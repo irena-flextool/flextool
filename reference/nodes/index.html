@@ -1,0 +1,2772 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.">
+      
+      
+        <meta name="author" content="Juha Kiviluoma, VTT Technical Centre of Finland">
+      
+      
+      
+        <link rel="prev" href="../entities_and_time/">
+      
+      
+        <link rel="next" href="../units/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../img/irena_flextool_favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Nodes - IRENA FlexTool</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#nodes" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="IRENA FlexTool" class="md-header__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            IRENA FlexTool
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Nodes
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="IRENA FlexTool" class="md-nav__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    IRENA FlexTool
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../interface_overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing an interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install_gui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model parameters
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Model parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../entities_and_time/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Entities and time structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nodes
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#defining-how-the-node-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Defining how the node functions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unit-of-measure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unit of measure
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-for-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data for nodes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-nodes-as-storages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using nodes as storages
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../units/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Units
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../connections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commodities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commodities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Groups
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../flow_groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Flow groups
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reserves/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reserves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../user_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../parameter_groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter groups and conventions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameter_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../how_to/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to recipes
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How-to recipes
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics: time, VRE, network and demand
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/storage_hydro/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage and hydro
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/thermal_chp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Thermal, CHP and reserves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/investment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Investment and multi-year models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/solve_sequences/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solve sequences, rolling and nested solves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/stochastics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stochastics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/emissions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emissions and system limits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/outputs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Outputs, diagnostics and Excel templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance and solvers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model outputs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reading_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reading results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../results_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../formulation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model formulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../advanced_concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../limitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model limitations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interfaces
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Interfaces
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flextool_gui_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../spine_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../spine_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine database editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../excel_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Excel as input/output
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../terminal_workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Terminal / CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ai_assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../solvers/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solvers
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Solvers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/highs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HiGHS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/gurobi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gurobi
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/cplex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CPLEX
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/xpress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Xpress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/copt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    COPT
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The engine pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LP scaling pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/slack_convention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Slack convention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/decomposition/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decomposition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/db_schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database schema and migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/assistant_evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/inject_between_solves/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Injecting parameters between solves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_11" >
+        
+          
+          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Archived
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Archived
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archived/browser_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archived/install_web_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface install (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#defining-how-the-node-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Defining how the node functions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unit-of-measure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unit of measure
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-for-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data for nodes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-nodes-as-storages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using nodes as storages
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="nodes">Nodes</h1>
+<h2 id="defining-how-the-node-functions">Defining how the node functions</h2>
+<p>These parameters will define how the node will behave and use the data it is given (available choices are marked in <em>italics</em>):</p>
+<ul>
+<li><code>name</code> - unique name identifier (case sensitive)</li>
+<li><code>node_type</code> - role of the node in the LP (default <em>balance</em>):<ul>
+<li><em>commodity</em> - price-exposed source/sink with no balance constraint (fuel imports, no storage)</li>
+<li><em>balance</em> - energy balance maintained every timestep</li>
+<li><em>storage</em> - balance plus a state variable (battery, reservoir)</li>
+<li><em>balance_within_period</em> - balance aggregated over the whole period (e.g. an annual gas budget)</li>
+</ul>
+</li>
+<li><code>invest_method</code> - Choice of investment method: either <em>not_allowed</em> or then a combination of <ul>
+<li><em>invest</em> and/or <em>retire</em> </li>
+<li>investment limits for each <em>period</em> and/or for all periods (<em>total</em>) or <em>no_limit</em> </li>
+<li><em>cumulative_limits</em> considers investments, retirements and existing together, requires <code>cumulative_max_capacity</code> and/or <code>cumulative_min_capacity</code></li>
+<li>any method other than <em>not_allowed</em> offers storage investment (retirement) in every investment period, also without <code>invest_cost</code> (<code>salvage_value</code>) or where it is 0: that capacity has no annuity, its <code>fixed_cost</code> still counts. To forbid investment in a period, use a <em>period</em> method (<em>invest_period</em>, <em>invest_period_total</em> and their <em>invest_retire_</em> forms) and set <code>invest_max_period</code> 0 for it: the other methods do not use <code>invest_max_period</code>. A 0 in an <code>invest_cost</code> map does not forbid it.</li>
+</ul>
+</li>
+<li><code>inflow_method</code> - choice how to treat inflow time series<ul>
+<li><em>use_original</em> - does not scale the original time series (no value defaults here)</li>
+<li><em>no_inflow</em> - ignores any inserted inflow time series</li>
+<li><em>scale_to_annual_flow</em> - will scale the time series to match the <code>annual_flow</code> so that the sum of inflow is multiplied by 8760/<code>hours_in_solve</code></li>
+<li><em>scale_in_proprotion</em> - calculates a scaling factor by dividing <code>annual_flow</code> with the sum of time series inflow (after it has been annualized using <code>timeline_duration_in_years</code>)</li>
+<li><em>scale_to_annual_and_peak_flow</em> - scales the time series to match the 'annual_flow' target while transforming the time series to match the highest load with the 'peak_inflow'</li>
+</ul>
+</li>
+<li><code>unit_of_measure</code> - [text] The unit of the node's amounts, for example <em>m3</em>, <em>t</em> or <em>MWh_th</em> (default <em>MWh</em>). A label only: FlexTool converts nothing. The node's results and the inputs about it are labelled in it: flows and the capacity of a unit on its side per hour (m3 → m3/h), storage and <code>inflow</code> per time step in the unit (m3), annual results per year (m3/a), prices and penalties per the unit (CUR/m3). See <a href="#unit-of-measure">Unit of measure</a>.</li>
+</ul>
+<p><img alt="image.png" src="../../img/concept/nodes.png" /></p>
+<h2 id="unit-of-measure">Unit of measure</h2>
+<p><code>unit_of_measure</code> names what the node holds: <em>MWh</em> (the default) for electricity, <em>m3</em> for water, <em>t</em> for
+hydrogen, <em>MWh_th</em> to tell heat from electricity. FlexTool uses it only for the labels of the results, the plots
+and the AI assistant; it changes no number. The node's rate is its unit per hour: m3 gives m3/h for its flows and
+for the capacity of a unit that delivers to it, MWh_th gives MW_th. The full rule and the table of labels are in
+<a href="../entities_and_time/#units-of-measure">Units of measure</a>.</p>
+<p>The inputs about the node are then in its units too:</p>
+<ul>
+<li><code>inflow</code>, <code>existing</code>, <code>invest_max_total</code> and the other capacities: in the node's unit (m3, or m3/h for a unit's
+  capacity on the node), entered as they are.</li>
+<li><code>penalty_up</code>, <code>penalty_down</code>, the <code>price</code> of a commodity on the node, <code>other_operational_cost</code> of a flow into
+  or out of it: per the node's unit (CUR/m3). Size the penalties for the unit: the default 10 000 is per MWh.</li>
+<li><code>invest_cost</code>, <code>fixed_cost</code>, <code>salvage_value</code>: per kW or kWh in an MWh model, so per 0.001 of the rate or the
+  amount here. A water tank that costs 20 CUR per m3 of storage has <code>invest_cost</code> 0.02 (20 × 0.001); a
+  desalination unit that costs 500 CUR per m3/h of capacity has <code>invest_cost</code> 0.5. Its annuity in the results is
+  per m3 for the tank (a storage capacity is an amount) and per m3/h for the unit (a capacity is a rate).</li>
+<li><code>efficiency</code> of a unit between nodes of different units: output units per input unit (12 m3/MWh).</li>
+</ul>
+<p>FlexTool warns when a connection, a commodity, a nodeGroup or flowGroup, or a group capacity limit spans nodes of
+different units (their sums are labelled <em>Mixed units of measure!</em>), when a reserve, inertia, non-synchronous or
+capacity-margin group has a member node that is not MWh, and when the value looks like a rate (<em>m3/h</em> instead of
+<em>m3</em>).</p>
+<h2 id="data-for-nodes">Data for nodes</h2>
+<p>Input data is set with the following parameters:</p>
+<ul>
+<li><code>inflow</code> - [MWh] per time step. Energy flowing into the node in each time step (negative is outflow, e.g. demand). The value is the energy of the whole step, not a rate: on 1 h steps it equals the average MW, and on 3 h steps it is 3 × the average MW. When the step length of your data changes, rescale the values yourself, e.g. sum hourly values to get 3 h steps, or halve MW values for 0.5 h steps. FlexTool does not convert them, and time-series values whose time names are not on the timeline are ignored. FlexTool sums the values for you only when a solve's <code>new_stepduration</code> coarsens the timeline, and when a group's <code>new_stepduration</code> balances the node per coarse step. A constant value is used as the same energy in every step. Constant or time series.</li>
+<li><code>annual_flow</code> - [MWh/a] Annual flow in energy units (always positive, the sign of inflow defines in/out). Constant or period.</li>
+<li><code>peak_inflow</code> - [MWh] per time step. The highest inflow of a time step that the scaled inflow should reach. Used only with <code>inflow_method = scale_to_annual_and_peak_flow</code>, which then needs <code>annual_flow</code> and an <code>inflow</code> profile for every period. Use the same scale and sign as <code>inflow</code> (negative for a demand); if you change the step length, rescale it as you rescale <code>inflow</code>. Each period reaches its own <code>peak_inflow</code>; with a solve's <code>new_stepduration</code>, <code>peak_inflow</code> is matched per original time step.</li>
+<li><code>energy_margin_method</code> - How the node's investment-stage energy margin is applied. Options: <em>none</em> (default, off, no scaling), <em>inflow_multiplier</em> (multiply this node's inflow by <code>energy_margin_multiplier</code> in the investment solve only) and <em>inflow_adder</em> (add <code>energy_margin_adder</code> MWh of extra demand to each time step of the investment solve only). See <a href="../../how_to/solve_sequences/#how-to-add-an-energy-margin-for-investment-adequacy">How to add an energy margin for investment adequacy</a>.</li>
+<li><code>energy_margin_multiplier</code> - [factor] Multiplier applied to the node's inflow in the investment solve only, when <code>energy_margin_method = inflow_multiplier</code>. Default 1 (no effect). A value of 1.1 makes the investment stage build for ~10% more demand, so the built capacity meets the true demand under the true (lower) annual VRE availability. Dispatch solves always see the true, un-margined inflow. The margin does not enter the reserve requirement (a group <code>increase_reserve_ratio</code>), the non-synchronous limit or the capacity margin, which follow the real demand (set <code>capacity_margin</code> for a capacity surplus). Constant.</li>
+<li><code>energy_margin_adder</code> - [MWh] per time step of the timeline. Extra demand (negative inflow) added to every time step of the investment solve, when <code>energy_margin_method = inflow_adder</code>. The value is not a total that is divided over the steps: each time step gets the full value. On a timeline of 24 h time steps, a margin of 10 MW needs a value of 240. When the investment solve uses <code>new_stepduration</code>, a solve step gets the sum of the values of the time steps it combines (a constant or period value counts once per time step: on 4 h solve steps of an hourly timeline, 10 adds 40 MWh per solve step). Default 0 (no effect). Adds a fixed amount of demand rather than scaling existing demand, so it also works on a node with no native inflow (e.g. a zero-inflow slack node) where the multiplier is a no-op. Dispatch solves always see the true, un-margined inflow. Like the multiplier, the added demand does not enter the reserve requirement, the non-synchronous limit or the capacity margin. Constant, period or period+time.</li>
+<li><code>existing</code> - [MWh or count] Existing storage capacity or number of storage units (requires <code>node_type=storage</code>). If <code>virtual_unitsize</code> is given, then <code>existing</code> is the number of units (capacity = <code>existing</code> × <code>virtual_unitsize</code>). Otherwise <code>existing</code> is the existing capacity of a single unit (typically in MWh). Constant or period.</li>
+<li><code>invest_cost</code> - [CUR/kWh] Overnight investment cost of new storage capacity. It is paid as an annuity over the years the storage capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the storage capacity is built (comes online) is used.</li>
+<li><code>salvage_value</code> - [CUR/kWh] Salvage value of the storage. A retirement earns it as an annuity over <code>lifetime</code> (see <a href="../units/#retirements">retirements</a>). Constant or period.</li>
+<li><code>lifetime</code> - [years] Operating lifetime of the storage capacity. It starts when the storage capacity starts to operate: with a construction lead time, after the construction. Used with the discount rate to calculate the annuity. What happens at the end of the lifetime depends on <code>lifetime_method</code>: <em>reinvest_automatic</em> keeps the storage capacity to the end of the model horizon, <em>reinvest_choice</em> retires it, <em>no_investment</em> retires it once. The <code>existing</code> storage ends at the first year of the model run plus the <code>lifetime</code> of the first period (in every solve of a chain of solves). Constant or period.</li>
+<li><code>construction_lead_time</code> - [years] Time from the investment decision until the storage capacity starts to operate. The start is rounded to the start of a period (see <code>construction_lead_time_method</code>). Investments whose rounded start is after the end of the solve or the model horizon are not offered, with a warning. Constant or period. Default 0. See <a href="../../how_to/investment/#how-to-make-investments-storageunit">construction lead time</a>.</li>
+<li><code>construction_lead_time_method</code> - How the start of operation (decision year plus <code>construction_lead_time</code>) is rounded to the start of a period: <em>immediate</em> (no lead time, the storage capacity operates from the decision period), <em>closest_seam</em> (the nearest period start; a tie goes to the later one), <em>previous_seam</em> (the period start before), <em>next_seam</em> (the period start after). Without a value: <em>immediate</em> when there is no lead time, else <em>closest_seam</em>.</li>
+<li><code>discount_rate</code> - [e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk for this technology. Should be nominal when model <code>inflation_rate</code> &gt; 0, real when <code>inflation_rate</code> = 0. Constant or period.</li>
+<li><code>invest_max_total</code> - [MWh] Largest allowed total storage investment over all solves. Every investment decision counts, also reinvestments and investments that are no longer in service; retirements and existing capacity do not reduce it (to limit the capacity in service, use <code>cumulative_max_capacity</code>). Constant.</li>
+<li><code>invest_max_period</code> - [MWh] Largest allowed storage capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period. A period map must give a value for every period in which capacity of the solve comes online: its investment periods, or with a construction lead time the periods the investments start to operate in (a missing period is an error).</li>
+<li><code>invest_min_total</code> - [MWh] Smallest required total storage investment over all solves, counted as for <code>invest_max_total</code>. Constant.</li>
+<li><code>invest_min_period</code> - [MWh] Smallest required storage capacity coming online in each period, counted as for <code>invest_max_period</code>. Constant or period. A period map must give a value for every period in which capacity of the solve comes online: its investment periods, or with a construction lead time the periods the investments start to operate in (a missing period is an error).</li>
+<li><code>retire_max_period</code> / <code>retire_min_period</code> - [MWh] Largest allowed / smallest required retirement of storage capacity in each period. Counts only what is retired in that period. Only <code>existing</code> storage can be retired (see <a href="../units/#retirements">retirements</a>). Constant or period. A period map must give a value for every investment period of the solve (a missing period is an error).</li>
+<li><code>retire_max_total</code> / <code>retire_min_total</code> - [MWh] Largest allowed / smallest required total retirement over all solves. Investments and existing capacity do not change it. Constant.</li>
+<li><code>cumulative_max_capacity</code> - [MWh] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period. A period map must give a value for every investment period of the solve (a missing period is an error).</li>
+<li><code>cumulative_min_capacity</code> - [MWh] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period. A period map must give a value for every investment period of the solve (a missing period is an error).</li>
+<li><code>fixed_cost</code> - [CUR/kWh/a] Annual fixed cost for storage. New storage capacity pays it only while it operates. Constant or period.</li>
+<li><code>penalty_up</code> - [CUR/MWh] Penalty cost for energy not served (decreasing consumption) in the node. The cost scales with both the magnitude (MW) and the duration (hours) of the violation. Default value is 10 000. Constant, period, time, period+time or stochastic time. The default applies to every node without a value of its own, and to the periods and timesteps that a map leaves out.</li>
+<li><code>penalty_down</code> - [CUR/MWh] Penalty cost for excess energy (increasing consumption) in the node. The cost scales with both the magnitude (MW) and the duration (hours) of the violation. Default value is 10 000. Constant, period, time, period+time or stochastic time. The default applies to every node without a value of its own, and to the periods and timesteps that a map leaves out.</li>
+<li><code>virtual_unitsize</code> - [MWh] Size of one unit. With it, <code>existing</code> is the number of units. Investments and retirements are continuous; their limits are in MWh. No value: the existing capacity, or 1000 MWh without it.</li>
+<li><code>self_discharge_loss</code> - [-] e.g. 0.01 means the content shrinks by the factor 1/1.01 every hour. Loss of stored energy over time: the content decays continuously at ln(1 + loss) per hour, for every modelled time step whatever its length; energy charged or discharged within a step is treated as spread evenly over the step. Constant, period, time or period+time (a time-varying loss decays each step at its own rate; a coarse step or timeset block decays by the sum of its hours' losses; this is exact for stored energy, while energy charged within such a step is weighted as if the loss were constant over the step, which overstates what is kept when the loss changes a lot inside the step).</li>
+<li><code>availability</code> - [e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant, period, time, period+time or stochastic time.</li>
+<li><code>invest_forced</code> - [MWh] Forces exactly this much new storage capacity to come online in the period, overriding the investment optimisation (as setting <code>invest_min_period</code> and <code>invest_max_period</code> equal). Constant or period.</li>
+<li><code>constraint_state_coeff</code> - A map of coefficients (Index: constraint name, value: coefficient) placing the storage state variable on the left side of a user-defined <code>constraint</code>. See <a href="../user_constraints/">User constraints</a>.</li>
+<li><code>constraint_invested_capacity_coeff</code> - A map of coefficients (Index: constraint name, value: coefficient) putting the storage capacity that comes online in each period on the left side of a user-defined <code>constraint</code>. Without a construction lead time, this is the storage capacity invested in that period. Coefficient per MWh. See <a href="../user_constraints/">User constraints</a>.</li>
+<li><code>constraint_cumulative_pre_built_capacity_coeff</code> - A map of coefficients (Index: constraint name, value: coefficient). Puts the storage capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MWh. See <a href="../user_constraints/">User constraints</a>.</li>
+<li><code>constraint_capacity_coeff</code> - A map of coefficients (Index: constraint name, value: coefficient). Puts the node's storage capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MWh. Capacity in construction is not included. See <a href="../user_constraints/">User constraints</a>.</li>
+<li><code>constraint_retired_capacity_coeff</code> - A map of coefficients (Index: constraint name, value: coefficient). Puts the storage capacity retired in each period on the left side of the user constraint. Coefficient per MWh. See <a href="../user_constraints/">User constraints</a>.</li>
+<li><code>constraint_in_construction_capacity_coeff</code> - A map of coefficients (Index: constraint name, value: coefficient). Puts the storage capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MWh. See <a href="../user_constraints/">User constraints</a>.</li>
+<li><code>node__profile</code> with <code>profile_method</code> - limits the storage state with a profile (<em>upper_limit</em>, <em>lower_limit</em>, <em>fixed</em>; the profile is a share of the storage capacity). The default is <em>none</em>: the profile is not applied, and FlexTool warns about a link without a <code>profile_method</code>. An <em>upper_limit</em> or <em>fixed</em> link to a profile without a value in the scenario stops the run with an error (it would hold the storage state at 0). See <a href="../units/#units-constrained-by-profiles">units constrained by profiles</a>.</li>
+</ul>
+<h2 id="using-nodes-as-storages">Using nodes as storages</h2>
+<p>FlexTool manages storages through nodes. A regular node maintains an energy/material balance between all inputs and outputs (<code>node_type=balance</code>). A storage node includes an additional state variable, which means that the node can also use charging and discharging of the storage while maintaining the energy balance. A storage node is created by setting <code>node_type=storage</code> and by adding storage capacity using the <code>existing</code> parameter and/or by letting the model invest in storage capacity (<code>invest_method</code>, <code>invest_cost</code>, <code>invest_max_period</code> and <code>invest_max_total</code> parameters).</p>
+<p>Since FlexTool allows different temporal structures (multi-periods, rolling optimization, etc.) there needs to be ways to define how the storages behave when the model timeline is not fully consequtive. By default, storages are forced to match start level to the end level within timesets. This is an acceptable setting for small storages that do not carry meaningful amounts of energy between longer time periods in the model.</p>
+<p>There are three methods associated with storage start and end values: <code>storage_binding_method</code>, <code>storage_start_end_method</code> and <code>storage_solve_horizon_method</code>. </p>
+<ul>
+<li>The most simple one of these is the <code>storage_start_end_method</code> and it overrides the other methods, since it forces the start and/or the end state of the storage to a predefined value based on the proportional parameters <code>storage_state_start</code> and <code>storage_state_end</code> (proportional means that the parameter needs to be set between 0-1 and will be scaled by the storage capacity in the model). The default is <em>fix_nothing</em> (the start and the end are not fixed). <em>fix_start</em> needs <code>storage_state_start</code> on the node and <em>fix_end</em> needs <code>storage_state_end</code>; <em>fix_start_end</em> needs both. A node that fixes a start or an end without its value stops the run with an error naming every such node, the method and the missing parameter (set the value, or a method that does not fix that end). In older databases the default was <em>fix_start</em>, and a fix without its value was not applied, or pinned the node at 0 when another node had a value; the upgrade rewrites such stored methods to what they did (<em>fix_nothing</em>, or a value of 0) where every scenario of the database used them the same way, and lists them (results unchanged). A node that used the old default with its own <code>storage_state_start</code> gets <em>fix_start</em> written in that value's alternative (results unchanged). Where scenarios differ, the method is left and the error names the scenarios. Storage nodes that relied on the old default now start free; in a model where another node had a <code>storage_state_start</code> they started at 0 (or at their own value) before, and runs of an upgraded database name them (see "Behaviour-change notices" below). These two parameters affect only the first and the last timesteps of the entire model (even when the model has more than one solve). A later solve or roll starts from the storage state realised before it: the end of the realised part of the previous roll or solve at the same nesting level or below (so a storage or investment solve continues from the dispatch solved below it). In nested solves the start applies to the first step of each nested level where the level first appears; a cyclic binding method (<em>bind_within_timeblock</em>, <em>bind_within_period</em>, <em>bind_within_solve</em>, a looping <em>bind_intraperiod_blocks</em>) cycles within each later solve without the start value, and a representative-period node (<em>_blended_weights</em>) starts each block from its own free start state. The end value (<em>fix_end</em>, <em>fix_start_end</em>) applies to the last timestep of the entire model, in every solve whose horizon contains that timestep: e.g. both an investment solve and the last dispatch solve (or roll) when both reach the end of the model, the solve of each nested level that contains it, and a roll whose look-ahead reaches it; a solve whose horizon ends earlier is not pinned. In a stochastic solve each terminal branch ends at it. Where an upper-level solve fixes the storage at that step with <code>storage_nested_fix_method</code> <em>fix_quantity</em> or <em>fix_usage</em>, the upper solve's value takes precedence; <em>fix_price</em> only values that end, so the end value still applies. <code>storage_start_end_method</code> is meant for simple models: in a model with several solves or rolls <code>storage_state_reference_value</code> with <code>storage_solve_horizon_method</code> <em>use_reference_value</em> is usually the better choice, since it guides the storage at the end of every solve horizon (from a time series when one is available), not only at the end of the model.</li>
+<li><code>storage_binding_method</code> chooses the cycle-closure scope for the storage state over discontinuities in the model timeline. There are seven cycle-scope methods plus one orthogonal aggregation method. See the parameter description in <code>flextool/schemas/spinedb_schema.json</code> for the canonical enumeration; in short:<ul>
+<li><em>bind_within_timeblock</em> — state cycles within each timeblock (block start = block end + flows); in a rolling solve within the timeblock's part in the roll. With <code>fix_start</code> the start state is pinned at the last step of the first timeblock (in a rolling solve, of its part in the roll), the state the first step starts from.</li>
+<li><em>bind_within_period</em> — state cycles within each FlexTool period; blocks chain inside the period; in a rolling solve within the period's part in the roll.</li>
+<li><em>bind_within_solve</em> — state cycles across the whole solve horizon; in a rolling solve across each roll. With <code>fix_start</code> the start state is pinned at the last step of the solve, the state the first step starts from (<em>bind_within_period</em>: at the last step of the first period). In a stochastic solve the cycle closes once per path: the last step of every forecast branch ends at the level the solve's first step starts from; when the forecasts open in the solve's first period, each forecast's first step continues from the last step of its own path, so they all start from the same level. With <code>storage_start_end_method</code> <em>fix_start</em> (or <em>fix_start_end</em>) the start of each forecast is pinned to the given share (<code>storage_state_start</code>) of that forecast's own storage capacity, so where the capacity differs by forecast (investment or divestment per forecast) the starting energy differs although the share is the same; without a fixed start all the forecasts start from the same level.</li>
+<li>With these three methods the storage level is not carried from one roll of a rolling solve to the next.</li>
+<li><em>bind_forward_only</em> (default) — state chains forward across the solve; no end-to-start closure. In a stochastic solve whose forecasts open in the solve's first period, all the forecasts start from the same level (the carried state, or without one a single free level). The exception is <code>fix_start</code> (or <code>fix_start_end</code>): each forecast's start is the <code>storage_state_start</code> share of its own storage capacity, so the starting energy differs between forecasts whose capacity differs (investment or divestment per forecast).</li>
+<li><em>bind_within_solve_blended_weights</em>, <em>bind_within_period_blended_weights</em>, <em>bind_forward_only_blended_weights</em> — representative-period variants of the three above. They apply RP weighting on top of the same cycle scope. With several periods each period uses its own representative periods and base periods (also when periods share a timeset); <em>bind_within_solve_blended_weights</em> and <em>bind_forward_only_blended_weights</em> chain the periods in solve order like <em>bind_within_solve</em> / <em>bind_forward_only</em>. With a blended variant every period of the solve needs a timeset with <code>representative_period_weights</code>. In a stochastic solve each forecast branch period uses the representative periods of the period it branches from, and each branch is independent: its first period continues from the last base period of the trunk period (the shared period before the split), a later period from the previous period of the same branch. <em>bind_within_solve_blended_weights</em> closes once per path: every branch's last period ends at the level the trunk period starts from. <em>bind_within_period_blended_weights</em> closes every branch period on itself. When the forecasts open in the solve's first period, all of them start from the same level (<em>bind_within_solve_blended_weights</em> through its closure, <em>bind_forward_only_blended_weights</em> through an equal chain start, also with <code>fix_start</code>, which pins the state in the first block). Inside the non-anticipativity window of a node in an <code>include_stochastics</code> group the start levels of the representative blocks are the same in every forecast. In a rolling solve (<code>solve_mode</code> <em>rolling_window</em>) the blended variants are not applied: those nodes bind forward only (<em>bind_forward_only</em>) and the storage state is passed directly from roll to roll; a warning names them once per solve (so a rolling solve that mixes periods with and without representative periods does not stop for them either).</li>
+<li><em>bind_intraperiod_blocks</em> — orthogonal aggregation method: state is held constant within each block and the energy balance of the node is summed over each block (every flow stays at the solve's time step); the blocks of a period form a loop, and the state of a block is its state at the end of the block. With <code>fix_start</code> the start state is pinned at the end of the first period's last block, the state the first block starts from. In a rolling solve (<code>solve_mode</code> <em>rolling_window</em>) the blocks of each roll also end at the end of the roll's realized part. A period that the roll holds whole loops as above (so a single roll over the whole timeline gives the same result as a solve that is not rolling). In a period that the roll holds only in part, the blocks chain forward: the first block of the period continues from the previous step of the roll, and the storage level is carried from roll to roll, as for <em>bind_forward_only</em>. When the roll's first period is held in part, the roll starts from <code>fix_start</code> (first roll) or from the level carried from the previous roll. With neither (<code>fix_nothing</code>), the first block has no state change, so its flows must balance on their own. Without a loop, <code>storage_solve_horizon_method</code> sets the end of the roll; it also sets the end of a period held in part when the next period of the roll is held whole (that period loops, so nothing continues from the end of the part). A <code>rolling_solve_jump</code> that is a whole number of periods keeps every realized period looping; otherwise a warning is given.</li>
+</ul>
+</li>
+<li>Silent-degrade behaviour: any <code>*_blended_weights</code> method on a node in a solve whose active timeset has no <code>representative_period_weights</code> is automatically downgraded to the corresponding non-RP variant for that solve. The same storage entity can therefore drive an RP investment solve and a chronological dispatch solve back-to-back without changing the parameter value.</li>
+<li>Older databases: the parameter used to take an array of methods, and three methods had other names (<em>bind_within_timeset</em> → <em>bind_within_timeblock</em>, <em>bind_using_blended_weights</em> → <em>bind_within_solve_blended_weights</em>, <em>bind_within_model</em> → <em>bind_within_solve</em>). Migration reduces an array to one method, by priority, and renames the old methods.</li>
+<li><code>storage_solve_horizon_method</code> is meant for models that roll forward between solves and have an overlapping temporal window between those solves (e.g. a model with 36 hour horizon rolls forward 24 hours at each solve - those 12 last hours will be overwritten by the next solve). In these cases, the end state of the storage will be replaced by the next solve, but it can be valuable to have some guidance for the end level of storage, since it will affect storage behaviour. There are three methods: <em>free</em> is the default and will simply let the model choose where the storage state ends (usually the storage will be emptied, since it would have no monetary value). <em>use_reference_value</em> will use the value set by <code>storage_state_reference_value</code> (a share of the storage capacity in the period, invested storage included) to force the end state in each solve (the last step of its last period and of each stochastic branch of it) to match the reference value (not for a node whose <code>storage_binding_method</code> ties its end to its start: <em>bind_within_timeblock</em>, <em>bind_within_period</em>, <em>bind_within_solve</em> and <em>bind_intraperiod_blocks</em> (in a rolling solve only when the roll holds its last period whole: otherwise its blocks chain forward and the pin applies, also at the end of a period held in part that a period held whole follows), including a <em>_blended_weights</em> node in a solve without representative periods, which uses the method without <em>_blended_weights</em>). In a solve with representative periods the <em>_blended_weights</em> nodes keep the end pin: it applies to the state at the end of the last representative block, which their base-period chain does not tie to the start. <em>use_reference_price</em> assigns a monetary value (in CUR per energy unit, consistent with other commodity prices) to the storage content at the end of the solve horizon — only at the last <code>(d, t)</code> of the solve's last period (and of each stochastic branch of it), not at every roll boundary or at the end of an earlier period of a multi-period solve, also when the periods share a timeset — using the <code>storage_state_reference_price</code> parameter; the model is then free to choose how much it stores at the end of horizon based on this monetary value. In a nested lower-level solve, where the upper-level solve fixes the storage at the end of the horizon (<code>storage_nested_fix_method</code> <em>fix_quantity</em>, <em>fix_usage</em> or <em>fix_price</em>), the upper solve's value overrides the <em>use_reference_value</em> end value at that step. The objective term is <strong>negative</strong> (<code>−Σ storage_state_reference_price × v_state_end × unitsize × weight_factors</code>), so a higher terminal state reduces the objective, offsetting the operational cost of leaving energy in storage.</li>
+</ul>
+<blockquote>
+<p><strong>Note: reference-price credit is in the solver objective but
+not in the calculated cost totals.</strong>  The credit above influences the
+solver's optimization but is <strong>omitted</strong> from the
+<code>costs_discounted_d_p</code> / <code>costs_discounted_p_</code> parquet files and
+the <code>summary_solve.csv</code> totals — it is an artificial endogenous
+valuation, not a real-world cost. End-of-horizon storage valuation
+has several valid interpretations and is typically computed as
+post-analysis rather than as part of the reported cost breakdown.
+If needed, compute the credit from last-timestep <code>v_state</code> values
+and the <code>storage_state_reference_price</code> parameter yourself.</p>
+</blockquote>
+<p>-Method hierarchy:</p>
+<ol>
+<li><code>storage_start_end_method</code></li>
+<li><code>storage_binding_method</code></li>
+<li><code>storage_solve_horizon_method</code></li>
+</ol>
+<p>-Meaning:</p>
+<ul>
+<li>The <code>storage_binding_method</code> is ignored (exeption <em>bind_forward_only</em>), if <code>storage_start_end_method</code> has the value <em>fix_start_end</em>: such a node chains forward like <em>bind_forward_only</em> (a <em>_blended_weights</em> method like <em>bind_forward_only_blended_weights</em>), so that the start and the end can take different values. A <em>bind_intraperiod_blocks</em> node keeps its timeset blocks, which then chain forward from period to period instead of looping within each period,</li>
+<li>The <code>storage_solve_horizon_method</code> <em>use_reference_value</em> is ignored, if other storage state methods are used. Only exeptions are <em>fix_start</em> or <em>bind_forward_only</em></li>
+</ul>
+<p>-Nested Parameters:</p>
+<ul>
+<li><code>storage_nested_fix_method</code>: Sets this storage as a long-term storage whose end state at the period boundary is passed to the contained lower-level solve as a constraint. Available choices:<ul>
+<li><em>fix_nothing</em> (or <em>no</em>) — no handoff for this node (default).</li>
+<li><em>fix_quantity</em> — pins the lower solve's storage state at the boundary to the parent-solved level (<code>v_state</code> equality at the last <code>(d, t)</code> of each <code>fix_storage_periods</code> entry, via <code>node_balance_fix_quantity_eq_lower</code>).</li>
+<li><em>fix_price</em> — gives the lower solve a per-MWh price tier <code>p_fix_storage_price</code> (taken from the parent solve's node price <code>price_t</code> at the fix step, or from <code>storage_state_reference_price</code>); the lower solve then chooses its own boundary state, paying this price for the energy it holds. Uses the same <code>storage_state_reference_price</code>-driven objective term described in the <code>use_reference_price</code> paragraph.</li>
+<li><em>fix_usage</em> — passes the <em>change</em> in storage between the solve start and the boundary (i.e. net energy charged or discharged across the dispatch window) as a less-than-or-equal cap <code>p_fix_storage_usage</code>, enforced by <code>node_storage_usage_fix_le</code>. Useful when the parent solve cares about total throughput rather than the absolute level.
+  A parent solve may set any subset of the three metrics per node — the carriers are independent and each travels as its own <code>handoff/fix_storage_*</code> Provider key.</li>
+</ul>
+</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      IRENA
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.indexes"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
+      
+        <script src="../../assets/mathjaxhelper.js"></script>
+      
+        <script src="../../assets/moved_doc_anchors.js"></script>
+      
+    
+  </body>
+</html>

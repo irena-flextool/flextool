@@ -1,0 +1,2795 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.">
+      
+      
+        <meta name="author" content="Juha Kiviluoma, VTT Technical Centre of Finland">
+      
+      
+      
+        <link rel="prev" href="../solve_sequences/">
+      
+      
+        <link rel="next" href="../emissions/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../img/irena_flextool_favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Stochastics - IRENA FlexTool</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#stochastics" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="IRENA FlexTool" class="md-header__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            IRENA FlexTool
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Stochastics
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="IRENA FlexTool" class="md-nav__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    IRENA FlexTool
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../interface_overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing an interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install_gui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model parameters
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Model parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/entities_and_time/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Entities and time structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/nodes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/units/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Units
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/connections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commodities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commodities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Groups
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/flow_groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Flow groups
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/reserves/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reserves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/user_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/parameter_groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter groups and conventions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameter_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to recipes
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How-to recipes
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics: time, VRE, network and demand
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage_hydro/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage and hydro
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../thermal_chp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Thermal, CHP and reserves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../investment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Investment and multi-year models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solve_sequences/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solve sequences, rolling and nested solves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stochastics
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stochastics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-use-stochastics-representing-uncertainty" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to use stochastics (representing uncertainty)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How to use stochastics (representing uncertainty)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-the-model-ties-across-branches-dispatch-vs-investment-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the model ties across branches (dispatch vs. investment defaults)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#single-solve-stochastics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Single solve stochastics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stochastics-over-multiple-periods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stochastics over multiple periods
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rolling-horizon-stochastics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rolling horizon stochastics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stochastic-investment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stochastic investment
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../emissions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emissions and system limits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../outputs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Outputs, diagnostics and Excel templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance and solvers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model outputs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reading_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reading results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../results_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../formulation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model formulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../advanced_concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../limitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model limitations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interfaces
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Interfaces
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flextool_gui_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../spine_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../spine_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine database editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../excel_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Excel as input/output
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../terminal_workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Terminal / CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ai_assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../solvers/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solvers
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Solvers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/highs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HiGHS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/gurobi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gurobi
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/cplex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CPLEX
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/xpress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Xpress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/copt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    COPT
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The engine pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LP scaling pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/slack_convention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Slack convention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/decomposition/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decomposition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/db_schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database schema and migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/assistant_evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/inject_between_solves/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Injecting parameters between solves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_11" >
+        
+          
+          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Archived
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Archived
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archived/browser_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archived/install_web_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface install (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-use-stochastics-representing-uncertainty" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to use stochastics (representing uncertainty)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How to use stochastics (representing uncertainty)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-the-model-ties-across-branches-dispatch-vs-investment-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the model ties across branches (dispatch vs. investment defaults)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#single-solve-stochastics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Single solve stochastics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stochastics-over-multiple-periods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stochastics over multiple periods
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rolling-horizon-stochastics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rolling horizon stochastics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stochastic-investment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stochastic investment
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="stochastics">Stochastics</h1>
+<h2 id="how-to-use-stochastics-representing-uncertainty">How to use stochastics (representing uncertainty)</h2>
+<p><strong>(stochastics.sqlite)</strong></p>
+<p>Stochastics are used to represent the uncertainty of the future in the decision making. The main idea is to represent the distribution of possible futures by a set of discrete, probability-weighted <strong>forecast branches</strong>. The branches fan out from a common branching point, and each carries a probability weight; the weights sum to one. The model minimises the <strong>expected</strong> (probability-weighted) cost across all the forecast branches.</p>
+<p>Because the decision maker does not yet know which future will occur, decisions that must be committed <em>before</em> the uncertainty is revealed cannot differ between the forecasts. A <strong>non-anticipativity</strong> constraint therefore forces the forecast branches to agree with each other on those here-and-now decisions over the committed part of the horizon — and that agreement <em>is</em> the (non-anticipative) realization of each such decision. The tied decision types are investments, storage usage and unit online (commitment) status; energy flows are always left free so each forecast dispatches them independently. (<code>min_uptime</code>, <code>min_downtime</code> and ramp limits are separate physics, always active within each branch's own trajectory — they are not part of the non-anticipativity tie.)</p>
+<p>There is <strong>no "realized" branch among the weighted forecasts.</strong> "Realized" is an <em>optional</em> designation — at most one branch per branching point — that marks which branch's data are treated as the actuals; it is never a weighted member of the fan. The stochastic solve optimises over the forecasts only, so its operations inside the fan have no realized answer of their own. With a designated branch, FlexTool runs a <strong>realization dispatch</strong> right after the stochastic solve: a deterministic solve over the same committed window that reads the designated branch's data, keeps the stochastic solve's investments and inherits the units online and the reserves tied across the forecasts (the value of the first forecast branch in sorted order). Its results are the realized operational results. Without a designation (a forecasts-only fan) the results hold the investment decisions and the operations of the periods before the reveal, but no realized operation inside the fan. A solve reports only these committed / realized results, never the individual forecast branches (the <code>output_horizon</code> debug option, below, writes them to a separate raw dump).</p>
+<p><img alt="Stochastic system" src="../../img/concept/non-anticipatory.png" /></p>
+<p>For the stochastics to have an effect on the results, the system needs parameters that change between the forecast branches. These could be e.g. wind power generation or fuel prices. The model then carries separate variables in every branch for all the decisions it can take (e.g. investment, storage state, online, flow), and minimises their probability-weighted (expected) cost. The committed decisions — tied across the branches as described above — therefore hedge against the whole distribution of forecasts rather than optimising for any single one.</p>
+<p>In this example, we show two ways to use stochastics: single solve and rolling horizon. They all share the same test system that includes: </p>
+<ul>
+<li>A demand node </li>
+<li>Coal, gas and wind power plants </li>
+<li>Hydro power plant with a reservoir and a downriver nodes</li>
+</ul>
+<p>The demand and the downriver nodes have a constant negative inflow. Therefore, the hydro plant capacity is partly in use at all times. The varying timeseries are the wind profile and the water inflow the reservoir. The coal commodity is more expensive than the gas, so the system will try to use the reservoir water to minimize the usage of coal. This will be affected by the forecast of the wind and the forecast of the water inflow. These are the stochastic timeseries in these examples. </p>
+<p>You can have stochastics in multiple timeseries in the same solve, but these will have to share the branches. This means that for example if you have two wind plants with two different stochastic wind profiles with three branches (upper, mid and lower estimates) you need to think if it is best to use only three branches and put both of the upper estimates to the same 'upper' branch or should you use combinatorics to make nine branches. However, note that the tool will not do the combinatorics for you and the solving time will be heavily affected by extra branches. Consequently, the usual practice is to present all the stochastics using just e.g. three branches and consider the correlations between the stochastic parameters in the pre-processing of the input data.</p>
+<p>Notes about the storage options with stochastics:</p>
+<ul>
+<li>
+<p>The best options to use are:</p>
+</li>
+<li>
+<p><code>storage_state_start_end_method</code>: fix_start or fix_start_end (and the their values)</p>
+</li>
+<li>
+<p><code>storage_solve_horizon_method</code>: fix_value or fix_price (and their values)</p>
+</li>
+<li>
+<p><code>storage_binding_method</code> works per path of the stochastic tree (a path runs from the solve's first step through the trunk periods, the shared periods before the split, to the end of one forecast branch). With <em>bind_within_solve</em> the cycle closes once per path: the last step of every forecast branch ends at the level the solve's first step starts from. When the fan opens in the solve's first period, each forecast's first step continues from the last step of its own path, and since all the paths end at the same level, all the forecasts start from it too. With <em>bind_forward_only</em> (the default) a fan that opens later continues from the trunk's last step, and the forecasts of a fan that opens in the solve's first period all start from the same level: the solve's start state (the <code>storage_state_start</code> value, or the state carried in from the previous roll or solve), or, with neither (<em>fix_nothing</em>), one free level shared by all the forecasts. With <code>storage_start_end_method</code> <em>fix_start</em> (or <em>fix_start_end</em>) the start of each forecast is pinned to the given share (<code>storage_state_start</code>) of that forecast's own storage capacity, so where the capacity differs by forecast (investment or divestment per forecast) the starting energy differs although the share is the same; without a fixed start all the forecasts start from the same level. </p>
+</li>
+<li>
+<p>Representative periods (a timeset with <code>representative_period_weights</code>) work in stochastic solves: each forecast branch period uses the representative periods of the period it branches from (all branches share that selection). The <em>_blended_weights</em> methods follow the same rules per branch: the first branch period continues from the last base period of the trunk period (the shared period before the split), a later one from the previous period of the same branch; <em>bind_within_solve_blended_weights</em> closes once per path, so every branch's last period ends at the level the trunk period starts from; <em>bind_within_period_blended_weights</em> closes each branch period on itself. When the fan opens in the solve's first period, the forecasts start from the same level (the fan has only forecasts, no realized member, so this equal start is what ties them). For a node in an <code>include_stochastics</code> group the start levels of the representative blocks are tied across the forecasts inside the non-anticipativity window, like the storage state.</p>
+</li>
+</ul>
+<p><img alt="Stocahstic system" src="../../img/concept/stochastic_system.png" /></p>
+<h3 id="what-the-model-ties-across-branches-dispatch-vs-investment-defaults">What the model ties across branches (dispatch vs. investment defaults)</h3>
+<p>Wherever the branches still share the same information — the committed part of the horizon, before the forecast is revealed — the model <strong>ties</strong> some decisions so that all forecast branches agree on them (the branches are tied <em>to each other</em>, not to any realized branch) and lets the rest <strong>diverge</strong>. What is tied depends on whether the solve invests.</p>
+<p><strong>Any stochastic solve (dispatch or investment) assumes, by default:</strong></p>
+<ul>
+<li><strong>Storage state, unit commitment (online status) and reserves are tied</strong> across the forecast branches over the solve's committed periods — every branch must take the same storage and start-up decisions while they still share information, so these decisions are genuinely non-anticipative. In a <strong>single</strong> solve whose committed periods span the whole horizon this ties them over the whole horizon (so only the flows differ between branches); in a <strong>rolling</strong> solve the tie covers only each roll's committed (jump) slice, and the branches operate freely in the forecast horizon beyond the reveal.</li>
+<li><strong>Energy flows are always free</strong> — each forecast dispatches its flows independently.</li>
+<li><strong>Continuity is ordinary temporal carry-in.</strong> Only the model's very first timestep starts from the given history / initial state; every later timestep continues from the previous one. At a branching point each child branch continues from its parent branch's last step, so sibling branches start from the same state simply because they share a parent.</li>
+</ul>
+<p><strong>An investment solve additionally assumes, by default:</strong></p>
+<ul>
+<li><strong>A single, shared here-and-now investment plan</strong> for all branches (<code>stochastic_invest_method = none</code>) — you commit one set of investments regardless of which future occurs.</li>
+</ul>
+<p>So a plain <strong>dispatch</strong> solve = commit the committed part (shared storage / online / reserve), forecast the rest, flows free. An <strong>investment</strong> solve = the same operational tie <strong>plus</strong> one shared investment plan.</p>
+<p><strong>Overriding the defaults:</strong></p>
+<ul>
+<li><em>Investment</em> — set <code>stochastic_invest_method = recourse</code> for per-scenario (wait-and-see) investment, or declare a mid-horizon reveal for a genuine two-stage hedge (see <em>Stochastic investment</em> below).</li>
+<li><em>Operations</em> — set the <code>solve</code> array parameter <code>shared_operation_periods</code> to change the operational tie window: an <strong>empty array</strong> frees operations from the first timestep (each forecast operates freely — combined with a single shared investment this is the classic two-stage capacity-expansion model), or a <strong>list of periods</strong> ties operations only over those periods. See <em>Stochastics over multiple periods</em> for the details.</li>
+</ul>
+<h3 id="single-solve-stochastics">Single solve stochastics</h3>
+<p><strong>(stochastics.sqlite scenario: 2_day_stochastic_dispatch)</strong></p>
+<p>In this scenario a near-term operating window is committed with an uncertain forecast for the following day over a 48-hour timeset.
+To set up a stochastic solve, we need three things: the stochastic branch information, the stochastic timeseries, and choosing which parts of the model use stochastic timeseries.</p>
+<p>The information about the branches is set with the <em>solve</em> parameter <code>stochastic_branches</code>. This is a 4-dimensional map. (Edit -&gt; choose map -&gt; right click -&gt; add columns.)
+The columns are: period, branch, analysis_time (starting time of the branch), realized (yes/no), and the value is the branch's <strong>probability weight</strong>. In this example we have forecast branches (e.g. mid, upper and lower) representing the wind forecasts. The weights set each branch's probability in the objective function (expected model cost) and are normalized so that the total weight is always one across the forecast branches at each start time. The <em>realized</em> flag is optional: at most one branch per start time may be flagged <code>yes</code>, and it only designates which branch's data are the actuals used by the realization dispatch (above) — a realized-flagged branch is <strong>not</strong> counted among the weighted forecasts. In this example all four branches (realized, upper, lower and mid) are forecasts and none is flagged <code>yes</code>: the fan is pure forecasts, so the solve reports no realized dispatch (its normal results are empty apart from the objective), and the example sets <code>output_horizon</code> (below) to write the forecast branches to the raw dump. Flag one branch <code>realized: yes</code> to get a realization dispatch of the 48 hours.</p>
+<p>The stochastic wind timeseries are set with the same <em>profile</em> parameter <code>profile</code>, but with a three-dimensional map instead of the regular one-dimensional one. The tool recognizes a stochastic timeseries from the dimensions of the data. The three dimensions are: branch, analysis_time and time. The model reads the branch-specific series for each forecast branch; where a branch has no stochastic data available for part of the horizon, it falls back to the profile's non-stochastic value, if one is given. A forecast branch period reads the series whose <code>analysis_time</code> is its own first time step and, for a time step that series does not cover, the series whose <code>analysis_time</code> is the solve's fan start (the step at which the solve branches). A series given only at the fan's <code>analysis_time</code> therefore serves every later period of the horizon; a series given at a later period's first step overrides it there. A period before the reveal never reads the fan-start series.
+The other parameters documented as "stochastic time" in the reference (<code>availability</code> of units and nodes, unit <code>efficiency</code> and <code>min_load</code>, <code>other_operational_cost</code> of unit inputs and outputs, <code>reservation</code>, <code>penalty_up</code> and <code>penalty_down</code>, node <code>inflow</code>) take the same three-level map and are read the same way; an entity's value is read regardless of whether it is in an <code>include_stochastics</code> group — the group changes HOW it is read, not whether it is read at all (below). Giving a value to only some of a reveal's forecast branches and leaving the rest out is a configuration error (naming the entity, the parameter and the branches left out); give every branch a value, or none.</p>
+<p>The parts of the model that will use stochastic data <strong>per branch</strong> are chosen with a <em>group</em> parameter <code>include_stochastics</code>: the units, nodes and connections added to this group read the matching forecast branch's own value on every branch period (if available). Here we add the unit <em>wind_plant</em> to this group. A profile is read per profile, not per user: when any unit, node or connection that uses a stochastic-time profile is in an <code>include_stochastics</code> group, every user of that profile reads the forecast branch's own series, including users outside the group. To keep one of two wind plants on a single series, give it its own non-stochastic profile. An entity with a stochastic-time value that is in no such group still reads the series — every one of its branch periods reads the single value of the designated realized branch rather than its own branch's value. A forecasts-only fan (no branch flagged <code>realized: yes</code>) has no such value, so a stochastic-time value of an entity outside every <code>include_stochastics</code> group is a configuration error there, naming the entity and the parameter — add the entity to the group, designate a realized branch, or give the parameter a non-stochastic value. Inside the group a forecasts-only fan is valid: every forecast reads its own branch. The period label (the original name of the period that opens the fan, see "Stochastics over multiple periods") has no dispatch, so it needs no value of its own. The realization dispatch reads the designated branch's value for every entity. A deterministic solve that declares no <code>stochastic_branches</code> at all takes the designated realized branch's value too, so authoring a stochastic-time value there without one is a configuration error, unless a realized branch elsewhere (e.g. the stochastic solve whose realization dispatch it is) was projected onto it.</p>
+<p>An option exists to look at the stochastic (forecast-branch) horizons for debugging your system: the <em>model</em> parameter <code>output_horizon</code>. It does not change the normal results (they hold the realized rows only, with or without the option); instead <code>output_parquet/&lt;scenario&gt;/horizon/</code> gets one raw parquet per LP variable and constraint with every row of every solve (forecast branches and rolling look-ahead included), a <code>realized</code> column marking the rows that reach the normal results, and the raw primal values, reduced costs and duals (see <a href="../../results/">Results</a>). The values are raw solver values, without cost processing.</p>
+<p>If you change the weights of the stochastic branches, you should see the results change.</p>
+<p><img alt="2day stochastics" src="../../img/concept/2day_stochastics.png" /></p>
+<p>The figure shows the dispatch of the forecast branches; those rows are in the raw <code>horizon/</code> dump, not in the normal results or plots.</p>
+<h3 id="stochastics-over-multiple-periods">Stochastics over multiple periods</h3>
+<p>When the solve's horizon spans periods beyond the branching period, the branches extend through all the remaining periods: every forecast branch with a nonzero weight gets a synthetic <code>&lt;period&gt;_&lt;branch&gt;</code> copy of the branching period and of each later period, and the operations of the stochastic solve live only on these copies. The real period names of the periods from the reveal onwards are <strong>period labels</strong>: they hold only period-level bookkeeping — the shared investment (under <code>stochastic_invest_method = none</code>, seen by every forecast), the years represented and the discounting — and have no dispatch (no time-step rows, empty operational results). Under <code>recourse</code> a period label has no investment either: every forecast invests on its own. The designated realized branch gets no copy: its data feed the realization dispatch, which dispatches the real period names. Only a period strictly before the reveal falls back to the lexically-smallest forecast branch for its own (necessarily pre-branch, undivided) data. The branch probability weights carry forward along each branch, so the weighting is constant along a branch's period chain and sums to one across the forecast branches of each period.</p>
+<p>Notes for multi-period stochastic solves:</p>
+<ul>
+<li>If <code>years_represented</code> is defined for the solve, it must cover <strong>all</strong> of the solve's periods. A configuration that defines it for only some periods fails with a configuration error (older versions silently ran on a truncated horizon instead).</li>
+<li>The forecast branch weights are normalized to sum to one across the forecasts at each period; a realized designation adds no weight to the fan (it is not a weighted member).</li>
+<li>In a single solve whose committed periods span the whole horizon, the non-anticipativity constraints cover the whole horizon: the shared decision types (storage usage, online status, reserve) stay tied across the forecast branches through the later periods, and post-branching divergence shows up only in the flow variables. Use a rolling solve when the branches should be free to commit differently after the information is revealed — each roll then commits only its jump slice and the non-anticipativity window ends at the reveal.</li>
+<li>To free the operational branches within a <em>single</em> solve (without moving to a rolling solve), set the <code>solve</code> array parameter <code>shared_operation_periods</code>. Left unset (the default) it keeps the behaviour above — the operational non-anticipativity window equals the realized-dispatch timesteps (plus any <code>fix_storage</code> timesteps), so operations stay tied across the whole committed horizon. Set it to an <strong>empty array</strong> to free operations from the first timestep: the shared decision types then branch freely per forecast while the investment plan is still a single shared decision (<code>stochastic_invest_method = none</code>) — this is the classic two-stage capacity-expansion structure (one here-and-now investment, wait-and-see operations). Set it to a <strong>list of periods</strong> to tie operations only over those periods (e.g. a mid-horizon reveal: tie the pre-reveal periods, free the rest); the listed periods' timesteps are intersected with the solve's active timeline, and a curated list <em>replaces</em> (does not add to) the default realized-dispatch window. The dispatch output window is unaffected — <code>realized_periods</code> still governs which periods are reported.</li>
+<li>A <code>realized: yes</code> row placed at a later period's first timestep does not re-branch the model, but it selects which branch's timeseries the realization dispatch uses from that period onwards. This can be used deliberately for per-period series selection; if you did not intend a series swap, keep the <code>realized: yes</code> row only at the solve (or roll) start.</li>
+<li>The branching period's label has no dispatch, so it reads no stochastic-time value; its forecast copies read their own branch's value, and the realization dispatch reads the designated branch's.</li>
+<li>Each forecast copy of a later period reads its branch's series at its own first time step and, for a time step not covered there, the series given at the fan's <code>analysis_time</code> (the realization dispatch and the entities outside every <code>include_stochastics</code> group read the realized branch the same way). One forecast per branch at the fan's <code>analysis_time</code>, covering the whole horizon, is therefore enough. In a rolling solve the order is the other way round (see "Rolling horizon stochastics").</li>
+<li>When a solve commits time steps inside a forecasts-only fan and a later solve (e.g. the next roll) continues from them, the units online and the reserves on the tied steps are the same in every forecast: the next solve continues from them (the first forecast branch in sorted order). Storage state, ramp-limited flows, the cumulative commodity ladder, the CO2 total cap and recourse investment are decided per forecast there, so such a run stops before the LP with an error naming the solve and these families: designate a <code>realized: yes</code> branch (FlexTool then adds the realization dispatch), configure a realization solve right after it, or end the committed window before the reveal.</li>
+</ul>
+<h3 id="rolling-horizon-stochastics">Rolling horizon stochastics</h3>
+<p><strong>(stochastics.sqlite scenario: 1_week_rolling_wind)</strong></p>
+<p>In this scenario we extend the previous timeline to one week and roll through it one day at a time with additional three day stochastic horizon:</p>
+<p><em>solve</em>: <code>rolling_solve_jump</code> = 24 and <code>rolling_solve_horizon</code> = 96. </p>
+<p>The stochastic data should be given so that it can serve the rolling structure: <code>rolling_solve_jump</code> dictates the duration of the committed (jump) part of each solve and the interval of forecast updates. So, for every <code>analysis_time</code> there needs to be a time series in each forecast branch that extends to the end of the horizon (as defined by <code>rolling_solve_horizon</code>). The branches continue to the end of the horizon without branching again. Each roll fans at its first step into the forecast branches; the non-anticipativity tie covers the committed jump slice, and the branches then diverge over the forecast tail. Only the committed jump is carried forward to the next roll as the realized state.</p>
+<p>For the <em>solve</em> parameter <code>stochastic_branches</code> this means an <code>analysis_time</code> at each roll start (here t0001, t0025, t0049, t0073, t0097, t0121 and t0145).</p>
+<p><strong>Look-ahead periods.</strong> A roll uses only the forecasts available when it decides, at its fan's <code>analysis_time</code>. Every period of the roll after the fan's period (the look-ahead periods, and also the later committed periods of a multi-period jump) reads the forecast given at the roll's own fan <code>analysis_time</code>, even where a later roll's forecast is given at that period's first time step. The roll's fan forecast must therefore cover the roll's whole horizon, look-ahead included: where it has no value for a time step of such a period but a forecast given later (at the period's own first time step) has one, the run stops before the roll is solved with an error naming the entity, the parameter, the roll and the uncovered time steps. A time step that no forecast covers reads the non-stochastic value, as before. The realization dispatch of a rolling solve reads the designated branch the same way. Data that is not stochastic (a plain time series) is read as before. A single (non-rolling) solve keeps the rule above: a forecast given at a later period's own first time step overrides the fan forecast there.</p>
+<p>Each roll fans at its first step, so its committed jump lies inside the fan. In this example branch <em>realized</em> is designated <code>realized: yes</code> at every roll start: FlexTool runs a realization dispatch after each stochastic roll over that roll's jump, with the designated branch's data, and the next roll continues from the realization dispatch's end state (storage, units online, ramps). Without a designation the jump is realized only for the families tied across the forecasts (units online and reserves); a model with storage (as here), ramp limits or cumulative caps then stops with a configuration error (see "Stochastics over multiple periods"). A fan that opens only in a roll's look-ahead needs no designation: the next roll continues from the committed steps before the reveal. The <code>solve</code> parameter <code>dispatch_realization_method</code> sets how the realization runs:</p>
+<ul>
+<li><code>within_solve</code> (default): no second solve unless a branch is designated <code>realized: yes</code>, which adds the realization dispatch as described above (with <code>stochastic_invest_method = none</code>; under <code>recourse</code> a warning says that no realization dispatch is added).</li>
+<li><code>separate_dispatch</code>: always splits realization into a dedicated downstream dispatch pass (committed investments/decisions fixed) as a separate realized-dispatch solve. It dispatches the branch designated <code>realized: yes</code>; without such a branch the run stops with an error naming the solve. This is the 2-stage seed of a future multi-stage sequential-market structure.</li>
+</ul>
+<p>The selection is engine-managed rather than something you normally set per roll; <code>separate_dispatch</code>'s automatic-selection defaults are still being refined.</p>
+<p>Otherwise there is no difference to the previous example.</p>
+<p><img alt="Rolling Branching" src="../../img/concept/rolling_non-anticipatory.png" /></p>
+<p><img alt="1Week stochastics" src="../../img/concept/1week_stochastics.png" /></p>
+<h3 id="stochastic-investment">Stochastic investment</h3>
+<p>By default (<code>solve.stochastic_invest_method = none</code>) a stochastic model makes a <strong>single</strong> investment plan shared by every branch — one plan for all futures. The stochastic-investment modes below differ in <em>what is decided before the uncertainty is revealed</em>.</p>
+<h4 id="standard-two-stage-stochastic-investment-the-main-mode">Standard two-stage stochastic investment (the main mode)</h4>
+<p>The usual goal is a genuine two-stage plan: <strong>one shared here-and-now investment decision, made before the uncertainty resolves, with every scenario then operating that fleet freely from the first timestep</strong> according to its own realization. The investment is the first-stage (non-anticipative) decision; <em>all operations are second-stage recourse</em> — nothing operational is tied across the branches.</p>
+<p>For a model that invests in a single period this is available today: keep <code>stochastic_invest_method = none</code> (one shared investment) and set <code>shared_operation_periods = []</code> (operations branch freely from t0 — see <em>What the model ties across branches</em> above). The result is the classic stochastic capacity-expansion model — commit one fleet, minimise the probability-weighted cost of operating it across the scenarios.</p>
+<p>For a <strong>multi-period</strong> investment horizon the ideal is that only the <em>first</em> period's investment is shared (the genuine here-and-now decision) while later-period investment adapts per scenario (recourse), since by then some uncertainty has resolved. This is delivered by the <strong>investment non-anticipativity window</strong> — the <code>solve</code> array parameter <code>shared_invest_periods</code>. Compose three knobs:</p>
+<ul>
+<li><code>stochastic_invest_method = recourse</code> (so per-branch investment variables exist to tie);</li>
+<li><code>shared_invest_periods = [&lt;first period&gt;]</code> (tie the first period's <code>v_invest</code>/<code>v_divest</code> across branches — a single shared here-and-now decision — while later periods invest per-branch);</li>
+<li><code>shared_operation_periods = []</code> (operations branch freely from t0).</li>
+</ul>
+<p>The result is the standard two-stage stochastic capacity-expansion structure: <strong>shared first-period investment + per-branch (recourse) investment later + free operations</strong>. Set <code>shared_invest_periods</code> to more than one period to extend the shared window (e.g. <code>[p2035, p2040]</code> shares the first two periods, recourse from the third). Left unset (the default) or set to an empty array it adds no tie — <code>recourse</code> stays per-branch everywhere, byte-identical to before. Both invest and divest are tied over the window, so the <em>net</em> first-stage capacity (existing + invest − divest) is genuinely shared. The window requires <code>recourse</code>; on a <code>none</code> solve it is a harmless no-op (investment is already shared across all periods).</p>
+<h4 id="per-scenario-wait-and-see-investment">Per-scenario (wait-and-see) investment</h4>
+<p><code>stochastic_invest_method = recourse</code> lets each forecast branch invest on its own data at and after the branching period, with probability-weighted investment costs and per-branch limits. When branches start at the solve's <strong>first</strong> step this is a <em>wait-and-see</em> analysis — each forecast has perfect foresight, so the objective is an EVPI lower bound, <strong>not</strong> a committed plan (it typically costs less than any single plan can). Useful for scenario screening and per-branch capacity ranges; it is not a plan you can build. Forecast-branch (unrealized) investments are not in the normal results; they are in the raw dump of <code>model.output_horizon</code> (a debug flag). Committed results report the committed / realized region. <code>recourse</code> is incompatible with Benders decomposition (the solver rejects the combination).</p>
+<h4 id="hedged-mid-horizon-reveal-first-periods-deterministic-for-investment-and-operations">Hedged mid-horizon reveal (first periods deterministic for investment <em>and</em> operations)</h4>
+<p>A third structure keeps the first periods <strong>fully deterministic — single shared pre-reveal periods for both investment and operations</strong> — and lets the branches fan out only from a later period. Set the branching period of the <code>stochastic_branches</code> map to that later period, with the branches' analysis time at that period's first step (the reveal must fall on a period boundary — investment is period-granular).</p>
+<p>The pre-reveal periods stay single real-named periods with one shared <code>v_invest</code> <em>and</em> one shared operational schedule — non-anticipativity holds by construction (there is only one variable per pre-reveal period, so nothing to tie). The post-reveal periods fan per branch (second-stage recourse). Note how this differs from the standard mode above: here the <strong>near-term operations are shared (committed) too</strong>, not just the investment — appropriate when the first periods genuinely are deterministic (a committed near-term operating schedule) rather than a first period that should already be operated per forecast. The objective sits strictly <em>between</em> the wait-and-see bound and the deterministic mean-value plan (positive EVPI and VSS); only the pre-reveal periods' committed results and the investment decisions are output (plus the realized operation of the fan when a branch is designated realized). Mid-horizon reveal is a general stochastics capability — it works for dispatch-only hedged stochastics too, not only for <code>recourse</code> investment.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      IRENA
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.indexes"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
+      
+        <script src="../../assets/mathjaxhelper.js"></script>
+      
+        <script src="../../assets/moved_doc_anchors.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,3118 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.">
+      
+      
+        <meta name="author" content="Juha Kiviluoma, VTT Technical Centre of Finland">
+      
+      
+      
+        <link rel="prev" href="../investment/">
+      
+      
+        <link rel="next" href="../stochastics/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../img/irena_flextool_favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Solve sequences, rolling and nested solves - IRENA FlexTool</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#solve-sequences-rolling-and-nested-solves" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="IRENA FlexTool" class="md-header__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            IRENA FlexTool
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Solve sequences, rolling and nested solves
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="IRENA FlexTool" class="md-nav__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    IRENA FlexTool
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../interface_overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing an interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install_gui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model parameters
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Model parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/entities_and_time/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Entities and time structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/nodes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/units/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Units
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/connections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commodities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commodities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Groups
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/flow_groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Flow groups
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/reserves/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reserves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/user_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/parameter_groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter groups and conventions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameter_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to recipes
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How-to recipes
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics: time, VRE, network and demand
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage_hydro/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage and hydro
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../thermal_chp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Thermal, CHP and reserves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../investment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Investment and multi-year models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solve sequences, rolling and nested solves
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solve sequences, rolling and nested solves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-run-solves-in-a-sequence-investment-dispatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to run solves in a sequence (investment + dispatch)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-make-an-lp-investment-and-a-detailed-dispatch-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to make an LP investment and a detailed dispatch check
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How to make an LP investment and a detailed dispatch check">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#several-milestones-representative-period-investment-then-a-full-year-dispatch-of-each" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Several milestones: representative-period investment, then a full-year dispatch of each
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-use-a-rolling-window-for-a-dispatch-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to use a rolling window for a dispatch model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to use Nested Rolling window solves (investments and long-term storage)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How to use Nested Rolling window solves (investments and long-term storage)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-to-force-include-adequacy-critical-weeks-in-representative-period-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to force-include adequacy-critical weeks in representative-period selection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-to-cluster-representative-periods-on-net-load" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to cluster representative periods on net load
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-to-add-an-energy-margin-for-investment-adequacy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to add an energy margin for investment adequacy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#peak-memory-in-long-rolling-and-nested-chains" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Peak memory in long rolling and nested chains
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-use-representative-period-clustering-with-scalar-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to use representative-period clustering with scalar profiles
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stochastics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stochastics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../emissions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emissions and system limits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../outputs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Outputs, diagnostics and Excel templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance and solvers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model outputs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reading_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reading results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../results_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../formulation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model formulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../advanced_concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../limitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model limitations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interfaces
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Interfaces
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flextool_gui_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../spine_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../spine_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine database editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../excel_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Excel as input/output
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../terminal_workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Terminal / CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ai_assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../solvers/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solvers
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Solvers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/highs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HiGHS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/gurobi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gurobi
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/cplex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CPLEX
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/xpress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Xpress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/copt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    COPT
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The engine pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LP scaling pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/slack_convention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Slack convention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/decomposition/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decomposition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/db_schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database schema and migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/assistant_evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/inject_between_solves/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Injecting parameters between solves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_11" >
+        
+          
+          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Archived
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Archived
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archived/browser_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archived/install_web_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface install (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-run-solves-in-a-sequence-investment-dispatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to run solves in a sequence (investment + dispatch)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-make-an-lp-investment-and-a-detailed-dispatch-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to make an LP investment and a detailed dispatch check
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How to make an LP investment and a detailed dispatch check">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#several-milestones-representative-period-investment-then-a-full-year-dispatch-of-each" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Several milestones: representative-period investment, then a full-year dispatch of each
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-use-a-rolling-window-for-a-dispatch-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to use a rolling window for a dispatch model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to use Nested Rolling window solves (investments and long-term storage)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How to use Nested Rolling window solves (investments and long-term storage)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-to-force-include-adequacy-critical-weeks-in-representative-period-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to force-include adequacy-critical weeks in representative-period selection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-to-cluster-representative-periods-on-net-load" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to cluster representative periods on net load
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-to-add-an-energy-margin-for-investment-adequacy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to add an energy margin for investment adequacy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#peak-memory-in-long-rolling-and-nested-chains" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Peak memory in long rolling and nested chains
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-use-representative-period-clustering-with-scalar-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to use representative-period clustering with scalar profiles
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="solve-sequences-rolling-and-nested-solves">Solve sequences, rolling and nested solves</h1>
+<h2 id="how-to-run-solves-in-a-sequence-investment-dispatch">How to run solves in a sequence (investment + dispatch)</h2>
+<p><strong>(examples.sqlite scenario: 5weeks_invest_fullYear_dispatch_coal_wind)</strong></p>
+<p>In this example, investment decisions are made using a five week sample of a year and then the dispatch is solved with the full year timeline using these investments. </p>
+<p>To do this you need two solves:</p>
+<ul>
+<li>Investment solve </li>
+<li>Dispatch solve</li>
+</ul>
+<p>Both solves should solve the <em>same</em> periods using <em>different</em> <code>timeset</code> to represent these periods. This example has only one period p2020 describing a year. The investment solve uses a representative sample <code>timeset</code> <em>5weeks</em> to do the investment decisions. These are then passed to the dispatch solve that uses complete timeline <em>fullYear</em>.</p>
+<p>Investment solve requires the parameters:</p>
+<ul>
+<li><code>Invest_periods</code>: Array of periods where investments can be made</li>
+<li><code>realised_invest_periods</code>: Array of periods that are output for investment decisions</li>
+<li><code>period_timeset</code>: Uses the <em>5weeks</em> as the timeset </li>
+</ul>
+<p>Note that the <code>realized_invest_periods</code> is used instead of <code>realized_periods</code>, because we want the investment solve to only output investments.
+Additionally some of the units, connections or storages will need investment parameters (<code>invest_cost</code>, <code>lifetime</code>...) see <a href="../investment/#how-to-make-investments-storageunit">How to make investments (storage/unit)</a></p>
+<p>The dispatch solve requires the parameters:</p>
+<ul>
+<li><code>realized_periods</code>: Array of output periods</li>
+<li><code>period_timeset</code>: Uses the <em>fullYear</em> as the timeset</li>
+</ul>
+<p>The sequence of solves is defined by the <code>model</code> parameter <code>solves</code>. Here it is an array where the first item is an investment_solve <em>5weeks_only_invest</em> and the second is the dispatch solve <em>y2020_fullYear_dispatch</em>. This is enough for the model to know to pass the investment decisions of the period to the period of the same name in the second solve.</p>
+<p>Note that the picture has two <code>model</code>: <em>solves</em> parameters defined one for each alternative. Only the parameter from the <em>5weeks_only_invest</em> is used as the lower alternatives in the scenario tree override the values from the higher alternatives and only one model can be run.</p>
+<p><img alt="Invest_and_dispatch" src="../../img/concept/invest_and_dispatch.png" /></p>
+<p><strong>Check the investment solve's capacity margin.</strong> A group's capacity margin (<code>capacity_margin_method</code>) applies only
+in a solve with investment periods, so here only the investment solve has it; the dispatch solve does not check it
+again. When the investment solve leaves a shortfall (the plan does not hold the margin, because the penalty is
+cheaper than the capacity or the capacity cannot be built), the run log says so right after that solve:</p>
+<div class="highlight"><pre><span></span><code>capacity margin shortfall: solve &lt;solve&gt;, group &lt;group&gt;, period &lt;period&gt;: &lt;MW&gt; MW at &lt;time step&gt; (penalty &lt;M CUR&gt; M CUR)
+</code></pre></div>
+<p>A period that is a look-ahead period of one investment solve and an investment period of the next gets a line from
+each solve that leaves a shortfall in it: the solve name says which plan the line is about.</p>
+<p>The results then show:</p>
+<ul>
+<li><code>slack__capacity_margin__d</code>: the shortfall [MW] of the period, also when a later dispatch solve realizes the
+  period, and its penalty in the costs (<code>capacity margin penalty</code> in <code>costs_discounted__d</code>).</li>
+<li><code>capacity_margin__d</code>: the capacity margin of each solve with investment periods, under that solve's name, for
+  each group and investment period (look-ahead and forecast branch periods included) at its binding step (the time
+  step with the largest deficit): the margin, the demand, the requirement, what firm and VRE units, storage, other
+  units, connections and consumption count, the shortfall, its penalty and the shadow price of the margin.</li>
+<li><code>capacity_margin_entity__d</code>: what each unit, connection and node counts at that step, to see which capacity is
+  missing or does not count.</li>
+</ul>
+<p>See <a href="../../results/#slack-and-penalty-values">Slack and penalty values</a>.</p>
+<h2 id="how-to-make-an-lp-investment-and-a-detailed-dispatch-check">How to make an LP investment and a detailed dispatch check</h2>
+<p>Unit commitment (<code>startup_method</code> <em>binary</em>), min loads, ramps and reserves make an investment solve slow, and an
+investment solve over many periods or a long sample may not finish at all. A common way out is to make the
+investment solve an LP with less detail and then check the plan with a dispatch solve that has all the detail.</p>
+<p><strong>Set up the two solves</strong> as in <a href="#how-to-run-solves-in-a-sequence-investment-dispatch">How to run solves in a sequence</a>:
+an investment solve that realizes the investments only (<code>realized_invest_periods</code>) and a dispatch solve that
+realizes the operations (<code>realized_periods</code>). Then set on the investment solve:</p>
+<ul>
+<li>
+<p><code>reduce_unit_detail_method</code>: <em>online</em> (or <em>online_ramps</em> to also leave out ramp limits and ramp costs).</p>
+<p>The investment solve has no units online: no start-ups and start-up costs, no min load, no minimum up and down
+times. <code>min_load_efficiency</code> units run at their full-load efficiency, and <code>exact</code> connections behave as
+<em>regular</em>. Use <em>integers</em> instead to keep the units online but make them continuous (linear unit
+commitment), which keeps start-up costs and min loads.</p>
+</li>
+<li>
+<p><code>reduce_system_detail_method</code>: <em>reserves</em> (or <em>reserves_inertia_non_synchronous</em> to also leave out the inertia and non-synchronous limits).</p>
+</li>
+</ul>
+<p>Leave both at <em>none</em> on the dispatch solve. The dispatch solve then commits the invested units with integer units
+online, ramps and holds the reserves.</p>
+<p><strong>An example to start from.</strong> In <em>examples.sqlite</em>, the scenario <code>5weeks_invest_fullYear_dispatch_coal_wind</code> has
+the investment solve <code>invest_1year_5weeks</code> (alternative <em>5weeks_only_invest</em>) and the dispatch solve
+<code>y2020_fullYear_dispatch</code>. Give <code>coal_plant</code> <code>startup_method</code> <em>binary</em> (as the alternative <em>coal_min_load_MIP</em>
+does), and set the two parameters on <code>invest_1year_5weeks</code>.</p>
+<p><strong>What to check.</strong> Read the investment solve's info line in the run log: it lists what was left out, for which
+units and groups, and what that means for the detail that was kept (for example "the reserves of ... now come from
+built capacity"). Then look at the dispatch solve's slack and penalty results (<code>slack__*</code> tables, the reserve
+shortfall). A shortfall there means the plan does not hold with the detail the investment solve left out:
+reserves in particular drive investment in flexible capacity, so an investment solve without them invests less
+in it. Then add the detail back step by step (for example <em>integers</em> instead of <em>online</em>, or keep the reserves)
+until the dispatch check passes.</p>
+<p><strong>In the results</strong> the investment solve realizes no operations, so the dispatch solve's tables are complete. If a
+solve that realizes operations leaves a feature out, its cells of that feature are empty, not 0 (see
+<a href="../../reference/entities_and_time/#leaving-out-detail-in-a-solve">Leaving out detail in a solve</a>).</p>
+<h3 id="several-milestones-representative-period-investment-then-a-full-year-dispatch-of-each">Several milestones: representative-period investment, then a full-year dispatch of each</h3>
+<p>A multi-year plan often makes the investments on representative periods (a few sample weeks per milestone year)
+and then checks each milestone with an hourly dispatch of the whole year (8760 h). FlexTool passes the investment
+decisions of a period to the period of the same name in the solves that follow, so the dispatch solves see the
+capacity built up to their milestone. There are two ways to set this up.</p>
+<p><strong>Sequential: one dispatch solve per milestone.</strong> List the solves in the <code>model</code> parameter <code>solves</code>, the
+investment solve first: for example [<em>invest_rp</em>, <em>dispatch_2030</em>, <em>dispatch_2040</em>, <em>dispatch_2050</em>].</p>
+<ul>
+<li>The investment solve has every milestone in <code>invest_periods</code> and <code>realized_invest_periods</code>, the representative timeset of each milestone in <code>period_timeset</code>, and <code>years_represented</code> for each milestone. Leave <code>realized_periods</code> out.</li>
+<li>
+<p>Each dispatch solve has one milestone in <code>period_timeset</code> (with the full-year timeset) and in <code>realized_periods</code>, and the same <code>years_represented</code> for it as the investment solve.</p>
+<p>A dispatch solve that realizes a later milestone gets the capacity invested in all the milestones up to it.
+One dispatch solve may also hold all the milestones, but its LP is then that many full years at once.</p>
+</li>
+</ul>
+<p><strong>Nested: the investment solve contains the dispatch solve.</strong> Put only the investment solve in <code>model</code>
+<code>solves</code> and give it <code>contains_solves</code>: <em>dispatch_solve</em>. The dispatch solve lists every milestone in
+<code>period_timeset</code> (each with the full-year timeset) and in <code>realized_periods</code>, and it can be a rolling solve
+(<code>solve_mode</code> <em>rolling_window</em>) so that each LP stays small. A storage solve can sit between the two for long-term
+storage. With several investment solves (myopic investment, set with 2D maps of <code>invest_periods</code> and
+<code>realized_invest_periods</code>), the same dispatch solve runs after each of them for the periods that investment solve
+realized. See <a href="#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage">How to use Nested Rolling window solves</a>.</p>
+<p><strong>Leave detail out of the investment solve.</strong> Set <code>reduce_unit_detail_method</code> and <code>reduce_system_detail_method</code>
+on the investment solve and keep the full detail in the dispatch solves, as in
+<a href="#how-to-make-an-lp-investment-and-a-detailed-dispatch-check">How to make an LP investment and a detailed dispatch check</a>
+(the options are in <a href="../../reference/entities_and_time/#leaving-out-detail-in-a-solve">Leaving out detail in a solve</a>).</p>
+<p><strong>Choose the representative periods with care.</strong> Hours the sample leaves out can be short of capacity in the
+full-year dispatch. The sections below help:
+<a href="#how-to-force-include-adequacy-critical-weeks-in-representative-period-selection">force-include adequacy-critical weeks</a>,
+<a href="#how-to-cluster-representative-periods-on-net-load">cluster on net load</a> and
+<a href="#how-to-add-an-energy-margin-for-investment-adequacy">add an energy margin</a>. The investment solve does not see
+the dispatch results: if a dispatch solve shows unserved energy or reserve shortfall, change the sample or the
+margins and run again.</p>
+<p><strong>Examples.</strong> In <em>examples.sqlite</em>, <code>5weeks_invest_fullYear_dispatch_coal_wind</code> is the sequential set-up with one
+milestone, and <code>multi_fullYear_battery_nested_multi_invest</code> is a nested set-up with four milestones, investment
+solves (each on the sample timeset of two milestones), a storage solve at 6 h steps and a rolling dispatch. To
+run in seconds, these examples use short stand-ins: their <em>fullYear</em> timeset is 72 hours and <em>5weeks</em> is five
+blocks of 4 hours. In a real model, the dispatch timeset covers the 8760 hours of the year and the sample holds
+whole weeks.</p>
+<h2 id="how-to-use-a-rolling-window-for-a-dispatch-model">How to use a rolling window for a dispatch model</h2>
+<p>A rolling window can be used for example when a dispatch model gets too big to be solved on one go. It splits the problem into multiple consecutive smaller problems.</p>
+<p>The rolling window solve splits the time dimension into overlapping parts and solves each one of them separately but in a sequence (and can therefore pass state information from the previous solve to the next one). For example, instead of a solving the full year in one go, you can split the year into six four-month long solves where each solve outputs only the first two months. The solves would therefore include the months:</p>
+<ul>
+<li><strong>Roll: Solve months -&gt; Output months</strong></li>
+<li>1: [1,2,3,4] -&gt; [1,2]</li>
+<li>2: [3,4,5,6] -&gt; [3,4]</li>
+<li>3: [5,6,7,8] -&gt; [5,6]</li>
+<li>4: [7,8,9,10] -&gt; [7,8]</li>
+<li>5: [9,10,11,12] -&gt;[9,10]</li>
+<li>6: [11,12] -&gt; [11,12]</li>
+</ul>
+<p><img alt="Rolling" src="../../img/concept/rolling.png" /></p>
+<p>The rolling solve could be setup also manually as described in the 'How to run a multi year model' - just using shorter periods. </p>
+<p>However, this would be tedious if there are many solves. In a rolling window model, the user can set the <code>rolling_solve_jump</code> and <code>rolling_solve_horizon</code> parameters, which are expressed in hours. </p>
+<ul>
+<li>
+<p><code>rolling_solve_horizon</code>: sets the length of the whole solve, in hours. In previous example 4 months (2880 hours). Horizon allows the model to see bit further in the future to improve the decision making for the period that will be output.</p>
+</li>
+<li>
+<p><code>rolling_solve_jump</code>: sets the interval for the length of each 'jump' the model takes forward in reach roll. It is then both the interval of roll starting points and the length of the output for each roll. The <code>rolling_solve_jump</code> must be smaller than the <code>rolling_solve_horizon</code>. In the previous example the <code>rolling_solve_jump</code> would be 2 months (1440 hours).</p>
+</li>
+</ul>
+<p>In addition, the user can set the duration for how long the model will roll:</p>
+<ul>
+<li><code>rolling_duration</code>: Optional (hours), the length of combined rolls. In the example, it could be set to 8640 hours which would divide evenly, or 8760 hours which means that the last roll will be shorter than the others. It is nicer to use <code>rolling_solve_jump</code> that is divisable with the <code>rolling_duration</code> to keep rolls even. If <code>rolling_duration</code> is not set, it defaults to rolling through the whole timeline.</li>
+</ul>
+<p>When using rolling window solve, you are solving the model with less information. Therefore, the results will be less optimal since the model will not have the full information at once. It is therefore important to know how this could affect the results and what things to consider when implementing a rolling window model. It will have an impact on time dependant parts of the model: for example, storages or cumulative flow constraints. If the model can see only a few months to the future, it can't see how much energy needs to be stored after that. </p>
+<p>Investments should not be used with this free rolling solve (<code>solve_mode</code>: <em>rolling_window</em>) as investments should only be done at the start of the periods. <em>Both the long-term storage and the investments can be taken into account with nested rolling solves that have a separate how-to</em>.</p>
+<p>Short term storages also are operated less optimally in a rolling window model. There is a positive side to this as well, since perfect foresight linear optimization models are 'too optimal'. They don't reflect the forecast errors present in real life. So, a rolling window model might operate a bit more <em>realistically</em> than a <em>single_solve</em> model. A <em>single_solve</em> model can consider things happening far in the future when setting the storage level at present, even though in reality that information is not available. So, the total cost of a <em>rolling_window</em> model should always be higher than the total cost from a complete <em>single_solve</em> model that has perfect information.</p>
+<p>To set a dispatch rolling window model you need to set the entity <code>solve</code> parameters:</p>
+<ul>
+<li><code>solve_mode</code>: <em>rolling_window</em></li>
+<li><code>rolling_solve_jump</code>: Hours, the desired length of the solve interval</li>
+<li><code>rolling_solve_horizon</code>: Hours, the desired length of each roll solve</li>
+<li><code>rolling_duration</code>: (Optional) Hours, the length of the combined outputs. If not set, the whole timeline is used.</li>
+</ul>
+<p>Considerations on the rolling times:</p>
+<ul>
+<li>The <code>rolling_solve_jump</code> and <code>rolling_solve_horizon</code> must be large enough to make the model faster. If too small intervals are used, the creation of solves and moving data from solve to another might take too much time.</li>
+<li>If you are not using 1-hour timesteps, preferably use multiples of the timestep you are using as the <code>rolling_solve_jump</code> and <code>rolling_solve_horizon</code>. The steps included in each solve are calculated by summing the step durations until they are larger or equal to the hours given. So, if multiples are not used, the rolls might not be exactly the same size.</li>
+<li>The model can roll over timeset and period jumps, which might cause some issues if storage constraints are used. Using timeset length or its multiples is therefore recommended. For example, the <code>rolling_solve_jump</code> could be a half of a timeset and the <code>rolling_solve_horizon</code> whole timeset or <code>rolling_solve_jump</code> a timeset and <code>rolling_solve_horizon</code> three timesets. Of course, when running e.g. a full year dispatch, there is only one timeset of 8760 hours, which makes the choices more simple.</li>
+</ul>
+<p>Considerations on storage parameters:</p>
+<ul>
+<li><code>storage_solve_horizon_method</code> <em>use_reference_value</em> or <em>use_reference_price</em> are the preferred means to bind storage values. They can be used together with the <code>storage_state_start_end_method</code>: <em>start</em>, which would then set the initial storage state. These methods bind either the storage value or the storage price at the end of <em>horizon</em> (not the end of <em>jump</em>). This allows the storage to use the part of the horizon that is not output to improve the behaviour of the storage in the part that is output (as defined by <code>rolling_solve_horizon</code> and <code>rolling_solve_jump</code>). </li>
+<li><code>bind_within_timeblock</code> does not work correctly if the rolls don't include whole timeblocks. Instead, it will bind the first step of the roll (whatever it is) to the end of the timeblock. Do not use in nested solves if you are not using whole timeblocks or its multiples as <code>rolling_solve_jump</code>. The storage level is not carried from roll to roll for this method (nor for <code>bind_within_period</code> and <code>bind_within_solve</code>): each roll cycles on its own, so the storage level jumps at each roll start, and the reported state change at that step is that jump.</li>
+<li>the same applies to the <code>bind_within_period</code> (but in relation to periods - do not use this unless you are <code>rolling_solve_jump</code> is as long as a period or its multiples).</li>
+<li><code>bind_intraperiod_blocks</code> loops the blocks of a period only in the rolls that hold the whole period. In a period that a roll holds only in part, the blocks chain forward and the storage level is carried from roll to roll, as for <code>bind_forward_only</code>. The blocks of a roll also end at the end of its realized part. Use a <code>rolling_solve_jump</code> of a whole number of periods to keep every realized period looping (otherwise a warning is given).</li>
+<li>The representative-period variants (<code>bind_within_solve_blended_weights</code>, <code>bind_within_period_blended_weights</code>, <code>bind_forward_only_blended_weights</code>) are not applied in a rolling solve on representative periods: their base-period chain spans the whole period and cannot be cut into rolls. Those nodes bind forward only (<code>bind_forward_only</code>) and the storage state is passed directly from roll to roll; a warning names them once per solve.</li>
+<li><code>storage_start_end_method</code> can be used to set the first timestep of the first roll and/or the last timestep of the entire model (in conjunction with <code>storage_state_start</code> and <code>storage_state_end</code>); the end value applies in every roll whose horizon contains the model's last timestep (usually the last roll only). Every later roll starts from the storage state realised by the previous roll. It is meant for simple models: <code>storage_state_reference_value</code> with <code>storage_solve_horizon_method</code> <em>use_reference_value</em> is usually the better choice.</li>
+<li><code>bind_within_solve</code> binds the start state to the end state of each <em>roll</em> not the start and end of the whole model timeline. Use with caution (and probably best not to use together with <code>storage_solve_horizon_method</code> <em>use_reference_value</em>).</li>
+</ul>
+<h2 id="how-to-use-nested-rolling-window-solves-investments-and-long-term-storage">How to use Nested Rolling window solves (investments and long-term storage)</h2>
+<p>The basic rolling solve can have problems in dealing with long term storage and with investments. If the model only sees a few weeks to the future, it really can't see how much energy should be stored in long term storages. Problems with investments can also be serious: If the first roll is really windy, the model would overinvest in wind power that is not profitable in the later rolls. Similarly, if the model is allowed to retire capacity, it might retire something that is actually needed in the later rolls. </p>
+<p>Nested solve sequences can first solve the investments and long-term storage levels and pass them to the dispatch solve. Both storage solve and dispatch solve can be rolling solves. The dispatch solves can then send the end storage values to the investment and long-term storage solves as start values to reduce the error of these solves.</p>
+<p>When to use nested solves?</p>
+<ul>
+<li>Dispatch model is taking too long to solve, but simple rolling window solve would not represent the long-term storages correctly. (Nesting without the investment solve)</li>
+<li>Investment model takes too long to solve, even with manual rolling <a href="../investment/#how-to-create-a-multi-year-model">How to create a multi-year model</a>. With nesting you can have smaller rolls for dispatch solve than the investment solve. (Nesting without the storage solve)</li>
+<li>Investment model takes too long and you have long term storages to consider. (Three level nesting, graph below)</li>
+</ul>
+<p><img alt="Nested graph" src="../../img/concept/nested_graph.png" /></p>
+<p>However, the obvious issue is that investment and storage solves cannot be solved using the old complete solve as it wouldn't make the solve time any shorter. Therefore, we need to decrease the information for investment and storage solves as well. There are a few options for this:</p>
+<ol>
+<li>Use lower resolution (longer timesteps). This can work quite well for a long-term storage.</li>
+<li>Use representative periods from the full timeline when performing investments. There is a large body of literature and methods on how to pick the representative weeks.</li>
+<li>Split the investment timeline (myopic investments) by manually creating a solve sequence for the investment solves like in: <a href="../investment/#how-to-create-a-multi-year-model">How to create a multi-year model</a> section. This can be combined with the first or second option. </li>
+</ol>
+<p>Each of these have their pros and cons:</p>
+<ul>
+<li>Using the lower resolution can speed-up the model considerably, but it also means that everything that happens faster than the new timestep duration will be lost as the timestep varying parameters are averaged or summed for the new timestep. For example, consider a model with investment options to solar and storage. If the step duration is changed to 24 hours, the model won't invest in enough storage to mitigate the diurnal variation in PV. When these investments are then passed to the dispatch solve, the invested portfolio will have trouble meeting the demand.</li>
+<li>Using the sample can be effective if the sample is chosen well, but all the needs that are not in these samples are not included. The speed is heavily dependent on the number and size of those samples.</li>
+<li>Splitting the investment timeline for multi-year models can be seen as a relatively realistic approach, since investment decisions would have a lot of uncertainty in the longer time frame anyway.</li>
+</ul>
+<p>The investment decisions with less information are always less optimal than with complete solves. Therefore, when they are passed to the dispatch solve, it will in some cases cause penalties in the results when the invested portfolio is not sufficient to meet the demand at all times.</p>
+<p>The long term storage solve can be implemented using a lower resolution solve. The storage state behaviour from the storage solve is used as a target for the dispatch solve. There are three options for doing this: </p>
+<ul>
+<li><em>fix_quantity</em> creates a constraint that forces the end storage state to be the same as in the storage solve at this timestep.</li>
+<li><em>fix_usage</em> does the same but not taking into account the inflow or slacks. Forces the summed usage of the storage during the dispatch solve to be the same as during the same time span in the storage solve. This avoids infeasibilities when modelling inflow stochastics in comparison to the <em>fix_quantity</em>.</li>
+<li><em>fix_price</em> takes the storage node's price (<code>price_t</code>, the value of one more MWh of stored energy) from the storage solve at the end timestep of the dispatch solve and uses it in the objective function to give a value to the stored energy at the end of the horizon. </li>
+</ul>
+<p>The <code>rolling_solve_jump</code> and <code>rolling_solve_horizon</code> in the storage solve have to be longer than in the dispatch solve. You can set which storages are included as "long term storages" whose value will be transferred to the dispatch solve.</p>
+<p>To create a nested solve sequence, you need two or three <code>solve</code> entities. Either the investment solve or the storage solve can be left out. When using nested solve sequence, the sequence is not set with the <code>model</code>: <code>solves</code> parameter. Only the topmost solve is put there. Instead, the nested levels are set by the <code>solve</code> parameter <code>contains_solves</code>: <em>solve_name</em>. The investment solve is always on the top followed by the storage solve and dispatch solve:</p>
+<ul>
+<li><em>investment_solve</em> <code>solve</code> parameter <code>contains_solves</code>: <em>storage_solve_name</em> </li>
+<li><em>storage_solve</em> <code>solve</code> parameter <code>contains_solves</code>: <em>dispatch_solve_name</em></li>
+</ul>
+<p>To create a storage solve:</p>
+<ul>
+<li><code>solve</code> parameter <code>fix_storage_periods</code>: Array of periods where the storage values are fixed in the lower solve. Should be the same as <code>realized_periods</code> for the dispatch solve.</li>
+<li><code>node</code> parameter <code>storage_nested_fix_method</code>: <em>fix_quantity</em>, <em>fix_price</em> or <em>fix_usage</em></li>
+</ul>
+<p>To create an investment_solve:</p>
+<ul>
+<li><code>solve</code> parameter <code>invest_periods</code>: Array of periods where the model can invest.</li>
+<li><code>solve</code> parameter <code>realized_invest_periods</code>: Array of periods where the model will realize investment decisions to the lower solves and results.</li>
+<li><code>solve</code> parameter <code>realized_periods</code>: Should not be used in this solve! You don't want the dispatch results from this solve, but from the dispatch solve.</li>
+</ul>
+<p>In addition, the rolling dispatch solve should be created as in the <em>How to use rolling window solve for dispatch</em>. To set a dispatch rolling window model you need to set the entity <code>solve</code> parameters:</p>
+<ul>
+<li><code>solve_mode</code>: <em>rolling_window</em></li>
+<li><code>rolling_solve_jump</code>: Hours, the desired length of the solve interval</li>
+<li><code>rolling_solve_horizon</code>: Hours, the desired length of each roll solve</li>
+<li><code>rolling_duration</code>: (Optional) Hours, the length of the combined outputs. If not set, the whole timeline is used.</li>
+<li><code>realized_periods</code>: Array of periods that are realized</li>
+</ul>
+<p>The other model parameters apply to <em>all</em> of the solves. Therefore, the considerations of the storage value binding that were discussed in the <a href="#how-to-use-a-rolling-window-for-a-dispatch-model">How to use a rolling window for a dispatch model</a> should be taken into account here as well.</p>
+<ul>
+<li>Storage levels can be fixed with <code>storage_solve_horizon_method</code>: <em>use_reference_value</em> or <em>use_reference_price</em>, these will fix the end of each horizon not each jump.</li>
+<li><code>storage_start_end_method</code> fixes the start of each solve level (the first step of the first roll) and/or the end of the entire model. The end value applies to the last timestep of the model in every solve whose horizon contains it: the investment, storage and dispatch solves when each of them reaches the end of the model, but not a solve (or roll) that ends earlier. It is meant for simple models: in nested solves <code>storage_state_reference_value</code> with <code>storage_solve_horizon_method</code> <em>use_reference_value</em> is usually the better choice. The start applies where a level appears for the first time; every later solve or roll of a level (also the first dispatch roll under a later storage roll, and the next investment or storage solve of a split investment timeline) starts from the latest storage state realised before it at that level or below (usually by the dispatch solve). The upper solves only fix the end of a lower solve's horizon (<code>storage_nested_fix_method</code>). At the model's last timestep in a lower-level solve, an upper-level <em>fix_quantity</em> or <em>fix_usage</em> overrides <code>storage_state_end</code>; a <em>fix_price</em> only values that end, so <code>storage_state_end</code> still applies.</li>
+<li>In most cases the <code>bind_storage_method</code> should be left as <em>bind_forward_only</em></li>
+<li>Do not use <code>bind_within_timeblock</code> if you are not using full timeblock or its multiples as the <code>rolling_solve_jump</code> in the dispatch model, otherwise you might cause an infeasible problem. </li>
+<li>Do not use <code>bind_within_period</code> if you are not using full periods or its multiples as the <code>rolling_solve_jump</code> in the dispatch model, otherwise you might cause an infeasible problem. </li>
+<li>Do not use <code>bind_within_solve</code></li>
+</ul>
+<p>The recommended storage parameters with nested solves are:</p>
+<ul>
+<li><code>storage_start_end_method</code>: <em>fix_start</em></li>
+<li><code>storage_solve_horizon_method</code>: <em>fix_quantity</em></li>
+<li><code>storage_state_start</code> and <code>storage_state_reference_value</code>: use the same value</li>
+</ul>
+<p>This way the start and end states of the system are the same. Each end of the horizon (not the output) has that value as well, which keeps the model from emptying the storages at the end of the roll. In the dispatch solve, the fixed storage value from the storage solve overrides the horizon end value if a conflict exist. </p>
+<p>How to create the three lower information solve types for investment and storage solves discussed above?</p>
+<p>To create a lower resolution (longer timesteps) solve:</p>
+<ul>
+<li>Make a new <code>timeset</code>, but use the same <code>timeline</code> and <code>timeset_duration</code> for it as with the high resolution solve</li>
+<li>In the <code>solve</code> use this new <code>timeset</code> in the <code>period_timeset</code></li>
+<li>Set <code>solve</code> parameter <code>new_stepduration</code>: Hours</li>
+</ul>
+<p>The model will create a new timeline for this solve with the <code>new_stepduration</code>. Each time series gets one value per new time step, by a rule that depends on the parameter (see <a href="../../reference/entities_and_time/"><code>new_stepduration</code> in the reference</a>): <code>inflow</code> and <code>energy_margin_adder</code> are summed over the time steps that form each new time step (a constant counts once per time step it combines); prices, costs, limits, availability, <code>min_load</code>, penalties, reservations, <code>self_discharge_loss</code>, weights and profiles are averaged over them, weighted by their durations; <code>efficiency</code> and <code>efficiency_at_min_load</code> take the mean of 1/efficiency (exact fuel use at a constant flow); <code>storage_state_reference_value</code> takes the value at the new step's end. Stochastic (branch) time series are combined the same way, branch by branch. <code>peak_inflow</code> stays per time step of the timeline: <code>scale_to_annual_and_peak_flow</code> scales each time step of the timeline as without <code>new_stepduration</code> and a new time step gets their sum, so the peak is matched by the timeline's time step, not by the average of a new time step. The <code>new_stepduration</code> must be a whole multiple of the timeline's time steps; on a timeline with time steps of different lengths every new time step must end where a time step of the timeline ends. FlexTool stops with an error otherwise. Steps are aggregated from the start of each block of the <code>timeset_duration</code>; if a block is not a multiple of the <code>new_stepduration</code> its last timestep will be shorter than the rest. A gap between two blocks stays a gap, so storage, ramps and on-line status treat the blocks as they do without <code>new_stepduration</code>. When several timesets of the solve share a timeline (e.g. one timeset per period), each period keeps its own timesteps; if a block of one timeset starts or ends inside a timestep of another timeset's block, that timestep is cut there (a warning names both timesets). A timeset used by a solve with <code>new_stepduration</code> cannot also be used by a solve without it, or by a solve with a different <code>new_stepduration</code>: give such solves their own timesets.
+<img alt="New step duration" src="../../img/concept/new_stepduration.png" /></p>
+<p>Some nodes can also be balanced at a coarser step than the rest of the solve: put them in a <code>group</code> with its own <code>new_stepduration</code> (e.g. hydrogen and its storage at 24 h while electricity stays hourly). Each node of the group is balanced once per coarse step, summing its flows over the step, and a storage node of the group keeps one state per coarse step. A unit or connection with a node outside the group keeps the solve's time step: an electrolyser between an hourly electricity node and a daily hydrogen node uses electricity in every hour it produces hydrogen. A unit or connection whose nodes are all coarse (e.g. a hydrogen liquefier or a hydrogen pipeline between daily nodes) has one flow per coarse step, which makes the model smaller. Its limits (capacity, availability, profiles, efficiency) apply to their average over the step, and ramp limits apply between coarse steps. The result is the same as with hourly flows when at most one limit of each flow varies within the step and its cost and efficiency do not; otherwise it can differ a little. A unit with online variables between coarse nodes decides its units online, start-ups and shut-downs once per coarse step, and its minimum up and down times count whole coarse steps; with ramp limits, its start-up and shut-down capacity reduction uses the coarse step (the average output over the whole step of a unit that starts at its start, ramping up from minimum load). A unit or connection between coarse nodes that provides reserves holds one reserve per coarse step: its reserve limits apply to the average over the step (with the average availability or profile), its reserve ramp room is the smallest of the step's time steps, and the reserve requirement is still checked at every time step of the solve, so it must be met by the step's one reserve in each of them. Nodes of a coarse group can be in reserve groups. An <code>exact</code> connection between coarse nodes chooses its direction once per coarse step, and DC power-flow lines between coarse nodes have one flow per coarse step (with one voltage angle per coarse step at the nodes of a DC network whose lines are all coarse; a DC network with an hourly line keeps every angle hourly). Rows that combine several units and connections — capacity margin, inertia and non-synchronous limits of a group, flow group instant limits, user constraints and DC power flow — are averaged over the coarse step when all their units and connections use it: they then see the step mean of demand, inflows, profiles and limits (a capacity margin on daily steps covers the mean net demand of the day, not its peak hour). A row that mixes coarse and hourly units or connections is still checked at every time step, with the coarse flows constant through their step. Only units and connections with a delay keep the solve's time step (and, in a Benders decomposition, flows that cross regions or live in the master; in a stochastic solve, those whose coarse step is tied between the forecasts over only part of it). An info line names the units and connections that keep the solve's step and the reason, and a database upgraded from an earlier FlexTool version prints a notice naming the coarse ones whose results can differ from hourly flows. Results are written at every time step: flows, units online and reserves hold the same value through the coarse step, and start-ups and shut-downs are written at the first time step of their coarse step. Listing a unit or connection in such a group has no effect on time resolution. The group step must be a multiple of the solve's time step.</p>
+<p>Note that if the last timestep of the dispatch horizon is not in the storage solve timeline, it will use the last available timestep to fix the storage. This can happen at the end of the timeline when the dispatch solve with a lower step size can fit an extra step after the last time step of the storage solve.
+Other reason might be that both dispatch and storage solves are aggregated with the <code>new_stepduration</code>. In that case, it is usually best to use values for the <code>new_stepduration</code> that are dividable.  </p>
+<p>To create a sample solve with representative periods:</p>
+<p>The tutorial contains an example of representaive periods under alternative <em>5weeks</em> where the year is represented with five sample weeks. It is done with the <code>timeset</code> parameter <code>timeset_duration</code> where instead of choosing the whole timeline by setting the first timestep and the duration of whole timeline, you choose multiple starting points with smaller durations. The example for the <em>5weeks</em> is below.</p>
+<p><img alt="New step duration" src="../../img/concept/5weeks.png" /></p>
+<p>To create an investment solve sequence, you have two options:</p>
+<ul>
+<li>Create manually a series of solves and set the <code>invest_periods</code> and <code>realized_invest_periods</code> individually for the solves. <a href="../investment/#how-to-create-a-multi-year-model">How to create a multi-year model</a> has an example of this with the difference that here you use <code>realized_invest_periods</code> instead of <code>realized_periods</code> and that each of the higher level solves requires the <code>contains_solves</code> parameter. </li>
+</ul>
+<p>If you have many splits, this option can get tedious and prone to mistakes.</p>
+<p>The other option is to use only one investment <code>solve</code> entity:</p>
+<ul>
+<li>The <code>invest_periods</code> and <code>realized_invest_periods</code> should then be set with a 2D map where the first column tells the solve (you don't have to create separate <code>solve</code> entities for these) and the second column tells the period. To get a 2D map, choose the parameter type as <em>Map</em> and then right click the table and choose <em>Insert column after/before</em>. The value column does not matter. The model will generate these solves, with the periods given. Note that the solve names should match in both 2D-maps.  </li>
+</ul>
+<p>You can use the same lower level solve with each the investment solves as the lower level solves will exclude the periods that are not included in either of the upper level realized periods: <code>realized_invest_periods</code> or <code>fix_storage_periods</code>. So, the lower level solve should have all the periods that it is used for in any the solves.</p>
+<p><img alt="2D_map" src="../../img/concept/2d_map.png" /></p>
+<p>Note that the results of a nested rolling solve run are not fully optimal, because the information in the model is decreased. This is the price you pay for the speed. Therefore, the results should not be taken as they are, instead it is important to know how to interpret the results: What phenomena are missing? How will they affect the results? Where should extra investments go to satisfy the demand (there is a possibility to use the <code>capacity_margin</code> method to force extra investments)?</p>
+<p>In the examples.sqlite there are four example scenarios related to this:</p>
+<ul>
+<li><em>multi_fullYear_battery</em>: The four period full year single solve, with coal, wind, battery storage with unlimited investment possibilities. Running this is still possible but takes a few minutes. This is here as a reference for the nested solves.</li>
+<li><em>multi_fullYear_battery_nested_24h_invest_one_solve</em>: This has the nested structure and the investment solve is done with 24h timesteps and storage solve 6h timesteps.</li>
+<li><em>multi_fullYear_battery_nested_sample_invest_one_solve</em>: This has the investment solve as 5weeks sample but all the four periods are included in the same investment solve. Nested structure with 6h storage solve timesteps.</li>
+<li><em>multi_fullYear_battery_nested_multi_invest</em>: This has split the investment to four solves with each having two period 5weeks sample period horizon. Nested structure with 6h storage solve timesteps.</li>
+</ul>
+<p>The 24h timestep is clearly too long as it invests too little for storage and coal. A large upward penalty ensues.</p>
+<p>The sample one solve invest also invests too little, as the largest demand-supply ratio weeks are not in the five week sample. However, the investments are spread more accurately.</p>
+<p>The split sample investment run produces in this case similar results as the one solve sample run. This is not always the case! Here the only difference between the periods was linearly increased demand.</p>
+<h3 id="how-to-force-include-adequacy-critical-weeks-in-representative-period-selection">How to force-include adequacy-critical weeks in representative-period selection</h3>
+<p>When a nested solve builds its investment stage on representative periods (see <a href="#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage">How to use Nested Rolling window solves</a>), those periods are picked by greedy convex-hull clustering, which optimises a whole-year approximation of the <em>shape</em> of the profiles and inflows. A sustained low-VRE / high-demand stress week can have an unremarkable within-period shape and so never get selected — the investment stage then never sees that week as a hard balance constraint and under-builds. Force-include fixes the <em>representation</em>: it injects the worst base period under an explicit net-load signal so the stress week becomes a hard row in the invest LP. This is complementary to the energy-margin lever below — force-include corrects <em>which</em> weeks the invest stage sees, whereas the energy margin applies a deliberate margin on top of whatever weeks are chosen.</p>
+<p>The selection runs from the command line:</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>flextool.representative_periods.preprocess<span class="w"> </span>&lt;db_url&gt;<span class="w"> </span>&lt;scenario&gt;<span class="w"> </span>&lt;n_rp&gt;<span class="w"> </span>&lt;period_length&gt;<span class="w"> </span><span class="o">[</span>options<span class="o">]</span>
+</code></pre></div>
+<p>The force-include options (all off by default):</p>
+<ul>
+<li><code>--force-highest-net-load</code> — force-include the base period with the greatest <em>sustained</em> net load (Flag B, energy-adequacy — the main fix; rewards a whole low-VRE / high-demand week rather than one spiky hour).</li>
+<li><code>--force-peak-load</code> — force-include the base period with the highest <em>instantaneous</em> net load (Flag A, capacity-adequacy; noisier for energy-constrained systems).</li>
+<li><code>--force-window N</code> — sub-window length in timesteps for the sustained score (default: the whole period).</li>
+<li><code>--vg-weight W</code> — convex blend in [0,1] between the VG-shortfall term and the inflow-demand term of the net-load signal; the inflow term gets <code>1 - W</code> (default 0.5).</li>
+<li><code>--region-groups G1,G2,…</code> — opt-in node-group demand-weighting of the VG term (see below).</li>
+</ul>
+<p>The VG-shortfall term of the net-load signal has two weighting modes. By default it is the unweighted, system-coincident mean shortfall over all profile series — best for a simple system or when no node-group information is available. With <code>--region-groups G1,G2,…</code> each region's VG shortfall is instead weighted by that region's demand <code>D_r</code>, so a coincident trough in the high-demand regions dominates the selection. The mapping is derived structurally — profile→node via <code>unit__node__profile</code>, node→region via <code>group__node</code> membership, and <code>D_r</code> = Σ|scalar demand| over the region's member nodes — with no name conventions. Each named region group must therefore contain BOTH the VG (profile) nodes and the demand nodes of that region.</p>
+<p>For example, on the H2_trade model:</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>flextool.representative_periods.preprocess<span class="w"> </span>&lt;db_url&gt;<span class="w"> </span>y2050_rp<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="m">168</span><span class="w"> </span>--force-highest-net-load<span class="w"> </span>--region-groups<span class="w"> </span>decomp_AUS,decomp_JAP,decomp_KOR
+</code></pre></div>
+<p>forces the low-VRE week starting 2050-10-15 (base period 41), which the unseeded hull ({3, 8, 14, 22, 49}) misses entirely, and the timeset is written as <code>hull_5rp_168h+f1</code>. Without <code>--region-groups</code> on this multi-region trade model the top-scoring week happens to already be a hull pick, so the timeset name is unchanged — a documented limitation of the unweighted signal on such systems; use <code>--region-groups</code> there.</p>
+<p>Forced periods <strong>seed</strong> the greedy hull: they are guaranteed into the set as its initial vertices, and the clustering then fills the remaining slots to <em>complement</em> them (never re-selecting a period a forced extreme already represents). The total stays pinned at <code>n_rp</code> — a forced period consumes one of the <code>n_rp</code> slots, it never grows the set beyond <code>n_rp</code>. The <code>+f{n}</code> suffix counts the forced periods that displaced a clustered pick (i.e. that the unseeded hull would not have selected). With no <code>--force-*</code> flag the run is byte-identical to the pure-hull selection and keeps the plain <code>hull_{n_rp}rp_{period_length}h</code> timeset name, so force-include never overwrites the pure-hull timeset.</p>
+<h3 id="how-to-cluster-representative-periods-on-net-load">How to cluster representative periods on net load</h3>
+<p>By default the greedy hull clusters on the <em>shape</em> of every normalized profile and inflow series. <code>--netload-clustering</code> instead clusters on a real-MW <strong>net-load</strong> signal — demand minus available VRE — so the selected periods are the ones the <em>net</em> demand actually stresses rather than the ones with the most distinctive individual profile shapes:</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>flextool.representative_periods.preprocess<span class="w"> </span>&lt;db_url&gt;<span class="w"> </span>&lt;scenario&gt;<span class="w"> </span>&lt;n_rp&gt;<span class="w"> </span>&lt;period_length&gt;<span class="w"> </span>--netload-clustering<span class="w"> </span><span class="o">[</span>--vre-penetration<span class="w"> </span>P<span class="o">]</span>
+</code></pre></div>
+<ul>
+<li><code>--netload-clustering</code> — cluster on <code>demand − Σ VRE·availability</code>. VRE is any generation unit whose <code>unit__node__profile</code> arc uses <code>profile_method = upper_limit</code> (the default). The iteration-0 VRE fleet is sized by a <strong>demand-match</strong> default (each aggregation unit's investable VRE is grown until its energy plus existing VRE energy covers the unit's demand energy). The timeset is written as <code>netload_{n_rp}rp_{period_length}h</code>.</li>
+<li><code>--vre-penetration P</code> — scale the demand-match energy-share target (<code>1.0</code> = full-energy match; default <code>1.0</code>). Ignored without <code>--netload-clustering</code>.</li>
+</ul>
+<p><strong>Per-group vs per-node granularity.</strong> Set the <code>group.use_for_representative_periods</code> (<code>yes_no</code>) flag to <code>yes</code> on one or more region groups to sum each flagged group's member-node net load into a single regional signal; when no group carries the flag, each node is clustered as its own net-load signal.</p>
+<p><strong>Iterating on solved capacities.</strong> The single-shot mode above sizes VRE with the demand-match default. To instead feed a solve's <em>realised</em> investments back into the selection, use the iteration driver, which reselects and re-solves until the representative set stabilises:</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>flextool.representative_periods.netload_iterate<span class="w"> </span>&lt;db_url&gt;<span class="w"> </span>&lt;scenario&gt;<span class="w"> </span>--n-rp<span class="w"> </span><span class="m">5</span><span class="w"> </span>--period-length<span class="w"> </span><span class="m">168</span><span class="w"> </span>--iterations<span class="w"> </span><span class="m">3</span><span class="w"> </span><span class="o">[</span>--keep-best<span class="o">]</span>
+</code></pre></div>
+<p>Each iteration runs an invest-only solve and feeds its invested capacities into the next net-load selection; the loop stops early once the selected set stops changing. <code>--keep-best</code> additionally dispatches each mature iteration over the full year and keeps the representative set with the lowest full-year cost. Run <code>... netload_iterate --help</code> for the full flag list (<code>--invest-solves</code>, <code>--dispatch-solves</code>, <code>--vre-penetration</code>, <code>--work-dir</code>, <code>--output-location</code>, <code>--alternative-name</code>, <code>--warm-start</code>).</p>
+<h3 id="how-to-add-an-energy-margin-for-investment-adequacy">How to add an energy margin for investment adequacy</h3>
+<p>In a nested solve the investment stage is optimised over representative periods and the full-year dispatch is solved separately. The representative periods can be systematically optimistic about variable-renewable (VRE) availability: their average VRE availability tends to exceed the true annual average. The investment stage then under-builds, and the full-year dispatch has to cover the shortfall with large forced unserved-energy (upward-slack) penalties.</p>
+<p>The energy-margin lever lets you de-rate a node's energy balance in the investment stage so that it builds enough capacity to meet the true demand under the true (lower) annual VRE availability. It is set per node with a method and one of two value parameters:</p>
+<ul>
+<li><code>energy_margin_method</code> - <em>none</em> (default, off), <em>inflow_multiplier</em>, or <em>inflow_adder</em>.</li>
+<li><code>energy_margin_multiplier</code> - the factor (default 1.0). When <code>energy_margin_method = inflow_multiplier</code>, the node's demand (inflow) is multiplied by this factor <strong>in the investment solve only</strong> — the dispatch solves always see the true demand. A value of 1.1 makes the investment stage build for about 10% more demand, so the real capacity is enough to meet the real demand under the true annual VRE. A value of 1.0 has no effect.</li>
+<li><code>energy_margin_adder</code> - the extra demand in MWh per time step of the timeline (default 0.0). When <code>energy_margin_method = inflow_adder</code>, this many MWh of extra demand (negative inflow) is added to every time step at the node <strong>in the investment solve only</strong>; the dispatch solves always see the true demand. When the investment solve has <code>new_stepduration</code>, a solve step gets the sum over the time steps it combines, like <code>inflow</code>. A value of 0.0 has no effect.</li>
+</ul>
+<p>For example, to build about 10% more into a demand node, set <code>energy_margin_method = inflow_multiplier</code> and <code>energy_margin_multiplier = 1.1</code> on that node.</p>
+<p>The energy margin enters only the node balance. The reserve requirement, the non-synchronous limit and the capacity margin of a group follow the real demand; use <code>capacity_margin</code> for a capacity surplus. Combined with a capacity margin, the energy margin does not lower or raise the capacity requirement: storage and imports count with the power they deliver at a step, also when it serves the energy margin's added demand, and firm output that serves it leaves the capacity margin unchanged.</p>
+<p>Use <code>inflow_adder</code> as the additive alternative to the multiplier. Because the multiplier scales the node's <em>existing</em> demand, it is a no-op on a node whose native inflow is zero — a common shape for a bare adequacy / slack node that carries no demand series of its own. <code>inflow_adder</code> instead adds a fixed block of demand at the node: it deepens the node's demand where it already has inflow and, crucially, <strong>creates</strong> the demand where the node had none, adding the same MWh to every investment-stage time step (a constant adder; on a timeline of 24 h time steps a margin of 10 MW needs a value of 240), or placing per-period values if authored as a period map. Set <code>energy_margin_method = inflow_adder</code> and <code>energy_margin_adder = &lt;MWh&gt;</code> on the node to raise investment-stage adequacy headroom without touching dispatch demand.</p>
+<p>The margin is extra demand for the investment decision only, not load: it does not raise reserve requirements (a reserve group's <code>increase_reserve_ratio</code> follows the un-margined demand).</p>
+<p>The energy margin is a per-node lever for regions whose adequacy gap is driven by VRE optimism and can be closed by building more of an investable response (more VRE, storage, or imports). It cannot help a region whose VRE collapses to near zero during the stress period when the only investable response is more VRE that serves the same demand — those regions need firm capacity or imports instead.</p>
+<p>It is complementary to the <code>capacity_margin_method</code> (see the <a href="../../reference/groups/#the-capacity-margin">group reference</a>): <code>capacity_margin_method</code> targets peak-capacity adequacy (firm and VRE capacity above the demand at every time step), whereas the energy margin targets sustained-energy adequacy across the year.</p>
+<h3 id="peak-memory-in-long-rolling-and-nested-chains">Peak memory in long rolling and nested chains</h3>
+<p>The cascade keeps several solves' worth of state alive in RAM at once — the LP and its solution while outputs and the hand-off to the next roll are written, the next roll's input data, and the parked Provider state from earlier sub-solves. On continental-scale rolling or nested chains this can push peak RSS into the 10-30 GB range. Two CLI knobs help when peak RSS is the bottleneck rather than wall time:</p>
+<ul>
+<li><code>--save-memory</code> (or <code>FLEXTOOL_SAVE_MEMORY=1</code>) — after each LP is built, drops polar-high's polars/numpy LP source, writes the LP to a temp MPS file, and solves it in a separate HiGHS subprocess (via <code>cmd_solve_mps</code>) so the solver's working set lives outside the FlexTool address space. Frees ~5–10 GB on large models at a cost of ~+90 s I/O per sub-solve. Also disables warm-LP reuse, so every sub-solve cold-rebuilds. Use when the machine OOMs, not as a default.</li>
+<li><code>--presolve off</code> — HiGHS' presolve is the largest single contributor to peak RSS on highly-structured LPs (continental power grids, dense capacity-expansion). Turning it off slows the solve but can free several GB. Pair with <code>--save-memory</code> for the largest savings.</li>
+</ul>
+<p>Both flags are documented in <a href="../../terminal_workflow/">Terminal / CLI</a>. The FlexTool GUI's side menu has a <strong>Save memory</strong> checkbox that passes <code>--save-memory</code> through to each scenario run.</p>
+<h2 id="how-to-use-representative-period-clustering-with-scalar-profiles">How to use representative-period clustering with scalar profiles</h2>
+<p>The representative-period preprocessor in <code>flextool/representative_periods/preprocess.py</code> builds its clustering matrix from time-varying <code>profile</code> and <code>node.inflow</code> series. Constant-valued (scalar) profiles and inflows are dropped from the clustering input: a constant series has zero variance and contributes no information to the period-similarity distance. The preprocessor prints a one-line note such as <code>Skipping 3 scalar profile(s) and 1 scalar inflow(s) — clustering only considers time-varying series.</code> so you can see exactly how many series were filtered out. There is nothing to configure: scalar profiles and inflows are still used by the model as constants, they just do not take part in choosing the representative periods.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      IRENA
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.indexes"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
+      
+        <script src="../../assets/mathjaxhelper.js"></script>
+      
+        <script src="../../assets/moved_doc_anchors.js"></script>
+      
+    
+  </body>
+</html>

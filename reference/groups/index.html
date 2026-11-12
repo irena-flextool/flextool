@@ -1,0 +1,2928 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.">
+      
+      
+        <meta name="author" content="Juha Kiviluoma, VTT Technical Centre of Finland">
+      
+      
+      
+        <link rel="prev" href="../commodities/">
+      
+      
+        <link rel="next" href="../flow_groups/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../img/irena_flextool_favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Groups - IRENA FlexTool</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#groups" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="IRENA FlexTool" class="md-header__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            IRENA FlexTool
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Groups
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="IRENA FlexTool" class="md-nav__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    IRENA FlexTool
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../interface_overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing an interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install_gui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model parameters
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Model parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../entities_and_time/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Entities and time structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../nodes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../units/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Units
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../connections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../commodities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commodities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Groups
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Groups
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#capacity-limits-for-nodes-units-and-connections" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Capacity limits for nodes, units and connections
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transfer-method-override-for-connections-in-a-group" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transfer method override for connections in a group
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits-for-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits for nodes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Limits for nodes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-capacity-margin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The capacity margin
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#co2-costs-and-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CO2 costs and limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stochastics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stochastics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decomposition-spatial-benders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decomposition (spatial Benders)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flex-temporal-decomposition-per-group-step-duration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flex-temporal decomposition (per-group step duration)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#controlling-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Controlling outputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../flow_groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Flow groups
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reserves/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reserves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../user_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../parameter_groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter groups and conventions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameter_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../how_to/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to recipes
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How-to recipes
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics: time, VRE, network and demand
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/storage_hydro/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage and hydro
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/thermal_chp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Thermal, CHP and reserves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/investment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Investment and multi-year models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/solve_sequences/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solve sequences, rolling and nested solves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/stochastics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stochastics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/emissions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emissions and system limits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/outputs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Outputs, diagnostics and Excel templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance and solvers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model outputs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reading_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reading results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../results_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../formulation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model formulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../advanced_concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../limitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model limitations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interfaces
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Interfaces
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flextool_gui_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../spine_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../spine_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine database editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../excel_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Excel as input/output
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../terminal_workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Terminal / CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ai_assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../solvers/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solvers
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Solvers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/highs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HiGHS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/gurobi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gurobi
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/cplex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CPLEX
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/xpress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Xpress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/copt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    COPT
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The engine pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LP scaling pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/slack_convention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Slack convention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/decomposition/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decomposition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/db_schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database schema and migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/assistant_evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/inject_between_solves/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Injecting parameters between solves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_11" >
+        
+          
+          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Archived
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Archived
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archived/browser_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archived/install_web_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface install (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#capacity-limits-for-nodes-units-and-connections" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Capacity limits for nodes, units and connections
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transfer-method-override-for-connections-in-a-group" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transfer method override for connections in a group
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits-for-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits for nodes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Limits for nodes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-capacity-margin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The capacity margin
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#co2-costs-and-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CO2 costs and limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stochastics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stochastics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decomposition-spatial-benders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decomposition (spatial Benders)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flex-temporal-decomposition-per-group-step-duration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flex-temporal decomposition (per-group step duration)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#controlling-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Controlling outputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="groups">Groups</h1>
+<p>Groups are used to make constraints that apply to a group of nodes, units and/or connections. A group is defined by creating a group entity and then creating an entity between the group and its members. The membership entity classes are <code>group__node</code>, <code>group__unit</code>, <code>group__connection</code> and <code>reserve__upDown__group</code>. The choice of group members depends on what the group is trying to achieve. For instance a group that limits investments could have a set of <code>units</code> included in the group.</p>
+<p>Flow aggregation (flow limits and aggregated flow outputs) lives on a separate <a href="../flow_groups/"><code>flowGroup</code></a> class with its own 3-dim membership classes <code>flowGroup__unit__node</code> and <code>flowGroup__connection__node</code>; see that section below.</p>
+<h2 id="capacity-limits-for-nodes-units-and-connections">Capacity limits for nodes, units and connections</h2>
+<ul>
+<li><code>invest_method</code> - How the group limits investment and retirement of its members (a value list of its own, <code>group_invest_methods</code>). <em>not_active</em> (default): the group sets no limits. <em>invest</em> / <em>retire</em> / <em>invest_retire</em>: which decisions the limits apply to; <em>_period</em> uses the <code>…_period</code> limits, <em>_total</em> the <code>…_total</code> limits, <em>_period_total</em> both; <em>no_limit</em>: no limits even if values are set; <em>cumulative_limits</em> uses the cumulative capacity limits. Before database version 77 <em>not_active</em> was called <em>not_allowed</em>; the upgrade renames stored values, and a database that still holds <em>not_allowed</em> for a group stops the run with an error.</li>
+<li><code>invest_max_total</code> / <code>invest_min_total</code> - [MW or MWh] Largest allowed / smallest required total investment of the group over all solves, summed over its units and connections (MW) and storage nodes (MWh). Every investment decision counts; retirements do not reduce it. Constant.</li>
+<li><code>invest_max_period</code> / <code>invest_min_period</code> - [MW or MWh] Largest allowed / smallest required capacity coming online in each period, summed over the group's members. With a construction lead time, the investment is decided earlier. Constant or period. A period map must give a value for every period in which capacity of the solve comes online: its investment periods, or with a construction lead time the periods the investments start to operate in (a missing period is an error).</li>
+<li><code>retire_max_period</code> / <code>retire_min_period</code> - [MW or MWh] Largest allowed / smallest required retirement in each period, summed over the group's members. Needs a <em>retire …_period</em> option in the group's <code>invest_method</code>. Constant or period. A period map must give a value for every investment period of the solve (a missing period is an error).</li>
+<li><code>retire_max_total</code> / <code>retire_min_total</code> - [MW or MWh] Largest allowed / smallest required total retirement of the group over all solves. Needs a <em>retire …_total</em> option in the group's <code>invest_method</code>. Constant.</li>
+<li><code>cumulative_max_capacity</code> - [MW or MWh] Maximum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period. A period map must give a value for every investment period of the solve (a missing period is an error). Only applies when <code>invest_method</code> is <code>cumulative_limits</code>.</li>
+<li><code>cumulative_min_capacity</code> - [MW or MWh] Minimum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period. A period map must give a value for every investment period of the solve (a missing period is an error). Only applies when <code>invest_method</code> is <code>cumulative_limits</code>.</li>
+</ul>
+<h2 id="transfer-method-override-for-connections-in-a-group">Transfer method override for connections in a group</h2>
+<ul>
+<li><code>transfer_method</code> - Overrides the <code>transfer_method</code> chosen on each individual <code>connection</code> whose both endpoints belong to this group (<code>group__node</code>). Options: <em>use_connection_transfer_methods</em> (default, no override), <em>no_losses_no_variable_cost</em>, <em>regular</em>, <em>exact</em>, <em>variable_cost_only</em>, <em>unidirectional</em>, <em>dc_power_flow_with_angles</em>. The connection-level options work exactly as in the <a href="../connections/#defining-how-the-connection-functions">connection reference</a>; <em>dc_power_flow_with_angles</em> activates B-theta DC power flow on the subnet and requires each member connection to have <code>reactance</code>; <code>is_DC</code> connections are not overridden and need no <code>reactance</code>. A connection with both endpoints in several groups that set different overrides is an error.</li>
+<li><code>base_MVA</code> - [MVA] Base power for the per-unit system used in DC power flow. Default 100. Only relevant when this group's <code>transfer_method = dc_power_flow_with_angles</code>.</li>
+<li><code>reference_node</code> - Name of the reference bus node (angle fixed to zero) for DC power flow. Optional; if not set the engine picks one deterministically.</li>
+<li><code>candidate_precapacity_to_avoid_big_m</code> - [MW] Small pre-existing capacity assigned to investment-candidate connections in DC power-flow subnets to avoid big-M angle constraints. Tuning parameter for numerical stability of the angle formulation.</li>
+</ul>
+<h2 id="limits-for-nodes">Limits for nodes</h2>
+<ul>
+<li><code>has_inertia</code> - A flag whether the group of nodes has an inertia constraint active. Default <em>no</em>. Without <em>yes</em> the group has no inertia constraint, even if <code>inertia_limit</code> is given.</li>
+<li><code>inertia_limit</code> - [MWs] Minimum for synchronous inertia in the group of nodes. Used only when <code>has_inertia</code> is <em>yes</em>; no value (or 0) means no requirement. Constant, period, time or period+time. A time map (or the time level of a period+time map) of a group with <code>has_inertia</code> <em>yes</em> must give a value for every time step of the solve, look-ahead included (a missing time step is an error, reported before the first solve; give 0 for an hour without a requirement). A solve whose <code>reduce_system_detail_method</code> leaves inertia out is not checked. A period map (or the period level of a period+time map) must give a value for every period of the solve, look-ahead periods included (a missing period is an error).</li>
+<li><code>penalty_inertia</code> - [CUR/MWs per hour] Penalty for violating the inertia constraint. The cost scales with the duration of the violation. Default 5000, applied to every group without a value of its own (and to the periods a map leaves out); 0 makes the violation free. Constant or period.</li>
+<li><code>has_non_synchronous</code> - A flag whether the group of nodes has the non-synchronous share constraint active. Default <em>no</em>. Without <em>yes</em> the group has no non-synchronous constraint, even if <code>non_synchronous_limit</code> is given.</li>
+<li><code>non_synchronous_limit</code> - [share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group, of the group's supply measured with the real demand (without an energy margin). Flows between the group's nodes are excluded. Used only when <code>has_non_synchronous</code> is <em>yes</em>; with the flag and no value (or 0), no non-synchronous infeed is allowed (violations are penalised). Constant, period, time or period+time. A time map (or the time level of a period+time map) of a group with <code>has_non_synchronous</code> <em>yes</em> must give a value for every time step of the solve, look-ahead included (a missing time step is an error, reported before the first solve; an authored 0 is a limit of 0, give 1 for an hour without a limit). A solve whose <code>reduce_system_detail_method</code> leaves the non-synchronous limit out is not checked. A period map (or the period level of a period+time map) must give a value for every period of the solve, look-ahead periods included (a missing period is an error).</li>
+<li><code>penalty_non_synchronous</code> - [CUR/MWh] Penalty for violating the non synchronous constraint. Default 5000, applied to every group without a value of its own (and to the periods a map leaves out); 0 makes the violation free. Constant or period.</li>
+<li><code>capacity_margin_method</code> - Whether the group of nodes has a capacity margin in investment solves, and how the margin is given. Options: <em>none</em> (default, no margin), <em>manual</em> (the margin is <code>capacity_margin</code> MW) and <em>share_of_peak</em> (the margin is <code>capacity_margin_share</code> times the group's peak demand). The margin applies in the investment periods of each solve (and their stochastic branch periods); a solve without <code>invest_periods</code> (dispatch, rolling dispatch) has none. See <a href="#the-capacity-margin">The capacity margin</a> below for what counts and how.</li>
+<li><code>capacity_margin</code> - [MW] The margin of a group with <code>capacity_margin_method</code> <em>manual</em>: the capacity the group needs above its demand at every time step of an investment period. Without that method the value is ignored (a warning says so). No value (or 0) means the capacity must still cover the demand. Constant or period. A period map must give a value for every investment period of the solve (a missing period is an error).</li>
+<li><code>capacity_margin_share</code> - [share, e.g. 0.15 means 15%] The margin of a group with <code>capacity_margin_method</code> <em>share_of_peak</em>, as a share of the group's peak demand in the period. Without that method the value is ignored (a warning says so). No value (or 0) means no margin. Constant or period. A period map must give a value for every investment period of the solve.</li>
+<li><code>penalty_capacity_margin</code> - [CUR/kW/a] Penalty for violating the capacity margin constraint. Uses operational discounting (not annualized over lifetime like investment costs), so a penalty of e.g. 1000 CUR/kW is not comparable to an investment cost of 1000 CUR/kW which would be annualized to a much lower annual cost. Default 5000, applied to every group without a value of its own (and to the periods a map leaves out); 0 makes the violation free. In a stochastic fan each forecast branch period has its own shortfall, and its penalty is weighted by the forecast's probability. Constant or period.</li>
+<li><code>share_loss_of_load</code> - Force the upward slack of the nodes in this group to be equal or inflow (demand) weighted</li>
+</ul>
+<h3 id="the-capacity-margin">The capacity margin</h3>
+<p>At every time step of an investment period, the capacity margin row of a group asks:</p>
+<p><em>firm capacity + VRE potential + what the group's other entities deliver or take at that step ≥ the group's demand + the margin.</em></p>
+<p>The demand is the real demand of the group's nodes (the negative inflow, without an energy margin). Storage nodes have no demand in the row: a storage node of the group with demand gets a warning (model that demand on a balance node of the group), a group of storage nodes only is an error, and so is a <code>balance_within_period</code> node in the group (its balance is per period, the margin per time step). The entities count as follows:</p>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Counts as</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Firm unit</strong>: a unit with an output into the group that is not one of the kinds below. Units fed from fuel or commodity nodes, from balance nodes outside the group, and units without inputs (e.g. demand response)</td>
+<td>its capacity × <code>availability</code> × <code>capacity_max_coeff</code> of the output. A unit with several outputs into the group (a CHP) counts its capacity once: capacity × <code>availability</code> × min(1, the sum of <code>capacity_max_coeff</code> of those outputs), the limit the sum of its outputs has</td>
+</tr>
+<tr>
+<td><strong>VRE unit</strong>: a unit whose output into the group has an <em>upper_limit</em> or <em>fixed</em> profile</td>
+<td>its capacity × min(profile, <code>capacity_max_coeff</code>) × <code>availability</code></td>
+</tr>
+<tr>
+<td><strong>Storage-backed unit</strong>: a unit with an input from a storage node, unless its other inputs can run it at full output alone (their <code>input_share_max</code> adds up to at least 1; the default is 1)</td>
+<td>its actual flow, minus the energy the storage node's balance slack makes in the period (see below)</td>
+</tr>
+<tr>
+<td><strong>Unit inside the group</strong> with efficiency ≥ 1: a unit with an input from one of the group's nodes (a heat pump in an electricity + heat group, an inverter fed from a DC bus of the group)</td>
+<td>its actual flow, and its input as consumption</td>
+</tr>
+<tr>
+<td><strong>Lossy unit inside the group</strong>: a unit whose inputs all come from the group's nodes and whose outputs all go to them, with an efficiency (at full load) below 1 at some step (an electric boiler, an electrolyser into a hydrogen node of the group)</td>
+<td>left out: the demand it serves counts one to one</td>
+</tr>
+<tr>
+<td><strong>Connection inside the group</strong>: both ends in the group</td>
+<td>left out: the demand at its far end counts one to one, without its losses</td>
+</tr>
+<tr>
+<td><strong>Other connection</strong> (imports, exports, a battery behind an inverter connection)</td>
+<td>its actual flow, into the group positive, out of it negative</td>
+</tr>
+<tr>
+<td><strong>Consumption</strong> by the units fed from the group's nodes that are not inside the group (electrolysers into a node outside the group, pumps, chargers)</td>
+<td>its actual flow, negative</td>
+</tr>
+</tbody>
+</table>
+<p>Inputs and outputs with <code>conversion_flow_coeff</code> 0 carry no energy limit: such an output counts by its flow, and such an input is left out of the storage and inside-the-group rules.</p>
+<p>What this means in practice:</p>
+<ul>
+<li><strong>Only firm and VRE capacity can hold the margin.</strong> Imports, storage and the group's own consumption help only by what they deliver at that step, which lets the firm units run less. A group fed only by imports cannot hold any margin. Energy dumped through the node's downward slack does not count.</li>
+<li><strong>Fuel is assumed to last.</strong> A unit fed from a fuel or commodity node, or from a balance node, counts at its capacity, even if the fuel is limited (a fuel node with a storage state makes its units storage-backed). To have a fuel-limited unit count by its flow, model the fuel as a storage node.</li>
+<li><strong>Storage counts by what it delivers.</strong> A battery, a hydro reservoir or a CSP heat tank counts with its discharge at that step, which is conservative when the storage is full. Pumped hydro: the turbine counts by its flow, the pump as consumption. Run-of-river counts at capacity when the river node (a balance node with inflow, no storage state) is outside the group; with the river node in the group, the turbine is a unit inside the group and counts by its flow, and the river's inflow lowers the group's demand.</li>
+<li><strong>Slack energy is not storage delivery.</strong> Energy that a storage node's upward balance slack makes could be stored and sent into the group at the binding step. For a storage node that feeds the group through a storage-backed unit or a connection, the row takes back all slack energy the node makes in the period, divided by the step's length. A storage node with <code>penalty_method</code> <em>off</em> has no slack. The same can happen through a node outside the group whose slack makes the energy it exports into the group; that is not taken back, so give such nodes a high <code>penalty_up</code> (or <code>penalty_method</code> <em>off</em>).</li>
+<li><strong>Exports add to the requirement.</strong> A connection out of the group counts negative, so the capacity behind an export cannot also hold the margin.</li>
+<li><strong>Losses inside the group are not part of the requirement.</strong> Connections with both ends in the group and lossy units inside the group are left out of the row: their far end's demand counts one to one. If the losses at the peak matter, add an estimate of them to the margin. (Had the row kept them, it would require the losses of the dispatch at each step, and shedding the load behind a lossy line would lower that requirement by more than the unserved energy raises the shortfall: a margin MW is priced for the whole year, a shed MWh only for its hour, so the model would shed load to hold the margin.) A heat pump (efficiency ≥ 1) stays in the row by its flow: its input is the power the heat demand needs.</li>
+<li><strong>Unserved energy is priced once.</strong> Load the group does not serve leaves the row unchanged where firm capacity would have served it, and is priced by <code>penalty_up</code> only.</li>
+<li><strong>The energy margin does not change the capacity margin.</strong> The row uses the real demand. Storage and imports count with the power they deliver at the step, also when it serves the energy margin's added demand: that power is real capability at that step. Firm output that serves the added demand leaves the row unchanged.</li>
+</ul>
+<p>The margin of a <em>share_of_peak</em> group is <code>capacity_margin_share</code> × the group's peak demand: the largest sum of the demand of the group's nodes over the period's full time series, on the period's original timeline (before representative periods and <code>new_stepduration</code>, and the same in every roll of a solve). If the representative periods leave the peak out, the margin still uses the real peak. When several investment periods of a solve use different parts of one timeline (a multi-year timeline, one block per period), each period's peak is over its own part: the time steps of its timeset blocks, or, with representative periods, of the base periods they stand for. A stochastic branch period has its own peak, from its own branch data.</p>
+<p><strong>Reading the result.</strong> After each investment solve that leaves a shortfall, the run log prints <code>capacity margin shortfall: solve …, group …, period …: … MW at … (penalty … M CUR)</code>. The table <a href="../../results/#slack-and-penalty-values"><code>capacity_margin__d</code></a> has, per solve, group and investment period, the binding time step, the requirement, what each class above counts there and the shortfall; <code>capacity_margin_entity__d</code> has what each unit, connection and node counts, which shows which rule applies to it. <code>slack__capacity_margin__d</code> and the <em>capacity margin penalty</em> of the costs are those of the solve that decided the investments.</p>
+<p>With representative periods, the row holds at the sampled time steps only, and the storage that counts is the storage of the sampled days: force-include the peak days. Over a coarse time step (<code>new_stepduration</code>) the row may be averaged (see below).</p>
+<p>Under spatial Benders decomposition (<code>decomposition_method</code> <em>benders_regional</em>), a capacity margin group (and an inertia or non-synchronous group) with nodes in more than one region is an error: each region would have to hold the whole margin. Use one group per region.</p>
+<h2 id="co2-costs-and-limits">CO2 costs and limits</h2>
+<ul>
+<li><code>co2_method</code> - Choice of the CO2 method or a combination of methods: no_method, price, period, total, price_period, price_total, period_total, price_period_total. A method with <em>period</em> in it needs <code>co2_max_period</code> and a method with <em>total</em> in it needs <code>co2_max_total</code>; a group without that value is an error.</li>
+<li><code>co2_price</code> [CUR/tCO2] CO2 price for a group of nodes. Constant or period. A period-indexed Map may cover <em>more</em> periods than the current solve realises — extra entries are silently ignored, so the same shared CO2-price dataset can drive solves with different period subsets. If the active solve activates <code>co2_price</code> topology (a priced commodity is wired up) but no <code>co2_price</code> or <code>co2_content</code> value is supplied for a needed period, the engine logs a warning and skips the CO2 cost term for that period rather than raising an error.</li>
+<li><code>co2_max_period</code> [tCO2/a] Annualized maximum limit for emitted CO2 in each period (tonnes per year of the period). Constant or period. A period map must give a value for every period of the solve, look-ahead periods included (a missing period is an error). In a rolling solve each roll applies the limit to its own window (realized part and look-ahead): its emissions are annualised over the window's hours of each period. The limit is carried across the rolls: each roll may emit the share of the period's limit reached by the end of its horizon, minus the emissions earlier rolls already realized in the period, so the realized emissions of a period stay within the limit. In a rolling solve the reported CO2 price of a period is the shadow price of the last roll that covers the period.</li>
+<li><code>co2_max_total</code> [tCO2] Cumulative limit for emitted CO2 over the whole solve horizon: each period's annualized emissions times the years it represents (<code>years_represented</code>), summed over the periods, so the model chooses when to emit. In a rolling solve or a chain of solves the limit is carried: each roll or solve may emit the part of the limit allotted to the periods it reaches (in a rolling solve, the <code>years_represented</code>-weighted share of the solve's periods reached by the end of the roll's horizon; a solve of a chain reaches all of its own periods) minus what earlier rolls and solves already realized, counted the same way (annualized and times <code>years_represented</code>). The realized emissions of the whole chain therefore stay within the limit, but an early solve of a chain may use up what later solves would have needed. In a stochastic solve each forecast path gets the whole remaining limit.</li>
+</ul>
+<p>The emissions that the CO2 price and the limits apply to are the fuel drawn from the group's nodes times the commodity's <code>co2_content</code>, including the extra fuel that <code>min_load_efficiency</code> units burn at part load.</p>
+<h2 id="stochastics">Stochastics</h2>
+<ul>
+<li><code>include_stochastics</code> Flag to choose if stochastic timeseries are to be used for the units/nodes/connections of this group </li>
+</ul>
+<h2 id="decomposition-spatial-benders">Decomposition (spatial Benders)</h2>
+<ul>
+<li><code>decomposition_method</code> (on <code>group</code>) - Decomposition strategy to apply to this group. Currently supported: <code>none</code> (no decomposition; default) and <code>benders_regional</code> (the group becomes a spatial region when a solve sets <code>decomposition = benders</code> — the <code>_region</code> suffix emphasises that this is the <em>geographic</em> flavour, distinct from any future temporal variant). See <a href="../../dev/decomposition/">dev/decomposition.md</a> for the algorithm, gap tolerances, and the membership classes the decomposer expects.</li>
+<li><code>decomposition</code> (on <code>solve</code>) - Whether <em>this solve</em> decomposes. <code>none</code> (default) solves monolithically; <code>benders</code> routes the solve through the spatial Benders coordinator (master trade flows + trade invest + per-region recourse, optimality cuts) over the <code>benders_regional</code> groups. Chosen per solve, so one chain can mix schemes. The optional knobs <code>benders_max_iter</code> (default <code>50</code>) and <code>benders_tolerance</code> (default <code>1e-3</code>) cap the cut loop and set the relative optimality-gap threshold.</li>
+</ul>
+<h2 id="flex-temporal-decomposition-per-group-step-duration">Flex-temporal decomposition (per-group step duration)</h2>
+<ul>
+<li>
+<p><code>new_stepduration</code> - Hours. Balances the nodes of this group once per coarse step of this length, while the rest of the model keeps the solve's time step.</p>
+<p><strong>What it does.</strong> The balance and storage nodes of this group are balanced once per coarse step when the step is longer than the solve's time step. An example is hourly electricity nodes next to daily hydrogen nodes. The energy over each coarse step balances, so the node may shift energy freely within the step. A storage node's state is constant within the step.</p>
+<p><strong>Which units and connections go coarse.</strong> A unit or connection with a node outside the coarse groups keeps the solve's time step. A coarse node sums its flows over the step, so an arc between an hourly and a daily node conserves energy at both ends. A unit or connection whose balance nodes are all coarse uses the coarse step: it has one flow per coarse step, a rate that stays the same over the step. If its nodes have different coarse steps, it takes the shortest one when that step divides the others; otherwise it keeps the solve's step. Listing a unit or connection in the group has no effect (a warning names those that touch a node outside the group).</p>
+<p><strong>Nodes without a balance.</strong> Commodity and price nodes and <code>balance_within_period</code> nodes do not count. A unit that also buys fuel can therefore be coarse; it pays the average price of the step.</p>
+<p><strong>Averaged limits.</strong> The capacity, availability, profile, efficiency and input-share limits of a coarse unit or connection apply to the average over each coarse step. This gives the same result as hourly flows when each arc has at most one limit that varies within the step, and its cost, efficiency and prices do not vary within the step. Otherwise the result can differ. With a cost or efficiency that varies, hourly flows could use the cheapest or most efficient hours. With two or more varying limits, the averaged limits are looser.</p>
+<p><strong>Ramps.</strong> Ramp limits apply between consecutive coarse steps, with the average duration of the two steps (see <code>ramp_speed_up</code>). Inside a coarse step the flow does not change.</p>
+<p><strong>Online units.</strong> A unit or connection with online variables uses the coarse step too. Its units online, start-ups and shut-downs are decided once per coarse step; it starts or stops at the start of the step. Its minimum load and online capacity apply to the average over the step. A minimum up or down time counts whole coarse steps: a start-up counts while the steps since its start last less than <code>min_uptime</code>. On daily steps a <code>min_uptime</code> of at most 24 h adds nothing.</p>
+<p><strong>Online units with ramp limits.</strong> The start-up and shut-down capacity reduction uses the coarse step. While the ramp does not reach full output within the step, a unit started at the start of a step reaches on average <code>min_load + ½ × ramp_speed_up × 60 × step duration</code> of its capacity over the step. When the ramp does reach full output (full output for the rest of the step), the average is <code>1 − (1 − min_load)² / (2 × ramp_speed_up × 60 × step duration)</code>. The same holds with <code>ramp_speed_down</code> before a shut-down. Its units online ramp between coarse steps.</p>
+<p><strong>Reserves.</strong> A unit or connection whose balance nodes are all coarse and that provides reserves holds one reserve per coarse step. Its reserve limits apply to the average over the step, with the average availability or profile. These limits are the reserve share of its capacity, a connection's net position, the floor of its flow, and the storage energy for the reserve duration when the storage node and every provider are coarse. The room its ramp limit leaves for reserve is the smallest of the step's time steps, each with its own capacity factor. The reserve requirement is still checked at every time step of the solve, and nodes of a coarse group may belong to reserve groups.</p>
+<p><strong>Exact connections and DC power flow.</strong> An <code>exact</code> connection whose nodes are all coarse chooses its direction once per coarse step; its direction limits apply to the average over the step. A DC power-flow line whose nodes are all coarse has one flow per coarse step. When every line of a DC network uses the coarse step (all its nodes with the same coarse step), its nodes have one voltage angle per coarse step. In a DC network with a line at the solve's step, every angle stays at the solve's step, so that line keeps its per-step physics.</p>
+<p><strong>Rows that combine several entities.</strong> These rows follow one rule: the capacity-margin, inertia and non-synchronous rows of a group, the instant flow limits of a flow group, a user <code>constraint</code> with flow, storage or online terms (<code>constraint_flow_coeff</code>, <code>constraint_state_coeff</code>, <code>constraint_online_coeff</code>), the DC power-flow row of a line, and the stochastic storage-use tie of a node. Such a row becomes one row per coarse step, the average of the row over the step, when every unit and connection in it uses the coarse step. In a user constraint, every storage node in it must also be coarse. In a capacity-margin row only the entities counted by their flow (storage-backed units, units inside the group, connections, consumption) are in it: firm and VRE units count by their capacity, and the units and connections left out are not in the row.</p>
+<p><strong>Averaged rows.</strong> An averaged row uses the step mean of the demand, inflow, profile, limit or constant in it. An averaged capacity margin therefore covers the mean net demand of the step, not its peak hour. A row given on only part of a coarse step (e.g. a <code>max_instant_flow</code> map without values for some hours) stays at the time steps it covers. An <code>inertia_limit</code> or <code>non_synchronous_limit</code> time map must give a value for every original time step (hour) of a coarse step; its row uses the step mean. The inertia and non-synchronous shortfalls are then one value per coarse step.</p>
+<p><strong>Mixed rows.</strong> A row that mixes units or connections on the coarse step with others on the solve's step is checked at every time step of the solve. It sees the coarse flows as constant through their step. A coarse DC line in a DC network with a line at the solve's step keeps the angle difference across it constant through the coarse step, while the angles stay per time step.</p>
+<p><strong>Exceptions.</strong> Units and connections with a delay keep the solve's time step. In a Benders decomposition, flows that cross regions and every flow in the master keep the solve's step. In a stochastic solve, a unit or connection at a stochastic node, with online variables or providing reserves, keeps the solve's step when the forecasts are tied over only part of one of its coarse steps. In a realization solve, the same applies to one whose committed units online or reserve change within a coarse step or are pinned on only part of it.</p>
+<p><strong>Messages.</strong> An info line lists the units and connections that use a coarse step, and those that keep the solve's step with the reason. A database upgraded from an earlier FlexTool version prints a notice naming the coarse units and connections whose results can differ from flows at the solve's step, and why.</p>
+<p><strong>Outputs.</strong> Flows, units online, reserves, voltage angles and the shortfalls of averaged rows are written at every time step of the solve, with the same value through each coarse step. Start-ups and shut-downs are written whole at the first time step of their coarse step and as 0 at the others. A coarse node's price is the dual of its coarse-step balance, the same at every time step of the step.</p>
+<p><strong>Rules for the step.</strong> The group step must be a multiple of the solve's time step; a shorter group step is ignored with a warning. Coarse steps start from the start of each timeset block. They restart after a gap in the timeline, at each representative period and at the end of the realized part of a roll. A block that is not a multiple of the step ends with a shorter step; with representative periods the step must divide the representative period.</p>
+<p><strong>Storage.</strong> Storage binding methods, <code>fix_start</code>, <code>storage_solve_horizon_method</code>, nested fix methods and the roll carry apply to coarse nodes as to others. <code>bind_intraperiod_blocks</code> cannot be combined with a coarse group.</p>
+</li>
+</ul>
+<h2 id="controlling-outputs">Controlling outputs</h2>
+<p>Two <code>group</code>-level flags drive the extra outputs computed from a node <code>group</code>, and the <code>flow_aggregator</code> method (on the <a href="../flow_groups/"><code>flowGroup</code></a> class) drives the flow-aggregation outputs. Each has a specific intent and requires a matching membership class; setting it without the right members yields an empty result (the runner will log a warning).</p>
+<table>
+<thead>
+<tr>
+<th>You want …</th>
+<th>Set this on …</th>
+<th>Must contain</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Summary metrics (loss of load, VRE share, curtailment, excess load, annualised inflow) for a collection of nodes</td>
+<td><code>print_indicators: yes</code> on <code>group</code></td>
+<td><code>group__node</code> rows</td>
+</tr>
+<tr>
+<td>A per-timestep in/out decomposition (<code>group_flow_t</code>) of a node collection, one column per contributing process/connection</td>
+<td><code>print_dispatch: yes</code> on <code>group</code></td>
+<td><code>group__node</code> rows</td>
+</tr>
+<tr>
+<td>Member flows shown as aggregated bands inside a node group's dispatch table</td>
+<td><code>flow_aggregator: dispatch_plots_only</code> on <code>flowGroup</code></td>
+<td><code>flowGroup__unit__node</code> or <code>flowGroup__connection__node</code> rows</td>
+</tr>
+<tr>
+<td>The flowGroup's own aggregated outputs (per-period <code>cumulative_flow</code> in MWh/a and <code>average_flow</code> in MW, plus a signed net-flow timewise series)</td>
+<td><code>flow_aggregator: standalone_aggregator_only</code> on <code>flowGroup</code></td>
+<td><code>flowGroup__unit__node</code> or <code>flowGroup__connection__node</code> rows</td>
+</tr>
+<tr>
+<td>Both of the above</td>
+<td><code>flow_aggregator: both</code> on <code>flowGroup</code></td>
+<td><code>flowGroup__unit__node</code> or <code>flowGroup__connection__node</code> rows</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><code>print_indicators</code> (on <code>group</code>) — emits aggregate indicator metrics (loss-of-load share, VRE share, curtailment share, excess-load share and annualised inflow) over the node members. Acts as a <em>summary</em> of the node group. Requires <code>group__node</code> members.</li>
+<li><code>print_dispatch</code> (on <code>group</code>) — emits the per-timestep in/out <em>decomposition</em> of the node group, with one column per contributing process or connection (units feeding the group, connections crossing its boundary, storage, slacks). Requires <code>group__node</code> members. If any of those contributing flows belong to a <code>flowGroup</code> whose <code>flow_aggregator</code> is <code>dispatch_plots_only</code> or <code>both</code>, their columns are replaced by a single aggregated band named after the flowGroup.</li>
+</ul>
+<p>See <a href="../flow_groups/">Flow groups (<code>flowGroup</code>)</a> for the <code>flow_aggregator</code> method values and the flow-limit parameters.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      IRENA
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.indexes"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
+      
+        <script src="../../assets/mathjaxhelper.js"></script>
+      
+        <script src="../../assets/moved_doc_anchors.js"></script>
+      
+    
+  </body>
+</html>

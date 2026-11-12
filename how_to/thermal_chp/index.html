@@ -1,0 +1,3569 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.">
+      
+      
+        <meta name="author" content="Juha Kiviluoma, VTT Technical Centre of Finland">
+      
+      
+      
+        <link rel="prev" href="../storage_hydro/">
+      
+      
+        <link rel="next" href="../investment/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../img/irena_flextool_favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Thermal, CHP and reserves - IRENA FlexTool</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#thermal-chp-and-reserves" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="IRENA FlexTool" class="md-header__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            IRENA FlexTool
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Thermal, CHP and reserves
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="IRENA FlexTool" class="md-nav__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    IRENA FlexTool
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../interface_overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing an interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install_gui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model parameters
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Model parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/entities_and_time/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Entities and time structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/nodes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/units/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Units
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/connections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commodities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commodities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Groups
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/flow_groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Flow groups
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/reserves/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reserves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/user_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/parameter_groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter groups and conventions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameter_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to recipes
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How-to recipes
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics: time, VRE, network and demand
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage_hydro/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage and hydro
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Thermal, CHP and reserves
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Thermal, CHP and reserves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-create-combined-heat-and-power-chp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to create combined heat and power (CHP)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-model-cogeneration-with-desalination" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to model cogeneration with desalination
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How to model cogeneration with desalination">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#backpressure-chp-and-thermal-desalination" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backpressure CHP and thermal desalination
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#extraction-chp-an-operating-region" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extraction CHP: an operating region
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reverse-osmosis-investment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reverse osmosis investment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#water-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Water storage
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-add-a-reserve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to add a reserve
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-add-a-minimum-load-start-up-and-ramp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to add a minimum load, start-up and ramp
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-give-a-unit-a-start-up-fuel-or-start-up-heat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to give a unit a start-up fuel or start-up heat
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-add-minimum-uptime-and-downtime" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to add minimum uptime and downtime
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-make-a-unit-run-all-the-time-must-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to make a unit run all the time (must-run)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How to make a unit run all the time (must-run)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#option-1-profile-lower-limit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 1: profile lower limit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-2-user-constraint-on-one-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 2: user constraint on one flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-3-user-constraint-on-a-fleets-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 3: user constraint on a fleet's output
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-4-flowgroup-minimum-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 4: flowGroup minimum flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-5-demand-driven-running" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 5: demand-driven running
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-6-user-constraint-on-the-units-online" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 6: user constraint on the units online
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#min_load-is-not-a-must-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        min_load is not a must-run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#avoid-a-negative-cost-as-a-must-run-bonus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Avoid a negative cost as a must-run bonus
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../investment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Investment and multi-year models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solve_sequences/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solve sequences, rolling and nested solves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stochastics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stochastics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../emissions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emissions and system limits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../outputs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Outputs, diagnostics and Excel templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance and solvers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model outputs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reading_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reading results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../results_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../formulation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model formulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../advanced_concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../limitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model limitations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interfaces
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Interfaces
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flextool_gui_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../spine_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../spine_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine database editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../excel_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Excel as input/output
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../terminal_workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Terminal / CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ai_assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../solvers/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solvers
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Solvers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/highs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HiGHS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/gurobi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gurobi
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/cplex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CPLEX
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/xpress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Xpress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/copt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    COPT
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The engine pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LP scaling pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/slack_convention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Slack convention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/decomposition/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decomposition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/db_schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database schema and migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/assistant_evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/inject_between_solves/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Injecting parameters between solves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_11" >
+        
+          
+          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Archived
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Archived
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archived/browser_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archived/install_web_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface install (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-create-combined-heat-and-power-chp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to create combined heat and power (CHP)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-model-cogeneration-with-desalination" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to model cogeneration with desalination
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How to model cogeneration with desalination">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#backpressure-chp-and-thermal-desalination" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backpressure CHP and thermal desalination
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#extraction-chp-an-operating-region" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extraction CHP: an operating region
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reverse-osmosis-investment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reverse osmosis investment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#water-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Water storage
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-add-a-reserve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to add a reserve
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-add-a-minimum-load-start-up-and-ramp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to add a minimum load, start-up and ramp
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-give-a-unit-a-start-up-fuel-or-start-up-heat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to give a unit a start-up fuel or start-up heat
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-add-minimum-uptime-and-downtime" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to add minimum uptime and downtime
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-make-a-unit-run-all-the-time-must-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to make a unit run all the time (must-run)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How to make a unit run all the time (must-run)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#option-1-profile-lower-limit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 1: profile lower limit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-2-user-constraint-on-one-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 2: user constraint on one flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-3-user-constraint-on-a-fleets-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 3: user constraint on a fleet's output
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-4-flowgroup-minimum-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 4: flowGroup minimum flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-5-demand-driven-running" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 5: demand-driven running
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-6-user-constraint-on-the-units-online" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option 6: user constraint on the units online
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#min_load-is-not-a-must-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        min_load is not a must-run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#avoid-a-negative-cost-as-a-must-run-bonus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Avoid a negative cost as a must-run bonus
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="thermal-chp-and-reserves">Thermal, CHP and reserves</h1>
+<h2 id="how-to-create-combined-heat-and-power-chp">How to create combined heat and power (CHP)</h2>
+<p><strong>(examples.sqlite scenario: coal_chp)</strong>
+<strong><em>init - west - coal_chp - heat</em></strong></p>
+<p>First, a new <em>heat</em> <code>node</code> is added with the necessary parameters. The <code>nodes</code> can be used for energy form of energy or matter, so the heat demand node does not differ from the electricity demand node. </p>
+<p>The <em>heat</em> <code>node</code> needs to be added to an alternative in the <code>Entity Alternative</code> sheet. </p>
+<p>The required parameters are:</p>
+<ul>
+<li><code>node_type</code>: balance</li>
+<li><code>inflow</code>: Map for the heat demand (negative) [MW]</li>
+<li><code>penalty_up</code>: a large number to prefer not creating energy from nowhere</li>
+<li><code>penalty_down</code>: a large number to prefer not creating energy from nowhere</li>
+</ul>
+<p>The heating systems tend to have some level of storage capability, so one could also add storage parameters to the node as well, but here they are not used.</p>
+<p>Then the <em>coal_chp</em> <code>unit</code> is made with a high <code>efficiency</code> parameter, since CHP units convert fuel energy to power and heat at high overall rates. In FlexTool, <code>efficiency</code> is a property of the unit - it demarcates at what rate the sum of inputs is converted to the sum of outputs. However, without any additional constraints, the <code>unit</code> is free to choose in what proportion to use inputs and in what proportion to use outputs. In units with only one input and output, this freedom does not exist, but in here, the <em>coal_chp</em> needs to be constrained as otherwise the unit could produce only electricity and no heat at 90% efficiency, which is not feasible. </p>
+<p>This CHP plant is an another example where the user defined <code>constraint</code> (see the last equation in the previous example) is used to achieve the desired behaviour. In a backpressure CHP, heat and power outputs are fixed - increase one of them, and you must also increase the other. In an extraction CHP plant the relation is more complicated - there is an allowed operating area between heat and power. Both can be represented in FlexTool, but here a backpressure example is given. An extraction plant would require two or more <em>greater_than</em> and/or <em>less_than</em> <code>constraints</code> to define an operating area: the extraction CHP of <a href="#how-to-model-cogeneration-with-desalination">How to model cogeneration with desalination</a> is built this way. The shipped <em>coal_chp_extraction</em> alternative takes another way: it turns <em>coal_chp_fix</em> off (<code>is_enabled</code> <em>no</em>) and shapes the operating area with <code>conversion_flow_coeff</code> and <code>capacity_max_coeff</code> on the outputs, as the next paragraph explains.</p>
+<p>For extraction CHP specifically, the <code>unit__inputNode</code> / <code>unit__outputNode</code> coefficients interact. <code>conversion_flow_coeff</code> multiplies into the edge's contribution in the conversion equation (<code>conversion_indirect</code>) — a higher coefficient means more input energy per unit of that edge's output, so a premium electricity output might use <code>conversion_flow_coeff = 2</code> while a byproduct heat output uses <code>0.2</code>. The unit capacity caps the sum of the outputs, and <code>capacity_max_coeff</code> on an output adds a per-output upper cap. With a minimum load (<code>min_load</code> plus a <code>startup_method</code>), the floor <code>electricity + heat &gt;= min_load × online capacity</code> applies once, to the sum of the outputs, so both the pure-condensing mode (heat = 0) and the pure-heat mode (electricity = 0) remain available while online with the default coefficients. Only if an output must carry part of the minimum load on its own, set <code>capacity_min_coeff</code> on that output (e.g. 1 on electricity: <code>electricity &gt;= min_load × online capacity</code>, which rules out the pure-heat mode). On the inputs, <code>input_share_max</code> limits the share of the full-load input a single input may supply (default 1: no effective limit) and <code>input_share_min</code> sets the smallest share of the current input an input must supply while the unit runs (default 0). Without the capacity-coefficient split, each output would be capped individually at <code>conversion_flow_coeff × capacity</code>, which prevents the model from using the full operating envelope.</p>
+<p>Electricity and heat outputs are fixed by adding a new <code>constraint</code> <em>coal_chp_fix</em> where the heat and power co-efficients are fixed. You need to create the two entities <code>unit__outputNode</code>, for <em>coal_chp--heat</em> and <em>coal_chp--west</em>. As can be seen in the bottom part of the figure below, the <code>constraint_flow_coeff</code> parameter for the <em>coal_chp--heat</em> and <em>coal_chp--west</em> is set as a map value where the <code>constraint</code> name matches with the <em>coal_chp_fix</em> <code>constraint</code> entity name. The values are set so that the constraint equation forces the heat output to be twice as large as the electricity output.</p>
+<p>Create constraint <em>coal_chp_fix</em>, add it to an alternative in the <code>Entity Alternative</code> sheet and add parameters:</p>
+<ul>
+<li><code>sense</code>: equal</li>
+<li><code>constant</code>: 0.0</li>
+</ul>
+<p>Create <code>unit_outputNode</code> (coal_chp|heat):</p>
+<ul>
+<li><code>constraint_flow_coeff</code> : <em>coal_chp_fix</em>, -0.5</li>
+</ul>
+<p>Create <code>unit_outputNode</code> (coal_chp|west):</p>
+<ul>
+<li><code>constraint_flow_coeff</code> : <em>coal_chp_fix</em>, 1</li>
+</ul>
+<p>Again, the negative value can be turned positive by arranging it to the right side of the equality, creating this:</p>
+<div class="highlight"><pre><span></span><code>1 x *electricity* = 0.5 x *heat*, which is true only if *heat* is 2 x *electricity*
+</code></pre></div>
+<p><img alt="Add CHP" src="../../img/tutorial/coal_chp.png" /></p>
+<h2 id="how-to-model-cogeneration-with-desalination">How to model cogeneration with desalination</h2>
+<p><strong>(examples.sqlite scenarios: desal_backpressure, desal_extraction, desal_ro_invest, desal_water_storage)</strong>
+<strong><em>init - west - coal - desal_system - (one desalination alternative)</em></strong></p>
+<p><strong>Water is one more node.</strong> A desalination plant turns heat or electricity into fresh water. In FlexTool the water is a <code>node</code> like any other, and its unit of measure is your choice. Here the node <em>water</em> is in m³: its flows are in m³/h, its demand in m³/h and its storage in m³. Set <code>unit_of_measure</code> <em>m3</em> on <em>water</em> (and, if you like, <em>MWh_th</em> on <em>desal_heat</em>) so that the results, plots and the AI assistant say m³/h, m³ and CUR/m³ instead of MW, MWh and CUR/MWh; FlexTool changes no number (see <a href="../../reference/entities_and_time/#units-of-measure">Units of measure</a>). A thermal desalination unit (for example multi-effect distillation, MED) takes heat from a CHP plant. A reverse-osmosis (RO) unit takes electricity. The four examples show a backpressure CHP, an extraction CHP, an RO investment and a water storage.</p>
+<p><strong>The example system.</strong> The alternatives <em>init</em>, <em>west</em> and <em>coal</em> are the tutorial's system: the 48-hour solve <em>y2020_2day_dispatch</em>, the node <em>west</em> and the 500 MW <em>coal_plant</em> fed from <em>coal_market</em>. Coal costs 20 CUR/MWh of fuel; at <code>efficiency</code> 0.4 that is 50 CUR/MWh of electricity. The alternative <em>desal_system</em> adds:</p>
+<table>
+<thead>
+<tr>
+<th>Alternative</th>
+<th>Entity</th>
+<th>Parameter</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><em>desal_system</em></td>
+<td><code>node</code> <em>west</em></td>
+<td><code>inflow</code></td>
+<td>−300 [MW]</td>
+</tr>
+<tr>
+<td><em>desal_system</em></td>
+<td><code>node</code> <em>desal_heat</em></td>
+<td><code>node_type</code>, <code>penalty_up</code>, <code>penalty_down</code></td>
+<td><em>balance</em>, 1000, 1000 [CUR/MWh]</td>
+</tr>
+<tr>
+<td><em>desal_system</em></td>
+<td><code>node</code> <em>water</em></td>
+<td><code>node_type</code>, <code>inflow</code></td>
+<td><em>balance</em>, −3000 [m³/h]</td>
+</tr>
+<tr>
+<td><em>desal_system</em></td>
+<td><code>node</code> <em>water</em></td>
+<td><code>penalty_up</code>, <code>penalty_down</code></td>
+<td>50, 50 [CUR/m³]</td>
+</tr>
+<tr>
+<td><em>desal_system</em></td>
+<td><code>unit</code> <em>bp_chp</em></td>
+<td><code>conversion_method</code>, <code>efficiency</code>, <code>existing</code></td>
+<td><em>constant_efficiency</em>, 0.85, 600 [MW]</td>
+</tr>
+<tr>
+<td><em>desal_system</em></td>
+<td><code>constraint</code> <em>bp_chp_ratio</em></td>
+<td><code>sense</code>, <code>constant</code></td>
+<td><em>equal</em>, 0</td>
+</tr>
+<tr>
+<td><em>desal_system</em></td>
+<td><code>unit__outputNode</code> (<em>bp_chp</em>, <em>west</em>)</td>
+<td><code>constraint_flow_coeff</code></td>
+<td>(<em>bp_chp_ratio</em> | 1)</td>
+</tr>
+<tr>
+<td><em>desal_system</em></td>
+<td><code>unit__outputNode</code> (<em>bp_chp</em>, <em>desal_heat</em>)</td>
+<td><code>constraint_flow_coeff</code></td>
+<td>(<em>bp_chp_ratio</em> | −0.5)</td>
+</tr>
+<tr>
+<td><em>desal_system</em></td>
+<td><code>unit</code> <em>med_desal</em></td>
+<td><code>conversion_method</code>, <code>efficiency</code>, <code>existing</code></td>
+<td><em>constant_efficiency</em>, 12 [m³/MWh], 3000 [m³/h]</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Entities.</strong> <em>desal_system</em> turns on the nodes <em>desal_heat</em> and <em>water</em> and the units <em>bp_chp</em> and <em>med_desal</em> (Entity Alternative). <em>bp_chp</em> has a <code>unit__inputNode</code> (<em>bp_chp</em>, <em>coal_market</em>) and two <code>unit__outputNode</code> entities, (<em>bp_chp</em>, <em>west</em>) and (<em>bp_chp</em>, <em>desal_heat</em>). <em>med_desal</em> has a <code>unit__inputNode</code> (<em>med_desal</em>, <em>desal_heat</em>) and a <code>unit__outputNode</code> (<em>med_desal</em>, <em>water</em>).</p>
+<p><strong>The results.</strong> The results per hour are the same in all 48 hours. The objective is the cost per hour × 8760 / 10⁶ (the 48 hours scaled to a year).</p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Water [m³/h]</th>
+<th>CHP [MW]</th>
+<th><em>coal_plant</em> [MW]</th>
+<th>Cost per hour [CUR]</th>
+<th>Objective [M CUR]</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><em>desal_backpressure</em></td>
+<td>MED 3000</td>
+<td><em>bp_chp</em>: heat 250, power 125, fuel 441.18</td>
+<td>175</td>
+<td>17 573.5</td>
+<td>153.944</td>
+</tr>
+<tr>
+<td><em>desal_extraction</em></td>
+<td>MED 3000</td>
+<td><em>ext_chp</em>: heat 250, power 300, fuel 750</td>
+<td>0</td>
+<td>15 000</td>
+<td>131.400</td>
+</tr>
+<tr>
+<td><em>desal_ro_invest</em></td>
+<td>MED 1000, RO 2000</td>
+<td><em>bp_chp</em>: heat 83.33, power 41.67</td>
+<td>266.33</td>
+<td>16 257.8 + the RO annuity</td>
+<td>147.233</td>
+</tr>
+<tr>
+<td><em>desal_water_storage</em></td>
+<td>MED 3000 (demand 2000 or 4000)</td>
+<td><em>bp_chp</em>: heat 250, power 125</td>
+<td>175</td>
+<td>17 573.5</td>
+<td>153.944</td>
+</tr>
+</tbody>
+</table>
+<h3 id="backpressure-chp-and-thermal-desalination">Backpressure CHP and thermal desalination</h3>
+<p><strong>(examples.sqlite scenario: desal_backpressure)</strong>
+<strong><em>init - west - coal - desal_system</em></strong></p>
+<p><strong>What it does.</strong> <em>med_desal</em> makes 12 m³ of water per MWh of heat, so 3000 m³/h needs 250 MW of heat. <em>bp_chp_ratio</em> is power − 0.5 × heat = 0, so heat = 2 × power, as in the <a href="#how-to-create-combined-heat-and-power-chp">CHP example</a>. The water demand therefore fixes the CHP: heat 250 MW, power 125 MW and fuel (125 + 250) / 0.85 = 441.18 MW. <em>coal_plant</em> makes the other 175 MW. This is the demand-driven must-run of <a href="#option-5-demand-driven-running">option 5</a>: nothing forces <em>bp_chp</em> to run except the water demand.</p>
+<p><strong>The water slack price.</strong> The <code>penalty_up</code> of <em>water</em> (50 CUR/m³) must be above the cost of the dearest real way to make a cubic metre, including the cost of the power the CHP is forced to make with it. Otherwise the model leaves water demand unserved instead. In a winter with low electricity demand, the power made with the water can exceed the demand; the model then weighs dumping that power at the <code>penalty_down</code> of <em>west</em> against unserved water. Check that <code>node_slack_up</code> of <em>water</em> is 0, and give the system flexibility through RO, water storage or heat storage rather than a low penalty.</p>
+<p><strong>Own electricity use.</strong> A real MED or MSF plant also draws about 1.5–4 kWh of electricity per m³ for its pumps; the example leaves this out. To include it, give <em>med_desal</em> a second <code>unit__inputNode</code> (<em>med_desal</em>, <em>west</em>) with <code>conversion_flow_coeff</code> 0, so it stays out of the conversion. Then tie it to the water output with an <em>equal</em> user constraint: electricity input − 0.0025 × water output = 0 for 2.5 kWh/m³.</p>
+<p><strong>One equality.</strong> A backpressure plant has one degree of freedom: the ratio fixes power and heat together. One <em>equal</em> user constraint is enough.</p>
+<p><strong>Efficiency above 1.</strong> <code>efficiency</code> is output / input in the units of the nodes, here m³ per MWh. A value above 1 is fine. The unit's capacity is on its output side, so <code>existing</code> 3000 is in m³/h. At full load its input capacity factor (<code>unit_cf__inputNode</code>) is therefore 1/<code>efficiency</code>.</p>
+<p><strong>Very large ratios.</strong> With a very large ratio the input coefficients can fall below the <code>model</code> parameter <code>small_number_threshold</code> and become 0, so the unit would make water for free; see <code>efficiency</code> in <a href="../../reference/units/#main-data-items-for-units">units</a>. Rescale the unit of measure (for example 1000 m³) if that happens.</p>
+<h3 id="extraction-chp-an-operating-region">Extraction CHP: an operating region</h3>
+<p><strong>(examples.sqlite scenario: desal_extraction)</strong>
+<strong><em>init - west - coal - desal_system - desal_extraction</em></strong></p>
+<p><strong>The data.</strong> <em>desal_extraction</em> turns <em>bp_chp</em> off (its Entity Alternative is <em>false</em>) and turns on the unit <em>ext_chp</em>, with the same input and outputs as <em>bp_chp</em>:</p>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Parameter</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>unit</code> <em>ext_chp</em></td>
+<td><code>conversion_method</code>, <code>efficiency</code>, <code>existing</code></td>
+<td><em>constant_efficiency</em>, 0.45, 1000 [MW]</td>
+</tr>
+<tr>
+<td><code>unit__outputNode</code> (<em>ext_chp</em>, <em>west</em>)</td>
+<td><code>conversion_flow_coeff</code></td>
+<td>1</td>
+</tr>
+<tr>
+<td><code>unit__outputNode</code> (<em>ext_chp</em>, <em>desal_heat</em>)</td>
+<td><code>conversion_flow_coeff</code></td>
+<td>0.15</td>
+</tr>
+<tr>
+<td><code>constraint</code> <em>ext_chp_backpressure_line</em></td>
+<td><code>sense</code>, <code>constant</code></td>
+<td><em>greater_than</em>, 0</td>
+</tr>
+<tr>
+<td><code>constraint</code> <em>ext_chp_max_heat</em></td>
+<td><code>sense</code>, <code>constant</code></td>
+<td><em>less_than</em>, 0</td>
+</tr>
+<tr>
+<td><code>unit__outputNode</code> (<em>ext_chp</em>, <em>west</em>)</td>
+<td><code>constraint_flow_coeff</code></td>
+<td>(<em>ext_chp_backpressure_line</em> | 1)</td>
+</tr>
+<tr>
+<td><code>unit__outputNode</code> (<em>ext_chp</em>, <em>desal_heat</em>)</td>
+<td><code>constraint_flow_coeff</code></td>
+<td>(<em>ext_chp_backpressure_line</em> | −0.5), (<em>ext_chp_max_heat</em> | 1)</td>
+</tr>
+<tr>
+<td><code>unit</code> <em>ext_chp</em></td>
+<td><code>constraint_capacity_coeff</code></td>
+<td>(<em>ext_chp_max_heat</em> | −0.6)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>What it does.</strong> The conversion is 0.45 × fuel = power + 0.15 × heat: each MWh of heat costs 0.15 MWh of power (the power-loss ratio). The two constraints draw the operating region. <em>ext_chp_backpressure_line</em> is power − 0.5 × heat ≥ 0: the plant cannot make more heat than on its backpressure line. <em>ext_chp_max_heat</em> is heat − 0.6 × capacity ≤ 0: a flow term and a capacity term in one row, written for every time step. Inside the region the model chooses power and heat freely.</p>
+<p><strong>What the capacity caps.</strong> The unit's capacity (<code>existing</code> 1000) caps power + heat, the sum of the outputs (see <code>capacity_max_coeff</code> in <a href="../../reference/units/#main-data-items-for-units">units</a>), not the fuel. So the top edge of the region is power + heat ≤ 1000, not the iso-fuel line power + 0.15 × heat ≤ constant that is drawn for an extraction turbine. For an iso-fuel edge, add a <em>less_than</em> row with the flow coefficients power 1 and heat 0.15 and a <code>constraint_capacity_coeff</code> −c on the unit, with c the full-condensing power per unit of capacity. Size the capacity so that the sum cap does not cut that edge: power + heat is largest on the backpressure line, at 1.5 / 0.65 = 2.31 × the full-condensing power. A minimum condensing flow or a minimum power line is one more <em>greater_than</em> row of the same kind.</p>
+<p><strong>The results.</strong> Power from <em>ext_chp</em> costs 20 / 0.45 = 44.4 CUR/MWh, less than the 50 of <em>coal_plant</em>. So <em>ext_chp</em> makes all 300 MW of power and the 250 MW of heat, with fuel (300 + 0.15 × 250) / 0.45 = 750 MW. Power ≥ 0.5 × heat holds (300 ≥ 125) and the heat limit (600 MW) does not bind.</p>
+<p><strong>A constraint with nothing in it.</strong> <em>bp_chp_ratio</em> still exists here, but all its coefficients are on flows of <em>bp_chp</em>, which is off. Its row reads 0 = 0, so FlexTool leaves it out of the model and prints a warning that names it: in <em>desal_extraction</em> this warning is expected. To switch a constraint off on purpose, set its <code>is_enabled</code> to <em>no</em>, as the <em>coal_chp_extraction</em> alternative does.</p>
+<h3 id="reverse-osmosis-investment">Reverse osmosis investment</h3>
+<p><strong>(examples.sqlite scenario: desal_ro_invest)</strong>
+<strong><em>init - west - coal - desal_system - desal_ro_invest</em></strong></p>
+<p><strong>The data.</strong> <em>desal_ro_invest</em> turns on the unit <em>ro_desal</em>, with a <code>unit__inputNode</code> (<em>ro_desal</em>, <em>west</em>) and a <code>unit__outputNode</code> (<em>ro_desal</em>, <em>water</em>), and sets <code>invest_periods</code> [<em>p2020</em>] on the solve <em>y2020_2day_dispatch</em>:</p>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Parameter</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>unit</code> <em>ro_desal</em></td>
+<td><code>conversion_method</code>, <code>efficiency</code></td>
+<td><em>constant_efficiency</em>, 250 [m³/MWh]</td>
+</tr>
+<tr>
+<td><code>unit</code> <em>ro_desal</em></td>
+<td><code>invest_method</code>, <code>invest_max_total</code></td>
+<td><em>invest_total</em>, 2000 [m³/h]</td>
+</tr>
+<tr>
+<td><code>unit</code> <em>ro_desal</em></td>
+<td><code>invest_cost</code></td>
+<td>30 (= 30 000 CUR per m³/h)</td>
+</tr>
+<tr>
+<td><code>unit</code> <em>ro_desal</em></td>
+<td><code>lifetime</code>, <code>discount_rate</code></td>
+<td>20, 0.05</td>
+</tr>
+</tbody>
+</table>
+<p><strong>invest_cost is per kW of the unit's capacity unit.</strong> FlexTool reads every capacity as if it were in MW, and <code>invest_cost</code> is per kW, that is per 0.001 of the capacity unit (with <code>unit_of_measure</code> <em>m3</em> on <em>water</em> the results label it CUR/(0.001 m³/h) and the annuity CUR/(m³/h)). For a capacity in m³/h, enter the cost per m³/h divided by 1000: 30 000 CUR per m³/h is <code>invest_cost</code> 30. The same holds for <code>fixed_cost</code>. The capacities themselves are entered in m³/h unchanged: <code>existing</code>, <code>invest_max_total</code> and <code>invest_min_total</code> of 2000 m³/h are 2000, not 2. An <code>other_operational_cost</code> on a water flow is per m³ directly (it is per MWh of flow, no ÷ 1000).</p>
+<p><strong>MED or RO.</strong> A cubic metre from MED costs 1/12 MWh of heat. The heat costs 1.5/0.85 MWh of fuel at 20 CUR/MWh, but the CHP also makes 0.5/12 MWh of power that <em>coal_plant</em> would otherwise make at 50 CUR/MWh: 2.941 − 2.083 = 0.858 CUR/m³. A cubic metre from RO costs 0.004 MWh of power at 50 CUR/MWh = 0.2 CUR/m³. The saving, 0.658 CUR/m³ × 8760 h = 5 764 CUR per m³/h and year, is more than twice the annuity (30 000 × 0.0802 = 2 407 CUR per m³/h and year at 5 % over 20 years).</p>
+<p><strong>The results.</strong> <em>ro_desal</em> is invested to its 2000 m³/h limit and uses 8 MW of power. MED makes the other 1000 m³/h, with 83.33 MW of heat, so <em>bp_chp</em> makes 41.67 MW of power and <em>coal_plant</em> 300 + 8 − 41.67 = 266.33 MW. The operation costs 16 257.8 CUR/h (142.419 M CUR a year) and the RO annuity is 2000 × 30 000 × 0.0802 = 4.815 M CUR: 147.233 M CUR. The investment is in <code>unit_capacity__d</code> and in the <em>unit investment &amp; retirement</em> row of the costs.</p>
+<h3 id="water-storage">Water storage</h3>
+<p><strong>(examples.sqlite scenario: desal_water_storage)</strong>
+<strong><em>init - west - coal - desal_system - desal_water_storage</em></strong></p>
+<p><strong>The data.</strong> <em>desal_water_storage</em> makes <em>water</em> a storage and gives it a demand that changes during the day:</p>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Parameter</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>node</code> <em>water</em></td>
+<td><code>node_type</code>, <code>existing</code></td>
+<td><em>storage</em>, 15 000 [m³]</td>
+</tr>
+<tr>
+<td><code>node</code> <em>water</em></td>
+<td><code>storage_binding_method</code></td>
+<td><em>bind_within_timeblock</em></td>
+</tr>
+<tr>
+<td><code>node</code> <em>water</em></td>
+<td><code>storage_start_end_method</code>, <code>storage_state_start</code></td>
+<td><em>fix_start</em>, 0</td>
+</tr>
+<tr>
+<td><code>node</code> <em>water</em></td>
+<td><code>inflow</code></td>
+<td>a time series: in each day 12 h at −2000, then 12 h at −4000 [m³/h]</td>
+</tr>
+</tbody>
+</table>
+<p><strong>What it does.</strong> The mean demand is 3000 m³/h, the capacity of MED. Without the storage, MED could not cover the 4000 m³/h hours and the water slack would pay 50 CUR/m³. With it, MED runs flat at 3000 m³/h in every hour: the storage fills to 12 000 m³ in the 12 hours of low demand and empties in the 12 hours of high demand, twice. The cost is that of <em>desal_backpressure</em>. The case is tight by design (the MED capacity equals the mean demand), so the storage state is unique: see <code>node_state__dt</code>.</p>
+<p><strong>Storage in m³.</strong> A water storage is a storage node in the water's own unit. <code>existing</code> is in m³ here, and for a storage <code>invest_cost</code> enter the cost per m³ ÷ 1000 (as per kWh for an MWh storage), the same rule as for RO.</p>
+<h2 id="how-to-add-a-reserve">How to add a reserve</h2>
+<p><strong>(examples.sqlite: scenario network_coal_wind_reserve)</strong></p>
+<p>In FlexTool, reserves are defined for a group of nodes. If there is a need to have a reserve requirement for a single node, it needs its own group. Therefore, when creating a reserve, the first step is to add a new <code>group</code> (e.g. <em>electricity</em>) with all member nodes (e.g. <em>west</em>, <em>east</em> and <em>north</em>) using the <code>group__node</code> entity. Then, a new reserve categories can be added (e.g. <em>primary</em>) to the <code>reserve</code> entity. 
+Finally, make sure there are <em>up</em> and <em>down</em> entities in the `UpDown' entity. These are hard-coded names in FlexTool and need to be used when creating reserves.</p>
+<p>Next, the reserve requirement will be defined. An entity between the <code>reserve__upDown__group</code> class (e.g. <em>primary--up--electricity</em>) allows to define the reserve parameters <code>reserve_method</code>, <code>reservation</code> (i.e. the amount of reserve) and <code>penalty_reserve</code> (i.e. the penalty cost in case of lack of reserve). For example, a constant of 10 MW could be used. Even though the name of the <code>reserve_method</code> is <em>timeseries_only</em>, it can also accept a constant value - it's an exogenous reserve requirement whereas the other two reserve methods are endogenous. Dynamic reserve method calculates the reserve requirement from generation and loads according to user defined factors (<code>increase_reserve_ratio</code>). Largest failure method will force enough reserve to cope with a failure of the chosen unit and connection flows.</p>
+<p>Parameters from the <code>reserve__upDown__unit__node</code> class should be used to define how different units can contribute to different reserves. Note that the entities in this class need to be added to the <code>Entity Alternative</code> sheet. Parameter <code>max_share</code> says how large a share of the unit's capacity at that node (its built capacity: existing + invested − retired; at a node the unit consumes from, its full-load input there) can be held for this reserve category (e.g. <em>coal_plant</em> may be limited by ramp constraint to provide only 1% of its capacity to an upward primary reserve.) Meanwhile, parameter <code>reliability</code> affects what portion of the reserved capacity actually contributes to the reserve (e.g. <em>wind_plant</em> may contribute only 80% of its generation to reserve due to uncertainty).</p>
+<p>If the reserve is provided by a <strong>battery</strong> or other storage (a unit discharging from, or a connection/charger tied to, a storage node), set <code>reserve_duration</code> (hours) on the <code>reserve__upDown__group</code> entity so the storage actually holds enough energy to sustain the committed reserve power. For example, a 4-hour upward reserve from a battery uses <code>reserve_duration = 4</code>: the model then guarantees the battery's stored energy can back its reserve commitment for 4 hours (corrected by the round-trip efficiency). Without <code>reserve_duration</code> the reserve is instantaneous-power-only — the battery could commit reserve it has no energy to deliver. The coupling only applies to storage-backed providers; ordinary fuel-fed units are unaffected.</p>
+<p><img alt="Add a reserve" src="../../img/concept/reserves.png" /></p>
+<h2 id="how-to-add-a-minimum-load-start-up-and-ramp">How to add a minimum load, start-up and ramp</h2>
+<p><strong>(ramp_and_start_up.sqlite)</strong></p>
+<p>Some plants cannot vary their output freely, but have some cost and limits associated with it. In this example we will add the minimum load behaviour to a <em>coal_plant</em> <code>unit</code> and add the cost and limits for starting up and ramping the plant respectively.</p>
+<p>Minimum load requires that the unit must have an online variable in addition to flow variables and therefore a <code>startup_method</code> needs to be defined and an optional <code>startup_cost</code> can be given. The <code>startup_cost</code> is added to the total cost every time the unit is required to start-up. Here we use a value 1000 (Currency/MW started up).</p>
+<p>The options for the <code>startup_method</code> are <em>no_startup</em>, <em>linear</em> and <em>binary</em>. <em>binary</em> would require an integer variable so <em>linear</em> is chosen. However, this means that the unit can startup partially. The minimum online will still apply, but it is the minimum of the online capacity in any given moment (<em>sum of output flows</em> &gt;= <em>min_load</em> x <em>capacity</em> x <em>online</em>), where 0 &lt;= <em>online</em> &lt;= 1. The minimum load applies once per unit, to the sum of its outputs; a unit with several inputs can run on any mix of them.</p>
+<p>The units online in a time step are linked to the units online in the previous step along the timeline, in the same way as ramp limits: also from the last step of a period into a period whose time steps continue it on the same timeline, and into the first step of a forecast branch. A step without a previous step — the first step of a solve, the first step of a period that does not continue the previous one (e.g. a period that reuses the same timeset), the first step after a gap in the timeline and the first step of a representative period — is linked to the last step of its own stretch of the timeline (the steps up to the next gap or the end of the period): the commitment cycles within that stretch and never across a gap, a representative-period start or into another period. So a stretch that ends offline starts up (and pays <code>startup_cost</code>) at its first step when it needs the unit there. Only the start of a stretch wraps: the step before a gap has no next step, so no pre-shutdown output limit applies there. In a rolling solve the units online that the previous roll realized are carried to the steps of the next roll that continue its last realized step on the timeline (also when the next solve has longer time steps: it continues the finer step that ends where its previous step ends); a roll that starts after a gap, at a new year that reuses the timeset or at a representative-period start takes no carry and cycles within its stretch.</p>
+<p>The online variable also allows to change the efficiency of the plant between the minimum and full loads. A unit with a part-load efficiency will obey the following equation:</p>
+<div class="highlight"><pre><span></span><code>  + sum_i[ input(i) * input_coefficient(i) ]
+  =
+  + sum_o[ output(o) * output_coefficient(o) ] * slope
+  + online * section
+
+where   slope = 1 / efficiency - section
+  and section = 1 / efficiency 
+                - ( 1 / efficiency - min_load / efficiency_at_min_load) / ( 1 - min_load )
+</code></pre></div>
+<p>By default, <code>input_coefficient</code> and <code>output_coefficient</code> are 1, but if there is a need to tweak their relative contributions, these coefficients allow to do so (e.g. a coal plant might have lower efficiency when using lignite than when using brown coal).</p>
+<p>The input is required at different ouput levels is shown in the figure below, when Capacity = 100, Efficiency = 0.8, Minimum load = 0.6 and Efficiency at minimum load = 0.5.</p>
+<p><img alt="Min load figure" src="../../img/tutorial/minimum_load.png" /></p>
+<p>Next we will add ramp limits. With the ramping limits, the user can force the change of a flow from a unit to be below a certain value each timestep. The ramping is an attribute of the flow. Therefore it does not require the minimum load behaviour and its parameters are added to the <code>unit_outputNode</code> entity:</p>
+<ul>
+<li><code>ramp_method</code>: ramp_limit, ramp_cost or both. <code>ramp_limit</code> uses the speeds below, <code>ramp_cost</code> the cost below, <code>both</code> uses both.</li>
+<li><code>ramp_speed_up</code>: Limit on how fast the plant can ramp up. (fraction of unit / min) ie. Value 0.01 allows the change of 60% of capacity per hour; with 2-hour time steps, 120% (i.e. no limit). The change between two time steps of different length uses their average length.</li>
+<li><code>ramp_speed_down</code>: Limit on how fast the plant can ramp down. (fraction of unit / min) ie. Value 0.01 allows the change of 60% of capacity per hour.</li>
+</ul>
+<p>The first time step of a solve, the first step after a gap in the timeline and the first step of a representative period have no ramp limit (there is no previous step to ramp from). A rolling window ramps from the flow of the previous window where it continues the previous window's last realized step on the timeline; a solve with longer time steps continues the finer step that ends where its own previous step ends (by position in time). Unlike the online status, the ramp has no cyclic link from the first step of a stretch to its last step.</p>
+<ul>
+<li><code>ramp_cost</code>: The cost of changing the flow [CUR/MW]: every MW of change from the previous time step costs this much, up and down alike, whatever the length of the steps (a change is an event, like a start-up). It uses the same previous step as the ramp limit above, so there is no cost at the first step of a solve, after a gap or at the start of a representative period, and a rolling window is charged once for the change from the previous window's realized flow. A start-up from zero pays both the startup cost and the ramp cost. The cost is reported in the cost category <em>ramps</em>. With a ramp cost, the price at a node where a ramp-costed unit sets the price and its flow does not change is not unique: it can lie up to 2 × <code>ramp_cost</code> / step duration [CUR/MWh] above or below that unit's marginal cost.</li>
+</ul>
+<p><img alt="Add min_load" src="../../img/tutorial/coal_min_load.png" /></p>
+<h2 id="how-to-give-a-unit-a-start-up-fuel-or-start-up-heat">How to give a unit a start-up fuel or start-up heat</h2>
+<p>A start-up can use energy that the running unit does not: a coal unit is started on oil, a gas turbine burns gas to warm up, a CSP turbine takes steam from its tank before it delivers power. The input arc of the unit (<code>unit__inputNode</code>) says what it supplies, with <code>startup_input_method</code>:</p>
+<ul>
+<li><em>just_input</em> (default) - the normal input flow;</li>
+<li><em>startup_and_input</em> - the normal input flow, and each start-up also takes <code>startup_energy</code> × MW started from the node;</li>
+<li><em>startup_only</em> - only the start-up energy: the arc has no flow, and it takes no part in the unit's conversion, capacity, input shares or ramps.</li>
+</ul>
+<p><code>startup_energy</code> is in MWh per MW started (constant or period). The unit needs online variables: <code>startup_method</code> <em>linear</em> or <em>binary</em> (or a <code>minimum_time_method</code>). With <em>linear</em> start-ups a start-up of 0.6 units of a 100 MW unit is 60 MW started; the model stays an LP.</p>
+<p><strong>Coal started on oil.</strong> A coal unit <em>coal_plant</em> with its fuel input (<em>coal_plant</em>, <em>coal_market</em>) gets a second input arc (<em>coal_plant</em>, <em>oil_market</em>) with <code>startup_input_method</code> <em>startup_only</em> and <code>startup_energy</code> 2. A start-up of 60 MW then takes 120 MWh of oil from <em>oil_market</em> in the step it starts in, priced as the oil commodity and with the oil's <code>co2_content</code>. The oil arc is not a flow, so the unit stays a one-input, one-output unit (no extra flow variable, no conversion row), and the oil cannot be used to run the unit.</p>
+<p><strong>CSP turbine started on tank heat.</strong> A turbine whose start-up heat comes from the tank uses its normal input: on (<em>csp_turbine</em>, <em>csp_heat</em>) set <code>startup_input_method</code> <em>startup_and_input</em> and <code>startup_energy</code> (for example 0.5 MWh_th per MW_e started). A start-up of 20 MW takes 10 MWh_th from the tank on top of the heat the turbine converts.</p>
+<p><strong>Results.</strong> <code>unit_startup_energy__dt</code> [MWh in the step] and <code>unit_startup_energy__d</code> [MWh/a] show the start-up input per unit and node. The unit's input from the node (<code>unit__inputNode__dt</code> / <code>__d</code>), the commodity costs, the CO2 emissions and costs and the node balance include it.</p>
+<p><strong>Caveats.</strong> The start-up input is not part of user constraints (<code>constraint_flow_coeff</code>), flow groups or the capacity margin. A solve whose <code>reduce_unit_detail_method</code> leaves out the online variables (<em>online</em>, <em>online_ramps</em>) also leaves out the start-up input, as it leaves out the start-up cost: an investment solve at that level under-counts both. See the <code>startup_input_method</code> / <code>startup_energy</code> entries in <a href="../../reference/units/#properties-of-unit-inputnode-and-unit-outputnode-entities">Units</a>.</p>
+<h2 id="how-to-add-minimum-uptime-and-downtime">How to add minimum uptime and downtime</h2>
+<p>Some power plants cannot be started and stopped freely due to thermal stress, safety requirements, or operational constraints. Minimum uptime forces a unit to stay online for a specified duration after starting up. Minimum downtime forces a unit to stay offline for a specified duration after shutting down.</p>
+<p>To add minimum uptime and/or downtime constraints to a <code>unit</code>:</p>
+<ol>
+<li>
+<p>Set the <code>minimum_time_method</code> parameter on the unit:</p>
+<ul>
+<li><em>min_uptime</em> - only enforce minimum uptime</li>
+<li><em>min_downtime</em> - only enforce minimum downtime</li>
+<li><em>both</em> - enforce both constraints</li>
+<li><em>none</em> - no minimum time constraints (default)</li>
+</ul>
+</li>
+<li>
+<p>Set the duration parameters (in hours):</p>
+<ul>
+<li><code>min_uptime</code> - e.g. 8 for an 8-hour minimum online time</li>
+<li><code>min_downtime</code> - e.g. 4 for a 4-hour minimum offline time</li>
+</ul>
+</li>
+</ol>
+<p>Setting <code>minimum_time_method</code> to anything other than <em>none</em> will automatically activate online variables for the unit (at least linear startup), even if <code>startup_method</code> is not explicitly defined. This means you do not need to separately set <code>startup_method</code> to <em>linear</em> or <em>binary</em>, although you can if you also want startup costs or binary commitment.</p>
+<p>The minimum time constraints work with variable timestep durations. The constraint checks that the cumulative duration of consecutive online (or offline) timesteps meets the minimum requirement, rather than simply counting timesteps.</p>
+<p>The look-back follows the timeline in the same way as ramp limits: it continues into a period whose time steps continue the previous period's on the same timeline and into the steps before a forecast branch starts, and stops at a gap in the timeline (the minimum time restarts after the gap), at the start of a representative period, at a period that reuses the same timeset as the previous one and at the first step of a solve. In rolling window solves, the start-ups and shut-downs that the previous roll realized count for the time steps of the next roll that continue its last realized step on the timeline, in the same way as the ramp continues: the same period, a period that continues it and every forecast branch that starts there (not a period that reuses the same timeset, a step after a gap or a representative-period start). So the solve horizon overlap does not need to cover the minimum times. A solve with longer time steps (for example a 6-hour storage roll after an hourly dispatch) continues the realized hourly step that ends where its own previous step ends, by position in time. A warning is printed only when a solve continues the timeline of an earlier solve but its first step neither follows nor ends at the earlier solve's last realized step (a hole or an overlap between the two), since no realized on-line history reaches it then.</p>
+<p>If the unit also has ramp limits (<code>ramp_method</code> with <code>ramp_speed_up</code>, <code>ramp_speed_down</code>), the model additionally tightens the maximum output in the startup and pre-shutdown timesteps based on how fast the unit can ramp within one timestep. A unit that starts in a timestep reaches on average at most <code>min_load + ½ × ramp_speed_up × 60 × timestep duration</code> of the started capacity in that step (it synchronises at minimum load and then ramps up: half a step's ramp on average), and in the step before it shuts down at most <code>min_load + ½ × ramp_speed_down × 60 × timestep duration</code> (both capped at full output and by <code>availability</code>). A unit online for a single step gets the smaller of the two. On an input with a ramp limit of a unit with several inputs or outputs, the limit is on the input it draws (at minimum load it needs the input of its minimum-load output). Without ramp limits, the unit can reach full output immediately after starting.</p>
+<p>Startups and shutdowns count exactly the units coming online and going offline. A unit with online variables ramps on its online capacity: the units online in both steps change by at most the ramp; a unit starting in a step reaches at most the startup-step output above, and a unit shutting down drops from at least its minimum load (and, in the step before, at most the pre-shutdown output). Starting and stopping units in the same step therefore gives no extra ramp room on a unit's output. On an input, or on one output of a unit with several outputs, a start/stop pair can still gain up to the minimum-load share of that flow, which the startup cost pays for.</p>
+<h2 id="how-to-make-a-unit-run-all-the-time-must-run">How to make a unit run all the time (must-run)</h2>
+<p><strong>(examples.sqlite scenarios: must_run_none, must_run_profile, must_run_constraint_one, must_run_fleet_output_floor, must_run_flowgroup, must_run_heat_demand, must_run_fleet_two_online, must_run_min_load_only)</strong>
+<strong><em>init - west - coal - wind - must_run_system - (one must-run alternative)</em></strong></p>
+<p><strong>No single switch.</strong> FlexTool has no must-run parameter. A unit runs when the optimisation wants it to, so a must-run is a floor that you put on its flow or on its units online. The table lists the ways to do it. The examples are the same small system with a different floor each.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Where it is set</th>
+<th>LP or MIP</th>
+<th>What it forces</th>
+<th>When to use it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1. Profile lower limit</td>
+<td><code>unit__node__profile</code>, <code>profile_method</code> <em>lower_limit</em></td>
+<td>LP</td>
+<td>flow ≥ profile × availability × capacity</td>
+<td>A share of the capacity that follows investments or changes in time</td>
+</tr>
+<tr>
+<td>2. User constraint on one flow</td>
+<td><code>constraint</code> + <code>constraint_flow_coeff</code> on <code>unit__outputNode</code></td>
+<td>LP</td>
+<td>flow ≥ <code>constant</code> [MW]</td>
+<td>A fixed MW floor on one unit, constant or per period</td>
+</tr>
+<tr>
+<td>3. User constraint on a fleet's output</td>
+<td>the same, with a coefficient on each unit</td>
+<td>LP</td>
+<td>sum of the flows ≥ <code>constant</code> [MW]</td>
+<td>A floor on a group of units; the model picks the cheapest ones</td>
+</tr>
+<tr>
+<td>4. flowGroup minimum flow</td>
+<td><code>flowGroup</code> + <code>flowGroup__unit__node</code>, <code>min_instant_flow</code></td>
+<td>LP</td>
+<td>sum of the member flows ≥ <code>min_instant_flow</code> [MW]</td>
+<td>As option 3, also with a floor that changes in time</td>
+</tr>
+<tr>
+<td>5. Demand-driven</td>
+<td>the unit's other output has a demand (heat, steam, water)</td>
+<td>LP</td>
+<td>nothing directly: the unit runs because its other product is needed</td>
+<td>CHP and other plants that run for a heat or process demand</td>
+</tr>
+<tr>
+<td>6. User constraint on the units online</td>
+<td><code>constraint</code> + <code>constraint_online_coeff</code> on <code>unit</code></td>
+<td>MIP with <em>binary</em> startup (LP with <em>linear</em>)</td>
+<td>at least N units online, each at least at <code>min_load</code></td>
+<td>A requirement for N machines on line, for example for system strength</td>
+</tr>
+</tbody>
+</table>
+<p><strong>The example system.</strong> The alternatives <em>init</em>, <em>west</em>, <em>coal</em> and <em>wind</em> are the tutorial's system: the 48-hour solve <em>y2020_2day_dispatch</em>, the node <em>west</em>, the 500 MW <em>coal_plant</em> fed from <em>coal_market</em> and the 1000 MW <em>wind_plant</em>. Coal costs 20 CUR/MWh of fuel at <code>efficiency</code> 0.4, i.e. 50 CUR/MWh of electricity. The other alternatives add:</p>
+<table>
+<thead>
+<tr>
+<th>Alternative</th>
+<th>Entity</th>
+<th>Parameter</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><em>must_run_system</em></td>
+<td><code>node</code> <em>west</em></td>
+<td><code>inflow</code></td>
+<td>−300 [MW]</td>
+</tr>
+<tr>
+<td><em>must_run_system</em></td>
+<td><code>unit__outputNode</code> (<em>wind_plant</em>, <em>west</em>)</td>
+<td><code>other_operational_cost</code></td>
+<td>1 [CUR/MWh]</td>
+</tr>
+<tr>
+<td><em>must_run_fleet</em></td>
+<td><code>unit</code> <em>steam_1</em>, <em>steam_2</em>, <em>steam_3</em></td>
+<td>entity alternative</td>
+<td>on</td>
+</tr>
+<tr>
+<td><em>must_run_fleet</em></td>
+<td><code>unit</code> <em>steam_k</em></td>
+<td><code>conversion_method</code>, <code>efficiency</code>, <code>existing</code></td>
+<td><em>constant_efficiency</em>, 0.4, 100 [MW]</td>
+</tr>
+<tr>
+<td><em>must_run_fleet</em></td>
+<td><code>unit__outputNode</code> (<em>steam_k</em>, <em>west</em>)</td>
+<td><code>other_operational_cost</code></td>
+<td>0, 1 and 2 [CUR/MWh]</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Entities of the fleet.</strong> Each <em>steam_k</em> also needs a <code>unit__inputNode</code> (<em>steam_k</em>, <em>coal_market</em>) and a <code>unit__outputNode</code> (<em>steam_k</em>, <em>west</em>). The <code>other_operational_cost</code> is on the output flow, not on the unit. The costs of 0, 1 and 2 CUR/MWh make the model always prefer the units in that order.</p>
+<p><strong>The results.</strong> Wind can cover the demand in every hour, so without a floor no coal runs. The results per hour are the same in all 48 hours:</p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Dispatch [MW]</th>
+<th>Cost per hour [CUR]</th>
+<th>Objective [M CUR]</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><em>must_run_none</em></td>
+<td>wind 300</td>
+<td>300</td>
+<td>2.628</td>
+</tr>
+<tr>
+<td><em>must_run_profile</em></td>
+<td>baseload_plant 200, wind 100</td>
+<td>10 100</td>
+<td>88.476</td>
+</tr>
+<tr>
+<td><em>must_run_constraint_one</em></td>
+<td>coal_plant 150, wind 150</td>
+<td>7 650</td>
+<td>67.014</td>
+</tr>
+<tr>
+<td><em>must_run_fleet_output_floor</em></td>
+<td>steam_1 100, wind 200</td>
+<td>5 200</td>
+<td>45.552</td>
+</tr>
+<tr>
+<td><em>must_run_flowgroup</em></td>
+<td>steam_1 100, wind 200</td>
+<td>5 200</td>
+<td>45.552</td>
+</tr>
+<tr>
+<td><em>must_run_heat_demand</em></td>
+<td>coal_chp 150 (and 300 heat), wind 150</td>
+<td>10 150</td>
+<td>88.914</td>
+</tr>
+<tr>
+<td><em>must_run_fleet_two_online</em></td>
+<td>steam_1 50, steam_2 50, wind 200</td>
+<td>5 250</td>
+<td>45.990</td>
+</tr>
+<tr>
+<td><em>must_run_min_load_only</em></td>
+<td>wind 300</td>
+<td>300</td>
+<td>2.628</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Floors are hard.</strong> None of these floors has a slack of its own. If a floor forces more output than the node can use, the extra energy goes to the node's downward slack, which costs <code>penalty_down</code> (with <code>penalty_method</code> <em>off</em> on the node, the model is infeasible instead). If the unit's capacity or another floor cannot meet a floor, the model is infeasible.</p>
+<p><strong>Set the sense.</strong> Without <code>sense</code>, a constraint is <em>equal</em>: always set <em>greater_than</em> for a floor.</p>
+<h3 id="option-1-profile-lower-limit">Option 1: profile lower limit</h3>
+<p><strong>(examples.sqlite scenario: must_run_profile)</strong>
+<strong><em>init - west - coal - wind - must_run_system - must_run_profile</em></strong></p>
+<p><strong>The data.</strong> Create a <code>profile</code> (here <em>must_run_share</em>) with <code>profile</code> 0.4 and connect it to the flow with a <code>unit__node__profile</code> entity (<em>baseload_plant</em>, <em>west</em>, <em>must_run_share</em>) with <code>profile_method</code> <em>lower_limit</em>. <em>baseload_plant</em> is a coal unit like <em>coal_plant</em>: <code>unit__inputNode</code> (<em>baseload_plant</em>, <em>coal_market</em>), <code>unit__outputNode</code> (<em>baseload_plant</em>, <em>west</em>), <code>conversion_method</code> <em>constant_efficiency</em>, <code>efficiency</code> 0.4 and <code>existing</code> 500 [MW]. The alternative <em>must_run_profile</em> holds all of these values and turns <em>baseload_plant</em> on.</p>
+<p><strong>What it does.</strong> In every time step the flow is at least profile × <code>availability</code> × capacity, here 0.4 × 500 = 200 MW. The capacity includes invested capacity, so the floor grows with investments. The <code>profile</code> can be a constant, a period, a time series or both (see <a href="../../reference/units/#units-constrained-by-profiles">units constrained by profiles</a>), so the floor can change from hour to hour.</p>
+<div class="admonition tip">
+<p class="admonition-title">Give the profile a value</p>
+<p>A <code>unit__node__profile</code> entity whose <code>profile</code> has no value in the scenario would hold the flow at 0: <code>profile_method</code> defaults to <em>upper_limit</em>, and a missing profile value is 0. FlexTool stops with an error that names the link. Entities are the same in every scenario, so fix it with one of these:</p>
+<ul>
+<li>give the <code>profile</code> a value in an alternative that every scenario uses;</li>
+<li>set <code>profile_method</code> <em>lower_limit</em> in such an alternative (a missing value is then a floor of 0, which does nothing);</li>
+<li>put the profile on a unit that is on only where the profile is used, as the example does with <em>baseload_plant</em>.</li>
+</ul>
+</div>
+<h3 id="option-2-user-constraint-on-one-flow">Option 2: user constraint on one flow</h3>
+<p><strong>(examples.sqlite scenario: must_run_constraint_one)</strong>
+<strong><em>init - west - coal - wind - must_run_system - must_run_constraint_one</em></strong></p>
+<p><strong>The data.</strong> Create a <code>constraint</code> <em>coal_plant_floor</em> with <code>sense</code> <em>greater_than</em> and <code>constant</code> 150. On <code>unit__outputNode</code> (<em>coal_plant</em>, <em>west</em>) set <code>constraint_flow_coeff</code> to the map (<em>coal_plant_floor</em> | 1).</p>
+<p><strong>What it does.</strong> In every time step, the flow from <em>coal_plant</em> to <em>west</em> is at least 150 MW. The <code>constant</code> is in MW (the unit of the flow times its coefficient). It can be a constant or a period map, not a time series. The floor does not follow investments; use a <code>constraint_capacity_coeff</code> term on the unit (see <a href="../../reference/user_constraints/">user constraints</a>) if it should.</p>
+<h3 id="option-3-user-constraint-on-a-fleets-output">Option 3: user constraint on a fleet's output</h3>
+<p><strong>(examples.sqlite scenario: must_run_fleet_output_floor)</strong>
+<strong><em>init - west - coal - wind - must_run_system - must_run_fleet - must_run_fleet_output_floor</em></strong></p>
+<p><strong>The data.</strong> Create a <code>constraint</code> <em>steam_fleet_output_floor</em> with <code>sense</code> <em>greater_than</em> and <code>constant</code> 100, and set <code>constraint_flow_coeff</code> (<em>steam_fleet_output_floor</em> | 1) on the output flow of each of <em>steam_1</em>, <em>steam_2</em> and <em>steam_3</em>.</p>
+<p><strong>What it does.</strong> The sum of the three flows is at least 100 MW in every time step. The model chooses how to share it: here <em>steam_1</em>, the cheapest, runs at 100 MW and the other two stay off. Use this when the requirement is on the fleet, not on each unit.</p>
+<h3 id="option-4-flowgroup-minimum-flow">Option 4: flowGroup minimum flow</h3>
+<p><strong>(examples.sqlite scenario: must_run_flowgroup)</strong>
+<strong><em>init - west - coal - wind - must_run_system - must_run_fleet - must_run_flowgroup</em></strong></p>
+<p><strong>The data.</strong> Create a <code>flowGroup</code> <em>steam_fleet</em>, add the flows with <code>flowGroup__unit__node</code> entities (<em>steam_fleet</em>, <em>steam_k</em>, <em>west</em>) and set <code>min_instant_flow</code> to 100.</p>
+<p><strong>What it does.</strong> The same as option 3: the sum of the member flows is at least 100 MW (output flows count positive, input flows negative). <code>min_instant_flow</code> can also be a time series or a period+time map, so the floor can change in time (see <a href="../../reference/flow_groups/#cumulative-and-instant-flow-limits">flow groups</a>). A user constraint is the better choice when the flows need different weights.</p>
+<h3 id="option-5-demand-driven-running">Option 5: demand-driven running</h3>
+<p><strong>(examples.sqlite scenario: must_run_heat_demand)</strong>
+<strong><em>init - west - coal - wind - must_run_system - coal_chp - heat</em></strong></p>
+<p><strong>The data.</strong> The alternatives <em>coal_chp</em> and <em>heat</em> of the <a href="#how-to-create-combined-heat-and-power-chp">CHP example</a> add a node <em>heat</em> with <code>inflow</code> −300 [MW] and the unit <em>coal_chp</em>, with input <em>coal_market</em>, outputs <em>west</em> and <em>heat</em> and <code>efficiency</code> 0.9. The constraint <em>coal_chp_fix</em> (<code>sense</code> <em>equal</em>) has the coefficient 1 on the <em>west</em> output and −0.5 on the <em>heat</em> output.</p>
+<p><strong>What it does.</strong> Many plants that run all the time do so because their other product is needed. Here <em>coal_chp</em> must make 300 MW of heat for the <em>heat</em> node, and <em>coal_chp_fix</em> ties its electricity to half of the heat. So it makes 150 MW of electricity in every hour, although wind could cover the whole electricity demand. Model the demand that makes the plant run instead of forcing its output, when you know that demand. The heat demand, not an artificial floor, is then what makes the plant run, and the heat node's price shows what it costs. A water demand works the same way: see <a href="#how-to-model-cogeneration-with-desalination">How to model cogeneration with desalination</a>.</p>
+<h3 id="option-6-user-constraint-on-the-units-online">Option 6: user constraint on the units online</h3>
+<p><strong>(examples.sqlite scenario: must_run_fleet_two_online)</strong>
+<strong><em>init - west - coal - wind - must_run_system - must_run_fleet - must_run_fleet_two_online</em></strong></p>
+<p><strong>The data.</strong> On each of <em>steam_1</em>, <em>steam_2</em> and <em>steam_3</em> set <code>startup_method</code> <em>binary</em>, <code>min_load</code> 0.5 and <code>constraint_online_coeff</code> (<em>steam_fleet_two_online</em> | 1). Create a <code>constraint</code> <em>steam_fleet_two_online</em> with <code>sense</code> <em>greater_than</em> and <code>constant</code> 2. The example also sets <code>solver_mip_gap</code> 0 on the solve, so the solver proves the best integer solution.</p>
+<p><strong>What it does.</strong> In every time step at least two of the three units are online, and each online unit makes at least its minimum load: <em>steam_1</em> and <em>steam_2</em> are online at 50 MW each. The count is in units of <code>virtual_unitsize</code>; without it, of the unit's existing capacity (here 100 MW, so each unit is one), else of 1000 MW. Set <code>virtual_unitsize</code> on a unit that is invested. A <code>constraint_online_coeff</code> on a unit without online variables is an error. See the <a href="../../reference/user_constraints/#example-two-of-three-units-online">two of three units online</a> example.</p>
+<p><strong>Output floor or count.</strong> The output floor of option 3 and this count cost almost the same here (5 200 against 5 250 CUR/h), but they force different things. The floor asks for 100 MW from any units; the count asks for two machines on line, whatever their output. Use the count only when the requirement really is about machines (for example inertia or short-circuit power from several units); it needs integer online variables, which makes the solve slower.</p>
+<p><strong>Binary or linear.</strong> With <em>binary</em> startup the count is a whole number, so ≥ 1.5 needs two units online. With <em>linear</em> startup the count is continuous: ≥ 1.5 keeps 1.5 units' worth of capacity online (150 MW here), with the minimum load applying to that capacity, not two whole machines. Linear is an LP and solves fast; binary gives the exact count.</p>
+<p><strong>An exact count.</strong> To fix the number of units online, use the same data with <code>sense</code> <em>equal</em> and <code>constant</code> N. The <code>constant</code> can be a constant or a period map, not a time series. There is no parameter that fixes a unit's online status directly; only a stochastic realization solve fixes it internally.</p>
+<h3 id="min_load-is-not-a-must-run">min_load is not a must-run</h3>
+<p><strong>(examples.sqlite scenario: must_run_min_load_only)</strong>
+<strong><em>init - west - coal - wind - must_run_system - must_run_fleet - must_run_min_load_only</em></strong></p>
+<p><strong>What it does.</strong> The steam units have <code>startup_method</code> <em>binary</em> and <code>min_load</code> 0.5, but no floor. The minimum load applies only while a unit is online, and the model is free to keep it offline, so all three stay off and wind covers the demand (the same result as <em>must_run_none</em>). <code>min_load</code> limits how low an online unit can go; it does not make the unit run.</p>
+<h3 id="avoid-a-negative-cost-as-a-must-run-bonus">Avoid a negative cost as a must-run bonus</h3>
+<p><strong>Why not.</strong> A large negative <code>other_operational_cost</code> makes the unit run, but it pays the unit for every MWh it makes. The bonus is then in the node prices, the cost results and the objective, so none of them is the system's real cost.</p>
+<p><strong>Dumped energy.</strong> Once the bonus, less the unit's own costs, is larger than the node's <code>penalty_down</code>, the unit runs above the demand and the extra energy is dumped through the downward slack. Use one of the floors above instead: they force exactly the output you want and show it as a constraint.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      IRENA
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.indexes"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
+      
+        <script src="../../assets/mathjaxhelper.js"></script>
+      
+        <script src="../../assets/moved_doc_anchors.js"></script>
+      
+    
+  </body>
+</html>
