@@ -3,9 +3,10 @@
 Models built from JSON (``tests/fixtures/tests.json``; never a checked-in ``.sqlite``):
 
 * ``dispatch_fullYear_roll`` cut to the first 36 h of p2020, rolls of 12 h / 12 h (three rolls); ``coal_plant``
-  with a linear ``startup_method`` (no min load, no ramps); levels ``online`` and ``reserves``.  The fixture's
-  reserve groups ``primary`` and ``n_1`` (upward, group ``electricity``) have no requirement, but coal_plant holds
-  them, so both are left out.
+  with a linear ``startup_method`` (no min load, no ramps); levels ``online`` and ``reserves``.  coal_plant holds
+  the fixture's reserve groups ``primary`` and ``n_1`` (upward, group ``electricity``); the override gives both a
+  ``timeseries_only`` requirement of 10 MW, so both are left out.  (Without a method a group is ``no_reserve``: it
+  has no reserve variables at all, item 84, and the ``reserves`` level would find nothing to reduce.)
 * ``sys_full`` of ``test_reduce_system_detail``: unit ``g1`` (linear startup, min load 0.5, inertia constant 2)
   holds the upward and downward reserve ``rsv`` of group ``electricity``, which also has an inertia and a
   non-synchronous limit.
@@ -53,7 +54,10 @@ def test_info_line_once_per_solve_and_run_status_on_every_roll(tmp_path_factory,
         ["solve", ROLL, "rolling_solve_horizon", _f(12.0)], ["solve", ROLL, "rolling_solve_jump", _f(12.0)],
         ["solve", ROLL, "reduce_unit_detail_method", _s("online")],
         ["solve", ROLL, "reduce_system_detail_method", _s("reserves")],
-        ["unit", PLANT, "startup_method", _s("linear")]]
+        ["unit", PLANT, "startup_method", _s("linear")]] + [
+        ["reserve__upDown__group", [r, "up", "electricity"], param, value]
+        for r in ("primary", "n_1")
+        for param, value in (("reserve_method", _s("timeseries_only")), ("reservation", _f(10.0)))]
     url, scen = make_db(tmp_path_factory, alt="rdl_roll", values=vals,
                         base_chain=["init", "west", "coal", "fullYear", ROLL])
     rec = RunRecorder()
