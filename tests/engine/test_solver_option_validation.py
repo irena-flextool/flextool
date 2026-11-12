@@ -725,3 +725,34 @@ def test_highs_database_file_names_land_in_the_work_folder(
     precommand = [w for w in _warnings(caplog) if w.startswith("solver_precommand")]
     assert len(precommand) == 1 and f"solve {_E2E_SOLVE}" in precommand[0], precommand
     assert _solver_dispatch._warned_precommands == {_E2E_SOLVE}
+
+
+def test_a_leading_byte_order_mark_is_not_part_of_the_first_name() -> None:
+    """A Windows editor's UTF-8 BOM: the run and the shipped-file screen read the first name without it."""
+    from flextool._solver_option_rules import highs_opt_lines, native_opt_lines, screen_solver_option_file
+
+    assert native_opt_lines("﻿Threads 2\n") == [(1, "Threads", "2")]
+    assert highs_opt_lines("﻿threads = 2\n") == [(1, "threads", "2")]
+    assert [(o.name, o.value) for o in _resolve("gurobi", opt_text="﻿Threads 2\n")] == [("Threads", "2")]
+    assert screen_solver_option_file("gurobi", "﻿ComputeServer srv.example:61000\n")[0].startswith(
+        "line 1: ComputeServer srv.example:61000 connects the solver to another computer")
+
+
+def test_cplex_name_with_a_leading_set_is_refused_from_every_source() -> None:
+    """FlexTool writes ``set <name> <value>`` itself: ``set lo /tmp/x`` would reach CPLEX as ``set set lo ...``.
+    The name the user meant is judged (``lo`` abbreviates ``logfile``, a path option)."""
+    from flextool._solver_option_rules import screen_solver_option_file
+
+    assert is_path_option("cplex", "set lo") and is_path_option("cplex", "set.workdir")
+    assert not is_path_option("cplex", "set threads")
+    assert screen_solver_option_file("cplex", "set lo /tmp/x\n") == [
+        "line 1: set lo /tmp/x names a file or folder outside the solve's work folder"]
+    assert screen_solver_option_file("cplex", "set threads 2\n") == [
+        "line 1: set threads 2 starts with 'set', which FlexTool writes itself (the line would reach CPLEX as "
+        "'set set ...'); write the parameter name without it"]
+    assert screen_solver_option_file("gurobi", "settings 2\n") == []   # only CPLEX
+    with pytest.raises(FlexToolUserError, match="starts with 'set'"):
+        _resolve("cplex", opt_text="set threads 2\n")
+    with pytest.raises(FlexToolUserError, match="solver_arguments of solve invest: the name starts with 'set'"):
+        _resolve("cplex", options={"set threads": "2"})
+    assert [(o.name, o.value) for o in _resolve("cplex", opt_text="threads 2\n")] == [("threads", "2")]

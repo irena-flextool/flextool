@@ -141,10 +141,14 @@ class ExportDialog(tk.Toplevel):
         else:
             lines.append("Solver options: none (this project's runs use FlexTool's defaults; looked in "
                          + ", ".join(str(folder) for folder in self._fixed["solver_config_dirs"]) + ")")
+        withheld = [pp.withheld_file_line(name, path, problems)
+                    for name, (path, problems) in self._fixed["solver_config_withheld"].items()]
         lines.append("With each result run: its run record (_run_status.json), which can show this computer's "
                      "folder paths, user name and host name, and its run log (_run.log)")
         for line in lines:
             ttk.Label(fixed, text=line, foreground=GREY_FG, wraplength=wrap, justify="left").pack(anchor="w")
+        for line in withheld:
+            ttk.Label(fixed, text=line, foreground=WARNING_FG, wraplength=wrap, justify="left").pack(anchor="w")
         ttk.Checkbutton(
             fixed, text="Remove this computer's folder paths, user name and host name from the run records, and "
                         "leave the run logs out", variable=self._scrub_var).pack(anchor="w", pady=(4, 0))

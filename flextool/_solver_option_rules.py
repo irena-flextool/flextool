@@ -10,11 +10,20 @@ from __future__ import annotations
 
 import re
 
+#: The UTF-8 byte order mark as a character: some Windows editors write it at the start of a text file.
+_BOM = "\ufeff"
+
+
+def _without_bom(text: str) -> str:
+    """*text* without a leading byte order mark, which would otherwise become part of the first option's name."""
+    return text[1:] if text.startswith(_BOM) else text
+
 
 def highs_opt_lines(text: str) -> list[tuple[int, str, str]]:
-    """``(line number, key, value)`` of every option line of a ``highs.opt`` text, in file order."""
+    """``(line number, key, value)`` of every option line of a ``highs.opt`` text, in file order (a leading
+    UTF-8 byte order mark ignored)."""
     out: list[tuple[int, str, str]] = []
-    for lineno, line in enumerate(text.splitlines(), start=1):
+    for lineno, line in enumerate(_without_bom(text).splitlines(), start=1):
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
@@ -28,9 +37,10 @@ def highs_opt_lines(text: str) -> list[tuple[int, str, str]]:
 
 def native_opt_lines(text: str) -> list[tuple[int, str, str]]:
     """``(line number, name, value)`` of every parameter line of a native ``.opt`` text (Gurobi, CPLEX, Xpress,
-    COPT: ``name value``, the value the last word), in file order; blank lines and ``#`` comments skipped."""
+    COPT: ``name value``, the value the last word), in file order; blank lines and ``#`` comments skipped, a
+    leading UTF-8 byte order mark ignored."""
     out: list[tuple[int, str, str]] = []
-    for lineno, raw in enumerate(text.splitlines(), start=1):
+    for lineno, raw in enumerate(_without_bom(text).splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -102,6 +112,8 @@ _PATH_OPTIONS: dict[str, frozenset[str]] = {
     # (``Model.getParamInfo``); ``LogFile`` (the ``copt_cmd`` console's log setting) is listed in case.
     "copt": frozenset({"logfile"}),
 }
+#: CPLEX: the Interactive Optimizer command FlexTool puts before every ``cplex.opt`` line (``set <name> <value>``).
+_CPLEX_SET_WORD = "set"
 #: CPLEX: a name whose first word is one of these is a path option too (``read`` / ``write`` commands).
 _CPLEX_PATH_FIRST_WORDS = frozenset({"read", "write"})
 
@@ -148,12 +160,31 @@ def is_path_option(solver: str, name: object) -> bool:
     if solver != "cplex" or not key:
         return False
     words = key.split(" ")
+    if words[0] == _CPLEX_SET_WORD and len(words) > 1:
+        # ``set lo /tmp/x``: FlexTool writes ``set <name> <value>`` itself; judge the name the user meant.
+        words = words[1:]
+        key = " ".join(words)
+        if key in listed or any(word in key for word in _PATH_NAME_WORDS):
+            return True
     if words[0] in _CPLEX_PATH_FIRST_WORDS:
         return True
     return any(
         len(words) == len(full.split(" ")) and all(f.startswith(w) for w, f in zip(words, full.split(" ")))
         for full in listed
     )
+
+
+def cplex_set_word_problem(solver: str, name: object) -> str | None:
+    """Why a CPLEX option *name* that starts with the word ``set`` (``set lpmethod``, ``set lo``) cannot be used,
+    else ``None``.  FlexTool writes each option as ``set <name> <value>``, so the line would reach CPLEX as
+    ``set set ...``, which CPLEX refuses; no CPLEX parameter name starts with ``set``."""
+    if solver != "cplex":
+        return None
+    words = " ".join(str(name).replace(".", " ").split()).casefold().split(" ")
+    if words[0] != _CPLEX_SET_WORD:
+        return None
+    return ("starts with 'set', which FlexTool writes itself (the line would reach CPLEX as 'set set ...'); "
+            "write the parameter name without it")
 
 
 def is_server_option(solver: str, name: object) -> bool:
@@ -196,11 +227,14 @@ def screen_solver_option_file(solver: str, text: str) -> list[str]:
                             "licence service) or carries its credentials")
         elif value and is_path_option(solver, name) and not _is_number(value) and not is_plain_file_name(value):
             problems.append(f"line {lineno}: {shown} names a file or folder outside the solve's work folder")
+        elif (reason := cplex_set_word_problem(solver, name)) is not None:
+            problems.append(f"line {lineno}: {shown} {reason}")
     return problems
 
 
 __all__ = [
     "commercial_option_key",
+    "cplex_set_word_problem",
     "highs_opt_lines",
     "is_path_option",
     "is_plain_file_name",

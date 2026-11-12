@@ -160,3 +160,38 @@ def test_one_folder_is_never_split(tmp_path: Path) -> None:
     (odd / "highs.opt").write_text("threads=3\n")
     source = resolve_solver_config_source(explicit=str(odd), environ={}, cwd=tmp_path)
     assert read_solver_option_files(source).texts["highs"] == "threads=3\n"
+
+
+def test_projects_folder_name_case_is_ignored_where_the_system_ignores_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On Windows ``Projects\\P\\input_sources\\db.sqlite`` is a GUI project's database (the resolved path keeps
+    the case on disk).  Stand in for Windows' file-name comparison; on Linux and macOS names stay exact."""
+    from flextool import _solver_config_source as source_module
+
+    root = tmp_path / "ws"
+    (root / "solver_config").mkdir(parents=True)
+    (root / "solver_config" / "highs.opt").write_text("mip_rel_gap = 0.02\n")
+    project = root / "Projects" / "P"
+    (project / "Input_Sources").mkdir(parents=True)
+    (project / "solver_config").mkdir()
+    (project / "solver_config" / "gurobi.opt").write_text(_template("gurobi"))
+    (project / "solver_config" / "copt.opt").write_text("Threads 1\n")
+    db = project / "Input_Sources" / "db.sqlite"
+    db.write_bytes(b"")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    def terminal():
+        return resolve_solver_config_source(environ={}, input_db_url=f"sqlite:///{db}", cwd=elsewhere)
+
+    assert not source_module.is_project_solver_config(project / "solver_config")
+    assert terminal().layers == ()
+    monkeypatch.setattr(source_module, "_normcase", str.lower)
+    assert source_module.is_project_solver_config(project / "solver_config")
+    assert [(folder.resolve(), reason) for folder, reason in terminal().layers] == [
+        ((project / "solver_config").resolve(), "project of the input database"),
+        ((root / "solver_config").resolve(), "workspace of the input database")]
+    texts = _texts(terminal())
+    assert texts["highs"] == "mip_rel_gap = 0.02\n" and texts["copt"] == "Threads 1\n"
+    assert texts["gurobi"] == _DEFAULT   # the project's unedited template is skipped

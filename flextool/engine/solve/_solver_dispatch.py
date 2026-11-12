@@ -31,6 +31,7 @@ from flextool._solver_option_rules import _SERVER_OPTIONS as _SERVER_OPTIONS
 from flextool._solver_option_rules import _is_number
 from flextool._solver_option_rules import _option_key as _option_key
 from flextool._solver_option_rules import commercial_option_key as commercial_option_key
+from flextool._solver_option_rules import cplex_set_word_problem
 from flextool._solver_option_rules import highs_opt_lines as _highs_opt_lines
 from flextool._solver_option_rules import is_path_option as is_path_option
 from flextool._solver_option_rules import is_plain_file_name
@@ -147,6 +148,8 @@ def validate_solver_option(solver: str, name: object, value: object, where: str)
             problem = "the name does not start with a letter"
         else:
             problem = "the name's words are not separated by single spaces, each starting with a letter"
+    elif (set_word := cplex_set_word_problem(solver, name_text)) is not None:
+        problem = f"the name {set_word}"
     elif len(value_text) > _OPTION_VALUE_MAX:
         problem = f"the value is longer than {_OPTION_VALUE_MAX} characters"
     elif _OPTION_VALUE.fullmatch(value_text) is None:

@@ -207,6 +207,13 @@ in the project's or the workspace's `solver_config` (or a folder given with
 project package from someone else is checked by the same rules when it is
 imported: a file with such a parameter is kept as `<solver>.opt.review`, which
 no run reads, until you have checked it and renamed it to `<solver>.opt`.
+Exporting a project applies the same rules to the option files it would
+ship: a file with such a parameter is left out of the package, and the export
+names its lines (a server password or a folder of your computer should not be
+sent unseen). A CPLEX parameter name in `cplex.opt` is written without the
+leading `set` (FlexTool adds it), and a name that starts with `set` is refused
+from every source. A UTF-8 byte order mark at the start of an option file is
+ignored.
 The checks against extra commands (no line breaks, spaces, quotes, `;`, `#`,
 `=` or a backslash at the end) apply to every source.
 
@@ -335,7 +342,8 @@ workspace's `highs.opt`. Delete the project's file to use the workspace's
 again.
 
 A project's `solver_config/` never gives an unedited FlexTool template (of
-this or an earlier version): that file holds the default options anyway, and
+this or an earlier version): that file holds the options FlexTool shipped then
+rather than a choice made for the project, and
 the workspace's file of that solver is used instead (the header names the
 skipped file). Tiers 2 to 4 count only when one of their folders holds a
 `<solver>.opt`. They skip `solver_config/` in the current folder when every

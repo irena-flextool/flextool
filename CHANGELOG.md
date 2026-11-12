@@ -80,14 +80,11 @@ Each line says what changes for a model that ran before and what to do; the deta
   own `solver_config/`: its runs take each solver's option file from the project, else the workspace, else
   FlexTool's default. Check the `Solver config:` line of the run log, which names the folder of each file, and move
   your `.opt` files there.
-- **An imported project now runs with the solver options it was shipped with.** Import unpacks them into the
-  project's `solver_config/`, where its runs use them ahead of the workspace's (before: `imported_solver_config/`,
-  which no run read). A project imported by an earlier 4.4 development version has that folder renamed to
-  `solver_config/` the first time the FlexTool window opens it (a log line says so), so its results may change;
-  delete a file there to use the workspace's again.
 - **Other commercial-solver fixes that can change results:** CPLEX now gets `solver_mip_gap`; one value per solver
   parameter, whatever its case; Xpress refuses a MIP (it returned the LP relaxation); Gurobi file-writing parameters
-  are not passed on.
+  are not passed on. A CPLEX option name starting with `set` (FlexTool adds it) is refused with a message naming
+  it, from every source (CPLEX refused the `set set ...` line before); a UTF-8 byte order mark at the start of an
+  option file is ignored (before, it made the first option's name invalid).
 - **The memory-saving solve (`--save-memory`, or warm start off) could put values on the wrong variables**; results
   of such runs can change. FlexTool now needs polar-high 3.12.4 or newer (installed with FlexTool).
 - **Fixes that change results:** a user constraint without capacity terms got a right-hand side of 0 when another
@@ -360,7 +357,11 @@ Each line says what changes for a model that ran before and what to do; the deta
   results are not flagged as made from a changed input), suggests `<Name>_2` when the name is taken (exit code 3
   in the terminal), refuses a database newer than this FlexTool, migrates older ones on open (asking first for a
   frozen one), and unpacks the shipped solver options to the project's `solver_config/`, where its runs use them
-  ahead of the workspace's.
+  ahead of the workspace's (delete a file there to use the workspace's). Export leaves out an option file with a
+  line that names a file or folder by its path or connects the solver to another computer (a server, cloud or
+  licence service, or its password), and names those lines. A project imported by a 4.4 development build has its
+  shipped options in `imported_solver_config/`, which no run reads: the first time the FlexTool window opens it,
+  the files are checked as at import and the folder is renamed to `solver_config/` (a log line says so).
   The viewer's axis ranges file is cut to the shipped runs; run records have this computer's folder paths, user
   name and host name replaced and run logs stay home (on by default; `--keep-run-records` / untick to keep them);
   a run still being written is refused (`--results all` leaves it out); a `.sqlite` input that may be in the middle

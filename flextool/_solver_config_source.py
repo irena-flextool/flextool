@@ -27,9 +27,9 @@ the first tier that applies:
 
 Tiers 2-4 count only when one of their folders holds a ``<solver>.opt`` it would give.  A GUI project's folder
 (``<workspace>/projects/<P>/solver_config``, in any tier) never gives an unedited FlexTool template (this or an
-earlier shipped version, :func:`is_unedited_template`): that file is the default anyway, and taking it would hide
-the workspace's file of that solver (FlexTool 4.3 shipped every file of the workspace, templates too, in a project
-package).  The tiers skip ``<current folder>/solver_config`` when every ``.opt`` in it is an unedited template and
+earlier shipped version, :func:`is_unedited_template`): such a file holds the options FlexTool shipped then, not a
+choice made for the project, and taking it would hide the workspace's file of that solver (4.4 development
+builds shipped every file of the workspace, templates too, in a project package).  The tiers skip ``<current folder>/solver_config`` when every ``.opt`` in it is an unedited template and
 the current folder is not a FlexTool workspace: that is the copy FlexTool 4.3 and older left in the folder a run
 started from, not a choice of options.  The run then takes the next tier and warns, naming the skipped folder.  A
 FlexTool workspace (the folder ``ensure_runtime_files`` seeds: it holds ``templates/project_folder.txt``, written in
@@ -209,9 +209,19 @@ def _is_dir(folder: Path) -> bool:
         return False
 
 
+#: How this system compares file names: case-folded on Windows (``Projects\P`` is ``projects\P`` there), exact
+#: elsewhere.  A module name so that a test can stand in for Windows.
+_normcase = os.path.normcase
+
+
+def _same_name(name: str, expected: str) -> bool:
+    """Whether the folder name *name* is *expected* on this system (case-insensitively on Windows)."""
+    return _normcase(name) == _normcase(expected)
+
+
 def is_project_solver_config(folder: Path) -> bool:
     """Whether *folder* is a GUI project's ``solver_config`` (``<workspace>/projects/<P>/solver_config``)."""
-    return folder.name == SOLVER_CONFIG_FOLDER and folder.parent.parent.name == "projects"
+    return _same_name(folder.name, SOLVER_CONFIG_FOLDER) and _same_name(folder.parent.parent.name, "projects")
 
 
 def _layer_gives(folder: Path, solver: str) -> tuple[bool, bool]:
@@ -356,7 +366,7 @@ def _database_candidates(input_db_url: str | os.PathLike | None) -> list[list[tu
     db_folder = db_path.parent
     out = [[(db_folder / SOLVER_CONFIG_FOLDER, REASON_DB_FOLDER)]]
     project = db_folder.parent
-    if db_folder.name in _PROJECT_DB_FOLDERS and project.parent.name == "projects":
+    if any(_same_name(db_folder.name, n) for n in _PROJECT_DB_FOLDERS) and _same_name(project.parent.name, "projects"):
         out.append([
             (project / SOLVER_CONFIG_FOLDER, REASON_DB_PROJECT),
             (project.parent.parent / SOLVER_CONFIG_FOLDER, REASON_DB_WORKSPACE),

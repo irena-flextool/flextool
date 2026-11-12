@@ -449,7 +449,7 @@ def _template_text(solver: str) -> str:
 
 
 def _add_member(zip_path: Path, arcname: str, data: bytes) -> None:
-    """Add *arcname* to the package and its manifest (a package as FlexTool 4.3 made it: templates shipped too)."""
+    """Add *arcname* to the package and its manifest (a package as a 4.4 development build made it: templates shipped too)."""
     import hashlib
 
     tmp = zip_path.with_name("tmp.zip")
@@ -489,9 +489,11 @@ def test_import_activates_clean_files_and_holds_back_path_options(workspace: dic
     own = workspace["project"] / "solver_config"
     own.mkdir()
     (own / "gurobi.opt").write_text("Threads 2\n")
-    (own / "cplex.opt").write_text("logfile /tmp/x\n")
     out = workspace["root"] / "out" / "held.flextool.zip"
     pp.export_project(workspace["project"], out, [], solver_config_dir=[own, workspace["config"]])
+    # A package made elsewhere (an export leaves such a file out): a path option, an inert .review beside it.
+    _add_member(out, "Proj/solver_config/cplex.opt", b"logfile /tmp/x\n")
+    _add_member(out, "Proj/solver_config/cplex.opt.review", b"threads 1\n")
     _add_member(out, "Proj/solver_config/xpress.opt", _template_text("xpress").encode("utf-8"))
     report = pp.import_project(out, workspace["projects"], "Held", solver_config_dir=workspace["config"])
     target = workspace["projects"] / "Held" / "solver_config"
@@ -508,7 +510,7 @@ def test_import_activates_clean_files_and_holds_back_path_options(workspace: dic
     assert "rename it to cplex.opt to use it" in text
 
 
-def test_first_open_renames_a_43_import(tmp_path: Path) -> None:
+def test_first_open_renames_a_development_build_import(tmp_path: Path) -> None:
     project = tmp_path / "projects" / "Old"
     imported = project / "imported_solver_config"
     imported.mkdir(parents=True)
@@ -529,3 +531,144 @@ def test_first_open_renames_a_43_import(tmp_path: Path) -> None:
         "Project Old: imported_solver_config/ is not read; this project's runs use solver_config/ (move any file "
         "you need from it and delete imported_solver_config/)."]
     assert (imported / "copt.opt").is_file() and not (own / "copt.opt").exists()
+
+
+def _old_import(tmp_path: Path) -> tuple[Path, Path]:
+    """A project imported by a 4.4 development build: two shipped files to hold back, one clean, one template."""
+    project = tmp_path / "projects" / "Old"
+    imported = project / "imported_solver_config"
+    imported.mkdir(parents=True)
+    (imported / "highs.opt").write_text("mip_rel_gap = 0.03\n")
+    (imported / "gurobi.opt").write_text("ComputeServer evil:61000\n")
+    (imported / "cplex.opt").write_text("logfile /home/u/.bashrc\n")
+    (imported / "xpress.opt").write_text(_template_text("xpress"))
+    return project, imported
+
+
+def _unchanged(project: Path, imported: Path) -> None:
+    assert not (project / "solver_config").exists()
+    assert sorted(p.name for p in imported.iterdir()) == ["cplex.opt", "gurobi.opt", "highs.opt", "xpress.opt"]
+
+
+def test_first_open_holds_before_renaming_and_names_only_used_files(tmp_path: Path) -> None:
+    project, imported = _old_import(tmp_path)
+    lines = pp.adopt_imported_solver_config(project)
+    own = project / "solver_config"
+    assert sorted(p.name for p in own.iterdir()) == ["cplex.opt.review", "gurobi.opt.review", "highs.opt",
+                                                       "xpress.opt"]
+    # xpress.opt is an unedited template, which runs skip: not named as used.
+    assert lines[0] == ("Project Old: renamed imported_solver_config/ to solver_config/. This project's runs now "
+                        "use its solver option files (highs.opt) ahead of the workspace's.")
+    assert len(lines) == 3
+
+
+def test_first_open_changes_nothing_when_a_file_cannot_be_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The second hold fails (a read-only folder, an antivirus lock): the first is renamed back, the folder
+    stays, and the line says the runs keep the workspace's options (never "now use")."""
+    project, imported = _old_import(tmp_path)
+    real = pp._rename_with_retry
+
+    def fail_on_cplex(src: Path, dst: Path) -> None:
+        if src.name == "cplex.opt":
+            raise PermissionError(13, "Permission denied", str(dst))
+        real(src, dst)
+
+    monkeypatch.setattr(pp, "_rename_with_retry", fail_on_cplex)
+    lines = pp.adopt_imported_solver_config(project)
+    _unchanged(project, imported)
+    assert len(lines) == 1 and "cannot check the solver option files" in lines[0]
+    assert lines[0].endswith("imported_solver_config/ is left as it is and this project's runs keep using the "
+                             "workspace's solver options.")
+
+
+def test_first_open_changes_nothing_when_a_review_file_exists(tmp_path: Path) -> None:
+    project, imported = _old_import(tmp_path)
+    (imported / "gurobi.opt.review").write_text("Threads 1\n")
+    lines = pp.adopt_imported_solver_config(project)
+    assert not (project / "solver_config").exists()
+    assert (imported / "gurobi.opt").read_text() == "ComputeServer evil:61000\n"
+    assert (imported / "gurobi.opt.review").read_text() == "Threads 1\n"
+    assert (imported / "cplex.opt").is_file() and not (imported / "cplex.opt.review").exists()
+    assert len(lines) == 1 and "gurobi.opt.review exists already" in lines[0]
+
+
+def test_first_open_rolls_back_when_the_folder_cannot_be_renamed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, imported = _old_import(tmp_path)
+    real = pp._rename_with_retry
+
+    def fail_on_folder(src: Path, dst: Path) -> None:
+        if src == imported:
+            raise PermissionError(13, "Permission denied", str(dst))
+        real(src, dst)
+
+    monkeypatch.setattr(pp, "_rename_with_retry", fail_on_folder)
+    lines = pp.adopt_imported_solver_config(project)
+    _unchanged(project, imported)
+    assert len(lines) == 1 and "cannot rename imported_solver_config/ to solver_config/" in lines[0]
+
+
+@pytest.mark.skipif(os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+                    reason="POSIX folder permissions; root ignores them")
+def test_first_open_of_a_read_only_folder_changes_nothing(tmp_path: Path) -> None:
+    project, imported = _old_import(tmp_path)
+    imported.chmod(0o555)
+    try:
+        lines = pp.adopt_imported_solver_config(project)
+        _unchanged(project, imported)
+    finally:
+        imported.chmod(0o755)
+    assert len(lines) == 1 and "keep using the workspace's solver options" in lines[0]
+
+
+def test_export_leaves_out_a_file_with_server_or_path_lines(
+    workspace: dict, capsys: pytest.CaptureFixture,
+) -> None:
+    """A credential or a folder of this computer does not leave unseen: the file is left out and named, with its
+    lines, before (``always_included``) and after the export (CLI warning)."""
+    own = workspace["project"] / "solver_config"
+    own.mkdir()
+    (own / "gurobi.opt").write_text("Threads 2\nWLSSecret s3cr3t\n")
+    (own / "cplex.opt").write_text("threads 2\n")
+    folders = [own, workspace["config"]]
+    fixed = pp.always_included(workspace["project"], folders)
+    assert sorted(fixed["solver_config_files"]) == ["cplex.opt", "highs.opt"]
+    assert fixed["solver_config_withheld"] == {"gurobi.opt": (own / "gurobi.opt", [
+        "line 2: WLSSecret s3cr3t connects the solver to another computer (a server, cloud or licence service) or "
+        "carries its credentials"])}
+    out = workspace["root"] / "out" / "withheld.flextool.zip"
+    assert cli.main(["export", str(workspace["project"]), "-o", str(out), "--solver-config-dir", str(own),
+                     "--solver-config-dir", str(workspace["config"])]) == cli.EXIT_OK
+    text = capsys.readouterr().out
+    assert (f"Warning: Solver options gurobi.opt (from {own}) left out of the package, because line 2: WLSSecret "
+            "s3cr3t connects the solver") in text
+    with zipfile.ZipFile(out) as zf:
+        names = zf.namelist()
+        assert "Proj/solver_config/cplex.opt" in names and not [n for n in names if "gurobi" in n]
+        assert b"s3cr3t" not in zf.read(pp.MANIFEST_NAME)
+    assert sorted(pp.read_manifest(out).solver_config) == ["cplex.opt", "highs.opt"]
+
+
+def test_import_names_the_workspace_default(workspace: dict, tmp_path: Path) -> None:
+    """A workspace that holds only the seeded template uses FlexTool's default: said so, not "has none"."""
+    own = workspace["project"] / "solver_config"
+    own.mkdir()
+    (own / "gurobi.opt").write_text("Threads 2\n")
+    out = workspace["root"] / "out" / "default.flextool.zip"
+    pp.export_project(workspace["project"], out, [], solver_config_dir=[own])
+    receiver = tmp_path / "receiver"
+    receiver.mkdir()
+    (receiver / "gurobi.opt").write_text(_template_text("gurobi"))
+    report = pp.import_project(out, workspace["projects"], "Recv", solver_config_dir=receiver)
+    assert "Solver options gurobi.opt: this workspace uses FlexTool's default." in pp.describe_import(report)
+
+
+def test_scrub_keeps_no_folder_name_with_spaces(workspace: dict) -> None:
+    status = {"a": "D:\\My Data\\ws\\solver_config", "b": "/srv/My Data/ws/x.opt", "c": "see /tmp/x and /var/y/z",
+              "d": "https://example.org/a b/c"}
+    assert pp.scrub_run_status(status, workspace["project"]) == {
+        "a": "<path>\\solver_config", "b": "<path>/x.opt", "c": "see <path>/x and <path>/z",
+        "d": "https://example.org/a b/c"}
