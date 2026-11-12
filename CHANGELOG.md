@@ -96,8 +96,8 @@ Each line says what changes for a model that ran before and what to do; the deta
   example HiGHS `solution_file` / `log_file`, Gurobi `LogFile` / `InputFile`, CPLEX `workdir`, Xpress
   `TUNEROUTPUTPATH`), or send the model to another computer. An option there that names a file or folder now takes
   only a plain file name, written in the solve's work folder (`<work folder>/solve_data/subprocess/`); a full path,
-  and a Gurobi Compute Server, Cloud, WLS, token-server or licence option, is refused with a message naming the
-  option, its value and the solve. Move such options to `solver_config/<solver>.opt`: the option files, flags and
+  a Gurobi Compute Server, Cloud, WLS, token-server or licence option, and an Xpress remote-solving control
+  (`COMPUTE...`), is refused with a message naming the option, its value and the solve. Move such options to `solver_config/<solver>.opt`: the option files, flags and
   environment variables keep full paths and server options. Names are matched as the solver reads them (Gurobi
   ignores `_`, Xpress an `XPRS_` prefix, CPLEX takes abbreviations); the full list is in the solver docs. Gurobi's
   `ResultFile` is FlexTool's own and is ignored, with a warning, wherever it is set. FlexTool's results are in
@@ -601,7 +601,7 @@ Each line says what changes for a model that ran before and what to do; the deta
   CPLEX `workdir` or Xpress `TUNEROUTPUTPATH` could read or write a file anywhere the user may, or send the model
   and credentials to another machine. Options from the input database are now trusted less than those of the
   user's own computer: a file option there takes a plain file name, placed in the solve's work folder, and a server
-  option is refused, with a message naming the option, its value and the solve and saying to set it in
+  option (Gurobi) or remote-solving control (Xpress `COMPUTE...`) is refused, with a message naming the option, its value and the solve and saying to set it in
   `solver_config/<solver>.opt` instead. The option files, flags and environment variables keep full paths and server
   options. Option names are compared as each solver reads them (Gurobi without case or `_`, Xpress without an
   `XPRS_` prefix, CPLEX abbreviations of its file options), so another spelling does not get past the check.

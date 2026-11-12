@@ -182,6 +182,9 @@ parameters; from the database:
   `CSPriority`, `CSRouter`, ...), the `Cloud...` Instant Cloud parameters, the
   `WLS...` Web License Service parameters, `TokenServer`, `TSPort`,
   `LicenseID`, `UserName`, `WorkerPool` and `WorkerPassword`.
+- **Xpress remote-solving controls** are refused: `COMPUTE`, which sends the
+  solve to a remote service, and the other `COMPUTE...` controls
+  (`COMPUTEEXECSERVICE`, `COMPUTEJOBPRIORITY`, `COMPUTELOG`).
 
 The error names the parameter, its value and the solve. Put a file path or a
 server parameter in the solver's option file, `solver_config/<solver>.opt`

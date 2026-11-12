@@ -251,6 +251,25 @@ def test_database_gurobi_server_option_is_refused(name: str) -> None:
     assert "input database" in message and "solver_config/gurobi.opt" in message
 
 
+@pytest.mark.parametrize("name, value", [
+    ("COMPUTE", "1"), ("XPRS_COMPUTE", "1"), ("compute", "1"), ("COMPUTEEXECSERVICE", "svc1"),
+    ("XPRS_COMPUTEEXECSERVICE", "svc1"), ("ComputeJobPriority", "5"), ("COMPUTELOG", "2"),
+])
+def test_database_xpress_remote_solving_control_is_refused(name: str, value: str) -> None:
+    """G1: Xpress solves remotely through its Insight Compute interface when ``COMPUTE`` is on; none of the
+    ``COMPUTE...`` controls is taken from the input database, in any spelling the library reads."""
+    with pytest.raises(FlexToolUserError) as err:
+        _resolve_db("xpress", {name: value})
+    message = str(err.value)
+    assert f"xpress option {name!r} (value {value!r})" in message and "another computer" in message
+    assert "solver_arguments of solve invest" in message and "solver_config/xpress.opt" in message
+
+
+def test_xpress_remote_solving_controls_stay_allowed_in_the_option_file() -> None:
+    options = _resolve_db("xpress", {}, opt_text="COMPUTE 1\nCOMPUTEEXECSERVICE svc1\n")
+    assert options == {"COMPUTE": "1", "COMPUTEEXECSERVICE": "svc1"}
+
+
 @pytest.mark.parametrize("solver", ["highs", *_COMMERCIAL])
 def test_trusted_option_file_keeps_paths_and_server_options(solver: str) -> None:
     """``solver_config/<solver>.opt`` is the user's own machine: a full path (and, for Gurobi, a server) passes."""
@@ -508,6 +527,21 @@ def test_gurobi_server_options_are_its_parameters() -> None:
     for key, name in by_key.items():
         if key.startswith(_solver_dispatch._SERVER_OPTION_PREFIXES["gurobi"]):
             assert _solver_dispatch.is_server_option("gurobi", name), name
+
+
+def test_xpress_server_options_are_its_remote_solving_controls() -> None:
+    """The listed Xpress server options are controls of this xpress, and every control with the ``compute`` prefix
+    is refused from the database."""
+    import warnings
+
+    warnings.simplefilter("ignore")
+    xp = pytest.importorskip("xpress")
+    controls = xp.problem().getControl()
+    assert set(_solver_dispatch._SERVER_OPTIONS["xpress"]) <= set(controls)
+    compute = {k for k in controls if k.startswith("compute")}
+    assert compute == {"compute", "computeexecservice", "computejobpriority", "computelog"}
+    assert all(_solver_dispatch.is_server_option("xpress", k.upper()) for k in compute)
+    assert not _solver_dispatch.is_server_option("xpress", "MAXTIME")
 
 
 def test_listed_names_are_comparison_keys() -> None:

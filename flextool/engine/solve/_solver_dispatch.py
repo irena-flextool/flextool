@@ -184,8 +184,8 @@ def validate_solver_option(solver: str, name: object, value: object, where: str)
 # (and ``solver_mip_gap``) may not point a solver at a file outside the solve's
 # work folder or at another machine.  An option that names a file, folder or
 # path takes only a plain file name there, which lands in the solve's work
-# folder (:func:`solver_workspace`); a Gurobi server / cloud / licence option is
-# refused.  No option of the five solvers starts another program: FlexTool
+# folder (:func:`solver_workspace`); a Gurobi server / cloud / licence option and
+# an Xpress remote-solving control are refused.  No option of the five solvers starts another program: FlexTool
 # passes options only as ``set`` / ``setControl`` lines or ``Name=value``
 # arguments, so the server options are the only other way out.  Both kinds are
 # refused, never cleaned up; the general check (:func:`validate_solver_option`)
@@ -233,9 +233,14 @@ _PATH_OPTIONS: dict[str, frozenset[str]] = {
 #: CPLEX: a name whose first word is one of these is a path option too (``read`` / ``write`` commands).
 _CPLEX_PATH_FIRST_WORDS = frozenset({"read", "write"})
 
-#: Gurobi options that connect to another machine or carry its credentials: Compute Server, Cluster Manager,
-#: Instant Cloud, Web License Service, token server and distributed workers (Gurobi 12 parameter list), as
-#: :func:`commercial_option_key` forms (so ``Compute_Server`` is ``ComputeServer``, as Gurobi reads it).
+#: Options that connect the solver to another machine or carry its credentials, as :func:`commercial_option_key`
+#: forms (so ``Compute_Server`` is ``ComputeServer`` and ``XPRS_COMPUTE`` is ``COMPUTE``, as the solver reads them).
+#: Gurobi: Compute Server, Cluster Manager, Instant Cloud, Web License Service, token server and distributed
+#: workers (Gurobi 12 parameter list).  Xpress (46.01.02, ``problem().getControl()``): the ``COMPUTE...`` controls
+#: of remote solving through the Insight Compute interface (``COMPUTE`` switches it on, ``COMPUTEEXECSERVICE``
+#: names the service; ``COMPUTEJOBPRIORITY`` and ``COMPUTELOG`` set the remote job's priority and log); no other
+#: control names a host, a service or credentials.  CPLEX 22.1.2 (``Cplex().parameters``) and COPT 8.0.4
+#: (``COPT.Param``) list no such parameter.
 _SERVER_OPTIONS: dict[str, frozenset[str]] = {
     "gurobi": frozenset({
         "computeserver", "serverpassword", "servertimeout",
@@ -246,10 +251,12 @@ _SERVER_OPTIONS: dict[str, frozenset[str]] = {
         "licenseid", "username", "tokenserver", "tokenport", "tsport",
         "workerpool", "workerpassword", "workerport",
     }),
+    "xpress": frozenset({"compute", "computeexecservice", "computejobpriority", "computelog"}),
 }
-#: Gurobi: a name with one of these prefixes is a server option too (a later Gurobi version's new ones).
+#: A name with one of these prefixes is a server option too (a later solver version's new ones).
 _SERVER_OPTION_PREFIXES: dict[str, tuple[str, ...]] = {
     "gurobi": ("computeserver", "server", "cs", "cloud", "wls", "token", "worker"),
+    "xpress": ("compute",),
 }
 
 #: A plain file name: ASCII letters, digits, ``_ . + -``, starting with a letter, digit or ``_``.
