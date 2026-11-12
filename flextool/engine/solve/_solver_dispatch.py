@@ -237,7 +237,8 @@ def _drop_solution_file_options(
 # scripts; ``cmd_solve_mps --solution`` for HiGHS ``--save-memory``) and in-process
 # HiGHS reads the solution from memory.  A block list: a parameter a later solver
 # version adds is not on it (item 240 has the allow-list).  Names are compared
-# with :func:`commercial_option_key` (without case; CPLEX ``.`` read as a space).
+# with :func:`commercial_option_key` (without case; CPLEX ``.`` read as a space;
+# Gurobi without ``_``; Xpress without an ``XPRS_`` prefix), as the solver reads them.
 _FILE_PATH_OPTIONS: dict[str, frozenset[str]] = {
     # highspy 1.15.1: every string option of ``Highs().writeOptions(<file>)`` whose description is a file
     # ("Log file", "Read solution file", "Read basis file", "Write model file", "Write solution file", "Write
@@ -251,6 +252,9 @@ _FILE_PATH_OPTIONS: dict[str, frozenset[str]] = {
     # or folder name (ResultFile, LogFile, SolFiles, NodefileDir, InputFile; the .prm / .json file lists
     # ConcurrentSettings, MultiObjSettings, TuneBaseSettings, TuneIgnoreSettings, TuneParams) and Record (writes
     # API-call recording files).  The other string parameters are licence / server names and secrets.
+    # Compared without case or ``_`` (as the Gurobi library reads names); InputFile and the five setting-file
+    # lists are command-line parameters, not library ones, and get the same rule (a superset if gurobi_cl's
+    # own reading is stricter).
     "gurobi": frozenset({
         "resultfile", "logfile", "solfiles", "nodefiledir", "inputfile", "concurrentsettings",
         "multiobjsettings", "tunebasesettings", "tuneignoresettings", "tuneparams", "record",
@@ -263,7 +267,7 @@ _FILE_PATH_OPTIONS: dict[str, frozenset[str]] = {
     "cplex": frozenset({"workdir", "output intsolfileprefix", "logfile"}),
     # xpress 46.01.02: the string controls of ``problem().getControl()`` that name a file or folder
     # (TUNERMETHODFILE read, TUNEROUTPUTPATH written, TUNERSESSIONNAME the name of the tuner's output under it).
-    # The others are MPS section names, masks and formats.  Compared without case.
+    # The others are MPS section names, masks and formats.  Compared without case or an ``XPRS_`` prefix.
     "xpress": frozenset({"tunermethodfile", "tuneroutputpath", "tunersessionname"}),
     # coptpy 8.0.4 (COPT 8.0.4): every parameter of ``COPT.Param`` is an integer or a float
     # (``Model.getParamInfo``); none names a file.
@@ -534,9 +538,10 @@ def build_solver_options(solver_config: SolverConfig) -> dict[str, Any]:
 #   3. the solve's ``solver_arguments`` (raw native names);
 #   4. the operator layer: ``--solver-time-limit`` / ``--solver-mip-gap``, else
 #      ``FLEXTOOL_SOLVER_TIME_LIMIT`` / ``FLEXTOOL_SOLVER_MIP_GAP``.
-# Names are compared without case (and, for CPLEX, with ``.`` read as a
-# space), so ``MIPGap`` in the file and ``mipgap`` in solver_arguments are
-# one parameter: one line, at the position of its first appearance, with the
+# Names are compared as the solver reads them (:func:`commercial_option_key`:
+# without case; CPLEX ``.`` read as a space; Gurobi without ``_``; Xpress
+# without an ``XPRS_`` prefix), so ``MIPGap`` in the file and ``mip_gap`` in
+# solver_arguments are one parameter: one line, at the position of its first appearance, with the
 # highest layer's value and spelling (CPLEX: always the interactive spelling,
 # since the dotted one is not a ``set`` command).
 
@@ -598,12 +603,25 @@ class CommercialOption(NamedTuple):
 
 
 def commercial_option_key(solver: str, name: str) -> str:
-    """The comparison key of a commercial parameter name: case-folded; for
-    CPLEX also ``.`` read as a space and runs of whitespace collapsed."""
+    """The comparison key of a commercial parameter name: one key for every spelling the solver reads as the
+    same parameter, so that the file-path filter and the merge of the layers match what the solver does.
+
+    Every solver: case-folded, runs of whitespace collapsed.  CPLEX: ``.`` read as a space.  Gurobi: ``_``
+    after the first character removed (the Gurobi library (``GRBsetparam``, 13.0.2) reads ``Log_File``,
+    ``LOG_FILE`` and ``M_I_P_Gap`` as ``LogFile`` / ``MIPGap``, but refuses a leading ``_``; it ignores no
+    other character).  Xpress: one leading ``xprs_`` removed (the library's control lookup, xpress 46.01.02,
+    reads ``XPRS_MAXTIME`` / ``xprs_maxtime`` as ``MAXTIME``, but not ``XPRS_XPRS_MAXTIME`` or ``XPRSMAXTIME``).
+    COPT (coptpy 8.0.4) only ignores case; HiGHS names are exact.
+    """
     key = str(name).strip()
     if solver == "cplex":
         key = key.replace(".", " ")
-    return " ".join(key.split()).casefold()
+    key = " ".join(key.split()).casefold()
+    if solver == "gurobi":
+        key = key[:1] + key[1:].replace("_", "")
+    elif solver == "xpress" and key.startswith("xprs_"):
+        key = key[len("xprs_"):]
+    return key
 
 
 def _native_value(solver: str, knob: str, value: object) -> str:

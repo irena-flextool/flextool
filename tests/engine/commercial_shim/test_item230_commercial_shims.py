@@ -309,8 +309,9 @@ def test_unknown_gurobi_parameter_is_named_with_its_layer(solver, shim, db, tmp_
 
 
 #: A parameter that makes the solver read or write at a path, for the option file (each solver's parameter
-#: reference; COPT has none).  ``workd`` is CPLEX's abbreviation of ``workdir``.
-FILE_PATH_OPTION = {"gurobi": "SolFiles", "cplex": "workd", "xpress": "TUNERMETHODFILE"}
+#: reference; COPT has none).  ``workd`` is CPLEX's abbreviation of ``workdir``; ``Nodefile_Dir`` is Gurobi's
+#: ``NodefileDir`` (Gurobi ignores ``_`` in names).
+FILE_PATH_OPTION = {"gurobi": "Nodefile_Dir", "cplex": "workd", "xpress": "TUNERMETHODFILE"}
 
 
 def test_path_options_and_precommand_are_not_used(solver, shim, db, highs_objective, tmp_path, caplog) -> None:

@@ -968,9 +968,9 @@ class SolveConfig:
         """Duplicate every solve-level dict entry from *old_solve* under
         *new_name*.
 
-        Mutates 21 sibling dicts (and ``model_solve`` when
-        *update_model_solves* is set) so downstream readers can address
-        the duplicated solve transparently.  One of the 21 —
+        Mutates the sibling dicts of ``dup_map_list`` (and ``model_solve``
+        when *update_model_solves* is set) so downstream readers can address
+        the duplicated solve transparently.  One of them —
         ``non_anticipativity_periods`` — is a plain tri-state dict, not a
         defaultdict; the ``if old_solve in dup_map.keys()`` guard copies
         it the same way (an unset parent solve simply has no key to

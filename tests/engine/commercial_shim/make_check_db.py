@@ -32,12 +32,14 @@ SOLVE = "y2020_2day_dispatch"
 SOLVERS = ("gurobi", "cplex", "xpress", "copt")
 LP_BASE = ["init", "west", "coal"]
 #: How each solver's ``solver_arguments`` spell the gap and the time limit in ``stack_<s>``: not the option
-#: file's spelling, so the case-insensitive (CPLEX: dotted) merge is exercised too.  Xpress keeps the upper-case
-#: names: its library takes no other case, and the console's case rule is not known here.
-ARG_GAP = {"gurobi": "mipgap", "cplex": "mip.tolerances.mipgap", "xpress": "MIPRELSTOP", "copt": "relgap"}
-ARG_TIME = {"gurobi": "timelimit", "cplex": "TimeLimit", "xpress": "MAXTIME", "copt": "timelimit"}
-#: A parameter that makes the solver write at a path (each solver's parameter reference; COPT has none).
-ARG_PATH = {"gurobi": "LogFile", "cplex": "logfile", "xpress": "TUNEROUTPUTPATH"}
+#: file's spelling, so the merge by the solver's own name rule is exercised too (case; CPLEX dotted; Gurobi
+#: ``_``).  Xpress keeps the upper-case names: its Python ``setControl`` (the shim) takes no other case, and the
+#: console's case rule is not known here.
+ARG_GAP = {"gurobi": "Mip_Gap", "cplex": "mip.tolerances.mipgap", "xpress": "MIPRELSTOP", "copt": "relgap"}
+ARG_TIME = {"gurobi": "time_limit", "cplex": "TimeLimit", "xpress": "MAXTIME", "copt": "timelimit"}
+#: A parameter that makes the solver write at a path (each solver's parameter reference; COPT has none), in a
+#: spelling the solver's library also reads (Gurobi ignores ``_``, Xpress an ``XPRS_`` prefix).
+ARG_PATH = {"gurobi": "Log_File", "cplex": "logfile", "xpress": "XPRS_TUNEROUTPUTPATH"}
 
 
 def precommand_marker(folder: Path, solver: str) -> Path:

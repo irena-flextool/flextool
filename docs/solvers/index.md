@@ -127,10 +127,13 @@ solver_arguments:
   Heuristics = 0.1
 ```
 
-These are passed through untouched. Parameter names match without regard to
-case (`mipgap` and `MIPGap` are one parameter; for CPLEX a dotted name such as
-`mip.tolerances.mipgap` is the same as `mip tolerances mipgap`; write CPLEX
-names in full, an abbreviation is not matched). What a solver does with a
+These are passed through untouched. Parameter names match the way the solver
+reads them: without regard to case (`mipgap` and `MIPGap` are one parameter);
+Gurobi also ignores `_` (`MIP_Gap` is `MIPGap`) and Xpress an `XPRS_` prefix;
+for CPLEX a dotted name such as `mip.tolerances.mipgap` is the same as
+`mip tolerances mipgap`. Write CPLEX names in full: an abbreviation is not
+matched to its full name when the layers are merged (the file options below
+excepted: they are matched abbreviated too). What a solver does with a
 misspelt name is the solver's own: Gurobi ignores it with a message, and
 FlexTool repeats that message as a warning naming where the name was set.
 
@@ -150,7 +153,12 @@ file, which it names itself, so solves are not affected:
 | Xpress | `TUNERMETHODFILE`, `TUNEROUTPUTPATH`, `TUNERSESSIONNAME` |
 | COPT   | none (COPT has no file parameters) |
 
-The solver's own log is still saved as `<solve>.log` (see below).
+FlexTool's results are not affected (they are in `output_parquet/<scenario>/`
+and the outputs you chose). A commercial solver's log is still saved as
+`<work folder>/solve_data/subprocess/<solve>.log` (see below). HiGHS' log is
+part of the run's console output, which `flextool-run` and the FlexTool window
+save in the run's log, `output_parquet/<scenario>/_run.log`; HiGHS has no log
+file of its own here.
 
 ### Per-solver baseline `.opt` files
 

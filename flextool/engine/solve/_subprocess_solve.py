@@ -1437,10 +1437,12 @@ def _warn_unknown_gurobi_parameters(
     names = dict.fromkeys(_GUROBI_UNKNOWN_PARAMETER.findall(output))
     if not names:
         return
-    layers = {k.casefold(): v for k, v in (option_layers or {}).items()}
+    from flextool.engine.solve._solver_dispatch import commercial_option_key
+
+    layers = {commercial_option_key("gurobi", k): v for k, v in (option_layers or {}).items()}
     log = logger or logging.getLogger(__name__)
     for name in names:
-        where = layers.get(name.casefold())
+        where = layers.get(commercial_option_key("gurobi", name))
         log.warning(
             "Gurobi does not know the parameter %r%s and solved solve %s without it. Check the spelling "
             "against the Gurobi parameter list.",

@@ -96,7 +96,10 @@ Each line says what changes for a model that ran before and what to do; the deta
   `LogFile`, CPLEX `workdir` or Xpress `TUNEROUTPUTPATH`. FlexTool now drops such options, with one warning per run
   naming the option and where it was set; the full list is in the solver docs. Solves are not affected: FlexTool
   reads the solution from its own result file. A solution file or log file asked for in `solver_arguments` is no
-  longer written; a commercial solver's log is still saved as `solve_data/subprocess/<solve>.log`.
+  longer written. FlexTool's results are in `output_parquet/<scenario>/` as before; a commercial solver's log is
+  still saved as `<work folder>/solve_data/subprocess/<solve>.log`, next to its result file; HiGHS' log is in the
+  run's log, `output_parquet/<scenario>/_run.log` (with `flextool-run` or the FlexTool window). A way to ask for
+  a solver's own log or solution file from this computer (not from a database) is planned.
 - **`solver_precommand` is not run, and a value now gives a warning.** FlexTool 3 ran it in front of CPLEX (for
   example to reserve a floating licence); FlexTool 4 does not run commands stored in a database, for safety: a
   database from someone else could otherwise run any program on your computer. The warning comes once per solve.

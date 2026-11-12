@@ -26,6 +26,7 @@ from flextool.engine.solve import _solver_dispatch
 from flextool.engine.solve._solver_dispatch import (
     _FILE_PATH_OPTIONS,
     _resolve_effective_highs_options,
+    commercial_option_key,
     is_file_path_option,
     reset_run_warnings,
     resolve_commercial_options,
@@ -130,8 +131,73 @@ def test_cplex_abbreviations_of_a_path_parameter_are_dropped() -> None:
         assert is_file_path_option("cplex", name), name
     for name in ("threads", "timelimit", "mip tolerances mipgap", "output clonelog", "workmem", "lpmethod"):
         assert not is_file_path_option("cplex", name), name
-    # Exact names only for the others.
+    # No abbreviations for the others.
     assert not is_file_path_option("gurobi", "Log") and is_file_path_option("gurobi", "logfile")
+
+
+# ---------------------------------------------------------------------------
+# Names matched as the solver reads them (security_a2a3_review F1 / F2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["Log_File", "LOG_FILE", "Sol_Files", "Input_File", "Nodefile_Dir", "result_file_"])
+def test_gurobi_path_option_with_underscores_is_dropped(name, tmp_path, caplog) -> None:
+    """The Gurobi library ignores case and ``_`` after the first character (``Log_File`` is ``LogFile``), so the
+    filter does too: from the option file and from ``solver_arguments``, never in ``gurobi_cl``'s arguments."""
+    target = tmp_path / "elsewhere" / "written_by_gurobi"
+    with caplog.at_level(logging.WARNING):
+        resolved = resolve_commercial_options(
+            "gurobi", opt_file="cfg/gurobi.opt", opt_text=f"Threads 2\n{name} {target}\n",
+            solver_config=SolverConfig(name="gurobi", options={name: str(target)}), run_options=_NO_FLAGS,
+            solve_name="dispatch",
+        )
+    assert [(o.name, o.value) for o in resolved] == [("Threads", "2")]
+    merged = _write_commercial_opt_file({o.name: o.value for o in resolved}, tmp_path / "solve.opt")
+    argv, _ = _SCRIPTS["gurobi"](Path("bin"), tmp_path / "m.mps", tmp_path / "m.json", merged)
+    assert str(target) not in " ".join(argv), argv
+    warnings = _warnings(caplog)
+    assert len(warnings) == 2 and all(f"Ignoring gurobi option {name}" in w for w in warnings), warnings
+
+
+def test_gurobi_spellings_of_one_parameter_merge_as_one(tmp_path) -> None:
+    """``MIPGap`` (option file), ``Mip_Gap`` (solver_arguments) and the gap flag are one Gurobi parameter: one
+    argument, with the highest layer's value; ``Time_Limit`` is read as the time limit."""
+    from flextool.cli.cmd_run_flextool import build_parser
+    from flextool.engine.solve._solver_dispatch import commercial_time_limit
+
+    config = SolverConfig(name="gurobi", options={"Mip_Gap": 0.1, "time_limit": 60})
+    resolved = resolve_commercial_options(
+        "gurobi", opt_file="cfg/gurobi.opt", opt_text="MIPGap 0.3\nTIME_LIMIT 900\nThreads 1\n",
+        solver_config=config, run_options=_NO_FLAGS,
+    )
+    assert [(o.name, o.value) for o in resolved] == [("Mip_Gap", "0.1"), ("time_limit", "60"), ("Threads", "1")]
+    assert commercial_time_limit("gurobi", resolved) == 60
+    flagged = resolve_commercial_options(
+        "gurobi", opt_file="cfg/gurobi.opt", opt_text="MIPGap 0.3\n", solver_config=config,
+        run_options=RunOptions.from_cli(build_parser().parse_args(["x.sqlite", "--solver-mip-gap", "0.05"]),
+                                        environ={}),
+    )
+    merged = _write_commercial_opt_file({o.name: o.value for o in flagged}, tmp_path / "solve.opt")
+    argv, _ = _SCRIPTS["gurobi"](Path("bin"), tmp_path / "m.mps", tmp_path / "m.json", merged)
+    gaps = [a for a in argv if a.split("=", 1)[0].replace("_", "").casefold() == "mipgap"]
+    assert gaps == ["MIPGap=0.05"], argv
+
+
+@pytest.mark.parametrize("name", ["XPRS_TUNEROUTPUTPATH", "xprs_tuneroutputpath", "Xprs_TunerMethodFile"])
+def test_xpress_path_control_with_prefix_is_dropped(name, tmp_path, caplog) -> None:
+    """The Xpress library's control lookup ignores case and one ``XPRS_`` prefix, so the filter does too."""
+    target = tmp_path / "elsewhere"
+    with caplog.at_level(logging.WARNING):
+        resolved = resolve_commercial_options(
+            "xpress", opt_file="cfg/xpress.opt", opt_text=f"THREADS 2\n{name} {target}\n",
+            solver_config=SolverConfig(name="xpress", options={name: str(target), "XPRS_MAXTIME": 60}),
+            run_options=_NO_FLAGS,
+        )
+    assert [(o.name, o.value) for o in resolved] == [("THREADS", "2"), ("XPRS_MAXTIME", "60")]
+    assert len(_warnings(caplog)) == 2
+    from flextool.engine.solve._solver_dispatch import commercial_time_limit
+
+    assert commercial_time_limit("xpress", resolved) == 60
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +221,69 @@ def test_gurobi_path_options_are_its_parameters() -> None:
     for key in _FILE_PATH_OPTIONS["gurobi"]:
         assert key in by_key, key
         assert by_key[key]["values"]["type"] == ("int" if key == "record" else "string"), key
+
+
+def test_listed_names_are_comparison_keys() -> None:
+    """The lists hold :func:`commercial_option_key` forms, so a lookup by key finds them."""
+    for solver, names in _FILE_PATH_OPTIONS.items():
+        assert all(commercial_option_key(solver, n) == n for n in names), solver
+
+
+def test_gurobi_library_reads_names_as_the_key_does() -> None:
+    """Pin :func:`commercial_option_key` for Gurobi to the library's own lookup (``GRBgetparamtype``, the C
+    function behind ``GRBsetparam`` and ``gurobi_cl``'s ``Name=value``): case and ``_`` after the first character
+    are ignored; a leading ``_``, and any other character, is not."""
+    import ctypes
+
+    gp = pytest.importorskip("gurobipy")
+    libs = sorted((Path(gp.__file__).parent / ".libs").glob("libgurobi*.so")) or sorted(
+        Path(gp.__file__).parent.glob("libgurobi*.so"))
+    if not libs:
+        pytest.skip("gurobipy ships no libgurobi shared library on this platform")
+    lib = ctypes.CDLL(str(libs[0]))
+    lib.GRBemptyenv.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+    lib.GRBgetparamtype.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+    lib.GRBfreeenv.argtypes = [ctypes.c_void_p]
+    env = ctypes.c_void_p()
+    assert lib.GRBemptyenv(ctypes.byref(env)) == 0
+    try:
+        def known(name: str) -> bool:
+            return lib.GRBgetparamtype(env, name.encode("latin-1")) > 0
+
+        for name in ("Log_File", "LOG_FILE", "Nodefile_Dir", "Sol_Files", "Result_File", "LogFile_", "M_I_P_Gap"):
+            assert known(name), name
+            assert commercial_option_key("gurobi", name) in {"logfile", "nodefiledir", "solfiles", "resultfile",
+                                                             "mipgap"}, name
+        for name in ("_LogFile", "Log-File", "Log.File", "Log File", "GRB_LogFile"):
+            assert not known(name), name
+            assert commercial_option_key("gurobi", name) != "logfile", name
+    finally:
+        lib.GRBfreeenv(env)
+
+
+def test_xpress_library_reads_names_as_the_key_does() -> None:
+    """Pin :func:`commercial_option_key` for Xpress to the library's control lookup (``getcontrolinfo``): case
+    and one ``XPRS_`` prefix are ignored; a second prefix or ``XPRS`` without ``_`` is not."""
+    import warnings
+
+    warnings.simplefilter("ignore")
+    xp = pytest.importorskip("xpress")
+    prob = xp.problem()
+    lookup = getattr(prob, "getControlInfo", None) or prob.getcontrolinfo
+
+    def control_id(name: str):
+        try:
+            return lookup(name)[0]
+        except Exception:  # the package's own error type for an unknown name
+            return None
+
+    for key in _FILE_PATH_OPTIONS["xpress"]:
+        for name in (key.upper(), f"XPRS_{key.upper()}", f"xprs_{key}", f"Xprs_{key.title()}"):
+            assert control_id(name) == control_id(key.upper()) is not None, name
+            assert commercial_option_key("xpress", name) == key, name
+        for name in (f"XPRS_XPRS_{key.upper()}", f"XPRS{key.upper()}"):
+            assert control_id(name) is None, name
+            assert commercial_option_key("xpress", name) != key, name
 
 
 def test_cplex_path_options_are_its_parameters() -> None:
