@@ -483,25 +483,25 @@ class TimelineConfig:
                 idx = index_of.get(start)
                 if idx is None:
                     hint = lower.get(str(start).lower())
-                    hint_txt = (f" Did you mean {hint!r}? Time step names are case sensitive."
+                    hint_txt = (f" Did you mean {str(hint)!r}? Time step names are case sensitive."
                                 if hint is not None else "")
                     errors.append(
                         f"{where}: the block starting {str(start)!r} does not start at a time step of timeline "
-                        f"{timeline_id!r} ({steps[0]!r} .. {steps[-1]!r}).{hint_txt}")
+                        f"{timeline_id!r} ({str(steps[0])!r} .. {str(steps[-1])!r}).{hint_txt}")
                     continue
                 left = len(steps) - idx
                 if n <= left:
                     continue
                 if ts in self.rp_weights:
                     errors.append(
-                        f"{where}: the block starting {start!r} has {n} time steps, but timeline "
-                        f"{timeline_id!r} has only {left} time steps from {start!r} (to {steps[-1]!r}). A "
+                        f"{where}: the block starting {str(start)!r} has {n} time steps, but timeline "
+                        f"{timeline_id!r} has only {left} time steps from {str(start)!r} (to {str(steps[-1])!r}). A "
                         "representative-period block cannot be cut: shorten the block or start it earlier.")
                     continue
                 warnings.append((
                     (ts, timeline_id, start, n),
-                    f"Warning: timeset {ts!r} (solve {solve_name!r}): the block starting {start!r} has {n} time "
-                    f"steps, but timeline {timeline_id!r} has only {left} from {start!r} (to {steps[-1]!r}); "
+                    f"Warning: timeset {ts!r} (solve {solve_name!r}): the block starting {str(start)!r} has {n} time "
+                    f"steps, but timeline {timeline_id!r} has only {left} from {str(start)!r} (to {str(steps[-1])!r}); "
                     f"the last {n - left} are not used."))
         if errors:
             shown = errors[:5]
@@ -1424,11 +1424,11 @@ def get_active_time(
 
         def _block(b: tuple[str, str]) -> str:
             ts, start = b
-            return f"block starting {start!r}" + (
-                f" (timeset {ts!r})" if ts != overlaps[0][3][0] else "")
+            return f"block starting {str(start)!r}" + (
+                f" (timeset {str(ts)!r})" if ts != overlaps[0][3][0] else "")
 
         sample = "; ".join(
-            f"period {p!r} timestep {t!r} is in both {_block(a)} and "
+            f"period {str(p)!r} timestep {str(t)!r} is in both {_block(a)} and "
             f"{_block(c)}"
             for p, t, a, c in overlaps[:5]
         )

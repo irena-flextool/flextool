@@ -868,7 +868,8 @@ class SolveConfig:
             if not realized:
                 continue
             invest = [t[1] for t in self.invest_periods.get(s, [])]
-            bad = [p for p in dict.fromkeys(realized) if p not in set(invest)]
+            # Plain ``str`` for the messages: numpy 2 shows a ``np.str_`` as ``np.str_('p1')`` in a list.
+            bad = [str(p) for p in dict.fromkeys(realized) if p not in set(invest)]
             if not bad:
                 continue
             if s in self.map2d_duplicate_of:
@@ -886,7 +887,7 @@ class SolveConfig:
                 problems.append(
                     f"{where}: realized_invest_periods lists period(s) "
                     f"{bad} that are not in its invest_periods "
-                    f"{list(dict.fromkeys(invest))}. A realized investment "
+                    f"{[str(p) for p in dict.fromkeys(invest)]}. A realized investment "
                     "period must also be an investment period: add it to "
                     "invest_periods, or remove it from realized_invest_periods"
                 )

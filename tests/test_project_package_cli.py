@@ -304,7 +304,9 @@ def test_run_records_scrubbed_by_default(workspace: dict, monkeypatch: pytest.Mo
     status = _status_in(out, "A_1")
     text = json.dumps(status)
     assert project not in text and "builder-host" not in text and "/opt/work" not in text
-    assert status["output"] == {"location": "<project>", "parquet_dir": "<project>/output_parquet/A_1"}
+    # The scrub keeps the platform's separator (``<project>\\output_parquet\\A_1`` on Windows).
+    assert set(status["output"]) == {"location", "parquet_dir"} and status["output"]["location"] == "<project>"
+    assert status["output"]["parquet_dir"].replace("\\", "/") == "<project>/output_parquet/A_1"
     assert status["process"] == {"host": None, "pid": 4242}
     assert status["argv"][0] == "<path>/cmd_run_flextool.py" and status["argv"][1] == "http://127.0.0.1:48767"
     assert status["state"] == "succeeded" and status["input"]["db_mtime"]   # what the readers use is kept

@@ -245,7 +245,7 @@ def test_each_scenario_breaks_where_its_own_timeline_does(tmp_path, monkeypatch)
         settings_path=tmp_path / "none.yaml", write_xlsx=True,
     )
     # dispatch_data.xlsx: every row shows its period (no merged cells)
-    sheet = pd.read_excel(tmp_path / "plots" / "dispatch_data.xlsx", sheet_name=f"{GROUP}_A")
+    sheet = pd.read_excel(tmp_path / "plots" / "dispatch_data.xlsx", sheet_name=f"{GROUP}_A", engine="openpyxl")
     assert list(zip(sheet["period"], sheet["time"])) == SAMPLED
     a = drawn[f"dispatch_nodeGroup_{GROUP}_A"]
     assert len(a) == 7 and np.isnan(a[2:5]).all()

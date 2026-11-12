@@ -7,6 +7,7 @@ frozen by an older FlexTool carries its marker at that older version; :func:`_ma
 """
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
@@ -289,12 +290,12 @@ def test_engine_refuses_an_unmigrated_database(tmp_path: Path, old_db_template: 
 
 def test_read_only_uri_has_an_empty_authority() -> None:
     """``//server/share`` must not become the URI authority ``server`` (SQLite rejects that)."""
-    from pathlib import PureWindowsPath
+    from pathlib import PurePosixPath, PureWindowsPath
 
     assert fz.ro_uri(PureWindowsPath(r"\\server\share\my models\x.sqlite")) == (
         "file:////server/share/my%20models/x.sqlite?mode=ro")
     assert fz.ro_uri(PureWindowsPath(r"C:\data\x#1.sqlite")) == "file:///C:/data/x%231.sqlite?mode=ro"
-    assert fz.ro_uri(Path("/data/x.sqlite")) == "file:///data/x.sqlite?mode=ro"
+    assert fz.ro_uri(PurePosixPath("/data/x.sqlite")) == "file:///data/x.sqlite?mode=ro"
 
 
 def test_a_locked_database_is_not_migrated(tmp_path: Path, old_db_template: Path,
@@ -421,9 +422,15 @@ def test_an_older_spinedb_schema_is_migrated_and_the_engine_explains_it(tmp_path
 def _set_version(path: Path, version: int) -> None:
     from spinedb_api import import_data
 
-    with DatabaseMapping(f"sqlite:///{path}", upgrade=False) as db:
-        import_data(db, object_parameters=[["model", "version", version, None, "test"]])
-        db.commit_session("test: set version")
+    # ``with`` closes only the session; ``close()`` also disposes the engine, whose pooled connection otherwise
+    # keeps the file open (Windows then cannot replace it, as ``materialize`` does).
+    db = DatabaseMapping(f"sqlite:///{path}", upgrade=False)
+    try:
+        with db:
+            import_data(db, object_parameters=[["model", "version", version, None, "test"]])
+            db.commit_session("test: set version")
+    finally:
+        db.close()
 
 
 def test_a_newer_database_is_left_alone_and_the_engine_asks_for_an_update(tmp_path: Path,
@@ -461,11 +468,11 @@ def test_migrate_hints_quote_a_path_with_spaces(tmp_path: Path, old_db_template:
 
     db = _copy(old_db_template, tmp_path / "my models")
     _mark_frozen(db)
-    with pytest.raises(fz.FrozenDatabaseError, match=f'flextool-migrate-database "{db}" --copy-to'):
+    with pytest.raises(fz.FrozenDatabaseError, match=re.escape(f'flextool-migrate-database "{db}" --copy-to')):
         fz.frozen_guard(db)
     plain = _copy(old_db_template, tmp_path / "my models", "plain.sqlite")
     with DatabaseMapping(f"sqlite:///{plain}") as mapping:
-        with pytest.raises(FlexToolConfigError, match=f'flextool-migrate-database "{plain}"'):
+        with pytest.raises(FlexToolConfigError, match=re.escape(f'flextool-migrate-database "{plain}"')):
             check_version(mapping, logging.getLogger(__name__))
 
 

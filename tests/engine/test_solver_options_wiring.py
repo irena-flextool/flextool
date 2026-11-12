@@ -562,6 +562,7 @@ def test_option_files_are_read_once_per_run(gurobi_db, tmp_path, monkeypatch) ->
     assert not [r for r in reads if r.parent == snapshot], reads
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the solver stub is a POSIX shebang script")
 def test_cli_flags_reach_a_fake_gurobi_cl_through_the_whole_run(gurobi_db, tmp_path, monkeypatch, caplog) -> None:
     """Review L6, end to end through ``run_chain_from_db`` and the real subprocess path: a fake ``gurobi_cl``
     (it solves the MPS with highspy and writes a Gurobi JSON result) records its argv.
