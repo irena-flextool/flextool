@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from flextool import run_record
+from flextool._child_python import SAFE_PATH_FLAG, child_env
 from flextool._resources import package_data_path
 from flextool.gui.project_utils import (
     get_projects_dir,
@@ -3924,7 +3925,7 @@ class MainWindow(tk.Tk):
         # Build the appropriate subprocess command
         if info.format == ExcelFormat.SELF_DESCRIBING:
             cmd = [
-                sys.executable, "-m",
+                sys.executable, SAFE_PATH_FLAG, "-m",
                 "flextool.cli.cmd_read_self_describing_tabular_input",
                 str(xlsx_path),
                 target_db_url,
@@ -3932,7 +3933,7 @@ class MainWindow(tk.Tk):
             ]
         elif info.format == ExcelFormat.SPECIFICATION:
             cmd = [
-                sys.executable, "-m",
+                sys.executable, SAFE_PATH_FLAG, "-m",
                 "flextool.cli.cmd_read_tabular_input",
                 target_db_url,
                 "--tabular-file-path",
@@ -3951,7 +3952,7 @@ class MainWindow(tk.Tk):
                 work_sqlite.unlink(missing_ok=True)
                 return
             cmd = [
-                sys.executable, "-m",
+                sys.executable, SAFE_PATH_FLAG, "-m",
                 "flextool.cli.cmd_read_old_flextool",
                 str(xlsx_path),
                 target_db_url,
@@ -4038,7 +4039,7 @@ class MainWindow(tk.Tk):
         elif info.format == ExcelFormat.SELF_DESCRIBING:
             template = package_data_path("schemas/pre_v26/flextool_template_v25.json")
             import_cmd = [
-                sys.executable, "-m",
+                sys.executable, SAFE_PATH_FLAG, "-m",
                 "flextool.cli.cmd_read_self_describing_tabular_input",
                 str(xlsx_path), tmp_db_url, "--keep-entities",
             ]
@@ -4046,14 +4047,14 @@ class MainWindow(tk.Tk):
             # SPECIFICATION format
             template = package_data_path("schemas/pre_v26/flextool_template_v25.json")
             import_cmd = [
-                sys.executable, "-m",
+                sys.executable, SAFE_PATH_FLAG, "-m",
                 "flextool.cli.cmd_read_tabular_input",
                 tmp_db_url, "--tabular-file-path", str(xlsx_path),
                 "--migration-follows",
             ]
 
         export_cmd = [
-            sys.executable, "-m",
+            sys.executable, SAFE_PATH_FLAG, "-m",
             "flextool.cli.cmd_export_to_tabular",
             tmp_db_url,
             str(xlsx_path),
@@ -4094,7 +4095,7 @@ class MainWindow(tk.Tk):
             import shutil as _shutil
             success = False
             try:
-                env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+                env = child_env(PYTHONUNBUFFERED="1")
 
                 # Step 1: import old Excel into temp sqlite
                 proc = subprocess.Popen(
@@ -4187,7 +4188,7 @@ class MainWindow(tk.Tk):
 
         db_url = f"sqlite:///{sqlite_path}"
         cmd = [
-            sys.executable, "-m",
+            sys.executable, SAFE_PATH_FLAG, "-m",
             "flextool.cli.cmd_export_to_tabular",
             db_url,
             str(target_xlsx),
@@ -4272,7 +4273,7 @@ class MainWindow(tk.Tk):
         def _worker() -> None:
             success = False
             try:
-                env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+                env = child_env(PYTHONUNBUFFERED="1")
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, bufsize=1, cwd=str(flextool_root), env=env,
@@ -4406,6 +4407,8 @@ class MainWindow(tk.Tk):
             success = True
             collected: list[str] = []
             try:
+                # pip / git steps: the pip steps carry -P themselves; no PYTHONSAFEPATH here, because pip runs
+                # the setup scripts of packages it builds, and those may need their own folder on sys.path.
                 env = {**os.environ, "PYTHONUNBUFFERED": "1"}
                 for step in steps:
                     mgr.append_stdout(job.job_id, "$ " + " ".join(step))
@@ -4532,7 +4535,7 @@ class MainWindow(tk.Tk):
             # Current version — import directly against the current schema
             template = package_data_path("schemas/spinedb_schema.json")
             cmd = [
-                sys.executable, "-m",
+                sys.executable, SAFE_PATH_FLAG, "-m",
                 "flextool.cli.cmd_read_self_describing_tabular_input",
                 str(xlsx_path), target_db_url, "--keep-entities",
             ]
@@ -4541,7 +4544,7 @@ class MainWindow(tk.Tk):
             # the Excel's version, import, then migrate to current.
             template = package_data_path("schemas/pre_v26/flextool_template_v25.json")
             cmd = [
-                sys.executable, "-m",
+                sys.executable, SAFE_PATH_FLAG, "-m",
                 "flextool.cli.cmd_read_self_describing_tabular_input",
                 str(xlsx_path), target_db_url, "--keep-entities",
             ]
@@ -4549,7 +4552,7 @@ class MainWindow(tk.Tk):
         else:
             template = package_data_path("schemas/pre_v26/flextool_template_v25.json")
             cmd = [
-                sys.executable, "-m",
+                sys.executable, SAFE_PATH_FLAG, "-m",
                 "flextool.cli.cmd_read_tabular_input",
                 target_db_url, "--tabular-file-path", str(xlsx_path),
                 "--migration-follows",
@@ -4587,7 +4590,7 @@ class MainWindow(tk.Tk):
         def _worker() -> None:
             success = False
             try:
-                env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+                env = child_env(PYTHONUNBUFFERED="1")
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, bufsize=1, cwd=str(flextool_root), env=env,

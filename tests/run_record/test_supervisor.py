@@ -121,6 +121,7 @@ def test_the_child_environment_adds_the_pipe_variables_and_leaves_os_environ_alo
     env = supervisor.child_environment({"FLEXTOOL_THREADS": "3"})
     assert env == {
         "FLEXTOOL_THREADS": "3", "FLEXTOOL_RUN_LOG_OWNER": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1",
+        "PYTHONSAFEPATH": "1",
     }
     supervisor.child_environment()
     assert "FLEXTOOL_RUN_LOG_OWNER" not in os.environ

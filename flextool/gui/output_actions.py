@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import logging
-import os
 import subprocess
 import sys
 import threading
 from pathlib import Path
 from typing import Callable, TYPE_CHECKING
 
+from flextool._child_python import SAFE_PATH_FLAG, child_env
 from flextool.gui.cli_format import format_cmd_for_log
 from flextool.gui.config_parser import parse_plot_configs
 from flextool.gui.data_models import PlotSettings, ProjectSettings
@@ -206,7 +206,7 @@ class OutputActionManager:
         parquet_dir = self.project_path / "output_parquet" / subdir
 
         cmd: list[str] = [
-            sys.executable, "-m", "flextool.cli.cmd_write_outputs",
+            sys.executable, SAFE_PATH_FLAG, "-m", "flextool.cli.cmd_write_outputs",
             "--scenario-name", scenario_name,
             "--read-parquet-dir", str(parquet_dir),
             "--output-location", str(self.project_path),
@@ -256,7 +256,7 @@ class OutputActionManager:
         ]
 
         cmd: list[str] = [
-            sys.executable, "-m", "flextool.cli.cmd_scenario_results",
+            sys.executable, SAFE_PATH_FLAG, "-m", "flextool.cli.cmd_scenario_results",
             "--parquet-base-dir", str(parquet_base),
             "--alternatives", *subdirs,
             "--plot-dir", str(plot_dir),
@@ -364,7 +364,7 @@ class OutputActionManager:
             self._execution_mgr.append_stdout(job.job_id, "")
 
         try:
-            env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+            env = child_env(PYTHONUNBUFFERED="1")
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,

@@ -32,12 +32,12 @@ This module does not judge success: it returns the raw
 from __future__ import annotations
 
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from flextool.run_options import Resolved, RunOptions
+from flextool._child_python import child_env, python_module_argv
 
 # Repo root = <root>/flextool/calibrate/_solve.py → parents[2].
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -103,7 +103,8 @@ def run_solve(
         the folder itself: ``FLEXTOOL_SOLVER_CONFIG_DIR``, else from the input database's location).
 
     The solve runs under the ``flextool-run`` supervisor, which writes the run's ``_run.log``; its output still
-    comes back here in ``stdout``.  No environment is passed: the child inherits this process's.
+    comes back here in ``stdout``.  The child inherits this process's environment, plus ``PYTHONSAFEPATH=1``
+    (:mod:`flextool._child_python`).
     """
     argv = solve_argv(
         url, scenario, work_dir=work_dir, out_root=out_root, cache_dir=cache_dir, threads=threads, launcher=launcher,
@@ -115,6 +116,7 @@ def run_solve(
     proc = subprocess.run(
         argv,
         cwd=str(_REPO_ROOT),
+        env=child_env(),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -155,9 +157,7 @@ def solve_argv(
         chosen["solver_config_dir"] = Resolved(str(solver_config_dir), "cli")
     warm = RunOptions(resolved=chosen)
     return [
-        sys.executable,
-        "-m",
-        "flextool_run_supervisor",
+        *python_module_argv("flextool_run_supervisor"),
         url_norm,
         "--scenario-name",
         scenario,

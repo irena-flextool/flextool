@@ -92,6 +92,17 @@ RUN_LOG_NAME = "_run.log"
 AXIS_BOUNDS_NAME = "_axis_bounds.json"
 #: Run states that mean the run may still be writing its folder (``flextool.run_record.effective_state``).
 ACTIVE_RUN_STATES = ("running", "unknown")
+#: The top-level entries a package may hold under ``<Name>/`` (what :func:`export_project` writes); import refuses a
+#: package with anything else.
+PACKAGE_TOP_LEVEL = (INPUT_DIR, RESULTS_DIR, SOLVER_CONFIG_DIR, SETTINGS_FILE, PLOT_SETTINGS_FILE)
+#: File types import refuses anywhere in a package: programs and scripts that Python, the operating system or a
+#: double click would run, none of which a FlexTool project holds.  A project folder opened in FlexTool must not
+#: carry code (a ``flextool/__init__.py`` there could replace FlexTool's own).
+EXECUTABLE_SUFFIXES = frozenset({
+    ".py", ".pyc", ".pyo", ".pyw", ".pyz", ".pyzw", ".pth", ".so", ".pyd", ".dll", ".dylib", ".exe", ".com",
+    ".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".msi", ".msp", ".scr",
+    ".cpl", ".lnk", ".url", ".desktop", ".sh", ".command", ".app", ".jar", ".reg", ".hta",
+})
 #: The largest modification time a package may record: the end of year 9999, in ns.
 _MAX_MTIME_NS = 253_402_300_799 * 10**9
 #: Free space kept on the disk on top of the unpacked size of a package.
@@ -734,6 +745,10 @@ def _export(
     inputs = _files_under(project_dir / INPUT_DIR)
     taken = {p.relative_to(project_dir / INPUT_DIR).as_posix().lower() for p in inputs}
     for path in inputs:
+        if path.suffix.lower() in EXECUTABLE_SUFFIXES:
+            # Import refuses a package holding one (_content_problem): leave it out.
+            warnings.append(f"{path.name} is a program or script: it is not in the package.")
+            continue
         entries.append(_Entry(f"{INPUT_DIR}/{path.relative_to(project_dir / INPUT_DIR).as_posix()}", path))
         if path.with_name("~$" + path.name).exists():
             warnings.append(f"{path.name} is open in Excel: the package holds its last saved version.")
@@ -774,6 +789,9 @@ def _export(
         for run in runs:
             for path in _files_under(base / run):
                 arcname = f"{RESULTS_DIR}/{path.relative_to(base).as_posix()}"
+                if path.suffix.lower() in EXECUTABLE_SUFFIXES:
+                    warnings.append(f"{arcname} is a program or script: it is not in the package.")
+                    continue
                 if scrub_run_records and path.parent == base / run and path.name == RUN_LOG_NAME:
                     continue
                 if scrub_run_records and path.parent == base / run and path.name == RUN_STATUS_NAME:
@@ -921,6 +939,21 @@ def _dest_rel(rel: str) -> str:
     return rel
 
 
+def _content_problem(rel: str) -> str | None:
+    """Why the project file *rel* (relative POSIX path under ``<Name>/``) is not one a package may hold: outside the
+    entries of :data:`PACKAGE_TOP_LEVEL`, a program or script (:data:`EXECUTABLE_SUFFIXES`), or a solver option
+    file that is not ``solver_config/<name>.opt``."""
+    parts = rel.split("/")
+    top = parts[0]
+    if top not in PACKAGE_TOP_LEVEL or (top in (SETTINGS_FILE, PLOT_SETTINGS_FILE)) != (len(parts) == 1):
+        return (f"'{rel}' is not part of a FlexTool project (a package holds only {', '.join(PACKAGE_TOP_LEVEL)}).")
+    if PurePosixPath(parts[-1]).suffix.lower() in EXECUTABLE_SUFFIXES:
+        return f"'{rel}' is a program or script, which a FlexTool project never holds."
+    if top == SOLVER_CONFIG_DIR and (len(parts) != 2 or not parts[1].lower().endswith(".opt")):
+        return f"'{rel}': the solver_config folder of a package holds only .opt files."
+    return None
+
+
 def _facts_problem(arcname: str, facts: object) -> str | None:
     """Why the manifest entry *facts* of *arcname* is not a valid ``{"sha256", "bytes", "mtime_ns"}``."""
     if not isinstance(facts, dict) or not isinstance(facts.get("sha256"), str):
@@ -963,6 +996,9 @@ def _check_members(zf: zipfile.ZipFile, manifest: Manifest) -> list[str]:
         reason = _portability_problem(listed[len(prefix):])
         if reason is not None:
             problems.append(f"Member {reason}.")
+        reason = _content_problem(listed[len(prefix):])
+        if reason is not None:
+            problems.append(reason)
         reason = _facts_problem(listed, facts)
         if reason is not None:
             problems.append(reason)
@@ -1192,6 +1228,7 @@ def _import(
                     os.utime(dest, ns=(mtime_ns, mtime_ns))
             for sub in _PROJECT_SUBDIRS:
                 (partial / sub).mkdir(exist_ok=True)
+            dropped_refs = _drop_outside_refs(partial)
             if name_taken(projects_dir, target_name):
                 raise NameClashError(target_name, suggest_name(projects_dir, target_name))
             _rename_with_retry(partial, final)
@@ -1199,6 +1236,10 @@ def _import(
             shutil.rmtree(partial, ignore_errors=True)
             raise
 
+    if dropped_refs:
+        warnings.append(
+            "The package's settings named input files outside the project folder; FlexTool left them out: "
+            + ", ".join(dropped_refs) + ". Add such a file again in the FlexTool window if you need it.")
     report = ImportReport(target_name, final, manifest, warnings)
     shipped = sorted((final / IMPORTED_SOLVER_CONFIG_DIR).glob("*.opt"))
     if shipped:
@@ -1216,6 +1257,64 @@ def _import(
         if any(state != "same" for _name, state in report.solver_config):
             report.solver_config_hint = solver_config_activation_hint(final, workspace)
     return report
+
+
+def _ref_outside(project_dir: Path, rel: object) -> bool:
+    """Whether the settings path *rel* (relative to the project folder) is absolute, empty-but-set or leaves
+    *project_dir*."""
+    if not isinstance(rel, str) or not rel:
+        return True
+    if PurePosixPath(rel.replace("\\", "/")).is_absolute() or re.match(r"^[A-Za-z]:", rel):
+        return True
+    root = project_dir.resolve()
+    return not (root / rel).resolve().is_relative_to(root)
+
+
+def _drop_outside_refs(project_dir: Path) -> list[str]:
+    """Remove from the unpacked ``settings.yaml`` the input sources that point outside the project folder; return
+    their names.
+
+    A package made by :func:`export_project` has no ``external_refs`` (they name files on the sender's computer),
+    but a package made by hand could point a source at any file on this computer, which a run would then migrate
+    and the assistant read.  Dropped: every ``external_refs`` entry whose path leaves the project, and the path
+    (not the name or number) of every ``source_registry`` record outside the project.
+    """
+    path = project_dir / SETTINGS_FILE
+    if not path.is_file():
+        return []
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise PackageError(f"The project settings ({SETTINGS_FILE}) in the package cannot be read: {exc}") from exc
+    if not isinstance(data, dict):
+        return []
+    dropped: list[str] = []
+    refs = data.get("external_refs")
+    if isinstance(refs, dict):
+        kept = {k: v for k, v in refs.items() if not _ref_outside(project_dir, v)}
+        dropped.extend(str(k) for k in refs if k not in kept)
+        data["external_refs"] = kept
+    elif refs is not None:
+        data["external_refs"] = {}
+        dropped.append("external_refs")
+    registry = data.get("source_registry")
+    if isinstance(registry, dict):
+        for record in registry.values():
+            if isinstance(record, dict) and record.get("path") and _ref_outside(project_dir, record["path"]):
+                record["path"] = ""
+                name = str(record.get("name") or "")
+                if name and name not in dropped:
+                    dropped.append(name)
+    if not dropped:
+        return []
+    gone = set(dropped) - {p.name for p in _files_under(project_dir / INPUT_DIR)}
+    if isinstance(data.get("checked_input_sources"), list):
+        # A dropped source is no longer offered; one of the same name in input_sources/ stays checked.
+        data["checked_input_sources"] = [c for c in data["checked_input_sources"] if c not in gone]
+    mtime_ns = path.stat().st_mtime_ns
+    path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    os.utime(path, ns=(mtime_ns, mtime_ns))
+    return dropped
 
 
 def _short_diff(mine: Path, shipped: Path, limit: int = 40) -> list[str]:

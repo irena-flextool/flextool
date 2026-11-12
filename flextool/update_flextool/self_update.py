@@ -10,6 +10,7 @@ try:
 except ModuleNotFoundError:
     exit("Cannot find the required Spine-Toolbox module. Check that the environment is activated and the toolbox is installed")
 from spinedb_api.exception import NothingToCommit
+from flextool._child_python import python_module_argv
 from flextool._resources import package_data_path
 from flextool.update_flextool.db_migration import migrate_database
 from flextool.update_flextool.initialize_database import initialize_database
@@ -45,7 +46,6 @@ def _reinstall_if_needed():
     caller's CWD (Spine Toolbox typically invokes from the project
     directory, not the flextool repo root).
     """
-    import sys
     import os
 
     # flextool/update_flextool/self_update.py  →  flextool/  →  repo root.
@@ -54,7 +54,7 @@ def _reinstall_if_needed():
     )))
 
     result = subprocess.run(
-        [sys.executable, "-m", "pip", "show", "flextool"],
+        python_module_argv("pip", "show", "flextool"),
         capture_output=True, text=True,
     )
     is_editable = "Editable project location" in result.stdout
@@ -65,7 +65,9 @@ def _reinstall_if_needed():
     )
     target = ["-e", repo_root] if is_editable else [repo_root]
     completed = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--upgrade", *target],
+        # -P only, no PYTHONSAFEPATH: pip runs the setup scripts of the packages it builds, which may need
+        # their own folder on sys.path.
+        python_module_argv("pip", "install", "--upgrade", *target),
     )
     if completed.returncode != 0:
         flag = "-e " if is_editable else ""

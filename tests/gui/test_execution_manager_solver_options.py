@@ -42,8 +42,8 @@ def _registry_flags_in(cmd: list[str]) -> set[str]:
 
 
 def _run_options(cmd: list[str]) -> RunOptions:
-    assert cmd[1:3] == ["-m", "flextool.cli.cmd_run_flextool"]
-    return RunOptions.from_cli(build_parser().parse_args(cmd[3:]), environ={})
+    assert cmd[1:4] == ["-P", "-m", "flextool.cli.cmd_run_flextool"]
+    return RunOptions.from_cli(build_parser().parse_args(cmd[4:]), environ={})
 
 
 def test_default_settings_send_only_the_thread_count(tmp_path: Path):
@@ -115,8 +115,8 @@ def test_calibration_sends_threads_per_run(tmp_path: Path):
         damping_first=1.0, damping_remaining=0.5, stall_fraction=0.05, warm_start_cache_dir=None, work_dir=None,
         output_location=None, debug=False, threads=3, solver_config_dir="/ws/solver_config",
     )
-    assert argv[1:3] == ["-m", "flextool.calibrate"]
-    parsed = calibrate_parser().parse_args(argv[3:])
+    assert argv[1:4] == ["-P", "-m", "flextool.calibrate"]
+    parsed = calibrate_parser().parse_args(argv[4:])
     assert parsed.threads == 3 and parsed.solver_config_dir == Path("/ws/solver_config")
 
 
@@ -126,8 +126,8 @@ def test_calibrator_solves_get_the_option_folder(tmp_path: Path):
 
     argv = solve_argv("in.sqlite", "scen", work_dir=tmp_path / "w", out_root=tmp_path / "o", cache_dir=tmp_path / "c",
                       solver_config_dir=Path("/ws/solver_config"))
-    assert argv[1:3] == ["-m", "flextool_run_supervisor"]
-    options = RunOptions.from_cli(build_parser().parse_args(argv[3:]), environ={})
+    assert argv[1:4] == ["-P", "-m", "flextool_run_supervisor"]
+    options = RunOptions.from_cli(build_parser().parse_args(argv[4:]), environ={})
     assert (options.value("solver_config_dir"), options.source("solver_config_dir")) == (
         str(Path("/ws/solver_config")), "cli")
 

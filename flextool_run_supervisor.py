@@ -47,6 +47,10 @@ from typing import IO, Callable, Mapping, Sequence
 
 #: The engine module the supervisor runs.
 ENGINE_MODULE = "flextool.cli.cmd_run_flextool"
+#: The interpreter flag of the engine child: the current folder stays off ``sys.path``, so a ``flextool/`` folder in
+#: the folder ``flextool-run`` is started from is never imported instead of FlexTool (``flextool/_child_python.py``,
+#: which this stdlib-only module cannot import).
+SAFE_PATH_FLAG = "-P"
 #: The launcher label this supervisor records (``--run-launcher``) and writes in the log.
 LAUNCHER = "flextool-run"
 #: After SIGTERM / SIGHUP, the child gets this many seconds to end before it is killed.
@@ -127,15 +131,21 @@ def with_launcher(argv: Sequence[str], launcher: str = LAUNCHER) -> list[str]:
     return [*args, "--run-launcher", launcher]
 
 
+def engine_command() -> list[str]:
+    """The engine child's interpreter and module: ``[sys.executable, "-P", "-m", ENGINE_MODULE]``."""
+    return [sys.executable, SAFE_PATH_FLAG, "-m", ENGINE_MODULE]
+
+
 def child_environment(environ: Mapping[str, str] | None = None) -> dict[str, str]:
-    """A copy of *environ* (default ``os.environ``) plus the pipe owner's three variables, without the stop file's
-    variable (it is this process's, not the engine's)."""
+    """A copy of *environ* (default ``os.environ``) plus the pipe owner's three variables and ``PYTHONSAFEPATH=1``,
+    without the stop file's variable (it is this process's, not the engine's)."""
     owner = load_owner()
     env = dict(os.environ if environ is None else environ)
     env.pop(owner.RUN_STOP_FILE_ENV, None)
     env[owner.RUN_LOG_OWNER_ENV] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONSAFEPATH"] = "1"
     return env
 
 
@@ -329,7 +339,7 @@ def run_supervised(
 ) -> int:
     """Run the engine with *argv* as this process's child and own its output; return the status to exit with.
 
-    *child_cmd* replaces ``[sys.executable, "-m", "flextool.cli.cmd_run_flextool"]`` (tests run a stub engine);
+    *child_cmd* replaces ``[sys.executable, "-P", "-m", "flextool.cli.cmd_run_flextool"]`` (tests run a stub engine);
     *stdout* replaces ``sys.stdout`` as the echo target.  The result is the child's exit code (negative: the
     signal that ended it, POSIX), or the stop signal when this process had to kill the child after one.
     """
@@ -339,7 +349,7 @@ def run_supervised(
     if stop_file is not None and owner_mod.read_stop_reason(stop_file) is not None:
         print(f"{LAUNCHER}: stopped before the engine started", file=sys.stderr, flush=True)
         return 1
-    cmd = [*(child_cmd if child_cmd is not None else [sys.executable, "-m", ENGINE_MODULE]), *with_launcher(argv)]
+    cmd = [*(child_cmd if child_cmd is not None else engine_command()), *with_launcher(argv)]
     owner = owner_mod.RunLogOwner(launcher=LAUNCHER, preamble=[f"# {LAUNCHER}: {_command_text(cmd)}"])
     popen_kwargs: dict = {"stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "env": child_environment()}
     if not windows:

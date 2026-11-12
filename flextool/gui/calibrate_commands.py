@@ -22,6 +22,8 @@ from __future__ import annotations
 import shlex
 from collections.abc import Sequence
 
+from flextool._child_python import SAFE_PATH_FLAG
+
 RP_MODULE = "flextool.representative_periods.preprocess"
 CALIBRATE_MODULE = "flextool.calibrate"
 
@@ -87,6 +89,7 @@ def build_rp_command(
     """
     argv: list[str] = [
         python_exe,
+        SAFE_PATH_FLAG,
         "-m",
         RP_MODULE,
         db_url,
@@ -152,6 +155,7 @@ def build_calibrate_command(
     """
     argv: list[str] = [
         python_exe,
+        SAFE_PATH_FLAG,
         "-m",
         CALIBRATE_MODULE,
         db_url,

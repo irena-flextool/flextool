@@ -45,6 +45,7 @@ def test_rp_command_full_options_exact() -> None:
     )
     assert argv == [
         "/usr/bin/python",
+        "-P",
         "-m",
         "flextool.representative_periods.preprocess",
         "sqlite:///m.sqlite",
@@ -77,6 +78,7 @@ def test_rp_command_booleans_omitted_when_false() -> None:
     )
     assert argv == [
         "python",
+        "-P",
         "-m",
         "flextool.representative_periods.preprocess",
         "db",
@@ -139,6 +141,7 @@ def test_calibrate_command_full_options_exact() -> None:
     )
     assert argv == [
         "/usr/bin/python",
+        "-P",
         "-m",
         "flextool.calibrate",
         "sqlite:///m.sqlite",

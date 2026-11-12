@@ -76,6 +76,8 @@ from typing import TYPE_CHECKING, Any, Mapping, NamedTuple
 
 import numpy as np
 
+from flextool._child_python import child_env, python_module_argv
+
 if TYPE_CHECKING:
     from polar_high import Problem, Solution
 
@@ -149,7 +151,7 @@ def _run_cold_probe(
     """
     try:
         probe_cmd = [
-            sys.executable, "-m", "flextool.cli.cmd_solve_mps",
+            *python_module_argv("flextool.cli.cmd_solve_mps"),
             "--mps", str(mps_path),
             "--solution", str(probe_sol),
             "--options", str(opts_path),
@@ -157,7 +159,7 @@ def _run_cold_probe(
         ]
         if threads is not None:
             probe_cmd += ["--threads", str(threads)]
-        subprocess.run(probe_cmd)
+        subprocess.run(probe_cmd, env=child_env())
         if not probe_stats.exists():
             return None
         pstats = json.loads(probe_stats.read_text())
@@ -1936,7 +1938,7 @@ def _solve_highs_subprocess(
         problem.write_mps(str(mps_path), release=True, emit_names=False)
 
         cmd = [
-            sys.executable, "-m", "flextool.cli.cmd_solve_mps",
+            *python_module_argv("flextool.cli.cmd_solve_mps"),
             "--mps", str(mps_path),
             "--solution", str(sol_path),
             "--options", str(opts_path),
@@ -2038,7 +2040,7 @@ def _solve_highs_subprocess(
             logger.info(
                 "save_memory: spawning subprocess HiGHS for %r", solve_name,
             )
-        cp = subprocess.run(cmd)
+        cp = subprocess.run(cmd, env=child_env())
         optimal = cp.returncode == 0
 
         # --- Warm-start publish + measurement ---------------------------

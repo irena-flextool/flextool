@@ -434,3 +434,58 @@ def test_disk_space_external_left_out_and_partial_hidden(workspace: dict, monkey
     (projects / ".Stopped.partial").mkdir()
     monkeypatch.chdir(workspace["root"])
     assert project_utils.list_projects() == ["Proj", "Recv"]
+
+
+@pytest.mark.parametrize(("member", "message"), [
+    ("Proj/flextool/__init__.py", "not part of a FlexTool project"),
+    ("Proj/input_sources/flextool/__init__.py", "program or script"),
+    ("Proj/output_parquet/A_1/run.pth", "program or script"),
+    ("Proj/input_sources/setup.BAT", "program or script"),
+    ("Proj/solver_config/highs.sh", "program or script"),
+    ("Proj/solver_config/sub/highs.opt", "holds only .opt files"),
+    ("Proj/notes.txt", "not part of a FlexTool project"),
+])
+def test_code_and_unknown_files_in_a_package_are_refused(tmp_path: Path, member: str, message: str) -> None:
+    """A package holds only what export writes; code never unpacks into the project (it could replace FlexTool)."""
+    bad = tmp_path / "bad.flextool.zip"
+    _handmade(bad, {"Proj/settings.yaml": b"{}\n", member: b"open('marker', 'w')\n"})
+    projects = tmp_path / "projects"
+    with pytest.raises(pp.PackageError, match=message):
+        pp.import_project(bad, projects)
+    assert not projects.exists() or not any(projects.iterdir())
+    assert not pp.verify_package(bad).ok
+
+
+def test_export_leaves_out_programs_and_the_package_imports(workspace: dict) -> None:
+    (workspace["project"] / "input_sources" / "helper.py").write_text("print('hi')\n")
+    out, manifest = _export(workspace, ["A_1"])
+    assert not any(name.endswith("helper.py") for name in manifest.files)
+    assert any("helper.py is a program or script" in w for w in manifest.export_warnings)
+    report = pp.import_project(out, workspace["projects"], "Recv")
+    assert not (report.project_path / "input_sources" / "helper.py").exists()
+
+
+def test_import_drops_input_files_outside_the_project(tmp_path: Path) -> None:
+    """A hand-made package cannot point an input source at a file elsewhere on this computer."""
+    settings = {
+        "input_source_numbers": {"model.sqlite": 1, "far.sqlite": 2, "abs.sqlite": 3, "inside.sqlite": 4},
+        "source_registry": {"1": {"name": "model.sqlite", "path": "input_sources/model.sqlite"},
+                            "2": {"name": "far.sqlite", "path": "../../secret/far.sqlite"},
+                            "3": {"name": "abs.sqlite", "path": "/etc/abs.sqlite"}},
+        "external_refs": {"far.sqlite": "../../secret/far.sqlite", "abs.sqlite": "/etc/abs.sqlite",
+                          "inside.sqlite": "input_sources/inside.sqlite"},
+        "checked_input_sources": ["model.sqlite", "far.sqlite", "abs.sqlite"],
+    }
+    package = tmp_path / "refs.flextool.zip"
+    _handmade(package, {"Proj/settings.yaml": yaml.dump(settings).encode(),
+                        "Proj/input_sources/model.sqlite": b"x", "Proj/input_sources/inside.sqlite": b"y"})
+    report = pp.import_project(package, tmp_path / "projects")
+    shipped = yaml.safe_load((report.project_path / "settings.yaml").read_text())
+    assert shipped["external_refs"] == {"inside.sqlite": "input_sources/inside.sqlite"}
+    assert shipped["source_registry"]["1"]["path"] == "input_sources/model.sqlite"
+    assert shipped["source_registry"]["2"] == {"name": "far.sqlite", "path": ""}
+    assert shipped["source_registry"]["3"] == {"name": "abs.sqlite", "path": ""}
+    assert shipped["checked_input_sources"] == ["model.sqlite"]
+    assert shipped["input_source_numbers"] == settings["input_source_numbers"]
+    (warning,) = [w for w in report.warnings if "outside the project folder" in w]
+    assert "far.sqlite" in warning and "abs.sqlite" in warning and "inside.sqlite" not in warning

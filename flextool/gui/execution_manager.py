@@ -18,6 +18,7 @@ from typing import Callable
 
 import psutil
 
+from flextool._child_python import SAFE_PATH_FLAG, child_env
 from flextool._process_tree import kill_process_tree
 from flextool.gui.cli_format import format_cmd_for_log, terminal_command
 from flextool.gui.data_models import TIMESTAMP_FORMAT, GlobalSettings, ProjectSettings, ScenarioInfo
@@ -1210,7 +1211,7 @@ class ExecutionManager:
                 # Step 2: Build and run the main FlexTool command
                 work_folder = self.project_path / "work" / job.output_subdir
 
-                # Clean work folder so re-executions start fresh
+                # Clean work folder so re-executions start fresh (only ever a folder under <project>/work/)
                 if work_folder.exists():
                     shutil.rmtree(work_folder, ignore_errors=True)
                 work_folder.mkdir(parents=True, exist_ok=True)
@@ -1241,12 +1242,11 @@ class ExecutionManager:
 
                 # The pipe-owner variables (docs/dev/architecture.md, "Runtime options" item 4): the engine prints
                 # the run-record marker instead of copying its own output into _run.log, and writes UTF-8 unbuffered.
-                env = {
-                    **os.environ,
-                    "PYTHONUNBUFFERED": "1",
-                    "PYTHONIOENCODING": "utf-8",
-                    RUN_LOG_OWNER_ENV: "1",
-                }
+                env = child_env(
+                    PYTHONUNBUFFERED="1",
+                    PYTHONIOENCODING="utf-8",
+                    **{RUN_LOG_OWNER_ENV: "1"},
+                )
                 popen_kwargs = dict(
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, encoding="utf-8", errors="replace", bufsize=1,
@@ -1440,7 +1440,7 @@ class ExecutionManager:
 
         cmd = [
             sys.executable,
-            "-m",
+            SAFE_PATH_FLAG, "-m",
             "flextool.cli.cmd_run_flextool",
             job.input_db_url,
             "--scenario-name",
@@ -1618,7 +1618,7 @@ class ExecutionManager:
 
         cmd = [
             sys.executable,
-            "-m",
+            SAFE_PATH_FLAG, "-m",
             "flextool.cli.cmd_scenario_results",
             "--parquet-base-dir",
             str(self.project_path / "output_parquet"),
@@ -1690,7 +1690,7 @@ class ExecutionManager:
         success = False
 
         try:
-            env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+            env = child_env(PYTHONUNBUFFERED="1")
             estimate_gb, _src = self._compute_memory_budget_for_job(None)
             with self._lock:
                 job.memory_cap_gb = estimate_gb

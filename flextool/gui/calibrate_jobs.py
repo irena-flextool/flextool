@@ -51,7 +51,6 @@ All subprocess work happens off the Tk thread. ``append_stdout`` and
 from __future__ import annotations
 
 import logging
-import os
 import queue
 import re
 import shutil
@@ -62,6 +61,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from flextool._child_python import child_env
 from flextool._solver_config_source import workspace_solver_config_dir
 from flextool.gui.calibrate_commands import (
     build_calibrate_command,
@@ -298,7 +298,7 @@ def _run_aux_subprocess(
     try:
         stop_dir = Path(tempfile.mkdtemp(prefix="flextool-stop-"))
         stop_file = stop_dir / "stop"
-        env = {**os.environ, "PYTHONUNBUFFERED": "1", RUN_STOP_FILE_ENV: str(stop_file)}
+        env = child_env(PYTHONUNBUFFERED="1", **{RUN_STOP_FILE_ENV: str(stop_file)})
         proc = subprocess.Popen(
             argv,
             stdout=subprocess.PIPE,
@@ -356,6 +356,12 @@ def _run_aux_subprocess(
 # Public entry points
 # --------------------------------------------------------------------------- #
 
+def _workspace_cwd() -> str:
+    """The folder the RP and calibration processes run in: the workspace the GUI was started from, like the
+    other jobs (never the project folder, which may come from someone else)."""
+    return str(Path.cwd())
+
+
 def launch_rp_jobs(
     mgr: ExecutionManager,
     *,
@@ -371,7 +377,7 @@ def launch_rp_jobs(
     :class:`_SerialRunner` to wait on it deterministically).
     """
     run = runner if runner is not None else _RP_RUNNER
-    cwd = str(project_path)
+    cwd = _workspace_cwd()
     for spec in jobs:
         argv = build_rp_command(
             python_exe,
@@ -423,7 +429,7 @@ def launch_calibration_jobs(
     ``runner`` override exists for tests.
     """
     run = runner if runner is not None else _CALIBRATE_RUNNER
-    cwd = str(project_path)
+    cwd = _workspace_cwd()
     for spec in jobs:
         warm_start, work_dir, output_location = _calib_dirs(
             project_path, spec.scenario

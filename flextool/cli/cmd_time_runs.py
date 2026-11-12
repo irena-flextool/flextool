@@ -48,6 +48,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from flextool._child_python import child_env, python_module_argv
 from flextool._resources import package_data_path
 from flextool._solver_config_source import workspace_solver_config_dir
 
@@ -242,7 +243,7 @@ def run_one(run: Run, folder: Path, threads: int = GUI_DEFAULT_THREADS) -> RunRe
     folder.mkdir(parents=True, exist_ok=True)
     write_methods = ["parquet", "plot"] if run.plots else ["parquet"]
     cmd = [
-        sys.executable, "-m", "flextool.cli.cmd_run_flextool", run.db_url,
+        *python_module_argv("flextool.cli.cmd_run_flextool"), run.db_url,
         "--scenario-name", run.scenario,
         "--work-folder", str(work),
         "--output-location", str(out),
@@ -258,7 +259,7 @@ def run_one(run: Run, folder: Path, threads: int = GUI_DEFAULT_THREADS) -> RunRe
         cmd += ["--solver-config-dir", str(solver_config_dir)]
     # As the FlexTool window: UTF-8 output (a redirected stdout on Windows is otherwise the locale code page,
     # and a non-Latin name in a print could stop the run), unbuffered.
-    env = dict(os.environ, FLEXTOOL_PHASE_TIMING="1", PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
+    env = child_env(FLEXTOOL_PHASE_TIMING="1", PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
     log_path = folder / "run.log"
     with open(log_path, "w", encoding="utf-8", errors="replace") as log:
         t0 = time.perf_counter()
