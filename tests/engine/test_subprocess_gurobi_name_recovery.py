@@ -187,23 +187,28 @@ def test_generic_id_parsers() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write_fake_gurobi(tmp_path: Path, sol_lines: list[str]) -> Path:
+def _write_fake_gurobi(tmp_path: Path, sol_lines: list[str], stdout: str = "") -> Path:
     """Executable stub mimicking ``gurobi_cl``: read ``ResultFile=<path>``
-    from argv, write *sol_lines* there (Gurobi ResultFile format), exit 0."""
+    from argv, write *sol_lines* there (Gurobi ResultFile format), print
+    *stdout*, record its argv in ``<tmp_path>/argv.json``, exit 0."""
     body = textwrap.dedent(
         """\
         #!{py}
-        import sys
+        import json, sys
         result = None
         for a in sys.argv[1:]:
             if a.startswith("ResultFile="):
                 result = a.split("=", 1)[1]
         assert result is not None, "fake gurobi_cl: no ResultFile= in argv"
+        with open({argv_log!r}, "w") as fh:
+            json.dump(sys.argv[1:], fh)
         with open(result, "w") as fh:
             fh.write({payload!r})
+        sys.stdout.write({stdout!r})
         sys.exit(0)
         """
-    ).format(py=sys.executable, payload="\n".join(sol_lines) + "\n")
+    ).format(py=sys.executable, payload="\n".join(sol_lines) + "\n", stdout=stdout,
+             argv_log=str(tmp_path / "argv.json"))
     stub = tmp_path / "fake_gurobi_cl"
     stub.write_text(body)
     stub.chmod(stub.stat().st_mode | stat.S_IEXEC | stat.S_IRWXU)
@@ -434,3 +439,124 @@ def test_real_commercial_solver_handles_spaces(
     # Objective recovered for every solver (COPT via the '=?'-tolerant
     # regex, Xpress via writeprtsol).
     assert float(sol.obj) == pytest.approx(20.0, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# 4. Options, status and messages of the commercial path (item 230), through the fake gurobi_cl
+# ---------------------------------------------------------------------------
+
+import json  # noqa: E402
+import logging  # noqa: E402
+
+from flextool.cli.cmd_run_flextool import build_parser  # noqa: E402
+from flextool.engine.input._solve_config import SolverConfig  # noqa: E402
+from flextool.engine.solve._acceptance import classify_acceptance  # noqa: E402
+from flextool.engine.solve._solver_dispatch import FlexToolUserError, run_one_solve  # noqa: E402
+from flextool.run_options import RunOptions  # noqa: E402
+
+_GUROBI_TIME_LIMIT_LOG = (
+    "Explored 2055 nodes (12153 simplex iterations) in 0.30 seconds (0.34 work units)\n"
+    "\n"
+    "Time limit reached\n"
+    "Best objective 1.000000000000e+02, best bound 9.900000000000e+01, gap 1.0101%\n"
+)
+_SOL_20 = ["# Objective value = 20", "C0000001 10", "C0000002 5", "C0000003 0"]
+
+
+def _mip_lp(nodes: list[str]) -> Problem:
+    """``_cost_lp`` with an extra integer column, so the problem is a MIP."""
+    pb = _cost_lp(nodes)
+    pb.add_var("u", ("node",), pl.DataFrame({"node": ["n"]}), lower=0.0, upper=1.0, integer=True)
+    return pb
+
+
+def _gurobi(stub: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sps, "_find_solver_binary", lambda name: stub)
+
+
+def test_gurobi_time_limit_from_the_console(tmp_path, monkeypatch) -> None:
+    """A text result file has no status: ``Time limit reached`` on the console makes it TIME_LIMIT, and the
+    gap line gives the gap; a MIP is then kept with a warning naming it."""
+    _gurobi(_write_fake_gurobi(tmp_path, _SOL_20, stdout=_GUROBI_TIME_LIMIT_LOG), monkeypatch)
+    sol = _solve_commercial_subprocess(
+        _mip_lp(["A", "B", "C"]), "gurobi", options=None, solve_name="unit", logger=None, work_folder=None,
+    )
+    assert (sol.shim_status, sol.optimal) == ("TIME_LIMIT", False)
+    assert sol.shim_mip_gap == pytest.approx(0.010101)
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="unit")
+    assert acc.accepted and acc.time_limited and "1.0101%" in acc.message
+
+
+def test_gurobi_without_the_time_limit_line_is_optimal(tmp_path, monkeypatch) -> None:
+    _gurobi(_write_fake_gurobi(tmp_path, _SOL_20, stdout="Optimal solution found\n"), monkeypatch)
+    sol = _solve_commercial_subprocess(
+        _cost_lp(["A", "B", "C"]), "gurobi", options=None, solve_name="unit", logger=None, work_folder=None,
+    )
+    assert (sol.shim_status, sol.optimal) == ("OPTIMAL", True)
+
+
+def test_gurobi_json_result_gives_status_and_gap_with_logging_off(tmp_path, monkeypatch, caplog) -> None:
+    """The JSON result file carries the status whatever the console says; it lists non-zero values only, so a
+    missing column is a zero, not a warning."""
+    payload = json.dumps({
+        "SolutionInfo": {"Status": 9, "ObjVal": 20, "ObjBound": 19.5, "MIPGap": 0.025, "SolCount": 2},
+        "Vars": [{"VarName": "C0000001", "X": 10}, {"VarName": "C0000002", "X": 5}],
+    })
+    _gurobi(_write_fake_gurobi(tmp_path, [payload]), monkeypatch)
+    with caplog.at_level(logging.WARNING):
+        sol = _solve_commercial_subprocess(
+            _cost_lp(["A", "B", "C"]), "gurobi", options=None, solve_name="unit",
+            logger=logging.getLogger("t"), work_folder=None,
+        )
+    assert sol.shim_status == "TIME_LIMIT" and sol.shim_mip_gap == pytest.approx(0.025)
+    np.testing.assert_allclose(sol.col_value, [10.0, 5.0, 0.0])
+    assert sol.obj == pytest.approx(20.0)
+    assert not [r for r in caplog.records if "absent" in r.getMessage()]
+    # An LP stopped at its limit stops the run.
+    assert not classify_acceptance(sol, ranges_post=None, solve_name="unit").accepted
+
+
+def test_gurobi_unknown_parameter_is_a_warning_naming_its_layer(tmp_path, monkeypatch, caplog) -> None:
+    _gurobi(_write_fake_gurobi(tmp_path, _SOL_20, stdout="Unknown parameter: 'MIPGapp' (ignored)\n"), monkeypatch)
+    with caplog.at_level(logging.WARNING):
+        _solve_commercial_subprocess(
+            _cost_lp(["A", "B", "C"]), "gurobi", options={"MIPGapp": "0.01"}, solve_name="unit",
+            logger=logging.getLogger("t"), work_folder=None,
+            option_layers={"MIPGapp": "solver_arguments of solve unit"},
+        )
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "MIPGapp" in warnings[0] and "solver_arguments of solve unit" in warnings[0]
+
+
+def test_flags_reach_gurobi_and_set_the_watchdog(tmp_path, monkeypatch) -> None:
+    """End to end through ``run_one_solve``: the flags become Gurobi parameters and the subprocess timeout is
+    2 x 60 + 600 = 720 s."""
+    _gurobi(_write_fake_gurobi(tmp_path, _SOL_20), monkeypatch)
+    (tmp_path / "cfg").mkdir()
+    (tmp_path / "cfg" / "gurobi.opt").write_text("Threads 0\nMIPGap 0.002\n")
+    timeouts: list = []
+    real_run = sps.subprocess.run
+
+    def spy(*args, **kwargs):
+        timeouts.append(kwargs.get("timeout"))
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(sps.subprocess, "run", spy)
+    flags = ["sqlite:///x.sqlite", "--solver-time-limit", "60", "--solver-mip-gap", "0.001"]
+    run_one_solve(
+        _cost_lp(["A", "B", "C"]), SolverConfig(name="gurobi"), solve_name="unit",
+        run_options=RunOptions.from_cli(build_parser().parse_args(flags), environ={}),
+        solver_config_dir=tmp_path / "cfg",
+    )
+    argv = json.loads((tmp_path / "argv.json").read_text())
+    assert argv[:-2] == ["Threads=0", "MIPGap=0.001", "TimeLimit=60.0"]
+    assert timeouts == [720.0]
+
+
+def test_xpress_refuses_a_mip(monkeypatch) -> None:
+    """The Xpress script runs ``lpoptimize``, which returns the LP relaxation of a MIP: refused up front."""
+    monkeypatch.setattr(sps, "_find_solver_binary", lambda name: pytest.fail("no solver may be started"))
+    with pytest.raises(FlexToolUserError, match="integer variables"):
+        run_one_solve(_mip_lp(["A", "B"]), SolverConfig(name="xpress"), solve_name="unit",
+                      run_options=RunOptions.from_env({}))

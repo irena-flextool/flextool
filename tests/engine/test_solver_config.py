@@ -243,8 +243,8 @@ def test_solve_config_load_idempotent(tmp_path: Path):
     [
         ("highs",  {"time_limit": "time_limit",   "mip_gap": "mip_rel_gap",            "threads": "threads"}),
         ("gurobi", {"time_limit": "TimeLimit",    "mip_gap": "MIPGap",                  "threads": "Threads"}),
-        ("cplex",  {"time_limit": "timelimit",    "mip_gap": "mip.tolerances.mipgap",   "threads": "threads"}),
-        ("xpress", {"time_limit": "maxtime",      "mip_gap": "miprelstop",              "threads": "threads"}),
+        ("cplex",  {"time_limit": "timelimit",    "mip_gap": "mip tolerances mipgap",   "threads": "threads"}),
+        ("xpress", {"time_limit": "MAXTIME",      "mip_gap": "MIPRELSTOP",              "threads": "THREADS"}),
         ("copt",   {"time_limit": "TimeLimit",    "mip_gap": "RelGap",                  "threads": "Threads"}),
     ],
 )

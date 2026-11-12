@@ -462,8 +462,8 @@ def test_solver_options_passthrough(
     [
         ("highs",  "time_limit", "mip_rel_gap",          "threads"),
         ("gurobi", "TimeLimit",  "MIPGap",                "Threads"),
-        ("cplex",  "timelimit",  "mip.tolerances.mipgap", "threads"),
-        ("xpress", "maxtime",    "miprelstop",            "threads"),
+        ("cplex",  "timelimit",  "mip tolerances mipgap", "threads"),
+        ("xpress", "MAXTIME",    "MIPRELSTOP",            "THREADS"),
         ("copt",   "TimeLimit",  "RelGap",                "Threads"),
     ],
 )

@@ -20,8 +20,9 @@ rationale and the canonical _PARAM_MAP table.
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping, NamedTuple
 
 from flextool.engine.input._solve_config import SolverConfig
 
@@ -215,14 +216,17 @@ class FlexToolUserError(Exception):
 
 # Per-solver native parameter names for the three "convenience" knobs
 # normalised by FlexTool.  Anything outside these three goes through
-# untranslated via ``SolverConfig.options``.
-#
-# Source: ``specs/flextool-multi-solver-handoff.md`` lines 109-136.
+# untranslated via ``SolverConfig.options``.  The one table for the
+# database knob (``solve.solver_mip_gap``) and the operator layer
+# (``--solver-time-limit`` / ``--solver-mip-gap`` and their environment
+# twins).  The names are the ones each CLI takes: CPLEX's interactive
+# ``set`` spelling (``mip tolerances mipgap``, not the Python API's
+# dotted path), Xpress controls in upper case as in its templates.
 _PARAM_MAP: dict[str, dict[str, str]] = {
     "highs":  {"time_limit": "time_limit", "mip_gap": "mip_rel_gap",          "threads": "threads"},
     "gurobi": {"time_limit": "TimeLimit",  "mip_gap": "MIPGap",                "threads": "Threads"},
-    "cplex":  {"time_limit": "timelimit",  "mip_gap": "mip.tolerances.mipgap", "threads": "threads"},
-    "xpress": {"time_limit": "maxtime",    "mip_gap": "miprelstop",            "threads": "threads"},
+    "cplex":  {"time_limit": "timelimit",  "mip_gap": "mip tolerances mipgap", "threads": "threads"},
+    "xpress": {"time_limit": "MAXTIME",    "mip_gap": "MIPRELSTOP",            "threads": "THREADS"},
     "copt":   {"time_limit": "TimeLimit",  "mip_gap": "RelGap",                "threads": "Threads"},
 }
 
@@ -230,6 +234,10 @@ _PARAM_MAP: dict[str, dict[str, str]] = {
 def build_solver_options(solver_config: SolverConfig) -> dict[str, Any]:
     """Translate a :class:`SolverConfig` into the raw options dict that
     polar-high's ``solve()`` consumes.
+
+    The database layers only (no option file, no operator flags, exact key
+    match).  FlexTool's own commercial solves use
+    :func:`resolve_commercial_options`, the full stack.
 
     1. The three convenience knobs (``time_limit`` / ``mip_gap`` /
        ``threads``), when set on *solver_config*, are translated to the
@@ -291,6 +299,233 @@ def build_solver_options(solver_config: SolverConfig) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Commercial option stack (item 230)
+# ---------------------------------------------------------------------------
+#
+# One stack for every solver, lowest -> highest:
+#   1. ``<solver>.opt`` (the run's solver-config folder);
+#   2. the solve's ``solver_mip_gap`` (translated through :data:`_PARAM_MAP`);
+#   3. the solve's ``solver_arguments`` (raw native names);
+#   4. the operator layer: ``--solver-time-limit`` / ``--solver-mip-gap``, else
+#      ``FLEXTOOL_SOLVER_TIME_LIMIT`` / ``FLEXTOOL_SOLVER_MIP_GAP``.
+# Names are compared without case (and, for CPLEX, with ``.`` read as a
+# space), so ``MIPGap`` in the file and ``mipgap`` in solver_arguments are
+# one parameter: one line, at the position of its first appearance, with the
+# highest layer's value and spelling (CPLEX: always the interactive spelling,
+# since the dotted one is not a ``set`` command).
+
+#: Option names (compared without case) that make the solver write files of
+#: its own.  FlexTool names the result file itself (``ResultFile``); the others
+#: would write wherever an option file or a database says.  Dropped from every
+#: layer with one warning.
+_FILE_WRITING_OPTIONS: dict[str, frozenset[str]] = {
+    "gurobi": frozenset({"resultfile", "logfile", "solfiles", "nodefiledir"}),
+}
+
+#: Flags / environment variables that only HiGHS reads.  Given on a run whose
+#: solve goes to a commercial solver, they are named once in a warning.
+_HIGHS_ONLY_OPTIONS = (
+    "highs_threads", "presolve", "solver_log_level", "user_bound_scale",
+    "highs_time_limit", "highs_mip_gap",
+)
+
+#: Commercial watchdog: the solver enforces its own time limit; FlexTool's
+#: subprocess timeout only guards a hung process.  Reading a large MPS before
+#: the limit starts and writing the result file after it can take minutes,
+#: hence the generous grace (``2 x limit + 600 s``).
+_WATCHDOG_FACTOR = 2.0
+_WATCHDOG_GRACE_S = 600.0
+
+_warned_dropped_options: set[tuple[str, str, str]] = set()
+_warned_highs_only: set[tuple[str, ...]] = set()
+
+
+class CommercialOption(NamedTuple):
+    """One parameter passed to a commercial solver: native name, value text and the layer that set it."""
+
+    name: str
+    value: str
+    layer: str
+
+
+def commercial_option_key(solver: str, name: str) -> str:
+    """The comparison key of a commercial parameter name: case-folded; for
+    CPLEX also ``.`` read as a space and runs of whitespace collapsed."""
+    key = str(name).strip()
+    if solver == "cplex":
+        key = key.replace(".", " ")
+    return " ".join(key.split()).casefold()
+
+
+def _native_value(solver: str, knob: str, value: object) -> str:
+    """Text of a convenience-knob value for *solver*: Xpress ``MAXTIME`` is an
+    integer control, so a time limit is rounded up to whole seconds."""
+    from flextool.engine.solve._subprocess_solve import _format_native_opt_value
+
+    if solver == "xpress" and knob == "time_limit":
+        return str(int(math.ceil(float(value))))
+    return _format_native_opt_value(value)
+
+
+def _operator_native_overrides(
+    solver: str, run_options: "RunOptions | None",
+) -> list[CommercialOption]:
+    """The operator layer of a commercial solve: the time limit and the MIP gap
+    given by flag or by ``FLEXTOOL_SOLVER_*``, under *solver*'s native names.
+
+    The HiGHS-only ``FLEXTOOL_HIGHS_TIME_LIMIT`` / ``FLEXTOOL_HIGHS_MIP_GAP``
+    do not apply, and threads stay with the option file (``--threads`` is the
+    run's FlexTool budget only).  A registry default adds nothing.
+    """
+    from flextool.run_options import OPTIONS, RunOptions
+
+    opts = run_options if run_options is not None else RunOptions.from_env()
+    names = _PARAM_MAP[solver]
+    out: list[CommercialOption] = []
+    for knob, key in (("time_limit", "solver_time_limit"), ("mip_gap", "solver_mip_gap")):
+        resolved = opts.resolved.get(key)
+        if resolved is None or resolved.source not in ("cli", "env") or resolved.value is None:
+            continue
+        spec = OPTIONS[key]
+        layer = f"flag {spec.flag}" if resolved.source == "cli" else f"environment variable {spec.env}"
+        out.append(CommercialOption(names[knob], _native_value(solver, knob, resolved.value), layer))
+    return out
+
+
+def resolve_commercial_options(
+    solver: str,
+    *,
+    opt_file: Path | None,
+    solver_config: SolverConfig | None,
+    run_options: "RunOptions | None",
+    solve_name: str | None = None,
+    logger: logging.Logger | None = None,
+) -> list[CommercialOption]:
+    """The parameters a commercial solve passes to *solver*, in final order.
+
+    Layers (lowest -> highest): *opt_file* < the solve's ``solver_mip_gap`` <
+    its ``solver_arguments`` < the operator layer
+    (:func:`_operator_native_overrides`).  See the block comment above for the
+    merge rule.  File-writing parameters (:data:`_FILE_WRITING_OPTIONS`) are
+    dropped with one warning per name and layer.
+    """
+    from flextool.engine.solve._subprocess_solve import (
+        _format_native_opt_value,
+        _parse_native_opt_file,
+    )
+
+    of_solve = f" of solve {solve_name}" if solve_name else ""
+    entries: list[CommercialOption] = []
+    if opt_file is not None:
+        entries += [
+            CommercialOption(k, v, str(opt_file)) for k, v in _parse_native_opt_file(Path(opt_file)).items()
+        ]
+    if solver_config is not None:
+        names = _PARAM_MAP[solver]
+        entries += [
+            CommercialOption(
+                names[knob], _native_value(solver, knob, getattr(solver_config, knob)), f"solver_mip_gap{of_solve}"
+            )
+            for knob in ("time_limit", "mip_gap", "threads")
+            if getattr(solver_config, knob) is not None
+        ]
+        entries += [
+            CommercialOption(str(k), _format_native_opt_value(v), f"solver_arguments{of_solve}")
+            for k, v in solver_config.options.items()
+            if v is not None
+        ]
+    entries += _operator_native_overrides(solver, run_options)
+
+    file_writing = _FILE_WRITING_OPTIONS.get(solver, frozenset())
+    merged: dict[str, CommercialOption] = {}
+    for option in entries:
+        key = commercial_option_key(solver, option.name)
+        if key in file_writing:
+            warn_key = (solver, key, option.layer)
+            if warn_key not in _warned_dropped_options:
+                _warned_dropped_options.add(warn_key)
+                (logger or logging.getLogger(__name__)).warning(
+                    "Ignoring %s %s in %s: FlexTool reads the solution from its own result file, and a "
+                    "parameter that makes %s write files is not passed on.",
+                    option.name, option.value, option.layer, solver,
+                )
+            continue
+        merged[key] = option._replace(name=key) if solver == "cplex" else option
+    return list(merged.values())
+
+
+def commercial_time_limit(solver: str, options: "list[CommercialOption] | Mapping[str, Any] | None") -> float | None:
+    """The time limit (seconds) among the resolved *options* of *solver*, else ``None``.
+
+    Read from the native time-limit name only (Xpress also ``TIMELIMIT``).  A
+    value that is not a positive finite number (Gurobi's ``inf``, an Xpress
+    negative ``MAXTIME`` meaning "only once a solution exists") gives ``None``.
+    """
+    if not options or solver not in _PARAM_MAP:
+        return None
+    wanted = {commercial_option_key(solver, _PARAM_MAP[solver]["time_limit"])}
+    if solver == "xpress":
+        wanted.add("timelimit")
+    items = (
+        [(o.name, o.value) for o in options] if isinstance(options, list) else list(options.items())
+    )
+    limit: float | None = None
+    for name, value in items:
+        if commercial_option_key(solver, name) not in wanted:
+            continue
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            continue
+        limit = v if math.isfinite(v) and 0.0 < v < 1e15 else None
+    return limit
+
+
+def commercial_watchdog_seconds(time_limit: float | None) -> float | None:
+    """The subprocess timeout of a commercial solve with *time_limit*: ``2 x limit + 600 s``; no limit, no
+    watchdog."""
+    if time_limit is None:
+        return None
+    return _WATCHDOG_FACTOR * float(time_limit) + _WATCHDOG_GRACE_S
+
+
+def warn_highs_only_options(solver: str, run_options: "RunOptions | None", logger: logging.Logger | None) -> None:
+    """One warning per run (per distinct set) naming the HiGHS-only flags / variables given while a solve runs
+    on the commercial *solver*."""
+    from flextool.run_options import OPTIONS, RunOptions
+
+    opts = run_options if run_options is not None else RunOptions.from_env()
+    given = []
+    for key in _HIGHS_ONLY_OPTIONS:
+        resolved = opts.resolved.get(key)
+        if resolved is None or resolved.source not in ("cli", "env"):
+            continue
+        spec = OPTIONS[key]
+        given.append(spec.flag if resolved.source == "cli" and spec.flag else spec.env)
+    if not given:
+        return
+    warn_key = (solver, *given)
+    if warn_key in _warned_highs_only:
+        return
+    _warned_highs_only.add(warn_key)
+    (logger or logging.getLogger(__name__)).warning(
+        "%s only applies to HiGHS; this solve runs on %s and does not use it. Set %s's own parameter in the "
+        "solve's solver_arguments or in %s.opt instead.",
+        ", ".join(given), solver, solver, solver,
+    )
+
+
+def problem_is_mip(vars_map: Mapping[str, Any] | None) -> bool:
+    """Whether a problem (its ``name -> Var`` map) has an integer column."""
+    for var in (vars_map or {}).values():
+        if getattr(var, "integer", False):
+            frame = getattr(var, "frame", None)
+            if frame is None or getattr(frame, "height", 1) > 0:
+                return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Single-solve dispatch (Phase 3)
 # ---------------------------------------------------------------------------
 
@@ -305,6 +540,7 @@ def run_one_solve(
     work_folder: "Path | None" = None,
     run_options: "RunOptions | None" = None,
     solver_config_dir: "Path | None" = None,
+    commercial_options: "list[CommercialOption] | None" = None,
 ):
     """Dispatch *problem* to the chosen solver.
 
@@ -365,6 +601,10 @@ def run_one_solve(
         The run's solver-config folder; the commercial path reads its
         ``<solver>.opt`` baseline there.  ``None`` falls back to
         ``$FLEXTOOL_SOLVER_CONFIG_DIR``, else ``<cwd>/solver_config``.
+    commercial_options
+        The commercial parameters already resolved by the caller
+        (:func:`resolve_commercial_options`, as the orchestrator does for its
+        ``Solver args`` line); ``None`` resolves them here.
 
     Returns
     -------
@@ -411,18 +651,17 @@ def run_one_solve(
 
     # Commercial path.  Always subprocess: write MPS via the cheap
     # ``Problem.write_mps`` (polars→MPS, no LpView), spawn the solver's
-    # CLI binary, parse the .sol.  The in-process commercial-solver
+    # CLI binary, parse the result file.  The in-process commercial-solver
     # dispatch was retired alongside the in-process cold-HiGHS path —
     # the goal is a single hard memory bound (~2-3 GB for write_mps on
     # the largest LPs) for every cold solve regardless of solver.
     #
-    # Convenience-knob translations are honoured but most commercial
-    # knobs (and the raw ``solver_options`` dict) are not yet plumbed
-    # into the CLI scripts — see :mod:`_subprocess_solve` for the
-    # current contract.  ``time_limit`` flows through as the subprocess
-    # timeout.
+    # The options are the one stack of :func:`resolve_commercial_options`
+    # (``<solver>.opt`` < solver_mip_gap < solver_arguments < flags /
+    # FLEXTOOL_SOLVER_*); the resolved time limit also sets the watchdog.
     from flextool.engine.solve._subprocess_solve import (
         _BINARY_NAMES,
+        _resolve_solver_config_dir,
         solve_via_subprocess,
     )
     if solver_config.name not in _BINARY_NAMES and solver_config.name != "highs":
@@ -436,7 +675,30 @@ def run_one_solve(
         if logger is not None:
             logger.error(msg)
         raise FlexToolUserError(msg)
-    options = build_solver_options(solver_config)
+    if solver_config.name == "xpress" and problem_is_mip(getattr(problem, "_vars", None)):
+        # The Xpress console script runs ``lpoptimize``, which on a MIP solves
+        # only the LP relaxation: refuse instead of returning a wrong answer.
+        msg = (
+            f"Solve {solve_name or 'solve'!r} has integer variables, but FlexTool's Xpress driver solves only "
+            "linear problems (it would return the LP relaxation, not an integer solution). Use another solver "
+            "for this solve, or remove its integer variables."
+        )
+        if logger is not None:
+            logger.error(msg)
+        raise FlexToolUserError(msg)
+    if commercial_options is None:
+        config_dir = _resolve_solver_config_dir(solver_config_dir)
+        commercial_options = resolve_commercial_options(
+            solver_config.name,
+            opt_file=config_dir / f"{solver_config.name}.opt",
+            solver_config=solver_config,
+            run_options=run_options,
+            solve_name=solve_name,
+            logger=logger,
+        )
+    warn_highs_only_options(solver_config.name, run_options, logger)
+    options = {o.name: o.value for o in commercial_options}
+    option_layers = {o.name: o.layer for o in commercial_options}
     try:
         return solve_via_subprocess(
             problem,
@@ -446,7 +708,7 @@ def run_one_solve(
             logger=logger,
             work_folder=work_folder,
             run_options=run_options,
-            config_dir=solver_config_dir,
+            option_layers=option_layers,
         )
     except RuntimeError as e:
         msg = str(e)
@@ -586,7 +848,13 @@ def probe_solver_licenses() -> dict[str, str]:
 
 __all__ = [
     "_PARAM_MAP",
+    "CommercialOption",
     "FlexToolUserError",
+    "commercial_option_key",
+    "commercial_time_limit",
+    "commercial_watchdog_seconds",
+    "problem_is_mip",
+    "resolve_commercial_options",
     "_parse_highs_opt_file",
     "_resolve_effective_highs_options",
     "build_solver_options",

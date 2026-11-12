@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import json
 import logging
+import mmap
 import os
 import re
 import shutil
@@ -70,7 +71,7 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping, NamedTuple
 
 import numpy as np
 
@@ -507,6 +508,23 @@ def _parse_highs_sol(
     return col_value, col_dual, row_dual
 
 
+def _highs_sol_status(sol_path: Path) -> str:
+    """``TIME_LIMIT`` when a HiGHS style=0 solution file says ``Time limit reached`` with a ``Feasible``
+    primal, else ``OTHER``.  Reads the file's first lines only."""
+    try:
+        with open(sol_path) as fh:
+            head = [fh.readline().strip() for _ in range(6)]
+    except OSError:
+        return "OTHER"
+    model_status = head[1] if len(head) > 1 and head[0] == "Model status" else ""
+    primal_status = next(
+        (head[i + 1] for i, line in enumerate(head[:-1]) if line == "# Primal solution values"), "",
+    )
+    if model_status == "Time limit reached" and primal_status == "Feasible":
+        return "TIME_LIMIT"
+    return "OTHER"
+
+
 class _SolHighsShim:
     """Duck-typed stand-in for ``highspy.Highs`` for the cold-path writers.
 
@@ -777,19 +795,17 @@ _SCRIPTS = {
 
 
 # ---------------------------------------------------------------------------
-# Per-solver baseline option-file handling
+# Per-solver option-file handling
 # ---------------------------------------------------------------------------
 # Each commercial solver gets a baseline ``solver_config/<solver>.opt``
-# (shipped with the FlexTool repo, user-editable).  The file is written
-# in the *solver's own* parameter-file syntax — see the comment header
-# in each baseline file for the exact format.  The scenario's
-# ``solver_options`` dict (already keyed by native parameter names by
-# ``build_solver_options`` in ``_solver_dispatch.py``) is then overlaid
-# on top, taking precedence per key.  The merged dict is materialised
-# to a temp file next to the MPS in the per-solver native format and
-# fed to the CLI via the per-solver mechanism (Gurobi: one
-# ``Name=value`` argv token per parameter; CPLEX/Xpress/COPT: inline
-# set/setControl commands piped on stdin).  Format helpers below.
+# (shipped as a template, user-editable), written in the *solver's own*
+# parameter syntax — see the comment header in each template.
+# ``_solver_dispatch.resolve_commercial_options`` merges it with the solve's
+# ``solver_mip_gap`` / ``solver_arguments`` and the operator's flags into one
+# ordered parameter set; :func:`_write_commercial_opt_file` writes that set
+# next to the MPS (the record of what was passed) and the per-solver script
+# turns each line into the CLI's form (Gurobi: one ``Name=value`` argv token
+# per parameter; CPLEX/Xpress/COPT: inline set/setControl commands on stdin).
 
 
 def _resolve_solver_config_dir(config_dir: Path | None = None) -> Path:
@@ -859,104 +875,141 @@ def _format_native_opt_value(v: object) -> str:
     return str(v)
 
 
-def _format_gurobi_opt(merged: dict[str, str]) -> str:
-    """Format *merged* as a Gurobi ``.prm`` file body.
-
-    One ``<ParamName> <value>`` per line.  Same syntax produced by
-    ``gurobi_cl`` 's own ``-w`` parameter dump.
-    """
-    return "".join(
-        f"{name} {_format_native_opt_value(value)}\n"
-        for name, value in merged.items()
-    )
-
-
-def _format_cplex_opt(merged: dict[str, str]) -> str:
-    """Format *merged* as our CPLEX baseline body.
-
-    Same layout as the input file: ``<name> <value>`` per line, where
-    ``<name>`` uses CPLEX' interactive ``set`` syntax (e.g.
-    ``mip tolerances mipgap``).  The per-solver script builder translates
-    each line into ``set <name> <value>`` for piping on stdin.
-    """
-    return "".join(
-        f"{name} {_format_native_opt_value(value)}\n"
-        for name, value in merged.items()
-    )
-
-
-def _format_xpress_opt(merged: dict[str, str]) -> str:
-    """Format *merged* as our Xpress controls baseline body."""
-    return "".join(
-        f"{name} {_format_native_opt_value(value)}\n"
-        for name, value in merged.items()
-    )
-
-
-def _format_copt_opt(merged: dict[str, str]) -> str:
-    """Format *merged* as our COPT baseline body."""
-    return "".join(
-        f"{name} {_format_native_opt_value(value)}\n"
-        for name, value in merged.items()
-    )
-
-
-_OPT_FORMATTERS = {
-    "gurobi": _format_gurobi_opt,
-    "cplex": _format_cplex_opt,
-    "xpress": _format_xpress_opt,
-    "copt": _format_copt_opt,
-}
-
-
-def _build_commercial_opt_file(
-    solver_name: str,
-    options: dict[str, Any] | None,
+def _write_commercial_opt_file(
+    options: Mapping[str, Any] | None,
     out_path: Path,
-    *,
-    config_dir: Path | None = None,
 ) -> Path | None:
-    """Merge baseline ``<solver>.opt`` with scenario *options* and write
-    the result to *out_path*.
+    """Write the resolved commercial *options* (name -> value, final order) to *out_path*.
 
-    Returns the path to the merged file when it has at least one entry,
-    or ``None`` when both the baseline file is missing and the scenario
-    *options* dict is empty (caller skips the per-solver opt-file slot
-    entirely, so the CLI gets no parameter arguments).
+    One ``<name> <value>`` line per parameter, the layout of the baseline
+    files; the per-solver script builder reads it back.  Returns ``None``
+    when there is nothing to pass (the CLI then gets no parameters).
     """
-    config_dir = _resolve_solver_config_dir(config_dir)
-    baseline_path = config_dir / f"{solver_name}.opt"
-    merged: dict[str, str] = {
-        k: str(v) for k, v in _parse_native_opt_file(baseline_path).items()
-    }
-    if options:
-        for key, value in options.items():
-            # Skip the FlexTool-internal ``time_limit`` knob — that's
-            # forwarded as the subprocess timeout, not as a solver
-            # parameter (Gurobi accepts ``TimeLimit`` which IS in the
-            # native-name overlay; the friendly ``time_limit`` key never
-            # appears here for the commercial path because
-            # ``build_solver_options`` translates it first).
-            if value is None:
-                continue
-            merged[str(key)] = _format_native_opt_value(value)
-    if not merged:
+    lines = [
+        f"{name} {_format_native_opt_value(value)}\n"
+        for name, value in (options or {}).items()
+        if value is not None
+    ]
+    if not lines:
         return None
-    formatter = _OPT_FORMATTERS[solver_name]
-    out_path.write_text(formatter(merged))
+    out_path.write_text("".join(lines))
     return out_path
 
 
-def _parse_gurobi_sol(
-    path: Path,
-) -> tuple[str, float | None, dict[str, float] | None, dict[str, float] | None]:
-    """Parse a Gurobi ``.sol`` (key=value text).
+class _ParsedSolution(NamedTuple):
+    """What a commercial result file (and the solver's console output) says about a solve.
 
-    Returns ``(status_str, objective, primal_dict, dual_dict)`` where
-    ``status_str`` is one of ``"OPTIMAL"`` / ``"OTHER"``.
+    ``primal`` is ``None`` when there is no solution; ``mip_gap`` is the
+    relative gap the solver reported (a fraction), when known.
+    """
+
+    status: str
+    objective: float | None
+    primal: dict[str, float] | None
+    dual: dict[str, float] | None
+    mip_gap: float | None = None
+
+
+#: Gurobi ``Status`` codes (``SolutionInfo.Status`` of a JSON result file).
+_GUROBI_STATUS = {
+    2: "OPTIMAL", 3: "INFEASIBLE", 4: "INF_OR_UNBD", 5: "UNBOUNDED", 7: "ITERATION_LIMIT", 8: "NODE_LIMIT",
+    9: "TIME_LIMIT", 10: "SOLUTION_LIMIT", 11: "INTERRUPTED", 12: "NUMERIC", 13: "SUBOPTIMAL",
+    15: "USER_OBJ_LIMIT", 16: "WORK_LIMIT", 17: "MEM_LIMIT",
+}
+_GUROBI_JSON_INFO = re.compile(rb'"SolutionInfo"\s*:\s*(\{[^{}]*\})')
+_GUROBI_JSON_VAR = re.compile(rb'"VarName"\s*:\s*"([^"]*)"\s*,\s*"X"\s*:\s*([^,}\s]+)')
+#: Console lines of a solve stopped by its time limit (Gurobi / COPT / Xpress).
+_GUROBI_TIME_LIMIT = re.compile(r"^\s*Time limit reached\s*$", re.MULTILINE)
+_GUROBI_GAP = re.compile(r"^Best objective [^,]*, best bound [^,]*, gap ([-+\d.eE]+)%", re.MULTILINE)
+_COPT_TIME_LIMIT = re.compile(r"status\s*:\s*stopped\s*\(time limit", re.IGNORECASE)
+_COPT_GAP = re.compile(r"^Best gap\s*:\s*([-+\d.eE]+)%", re.MULTILINE)
+_CPLEX_GAP = re.compile(r"gap\s*=\s*[^,()]*,\s*([-+\d.eE]+)%")
+_XPRESS_TIME_LIMIT = re.compile(r"MAXTIME limit reached|\*\*\* Time limit reached \*\*\*|time limit hit",
+                                re.IGNORECASE)
+#: ``gurobi_cl``'s message for a parameter name it does not know (it then solves on without it).
+_GUROBI_UNKNOWN_PARAMETER = re.compile(r"Unknown parameter:?\s*'([^']+)'")
+
+
+def _percent(match: "re.Match[str] | None") -> float | None:
+    if match is None:
+        return None
+    try:
+        return float(match.group(1)) / 100.0
+    except ValueError:
+        return None
+
+
+def _parse_gurobi_json(path: Path) -> _ParsedSolution | None:
+    """Parse a Gurobi JSON result file (``ResultFile=<x>.json``), else ``None`` when *path* is not one.
+
+    ``SolutionInfo`` carries ``Status`` / ``ObjVal`` / ``MIPGap`` / ``SolCount``
+    whatever the console logging; ``Vars`` lists the non-zero values only and
+    is absent when there is no solution.  Read through ``mmap`` with a bytes
+    regex, so a large file is not loaded as Python objects.
+    """
+    try:
+        with path.open("rb") as fh:
+            if not fh.read(64).lstrip().startswith(b"{"):
+                return None
+            fh.seek(0)
+            try:
+                data = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+            except ValueError:  # empty file
+                return None
+            try:
+                m = _GUROBI_JSON_INFO.search(data)
+                info = json.loads(m.group(1)) if m else {}
+                has_solution = data.find(b'"Vars"') >= 0
+                primal = {
+                    name.decode(): float(value)
+                    for name, value in _GUROBI_JSON_VAR.findall(data)
+                } if has_solution else None
+            finally:
+                data.close()
+    except (OSError, ValueError):
+        return None
+    status = _GUROBI_STATUS.get(info.get("Status"), "OTHER")
+    objective = info.get("ObjVal") if has_solution else None
+    gap = info.get("MIPGap")
+    return _ParsedSolution(
+        status,
+        float(objective) if isinstance(objective, (int, float)) else None,
+        primal,
+        None,
+        float(gap) if isinstance(gap, (int, float)) and has_solution and abs(gap) < 1e99 else None,
+    )
+
+
+def _parse_gurobi_sol(path: Path, stdout: str = "") -> _ParsedSolution:
+    """Parse a Gurobi result file: JSON (status, gap, non-zero values) first,
+    else the ``.sol`` text format (values only).
+
+    With the text format the status comes from the console output: a primal
+    with ``Time limit reached`` in *stdout* is ``TIME_LIMIT``, otherwise
+    ``OPTIMAL`` (the text format has no status; with console logging off a
+    time-limited solve cannot be told apart, which is why FlexTool asks for JSON).
+    """
+    parsed = _parse_gurobi_json(path) if path.is_file() else None
+    if parsed is not None:
+        if parsed.status == "TIME_LIMIT" and parsed.mip_gap is None:
+            parsed = parsed._replace(mip_gap=_percent(_GUROBI_GAP.search(stdout)))
+        return parsed
+    status, objective, primal = _parse_sol_text(path)
+    if primal and _GUROBI_TIME_LIMIT.search(stdout):
+        return _ParsedSolution("TIME_LIMIT", objective, primal, None, _percent(_GUROBI_GAP.search(stdout)))
+    return _ParsedSolution(status, objective, primal, None)
+
+
+def _parse_sol_text(
+    path: Path,
+) -> tuple[str, float | None, dict[str, float] | None]:
+    """Parse a Gurobi / COPT ``.sol`` text file (``<name> <value>`` lines).
+
+    Returns ``(status_str, objective, primal_dict)`` where ``status_str`` is
+    ``"OPTIMAL"`` when there are values, else ``"OTHER"``.
     """
     if not path.is_file():
-        return "OTHER", None, None, None
+        return "OTHER", None, None
     objective: float | None = None
     primal: dict[str, float] = {}
     with path.open("r") as fh:
@@ -981,29 +1034,32 @@ def _parse_gurobi_sol(
                 except ValueError:
                     continue
     status = "OPTIMAL" if primal else "OTHER"
-    return status, objective, (primal or None), None
+    return status, objective, (primal or None)
 
 
-def _parse_copt_sol(path: Path):
-    """COPT's ``.sol`` matches Gurobi's key=value layout."""
-    return _parse_gurobi_sol(path)
+def _parse_copt_sol(path: Path, stdout: str = "") -> _ParsedSolution:
+    """COPT's ``.sol`` has Gurobi's text layout; the status comes from the
+    console (``MIP status : stopped (time limit reached)``)."""
+    status, objective, primal = _parse_sol_text(path)
+    if primal and _COPT_TIME_LIMIT.search(stdout):
+        return _ParsedSolution("TIME_LIMIT", objective, primal, None, _percent(_COPT_GAP.search(stdout)))
+    return _ParsedSolution(status, objective, primal, None)
 
 
-def _parse_cplex_sol(
-    path: Path,
-) -> tuple[str, float | None, dict[str, float] | None, dict[str, float] | None]:
-    """Parse CPLEX XML ``.sol`` via :mod:`xml.etree.ElementTree`."""
+def _parse_cplex_sol(path: Path, stdout: str = "") -> _ParsedSolution:
+    """Parse CPLEX XML ``.sol`` via :mod:`xml.etree.ElementTree`; the gap of a
+    time-limited MIP comes from the console (``gap = ..., X%``)."""
     if not path.is_file():
-        return "OTHER", None, None, None
+        return _ParsedSolution("OTHER", None, None, None)
     try:
         tree = ET.parse(path)
     except ET.ParseError:
-        return "OTHER", None, None, None
+        return _ParsedSolution("OTHER", None, None, None)
     root = tree.getroot()
     if root.tag == "CPLEXSolutions":
         children = list(root)
         if not children:
-            return "OTHER", None, None, None
+            return _ParsedSolution("OTHER", None, None, None)
         root = children[0]
     objective: float | None = None
     status = "OTHER"
@@ -1050,12 +1106,17 @@ def _parse_cplex_sol(
                 continue
     if status == "OTHER" and primal:
         status = "OPTIMAL"
-    return status, objective, (primal or None), (dual or None)
+    gaps = _CPLEX_GAP.findall(stdout) if status == "TIME_LIMIT" else []
+    gap = None
+    if gaps:
+        try:
+            gap = float(gaps[-1]) / 100.0
+        except ValueError:
+            gap = None
+    return _ParsedSolution(status, objective, (primal or None), (dual or None), gap)
 
 
-def _parse_xpress_sol(
-    path: Path,
-) -> tuple[str, float | None, dict[str, float] | None, dict[str, float] | None]:
+def _parse_xpress_sol(path: Path, stdout: str = "") -> _ParsedSolution:
     """Parse the Xpress solution written by :func:`_xpress_script`.
 
     We force Xpress to emit the MPS-like **SLX** solution (name-based,
@@ -1096,13 +1157,18 @@ def _parse_xpress_sol(
             primal[parts[-2]] = val
 
     objective: float | None = None
+    unfinished = False
     prt = _first_existing(
         [Path(str(path) + ".prt"), path.with_suffix(".prt")]
     )
     if prt is not None:
+        prt_text = prt.read_text()
+        # ``Problem is unfinished`` (the print solution's statistics) where a
+        # finished solve says ``Optimal solution found``.
+        unfinished = "Problem is unfinished" in prt_text
         m = re.search(
             r"[Oo]bjective\s+function\s+value\s+is\s+([-\d.eE+]+)",
-            prt.read_text(),
+            prt_text,
         )
         if m:
             try:
@@ -1110,8 +1176,15 @@ def _parse_xpress_sol(
             except ValueError:
                 objective = None
 
-    status = "OPTIMAL" if primal else "OTHER"
-    return status, objective, (primal or None), None
+    if not primal:
+        status = "OTHER"
+    elif _XPRESS_TIME_LIMIT.search(stdout):
+        status = "TIME_LIMIT"
+    elif unfinished:
+        status = "UNFINISHED"
+    else:
+        status = "OPTIMAL"
+    return _ParsedSolution(status, objective, (primal or None), None)
 
 
 _PARSERS = {
@@ -1160,6 +1233,51 @@ def _looks_like_license_error(*texts: str) -> bool:
     return any(p.search(blob) for p in _LICENSE_ERROR_PATTERNS)
 
 
+#: A result-file status without a solution, and how the error names it.
+_NO_SOLUTION_REASONS = {
+    "INFEASIBLE": "is infeasible",
+    "UNBOUNDED": "is unbounded",
+    "INF_OR_UNBD": "is infeasible or unbounded",
+    "TIME_LIMIT": "stopped at its time limit before finding a solution",
+    "ITERATION_LIMIT": "stopped at its iteration limit before finding a solution",
+    "NODE_LIMIT": "stopped at its node limit before finding a solution",
+    "WORK_LIMIT": "stopped at its work limit before finding a solution",
+    "MEM_LIMIT": "stopped at its memory limit before finding a solution",
+    "INTERRUPTED": "was interrupted before finding a solution",
+}
+
+
+def _is_sparse_result(solver_name: str, sol_path: Path) -> bool:
+    """Whether *sol_path* is a Gurobi JSON result file (only non-zero values listed)."""
+    if solver_name != "gurobi" or not sol_path.is_file():
+        return False
+    with sol_path.open("rb") as fh:
+        return fh.read(64).lstrip().startswith(b"{")
+
+
+def _warn_unknown_gurobi_parameters(
+    output: str,
+    option_layers: Mapping[str, str] | None,
+    solve_name: str,
+    logger: logging.Logger | None,
+) -> None:
+    """One warning per ``Unknown parameter: '<name>' (ignored)`` line of ``gurobi_cl``, naming where the
+    parameter was set.  Gurobi solves on without it.  The line is part of Gurobi's console log, so it is not
+    seen when the log is off (``LogToConsole 0`` / ``OutputFlag 0``)."""
+    names = dict.fromkeys(_GUROBI_UNKNOWN_PARAMETER.findall(output))
+    if not names:
+        return
+    layers = {k.casefold(): v for k, v in (option_layers or {}).items()}
+    log = logger or logging.getLogger(__name__)
+    for name in names:
+        where = layers.get(name.casefold())
+        log.warning(
+            "Gurobi does not know the parameter %r%s and solved solve %s without it. Check the spelling "
+            "against the Gurobi parameter list.",
+            name, f" (set in {where})" if where else "", solve_name,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -1195,7 +1313,7 @@ def solve_via_subprocess(
     logger: logging.Logger | None = None,
     work_folder: Path | None = None,
     run_options: "RunOptions | None" = None,
-    config_dir: Path | None = None,
+    option_layers: Mapping[str, str] | None = None,
 ) -> "Solution":
     """Solve *problem* via the appropriate CLI subprocess; return a Solution.
 
@@ -1211,13 +1329,12 @@ def solve_via_subprocess(
         for the commercial CLIs.
     options
         Effective solver options.  For HiGHS, written as a HiGHS ``.opt``
-        file ingested by the subprocess.  For commercial solvers,
-        overlaid on top of the per-solver baseline at
-        ``solver_config/<solver>.opt`` and fed to the CLI via the
-        per-solver mechanism (see
-        :func:`_build_commercial_opt_file`).  Raw options win on key
-        collision.  ``time_limit`` is additionally honoured as the
-        subprocess timeout.
+        file ingested by the subprocess.  For commercial solvers, the
+        already-resolved parameter set (name -> value, final order; see
+        ``_solver_dispatch.resolve_commercial_options``), written next to
+        the MPS and fed to the CLI via the per-solver mechanism.  Its
+        native time limit also sets the subprocess watchdog
+        (``2 x limit + 600 s``).
     solve_name
         Used to name the MPS / .opt / .sol files.
     logger
@@ -1229,10 +1346,10 @@ def solve_via_subprocess(
     run_options
         The run's operator options; the HiGHS path reads ``warm_start`` and
         ``basis_cache_dir`` from them.  ``None`` reads the environment.
-    config_dir
-        The run's solver-config folder holding the commercial
-        ``<solver>.opt`` baselines (:func:`_resolve_solver_config_dir`:
-        this folder > ``$FLEXTOOL_SOLVER_CONFIG_DIR`` > ``<cwd>/solver_config``).
+    option_layers
+        Commercial solvers: parameter name -> the layer that set it (option
+        file path, ``solver_arguments of solve X``, a flag), named in the
+        warning about a parameter the solver does not know.
 
     Returns
     -------
@@ -1250,7 +1367,7 @@ def solve_via_subprocess(
     if solver_name in _SCRIPTS:
         return _solve_commercial_subprocess(
             problem, solver_name, options, solve_name=solve_name,
-            logger=logger, work_folder=work_folder, config_dir=config_dir,
+            logger=logger, work_folder=work_folder, option_layers=option_layers,
         )
     raise ValueError(
         f"solve_via_subprocess: unknown solver_name={solver_name!r}; "
@@ -1633,10 +1750,11 @@ def _solve_highs_subprocess(
             vars=dict(problem._vars),
             highs=h,
         )
-        # The child's exit code is all the parent knows of its status
-        # (``cmd_solve_mps`` exits 0 for kOptimal, 1 otherwise); the
-        # acceptance check records it as the solve's model status.
-        sol.shim_status = "OPTIMAL" if optimal else "OTHER"
+        # The child exits 0 for kOptimal, 1 otherwise; a non-optimal solve
+        # is told apart by the status line of its solution file (a time
+        # limit with a feasible primal is ``TIME_LIMIT``).  The acceptance
+        # check records it as the solve's model status.
+        sol.shim_status = "OPTIMAL" if optimal else _highs_sol_status(sol_path)
         return sol
     finally:
         if cleanup:
@@ -1676,7 +1794,7 @@ def _solve_commercial_subprocess(
     solve_name: str,
     logger: logging.Logger | None,
     work_folder: Path | None,
-    config_dir: Path | None = None,
+    option_layers: Mapping[str, str] | None = None,
 ) -> "Solution":
     """Solve via a commercial solver's CLI binary.
 
@@ -1701,18 +1819,23 @@ def _solve_commercial_subprocess(
        Work — no parent-side ``highspy.Highs.readModel`` (which used to
        OOM on large LPs and hard-fail on entity names containing spaces).
 
-    ``options`` is fed to the solver via a per-solver native opt-file
-    materialised next to the MPS in the per-solve temp dir.  The file
-    starts from the user-editable baseline at
-    ``solver_config/<solver>.opt`` (shipped in the FlexTool repo) and
-    overlays the scenario's *options* dict line-by-line (raw entries
-    win on key collision — same semantics as
-    :func:`build_solver_options`).  Each per-solver script builder then
-    references the merged file in the cleanest native form
-    (Gurobi: ``gurobi_cl <Name>=<value> ... ResultFile=<sol> <mps>``; CPLEX/Xpress/COPT:
-    inline ``set``/``setControl`` lines piped on stdin before the
-    ``read``/``optimize`` pair).  ``time_limit`` is *also* honoured as
-    the subprocess timeout when present in *options*.
+    ``options`` is the resolved parameter set
+    (``_solver_dispatch.resolve_commercial_options``: ``<solver>.opt`` <
+    ``solver_mip_gap`` < ``solver_arguments`` < flags), written next to the
+    MPS as the record of what was passed.  Each per-solver script builder
+    turns it into the CLI's form (Gurobi:
+    ``gurobi_cl <Name>=<value> ... ResultFile=<x>.json <mps>``;
+    CPLEX/Xpress/COPT: inline ``set``/``setControl`` lines piped on stdin
+    before the ``read``/``optimize`` pair).  The native time limit among
+    them sets the watchdog (``2 x limit + 600 s``): the solver enforces the
+    limit itself, the watchdog only catches a hung process.
+
+    The parsed status (``Solution.shim_status``) is ``TIME_LIMIT`` for a
+    solve stopped by its limit with a solution (Gurobi from its JSON
+    result file, else its console; COPT / Xpress from the console; CPLEX
+    from its solution file); ``Solution.shim_mip_gap`` carries the gap the
+    solver reported, when known.  The acceptance check decides what that
+    means (``_acceptance.classify_acceptance``).
     """
     from polar_high import Solution
 
@@ -1732,22 +1855,20 @@ def _solve_commercial_subprocess(
     else:
         out_dir = Path(tempfile.mkdtemp(prefix=f"flextool_{solver_name}_"))
 
+    from flextool.engine.solve._solver_dispatch import (
+        commercial_time_limit,
+        commercial_watchdog_seconds,
+    )
+
     safe_name = solve_name.replace("/", "_").replace(" ", "_") or "solve"
     mps_path = out_dir / f"{safe_name}.mps"
-    sol_path = out_dir / f"{safe_name}.sol"
+    # Gurobi writes a JSON result file for a ``.json`` name: it carries the
+    # status, gap and solution count whatever the console logging.
+    sol_path = out_dir / (f"{safe_name}.json" if solver_name == "gurobi" else f"{safe_name}.sol")
     opt_path = out_dir / f"{safe_name}.opt"
 
-    # Pull a time_limit out of options if the caller forwarded one.
-    time_limit: float | None = None
-    if options:
-        for key in ("time_limit", "TimeLimit", "timelimit", "maxtime"):
-            v = options.get(key)
-            if v is not None:
-                try:
-                    time_limit = float(v)
-                    break
-                except (TypeError, ValueError):
-                    pass
+    time_limit = commercial_time_limit(solver_name, dict(options or {}))
+    watchdog = commercial_watchdog_seconds(time_limit)
 
     try:
         if logger is not None:
@@ -1777,14 +1898,10 @@ def _solve_commercial_subprocess(
         # HiGHS path.
         problem.write_mps(str(mps_path), release=True, emit_names=False)
 
-        # Merge baseline ``solver_config/<solver>.opt`` with the scenario
-        # options dict (raw entries win) and write the result to
-        # ``<solve>.opt`` for the per-solver CLI to ingest.  Returns
-        # ``None`` when both sources are empty — the per-solver script
-        # builders then skip the opt-file slot entirely.
-        opt_arg = _build_commercial_opt_file(
-            solver_name, options, opt_path, config_dir=config_dir,
-        )
+        # Write the resolved parameters to ``<solve>.opt`` for the
+        # per-solver CLI to ingest.  ``None`` when there are none — the
+        # per-solver script builders then skip the opt-file slot entirely.
+        opt_arg = _write_commercial_opt_file(options, opt_path)
 
         argv, stdin_text = _SCRIPTS[solver_name](
             binary, mps_path, sol_path, opt_arg,
@@ -1802,16 +1919,20 @@ def _solve_commercial_subprocess(
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=time_limit,
+                timeout=watchdog,
             )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(
-                f"{solver_name!r} CLI exceeded time_limit={time_limit!r}s "
-                f"for solve {solve_name!r}; captured stderr: {exc.stderr!r}"
+                f"{solver_name!r} did not stop at its own time limit of "
+                f"{time_limit:g} s for solve {solve_name!r}: FlexTool stopped it "
+                f"after {watchdog:g} s (2 x the limit + 600 s); captured "
+                f"stderr: {exc.stderr!r}"
             ) from exc
 
         stdout = cp.stdout or ""
         stderr = cp.stderr or ""
+        if solver_name == "gurobi":
+            _warn_unknown_gurobi_parameters(stdout + "\n" + stderr, option_layers, solve_name, logger)
 
         if cp.returncode != 0:
             msg = (
@@ -1825,13 +1946,20 @@ def _solve_commercial_subprocess(
                 raise RuntimeError(f"LICENSE: {msg}")
             raise RuntimeError(msg)
 
-        status_str, objective, primal, dual = _PARSERS[solver_name](sol_path)
-        if status_str == "OTHER" and not primal:
+        parsed = _PARSERS[solver_name](sol_path, stdout)
+        status_str, objective, primal, dual = parsed.status, parsed.objective, parsed.primal, parsed.dual
+        if primal is None:
             if _looks_like_license_error(stdout, stderr):
                 raise RuntimeError(
                     f"{solver_name!r} CLI for solve {solve_name!r} returned "
                     f"no usable solution and its output reports a licence error.\n"
                     f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+                )
+            if status_str in _NO_SOLUTION_REASONS:
+                raise RuntimeError(
+                    f"{solver_name!r} reports that solve {solve_name!r} "
+                    f"{_NO_SOLUTION_REASONS[status_str]}; there is no solution "
+                    f"to use.\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
                 )
             raise RuntimeError(
                 f"{solver_name!r} CLI produced no solution file we could "
@@ -1866,7 +1994,8 @@ def _solve_commercial_subprocess(
                 "(non-generic) column names for solve %r — ignored",
                 solver_name, unrecognised, len(primal_dict), solve_name,
             )
-        if mapped < n_cols and logger is not None:
+        # A JSON result file lists only the non-zero values; a text one lists all.
+        if mapped < n_cols and logger is not None and not _is_sparse_result(solver_name, sol_path):
             logger.warning(
                 "subprocess[%s]: %d/%d columns absent from .sol for solve "
                 "%r (defaulted to 0.0)",
@@ -1917,6 +2046,7 @@ def _solve_commercial_subprocess(
         # UNBOUNDED / TIME_LIMIT / OTHER); the acceptance check records it
         # as the solve's model status (no HiGHS diagnostics exist here).
         sol.shim_status = status_str
+        sol.shim_mip_gap = parsed.mip_gap
         return sol
     finally:
         if cleanup:

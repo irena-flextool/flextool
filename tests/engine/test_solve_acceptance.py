@@ -504,3 +504,51 @@ def test_model_empty_without_a_readable_lp_keeps_the_plain_message() -> None:
     )
     assert acc.model_status == "kModelEmpty"
     assert acc.message == "solve for s has no variables or constraints"
+
+
+# --- time limit: a MIP keeps its incumbent with a warning, an LP stops (owner decision D2, every solver) -------
+
+
+class _Var:
+    def __init__(self, integer: bool) -> None:
+        import polars as pl
+
+        self.integer = integer
+        self.frame = pl.DataFrame({"col_id": [0]})
+
+
+def _time_limited(*, mip: bool, diagnostics=None, shim_gap: float | None = None) -> _StubSolution:
+    sol = _StubSolution(optimal=False, diagnostics=diagnostics)
+    sol._vars = {"x": _Var(integer=False), "u": _Var(integer=mip)}
+    if diagnostics is None:  # a commercial / --save-memory result file
+        sol.shim_status = "TIME_LIMIT"
+        sol.shim_mip_gap = shim_gap
+    return sol
+
+
+@pytest.mark.parametrize("source", ["highs", "result_file"])
+def test_time_limited_mip_with_a_solution_is_kept_with_a_warning(source: str) -> None:
+    diagnostics = _diag(status_name="kTimeLimit", primal_feasible=True) if source == "highs" else None
+    acc = classify_acceptance(
+        _time_limited(mip=True, diagnostics=diagnostics, shim_gap=0.010101), ranges_post=None, solve_name="s",
+    )
+    assert acc.accepted and acc.time_limited and acc.model_status == "kTimeLimit"
+    assert "time limit" in acc.message
+    if source == "result_file":
+        assert "1.0101%" in acc.message
+
+
+@pytest.mark.parametrize("source", ["highs", "result_file"])
+def test_time_limited_lp_stops_the_run(source: str) -> None:
+    diagnostics = _diag(status_name="kTimeLimit", primal_feasible=True) if source == "highs" else None
+    acc = classify_acceptance(_time_limited(mip=False, diagnostics=diagnostics), ranges_post=None, solve_name="s")
+    assert not acc.accepted and not acc.time_limited and acc.model_status == "kTimeLimit"
+    assert "time limit" in acc.message
+
+
+def test_time_limited_mip_without_a_solution_stops_the_run() -> None:
+    acc = classify_acceptance(
+        _time_limited(mip=True, diagnostics=_diag(status_name="kTimeLimit", primal_feasible=False)),
+        ranges_post=None, solve_name="s",
+    )
+    assert not acc.accepted and acc.model_status == "kTimeLimit"

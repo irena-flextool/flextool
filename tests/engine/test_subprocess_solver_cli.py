@@ -71,3 +71,157 @@ def test_licence_banner_of_an_infeasible_solve_is_not_a_licence_error() -> None:
 def test_licence_failure_is_a_licence_error(text: str) -> None:
     assert _looks_like_license_error("", text)
     assert _looks_like_license_error(_GUROBI_INFEASIBLE_LOG + text + "\n", "")
+
+
+# ---------------------------------------------------------------------------
+# One option stack for every solver (item 230): option file < solver_mip_gap < solver_arguments < flag / env.
+# Expected values are worked out by hand from the layer rules (specs/gurobi_options_fix_design.md §3).
+# ---------------------------------------------------------------------------
+
+from flextool.cli.cmd_run_flextool import build_parser  # noqa: E402
+from flextool.engine.input._solve_config import SolverConfig  # noqa: E402
+from flextool.engine.solve._solver_dispatch import (  # noqa: E402
+    _operator_native_overrides,
+    commercial_time_limit,
+    commercial_watchdog_seconds,
+    resolve_commercial_options,
+)
+from flextool.engine.solve._subprocess_solve import _SCRIPTS, _write_commercial_opt_file  # noqa: E402
+from flextool.run_options import RunOptions  # noqa: E402
+
+_FLAGS = ["--solver-mip-gap", "0.001", "--solver-time-limit", "1800"]
+
+
+def _options(flags: list[str], environ: dict | None = None) -> RunOptions:
+    return RunOptions.from_cli(build_parser().parse_args(["sqlite:///x.sqlite", *flags]), environ=environ or {})
+
+
+def _passed(solver: str, tmp_path: Path, opt_text: str, cfg: SolverConfig, flags: list[str]):
+    """The argv parameters (Gurobi) or the stdin script (the others) the CLI would get."""
+    opt_file = tmp_path / f"{solver}.opt"
+    opt_file.write_text(opt_text)
+    resolved = resolve_commercial_options(solver, opt_file=opt_file, solver_config=cfg, run_options=_options(flags))
+    merged = _write_commercial_opt_file({o.name: o.value for o in resolved}, tmp_path / "solve.opt")
+    argv, stdin = _SCRIPTS[solver](Path("bin"), tmp_path / "m.mps", tmp_path / "m.sol", merged)
+    return argv[1:-2], stdin
+
+
+def test_gurobi_stack_flags_win_and_one_gap_entry(tmp_path: Path) -> None:
+    cfg = SolverConfig(name="gurobi", mip_gap=0.01, options={"Presolve": 2, "mipgap": 0.005})
+    params, _ = _passed("gurobi", tmp_path, "Threads 0\nMIPGap 0.002\n", cfg, _FLAGS)
+    assert params == ["Threads=0", "MIPGap=0.001", "Presolve=2", "TimeLimit=1800.0"]
+
+
+def test_gurobi_stack_without_flags_solver_arguments_win(tmp_path: Path) -> None:
+    """solver_arguments beat the solver_mip_gap knob and the file; the winning spelling is kept, at the file's
+    position."""
+    cfg = SolverConfig(name="gurobi", mip_gap=0.01, options={"Presolve": 2, "mipgap": 0.005})
+    params, _ = _passed("gurobi", tmp_path, "Threads 0\nMIPGap 0.002\n", cfg, [])
+    assert params == ["Threads=0", "mipgap=0.005", "Presolve=2"]
+
+
+@pytest.mark.parametrize("solver, opt_text, gap_line, time_line", [
+    ("cplex", "threads 1\nmip tolerances mipgap 0.002\n", "set mip tolerances mipgap 0.001", "set timelimit 1800.0"),
+    ("xpress", "THREADS 1\nMIPRELSTOP 0.002\n", "setControl MIPRELSTOP 0.001", "setControl MAXTIME 1800"),
+    ("copt", "Threads 1\nRelGap 0.002\n", "set RelGap 0.001", "set TimeLimit 1800.0"),
+])
+def test_flags_reach_cplex_xpress_copt_under_native_names(solver, opt_text, gap_line, time_line, tmp_path) -> None:
+    cfg = SolverConfig(name=solver, mip_gap=0.01)
+    _, stdin = _passed(solver, tmp_path, opt_text, cfg, _FLAGS)
+    lines = stdin.splitlines()
+    assert gap_line in lines and time_line in lines
+    gap_word = {"cplex": "mipgap", "xpress": "MIPRELSTOP", "copt": "RelGap"}[solver]
+    assert sum(gap_word.lower() in line.lower() for line in lines) == 1, stdin
+    assert "mip.tolerances.mipgap" not in stdin
+
+
+def test_cplex_dotted_name_lands_on_the_interactive_spelling(tmp_path: Path) -> None:
+    cfg = SolverConfig(name="cplex", options={"mip.tolerances.mipgap": 0.004})
+    _, stdin = _passed("cplex", tmp_path, "threads 1\nmip tolerances mipgap 0.002\n", cfg, [])
+    assert [line for line in stdin.splitlines() if "mipgap" in line] == ["set mip tolerances mipgap 0.004"]
+
+
+def test_highs_environment_names_never_reach_a_commercial_solver() -> None:
+    """D5: FLEXTOOL_HIGHS_* stay HiGHS-only; FLEXTOOL_SOLVER_* are the flags' twins for every solver."""
+    from flextool.engine.solve._orchestration import _operator_highs_overrides
+
+    highs_only = RunOptions.from_env({"FLEXTOOL_HIGHS_TIME_LIMIT": "120", "FLEXTOOL_HIGHS_MIP_GAP": "0.3"})
+    assert _operator_native_overrides("gurobi", highs_only) == []
+    assert _operator_highs_overrides(highs_only) == {"time_limit": 120.0, "mip_rel_gap": 0.3}
+    both = RunOptions.from_env({"FLEXTOOL_HIGHS_TIME_LIMIT": "120", "FLEXTOOL_SOLVER_TIME_LIMIT": "90"})
+    assert [(o.name, o.value) for o in _operator_native_overrides("gurobi", both)] == [("TimeLimit", "90.0")]
+    assert _operator_highs_overrides(both) == {"time_limit": 90.0}
+
+
+@pytest.mark.parametrize("solver, opts, expected", [
+    ("gurobi", {"TimeLimit": "1800.0"}, 4200.0),
+    ("gurobi", {"timelimit": "60"}, 720.0),
+    ("cplex", {"timelimit": "300"}, 1200.0),
+    ("xpress", {"MAXTIME": "60"}, 720.0),
+    ("gurobi", {"Threads": "0"}, None),
+    ("gurobi", {"TimeLimit": "inf"}, None),
+])
+def test_watchdog_is_twice_the_native_limit_plus_ten_minutes(solver, opts, expected) -> None:
+    assert commercial_watchdog_seconds(commercial_time_limit(solver, opts)) == expected
+
+
+def test_result_file_in_solver_arguments_is_dropped_with_a_warning(tmp_path: Path, caplog) -> None:
+    cfg = SolverConfig(name="gurobi", options={"ResultFile": "mine.sol", "Presolve": 2})
+    with caplog.at_level("WARNING"):
+        params, _ = _passed("gurobi", tmp_path, "Threads 0\n", cfg, [])
+    assert params == ["Threads=0", "Presolve=2"]
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1 and "ResultFile" in warnings[0] and "solver_arguments" in warnings[0]
+
+
+# ---------------------------------------------------------------------------
+# The native names are real parameter names (checked against the installed wheels; skipped where absent)
+# ---------------------------------------------------------------------------
+
+_VALUES = {"time_limit": 60, "mip_gap": 0.01, "threads": 1}
+
+
+def _set_through_wheel(solver: str, name: str, value) -> None:
+    """Set parameter *name* (as FlexTool passes it to the CLI) through the solver's Python wheel; an unknown
+    name raises."""
+    if solver == "gurobi":
+        import gurobipy as gp
+
+        with gp.Env(params={"OutputFlag": 0}) as env, gp.Model(env=env) as m:
+            m.setParam(name, value)
+    elif solver == "cplex":
+        import cplex
+
+        c = cplex.Cplex()  # kept alive: the parameter tree holds only a weak reference to it
+        node = c.parameters
+        for part in name.split():  # the interactive ``set`` path: "mip tolerances mipgap"
+            node = getattr(node, part)
+        node.set(value)
+    elif solver == "xpress":
+        import xpress as xp
+
+        p = xp.problem()
+        p.setControl(name, value)
+        assert p.getControl(name) == value
+    else:
+        import coptpy as cp
+
+        cp.Envr().createModel().setParam(name, value)
+
+
+@pytest.mark.parametrize("solver", ["gurobi", "cplex", "xpress", "copt"])
+def test_native_names_are_known_to_the_solver(solver: str) -> None:
+    import importlib.util
+
+    from flextool.engine.solve._solver_dispatch import _PARAM_MAP
+
+    module = {"gurobi": "gurobipy", "cplex": "cplex", "xpress": "xpress", "copt": "coptpy"}[solver]
+    if importlib.util.find_spec(module) is None:
+        pytest.skip(f"{module} not installed")
+    for knob, name in _PARAM_MAP[solver].items():
+        try:
+            _set_through_wheel(solver, name, _VALUES[knob])
+        except Exception as exc:  # noqa: BLE001 - a licence problem skips; a name problem fails below
+            if any(h in str(exc).lower() for h in ("licen", "size-limited")):
+                pytest.skip(f"{solver}: no usable licence ({exc})")
+            raise AssertionError(f"{solver} does not know {name!r} ({knob}): {exc}") from exc

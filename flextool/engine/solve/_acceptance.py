@@ -24,6 +24,11 @@ non-``kOptimal`` solve is safe to accept:
   rows of such an LP) → reject, as infeasible when a row excludes 0.
 * ``kUnknown`` that is primal-feasible with a small primal--dual objective
   gap → accept as *near-optimal* (use the primal solution), else reject.
+* a solve stopped by its **time limit** (every solver: HiGHS ``kTimeLimit``,
+  a commercial or ``--save-memory`` result file's ``TIME_LIMIT``) → for a
+  MIP with a feasible solution, accept with a warning (the solution is not
+  proven optimal; the gap is named when the solver reported it); for an LP,
+  or with no solution, reject.
 
 The predicate is conjunctive and derives its primal-feasibility limits
 from the solver's own ``primal_feasibility_tolerance`` (the option value
@@ -207,6 +212,8 @@ class Acceptance:
                         (accepted only because the ceiling follows the
                         solve's tolerance); the caller prints the
                         behaviour-change notice for it.
+    ``time_limited``  — accepted MIP solution of a solve stopped by its time
+                        limit: the caller logs :attr:`message` as a WARNING.
     ``model_status``  — the solve's own HiGHS model status name
                         (``kOptimal``, ``kInfeasible``, ...) as the check saw
                         it: from the solve's diagnostics (never the live
@@ -222,6 +229,7 @@ class Acceptance:
     scaling_hint: str | None
     above_fixed_ceiling: bool = False
     model_status: str | None = None
+    time_limited: bool = False
 
 
 #: The status a subprocess / commercial solve's parsed solution file reports
@@ -231,8 +239,59 @@ _SHIM_MODEL_STATUS = {
     "OPTIMAL": "kOptimal",
     "INFEASIBLE": "kInfeasible",
     "UNBOUNDED": "kUnbounded",
+    "INF_OR_UNBD": "kUnboundedOrInfeasible",
     "TIME_LIMIT": "kTimeLimit",
+    "ITERATION_LIMIT": "kIterationLimit",
+    "SOLUTION_LIMIT": "kSolutionLimit",
+    "MEM_LIMIT": "kMemoryLimit",
+    "INTERRUPTED": "kInterrupt",
 }
+
+
+def _is_mip(sol: "Solution") -> bool:
+    """Whether the solved problem has integer columns (from the Solution's variables)."""
+    from flextool.engine.solve._solver_dispatch import problem_is_mip
+
+    return problem_is_mip(getattr(sol, "_vars", None) or getattr(sol, "vars", None))
+
+
+def _time_limit_verdict(
+    sol: "Solution", solve_name: str, *, gap: float | None, ranges_post: "RangeReport | None",
+) -> Acceptance:
+    """The rule for a solve stopped by its time limit *with* a solution (owner decision D2, every solver).
+
+    A MIP keeps the solution with a warning: it is feasible but not proven optimal, which a time limit on a
+    MIP asks for.  An LP stopped at its limit has no usable solution (the iterate is not a feasible optimum),
+    so the run stops.
+    """
+    if not _is_mip(sol):
+        return Acceptance(
+            accepted=False,
+            near_optimal=False,
+            message=(
+                f"solve for {solve_name} {_FAILURE_MESSAGES['kTimeLimit']}: it is a linear problem, and a "
+                "linear solve stopped at its time limit has no usable solution. Raise the time limit "
+                "(--solver-time-limit, or the solver's own time-limit parameter)"
+            ),
+            scaling_hint=_scaling_hint_for_reject(ranges_post),
+            model_status="kTimeLimit",
+        )
+    gap_text = (
+        f" (relative MIP gap {gap:.4%})" if gap is not None
+        else " (the remaining gap is in the solver log above)"
+    )
+    return Acceptance(
+        accepted=True,
+        near_optimal=True,
+        message=(
+            f"Solve {solve_name} stopped at its time limit with a feasible integer solution that is not proven "
+            f"optimal{gap_text}. FlexTool uses this solution; raise the time limit (--solver-time-limit, or "
+            "the solver's own time-limit parameter) or the MIP gap for a proven one."
+        ),
+        scaling_hint=None,
+        model_status="kTimeLimit",
+        time_limited=True,
+    )
 
 
 def _scaling_hint_for_reject(
@@ -349,6 +408,21 @@ def classify_acceptance(
     # cannot verify the solution, so we must NOT accept it.  Reject with an
     # honest "cannot diagnose" message.
     if diag is None:
+        shim_status = getattr(sol, "shim_status", None)
+        if shim_status == "TIME_LIMIT":
+            # The result file of a solve stopped by its limit holds its incumbent.
+            return _time_limit_verdict(
+                sol, solve_name, gap=getattr(sol, "shim_mip_gap", None), ranges_post=ranges_post,
+            )
+        model_status = _SHIM_MODEL_STATUS.get(shim_status)
+        if model_status in _FAILURE_MESSAGES:
+            return Acceptance(
+                accepted=False,
+                near_optimal=False,
+                message=f"solve for {solve_name} {_FAILURE_MESSAGES[model_status]}",
+                scaling_hint=None,
+                model_status=model_status,
+            )
         return Acceptance(
             accepted=False,
             near_optimal=False,
@@ -356,9 +430,10 @@ def classify_acceptance(
                 f"non-optimal solve for {solve_name}: the solver did not "
                 "certify optimality and no solver diagnostics are available "
                 "to assess the solution"
+                + (f" (solver status {shim_status})" if shim_status not in (None, "OTHER") else "")
             ),
             scaling_hint=None,
-            model_status=_SHIM_MODEL_STATUS.get(getattr(sol, "shim_status", None)),
+            model_status=model_status,
         )
 
     status = diag.model_status_name
@@ -370,6 +445,10 @@ def classify_acceptance(
         variable_free = _classify_variable_free_model(sol, solve_name)
         if variable_free is not None:
             return variable_free
+
+    # A MIP stopped by its time limit with a feasible incumbent: the D2 rule.
+    if status == "kTimeLimit" and diag.primal_feasible:
+        return _time_limit_verdict(sol, solve_name, gap=None, ranges_post=ranges_post)
 
     # A named failure status is never acceptable — report the precise cause.
     if status in _FAILURE_MESSAGES:

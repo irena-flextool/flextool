@@ -485,9 +485,8 @@ def test_second_run_in_a_process_uses_its_own_solver_config(gurobi_db, tmp_path,
     monkeypatch.chdir(cwd)
     built: list[str] = []
 
-    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, config_dir=None):
-        opt = _subprocess_solve._build_commercial_opt_file(
-            solver_name, options, Path(work_folder) / f"{solve_name}.gurobi.opt", config_dir=config_dir)
+    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None):
+        opt = _subprocess_solve._write_commercial_opt_file(options, Path(work_folder) / f"{solve_name}.gurobi.opt")
         built.append(opt.read_text() if opt is not None else "")
         return problem.solve(keep_solver=True)
 
@@ -498,3 +497,30 @@ def test_second_run_in_a_process_uses_its_own_solver_config(gurobi_db, tmp_path,
     run_chain_from_db(input_db_url=gurobi_db, scenario_name="custom", work_folder=tmp_path / "w2")
     assert (tmp_path / "w2" / "solver_config" / "gurobi.opt").read_text() == "Threads 22\n"
     assert len(built) == 2 and "11" in built[0] and "22" in built[1], built
+
+
+def test_cli_gap_reaches_the_commercial_solver_and_its_args_line(gurobi_db, tmp_path, monkeypatch, capsys) -> None:
+    """``--solver-mip-gap`` on a Gurobi solve: the passed set holds ``MIPGap 0.001`` (over the file's 0.002),
+    and the echoed line names the solver and the native name, not HiGHS' ``mip_rel_gap``."""
+    from flextool.cli.cmd_run_flextool import build_parser
+    from flextool.engine import run_chain_from_db
+    from flextool.engine.solve import _subprocess_solve
+    from flextool.run_options import RunOptions
+
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "gurobi.opt").write_text("Threads 0\nMIPGap 0.002\n")
+    passed: list[dict] = []
+
+    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None):
+        passed.append(dict(options))
+        return problem.solve(keep_solver=True)
+
+    monkeypatch.setattr(_subprocess_solve, "_solve_commercial_subprocess", commercial)
+    run_options = RunOptions.from_cli(
+        build_parser().parse_args([gurobi_db, "--solver-mip-gap", "0.001"]), environ={})
+    run_chain_from_db(input_db_url=gurobi_db, scenario_name="custom", work_folder=tmp_path / "w",
+                      solver_config_dir=cfg, run_options=run_options)
+    assert passed and all(p == {"Threads": "0", "MIPGap": "0.001"} for p in passed), passed
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("Solver args")]
+    assert lines and all(line == "Solver args (gurobi): Threads=0, MIPGap=0.001" for line in lines), lines

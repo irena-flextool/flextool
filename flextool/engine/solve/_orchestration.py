@@ -109,6 +109,7 @@ def _format_solver_args_line(
     effective_options: Mapping[str, Any] | None,
     *,
     prefer_first: "Sequence[str]" = (),
+    solver: str | None = None,
 ) -> str | None:
     """Render the effective solver options as a one-liner.
 
@@ -131,13 +132,18 @@ def _format_solver_args_line(
 
     Returns ``None`` when *effective_options* is empty (nothing the
     operator set → no line).
+
+    A commercial solve passes *solver*: the line then reads
+    ``Solver args (<solver>): ...`` and lists the native parameters the
+    CLI receives (option file included, since it has no engine baseline).
     """
     if not effective_options:
         return None
     order = [k for k in prefer_first if k in effective_options]
     order += [k for k in effective_options if k not in order]
     body = ", ".join(f"{k}={effective_options[k]}" for k in order)
-    return f"Solver args: {body}"
+    label = f"Solver args ({solver})" if solver else "Solver args"
+    return f"{label}: {body}"
 
 
 # Legacy ``scale_the_objective`` default — historically the
@@ -4127,10 +4133,39 @@ def _drive_cascade(
                 # sit in the same stdout stream as the blank separator
                 # above and HiGHS' native banner below — the GUI's
                 # ``execution_window`` parses these printed markers.
-                _eff_touched = _solve_highs_options(state, complete_solve_name, baseline=None)
-                _sa_line = _format_solver_args_line(
-                    _eff_touched, prefer_first=list(_solver_args_map or {}),
-                )
+                # A commercial solve echoes the parameters it passes, under
+                # their native names (``Solver args (gurobi): ...``), from the
+                # same resolved list ``run_one_solve`` hands to the CLI.
+                _commercial_opts = None
+                if _active_solver_cfg.name != "highs":
+                    from flextool.engine.solve._solver_dispatch import (
+                        _PARAM_MAP as _NATIVE_NAMES,
+                        resolve_commercial_options,
+                    )
+                    from flextool.engine.solve._subprocess_solve import (
+                        _resolve_solver_config_dir,
+                    )
+                    if _active_solver_cfg.name in _NATIVE_NAMES:
+                        _commercial_opts = resolve_commercial_options(
+                            _active_solver_cfg.name,
+                            opt_file=_resolve_solver_config_dir(state.paths.solver_config_dir)
+                            / f"{_active_solver_cfg.name}.opt",
+                            solver_config=_active_solver_cfg,
+                            run_options=run_options,
+                            solve_name=complete_solve_name,
+                            logger=state.logger,
+                        )
+                        _sa_line = _format_solver_args_line(
+                            {o.name: o.value for o in _commercial_opts},
+                            solver=_active_solver_cfg.name,
+                        )
+                    else:
+                        _sa_line = None
+                else:
+                    _eff_touched = _solve_highs_options(state, complete_solve_name, baseline=None)
+                    _sa_line = _format_solver_args_line(
+                        _eff_touched, prefer_first=list(_solver_args_map or {}),
+                    )
                 if _sa_line:
                     print(_sa_line, flush=True)
                 _phase_prof("solve_start")
@@ -4144,6 +4179,7 @@ def _drive_cascade(
                     work_folder=state.paths.work_folder,
                     run_options=run_options,
                     solver_config_dir=state.paths.solver_config_dir,
+                    commercial_options=_commercial_opts,
                 )
                 _t_solve_end = (
                     time.perf_counter() if _phase_timing else 0.0
@@ -4298,7 +4334,9 @@ def _drive_cascade(
                 if _acc.scaling_hint:
                     print(_acc.scaling_hint, flush=True)
                 return 1
-            if _acc.near_optimal:
+            if _acc.time_limited:
+                self.state.logger.warning(_acc.message)
+            elif _acc.near_optimal:
                 self.state.logger.info(_acc.message)
             if _acc.above_fixed_ceiling:
                 from flextool.engine import _behaviour_changes
