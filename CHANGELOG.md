@@ -95,9 +95,11 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   never limits a commercial solver. Commercial solvers keep their thread count from their option file.
 - **A solve that stops at its time limit:** a MIP with a solution keeps it, with a warning (with the gap reached
   when the solver reports it), and the run goes on; an LP, or a solve without a solution, stops the run. This is
-  the same for every solver. Before, HiGHS and CPLEX stopped the run at the limit even with a usable MIP solution,
-  so such runs now finish; Gurobi, COPT and Xpress reported a solve stopped at its time limit as optimal, without a
-  word.
+  the same for every solver (a Benders master or region solve stops the run at its limit, as before). Before,
+  HiGHS and CPLEX stopped the run at the limit even with a usable MIP solution, so such runs now finish; Gurobi,
+  COPT and Xpress reported a solve stopped at its time limit as optimal, without a word. A CPLEX or Gurobi solve
+  stopped by another limit (nodes, solutions, memory) or aborted was also reported optimal; it now stops the run,
+  naming the solver's status.
 - **Solver option files come from one `solver_config` folder chosen per run**, no longer from the folder
   FlexTool is started from: `--solver-config-dir` (new) or `FLEXTOOL_SOLVER_CONFIG_DIR`, else `solver_config/`
   next to the input database or in the workspace of a GUI project database, else the Spine Toolbox project
@@ -105,9 +107,10 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   default `.opt` files instead of the workspace's, and a terminal run from another folder used the defaults and
   left a copy there that later runs took for your file. The run header and log show the folder used
   (`Solver config:`). Each run reads the files once at its start and copies them afresh to
-  `<work folder>/solve_data/solver_config/`; a `<work folder>/solver_config/` left by an earlier version is no
-  longer read (the run warns when it differs). The GUI and the calibrator pass the workspace's folder to their
-  runs.
+  `<work folder>/solve_data/solver_config/`. A `<work folder>/solver_config/` left by an earlier version is no
+  longer read as the work folder's copy (the run warns when it differs); when it is `solver_config/` in the
+  current folder and holds only unedited FlexTool templates, the run skips it and warns, naming it. The GUI and
+  the calibrator pass the workspace's folder to their runs.
 - **Fixes that change results:** a user constraint without capacity terms got a right-hand side of 0 when another
   constraint had one (since 4.0); the reported fuel, CO2 and cost of a unit with a profile and an input were too
   low; the period node-group indicators and VRE share are now ratios of the period energies; the `summary_solve.csv`

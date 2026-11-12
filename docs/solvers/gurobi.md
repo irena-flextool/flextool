@@ -78,20 +78,22 @@ A clean exit (no `GurobiError`) means the licence is found.
 
 ## Common errors
 
-The error messages below are what FlexTool surfaces as
-`FlexToolUserError` — they wrap polar-high's exception, which in turn wraps
-Gurobi's raw `GurobiError`. The raw vendor text appears in the FlexTool log
-as the cause of the wrapped exception.
+FlexTool runs Gurobi as the `gurobi_cl` command-line program. When it fails,
+FlexTool stops the run with a `FlexToolUserError` whose message includes
+`gurobi_cl`'s own output (its `stdout` and `stderr`), so Gurobi's text is in
+the FlexTool log.
 
-- **No licence file found.** Gurobi `GurobiError` with `errno` in
-  `10009..10015` (most commonly `10009` "No Gurobi license found"). FlexTool
-  shows: *"Solver 'gurobi' is installed but its license check failed.
-  Details: Gurobi license check failed (code 10009): No Gurobi license
-  found. Place gurobi.lic at $HOME or /opt/gurobi/, set GRB_LICENSE_FILE,
-  or pass a configured gurobipy.Env via env=..."*. Fix by placing the
-  `gurobi.lic` file or setting `GRB_LICENSE_FILE`.
-- **Licence expired.** Same FlexTool message family with the vendor text
-  *"License has expired"*. Renew through the Gurobi web portal.
+- **No licence, or the licence check failed.** `gurobi_cl` exits with an
+  error and prints, for example, *"No Gurobi license found"*. FlexTool shows:
+  *"Solver 'gurobi' subprocess failed a license check. Details: 'gurobi'
+  CLI for solve '<solve>' exited with returncode=... --- stdout --- ..."*
+  (see [License options](#license-options)). Fix by placing the
+  `gurobi.lic` file in your home folder (or `/opt/gurobi/`) or by setting
+  `GRB_LICENSE_FILE` in the environment FlexTool runs in.
+- **Licence expired.** The same message, with Gurobi's text *"License has
+  expired"*. Renew the licence through the Gurobi web portal.
+- **`gurobi_cl` not found.** *"Solver 'gurobi' CLI binary is not installed on
+  this system."* Install Gurobi and put `gurobi_cl` on the `PATH`.
 - **Unknown Gurobi parameter.** A misspelt name in `solver_arguments` or
   `gurobi.opt` (e.g. `MIPGapp`) is ignored by Gurobi, which prints
   `Unknown parameter: 'MIPGapp' (ignored)` and solves on. FlexTool repeats it
