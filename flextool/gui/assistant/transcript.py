@@ -109,6 +109,7 @@ class Transcript(ttk.Frame):
         self._buttons: dict[int, list[ttk.Button]] = {}     # the lines that have the ↻ ✎ buttons
         self._question_menu: tk.Menu | None = None
         self._md = MarkdownStream()
+        self._held = ""                 # the answer's last line held back: it may be a leaked "Keep:" line
         self._answer_open = False
         self._in_turn = False
         self._tool_count = 0
@@ -408,6 +409,7 @@ class Transcript(ttk.Frame):
             self.text.mark_unset(*stale)
         self._tool_headers.clear()
         self._md = MarkdownStream()
+        self._held = ""
         self._answer_open = False
         self._in_turn = False
         self._example = False
@@ -490,11 +492,25 @@ class Transcript(ttk.Frame):
             self.text.insert(index, text, ("assistant",) + tuple(tags))
 
     def stream(self, delta: str) -> None:
-        """Add a piece of the answer."""
+        """Add a piece of the answer.  A last line that is or may become a ``Keep:`` line (the model's working notes
+        leaking into its answer, :func:`~flextool.assistant.session.may_become_keep_line`) is held back until the
+        answer goes on or ends (:meth:`end_answer`), so the live answer shows what the saved chat shows."""
+        from flextool.assistant.session import may_become_keep_line
+
         if not delta:
             return
         at_end = self._at_end()
         self.begin_answer()
+        text, self._held = self._held + delta, ""
+        content = text.rstrip()
+        start = content.rfind("\n") + 1
+        if content and may_become_keep_line(content[start:]):
+            text, self._held = text[:start], text[start:]
+        if text:
+            self._feed(text)
+        self._follow(at_end)
+
+    def _feed(self, delta: str) -> None:
         lines = self._md.feed(delta)
         if not lines:
             self.text.insert("answer_end", delta, ("assistant",))
@@ -505,19 +521,32 @@ class Transcript(ttk.Frame):
             self.text.mark_set("pending_start", "answer_end")
             if self._md.pending:
                 self.text.insert("answer_end", self._md.pending, ("assistant",))
-        self._follow(at_end)
 
-    def _close_answer(self) -> None:
+    def _close_answer(self, final: str | None = None, *, notice: bool = False) -> None:
+        """Close the answer.  A held-back ``Keep:`` line is shown unless *final* (the turn's answer as the session
+        stored it) leaves it out, or a *notice* closes the answer: the session's notices after an answer come
+        before the turn's end, and a final answer that ends in a ``Keep:`` line follows a note request (the
+        repeated-steps notice comes only after one), so the session leaves the line out."""
+        from flextool.assistant.session import is_keep_line
+
         if not self._answer_open:
             return
+        held, self._held = self._held, ""
+        if held:
+            dropped = is_keep_line(held) and (notice or (final is not None
+                                                         and not final.rstrip().endswith(held.strip())))
+            if not dropped:
+                self._feed(held)
         self.text.delete("pending_start", "answer_end")
         self._insert_line(self._md.finish(), "answer_end")
         self._answer_open = False
         self._ensure_newline()
 
-    def end_answer(self) -> None:
+    def end_answer(self, final: str | None = None) -> None:
+        """The answer has ended; *final*: the turn's answer as the session stored it (a leaked ``Keep:`` line left
+        out), ``None`` when the answer was stopped."""
         at_end = self._at_end()
-        self._close_answer()
+        self._close_answer(final)
         self._follow(at_end)
 
     def tool_running(self, name: str, args_preview: str) -> int:
@@ -602,7 +631,7 @@ class Transcript(ttk.Frame):
 
     def notice(self, text: str) -> None:
         at_end = self._at_end()
-        self._close_answer()
+        self._close_answer(notice=True)
         self._ensure_newline()
         self._insert(text + "\n", ("notice",))
         self._follow(at_end)

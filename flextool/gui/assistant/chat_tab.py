@@ -746,7 +746,7 @@ class ChatTab(ttk.Frame):
         from flextool.assistant.llm_errors import message_for
 
         result = event.result
-        self.transcript.end_answer()
+        self.transcript.end_answer(result.text)
         self._question_usage = list(result.usage)
         self._totals = dict(event.totals)
         self._show_totals()

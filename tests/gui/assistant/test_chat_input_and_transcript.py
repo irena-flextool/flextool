@@ -404,6 +404,52 @@ def test_a_continuation_shows_one_line_and_the_note_stays_out(windows, backends)
     assert "A note for" not in again and "This question continues" not in again
 
 
+def test_a_keep_line_leaked_into_the_answer_is_left_out_live_and_reopened(windows, backends):
+    """B1 T5: after a note request the model ends its final answer with its note's "Keep: 1" line.  The session
+    leaves it out of the stored answer, the chat window holds it back while it streams: the live chat and the
+    reopened one show the same answer, without it."""
+    save_provider(LOCAL)
+    backends.add([tool_call(text="a"), tool_call(text="b"), tool_call(text="c"), say("Found a.\nKeep: 1"),
+                  say("Final answer.\n\nKeep: 1, 2\n")])
+    window = windows.open()
+    tab = ask(window, "question")
+    wait_idle(window, tab)
+    contents = tab.transcript.contents()
+    assert contents.rstrip().endswith("Final answer.") and "Keep" not in contents
+    from flextool.assistant.store import message_from_json
+    from tests.assistant.gui_support.worker_rig import messages_on_disk
+
+    saved = [message_from_json(m) for m in messages_on_disk(windows.project, tab.conversation_id)]
+    assert saved[-1].text == "Final answer."
+    tab.transcript.render_history(saved, tab.provider)
+    again = tab.transcript.contents()
+    assert again.rstrip().endswith("Final answer.") and "Keep" not in again
+
+
+def test_a_line_that_only_starts_like_keep_is_shown(host):
+    """The held-back line is shown once it is no Keep line, or when the stored answer kept it (no note was
+    requested); a notice closing the answer leaves a Keep line out (the session's notices come before the end)."""
+    from flextool.gui.assistant.transcript import Transcript
+
+    transcript = Transcript(host)
+    try:
+        transcript.pack()
+        for piece in ("Answer.\nKe", "ep it", " simple.\nK"):
+            transcript.stream(piece)
+        assert transcript.contents().endswith("Keep it simple.\n")       # the last "K" is held back
+        transcript.stream("eep: 3")
+        transcript.end_answer("Answer.\nKeep it simple.\nKeep: 3")       # no note: the session kept the line
+        assert transcript.contents().rstrip().endswith("Keep it simple.\nKeep: 3")
+        transcript.stream("Second.\nKeep: none")
+        transcript.notice("A notice.")
+        assert "Keep: none" not in transcript.contents() and transcript.contents().rstrip().endswith("A notice.")
+        transcript.stream("Third.\nKeep: 2")
+        transcript.end_answer()                                             # stopped: shown as stored
+        assert transcript.contents().rstrip().endswith("Third.\nKeep: 2")
+    finally:
+        transcript.destroy()
+
+
 # --- the fonts of the answer ------------------------------------------------------------------------------------
 def test_bold_italic_and_code_have_the_size_of_the_body_text(host):
     """Owner decisions 2026-11-08: the chat text is one named base font, 11 pt at the GUI's default 10 pt; bold and
