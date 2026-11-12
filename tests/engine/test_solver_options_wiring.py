@@ -208,6 +208,44 @@ def test_save_memory_child_gets_the_thread_budget(options_db, tmp_path, monkeypa
     assert _norm(_opt_file_options(tmp_path / "save_memory")["threads"]) == 2.0
 
 
+def test_solver_precommand_is_never_run(tmp_path, monkeypatch) -> None:
+    """``solve.solver_precommand`` is kept only so that older databases read: a solve with one set starts no
+    process (the command would come from the input database, so it must never reach a shell)."""
+    import subprocess
+
+    from flextool.update_flextool.db_migration import migrate_database
+    from tests.db_utils import json_to_db
+
+    marker = tmp_path / "precommand_ran"
+    data = json.loads((FIXTURES / "tests.json").read_text())
+    data = _lp_snapshot()._overlay(
+        data, name="custom", base=["init", "west", "coal"],
+        values=[["solve", SOLVE, "solver_precommand", f"touch {marker}"]])
+    (tmp_path / "f.json").write_text(json.dumps(data))
+    url = json_to_db(tmp_path / "f.json", tmp_path / "f.sqlite")
+    migrate_database(url)
+
+    started: list[str] = []
+    real_popen = subprocess.Popen
+
+    class RecordingPopen(real_popen):
+        def __init__(self, args, *a, **kw):
+            started.append(str(args))
+            super().__init__(args, *a, **kw)
+
+    def recording_system(command):
+        started.append(str(command))
+        return 0
+
+    monkeypatch.setattr(subprocess, "Popen", RecordingPopen)
+    monkeypatch.setattr(os, "system", recording_system)
+    monkeypatch.delenv("FLEXTOOL_SAVE_MEMORY", raising=False)
+    steps = _run(url, None, tmp_path / "work", warm=True)
+    assert steps, "the solve did not run"
+    assert started == [], f"a solve with solver_precommand set started processes: {started}"
+    assert not marker.exists()
+
+
 # ---------------------------------------------------------------------------
 # Benders master and regions (#39)
 # ---------------------------------------------------------------------------

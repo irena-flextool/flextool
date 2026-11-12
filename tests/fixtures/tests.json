@@ -5490,7 +5490,7 @@
         null
       ],
       null,
-      "[text] Map of HiGHS solver options (option name -> value), layered on top of the floor values in solver_config/highs.opt and below any CLI overrides (e.g. --solver-time-limit). Use this for ad-hoc HiGHS knobs that do not have a dedicated FlexTool parameter (solver_mip_gap, solver_precommand).",
+      "[text] Map of HiGHS solver options (option name -> value), layered on top of the floor values in solver_config/highs.opt and below any CLI overrides (e.g. --solver-time-limit). Use this for ad-hoc HiGHS knobs that do not have a dedicated FlexTool parameter (solver_mip_gap).",
       "solve_advanced"
     ],
     [
@@ -5512,7 +5512,7 @@
         null
       ],
       null,
-      "[text] Additional command to execute before calling the solver. Can be used to e.g. reserve a floating license for a commercial solver.",
+      "[text] Not used: FlexTool never runs this command. Kept only so that older databases still read.",
       "solve_advanced"
     ],
     [

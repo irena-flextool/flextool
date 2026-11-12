@@ -571,6 +571,10 @@ Each line says what changes for a model that ran before and what to do; the deta
   option is refused, with a message naming the option, its value and the solve and saying to set it in
   `solver_config/<solver>.opt` instead. The option files, flags and environment variables keep full paths and server
   options.
+- **`solver_precommand` is not used, and the docs now say so.** The docs described it as a shell command run
+  before the solver, but FlexTool has never run it, and it will not: a command stored in an input database must not
+  reach a shell. The parameter is kept only so that older databases still read; its description and that of
+  `solver_arguments` are updated by the v79 migration. Reserve a solver licence before starting FlexTool.
 - **`--solver-time-limit` and `--solver-mip-gap` now apply to Gurobi, CPLEX, Xpress and COPT** (the GUI's time
   limit too), and win over the solve's `solver_mip_gap`, its `solver_arguments` and the solver's option file, as
   they do for HiGHS. Before, they set only HiGHS options: a commercial solve used the database gap and ran without

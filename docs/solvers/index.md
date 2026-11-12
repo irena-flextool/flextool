@@ -44,7 +44,7 @@ The DB-level solver parameters are, with their per-solver defaults:
 | `solver`             | `"highs"`   | Solver name from `[highs, gurobi, cplex, xpress, copt]`      |
 | `solver_arguments`   | empty Map   | Raw option name → value pairs forwarded verbatim to the solver |
 | `solver_mip_gap`     | unset       | Relative MIP gap; normalised across solvers                  |
-| `solver_precommand`  | unset       | Shell command run before the solver subprocess (advanced)    |
+| `solver_precommand`  | unset       | Not used: FlexTool never runs it (kept so older databases still read) |
 
 A handful of options that used to be DB parameters are now controlled by
 **CLI flags** on `flextool` (they apply to the whole run rather than per
@@ -92,7 +92,7 @@ entering the values above. Unspecified parameters take their defaults.
 | `solver`             | str    | `"highs"`   | Solver name. Must be one of `highs`, `gurobi`, `cplex`, `xpress`, `copt`.                                |
 | `solver_arguments`   | map    | empty       | Map of option name → value passed verbatim to the underlying solver. Use this for any solver-native option that is not one of the convenience knobs below. Raw options always override the convenience knobs on key collision. |
 | `solver_mip_gap`     | float  | unset       | Relative MIP optimality gap (e.g. `0.01` for 1 %). Translated to each solver's native parameter (`MIPGap` / `mip tolerances mipgap` / `MIPRELSTOP` / `RelGap` / `mip_rel_gap`). `--solver-mip-gap` wins over it. |
-| `solver_precommand`  | str    | unset       | Shell command run before the solver subprocess (advanced; e.g. to source a licence environment). |
+| `solver_precommand`  | str    | unset       | Not used: FlexTool never runs this command. The parameter is kept only so that older databases still read. To reserve a licence or set up a licence environment, do it before starting FlexTool. |
 
 The corresponding CLI flags (`--solver-time-limit`, `--solver-mip-gap`,
 `--highs-threads`, `--solver-log-level`) are documented in the table above.
