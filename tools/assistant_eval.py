@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import dataclasses
 import json
 import math
@@ -790,9 +791,11 @@ def unfinished_text(partial: Any) -> str:
 def setting_key(setting: Setting) -> dict[str, Any]:
     """What a cell's requests are made from beyond the folder's identity: the level, the model id sent, the window
     and its source, the caps and result caps, the compaction rhythm, the history policy, the free plan, the route
-    kind, the hashes of the instructions and tools and the tools' behaviour batch
-    (:data:`flextool.assistant.ASSISTANT_BEHAVIOUR`).  A checkpoint of another key starts its cell again."""
+    kind, the hashes of the instructions and tools, the tools' behaviour batch
+    (:data:`flextool.assistant.ASSISTANT_BEHAVIOUR`) and the version of the model facts
+    (:data:`flextool.assistant.model_facts.FACTS_VERSION`).  A checkpoint of another key starts its cell again."""
     from flextool.assistant import ASSISTANT_BEHAVIOUR, budget, prompt
+    from flextool.assistant.model_facts import FACTS_VERSION
     from flextool.assistant.session import text_hash, tool_specs, tools_hash
 
     b = setting.budget
@@ -806,7 +809,8 @@ def setting_key(setting: Setting) -> dict[str, Any]:
            "history": [history, history_turns], "free_tier": b.free_tier,
            "route": setting.route.kind if setting.route else None,
            "system_hash": text_hash(list(prompt.system_layers("terminal", setting.level))),
-           "tools_hash": tools_hash(tool_specs(setting.level)), "behaviour": ASSISTANT_BEHAVIOUR}
+           "tools_hash": tools_hash(tool_specs(setting.level)), "behaviour": ASSISTANT_BEHAVIOUR,
+           "facts_version": FACTS_VERSION}
     return json.loads(json.dumps(key))
 
 
@@ -1069,7 +1073,21 @@ def run_cell(project: Path, qset: scoring.QuestionSet, question: scoring.Questio
         })
         say(f"  {question.id} turn {number}: {result.rounds} round(s), {result.calls} call(s), "
             f"{'ok' if result.ok else turns[-1]['stop']}")
-    return {"turns": turns}
+    return {"turns": turns, **context_fields(session.last_context_block)}
+
+
+def context_fields(block: str | None) -> dict[str, Any]:
+    """``{context_block, facts_hash}`` of a cell: the last context block its questions carried (redacted, as it
+    was sent) and the SHA-256 of its model facts (``None`` without facts), so the summary can warn of repeats that
+    saw other facts (another latest run, changed input data)."""
+    from flextool.assistant.model_facts import HEADER
+    from flextool.assistant.prompt import CONTEXT_END
+
+    facts = None
+    if block and HEADER in block:
+        facts = block[block.index(HEADER):].removesuffix(CONTEXT_END).rstrip("\n")
+    return {"context_block": block,
+            "facts_hash": hashlib.sha256(facts.encode("utf-8")).hexdigest() if facts is not None else None}
 
 
 def _record(question: scoring.Question, setting: Setting, repeat: int, *, preset: Any, identity: Mapping[str, Any],
@@ -1381,15 +1399,16 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                 pacer.set_floor(pace_key(backend.origin), args.pace)
                 try:
                     try:
-                        turns = run_cell(project, qset, question, setting, backend=backend, preset=preset,
-                                         ledger=ledger, say=say, checkpoint=cp)["turns"]
+                        cell = run_cell(project, qset, question, setting, backend=backend, preset=preset,
+                                        ledger=ledger, say=say, checkpoint=cp)
                     except CheckpointRefused as refused:
                         say(f"{cid}: started again from the start ({refused})")
                         cp.discard(spend)
                         held.pop(cid, None)
                         cp = checkpoint_for(None)
-                        turns = run_cell(project, qset, question, setting, backend=backend, preset=preset,
-                                         ledger=ledger, say=say, checkpoint=cp)["turns"]
+                        cell = run_cell(project, qset, question, setting, backend=backend, preset=preset,
+                                        ledger=ledger, say=say, checkpoint=cp)
+                    turns = cell["turns"]
                 except CellStopped as exc:
                     outcome = _stopped(exc, cp, cid, spend=spend, sending=sending, say=say)
                     held[cid] = cp.on_disk if cp.exists else {}
@@ -1427,6 +1446,8 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                                  knobs_sent=knobs_sent, free_tier=free, git=git, turns=turns, sending=sending)
                 record.update(_resume_fields(cp, turns))
                 record["setting_key"] = setting_id              # the summary warns of a level's mixed settings
+                record["context_block"] = cell["context_block"]  # the summary warns of repeats with other facts
+                record["facts_hash"] = cell["facts_hash"]
                 if saved is not None and int(saved.get("requests_sent") or 0):
                     # The replaced record's requests stay counted for their day (written first: a crash
                     # between the two counts them twice, never not at all).

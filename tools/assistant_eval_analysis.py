@@ -291,15 +291,18 @@ def failed_attempt_codes(records: Iterable[Mapping[str, Any]]) -> dict[tuple[str
 
 
 #: The hashes of a cell's level setting (``setting_key`` of its record) whose mix within one model and level the
-#: summary and grade-ai warn of: cells asked with other instructions, tools or tool behaviour (``behaviour``,
-#: :data:`flextool.assistant.ASSISTANT_BEHAVIOUR`; a record before it was recorded: unknown) are not of one setting.
-SETTING_HASHES = (("tools_hash", "tools"), ("system_hash", "instructions"), ("behaviour", "tool behaviours"))
+#: summary and grade-ai warn of: cells asked with other instructions, tools, tool behaviour (``behaviour``,
+#: :data:`flextool.assistant.ASSISTANT_BEHAVIOUR`; a record before it was recorded: unknown) or model facts version
+#: (``facts_version``, :data:`flextool.assistant.model_facts.FACTS_VERSION`) are not of one setting.
+SETTING_HASHES = (("tools_hash", "tools"), ("system_hash", "instructions"), ("behaviour", "tool behaviours"),
+                  ("facts_version", "model facts versions"))
 
 
 def mixed_settings(records: Iterable[Mapping[str, Any]]) -> list[str]:
     """One warning per (provider, model, level) and hash of :data:`SETTING_HASHES` that more than one value holds
     among the records' ``setting_key`` (a record without it, written before the key was recorded: ``unknown``,
-    which alone warns of nothing).  In provider, model, level order."""
+    which alone warns of nothing).  In provider, model, level order; then the warnings of :func:`mixed_facts`."""
+    records = list(records)
     seen: dict[tuple[str, str, str], dict[str, set[str]]] = {}
     for record in records:
         cell = record.get("cell") or {}
@@ -318,7 +321,28 @@ def mixed_settings(records: Iterable[Mapping[str, Any]]) -> list[str]:
                 out.append(f"Warning: the cells of {preset} {model} at level {level} were asked with "
                            f"{len(values)} different {what} ({name} {', '.join(values)}): their grades are not "
                            "of one setting.")
-    return out
+    return out + mixed_facts(records)
+
+
+def mixed_facts(records: Iterable[Mapping[str, Any]]) -> list[str]:
+    """One warning per (provider, model, level, question) whose repeats carried different model facts (their
+    records' ``facts_hash``: another latest run or changed input data between the repeats, so they did not answer
+    the same question).  Records without a ``facts_hash`` (no facts, or written before it was recorded) are left
+    out.  In provider, model, level, question order."""
+    seen: dict[tuple[str, str, str, str], set[str]] = {}
+    for record in records:
+        value = record.get("facts_hash")
+        if not value:
+            continue
+        cell = record.get("cell") or {}
+        model = record.get("model") or {}
+        key = (str(model.get("preset")), str(cell.get("model") or model.get("model")), str(cell.get("level_setting")),
+               str(cell.get("question")))
+        seen.setdefault(key, set()).add(str(value))
+    return [f"Warning: the repeats of {question} by {preset} {model} at level {level} carried {len(hashes)} different "
+            "model facts (facts_hash): the input data or the latest run changed between them, so they did not "
+            "answer the same question."
+            for (preset, model, level, question), hashes in sorted(seen.items()) if len(hashes) > 1]
 
 
 def failed_attempts_line(counts: Mapping[tuple[str, str], Mapping[str, int]]) -> str | None:

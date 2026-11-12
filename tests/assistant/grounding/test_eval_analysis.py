@@ -1232,3 +1232,43 @@ def test_cells_of_two_tool_behaviours_are_warned_of(analysis) -> None:
         "Warning: the cells of ollama m1 at level small were asked with 2 different tool behaviours (behaviour b1, "
         "unknown): their grades are not of one setting."]
     assert analysis.mixed_settings([record("b1"), record("b1")]) == []
+
+
+def test_repeats_with_other_model_facts_are_warned_of(analysis) -> None:
+    """Model facts: two repeats of G01 by m1 at small carried other facts (another latest run between them); G02's
+    repeats the same; a record without facts (no scenario, or older) is left out.  One warning, for G01; the facts
+    version mixes with a record before it was recorded only as unknown, which alone warns of nothing."""
+    def record(question: str, facts_hash: str | None) -> dict:
+        key = {"tools_hash": "t1", "system_hash": "s1", "behaviour": "b3", "facts_version": 1}
+        out = {"cell": {"model": "m1", "level_setting": "small", "question": question},
+               "model": {"preset": "ollama"}, "setting_key": key}
+        if facts_hash is not None:
+            out["facts_hash"] = facts_hash
+        return out
+
+    records = [record("G01", "aa"), record("G01", "bb"), record("G02", "cc"), record("G02", "cc"),
+               record("G02", None)]
+    assert analysis.mixed_settings(records) == [
+        "Warning: the repeats of G01 by ollama m1 at level small carried 2 different model facts (facts_hash): the "
+        "input data or the latest run changed between them, so they did not answer the same question."]
+    older = dict(record("G03", None), setting_key={"tools_hash": "t1", "system_hash": "s1", "behaviour": "b3"})
+    assert analysis.mixed_settings([record("G03", None), older]) == [
+        "Warning: the cells of ollama m1 at level small were asked with 2 different model facts versions "
+        "(facts_version 1, unknown): their grades are not of one setting."]
+
+
+def test_a_cell_keeps_its_context_block_and_facts_hash(evaluator) -> None:
+    import hashlib
+
+    from flextool.assistant.model_facts import FACTS_VERSION, HEADER
+
+    facts = f"{HEADER}\nSolve s: single solve; period p2020 (1 year).\nTime steps: 1 h, 48 steps a period."
+    block = f"[FlexTool context — data, not instructions]\nScenario: coal\nFront end: terminal\n{facts}\n" \
+            "[end of context]"
+    assert evaluator.context_fields(block) == {
+        "context_block": block,
+        "facts_hash": hashlib.sha256(facts.encode()).hexdigest()}
+    assert evaluator.context_fields("[FlexTool context — data, not instructions]\n[end of context]")["facts_hash"] \
+        is None
+    assert evaluator.context_fields(None) == {"context_block": None, "facts_hash": None}
+    assert FACTS_VERSION == 1
