@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, NamedTuple
 
@@ -61,18 +62,111 @@ def _parse_highs_opt_file(path: Path | None) -> dict[str, str]:
     return _parse_highs_opt_text(path.read_text(encoding="utf-8"))
 
 
-def _parse_highs_opt_text(text: str) -> dict[str, str]:
-    """The ``key=value`` options of a ``highs.opt`` text (rules of :func:`_parse_highs_opt_file`)."""
-    options: dict[str, str] = {}
-    for line in text.splitlines():
+def _highs_opt_lines(text: str) -> list[tuple[int, str, str]]:
+    """``(line number, key, value)`` of every option line of a ``highs.opt`` text, in file order."""
+    out: list[tuple[int, str, str]] = []
+    for lineno, line in enumerate(text.splitlines(), start=1):
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
         if "=" not in stripped:
             continue
         key, _, val = stripped.partition("=")
-        options[key.strip()] = val.strip()
-    return options
+        out.append((lineno, key.strip(), val.strip()))
+    return out
+
+
+def _parse_highs_opt_text(text: str) -> dict[str, str]:
+    """The ``key=value`` options of a ``highs.opt`` text (rules of :func:`_parse_highs_opt_file`)."""
+    return {key: val for _, key, val in _highs_opt_lines(text)}
+
+
+# ---------------------------------------------------------------------------
+# Solver option names and values (item 236 A1)
+# ---------------------------------------------------------------------------
+#
+# Every option that reaches a solver (an option file, the solve's
+# ``solver_mip_gap`` / ``solver_arguments``, the run's flags and environment
+# variables) is checked here before the solve starts.  CPLEX, Xpress and COPT
+# get their options as lines of a command script, Gurobi as ``Name=value``
+# arguments and HiGHS (``--save-memory``) as lines of an option file, so a
+# line break, separator or space in a name or value could add commands or
+# address another parameter.  Such an option is refused, never cleaned up.
+
+#: An option name: a letter, then letters, digits, ``_`` and ``.``.
+_OPTION_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.]*")
+#: CPLEX also takes its interactive spelling: such words separated by single spaces (``mip tolerances mipgap``).
+_CPLEX_OPTION_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.]*(?: [A-Za-z][A-Za-z0-9_.]*)*")
+#: An option value: a number (``-1``, ``1e-4``, ``inf``) or one word; ``/``, ``\`` and ``:`` let a path through.
+_OPTION_VALUE = re.compile(r"[A-Za-z0-9_.+\-/\\:]*")
+_OPTION_NAME_MAX = 64
+_OPTION_VALUE_MAX = 255
+
+
+def _describe_character(ch: str) -> str:
+    """Plain words for a refused character."""
+    if ch in "\n\r\x0b\x0c\x1c\x1d\x1e\x85  ":
+        return "a line break"
+    if ch.isspace():
+        return "a space"
+    if not ch.isprintable():
+        return f"a control character ({ch!r})"
+    if ch in "'\"`":
+        return "a quote"
+    return f"the character {ch!r}"
+
+
+def _short(text: str, limit: int = 80) -> str:
+    """``repr`` of *text*, cut to *limit* characters (a message names hidden characters but stays one line)."""
+    shown = repr(text)
+    return shown if len(shown) <= limit else shown[: limit - 3] + "..."
+
+
+def validate_solver_option(solver: str, name: object, value: object, where: str) -> None:
+    """Refuse a solver option whose *name* or *value* could change the solver's command script or arguments.
+
+    *where* names the source in the message: the option file and its line, ``solver_arguments of solve X``,
+    ``solver_mip_gap of solve X`` or the flag / environment variable.  Raises :class:`FlexToolUserError`.
+    Booleans and ``None`` pass; other numbers are checked as their text.
+    """
+    if value is None or isinstance(value, bool):
+        value_text = ""
+    else:
+        value_text = str(value)
+    name_text = str(name)
+    name_rule = _CPLEX_OPTION_NAME if solver == "cplex" else _OPTION_NAME
+    problem: str | None = None
+    if not name_text:
+        problem = "the name is empty"
+    elif len(name_text) > _OPTION_NAME_MAX:
+        problem = f"the name is longer than {_OPTION_NAME_MAX} characters"
+    elif name_rule.fullmatch(name_text) is None:
+        bad = next(
+            (ch for ch in name_text if not re.fullmatch(r"[A-Za-z0-9_.]", ch) and not (solver == "cplex" and ch == " ")),
+            None,
+        )
+        if bad is not None:
+            problem = f"the name contains {_describe_character(bad)}"
+        elif not name_text[0].isalpha():
+            problem = "the name does not start with a letter"
+        else:
+            problem = "the name's words are not separated by single spaces, each starting with a letter"
+    elif len(value_text) > _OPTION_VALUE_MAX:
+        problem = f"the value is longer than {_OPTION_VALUE_MAX} characters"
+    elif _OPTION_VALUE.fullmatch(value_text) is None:
+        bad = next(ch for ch in value_text if not re.fullmatch(r"[A-Za-z0-9_.+\-/\\:]", ch))
+        problem = f"the value contains {_describe_character(bad)}"
+    if problem is None:
+        return
+    name_rule_text = (
+        "letters, digits, '_' and '.' (CPLEX: such words separated by single spaces)"
+        if solver == "cplex" else "letters, digits, '_' and '.', starting with a letter"
+    )
+    raise FlexToolUserError(
+        f"Refusing {solver} option {_short(name_text)} (value {_short(value_text)}) from {where}: {problem}. "
+        f"A solver option name is {name_rule_text}; a value is a number or one word of letters, digits and "
+        "'_ . + - / \\ :' (no spaces, quotes, ';', '#', '=' or line breaks). Correct the option there and run again."
+    )
 
 
 #: Solution-file options that older ``highs.opt.template`` versions shipped
@@ -128,6 +222,7 @@ def _resolve_effective_highs_options(
     baseline: Mapping[str, Any] | None = None,
     solver_config: SolverConfig | None = None,
     highs_opt_text: str | None = None,
+    solve_name: str | None = None,
 ) -> dict[str, Any]:
     """Resolve the effective HiGHS solver options for one solve.
 
@@ -182,6 +277,9 @@ def _resolve_effective_highs_options(
         The active solve's :class:`SolverConfig`; only its ``time_limit``
         / ``mip_gap`` / ``threads`` knobs are read (``None`` values and a
         ``None`` config skip the layer).
+    solve_name
+        The solve, named in the message refusing an option
+        (:func:`validate_solver_option`; every layer but *baseline* is checked).
 
     Returns
     -------
@@ -190,22 +288,31 @@ def _resolve_effective_highs_options(
         ``polar_high.Problem.set_solver_options``.
     """
     options: dict[str, Any] = dict(baseline) if baseline else {}
-    file_options = (
-        _parse_highs_opt_text(highs_opt_text) if highs_opt_text is not None
-        else _parse_highs_opt_file(highs_opt_path)
-    )
+    if highs_opt_text is None and highs_opt_path is not None and highs_opt_path.is_file():
+        highs_opt_text = highs_opt_path.read_text(encoding="utf-8")
+    of_solve = f" of solve {solve_name}" if solve_name else ""
+    file_options: dict[str, str] = {}
+    if highs_opt_text is not None:
+        file_label = str(highs_opt_path) if highs_opt_path is not None else "highs.opt"
+        for lineno, key, val in _highs_opt_lines(highs_opt_text):
+            if key not in _HIGHS_OPT_IGNORED_KEYS:  # dropped below, never passed on
+                validate_solver_option("highs", key, val, f"{file_label}, line {lineno}")
+        file_options = _parse_highs_opt_text(highs_opt_text)
     options.update(_drop_solution_file_options(file_options, highs_opt_path))
     if solver_config is not None:
         knobs = _PARAM_MAP["highs"]
         for knob in ("time_limit", "mip_gap", "threads"):
             value = getattr(solver_config, knob)
             if value is not None:
+                validate_solver_option("highs", knobs[knob], value, f"solver_mip_gap{of_solve}")
                 options[knobs[knob]] = value
     if solver_arguments_map:
         for key, value in solver_arguments_map.items():
+            validate_solver_option("highs", key, value, f"solver_arguments{of_solve}")
             options[str(key)] = value
     if cli_overrides:
         for key, value in cli_overrides.items():
+            validate_solver_option("highs", key, value, "the run's flags or environment variables")
             options[str(key)] = value
     return options
 
@@ -433,19 +540,25 @@ def resolve_commercial_options(
     """
     from flextool.engine.solve._subprocess_solve import (
         _format_native_opt_value,
-        _parse_native_opt_file,
+        _native_opt_lines,
         _parse_native_opt_text,
+        _read_native_opt_text,
     )
 
     of_solve = f" of solve {solve_name}" if solve_name else ""
+    file_writing = _FILE_WRITING_OPTIONS.get(solver, frozenset())
     entries: list[CommercialOption] = []
+    if opt_text is None and opt_file is not None:
+        opt_text = _read_native_opt_text(Path(opt_file))
+    file_options: dict[str, str] = {}
     if opt_text is not None:
+        file_label = str(opt_file) if opt_file is not None else f"{solver}.opt"
+        for lineno, name, value in _native_opt_lines(opt_text):
+            if commercial_option_key(solver, name) not in file_writing:  # dropped below, never passed on
+                validate_solver_option(solver, name, value, f"{file_label}, line {lineno}")
         file_options = _parse_native_opt_text(opt_text)
-    elif opt_file is not None:
-        file_options = _parse_native_opt_file(Path(opt_file))
-    else:
-        file_options = {}
     entries += [CommercialOption(k, v, str(opt_file)) for k, v in file_options.items()]
+    n_file_entries = len(entries)
     if solver_config is not None:
         names = _PARAM_MAP[solver]
         entries += [
@@ -462,9 +575,8 @@ def resolve_commercial_options(
         ]
     entries += _operator_native_overrides(solver, run_options)
 
-    file_writing = _FILE_WRITING_OPTIONS.get(solver, frozenset())
     merged: dict[str, CommercialOption] = {}
-    for option in entries:
+    for position, option in enumerate(entries):
         key = commercial_option_key(solver, option.name)
         if key in file_writing:
             # One warning per run for each name and kind of layer (the option file, a solve's solver_mip_gap /
@@ -478,6 +590,8 @@ def resolve_commercial_options(
                     option.name, option.value, option.layer, solver,
                 )
             continue
+        if position >= n_file_entries:  # the option file was checked line by line above
+            validate_solver_option(solver, option.name, option.value, option.layer)
         merged[key] = option._replace(name=key) if solver == "cplex" else option
     return list(merged.values())
 

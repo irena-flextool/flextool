@@ -84,6 +84,12 @@ Each line says what changes for a model that ran before and what to do; the deta
   weights; without `realized_invest_periods` a solve realizes only the `realized_periods` that are also
   `invest_periods`; `invest_period_total` could retire and `retire_period_total` invest; a `virtual_unitsize` ≤ 0
   is now ignored. Details below.
+- **Security: solver options are checked before a solve.** Since 4.0, a database's `solver_arguments` (or an
+  option file from another person's project) could add commands to a CPLEX, Xpress or COPT run. FlexTool now
+  refuses, for every solver including HiGHS, an option name or value with a line break, control character, space,
+  quote, `;`, `#` or `=`; names are letters, digits, `_` and `.` (CPLEX: words separated by single spaces). The
+  error names the solve and parameter, or the option file and line. Numbers (`-1`, `1e-4`, `inf`) and paths without
+  spaces still pass; a value with a space, such as a file path, is now refused: use a path without spaces.
 
 ### New features
 
