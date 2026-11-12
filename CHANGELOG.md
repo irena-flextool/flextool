@@ -73,6 +73,12 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   (investment or divestment per forecast) the starting energy differs although the share is the same; without a
   fixed start all the forecasts start from the same level. Results of such stochastic models change; the upgrade
   marks the databases and runs name the nodes.
+- **A forecast given at the fan's analysis time is read in every later period.** A stochastic solve fans once, at
+  its first stochastic step; a forecast branch period now reads the forecast authored at its own first step and,
+  for a time step that forecast does not cover, the one authored at the fan's analysis time. Before, the later
+  periods of a multi-period stochastic solve read 0 where the forecast was given only at the fan's analysis time
+  (profiles, availability, efficiency, costs, reservations, penalties, stochastic inflow; also the realization
+  dispatch). Results of such models change.
 - **Fixes that change results:** a user constraint without capacity terms got a right-hand side of 0 when another
   constraint had one (since 4.0); the reported fuel, CO2 and cost of a unit with a profile and an input were too
   low; the period node-group indicators and VRE share are now ratios of the period energies; the `summary_solve.csv`
@@ -519,8 +525,22 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   roll to roll, with one warning per solve naming them (`storage_binding_method` is not applied in a rolling solve).
   The same holds when such a solve mixes periods with and without representative periods.
 
+- **Stochastic values in the later periods of a stochastic solve.** A stochastic-time value (`branch` /
+  `analysis_time` / `time` map) given only at the fan's analysis time read 0 in the forecast branch periods after
+  the fan's period, in the realization dispatch of those periods and, for entities outside every
+  `include_stochastics` group, in the realized-branch read: a wind profile was 0 there and the unit did not run.
+  Each value now comes from the forecast authored at the branch period's own first step, else from the one
+  authored at the fan's analysis time (per time step); a period before the reveal never reads the latter.
+
 #### Input checks
 
+- **A stochastic node `inflow` outside every `include_stochastics` group needs a realized branch.** In a fan
+  without a `realized: yes` branch such a node read an inflow of 0 in every branch period without a message; it is
+  now a configuration error naming the node, as for the other stochastic-time parameters. Add the node to an
+  `include_stochastics` group, designate a realized branch, or give the inflow a non-stochastic value.
+- **A stochastic inflow or reservation that gives a value to only some of a fan's forecast branches is an
+  error,** as for the other stochastic-time parameters (it read 0 in the branches left out). The check also covers
+  values given at the fan's analysis time that later periods read.
 - **A `co2_max_period` or `co2_max_total` on a group whose `co2_method` has no such cap is reported.** The
   value is ignored (for example `co2_max_period` with `co2_method` *price*); the run now warns, naming the group,
   the alternative and its method. Before, such a group with `co2_max_period` was also listed as CO2-limited in
