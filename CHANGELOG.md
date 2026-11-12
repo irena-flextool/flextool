@@ -97,9 +97,11 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   when the solver reports it), and the run goes on; an LP, or a solve without a solution, stops the run. This is
   the same for every solver (a Benders master or region solve stops the run at its limit, as before). Before,
   HiGHS and CPLEX stopped the run at the limit even with a usable MIP solution, so such runs now finish; Gurobi,
-  COPT and Xpress reported a solve stopped at its time limit as optimal, without a word. A CPLEX or Gurobi solve
-  stopped by another limit (nodes, solutions, memory) or aborted was also reported optimal; it now stops the run,
-  naming the solver's status.
+  COPT and Xpress reported a solve stopped at its time limit as optimal, without a word. A CPLEX, Gurobi or COPT
+  solve stopped by another limit (nodes, iterations, solutions, memory) or aborted was also reported optimal; it
+  now stops the run, naming the solver's status. So does a CPLEX solution "optimal with unscaled
+  infeasibilities" or with an "optimal face unbounded", which is not a certified optimum, and a COPT solve (or a
+  Gurobi one with a text result file) whose log is turned off, since how it ended cannot be read.
 - **Solver option files come from one `solver_config` folder chosen per run**, no longer from the folder
   FlexTool is started from: `--solver-config-dir` (new) or `FLEXTOOL_SOLVER_CONFIG_DIR`, else `solver_config/`
   next to the input database or in the workspace of a GUI project database, else the Spine Toolbox project
@@ -109,8 +111,9 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   (`Solver config:`). Each run reads the files once at its start and copies them afresh to
   `<work folder>/solve_data/solver_config/`. A `<work folder>/solver_config/` left by an earlier version is no
   longer read as the work folder's copy (the run warns when it differs); when it is `solver_config/` in the
-  current folder and holds only unedited FlexTool templates, the run skips it and warns, naming it. The GUI and
-  the calibrator pass the workspace's folder to their runs.
+  current folder and holds only unedited FlexTool templates, the run skips it, uses the next folder or the
+  defaults, and warns, naming it (not in the FlexTool folder itself, whose `solver_config/` is always used). The
+  GUI and the calibrator pass the workspace's folder to their runs.
 - **Fixes that change results:** a user constraint without capacity terms got a right-hand side of 0 when another
   constraint had one (since 4.0); the reported fuel, CO2 and cost of a unit with a profile and an input were too
   low; the period node-group indicators and VRE share are now ratios of the period energies; the `summary_solve.csv`
@@ -583,14 +586,22 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   `Solver args (<solver>): ...` with what the solver receives, under its own names.
 - **The log of a commercial solver is shown.** Gurobi, CPLEX, Xpress and COPT printed nothing on a successful
   run (their log was read for the status and dropped), so the parameters they took, how the solve ended and the
-  gap a time-limit warning refers to could not be seen. The log now follows the `Solver args` line, as HiGHS'
-  does.
-- **Whole numbers in `solver_arguments` reach a commercial solver as integers** (`Threads=4`, not `Threads=4.0`;
-  the database stores every number as a decimal). An integer parameter can refuse `4.0`: the Xpress library
-  does.
-- **A COPT LP stopped at its time limit** without a solution was reported as a licence error under COPT's
-  size-limited licence, or as a missing solution file; it now says the solve stopped at its time limit. An LP
-  stopped with a solution file is no longer taken as optimal.
+  gap a time-limit warning refers to could not be seen. The log is now printed when the solve ends, after the
+  `Solver args` line.
+- **Whole numbers reach a commercial solver as integers** (`Threads=4`, `TimeLimit=60`, not `Threads=4.0`), from
+  `solver_arguments`, `solver_mip_gap` and the flags alike (the database stores every number as a decimal). An
+  integer parameter can refuse `4.0`: the Xpress library does.
+- **A COPT solve stopped by a limit, or infeasible,** without a solution was reported as a licence error under
+  COPT's size-limited licence, or as a missing solution file; it now names the limit (or the infeasibility).
+  With a solution, a COPT solve stopped by any limit but the time limit is no longer taken as optimal.
+- **A CPLEX solve stopped at its time limit without a solution** stopped the run with "no solution file"; it now
+  says the solve stopped at its time limit.
+- **A work folder with a space in its name** broke CPLEX, Xpress and COPT runs (FlexTool wrote the file paths
+  into their command script unquoted). The solver program now runs in `solve_data/subprocess/` with bare file
+  names, and its command script is saved there as `<solve>.script`, to replay by hand. CPLEX's and Gurobi's own
+  log files (`cplex.log`, `gurobi.log`) are written there too, no longer in the folder the run started from.
+- **A negative Xpress `MAXTIME`** (a hard limit) set no watchdog for the solver process; its absolute value now
+  counts as the time limit.
 - **The commercial solver option templates** described how options were passed before 4.3.0 (`ReadParams`, the
   `solver_options` map, `solver_time_limit` / `solver_threads`); their header now gives the actual mechanism and
   precedence. Existing `solver_config/*.opt` copies keep their old comment until you replace them.

@@ -516,8 +516,12 @@ def commercial_time_limit(solver: str, options: "list[CommercialOption] | Mappin
     """The time limit (seconds) among the resolved *options* of *solver*, else ``None``.
 
     Read from the native time-limit name only (Xpress also ``TIMELIMIT``).  A
-    value that is not a positive finite number (Gurobi's ``inf``, an Xpress
-    negative ``MAXTIME`` meaning "only once a solution exists") gives ``None``.
+    value that is not a positive finite number (Gurobi's ``inf``) gives ``None``.
+    Xpress ``MAXTIME``: a positive value stops an LP at the limit, and a MIP only
+    once it has a solution (FlexTool's Xpress path solves LPs only); a negative
+    value is a hard limit of its absolute value (xpress 46.01: ``MAXTIME -1`` and
+    ``1`` both stop at 1 s on a MIP with incumbents, only ``-1`` without one), so
+    its absolute value is the limit.
     """
     if not options or solver not in _PARAM_MAP:
         return None
@@ -535,6 +539,8 @@ def commercial_time_limit(solver: str, options: "list[CommercialOption] | Mappin
             v = float(value)
         except (TypeError, ValueError):
             continue
+        if solver == "xpress" and commercial_option_key(solver, name) == "maxtime":
+            v = abs(v)
         limit = v if math.isfinite(v) and 0.0 < v < 1e15 else None
     return limit
 

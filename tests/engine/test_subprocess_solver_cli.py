@@ -159,6 +159,8 @@ def test_highs_environment_names_never_reach_a_commercial_solver() -> None:
     ("gurobi", {"timelimit": "60"}, 720.0),
     ("cplex", {"timelimit": "300"}, 1200.0),
     ("xpress", {"MAXTIME": "60"}, 720.0),
+    ("xpress", {"MAXTIME": "-60"}, 720.0),      # a negative MAXTIME is a hard limit of 60 s (review F2)
+    ("xpress", {"TIMELIMIT": "30.5"}, 661.0),
     ("gurobi", {"Threads": "0"}, None),
     ("gurobi", {"TimeLimit": "inf"}, None),
 ])
@@ -279,3 +281,103 @@ def test_copt_lp_time_limit_is_read_with_and_without_a_solution_file(tmp_path: P
     written = _parse_copt_sol(sol, _COPT_LP_TIMEOUT_LOG)
     assert written.status == "TIME_LIMIT" and written.primal == {"C0000001": 1.0, "C0000002": 0.0}
     assert _parse_copt_sol(sol, "Status: Optimal  Objective: 1.0943977500e+03\n").status == "OPTIMAL"
+
+
+#: The ends of COPT logs (coptpy 8.0.4, the library ``copt_cmd`` runs): the market split MIP stopped by
+#: ``NodeLimit 5`` and by ``TimeLimit 0.5``, a small MIP solved, an LP stopped by ``BarIterLimit 1``.
+_COPT_MIP_NODE_LIMIT_LOG = """\
+Best solution   : 1.000000000
+Best bound      : 0.000000000
+Best gap        : 100.0000%
+Solve time      : 0.21
+Solve node      : 5
+MIP status      : stopped (node limit reached)
+Solution status : integer feasible
+"""
+_COPT_MIP_TIME_LIMIT_LOG = _COPT_MIP_NODE_LIMIT_LOG.replace("node limit", "time limit")
+_COPT_MIP_SOLVED_LOG = "MIP status      : solved\nSolution status : integer optimal (relative gap limit 0.0001)\n"
+_COPT_LP_ITER_LIMIT_LOG = "Solving unfinished\nStatus: IterLimit  Objective: 0.0000000000e+00  Iterations: 1(0)\n"
+
+
+@pytest.mark.parametrize("log, status, gap", [
+    (_COPT_MIP_NODE_LIMIT_LOG, "NODE_LIMIT", None),
+    (_COPT_MIP_NODE_LIMIT_LOG.replace("(node limit reached)", "(interrupted by user)"), "INTERRUPTED", None),
+    (_COPT_MIP_NODE_LIMIT_LOG.replace("(node limit reached)", "(something new)"), "STOPPED", None),
+    (_COPT_MIP_TIME_LIMIT_LOG, "TIME_LIMIT", 1.0),
+    (_COPT_MIP_SOLVED_LOG, "OPTIMAL", None),
+    (_COPT_LP_ITER_LIMIT_LOG, "ITERATION_LIMIT", None),
+    (_COPT_LP_ITER_LIMIT_LOG.replace("IterLimit", "Numerical"), "NUMERICAL", None),
+    ("", "NO_STATUS", None),   # Logging 0: the log says nothing
+])
+def test_copt_status_with_a_solution_comes_from_its_log(log, status, gap, tmp_path: Path) -> None:
+    """Review L2-2: only ``MIP status : solved`` / ``Status: Optimal`` is optimal; every other limit or an
+    interrupt is named (and rejected), only a time limit keeps a MIP solution, and values with no status in the
+    log are ``NO_STATUS``."""
+    from flextool.engine.solve._subprocess_solve import _parse_copt_sol
+
+    sol = tmp_path / "mip.sol"
+    sol.write_text("# Objective value 1\nC0000001  1\nC0000002  0\n")
+    parsed = _parse_copt_sol(sol, log)
+    assert (parsed.status, parsed.primal, parsed.mip_gap) == (status, {"C0000001": 1.0, "C0000002": 0.0}, gap)
+
+
+def test_copt_mip_at_a_node_limit_is_rejected_naming_it(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from flextool.engine.solve._acceptance import classify_acceptance
+    from flextool.engine.solve._subprocess_solve import _parse_copt_sol
+
+    sol_file = tmp_path / "mip.sol"
+    sol_file.write_text("# Objective value 1\nC0000001  1\n")
+    parsed = _parse_copt_sol(sol_file, _COPT_MIP_NODE_LIMIT_LOG)
+    sol = SimpleNamespace(optimal=False, shim_status=parsed.status, shim_mip_gap=parsed.mip_gap, _vars={})
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="unit")
+    assert not acc.accepted and "(solver status NODE_LIMIT)" in acc.message
+
+
+_RECORDING_SOLVER = """\
+#!{py}
+import json, os, sys
+with open({record!r}, "w") as fh:
+    json.dump({{"argv": sys.argv[1:], "cwd": os.getcwd(), "stdin": sys.stdin.read()}}, fh)
+"""
+
+
+@pytest.mark.parametrize("solver", ["gurobi", "cplex", "xpress", "copt"])
+def test_a_work_folder_with_a_space_reaches_the_solver_as_bare_file_names(solver: str, tmp_path: Path,
+                                                                          monkeypatch) -> None:
+    """The solver program runs in ``<work>/solve_data/subprocess`` and gets bare file names, so a work folder
+    named ``my runs`` needs no quoting in any console script (nor a Windows path's backslashes any escaping).
+    The console script is saved there as ``<solve>.script``."""
+    import json
+    import stat
+    import sys
+
+    from flextool.engine.solve import _subprocess_solve as sps
+    from tests.engine.test_subprocess_gurobi_name_recovery import _cost_lp
+
+    record = tmp_path / "record.json"
+    stub = tmp_path / "solver_stub"
+    stub.write_text(_RECORDING_SOLVER.format(py=sys.executable, record=str(record)))
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setattr(sps, "_find_solver_binary", lambda name: stub)
+    pb = _cost_lp(["coal fired", "gas"])
+    work = tmp_path / "my runs"
+    with pytest.raises(RuntimeError, match="no solution file"):
+        sps._solve_commercial_subprocess(pb, solver, {"Threads" if solver != "xpress" else "THREADS": 1},
+                                         solve_name="y2020 dispatch", logger=None, work_folder=work)
+    got = json.loads(record.read_text())
+    out_dir = work / "solve_data" / "subprocess"
+    assert Path(got["cwd"]) == out_dir
+    assert (out_dir / "y2020_dispatch.mps").is_file()
+    result = "y2020_dispatch.json" if solver == "gurobi" else "y2020_dispatch.sol"
+    if solver == "gurobi":
+        assert got["argv"] == ["Threads=1", f"ResultFile={result}", "y2020_dispatch.mps"]
+    else:
+        read, write = {"cplex": ("read", f"write {result} sol"), "xpress": ("readprob", f"writeslxsol {result}"),
+                       "copt": ("read", f"write {result}")}[solver]
+        lines = got["stdin"].splitlines()
+        assert f"{read} y2020_dispatch.mps" in lines and write in lines, lines
+        # Review F7: the script is kept next to the MPS for a replay by hand.
+        assert (out_dir / "y2020_dispatch.script").read_text() == got["stdin"]
+    assert "my runs" not in json.dumps(got["argv"]) + got["stdin"]

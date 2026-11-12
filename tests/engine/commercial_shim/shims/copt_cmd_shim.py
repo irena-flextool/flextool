@@ -17,12 +17,13 @@ What it does:
   writes COPT's solution text, ``# Objective value <v>`` then ``<name> <value>`` lines, the layout
   ``_parse_copt_sol`` reads).  The package's log goes to stdout; its summary carries the lines FlexTool reads
   (``MIP status : stopped (time limit reached)``, ``Best gap : X%``).
-* With no solution ``write`` prints an error line and writes nothing.
+* With no solution ``write`` writes nothing (as the library does).
 
 What it does NOT reproduce:
 
 * ``copt_cmd``'s own command parser (case, abbreviations, quoting, paths with spaces), its banner, the exact
   text of its error messages and its exit code.
+* What ``copt_cmd`` prints for ``write`` without a solution: the shim's error line is its own.
 """
 from __future__ import annotations
 

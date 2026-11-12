@@ -600,3 +600,56 @@ def test_cli_flags_reach_a_fake_gurobi_cl_through_the_whole_run(gurobi_db, tmp_p
         assert argv[3].startswith("ResultFile=") and len(argv) == 5, argv
     assert f"Solver config: {cfg} (--solver-config-dir)" in [r.getMessage() for r in caplog.records]
     assert (work / "solve_data" / "solver_config" / "gurobi.opt").read_text() == "Threads 5\nMIPGap 0.002\n"
+
+
+@pytest.mark.parametrize("next_to_db", [False, True])
+def test_the_cli_resolves_the_option_folder_from_its_own_arguments(gurobi_db, tmp_path, monkeypatch, capsys,
+                                                                   next_to_db) -> None:
+    """Review L2-4: ``cmd_run_flextool.main`` resolves the folder itself (``--project-folder-file``, the input
+    database) and hands it to the engine.  Started from an empty folder with ``--project-folder-file
+    tb/templates/project_folder.txt``: the engine gets ``tb/solver_config`` (Spine Toolbox project folder); with a
+    ``solver_config/`` next to the database, that one (it comes first).  The header names the same folder."""
+    import shutil
+    import sys
+
+    import flextool.engine
+    from flextool._solver_config_source import REASON_DB_FOLDER, REASON_TOOLBOX
+    from flextool.cli import cmd_run_flextool
+
+    monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
+    tb = tmp_path / "tb"
+    (tb / "templates").mkdir(parents=True)
+    (tb / "templates" / "project_folder.txt").write_text("")
+    (tb / "solver_config").mkdir()
+    (tb / "solver_config" / "gurobi.opt").write_text("Threads 4\n")
+    models = tmp_path / "models"
+    models.mkdir()
+    db = models / "f.sqlite"
+    shutil.copyfile(gurobi_db.removeprefix("sqlite:///"), db)
+    if next_to_db:
+        (models / "solver_config").mkdir()
+        (models / "solver_config" / "gurobi.opt").write_text("Threads 6\n")
+        expected = (models / "solver_config", REASON_DB_FOLDER)
+    else:
+        expected = (tb / "solver_config", REASON_TOOLBOX)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    got: dict = {}
+
+    def fake_run_chain_from_db(*args, **kwargs):
+        got.update(kwargs)
+        raise RuntimeError("stopped by the test after the folder was resolved")
+
+    monkeypatch.setattr(flextool.engine, "run_chain_from_db", fake_run_chain_from_db)
+    monkeypatch.setattr(sys, "argv", [
+        "cmd_run_flextool", str(db), "--scenario-name", "custom", "--work-folder", str(tmp_path / "w"),
+        "--output-location", str(tmp_path / "out"), "--project-folder-file", str(tb / "templates" / "project_folder.txt"),
+    ])
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_run_flextool.main()
+    assert excinfo.value.code == 1
+    source = got["solver_config_source"]
+    assert (source.dir, source.reason) == expected
+    header = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("Solver config:")]
+    assert header == [f"Solver config: {expected[0]} ({expected[1]})"], header

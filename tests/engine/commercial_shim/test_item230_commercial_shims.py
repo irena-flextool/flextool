@@ -228,6 +228,18 @@ def test_tiny_lp(solver, shim, db, highs_objective, tmp_path, capsys) -> None:
     assert args_line in out and BANNER[solver] in out.split(args_line, 1)[1], out[-3000:]
 
 
+def test_work_folder_with_a_space(solver, shim, db, highs_objective, tmp_path) -> None:
+    """The ``coal`` LP with the work folder ``w with space``: the solver program gets bare file names in its own
+    folder, so the run solves (a shim refuses a path with a space, as the real consoles' quoting is unknown)."""
+    cfg = _cfg(tmp_path, solver, f"{THREADS[solver]} 2\n")
+    work = tmp_path / "w with space"
+    steps = _run(db, f"lp_{solver}", work, cfg)
+    assert steps[SOLVE].optimal
+    assert steps[SOLVE].obj == pytest.approx(highs_objective["lp"], rel=1e-6)
+    calls = _calls(shim)
+    assert calls and all("w with space" not in c.get("stdin", "") + json.dumps(c.get("argv", [])) for c in calls), calls
+
+
 def test_tiny_mip_with_the_gap_flag(solver, shim, db, highs_objective, tmp_path, capsys) -> None:
     """``--solver-mip-gap 0.0123`` on the ``coal_min_load_MIP_wind`` MIP: the solver reports its gap parameter
     as 0.0123 (read back from the package), and the ``Solver args`` line says the same.  Xpress: FlexTool
@@ -309,8 +321,8 @@ def test_lp_at_a_limit_stops_the_run(solver, shim, db, tmp_path, caplog) -> None
 
     * Gurobi (JSON status) and COPT (console ``Status: Timeout``): "stopped at its time limit before finding a
       solution".
-    * CPLEX: its status lives only in the solution file, which it does not write without a solution, so the
-      run stops on "no solution file".
+    * CPLEX: it writes no solution file without a solution; its console says ``time limit exceeded``, so the
+      run stops with the same "stopped at its time limit before finding a solution".
     * Xpress: the print solution says ``Problem is unfinished``; the acceptance check rejects it."""
     from flextool.engine.input._solve_state import FlexToolSolveError
     from flextool.engine.solve._solver_dispatch import FlexToolUserError
@@ -323,10 +335,8 @@ def test_lp_at_a_limit_stops_the_run(solver, shim, db, tmp_path, caplog) -> None
     expected_error = FlexToolSolveError if solver == "xpress" else FlexToolUserError
     with caplog.at_level(logging.INFO), pytest.raises(expected_error) as excinfo:
         _run(db, scenario, tmp_path / "w", cfg, *flags)
-    if solver in ("gurobi", "copt"):
+    if solver in ("gurobi", "copt", "cplex"):
         assert "stopped at its time limit before finding a solution" in str(excinfo.value), excinfo.value
-    elif solver == "cplex":
-        assert "produced no solution file we could parse" in str(excinfo.value), excinfo.value
     else:
         errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
         assert any(f"non-optimal solve for {SOLVE}" in e and "(solver status UNFINISHED)" in e for e in errors), errors
@@ -390,6 +400,32 @@ def test_mip_at_its_time_limit_keeps_the_solution(solver, shim, tmp_path) -> Non
     acc = classify_acceptance(sol, ranges_post=None, solve_name="market_split")
     assert acc.accepted and acc.time_limited and acc.model_status == "kTimeLimit", acc
     assert f"(relative MIP gap {call['mip_gap']:.4%})" in acc.message, acc.message
+
+
+#: The native name of the MIP node limit (CPLEX by its interactive path).
+NODES = {"gurobi": "NodeLimit", "cplex": "mip limits nodes", "copt": "NodeLimit"}
+
+
+def test_mip_at_a_node_limit_is_rejected_by_name(solver, shim, tmp_path) -> None:
+    """Review F1 / D2: a node limit of 5 on the market split MIP stops the solver with an incumbent (found at
+    the root) but no proof; only a time limit keeps such a solution, so the acceptance step rejects it, naming
+    ``NODE_LIMIT`` (Gurobi from its JSON status, CPLEX from the file's status code, COPT from its log).
+    Xpress: no MIP."""
+    from flextool.engine.input._solve_config import SolverConfig
+    from flextool.engine.solve._acceptance import classify_acceptance
+    from flextool.engine.solve._solver_dispatch import run_one_solve
+
+    if solver == "xpress":
+        pytest.skip("FlexTool's Xpress driver solves only LPs")
+    cfg = _cfg(tmp_path, solver, f"{THREADS[solver]} 1\n{NODES[solver]} 5\n")
+    sol = run_one_solve(_market_split(), SolverConfig(name=solver), solve_name="market_split",
+                        work_folder=tmp_path / "w", run_options=_run_options("unused.sqlite"), solver_config_dir=cfg)
+    (call,) = _calls(shim)
+    assert call["params"] == {THREADS[solver]: 1, NODES[solver]: 5}, call
+    assert call["is_mip"] and call["mip_gap"] is not None and call["mip_gap"] > 0.0, call
+    assert (sol.shim_status, sol.optimal) == ("NODE_LIMIT", False)
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="market_split")
+    assert not acc.accepted and "(solver status NODE_LIMIT)" in acc.message, acc
 
 
 # ---------------------------------------------------------------------------

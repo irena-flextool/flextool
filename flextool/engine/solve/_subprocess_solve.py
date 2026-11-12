@@ -925,11 +925,20 @@ _GUROBI_STOP_STATUS = {
     "work limit": "WORK_LIMIT", "memory limit": "MEM_LIMIT", "interrupt request": "INTERRUPTED",
     "solve interrupted": "INTERRUPTED",
 }
+#: Console lines of a Gurobi solve that finished: ``Optimal solution found (tolerance ...)`` (MIP),
+#: ``Optimal objective  <v>`` (LP).
+_GUROBI_OPTIMAL = re.compile(r"^\s*Optimal (solution found|objective)\b", re.MULTILINE)
 _GUROBI_GAP = re.compile(r"^Best objective [^,]*, best bound [^,]*, gap ([-+\d.eE]+)%", re.MULTILINE)
-#: COPT's summary of a solve stopped by its time limit: ``MIP status : stopped (time limit reached)`` (MIP),
-#: ``Status: Timeout  Objective: ...`` (LP).
-_COPT_TIME_LIMIT = re.compile(r"status\s*:\s*stopped\s*\(time limit|^Status:\s*Timeout\b",
-                              re.IGNORECASE | re.MULTILINE)
+#: COPT's summary of how a MIP ended (``MIP status      : solved`` / ``: stopped (time limit reached)`` /
+#: ``: stopped (node limit reached)``) and of an LP (``Status: Optimal  Objective: ...``, ``Status: Timeout``,
+#: ``Status: IterLimit``); FlexTool reads the last of each.
+_COPT_MIP_STATUS = re.compile(r"^\s*MIP status\s*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+_COPT_LP_STATUS = re.compile(r"^\s*Status:\s*(\w+)", re.MULTILINE)
+#: COPT LP ``Status:`` words, as FlexTool's status names (another word becomes its upper-case self).
+_COPT_LP_STATUS_NAMES = {
+    "optimal": "OPTIMAL", "infeasible": "INFEASIBLE", "unbounded": "UNBOUNDED", "infororunb": "INF_OR_UNBD",
+    "timeout": "TIME_LIMIT", "iterlimit": "ITERATION_LIMIT", "interrupted": "INTERRUPTED",
+}
 _COPT_GAP = re.compile(r"^Best gap\s*:\s*([-+\d.eE]+)%", re.MULTILINE)
 _CPLEX_GAP = re.compile(r"gap\s*=\s*[^,()]*,\s*([-+\d.eE]+)%")
 _XPRESS_TIME_LIMIT = re.compile(r"MAXTIME limit reached|\*\*\* Time limit reached \*\*\*|time limit hit",
@@ -994,9 +1003,12 @@ def _parse_gurobi_sol(path: Path, stdout: str = "") -> _ParsedSolution:
 
     With the text format the status comes from the console output: a primal
     with ``Time limit reached`` in *stdout* is ``TIME_LIMIT``, one with another
-    limit or an interrupt (``Node limit reached``, ...) carries that status, otherwise
-    ``OPTIMAL`` (the text format has no status; with console logging off a
-    time-limited solve cannot be told apart, which is why FlexTool asks for JSON).
+    limit or an interrupt (``Node limit reached``, ...) carries that status, one
+    with ``Optimal solution found`` / ``Optimal objective`` is ``OPTIMAL``.  With
+    none of these (console logging off, ``LogToConsole 0``) how the solve ended
+    is unknown: ``NO_STATUS``, which the acceptance check rejects, since a solve
+    stopped by a node limit or an interrupt would read the same.  (FlexTool asks
+    for a JSON result file, which carries the status whatever the logging.)
     """
     parsed = _parse_gurobi_json(path) if path.is_file() else None
     if parsed is not None:
@@ -1011,6 +1023,8 @@ def _parse_gurobi_sol(path: Path, stdout: str = "") -> _ParsedSolution:
         if stop is not None:
             # Another limit or an interrupt: not optimal, rejected by name.
             return _ParsedSolution(_GUROBI_STOP_STATUS[stop.group(1).lower()], objective, primal, None)
+        if not _GUROBI_OPTIMAL.search(stdout):
+            return _ParsedSolution("NO_STATUS", objective, primal, None)
     return _ParsedSolution(status, objective, primal, None)
 
 
@@ -1051,27 +1065,90 @@ def _parse_sol_text(
     return status, objective, (primal or None)
 
 
-def _parse_copt_sol(path: Path, stdout: str = "") -> _ParsedSolution:
-    """COPT's ``.sol`` has Gurobi's text layout; the status comes from the
-    console (``MIP status : stopped (time limit reached)``, an LP's ``Status: Timeout``).
+def _copt_status(stdout: str) -> str | None:
+    """How a COPT solve ended, from its console log; ``None`` when the log does not say (logging off).
 
-    A time limit is ``TIME_LIMIT`` with or without a solution file (COPT writes
-    none when it has no solution), so a run without one is told why.
+    A MIP's last ``MIP status`` line: ``solved`` is ``OPTIMAL``; ``stopped (time limit reached)`` is
+    ``TIME_LIMIT``; ``stopped (node limit reached)`` ``NODE_LIMIT``; another ``stopped (...)`` is
+    ``INTERRUPTED`` when it names an interrupt, else ``STOPPED``; ``infeasible`` / ``unbounded`` as named.  Else
+    an LP's last ``Status:`` word (:data:`_COPT_LP_STATUS_NAMES`; another word, e.g. ``Numerical``, becomes
+    ``NUMERICAL``).  Only ``OPTIMAL`` is optimal, so every other limit or an interrupt is rejected by name and
+    only a MIP's ``TIME_LIMIT`` keeps its solution (the D2 rule of :mod:`flextool.engine.solve._acceptance`).
     """
-    status, objective, primal = _parse_sol_text(path)
-    if _COPT_TIME_LIMIT.search(stdout):
-        gap = _percent(_COPT_GAP.search(stdout)) if primal else None
-        return _ParsedSolution("TIME_LIMIT", objective if primal else None, primal, None, gap)
-    return _ParsedSolution(status, objective, primal, None)
+    mip = _COPT_MIP_STATUS.findall(stdout)
+    if mip:
+        text = mip[-1].lower()
+        if text.startswith("solved"):
+            return "OPTIMAL"
+        if text.startswith("stopped"):
+            if "time limit" in text:
+                return "TIME_LIMIT"
+            if "node limit" in text:
+                return "NODE_LIMIT"
+            return "INTERRUPTED" if "interrupt" in text else "STOPPED"
+        if "infeasible or unbounded" in text:
+            return "INF_OR_UNBD"
+        if "infeasible" in text:
+            return "INFEASIBLE"
+        if "unbounded" in text:
+            return "UNBOUNDED"
+        return "OTHER"
+    lp = _COPT_LP_STATUS.findall(stdout)
+    if lp:
+        word = lp[-1]
+        return _COPT_LP_STATUS_NAMES.get(word.lower(), word.upper())
+    return None
 
 
-#: CPLEX ``solutionStatusString`` phrases, checked in order (``CPXgetstatstring``).  A limit or an abort is
-#: never "optimal": with a solution, only a time limit is kept (the D2 rule of
-#: :mod:`flextool.engine.solve._acceptance`); the other limits are rejected by name.  An unrecognised
-#: string stays ``OTHER`` (rejected, naming the solver status).
+def _parse_copt_sol(path: Path, stdout: str = "") -> _ParsedSolution:
+    """COPT's ``.sol`` has Gurobi's text layout and no status; the status comes from the console
+    (:func:`_copt_status`).
+
+    A status is kept with or without a solution file (COPT writes none when it has no solution), so a run
+    without one is told why (``stopped at its time limit before finding a solution``).  Values with no status
+    in the log (``Logging 0`` / ``LogToConsole 0``) are ``NO_STATUS``: how the solve ended is unknown, so the
+    acceptance check rejects them.
+    """
+    _, objective, primal = _parse_sol_text(path)
+    status = _copt_status(stdout)
+    if status is None:
+        return _ParsedSolution("NO_STATUS" if primal else "OTHER", objective, primal, None)
+    gap = _percent(_COPT_GAP.search(stdout)) if primal and status == "TIME_LIMIT" else None
+    return _ParsedSolution(status, objective if primal else None, primal, None, gap)
+
+
+#: CPLEX ``solutionStatusValue`` codes (``CPX_STAT_*`` for LP, ``CPXMIP_*`` for MIP; the CPLEX reference manual,
+#: "Solution status codes"), read first.  A limit or an abort is never optimal: with a solution, only a time
+#: limit is kept (the D2 rule of :mod:`flextool.engine.solve._acceptance`); the other limits are rejected by name.
+#: "Optimal with unscaled infeasibilities" (5, 115) breaks the feasibility tolerances once unscaled, and an
+#: "unbounded optimal face" (20, barrier without crossover) returns an interior point of an unbounded face, not a
+#: vertex: neither is a certified optimum, and FlexTool has no diagnostics of a solver run as a program to verify
+#: one, so both are rejected (as HiGHS' uncertified ``kUnknown`` is without diagnostics that show a feasible
+#: primal).  A code not listed falls back to the phrase table.
+_CPLEX_STATUS_CODES: Mapping[int, str] = {
+    1: "OPTIMAL", 101: "OPTIMAL", 102: "OPTIMAL", 128: "OPTIMAL", 129: "OPTIMAL",
+    2: "UNBOUNDED", 118: "UNBOUNDED",
+    3: "INFEASIBLE", 103: "INFEASIBLE",
+    4: "INF_OR_UNBD", 119: "INF_OR_UNBD",
+    5: "OPTIMAL_INFEASIBLE", 115: "OPTIMAL_INFEASIBLE",
+    20: "OPTIMAL_FACE_UNBOUNDED",
+    6: "NUMERIC",
+    10: "ITERATION_LIMIT",
+    11: "TIME_LIMIT", 25: "TIME_LIMIT", 107: "TIME_LIMIT", 108: "TIME_LIMIT", 131: "TIME_LIMIT", 132: "TIME_LIMIT",
+    12: "OBJECTIVE_LIMIT", 21: "OBJECTIVE_LIMIT", 22: "OBJECTIVE_LIMIT",
+    13: "INTERRUPTED", 113: "INTERRUPTED", 114: "INTERRUPTED",
+    104: "SOLUTION_LIMIT", 130: "SOLUTION_LIMIT",
+    105: "NODE_LIMIT", 106: "NODE_LIMIT",
+    111: "MEM_LIMIT", 112: "MEM_LIMIT",
+}
+
+#: CPLEX ``solutionStatusString`` phrases, checked in order (``CPXgetstatstring``), for a file without a known
+#: ``solutionStatusValue``.  An unrecognised string stays ``OTHER`` (rejected, naming the solver status).
 _CPLEX_STATUS_PHRASES: tuple[tuple[str, str], ...] = (
     ("non-optimal", "OTHER"),
     ("nonoptimal", "OTHER"),
+    ("unscaled infeasibilities", "OPTIMAL_INFEASIBLE"),   # "[integer] optimal with unscaled infeasibilities"
+    ("face unbounded", "OPTIMAL_FACE_UNBOUNDED"),         # "optimal face unbounded"
     ("time limit", "TIME_LIMIT"),          # also "deterministic time limit exceeded"
     ("node limit", "NODE_LIMIT"),
     ("solution limit", "SOLUTION_LIMIT"),
@@ -1084,9 +1161,17 @@ _CPLEX_STATUS_PHRASES: tuple[tuple[str, str], ...] = (
     ("unbounded", "UNBOUNDED"),
 )
 
+#: The interactive optimizer's line for a solve stopped by a time limit (``Time limit exceeded, no solution.``,
+#: ``Deterministic time limit exceeded``): the reason when CPLEX wrote no solution file.
+_CPLEX_TIME_LIMIT_TEXT = re.compile(r"time limit exceeded", re.IGNORECASE)
 
-def _cplex_status(status_str: str) -> str:
-    """The status of a CPLEX ``solutionStatusString`` (lower case), ``OTHER`` when unrecognised or empty."""
+
+def _cplex_status(status_str: str, status_value: int | None = None) -> str:
+    """The status of a CPLEX solution header: its ``solutionStatusValue`` when known
+    (:data:`_CPLEX_STATUS_CODES`), else its ``solutionStatusString`` (lower case); ``OTHER`` when neither is
+    recognised or both are empty."""
+    if status_value is not None and status_value in _CPLEX_STATUS_CODES:
+        return _CPLEX_STATUS_CODES[status_value]
     for phrase, status in _CPLEX_STATUS_PHRASES:
         if phrase in status_str:
             return status
@@ -1095,9 +1180,13 @@ def _cplex_status(status_str: str) -> str:
 
 def _parse_cplex_sol(path: Path, stdout: str = "") -> _ParsedSolution:
     """Parse CPLEX XML ``.sol`` via :mod:`xml.etree.ElementTree`; the gap of a
-    time-limited MIP comes from the console (``gap = ..., X%``)."""
+    time-limited MIP comes from the console (``gap = ..., X%``).
+
+    CPLEX writes no file without a solution; a console that says ``time limit exceeded`` then gives
+    ``TIME_LIMIT`` (no solution), so the run is told it stopped at its limit.
+    """
     if not path.is_file():
-        return _ParsedSolution("OTHER", None, None, None)
+        return _ParsedSolution("TIME_LIMIT" if _CPLEX_TIME_LIMIT_TEXT.search(stdout) else "OTHER", None, None, None)
     try:
         tree = ET.parse(path)
     except ET.ParseError:
@@ -1120,7 +1209,13 @@ def _parse_cplex_sol(path: Path, stdout: str = "") -> _ParsedSolution:
             except ValueError:
                 pass
         status_str = (header.get("solutionStatusString") or "").strip().lower()
-        status = _cplex_status(status_str)
+        try:
+            status_value: int | None = int(header.get("solutionStatusValue") or "")
+        except ValueError:
+            status_value = None
+        status = _cplex_status(status_str, status_value)
+        if status_value is not None:
+            status_str = status_str or str(status_value)
     primal: dict[str, float] = {}
     vars_el = root.find("variables")
     if vars_el is not None:
@@ -1849,8 +1944,10 @@ def _solve_commercial_subprocess(
        We keep the real names in memory instead and map back by index.
     2. Locate ``gurobi_cl`` / ``cplex`` / ``optimizer`` / ``copt_cmd``
        via :func:`_find_solver_binary`.
-    3. Spawn the binary with the per-solver argv + stdin script
-       (copied verbatim from polar-high's ``_mps_fallback``).
+    3. Spawn the binary in the output folder with the per-solver argv +
+       stdin script and bare file names (no path, so no console quoting
+       rule matters); the stdin script is also written there as
+       ``<solve>.script`` for a replay by hand.
     4. Parse the .sol with the per-solver parser; map its generic-named
        primal (and duals, for :data:`_DUAL_CAPABLE_SOLVERS`) back by
        *index* onto the real ``col_id`` / ``row_id`` names rebuilt from
@@ -1902,7 +1999,10 @@ def _solve_commercial_subprocess(
         commercial_watchdog_seconds,
     )
 
-    safe_name = solve_name.replace("/", "_").replace(" ", "_") or "solve"
+    # The solver runs in ``out_dir`` and gets bare file names: a folder name with a space, or a Windows path's
+    # backslashes, then needs no quoting or escaping rule of any solver's console (none of which FlexTool can
+    # check here).  The name keeps letters, digits, ``_``, ``.`` and ``-`` only: one plain token everywhere.
+    safe_name = re.sub(r"[^\w.\-]", "_", solve_name) or "solve"
     mps_path = out_dir / f"{safe_name}.mps"
     # Gurobi writes a JSON result file for a ``.json`` name: it carries the
     # status, gap and solution count whatever the console logging.
@@ -1946,8 +2046,12 @@ def _solve_commercial_subprocess(
         opt_arg = _write_commercial_opt_file(options, opt_path)
 
         argv, stdin_text = _SCRIPTS[solver_name](
-            binary, mps_path, sol_path, opt_arg,
+            binary, Path(mps_path.name), Path(sol_path.name), opt_arg,
         )
+        if stdin_text is not None:
+            # The command script piped to the console (CPLEX / Xpress / COPT), next to the MPS: replay it by hand
+            # with ``cd <this folder> && <solver program> < <solve>.script``.
+            (out_dir / f"{safe_name}.script").write_text(stdin_text, encoding="utf-8")
 
         if logger is not None:
             logger.info(
@@ -1962,6 +2066,7 @@ def _solve_commercial_subprocess(
                 text=True,
                 check=False,
                 timeout=watchdog,
+                cwd=out_dir,
             )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(

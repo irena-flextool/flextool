@@ -253,7 +253,8 @@ def test_commercial_path_maps_generic_primal_by_index(
         "C0000002 5",    # col_id 1 -> x[gas,p0]
         "C0000003 0",    # col_id 2 -> x[wind,p0]
     ]
-    stub = _write_fake_gurobi(tmp_path, sol_lines)
+    # A text result file has no status: Gurobi's console line says the LP finished.
+    stub = _write_fake_gurobi(tmp_path, sol_lines, stdout="Optimal objective  2.000000000e+01\n")
     monkeypatch.setattr(sps, "_find_solver_binary", lambda name: stub)
 
     sol = _solve_commercial_subprocess(
@@ -388,10 +389,7 @@ for line in sys.stdin.read().splitlines():
 import sys, coptpy as cp
 env = cp.Envr()
 m = env.createModel()
-try:
-    m.setParam("Logging", 0)
-except Exception:
-    pass
+# The log stays on, as copt_cmd's is by default: FlexTool reads how the solve ended from it.
 for line in sys.stdin.read().splitlines():
     t = line.split()
     if not t:
@@ -596,6 +594,80 @@ def test_gurobi_text_result_with_another_limit_is_not_optimal(tmp_path, monkeypa
     assert (sol.shim_status, sol.optimal) == ("NODE_LIMIT", False)
     acc = classify_acceptance(sol, ranges_post=None, solve_name="unit")
     assert not acc.accepted and "NODE_LIMIT" in acc.message
+
+
+def test_gurobi_text_result_without_a_status_line_is_not_optimal(tmp_path, monkeypatch) -> None:
+    """Review L2-2: a text result file and a console without a status line (``LogToConsole 0``): how the solve
+    ended is unknown (a node limit would read the same), so it is ``NO_STATUS`` and the run stops, saying why."""
+    _gurobi(_write_fake_gurobi(tmp_path, _SOL_20, stdout=""), monkeypatch)
+    sol = _solve_commercial_subprocess(
+        _mip_lp(["A", "B", "C"]), "gurobi", options=None, solve_name="unit", logger=None, work_folder=None,
+    )
+    assert (sol.shim_status, sol.optimal) == ("NO_STATUS", False)
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="unit")
+    assert not acc.accepted and "LogToConsole 1" in acc.message and "(solver status NO_STATUS)" in acc.message
+
+
+def _cplex_file(tmp_path: Path, status_string: str, status_value: str | None) -> Path:
+    path = tmp_path / "x.sol"
+    value = "" if status_value is None else f' solutionStatusValue="{status_value}"'
+    path.write_text(
+        '<?xml version="1.0"?>\n<CPLEXSolution version="1.2">\n'
+        f' <header objectiveValue="20"{value} solutionStatusString="{status_string}"/>\n'
+        ' <variables><variable name="C0000001" index="0" value="10"/></variables>\n'
+        '</CPLEXSolution>\n'
+    )
+    return path
+
+
+@pytest.mark.parametrize("status_value, status_string, expected", [
+    # The codes of the CPLEX reference manual ("Solution status codes"), with the string CPLEX writes beside each.
+    ("1", "optimal", "OPTIMAL"),
+    ("101", "integer optimal solution", "OPTIMAL"),
+    ("102", "integer optimal, tolerance", "OPTIMAL"),
+    ("5", "optimal with unscaled infeasibilities", "OPTIMAL_INFEASIBLE"),
+    ("115", "integer optimal with unscaled infeasibilities", "OPTIMAL_INFEASIBLE"),
+    ("20", "optimal face unbounded", "OPTIMAL_FACE_UNBOUNDED"),
+    ("11", "time limit exceeded", "TIME_LIMIT"),
+    ("107", "time limit exceeded, integer feasible", "TIME_LIMIT"),
+    ("131", "deterministic time limit exceeded, integer feasible", "TIME_LIMIT"),
+    ("105", "node limit exceeded, integer feasible", "NODE_LIMIT"),
+    ("113", "aborted, integer feasible", "INTERRUPTED"),
+    # The code decides when the string says something else.
+    ("115", "integer optimal solution", "OPTIMAL_INFEASIBLE"),
+    # An unlisted code falls back to the string.
+    ("999", "integer optimal solution", "OPTIMAL"),
+    # No code (an older writer): the string, the unscaled cases before plain "optimal".
+    (None, "integer optimal with unscaled infeasibilities", "OPTIMAL_INFEASIBLE"),
+    (None, "optimal face unbounded", "OPTIMAL_FACE_UNBOUNDED"),
+])
+def test_cplex_status_code_with_a_solution(status_value, status_string, expected, tmp_path) -> None:
+    """Review L2-3: the numeric ``solutionStatusValue`` first; "optimal with unscaled infeasibilities" and
+    "optimal face unbounded" are not optimal."""
+    parsed = sps._parse_cplex_sol(_cplex_file(tmp_path, status_string, status_value))
+    assert (parsed.status, parsed.primal) == (expected, {"C0000001": 10.0})
+
+
+@pytest.mark.parametrize("status, reason", [
+    ("OPTIMAL_INFEASIBLE", "once unscaled, the solution breaks the feasibility tolerances"),
+    ("OPTIMAL_FACE_UNBOUNDED", "has an unbounded optimal face"),
+])
+def test_cplex_uncertified_optimum_is_rejected_with_its_reason(status, reason) -> None:
+    from types import SimpleNamespace
+
+    sol = SimpleNamespace(optimal=False, shim_status=status, shim_mip_gap=None, _vars=_cost_lp(["A"])._vars)
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="unit")
+    assert not acc.accepted and reason in acc.message and f"(solver status {status})" in acc.message
+
+
+def test_cplex_without_a_solution_file_at_its_time_limit_says_so(tmp_path) -> None:
+    """CPLEX writes no file without a solution; its console's ``time limit exceeded`` makes the reason the time
+    limit (the run says "stopped at its time limit before finding a solution"), else nothing is known."""
+    missing = tmp_path / "none.sol"
+    log = "Dual simplex - Time limit exceeded, no solution.\nCPLEX Error  1217: No solution exists.\n"
+    assert sps._parse_cplex_sol(missing, log) == sps._ParsedSolution("TIME_LIMIT", None, None, None)
+    assert sps._parse_cplex_sol(missing, "CPLEX Error  1217: No solution exists.\n").status == "OTHER"
+    assert sps._NO_SOLUTION_REASONS["TIME_LIMIT"] == "stopped at its time limit before finding a solution"
 
 
 @pytest.mark.parametrize("status_string, expected", [

@@ -247,6 +247,24 @@ _SHIM_MODEL_STATUS = {
     "INTERRUPTED": "kInterrupt",
 }
 
+#: Statuses of a solver run as a program that have no HiGHS twin, and why each is not a usable optimum
+#: (``_subprocess_solve``).  Rejected like any other non-optimal status, with this reason.
+_SHIM_STATUS_REASONS = {
+    "NO_STATUS": (
+        "did not say how it ended: its result file carries no status and its console log names none (is the "
+        "log turned off? Gurobi: LogToConsole 1; COPT: Logging 1 and LogToConsole 1), so a solve stopped by a "
+        "limit or an interrupt cannot be told from a finished one"
+    ),
+    "OPTIMAL_INFEASIBLE": (
+        "is optimal only for the solver's scaled model: once unscaled, the solution breaks the feasibility "
+        "tolerances (CPLEX: optimal with unscaled infeasibilities)"
+    ),
+    "OPTIMAL_FACE_UNBOUNDED": (
+        "has an unbounded optimal face: the solution is an interior point of it, not a vertex (CPLEX barrier "
+        "without crossover; a cost or bound is probably missing)"
+    ),
+}
+
 
 def _is_mip(sol: "Solution") -> bool:
     """Whether the solved problem has integer columns (from the Solution's variables)."""
@@ -415,6 +433,17 @@ def classify_acceptance(
                 sol, solve_name, gap=getattr(sol, "shim_mip_gap", None), ranges_post=ranges_post,
             )
         model_status = _SHIM_MODEL_STATUS.get(shim_status)
+        if shim_status in _SHIM_STATUS_REASONS:
+            return Acceptance(
+                accepted=False,
+                near_optimal=False,
+                message=(
+                    f"non-optimal solve for {solve_name}: the solver {_SHIM_STATUS_REASONS[shim_status]} "
+                    f"(solver status {shim_status})"
+                ),
+                scaling_hint=None,
+                model_status=None,
+            )
         if model_status in _FAILURE_MESSAGES:
             return Acceptance(
                 accepted=False,

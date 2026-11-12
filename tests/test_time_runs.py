@@ -100,6 +100,13 @@ def test_db_runs_from_a_copy_with_the_gui_threads(tmp_path: Path, monkeypatch: p
         return subprocess.CompletedProcess(cmd, 0)
 
     monkeypatch.setattr(cmd_time_runs.subprocess, "run", fake_run)
+    with redirect_stdout(io.StringIO()):
+        main(["--db", str(db), "--scenario", "coal"])
+    # No solver_config/ in the current folder: no flag (a missing folder would warn on every run).
+    (cmd, _env), = [c for c in calls if "flextool.cli.cmd_run_flextool" in c[0]]
+    assert "--solver-config-dir" not in cmd
+    calls.clear()
+    (tmp_path / "solver_config").mkdir()
     with redirect_stdout(io.StringIO()) as buf:
         main(["--db", str(db), "--scenario", "coal"])
     assert hashlib.sha256(db.read_bytes()).hexdigest() == before

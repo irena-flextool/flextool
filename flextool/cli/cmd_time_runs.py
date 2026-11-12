@@ -7,7 +7,8 @@ temporary folder); ``--db PATH --scenario S ...`` runs the scenarios of your own
 Each run is the command the FlexTool window starts (``python -m flextool.cli.cmd_run_flextool ...``) with the
 same ``--threads`` as the window's default *Threads per run* (1; ``--threads`` sets another), the same solver
 option folder (``--solver-config-dir``: ``$FLEXTOOL_SOLVER_CONFIG_DIR``, else ``solver_config/`` in the current
-folder, the workspace when run from there) and the same UTF-8 output, with plots off unless ``--plots`` says
+folder, the workspace when run from there; passed only when that folder exists, so a run from another folder
+resolves its option files as a terminal run does) and the same UTF-8 output, with plots off unless ``--plots`` says
 otherwise.  It does not pass the project's active output configurations, so with plots on the default plot set
 is drawn.  A ``--db`` database is copied into the temporary folder first and the runs read the copy.  The time of each phase is read from the run's ``timings.csv``:
 
@@ -249,9 +250,12 @@ def run_one(run: Run, folder: Path, threads: int = GUI_DEFAULT_THREADS) -> RunRe
         "--write-methods", *write_methods,
         "--run-launcher", "time-runs",
         "--threads", str(threads),
-        # As the FlexTool window: the workspace's option files, wherever the database is.
-        "--solver-config-dir", str(workspace_solver_config_dir()),
     ]
+    # As the FlexTool window: the workspace's option files, wherever the database is.  Only a folder that exists:
+    # naming a missing one would warn on every run that it does not exist.
+    solver_config_dir = workspace_solver_config_dir()
+    if solver_config_dir.is_dir():
+        cmd += ["--solver-config-dir", str(solver_config_dir)]
     # As the FlexTool window: UTF-8 output (a redirected stdout on Windows is otherwise the locale code page,
     # and a non-Latin name in a print could stop the run), unbuffered.
     env = dict(os.environ, FLEXTOOL_PHASE_TIMING="1", PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")

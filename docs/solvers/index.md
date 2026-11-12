@@ -178,7 +178,16 @@ determinism defaults sit below the baseline file.
 Before each solve the run prints what the solver receives: `Solver args:` for
 HiGHS (the options set above FlexTool's defaults), and for a commercial solver
 `Solver args (<solver>):` with every parameter under its native name, for
-example `Solver args (gurobi): Threads=1, MIPGap=0.001, TimeLimit=1800.0`.
+example `Solver args (gurobi): Threads=1, MIPGap=0.001, TimeLimit=1800`.
+
+A commercial solver's program runs in `<work folder>/solve_data/subprocess/`.
+FlexTool writes there the model (`<solve>.mps`), the parameters passed
+(`<solve>.opt`) and, for CPLEX, Xpress and COPT, the command script it pipes
+to the program (`<solve>.script`). To replay a solve by hand, run the program
+in that folder with the script as its input, for example
+`cd solve_data/subprocess && cplex < y2020_dispatch.script`. The solver's
+result file and its own log file (`gurobi.log`, `cplex.log`) are written there
+too.
 
 ### Where the option files come from
 
@@ -201,10 +210,15 @@ first of:
 
 Tiers 3 to 5 count a folder only when it holds at least one `<solver>.opt`.
 They skip `solver_config/` in the current folder when every `.opt` in it is an
-unedited FlexTool template (of this or an earlier version): FlexTool 4.3 and
-older left such a copy in the folder a run was started from. The run then
-takes the next tier and warns, naming the skipped folder; pass
-`--solver-config-dir <folder>` to use it anyway.
+unedited FlexTool template (of this or an earlier version) and the current
+folder is not a FlexTool folder: FlexTool 4.3 and older left such a copy in
+the folder a run was started from. The run then takes the next tier and
+warns, naming the skipped folder; to use your own option files, pass
+`--solver-config-dir <the folder with your files>`, and delete the skipped
+folder to stop the warning. The FlexTool folder itself (the workspace, which
+holds `templates/project_folder.txt`) is never skipped: its `solver_config/`
+is the folder the FlexTool window uses, and a run from there uses it without
+a warning, edited or not.
 In the chosen folder, a solver whose file is missing uses its shipped default.
 A Spine Toolbox run (whose Data Store is the workspace's `input_data.sqlite`)
 therefore uses the workspace's `solver_config`, even though Toolbox runs the
@@ -224,9 +238,10 @@ afresh every run and never read back. Up to FlexTool 4.3 runs read a copy in
 `<work folder>/solver_config/`; such a folder is no longer read as the work
 folder's copy (the run warns and names it when it differs from the files the
 run uses). When the work folder is also the current folder, the folder is
-tier 5: it is used when you have edited a file in it, and skipped, with a
-warning, while it holds only the templates 4.3 copied there. To run with
-the files of a particular folder, pass `--solver-config-dir <folder>`.
+tier 5: it is used when you have edited a file in it (or it is the FlexTool
+folder), and skipped, with a warning, while it holds only the templates 4.3
+copied there. To run with the files of a particular folder, pass
+`--solver-config-dir <folder>`.
 
 ### Time limit
 
@@ -244,7 +259,18 @@ solve stops at its time limit:
 
 Another limit or an interrupt (a node, iteration, solution or memory limit, or
 an aborted solve) is not a time limit: it stops the run, naming the solver's
-status, even with a solution.
+status, even with a solution. So does a solution the solver does not certify
+as optimal, such as CPLEX's "optimal with unscaled infeasibilities" or
+"optimal face unbounded".
+
+FlexTool reads how a solve ended from the solver's result file (HiGHS, Gurobi's
+JSON result, CPLEX) or from its console log (COPT, Xpress; Gurobi when it
+writes a text result file). With COPT's log turned off (`Logging 0` or
+`LogToConsole 0`), or a text Gurobi result with `LogToConsole 0`, a finished
+solve cannot be told from one stopped by a limit, so the run stops and says
+so: keep the log on (the shipped option files do). Xpress: FlexTool knows
+only its time limit and an unfinished solve, from the console and the print
+solution; another Xpress limit with a solution is not told apart.
 
 FlexTool also stops a solver that has not finished well after its limit
 (after twice the limit plus 10 minutes), which only guards against a solver

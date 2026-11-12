@@ -14,10 +14,14 @@ A run reads ``highs.opt``, ``gurobi.opt``, ``cplex.opt``, ``xpress.opt`` and ``c
 6. none: FlexTool's packaged defaults (``flextool/solver_config/<solver>.opt.template``), with one warning.
 
 Tiers 3-5 count only a folder that holds at least one ``<solver>.opt``.  They skip ``<current folder>/solver_config``
-when every ``.opt`` in it is an unedited FlexTool template (this or an earlier shipped version): that is the copy
-FlexTool 4.3 and older left in the folder a run started from, not a choice of options.  The run then takes the
-next tier and warns, naming the skipped folder.  An explicit or environment folder is taken as given; a solver
-whose file is missing there uses its packaged default.
+when every ``.opt`` in it is an unedited FlexTool template (this or an earlier shipped version) and the current
+folder is not a FlexTool workspace: that is the copy FlexTool 4.3 and older left in the folder a run started from,
+not a choice of options.  The run then takes the next tier and warns, naming the skipped folder.  A FlexTool
+workspace (the folder ``ensure_runtime_files`` seeds: it holds ``templates/project_folder.txt``, written in the
+same step as ``solver_config/``, by 4.3 and 4.4 alike) is never skipped: its ``solver_config`` is the folder the
+FlexTool window passes to every run, its unedited files are the seeded defaults (the same option values as the
+packaged templates), and a later edit there is meant for runs from the workspace.  An explicit or environment
+folder is taken as given; a solver whose file is missing there uses its packaged default.
 
 :func:`snapshot_solver_option_files` reads the chosen files once at run start, writes the copy
 ``<work_folder>/solve_data/solver_config/`` as the record of what the run used, and returns the texts every
@@ -60,10 +64,16 @@ REASON_DEFAULTS = "FlexTool defaults"
 #: The GUI project folders an input database can sit in: ``<workspace>/projects/<P>/<folder>/<db>``.
 _PROJECT_DB_FOLDERS = ("input_sources", "intermediate")
 
+#: The file ``ensure_runtime_files`` seeds in a FlexTool workspace (with ``solver_config/``), relative to it.
+_WORKSPACE_MARKER = Path("templates") / "project_folder.txt"
+
 #: sha256 (of the text with CRLF read as LF) of every shipped version of ``flextool/solver_config/<solver>.opt.template``
-#: up to 4.4.0, from the git history (``git log --all -- 'flextool*/solver_config/<solver>.opt.template'``).  The
-#: current template is also recognised at run time, so a later template edit needs no entry here; the test
-#: ``test_shipped_template_hashes_cover_git_history`` checks the list against the history.
+#: up to 4.4.0, from the git history (``git log --all -- 'flextool*/solver_config/<solver>.opt.template'``, and the
+#: older ``bin/highs.opt.template``).  A template edit adds its hash here: the test
+#: ``test_shipped_template_hashes_are_pinned`` fails until the installed template's hash is listed (so the version
+#: a later release replaces is always recognised) and checks the list against a copy pinned in the test.
+#: A copy saved by an editor that adds a UTF-8 byte-order mark (or drops the final newline) does not match: the
+#: folder is then used, which errs on the safe side (its values are the defaults' anyway).
 SHIPPED_TEMPLATE_SHA256: Mapping[str, frozenset[str]] = {
     "highs": frozenset({
         "2151672a9aad61f534bdda16033e1848a678ab293896c5993a28dcf9c2956bed",
@@ -181,6 +191,15 @@ def is_template_copy(folder: Path) -> bool:
     return found
 
 
+def is_flextool_workspace(folder: Path) -> bool:
+    """Whether *folder* is a FlexTool workspace: it holds ``templates/project_folder.txt``, which
+    ``ensure_runtime_files`` (FlexTool window start, ``flextool-update``) seeds together with ``solver_config/``."""
+    try:
+        return (folder / _WORKSPACE_MARKER).is_file()
+    except OSError:
+        return False
+
+
 def _database_candidates(input_db_url: str | os.PathLike | None) -> list[tuple[Path, str]]:
     """The bounded database-layout folders of tier 3, in order."""
     db_path = input_db_filesystem_path(input_db_url)
@@ -233,11 +252,15 @@ def resolve_solver_config_source(
     candidates.append((cwd_folder, REASON_CWD))
     tried: list[Path] = []
     skipped: list[Path] = []
+    seen: set[Path] = set()  # resolved, so a symlinked current folder is looked at once
+    cwd_key = _folder_key(cwd_folder)
     for folder, reason in candidates:
-        if folder in tried or folder in skipped:
+        key = _folder_key(folder)
+        if key in seen:
             continue
+        seen.add(key)
         if _has_option_file(folder):
-            if _same_folder(folder, cwd_folder) and is_template_copy(folder):
+            if key == cwd_key and not is_flextool_workspace(cwd_folder.parent) and is_template_copy(folder):
                 # FlexTool 4.3 and older copied the templates into the folder a run started from.
                 skipped.append(folder)
                 continue
@@ -246,11 +269,11 @@ def resolve_solver_config_source(
     return SolverConfigSource(None, REASON_DEFAULTS, tuple(tried), tuple(skipped))
 
 
-def _same_folder(a: Path, b: Path) -> bool:
+def _folder_key(folder: Path) -> Path:
     try:
-        return a.resolve() == b.resolve()
+        return folder.resolve()
     except OSError:
-        return a == b
+        return folder
 
 
 def workspace_solver_config_dir(environ: Mapping[str, str] | None = None, cwd: str | os.PathLike | None = None) -> Path:
@@ -339,10 +362,12 @@ def snapshot_solver_option_files(
     log.info("Solver config: %s", source.describe())
     for folder in source.skipped:
         log.warning(
-            "Not using %s: its option files are unedited FlexTool templates, as FlexTool 4.3 and older left in "
-            "the folder a run started from; this run uses %s. To use that folder, pass --solver-config-dir %s "
-            "(or set FLEXTOOL_SOLVER_CONFIG_DIR).",
-            folder, "FlexTool's default options" if source.dir is None else f"{source.dir} ({source.reason})", folder,
+            "Not using %s: it holds only FlexTool's default option files (probably copied there by FlexTool 4.3 "
+            "or older), so this run uses %s. To use your own option files, pass --solver-config-dir <the folder "
+            "with your files> (or set FLEXTOOL_SOLVER_CONFIG_DIR). Delete %s to stop this warning.",
+            folder,
+            "FlexTool's default options" if source.dir is None else f"the files in {source.dir} ({source.reason})",
+            folder,
         )
     if source.dir is None:
         if not source.skipped:  # else the skipped-folder warning above says the defaults are used
@@ -419,6 +444,7 @@ __all__ = [
     "SolverConfigSource",
     "SolverOptionFiles",
     "input_db_filesystem_path",
+    "is_flextool_workspace",
     "is_template_copy",
     "read_solver_option_files",
     "resolve_solver_config_source",
