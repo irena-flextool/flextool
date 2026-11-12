@@ -122,7 +122,7 @@ y-axis is `m3/h` for a water node and `MWh/h` by default. A label without tokens
 - `model` entity `cost_discounted_solve` parameter — M[CUR] costs for the solve considering discounting and years represented (NPV currency)
 - `model` entity `cost_discounted_total` parameter — M[CUR] same, totalled over all realised periods
 - table `years_represented__d` (not in the results database) — [a] the years each period represents; an annualized per-period value times these years gives the period's total over the horizon
-- table `period_share_of_year__d` (not in the results database) — [per unit] for each realised period, the share of a year it covers (its complete hours / 8760, in the solve that realises it): the annualized per-period (`…__d`) tables are the period's sums divided by this share. A 48-hour period has 0.005479, so its per-period values are 182.5 times its 48-hour sums; a full-year period has 1. Results saved before this version have no such table.
+- table `period_share_of_year__d` (not in the results database) — [per unit] for each realised period, the share of a year it covers (its complete hours / 8760, in the solve that realises it): the annualized per-period (`…__d`) results (flows, energy, annualized costs, emissions, start-ups) are the period's weighted sums over its time steps divided by this share; capacities, prices, averages, ratios and discounted costs are not scaled. A 48-hour period has 0.005479, so its annualized per-period values are 182.5 times its 48-hour sums; a full-year period has 1. Results saved before this version have no such table.
 
 ### Costs of a run of several solves
 

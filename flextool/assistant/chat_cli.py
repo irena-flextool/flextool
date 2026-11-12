@@ -190,8 +190,8 @@ PRIVACY_NONE = "Sent with every request: no privacy setting (this service has no
 PRIVACY_ACCOUNT = "Set in your provider account (FlexTool cannot set these):"
 #: What /privacy says of the context block's model facts (sent with each question that has a scenario).
 PRIVACY_FACTS = ("With each question about a scenario (--scenario) the assistant is also sent its model facts: the "
-                 "names of its solves and periods, its time steps and the state of its latest run, with that run's "
-                 "error message.")
+                 "names of its solves, periods, forecast branches and timesets, its time steps, and the run folder "
+                 "name and state of its latest run, with that run's error message.")
 CONTEXT_LINE = ("Context: {window} tokens ({source}); tool results up to {chars} characters; earlier results "
                 "shortened every {every}.")
 #: The longest /context waits for a tool call to finish before it shows the block without the model facts.

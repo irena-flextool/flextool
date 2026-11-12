@@ -1073,21 +1073,29 @@ def run_cell(project: Path, qset: scoring.QuestionSet, question: scoring.Questio
         })
         say(f"  {question.id} turn {number}: {result.rounds} round(s), {result.calls} call(s), "
             f"{'ok' if result.ok else turns[-1]['stop']}")
-    return {"turns": turns, **context_fields(session.last_context_block)}
+    from flextool.assistant.prompt import context_blocks
+
+    return {"turns": turns,
+            **context_fields(context_blocks([m.text for m in conversation.messages if m.role == "user"]))}
 
 
-def context_fields(block: str | None) -> dict[str, Any]:
-    """``{context_block, facts_hash}`` of a cell: the last context block its questions carried (redacted, as it
-    was sent) and the SHA-256 of its model facts (``None`` without facts), so the summary can warn of repeats that
-    saw other facts (another latest run, changed input data)."""
+def context_fields(blocks: str | list[str] | None) -> dict[str, Any]:
+    """``{context_block, facts_hash}`` of a cell from the context blocks its questions carried, oldest first
+    (redacted, as they were sent; one block or ``None`` also do): the last block, and the SHA-256 of the model
+    facts of every block that has them, in order (one block: of its facts; ``None`` without facts), so the summary
+    can warn of repeats that saw other facts (another latest run, changed input data) in any of their questions."""
     from flextool.assistant.model_facts import HEADER
     from flextool.assistant.prompt import CONTEXT_END
 
-    facts = None
-    if block and HEADER in block:
-        facts = block[block.index(HEADER):].removesuffix(CONTEXT_END).rstrip("\n")
-    return {"context_block": block,
-            "facts_hash": hashlib.sha256(facts.encode("utf-8")).hexdigest() if facts is not None else None}
+    if blocks is None:
+        blocks = []
+    elif isinstance(blocks, str):
+        blocks = [blocks]
+    facts = [block[block.index(HEADER):].removesuffix(CONTEXT_END).rstrip("\n")
+             for block in blocks if HEADER in block]
+    joined = "\n\n".join(facts)
+    return {"context_block": blocks[-1] if blocks else None,
+            "facts_hash": hashlib.sha256(joined.encode("utf-8")).hexdigest() if facts else None}
 
 
 def _record(question: scoring.Question, setting: Setting, repeat: int, *, preset: Any, identity: Mapping[str, Any],

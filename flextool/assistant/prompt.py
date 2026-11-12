@@ -259,7 +259,7 @@ def context_block(snapshot: ContextSnapshot, redact: Callable[[str], str] | None
     """The context block put at the start of a user message: the project, the input source and scenario the
     tools use by default, in the FlexTool window also its selections and the result viewer (P2 §7), the front
     end, and the scenario's model facts when the snapshot has them (:mod:`flextool.assistant.model_facts`; without
-    them the block is as before).  Names are on one line, length-capped and redacted (*redact*); non-ASCII is kept.
+    them, or when they cannot be rendered, the block is as before).  Names are on one line, length-capped and redacted (*redact*); non-ASCII is kept.
     The snapshot's time is never in it, so the block changes only when what it shows changes."""
     lines = [
         CONTEXT_START,
@@ -273,7 +273,10 @@ def context_block(snapshot: ContextSnapshot, redact: Callable[[str], str] | None
     if snapshot.scenario_facts is not None:
         from flextool.assistant.model_facts import render
 
-        lines.append(render(snapshot.scenario_facts, redact))
+        try:
+            lines.append(render(snapshot.scenario_facts, redact))
+        except Exception:  # noqa: BLE001 — the facts are an aid: a failure to render them leaves them out
+            pass
     lines.append(CONTEXT_END)
     return "\n".join(lines)
 
@@ -287,6 +290,11 @@ def strip_context_block(text: str) -> str:
 def remove_context_blocks(text: str) -> str:
     """*text* without any context block (a question merged with an unanswered one may hold two)."""
     return "\n\n".join(part.strip() for part in _CONTEXT_BLOCK.split(text) if part.strip())
+
+
+def context_blocks(texts: list[str]) -> list[str]:
+    """Every context block in *texts* (user messages, oldest first), in order."""
+    return [block for text in texts for block in _CONTEXT_BLOCK.findall(text)]
 
 
 def last_context_block(texts: list[str]) -> str | None:

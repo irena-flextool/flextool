@@ -103,10 +103,14 @@ When a scenario is chosen (the highlighted one in the window, `--scenario` in th
 gives the assistant the scenario's **model facts**, read from the input data and the scenario's latest run, so it
 does not have to guess them: the solves in their order (nested ones too) and how each solves (one solve, a rolling
 window with its horizon and jump, stochastic forecast branches with their weights, representative periods), the
-periods with the years each represents, the length of the time steps each solve really uses (with
-`new_stepduration`, the aggregated steps), the share of a year each realised period covers (from the result table
-`period_share_of_year__d`: the per-period results are the period's sums divided by it), and whether the latest run
-succeeded, with its error when it did not. When the time steps are not all of the same length, the facts say so
+periods with the years each represents and which of them a solve does not realise (look-ahead periods, and periods
+whose investments only it realises; with solves of different periods, also the periods realised across all solves),
+the length of the time steps each solve really uses (with `new_stepduration`, the aggregated steps), the share of a
+year each realised period covers (from the result table `period_share_of_year__d`), and whether the latest run
+succeeded, with its error when it did not. The annualised per-period (`_d_`) results (flows, energy, annualised
+costs, emissions, start-ups) are, per realised period, its weighted sum over its time steps divided by that share;
+capacities, prices, averages, ratios and discounted costs are not scaled. A stochastic solve without a realized
+branch is said to have empty operational results. When the time steps are not all of the same length, the facts say so
 and how to deal with it. Without a chosen scenario there are no model facts. The facts are short (at most about
 200 tokens) and are sent again only when they change.
 
@@ -575,8 +579,8 @@ short and focused. The saved conversation keeps everything.
 | Earlier questions in each request | the last two, each with its final answer (text only) | every one, with its final answer (text only) | the whole conversation, with the tool calls and results |
 
 The context block (your project, input source and scenario, and with a scenario its model facts) is always sent; the
-model facts, too, go to the AI service: the names of the scenario's solves and periods, its time steps and the
-state of its latest run with that run's error message. The context size also sets how much one
+model facts, too, go to the AI service: the names of the scenario's solves, periods, forecast branches and
+timesets, its time steps, and the run folder name and state of its latest run with that run's error message. The context size also sets how much one
 tool result may hold and, at the advanced level, how often the tool results of earlier questions are replaced by a
 short note:
 

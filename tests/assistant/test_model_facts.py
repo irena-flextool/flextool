@@ -4,18 +4,31 @@
 Every expected text is derived by hand from the fixture data, written out next to it, not read from the code:
 
 * ``coal`` (``tests.json``): ``model.solves`` = [y2020_2day_dispatch], a single solve with period_timeset
-  p2020 → 2day; no years_represented (1 year); timeset 2day = block t0001 of 48 steps on timeline y2020, whose 72
+  p2020 → 2day and realized_periods [p2020]; no years_represented (1 year); timeset 2day = block t0001 of 48 steps on timeline y2020, whose 72
   steps are 1 h each; no new_stepduration.  Its run here succeeded (kOptimal, accepted optimal) and wrote
   ``period_share_of_year__d`` with p2020 = 48 / 8760 = 0.0054794… (3 significant digits 0.00548; 8760 / 48 = 182.5);
 * ``fullYear_roll``: dispatch_fullYear_roll, rolling_window, horizon 8 h, jump 4 h, periods p2020, p2025, p2030,
-  p2035 (years_represented 5 each), all on timeset fullYear = t0001 + 72 steps of 1 h; no run;
+  p2035 (years_represented 5 each, all realized_periods), all on timeset fullYear = t0001 + 72 steps of 1 h; no run;
 * ``multi_fullYear_battery_nested_24h_invest_one_solve``: invest_24h (new_stepduration 24, timeset fullYear_24h =
   72 h → 3 steps of 24 h) contains storage_fullYear_6h (new_stepduration 6 on fullYear_6h → 12 steps of 6 h),
   which contains dispatch_fullYear_roll (rolling 8 h / 4 h, fullYear, 72 steps of 1 h); every solve has the
-  periods p2020…p2035 at 5 years each;
+  periods p2020…p2035 at 5 years each, but only dispatch_fullYear_roll has them as realized_periods: invest_24h has
+  them as invest_periods and realized_invest_periods (investments realised, operations not), storage_fullYear_6h
+  only in its period_timeset (look-ahead, not realised); so the periods would be said per solve, which with the
+  three step lines is over 200 tokens: by the cut rule the periods go, and the line of the periods realised across
+  all solves (p2020, p2025, p2030, p2035) stays;
+* ``wind_battery_invest``: model.solves = [y2020_5week] (alternative 5weeks), a single solve with period_timeset
+  p2020, p2025 → 5weeks, invest_periods [p2020, p2025], realized_periods [p2020], years_represented 5 each; timeset
+  5weeks = 5 blocks of 4 steps on the 1 h timeline y2020, so 20 steps of 1 h a period; p2025 is invested in but not
+  realised: an investment look-ahead;
+* ``multi_year``: model.solves = [y2020_5week, y2025_5week, y2030_5week, y2035_5week], all single solves on 5weeks
+  (20 steps of 1 h a period), so only the first has its own line; y2020_5week as above, y2025_5week realises p2025
+  of p2025, p2030; y2030_5week p2030 of p2030, p2035; y2035_5week p2035; the periods differ, so one line gives the
+  realised periods across all solves: p2020, p2025, p2030, p2035;
 * ``2_day_stochastic_dispatch`` (``stochastics.json``): 2day_dispatch, single solve, period period1 → 2day (t0001,
   48 steps of the 1 h timeline y2020); stochastic_branches period1 → realized / upper / lower / mid, each at t0001
-  with flag "no" and weight 1, so four forecast branches of 0.25 each;
+  with flag "no" and weight 1, so four forecast branches of 0.25 each and no realized branch (its operational
+  results are empty); realized_periods [period1];
 * ``step5_test`` = coal + new_stepduration 5 on y2020_2day_dispatch: the 48-h block in 5-h steps is nine of 5 h and
   one of 3 h (45 + 3), ten steps a period.
 """
@@ -23,6 +36,7 @@ from __future__ import annotations
 
 import base64
 import json
+from dataclasses import replace
 import subprocess
 import sys
 from pathlib import Path
@@ -46,6 +60,10 @@ from tests.assistant.conftest import FIXTURES, make_project, record_run
 from tests.assistant.results_tables import write_result
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+#: The scaling line of coal_1: p2020 = 48 / 8760 of a year (0.00548 to 3 digits, × 8760 / 48 = 182.5).
+SCALING_COAL = ("Annualised per-period (_d_) results (flows, energy, annualised costs, emissions, start-ups): per "
+                "realised period, its weighted sum over its time steps divided by its share of a year (p2020: "
+                "0.00548, so × 182.5). Capacities, prices, averages, ratios and discounted costs are not scaled.")
 STEP5_SCENARIO = "step5_test"
 #: The run error of coal_chp_1: 100 characters, then the project folder (redacted to "<project>" first, then cut).
 ERROR_HEAD = "x" * 100
@@ -137,8 +155,7 @@ def test_the_grounding_coal_block(facts_project: Path) -> None:
         HEADER,
         "Solve y2020_2day_dispatch: single solve; period p2020 (1 year).",
         "Time steps: 1 h, 48 steps a period.",
-        "Per-period (_d_) results are annualised: per realised period, its sums over its time steps divided by its "
-        "share of a year (p2020: 0.00548, so × 182.5).",
+        SCALING_COAL,
         "Latest run: coal_1 succeeded (optimal).",
         "[end of context]",
     ])
@@ -164,7 +181,7 @@ def test_nested_solves_with_new_step_durations(facts_project: Path) -> None:
         "- invest_24h: single solve.",
         "- storage_fullYear_6h (inside invest_24h): single solve.",
         "- dispatch_fullYear_roll (inside storage_fullYear_6h): rolling window (horizon 8 h, jump 4 h).",
-        "Periods p2020, p2025, p2030, p2035 (5 years each) in every solve.",
+        "Realised periods across all solves: p2020, p2025, p2030, p2035.",
         "Time steps: 24 h, 3 steps a period (invest_24h); 6 h, 12 steps a period (storage_fullYear_6h); 1 h, "
         "72 steps a period (dispatch_fullYear_roll).",
         "Latest run: none of this scenario from this input source.",
@@ -177,10 +194,69 @@ def test_stochastic_forecast_branches(stochastic_project: Path) -> None:
         == [
         HEADER,
         "Solve 2day_dispatch: single solve; stochastic: 4 forecast branches (realized, upper, lower, mid, equal "
-        "weights) from period1 t0001; period period1 (1 year).",
+        "weights) from period1 t0001; no realized branch, so the fan's operational results are empty; period "
+        "period1 (1 year).",
         "Time steps: 1 h, 48 steps a period.",
         "Latest run: none of this scenario from this input source.",
     ]
+
+
+def test_an_investment_look_ahead_period_is_marked(facts_project: Path) -> None:
+    assert _facts_text(facts_project, "wind_battery_invest").splitlines() == [
+        HEADER,
+        "Solve y2020_5week: single solve; periods p2020, p2025 (5 years each; p2025 investment look-ahead, not "
+        "realised).",
+        "Time steps: 1 h, 20 steps a period.",
+        "Latest run: none of this scenario from this input source.",
+    ]
+
+
+def test_solves_of_different_periods_give_the_realised_periods(facts_project: Path) -> None:
+    assert _facts_text(facts_project, "multi_year").splitlines() == [
+        HEADER,
+        "Solves: y2020_5week, y2025_5week, y2030_5week, y2035_5week.",
+        "- y2020_5week: single solve; periods p2020, p2025 (5 years each; p2025 investment look-ahead, not "
+        "realised).",
+        "Realised periods across all solves: p2020, p2025, p2030, p2035.",
+        "Time steps: 1 h, 20 steps a period in every solve.",
+        "Latest run: none of this scenario from this input source.",
+    ]
+
+
+def test_zero_weight_forecasts_are_left_out() -> None:
+    """Forecasts a (1), b (0) and c (3) at p1 t1: b is left out as the engine leaves it out of the fan, so a has
+    1 / 4 = 0.25 and c 3 / 4 = 0.75; no branch is flagged realized."""
+    fans = model_facts._fans({"p1": {"a": {"t1": {"no": 1.0}}, "b": {"t1": {"no": 0.0}}, "c": {"t1": {"no": 3.0}}}})
+    assert fans == (BranchFan("p1", "t1", (("a", 0.25), ("c", 0.75)), None),)
+    line = render(ScenarioFacts((_solve("s", branches=fans),), _run())).splitlines()[1]
+    assert line == ("Solve s: single solve; stochastic: 2 forecast branches (a 0.25, c 0.75) from p1 t1; no realized "
+                    "branch, so the fan's operational results are empty; period p2020 (1 year).")
+
+
+def test_one_step_and_one_base_period_are_singular() -> None:
+    facts = ScenarioFacts((_solve("s", steps=((24.0, 1),), steps_per_period=(1, 1),
+                                  representative=(("rp", 1, 1),)),), _run())
+    assert render(facts).splitlines()[1:3] == [
+        "Solve s: single solve; representative periods: 1 for 1 base period (timeset rp); period p2020 (1 year).",
+        "Time steps: 24 h, 1 step a period.",
+    ]
+
+
+def test_the_latest_run_is_of_the_resolved_source(facts_project: Path, tmp_path: Path) -> None:
+    """A snapshot that names no input source (an agent with no window) gets the facts of the connection's default
+    source, other.sqlite (2), and so the latest run of that source: none, though tests.sqlite (1) has coal_1."""
+    project = make_project(tmp_path, facts_project / "input_sources" / "tests.sqlite")
+    (project / "input_sources" / "other.sqlite").write_bytes((project / "input_sources" / "tests.sqlite").read_bytes())
+    (project / "settings.yaml").write_text("input_source_numbers:\n  tests.sqlite: 1\n  other.sqlite: 2\n",
+                                           encoding="utf-8")
+    record_run(project, "coal_1", "coal", _succeed_with_share({"p2020": 48 / 8760}))
+    model_facts.clear_cache()
+    for source, last in (("other.sqlite", "Latest run: none of this scenario from this input source."),
+                         ("tests.sqlite", "Latest run: coal_1 succeeded (optimal).")):
+        ctx = make_context(project, input_source=source, front_end="agent")
+        facts = facts_for(ctx, ContextSnapshot(project=project.name, input_source=None, scenario="coal",
+                                               front_end="agent"), None)
+        assert facts is not None and render(facts, ctx.redact).splitlines()[-1] == last
 
 
 @pytest.mark.parametrize(("tier", "advice"), [
@@ -209,6 +285,39 @@ def test_a_failed_latest_run(facts_project: Path) -> None:
     line = _facts_text(facts_project, "coal_chp").splitlines()[-1]
     assert line == f"Latest run: coal_chp_1 failed: {redacted[:119]}…; its results are not used, see the run log."
     assert str(facts_project) not in line and facts_project.parent.name not in line
+
+
+def test_facts_that_cannot_be_rendered_are_left_out(facts_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ctx = make_context(facts_project, front_end="terminal")
+    snapshot = model_facts.with_facts(ctx, _snapshot(facts_project, "coal"), "medium")
+    assert snapshot.scenario_facts is not None
+
+    def broken(*_a, **_k):
+        raise RuntimeError("broken")
+
+    monkeypatch.setattr(model_facts, "render", broken)
+    assert prompt.context_block(snapshot, ctx.redact) == prompt.context_block(
+        replace(snapshot, scenario_facts=None), ctx.redact)
+
+
+def test_the_scaling_categories_are_those_of_the_output_metadata() -> None:
+    """The scaling line names flows, energy, annualised costs, emissions and start-ups as scaled and capacities,
+    prices, averages, ratios and discounted costs as not: every per-period (``_d_``) table's transform is of one of
+    those kinds (an annualised one, a start-up count, a level, price, average, ratio, discounted value or the years
+    represented), so a new kind of per-period table makes this test fail and the line be checked again."""
+    from flextool.process_outputs import _output_meta as meta
+
+    scaled = {meta.Semantics.ANNUALIZED}
+    unscaled = {meta.Semantics.LEVEL, meta.Semantics.PRICE, meta.Semantics.AVERAGE, meta.Semantics.RATIO,
+                meta.Semantics.DISCOUNTED}
+    for name, entry in meta.OUTPUT_TRANSFORM.items():
+        if "_d_" not in name and not name.endswith("__d"):
+            continue
+        for transform in (entry.values() if isinstance(entry, dict) else (entry,)):
+            if transform.semantics == meta.Semantics.COUNT:
+                assert transform in (meta.COUNT_ANNUAL, meta.YEARS), name       # start-ups, or the years
+                continue
+            assert transform.semantics in scaled | unscaled, (name, transform.semantics)
 
 
 # --- no scenario: the block is as before ------------------------------------------------------------------------
@@ -250,8 +359,11 @@ def test_facts_are_none_on_any_error_and_not_cached(facts_project: Path, monkeyp
 def _solve(name: str, **kw) -> SolveFacts:
     fields = dict(parent=None, mode="single_solve", horizon=None, jump=None, duration=None,
                   periods=(("p2020", 1.0),), steps=((1.0, 48),), steps_per_period=(48, 48), branches=(),
-                  representative=())
+                  representative=(), invest=())
     fields.update(kw)
+    realized = tuple(p for p, _y in fields["periods"])      # every period realised, unless given
+    fields.setdefault("realized", realized)
+    fields.setdefault("realized_invest", fields["realized"])
     return SolveFacts(name=name, **fields)
 
 
@@ -313,8 +425,7 @@ def test_get_gui_context_gives_the_facts(facts_project: Path) -> None:
     assert out["model_facts"].splitlines() == [
         "Solve y2020_2day_dispatch: single solve; period p2020 (1 year).",
         "Time steps: 1 h, 48 steps a period.",
-        "Per-period (_d_) results are annualised: per realised period, its sums over its time steps divided by its "
-        "share of a year (p2020: 0.00548, so × 182.5).",
+        SCALING_COAL,
         "Latest run: coal_1 succeeded (optimal).",
     ]
     agent = make_context(facts_project, input_source="tests.sqlite", scenario="coal_chp", front_end="agent")

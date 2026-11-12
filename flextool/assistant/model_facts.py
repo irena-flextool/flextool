@@ -6,7 +6,8 @@ The facts come from two places:
 * the input data (:func:`input_facts`): the solve sequence (``model.solves`` and the solves nested with
   ``contains_solves``), and per solve its mode (a single solve, a rolling window with its horizon and jump,
   stochastic forecast branches with their weights, representative periods), its periods with the years each
-  represents, and the time steps it really uses: ``timeline.timestep_duration`` over the blocks of its timesets,
+  represents and which of them it does not realise (look-ahead periods, or periods whose investments only it
+  realises), and the time steps it really uses: ``timeline.timestep_duration`` over the blocks of its timesets,
   or with ``solve.new_stepduration`` the steps the engine aggregates them to (:mod:`flextool.timeline_pieces`, the
   engine's own chunking, so a block that is not a multiple of the new step ends with a shorter step);
 * the scenario's latest run (:func:`run_facts`): the newest run folder of the scenario and input source, by the
@@ -37,9 +38,9 @@ if TYPE_CHECKING:
 
 #: The version of the facts: bumped whenever what the facts say or how they are worded changes (the evaluation
 #: runner records it with each cell, ``tools/assistant_eval.py`` ``setting_key``).
-FACTS_VERSION = 1
+FACTS_VERSION = 2
 #: The first line of the facts in the context block (the scenario is named on the block's Scenario line).
-HEADER = "Model facts (from the input data and its latest run):"
+HEADER = "Model facts (from the scenario's input data and latest run):"
 #: The most tokens (``budget.approx_tokens``, text) the facts may take, header included.
 FACTS_TOKENS_MAX = 200
 #: The longest name, and the longest run error, the facts show (both redacted before they are cut).
@@ -70,7 +71,8 @@ class BranchFan:
 
     period: str
     start: str
-    forecasts: tuple[tuple[str, float], ...]     # (branch, weight normalised over the forecasts of this start)
+    forecasts: tuple[tuple[str, float], ...]     # (branch, weight normalised over the forecasts of this start);
+    #                                              a zero-weight forecast is left out, as the engine leaves it out
     realized: str | None                         # the branch flagged realized: yes (not a weighted forecast)
 
 
@@ -85,6 +87,9 @@ class SolveFacts:
     jump: float | None                           # rolling_solve_jump (hours)
     duration: float | None                       # rolling_duration (hours)
     periods: tuple[tuple[str, float], ...]       # (period, years represented), in the solve's order
+    realized: tuple[str, ...]                    # realized_periods: the periods whose operations it realises
+    realized_invest: tuple[str, ...]             # realized_invest_periods (else realized_periods): investments
+    invest: tuple[str, ...]                      # invest_periods: the periods it may invest in
     steps: tuple[tuple[float, int], ...]         # (hours, number of steps) of the steps it uses, most first
     steps_per_period: tuple[int, int] | None     # the fewest and the most steps of one period
     branches: tuple[BranchFan, ...]
@@ -154,7 +159,7 @@ def facts_for(ctx: AssistantContext, snapshot: ContextSnapshot | None, tier: str
                 _cache[key] = solves
                 while len(_cache) > CACHE_SIZE:
                     _cache.popitem(last=False)
-        run = run_facts(ctx, snapshot.input_source, snapshot.scenario)
+        run = run_facts(ctx, source.name, snapshot.scenario)      # the resolved source (the snapshot may name none)
         return ScenarioFacts(solves, run, basic)
     except Exception:  # noqa: BLE001 — the facts are an aid: any failure leaves them out
         return None
@@ -270,7 +275,7 @@ def _fans(raw: Any) -> tuple[BranchFan, ...]:
                     forecasts, realized = fans.setdefault((str(period), str(start)), ([], []))
                     if flag is True or str(flag).strip().lower() in ("yes", "true"):
                         realized.append(str(branch))
-                    else:
+                    elif (_number(weight) or 0.0) != 0.0:     # the engine leaves a zero-weight forecast out
                         forecasts.append((str(branch), _number(weight) or 0.0))
     out = []
     for (period, start), (forecasts, realized) in fans.items():
@@ -332,6 +337,10 @@ def input_facts(db: Any, scenario: str) -> tuple[SolveFacts, ...]:
         years_raw = data.value("solve", solve, "years_represented")
         years = {str(p): _number(y) for p, y in _items(years_raw)} if years_raw is not None else {}
         period_years = tuple((p, years.get(p) if years.get(p) is not None else 1.0) for p in periods)
+        realized = tuple(dict.fromkeys(_names(data.value("solve", solve, "realized_periods"))))
+        invest = tuple(dict.fromkeys(_names(data.value("solve", solve, "invest_periods"))))
+        realized_invest = tuple(dict.fromkeys(_names(data.value("solve", solve, "realized_invest_periods")))) \
+            or realized                         # the engine's rule: without it the realized_periods realise invests
 
         chunks = solve_step_chunks(
             solve, new_step_durations=step_durations, timesets_of_solve=timesets_of, timeset_blocks=blocks,
@@ -355,7 +364,8 @@ def input_facts(db: Any, scenario: str) -> tuple[SolveFacts, ...]:
             horizon=_number(data.value("solve", solve, "rolling_solve_horizon")),
             jump=_number(data.value("solve", solve, "rolling_solve_jump")),
             duration=_number(data.value("solve", solve, "rolling_duration")),
-            periods=period_years, steps=steps,
+            periods=period_years, realized=realized, realized_invest=realized_invest, invest=invest,
+            steps=steps,
             steps_per_period=(min(per_period), max(per_period)) if per_period else None,
             branches=_fans(stochastic) if stochastic is not None else (),
             representative=representative))
@@ -450,6 +460,7 @@ class _Cut:
     periods: bool = True
     detailed: int = DETAILED_SOLVES
     scaling: bool = True
+    realised: bool = True
     error_max: int = ERROR_MAX
     name_max: int = NAME_MAX
     sequence: int = SEQUENCE_NAMES
@@ -457,7 +468,8 @@ class _Cut:
     group_names: int = GROUP_NAMES
 
 
-#: The cut rule: weights, then periods, then the solves after the first, then the scaling line go; then the run
+#: The cut rule: weights, then periods, then the solves after the first, then the scaling line and the line of the
+#: realised periods go; then the run
 #: error is shortened and left out, the names shortened, and the step line keeps fewer step lengths and names.
 #: The step and run lines always stay.
 CUTS: tuple[_Cut, ...] = (
@@ -465,15 +477,15 @@ CUTS: tuple[_Cut, ...] = (
     _Cut(weights=False),
     _Cut(weights=False, periods=False),
     _Cut(weights=False, periods=False, detailed=1),
-    _Cut(weights=False, periods=False, detailed=1, scaling=False),
-    _Cut(weights=False, periods=False, detailed=1, scaling=False, error_max=60),
-    _Cut(weights=False, periods=False, detailed=1, scaling=False, error_max=0),
-    _Cut(weights=False, periods=False, detailed=1, scaling=False, error_max=0, name_max=24, sequence=3),
-    _Cut(weights=False, periods=False, detailed=1, scaling=False, error_max=0, name_max=12, sequence=2),
-    _Cut(weights=False, periods=False, detailed=1, scaling=False, error_max=0, name_max=6, sequence=1),
-    _Cut(weights=False, periods=False, detailed=1, scaling=False, error_max=0, name_max=6, sequence=1,
+    _Cut(weights=False, periods=False, detailed=1, scaling=False, realised=False),
+    _Cut(weights=False, periods=False, detailed=1, scaling=False, realised=False, error_max=60),
+    _Cut(weights=False, periods=False, detailed=1, scaling=False, realised=False, error_max=0),
+    _Cut(weights=False, periods=False, detailed=1, scaling=False, realised=False, error_max=0, name_max=24, sequence=3),
+    _Cut(weights=False, periods=False, detailed=1, scaling=False, realised=False, error_max=0, name_max=12, sequence=2),
+    _Cut(weights=False, periods=False, detailed=1, scaling=False, realised=False, error_max=0, name_max=6, sequence=1),
+    _Cut(weights=False, periods=False, detailed=1, scaling=False, realised=False, error_max=0, name_max=6, sequence=1,
          step_groups=2, group_names=1),
-    _Cut(weights=False, periods=False, detailed=1, scaling=False, error_max=0, name_max=6, sequence=1,
+    _Cut(weights=False, periods=False, detailed=1, scaling=False, realised=False, error_max=0, name_max=6, sequence=1,
          step_groups=1, group_names=0),
 )
 
@@ -524,7 +536,8 @@ class _Renderer:
             text += "; " + self.fans(s.branches)
         if s.representative:
             ts, reps, bases = s.representative[0]
-            text += (f"; representative periods: {reps} for {bases} base periods (timeset {self.name(ts)}"
+            text += (f"; representative periods: {reps} for {bases} base period{'' if bases == 1 else 's'} "
+                     f"(timeset {self.name(ts)}"
                      + (f" and {len(s.representative) - 1} more" if len(s.representative) > 1 else "") + ")")
         return text
 
@@ -548,9 +561,36 @@ class _Renderer:
         realized = next((fan.realized for fan in fans if fan.realized), None)
         if realized:
             text += f"; realized branch {self.name(realized)}"
+        else:
+            text += "; no realized branch, so the fan's operational results are empty"
         return text
 
-    def periods(self, periods: tuple[tuple[str, float], ...]) -> str:
+    def unrealised(self, s: SolveFacts) -> str:
+        """The periods of *s* whose operations it does not realise: look-ahead periods (neither operations nor
+        investments realised; an investment look-ahead when it may invest in them) and periods whose investments
+        only it realises; empty when it realises them all."""
+        names = [p for p, _y in s.periods]
+        operations, investments, invest = set(s.realized), set(s.realized_invest), set(s.invest)
+        ahead = [p for p in names if p not in operations and p not in investments]
+        groups = (([p for p in ahead if p in invest], "investment look-ahead, not realised"),
+                  ([p for p in ahead if p not in invest], "look-ahead, not realised"),
+                  ([p for p in names if p not in operations and p in investments],
+                   "investments realised, operations not"))
+        parts = []
+        for group, words in groups:
+            if not group:
+                continue
+            if len(group) == len(names) > 1:
+                who = "all"
+            elif len(group) <= LIST_NAMES:
+                who = ", ".join(self.name(p) for p in group)
+            else:
+                who = f"{len(group)} periods"
+            parts.append(f"{who} {words}")
+        return "; ".join(parts)
+
+    def periods(self, s: SolveFacts) -> str:
+        periods = s.periods
         if not periods:
             return "no periods"
         names = [p for p, _y in periods]
@@ -564,13 +604,27 @@ class _Renderer:
         low, high = min(years), max(years)
         if low == high:
             word = "year" if low == 1 else "years"
-            return f"{shown} ({_num(low)} {word}{' each' if len(years) > 1 else ''})"
-        return f"{shown} ({_num(low)} to {_num(high)} years)"
+            text = f"{_num(low)} {word}{' each' if len(years) > 1 else ''}"
+        else:
+            text = f"{_num(low)} to {_num(high)} years"
+        marks = self.unrealised(s)
+        return f"{shown} ({text}{'; ' + marks if marks else ''})"
+
+    def realised_line(self, solves: tuple[SolveFacts, ...]) -> str:
+        """The periods whose operations some solve realises, in the order of the solves."""
+        names = list(dict.fromkeys(p for s in solves for p in s.realized))
+        if not names:
+            shown = "none"
+        elif len(names) <= LIST_NAMES:
+            shown = ", ".join(self.name(p) for p in names)
+        else:
+            shown = f"{len(names)} periods {self.name(names[0])} to {self.name(names[-1])}"
+        return f"Realised periods across all solves: {shown}."
 
     def solve_line(self, s: SolveFacts, *, only: bool, periods: bool = True, nested: bool = False) -> str:
         text = self.mode(s)
         if self.cut.periods and periods:
-            text += "; " + self.periods(s.periods)
+            text += "; " + self.periods(s)
         if only:
             return f"Solve {self.name(s.name)}: {text}."
         inside = f" (inside {self.name(s.parent)})" if s.parent and nested else ""
@@ -591,7 +645,10 @@ class _Renderer:
         text = _hours(hours[0]) if len(hours) == 1 else f"{_num(min(hours))} to {_hours(max(hours))}"
         if s.steps_per_period is not None:
             low, high = s.steps_per_period
-            text += f", {low} steps a period" if low == high else f", {low} to {high} steps a period"
+            if low == high:
+                text += f", {low} step{'' if low == 1 else 's'} a period"
+            else:
+                text += f", {low} to {high} steps a period"
         return text
 
     def steps_line(self, solves: tuple[SolveFacts, ...]) -> str:
@@ -646,8 +703,12 @@ class _Renderer:
         if len(groups) > SHARE_GROUPS:
             rest = sum(len(m) for m in list(groups.values())[SHARE_GROUPS:])
             parts.append(f"and {rest} more periods")
-        return ("Per-period (_d_) results are annualised: per realised period, its sums over its time steps "
-                f"divided by its share of a year ({'; '.join(parts)}).")
+        # The categories are those of the annualised transforms of flextool.process_outputs._output_meta
+        # (Semantics.ANNUALIZED: energy, annualised costs, emissions, inertia slack; COUNT_ANNUAL: start-ups); the
+        # LEVEL, PRICE, AVERAGE, RATIO and DISCOUNTED ones are not scaled.
+        return ("Annualised per-period (_d_) results (flows, energy, annualised costs, emissions, start-ups): per "
+                "realised period, its weighted sum over its time steps divided by its share of a year "
+                f"({'; '.join(parts)}). Capacities, prices, averages, ratios and discounted costs are not scaled.")
 
     def run_line(self, run: RunFacts | None) -> str:
         if run is None:
@@ -680,11 +741,15 @@ class _Renderer:
             detailed = _detailed(solves, self.cut.detailed, self.step_text)
             every = len(detailed) == len(solves)                # each on its own line: no sequence line
             out.append("Solves:" if every else self.sequence_line(solves))
-            shared = len({s.periods for s in solves}) == 1      # the same periods in every solve: said once
+            # The same periods (and the same of them realised) in every solve: said once; else each detailed
+            # solve says its own and one line gives the periods realised across all solves.
+            shared = len({self.periods(s) for s in solves}) == 1
             out += [self.solve_line(s, only=False, periods=not shared, nested=every) for s in detailed]
             if shared and self.cut.periods:
-                text = self.periods(solves[0].periods)
+                text = self.periods(solves[0])
                 out.append(f"{text[0].upper()}{text[1:]} in every solve.")
+            elif not shared and self.cut.realised:
+                out.append(self.realised_line(solves))
         else:
             out.append("Solves: none found (model.solves names no solve of the scenario).")
         out.append(self.steps_line(solves))

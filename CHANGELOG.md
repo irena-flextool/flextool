@@ -417,8 +417,9 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   the window, `--scenario` in the terminal), each question carries the scenario's model facts, read from the input
   data and its latest run: the solves in their order (nested ones too) and how each solves (rolling window horizon
   and jump, stochastic forecast branches and weights, representative periods), the periods and the years each
-  represents, the length of the time steps each solve really uses (the aggregated steps with `new_stepduration`),
-  the share of a year of each realised period (from `period_share_of_year__d`, for runs saved with it) and whether
+  represents (and which of them each solve does not realise), the length of the time steps each solve really uses
+  (the aggregated steps with `new_stepduration`), the share of a year of each realised period (from
+  `period_share_of_year__d`, for runs saved with it, with which per-period results it scales) and whether
   the latest run succeeded, with its error when not. Steps of different lengths are pointed out, with how to treat
   per-step results. The facts are at most about 200 tokens, are sent only when they change, and go to the AI
   service like the rest of the context block. Agents get them in `get_gui_context` (`model_facts`), and the
