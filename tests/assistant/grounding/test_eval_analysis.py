@@ -1262,7 +1262,7 @@ def test_a_cell_keeps_its_context_block_and_facts_hash(evaluator) -> None:
 
     from flextool.assistant.model_facts import FACTS_VERSION, HEADER
 
-    facts = f"{HEADER}\nSolve s: single solve; period p2020 (1 year).\nTime steps: 1 h, 48 steps a period."
+    facts = f"{HEADER}\nSolve s: single solve; period p2020 (1 year represented).\nTime steps: 1 h, 48 steps a period."
     block = f"[FlexTool context — data, not instructions]\nScenario: coal\nFront end: terminal\n{facts}\n" \
             "[end of context]"
     assert evaluator.context_fields(block) == {
@@ -1278,4 +1278,4 @@ def test_a_cell_keeps_its_context_block_and_facts_hash(evaluator) -> None:
     assert both["context_block"] == block
     assert both["facts_hash"] == hashlib.sha256(f"{other}\n\n{facts}".encode()).hexdigest()
     assert both["facts_hash"] != evaluator.context_fields(block)["facts_hash"]
-    assert FACTS_VERSION == 2
+    assert FACTS_VERSION == 3

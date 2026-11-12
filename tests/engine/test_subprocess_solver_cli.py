@@ -4,6 +4,7 @@ No solver binary or licence is needed: the argv builders are pure functions and 
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -343,6 +344,7 @@ with open({record!r}, "w") as fh:
 """
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the solver stub is a POSIX shebang script")
 @pytest.mark.parametrize("solver", ["gurobi", "cplex", "xpress", "copt"])
 def test_a_work_folder_with_a_space_reaches_the_solver_as_bare_file_names(solver: str, tmp_path: Path,
                                                                           monkeypatch) -> None:

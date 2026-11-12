@@ -3,7 +3,8 @@ hints the two give together (item 209; the readers are ``results._entity``).
 
 The run is named (``run``, refused as query_result refuses it) or is the newest run of ``scenario``
 (``_runs.select_runs``, then ``_runs.resolve_run`` on it: a scenario whose latest run did not succeed is refused,
-never answered from an earlier run).  The inputs are those of the run's own input source and scenario
+never answered from an earlier run).  Without either, the scenario is the connection's default where it applies,
+as the input tools apply it (``_default_scenario``); with no default, the call is refused.  The inputs are those of the run's own input source and scenario
 (``_runs.run_inputs``).  Standard and advanced levels only.
 """
 from __future__ import annotations
@@ -40,9 +41,38 @@ HINT_PARAMETERS = ("invest_method", *_notes.LIMIT_USERS)
 # The run
 
 
+def _default_scenario(ctx: AssistantContext, source: str | None,
+                      every: list[_runs.Run]) -> tuple[str | None, str | None]:
+    """``(scenario, source)`` of the connection's default scenario where it applies, as the input tools apply it
+    (:func:`project.default_scenario_for`), else ``(None, source)``.
+
+    With a default source (the FlexTool window's, or ``--input-source``) the default scenario belongs to it: it
+    applies when the call names no source (the newest run of that source) or names that source.  Without one it
+    applies to any source, and to a named source when a run of that source is of the default scenario.
+    """
+    wanted = ctx.default_scenario
+    if wanted is None:
+        return None, source
+    if ctx.default_source is not None:
+        try:
+            default = project.resolve_source(ctx, None)
+        except ToolError:
+            return None, source
+        if source is not None and project.resolve_source(ctx, str(source)).path != default.path:
+            return None, source
+        return wanted, default.name
+    if source is not None:
+        number = project.resolve_source(ctx, str(source)).number
+        if not any(r.entry["source_number"] == number and r.entry["db_scenario"] == wanted for r in every):
+            return None, source
+    return wanted, source
+
+
 def _select_run(ctx: AssistantContext, args: dict) -> tuple[_runs.ResolvedRun, list[str]]:
     run, scenario, source = args.get("run"), args.get("scenario"), args.get("source")
     every = _runs.runs(ctx)             # one scan of the run folders for the whole call
+    if run is None and scenario is None:
+        scenario, source = _default_scenario(ctx, source, every)
     if run is not None:
         rr = _runs.resolve_run(ctx, str(run), every)
         own = rr.entry["db_scenario"]

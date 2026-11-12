@@ -358,6 +358,7 @@ def _solve_highs_options(
         solver_config=state.solve.solver_configs.get(
             complete_solve_name, SolverConfig()
         ),
+        solve_name=complete_solve_name,
     )
 
 

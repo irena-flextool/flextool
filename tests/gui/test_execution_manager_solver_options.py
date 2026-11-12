@@ -128,7 +128,8 @@ def test_calibrator_solves_get_the_option_folder(tmp_path: Path):
                       solver_config_dir=Path("/ws/solver_config"))
     assert argv[1:3] == ["-m", "flextool_run_supervisor"]
     options = RunOptions.from_cli(build_parser().parse_args(argv[3:]), environ={})
-    assert (options.value("solver_config_dir"), options.source("solver_config_dir")) == ("/ws/solver_config", "cli")
+    assert (options.value("solver_config_dir"), options.source("solver_config_dir")) == (
+        str(Path("/ws/solver_config")), "cli")
 
 
 def test_the_gui_never_sends_a_mip_gap(tmp_path: Path):

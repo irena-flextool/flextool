@@ -187,7 +187,8 @@ def test_the_migration_lock_is_reentrant_within_a_thread(tmp_path: Path, old_db_
 def test_a_file_system_without_locks_stops_with_a_message(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                                                           capsys: pytest.CaptureFixture[str]) -> None:
     import errno
-    import fcntl
+
+    fcntl = pytest.importorskip("fcntl")  # the POSIX flock path; Windows takes msvcrt.locking
 
     from flextool._file_lock import FileLockError
     from flextool.cli.cmd_run_flextool import _migrate_input_or_exit
@@ -252,3 +253,18 @@ def test_a_bad_lock_timeout_does_not_stop_a_posix_migration(tmp_path: Path, old_
     db = _copy(old_db_template, tmp_path / "db")
     assert migrate_before_run(str(db)) == OLD
     assert fz.read_db_version_ro(db) == FLEXTOOL_DB_VERSION
+
+
+def test_the_lock_module_imports_where_errno_has_no_edeadlock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """macOS's ``errno`` has ``EDEADLK`` but no ``EDEADLOCK``; importing flextool must not need it."""
+    import errno
+    import importlib.util
+
+    import flextool._file_lock as file_lock
+
+    monkeypatch.delattr(errno, "EDEADLOCK", raising=False)
+    # A fresh copy under another name: the imported module (and its exception classes) stays untouched.
+    spec = importlib.util.spec_from_file_location("_file_lock_without_edeadlock", file_lock.__file__)
+    copy = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(copy)
+    assert copy._WINDOWS_HELD == {errno.EACCES, errno.EDEADLK}

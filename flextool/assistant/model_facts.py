@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 #: The version of the facts: bumped whenever what the facts say or how they are worded changes (the evaluation
 #: runner records it with each cell, ``tools/assistant_eval.py`` ``setting_key``).
-FACTS_VERSION = 2
+FACTS_VERSION = 3
 #: The first line of the facts in the context block (the scenario is named on the block's Scenario line).
 HEADER = "Model facts (from the scenario's input data and latest run):"
 #: The most tokens (``budget.approx_tokens``, text) the facts may take, header included.
@@ -604,9 +604,9 @@ class _Renderer:
         low, high = min(years), max(years)
         if low == high:
             word = "year" if low == 1 else "years"
-            text = f"{_num(low)} {word}{' each' if len(years) > 1 else ''}"
+            text = f"{_num(low)} {word} represented{' each' if len(years) > 1 else ''}"
         else:
-            text = f"{_num(low)} to {_num(high)} years"
+            text = f"{_num(low)} to {_num(high)} years represented"
         marks = self.unrealised(s)
         return f"{shown} ({text}{'; ' + marks if marks else ''})"
 

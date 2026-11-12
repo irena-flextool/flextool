@@ -16,7 +16,8 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 #: The ``msvcrt.locking`` errors that mean "another handle holds the lock"; any other error is not retried.
-_WINDOWS_HELD = {errno.EACCES, errno.EDEADLOCK}
+#: ``errno.EDEADLOCK`` exists on Windows and Linux only (macOS has just ``EDEADLK``), so it is looked up softly.
+_WINDOWS_HELD = {errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)}
 #: The poll interval of the Windows wait, in seconds.
 _POLL_S = 0.05
 

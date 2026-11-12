@@ -129,10 +129,10 @@ def test_snapshot_is_written_afresh_every_run(layout) -> None:
     work = layout["tmp"] / "work"
     first = snapshot_solver_option_files(source, work, _LOGGER)
     assert first.snapshot_dir == work / "solve_data" / "solver_config"
-    assert (first.snapshot_dir / "gurobi.opt").read_text() == "Threads 7\n"
+    assert (first.snapshot_dir / "gurobi.opt").read_text(encoding="utf-8") == "Threads 7\n"
     (layout["ws"] / "solver_config" / "gurobi.opt").write_text("Threads 9\n")
     second = snapshot_solver_option_files(source, work, _LOGGER)
-    assert (second.snapshot_dir / "gurobi.opt").read_text() == "Threads 9\n"
+    assert (second.snapshot_dir / "gurobi.opt").read_text(encoding="utf-8") == "Threads 9\n"
     assert second.text("gurobi") == "Threads 9\n"
     # A solver missing in the folder gets its packaged default, and says so.
     assert second.text("highs") == _template("highs")
@@ -149,7 +149,7 @@ def test_no_folder_found_uses_the_defaults_without_planting_a_copy(layout, caplo
         files = snapshot_solver_option_files(source, cwd, _LOGGER)
     assert not (cwd / "solver_config").exists()
     for solver in SOLVER_NAMES:
-        assert (files.snapshot_dir / f"{solver}.opt").read_text() == _template(solver)
+        assert (files.snapshot_dir / f"{solver}.opt").read_text(encoding="utf-8") == _template(solver)
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1 and "No solver_config folder found" in warnings[0]
 

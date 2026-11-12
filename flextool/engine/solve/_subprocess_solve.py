@@ -695,11 +695,12 @@ def _gurobi_script(
     record of what was passed.
     """
     argv: list[str] = [str(binary)]
-    if opt_path is not None:
-        for name, value in _parse_native_opt_file(opt_path).items():
-            argv.append(f"{name}={value}")
+    params = _parse_native_opt_file(opt_path) if opt_path is not None else {}
+    for name, value in params.items():
+        argv.append(f"{name}={value}")
     argv.append(f"ResultFile={sol_path}")
     argv.append(str(mps_path))
+    _check_command_lines("gurobi", "argument", argv, len(params) + 3)
     return argv, None
 
 
@@ -716,17 +717,13 @@ def _cplex_script(
     if opt_path is not None:
         for name, value in _parse_native_opt_file(opt_path).items():
             pre.append(f"set {name} {value}")
-    cmds = "\n".join(
-        pre
-        + [
-            f"read {mps_path}",
-            "optimize",
-            f"write {sol_path} sol",
-            "quit",
-            "",
-        ]
-    )
-    return [str(binary)], cmds
+    fixed = [
+        f"read {mps_path}",
+        "optimize",
+        f"write {sol_path} sol",
+        "quit",
+    ]
+    return [str(binary)], _join_script("cplex", pre, fixed)
 
 
 def _xpress_script(
@@ -742,24 +739,20 @@ def _xpress_script(
     if opt_path is not None:
         for name, value in _parse_native_opt_file(opt_path).items():
             pre.append(f"setControl {name} {value}")
-    cmds = "\n".join(
-        pre
-        + [
-            f"readprob {mps_path}",
-            "lpoptimize",
-            # Force the MPS-like **SLX** solution (name-based, whitespace-
-            # safe) for the primal — Xpress' default ``writesol`` emits an
-            # index-based ``.asc``/``.hdr`` CSV pair with no usable
-            # name→value mapping.  ``writeprtsol`` carries the objective
-            # value SLX omits.  Xpress appends ``.slx`` / ``.prt`` to the
-            # base path; :func:`_parse_xpress_sol` looks for those.
-            f"writeslxsol {sol_path}",
-            f"writeprtsol {sol_path}",
-            "quit",
-            "",
-        ]
-    )
-    return [str(binary)], cmds
+    fixed = [
+        f"readprob {mps_path}",
+        "lpoptimize",
+        # Force the MPS-like **SLX** solution (name-based, whitespace-
+        # safe) for the primal — Xpress' default ``writesol`` emits an
+        # index-based ``.asc``/``.hdr`` CSV pair with no usable
+        # name→value mapping.  ``writeprtsol`` carries the objective
+        # value SLX omits.  Xpress appends ``.slx`` / ``.prt`` to the
+        # base path; :func:`_parse_xpress_sol` looks for those.
+        f"writeslxsol {sol_path}",
+        f"writeprtsol {sol_path}",
+        "quit",
+    ]
+    return [str(binary)], _join_script("xpress", pre, fixed)
 
 
 def _copt_script(
@@ -774,17 +767,45 @@ def _copt_script(
     if opt_path is not None:
         for name, value in _parse_native_opt_file(opt_path).items():
             pre.append(f"set {name} {value}")
-    cmds = "\n".join(
-        pre
-        + [
-            f"read {mps_path}",
-            "optimize",
-            f"write {sol_path}",
-            "quit",
-            "",
-        ]
+    fixed = [
+        f"read {mps_path}",
+        "optimize",
+        f"write {sol_path}",
+        "quit",
+    ]
+    return [str(binary)], _join_script("copt", pre, fixed)
+
+
+#: Characters that end a line for a console or for :meth:`str.splitlines`.
+_LINE_BREAKS = frozenset("\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
+
+
+def _check_command_lines(solver: str, kind: str, lines: list[str], expected: int) -> None:
+    """Last check before a solver starts (item 236 A4): *lines* (the command script's lines, or Gurobi's
+    arguments) are one per parameter plus the fixed ones, and none holds a line break.  The options were
+    checked when they were read (``_solver_dispatch.validate_solver_option``), so a failure here is an
+    internal error; the solver is not started."""
+    from flextool.engine.solve._solver_dispatch import FlexToolUserError
+
+    bad = next((line for line in lines if _LINE_BREAKS.intersection(line)), None)
+    if bad is None and len(lines) == expected:
+        return
+    detail = (
+        f"the {kind} {bad[:80]!r} holds a line break" if bad is not None
+        else f"it has {len(lines)} {kind}s, not {expected}"
     )
-    return [str(binary)], cmds
+    raise FlexToolUserError(
+        f"FlexTool did not start {solver}: {detail}. This is an internal check on the solver options; "
+        "please report it with the solve's solver options."
+    )
+
+
+def _join_script(solver: str, pre: list[str], fixed: list[str]) -> str:
+    """The stdin script of a console solver: the parameter lines *pre*, then the *fixed* commands, each ending
+    in a line break; checked by :func:`_check_command_lines`."""
+    lines = pre + fixed
+    _check_command_lines(solver, "line", lines, len(pre) + len(fixed))
+    return "\n".join(lines + [""])
 
 
 _SCRIPTS = {
@@ -824,27 +845,38 @@ def _parse_native_opt_file(path: Path) -> dict[str, str]:
 
     Returns an empty dict when the file is missing or unreadable.
     """
+    text = _read_native_opt_text(path)
+    return {} if text is None else _parse_native_opt_text(text)
+
+
+def _read_native_opt_text(path: Path) -> str | None:
+    """The text of a native ``.opt`` file; ``None`` when it is missing or unreadable."""
     if not path.is_file():
-        return {}
+        return None
     try:
-        text = path.read_text()
+        return path.read_text()
     except OSError:
-        return {}
-    return _parse_native_opt_text(text)
+        return None
 
 
-def _parse_native_opt_text(text: str) -> dict[str, str]:
-    """The ``name value`` lines of a native ``.opt`` text (rules of :func:`_parse_native_opt_file`)."""
-    out: dict[str, str] = {}
-    for raw in text.splitlines():
+def _native_opt_lines(text: str) -> list[tuple[int, str, str]]:
+    """``(line number, name, value)`` of every parameter line of a native ``.opt`` text, in file order (rules of
+    :func:`_parse_native_opt_file`)."""
+    out: list[tuple[int, str, str]] = []
+    for lineno, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
         if " " not in line and "\t" not in line:
             continue
         name, value = line.rsplit(maxsplit=1)
-        out[name.strip()] = value.strip()
+        out.append((lineno, name.strip(), value.strip()))
     return out
+
+
+def _parse_native_opt_text(text: str) -> dict[str, str]:
+    """The ``name value`` lines of a native ``.opt`` text (rules of :func:`_parse_native_opt_file`)."""
+    return {name: value for _, name, value in _native_opt_lines(text)}
 
 
 def _format_native_opt_value(v: object) -> str:
@@ -1871,9 +1903,11 @@ def _solve_highs_subprocess(
 
     try:
         opts = options or {}
+        opt_lines = [f"{k}={_format_opt_value(v)}" for k, v in opts.items()]
+        _check_command_lines("highs", "option-file line", opt_lines, len(opts))
         with open(opts_path, "w") as f:
-            for k, v in opts.items():
-                f.write(f"{k}={_format_opt_value(v)}\n")
+            for line in opt_lines:
+                f.write(f"{line}\n")
 
         if logger is not None:
             logger.info(

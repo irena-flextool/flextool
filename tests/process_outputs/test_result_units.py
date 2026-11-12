@@ -218,7 +218,7 @@ def test_workbook_layout(tmp_path: Path):
                                       ("average_flow", "MW", "average")]
 
     # Wide sheet: the unit of measure is the last header row and the sheet reads back with one more header row.
-    back = pd.read_excel(xlsx, sheet_name="unit_outputNode__dt", header=[0, 1, 2], index_col=[0, 1])
+    back = pd.read_excel(xlsx, sheet_name="unit_outputNode__dt", header=[0, 1, 2], index_col=[0, 1], engine="openpyxl")
     assert list(back.columns.names) == ["unit", "node", UNIT_LEVEL]
     assert list(back.columns) == [("coal", "east", "MW"), ("wind", "east", "MW")]
     assert back.to_numpy().tolist() == [[1.0, 2.0], [3.0, 4.0]]
@@ -229,11 +229,11 @@ def test_comparison_workbook_adds_the_unit_level_below_the_scenario_level(tmp_pa
     xlsx = tmp_path / "compare.xlsx"
     write_excel_with_metadata(str(xlsx), [("flowGroup__gd", "flowGroup_gd_p", combined)])
     assert openpyxl.load_workbook(xlsx).sheetnames == ["Units", "_output_metadata", "flowGroup__gd"]
-    back = pd.read_excel(xlsx, sheet_name="flowGroup__gd", header=[0, 1, 2], index_col=[0, 1])
+    back = pd.read_excel(xlsx, sheet_name="flowGroup__gd", header=[0, 1, 2], index_col=[0, 1], engine="openpyxl")
     assert list(back.columns.names) == ["scenario", "parameter", UNIT_LEVEL]
     assert [c[2] for c in back.columns] == ["MWh/a", "MW", "MWh/a", "MW"]
     # _output_metadata gives the scenario of a column in its own cell.
-    meta = pd.read_excel(xlsx, sheet_name="_output_metadata")
+    meta = pd.read_excel(xlsx, sheet_name="_output_metadata", engine="openpyxl")
     assert list(meta.columns[:4]) == ["sheet", "output", "scenario", "column"]
     assert list(zip(meta["scenario"], meta["column"], meta["unit"])) == [
         ("base", "cumulative_flow", "MWh/a"), ("base", "average_flow", "MW"),
