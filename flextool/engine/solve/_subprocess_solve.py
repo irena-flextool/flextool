@@ -27,9 +27,13 @@ The child process has a clean address space — none of FlexTool's
 ~7-11 GB of polars frames, no glibc fragmentation from upstream
 preprocessing.  When it finishes, the parent reads the solution back:
 
-* HiGHS path parses the subprocess-written .sol directly
-  (:func:`_parse_highs_sol`) — the file already carries names + primal
-  + duals.
+* HiGHS path writes the MPS with GENERIC ``C…``/``R…`` names too and
+  parses the subprocess-written .sol directly (:func:`_parse_highs_sol`):
+  each primal / dual value goes to the col_id / row id its generic name
+  encodes, every name and count is checked against the LP (a mismatch
+  raises :class:`SubprocessSolutionMismatch`), and the real names come
+  from the Problem (row names taken before the release, column names
+  from the surviving ``_vars``).
 * Commercial path writes the MPS with GENERIC ``C…``/``R…`` names
   (``emit_names=False``) so real entity names — which routinely contain
   spaces, illegal in whitespace-delimited free-format MPS — never
@@ -58,6 +62,7 @@ from __future__ import annotations
 
 import json
 import logging
+import mmap
 import os
 import re
 import shutil
@@ -66,7 +71,7 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping, NamedTuple
 
 import numpy as np
 
@@ -206,62 +211,11 @@ def _read_objective_from_sol(sol_path: Path) -> float:
 # that ``readModel`` accounts for the +33 GB RSS spike at the per-solve
 # ``Solver`` checkpoint — and immediately gets thrown away after the
 # writers finish.  We sidestep it: parse the HiGHS style=0 .sol file
-# directly (it already carries column / row names + primal + dual values)
-# and wrap the arrays in a duck-typed shim that exposes exactly the API
-# surface the writers use.  No 33 GB sidecar Highs instance.
-
-def _parse_mps_row_names(mps_path: Path) -> list[str]:
-    """Return constraint row names (in MPS ROWS order, objective excluded).
-
-    HiGHS' ``writeSolution`` periodically rewrites row names to
-    ``r0, r1, ...`` (warning: ``Row names are not present, or contain
-    duplicates: using names with prefix "r"``) when the LP's row name
-    array survives ``readModel`` in a degraded state — observed with
-    free-format MPS row names that contain bracket / comma characters
-    (``nodeBalance_eq[battery,p2020,t0001]``).  The MPS file itself
-    carries the canonical names; this helper recovers them so the
-    downstream output writers' name-based row lookups (``row_dual``
-    for ``nodeBalance_eq`` / ``reserveBalance_*_eq`` / ``co2_max_*``)
-    keep working through the subprocess-MPS path.
-
-    The objective row (``N  cost`` in the polar-high MPS) is excluded
-    so the returned list aligns with HiGHS' ``row_dual`` array, which
-    only covers constraint rows (objective dual is meaningless).
-
-    Parser: a tiny state machine over the ROWS section.  Lines look
-    like ``" E  nodeBalance_eq[...]"`` — leading whitespace + 1-char
-    sense + whitespace + name.  Anything else terminates the section.
-    """
-    names: list[str] = []
-    try:
-        with open(mps_path) as fh:
-            in_rows = False
-            for raw in fh:
-                line = raw.rstrip("\n")
-                if not in_rows:
-                    if line.strip().upper() == "ROWS":
-                        in_rows = True
-                    continue
-                # Detect end of ROWS section (next header line: COLUMNS,
-                # RHS, RANGES, BOUNDS, ENDATA, ...).  Header lines are
-                # left-flush; data lines start with whitespace.
-                if line and not line[0].isspace():
-                    break
-                parts = line.split()
-                if len(parts) < 2:
-                    continue
-                sense = parts[0].upper()
-                name = parts[1]
-                # Skip the objective row — ``row_dual`` covers
-                # constraints only.
-                if sense == "N":
-                    continue
-                if sense in ("E", "L", "G"):
-                    names.append(name)
-    except OSError:
-        pass
-    return names
-
+# directly (it carries primal + dual values under the generic ``C…`` /
+# ``R…`` names of the MPS), place them by generic-name index into dense
+# arrays, take the real names from the Problem, and wrap the arrays in a
+# duck-typed shim that exposes exactly the API surface the writers use.
+# No 33 GB sidecar Highs instance.
 
 def _col_names_from_vars(problem: "Problem") -> list[str]:
     """Rebuild the dense, ``col_id``-indexed column-name list from a
@@ -387,26 +341,49 @@ def _generic_row_id(name: str) -> int | None:
 _DUAL_CAPABLE_SOLVERS = frozenset({"cplex"})
 
 
+class SubprocessSolutionMismatch(RuntimeError):
+    """The solver's ``.sol`` does not line up with the LP that was written.
+
+    Raised when a HiGHS ``.sol`` read back on the subprocess path names a
+    column or row that is not the generic name expected at that position,
+    or has a different number of columns / rows than the LP.  Mapping such
+    a file by position would put solution values on the wrong variables,
+    so the solve stops instead.
+    """
+
+
 def _parse_highs_sol(
     sol_path: Path,
-) -> tuple[
-    list[str], list[str],
-    np.ndarray, np.ndarray, np.ndarray,
-]:
-    """Parse a HiGHS style=0 ``.sol`` file into the writer-facing arrays.
+    n_cols: int,
+    n_rows: int,
+    *,
+    require_primal: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Parse a HiGHS style=0 ``.sol`` of a generic-name MPS into dense arrays.
 
-    Returns ``(col_names, row_names, col_value, col_dual, row_dual)``.
-    All five live in-process at numpy / list scale — typically a few
-    hundred MB even on the DES-scale LP, vs the +33 GB the equivalent
-    ``Highs.readModel(mps)`` parent re-read used to cost.
+    The MPS was written by ``Problem.write_mps(emit_names=False)``, so
+    column ``col_id=j`` is ``C{j+1:07d}`` and constraint row ``i`` is
+    ``R{i+2:07d}``.  Returns ``(col_value, col_dual, row_dual)`` indexed by
+    ``col_id`` / constraint row id — the same dense layout an in-process
+    solve gives.  The real names are not in the file; the caller takes them
+    from the Problem.
 
-    The HiGHS style=0 file format (see ``Highs::writeSolution``):
+    Every name in the file is checked against the generic name expected at
+    its position, and each section must hold exactly *n_cols* columns /
+    *n_rows* rows.  Any difference raises :class:`SubprocessSolutionMismatch`
+    (a column the reader dropped or moved would otherwise shift every later
+    value onto the wrong variable).  A section HiGHS writes as ``None`` (no
+    primal / dual solution, e.g. an infeasible or interrupted solve) leaves
+    zeros; with *require_primal* (the child reported an optimal solve) a
+    missing primal section raises instead.
+
+    The HiGHS style=0 file format (see ``Highs::writeSolution``)::
 
         Model status
         <status>
 
         # Primal solution values
-        Feasible | Infeasible
+        Feasible | Infeasible | None
         Objective <value>
         # Columns <N>
         <name> <value>
@@ -416,7 +393,7 @@ def _parse_highs_sol(
         ...
 
         # Dual solution values
-        Feasible | Infeasible
+        Feasible | Infeasible | None
         # Columns <N>
         <name> <dual>
         ...
@@ -424,87 +401,128 @@ def _parse_highs_sol(
         <name> <dual>
         ...
 
-        # Basis ...   (ignored — basis statuses are not needed by the
-                       parent-side output writers)
-
-    Each ``<name> <value>`` line splits on whitespace; names with
-    embedded spaces are not produced by HiGHS so the simple split is
-    safe.
+        # Basis ...   (ignored)
     """
-    col_names: list[str] = []
-    row_names: list[str] = []
-    col_value_list: list[float] = []
-    col_dual_list: list[float] = []
-    row_value_list: list[float] = []   # not actually exposed; parse but discard
-    row_dual_list: list[float] = []
+    col_value = np.zeros(n_cols, dtype=np.float64)
+    col_dual = np.zeros(n_cols, dtype=np.float64)
+    row_dual = np.zeros(n_rows, dtype=np.float64)
+    row_value = np.zeros(n_rows, dtype=np.float64)  # parsed, checked, discarded
+    targets = {
+        ("primal", "col"): col_value,
+        ("primal", "row"): row_value,
+        ("dual", "col"): col_dual,
+        ("dual", "row"): row_dual,
+    }
 
-    # Three-state parser:
-    #   section   ∈ {"primal", "dual", None}
-    #   bucket    ∈ {"col", "row", None}
+    def _mismatch(detail: str) -> SubprocessSolutionMismatch:
+        return SubprocessSolutionMismatch(
+            f"HiGHS solution file {sol_path} does not match the LP written "
+            f"for it ({n_cols} columns, {n_rows} rows): {detail}. The values "
+            "cannot be mapped back to the model's variables safely, so the "
+            "solve is stopped."
+        )
+
     section: str | None = None
     bucket: str | None = None
+    arr: np.ndarray | None = None
+    pos = 0
+    counts: dict[tuple[str, str], int] = {}
+
+    def _close_bucket() -> None:
+        if section is not None and bucket is not None:
+            want = n_cols if bucket == "col" else n_rows
+            if pos != want:
+                raise _mismatch(
+                    f"the {section} {bucket} section has {pos} entries, "
+                    f"expected {want}"
+                )
+            counts[(section, bucket)] = pos
 
     with open(sol_path) as fh:
         for raw in fh:
-            line = raw.rstrip("\n")
-            if not line.strip():
-                continue
-            if line.startswith("# Primal solution"):
-                section, bucket = "primal", None
-                continue
-            if line.startswith("# Dual solution"):
-                section, bucket = "dual", None
-                continue
-            if line.startswith("# Basis"):
-                # Basis section ends the data we care about.
-                break
-            if line.startswith("# Columns"):
-                bucket = "col"
-                continue
-            if line.startswith("# Rows"):
-                bucket = "row"
+            line = raw.strip()
+            if not line:
                 continue
             if line.startswith("#"):
-                # Unrecognised comment header — keep current state.
+                if line.startswith(("# Primal solution", "# Dual solution", "# Basis")):
+                    _close_bucket()
+                    bucket, arr = None, None
+                    if line.startswith("# Basis"):
+                        section = None
+                        break
+                    section = "primal" if line.startswith("# Primal") else "dual"
+                    continue
+                if line.startswith(("# Columns", "# Rows")) and section is not None:
+                    _close_bucket()
+                    bucket = "col" if line.startswith("# Columns") else "row"
+                    pos = 0
+                    arr = targets[(section, bucket)]
+                    want = n_cols if bucket == "col" else n_rows
+                    try:
+                        declared = int(line.split()[2])
+                    except (IndexError, ValueError):
+                        declared = None
+                    if declared != want:
+                        raise _mismatch(
+                            f"the {section} {bucket} section declares "
+                            f"{line.split(None, 2)[-1]!r} entries, expected {want}"
+                        )
+                    continue
                 continue
-            if (
-                line.startswith("Model status")
-                or line.startswith("Objective ")
-                or line in ("Feasible", "Infeasible", "Unknown")
-                or line.startswith("HiGHS_basis_file")
-                or line in ("Valid", "None")
-            ):
+            if arr is None:
+                # Status / ``Objective`` / ``Feasible`` / ``None`` lines.
                 continue
-            # Data row: "<name> <value>"
-            sp = line.rsplit(None, 1)
+            sp = line.split()
             if len(sp) != 2:
-                continue
+                raise _mismatch(f"unreadable line {line!r}")
             name, val_s = sp
+            if bucket == "col":
+                expected = f"C{pos + 1:07d}"
+            else:
+                expected = f"R{pos + 2:07d}"
+            if name != expected:
+                raise _mismatch(
+                    f"{section} {bucket} entry {pos} is named {name!r}, "
+                    f"expected {expected!r}"
+                )
+            if pos >= arr.shape[0]:
+                raise _mismatch(f"more {section} {bucket} entries than expected")
             try:
-                val = float(val_s)
-            except ValueError:
-                continue
-            if section == "primal" and bucket == "col":
-                col_names.append(name)
-                col_value_list.append(val)
-            elif section == "primal" and bucket == "row":
-                row_names.append(name)
-                row_value_list.append(val)
-            elif section == "dual" and bucket == "col":
-                col_dual_list.append(val)
-            elif section == "dual" and bucket == "row":
-                row_dual_list.append(val)
+                arr[pos] = float(val_s)
+            except ValueError as exc:
+                raise _mismatch(f"unreadable value in line {line!r}") from exc
+            pos += 1
+    _close_bucket()
+    # HiGHS writes a section's column and row values together; one without
+    # the other means a truncated file.
+    for sec in ("primal", "dual"):
+        has_col = (sec, "col") in counts
+        has_row = (sec, "row") in counts
+        if has_col != has_row:
+            raise _mismatch(
+                f"the {sec} section has only its "
+                f"{'column' if has_col else 'row'} values"
+            )
+    if require_primal and ("primal", "col") not in counts:
+        raise _mismatch("the solve reported optimal but the file has no primal values")
+    return col_value, col_dual, row_dual
 
-    col_value = np.asarray(col_value_list, dtype=np.float64)
-    col_dual = (
-        np.asarray(col_dual_list, dtype=np.float64)
-        if col_dual_list else np.zeros(len(col_value), dtype=np.float64)
+
+def _highs_sol_status(sol_path: Path) -> str:
+    """``TIME_LIMIT`` when a HiGHS style=0 solution file says ``Time limit reached`` with a ``Feasible``
+    primal, else ``OTHER``.  Reads the file's first lines only."""
+    try:
+        with open(sol_path) as fh:
+            head = [fh.readline().strip() for _ in range(6)]
+    except OSError:
+        return "OTHER"
+    model_status = head[1] if len(head) > 1 and head[0] == "Model status" else ""
+    primal_status = next(
+        (head[i + 1] for i, line in enumerate(head[:-1]) if line == "# Primal solution values"), "",
     )
-    row_dual = (
-        np.asarray(row_dual_list, dtype=np.float64)
-        if row_dual_list else np.zeros(len(row_names), dtype=np.float64)
-    )
-    return col_names, row_names, col_value, col_dual, row_dual
+    if model_status == "Time limit reached" and primal_status == "Feasible":
+        return "TIME_LIMIT"
+    return "OTHER"
 
 
 class _SolHighsShim:
@@ -777,42 +795,17 @@ _SCRIPTS = {
 
 
 # ---------------------------------------------------------------------------
-# Per-solver baseline option-file handling
+# Per-solver option-file handling
 # ---------------------------------------------------------------------------
 # Each commercial solver gets a baseline ``solver_config/<solver>.opt``
-# (shipped with the FlexTool repo, user-editable).  The file is written
-# in the *solver's own* parameter-file syntax — see the comment header
-# in each baseline file for the exact format.  The scenario's
-# ``solver_options`` dict (already keyed by native parameter names by
-# ``build_solver_options`` in ``_solver_dispatch.py``) is then overlaid
-# on top, taking precedence per key.  The merged dict is materialised
-# to a temp file next to the MPS in the per-solver native format and
-# fed to the CLI via the per-solver mechanism (Gurobi: one
-# ``Name=value`` argv token per parameter; CPLEX/Xpress/COPT: inline
-# set/setControl commands piped on stdin).  Format helpers below.
-
-
-def _resolve_solver_config_dir(config_dir: Path | None = None) -> Path:
-    """Resolve the directory holding ``<solver>.opt`` baseline files.
-
-    Lookup order:
-
-    1. *config_dir* — the run's solver-config folder (``run_chain_from_db``
-       passes its work-folder copy, ``<work_folder>/solver_config``).
-    2. ``$FLEXTOOL_SOLVER_CONFIG_DIR`` environment variable, for a caller
-       that passes no folder.
-    3. ``<cwd>/solver_config``.
-
-    Returns the resolved :class:`Path` regardless of whether it exists;
-    callers check ``.is_file()`` on the specific solver file before
-    parsing.
-    """
-    if config_dir is not None:
-        return Path(config_dir)
-    env = os.environ.get("FLEXTOOL_SOLVER_CONFIG_DIR")
-    if env:
-        return Path(env)
-    return Path.cwd() / "solver_config"
+# (shipped as a template, user-editable), written in the *solver's own*
+# parameter syntax — see the comment header in each template.
+# ``_solver_dispatch.resolve_commercial_options`` merges it with the solve's
+# ``solver_mip_gap`` / ``solver_arguments`` and the operator's flags into one
+# ordered parameter set; :func:`_write_commercial_opt_file` writes that set
+# next to the MPS (the record of what was passed) and the per-solver script
+# turns each line into the CLI's form (Gurobi: one ``Name=value`` argv token
+# per parameter; CPLEX/Xpress/COPT: inline set/setControl commands on stdin).
 
 
 def _parse_native_opt_file(path: Path) -> dict[str, str]:
@@ -830,21 +823,26 @@ def _parse_native_opt_file(path: Path) -> dict[str, str]:
 
     Returns an empty dict when the file is missing or unreadable.
     """
-    out: dict[str, str] = {}
     if not path.is_file():
-        return out
+        return {}
     try:
-        with path.open("r") as fh:
-            for raw in fh:
-                line = raw.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if " " not in line and "\t" not in line:
-                    continue
-                name, value = line.rsplit(maxsplit=1)
-                out[name.strip()] = value.strip()
+        text = path.read_text()
     except OSError:
         return {}
+    return _parse_native_opt_text(text)
+
+
+def _parse_native_opt_text(text: str) -> dict[str, str]:
+    """The ``name value`` lines of a native ``.opt`` text (rules of :func:`_parse_native_opt_file`)."""
+    out: dict[str, str] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if " " not in line and "\t" not in line:
+            continue
+        name, value = line.rsplit(maxsplit=1)
+        out[name.strip()] = value.strip()
     return out
 
 
@@ -852,111 +850,194 @@ def _format_native_opt_value(v: object) -> str:
     """Render *v* for a native solver opt-file line.
 
     Booleans become ``1`` / ``0`` (Gurobi/COPT accept either word or
-    int; the int form is portable across CPLEX/Xpress too).
+    int; the int form is portable across CPLEX/Xpress too).  A whole number
+    is written without its ``.0`` (``Threads 1``, not ``Threads 1.0``), as a
+    float or as the text of one (``solver_arguments`` values arrive as
+    ``str(float)``): the database stores every number as a float, and an
+    integer parameter may refuse ``1.0`` (the Xpress library does), while a
+    float parameter reads ``1`` as 1.0.
     """
     if isinstance(v, bool):
         return "1" if v else "0"
+    if isinstance(v, float) and v.is_integer() and abs(v) < 1e15:
+        return str(int(v))
+    if isinstance(v, str) and _WHOLE_NUMBER_TEXT.match(v):
+        return v.strip().split(".", 1)[0]
     return str(v)
 
 
-def _format_gurobi_opt(merged: dict[str, str]) -> str:
-    """Format *merged* as a Gurobi ``.prm`` file body.
-
-    One ``<ParamName> <value>`` per line.  Same syntax produced by
-    ``gurobi_cl`` 's own ``-w`` parameter dump.
-    """
-    return "".join(
-        f"{name} {_format_native_opt_value(value)}\n"
-        for name, value in merged.items()
-    )
+#: The text of a whole number written as a float (``1.0``, ``-3.00``), as ``str(float)`` gives it.
+_WHOLE_NUMBER_TEXT = re.compile(r"^\s*-?\d{1,15}\.0+\s*$")
 
 
-def _format_cplex_opt(merged: dict[str, str]) -> str:
-    """Format *merged* as our CPLEX baseline body.
-
-    Same layout as the input file: ``<name> <value>`` per line, where
-    ``<name>`` uses CPLEX' interactive ``set`` syntax (e.g.
-    ``mip tolerances mipgap``).  The per-solver script builder translates
-    each line into ``set <name> <value>`` for piping on stdin.
-    """
-    return "".join(
-        f"{name} {_format_native_opt_value(value)}\n"
-        for name, value in merged.items()
-    )
-
-
-def _format_xpress_opt(merged: dict[str, str]) -> str:
-    """Format *merged* as our Xpress controls baseline body."""
-    return "".join(
-        f"{name} {_format_native_opt_value(value)}\n"
-        for name, value in merged.items()
-    )
-
-
-def _format_copt_opt(merged: dict[str, str]) -> str:
-    """Format *merged* as our COPT baseline body."""
-    return "".join(
-        f"{name} {_format_native_opt_value(value)}\n"
-        for name, value in merged.items()
-    )
-
-
-_OPT_FORMATTERS = {
-    "gurobi": _format_gurobi_opt,
-    "cplex": _format_cplex_opt,
-    "xpress": _format_xpress_opt,
-    "copt": _format_copt_opt,
-}
-
-
-def _build_commercial_opt_file(
-    solver_name: str,
-    options: dict[str, Any] | None,
+def _write_commercial_opt_file(
+    options: Mapping[str, Any] | None,
     out_path: Path,
-    *,
-    config_dir: Path | None = None,
 ) -> Path | None:
-    """Merge baseline ``<solver>.opt`` with scenario *options* and write
-    the result to *out_path*.
+    """Write the resolved commercial *options* (name -> value, final order) to *out_path*.
 
-    Returns the path to the merged file when it has at least one entry,
-    or ``None`` when both the baseline file is missing and the scenario
-    *options* dict is empty (caller skips the per-solver opt-file slot
-    entirely, so the CLI gets no parameter arguments).
+    One ``<name> <value>`` line per parameter, the layout of the baseline
+    files; the per-solver script builder reads it back.  Returns ``None``
+    when there is nothing to pass (the CLI then gets no parameters).
     """
-    config_dir = _resolve_solver_config_dir(config_dir)
-    baseline_path = config_dir / f"{solver_name}.opt"
-    merged: dict[str, str] = {
-        k: str(v) for k, v in _parse_native_opt_file(baseline_path).items()
-    }
-    if options:
-        for key, value in options.items():
-            # Skip the FlexTool-internal ``time_limit`` knob — that's
-            # forwarded as the subprocess timeout, not as a solver
-            # parameter (Gurobi accepts ``TimeLimit`` which IS in the
-            # native-name overlay; the friendly ``time_limit`` key never
-            # appears here for the commercial path because
-            # ``build_solver_options`` translates it first).
-            if value is None:
-                continue
-            merged[str(key)] = _format_native_opt_value(value)
-    if not merged:
+    lines = [
+        f"{name} {_format_native_opt_value(value)}\n"
+        for name, value in (options or {}).items()
+        if value is not None
+    ]
+    if not lines:
         return None
-    formatter = _OPT_FORMATTERS[solver_name]
-    out_path.write_text(formatter(merged))
+    out_path.write_text("".join(lines))
     return out_path
 
 
-def _parse_gurobi_sol(
-    path: Path,
-) -> tuple[str, float | None, dict[str, float] | None, dict[str, float] | None]:
-    """Parse a Gurobi ``.sol`` (key=value text).
+class _ParsedSolution(NamedTuple):
+    """What a commercial result file (and the solver's console output) says about a solve.
 
-    Returns ``(status_str, objective, primal_dict, dual_dict)`` where
-    ``status_str`` is one of ``"OPTIMAL"`` / ``"OTHER"``.
+    ``primal`` is ``None`` when there is no solution; ``mip_gap`` is the
+    relative gap the solver reported (a fraction), when known.
+    """
+
+    status: str
+    objective: float | None
+    primal: dict[str, float] | None
+    dual: dict[str, float] | None
+    mip_gap: float | None = None
+
+
+#: Gurobi ``Status`` codes (``SolutionInfo.Status`` of a JSON result file).
+_GUROBI_STATUS = {
+    2: "OPTIMAL", 3: "INFEASIBLE", 4: "INF_OR_UNBD", 5: "UNBOUNDED", 7: "ITERATION_LIMIT", 8: "NODE_LIMIT",
+    9: "TIME_LIMIT", 10: "SOLUTION_LIMIT", 11: "INTERRUPTED", 12: "NUMERIC", 13: "SUBOPTIMAL",
+    15: "USER_OBJ_LIMIT", 16: "WORK_LIMIT", 17: "MEM_LIMIT",
+}
+_GUROBI_JSON_INFO = re.compile(rb'"SolutionInfo"\s*:\s*(\{[^{}]*\})')
+_GUROBI_JSON_VAR = re.compile(rb'"VarName"\s*:\s*"([^"]*)"\s*,\s*"X"\s*:\s*([^,}\s]+)')
+#: Console lines of a solve stopped by its time limit (Gurobi / COPT / Xpress).
+_GUROBI_TIME_LIMIT = re.compile(r"^\s*Time limit reached\s*$", re.MULTILINE)
+#: Console lines of a Gurobi solve stopped by another limit or an interrupt (the ``.sol`` text has no status).
+_GUROBI_OTHER_STOP = re.compile(
+    r"^\s*(Solution limit|Node limit|Iteration limit|Work limit|Memory limit|Interrupt request|Solve interrupted)"
+    r"\b", re.MULTILINE | re.IGNORECASE,
+)
+_GUROBI_STOP_STATUS = {
+    "solution limit": "SOLUTION_LIMIT", "node limit": "NODE_LIMIT", "iteration limit": "ITERATION_LIMIT",
+    "work limit": "WORK_LIMIT", "memory limit": "MEM_LIMIT", "interrupt request": "INTERRUPTED",
+    "solve interrupted": "INTERRUPTED",
+}
+#: Console lines of a Gurobi solve that finished: ``Optimal solution found (tolerance ...)`` (MIP),
+#: ``Optimal objective  <v>`` (LP).
+_GUROBI_OPTIMAL = re.compile(r"^\s*Optimal (solution found|objective)\b", re.MULTILINE)
+_GUROBI_GAP = re.compile(r"^Best objective [^,]*, best bound [^,]*, gap ([-+\d.eE]+)%", re.MULTILINE)
+#: COPT's summary of how a MIP ended (``MIP status      : solved`` / ``: stopped (time limit reached)`` /
+#: ``: stopped (node limit reached)``) and of an LP (``Status: Optimal  Objective: ...``, ``Status: Timeout``,
+#: ``Status: IterLimit``); FlexTool reads the last of each.
+_COPT_MIP_STATUS = re.compile(r"^\s*MIP status\s*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+_COPT_LP_STATUS = re.compile(r"^\s*Status:\s*(\w+)", re.MULTILINE)
+#: COPT LP ``Status:`` words, as FlexTool's status names (another word becomes its upper-case self).
+_COPT_LP_STATUS_NAMES = {
+    "optimal": "OPTIMAL", "infeasible": "INFEASIBLE", "unbounded": "UNBOUNDED", "infororunb": "INF_OR_UNBD",
+    "timeout": "TIME_LIMIT", "iterlimit": "ITERATION_LIMIT", "interrupted": "INTERRUPTED",
+}
+_COPT_GAP = re.compile(r"^Best gap\s*:\s*([-+\d.eE]+)%", re.MULTILINE)
+_CPLEX_GAP = re.compile(r"gap\s*=\s*[^,()]*,\s*([-+\d.eE]+)%")
+_XPRESS_TIME_LIMIT = re.compile(r"MAXTIME limit reached|\*\*\* Time limit reached \*\*\*|time limit hit",
+                                re.IGNORECASE)
+#: ``gurobi_cl``'s message for a parameter name it does not know (it then solves on without it).
+_GUROBI_UNKNOWN_PARAMETER = re.compile(r"Unknown parameter:?\s*'([^']+)'")
+
+
+def _percent(match: "re.Match[str] | None") -> float | None:
+    if match is None:
+        return None
+    try:
+        return float(match.group(1)) / 100.0
+    except ValueError:
+        return None
+
+
+def _parse_gurobi_json(path: Path) -> _ParsedSolution | None:
+    """Parse a Gurobi JSON result file (``ResultFile=<x>.json``), else ``None`` when *path* is not one.
+
+    ``SolutionInfo`` carries ``Status`` / ``ObjVal`` / ``MIPGap`` / ``SolCount``
+    whatever the console logging; ``Vars`` lists the non-zero values only and
+    is absent when there is no solution.  Read through ``mmap`` with a bytes
+    regex, so a large file is not loaded as Python objects.
+    """
+    try:
+        with path.open("rb") as fh:
+            if not fh.read(64).lstrip().startswith(b"{"):
+                return None
+            fh.seek(0)
+            try:
+                data = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+            except ValueError:  # empty file
+                return None
+            try:
+                m = _GUROBI_JSON_INFO.search(data)
+                info = json.loads(m.group(1)) if m else {}
+                has_solution = data.find(b'"Vars"') >= 0
+                primal = {
+                    name.decode(): float(value)
+                    for name, value in _GUROBI_JSON_VAR.findall(data)
+                } if has_solution else None
+            finally:
+                data.close()
+    except (OSError, ValueError):
+        return None
+    status = _GUROBI_STATUS.get(info.get("Status"), "OTHER")
+    objective = info.get("ObjVal") if has_solution else None
+    gap = info.get("MIPGap")
+    return _ParsedSolution(
+        status,
+        float(objective) if isinstance(objective, (int, float)) else None,
+        primal,
+        None,
+        float(gap) if isinstance(gap, (int, float)) and has_solution and abs(gap) < 1e99 else None,
+    )
+
+
+def _parse_gurobi_sol(path: Path, stdout: str = "") -> _ParsedSolution:
+    """Parse a Gurobi result file: JSON (status, gap, non-zero values) first,
+    else the ``.sol`` text format (values only).
+
+    With the text format the status comes from the console output: a primal
+    with ``Time limit reached`` in *stdout* is ``TIME_LIMIT``, one with another
+    limit or an interrupt (``Node limit reached``, ...) carries that status, one
+    with ``Optimal solution found`` / ``Optimal objective`` is ``OPTIMAL``.  With
+    none of these (console logging off, ``LogToConsole 0``) how the solve ended
+    is unknown: ``NO_STATUS``, which the acceptance check rejects, since a solve
+    stopped by a node limit or an interrupt would read the same.  (FlexTool asks
+    for a JSON result file, which carries the status whatever the logging.)
+    """
+    parsed = _parse_gurobi_json(path) if path.is_file() else None
+    if parsed is not None:
+        if parsed.status == "TIME_LIMIT" and parsed.mip_gap is None:
+            parsed = parsed._replace(mip_gap=_percent(_GUROBI_GAP.search(stdout)))
+        return parsed
+    status, objective, primal = _parse_sol_text(path)
+    if primal and _GUROBI_TIME_LIMIT.search(stdout):
+        return _ParsedSolution("TIME_LIMIT", objective, primal, None, _percent(_GUROBI_GAP.search(stdout)))
+    if primal:
+        stop = _GUROBI_OTHER_STOP.search(stdout)
+        if stop is not None:
+            # Another limit or an interrupt: not optimal, rejected by name.
+            return _ParsedSolution(_GUROBI_STOP_STATUS[stop.group(1).lower()], objective, primal, None)
+        if not _GUROBI_OPTIMAL.search(stdout):
+            return _ParsedSolution("NO_STATUS", objective, primal, None)
+    return _ParsedSolution(status, objective, primal, None)
+
+
+def _parse_sol_text(
+    path: Path,
+) -> tuple[str, float | None, dict[str, float] | None]:
+    """Parse a Gurobi / COPT ``.sol`` text file (``<name> <value>`` lines).
+
+    Returns ``(status_str, objective, primal_dict)`` where ``status_str`` is
+    ``"OPTIMAL"`` when there are values, else ``"OTHER"``.
     """
     if not path.is_file():
-        return "OTHER", None, None, None
+        return "OTHER", None, None
     objective: float | None = None
     primal: dict[str, float] = {}
     with path.open("r") as fh:
@@ -981,32 +1062,144 @@ def _parse_gurobi_sol(
                 except ValueError:
                     continue
     status = "OPTIMAL" if primal else "OTHER"
-    return status, objective, (primal or None), None
+    return status, objective, (primal or None)
 
 
-def _parse_copt_sol(path: Path):
-    """COPT's ``.sol`` matches Gurobi's key=value layout."""
-    return _parse_gurobi_sol(path)
+def _copt_status(stdout: str) -> str | None:
+    """How a COPT solve ended, from its console log; ``None`` when the log does not say (logging off).
+
+    A MIP's last ``MIP status`` line: ``solved`` is ``OPTIMAL``; ``stopped (time limit reached)`` is
+    ``TIME_LIMIT``; ``stopped (node limit reached)`` ``NODE_LIMIT``; another ``stopped (...)`` is
+    ``INTERRUPTED`` when it names an interrupt, else ``STOPPED``; ``infeasible`` / ``unbounded`` as named.  Else
+    an LP's last ``Status:`` word (:data:`_COPT_LP_STATUS_NAMES`; another word, e.g. ``Numerical``, becomes
+    ``NUMERICAL``).  Only ``OPTIMAL`` is optimal, so every other limit or an interrupt is rejected by name and
+    only a MIP's ``TIME_LIMIT`` keeps its solution (the D2 rule of :mod:`flextool.engine.solve._acceptance`).
+    """
+    mip = _COPT_MIP_STATUS.findall(stdout)
+    if mip:
+        text = mip[-1].lower()
+        if text.startswith("solved"):
+            return "OPTIMAL"
+        if text.startswith("stopped"):
+            if "time limit" in text:
+                return "TIME_LIMIT"
+            if "node limit" in text:
+                return "NODE_LIMIT"
+            return "INTERRUPTED" if "interrupt" in text else "STOPPED"
+        if "infeasible or unbounded" in text:
+            return "INF_OR_UNBD"
+        if "infeasible" in text:
+            return "INFEASIBLE"
+        if "unbounded" in text:
+            return "UNBOUNDED"
+        return "OTHER"
+    lp = _COPT_LP_STATUS.findall(stdout)
+    if lp:
+        word = lp[-1]
+        return _COPT_LP_STATUS_NAMES.get(word.lower(), word.upper())
+    return None
 
 
-def _parse_cplex_sol(
-    path: Path,
-) -> tuple[str, float | None, dict[str, float] | None, dict[str, float] | None]:
-    """Parse CPLEX XML ``.sol`` via :mod:`xml.etree.ElementTree`."""
+def _parse_copt_sol(path: Path, stdout: str = "") -> _ParsedSolution:
+    """COPT's ``.sol`` has Gurobi's text layout and no status; the status comes from the console
+    (:func:`_copt_status`).
+
+    A status is kept with or without a solution file (COPT writes none when it has no solution), so a run
+    without one is told why (``stopped at its time limit before finding a solution``).  Values with no status
+    in the log (``Logging 0`` / ``LogToConsole 0``) are ``NO_STATUS``: how the solve ended is unknown, so the
+    acceptance check rejects them.
+    """
+    _, objective, primal = _parse_sol_text(path)
+    status = _copt_status(stdout)
+    if status is None:
+        return _ParsedSolution("NO_STATUS" if primal else "OTHER", objective, primal, None)
+    gap = _percent(_COPT_GAP.search(stdout)) if primal and status == "TIME_LIMIT" else None
+    return _ParsedSolution(status, objective if primal else None, primal, None, gap)
+
+
+#: CPLEX ``solutionStatusValue`` codes (``CPX_STAT_*`` for LP, ``CPXMIP_*`` for MIP; the CPLEX reference manual,
+#: "Solution status codes"), read first.  A limit or an abort is never optimal: with a solution, only a time
+#: limit is kept (the D2 rule of :mod:`flextool.engine.solve._acceptance`); the other limits are rejected by name.
+#: "Optimal with unscaled infeasibilities" (5, 115) breaks the feasibility tolerances once unscaled, and an
+#: "unbounded optimal face" (20, barrier without crossover) returns an interior point of an unbounded face, not a
+#: vertex: neither is a certified optimum, and FlexTool has no diagnostics of a solver run as a program to verify
+#: one, so both are rejected (as HiGHS' uncertified ``kUnknown`` is without diagnostics that show a feasible
+#: primal).  A code not listed falls back to the phrase table.
+_CPLEX_STATUS_CODES: Mapping[int, str] = {
+    1: "OPTIMAL", 101: "OPTIMAL", 102: "OPTIMAL", 128: "OPTIMAL", 129: "OPTIMAL",
+    2: "UNBOUNDED", 118: "UNBOUNDED",
+    3: "INFEASIBLE", 103: "INFEASIBLE",
+    4: "INF_OR_UNBD", 119: "INF_OR_UNBD",
+    5: "OPTIMAL_INFEASIBLE", 115: "OPTIMAL_INFEASIBLE",
+    20: "OPTIMAL_FACE_UNBOUNDED",
+    6: "NUMERIC",
+    10: "ITERATION_LIMIT",
+    11: "TIME_LIMIT", 25: "TIME_LIMIT", 107: "TIME_LIMIT", 108: "TIME_LIMIT", 131: "TIME_LIMIT", 132: "TIME_LIMIT",
+    12: "OBJECTIVE_LIMIT", 21: "OBJECTIVE_LIMIT", 22: "OBJECTIVE_LIMIT",
+    13: "INTERRUPTED", 113: "INTERRUPTED", 114: "INTERRUPTED",
+    104: "SOLUTION_LIMIT", 130: "SOLUTION_LIMIT",
+    105: "NODE_LIMIT", 106: "NODE_LIMIT",
+    111: "MEM_LIMIT", 112: "MEM_LIMIT",
+}
+
+#: CPLEX ``solutionStatusString`` phrases, checked in order (``CPXgetstatstring``), for a file without a known
+#: ``solutionStatusValue``.  An unrecognised string stays ``OTHER`` (rejected, naming the solver status).
+_CPLEX_STATUS_PHRASES: tuple[tuple[str, str], ...] = (
+    ("non-optimal", "OTHER"),
+    ("nonoptimal", "OTHER"),
+    ("unscaled infeasibilities", "OPTIMAL_INFEASIBLE"),   # "[integer] optimal with unscaled infeasibilities"
+    ("face unbounded", "OPTIMAL_FACE_UNBOUNDED"),         # "optimal face unbounded"
+    ("time limit", "TIME_LIMIT"),          # also "deterministic time limit exceeded"
+    ("node limit", "NODE_LIMIT"),
+    ("solution limit", "SOLUTION_LIMIT"),
+    ("iteration limit", "ITERATION_LIMIT"),
+    ("memory limit", "MEM_LIMIT"),
+    ("abort", "INTERRUPTED"),
+    ("infeasible or unbounded", "INF_OR_UNBD"),
+    ("optimal", "OPTIMAL"),                # "optimal", "integer optimal solution", "integer optimal, tolerance"
+    ("infeasible", "INFEASIBLE"),
+    ("unbounded", "UNBOUNDED"),
+)
+
+#: The interactive optimizer's line for a solve stopped by a time limit (``Time limit exceeded, no solution.``,
+#: ``Deterministic time limit exceeded``): the reason when CPLEX wrote no solution file.
+_CPLEX_TIME_LIMIT_TEXT = re.compile(r"time limit exceeded", re.IGNORECASE)
+
+
+def _cplex_status(status_str: str, status_value: int | None = None) -> str:
+    """The status of a CPLEX solution header: its ``solutionStatusValue`` when known
+    (:data:`_CPLEX_STATUS_CODES`), else its ``solutionStatusString`` (lower case); ``OTHER`` when neither is
+    recognised or both are empty."""
+    if status_value is not None and status_value in _CPLEX_STATUS_CODES:
+        return _CPLEX_STATUS_CODES[status_value]
+    for phrase, status in _CPLEX_STATUS_PHRASES:
+        if phrase in status_str:
+            return status
+    return "OTHER"
+
+
+def _parse_cplex_sol(path: Path, stdout: str = "") -> _ParsedSolution:
+    """Parse CPLEX XML ``.sol`` via :mod:`xml.etree.ElementTree`; the gap of a
+    time-limited MIP comes from the console (``gap = ..., X%``).
+
+    CPLEX writes no file without a solution; a console that says ``time limit exceeded`` then gives
+    ``TIME_LIMIT`` (no solution), so the run is told it stopped at its limit.
+    """
     if not path.is_file():
-        return "OTHER", None, None, None
+        return _ParsedSolution("TIME_LIMIT" if _CPLEX_TIME_LIMIT_TEXT.search(stdout) else "OTHER", None, None, None)
     try:
         tree = ET.parse(path)
     except ET.ParseError:
-        return "OTHER", None, None, None
+        return _ParsedSolution("OTHER", None, None, None)
     root = tree.getroot()
     if root.tag == "CPLEXSolutions":
         children = list(root)
         if not children:
-            return "OTHER", None, None, None
+            return _ParsedSolution("OTHER", None, None, None)
         root = children[0]
     objective: float | None = None
     status = "OTHER"
+    status_str = ""
     header = root.find("header")
     if header is not None:
         obj_str = header.get("objectiveValue")
@@ -1015,15 +1208,14 @@ def _parse_cplex_sol(
                 objective = float(obj_str)
             except ValueError:
                 pass
-        status_str = (header.get("solutionStatusString") or "").lower()
-        if "optimal" in status_str:
-            status = "OPTIMAL"
-        elif "infeasible" in status_str:
-            status = "INFEASIBLE"
-        elif "unbounded" in status_str:
-            status = "UNBOUNDED"
-        elif "time" in status_str:
-            status = "TIME_LIMIT"
+        status_str = (header.get("solutionStatusString") or "").strip().lower()
+        try:
+            status_value: int | None = int(header.get("solutionStatusValue") or "")
+        except ValueError:
+            status_value = None
+        status = _cplex_status(status_str, status_value)
+        if status_value is not None:
+            status_str = status_str or str(status_value)
     primal: dict[str, float] = {}
     vars_el = root.find("variables")
     if vars_el is not None:
@@ -1048,14 +1240,20 @@ def _parse_cplex_sol(
                 dual[name] = float(dual_str)
             except ValueError:
                 continue
-    if status == "OTHER" and primal:
+    if status == "OTHER" and primal and not status_str:
+        # A file without a status string: the values are all there is to go on.
         status = "OPTIMAL"
-    return status, objective, (primal or None), (dual or None)
+    gaps = _CPLEX_GAP.findall(stdout) if status == "TIME_LIMIT" else []
+    gap = None
+    if gaps:
+        try:
+            gap = float(gaps[-1]) / 100.0
+        except ValueError:
+            gap = None
+    return _ParsedSolution(status, objective, (primal or None), (dual or None), gap)
 
 
-def _parse_xpress_sol(
-    path: Path,
-) -> tuple[str, float | None, dict[str, float] | None, dict[str, float] | None]:
+def _parse_xpress_sol(path: Path, stdout: str = "") -> _ParsedSolution:
     """Parse the Xpress solution written by :func:`_xpress_script`.
 
     We force Xpress to emit the MPS-like **SLX** solution (name-based,
@@ -1096,13 +1294,18 @@ def _parse_xpress_sol(
             primal[parts[-2]] = val
 
     objective: float | None = None
+    unfinished = False
     prt = _first_existing(
         [Path(str(path) + ".prt"), path.with_suffix(".prt")]
     )
     if prt is not None:
+        prt_text = prt.read_text()
+        # ``Problem is unfinished`` (the print solution's statistics) where a
+        # finished solve says ``Optimal solution found``.
+        unfinished = "Problem is unfinished" in prt_text
         m = re.search(
             r"[Oo]bjective\s+function\s+value\s+is\s+([-\d.eE+]+)",
-            prt.read_text(),
+            prt_text,
         )
         if m:
             try:
@@ -1110,8 +1313,15 @@ def _parse_xpress_sol(
             except ValueError:
                 objective = None
 
-    status = "OPTIMAL" if primal else "OTHER"
-    return status, objective, (primal or None), None
+    if not primal:
+        status = "OTHER"
+    elif _XPRESS_TIME_LIMIT.search(stdout):
+        status = "TIME_LIMIT"
+    elif unfinished:
+        status = "UNFINISHED"
+    else:
+        status = "OPTIMAL"
+    return _ParsedSolution(status, objective, (primal or None), None)
 
 
 _PARSERS = {
@@ -1160,6 +1370,51 @@ def _looks_like_license_error(*texts: str) -> bool:
     return any(p.search(blob) for p in _LICENSE_ERROR_PATTERNS)
 
 
+#: A result-file status without a solution, and how the error names it.
+_NO_SOLUTION_REASONS = {
+    "INFEASIBLE": "is infeasible",
+    "UNBOUNDED": "is unbounded",
+    "INF_OR_UNBD": "is infeasible or unbounded",
+    "TIME_LIMIT": "stopped at its time limit before finding a solution",
+    "ITERATION_LIMIT": "stopped at its iteration limit before finding a solution",
+    "NODE_LIMIT": "stopped at its node limit before finding a solution",
+    "WORK_LIMIT": "stopped at its work limit before finding a solution",
+    "MEM_LIMIT": "stopped at its memory limit before finding a solution",
+    "INTERRUPTED": "was interrupted before finding a solution",
+}
+
+
+def _is_sparse_result(solver_name: str, sol_path: Path) -> bool:
+    """Whether *sol_path* is a Gurobi JSON result file (only non-zero values listed)."""
+    if solver_name != "gurobi" or not sol_path.is_file():
+        return False
+    with sol_path.open("rb") as fh:
+        return fh.read(64).lstrip().startswith(b"{")
+
+
+def _warn_unknown_gurobi_parameters(
+    output: str,
+    option_layers: Mapping[str, str] | None,
+    solve_name: str,
+    logger: logging.Logger | None,
+) -> None:
+    """One warning per ``Unknown parameter: '<name>' (ignored)`` line of ``gurobi_cl``, naming where the
+    parameter was set.  Gurobi solves on without it.  The line is part of Gurobi's console log, so it is not
+    seen when the log is off (``LogToConsole 0`` / ``OutputFlag 0``)."""
+    names = dict.fromkeys(_GUROBI_UNKNOWN_PARAMETER.findall(output))
+    if not names:
+        return
+    layers = {k.casefold(): v for k, v in (option_layers or {}).items()}
+    log = logger or logging.getLogger(__name__)
+    for name in names:
+        where = layers.get(name.casefold())
+        log.warning(
+            "Gurobi does not know the parameter %r%s and solved solve %s without it. Check the spelling "
+            "against the Gurobi parameter list.",
+            name, f" (set in {where})" if where else "", solve_name,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -1195,7 +1450,7 @@ def solve_via_subprocess(
     logger: logging.Logger | None = None,
     work_folder: Path | None = None,
     run_options: "RunOptions | None" = None,
-    config_dir: Path | None = None,
+    option_layers: Mapping[str, str] | None = None,
 ) -> "Solution":
     """Solve *problem* via the appropriate CLI subprocess; return a Solution.
 
@@ -1211,13 +1466,12 @@ def solve_via_subprocess(
         for the commercial CLIs.
     options
         Effective solver options.  For HiGHS, written as a HiGHS ``.opt``
-        file ingested by the subprocess.  For commercial solvers,
-        overlaid on top of the per-solver baseline at
-        ``solver_config/<solver>.opt`` and fed to the CLI via the
-        per-solver mechanism (see
-        :func:`_build_commercial_opt_file`).  Raw options win on key
-        collision.  ``time_limit`` is additionally honoured as the
-        subprocess timeout.
+        file ingested by the subprocess.  For commercial solvers, the
+        already-resolved parameter set (name -> value, final order; see
+        ``_solver_dispatch.resolve_commercial_options``), written next to
+        the MPS and fed to the CLI via the per-solver mechanism.  Its
+        native time limit also sets the subprocess watchdog
+        (``2 x limit + 600 s``).
     solve_name
         Used to name the MPS / .opt / .sol files.
     logger
@@ -1229,10 +1483,10 @@ def solve_via_subprocess(
     run_options
         The run's operator options; the HiGHS path reads ``warm_start`` and
         ``basis_cache_dir`` from them.  ``None`` reads the environment.
-    config_dir
-        The run's solver-config folder holding the commercial
-        ``<solver>.opt`` baselines (:func:`_resolve_solver_config_dir`:
-        this folder > ``$FLEXTOOL_SOLVER_CONFIG_DIR`` > ``<cwd>/solver_config``).
+    option_layers
+        Commercial solvers: parameter name -> the layer that set it (option
+        file path, ``solver_arguments of solve X``, a flag), named in the
+        warning about a parameter the solver does not know.
 
     Returns
     -------
@@ -1250,7 +1504,7 @@ def solve_via_subprocess(
     if solver_name in _SCRIPTS:
         return _solve_commercial_subprocess(
             problem, solver_name, options, solve_name=solve_name,
-            logger=logger, work_folder=work_folder, config_dir=config_dir,
+            logger=logger, work_folder=work_folder, option_layers=option_layers,
         )
     raise ValueError(
         f"solve_via_subprocess: unknown solver_name={solver_name!r}; "
@@ -1274,9 +1528,18 @@ def _solve_highs_subprocess(
 ) -> "Solution":
     """HiGHS-specific subprocess path (unchanged contract).
 
-    Writes MPS via :meth:`Problem.write_mps`, spawns
-    :mod:`flextool.cli.cmd_solve_mps`, parses the .sol back via
-    :func:`_parse_highs_sol` + :class:`_SolHighsShim` — no parent-side
+    Writes MPS via :meth:`Problem.write_mps` with GENERIC names
+    (``emit_names=False``: column ``col_id=j`` is ``C{j+1:07d}``, constraint
+    row ``i`` is ``R{i+2:07d}``), spawns :mod:`flextool.cli.cmd_solve_mps`,
+    and parses the .sol back via :func:`_parse_highs_sol`, which places
+    every value by its generic-name index into dense ``col_id`` / row-id
+    arrays and raises :class:`SubprocessSolutionMismatch` when a name or a
+    count does not line up.  The real constraint-row names come from the
+    Problem's canonical matrix, taken before the release; the column names
+    from the ``_vars`` that survive it (:func:`_col_names_from_vars`).  Real names never
+    go through the whitespace-delimited MPS / .sol, so an entity name with
+    a space (``Battery Farm``) cannot split into a different column.  The
+    arrays are wrapped in :class:`_SolHighsShim` — no parent-side
     ``highspy.Highs.readModel`` (which used to dominate cold-path RSS).
 
     **Warm-start arm** (opt-in, active only when the save-memory
@@ -1357,7 +1620,22 @@ def _solve_highs_subprocess(
                 solve_name, mps_path,
             )
 
-        problem.write_mps(str(mps_path), release=True)
+        # The LP's column count and real constraint-row names, in the exact
+        # order write_mps writes them (``canonicalise`` is cached, so
+        # write_mps reuses this matrix).  The row names must be taken now:
+        # the release drops ``_cstrs`` and the matrix.  They wait out the
+        # child solve as one compact Arrow string column rather than a
+        # Python list.  Column names survive the release in ``_vars`` and
+        # are rebuilt after the solve.
+        import polars as pl
+
+        canonical = problem.canonicalise()
+        n_lp_cols = int(canonical.n_cols)
+        real_row_names = pl.Series("row_names", canonical.row_names, dtype=pl.String)
+        del canonical
+        # Generic, whitespace-safe names in the file (see the docstring);
+        # the solution is mapped back by generic-name index below.
+        problem.write_mps(str(mps_path), release=True, emit_names=False)
 
         cmd = [
             sys.executable, "-m", "flextool.cli.cmd_solve_mps",
@@ -1372,6 +1650,13 @@ def _solve_highs_subprocess(
         # --- Warm-start arm (opt-in) ------------------------------------
         # Keyed by the MPS structural fingerprint.  Everything here is
         # defensive: on any hiccup we drop the warm slots and solve cold.
+        # The fingerprint is polar-high's hash of the REAL name-set (also
+        # with ``emit_names=False``, polar-high >= 3.12.4).  The cached
+        # ``.bas`` carries the MPS's generic names, which HiGHS' readBasis
+        # matches by name, i.e. by col_id / row position: a hit needs the
+        # same name-set built in the same order, which the deterministic
+        # model build gives.  A basis saved by an older FlexTool (real
+        # names, ``phbasis-v1`` key) misses once and is replaced.
         if run_options.value("warm_start"):
             try:
                 fp = getattr(problem, "_last_mps_fingerprint", None)
@@ -1566,40 +1851,21 @@ def _solve_highs_subprocess(
         # Parse the .sol directly — no parent-side ``Highs.readModel``.
         # On large LPs the old path's ``readModel(mps)`` spiked +33 GB
         # of RSS purely to satisfy ``allVariableNames()`` / ``getSolution()``
-        # on downstream writers; the .sol file already carries names +
-        # primal + duals, and the writers see the same shape via the
-        # ``_SolHighsShim`` wrapper.
-        col_names, row_names, col_value, col_dual, row_dual = (
-            _parse_highs_sol(sol_path)
+        # on downstream writers.  The .sol carries the primal + duals under
+        # the generic names; each value goes to the col_id / row id its
+        # name encodes, and any name or count that does not line up with
+        # the LP raises (never a silent shift onto other variables).
+        col_names = _col_names_from_vars(problem)
+        if len(col_names) != n_lp_cols:
+            raise SubprocessSolutionMismatch(
+                f"solve {solve_name!r}: the variables name {len(col_names)} "
+                f"columns but the LP written to {mps_path} has {n_lp_cols}"
+            )
+        row_names = real_row_names.to_list()
+        del real_row_names
+        col_value, col_dual, row_dual = _parse_highs_sol(
+            sol_path, len(col_names), len(row_names), require_primal=optimal,
         )
-        n_cols = len(col_value)
-        if col_dual.size == 0:
-            col_dual = np.zeros(n_cols, dtype=np.float64)
-
-        # HiGHS' ``writeSolution`` may emit synthesized row names
-        # (``r0, r1, ...``) when the LP carried duplicate or otherwise
-        # un-preservable names through ``readModel`` — the warning
-        # "Row names are not present, or contain duplicates: using
-        # names with prefix 'r'" flags this on the subprocess stderr.
-        # The MPS file written by polar-high carries the canonical
-        # constraint names (e.g. ``nodeBalance_eq[n, d, t]``); recover
-        # them so the row-dual output writers' name-based lookups keep
-        # working.  Detect by checking whether every name matches the
-        # ``r<int>`` pattern AND the count equals the MPS' constraint
-        # row count.
-        if row_names and all(
-            n.startswith("r") and n[1:].isdigit() for n in row_names
-        ):
-            mps_row_names = _parse_mps_row_names(mps_path)
-            if len(mps_row_names) == len(row_names):
-                row_names = mps_row_names
-                if logger is not None:
-                    logger.debug(
-                        "save_memory: recovered %d row names from MPS "
-                        "(HiGHS writeSolution emitted synthesized 'r*' "
-                        "names for solve %r)",
-                        len(row_names), solve_name,
-                    )
         obj = _read_objective_from_sol(sol_path)
         h = _SolHighsShim(
             col_names=col_names,
@@ -1621,10 +1887,11 @@ def _solve_highs_subprocess(
             vars=dict(problem._vars),
             highs=h,
         )
-        # The child's exit code is all the parent knows of its status
-        # (``cmd_solve_mps`` exits 0 for kOptimal, 1 otherwise); the
-        # acceptance check records it as the solve's model status.
-        sol.shim_status = "OPTIMAL" if optimal else "OTHER"
+        # The child exits 0 for kOptimal, 1 otherwise; a non-optimal solve
+        # is told apart by the status line of its solution file (a time
+        # limit with a feasible primal is ``TIME_LIMIT``).  The acceptance
+        # check records it as the solve's model status.
+        sol.shim_status = "OPTIMAL" if optimal else _highs_sol_status(sol_path)
         return sol
     finally:
         if cleanup:
@@ -1664,7 +1931,7 @@ def _solve_commercial_subprocess(
     solve_name: str,
     logger: logging.Logger | None,
     work_folder: Path | None,
-    config_dir: Path | None = None,
+    option_layers: Mapping[str, str] | None = None,
 ) -> "Solution":
     """Solve via a commercial solver's CLI binary.
 
@@ -1677,8 +1944,10 @@ def _solve_commercial_subprocess(
        We keep the real names in memory instead and map back by index.
     2. Locate ``gurobi_cl`` / ``cplex`` / ``optimizer`` / ``copt_cmd``
        via :func:`_find_solver_binary`.
-    3. Spawn the binary with the per-solver argv + stdin script
-       (copied verbatim from polar-high's ``_mps_fallback``).
+    3. Spawn the binary in the output folder with the per-solver argv +
+       stdin script and bare file names (no path, so no console quoting
+       rule matters); the stdin script is also written there as
+       ``<solve>.script`` for a replay by hand.
     4. Parse the .sol with the per-solver parser; map its generic-named
        primal (and duals, for :data:`_DUAL_CAPABLE_SOLVERS`) back by
        *index* onto the real ``col_id`` / ``row_id`` names rebuilt from
@@ -1689,18 +1958,23 @@ def _solve_commercial_subprocess(
        Work — no parent-side ``highspy.Highs.readModel`` (which used to
        OOM on large LPs and hard-fail on entity names containing spaces).
 
-    ``options`` is fed to the solver via a per-solver native opt-file
-    materialised next to the MPS in the per-solve temp dir.  The file
-    starts from the user-editable baseline at
-    ``solver_config/<solver>.opt`` (shipped in the FlexTool repo) and
-    overlays the scenario's *options* dict line-by-line (raw entries
-    win on key collision — same semantics as
-    :func:`build_solver_options`).  Each per-solver script builder then
-    references the merged file in the cleanest native form
-    (Gurobi: ``gurobi_cl <Name>=<value> ... ResultFile=<sol> <mps>``; CPLEX/Xpress/COPT:
-    inline ``set``/``setControl`` lines piped on stdin before the
-    ``read``/``optimize`` pair).  ``time_limit`` is *also* honoured as
-    the subprocess timeout when present in *options*.
+    ``options`` is the resolved parameter set
+    (``_solver_dispatch.resolve_commercial_options``: ``<solver>.opt`` <
+    ``solver_mip_gap`` < ``solver_arguments`` < flags), written next to the
+    MPS as the record of what was passed.  Each per-solver script builder
+    turns it into the CLI's form (Gurobi:
+    ``gurobi_cl <Name>=<value> ... ResultFile=<x>.json <mps>``;
+    CPLEX/Xpress/COPT: inline ``set``/``setControl`` lines piped on stdin
+    before the ``read``/``optimize`` pair).  The native time limit among
+    them sets the watchdog (``2 x limit + 600 s``): the solver enforces the
+    limit itself, the watchdog only catches a hung process.
+
+    The parsed status (``Solution.shim_status``) is ``TIME_LIMIT`` for a
+    solve stopped by its limit with a solution (Gurobi from its JSON
+    result file, else its console; COPT / Xpress from the console; CPLEX
+    from its solution file); ``Solution.shim_mip_gap`` carries the gap the
+    solver reported, when known.  The acceptance check decides what that
+    means (``_acceptance.classify_acceptance``).
     """
     from polar_high import Solution
 
@@ -1720,22 +1994,23 @@ def _solve_commercial_subprocess(
     else:
         out_dir = Path(tempfile.mkdtemp(prefix=f"flextool_{solver_name}_"))
 
-    safe_name = solve_name.replace("/", "_").replace(" ", "_") or "solve"
+    from flextool.engine.solve._solver_dispatch import (
+        commercial_time_limit,
+        commercial_watchdog_seconds,
+    )
+
+    # The solver runs in ``out_dir`` and gets bare file names: a folder name with a space, or a Windows path's
+    # backslashes, then needs no quoting or escaping rule of any solver's console (none of which FlexTool can
+    # check here).  The name keeps letters, digits, ``_``, ``.`` and ``-`` only: one plain token everywhere.
+    safe_name = re.sub(r"[^\w.\-]", "_", solve_name) or "solve"
     mps_path = out_dir / f"{safe_name}.mps"
-    sol_path = out_dir / f"{safe_name}.sol"
+    # Gurobi writes a JSON result file for a ``.json`` name: it carries the
+    # status, gap and solution count whatever the console logging.
+    sol_path = out_dir / (f"{safe_name}.json" if solver_name == "gurobi" else f"{safe_name}.sol")
     opt_path = out_dir / f"{safe_name}.opt"
 
-    # Pull a time_limit out of options if the caller forwarded one.
-    time_limit: float | None = None
-    if options:
-        for key in ("time_limit", "TimeLimit", "timelimit", "maxtime"):
-            v = options.get(key)
-            if v is not None:
-                try:
-                    time_limit = float(v)
-                    break
-                except (TypeError, ValueError):
-                    pass
+    time_limit = commercial_time_limit(solver_name, dict(options or {}))
+    watchdog = commercial_watchdog_seconds(time_limit)
 
     try:
         if logger is not None:
@@ -1765,18 +2040,18 @@ def _solve_commercial_subprocess(
         # HiGHS path.
         problem.write_mps(str(mps_path), release=True, emit_names=False)
 
-        # Merge baseline ``solver_config/<solver>.opt`` with the scenario
-        # options dict (raw entries win) and write the result to
-        # ``<solve>.opt`` for the per-solver CLI to ingest.  Returns
-        # ``None`` when both sources are empty — the per-solver script
-        # builders then skip the opt-file slot entirely.
-        opt_arg = _build_commercial_opt_file(
-            solver_name, options, opt_path, config_dir=config_dir,
-        )
+        # Write the resolved parameters to ``<solve>.opt`` for the
+        # per-solver CLI to ingest.  ``None`` when there are none — the
+        # per-solver script builders then skip the opt-file slot entirely.
+        opt_arg = _write_commercial_opt_file(options, opt_path)
 
         argv, stdin_text = _SCRIPTS[solver_name](
-            binary, mps_path, sol_path, opt_arg,
+            binary, Path(mps_path.name), Path(sol_path.name), opt_arg,
         )
+        if stdin_text is not None:
+            # The command script piped to the console (CPLEX / Xpress / COPT), next to the MPS: replay it by hand
+            # with ``cd <this folder> && <solver program> < <solve>.script``.
+            (out_dir / f"{safe_name}.script").write_text(stdin_text, encoding="utf-8")
 
         if logger is not None:
             logger.info(
@@ -1790,16 +2065,21 @@ def _solve_commercial_subprocess(
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=time_limit,
+                timeout=watchdog,
+                cwd=out_dir,
             )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(
-                f"{solver_name!r} CLI exceeded time_limit={time_limit!r}s "
-                f"for solve {solve_name!r}; captured stderr: {exc.stderr!r}"
+                f"{solver_name!r} did not stop at its own time limit of "
+                f"{time_limit:g} s for solve {solve_name!r}: FlexTool stopped it "
+                f"after {watchdog:g} s (2 x the limit + 600 s); captured "
+                f"stderr: {exc.stderr!r}"
             ) from exc
 
         stdout = cp.stdout or ""
         stderr = cp.stderr or ""
+        if solver_name == "gurobi":
+            _warn_unknown_gurobi_parameters(stdout + "\n" + stderr, option_layers, solve_name, logger)
 
         if cp.returncode != 0:
             msg = (
@@ -1813,8 +2093,18 @@ def _solve_commercial_subprocess(
                 raise RuntimeError(f"LICENSE: {msg}")
             raise RuntimeError(msg)
 
-        status_str, objective, primal, dual = _PARSERS[solver_name](sol_path)
-        if status_str == "OTHER" and not primal:
+        parsed = _PARSERS[solver_name](sol_path, stdout)
+        status_str, objective, primal, dual = parsed.status, parsed.objective, parsed.primal, parsed.dual
+        if primal is None:
+            # A status the solver reported (infeasible, a limit) is the reason; the licence
+            # check reads free log text, and a size-limited licence's banner (COPT: "No license
+            # found. Starting COPT with size limitations") is not a failure.
+            if status_str in _NO_SOLUTION_REASONS:
+                raise RuntimeError(
+                    f"{solver_name!r} reports that solve {solve_name!r} "
+                    f"{_NO_SOLUTION_REASONS[status_str]}; there is no solution "
+                    f"to use.\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+                )
             if _looks_like_license_error(stdout, stderr):
                 raise RuntimeError(
                     f"{solver_name!r} CLI for solve {solve_name!r} returned "
@@ -1826,6 +2116,13 @@ def _solve_commercial_subprocess(
                 f"parse at {sol_path} for solve {solve_name!r}.\n"
                 f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
             )
+
+        # The solver's own log, shown as HiGHS' is (after the ``Solver args`` line): the parameters it
+        # took, how the solve ended, and the remaining gap the time-limit warning points to.  The
+        # failure paths above carry it in their message instead.
+        for text in (stdout, stderr):
+            if text.strip():
+                print(text, end="" if text.endswith("\n") else "\n", flush=True)
 
         optimal = status_str == "OPTIMAL"
 
@@ -1854,7 +2151,8 @@ def _solve_commercial_subprocess(
                 "(non-generic) column names for solve %r — ignored",
                 solver_name, unrecognised, len(primal_dict), solve_name,
             )
-        if mapped < n_cols and logger is not None:
+        # A JSON result file lists only the non-zero values; a text one lists all.
+        if mapped < n_cols and logger is not None and not _is_sparse_result(solver_name, sol_path):
             logger.warning(
                 "subprocess[%s]: %d/%d columns absent from .sol for solve "
                 "%r (defaulted to 0.0)",
@@ -1905,6 +2203,7 @@ def _solve_commercial_subprocess(
         # UNBOUNDED / TIME_LIMIT / OTHER); the acceptance check records it
         # as the solve's model status (no HiGHS diagnostics exist here).
         sol.shim_status = status_str
+        sol.shim_mip_gap = parsed.mip_gap
         return sol
     finally:
         if cleanup:

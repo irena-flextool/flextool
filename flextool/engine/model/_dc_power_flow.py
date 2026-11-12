@@ -21,7 +21,7 @@ import polars as pl
 from polar_high import Param, Sum, Where
 from polar_high.engine import Var
 
-from flextool.engine.input._axis_enums import cast_dim
+from flextool.engine.input._axis_enums import cast_dim, join_aligned
 from flextool.engine.model import _coarse_flows
 from flextool.engine.model._common import _has_rows
 
@@ -308,25 +308,38 @@ def _dc_partition(b: _Build, dc_arcs: pl.DataFrame, over: pl.DataFrame) -> "pl.D
 
 
 def nodeBalance_back_flow_terms(arcs: pl.DataFrame | None, v_flow_back: Var | None, p_unitsize: Param,
-                                p_step_duration: Param) -> dict:
+                                p_step_duration: Param | None, *, group_nodes: pl.DataFrame | None = None,
+                                exclude_arcs: pl.DataFrame | None = None) -> dict:
     """The v_flow_back terms of nodeBalance_eq, open dims (n, d, t); {} without reverse flow.
 
     back_at_sink[n,d,t]   = − Σ_{(p,s,n) ∈ arcs} v_flow_back[p,s,n,d,t] · unitsize[p] · step_duration[d,t]
     back_at_source[n,d,t] = + Σ_{(p,n,k) ∈ arcs} v_flow_back[p,n,k,d,t] · unitsize[p] · step_duration[d,t]
     The signed flow of an arc is v_flow − v_flow_back, so the reverse flow leaves the sink node and arrives
     at the source node.  ``arcs`` = every arc with a reverse-flow variable (twoway1var_arcs).
+    ``p_step_duration`` None: power terms (no step_duration).  ``group_nodes`` (g, n): each term only at its
+    (g, n) pairs, open dims (g, n, d, t); ``exclude_arcs`` (g, p, source, sink): those arcs left out for that g
+    (the capacity margin, :func:`flextool.engine.model._balance_terms.balance_flow_terms`).
     """
     if v_flow_back is None or arcs is None or arcs.height == 0:
         return {}
     sink_as_n = arcs.with_columns(n=pl.col("sink")).select("p", "source", "sink", "n")
     src_as_n = arcs.with_columns(n=pl.col("source")).select("p", "source", "sink", "n")
-    return {
-        "back_at_sink": -Sum(
-            Where(v_flow_back * p_unitsize, sink_as_n) * p_step_duration,
-            over=("p", "source", "sink"),
-        ),
-        "back_at_source": Sum(
-            Where(v_flow_back * p_unitsize, src_as_n) * p_step_duration,
-            over=("p", "source", "sink"),
-        ),
-    }
+    if group_nodes is not None:
+        sink_as_n = join_aligned(sink_as_n, group_nodes.select("g", "n"), on="n", how="inner")
+        src_as_n = join_aligned(src_as_n, group_nodes.select("g", "n"), on="n", how="inner")
+        if exclude_arcs is not None and exclude_arcs.height > 0:
+            keys = ["g", "p", "source", "sink"]
+            sink_as_n = join_aligned(sink_as_n, exclude_arcs.select(keys).unique(), on=keys, how="anti")
+            src_as_n = join_aligned(src_as_n, exclude_arcs.select(keys).unique(), on=keys, how="anti")
+
+    def energy(term):
+        return term if p_step_duration is None else term * p_step_duration
+
+    terms: dict = {}
+    if sink_as_n.height > 0:
+        terms["back_at_sink"] = -Sum(energy(Where(v_flow_back * p_unitsize, sink_as_n)),
+                                     over=("p", "source", "sink"))
+    if src_as_n.height > 0:
+        terms["back_at_source"] = Sum(energy(Where(v_flow_back * p_unitsize, src_as_n)),
+                                      over=("p", "source", "sink"))
+    return terms

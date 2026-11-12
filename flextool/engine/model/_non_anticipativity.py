@@ -1,7 +1,7 @@
 """Non-anticipativity: decisions taken before a forecast is revealed are equal in every forecast branch.
 
-Owns the dispatch ties non_anticipativity_storage_use, _storage_state_first, _online_{integer,linear} and
-_reserve, which hold over the tied steps dt_non_anticipativity between the forecast branches of each anchor
+Owns the dispatch ties non_anticipativity_storage_use, _storage_state_first, _rp_block_start,
+_online_{integer,linear} and _reserve, which hold over the tied steps dt_non_anticipativity between the forecast branches of each anchor
 period, and the investment ties non_anticipativity_{invest,divest}_{p,n}, which hold over the window
 pd_non_anticipativity of a recourse-investment solve.  The module declares no variables.
 """
@@ -147,6 +147,50 @@ def _storage_use_partition(b: "_Build", over: pl.DataFrame) -> "pl.DataFrame | N
             .select("n", "d", "b", "b_first", "t", "w"))
 
 
+def _state_first_cells(star, tie_dt, stoch_nodes, v_state) -> "pl.DataFrame | None":
+    """``(n, d, b, t)``: the rows of non_anticipativity_storage_state_first (forecast d tied to its reference b at
+    the first tied step t of d, only where the tied steps of d are fewer than the v_state steps of (n, d), and with
+    a v_state column on both sides); None when there are none."""
+    if v_state is None or stoch_nodes is None:
+        return None
+    vstate_dt = v_state.frame.select("n", "d", "t").unique()
+    tied_steps = tie_dt.select("d", "t").unique()
+    first_per_d = tied_steps.group_by("d").agg(pl.col("t").min().alias("t"))
+    tied_counts = tied_steps.group_by("d").agg(pl.len().alias("tied_count"))
+    full_counts = vstate_dt.group_by("n", "d").agg(pl.len().alias("full_count"))
+    nd_keep = (stoch_nodes
+               .join(tie_dt.select("d").unique(), how="cross")
+               .join(tied_counts, on="d", how="inner")
+               .join(full_counts, on=["n", "d"], how="inner")
+               .filter(pl.col("tied_count") < pl.col("full_count"))
+               .select("n", "d").unique())
+    if nd_keep.height == 0:
+        return None
+    over = (nd_keep
+            .join(first_per_d, on="d", how="inner")
+            .join(star, on="d", how="inner")
+            .select("n", "d", "b", "t").unique())
+    # Keep only cells with a v_state column on both sides (the star's b is on the period axis).
+    over = (over
+            .join(vstate_dt, on=["n", "d", "t"], how="inner")
+            .join(vstate_dt.rename({"d": "b"}), on=["n", "b", "t"], how="inner")
+            .select("n", "d", "b", "t").unique())
+    return over if over.height > 0 else None
+
+
+def storage_state_first_cells(b: "_Build") -> "pl.DataFrame | None":
+    """``(n, d, b, t)``: the rows non_anticipativity_storage_state_first has in this build (the same guards as
+    :func:`add_dispatch_constraints`); None when it has none.  ``model.core._eq_storage_state_fan_start`` leaves
+    the root pairs these rows tie out."""
+    d = b.d
+    if not _has_rows(d.period_branch_full) or not _has_rows(d.dt_non_anticipativity):
+        return None
+    star, tie_dt = _forecast_star(d)
+    if star is None or not _has_rows(tie_dt):
+        return None
+    return _state_first_cells(star, tie_dt, _stochastic_nodes(d), b.v_state)
+
+
 def add_dispatch_constraints(b: "_Build") -> None:
     """Tie storage use, units online and reserves across the forecast branches of each anchor period."""
     d = b.d
@@ -170,6 +214,7 @@ def add_dispatch_constraints(b: "_Build") -> None:
     #              − Σ_{(p,n,k) ∈ flow_from_nodeBalance_noEff} v_flow[p,n,k,d,t] · unitsize[p] · Δt[d,t]
     #              − Σ_{(p,s,n) ∈ twoway1var_arcs} v_flow_back[p,s,n,d,t] · unitsize[p] · Δt[d,t]
     #              + Σ_{(p,n,k) ∈ twoway1var_arcs} v_flow_back[p,n,k,d,t] · unitsize[p] · Δt[d,t]
+    #              − Σ_{(p,n) ∈ startup_to_balance} v_startup[p,d,t] · startup_energy[p,n,d] · unitsize[p]
     #   ∀ n ∈ nodes of groupStochastic ∩ nodeBalance, (d,b) ∈ forecast star, (d,t) ∈ tied steps
     #   section only for p ∈ process_min_load_eff (v_online = v_online_linear or v_online_integer)
     # The net flow into a stochastic node is the same in every forecast over the tied steps: exactly the flow
@@ -220,35 +265,61 @@ def add_dispatch_constraints(b: "_Build") -> None:
     # drift stays feasible where balance slack or forecast-specific inflow
     # absorbs it.  v_online and v_reserve need no analogue: their ties pin
     # the variable itself at every tied step.
-    if v_state is not None and stoch_nodes is not None:
-        vstate_dt = v_state.frame.select("n", "d", "t").unique()
-        tied_steps = tie_dt.select("d", "t").unique()
-        first_per_d = tied_steps.group_by("d").agg(pl.col("t").min().alias("t"))
-        tied_counts = tied_steps.group_by("d").agg(pl.len().alias("tied_count"))
-        full_counts = vstate_dt.group_by("n", "d").agg(pl.len().alias("full_count"))
-        nd_keep = (stoch_nodes
-                   .join(tie_dt.select("d").unique(), how="cross")
-                   .join(tied_counts, on="d", how="inner")
-                   .join(full_counts, on=["n", "d"], how="inner")
-                   .filter(pl.col("tied_count") < pl.col("full_count"))
-                   .select("n", "d").unique())
-        if nd_keep.height > 0:
-            over = (nd_keep
-                    .join(first_per_d, on="d", how="inner")
-                    .join(star, on="d", how="inner")
-                    .select("n", "d", "b", "t").unique())
-            # Keep only cells with a v_state column on both sides (the star's b is on the period axis).
-            over = (over
-                    .join(vstate_dt, on=["n", "d", "t"], how="inner")
-                    .join(vstate_dt.rename({"d": "b"}), on=["n", "b", "t"], how="inner")
-                    .select("n", "d", "b", "t").unique())
+    state_first_over = _state_first_cells(star, tie_dt, stoch_nodes, v_state)
+    if state_first_over is not None:
+        m.add_cstr(
+            "non_anticipativity_storage_state_first",
+            over      = state_first_over,
+            sense     = "==",
+            lhs_terms = {"v_d":  v_state,
+                         "v_b": -_var_view(v_state, "__nab_first", {"d": "b"})},
+            rhs_terms = {},
+        )
+
+    # ─── EQ. ─── non_anticipativity_rp_block_start ───────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_rp_start[n,d,t] − v_state_rp_start[n,b,t] = 0
+    #   ∀ n ∈ nodes of groupStochastic ∩ nodeState_rp, (d,b) ∈ forecast star, (d,t) ∈ tied steps,
+    #     (d,t) and (b,t) ∈ rp_block_first, (n,d,b,t) ∉ the rows of non_anticipativity_storage_state_first
+    # A representative block starts from a free level; inside the tie window it
+    # is a decision taken before the forecast is known, so it is the same in
+    # every forecast (the net-flow tie fixes only the shape of the state within
+    # the block).  A block whose first step already has a
+    # non_anticipativity_storage_state_first row is left out: there v_state at
+    # t_first (the end of the block's first step) is tied, so its start is tied
+    # up to the forecasts' difference in balance slack (and inflow) over that
+    # step; the net flows of the step are tied already.  The base-period
+    # levels v_state_inter need no tie of their own: inside the window they
+    # follow from the tied net flows, these block starts and the shared chain
+    # start (the trunk period's end level, or rp_inter_period_fan_start).
+    v_rp_start = b.v_state_rp_start
+    if v_rp_start is not None and stoch_nodes is not None and _has_rows(d.nodeState_rp):
+        rp_names = [str(n) for n in d.nodeState_rp["n"].to_list()]
+        rp_nodes = stoch_nodes.filter(pl.col("n").cast(pl.Utf8).is_in(rp_names))
+        start_cells = v_rp_start.frame.select("n", "d", "t").unique()
+        if rp_nodes.height > 0 and start_cells.height > 0:
+            u = [pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t")]
+            cells_u = start_cells.select(u)
+            over = (rp_nodes.select(pl.col("n").cast(pl.Utf8))
+                    .join(star.select(pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8)), how="cross")
+                    .join(tie_dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).unique(),
+                          on="d", how="inner")
+                    .join(cells_u, on=["n", "d", "t"], how="inner")
+                    .join(cells_u.rename({"d": "b"}), on=["n", "b", "t"], how="inner"))
+            if state_first_over is not None:
+                over = over.join(state_first_over.select([pl.col(c).cast(pl.Utf8) for c in ("n", "d", "b", "t")]),
+                                 on=["n", "d", "b", "t"], how="anti")
+            schema = start_cells.schema
+            over = (over.select("n", "d", "b", "t").unique()
+                    .with_columns(pl.col("n").cast(schema["n"]), pl.col("d").cast(schema["d"]),
+                                  pl.col("b").cast(schema["d"]), pl.col("t").cast(schema["t"])))
             if over.height > 0:
                 m.add_cstr(
-                    "non_anticipativity_storage_state_first",
+                    "non_anticipativity_rp_block_start",
                     over      = over,
                     sense     = "==",
-                    lhs_terms = {"v_d":  v_state,
-                                 "v_b": -_var_view(v_state, "__nab_first", {"d": "b"})},
+                    lhs_terms = {"v_d":  v_rp_start,
+                                 "v_b": -_var_view(v_rp_start, "__nab_rp", {"d": "b"})},
                     rhs_terms = {},
                 )
 

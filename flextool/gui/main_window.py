@@ -54,7 +54,10 @@ from flextool.gui.execution_window import ExecutionWindow
 from flextool.gui.output_actions import OutputActionManager
 from flextool.gui.result_viewer import ResultViewer
 from flextool.gui.db_version_check import check_and_upgrade_database
-from flextool.gui.dialogs.migration_consent_dialog import ask_external_migration_consent
+from flextool.gui.dialogs.migration_consent_dialog import (
+    ask_external_migration_consent,
+    ask_frozen_migration_choice,
+)
 from flextool.gui.dialogs.calibrate_dialog import CalibrateDialog
 from flextool.gui.dialogs.migration_progress_dialog import MigrationProgressDialog
 from flextool.gui.dialogs.plot_dialog import PlotDialog
@@ -117,6 +120,10 @@ STATUS_ERR = "\u2717"     # ✗
 STATUS_EMPTY = "\u25cb"   # (no scenarios; Geometric Shapes circle — was U+2300 diameter sign)
 STATUS_EDITING = "\u25b6" # open in editor (Geometric Shapes; was U+23F3)
 STATUS_RETIRED = "\u2298" # ghost row: input file gone, only results remain
+# Frozen sqlite (``flextool-freeze``; a snowflake, as Tk 8.6 cannot show the
+# non-BMP lock emoji): at the current version and runnable, or older and not.
+STATUS_FROZEN = "\u2744"
+STATUS_FROZEN_OLD = "\u2744\u2717"
 
 # Input-sources tree iid prefixes
 _EXT_IID_PREFIX = "ext:"      # external reference
@@ -128,6 +135,43 @@ def _source_name_from_iid(iid: str) -> str:
     if iid.startswith(_EXT_IID_PREFIX):
         return iid[len(_EXT_IID_PREFIX):]
     return iid
+
+
+def _migrate_frozen_copy(
+    original: Path,
+    copy_path: Path,
+    *,
+    progress_callback,
+    cancel_check,
+) -> tuple[bool, bool, list[str]]:
+    """Migrate a copy of a frozen source (``frozen.migrate_copy``) as ``check_and_upgrade_database`` reports.
+
+    Returns ``(was_upgraded, failed, messages)``; a cancelled or failed copy is removed and the frozen original is
+    never changed.
+    """
+    from flextool.update_flextool.db_migration import MigrationCancelled
+    from flextool.update_flextool.frozen import migrate_copy
+
+    try:
+        marker = migrate_copy(
+            original, copy_path, progress_callback=progress_callback, cancel_check=cancel_check,
+        )
+    except MigrationCancelled:
+        return False, False, [
+            f"{original.name}: migrating the copy was cancelled; the copy was removed and "
+            f"the frozen file is unchanged."
+        ]
+    except Exception as exc:
+        logger.warning("Migrating a copy of %s failed", original, exc_info=True)
+        return False, True, [
+            f"{original.name}: migrating a copy FAILED ({exc}); the copy was removed and "
+            f"the frozen file is unchanged."
+        ]
+    return True, False, [
+        f"{original.name} is frozen ('{marker.label}'): migrated a copy from version "
+        f"{marker.version} to the current version as {copy_path.name}, a new input source. "
+        f"The frozen file is unchanged."
+    ]
 
 
 def _is_ghost_iid(iid: str) -> bool:
@@ -1704,6 +1748,7 @@ class MainWindow(tk.Tk):
         dlg = ProjectDialog(
             self, current_project=self.current_project,
             before_project_change=self._assistant.before_project_change,
+            jobs_running=self._project_jobs_running,
         )
 
         # The open project under the name the dialog left it with (it may
@@ -1732,6 +1777,11 @@ class MainWindow(tk.Tk):
             # failed left it open: keep its AI assistant runtime file.
             if self.current_project and not deleted:
                 self._assistant.ensure_open(self.current_project)
+
+    def _project_jobs_running(self, name: str) -> bool:
+        """Whether project *name* has running or pending execution jobs (only the open project can)."""
+        return (name == self.current_project and self.execution_mgr is not None
+                and self.execution_mgr.has_pending_or_running())
 
     def _reset_to_no_project(self) -> None:
         """Tear down per-project state after the open project is deleted."""
@@ -2508,11 +2558,110 @@ class MainWindow(tk.Tk):
         menu = self._styled_popup_menu(self)
         menu.add_command(label="Edit", command=self._on_edit_source)
         menu.add_command(label="Convert", command=self._on_convert_source)
+        source = self._frozen_menu_source(item)
+        if source is not None:
+            menu.add_separator()
+            if source.status == "frozen_old":
+                menu.add_command(
+                    label="Migrate frozen database\u2026",
+                    command=lambda s=source: self._on_migrate_frozen_source(s),
+                )
+            if source.frozen_label is None:
+                menu.add_command(
+                    label="Freeze database\u2026",
+                    command=lambda s=source: self._on_freeze_source(s),
+                )
+            else:
+                menu.add_command(
+                    label="Unfreeze database",
+                    command=lambda s=source: self._on_unfreeze_source(s),
+                )
         menu.add_separator()
         menu.add_command(label="Delete", command=self._on_delete_source)
         menu.add_separator()
         menu.add_command(label="Refresh", command=self._on_refresh_sources)
         menu.tk_popup(event.x_root, event.y_root)
+
+    def _frozen_menu_source(self, item: str):
+        """The live sqlite source of a right-clicked row, for the Freeze / Unfreeze actions (else ``None``)."""
+        if not item or self.input_source_mgr is None:
+            return None
+        name = _source_name_from_iid(item)
+        if not name.lower().endswith(".sqlite"):
+            return None
+        return next((s for s in self.input_source_mgr._sources if s.name == name), None)
+
+    def _on_freeze_source(self, source) -> None:
+        """Right-click "Freeze database…": ask a label and write the frozen marker (``flextool-freeze``)."""
+        from flextool.update_flextool.frozen import MAX_LABEL_LENGTH, FreezeError, freeze
+
+        assert self.input_source_mgr is not None
+        path = self.input_source_mgr.resolve_path(source)
+        if self.db_editor_mgr.has_uncommitted_changes(path):
+            messagebox.showwarning(
+                "Freeze database",
+                f"{source.name} has uncommitted changes in the database editor. "
+                "Commit or discard them first.",
+                parent=self,
+            )
+            return
+        label = simpledialog.askstring(
+            "Freeze database",
+            f"A frozen database is never migrated in place without asking.\n"
+            f"Label for {source.name} (at most {MAX_LABEL_LENGTH} characters), "
+            f"e.g. \"Reference case 1.0\":",
+            parent=self,
+        )
+        if label is None:
+            return
+        try:
+            info = freeze(path, label)
+        except FreezeError as exc:
+            messagebox.showerror("Freeze database", str(exc), parent=self)
+            return
+        except Exception as exc:
+            logger.warning("Freezing %s failed", path, exc_info=True)
+            messagebox.showerror("Freeze database", f"Could not freeze {source.name}: {exc}", parent=self)
+            return
+        messagebox.showinfo("Freeze database", f"{source.name} is frozen: {info.describe()}.", parent=self)
+        self._refresh_input_sources()
+
+    def _on_unfreeze_source(self, source) -> None:
+        """Right-click "Unfreeze database": remove the frozen marker after a confirm."""
+        from flextool.update_flextool.frozen import unfreeze
+
+        assert self.input_source_mgr is not None
+        path = self.input_source_mgr.resolve_path(source)
+        if not messagebox.askyesno(
+            "Unfreeze database",
+            f"Remove the frozen marker of {source.name} ('{source.frozen_label}')?\n"
+            "It is then migrated like any other input source.",
+            parent=self,
+        ):
+            return
+        try:
+            unfreeze(path)
+        except Exception as exc:
+            logger.warning("Unfreezing %s failed", path, exc_info=True)
+            messagebox.showerror("Unfreeze database", f"Could not unfreeze {source.name}: {exc}", parent=self)
+            return
+        self._refresh_input_sources()
+
+    def _on_migrate_frozen_source(self, source) -> None:
+        """Right-click "Migrate frozen database…": ask again about a frozen source declined this session."""
+        assert self.input_source_mgr is not None
+        path = self.input_source_mgr.resolve_path(source)
+        copy = self.input_source_mgr.migrated_copy_of(path)
+        if copy is not None:
+            messagebox.showinfo(
+                "Migrate frozen database",
+                f"{source.name} already has a migrated copy, {copy.name}: run the copy. "
+                "Delete the copy to migrate the frozen file again.",
+                parent=self,
+            )
+            return
+        self.input_source_mgr.undecline_frozen(path)
+        self._refresh_input_sources()
 
     def _show_ghost_source_menu(self, item: str, x_root: int, y_root: int) -> None:
         """Context menu for a retired ghost row (deleted file, results remain).
@@ -2648,6 +2797,13 @@ class MainWindow(tk.Tk):
             tip_lines.append("Could not read scenarios (invalid or missing file).")
         elif status_char == STATUS_EDITING:
             tip_lines.append("File is currently open for editing.")
+        if not _is_ghost_iid(item) and self.input_source_mgr is not None:
+            live = next(
+                (s for s in self.input_source_mgr._sources if s.name == source_name),
+                None,
+            )
+            if live is not None and live.frozen_note:
+                tip_lines.append(live.frozen_note)
         if is_external:
             rel = self.project_settings.external_refs.get(source_name, "")
             tip_lines.append(
@@ -2813,31 +2969,6 @@ class MainWindow(tk.Tk):
         # 5. Persist the updated check states
         self._save_checked_available_scenarios()
 
-    def _refresh_and_check_new_scenarios(self) -> None:
-        """Refresh input sources and check any newly appeared scenarios.
-
-        Called after sensitivity import completes — the source already exists
-        but new scenarios have been added to it.
-        """
-        # Remember which scenarios are currently shown
-        old_scenarios: set[str] = set()
-        for item in self.available_tree.get_children():
-            values = self.available_tree.item(item, "values")
-            if values:
-                old_scenarios.add(str(values[0]))  # scenario name
-
-        self._refresh_input_sources()
-
-        # Check any scenarios that weren't there before
-        for item in self.available_tree.get_children():
-            values = self.available_tree.item(item, "values")
-            if values and str(values[0]) not in old_scenarios:
-                self.available_tree.set(item, "check", CHECK_ON)
-
-        self._save_checked_available_scenarios()
-        self._update_add_to_execution_style()
-        self._update_add_to_execution_style()
-
     def _on_refresh_sources(self) -> None:
         """Refresh input sources by re-scanning the directory."""
         if not self.input_source_mgr:
@@ -2861,26 +2992,32 @@ class MainWindow(tk.Tk):
         (
             internal_to_migrate,
             external_to_migrate,
+            frozen_to_migrate,
             planning_messages,
         ) = mgr.plan_db_migrations()
 
-        if not internal_to_migrate and not external_to_migrate:
+        if not internal_to_migrate and not external_to_migrate and not frozen_to_migrate:
             return False, planning_messages
 
         consent: str = "in_place"
         if external_to_migrate:
             consent = ask_external_migration_consent(self, external_to_migrate)
 
-        final_list: list[tuple[str, Path]] = list(internal_to_migrate)
+        # (name, path, mode, copy destination): mode "plain" migrates a source
+        # that is not frozen, "frozen_in_place" a frozen one the user agreed to
+        # change, "frozen_copy" migrates a copy and leaves the frozen file as is.
+        final_list: list[tuple[str, Path, str, Path | None]] = [
+            (name, path, "plain", None) for name, path in internal_to_migrate
+        ]
         if consent == "in_place":
             for name, abs_path, _curr, _tgt in external_to_migrate:
-                final_list.append((name, abs_path))
+                final_list.append((name, abs_path, "plain", None))
         elif consent == "copy_to_project":
             settings_changed = False
             for name, _abs_path, _curr, _tgt in external_to_migrate:
                 dst, error = mgr.copy_external_to_project(name)
                 if error is None:
-                    final_list.append((name, dst))
+                    final_list.append((name, dst, "plain", None))
                     settings_changed = True
                 else:
                     planning_messages.append(error)
@@ -2890,6 +3027,23 @@ class MainWindow(tk.Tk):
                     self.project_settings,
                 )
         # consent == "cancel" -> skip externals entirely
+
+        for entry in frozen_to_migrate:
+            copy_path = mgr.frozen_copy_path(entry)
+            choice = ask_frozen_migration_choice(
+                self, entry.source_name, entry.path, entry.label,
+                entry.current_version, entry.target_version, copy_path.name,
+            )
+            if choice == "copy":
+                final_list.append((entry.source_name, entry.path, "frozen_copy", copy_path))
+            elif choice == "in_place":
+                final_list.append((entry.source_name, entry.path, "frozen_in_place", None))
+            else:
+                mgr.decline_frozen(entry.path)
+                planning_messages.append(
+                    f"{entry.source_name} is frozen ('{entry.label}') and was not "
+                    f"migrated; it cannot be run in this session."
+                )
 
         if not final_list:
             return False, planning_messages
@@ -2930,7 +3084,7 @@ class MainWindow(tk.Tk):
 
         def _worker() -> None:
             try:
-                for i, (name, path) in enumerate(final_list, start=1):
+                for i, (name, path, mode, copy_path) in enumerate(final_list, start=1):
                     if dialog.cancel_requested:
                         break
                     dialog.update_status(f"Migrating {name} ({i}/{total})…")
@@ -2952,11 +3106,20 @@ class MainWindow(tk.Tk):
                             f"v{curr} → v{nxt} (target v{target})"
                         )
 
-                    was_upgraded, failed, messages = check_and_upgrade_database(
-                        path,
-                        progress_callback=_progress_cb,
-                        cancel_check=lambda: dialog.cancel_requested,
-                    )
+                    if mode == "frozen_copy":
+                        assert copy_path is not None
+                        was_upgraded, failed, messages = _migrate_frozen_copy(
+                            path, copy_path,
+                            progress_callback=_progress_cb,
+                            cancel_check=lambda: dialog.cancel_requested,
+                        )
+                    else:
+                        was_upgraded, failed, messages = check_and_upgrade_database(
+                            path,
+                            progress_callback=_progress_cb,
+                            cancel_check=lambda: dialog.cancel_requested,
+                            allow_frozen=mode == "frozen_in_place",
+                        )
                     worker_messages.extend(messages)
                     for msg in messages:
                         _emit(msg)
@@ -3032,7 +3195,9 @@ class MainWindow(tk.Tk):
                 continue
 
             if source.status == "ok":
-                status_char = STATUS_OK
+                status_char = STATUS_FROZEN if source.frozen_label is not None else STATUS_OK
+            elif source.status == "frozen_old":
+                status_char = STATUS_FROZEN_OLD
             elif source.status == "editing":
                 status_char = STATUS_EDITING
             elif source.status == "empty":
@@ -3049,6 +3214,8 @@ class MainWindow(tk.Tk):
 
             if source.status == "error":
                 tags = ("error",)
+            elif source.status == "frozen_old":
+                tags = ("retired",)
             elif source.status == "empty":
                 tags = ("empty",)
             elif source.external_rel_path:
@@ -3773,12 +3940,24 @@ class MainWindow(tk.Tk):
                 "--migration-follows",
             ]
         elif info.format == ExcelFormat.OLD_V2:
+            # The sensitivities must be written before the migration, inside
+            # the same import, so the optional master workbook is asked now.
+            from flextool.gui.dialogs.add_dialog import ask_old_flextool_master
+            master_path = ask_old_flextool_master(
+                self, xlsx_path.parent, self.winfo_width(),
+                self.winfo_screenheight(),
+            )
+            if master_path is False:
+                work_sqlite.unlink(missing_ok=True)
+                return
             cmd = [
                 sys.executable, "-m",
                 "flextool.cli.cmd_read_old_flextool",
                 str(xlsx_path),
                 target_db_url,
             ]
+            if master_path is not None:
+                cmd += ["--master", str(master_path)]
         else:
             messagebox.showerror(
                 "Unknown format",
@@ -5063,6 +5242,12 @@ class MainWindow(tk.Tk):
             logger.info("No scenarios checked for execution")
             return
 
+        # The engine refuses a database that is not at the current version:
+        # migrate (with the usual consent dialogs) before the run starts.
+        checked = self._migrate_sources_before_run(checked)
+        if not checked:
+            return
+
         # Check if any checked scenarios come from editing sources (Change 5)
         editing_source_numbers: set[int] = set()
         sources_by_name = (
@@ -5166,6 +5351,61 @@ class MainWindow(tk.Tk):
         # Handle xlsx scenarios through pre-conversion
         if xlsx_scenarios:
             self._start_xlsx_preconversion(xlsx_scenarios)
+
+    def _sqlite_sources_not_current(self, scenarios: list[ScenarioInfo]) -> dict[str, str]:
+        """The sqlite input sources of *scenarios* that are not current, each with the reason (read-only probe).
+
+        Not current: a FlexTool data version other than this FlexTool's, an
+        older SpineDB schema, or a version that cannot be read.
+        """
+        from flextool.gui.db_version_check import get_target_flextool_version
+        from flextool.update_flextool.frozen import read_db_version_ro, schema_outdated_ro
+
+        if self.input_source_mgr is None:
+            return {}
+        target = get_target_flextool_version()
+        by_name = {s.name: s for s in self.input_source_mgr._sources}
+        stale: dict[str, str] = {}
+        for name in {s.source_name for s in scenarios}:
+            if not name.lower().endswith(".sqlite"):
+                continue
+            source = by_name.get(name)
+            if source is None:
+                continue
+            path = self.input_source_mgr.resolve_path(source)
+            version = read_db_version_ro(path)
+            if version is None:
+                stale[name] = "could not read the FlexTool version"
+            elif version != target:
+                stale[name] = f"FlexTool data version {version}, this FlexTool needs {target}"
+            elif schema_outdated_ro(path):
+                stale[name] = "older SpineDB schema"
+        return stale
+
+    def _migrate_sources_before_run(self, scenarios: list[ScenarioInfo]) -> list[ScenarioInfo]:
+        """Migrate the sqlite sources of *scenarios* that are not current; returns the scenarios that can run.
+
+        A source changed after the last refresh (a file copied in, an external
+        source whose migration was cancelled) is migrated here through the
+        refresh, with its consent dialogs.  Scenarios of a source that is still
+        not current (declined, frozen, failed, unreadable) are left out with a
+        message.
+        """
+        stale = self._sqlite_sources_not_current(scenarios)
+        if not stale:
+            return scenarios
+        self._refresh_input_sources()
+        still = self._sqlite_sources_not_current(scenarios)
+        if not still:
+            return scenarios
+        messagebox.showwarning(
+            "Input database not migrated",
+            "These input sources are not current and were not migrated, so "
+            "their scenarios are not run:\n\n  "
+            + "\n  ".join(f"{name} ({still[name]})" for name in sorted(still)),
+            parent=self,
+        )
+        return [s for s in scenarios if s.source_name not in still]
 
     # ── Execution menu handler ───────────────────────────────────
 
@@ -5363,6 +5603,10 @@ class MainWindow(tk.Tk):
             return
 
         checked = self.avail_scenario_mgr.get_checked_scenarios(self.available_tree)
+        if not checked:
+            return
+        # As a normal run: migrate the sources first, leave out the ones that stay not current.
+        checked = self._migrate_sources_before_run(checked)
         if not checked:
             return
 
@@ -5748,11 +5992,14 @@ class MainWindow(tk.Tk):
         )
         tl_entry.grid(row=row, column=1, sticky="w", pady=4)
         _attach_tip(tl_entry, (
-            "HiGHS wall-clock time limit in whole seconds\n"
-            "(--solver-time-limit SECONDS). 0 means no limit\n"
-            "(the CLI's unset default). Routed through the\n"
-            "effective-options resolver as a CLI override\n"
-            "(highest precedence)."
+            "Time limit of each solve in whole seconds, on every\n"
+            "solver: HiGHS, Gurobi, CPLEX, Xpress and COPT\n"
+            "(--solver-time-limit SECONDS). 0 means no limit.\n"
+            "It overrides a time limit in the solver's option file\n"
+            "and in a solve's solver_arguments. A MIP solve that\n"
+            "stops at the limit keeps its best solution, with a\n"
+            "warning; a linear solve, or one without a solution,\n"
+            "stops the run."
         ))
         row += 1
 
@@ -5827,7 +6074,8 @@ class MainWindow(tk.Tk):
             text=(
                 "These are the common knobs. The full set of solver "
                 "options can be set\nthrough the .opt files (e.g. "
-                "highs.opt) in the project's solver_config folder;\n"
+                "highs.opt) in the solver_config folder of the FlexTool\n"
+                "workspace (or $FLEXTOOL_SOLVER_CONFIG_DIR);\n"
                 "the MIP gap is set per solve (solver_mip_gap) or in "
                 "highs.opt."
             ),

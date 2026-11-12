@@ -3,7 +3,7 @@
 Lazy-polars port of flextool's NPV / lifetime-fixed-cost / inflation
 cascade.  Replaces the eager-Python implementation that previously lived
 in :mod:`._derived` (``ed_entity_annual_family_from_source`` plus
-its supporting ``_per_method_annuity`` / ``_resolve_pdX`` helpers).
+its supporting ``_resolve_pdX`` helper).
 
 The cluster covers six FlexData fields:
 
@@ -54,8 +54,10 @@ Algorithm:
   where:
 
   * ``annuity`` = sum-over-allowed-methods of
-    ``invest_value × 1000 × r / (1 - (1/(1+r))^n)`` with
-    ``r ≤ 0 → 0.05`` and ``n ≤ 0 → 20`` fallbacks.
+    ``invest_value × 1000 × annuity_factor(r, n)`` (:mod:`.._annuity`:
+    ``r / (1 - (1+r)^-n)``, ``1/n`` at ``r = 0``).  A missing ``r`` takes
+    the schema default (0.05); a missing lifetime where the cost is not 0
+    is an error.
   * ``window(d, d_all, e)``:
       - ``reinvest_choice`` / ``no_investment``:
         ``pdy[d_all] ∈ [pdy[d], pdy[d] + lifetime[e, d])``.
@@ -96,7 +98,16 @@ from flextool.engine.input._axis_enums import (
     alias_to_axis,
     schema_dtype,
 )
+from flextool.engine.preprocess._annuity import (
+    annuity_factor_expr,
+    default_discount_rate,
+    require_lifetime,
+)
 from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
+from flextool.engine.preprocess.params._existing import (
+    DIVEST_NOT_ALLOWED as _DIVEST_NOT_ALLOWED,
+    INVEST_NOT_ALLOWED as _INVEST_NOT_ALLOWED,
+)
 
 # Substrate handle for the cascade-wide axis enum vocabulary.
 # Bare ``None`` here; ``cast_dim`` / ``schema_dtype`` in
@@ -109,13 +120,8 @@ if TYPE_CHECKING:
     from flextool.engine.input._input_source import InputSource
 
 
-# Mirror flextool/flextool_base.dat:211-212 (cf. entity_annual_calc_params.py).
-_INVEST_NOT_ALLOWED: frozenset[str] = frozenset((
-    "not_allowed", "retire_period", "retire_total", "retire_no_limit",
-))
-_DIVEST_NOT_ALLOWED: frozenset[str] = frozenset((
-    "not_allowed", "invest_period", "invest_total", "invest_no_limit",
-))
+# The invest/retire method lists (_INVEST_NOT_ALLOWED / _DIVEST_NOT_ALLOWED)
+# are imported from params/_existing.py, their one definition.
 
 # Default lifetime_method when an entity has no explicit row
 # (preprocessing/method_with_fallback_sets.py::_LIFETIME_METHOD_DEFAULT).
@@ -250,7 +256,7 @@ def _per_entity_param_lf(source: "InputSource",
 
 def _resolve_per_period_lf(per_param: pl.LazyFrame,
                               ed_lf: pl.LazyFrame,
-                              fill: float = 0.0,
+                              fill: float | None = 0.0,
                               ) -> pl.LazyFrame:
     """Resolve ``pdX[e, param, d]`` cascade in lazy form.
 
@@ -700,6 +706,17 @@ def _commission_walk_lf(commission: pl.DataFrame | None) -> pl.LazyFrame | None:
 # ---------------------------------------------------------------------------
 
 
+def _notice_discount_rate_zero() -> None:
+    """The ``discount_rate_zero_is_zero`` notice for the entities its marker names (an upgraded database whose
+    explicit discount_rate 0 was read as 5 % before schema v79)."""
+    from flextool.engine import _behaviour_changes as bc
+
+    if bc.has_marker("discount_rate_zero_is_zero"):
+        names = bc.marker_json("discount_rate_zero_is_zero").get("entities") or []
+        if names:
+            bc.notice("discount_rate_zero_is_zero", "entities", sorted(str(n) for n in names))
+
+
 def _per_method_annuity_lf(
         source: "InputSource",
         ed_lf: pl.LazyFrame,
@@ -713,11 +730,11 @@ def _per_method_annuity_lf(
 
       For each (e, d) ∈ ed_lf:
         ann[e, d] = Σ_{m ∈ invest_methods[e] \\ disallowed}
-                       _annuity(cost[e, d], discount_rate[e, d], lifetime[e, d])
+                       cost[e, d] · 1000 · annuity_factor(discount_rate[e, d], lifetime[e, d])
         (when e ∈ unit ∪ connection ∪ node)
 
     The inner computation does NOT depend on ``m`` — every allowed
-    method contributes the same ``_annuity(...)`` value.  So we collapse:
+    method contributes the same annuity value.  So we collapse:
     ``ann[e, d] = method_count[e] × annuity[e, d]`` where
     ``method_count[e] = |{m : (e, m) ∈ entity__invest_method,
                                 m ∉ disallowed}|``.
@@ -743,25 +760,33 @@ def _per_method_annuity_lf(
     ed_with_class = ed_lf.join(cls_lf, on="e", how="left")
     ed_with_cost = (_resolve_per_period_lf(cost_per, ed_with_class, fill=0.0)
                        .rename({"value": "cost"}))
-    ed_with_disc = (_resolve_per_period_lf(disc_per, ed_with_cost, fill=0.0)
+    # A missing discount_rate is the schema default (0.05); an explicit 0 stays 0 (straight-line annuity).
+    ed_with_disc = (_resolve_per_period_lf(disc_per, ed_with_cost,
+                                           fill=default_discount_rate(source))
                        .rename({"value": "disc"}))
-    ed_with_life = (_resolve_per_period_lf(life_per, ed_with_disc, fill=0.0)
+    # No lifetime default: a null (or ≤ 0) lifetime where the cost is not 0 is an input error.  Checked here,
+    # not only in the validator: a period map can lack a period, and the lead-time path calls this again at the
+    # commissioning period.
+    ed_with_life = (_resolve_per_period_lf(life_per, ed_with_disc, fill=None)
                        .rename({"value": "life"}))
+    bad = (ed_with_life
+              .join(method_count_lf, on="e", how="inner")
+              .filter(in_class & (pl.col("cost") != 0)
+                      & (pl.col("life").is_null() | (pl.col("life") <= 0)))
+              .select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8))
+              .head(5)
+              .collect())
+    require_lifetime(bad.iter_rows(), cost_param_name)
+    _notice_discount_rate_zero()
 
-    # Annuity formula: invest_value × 1000 × r / (1 - (1/(1+r))^n)
-    # with r ≤ 0 → 0.05, n ≤ 0 → 20.
-    r_eff = (pl.when(pl.col("disc") > 0).then(pl.col("disc")).otherwise(0.05))
-    n_eff = (pl.when(pl.col("life") > 0).then(pl.col("life")).otherwise(20.0))
-    annuity_expr = (pl.when(r_eff == 0)
-                       .then(0.0)
-                       .otherwise(
-                           pl.col("cost") * 1000.0 * r_eff
-                           / (1.0 - (1.0 / (1.0 + r_eff)) ** n_eff)))
+    # Annuity: cost [CUR/kW] × 1000 × annuity_factor(r, n).
+    annuity_expr = (pl.col("cost") * 1000.0
+                    * annuity_factor_expr(pl.col("disc"), pl.col("life")))
     out = (ed_with_life
               .join(method_count_lf, on="e", how="left")
               .with_columns(
                   method_count=pl.col("method_count").fill_null(0),
-                  ann_per_method=annuity_expr,
+                  ann_per_method=pl.when(pl.col("cost") == 0).then(0.0).otherwise(annuity_expr),
               )
               .with_columns(
                   ann=pl.when(in_class)
@@ -1261,6 +1286,10 @@ def p_inflation_op_from_source(source: "InputSource",
               .with_columns(alias_to_axis("d", "d"))
               .join(factors_lf, on="d", how="left")
               .with_columns(
+                  # Unreachable on the solve path: ``_inflation_factors_lf`` gives every period of
+                  # ``period_universe`` a factor (1.0 where years_represented has none), and the periods in use
+                  # are periods of that universe.  The fill only keeps a caller's universe that misses a period
+                  # in use from leaving it a null factor (build_flextool checks the factor covers dt).
                   value=pl.col(factor).fill_null(1.0),
               )
               .select("d", "value")

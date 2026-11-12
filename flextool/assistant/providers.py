@@ -62,6 +62,13 @@ class Preset:
     #: Seconds between request starts always, free plan or not (owner decision 2026-11-08), and its source.
     min_interval: float | None = None
     min_interval_source: str = ""
+    #: The field that carries the model's reasoning as one string: read from the answer (``delta.<key>`` streamed,
+    #: ``message.<key>`` whole), kept as ``provider_extra["reasoning_text"]``, and sent back under this key on the
+    #: assistant messages after the last user message, to the same model and endpoint only.  Ollama: gpt-oss's
+    #: template renders that reasoning between tool calls, as OpenAI's harmony format asks; without it the model
+    #: imitates reasoning-less calls and can leak its analysis into a call (checked on Ollama 0.40.15,
+    #: 2026-11-11: ``/v1`` takes ``reasoning`` on assistant messages, ignores ``reasoning_content``).
+    reasoning_wire_key: str | None = None
 
     def knob(self, knob_id: str) -> Knob | None:
         return next((k for k in self.request_knobs if k.id == knob_id), None)
@@ -152,7 +159,7 @@ PRESETS: dict[str, Preset] = {p.id: p for p in (
         account_knobs=("Ollama cloud models: check Ollama's terms for cloud models yourself",),
         required_headers=frozenset(), capture_tool_call_keys=frozenset(), capture_message_keys=frozenset(),
         tool_message_name=False, cost_field=None, context_probe="ollama", local=True, server_name="Ollama",
-        last_checked=_CHECKED),
+        last_checked=_CHECKED, reasoning_wire_key="reasoning"),
     Preset(
         id="lmstudio", label="LM Studio", backend="openai", base_url="http://localhost:1234/v1", key_env=None,
         key_required=False, key_optional=True, allowed_params=frozenset({"stream_options", "tool_choice"}),

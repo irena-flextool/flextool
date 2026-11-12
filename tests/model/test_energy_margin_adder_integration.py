@@ -32,7 +32,7 @@ dispatch solve (``invest=False``).
 * **Case 1 — deepen an existing negative-demand node.**  ``west`` carries
   an all-negative ``pdtNodeInflow`` in the invest solve (12 rows,
   ~ -16.5k … -29.3k MWh).  Setting ``inflow_adder`` + a modest adder on
-  ``west`` must (a) deepen EVERY demand row by exactly the adder (correct
+  ``west`` must (a) deepen EVERY demand row by exactly 24 x the adder (correct
   sign), (b) raise the invest solve's objective — the build/serve response
   to more demand — while staying optimal, and (c) leave a DISPATCH
   sub-solve's ``west`` inflow byte-identical (the invest-only gate).
@@ -46,7 +46,7 @@ dispatch solve (``invest=False``).
   tmp-DB ``import_data`` reconfiguration the multiplier test uses to inject
   its margin (NO JSON edit, NO new scenario) — we mark the real balance
   node ``battery`` ``no_inflow``.  Adder-OFF, ``battery`` then has NO inflow
-  row; adder-ON, the emitter must CREATE one ``-adder`` demand row per
+  row; adder-ON, the emitter must CREATE one ``-24 x adder`` demand row per
   invest ``(d, t)``, the solve must stay optimal, and (since ``battery`` is
   a real ``nodeBalance`` node) the served extra demand must raise cost.
 
@@ -78,6 +78,9 @@ KEYS = ("node", "period", "time")
 TARGET_C1 = "west"       # existing all-negative demand node → DEEPEN
 ADDER_WEST = 2000.0      # modest, per-timestep MWh added to west
 TARGET_C2 = "battery"    # real nodeBalance node, marked no_inflow → CREATE
+# invest_24h has new_stepduration 24 h on the hourly y2020 timeline: each solve step combines 24 time steps of the
+# timeline, and the adder (MWh per time step of the timeline) counts once per time step it combines.
+STEP_COUNT = 24.0
 ADDER_BATT = 500.0       # modest, per-timestep MWh created on battery
 
 # HiGHS-driving, multi-solve cascade → keep out of the fast inner loop.
@@ -198,6 +201,13 @@ def _inflow(step) -> pl.DataFrame:
     return df.sort(KEYS)
 
 
+def _assert_step_count(step) -> None:
+    """Every solve step of the invest solve combines STEP_COUNT time steps of the timeline."""
+    base = step.flex_data_provider.get("solve_data/new_step_base_steps")
+    assert base is not None and base.height > 0, "the invest solve has no new_stepduration base steps"
+    assert set(base.get_column("value").cast(pl.Float64).to_list()) == {STEP_COUNT}
+
+
 # ---------------------------------------------------------------------------
 # Fixtures — each cascade pair is consumed by exactly ONE test, so the
 # module-scoped fixture runs its (2 × ~35s) cascades once even under xdist.
@@ -258,10 +268,11 @@ def case2_cascades(tmp_path_factory):
 
 def test_case1_west_demand_deepened_builds_and_gated(case1_cascades):
     """In ``invest_24h`` the adder DEEPENS every ``west`` demand row by
-    exactly the adder (correct sign), raises the objective (build/serve
+    exactly 24 x the adder (24 h solve steps; correct sign), raises the objective (build/serve
     response) while staying optimal, leaves every other node byte-identical,
     and does NOT touch a dispatch sub-solve (invest-only gate)."""
     base_steps, adder_steps = case1_cascades
+    _assert_step_count(adder_steps[INVEST_SOLVE])
     base = _inflow(base_steps[INVEST_SOLVE])
     adder = _inflow(adder_steps[INVEST_SOLVE])
 
@@ -286,15 +297,15 @@ def test_case1_west_demand_deepened_builds_and_gated(case1_cascades):
     )
 
     # (a) SIGN: every demand row is DEEPER (more negative) by exactly the
-    #     adder.  ``af < bf`` catches the inverted sign (which would REDUCE
+    #     adder times the STEP_COUNT time steps of each solve step.  ``af < bf`` catches the inverted sign (which would REDUCE
     #     demand); the exact-delta pins the magnitude.
     for b, a in zip(neg["bf"].to_list(), neg["af"].to_list()):
         assert a < b, (
             f"adder REDUCED demand ({a!r} !< {b!r}) — inverted sign: adding "
             f"demand must make inflow MORE negative"
         )
-        assert abs(a - (b - ADDER_WEST)) <= 1e-6 * max(1.0, abs(b)), (
-            f"west demand not deepened by exactly {ADDER_WEST}: "
+        assert abs(a - (b - STEP_COUNT * ADDER_WEST)) <= 1e-6 * max(1.0, abs(b)), (
+            f"west demand not deepened by exactly {STEP_COUNT} x {ADDER_WEST}: "
             f"base={b!r} adder={a!r} (Δ={b - a!r})"
         )
 
@@ -351,6 +362,7 @@ def test_period_map_adder_deepens_per_period(period_map_cascades):
     pre-fix behaviour) would deepen by one flat value or nothing at all, so
     the DISTINCT per-period deltas below are the load-bearing assertion."""
     base_steps, adder_steps = period_map_cascades
+    _assert_step_count(adder_steps[INVEST_SOLVE])
     base = _inflow(base_steps[INVEST_SOLVE])
     adder = _inflow(adder_steps[INVEST_SOLVE])
 
@@ -382,7 +394,7 @@ def test_period_map_adder_deepens_per_period(period_map_cascades):
         assert period in MAP_PERIOD_VALUES, (
             f"unexpected invest period {period!r} not in the authored Map"
         )
-        delta = MAP_PERIOD_VALUES[period]
+        delta = STEP_COUNT * MAP_PERIOD_VALUES[period]
         assert a < b, (
             f"period {period!r}: adder REDUCED demand ({a!r} !< {b!r}) — "
             f"inverted sign"
@@ -420,6 +432,7 @@ def test_case2_creates_rows_on_zero_inflow_node(case2_cascades):
     ``(d, t)``, the solve stays optimal, the served demand raises cost, and
     no other node is touched."""
     base_steps, adder_steps = case2_cascades
+    _assert_step_count(adder_steps[INVEST_SOLVE])
     base = _inflow(base_steps[INVEST_SOLVE])
     adder = _inflow(adder_steps[INVEST_SOLVE])
 
@@ -450,8 +463,8 @@ def test_case2_creates_rows_on_zero_inflow_node(case2_cascades):
             f"created row is not negative demand ({v!r}) — inverted sign: "
             f"adding demand must create NEGATIVE inflow"
         )
-        assert abs(v - (-ADDER_BATT)) <= 1e-6 * ADDER_BATT, (
-            f"created value {v!r} != -adder ({-ADDER_BATT!r})"
+        assert abs(v - (-STEP_COUNT * ADDER_BATT)) <= 1e-6 * ADDER_BATT, (
+            f"created value {v!r} != -{STEP_COUNT} x adder ({-ADDER_BATT!r})"
         )
 
     # The created rows are the ONLY change: every other node is identical.

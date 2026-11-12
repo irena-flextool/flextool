@@ -9,6 +9,8 @@ import pandas as pd
 import yaml
 
 from flextool.lean_parquet import write_lean_parquet
+from flextool.process_outputs._sheet_names import excel_sheet_name
+from flextool.process_outputs._excel_writer import reserved_sheet_names, write_excel_with_metadata
 
 from flextool.scenario_comparison.config_builder import (
     assign_palette_colors,
@@ -33,7 +35,7 @@ from flextool.scenario_comparison.plan_union import (
     has_comparison_view,
 )
 from flextool.plot_outputs.config import _is_single_config, flatten_new_format
-from flextool.plot_outputs.orchestrator import plot_dict_of_dataframes
+from flextool.plot_outputs.orchestrator import plot_data_wanted, plot_dict_of_dataframes
 from flextool.plot_outputs.color_template import resolve_plot_settings_path
 
 
@@ -196,6 +198,81 @@ def _derive_comparison_settings(plots_flat: dict) -> dict:
     return out
 
 
+def comparison_unit_context(scenario_folders, parquet_dirs) -> dict:
+    """``{scenario folder name: UnitContext}`` of the compared scenarios: each folder's ``_unit_context.json``
+    (an empty context when every node is MWh) with the folder's parquet footers, so a compared table shows the
+    units each scenario's run wrote (:func:`~flextool.process_outputs._output_meta.replay_unit_context`)."""
+    from flextool.process_outputs._output_meta import replay_unit_context
+
+    return {name: replay_unit_context(d) for name, d in zip(scenario_folders, parquet_dirs)}
+
+
+def comparison_column_units(name: str, df, unit_ctx) -> "tuple[dict | None, dict | None]":
+    """``(column metadata, row units)`` of the combined comparison table *name* for its parquet footer, as a
+    scenario's own parquet carries them: the units of each scenario's columns (keyed by the full column label,
+    the ``scenario`` level included) and, for a table whose unit varies by row, the units per row entity.
+    ``(None, None)`` for an undeclared table."""
+    from flextool.process_outputs._output_meta import derive_column_meta, row_units
+
+    if not isinstance(df, pd.DataFrame):
+        return None, None
+    derived = derive_column_meta(name, df.columns, ctx=unit_ctx, rows=df.index)
+    meta = {k: v.as_dict() for k, v in derived.items()} if derived else None
+    return meta, row_units(name, df.index, df.columns, unit_ctx)
+
+
+def dispatch_unit_context(unit_ctx, tags) -> dict:
+    """``{dispatch scenario tag: UnitContext}``: the dispatch data is tagged with the scenario name, which a
+    folder with the run-index suffix (``S2_Dry_1``) does not equal; such a tag takes its folder's context (the
+    folders of one tag merged, see :func:`~flextool.plot_outputs.unit_labels.merged_context`)."""
+    import re
+
+    from flextool.plot_outputs.unit_labels import merged_context
+
+    out = {}
+    for tag in tags:
+        if tag in unit_ctx:
+            out[tag] = unit_ctx[tag]
+            continue
+        folders = {f: c for f, c in unit_ctx.items() if re.fullmatch(re.escape(str(tag)) + r"_\d+", str(f))}
+        if folders:
+            out[tag] = merged_context(folders)
+    return out
+
+
+def unit_differences(sheets, unit_ctx) -> list[str]:
+    """One note per comparison table whose same column has different units in different scenarios (the units are
+    shown per scenario, never summed): ``[]`` without node units."""
+    if not unit_ctx:
+        return []
+    from flextool.process_outputs._output_meta import SCENARIO_LEVEL, resolve_columns, row_units
+
+    notes = []
+    for _sheet, raw_key, df in sheets:
+        if not isinstance(df, pd.DataFrame) or SCENARIO_LEVEL not in (df.columns.names or []):
+            continue
+        resolved = resolve_columns(raw_key, df.columns, ctx=unit_ctx) or []
+        by_row = row_units(raw_key, df.index, df.columns, unit_ctx) or {}
+        pos = list(df.columns.names).index(SCENARIO_LEVEL)
+        seen: dict[tuple, set[str]] = {}
+        for col, meta in zip(df.columns, resolved):
+            if not meta.unit:
+                continue
+            rest = tuple(col[:pos]) + tuple(col[pos + 1:])
+            if by_row:
+                for entity, units in by_row.items():
+                    seen.setdefault(rest + (entity,), set()).add(units.get(meta.name, ""))
+            else:
+                seen.setdefault(rest, set()).add(meta.unit)
+        differing = sorted(k for k, us in seen.items() if len(us - {""}) > 1)
+        if differing:
+            shown = ", ".join("/".join(str(x) for x in k) for k in differing[:3])
+            more = f" and {len(differing) - 3} more" if len(differing) > 3 else ""
+            notes.append(f"Note: {raw_key}: the scenarios have different units of measure for {shown}{more} "
+                         f"(each scenario's column has its own unit; they are not summed).")
+    return notes
+
+
 def run(
     db_url: str | None,
     parquet_subdir: str,
@@ -213,6 +290,7 @@ def run(
     excel_dir: str | None = None,
     shared_legend: bool = True,
     only_first_file: bool = False,
+    write_plot_data: bool = False,
     comparison_parquet_dir: str | None = None,
     debug: bool = False,
     plot_dir_is_default: bool = False,
@@ -230,6 +308,9 @@ def run(
     plot output dir is re-rooted at ``<project_root>/output_plot_comparisons``
     when the participating scenarios share a sensible common project root (see
     :func:`derive_project_root`).  An explicit ``--plot-dir`` always wins.
+
+    *write_plot_data* (or ``write_plot_data: true`` in the project's
+    ``plot_settings.yaml``) writes each plot's drawn data as a CSV next to it.
     """
     with open(output_config_path, 'r', encoding='utf-8') as f:
         settings = yaml.safe_load(f)
@@ -344,6 +425,13 @@ def run(
         else:
             break_dirs.append(os.path.join(folder, name))
     break_times = load_timeline_breaks(*break_dirs)
+    # A dispatch plot shows one scenario on its own steps: it breaks where that scenario's timeline does
+    scenario_break_times = {
+        name: load_timeline_breaks(d) for name, d in zip(scenario_folders, break_dirs)
+    }
+    # The units of each scenario folder (keyed like the data's ``scenario`` level: the folder name): its
+    # parquet footers first, then its node units.
+    unit_ctx = comparison_unit_context(scenario_folders, break_dirs)
 
     # Write combined comparison parquets if output directory specified
     if comparison_parquet_dir:
@@ -353,7 +441,9 @@ def run(
         write_id = new_write_id()
         for name, df in combined_dfs.items():
             if not df.empty:
-                write_lean_parquet(df, os.path.join(comparison_parquet_dir, f"{name}.parquet"), write_id=write_id)
+                col_meta, table_row_units = comparison_column_units(name, df, unit_ctx)
+                write_lean_parquet(df, os.path.join(comparison_parquet_dir, f"{name}.parquet"), write_id=write_id,
+                                   column_metadata=col_meta, row_units=table_row_units)
         # Also write a metadata file with the scenario list and the runs the folders held, checked again now that
         # every member file has been read (parquets, dispatch mappings, timeline breaks)
         write_comparison_metadata(
@@ -395,6 +485,7 @@ def run(
                 break_times=break_times,
                 strip_scenario_level=False,
                 color_path=color_path,
+                unit_ctx=unit_ctx,
             )
             print("Computed plot plans for viewer")
         except Exception as exc:
@@ -402,6 +493,8 @@ def run(
             _logging.warning("Plot plan computation failed (non-fatal): %s", exc)
 
     # Generate comparison plots from the merged settings derived above.
+    # Plotted data as CSV: the flag, or ``write_plot_data: true`` in plot_settings.yaml.
+    write_plot_data = plot_data_wanted(write_plot_data, color_path)
     plot_dict_of_dataframes(
         combined_dfs, plot_dir, settings['plots'],
         active_settings=active_configs, plot_rows=plot_rows,
@@ -409,6 +502,8 @@ def run(
         only_first_file=only_first_file,
         break_times=break_times,
         color_path=color_path,
+        write_plot_data=write_plot_data,
+        unit_ctx=unit_ctx,
     )
     print(f'\nPlotted comparison of {len(scenario_folders)} scenarios to folder: {plot_dir}')
 
@@ -421,10 +516,12 @@ def run(
                 scenarios=dispatch_scenarios,
                 show_plot=show_plots,
                 write_xlsx=write_dispatch_xlsx,
-                break_times=break_times,
+                break_times=scenario_break_times,
                 plot_rows=plot_rows,
                 debug=debug,
                 settings_path=color_path,
+                write_plot_data=write_plot_data,
+                unit_ctx=dispatch_unit_context(unit_ctx, dispatch_scenarios),
             )
         else:
             print("Warning: Cannot generate dispatch plots - missing dispatch mappings")
@@ -452,27 +549,22 @@ def run(
         filename = 'compare_' + str(len(scenario_folders)) + '_scens.xlsx'
         target_dir = excel_dir if excel_dir is not None else plot_dir
         excel_path = os.path.join(target_dir, filename)
-        # Build list of (sheet_name, df) sorted alphabetically
-        sheets: list[tuple[str, pd.DataFrame]] = []
-        used_names: set[str] = set()
+        # Build list of (sheet_name, raw_key, df) sorted alphabetically; the raw key gives the units.
+        sheets: list[tuple[str, str, pd.DataFrame]] = []
+        used_names: set[str] = reserved_sheet_names()
         for name, df in combined_dfs.items():
             display_name, export = _parse_rename(rename_raw.get(name, name))
             if not export:
                 continue
             if (not df.empty) & (len(df) > 0):
-                sheet_name = display_name[:31]
-                if sheet_name in used_names:
-                    suffix = 1
-                    while f"{sheet_name[:28]}_{suffix}" in used_names:
-                        suffix += 1
-                    sheet_name = f"{sheet_name[:28]}_{suffix}"
-                used_names.add(sheet_name)
-                sheets.append((sheet_name, df))
+                # At most 31 characters, the __d / __dt suffix kept, distinct without regard to case.
+                sheet_name = excel_sheet_name(display_name, used_names)
+                sheets.append((sheet_name, name, df))
         sheets.sort(key=lambda x: x[0].lower())
 
-        with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
-            for sheet_name, df in sheets:
-                df.to_excel(writer, sheet_name=sheet_name)
+        write_excel_with_metadata(excel_path, sheets, ctx=unit_ctx)
+        for note in unit_differences(sheets, unit_ctx):
+            print(note)
         print(f'\nWrote comparison of {len(scenario_folders)} scenarios to xlsx file: {excel_path}')
 
     print('\nDone!')

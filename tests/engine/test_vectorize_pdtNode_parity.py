@@ -35,6 +35,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess.emit._pdt_params import (
     derive_pdtNode,
     derive_pdtNode_vectorized,
@@ -175,7 +176,7 @@ def test_vectorized_pdtNode_extra_stochastic_fixtures(
     sdd = work / "solve_data"
 
     # Document the empty-pbt_node reality (the pdtNode fold cannot fire).
-    pbt = p.get("input/pbt_node")
+    pbt = p.get("solve_data/pbt_node")
     pbt_h = 0 if pbt is None else pbt.height
     assert pbt_h == 0, (
         f"{db_fixture}: pbt_node unexpectedly NON-empty ({pbt_h} rows) — "
@@ -240,7 +241,7 @@ def test_vectorized_pdtNode_synthetic_fold_and_cascade(tmp_path):
         provider.put(stem, df)
 
     # pbt_node: (node, param, branch, time_start, time, value)
-    put("input", "pbt_node", pl.DataFrame({
+    put("solve_data", "pbt_node", pl.DataFrame({
         "node": ["riverA", "riverA", "riverB"],
         "param": ["inflow", "inflow", "inflow"],
         "branch": ["b1", "b2", "b1"],
@@ -256,7 +257,7 @@ def test_vectorized_pdtNode_synthetic_fold_and_cascade(tmp_path):
         "value": [5.0, 9.0],
     }))
     # pt_node: (node, param, time, value) — time-first override on storage.
-    put("input", "pt_node", pl.DataFrame({
+    put("solve_data", "pt_node", pl.DataFrame({
         "node": ["lake"],
         "param": ["storage"],
         "time": ["t1"],
@@ -347,7 +348,7 @@ def test_vectorized_pdtNode_branch_period_inherits_anchor_pd(tmp_path):
         provider.put(f"{parent}/{stem}", df)
         provider.put(stem, df)
 
-    put("input", "pbt_node", pl.DataFrame(schema={
+    put("solve_data", "pbt_node", pl.DataFrame(schema={
         "node": pl.Utf8, "param": pl.Utf8, "branch": pl.Utf8,
         "time_start": pl.Utf8, "time": pl.Utf8, "value": pl.Float64}))
     put("input", "pd_node", pl.DataFrame({
@@ -356,10 +357,10 @@ def test_vectorized_pdtNode_branch_period_inherits_anchor_pd(tmp_path):
         "period": ["d1", "d1", "d1", "d1_b", "d1"],
         "value": [8000.0, 5.0, 9.0, 2.0, 10.0],
     }))
-    put("input", "pt_node", pl.DataFrame({
+    put("solve_data", "pt_node", pl.DataFrame({
         "node": ["lake", "lake"], "param": ["storage", "flow"], "time": ["t1", "t1"],
         "value": [7.0, 20.0]}))
-    put("input", "pdt_node", pl.DataFrame({
+    put("solve_data", "pdt_node", pl.DataFrame({
         "node": ["lake"], "param": ["flow"], "period": ["d1"], "time": ["t1"],
         "value": [30.0]}))
     put("input", "p_node", pl.DataFrame(schema={
@@ -397,3 +398,50 @@ def test_vectorized_pdtNode_branch_period_inherits_anchor_pd(tmp_path):
     assert df_vec.equals(df_legacy), (
         f"branch-period pd: vectorized != legacy.\n"
         f"legacy:\n{df_legacy}\nvec:\n{df_vec}")
+
+
+@pytest.mark.parametrize("case", ["single", "rolling_lookahead", "rolling_uncovered"])
+def test_vectorized_pdtNode_fan_start_fallback(case, tmp_path):
+    """Item 228: a non-empty ``fan_for_d`` (``branch_time_start``) -- each fold cell reads the forecast at its
+    period's own first step, else at the fan start (a roll's look-ahead period: the fan start only; a cell it
+    does not cover that a later forecast does is an input error in both twins) -- byte-identical in both twins,
+    values hand-derived in
+    :mod:`tests.engine._fan_fold_fixture`."""
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+    from tests.engine._fan_fold_fixture import (
+        STEPS, expected_fold, fan_case, pbt_frame, put_fan_scaffold, uncovered_error)
+
+    provider = FlexDataProvider()
+
+    def put(parent: str, stem: str, df: pl.DataFrame) -> None:
+        provider.put(f"{parent}/{stem}", df)
+        provider.put(stem, df)
+
+    rolling, rows = fan_case(case)
+    put_fan_scaffold(put, rolling=rolling)
+    put("solve_data", "pbt_node", pbt_frame({"node": "entity", "param": "cap"}, rows=rows))
+    put("input", "pd_node", pl.DataFrame(schema={
+        "node": pl.Utf8, "param": pl.Utf8, "period": pl.Utf8, "value": pl.Float64}))
+    put("solve_data", "pt_node", pl.DataFrame(schema={
+        "node": pl.Utf8, "param": pl.Utf8, "time": pl.Utf8, "value": pl.Float64}))
+    put("input", "p_node", pl.DataFrame(schema={
+        "node": pl.Utf8, "param": pl.Utf8, "value": pl.Float64}))
+    put("input", "default_values", pl.DataFrame(schema={
+        "class": pl.Utf8, "parameter": pl.Utf8, "value": pl.Float64}))
+    put("input", "group__node", pl.DataFrame({"group": ["g"], "node": ["X"]}))
+    put("solve_data", "node__TimeParam_in_use", pl.DataFrame({
+        "node": ["X", "Y"], "param": ["cap", "cap"]}))
+
+    inp, sdd = tmp_path / "input", tmp_path / "solve_data"
+    if case == "rolling_uncovered":
+        for derive in (derive_pdtNode, derive_pdtNode_vectorized):
+            with pytest.raises(FlexToolConfigError, match=uncovered_error("node 'Y'", "cap")):
+                derive(inp, sdd, provider=provider)
+        return
+    df_legacy = derive_pdtNode(inp, sdd, provider=provider)
+    df_vec = derive_pdtNode_vectorized(inp, sdd, provider=provider)
+    leg = {(r[0], r[2], r[3]): r[4] for r in df_legacy.iter_rows()}
+    for e in ("X", "Y"):
+        for d, t in STEPS:
+            assert leg[(e, d, t)] == repr(expected_fold(rolling).get((e, d, t), 0.0)), (e, d, t, leg)
+    assert df_vec.equals(df_legacy), f"fan fallback: vectorized != legacy.\nlegacy:\n{df_legacy}\nvec:\n{df_vec}"

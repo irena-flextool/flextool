@@ -74,7 +74,7 @@ packages. Every CLI command also has an installed entry point in
 | `cmd_read_self_describing_tabular_input` | `flextool-read-self-describing-tabular-input` | Self-describing Excel (embedded metadata) → Spine DB. |
 | `cmd_read_old_flextool` | `flextool-read-old` | Import old FlexTool v2 `.xlsm` files → Spine DB. |
 | `cmd_read_matpower` | `flextool-read-matpower` | Import a MATPOWER case → Spine DB. |
-| `cmd_import_sensitivities` | `flextool-import-sensitivities` | Import FlexTool v2 sensitivity scenarios. |
+| `cmd_import_sensitivities` | `flextool-import-sensitivities` | Import FlexTool v2 sensitivity scenarios into a version-56 import (`flextool-read-old --master` does both in one run). |
 | `cmd_export_to_tabular` | `flextool-export-to-tabular` | Export Spine DB → Excel (`.xlsx`). |
 | `cmd_execute_flextool_workflow` | `flextool-execute-workflow` | Two-phase workflow runner: optional input-prep (auto-triggered by `--tabular-file-path` / `--csv-directory-path`) followed by the fused model-run + output-write phase. |
 | `cmd_migrate_database` | `flextool-migrate-database` | Upgrade an input DB to the current schema version. |
@@ -123,8 +123,18 @@ The contract:
 5. Process-level variables (`MALLOC_ARENA_MAX`, `_RJEM_MALLOC_CONF`, `POLARS_*`) keep `setdefault` semantics: a
    value already in the environment wins.  The exception is `POLARS_MAX_THREADS` while `flextool/__init__.py`
    imports polars: see "Thread budget" below.
-6. HiGHS keys keep their own stack (baseline < `highs.opt` < `solve.solver_mip_gap` < `solve.solver_arguments` <
-   operator layer); the registry supplies only the operator layer.
+6. Solver options keep their own stack, the same for every solver (HiGHS: baseline < `highs.opt`; a commercial
+   solver: `<solver>.opt`; then `solve.solver_mip_gap` < `solve.solver_arguments` < operator layer); the registry
+   supplies only the operator layer (`_operator_highs_overrides`; `_solver_dispatch._operator_native_overrides`
+   maps `--solver-time-limit` / `--solver-mip-gap` to the native names of `_PARAM_MAP`).
+   The option files come from one folder per run, `flextool/_solver_config_source.py` (engine-free; not
+   `flextool/solver_config.py`, which would shadow the template data folder):
+   `resolve_solver_config_source` — explicit argument > `--solver-config-dir` > `FLEXTOOL_SOLVER_CONFIG_DIR` >
+   the bounded database layout (next to the database; `<workspace>` of a `projects/<P>/input_sources/` database)
+   > the Toolbox project folder > cwd > packaged templates. `snapshot_solver_option_files` reads them once at run
+   start into `PathConfig.solver_option_files` (every solve reads its layer from there, never from disk) and
+   writes the record `<work_folder>/solve_data/solver_config/`. The GUI and the calibrator pass the folder
+   explicitly.
 7. The run header prints `RunOptions.summary_lines()` — each option set by a flag or an environment variable,
    with its source — and the thread budget (`Threads:`), with polars' and HiGHS' thread counts.
 
@@ -357,7 +367,7 @@ its flag is off. Required-field lists are module-level tuples in
 | `has_indirect` | `process_indirect` | `INDIRECT` | `conversion_indirect`, `minInputShare`. |
 | `has_co2_price` | `flow_from_co2_priced` | — (warns and skips without price / content) | CO2 price term in the objective. |
 | `has_co2_cap` / `has_co2_cap_total` | `flow_from_co2_capped[_noEff]` / `flow_from_co2_capped_total[_noEff]` | `CO2_CAP` / `CO2_CAP_TOTAL` | `co2_max_period` / `co2_max_total`. |
-| `has_user_cstr` | `cdt_eq` / `cdt_le` / `cdt_ge` | `USER_CSTR` | `process_constraint_{equal,less_than,greater_than}[_period]` (`_period`: one row per period for constraints without flow or state terms). |
+| `has_user_cstr` | `cdt_eq` / `cdt_le` / `cdt_ge` | `USER_CSTR` | `process_constraint_{equal,less_than,greater_than}[_period\|_period_total]` (`_period`: one row per period for constraints without flow or state terms; `_period_total`: one annualised row per period for `constraint_period_method` *period_total*, `constraint_period_total`). |
 | `has_profile` | `process_profile_{upper,lower,fixed}` | `PROFILES` | `profile_flow_*` bounds on `v_flow`. |
 | `has_storage` | `nodeState` | `STORAGE` | `v_state`, state change in `nodeBalance_eq`, `maxState`, start binding, state profiles, reference value. |
 | `has_rp` | `nodeState_rp` | — | Representative-period inter-period state coupling (`_eq_rp_storage_chain`). |
@@ -372,6 +382,14 @@ its flag is off. Required-field lists are module-level tuples in
 | `has_capacity_margin` / `has_inertia` / `has_non_sync` | `_group_slack.has_*` | — | `_group_slack`. |
 | `has_cumulative_invest` | `_cumulative_invest.has_feature` | — | `_cumulative_invest`. |
 | `has_ladder` | `_commodity_ladder.has_feature` | — | `_commodity_ladder`. |
+
+A solve's `reduce_unit_detail_method` / `reduce_system_detail_method` turns flags off by clearing their switch
+fields before the build (`preprocess._reduce_detail`, see [engine.md](engine.md#solve-level-detail-reduction)):
+`online*` clears the `has_online_*`, `has_minload_eff` and `has_startup_cost_*` switches, `*ramps` the `has_ramp`
+switch and the ramp-cost set, `*min_limits` the min-load and min-time sets, `reserves` the `has_reserve` gate,
+`inertia` / `non_synchronous` the group sets behind `has_inertia` / `has_non_sync`, and `dc_power_flow` the DC
+sets. `integers*` keeps the online flags and sets `relax_integrality`, which `_online` and `_exact` read as
+`integer=not d.relax_integrality`. The capacity margin is never cleared.
 
 The DC power-flow, exact-connection, delay and non-anticipativity modules
 gate on their own data (`_dc_power_flow.has_feature`, `_exact.has_feature`
@@ -554,6 +572,44 @@ DB-authored, never reach the resolver, and a stray one already fails
 loudly via `_UnrecognisedIndex`. Document such internal axes in
 `schemas/flextool_axis_contract.json`, not in the resolver's allow-lists.
 
+##### Solve-step aggregation (`new_stepduration` of a solve)
+
+A solve with `new_stepduration` combines the time steps of its timeline into longer steps, each labelled by
+its first original (base) step. Every time series then needs one value per new step, and the rule is a
+property of the parameter: `TIME_AGGREGATION` in `engine/input/_solve_step_aggregation.py` maps each
+`(entity_class, parameter)` that can vary in time to `MEAN` (duration-weighted mean: prices, costs, limits,
+availability, min load, penalties, reserves, self-discharge, weights, profiles, instant-flow limits),
+`HARMONIC` (mean of 1/v: `efficiency`, `efficiency_at_min_load`, so the fuel use of a constant flow is
+exact), `SUM` (`inflow`, `energy_margin_adder`: energy per base step) or `LAST` (`storage_state_reference_value`:
+the state at the step's end). `NOT_TIME_SERIES` lists the schema's other map parameters; every map
+parameter of the schema is in exactly one of the two (`tests/engine/test_time_aggregation_registry.py`).
+**A new time-series parameter needs a `TIME_AGGREGATION` entry**; while a solve's steps are active, a
+broadcast of a key without one raises.
+
+One vectorised function, `aggregate_to_solve_steps`, does the arithmetic (a step whose base values are all
+equal keeps the value itself; the means are exact, only the profile keeps its earlier 6-decimal rounding
+(`ROUND6_KEYS`); `SUM` is `math.fsum`, so n equal values give n·v like a constant; `LAST` follows the timeline
+position); `combine` is its per-step reference (`test_vectorised_kernel_equals_combine`). A roll aggregates
+only the base steps of its own solve steps (`aggregate_if_active(steps=...)`). It serves three places:
+
+- the provider's frames: `TimelineConfig.create_averaged_timeseries` writes `solve_data/pt_*`, `pbt_*`,
+  `pdt_process`, `pdt_node`, `pdt_energy_margin_adder` and (verbatim) `pd_energy_margin_adder` (kinds by
+  (file, parameter)) and
+  `solve_data/new_step_base_steps` (base step, new step, count, duration, position); without
+  `new_stepduration` the `input/` frames pass through verbatim. The per-solve emit folds read these
+  `solve_data/` frames, never `input/` (see docs/dev/engine.md "Vectorized per-roll emit"), and
+  `_run_model` mirrors every key the aggregation wrote onto the sub-solve provider;
+- the DB-direct readers: `broadcast_to_period_time` aggregates the rows that carry `t`, keyed by
+  `ResolvedShape.key`, after the null filter and before `filter_zero` and the axis cast;
+- the readers outside the resolver (the period+time profile reader, `timeset_weights`).
+
+`load_flextool` arms the base steps in a contextvar (`activate_solve_step_aggregation`) next to the
+stochastic-time source; with no `new_stepduration` the frame is empty and nothing is aggregated, so the
+LP of every uncoarsened solve is unchanged. The hook does not break the rule above: `t` stays the I/O axis
+and only the values are grouped. The `SUM` kinds are scaled by their own readers (a constant counts once per
+base step: the inflow scaling, the energy-margin adder), so a `SUM` key reaching the generic broadcast
+raises.
+
 ##### Silent-default `"x"` index — readers outside the resolver
 
 Not every DB read goes through `resolve_param_shape`. The **per-entity
@@ -594,13 +650,26 @@ turning `existing_count = capacity / unitsize` into a spurious fraction
   hardened); `_ed_explicit_period_param`, `_per_solve_sets`; `profile`
   in real solves (reads the engine-written canonical `pt_profile.csv` /
   `pbt_profile`, not the raw Map).
-- *Residual, latent* — the `_profiles.py` **raw-Spine fallback**
-  readers (`_profile_time_lf` matches only `t`/`i`/`time`;
-  `_profile_period_time_lf` / `_profile_period_only_lf` gate on literal
-  `"period"`). An `"x"`-indexed profile Map read via these returns empty
-  (silent zero profile). Only reachable when the averaged-CSV primary
-  path is absent (tests / runner bypass), so not a live-solve bug —
-  harden if that path ever becomes load-bearing.
+- *Profile tiers (item 73)* — `_profiles._classify_profile_rows` reads a
+  1-D profile Map without an index name by its keys against the solve's
+  `_param_shapes._period_time_vocab(dt)` (`_silent_map_tier`): periods
+  only → period tier (`_profile_period_only_lf` reads the `x` column as
+  the period), else time tier; the `InMemoryReader` column fallback uses
+  the same rule. Unlike the resolver's silent drop of an entity whose keys
+  miss the solve (`_silent_entity_axes`), the run is told:
+  `validate_period_keys` warns once per run about a profile period map
+  that misses periods of the scenario's solves and stops on keys that
+  are periods and time steps of the model. `_profile_time_lf`'s raw
+  fallback also reads `x`. A 2-D Map whose outer level has no index name
+  is `period_time` by the same rule on its outer keys (item 223;
+  `_profile_period_time_lf` reads `x` as the period and `x_2` / `t` as the
+  time step, the column fallback likewise; under an outer level labelled
+  `period` the reader names the unnamed inner level `x`, read as the time
+  step on the rows whose `period` is set); other unnamed 2-D Maps stay
+  `stochastic` (only 3-level Maps fill `pbt_profile`), and
+  `validate_period_keys` stops the run on them (outer keys that are time
+  steps, both kinds, or no period). Residual: the CSV `pdtProfile` seed
+  has no period tier at all (item 222).
 - *Guarded by schema* — `invest_max_total` and `virtual_unitsize` are
   declared `float`-only in `parameter_types` (no `map` row), so the
   `keep="last"` collapse in `_e_explicit_param` and in the
@@ -915,10 +984,12 @@ options file:
 | `solver_config/highs.opt` | No (gitignored) | User-editable runtime copy; seeded from the template on first run. |
 
 `flextool._resources.package_data_path("solver_config/highs.opt.template")`
-returns the template; the runtime layer copies it to
-`solver_config/highs.opt` on first run if absent. Users edit the runtime
-copy; `_orchestration._finalise_highs_options` reads it and applies any
-CLI overrides (`--user-bound-scale`, `--presolve`, `--highs-threads`).
+returns the template; `ensure_runtime_files` (GUI start, `flextool-update`)
+copies it to the workspace's `solver_config/highs.opt` if absent. Users edit
+the runtime copy; a run reads it once (see "Runtime options" item 6) and
+`_solve_highs_options` layers the solve's settings and the CLI overrides on
+it. The commercial templates (`gurobi`, `cplex`, `xpress`, `copt`) follow the
+same pattern.
 
 `--save-memory` (or `FLEXTOOL_SAVE_MEMORY=1`) is an opt-in peak-RSS
 strategy that disables warm-start and round-trips each sub-solve through
@@ -993,7 +1064,7 @@ Every engine run (`cmd_run_flextool.main`, once its scenario and output folder a
 - **`_run_status.json`** (schema `flextool.run_status`) — written by the **engine**, the only process that knows
   the verdicts: `RunRecorder` (`_status.py`) creates it as `running`, rewrites it atomically as solves start and
   are classified, and finishes it in `main()`'s `finally` (`succeeded` / `failed` / `interrupted`). It records each
-  solve's model status and acceptance, the error, the input, the options and threads, and `outputs.parquet_state`:
+  solve's model status and acceptance, its `reduced` detail levels (`reduce_*_detail_method`), the error, the input, the options and threads, and `outputs.parquet_state`:
   a failed run keeps the earlier run's parquet, marked `previous_run`. `write_outputs` keeps both files when it
   empties the folder.
 - **`_run.log`** — written by the **pipe owner**, the process that reads the engine's stdout + stderr pipe and so
@@ -1077,7 +1148,10 @@ agent; and FlexTool's own chat with an AI service ("AI assistant chat" below). U
   Markdown (`docs_build/scope.CURATED_DOCS`) into `flextool/assistant/_docs/md/`; an editable install reads the
   clone's `docs/`. On first use the formulation page, the results catalogue and the BM25 index are generated by the
   installed FlexTool into the user cache folder, keyed by FlexTool version + source hash. The web docs generate the
-  same two pages with the same generator (`tools/mkdocs_hooks.py`).
+  same two pages with the same generator (`tools/mkdocs_hooks.py`), plus the web-only parameter catalogue
+  (`scope.WEB_ONLY_PAGES`, `docs_build/parameters.py`: one large table per class, which `describe_parameter`
+  already serves, so it stays out of the assistant's index); `python -m flextool.docs_build --xlsx` writes it as an
+  Excel data dictionary.
 
 **The connection server for agents** (`flextool-assistant --mcp`, `mcp_server.py`, mcp 2.x low-level `Server`,
 telemetry middleware removed). The protocol uses stdin and stdout, so `flextool_assistant_entry.py`, a
@@ -1111,7 +1185,12 @@ nor the chat (`tests/assistant/test_import_hygiene.py`).
   end shows (`TextDelta`, `ToolDone`, `Waiting`, `RetryWait`, …) and the `Backend` protocol. Data only one provider
   understands (Anthropic thinking blocks, Gemini thought signatures, OpenRouter reasoning details) travels in
   `provider_extra`, stamped with its origin (preset, base URL, model), and is replayed only to that origin; on a
-  switch it is dropped and tool-call ids are re-mapped.
+  switch it is dropped and tool-call ids are re-mapped. Ollama's reasoning string (the preset's
+  `reasoning_wire_key`, `delta.reasoning` joined) is kept as `provider_extra["reasoning_text"]`: never shown,
+  saved with the conversation, and sent back as `reasoning` only on the assistant messages after the last user
+  message (gpt-oss's template renders it only there; without it the model leaks its analysis into tool calls). It
+  does not make a turn's history uneditable, and like all message data a compaction drops it — also one in the
+  middle of a turn, after which this turn's earlier reasoning is not sent again.
 - **Backends** (`backends/`): Anthropic Messages and OpenAI Chat Completions (also Mistral, OpenRouter, Gemini,
   Ollama, LM Studio and any compatible endpoint). The provider libraries are imported only in `make_backend`.
   `net.py` builds each library's HTTP client: headers rebuilt from an allow-list (the libraries' identification

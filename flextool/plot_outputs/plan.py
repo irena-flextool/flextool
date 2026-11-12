@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
+from flextool.plot_outputs.unit_labels import AxisLabeler
 import pandas as pd
 
 if TYPE_CHECKING:
@@ -161,6 +162,10 @@ class PlotPlan:
     legend_position: str = 'right'
     xlabel: str | None = None
     ylabel: str | None = None
+    # The axis labels per file batch when they differ by file (unit tokens filled per subplot from the nodes'
+    # unit_of_measure, see plot_outputs.unit_labels); None = xlabel / ylabel for every file.
+    batch_xlabels: list | None = None
+    batch_ylabels: list | None = None
     bar_orientation: str = 'horizontal'
     axis_tick_format: str = 'dynamic'
     always_include_zero_in_axis: bool = True
@@ -252,6 +257,13 @@ def save_plot_plan(
         'col_was_single_multi': False,
         'idx_was_single_multi': False,
     }
+
+    # Per-file labels only when they differ by file (never in a run whose nodes are all MWh), so the
+    # default plan files are unchanged.
+    if plan.batch_xlabels is not None:
+        meta['batch_xlabels'] = plan.batch_xlabels
+    if plan.batch_ylabels is not None:
+        meta['batch_ylabels'] = plan.batch_ylabels
 
     with open(output_dir / f"{prefix}_plan.json", 'w') as f:
         json.dump(meta, f, indent=2, default=_json_safe)
@@ -348,6 +360,8 @@ def load_plot_plan(
             legend_position=meta.get('legend_position', 'right'),
             xlabel=meta.get('xlabel'),
             ylabel=meta.get('ylabel'),
+            batch_xlabels=meta.get('batch_xlabels'),
+            batch_ylabels=meta.get('batch_ylabels'),
             bar_orientation=meta.get('bar_orientation', 'horizontal'),
             axis_tick_format=meta.get('axis_tick_format', 'dynamic'),
             always_include_zero_in_axis=meta.get('always_include_zero_in_axis', True),
@@ -521,6 +535,12 @@ def build_figure_from_plan(
     if not effective_plots:
         return None
 
+    # The axis labels of this file (per-file labels when the units differ by file).
+    xlabel = (plan.batch_xlabels[file_index] if plan.batch_xlabels and file_index < len(plan.batch_xlabels)
+              else plan.xlabel)
+    ylabel = (plan.batch_ylabels[file_index] if plan.batch_ylabels and file_index < len(plan.batch_ylabels)
+              else plan.ylabel)
+
     # Reconstruct time_index
     time_index = None
     if time_vals is not None:
@@ -557,7 +577,7 @@ def build_figure_from_plan(
             effective_plots, plan.plot_name, plan.sub_levels,
             plan.item_level_names, time_index,
             plan.subplots_per_row, plan.legend_position,
-            plan.xlabel, plan.ylabel,
+            xlabel, ylabel,
             axis_bounds, plan.axis_tick_format,
             plan.always_include_zero_in_axis,
             layout, plan.shared_color_map,
@@ -570,7 +590,7 @@ def build_figure_from_plan(
             effective_plots, plan.plot_name, plan.sub_levels,
             plan.item_level_names, time_index,
             plan.subplots_per_row, plan.legend_position,
-            plan.xlabel, plan.ylabel,
+            xlabel, ylabel,
             axis_bounds, plan.axis_tick_format,
             plan.always_include_zero_in_axis,
             layout, plan.shared_color_map,
@@ -598,7 +618,7 @@ def build_figure_from_plan(
             plan.sub_levels,
             plan.grouped_bar_levels, plan.grouped_bar_level_names,
             plan.legend_position, plan.subplots_per_row,
-            plan.xlabel, plan.ylabel,
+            xlabel, ylabel,
             plan.bar_orientation, plan.base_bar_length,
             value_fmt,
             plan.axis_bounds, plan.axis_tick_format,
@@ -671,6 +691,24 @@ def _encode_row_selector(df_sub: pd.DataFrame) -> list:
 #  _compute_time_plan / _compute_bar_plan
 # ---------------------------------------------------------------------------
 
+def _plan_axis_labels(cfg, axis_units, effective_plots, chunk_subs, file_batches, sub_level_names) -> dict:
+    """The ``xlabel`` / ``ylabel`` (and, when they differ by file, ``batch_xlabels`` / ``batch_ylabels``) fields of
+    a plan: the configured labels filled for MWh without *axis_units*, else filled per subplot of each file."""
+    from flextool.plot_outputs.unit_labels import _sub_dict, fill_default
+
+    if axis_units is None:
+        return {'xlabel': fill_default(cfg.xlabel), 'ylabel': fill_default(cfg.ylabel)}
+    out: dict = {}
+    for axis, label in (('x', cfg.xlabel), ('y', cfg.ylabel)):
+        per_file = [axis_units.batch_label(label, [(effective_plots[i][1], _sub_dict(chunk_subs[i], sub_level_names))
+                                                   for i in batch])
+                    for batch in file_batches]
+        first = per_file[0] if per_file else fill_default(label)
+        out[f'{axis}label'] = first
+        out[f'batch_{axis}labels'] = per_file if any(p != first for p in per_file) else None
+    return out
+
+
 def _compute_time_plan(
     df_fm: pd.DataFrame,
     effective_plot_name: str,
@@ -681,8 +719,12 @@ def _compute_time_plan(
     axis_bounds,
     plot_rows: tuple[int, int],
     color_path: Path | None = None,
+    axis_units=None,
 ) -> PlotPlan | None:
     """Compute a PlotPlan for a time-series (lines or stack) chart.
+
+    *axis_units* (an :class:`~flextool.plot_outputs.unit_labels.AxisLabeler`) fills the unit tokens of the
+    labels per subplot; without it the labels are filled for MWh nodes.
 
     Replicates the planning steps of build_line_figures() and
     build_stack_figures() without actually creating matplotlib Figures.
@@ -828,6 +870,10 @@ def _compute_time_plan(
         file_batches.append(list(range(offset, offset + batch_size)))
         offset += batch_size
 
+    labels = _plan_axis_labels(cfg, axis_units, effective_plots, chunk_subs, file_batches,
+                               [df_fm.columns.names[i] for i in fm_subplot_levels]
+                               if isinstance(df_fm.columns, pd.MultiIndex) else [])
+
     # Compute per-subplot global y-axis ranges from full time series.
     # For stacked charts the visual ceiling is the column-wise stacked
     # sum (positives stack up, negatives stack down), not the per-series
@@ -883,8 +929,7 @@ def _compute_time_plan(
         max_period_label_len=max_period_label_len,
         subplots_per_row=cfg.subplots_per_row,
         legend_position=cfg.legend,
-        xlabel=cfg.xlabel,
-        ylabel=cfg.ylabel,
+        **labels,
         axis_tick_format=cfg.axis_tick_format,
         always_include_zero_in_axis=cfg.always_include_zero_in_axis,
         subplot_y_ranges=subplot_y_ranges,
@@ -1066,8 +1111,9 @@ def _compute_bar_plan(
     fm_grouped_bar_levels: list[int],
     axis_bounds,
     color_path: Path | None = None,
+    axis_units=None,
 ) -> PlotPlan | None:
-    """Compute a PlotPlan for a bar chart.
+    """Compute a PlotPlan for a bar chart (*axis_units* as in :func:`_compute_time_plan`).
 
     Replicates the planning steps of build_bar_figures() without actually
     creating matplotlib Figures.
@@ -1365,6 +1411,10 @@ def _compute_bar_plan(
         file_batches.append(list(range(offset, offset + batch_size)))
         offset += batch_size
 
+    labels = _plan_axis_labels(cfg, axis_units, effective_plots, chunk_subs, file_batches,
+                               [df_fm.columns.names[i] for i in sub_levels]
+                               if isinstance(df_fm.columns, pd.MultiIndex) else [])
+
     # Serialize layout
     layout_params = {
         'bar_label_width': layout.bar_label_width,
@@ -1393,8 +1443,7 @@ def _compute_bar_plan(
         item_level_names=[],
         subplots_per_row=cfg.subplots_per_row,
         legend_position=cfg.legend,
-        xlabel=cfg.xlabel,
-        ylabel=cfg.ylabel,
+        **labels,
         bar_orientation=cfg.bar_orientation,
         axis_tick_format=cfg.axis_tick_format,
         always_include_zero_in_axis=cfg.always_include_zero_in_axis,
@@ -1426,8 +1475,12 @@ def compute_plot_plans_for_result(
     manifest_accumulator=None,
     manifest_scenario_name: str | None = None,
     color_path: Path | None = None,
+    unit_ctx=None,
 ) -> list[tuple[str, str]]:
     """Compute and save PlotPlans for all configs of a result_key.
+
+    *unit_ctx* (the run's :class:`~flextool.process_outputs._output_meta.UnitContext`, or one per compared
+    scenario) fills the unit tokens of the axis labels per subplot when some node is not MWh.
 
     Called after scenario runs to pre-compute plans.
     Returns list of (result_key, sub_config) pairs that produced valid plans.
@@ -1512,6 +1565,7 @@ def compute_plot_plans_for_result(
         if dim_result is None:
             continue
         df_processed, rules, chart_type, summed_dims, averaged_dims = dim_result
+        labeler = AxisLabeler.build(result_key, unit_ctx, df, cfg)
 
         # Identify level roles
         col_rules = rules[df_processed.index.nlevels:]
@@ -1588,6 +1642,9 @@ def compute_plot_plans_for_result(
                 df_fm = insert_timeline_breaks(
                     df_fm, break_times, period=file_member_period(file_member, file_level_names))
 
+            fm_labeler = (labeler.for_file_member(
+                file_member, [df_processed.columns.names[i] for i in file_levels])
+                if labeler is not None else None)
             # Compute plan based on chart type
             if chart_type == 'bar':
                 plan = _compute_bar_plan(
@@ -1596,6 +1653,7 @@ def compute_plot_plans_for_result(
                     fm_subplot_levels, fm_grouped_bar_levels,
                     axis_bounds,
                     color_path=color_path,
+                    axis_units=fm_labeler,
                 )
             elif chart_type == 'time':
                 plan = _compute_time_plan(
@@ -1603,6 +1661,7 @@ def compute_plot_plans_for_result(
                     fm_stack_levels, fm_subplot_levels, fm_line_levels,
                     axis_bounds, plot_rows,
                     color_path=color_path,
+                    axis_units=fm_labeler,
                 )
             else:
                 continue
@@ -1640,11 +1699,15 @@ def compute_live_plan(
     break_times: pd.MultiIndex | None = None,
     period_weights=None,
     color_path: Path | None = None,
+    result_key: str | None = None,
+    unit_ctx=None,
 ) -> PlotPlan | None:
     """Compute a PlotPlan in memory without disk I/O.
 
     Uses the full data range so time-series plans can be rendered at any
     start/duration via :func:`build_figure_from_plan` with *plot_rows*.
+    *result_key* and *unit_ctx* fill the unit tokens of the axis labels
+    (see :func:`compute_plot_plans_for_result`).
     """
     from flextool.plot_outputs.orchestrator import (
         _apply_dimension_rules, _resolve_shared_axis_bounds, _process_file_member,
@@ -1659,6 +1722,7 @@ def compute_live_plan(
     if dim_result is None:
         return None
     df_processed, rules, chart_type, summed_dims, averaged_dims = dim_result
+    labeler = AxisLabeler.build(result_key, unit_ctx, df, cfg)
 
     col_rules = rules[df_processed.index.nlevels:]
     grouped_bar_levels = [i for i, c in enumerate(col_rules) if c == 'g']
@@ -1722,6 +1786,9 @@ def compute_live_plan(
         df_fm = insert_timeline_breaks(
             df_fm, break_times, period=file_member_period(file_member, file_level_names))
 
+    fm_labeler = (labeler.for_file_member(
+        file_member, [df_processed.columns.names[i] for i in file_levels])
+        if labeler is not None else None)
     if chart_type == 'bar':
         return _compute_bar_plan(
             df_fm, effective_plot_name, cfg,
@@ -1729,6 +1796,7 @@ def compute_live_plan(
             fm_subplot_levels, fm_grouped_bar_levels,
             axis_bounds,
             color_path=color_path,
+            axis_units=fm_labeler,
         )
     elif chart_type == 'time':
         return _compute_time_plan(
@@ -1736,6 +1804,7 @@ def compute_live_plan(
             fm_stack_levels, fm_subplot_levels, fm_line_levels,
             axis_bounds, full_range,
             color_path=color_path,
+            axis_units=fm_labeler,
         )
     return None
 

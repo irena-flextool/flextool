@@ -104,17 +104,21 @@ def _group_items_by_magnitude(
 
 
 def _build_effective_plots(df_plot, sub_levels, item_level_names,
-                           max_items_per_plot, subplots_by_magnitudes=False):
+                           max_items_per_plot, subplots_by_magnitudes=False,
+                           subs_out: list | None = None):
     """Pre-expand subplots into effective_plots with item splitting.
 
     When *subplots_by_magnitudes* is True the columns are first grouped
     by order-of-magnitude of their max absolute value (within each 'u'
     subplot group) and each magnitude bucket becomes its own subplot.
+    When *subs_out* is a list, the subplot value each effective plot was
+    extracted from is appended to it (one entry per effective plot).
     """
     from flextool.plot_outputs.subplot_helpers import _sort_subs
     subs = _sort_subs(_get_unique_levels(df_plot.columns, sub_levels))
     effective_plots = []
     for sub in subs:
+        n_before = len(effective_plots)
         df_sub = _extract_subplot_data(df_plot, sub, sub_levels)
         base_title = (
             ' | '.join(str(v) for v in sub) if isinstance(sub, tuple)
@@ -156,7 +160,21 @@ def _build_effective_plots(df_plot, sub_levels, item_level_names,
                     effective_plots.append((f"{base_title}_{chunk_idx}", df_chunk))
             else:
                 effective_plots.append((base_title, df_sub))
+        if subs_out is not None:
+            subs_out.extend([sub] * (len(effective_plots) - n_before))
     return effective_plots
+
+
+def _batch_axis_labels(axis_units, xlabel, ylabel, batch, effective_plots, plot_subs, df_plot, sub_levels):
+    """``(xlabel, ylabel)`` of one figure: as given without *axis_units*, else filled per subplot by the
+    :class:`~flextool.plot_outputs.unit_labels.AxisLabeler` from each subplot's data and subplot value."""
+    if axis_units is None:
+        return xlabel, ylabel
+    from flextool.plot_outputs.unit_labels import _sub_dict
+    names = [df_plot.columns.names[i] for i in sub_levels] if isinstance(df_plot.columns, pd.MultiIndex) else []
+    sub_of = {id(d): s for (_t, d), s in zip(effective_plots, plot_subs)}
+    plots = [(d, _sub_dict(sub_of.get(id(d)), names)) for _t, d in batch]
+    return axis_units.batch_label(xlabel, plots), axis_units.batch_label(ylabel, plots)
 
 
 def _make_file_batches(effective_plots, max_subplots_per_file, output_filepath, plot_dir, plot_name):
@@ -278,6 +296,30 @@ def _compute_line_layout(
 #  Lines
 # ---------------------------------------------------------------------------
 
+def _summed_lines_frame(df_sub: pd.DataFrame, drawn: list, level_names: list) -> pd.DataFrame:
+    """The lines (or stacks) drawn in one subplot as a frame, for the plot-data CSV when some of them are sums.
+
+    *drawn* is the ``(key, series)`` list the subplot drew.  A column level that no rule uses is summed over in the
+    drawing, so ``df_sub`` itself would show the unsummed columns; this frame has one column per drawn line,
+    named by its key (a tuple key becomes a column MultiIndex over *level_names*).
+    """
+    keys = [k for k, _ in drawn]
+    frame = pd.concat([pd.Series(y.to_numpy(), index=df_sub.index) for _, y in drawn], axis=1)
+    if keys and all(isinstance(k, tuple) for k in keys):
+        frame.columns = pd.MultiIndex.from_tuples(keys, names=level_names or None)
+    else:
+        frame.columns = keys
+    return frame
+
+
+def _batch_as_drawn(batch: list, fig) -> list:
+    """*batch* with each subplot whose lines were sums replaced by the summed lines (see :func:`_summed_lines_frame`)."""
+    summed = getattr(fig, '_flextool_summed_subplots', None)
+    if not summed:
+        return batch
+    return [(title, summed.get(i, frame)) for i, (title, frame) in enumerate(batch)]
+
+
 def _build_lines_figure(
     effective_plots, plot_name, sub_levels, line_level_names, time_index,
     subplots_per_row, legend_position,
@@ -343,6 +385,8 @@ def _build_lines_figure(
     # set_smart_xticks handles tick labelling from time_index separately.
     x_positions = np.arange(len(time_index))
 
+    summed_subplots: dict[int, pd.DataFrame] = {}
+
     # ── Per-subplot rendering ──
     for idx, (eff_title, df_sub) in enumerate(effective_plots):
         ax = axes[idx]
@@ -378,6 +422,8 @@ def _build_lines_figure(
                     ),
                 )
 
+            drawn: list = []
+            summed = False
             for line in lines:
                 if is_multiindex:
                     if len(line_level_names) == 1:
@@ -395,11 +441,17 @@ def _build_lines_figure(
                     y_data = df_sub[line]
 
                 if isinstance(y_data, pd.DataFrame):
-                    y_data = y_data.sum(axis=1)
+                    summed = summed or y_data.shape[1] > 1
+                    # min_count=1: a row whose cells are all empty (an empty result cell or a timeline-gap
+                    # row) stays NaN and is drawn as a gap, not as 0.
+                    y_data = y_data.sum(axis=1, min_count=1)
+                drawn.append((line, y_data))
 
                 label = str(line)
                 color = shared_color_map.get(label) if shared_color_map else None
                 ax.plot(x_positions, y_data.values, label=label, color=color)
+            if summed:
+                summed_subplots[idx] = _summed_lines_frame(df_sub, drawn, line_level_names)
 
         # Subplot formatting
         if eff_title is not None:
@@ -454,6 +506,8 @@ def _build_lines_figure(
     # ── Figure title ──
     fig_h = fig.get_size_inches()[1]
     fig.suptitle(plot_name, y=1 - 0.14 / fig_h, va='top')
+    if summed_subplots:
+        fig._flextool_summed_subplots = summed_subplots
 
     return fig
 
@@ -506,12 +560,16 @@ def build_line_figures(
     color_template: dict | None = None,
     category: str | None = None,
     entity_class: str | None = None,
+    keep_plot_data: bool = False,
+    axis_units=None,
 ) -> tuple[list[tuple[str, 'plt.Figure']], int]:
     """Build line-plot Figures and return them without saving or closing.
 
     Returns (figures, total_file_count) where figures is a list of
     (batch_title, Figure) pairs -- one per file batch.
     When only_file_index is set, only that batch is built.
+    With *keep_plot_data*, each Figure carries the drawn ``(subplot_title, frame)``
+    list as ``flextool_plot_batch`` (a reference, no copy) for its CSV.
     """
     # Convert level indices to level names
     if isinstance(df_plot.columns, pd.MultiIndex):
@@ -532,9 +590,10 @@ def build_line_figures(
         time_index = df_plot.index.astype(str)
 
     # Build effective_plots with item splitting (and optional magnitude splitting)
+    plot_subs: list = []
     effective_plots = _build_effective_plots(
         df_plot, sub_levels, line_level_names, max_items_per_plot,
-        subplots_by_magnitudes=subplots_by_magnitudes,
+        subplots_by_magnitudes=subplots_by_magnitudes, subs_out=plot_subs,
     )
     if not effective_plots:
         return [], 0
@@ -580,15 +639,19 @@ def build_line_figures(
         if only_file_index is not None and (batch_idx - 1) != only_file_index:
             continue
         batch_title = f"{plot_name} ({batch_idx}/{n_total})" if n_total > 1 else plot_name
+        batch_x, batch_y = _batch_axis_labels(
+            axis_units, xlabel, ylabel, batch, effective_plots, plot_subs, df_plot, sub_levels)
         fig = _build_lines_figure(
             batch, batch_title, sub_levels, line_level_names, time_index,
             subplots_per_row, legend_position,
-            xlabel, ylabel,
+            batch_x, batch_y,
             axis_bounds, axis_tick_format, always_include_zero_in_axis,
             layout, shared_color_map,
             period_labels=period_labels,
             expected_x_length=expected_x_length,
         )
+        if keep_plot_data:
+            fig.flextool_plot_batch = _batch_as_drawn(batch, fig)
         result.append((batch_title, fig))
     return result, total_file_count
 
@@ -598,6 +661,40 @@ def build_line_figures(
 # ---------------------------------------------------------------------------
 #  Stacked area
 # ---------------------------------------------------------------------------
+
+def draw_stacked_area(ax, df: pd.DataFrame, colors) -> None:
+    """Draw *df*'s columns as stacked areas at x = 0, 1, ...: positive columns upward from zero, negative ones
+    downward, in column order (as pandas' stacked ``plot.area``).
+
+    A row whose cells are all empty (an empty result row or a timeline-gap row) is a gap: nothing is drawn there.
+    pandas' ``plot.area`` would draw it as 0.  An empty cell in a row that has other values adds nothing to the
+    stack there.  Each column must be all >= 0 or all <= 0 (the caller splits mixed columns); a column with both
+    signs raises ``ValueError``, as pandas did.  Each area is labelled ``str(column)``, so a caller that matches
+    legend labels against ``df.columns`` needs string column names.  Used by the stack plots and by the scenario
+    comparison's dispatch plots.
+    """
+    n = len(df)
+    x = np.arange(n)
+    drawn = ~df.isna().all(axis=1).to_numpy()
+    pos = np.zeros(n)
+    neg = np.zeros(n)
+    for col, color in zip(df.columns, colors):
+        y = df[col].fillna(0).to_numpy(dtype=float)
+        if (y > 0).any() and (y < 0).any():
+            raise ValueError(f"stacked area column {col!r} has both positive and negative values; split it into "
+                             "a positive and a negative column")
+        if (y >= 0).all():
+            base, pos = pos, pos + y
+            top = pos
+        else:
+            base, neg = neg, neg + y
+            top = neg
+        ax.fill_between(x, base, top, where=drawn, color=color, alpha=1.0, linewidth=0, label=str(col))
+    if n:
+        # Keep the whole time axis (and zero) in view also when the first or last rows are gaps.
+        ax.update_datalim(np.column_stack([x, np.zeros(n)]))
+        ax.autoscale_view()
+
 
 def _build_stack_figure(
     effective_plots, plot_name, sub_levels, stack_level_names, time_index,
@@ -654,6 +751,8 @@ def _build_stack_figure(
             axes[idx] = fig.add_axes([x_left, y_bottom, ax_width, ax_height])
         y_cursor -= cell_height + INTER_ROW_GAP
 
+    summed_subplots: dict[int, pd.DataFrame] = {}
+
     # ── Per-subplot rendering ──
     for idx, (eff_title, df_sub) in enumerate(effective_plots):
         ax = axes[idx]
@@ -674,6 +773,8 @@ def _build_stack_figure(
                 stacks = df_sub.columns.unique().tolist()
 
             data_dict = {}
+            drawn: list = []
+            summed = False
             for stack in stacks:
                 if is_multiindex:
                     if len(stack_level_names) == 1:
@@ -684,11 +785,17 @@ def _build_stack_figure(
                     y_data = df_sub[stack]
 
                 if isinstance(y_data, pd.DataFrame):
-                    y_data = y_data.sum(axis=1)
+                    summed = summed or y_data.shape[1] > 1
+                    # min_count=1: a row whose cells are all empty (an empty result cell or a timeline-gap
+                    # row) stays NaN and is drawn as a gap, not as 0.
+                    y_data = y_data.sum(axis=1, min_count=1)
+                drawn.append((stack, y_data))
 
                 data_dict[str(stack)] = y_data
 
             df_to_plot = pd.DataFrame(data_dict, index=df_sub.index)
+            if summed:
+                summed_subplots[idx] = _summed_lines_frame(df_sub, drawn, stack_level_names)
 
         # Reset index to use time only (drop period)
         df_to_plot.index = time_index
@@ -744,7 +851,7 @@ def _build_stack_figure(
             colors = plt.colormaps['tab10'].colors[:n_columns]
             if n_columns > 10:
                 colors = plt.colormaps['tab20'].colors[:n_columns]
-        df_to_plot.plot.area(stacked=True, ax=ax, alpha=1.0, legend=False, linewidth=0, color=colors, xlabel="")
+        draw_stacked_area(ax, df_to_plot, colors)
 
         # Subplot formatting
         if eff_title is not None:
@@ -759,7 +866,7 @@ def _build_stack_figure(
                 pos_pairs = []
                 neg_pairs = []
                 for h, label in zip(handles, labels):
-                    if label in df_to_plot.columns and (df_to_plot[label] <= 0).all():
+                    if label in df_to_plot.columns and (df_to_plot[label].dropna() <= 0).all():
                         neg_pairs.append((h, label))
                     else:
                         pos_pairs.append((h, label))
@@ -819,6 +926,8 @@ def _build_stack_figure(
     # ── Figure title ──
     fig_h = fig.get_size_inches()[1]
     fig.suptitle(plot_name, y=1 - 0.14 / fig_h, va='top')
+    if summed_subplots:
+        fig._flextool_summed_subplots = summed_subplots
 
     return fig
 
@@ -868,12 +977,16 @@ def build_stack_figures(
     color_template: dict | None = None,
     category: str | None = None,
     entity_class: str | None = None,
+    keep_plot_data: bool = False,
+    axis_units=None,
 ) -> tuple[list[tuple[str, 'plt.Figure']], int]:
     """Build stacked-area Figures and return them without saving or closing.
 
     Returns (figures, total_file_count) where figures is a list of
     (batch_title, Figure) pairs -- one per file batch.
     When only_file_index is set, only that batch is built.
+    With *keep_plot_data*, each Figure carries the drawn ``(subplot_title, frame)``
+    list as ``flextool_plot_batch`` (a reference, no copy) for its CSV.
     """
     # Convert level indices to level names
     if isinstance(df_plot.columns, pd.MultiIndex):
@@ -893,8 +1006,10 @@ def build_stack_figures(
         time_index = df_plot.index.astype(str)
 
     # Build effective_plots with item splitting
+    plot_subs: list = []
     effective_plots = _build_effective_plots(
-        df_plot, sub_levels, stack_level_names, max_items_per_plot
+        df_plot, sub_levels, stack_level_names, max_items_per_plot,
+        subs_out=plot_subs,
     )
     if not effective_plots:
         return [], 0
@@ -938,14 +1053,18 @@ def build_stack_figures(
         if only_file_index is not None and (batch_idx - 1) != only_file_index:
             continue
         batch_title = f"{plot_name} ({batch_idx}/{n_total})" if n_total > 1 else plot_name
+        batch_x, batch_y = _batch_axis_labels(
+            axis_units, xlabel, ylabel, batch, effective_plots, plot_subs, df_plot, sub_levels)
         fig = _build_stack_figure(
             batch, batch_title, sub_levels, stack_level_names, time_index,
             subplots_per_row, legend_position,
-            xlabel, ylabel,
+            batch_x, batch_y,
             axis_bounds, axis_tick_format, always_include_zero_in_axis,
             layout, shared_color_map,
             period_labels=period_labels,
             expected_x_length=expected_x_length,
         )
+        if keep_plot_data:
+            fig.flextool_plot_batch = _batch_as_drawn(batch, fig)
         result.append((batch_title, fig))
     return result, total_file_count

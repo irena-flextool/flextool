@@ -548,7 +548,7 @@
       "constraint_capacity_coeff",
       null,
       null,
-      "[unit of the constraint per MW] Puts the connection's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW. Capacity in construction is not included.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the connection's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW. Capacity in construction is not included.",
       "constraint"
     ],
     [
@@ -556,7 +556,7 @@
       "constraint_cumulative_pre_built_capacity_coeff",
       null,
       null,
-      "[unit of the constraint per MW] Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -564,7 +564,7 @@
       "constraint_in_construction_capacity_coeff",
       null,
       null,
-      "[unit of the constraint per MW] Puts the capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -572,7 +572,15 @@
       "constraint_invested_capacity_coeff",
       null,
       null,
-      "[unit of the constraint per MW] Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MW.",
+      "constraint"
+    ],
+    [
+      "connection",
+      "constraint_online_coeff",
+      null,
+      null,
+      "[unit of the constraint per unit online] A map of coefficients (Index: constraint name, value: coefficient). Puts the number of units of the connection online in each time step on the left side of the user constraint. One unit is virtual_unitsize; without it, the largest existing capacity, else 1000 MW (set virtual_unitsize when the capacity is invested). Needs online variables (startup_method linear or binary); a coefficient without them is an error. With linear startup the number is continuous. For MW online, use the unit size (MW per unit) as the coefficient.",
       "constraint"
     ],
     [
@@ -580,7 +588,7 @@
       "constraint_retired_capacity_coeff",
       null,
       null,
-      "[unit of the constraint per MW] Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -631,7 +639,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / lifetime. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -728,7 +736,7 @@
       "lifetime",
       null,
       null,
-      "[years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Constant or period.",
+      "[years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Required when the connection invests or retires with a cost (invest_cost, salvage_value), and when lifetime_method is reinvest_choice or no_investment (also for existing capacity without investment). Constant or period.",
       "investment"
     ],
     [
@@ -868,6 +876,17 @@
     ],
     [
       "constraint",
+      "constraint_period_method",
+      [
+        "\"per_timestep\"",
+        "str"
+      ],
+      "constraint_period_methods",
+      "[choice] How the user constraint is applied in time. per_timestep (default): a row for every time step (a constraint with only capacity terms has one row per period). period_total: one row per period over the sum of the time steps, each step's terms times its duration and weight, annualised (divided by the period's share of a year): flows count in MWh per year and units online in unit-hours per year; capacity terms and their existing capacity are multiplied by the hours of the year, and constant is per year. A state coefficient is not allowed. In a rolling solve the row is written only in a roll that realizes the whole period; otherwise the solve leaves it out with a warning. Constant.",
+      "constraint"
+    ],
+    [
+      "constraint",
       "is_enabled",
       [
         "\"yes\"",
@@ -952,7 +971,7 @@
       "capacity_margin",
       null,
       null,
-      "[MW] Capacity the group needs above its peak net load. Used only with capacity_margin_method manual, and only in investment periods. No value means 0. Constant or period.",
+      "[MW] Capacity the group needs above its demand at every time step of an investment period. Used only with capacity_margin_method manual. No value means 0 (the demand must still be covered). Constant or period.",
       "investment"
     ],
     [
@@ -963,7 +982,15 @@
         "str"
       ],
       "capacity_margin_methods",
-      "[choice] Whether the group needs a capacity margin in investment solves. none: no margin. manual: the group needs capacity_margin MW above its peak net load.",
+      "[choice] Whether the group needs a capacity margin in investment solves, and how the margin is given. none (default): no margin. manual: capacity_margin MW. share_of_peak: capacity_margin_share times the group's peak demand in the period. At every time step of an investment period, the capacity of the group's firm units (capacity x availability x capacity_max_coeff) and VRE units (capacity x profile x availability) must cover the group's demand plus the margin. Units fed from a storage node, connections and the units consuming from the group count by their actual flow, so exports add to the requirement; connections and lossy units inside the group are left out (their losses are not required). Units fed from fuel or commodity nodes count at capacity: the fuel is assumed to last.",
+      "investment"
+    ],
+    [
+      "group",
+      "capacity_margin_share",
+      null,
+      null,
+      "[-] e.g. 0.15 means 15%. Capacity margin as a share of the group's peak demand: the largest sum of the demand of the group's nodes over the period's full time series (before representative periods and new_stepduration). Used only with capacity_margin_method share_of_peak. No value means 0. Constant or period.",
       "investment"
     ],
     [
@@ -1066,7 +1093,7 @@
       "inertia_limit",
       null,
       null,
-      "[MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value means no requirement. Constant or period.",
+      "[MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value (or 0) means no requirement. Constant, period, time or period+time. A time map must give a value for every time step of the solve (a missing time step is an error). Over a coarse time step the row uses the step mean.",
       "network"
     ],
     [
@@ -1125,7 +1152,7 @@
       "non_synchronous_limit",
       null,
       null,
-      "[-] e.g. 0.8 means 80%. Largest share of non-synchronous supply in the group, measured against the real demand. Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no value means 0. Constant or period.",
+      "[-] e.g. 0.8 means 80%. Largest share of non-synchronous supply in the group, measured against the real demand. Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no value means 0. Constant, period, time or period+time. A time map must give a value for every time step of the solve (a missing time step is an error). Over a coarse time step the row uses the step mean.",
       "network"
     ],
     [
@@ -1333,7 +1360,7 @@
       "model",
       "version",
       [
-        "78.0",
+        "79.0",
         "float"
       ],
       null,
@@ -1364,7 +1391,7 @@
       "constraint_capacity_coeff",
       null,
       null,
-      "[unit of the constraint per MWh] Puts the node's storage capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MWh. Capacity in construction is not included.",
+      "[unit of the constraint per MWh] A map of coefficients (Index: constraint name, value: coefficient). Puts the node's storage capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MWh. Capacity in construction is not included.",
       "constraint"
     ],
     [
@@ -1372,7 +1399,7 @@
       "constraint_cumulative_pre_built_capacity_coeff",
       null,
       null,
-      "[unit of the constraint per MWh] Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MWh.",
+      "[unit of the constraint per MWh] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MWh.",
       "constraint"
     ],
     [
@@ -1380,7 +1407,7 @@
       "constraint_in_construction_capacity_coeff",
       null,
       null,
-      "[unit of the constraint per MWh] Puts the storage capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MWh.",
+      "[unit of the constraint per MWh] A map of coefficients (Index: constraint name, value: coefficient). Puts the storage capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MWh.",
       "constraint"
     ],
     [
@@ -1388,7 +1415,7 @@
       "constraint_invested_capacity_coeff",
       null,
       null,
-      "[unit of the constraint per MWh] Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MWh.",
+      "[unit of the constraint per MWh] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MWh.",
       "constraint"
     ],
     [
@@ -1396,7 +1423,7 @@
       "constraint_retired_capacity_coeff",
       null,
       null,
-      "[unit of the constraint per MWh] Puts the storage capacity retired in each period on the left side of the user constraint. Coefficient per MWh.",
+      "[unit of the constraint per MWh] A map of coefficients (Index: constraint name, value: coefficient). Puts the storage capacity retired in each period on the left side of the user constraint. Coefficient per MWh.",
       "constraint"
     ],
     [
@@ -1447,7 +1474,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / lifetime. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -1458,7 +1485,7 @@
         "float"
       ],
       null,
-      "[MWh] per time step. Extra demand (negative inflow) added to every time step of the investment solve, when `energy_margin_method` = `inflow_adder`. The value is not a total that is divided over the steps: each step gets the full value. On 24 h steps, a margin of 10 MW needs a value of 240. FlexTool does not rescale it, including when the investment solve uses `new_stepduration`. Dispatch solves are not affected. 0 = off. Constant, period or period+time.",
+      "[MWh] per time step of the timeline. Extra demand (negative inflow) added to every time step of the investment solve, when `energy_margin_method` = `inflow_adder`. The value is not a total that is divided over the steps: each time step gets the full value. On a timeline of 24 h time steps, a margin of 10 MW needs a value of 240. When the investment solve uses `new_stepduration`, a solve step gets the sum of the values of the time steps it combines (a constant or period value counts once per time step). Dispatch solves are not affected. 0 = off. Constant, period or period+time.",
       "investment"
     ],
     [
@@ -1582,7 +1609,7 @@
       "lifetime",
       null,
       null,
-      "[years] Operating lifetime. It starts when the storage capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the storage capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Constant or period.",
+      "[years] Operating lifetime. It starts when the storage capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the storage capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Required when the node invests or retires with a cost (invest_cost, salvage_value), and when lifetime_method is reinvest_choice or no_investment (also for existing capacity without investment). Constant or period.",
       "investment"
     ],
     [
@@ -1704,7 +1731,7 @@
         "str"
       ],
       "storage_binding_methods",
-      "[choice] Choice how the storage state will be maintained over discontinuous timelines. Seven cycle-scope methods (the state-continuity family): 'bind_within_timeblock' cycles state within each timeblock (cycle closes at block boundaries); 'bind_within_period' cycles within each FlexTool period and chains blocks inside the period; 'bind_within_solve' cycles across the whole solve horizon; 'bind_forward_only' (default) chains state forward across the solve with no end-to-start closure; 'bind_within_solve_blended_weights' is the representative-period variant of bind_within_solve (RP weighting + solve-level cycle closure); 'bind_within_period_blended_weights' is the RP variant of bind_within_period (per-period RP weighting, each period closes independently); 'bind_forward_only_blended_weights' is the RP variant of bind_forward_only (RP weighting, no cycle closure). One additional value, 'bind_intraperiod_blocks', is structurally an aggregation method rather than a cycle-scope method: state is held constant within each block and the block-total flow is balanced at the boundary. Silent-degrade behaviour: any '*_blended_weights' method on a node in a solve whose active timeset has no representative_period_weights is automatically downgraded to the corresponding non-RP variant for that solve, so the same storage entity can drive an RP investment solve and a chronological dispatch solve back-to-back. Separate parameters (e.g. 'storage_state_start') can force additional bindings. By default, storage start state is bound to 0. The blended_weights methods do not work with stochastic branches.",
+      "[choice] Choice how the storage state will be maintained over discontinuous timelines. Seven cycle-scope methods (the state-continuity family): 'bind_within_timeblock' cycles state within each timeblock (cycle closes at block boundaries); 'bind_within_period' cycles within each FlexTool period and chains blocks inside the period; 'bind_within_solve' cycles across the whole solve horizon; 'bind_forward_only' (default) chains state forward across the solve with no end-to-start closure; 'bind_within_solve_blended_weights' is the representative-period variant of bind_within_solve (RP weighting + solve-level cycle closure); 'bind_within_period_blended_weights' is the RP variant of bind_within_period (per-period RP weighting, each period closes independently); 'bind_forward_only_blended_weights' is the RP variant of bind_forward_only (RP weighting, no cycle closure). One additional value, 'bind_intraperiod_blocks', is structurally an aggregation method rather than a cycle-scope method: state is held constant within each block and the block-total flow is balanced at the boundary. Silent-degrade behaviour: any '*_blended_weights' method on a node in a solve whose active timeset has no representative_period_weights is automatically downgraded to the corresponding non-RP variant for that solve, so the same storage entity can drive an RP investment solve and a chronological dispatch solve back-to-back. Separate parameters (e.g. 'storage_state_start') can force additional bindings. By default, storage start state is bound to 0. In a stochastic solve each forecast branch uses the representative periods of its period, and the blended_weights methods work per branch. In a rolling_window solve on representative periods the blended_weights methods are not applied: those nodes bind forward only (bind_forward_only), with a warning.",
       "storage"
     ],
     [
@@ -1771,6 +1798,17 @@
       null,
       "[-] 0-1, share of the storage capacity. Storage state at the start of the first solve, as a share of the storage capacity. Needed by fix_start and fix_start_end. Constant.",
       "storage"
+    ],
+    [
+      "node",
+      "unit_of_measure",
+      [
+        "\"MWh\"",
+        "str"
+      ],
+      null,
+      "[text] Unit of measure of this node's amounts, e.g. m3, t, MWh_th (default MWh). A label only: FlexTool converts nothing. Flows into and out of the node, and the capacity of a unit whose output is this node (of a connection when both of its nodes have this unit), are rates in this unit per hour (MWh → MW, m3 → m3/h); storage state, storage capacity and inflow per time step are amounts (m3); annual results are per year (m3/a); prices and penalty_up/down are CUR per this unit. The per-kW costs (invest_cost, fixed_cost, salvage_value) of a unit whose capacity is in this unit, and the per-kWh costs of this node's storage, are per 0.001 of the rate or amount: 500 CUR per m3/h of capacity is entered as 0.5, and 20 CUR per m3 of storage as 0.02. An efficiency into or out of this node is output units per input unit (e.g. m3/MWh).",
+      "basics"
     ],
     [
       "node",
@@ -2050,6 +2088,28 @@
     ],
     [
       "solve",
+      "reduce_system_detail_method",
+      [
+        "\"none\"",
+        "str"
+      ],
+      "reduce_system_detail_methods",
+      "[choice] System detail that this solve leaves out, to make it faster. none (default): all detail. reserves: no reserve requirements. inertia: no inertia limits. non_synchronous: no non-synchronous share limits. dc_power_flow: the lines of dc_power_flow_with_angles groups are lossless transport limited by their capacity (no angles). A combination leaves out each named part. The capacity margin is always kept.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "reduce_unit_detail_method",
+      [
+        "\"none\"",
+        "str"
+      ],
+      "reduce_unit_detail_methods",
+      "[choice] Detail of units and connections that this solve leaves out, to make it faster (typically an investment solve). none (default): all detail. integers: binary startup_method is solved as continuous and exact connections behave as regular. integers_ramps: integers, and no ramp limits or ramp costs. integers_min_limits: integers, and no min_load, capacity_min_coeff floors or minimum up / down times. integers_ramps_min_limits: integers, no ramps and no min limits. Under the integers levels, a unit or connection whose online variables nothing in the solve still uses (no start-up cost, min_load, capacity_min_coeff floor, minimum up / down time, min_load_efficiency curve, constraint_online_coeff in a user constraint, reserve, inertia or ramp limit left) has none, as with startup_method no_startup; the run log names them. online: everything of integers_min_limits, and no online variables: no start-up costs, user constraints that count units online are left out whole, min_load_efficiency units use their full-load efficiency (less fuel than the curve at part load), and ramp limits apply to the capacity. Reserves are then limited by built capacity, not online capacity, and inertia is counted from flows. online_ramps: online, and no ramp limits or ramp costs. Never adds detail.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
       "rolling_duration",
       null,
       null,
@@ -2196,7 +2256,7 @@
       "representative_period_weights",
       null,
       null,
-      "[-] Representative-period weighting map (rank-2 nested Map: base period start timestep -> representative period start timestep -> weight).  Created by the representative-periods preprocess tool; declares how much each representative period stands in for each base period.  Its presence enables RP-aware storage-binding ('*_blended_weights'); its absence silently downgrades those methods to the non-RP behaviour.  Mutually exclusive with 'timeset_weights' on the same timeset. Not allowed in a stochastic solve.",
+      "[-] Representative-period weighting map (rank-2 nested Map: base period start timestep -> representative period start timestep -> weight).  Created by the representative-periods preprocess tool; declares how much each representative period stands in for each base period.  Its presence enables RP-aware storage-binding ('*_blended_weights'); its absence silently downgrades those methods to the non-RP behaviour.  Mutually exclusive with 'timeset_weights' on the same timeset. The forecast branches of a stochastic solve use the representative periods of their period.",
       "solve_advanced"
     ],
     [
@@ -2212,7 +2272,7 @@
       "timeset_duration",
       null,
       null,
-      "[count of time steps] Index: name of the the timestep that starts the timeset, value: duration of the block in timesteps. Defines the *selection*: which timesteps are in the solve and how many (this sets 'hours_in_solve'). Representativeness - each timestep's share of the year - is set separately by 'timeset_weights'.",
+      "[count of time steps] Index: name of the timestep that starts the timeset, value: duration of the block in timesteps. Defines the *selection*: which timesteps are in the solve and how many (this sets 'hours_in_solve'). Representativeness - each timestep's share of the year - is set separately by 'timeset_weights'.",
       "timeline"
     ],
     [
@@ -2239,7 +2299,7 @@
       "constraint_capacity_coeff",
       null,
       null,
-      "[unit of the constraint per MW] Puts the unit's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW. Capacity in construction is not included.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the unit's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW. Capacity in construction is not included.",
       "constraint"
     ],
     [
@@ -2247,7 +2307,7 @@
       "constraint_cumulative_pre_built_capacity_coeff",
       null,
       null,
-      "[unit of the constraint per MW] Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -2255,7 +2315,7 @@
       "constraint_in_construction_capacity_coeff",
       null,
       null,
-      "[unit of the constraint per MW] Puts the capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -2263,7 +2323,15 @@
       "constraint_invested_capacity_coeff",
       null,
       null,
-      "[unit of the constraint per MW] Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MW.",
+      "constraint"
+    ],
+    [
+      "unit",
+      "constraint_online_coeff",
+      null,
+      null,
+      "[unit of the constraint per unit online] A map of coefficients (Index: constraint name, value: coefficient). Puts the number of units online in each time step on the left side of the user constraint. One unit is virtual_unitsize; without it, the largest existing capacity, else 1000 MW (set virtual_unitsize when the capacity is invested). Needs online variables (startup_method linear or binary, or a minimum_time_method); a coefficient without them is an error. With linear startup the number is continuous. For MW online, use the unit size (MW per unit) as the coefficient.",
       "constraint"
     ],
     [
@@ -2271,7 +2339,7 @@
       "constraint_retired_capacity_coeff",
       null,
       null,
-      "[unit of the constraint per MW] Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -2333,7 +2401,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / lifetime. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -2344,7 +2412,7 @@
         "float"
       ],
       null,
-      "[-] Efficiency of the unit at full load: outputs / inputs, each flow weighted by its conversion_flow_coeff (default 1, giving plain sum of outputs / sum of inputs). A min_load_efficiency unit can have different efficiency below full load (see efficiency_at_min_load). No effect on a unit without inputs or without outputs. Constant, period, time, period+time or stochastic time.",
+      "[-] Efficiency of the unit at full load: outputs / inputs, each flow weighted by its conversion_flow_coeff (default 1, giving plain sum of outputs / sum of inputs). May be above 1: a heat pump with COP 3 has 3; a unit whose output is measured in another unit of measure (e.g. m³ of water per MWh of electricity) uses that ratio. A min_load_efficiency unit can have different efficiency below full load (see efficiency_at_min_load). No effect on a unit without inputs or without outputs. Constant, period, time, period+time or stochastic time.",
       "basics"
     ],
     [
@@ -2352,7 +2420,7 @@
       "efficiency_at_min_load",
       null,
       null,
-      "[-] e.g. 0.4 means 40%. Efficiency of a min_load_efficiency unit at its minimum load. Fuel use is a straight line from minimum load (this efficiency) to full load (efficiency). Has no effect when min_load is 0: the efficiency at zero output is not defined. No value: efficiency applies at minimum load too. Constant, period, time or period+time.",
+      "[-] Output / input at minimum load, like efficiency (e.g. 0.4; may be above 1). Efficiency of a min_load_efficiency unit at its minimum load. Fuel use is a straight line from minimum load (this efficiency) to full load (efficiency). Has no effect when min_load is 0: the efficiency at zero output is not defined. No value: efficiency applies at minimum load too. Constant, period, time or period+time.",
       "basics"
     ],
     [
@@ -2427,7 +2495,7 @@
       "lifetime",
       null,
       null,
-      "[years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Constant or period.",
+      "[years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Required when the unit invests or retires with a cost (invest_cost, salvage_value), and when lifetime_method is reinvest_choice or no_investment (also for existing capacity without investment). Constant or period.",
       "investment"
     ],
     [
@@ -2613,7 +2681,7 @@
       "ramp_cost",
       null,
       null,
-      "[CUR/MW] Cost of ramping the unit. Constant.",
+      "[CUR/MW] Cost per MW of change in the step-average flow, up or down, between a time step and the step before it. Charged per change, independent of step length. Needs ramp_method ramp_cost or both. Constant. On a constant_efficiency unit with one input and one output, an input-side ramp cost prices the change of the unit's output flow.",
       "tech_advanced"
     ],
     [
@@ -2624,7 +2692,7 @@
         "str"
       ],
       "ramp_methods",
-      "[choice] Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost is not functional yet.",
+      "[choice] Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost charges every change in the flow between consecutive time steps. both adds the limit as well.",
       "tech_advanced"
     ],
     [
@@ -2641,6 +2709,25 @@
       null,
       null,
       "[share of capacity per minute] Largest increase of the flow between two time steps. No limit across a gap in the timeline. Constant.",
+      "tech_advanced"
+    ],
+    [
+      "unit__inputNode",
+      "startup_energy",
+      null,
+      null,
+      "[MWh per MW started] Energy taken from this input node per MW of capacity started up (start-ups x unit size). Used with startup_input_method startup_and_input or startup_only. Constant or period.",
+      "tech_advanced"
+    ],
+    [
+      "unit__inputNode",
+      "startup_input_method",
+      [
+        "\"just_input\"",
+        "str"
+      ],
+      "startup_input_methods",
+      "[choice] What the input arc supplies. just_input (default): the normal input flow. startup_and_input: the normal input flow, and each start-up of the unit also takes startup_energy x MW started from this node. startup_only: only the start-up energy; the arc has no flow and takes no part in the conversion, the capacity, input shares or ramps. The start-up input can be fuel (oil to start a coal unit), heat (from the tank of a CSP plant) or electricity. Needs online variables (startup_method linear or binary, or a minimum_time_method). The start-up input is priced as the node's commodity, counts in CO2 prices and caps and is dropped with the start-ups by reduce_unit_detail_method online. It is not part of constraint_flow_coeff, flow groups or the capacity margin.",
       "tech_advanced"
     ],
     [
@@ -2727,7 +2814,7 @@
       "ramp_cost",
       null,
       null,
-      "[CUR/MW] Cost of ramping the unit. Constant.",
+      "[CUR/MW] Cost per MW of change in the step-average flow, up or down, between a time step and the step before it. Charged per change, independent of step length. Needs ramp_method ramp_cost or both. Constant. On a constant_efficiency unit with one input and one output, an input-side ramp cost prices the change of the unit's output flow.",
       "tech_advanced"
     ],
     [
@@ -2738,7 +2825,7 @@
         "str"
       ],
       "ramp_methods",
-      "[choice] Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost is not functional yet.",
+      "[choice] Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost charges every change in the flow between consecutive time steps. both adds the limit as well.",
       "tech_advanced"
     ],
     [
@@ -2923,6 +3010,12 @@
     [
       "connection",
       "constraint_invested_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "connection",
+      "constraint_online_coeff",
       "map",
       1
     ],
@@ -3246,6 +3339,12 @@
     ],
     [
       "constraint",
+      "constraint_period_method",
+      "str",
+      0
+    ],
+    [
+      "constraint",
       "is_enabled",
       "str",
       0
@@ -3354,6 +3453,18 @@
     ],
     [
       "group",
+      "capacity_margin_share",
+      "float",
+      0
+    ],
+    [
+      "group",
+      "capacity_margin_share",
+      "map",
+      1
+    ],
+    [
+      "group",
       "co2_max_period",
       "float",
       0
@@ -3456,6 +3567,12 @@
     ],
     [
       "group",
+      "inertia_limit",
+      "map",
+      2
+    ],
+    [
+      "group",
       "invest_max_period",
       "float",
       0
@@ -3513,6 +3630,12 @@
       "non_synchronous_limit",
       "map",
       1
+    ],
+    [
+      "group",
+      "non_synchronous_limit",
+      "map",
+      2
     ],
     [
       "group",
@@ -4170,6 +4293,12 @@
     ],
     [
       "node",
+      "unit_of_measure",
+      "str",
+      0
+    ],
+    [
+      "node",
       "virtual_unitsize",
       "float",
       0
@@ -4416,6 +4545,18 @@
     ],
     [
       "solve",
+      "reduce_system_detail_method",
+      "str",
+      0
+    ],
+    [
+      "solve",
+      "reduce_unit_detail_method",
+      "str",
+      0
+    ],
+    [
+      "solve",
       "rolling_duration",
       "float",
       0
@@ -4579,6 +4720,12 @@
     [
       "unit",
       "constraint_invested_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "unit",
+      "constraint_online_coeff",
       "map",
       1
     ],
@@ -4997,6 +5144,24 @@
       0
     ],
     [
+      "unit__inputNode",
+      "startup_energy",
+      "float",
+      0
+    ],
+    [
+      "unit__inputNode",
+      "startup_energy",
+      "map",
+      1
+    ],
+    [
+      "unit__inputNode",
+      "startup_input_method",
+      "str",
+      0
+    ],
+    [
       "unit__node__profile",
       "profile_method",
       "str",
@@ -5103,6 +5268,13 @@
       ]
     ],
     [
+      "capacity_margin_methods",
+      [
+        "\"share_of_peak\"",
+        "str"
+      ]
+    ],
+    [
       "co2_methods",
       [
         "\"none\"",
@@ -5155,6 +5327,20 @@
       "co2_methods",
       [
         "\"price_period_total\"",
+        "str"
+      ]
+    ],
+    [
+      "constraint_period_methods",
+      [
+        "\"per_timestep\"",
+        "str"
+      ]
+    ],
+    [
+      "constraint_period_methods",
+      [
+        "\"period_total\"",
         "str"
       ]
     ],
@@ -5747,6 +5933,111 @@
       ]
     ],
     [
+      "reduce_system_detail_methods",
+      [
+        "\"none\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "\"reserves\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "\"inertia\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "\"non_synchronous\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "\"inertia_non_synchronous\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "\"reserves_inertia_non_synchronous\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "\"dc_power_flow\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "\"reserves_inertia_non_synchronous_dc_power_flow\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "\"none\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "\"integers\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "\"integers_ramps\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "\"integers_min_limits\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "\"integers_ramps_min_limits\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "\"online\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "\"online_ramps\"",
+        "str"
+      ]
+    ],
+    [
       "reserve_methods",
       [
         "\"no_reserve\"",
@@ -5953,6 +6244,27 @@
       "solvers",
       [
         "\"copt\"",
+        "str"
+      ]
+    ],
+    [
+      "startup_input_methods",
+      [
+        "\"just_input\"",
+        "str"
+      ]
+    ],
+    [
+      "startup_input_methods",
+      [
+        "\"startup_and_input\"",
+        "str"
+      ]
+    ],
+    [
+      "startup_input_methods",
+      [
+        "\"startup_only\"",
         "str"
       ]
     ],

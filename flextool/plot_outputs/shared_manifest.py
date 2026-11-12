@@ -457,6 +457,30 @@ def _union_scenarios(
 # Scenario removal helper
 # ---------------------------------------------------------------------------
 
+def filter_manifest_to_scenarios(data: dict, keep) -> dict:
+    """A copy of the manifest *data* with only the scenarios (run folders) in *keep*.
+
+    Empty subplot / sub_config / result_key entries are pruned, and legacy flat entries (no scenario dimension,
+    so no telling which run they came from) are dropped.  Used by the project export, so a package does not carry
+    the names and value ranges of runs left out of it.
+    """
+    keep = set(keep)
+    out: dict = {}
+    for result_key, sub_map in data.items():
+        if not isinstance(sub_map, dict):
+            continue
+        for sub_config, subplot_map in sub_map.items():
+            if not isinstance(subplot_map, dict):
+                continue
+            for subplot_key, scen_map in subplot_map.items():
+                if not isinstance(scen_map, dict):
+                    continue
+                kept = {name: bounds for name, bounds in scen_map.items() if name in keep}
+                if kept:
+                    out.setdefault(result_key, {}).setdefault(sub_config, {})[subplot_key] = kept
+    return out
+
+
 def remove_scenario_from_manifest(
     project_path: Path, scenario_name: str,
 ) -> bool:

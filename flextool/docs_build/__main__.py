@@ -1,4 +1,5 @@
-"""``python -m flextool.docs_build --out DIR``: write the generated documentation pages into ``DIR``."""
+"""``python -m flextool.docs_build --out DIR`` writes the generated documentation pages into ``DIR``;
+``--xlsx FILE [--input-db DB [--scenario NAME]]`` writes the parameter catalogue as an Excel data dictionary."""
 from __future__ import annotations
 
 import argparse
@@ -10,24 +11,13 @@ from flextool.docs_build import (
     default_private_names_path,
     write_pages,
 )
-from flextool.docs_build.catalogue import unmatched_bullets
 
 PROG = "python -m flextool.docs_build"
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog=PROG,
-        description="Write the formulation page and the results catalogue, generated from the installed code.",
-    )
-    parser.add_argument("--out", type=Path, required=True, help="folder to write the pages into")
-    parser.add_argument("--docs-dir", type=Path, default=None,
-                        help="the Markdown documentation they are built with (default: docs/ of this clone, else "
-                             "the copy in the installed package)")
-    parser.add_argument("--private-names", type=Path, default=None,
-                        help="list of private names to check the pages against (default: .private_names at the "
-                             "repository root, skipped when absent)")
-    args = parser.parse_args(argv)
+def _write_pages(args: argparse.Namespace) -> int:
+    from flextool.docs_build.catalogue import unmatched_bullets
+
     docs_dir = args.docs_dir
     if docs_dir is None:
         from flextool.assistant.docs_store import markdown_root
@@ -59,6 +49,66 @@ def main(argv: list[str] | None = None) -> int:
         print(f"results.md ({bullet.topic}): names no result table: {bullet.text}", file=sys.stderr)
     for path in written:
         print(path)
+    return 0
+
+
+def _write_xlsx(args: argparse.Namespace) -> int:
+    from flextool.docs_build.parameters import CatalogueInputError, database_usage, version_mismatch, write_xlsx
+
+    usage = None
+    if args.input_db is not None:
+        try:
+            usage = database_usage(args.input_db, args.scenario)
+        except CatalogueInputError as exc:
+            print(f"{PROG}: {exc}", file=sys.stderr)
+            return 1
+        note = version_mismatch(usage.version)
+        if note:
+            print(f"{PROG}: {note}", file=sys.stderr)
+    try:
+        path = write_xlsx(args.xlsx, usage, input_db=args.input_db, scenario=args.scenario)
+    except OSError as exc:
+        print(f"{PROG}: cannot write {args.xlsx}: {exc}", file=sys.stderr)
+        return 1
+    print(path)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog=PROG,
+        description="Write the generated documentation pages (the formulation page, the results catalogue and the "
+                    "parameter catalogue) and/or the parameter catalogue as an Excel data dictionary, from the "
+                    "installed code.",
+    )
+    parser.add_argument("--out", type=Path, default=None, help="folder to write the pages into")
+    parser.add_argument("--docs-dir", type=Path, default=None,
+                        help="the Markdown documentation they are built with (default: docs/ of this clone, else "
+                             "the copy in the installed package)")
+    parser.add_argument("--private-names", type=Path, default=None,
+                        help="list of private names to check the pages against (default: .private_names at the "
+                             "repository root, skipped when absent)")
+    parser.add_argument("--xlsx", type=Path, default=None,
+                        help="write the parameter catalogue (data dictionary) to this Excel file")
+    parser.add_argument("--input-db", default=None,
+                        help="with --xlsx: an input database, as a file path (input_data.sqlite) or a URL "
+                             "(sqlite:///input_data.sqlite); the parameters it gives values to are marked 'used in "
+                             "DB'. The file is opened read-only")
+    parser.add_argument("--scenario", default=None,
+                        help="with --input-db: count only the alternatives of this scenario")
+    args = parser.parse_args(argv)
+    if args.out is None and args.xlsx is None:
+        parser.error("give --out, --xlsx or both")
+    if args.input_db is not None and args.xlsx is None:
+        parser.error("--input-db needs --xlsx")
+    if args.scenario is not None and args.input_db is None:
+        parser.error("--scenario needs --input-db")
+    if args.out is not None:
+        code = _write_pages(args)
+        if code:
+            return code
+    if args.xlsx is not None:
+        return _write_xlsx(args)
     return 0
 
 

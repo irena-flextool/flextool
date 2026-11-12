@@ -81,6 +81,11 @@ from build_lh2_three_region import (  # noqa: E402
     REGIONS,
     SCENARIO,
 )
+from _augment_added import (  # noqa: E402
+    ADDED_ALTERNATIVES as AUGMENT_ALTERNATIVES,
+    ADDED_ENTITIES as AUGMENT_ENTITIES,
+    ADDED_SCENARIOS as AUGMENT_SCENARIOS,
+)
 
 
 DEFAULT_OUT = HERE / "lh2_three_region.json"
@@ -1034,14 +1039,25 @@ def _build_sqlite(
     # entity_class, parameter_definition and value list FlexTool needs.
     json_to_db(HERE / "tests.json", db_path)
 
-    # Step 2: drop the baseline alternatives added to tests.json after the
-    # LH2 fixtures were built, so the build reproduces the committed JSONs.
+    # Step 2: drop what was added to tests.json after the LH2 fixtures were
+    # built (the alternatives above and what the _augment_*.py scripts add,
+    # see _augment_added.py), so the build reproduces the committed JSONs.
     url = f"sqlite:///{db_path.resolve()}"
     with open_database_mapping(url) as db:
-        for name in BASELINE_ALTERNATIVES_NOT_CARRIED:
+        for name in BASELINE_ALTERNATIVES_NOT_CARRIED + AUGMENT_ALTERNATIVES:
             alt = db.get_item("alternative", name=name)
             if alt:
                 db.remove_item("alternative", alt["id"])
+        for name in AUGMENT_SCENARIOS:
+            scenario = db.get_item("scenario", name=name)
+            if scenario:
+                db.remove_item("scenario", scenario["id"])
+        # Multi-dimensional entities first: removing a 0-d entity removes
+        # the entities built on it as well.
+        for class_name, byname in sorted(AUGMENT_ENTITIES, key=lambda e: -len(e[1])):
+            entity = db.get_item("entity", entity_class_name=class_name, entity_byname=byname)
+            if entity:
+                db.remove_item("entity", entity["id"])
         db.commit_session("Dropped baseline alternatives the LH2 fixtures do not carry")
 
     # Step 3: layer the LH2 fixture on top.

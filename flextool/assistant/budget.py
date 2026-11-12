@@ -7,9 +7,10 @@ context window.
 Mistral, Gemma) make result JSON with floats about one token per 1.4 characters; the digit-aware form stays above
 them without a tokenizer (checked against Qwen2.5 and o200k counts of a committed result fixture).  Provider data a
 request replays to the model that produced it (thinking blocks, reasoning details, thought signatures) counts as
-JSON, as the backend sends it.  A per-session :class:`TokenCorrection` raises the estimates when a provider reports
-more prompt tokens than estimated: by the largest ratio of the last :data:`CORRECTION_WINDOW` requests (never below
-1.0).
+JSON, as the backend sends it; Ollama's reasoning text counts as text, and only on the messages after the last user
+message, where the backend replays it (an estimate that is too high is never corrected down).  A per-session
+:class:`TokenCorrection` raises the estimates when a provider reports more prompt tokens than estimated: by the
+largest ratio of the last :data:`CORRECTION_WINDOW` requests (never below 1.0).
 
 **Budgets** (:data:`LEVEL_BUDGETS`, the free plan's in :data:`FREE_TIER_BUDGETS`) are safety caps, not usage
 limits; :func:`resolve_budget` combines a level with the window (P3 §3.3):
@@ -55,7 +56,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from flextool.assistant import caps as caps_module
-from flextool.assistant.llm_adapter import ANTHROPIC_BLOCKS_KEY
+from flextool.assistant.llm_adapter import ANTHROPIC_BLOCKS_KEY, REASONING_TEXT_KEY
 from flextool.assistant.tiers import ASSUMED_LOCAL_WINDOW, ASSUMED_REMOTE_WINDOW, MIN_WINDOW
 
 if TYPE_CHECKING:
@@ -72,6 +73,9 @@ ESTIMATE_OVERHEAD = 4
 FIT_SHARE = 0.95
 #: The margin and the text history that :func:`fit_caps` keeps free.
 FIT_MARGIN_SHARE = 0.10
+#: The room :func:`fit_caps` and :func:`fitting_calls` keep for the context block: its model facts (at most
+#: ``model_facts.FACTS_TOKENS_MAX``, 200 tokens) and the block's other lines (about 60 tokens with a few names).
+CONTEXT_RESERVE_TOKENS = 260
 HISTORY_TOKENS_MAX = 4_000
 HISTORY_SHARE = 0.15
 #: Characters per token of result JSON at its densest, as the estimate counts it (P3 §4.3).
@@ -120,11 +124,12 @@ def _extra_tokens(extra: dict) -> int:
     return approx_tokens(json.dumps(extra, ensure_ascii=False), "json") if extra else 0
 
 
-def _message_parts(m: Message, origin: Origin | None = None) -> tuple[int, int]:
+def _message_parts(m: Message, origin: Origin | None = None, *, after_last_user: bool = False) -> tuple[int, int]:
     """(text tokens, JSON tokens) of one message.  The first message of a fresh context carries tool results, so
     it counts as JSON (the larger estimate).  For the model that produced it (*origin*) an assistant message's
     provider data counts as the backend sends it: Anthropic's content blocks instead of the text and the calls;
-    other data (reasoning details, the calls' thought signatures) on top of them."""
+    other data (reasoning details, the calls' thought signatures) on top of them; the reasoning text (Ollama) as
+    text, and only *after_last_user* (the backend replays it only there)."""
     if m.role == "tool" or m.kind == "continuation":
         return 0, approx_tokens(m.text, "json")
     same = origin is not None and m.origin is not None and tuple(m.origin) == tuple(origin)
@@ -133,7 +138,11 @@ def _message_parts(m: Message, origin: Origin | None = None) -> tuple[int, int]:
     text = approx_tokens(m.text, "text") if m.text else 0
     calls = sum(approx_tokens(f"{c.name}{c.raw_arguments}", "json") for c in m.tool_calls)
     if same:
-        calls += _extra_tokens(m.provider_extra) + sum(_extra_tokens(c.provider_extra) for c in m.tool_calls)
+        extra = {k: v for k, v in m.provider_extra.items() if k != REASONING_TEXT_KEY}
+        calls += _extra_tokens(extra) + sum(_extra_tokens(c.provider_extra) for c in m.tool_calls)
+        reasoning = m.provider_extra.get(REASONING_TEXT_KEY)
+        if after_last_user and isinstance(reasoning, str) and reasoning:
+            text += approx_tokens(reasoning, "text")
     return text, calls
 
 
@@ -151,8 +160,9 @@ def request_parts(req: Request, origin: Origin | None = None, *, schemas: bool =
     tool-less request the backend sends without tools, :func:`~flextool.assistant.providers.schemas_sent`)."""
     text = sum(approx_tokens(layer, "text") for layer in req.system)
     tools = schema_tokens(req.tools) if schemas else 0
-    for m in req.messages:
-        t, j = _message_parts(m, origin)
+    last_user = max((i for i, m in enumerate(req.messages) if m.role == "user"), default=-1)
+    for i, m in enumerate(req.messages):
+        t, j = _message_parts(m, origin, after_last_user=i > last_user)
         text += t
         tools += j
     return text, tools
@@ -196,20 +206,31 @@ class LevelBudget:
 
 #: Starting values that the calibration informs (P3 §4.1, §7.6).  The prefix budgets are above the estimate of
 #: the shipped instructions and tool schemas at the worst front end (the GUI; ``tests/assistant/test_prompt_budget``
-#: pins each level × front end).  P3 §4.1 drafted 3 500 / 7 500 / 8 500 before the schemas were final; basic rose
+#: checks each level × front end fits).  P3 §4.1 drafted 3 500 / 7 500 / 8 500 before the schemas were final; basic rose
 #: to 4 700 with list_sources, to 4 850 with get_parameter's lists, standard to 8 700; Cycle 2: basic
 #: 4 920 (C2-D1: a 16 384-token window fits a part's three 2 000-character float-heavy results, 4 088 tokens, up to
 #: a prefix of 4 923; C2-OD2's 4 950 assumed 1.5 characters a token, which such results undercut),
 #: standard 9 000, advanced 9 100 (list_runs' scan and overview, list_sources' full text at standard and advanced);
 #: 2026-11-11 "How to answer" in the level texts: basic 5 000 (three float-heavy 2 000-character results, 4 088
 #: tokens, now overflow a 16 384-token window by about 50 tokens; the pre-send fit handles it), standard 9 350,
-#: advanced 9 450.
+#: advanced 9 450; 2026-11-12 explain_entity (item 209; its schema is about 500 tokens, standard and advanced only):
+#: standard 9 850, advanced 9 950 (the worst front end's prefix before it plus the schema plus 50); 2026-11-12
+#: owner-approved answer rules (plain words, "More detail:", alternatives, rounding, no guessing, inactive entity
+#: first, demand as a positive number): standard 10 050, advanced 10 150 (worst front end 9 992 and 10 091, plus
+#: about 55), basic stays 5 000 (4 987 at the GUI; the dropped time-step sentence pays for its additions); 2026-11-12
+#: model facts in the context block (up to 200 tokens, owner: basic may plan above 5 000 for them, they save
+#: reasoning): the prefix budgets stay, and ``fit_caps`` / ``fitting_calls`` keep CONTEXT_RESERVE_TOKENS (260) free
+#: for the block — at 20 000 tokens basic has 4 calls a part (was 5), at 24 000 caps of 2 161 characters (was
+#: 2 226), at 30 000 of 3 411 (was 3 476); at 16 384 tokens a part's three 2 000-character float-heavy results with
+#: the facts overshoot 95 % of the window by up to 340 tokens (80 before them), which the pre-send fit absorbs by
+#: shortening a result.  This changes nothing at runtime for windows of 32 768 tokens or more (the prefix budget only
+#: plans the results that fit a smaller window, ``fit_caps`` / ``fitting_calls``).
 #: The history and the continuations are the owner's of 2026-11-08 (P3 §4.7).  Budgets count steps and calls:
 #: basic 3 steps, 6 calls a part, 3 calls a step (batching 2026-11-08; was 3 calls a part).
 LEVEL_BUDGETS: dict[str, LevelBudget] = {
     "small": LevelBudget(5_000, 3, 6, 3, 4_096, 6, 12_288, max_continuations=2, history="answers", history_turns=2),
-    "medium": LevelBudget(9_350, 8, 16, 8, 8_000, 6, 32_768, max_continuations=1, history="answers"),
-    "large": LevelBudget(9_450, 12, 30, 8, 16_000, 8, 65_536, max_continuations=0, history="full"),
+    "medium": LevelBudget(10_050, 8, 16, 8, 8_000, 6, 32_768, max_continuations=1, history="answers"),
+    "large": LevelBudget(10_150, 12, 30, 8, 16_000, 8, 65_536, max_continuations=0, history="full"),
 }
 #: The free plan: fewer requests per question (P3 §4.6, §4.7).  Its steps are what cost requests, so it keeps
 #: fewer steps (3 / 4 / 6) and the level's calls a step; its calls a part are the level's, at most steps × calls a
@@ -262,10 +283,11 @@ def _smaller(a: caps_module.Caps, b: caps_module.Caps) -> caps_module.Caps:
 
 
 def fit_caps(window: int, level: LevelBudget, max_output_tokens: int, keep_recent_turns: int) -> caps_module.Caps:
-    """The result caps that let a question's planned results fit a small window (P3 §4.3)."""
+    """The result caps that let a question's planned results fit a small window (P3 §4.3), with room for the
+    context block (:data:`CONTEXT_RESERVE_TOKENS`)."""
     small = caps_module.preset("small")
     available = (window - level.prefix_tokens - max_output_tokens - FIT_MARGIN_SHARE * window
-                 - min(HISTORY_TOKENS_MAX, HISTORY_SHARE * window))
+                 - min(HISTORY_TOKENS_MAX, HISTORY_SHARE * window) - CONTEXT_RESERVE_TOKENS)
     per_call = available / (keep_recent_turns + 1) / level.planned_calls
     max_chars = int(round(min(max(per_call * RESULT_CHARS_PER_TOKEN, MIN_RESULT_CHARS), small.max_chars), 6))
     share = max_chars / small.max_chars
@@ -277,10 +299,11 @@ def fit_caps(window: int, level: LevelBudget, max_output_tokens: int, keep_recen
 def fitting_calls(window: int, level: LevelBudget, max_output_tokens: int, keep_recent_turns: int,
                   max_chars: int) -> int:
     """The tool calls of one part whose results, each at *max_chars* and as dense as result JSON gets
-    (:data:`RESULT_CHARS_PER_TOKEN`), fit 95 % of *window* with the prefix, the answer and the text history: at least
-    a step's calls, at most the level's calls a part (batching 2026-11-08)."""
+    (:data:`RESULT_CHARS_PER_TOKEN`), fit 95 % of *window* with the prefix, the answer, the text history and the
+    context block (:data:`CONTEXT_RESERVE_TOKENS`): at least a step's calls, at most the level's calls a part
+    (batching 2026-11-08)."""
     room = (FIT_SHARE * window - level.prefix_tokens - max_output_tokens
-            - min(HISTORY_TOKENS_MAX, HISTORY_SHARE * window))
+            - min(HISTORY_TOKENS_MAX, HISTORY_SHARE * window) - CONTEXT_RESERVE_TOKENS)
     n = math.floor(round(room / (keep_recent_turns + 1) / (max_chars / RESULT_CHARS_PER_TOKEN), 6))
     return max(level.max_calls_per_round, min(level.max_calls_per_turn, n))
 

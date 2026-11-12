@@ -1,4 +1,10 @@
-"""CLI entry point for importing FlexTool 2.0 sensitivities into a Spine DB."""
+"""CLI entry point for importing FlexTool 2.0 sensitivities into a Spine DB.
+
+The target must still be at the import schema version (56), i.e. written by
+``flextool-read-old ... --no-migrate``.  The usual path is one command that
+imports the base data and the sensitivities before migrating:
+``flextool-read-old BASE.xlsm sqlite:///new.sqlite --master MASTER.xlsm``.
+"""
 
 import argparse
 import logging
@@ -9,7 +15,10 @@ from flextool.process_inputs.read_old_flextool import (
     read_old_flextool,
     read_old_flextool_sensitivities,
 )
-from flextool.process_inputs.write_old_flextool_to_db import write_sensitivities_to_db
+from flextool.process_inputs.write_old_flextool_to_db import (
+    ImportReport,
+    write_sensitivities_to_db,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +37,10 @@ def main() -> None:
     )
     parser.add_argument(
         "target_db_url",
-        help="Target Spine DB URL (must already contain base import)",
+        help=(
+            "Target Spine DB URL: a base import still at version 56 "
+            "(flextool-read-old --no-migrate)"
+        ),
     )
     parser.add_argument(
         "--base-alternative",
@@ -62,12 +74,19 @@ def main() -> None:
         print(f"  - {name}: {len(overrides)} override(s)")
 
     print(f"Writing sensitivities to: {args.target_db_url}")
-    write_sensitivities_to_db(
-        sensitivities,
-        data,
-        args.target_db_url,
-        base_alternative=args.base_alternative,
-    )
+    try:
+        counters = write_sensitivities_to_db(
+            sensitivities,
+            data,
+            args.target_db_url,
+            base_alternative=args.base_alternative,
+        )
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    report = ImportReport()
+    report.add("sensitivities", counters)
+    print(report.format())
     print("Sensitivity import complete!")
 
 

@@ -7,6 +7,7 @@ sees (``log_capture: "parent"``).
 """
 from __future__ import annotations
 
+import enum
 import json
 import os
 import signal
@@ -171,10 +172,10 @@ def test_a_stop_file_present_at_start_runs_nothing(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     ("returncode", "plat", "state", "reason_part"),
     [
-        (-9, "linux", "killed", "SIGKILL"),
+        # A signal is named, and so classified, by this computer's signal table (Windows has neither SIGKILL,
+        # SIGHUP nor SIGUSR1, and numbers 1 CTRL_BREAK_EVENT; macOS numbers 10 SIGBUS and SIGUSR1 30): CI of PR #362.
+        pytest.param(-9, "linux", "killed", "SIGKILL", marks=posix_only),
         (-15, "linux", "interrupted", "SIGTERM"),
-        # The reason names a signal by this computer's signal table (Windows has neither SIGHUP nor SIGUSR1, and
-        # numbers 1 CTRL_BREAK_EVENT; macOS numbers 10 SIGBUS and SIGUSR1 30): CI of PR #362.
         pytest.param(-1, "linux", "interrupted", "SIGHUP", marks=posix_only),
         (-2, "linux", "interrupted", "SIGINT"),
         (-11, "linux", "crashed", "SIGSEGV"),
@@ -193,6 +194,35 @@ def test_classify_exit(returncode, plat, state, reason_part):
     got_state, reason = classify_exit(returncode, plat)
     assert got_state == state
     assert reason_part in reason
+
+
+# macOS numbering (signal.h of Darwin) and Linux numbering (x86-64 / arm64) of the signals the classification uses.
+_MACOS_SIGNALS = enum.IntEnum("Signals", {
+    "SIGHUP": 1, "SIGINT": 2, "SIGILL": 4, "SIGABRT": 6, "SIGEMT": 7, "SIGFPE": 8, "SIGKILL": 9, "SIGBUS": 10,
+    "SIGSEGV": 11, "SIGTERM": 15, "SIGUSR1": 30,
+})
+_LINUX_SIGNALS = enum.IntEnum("Signals", {
+    "SIGHUP": 1, "SIGINT": 2, "SIGILL": 4, "SIGABRT": 6, "SIGBUS": 7, "SIGFPE": 8, "SIGKILL": 9, "SIGUSR1": 10,
+    "SIGSEGV": 11, "SIGTERM": 15,
+})
+
+
+@pytest.mark.parametrize(
+    ("table", "returncode", "state", "reason"),
+    [
+        (_MACOS_SIGNALS, -10, "crashed", "SIGBUS (bus error)"),
+        (_MACOS_SIGNALS, -7, "killed", "terminated by SIGEMT"),
+        (_MACOS_SIGNALS, -30, "killed", "terminated by SIGUSR1"),
+        (_LINUX_SIGNALS, -7, "crashed", "SIGBUS (bus error)"),
+        (_LINUX_SIGNALS, -10, "killed", "terminated by SIGUSR1"),
+        (_LINUX_SIGNALS, -30, "killed", "terminated by signal 30"),
+    ],
+)
+def test_classify_exit_names_signals_by_this_computers_numbering(monkeypatch, table, returncode, state, reason):
+    """Item 215: SIGBUS is 10 on macOS (7 on Linux), so a macOS SIGBUS crash is ``crashed``, not ``killed``."""
+    monkeypatch.setattr(signal, "Signals", table)
+    assert classify_exit(returncode, "darwin" if table is _MACOS_SIGNALS else "linux") == (state, reason)
+    assert supervisor._signal_name(-returncode) == reason.split(" (")[0].removeprefix("terminated by ")
 
 
 def test_the_supervisor_does_not_import_flextool_or_polars():

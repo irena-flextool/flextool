@@ -71,7 +71,16 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
 - **One record per cell.** A cell is one model at one level setting answering one question. The records go to the
   `--out` folder. They are redacted, and they stay local: `_audit_reports/` is git-ignored. Each question gets a
   fresh conversation. The eight turns of S01 share one conversation, and S01 runs only at the model's automatic
-  level.
+  level. A finished cell's record holds its level setting (`setting_key`: the caps, the window, the history policy
+  and the hashes of the instructions and tools, `system_hash` and `tools_hash`). `summary` and `grade-ai` warn when
+  the cells of one model at one level were asked with more than one `tools_hash` or `system_hash` (a record written
+  before the key was recorded counts as `unknown`, which warns only beside a known one): their grades are not of
+  one setting. A new or changed tool changes the `tools_hash` of the levels that list it (`explain_entity`,
+  2026-11-12: standard and advanced): their kept checkpoints start again from the start, and their cells are asked
+  again for grades of one setting; basic keeps its hash. A change of what the tools return that leaves their
+  descriptions as they are bumps `ASSISTANT_BEHAVIOUR` (`flextool/assistant/__init__.py`, "b1" for the tools
+  batch B1), which the key records as `behaviour`: the warning above covers it too (a record without it is
+  `unknown`), and a checkpoint of another behaviour starts its cell again.
 - **Local models (Ollama).** Make one variant of the model for each context size. For example, write a Modelfile
   with `FROM <model>` (a model you have pulled) and `PARAMETER num_ctx 32768`, then run
   `ollama create <model>-32k -f Modelfile`.
@@ -95,8 +104,14 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
 - **Errors.** A cell whose answer was cut off, was still too long for the context, or was refused by the provider
   is a graded outcome and is saved. Any other error stops the run with exit code 1 (a daily quota: exit 0):
   - after a *temporary* one (a busy or overloaded service, a rate limit, Google's per-minute input-token quota, no
-    connection, a timeout, a daily quota) the cell is kept: "G05__large__r1: kept up to turn 1, request 7; run
+    connection, a timeout, a daily quota, a tool call the service could not read three times in a row —
+    `tool_call_unreadable`, Ollama's "error parsing tool call", never a graded stop) the cell is kept: "G05__large__r1: kept up to turn 1, request 7; run
     again with --resume to continue it";
+  - a tool call the service could not read is one answer's format problem, not the service's state: after it the
+    run does not stop but goes on with the next cell, and at its end (also when the day's budget ends it) it names
+    the kept cells — "2 cell(s) kept after a tool call the service could not read: G04__medium__r1,
+    G05__medium__r1; run again with --resume to continue them." — and exits with code 1 (0 only when no cell is
+    left kept or unsaved);
   - after any other (a key, permission, credit, model, routing, tools or history error, an internal fault) nothing
     of the cell is saved: "…: nothing was saved for this cell. Run again with --resume." Its next `--resume` asks it
     from the start.
@@ -114,8 +129,8 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
   sent, window, caps and result caps, compaction, history, free plan, route, the hashes of the instructions and
   tools) and when the restored conversation gives the same request byte for byte; else the cell starts again,
   with one line: "G01__medium__r1: started again from the start (the level setting changed: window)" (or "the
-  instructions or tools changed", "a checkpoint of another format", "the checkpoint no longer gives the same
-  request"). A checkpoint written by an older format or commit is never filled with defaults: a field missing or
+  instructions or tools changed", "the assistant's behaviour changed since this checkpoint", "a checkpoint of
+  another format", "the checkpoint no longer gives the same request"). A checkpoint written by an older format or commit is never filled with defaults: a field missing or
   unknown is another format. A resume on another commit is allowed and recorded (the point's `git` and
   `stopped_git`), not prevented: the hashes guarantee only the next request, so such a cell can mix two code
   versions. The record's `resume` says how often and where the cell was continued: `{"count", "points": [{"turn",
@@ -292,15 +307,24 @@ it at once.
 ### Grading with Claude Code instead of the API
 
 The same model can grade through Claude Code subagents (for example on a Max plan) instead of API requests. This
-needs a grading folder that `grade-ai` already started (its `grading.json` fixes the blind order):
+needs a grading folder that `grade-ai` already started (its `grading.json` fixes the blind order). `--start-only`
+starts one without any request:
 
 ```
+python tools/assistant_eval.py grade-ai _audit_reports/assistant_eval/{opus,gemini,gemma,gptoss} \
+    --dir _audit_reports/assistant_eval/grading_v2 --start-only
 python tools/assistant_eval.py grade-ai _audit_reports/assistant_eval/{opus,gemini,gemma,gptoss} \
     --dir _audit_reports/assistant_eval/grading_v2 --export-requests _audit_reports/assistant_eval/cc_grading
 # subagents: read cc_grading/<n>.request.txt, write the JSON reply to cc_grading/<n>.reply.json
 python tools/assistant_eval.py grade-ai _audit_reports/assistant_eval/{opus,gemini,gemma,gptoss} \
     --dir _audit_reports/assistant_eval/grading_v2 --import-replies _audit_reports/assistant_eval/cc_grading
 ```
+
+`--start-only` runs every check of a first `grade-ai` (the folder set, every folder complete, one model only with
+`--single-model`, the leak scan of every request) and writes `grading.json` as the first API run would, its one
+seed drawn then; it needs no API key and no data notice, sends nothing and grades no cell. On a grading folder
+already started it says so and changes nothing; it is refused with `--export-requests`, `--import-replies` or
+`--changed`.
 
 `--export-requests OUT` writes, for every cell `grade-ai` would send now, `OUT/<n>.request.txt`: a `SYSTEM:`
 section and a `USER:` section holding exactly the system and user parts of the API request, after the same
@@ -410,7 +434,10 @@ the ratings per level setting next to the understandability.
 ### summary
 
 `summary --dir` prints, per model, level setting and class: answered, incomplete, escalated, failed (and how many
-had no answer), the cells still waiting, the invented numbers and the understandability ratings. It also writes
+had no answer), the cells still waiting, the invented numbers and the understandability ratings; per model also the
+failed request attempts of its saved turns by code ("failed requests (service or format problems, not part of the
+grade): busy 1, tool_call_unreadable 3"), retried and recovered or not — a count of the service's and the
+format's problems, in no rate. It also writes
 `agreement.txt`: Opus against the owner's first verdicts, per item (3 categories), per outcome (4) and for
 understandability (also linear-weighted kappa), each with n, agreement, Cohen's kappa with a bootstrap interval by
 question, the confusion table and the lenient (Opus kinder) and strict counts. It reports:

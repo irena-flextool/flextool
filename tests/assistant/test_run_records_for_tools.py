@@ -26,7 +26,7 @@ from flextool.assistant.registry import all_tools, call_tool
 from flextool.assistant.results import _runs
 from flextool.run_record import read_status_file, write_status_atomic
 
-from tests.assistant.conftest import fail_with, make_project, record_run, succeed, write_parquet
+from tests.assistant.conftest import fail_with, make_project, record_run, succeed, fixture_count, write_parquet
 
 
 def _call(ctx, tool: str, **args) -> dict:
@@ -93,8 +93,8 @@ def test_list_sources(ctx) -> None:
     (source,) = _call(ctx, "list_sources")["sources"]
     assert (source["name"], source["number"], source["kind"], source["path"]) == (
         "tests.sqlite", 1, "sqlite", "input_sources/tests.sqlite")
-    # tests.json has 69 scenarios; the database is migrated to this FlexTool.
-    assert len(source["scenarios"]) == 69 and source["scenarios_note"] is None
+    # Every scenario of tests.json; the database is migrated to this FlexTool.
+    assert len(source["scenarios"]) == fixture_count("scenarios") and source["scenarios_note"] is None
     assert (source["database_version"], source["version_status"]) == (FLEXTOOL_DB_VERSION, "current")
     assert source["conversion"] is None and source["behaviour_notices"] == []
 
@@ -390,6 +390,13 @@ def _slack_tables(folder: Path) -> None:
                                                               ("r2", "down", "g1")],
                                                              names=["reserve", "updown", "node_group"]))
     write_result(folder, "nodeGroup_slack_reserve_d_eeg", reserve, "coal")
+    # nodeGroup_reserve_d_eegp [MW]: the period's requirement and shortfall of r1 (r2 has no row: None).
+    req = pd.DataFrame([[40.0, 4.5, 30.0, 3.5], [0.0, 0.0, 0.0, 0.0]], index=periods,
+                       columns=pd.MultiIndex.from_tuples(
+                           [("r1", "up", "g1", "requirement_avg"), ("r1", "up", "g1", "shortfall_avg"),
+                            ("r1", "up", "g2", "requirement_avg"), ("r1", "up", "g2", "shortfall_avg")],
+                           names=["reserve", "updown", "node_group", "quantity"]))
+    write_result(folder, "nodeGroup_reserve_d_eegp", req, "coal")
 
 
 def test_get_slack_summary_with_feeding_entities(tmp_path: Path, tests_db: Path) -> None:
@@ -405,8 +412,12 @@ def test_get_slack_summary_with_feeding_entities(tmp_path: Path, tests_db: Path)
     assert reserve["slack"] == "vq_reserve" and reserve["total"] is None
     assert reserve["total_note"].startswith("No total: the values of reserve, updown, node_group are not added up")
     assert [e["value"] for e in reserve["entries"]] == [4.0, 3.0, 2.0]
+    # #234: the requirement and shortfall in MW beside each reserve slack, from nodeGroup_reserve_d_eegp.
+    assert [(e["requirement_avg_MW"], e["shortfall_avg_MW"]) for e in reserve["entries"]] == [
+        (40.0, 4.5), (30.0, 3.5), (None, None)]
+    assert reserve["detail_tables"] == ["nodeGroup_reserve_d_eegp"]
     assert (slack["slack"], slack["table"], slack["unit"]) == ("vq_state_up", "node_slack_up_d_e",
-                                                                "MWh/a (default convention)")
+                                                                "MWh/a")
     assert slack["entries"] == [{"entity": ["west"], "period": "p2020", "value": 12.5}]
     assert slack["total"] == {"p2020": 12.5}
     assert "node.penalty_up" in slack["related_inputs"]
@@ -417,7 +428,7 @@ def test_get_slack_summary_with_feeding_entities(tmp_path: Path, tests_db: Path)
                                                    "entity": ["coal_plant", "west"]}]}
     assert out["penalty_costs"]["entries"] == [{"category": "upward slack penalty", "period": "p2020",
                                                 "value": 0.125}]
-    assert out["penalty_costs"]["unit"] == "M CUR/a (default convention)" and out["none_found"] is False
+    assert out["penalty_costs"]["unit"] == "M CUR/a" and out["none_found"] is False
     assert _call(ctx, "get_slack_summary", run="clean_1")["none_found"] is True
 
 
@@ -469,8 +480,10 @@ def test_comparison_files_record_their_runs_and_are_used_while_fresh(tmp_path: P
     assert [(b["folder"], b["run_id"]) for b in out["built_from"]] == [("base_1", ids["base_1"]),
                                                                         ("high_1", ids["high_1"])]
     # high_1 − base_1: p2020 1500 − 1000 = 500, p2025 0.
-    assert [tuple(r) for r in out["rows"]] == [("p2020", "coal_plant", "west", 1000.0, 1500.0, 500.0),
-                                               ("p2025", "coal_plant", "west", 2000.0, 2000.0, 0.0)]
+    # scaled (B1 T6): base, high and difference from 1 000 MWh/a on in GWh/a.
+    assert [tuple(r) for r in out["rows"]] == [
+        ("p2020", "coal_plant", "west", 1000.0, 1500.0, 500.0, ["≈1 GWh/a", "≈1.5 GWh/a", None]),
+        ("p2025", "coal_plant", "west", 2000.0, 2000.0, 0.0, ["≈2 GWh/a", "≈2 GWh/a", None])]
 
 
 def test_comparison_falls_back_to_member_folders(tmp_path: Path, tests_db: Path) -> None:
@@ -516,7 +529,8 @@ def test_comparison_falls_back_to_member_folders(tmp_path: Path, tests_db: Path)
     out = _compare(ctx)
     assert out["source"] == "run_folders" and out["built_from"] is None
     # The values are high_1's new run: 900 − 1000 = −100.
-    assert [tuple(r) for r in out["rows"]][0] == ("p2020", "coal_plant", "west", 1000.0, 900.0, -100.0)
+    assert [tuple(r) for r in out["rows"]][0] == ("p2020", "coal_plant", "west", 1000.0, 900.0, -100.0,
+                                                  ["≈1 GWh/a", None, None])
 
 
 def test_the_comparison_orchestrator_records_its_runs(tmp_path: Path, tests_db: Path) -> None:
@@ -757,8 +771,10 @@ def test_compare_runs_reads_the_comparison_file_once(tmp_path: Path, tests_db: P
     out = _compare(make_context(project))
     assert out["source"] == "comparison_files" and len(calls) == 1
     # The values of test_comparison_files_record_their_runs_and_are_used_while_fresh.
-    assert [tuple(r) for r in out["rows"]] == [("p2020", "coal_plant", "west", 1000.0, 1500.0, 500.0),
-                                               ("p2025", "coal_plant", "west", 2000.0, 2000.0, 0.0)]
+    # scaled (B1 T6): base, high and difference from 1 000 MWh/a on in GWh/a.
+    assert [tuple(r) for r in out["rows"]] == [
+        ("p2020", "coal_plant", "west", 1000.0, 1500.0, 500.0, ["≈1 GWh/a", "≈1.5 GWh/a", None]),
+        ("p2025", "coal_plant", "west", 2000.0, 2000.0, 0.0, ["≈2 GWh/a", "≈2 GWh/a", None])]
 
 
 def test_a_comparison_rewritten_during_the_read_is_not_used(tmp_path: Path, tests_db: Path, monkeypatch) -> None:
@@ -954,7 +970,12 @@ def _with_state(project: Path, folder: str, state: str) -> None:
 def test_list_runs_answers_for_every_run_record_state(tmp_path: Path, tests_db: Path, state: str) -> None:
     """B1: a run stopped in the window (``killed``), by Ctrl-C (``interrupted``), by a native fault (``crashed``),
     or in a state a newer FlexTool writes, no longer makes every list_runs call fail.  The states come from
-    ``run_record.RUN_STATES``.  Before: ValueError (a fault) for any state not in list_runs' own list."""
+    ``run_record.RUN_STATES``.  Before: ValueError (a fault) for any state not in list_runs' own list.
+
+    The ``state`` argument is an enum of these states (2026-11-11: models invented "success"): an unknown state is
+    refused in plain English, naming the states the project's runs have; a state only a newer FlexTool writes is
+    listed without the filter and still filtered by the runs' own selection, but the tool's filter cannot name it
+    (the schema refuses it, its values quoted)."""
     project = _project_with(tmp_path, tests_db, ("coal_1", succeed))
     write_parquet(project / "output_parquet" / "base_1")          # no run record: state no_record
     _with_state(project, "coal_1", state)
@@ -963,9 +984,21 @@ def test_list_runs_answers_for_every_run_record_state(tmp_path: Path, tests_db: 
     shown = _listed(ctx)["coal_1"]["state"]
     assert out["total"] == 2 and sum(out["counts"].values()) == 2 and shown in out["counts"]
     assert _call(ctx, "list_runs", folders=["coal_1"])["total"] == 1
-    assert [r["folder"] for r in _call(ctx, "list_runs", state=shown)["runs"]] == ["coal_1"]
+    assert [r.folder.name for r in _runs.select_runs(ctx, state=shown)] == ["coal_1"]
+    filtered = call_tool(ctx, "list_runs", {"state": shown})
+    if shown in _runs.RUN_STATES:
+        assert [r["folder"] for r in json.loads(filtered.text)["runs"]] == ["coal_1"]
+    else:
+        assert not filtered.ok and filtered.message.startswith(
+            f'The arguments of "list_runs" are not valid: state: "{shown}" is not one of its values, which are '
+            '"succeeded", "failed", ')
+    present = ", ".join(f'"{s}"' for s in sorted({shown, "no_record"}, key=lambda s: (_runs.state_order(s), s)))
     refused = call_tool(ctx, "list_runs", {"state": "no_such_state"})
-    assert not refused.ok and refused.message.startswith("There is no run state")
+    assert not refused.ok and refused.message == (
+        f'There is no run state "no_such_state". The states of this project\'s runs are: {present}.')
+    with pytest.raises(ToolError) as info:
+        _runs.select_runs(ctx, state="no_such_state")
+    assert info.value.key == "unknown_run_state" and str(info.value).startswith("There is no run state")
     assert _runs.RUN_STATES == (*run_record.RUN_STATES, "no_record")
 
 

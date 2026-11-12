@@ -11,7 +11,7 @@ to the latest version without losing data.
 
 This page is a pointer for developers who need to read or modify the
 schema. For the user-facing meaning of individual parameters, see
-[`reference.md`](../reference.md). For where this DB sits in the
+[Model parameters](../reference/index.md). For where this DB sits in the
 overall data flow, see [`architecture.md`](architecture.md).
 
 ## The current schema
@@ -93,7 +93,7 @@ is the authoritative inventory):
   `bind_forward_only_blended_weights`) plus the orthogonal
   aggregation method `bind_intraperiod_blocks`. The migration also
   refreshes the parameter description text. See
-  [`reference.md`](../reference.md) for the user-facing enumeration
+  [Model parameters](../reference/index.md) for the user-facing enumeration
   and silent-degrade behaviour.
 - **v56 — solver-knob consolidation.** Retypes `solve.solver_arguments`
   to a 1d-map (solver option name → value) and folds the v52-era
@@ -169,6 +169,12 @@ A typical workflow when introducing a new parameter or entity class:
 6. Add a test if the migration is non-trivial — see
    [`testing.md`](testing.md) for where to put it.
 
+**A new value in a value list** (for example a new combination of `reduce_system_detail_methods`) also needs a
+migration step and a version bump: value lists live in each database, so existing databases only get the value
+through `add_value_list_manual`. No data is rewritten. The engine side must accept the value too (for the two
+detail-reduction lists: `REDUCE_UNIT_DETAIL_METHODS` / `REDUCE_SYSTEM_DETAIL_METHODS` in
+`engine/input/_solve_config.py`, and `UNIT_PARTS` / `SYSTEM_TOKENS` in `engine/preprocess/_reduce_detail.py`).
+
 !!! tip
     Steps that touch existing rows should be tolerant of partial state:
     use `update_item` / `add_update_item` so re-applying the step on a
@@ -178,7 +184,7 @@ A typical workflow when introducing a new parameter or entity class:
 
 - [`architecture.md`](architecture.md) — overall data flow from input
   DB through the engine to outputs
-- [`reference.md`](../reference.md) — user-facing parameter docs that
+- [Model parameters](../reference/index.md) — user-facing parameter docs that
   follow the schema groupings
 - [`excel_interface.md`](../excel_interface.md) — where the
   parameter-group picker also surfaces

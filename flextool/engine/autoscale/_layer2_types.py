@@ -96,6 +96,11 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     # ── Process / connection flow (dispatched per timestep).
     # flextool/engine/model/core.py _declare_variables
     "v_flow": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
+    # The increase / decrease of v_flow from its ramp predecessor (ramp cost), in v_flow's units, so that
+    # ramp_change_eq keeps its ±1 coefficients after column scaling.
+    # flextool/engine/model/core.py _declare_variables
+    "v_ramp_up": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
+    "v_ramp_down": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
 
     # ── Storage / nodeBalance slacks.  Carry ENERGY directly (no
     # unitsize multiplier on the column).
@@ -164,6 +169,9 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     # ── Group-level slacks.  Direct physical units.
     # flextool/engine/model/_group_slack.py add_variables
     "vq_capacity_margin": VarFamily(QuantityType.POWER),
+    # flextool/engine/model/_group_slack.py add_variables: the slack energy of a storage node feeding a
+    # capacity-margin group (MWh, capacityMargin_slack_energy)
+    "v_capacity_margin_slack_energy": VarFamily(QuantityType.ENERGY),
     # flextool/engine/model/_group_slack.py add_variables
     "vq_inertia": VarFamily(QuantityType.INERTIA),
     # flextool/engine/model/_group_slack.py add_variables
@@ -237,12 +245,18 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "rp_inter_period_balance": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_rp_storage_chain
     "rp_inter_period_cyclic": CstrFamily(QuantityType.ENERGY),
+    # flextool/engine/model/core.py _eq_rp_storage_chain (first-period fan of forward-only blended nodes)
+    "rp_inter_period_fan_start": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_rp_storage_chain
     "rp_inter_period_max_state": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_start_binding
     "storage_state_start_binding": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_start_binding_cyclic
     "storage_state_start_binding_cyclic_period": CstrFamily(QuantityType.ENERGY),
+    # flextool/engine/model/core.py _eq_storage_within_solve_path_end (bind_within_solve, stochastic paths)
+    "storage_within_solve_path_end": CstrFamily(QuantityType.ENERGY),
+    # flextool/engine/model/core.py _eq_storage_state_fan_start (bind_forward_only, first-period fan)
+    "storage_state_fan_start": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_end_binding
     "storage_state_end_binding": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_reference_value
@@ -284,6 +298,9 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # _coarse_flows.reserve_room_rows).  Explicit, with the ramp family's type.
     **{f"ramp_{side}_{dir_}_reserve_coarse": CstrFamily(QuantityType.DIMENSIONLESS)
        for side in ("sink", "source") for dir_ in ("up", "down")},
+    # The flow change of an arc with a ramp cost, split into v_ramp_up / v_ramp_down (core.py _eq_ramp_cost).
+    # Exact entry: the "ramp" prefix above would otherwise catch it.
+    "ramp_change_eq": CstrFamily(QuantityType.DIMENSIONLESS),
 
     # ── Investment caps — entity scope.
     # flextool/engine/model/core.py _eq_invest_max_units
@@ -441,6 +458,10 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "process_constraint_equal_period": CstrFamily(None),
     "process_constraint_less_than_period": CstrFamily(None),
     "process_constraint_greater_than_period": CstrFamily(None),
+    # constraint_period_method period_total: one row per (cn, d) over the period's annualised terms.
+    "process_constraint_equal_period_total": CstrFamily(None),
+    "process_constraint_less_than_period_total": CstrFamily(None),
+    "process_constraint_greater_than_period_total": CstrFamily(None),
     # The row rule on coarse steps — _coarse_flows.add_row_rule_cstr (f"{name}_coarse").
     "process_constraint_equal_coarse": CstrFamily(None),
     "process_constraint_less_than_coarse": CstrFamily(None),
@@ -592,6 +613,8 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # ── Group slack constraints.
     # flextool/engine/model/_group_slack.py _eq_capacity_margin
     "capacityMargin": CstrFamily(QuantityType.POWER),
+    # flextool/engine/model/_group_slack.py _eq_slack_energy
+    "capacityMargin_slack_energy": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/_group_slack.py _eq_inertia
     "inertia_constraint": CstrFamily(QuantityType.INERTIA),
     # flextool/engine/model/_group_slack.py _eq_non_sync
@@ -624,6 +647,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # The row rule on coarse steps (a node whose processes are all coarse) — _coarse_flows.add_row_rule_cstr.
     "non_anticipativity_storage_use_coarse": CstrFamily(None),
     "non_anticipativity_storage_state_first": CstrFamily(None),
+    "non_anticipativity_rp_block_start": CstrFamily(None),
     "non_anticipativity_online_integer": CstrFamily(None),
     "non_anticipativity_online_linear": CstrFamily(None),
     "non_anticipativity_reserve": CstrFamily(None),

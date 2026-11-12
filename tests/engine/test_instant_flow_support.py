@@ -172,12 +172,16 @@ def _resolve_and_support(stub) -> pl.DataFrame:
     return _instant_flow_support(_collect(cap), pf.select("d", "t").unique())
 
 
+_BOTH_PERIODS = {("fg1", "p2025", "t01"), ("fg1", "p2025", "t02"),
+                 ("fg1", "p2030", "t01"), ("fg1", "p2030", "t02")}
+
+
 def test_x_indexed_period_map_resolves_and_emits_support() -> None:
     """The field-report case: ``min_instant_flow`` as a period map with
     ``index_name="x"``, non-zero in the first period and zero in the
-    later one.  The non-zero period must yield support over its
-    timesteps; the explicit-zero period must drop out (a minimum of 0 is
-    no obligation)."""
+    later one.  Both periods must yield support over their timesteps: an
+    explicit 0 is a floor of 0 (the net flow into a flowGroup is signed,
+    so it binds), not "no obligation"."""
     stub = _PeriodMapStub(
         "min_instant_flow", "fg1",
         {"p2025": 500.0, "p2030": 0.0}, index_name="x",
@@ -186,8 +190,8 @@ def test_x_indexed_period_map_resolves_and_emits_support() -> None:
         pl.col("g").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
         pl.col("t").cast(pl.Utf8),
     )
-    assert _rows(over) == {("fg1", "p2025", "t01"), ("fg1", "p2025", "t02")}, (
-        f"expected support only over the non-zero period p2025; got "
+    assert _rows(over) == _BOTH_PERIODS, (
+        f"expected support over both periods (the zero is a floor); got "
         f"{_rows(over)}"
     )
 
@@ -204,7 +208,7 @@ def test_period_indexed_period_map_resolves_and_emits_support() -> None:
         pl.col("g").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
         pl.col("t").cast(pl.Utf8),
     )
-    assert _rows(over) == {("fg1", "p2025", "t01"), ("fg1", "p2025", "t02")}
+    assert _rows(over) == _BOTH_PERIODS
 
 
 # ---------------------------------------------------------------------------

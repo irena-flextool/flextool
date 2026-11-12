@@ -1,7 +1,7 @@
 """Stochastic-time maps of availability, efficiency, min_load, other operational costs, reservation and penalties
 (#78).
 
-``docs/how_to.md``: "The tool recognizes a stochastic timeseries from the dimensions of the data" — a three-level
+``docs/how_to/stochastics.md``: "The tool recognizes a stochastic timeseries from the dimensions of the data" — a three-level
 map ``branch → analysis_time → time``.  For the parameters whose schema allows it (``node.availability``,
 ``node.penalty_up`` / ``penalty_down``, ``unit.availability`` / ``efficiency`` / ``min_load``, the unit arcs'
 ``other_operational_cost``, ``reserve__upDown__group.reservation``):
@@ -448,7 +448,7 @@ def test_rank3_constant_equals_scalar_rolling(tmp_path_factory) -> None:
 
 def test_rank3_outside_stochastic_group_reads_realized_branch(tmp_path_factory) -> None:
     """``gas_plant`` (in no ``include_stochastics`` group) authors a rank-3 availability.  Outside such a group
-    every branch period reads the single value of the realized branch (docs/how_to.md "Single solve
+    every branch period reads the single value of the realized branch (docs/how_to/stochastics.md "Single solve
     stochastics"): ``1_week_rolling_wind`` designates branch ``realized`` (0.9) ``realized: yes`` in every
     roll, so every cell of every stochastic roll is 0.9."""
     steps = _run(tmp_path_factory, ROLLING, [["unit", "gas_plant", "availability", _r3(1.0, AT_ROLL, True)]], [])
@@ -462,7 +462,8 @@ def test_rank3_outside_stochastic_group_forecasts_only_raises(tmp_path_factory) 
     """The same value in ``2_day_stochastic_dispatch``, a forecasts-only fan: there is no realized branch for
     the ungrouped entity to read, so the solve raises naming the entity instead of silently taking the class
     default (1.0) on every branch period."""
-    with pytest.raises(FlexToolConfigError, match="gas_plant.availability.*include_stochastics"):
+    with pytest.raises(FlexToolConfigError,
+                       match="unit or connection 'gas_plant', parameter 'availability'.*include_stochastics"):
         _run(tmp_path_factory, SINGLE, [["unit", "gas_plant", "availability", _r3(1.0, AT_SINGLE, True)]], [])
 
 
@@ -475,7 +476,8 @@ def test_rank3_reservation_forecasts_only_fan(tmp_path_factory, grouped: bool) -
     values = _reserve_values(_r3(100.0, AT_SINGLE, True), None, grouped=grouped)
     entities = _reserve_entities(second=False)
     if not grouped:
-        with pytest.raises(FlexToolConfigError, match="r1/up/res_g.reservation.*include_stochastics"):
+        with pytest.raises(FlexToolConfigError, match=r"reserve 'r1' \(up\) of group 'res_g', parameter "
+                           r"'reservation'.*Set include_stochastics on group 'res_g'"):
             _run(tmp_path_factory, SINGLE, values, entities)
         return
     cells = _cells(_first(_run(tmp_path_factory, SINGLE, values, entities)),

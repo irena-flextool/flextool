@@ -12,12 +12,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from flextool.assistant import project
-from flextool.assistant.caps import Rendered
 from flextool.assistant.context import AssistantContext
-from flextool.assistant.errors import ToolError, quoted
 from flextool.assistant.results import _query, _runs
-from flextool.assistant.unit_wording import shown_unit
+from flextool.assistant.unit_wording import scaled, shown_unit, table_scaling
 from flextool.lean_parquet import to_long
 
 COSTS_TABLE = "annualized_costs_d_p"
@@ -32,6 +29,10 @@ class Slack:
     meaning: str
     related_inputs: tuple[str, ...]
     node_level: str | None = None          # the column level that names a node (for feeding_entities)
+    detail_tables: tuple[str, ...] = ()    # the tables that break the slack down (listed when present)
+    # (table, {key in the entry: quantity}): values of a period table with the slack's column levels plus a
+    # ``quantity`` level, shown in each entry next to the slack (the requirement the slack falls short of).
+    beside: tuple[str, dict[str, str]] | None = None
 
 
 SLACKS: tuple[Slack, ...] = (
@@ -51,11 +52,23 @@ SLACKS: tuple[Slack, ...] = (
           "Inertia the group lacked against its requirement, annualized.",
           ("group.inertia_limit", "group.penalty_inertia")),
     Slack("vq_reserve", "nodeGroup_slack_reserve_d_eeg",
-          "Reserve requirement the group did not meet, annualized.",
-          ("reserve__upDown__group.reservation", "reserve__upDown__group.penalty_reserve")),
+          "Reserve requirement the group did not meet, annualized. Each entry also gives the period's "
+          "requirement and shortfall in MW (time-step-weighted averages, nodeGroup_reserve_d_eegp); "
+          "nodeGroup_reserve_dt_eegp has them per step with the need of each method (timeseries, dynamic, n-1) and "
+          "the reserve counted, and nodeGroup_reserve_provider_dt_eegee what each unit and connection counts.",
+          ("reserve__upDown__group.reservation", "reserve__upDown__group.reserve_method",
+           "reserve__upDown__group.penalty_reserve"),
+          detail_tables=("nodeGroup_reserve_d_eegp", "nodeGroup_reserve_dt_eegp",
+                         "nodeGroup_reserve_provider_dt_eegee"),
+          beside=("nodeGroup_reserve_d_eegp", {"requirement_avg_MW": "requirement_avg",
+                                               "shortfall_avg_MW": "shortfall_avg"})),
     Slack("vq_capacity_margin", "nodeGroup_slack_capacity_margin_d_g",
-          "Capacity the group lacked against its capacity margin in the period (not annualized).",
-          ("group.capacity_margin", "group.penalty_capacity_margin")),
+          "Capacity the group lacked against its capacity margin in the period (not annualized). An investment "
+          "solve's shortfall is shown under the solve that realizes the period; nodeGroup_capacity_margin_d_g has "
+          "it per solve, with the requirement and what each class of units and connections counts at the binding "
+          "step, and nodeGroup_capacity_margin_entity_d_g what each unit, connection and node counts.",
+          ("group.capacity_margin", "group.capacity_margin_share", "group.penalty_capacity_margin"),
+          detail_tables=("nodeGroup_capacity_margin_d_g", "nodeGroup_capacity_margin_entity_d_g")),
 )
 
 
@@ -92,21 +105,32 @@ def _totals(table: _query.Table, long, levels: list[str], max_rows: int) -> dict
     return {"total": rows, "total_by": by, "totals_shown": f"{len(rows)} of {totals.height}"}
 
 
+def _add_scaled(entries: list[dict], totals: dict[str, Any], unit: str, carrier: bool) -> None:
+    """A rounded copy in a larger unit (``scaled``, :func:`~flextool.assistant.unit_wording.scaled`) beside each
+    entry's and total's value that gets one; a total per period gets ``total_scaled`` by period."""
+    for entry in entries:
+        copy = scaled(entry["value"], unit, carrier=carrier)
+        if copy:
+            entry["scaled"] = copy
+    total = totals.get("total")
+    if isinstance(total, dict):
+        copies = {p: c for p, v in total.items() if (c := scaled(v, unit, carrier=carrier))}
+        if copies:
+            totals["total_scaled"] = copies
+    elif isinstance(total, list):
+        for row in total:
+            copy = scaled(row["value"], unit, carrier=carrier)
+            if copy:
+                row["scaled"] = copy
+
+
 def _feeding(ctx: AssistantContext, rr: _runs.ResolvedRun, nodes: list[str]) -> tuple[dict | None, str | None]:
     """``{node: [{entity_class, entity}]}``: the units and connections that have the node as a dimension and are
-    active in the run's scenario of its input source."""
-    run = rr.run
-    scenario = rr.entry.get("db_scenario")
-    if run is None or run.source is None or not scenario:
-        return None, "The input source of this run is not known, so its units and connections are not listed."
-    try:
-        db, _ = project.open_source(ctx, run.source)
-        if scenario not in db.scenarios:
-            return None, Rendered(f"The input source no longer has the scenario {quoted(scenario, ctx.redact)} "
-                                  "of this run.")
-        view = db.view(scenario)
-    except ToolError as exc:
-        return None, Rendered(f"The input data of this run could not be read: {exc.render(ctx.redact)}")
+    active in the run's scenario of its input source (:func:`~flextool.assistant.results._runs.run_inputs`)."""
+    db, view, note = _runs.run_inputs(ctx, rr, not_shown="its units and connections are not listed",
+                                      current="the units and connections are those of the current data")
+    if view is None:
+        return None, note
     out: dict[str, list[dict]] = {}
     for node in nodes:
         found: set[tuple[str, tuple[str, ...]]] = set()
@@ -115,10 +139,28 @@ def _feeding(ctx: AssistantContext, rr: _runs.ResolvedRun, nodes: list[str]) -> 
             if dims and dims[0] in _FEEDING_CLASSES and view.active(e.entity_class, e.byname)[0]:
                 found.add((e.entity_class, tuple(e.byname)))
         out[node] = [{"entity_class": cls, "entity": list(byname)} for cls, byname in sorted(found)]
-    note = None
-    if rr.entry.get("stale_vs_input"):
-        note = "The input data changed after this run; the units and connections are those of the current data."
     return out, note
+
+
+def _add_beside(rr: _runs.ResolvedRun, beside: tuple[str, dict[str, str]], entity_levels: list[str],
+                entries: list[dict]) -> None:
+    """Add to each entry the values of ``beside`` (:attr:`Slack.beside`) at its entity and period (None where the
+    table has none); nothing when the table is not there."""
+    import polars as pl
+
+    stem, keys = beside
+    if not (rr.folder / f"{stem}.parquet").is_file():
+        return
+    long = _long(_query.open_table(rr.folder, stem, where=rr.folder.name))
+    if "quantity" not in long.columns or any(c not in long.columns for c in entity_levels):
+        return
+    long = long.filter(pl.col("quantity").is_in(list(keys.values())))
+    found = {(tuple(row[c] for c in entity_levels), row.get("period"), row["quantity"]): row["value"]
+             for row in long.iter_rows(named=True)}
+    for entry in entries:
+        for key, quantity in keys.items():
+            value = found.get((tuple(entry["entity"]), entry["period"], quantity))
+            entry[key] = None if value is None else _query._number(value)
 
 
 def slack_summary(ctx: AssistantContext, run: str, *, min_value: float, max_rows: int) -> dict:
@@ -140,18 +182,27 @@ def slack_summary(ctx: AssistantContext, run: str, *, min_value: float, max_rows
         long = long.sort("value", descending=True, maintain_order=True)
         entries = [{"entity": [row[c] for c in entity_levels], "period": row.get("period"),
                     "value": _query._number(row["value"])} for row in long.head(max_rows).iter_rows(named=True)]
+        scaling = table_scaling(_query._units(table, list(table.layout.physical)), table.measures, table.row_units)
+        totals = _totals(table, long, entity_levels, max_rows)
+        if scaling is not None:
+            _add_scaled(entries, totals, *scaling)
+        if spec.beside is not None:
+            _add_beside(rr, spec.beside, entity_levels, entries)
         record: dict[str, Any] = {
             "slack": spec.slack,
             "table": spec.table,
             "meaning": spec.meaning,
             "unit": shown_unit(table.measures[0].unit) if table.measures else None,
-            **_totals(table, long, entity_levels, max_rows),
+            **totals,
             "entries": entries,
             "entries_shown": f"{len(entries)} of {long.height}",
             "related_inputs": list(spec.related_inputs),
             "feeding_entities": None,
             "docs": DOCS,
         }
+        details = [t for t in spec.detail_tables if (rr.folder / f"{t}.parquet").is_file()]
+        if details:
+            record["detail_tables"] = details
         if spec.node_level is not None and spec.node_level in entity_levels:
             nodes = list(dict.fromkeys(e["entity"][entity_levels.index(spec.node_level)] for e in entries))
             feeding, note = _feeding(ctx, rr, nodes)

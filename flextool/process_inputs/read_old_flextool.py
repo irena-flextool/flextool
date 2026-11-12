@@ -58,10 +58,15 @@ _UNIT_COLUMN_MAP: dict[str, str] = {
     "output2 lt constant": "output2_lt_constant",
     "output2 max capacity": "output2_max_capacity",
     "output2 max capacity (mw)": "output2_max_capacity",
-    "output2 max capacity ratio": "output2_max_capacity",
+    "output2 max capacity ratio": "output2_max_capacity_ratio",
     "fueluse increase eq x output2": "fueluse_increase_eq",
     "inflow multiplier": "inflow_multiplier",
 }
+
+# Units-sheet headers of older FT2 workbooks, whose output2 eq / gt / lt
+# constants are MW (newer workbooks: 'output2 max capacity ratio', constants
+# per unit of capacity).
+_OUTPUT2_MW_HEADERS = frozenset({"output2 max capacity (mw)", "output2 max capacity"})
 
 # Columns that need special grid/node splitting
 _UNIT_GRID_NODE_COLS: dict[str, tuple[str, str]] = {
@@ -182,6 +187,13 @@ class UnitInstance:
     fueluse_increase_eq: float | None
     inflow_multiplier: float | None
     extra_params: dict[str, float | None] = field(default_factory=dict)
+    #: FT2 ``output2_max_capacity_ratio``: output2 <= ratio x capacity.
+    #: (``output2_max_capacity`` is the MW form of older workbooks.)
+    output2_max_capacity_ratio: float | None = None
+    #: The sheet has the older header ``output2 max capacity (MW)`` (or
+    #: ``output2 max capacity``): its ``output2 eq / gt / lt constant`` are MW,
+    #: not shares of the unit's capacity.
+    output2_constants_mw: bool = False
 
 
 @dataclass
@@ -199,6 +211,7 @@ class NodeNodeConnection:
     lifetime: float | None
     interest: float | None
     is_hvdc: bool
+    annuity: float | None = None  # FT2's own -PMT(interest, lifetime, 1); checked, not imported
 
 
 @dataclass
@@ -569,9 +582,16 @@ def _read_units(wb: openpyxl.Workbook) -> list[UnitInstance]:
     # Build header-to-index mapping
     raw_headers = rows[0]
     headers: list[str | None] = [_safe_str(h) for h in raw_headers]
+    # Lower case, underscores as spaces: FT2 workbooks spell some headers
+    # with underscores (``use_min_generation``, ``output2_max_capacity_ratio``).
     normalized_headers: list[str | None] = [
-        h.strip().lower() if h is not None else None for h in headers
+        " ".join(h.strip().lower().replace("_", " ").split()) if h is not None
+        else None for h in headers
     ]
+
+    # Older workbooks have 'output2 max capacity (MW)' in place of
+    # 'output2 max capacity ratio'; in them the output2 constants are MW.
+    constants_mw = any(h in _OUTPUT2_MW_HEADERS for h in normalized_headers)
 
     result: list[UnitInstance] = []
 
@@ -610,6 +630,7 @@ def _read_units(wb: openpyxl.Workbook) -> list[UnitInstance]:
             "output2_lt_coeff": None,
             "output2_lt_constant": None,
             "output2_max_capacity": None,
+            "output2_max_capacity_ratio": None,
             "fueluse_increase_eq": None,
             "inflow_multiplier": None,
         }
@@ -671,9 +692,11 @@ def _read_units(wb: openpyxl.Workbook) -> list[UnitInstance]:
             output2_lt_coeff=field_values["output2_lt_coeff"],
             output2_lt_constant=field_values["output2_lt_constant"],
             output2_max_capacity=field_values["output2_max_capacity"],
+            output2_max_capacity_ratio=field_values["output2_max_capacity_ratio"],
             fueluse_increase_eq=field_values["fueluse_increase_eq"],
             inflow_multiplier=field_values["inflow_multiplier"],
             extra_params=extra,
+            output2_constants_mw=constants_mw,
         ))
     return result
 
@@ -714,7 +737,7 @@ def _read_connections(wb: openpyxl.Workbook) -> list[NodeNodeConnection]:
     c_inv_cost = _col("inv.cost/kW")
     c_life = _col("lifetime")
     c_interest = _col("interest")
-    _col("annuity")
+    c_annuity = _col("annuity")
     c_hvdc = _col("HVDC")
 
     for row in rows[1:]:
@@ -742,6 +765,7 @@ def _read_connections(wb: openpyxl.Workbook) -> list[NodeNodeConnection]:
             lifetime=_safe_float(_get(row, c_life)),
             interest=_safe_float(_get(row, c_interest)),
             is_hvdc=is_hvdc,
+            annuity=_safe_float(_get(row, c_annuity)),
         ))
     return result
 
@@ -1053,6 +1077,31 @@ def _read_time_steps(wb: openpyxl.Workbook) -> list[TimeStep]:
 # Main entry point
 # ---------------------------------------------------------------------------
 
+def _require_input_data_workbook(wb: openpyxl.Workbook, file_path: str) -> None:
+    """Raise ``ValueError`` unless *wb* is a FlexTool 2 input data workbook.
+
+    An input data workbook has a ``master`` sheet (the same rule as
+    ``detect_excel_format``).  The FlexTool 2 *master* workbook (the one with
+    the run buttons and the ``Sensitivity definitions`` sheet) has none of the
+    data sheets; reading it would give an empty model, so it is refused with a
+    hint to the right files.
+    """
+    if "master" in wb.sheetnames:
+        return
+    if "Sensitivity definitions" in wb.sheetnames:
+        raise ValueError(
+            f"'{file_path}' is the FlexTool 2 master workbook (it has the "
+            "'Sensitivity definitions' sheet), not an input data workbook. "
+            "Give one of its InputData/*.xlsm files as the input file, and "
+            "this workbook as the master workbook to import its "
+            "sensitivities (on the command line: --master)."
+        )
+    raise ValueError(
+        f"'{file_path}' has no 'master' sheet, so it is not a FlexTool 2 "
+        "input data workbook."
+    )
+
+
 def read_old_flextool(file_path: str) -> OldFlexToolData:
     """Read an old-format FlexTool Excel file and return structured data.
 
@@ -1061,11 +1110,16 @@ def read_old_flextool(file_path: str) -> OldFlexToolData:
 
     Returns:
         An OldFlexToolData instance with all parsed sheets.
+
+    Raises:
+        ValueError: the workbook has no ``master`` sheet (for example the
+            FlexTool 2 master workbook was given instead of an input file).
     """
     logger.info("Reading old FlexTool file: %s", file_path)
     wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
 
     try:
+        _require_input_data_workbook(wb, file_path)
         # Log which sheets are present and which will be skipped
         for name in wb.sheetnames:
             if name in _SKIP_SHEETS:

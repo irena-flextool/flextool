@@ -577,6 +577,7 @@ class RunRecorder:
                 "wall_s": None,
                 "warm_used": None,
                 "benders": None,
+                "reduced": None,
                 "log_anchor": log_anchor,
             }
             solves = self._status["solves"]
@@ -588,6 +589,20 @@ class RunRecorder:
             self._current_t0 = time.monotonic()
             self._status["progress"] = None
             self._write(force=True)
+
+    @_flushing
+    def solve_reduced(self, unit: str, system: str, summary: str | None) -> None:
+        """The running solve left out detail (``solve.reduce_unit_detail_method`` / ``reduce_system_detail_method``):
+        ``reduced`` = the two levels and the run-log line that says what was left out.  Every roll of a reduced
+        solve carries the levels; only its first roll carries the line (``summary`` None on the later rolls), so
+        a long rolling run does not repeat it."""
+        with self._lock:
+            entry = self._current
+            if entry is None:
+                return
+            entry["reduced"] = {"unit": str(unit), "system": str(system),
+                                "summary": None if summary is None else str(summary)[:_MESSAGE_LIMIT]}
+            self._write()
 
     @_flushing
     def solve_classified(

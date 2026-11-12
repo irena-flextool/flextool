@@ -143,6 +143,17 @@ def unit_inputNode(par, s, v, r, debug):
         u, source, sink = col
         result_multi_dt[(u, source)] = -r.flow_dt[col]
 
+    # The start-up input (startup_input_method): added to the flow of a startup_and_input arc, its own column for a
+    # startup_only arc (which has no flow).  MW-average over the step, as the flows.
+    draw = getattr(r, 'startup_draw_dt', None)
+    if draw is not None and len(draw.columns):
+        for u, n in draw.columns:
+            if u not in s.process_unit:
+                continue
+            taken = -draw[(u, n)].reindex(result_multi_dt.index)
+            result_multi_dt[(u, n)] = (result_multi_dt[(u, n)].add(taken, fill_value=0.0)
+                                       if (u, n) in result_multi_dt.columns else taken)
+
     # Reorder columns to match v3.32.0's direct-then-indirect / alphabetical
     # ordering (see ``unit_outputNode`` for rationale).
     indirect = _indirect_units(s)
@@ -166,6 +177,26 @@ def unit_inputNode(par, s, v, r, debug):
     # Return period results
     results.append((result_multi_d, 'unit_inputNode_d_ee'))
 
+    return results
+
+
+def unit_startup_energy(par, s, v, r, debug):
+    """Start-up input energy of each unit from each start-up input node (unit__inputNode.startup_input_method
+    startup_and_input / startup_only): MWh taken in each step, and the period sum scaled to a full year."""
+    results = []
+    draw = getattr(r, 'startup_draw_dt', None)
+    if draw is None or len(draw.columns) == 0:
+        return results
+    cols = draw.columns[draw.columns.get_level_values('process').isin(s.process_unit)]
+    if len(cols) == 0:
+        return results
+    energy_dt = draw[cols].mul(par.step_duration.reindex(draw.index), axis=0)
+    energy_dt.columns = pd.MultiIndex.from_tuples(list(cols), names=['unit', 'node'])
+    energy_dt = _clip_flow_residuals(energy_dt)
+    results.append((energy_dt, 'unit_startup_energy_dt_ee'))
+    energy_d = _clip_flow_residuals(annualize_dt_to_d(
+        energy_dt, par.timestep_weight, par.complete_period_share_of_year))
+    results.append((energy_d, 'unit_startup_energy_d_ee'))
     return results
 
 
@@ -224,22 +255,16 @@ def unit_VRE_curtailment_and_potential(par, s, v, r, debug):
         curtail_share_dt = (curtail_dt / potential_dt).where(potential_dt != 0, 0)
         results.append((curtail_share_dt, 'unit_curtailment_share_outputNode_dt_ee'))
 
-        # Aggregate to period level.  curtail_dt / potential_dt are MW —
-        # multiply by step_duration to get MWh per step, then weight each
-        # (d, t) by par.timestep_weight (=1.0 with no/uniform timeset_weights
-        # → byte-identical) before summing.  Both numerator and denominator
-        # carry the same weight, so the curtailment-share ratio below is
-        # unchanged; only the absolute MWh outputs move.
-        curtail_period = (
-            curtail_dt.mul(par.step_duration, axis=0)
-            .mul(par.timestep_weight, axis=0)
-            .groupby(level='period').sum()
-        )
-        potential_period = (
-            potential_dt.mul(par.step_duration, axis=0)
-            .mul(par.timestep_weight, axis=0)
-            .groupby(level='period').sum()
-        )
+        # Aggregate to period level, annualised like the flows (MWh per
+        # year): curtail_dt / potential_dt are MW — × step_duration (MWh per
+        # step), × timestep_weight (1.0 with no/uniform timeset_weights), Σ
+        # over the period, ÷ complete_period_share_of_year.  Numerator and
+        # denominator share every factor, so the curtailment share is the
+        # ratio of the sample sums.
+        curtail_period = annualize_dt_to_d(
+            curtail_dt, par.timestep_weight, par.complete_period_share_of_year, par.step_duration)
+        potential_period = annualize_dt_to_d(
+            potential_dt, par.timestep_weight, par.complete_period_share_of_year, par.step_duration)
 
         # Calculate curtailment share at period level (ratio — step_duration cancels)
         curtail_share_period = (curtail_period / potential_period).where(potential_period != 0, 0)

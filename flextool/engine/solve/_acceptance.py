@@ -20,8 +20,15 @@ non-``kOptimal`` solve is safe to accept:
 
 * ``kOptimal``                → accept (unchanged).
 * a genuine failure status    → reject, naming the precise cause.
+* ``kModelEmpty`` of an LP with rows but no variables (HiGHS ignores the
+  rows of such an LP) → reject, as infeasible when a row excludes 0.
 * ``kUnknown`` that is primal-feasible with a small primal--dual objective
   gap → accept as *near-optimal* (use the primal solution), else reject.
+* a solve stopped by its **time limit** (every solver: HiGHS ``kTimeLimit``,
+  a commercial or ``--save-memory`` result file's ``TIME_LIMIT``) → for a
+  MIP with a feasible solution, accept with a warning (the solution is not
+  proven optimal; the gap is named when the solver reported it); for an LP,
+  or with no solution, reject.
 
 The predicate is conjunctive and derives its primal-feasibility limits
 from the solver's own ``primal_feasibility_tolerance`` (the option value
@@ -49,6 +56,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+import numpy as np
 
 from flextool.engine.autoscale._report import (
     format_nonoptimal_hint as _format_nonoptimal_hint,
@@ -178,6 +187,8 @@ _FAILURE_MESSAGES: dict[str, str] = {
         "usable"
     ),
     "kModelEmpty": "has no variables or constraints",
+    # (A model with no variables but with rows is judged by its rows: see
+    # :func:`_classify_variable_free_model`.)
     "kNotset": "returned no model status",
     "kLoadError": "could not be loaded by the solver",
     "kModelError": "was rejected as malformed by the solver",
@@ -201,6 +212,8 @@ class Acceptance:
                         (accepted only because the ceiling follows the
                         solve's tolerance); the caller prints the
                         behaviour-change notice for it.
+    ``time_limited``  — accepted MIP solution of a solve stopped by its time
+                        limit: the caller logs :attr:`message` as a WARNING.
     ``model_status``  — the solve's own HiGHS model status name
                         (``kOptimal``, ``kInfeasible``, ...) as the check saw
                         it: from the solve's diagnostics (never the live
@@ -216,6 +229,7 @@ class Acceptance:
     scaling_hint: str | None
     above_fixed_ceiling: bool = False
     model_status: str | None = None
+    time_limited: bool = False
 
 
 #: The status a subprocess / commercial solve's parsed solution file reports
@@ -225,8 +239,77 @@ _SHIM_MODEL_STATUS = {
     "OPTIMAL": "kOptimal",
     "INFEASIBLE": "kInfeasible",
     "UNBOUNDED": "kUnbounded",
+    "INF_OR_UNBD": "kUnboundedOrInfeasible",
     "TIME_LIMIT": "kTimeLimit",
+    "ITERATION_LIMIT": "kIterationLimit",
+    "SOLUTION_LIMIT": "kSolutionLimit",
+    "MEM_LIMIT": "kMemoryLimit",
+    "INTERRUPTED": "kInterrupt",
 }
+
+#: Statuses of a solver run as a program that have no HiGHS twin, and why each is not a usable optimum
+#: (``_subprocess_solve``).  Rejected like any other non-optimal status, with this reason.
+_SHIM_STATUS_REASONS = {
+    "NO_STATUS": (
+        "did not say how it ended: its result file carries no status and its console log names none (is the "
+        "log turned off? Gurobi: LogToConsole 1; COPT: Logging 1 and LogToConsole 1), so a solve stopped by a "
+        "limit or an interrupt cannot be told from a finished one"
+    ),
+    "OPTIMAL_INFEASIBLE": (
+        "is optimal only for the solver's scaled model: once unscaled, the solution breaks the feasibility "
+        "tolerances (CPLEX: optimal with unscaled infeasibilities)"
+    ),
+    "OPTIMAL_FACE_UNBOUNDED": (
+        "has an unbounded optimal face: the solution is an interior point of it, not a vertex (CPLEX barrier "
+        "without crossover; a cost or bound is probably missing)"
+    ),
+}
+
+
+def _is_mip(sol: "Solution") -> bool:
+    """Whether the solved problem has integer columns (from the Solution's variables)."""
+    from flextool.engine.solve._solver_dispatch import problem_is_mip
+
+    return problem_is_mip(getattr(sol, "_vars", None) or getattr(sol, "vars", None))
+
+
+def _time_limit_verdict(
+    sol: "Solution", solve_name: str, *, gap: float | None, ranges_post: "RangeReport | None",
+) -> Acceptance:
+    """The rule for a solve stopped by its time limit *with* a solution (owner decision D2, every solver).
+
+    A MIP keeps the solution with a warning: it is feasible but not proven optimal, which a time limit on a
+    MIP asks for.  An LP stopped at its limit has no usable solution (the iterate is not a feasible optimum),
+    so the run stops.
+    """
+    if not _is_mip(sol):
+        return Acceptance(
+            accepted=False,
+            near_optimal=False,
+            message=(
+                f"solve for {solve_name} {_FAILURE_MESSAGES['kTimeLimit']}: it is a linear problem, and a "
+                "linear solve stopped at its time limit has no usable solution. Raise the time limit "
+                "(--solver-time-limit, or the solver's own time-limit parameter)"
+            ),
+            scaling_hint=_scaling_hint_for_reject(ranges_post),
+            model_status="kTimeLimit",
+        )
+    gap_text = (
+        f" (relative MIP gap {gap:.4%})" if gap is not None
+        else " (the remaining gap is in the solver log above)"
+    )
+    return Acceptance(
+        accepted=True,
+        near_optimal=True,
+        message=(
+            f"Solve {solve_name} stopped at its time limit with a feasible integer solution that is not proven "
+            f"optimal{gap_text}. FlexTool uses this solution; raise the time limit (--solver-time-limit, or "
+            "the solver's own time-limit parameter) or the MIP gap for a proven one."
+        ),
+        scaling_hint=None,
+        model_status="kTimeLimit",
+        time_limited=True,
+    )
 
 
 def _scaling_hint_for_reject(
@@ -246,6 +329,62 @@ def _scaling_hint_for_reject(
         return None
     hint = _format_nonoptimal_hint(ranges_post)
     return hint or None
+
+
+#: How many failing rows a variable-free model's message names.
+_VARIABLE_FREE_ROWS_SHOWN = 5
+
+
+def _classify_variable_free_model(sol: "Solution", solve_name: str) -> Acceptance | None:
+    """The verdict on a ``kModelEmpty`` solve whose LP has rows but no columns, else ``None``.
+
+    Every row of such an LP reads ``row_lower <= 0 <= row_upper``.  A row that excludes 0 cannot hold, so the
+    model is infeasible (``kInfeasible``, the failing rows named).  When all hold, there is still nothing to
+    solve: rejected as ``kModelEmpty``, with a message that says the constraints are there.  ``None`` when the
+    live LP cannot be read or has no rows (the plain ``kModelEmpty`` message applies).
+    """
+    get_lp = getattr(getattr(sol, "highs", None), "getLp", None)
+    if not callable(get_lp):
+        return None
+    lp = get_lp()
+    if int(lp.num_col_) != 0 or int(lp.num_row_) == 0:
+        return None
+    lower = np.asarray(lp.row_lower_, dtype=np.float64)
+    upper = np.asarray(lp.row_upper_, dtype=np.float64)
+    tol = float(sol.primal_feasibility_tolerance) or 1e-7
+    failing = np.flatnonzero((lower > tol) | (upper < -tol))
+    n_rows = int(lp.num_row_)
+    if failing.size == 0:
+        return Acceptance(
+            accepted=False,
+            near_optimal=False,
+            message=(
+                f"solve for {solve_name} has no variables: its {n_rows} "
+                "constraints hold with nothing in them, so there is nothing "
+                "to solve"
+            ),
+            scaling_hint=None,
+            model_status="kModelEmpty",
+        )
+    names = list(getattr(sol, "row_names", None) or ())
+    shown = [
+        (names[i] if i < len(names) and names[i] else f"row {i}")
+        + f" (0 not in [{lower[i]:g}, {upper[i]:g}])"
+        for i in failing[:_VARIABLE_FREE_ROWS_SHOWN].tolist()
+    ]
+    more = failing.size - len(shown)
+    return Acceptance(
+        accepted=False,
+        near_optimal=False,
+        message=(
+            f"solve for {solve_name} is infeasible: the model has no "
+            f"variables, and {failing.size} of its {n_rows} "
+            f"constraints cannot hold with nothing in them: {', '.join(shown)}"
+            + (f" and {more} more" if more else "")
+        ),
+        scaling_hint=None,
+        model_status="kInfeasible",
+    )
 
 
 def classify_acceptance(
@@ -287,6 +426,32 @@ def classify_acceptance(
     # cannot verify the solution, so we must NOT accept it.  Reject with an
     # honest "cannot diagnose" message.
     if diag is None:
+        shim_status = getattr(sol, "shim_status", None)
+        if shim_status == "TIME_LIMIT":
+            # The result file of a solve stopped by its limit holds its incumbent.
+            return _time_limit_verdict(
+                sol, solve_name, gap=getattr(sol, "shim_mip_gap", None), ranges_post=ranges_post,
+            )
+        model_status = _SHIM_MODEL_STATUS.get(shim_status)
+        if shim_status in _SHIM_STATUS_REASONS:
+            return Acceptance(
+                accepted=False,
+                near_optimal=False,
+                message=(
+                    f"non-optimal solve for {solve_name}: the solver {_SHIM_STATUS_REASONS[shim_status]} "
+                    f"(solver status {shim_status})"
+                ),
+                scaling_hint=None,
+                model_status=None,
+            )
+        if model_status in _FAILURE_MESSAGES:
+            return Acceptance(
+                accepted=False,
+                near_optimal=False,
+                message=f"solve for {solve_name} {_FAILURE_MESSAGES[model_status]}",
+                scaling_hint=None,
+                model_status=model_status,
+            )
         return Acceptance(
             accepted=False,
             near_optimal=False,
@@ -294,12 +459,25 @@ def classify_acceptance(
                 f"non-optimal solve for {solve_name}: the solver did not "
                 "certify optimality and no solver diagnostics are available "
                 "to assess the solution"
+                + (f" (solver status {shim_status})" if shim_status not in (None, "OTHER") else "")
             ),
             scaling_hint=None,
-            model_status=_SHIM_MODEL_STATUS.get(getattr(sol, "shim_status", None)),
+            model_status=model_status,
         )
 
     status = diag.model_status_name
+
+    # HiGHS reports any LP without columns as ``kModelEmpty`` and ignores its
+    # rows, so a variable-free row that cannot hold (a hard ``0 = demand``)
+    # would read as "no constraints".  Judge such rows here.
+    if status == "kModelEmpty":
+        variable_free = _classify_variable_free_model(sol, solve_name)
+        if variable_free is not None:
+            return variable_free
+
+    # A MIP stopped by its time limit with a feasible incumbent: the D2 rule.
+    if status == "kTimeLimit" and diag.primal_feasible:
+        return _time_limit_verdict(sol, solve_name, gap=None, ranges_post=ranges_post)
 
     # A named failure status is never acceptable — report the precise cause.
     if status in _FAILURE_MESSAGES:

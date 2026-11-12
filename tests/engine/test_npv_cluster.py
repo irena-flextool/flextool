@@ -273,7 +273,8 @@ def _val(param, *idx_keys: str) -> float:
 
 
 def _approx(actual: float, expected: float, *, abs_tol: float = 1e-9) -> bool:
-    return math.isclose(actual, expected, abs_tol=abs_tol, rel_tol=0.0)
+    """1e-9 absolute, or 1e-12 relative (floating-point rounding of a 1e6-scale annuity)."""
+    return math.isclose(actual, expected, abs_tol=abs_tol, rel_tol=1e-12)
 
 
 def test_npv_lazy_p_inflation_op_2pct(scenario_run):
@@ -300,7 +301,7 @@ def test_npv_lazy_p_inflation_op_2pct(scenario_run):
 def test_npv_lazy_ed_entity_annual_discounted_2pct(scenario_run):
     """Lazy ``ed_entity_annual_discounted`` for wind+battery (both
     ``reinvest_automatic`` lifetime_method) must match the hand-derived
-    annuity × inv_factor sum to 1e-9 absolute.
+    annuity × inv_factor sum to 1e-9 absolute (or 1e-12 relative).
     """
     reader, provider, work = _lazy_inputs(scenario_run(SCENARIO_INFLATION))
     active_solve = _read_active_solve(work, provider=provider)
@@ -320,3 +321,84 @@ def test_npv_lazy_ed_entity_annual_discounted_2pct(scenario_run):
             assert _approx(actual, expected), (
                 f"ed[{ent}, {d}]: actual={actual!r}, expected={expected!r}"
             )
+
+
+# ---------------------------------------------------------------------------
+# discount_rate 0 is 0 %, a missing rate is the 5 % default (both annuity paths)
+# ---------------------------------------------------------------------------
+#
+# invest_cost 1000 CUR/kW, lifetime 20 a.  Hand values:
+#   r = 0          → 1000·1000/20                 = 50 000 CUR/MW/a (straight line);
+#   r missing/0.05 → 1e6·0.05/(1 − 1.05^−20)      = 80 242.58719 CUR/MW/a.
+
+ANN_R0 = 50_000.0
+ANN_R5 = 80_242.58719
+
+
+class _Lookup:
+    """Duck-typed ``PdLookup`` (``get`` / ``has``) over a ``{(e, param): value}`` dict."""
+
+    def __init__(self, values: dict[tuple[str, str], float]) -> None:
+        self._v = values
+
+    def get(self, e: str, param: str, d: str) -> float:
+        return self._v.get((e, param), 0.0)
+
+    def has(self, e: str, param: str, d: str) -> bool:
+        return (e, param) in self._v
+
+
+def _lazy_annuity(disc: float | None, life: float | None, cost: float = 1000.0) -> float:
+    from flextool.engine.input._inmemory_reader import InMemoryReader
+
+    def frame(v):
+        return pl.DataFrame({"name": ["u"], "value": [v]})
+
+    params = {("unit", "invest_cost"): frame(cost),
+              ("unit", "invest_method"): pl.DataFrame({"name": ["u"], "value": ["invest_no_limit"]})}
+    if disc is not None:
+        params[("unit", "discount_rate")] = frame(disc)
+    if life is not None:
+        params[("unit", "lifetime")] = frame(life)
+    src = InMemoryReader({"unit": pl.DataFrame({"name": ["u"]})}, params,
+                         defaults={("unit", "discount_rate"): 0.05})
+    ed = pl.LazyFrame({"e": ["u"], "d": ["p2020"]})
+    out = npv._per_method_annuity_lf(src, ed, "invest_cost", npv._INVEST_NOT_ALLOWED).collect()
+    return float(out["ann"][0])
+
+
+def _emit_annuity(disc: float | None, life: float | None, cost: float = 1000.0) -> float:
+    from flextool.engine.preprocess.emit._entity_annual import _annuity
+
+    values = {("u", "invest_cost"): cost}
+    if disc is not None:
+        values[("u", "discount_rate")] = disc
+    if life is not None:
+        values[("u", "lifetime")] = life
+    return _annuity(_Lookup(values), "u", "p2020", "invest_cost")
+
+
+@pytest.mark.parametrize("path", [_lazy_annuity, _emit_annuity], ids=["lazy", "emit"])
+@pytest.mark.parametrize("disc, expected", [(0.0, ANN_R0), (None, ANN_R5), (0.05, ANN_R5)],
+                         ids=["zero", "missing", "explicit_5pct"])
+def test_annuity_discount_rate(path, disc, expected) -> None:
+    assert math.isclose(path(disc, 20.0), expected, rel_tol=1e-9), (path.__name__, disc)
+
+
+@pytest.mark.parametrize("path", [_lazy_annuity, _emit_annuity], ids=["lazy", "emit"])
+def test_annuity_without_lifetime_is_an_error(path) -> None:
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    with pytest.raises(FlexToolConfigError, match="lifetime is missing or not above 0 where invest_cost is not 0: "
+                                                  "'u' in period p2020"):
+        path(0.05, None)
+    assert path(0.05, None, cost=0.0) == 0.0
+
+
+def test_annuity_factor_small_rate_is_the_straight_line() -> None:
+    from flextool.engine.preprocess._annuity import annuity_factor, annuity_factor_expr
+
+    assert annuity_factor(0.0, 20.0) == 1 / 20
+    assert math.isclose(annuity_factor(1e-12, 20.0), 1 / 20, rel_tol=1e-9)
+    got = pl.select(annuity_factor_expr(pl.lit(1e-12), pl.lit(20.0))).item()
+    assert math.isclose(got, 1 / 20, rel_tol=1e-9)

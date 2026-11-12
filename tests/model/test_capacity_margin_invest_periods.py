@@ -4,7 +4,7 @@
     D_inv = period_invest ∩ periods of dt
     period_invest = invest_periods_of_current_solve ∪ the branch periods of those anchors
 
-``reference.md`` and the schema say the capacity margin is "used only by the investment mode", and GMPL built it
+``reference/groups.md`` and the schema say the capacity margin is "used only by the investment mode", and GMPL built it
 for ``d ∈ period_invest`` only.  Before the fix it was built in every period of every solve: dispatch solves,
 rolling rolls, stochastic dispatch and look-ahead periods paid the margin penalty.  A period label has no dt,
 so a stochastic fan contributes its forecast branch periods, one row per forecast.

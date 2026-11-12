@@ -24,13 +24,23 @@ monolith; Step 2.5 item 6 extracted them here.
 """
 from __future__ import annotations
 
+import difflib
+import functools
+import json
 import logging
+import re
+import warnings
 from collections.abc import Iterable
+from dataclasses import dataclass
 
+import numpy as np
 import spinedb_api as api
 
 from flextool.engine.input._solve_state import FlexToolConfigError
-from flextool.input_derivation._method_constants import METHOD_2WAY_1VAR
+from flextool.engine.preprocess._co2_methods import CO2_MAX_PERIOD_METHODS, CO2_MAX_TOTAL_METHODS
+from flextool.engine.preprocess.params._existing import DIVEST_NOT_ALLOWED, INVEST_NOT_ALLOWED
+from flextool import units_of_measure as uom
+from flextool.input_derivation._method_constants import METHOD_2WAY_1VAR, METHOD_LP, METHOD_MIP
 
 
 __all__ = [
@@ -42,10 +52,22 @@ __all__ = [
     "validate_ladder_methods",
     "validate_group_output_memberships",
     "validate_connection_node_memberships",
+    "warn_node_connections",
+    "validate_node_invest_without_storage",
+    "validate_units_of_measure",
     "validate_connection_delay",
     "validate_unit_input_shares",
     "validate_output_min_coeff",
     "validate_node_inflow_not_period",
+    "validate_time_series_keys",
+    "validate_period_keys",
+    "database_time_facts",
+    "DatabaseTimeFacts",
+    "validate_profile_links",
+    "validate_zero_conversion_coeff",
+    "validate_basic_sanity",
+    "warn_profiles_as_percent",
+    "value_alternatives",
 ]
 
 
@@ -65,33 +87,135 @@ def _get_commodity_price_methods(db) -> dict[str, str]:
     return out
 
 
+def _str_leaves(value, out: list[str]) -> None:
+    """Append the string values of a (nested) Map, outer to inner, to ``out``."""
+    if isinstance(value, api.Map):
+        for sub in value.values:
+            _str_leaves(sub, out)
+    elif isinstance(value, str):
+        out.append(value)
+
+
+class _RowsView:
+    """``find_parameter_values`` / ``find_entities`` over :func:`_pv_rows` (a backend's bulk index), for the
+    readers that take a backend-like object (``_timeline_rules.time_structure_from_backend``): a
+    ``DatabaseMapping.find_parameter_values`` per parameter scans the whole value table each time."""
+
+    def __init__(self, src) -> None:
+        self._src = src
+
+    def find_parameter_values(self, *, entity_class_name: str, parameter_definition_name: str) -> list:
+        return list(_pv_rows(self._src, entity_class_name, parameter_definition_name))
+
+    def find_entities(self, *, entity_class_name: str) -> list:
+        return self._src.find_entities(entity_class_name=entity_class_name)
+
+
 def validate_timeline_timestep_duration(db) -> None:
-    """Raise FlexToolConfigError if any timeline entity is missing its
-    ``timestep_duration`` map.  Without it, ``step_duration`` silently
-    falls to 0 throughout the model and every time-weighted quantity
-    (balances, costs, ramps) collapses to zero.  There is no sensible
-    default, so the value must be present on every timeline.
+    """Raise FlexToolConfigError when a timeline that a solve uses has no ``timestep_duration``, or a step that
+    does not last more than 0 h (0, negative or NaN; audit bug 8).
+
+    Without durations ``step_duration`` silently falls to 0 and every time-weighted quantity (balances, costs,
+    ramps) collapses to zero; a step of 0 h or less does the same for that step.  Only the used timelines are
+    checked: the timelines of the timesets each solve of the scenario uses (the solves of ``model.solves`` and
+    ``solve.contains_solves``, else Rule 4's choice, else every solve), resolved as the engine resolves them
+    (``_timeline_rules.solve_period_timesets``: the solve's ``period_timeset``, else the Rule 1 / 2 / 5b default,
+    so a solve without its own ``period_timeset`` is checked too).  A timeset without ``timeline`` uses the sole
+    timeline (Rule 3).  A solve whose timesets cannot be resolved (no default applies) brings the timelines named
+    by any ``timeset.timeline``, or every timeline when no timeset names one (the check before the scoping).  A
+    timeline no solve uses (a spare one kept in the database) needs no durations: the timeline reader builds the
+    timelines from the ``timestep_duration`` values, so it is invisible to the model.
+
+    ``db`` is the scenario-filtered ``SpineDBBackend`` (its bulk value index, ``input_derivation.run``) or
+    DatabaseMapping.  All the offenders go into one error.
     """
+    from flextool.engine.input._timeline_rules import solve_period_timesets, time_structure_from_backend
+
     timelines = [ent["entity_byname"][0]
                  for ent in db.find_entities(entity_class_name="timeline")]
     if not timelines:
         return
-    have_duration: set[str] = set()
-    for pv in db.find_parameter_values(
-        entity_class_name="timeline",
-        parameter_definition_name="timestep_duration",
-    ):
-        if pv["type"] is None:
+    timeline_of: dict[str, str] = {}
+    for pv in _pv_rows(db, "timeset", "timeline"):
+        if pv["type"] is not None:
+            timeline_of[pv["entity_byname"][0]] = str(pv["parsed_value"])
+    sole = timelines[0] if len(timelines) == 1 else None
+    structure = time_structure_from_backend(_RowsView(db))
+    # used timeline -> (timeset, solve) that first names it (None: the unresolved-solve fallback)
+    used: dict[str, tuple[str, str] | None] = {}
+    unresolved = False
+    solves = _used_solves(structure)
+    for solve in solves:
+        pairs = solve_period_timesets(solve, structure)
+        if not pairs:
+            unresolved = True
             continue
-        have_duration.add(pv["entity_byname"][0])
-    missing = [t for t in timelines if t not in have_duration]
+        for _period, timeset in pairs:
+            timeline = timeline_of.get(timeset, sole)  # Rule 1's synthetic timeset and Rule 3: the sole timeline
+            if timeline is not None:
+                used.setdefault(timeline, (timeset, solve))
+    if unresolved or not solves:
+        named = set(timeline_of.values())
+        for timeline in timelines:
+            if not named or timeline in named:
+                used.setdefault(timeline, None)
+    durations: dict[str, list] = {}
+    for pv in _pv_rows(db, "timeline", "timestep_duration"):
+        if pv["type"] is None or pv["entity_byname"][0] not in used:
+            continue
+        durations.setdefault(pv["entity_byname"][0], []).append(pv)
+
+    def why(timeline: str) -> str:
+        via = used[timeline]
+        return f" (timeset '{via[0]}' of solve '{via[1]}')" if via else ""
+
+    missing = [t for t in timelines if t in used and t not in durations]
+    errors: list[str] = []
     if missing:
-        raise FlexToolConfigError(
+        errors.append(
             "timeline 'timestep_duration' is not set for: "
-            + ", ".join(sorted(missing))
-            + ".  Every timeline needs a Map(timestep -> duration_in_hours); "
-              "without it all time-weighted quantities collapse to zero."
-        )
+            + ", ".join(f"{t}{why(t)}" for t in sorted(missing))
+            + ".  Every timeline a solve uses needs a Map(timestep -> duration_in_hours); "
+              "without it all time-weighted quantities collapse to zero.")
+    for timeline in sorted(durations):
+        for pv in durations[timeline]:
+            hit = _first_bad(_parsed_then_evict(pv), lambda v: not v > 0.0)
+            if hit is not None:
+                errors.append(
+                    f"timeline '{timeline}'{why(timeline)} timestep_duration = {hit[1]:g} "
+                    f"{_where(pv['alternative_name'], hit[0])}: a time step must last more than 0 hours (a step "
+                    "of 0 h or less weighs its flows, costs and balances by 0 or less).")
+    if errors:
+        raise FlexToolConfigError("\n".join(errors))
+
+
+def _used_solves(structure) -> list[str]:
+    """The solves of the scenario that run: the solves of ``model.solves`` and ``solve.contains_solves``, else
+    Rule 4's choice (``_timeline_rules.rule5_model_solves``), else every solve.  ``structure`` is the scenario's
+    ``_timeline_rules.TimeStructure``."""
+    from flextool.engine.input._timeline_rules import rule5_model_solves
+
+    solves = list(dict.fromkeys([s for _model, listed in structure.model_solves for s in listed]
+                                + sorted(structure.contained_solves)))
+    if not solves:
+        solves = rule5_model_solves(structure)[1] or list(structure.solves)
+    return solves
+
+
+def _used_solve_periods(src) -> set[str]:
+    """The periods of the solves that run (:func:`_used_solves`): each one's ``period_timeset`` as the engine
+    resolves it (``_timeline_rules.solve_period_timesets``, the Rule 1 / 2 / 5b default included) plus its
+    ``realized_periods`` and ``invest_periods``.  A solve defined in the alternatives that no model runs brings
+    no period (unlike :func:`_scenario_periods`)."""
+    from flextool.engine.input._timeline_rules import solve_period_timesets, time_structure_from_backend
+
+    structure = time_structure_from_backend(_RowsView(src))
+    periods: set[str] = set()
+    for solve in _used_solves(structure):
+        periods.update(period for period, _timeset in solve_period_timesets(solve, structure) or [])
+        periods.update(structure.realized_periods.get(solve, []))
+        periods.update(structure.invest_periods.get(solve, []))
+    return periods
 
 
 def _pv_rows(src, entity_class: str, parameter: str) -> Iterable:
@@ -126,6 +250,15 @@ _SOLVE_PERIOD_PARAMS = ("realized_periods", "invest_periods", "realized_invest_p
 
 def _period_and_timestep_names(src) -> tuple[set[str], set[str]]:
     """``(periods, timesteps)`` of the scenario: see ``validate_node_inflow_not_period``."""
+    periods, timelines = _scenario_time_vocab(src)
+    timesteps: set[str] = set()
+    for steps in timelines.values():
+        timesteps.update(steps)
+    return periods, timesteps
+
+
+def _scenario_periods(src) -> set[str]:
+    """The period names of the scenario: see ``validate_node_inflow_not_period``."""
     periods: set[str] = set()
     for pv in _pv_rows(src, "solve", "period_timeset"):
         if pv["type"] == "map":
@@ -136,11 +269,7 @@ def _period_and_timestep_names(src) -> tuple[set[str], set[str]]:
                 periods.update(str(v) for v in _parsed_then_evict(pv).values)
             elif pv["type"] == "map":
                 _map_keys_all_levels(_parsed_then_evict(pv), periods)
-    timesteps: set[str] = set()
-    for pv in _pv_rows(src, "timeline", "timestep_duration"):
-        if pv["type"] in ("map", "time_series"):
-            timesteps.update(str(k) for k in _parsed_then_evict(pv).indexes)
-    return periods, timesteps
+    return periods
 
 
 def _keys_all_periods(indexes, periods: set[str], timesteps: set[str]) -> bool:
@@ -155,11 +284,11 @@ def _keys_all_periods(indexes, periods: set[str], timesteps: set[str]) -> bool:
     return True
 
 
-def validate_node_inflow_not_period(src) -> None:
+def validate_node_inflow_not_period(src, vocab: tuple[set[str], dict[str, list[str]]] | None = None) -> None:
     """Raise FlexToolConfigError when a node's ``inflow`` is keyed by period.
 
     ``inflow`` is a constant, a time series (1-D map over time) or a stochastic 3-D map (branch, analysis time,
-    time); it cannot be period-based (docs/reference.md, 'Timesteps and periods').  A period-keyed value is not
+    time); it cannot be period-based (docs/reference/entities_and_time.md, 'Timesteps and periods').  A period-keyed value is not
     read by any path: before this check it silently became inflow 0.  Flagged:
       * a 1-D map with index_name 'period';
       * any 2-D map (the schema has no rank-2 inflow; a period x time map is the usual intent);
@@ -173,13 +302,19 @@ def validate_node_inflow_not_period(src) -> None:
     read without parsing, rank-1 and rank-2 maps are parsed (rank 2 for its first-level keys only), and only the
     first 3 keys of an offending map are kept.
 
-    ``src`` is the ``SpineDBBackend`` of ``input_derivation.run`` (or a scenario-filtered ``DatabaseMapping``).
+    ``src`` is the ``SpineDBBackend`` of ``input_derivation.run`` (or a scenario-filtered ``DatabaseMapping``);
+    ``vocab`` the ``(periods, timelines)`` of :func:`_scenario_time_vocab`, shared with
+    :func:`validate_time_series_keys` (built here when not given).
     """
     to_rank = api.parameter_value.from_database_to_dimension_count
     inflow_maps = [pv for pv in _pv_rows(src, "node", "inflow") if pv["type"] == "map"]
     if not inflow_maps:
         return
-    periods, timesteps = _period_and_timestep_names(src)
+    if vocab is None:
+        periods, timesteps = _period_and_timestep_names(src)
+    else:
+        periods = vocab[0]
+        timesteps = {step for steps in vocab[1].values() for step in steps}
 
     problems: list[str] = []
     for pv in inflow_maps:
@@ -208,17 +343,467 @@ def validate_node_inflow_not_period(src) -> None:
               "scale_in_proportion, scale_to_annual_and_peak_flow).")
 
 
+# ---------------------------------------------------------------------------
+# Time-series keys that are not time steps of any timeline (#205)
+
+# The start of a nested value in a Map's database JSON, and the label of a level.
+_RAW_NESTED = re.compile(rb'\{\s*"type"')
+_RAW_LABEL = re.compile(rb'"index_name"\s*:\s*"([^"]*)"')
+# The quoted strings of a Map's database JSON that are not keys.
+_RAW_STRUCTURE = frozenset((b"type", b"map", b"index_type", b"str", b"date_time", b"duration", b"index_name",
+                            b"data", b"rank"))
+# Database JSON whose keys the fast path cannot see: an escape (the quotes no longer pair), a time series, a float
+# index (unquoted keys; any ``float`` in the text takes the parse, one scan), a dict-form ``data``.  (A date_time
+# or duration index has quoted keys: a non-canonical stamp is not a time step's bytes, so it takes the parse.)
+_RAW_SLOW_MARKERS = (b"\\", b"time_series", b"float", b'"data": {', b'"data":{')
+
+
+def _scenario_time_vocab(src) -> tuple[set[str], dict[str, list[str]]]:
+    """``(periods, {timeline: [step, ...]})`` of the scenario: the period names of
+    ``validate_node_inflow_not_period`` and the steps of every ``timeline.timestep_duration``, in timeline order
+    (keys stringified as ``str(key)``, the timeline reader's form)."""
+    periods = _scenario_periods(src)
+    timelines: dict[str, list[str]] = {}
+    for pv in _pv_rows(src, "timeline", "timestep_duration"):
+        if pv["type"] in ("map", "time_series"):
+            timelines[pv["entity_byname"][0]] = [str(k) for k in _parsed_then_evict(pv).indexes]
+    return periods, timelines
+
+
+class _DatabaseTimeVocab:
+    """The periods and timelines of the **whole** database (every alternative, so every scenario), read on first
+    use only (a run whose values all classify on the scenario's own vocabulary never opens it).
+
+    :func:`validate_time_series_keys` uses it for two cases that are plain data of another scenario, not errors:
+    an unnamed map level keyed by periods of another scenario (a period level: that entity gets no value in this
+    solve, docs/reference/entities_and_time.md), and a series keyed on the steps of a timeline that is not one of
+    this scenario's.  ``src`` is the scenario-filtered ``SpineDBBackend``; any other ``src`` (or a backend without
+    a scenario) is taken as the whole database already.  ``whole`` (:func:`database_time_facts`, read by
+    ``input_derivation.run`` before the scenario filter) gives the whole database's facts without a second open.
+    """
+
+    def __init__(self, src, periods: set[str], timelines: dict[str, list[str]],
+                 whole: "DatabaseTimeFacts | None" = None) -> None:
+        self._src = src
+        self._loaded = False
+        self.periods: set[str] = set(periods)
+        # (timeline, alternative, steps) of the timestep_duration values that are not this scenario's timelines
+        self.other_timelines: list[tuple[str, str, frozenset[str]]] = []
+        self._own = {name: frozenset(steps) for name, steps in timelines.items()}
+        if whole is not None:
+            # Read by ``input_derivation.run`` before the scenario filter: nothing to open.
+            self._loaded = True
+            self.periods |= whole.periods
+            self.other_timelines = [(name, alt, steps) for name, alt, steps in whole.timelines
+                                    if self._own.get(name) != steps]
+
+    def _load(self) -> None:
+        if self._loaded:
+            return
+        self._loaded = True
+        url = getattr(self._src, "db_url", None)
+        if not url or not getattr(self._src, "scenario_name", None):
+            return
+        from flextool.update_flextool.db_handle import open_database_mapping
+
+        with open_database_mapping(url) as db:
+            self.periods |= _scenario_periods(db)
+            for pv in _pv_rows(db, "timeline", "timestep_duration"):
+                if pv["type"] not in ("map", "time_series"):
+                    continue
+                name = pv["entity_byname"][0]
+                steps = frozenset(str(k) for k in pv["parsed_value"].indexes)
+                if self._own.get(name) != steps:
+                    self.other_timelines.append((name, pv["alternative_name"], steps))
+
+    def all_periods(self) -> set[str]:
+        self._load()
+        return self.periods
+
+    def other_timelines_holding(self, keys) -> list[tuple[str, str]] | None:
+        """``[(timeline, alternative), ...]`` of the timelines outside this scenario whose steps together hold
+        every key of ``keys``; None when some key is a step of none of them."""
+        self._load()
+        left = set(keys)
+        found: list[tuple[str, str]] = []
+        for name, alt, steps in self.other_timelines:
+            if not left.isdisjoint(steps):
+                found.append((name, alt))
+                left -= steps
+                if not left:
+                    return found
+        return None
+
+
+def _raw_keys_on_timeline(raw: bytes, periods_b: frozenset[bytes], base_b: frozenset[bytes],
+                          unions: dict[frozenset[bytes], frozenset[bytes]]) -> bool:
+    """Fast path of :func:`validate_time_series_keys`: True when the database JSON of a str-indexed Map shows,
+    without parsing it, that no time key can be off the timeline: every quoted string is a time step, a word of the
+    JSON structure, a level label, or a period name that keys a nested map (the period level of a period x time
+    map).  A C-speed split and set comparison (the quoted strings are every other piece between quotes); False
+    means "parse and classify" (not that a key is off).  An escape, a float index, a dict-form ``data``, a string
+    value or a time series inside the value always takes the parse.  Known limit: a time key that is one of those
+    words or a period name of the map's period level is not reported.
+
+    ``base_b`` is the time steps, the structure words and the usual labels (built once per check); ``unions``
+    caches ``base_b`` plus the other words of a value (its period keys, another label), so the values of the same
+    periods share one set."""
+    for marker in _RAW_SLOW_MARKERS:
+        if marker in raw:
+            return False
+    quoted = raw.split(b'"')[1::2]
+    extra: set[bytes] = set()
+    # The keys of the nested maps: the last key before each nested value (few, one per period).
+    for match in _RAW_NESTED.finditer(raw):
+        pos = match.start()
+        open_at = raw.rfind(b'["', 0, pos)
+        close_at = raw.find(b'"', open_at + 2, pos)
+        if open_at < 0 or close_at < 0:
+            return False
+        key = raw[open_at + 2:close_at]
+        if key not in periods_b:
+            return False
+        extra.add(key)
+    extra.difference_update(base_b)
+    if not extra:
+        allowed = base_b
+    else:
+        frozen = frozenset(extra)
+        allowed = unions.get(frozen)
+        if allowed is None:
+            allowed = unions[frozen] = base_b | frozen
+    if allowed.issuperset(quoted):
+        return True
+    # A level label other than time / period / t (rare): read the labels only now and try again.
+    labels = set(_RAW_LABEL.findall(raw)).difference(allowed)
+    return bool(labels) and allowed.union(labels).issuperset(quoted)
+
+
+@functools.lru_cache(maxsize=65536)
+def _index_key_str(key: str, index_type: str) -> str:
+    """A Map key as the reader sees it: ``str()`` of the parsed index (spinedb_api parses a ``date_time`` or
+    ``duration`` key, so ``2050-01-01 00:00:00`` and ``2050-01-01T00:00`` read as ``2050-01-01T00:00:00``)."""
+    try:
+        if index_type == "date_time":
+            return str(api.DateTime(key))
+        if index_type == "duration":
+            return str(api.Duration(key))
+    except Exception:  # noqa: BLE001 - a key spinedb_api cannot parse is compared as written
+        return str(key)
+    return str(key)
+
+
+def _value_levels(value) -> list[tuple[str | None, list]]:
+    """``[(index_name, keys), ...]`` per level of a parsed database JSON value (outer to inner): the depth and the
+    labels follow the first entry of each level, as the reader's ``_discover_index_cols`` does, and the keys of a
+    level are those of all its maps.  Keys are stringified as the reader does (``str()`` of the parsed index:
+    :func:`_index_key_str`); a time series level is ``("time", stamps)``."""
+    levels: list[tuple[str | None, list]] = []
+    current = [value]
+    while current:
+        first = current[0]
+        kind = first.get("type") if isinstance(first, dict) else None
+        if kind == "time_series":
+            keys: list = []
+            for ts in current:
+                if isinstance(ts, dict):
+                    parsed = api.from_database(json.dumps(ts).encode(), "time_series")
+                    keys.extend(str(k) for k in parsed.indexes)
+            levels.append(("time", keys))
+            break
+        if not isinstance(first, dict) or "data" not in first:
+            break
+        keys = []
+        children: list = []
+        for m in current:
+            if not isinstance(m, dict) or m.get("type") == "time_series":
+                continue
+            index_type = m.get("index_type")
+            parse = index_type in ("date_time", "duration")
+            data = m.get("data")
+            entries = data.items() if isinstance(data, dict) else data or []
+            for entry in entries:
+                k, v = entry[0], entry[1]
+                keys.append(_index_key_str(str(k), index_type) if parse else str(k))
+                if isinstance(v, dict) and v.get("type") in ("map", "time_series"):
+                    children.append(v)
+        levels.append((first.get("index_name"), keys))
+        current = children
+    return levels
+
+
+_DIGIT = re.compile(r"\d")
+
+
+def _key_form(key: str) -> str:
+    """The form of a map key: lower case, each digit as ``#`` (``t0099`` and ``T0001`` are ``t####``)."""
+    return _DIGIT.sub("#", key.lower())
+
+
+class _StepForms:
+    """The forms (:func:`_key_form`) of time steps, built on the first lookup (only a value with keys that are
+    neither periods nor time steps needs them).  ``sources``: callables returning iterables of time steps."""
+
+    def __init__(self, *sources) -> None:
+        self._sources = sources
+        self._forms: set[str] | None = None
+
+    def __contains__(self, form: str) -> bool:
+        if self._forms is None:
+            self._forms = {_key_form(t) for source in self._sources for t in source()}
+        return form in self._forms
+
+
+def _looks_like_time_keys(keys, step_forms) -> bool:
+    """Whether keys that are no time step still look like time steps: a date-time stamp, or a key of the form
+    (:func:`_key_form`) of a time step (``t0099`` past the end of ``t0001..t0072``, ``T0001`` in another case).
+    Keys that do not (``p2050``, ``p_none``) are period keys that are no period: the period-key check reports
+    them (:func:`validate_period_keys`), not the time-series check."""
+    return any(_ISO_STAMP.match(k) or _key_form(k) in step_forms for k in keys)
+
+
+def _time_levels(levels: list[tuple[str | None, list]], allowed, periods: set[str],
+                 timesteps: set[str], all_periods=None, time_like=None) -> list[int]:
+    """The positions of the time levels in ``levels`` (:func:`_value_levels`), classified as the readers do:
+    by depth, label and the parameter's allowed shapes (``PARAM_ALLOWED_SHAPES``), then by the keys.
+
+    - 3 levels: a stochastic map (branch, analysis time, time) by position; the branch level is never checked.
+    - A level labelled ``period`` is not checked, one labelled ``time`` / ``t`` is; another label is left to the
+      shape checks (not checked).
+    - An unnamed level takes the allowed shapes' unique label at that depth and position; otherwise it is a period
+      level when its keys hit the periods and no time step, or (``all_periods``, a callable giving the periods of
+      the whole database) hit no time step but a period of another scenario: such an entity gets no value in this
+      solve, as documented; or (``time_like``, a callable of the keys, given for a parameter the period-key check
+      covers) hit neither and do not look like time steps (``p2050``, ``p_none``): a mistyped period map, which
+      :func:`validate_period_keys` reports; else it is a time level.  On 2 levels an unnamed outer level that hits
+      no period is not checked (a branch level of a 2-level stochastic profile).
+    """
+    from flextool.engine.input._param_shapes import _infer_silent_default_labels, _normalise_label
+
+    depth = len(levels)
+    if depth == 3:
+        return [1, 2]
+    if depth not in (1, 2):
+        return []
+    labels = [_normalise_label(name) for name, _keys in levels]
+    if allowed:
+        labels = _infer_silent_default_labels(labels, allowed)
+    out: list[int] = []
+    for pos, (label, (_name, keys)) in enumerate(zip(labels, levels)):
+        if label in ("time", "t"):
+            out.append(pos)
+        elif label is None:
+            key_set = set(keys)
+            hits_step = not key_set.isdisjoint(timesteps)
+            hits_period = not key_set.isdisjoint(periods)
+            if hits_period and not hits_step:
+                continue
+            if not hits_step and all_periods is not None and not key_set.isdisjoint(all_periods()):
+                continue
+            if depth == 1 and not hits_step and time_like is not None and not time_like(keys):
+                continue
+            if depth == 2 and pos == 0 and not hits_period and not hits_step:
+                continue
+            out.append(pos)
+    if depth == 2 and len(out) == 2:
+        # Both unnamed and both look like time: the outer one is the period level of a period x time map.
+        out = [1]
+    return out
+
+
+def _span(steps: list[str]) -> str:
+    return f"{steps[0]} .. {steps[-1]}" if steps else "no steps"
+
+
+def _timelines_text(timelines: dict[str, list[str]]) -> str:
+    items = list(timelines.items())
+    if len(items) == 1:
+        name, steps = items[0]
+        return f"Timeline {name!r}: {len(steps)} steps, {_span(steps)}."
+    shown = "; ".join(f"{name!r}: {len(steps)} steps, {_span(steps)}" for name, steps in items[:3])
+    more = f"; and {len(items) - 3} more" if len(items) > 3 else ""
+    return f"Timelines {shown}{more}."
+
+
+_ISO_STAMP = re.compile(r"^(\d{4})-\d\d-\d\d[T ]")
+
+
+def _off_keys_hint(keys: list[str], lower_steps: dict[str, str], timelines: dict[str, list[str]]) -> str:
+    """Why the keys of a value may be off: a case-insensitive match (``did you mean``), or date-time stamps of
+    another year than the timelines'.  Empty when neither applies."""
+    for k in keys:
+        match = lower_steps.get(k.lower())
+        if match is not None:
+            return f" Did you mean {match!r} (for {k!r})? Time step names are case sensitive."
+    key_years = {m.group(1) for k in keys[:50] if (m := _ISO_STAMP.match(k))}
+    if key_years:
+        step_years = {m.group(1) for steps in timelines.values() for s in steps[:1] + steps[-1:]
+                      if (m := _ISO_STAMP.match(s))}
+        if step_years and key_years.isdisjoint(step_years):
+            return (f" Its stamps are of year {', '.join(sorted(key_years))}, the timelines' of "
+                    f"{', '.join(sorted(step_years))}.")
+    return ""
+
+
+def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] | None = None,
+                              whole: "DatabaseTimeFacts | None" = None) -> None:
+    """Warn about time-series keys that are not a time step of any timeline; error when none of a value's are (#205).
+
+    The readers join a time series with the solve's time steps, so a key that is not a time step of a timeline is
+    dropped without a word: hourly data on a 3 h timeline, a different year's stamps, a different case.  This check
+    runs once per run (``input_derivation.run``) for every parameter of ``TIME_AGGREGATION`` (the complete
+    time-series registry), on the Map and time series values, against the steps of **all** the scenario's
+    timelines (a database that keeps series for two timelines gives no noise):
+
+    - some keys of a value are off → one warning per (class, parameter), printed once, naming up to 3 entities,
+      the number of off keys and the first 5;
+    - no time key of a value is on a timeline → :class:`FlexToolConfigError` (every value of it would be dropped
+      and the parameter would fall back to its default), naming the entity, the parameter, the alternative and the
+      first keys (up to 5 values shown), with a case or year hint when one applies;
+    - ... unless every key is a time step of a timeline that is not one of this scenario's (another alternative's
+      ``timestep_duration``): plain data of another scenario → a warning (the value is not used).
+
+    The time levels are classified as the readers do (:func:`_time_levels`): a stochastic branch name or a period
+    key is never checked; an unnamed level keyed by periods of another scenario is a period level (no value in
+    this solve, as documented). Date-time and duration keys are compared as the reader parses them
+    (:func:`_index_key_str`). An unnamed level of a parameter that also takes a period map, whose keys are neither
+    periods nor time steps and do not look like time steps (``p2050``: :func:`_looks_like_time_keys`), is a period
+    map with mistyped keys: :func:`validate_period_keys` stops the run on it.  Known limit: a period-level key
+    that is not a period of the scenario is not reported here.
+
+    Performance: a str-indexed Map is first read as raw database JSON (:func:`_raw_keys_on_timeline`, a C-speed
+    regex and set comparison); only a value with a key that is not a period or a time step is parsed. Each
+    distinct raw value is checked once (copies of one profile on many entities cost a dict lookup); the cache
+    holds the database mapping's own bytes, so it adds no copy of them. The whole database's periods and timelines
+    are read only when a value needs them (:class:`_DatabaseTimeVocab`).
+
+    ``vocab`` is the ``(periods, timelines)`` of :func:`_scenario_time_vocab` (built here when not given);
+    ``whole`` the whole database's facts (:func:`database_time_facts`), when the caller read them.
+    """
+    from flextool.engine.input._param_shapes import PARAM_ALLOWED_SHAPES
+    from flextool.engine.input._solve_step_aggregation import TIME_AGGREGATION
+
+    periods, timelines = vocab if vocab is not None else _scenario_time_vocab(src)
+    timesteps: set[str] = set()
+    for steps in timelines.values():
+        timesteps.update(steps)
+    if not timesteps:
+        return
+    periods_b = frozenset(p.encode() for p in periods)
+    base_b = frozenset(t.encode() for t in timesteps) | _RAW_STRUCTURE | {b"time", b"period", b"t"}
+    unions: dict[frozenset[bytes], frozenset[bytes]] = {}
+    database = _DatabaseTimeVocab(src, periods, timelines, whole)
+    lower_steps: dict[str, str] | None = None
+    # raw value -> True (fast path: nothing off), or per allowed shapes -> the value's time keys (in order)
+    fast_seen: dict[bytes, bool] = {}
+    keys_seen: dict[tuple[bytes, frozenset | None], dict[str, None]] = {}
+
+    def other_steps():
+        database.all_periods()  # loads the other timelines
+        return (t for _name, _alt, steps in database.other_timelines for t in steps)
+
+    # The forms of the time steps of every timeline of the database.
+    step_forms = _StepForms(lambda: timesteps, other_steps)
+
+    def time_like(keys) -> bool:
+        return _looks_like_time_keys(keys, step_forms)
+
+    period_axis = _period_axis_params()
+    errors: list[str] = []
+    other_timeline_warnings: list[str] = []
+    warnings: list[str] = []
+    for (cls, par) in TIME_AGGREGATION:
+        allowed = PARAM_ALLOWED_SHAPES.get((cls, par))
+        allowed_key = frozenset(allowed) if allowed else None
+        hand_off = time_like if (cls, par) in period_axis else None
+        off_entities: list[str] = []
+        all_keys: dict[str, None] = {}
+        off_keys: dict[str, None] = {}
+        for pv in _pv_rows(src, cls, par):
+            kind = pv["type"]
+            if kind not in ("map", "time_series"):
+                continue
+            raw = pv["value"]
+            if isinstance(raw, str):
+                raw = raw.encode()
+            if kind == "map":
+                fast = fast_seen.get(raw)
+                if fast is None:
+                    fast = fast_seen[raw] = _raw_keys_on_timeline(raw, periods_b, base_b, unions)
+                if fast:
+                    continue
+            keys = keys_seen.get((raw, allowed_key))
+            if keys is None:
+                if kind == "time_series":
+                    levels = [("time", [str(k) for k in api.from_database(raw, "time_series").indexes])]
+                else:
+                    levels = _value_levels(json.loads(raw))
+                keys = {}
+                for pos in _time_levels(levels, allowed, periods, timesteps, database.all_periods, hand_off):
+                    keys.update(dict.fromkeys(levels[pos][1]))
+                keys_seen[(raw, allowed_key)] = keys
+            if not keys:
+                continue
+            off = [k for k in keys if k not in timesteps]
+            if not off:
+                continue
+            entity = "/".join(str(b) for b in pv["entity_byname"])
+            where = f"{cls} {entity!r} parameter {par!r} (alternative {pv['alternative_name']!r})"
+            if len(off) == len(keys):
+                first = ", ".join(list(keys)[:3]) + (" ..." if len(keys) > 3 else "")
+                others = database.other_timelines_holding(keys)
+                if others is not None:
+                    names = ", ".join(f"{name!r} (alternative {alt!r})" for name, alt in others[:2])
+                    other_timeline_warnings.append(
+                        f"Warning: {where}: its keys ({first}) are time steps of timeline {names}, which is not a "
+                        "timeline of this scenario; the value is not used.")
+                    continue
+                if lower_steps is None:
+                    lower_steps = {}
+                    for s in timesteps:
+                        lower_steps.setdefault(s.lower(), s)
+                errors.append(
+                    f"{where}: none of its {len(keys)} time keys ({first}) is a time step of a timeline."
+                    + _off_keys_hint(list(keys), lower_steps, timelines))
+                continue
+            off_entities.append(entity)
+            all_keys.update(keys)
+            off_keys.update(dict.fromkeys(off))
+        if off_entities:
+            names = ", ".join(repr(e) for e in off_entities[:3])
+            if len(off_entities) > 3:
+                names += f" and {len(off_entities) - 3} more entities"
+            first = list(off_keys)[:5]
+            rest = len(off_keys) - len(first)
+            shown = ", ".join(first) + (f" and {rest} more" if rest else "")
+            warnings.append(
+                f"Warning: {cls} {names} parameter {par!r}: {len(off_keys)} of {len(all_keys)} distinct time keys "
+                f"are not time steps of any timeline ({shown}); their values are not used. "
+                f"{_timelines_text(timelines)}")
+    if errors:
+        more = f" (+{len(errors) - 5} more)" if len(errors) > 5 else ""
+        timeline_list = ", ".join(f"{name}: {_span(steps)}" for name, steps in list(timelines.items())[:3])
+        raise FlexToolConfigError(
+            "Time series with no key on a timeline: " + " ".join(errors[:5]) + more
+            + f" (timelines {timeline_list}). Rename the keys to time steps of a timeline, or remove the value.")
+    for text in other_timeline_warnings + warnings:
+        print(text, flush=True)
+
+
 def validate_capacity_margin_groups(db, logger: logging.Logger) -> None:
-    """Storage nodes are excluded from the capacity-margin constraint.
-    Raise if any capacity_margin_method='manual' group contains *only*
-    storage nodes (constraint would have no valid members); warn if a
-    mix is present.
+    """The nodes of a capacity-margin group (``capacity_margin_method`` manual or share_of_peak).
+
+    Storage nodes are left out of the group's demand, and the units fed from them count by their flow, so a group
+    of storage nodes only has no demand to cover: an error.  A storage node of the group with demand (a negative
+    inflow, e.g. a heat node with a tank) has that demand left out of the margin: a warning.  A
+    ``balance_within_period`` node balances its energy over the period, not at each time step, so the per-step
+    margin cannot hold for it: an error.
     """
     capacity_margin_groups: dict[str, list[str]] = {}
     for pv in db.find_parameter_values(
         entity_class_name="group", parameter_definition_name="capacity_margin_method",
     ):
-        if pv["parsed_value"] == "manual":
+        if pv["parsed_value"] in ("manual", "share_of_peak"):
             capacity_margin_groups[pv["entity_byname"][0]] = []
     if not capacity_margin_groups:
         return
@@ -226,25 +811,34 @@ def validate_capacity_margin_groups(db, logger: logging.Logger) -> None:
         g, n = ent["entity_byname"][0], ent["entity_byname"][1]
         if g in capacity_margin_groups:
             capacity_margin_groups[g].append(n)
-    storage_nodes: set[str] = set()
+    node_type: dict[str, str] = {}
     for pv in db.find_parameter_values(
         entity_class_name="node", parameter_definition_name="node_type",
     ):
-        if pv["parsed_value"] == "storage":
-            storage_nodes.add(pv["entity_byname"][0])
-    for g, nodes in capacity_margin_groups.items():
-        storage_in_group = [n for n in nodes if n in storage_nodes]
+        node_type[pv["entity_byname"][0]] = pv["parsed_value"]
+    inflow = _explicit_values(db, "node", "inflow")
+    for g, nodes in sorted(capacity_margin_groups.items()):
+        storage_in_group = [n for n in nodes if node_type.get(n) == "storage"]
         if storage_in_group and len(storage_in_group) == len(nodes):
             raise FlexToolConfigError(
                 f"Capacity margin group '{g}' contains only storage nodes "
-                f"({', '.join(storage_in_group)}). The capacity margin constraint "
-                f"excludes storage nodes, so this group has no valid nodes."
+                f"({', '.join(storage_in_group)}). The capacity margin covers the demand of the group's "
+                f"other nodes, so this group has none. Add the nodes whose demand the margin is for."
             )
-        elif storage_in_group:
+        with_demand = sorted(n for n in storage_in_group if any(v < 0.0 for v in inflow.get(n, ())))
+        if with_demand:
             logger.warning(
-                "Capacity margin group '%s' contains storage nodes (%s) which will "
-                "be excluded from the capacity margin constraint.",
-                g, ', '.join(storage_in_group),
+                f"Capacity margin group '{g}': the storage node(s) {', '.join(with_demand)} have demand (a "
+                f"negative inflow), which the capacity margin leaves out: it covers the demand of the group's "
+                f"nodes without a storage state. Model the demand on a balance node of the group, connected to the "
+                f"storage node, if the margin should cover it.")
+        period_nodes = sorted(n for n in nodes if node_type.get(n) == "balance_within_period")
+        if period_nodes:
+            raise FlexToolConfigError(
+                f"Capacity margin group '{g}' contains balance_within_period nodes "
+                f"({', '.join(period_nodes)}). Their energy balances over the period, not at each time step, "
+                f"so the capacity margin, which holds at each time step, cannot apply to them. Leave them out "
+                f"of the group."
             )
 
 
@@ -259,6 +853,15 @@ def _explicit_values(db, entity_class: str, parameter: str) -> dict[str, list[fl
     return out
 
 
+def _explicit_value_alternatives(db, entity_class: str, parameter: str) -> dict[str, str]:
+    """``{entity: alternative}`` of the scenario's explicit values of a one-dimensional class's ``parameter``:
+    the alternative each value comes from (the scenario filter leaves the top-ranked one), for messages in the
+    style of :func:`_where`."""
+    return {pv["entity_byname"][0]: pv["alternative_name"]
+            for pv in db.find_parameter_values(entity_class_name=entity_class, parameter_definition_name=parameter)
+            if pv["type"] is not None}
+
+
 def _entities_with_value(db, entity_class: str, parameter: str, value: str) -> set[str]:
     """Entities of ``entity_class`` whose explicit ``parameter`` value is ``value``."""
     return {pv["entity_byname"][0]
@@ -269,13 +872,15 @@ def _entities_with_value(db, entity_class: str, parameter: str, value: str) -> s
 # (limit parameter, method/flag parameter, value that switches the limit on)
 _GROUP_LIMIT_FLAGS: tuple[tuple[str, str, str], ...] = (
     ("capacity_margin", "capacity_margin_method", "manual"),
+    ("capacity_margin_share", "capacity_margin_method", "share_of_peak"),
     ("inertia_limit", "has_inertia", "yes"),
     ("non_synchronous_limit", "has_non_synchronous", "yes"),
 )
 
 # What a flagged group without the limit gets (the model reads the limit as 0).
 _GROUP_LIMIT_ABSENT: dict[str, str] = {
-    "capacity_margin": "its capacity must cover the peak net load (margin 0)",
+    "capacity_margin": "its capacity must cover its demand (margin 0)",
+    "capacity_margin_share": "its capacity must cover its demand (margin 0)",
     "inertia_limit": "it has no inertia requirement",
     "non_synchronous_limit": "it reads as 0, so no non-synchronous infeed is allowed (violations are penalised)",
 }
@@ -285,12 +890,16 @@ def validate_group_limit_flags(db, logger: logging.Logger) -> None:
     """Warn about group limits and their method / flag that do not go together.
 
     The capacity margin, inertia and non-synchronous constraints are built for the groups whose
-    ``capacity_margin_method`` is ``manual`` / ``has_inertia`` is ``yes`` / ``has_non_synchronous``
-    is ``yes``, and nowhere else.  Warnings (``db`` is scenario-filtered):
+    ``capacity_margin_method`` is ``manual`` (``capacity_margin``) or ``share_of_peak``
+    (``capacity_margin_share``) / ``has_inertia`` is ``yes`` / ``has_non_synchronous`` is ``yes``, and
+    nowhere else.  Warnings (``db`` is scenario-filtered):
 
     * a non-zero limit on a group without its method / flag: the limit is ignored;
     * the method / flag on a group with no limit value at all: the model reads the limit as 0.  An
       explicit 0 is a deliberate input and is not reported.
+    * ``co2_max_period`` / ``co2_max_total`` (any value, 0 included: a cap of 0 is a limit) on a group whose
+      ``co2_method`` has no period / total cap: the limit is ignored.  The reverse (a capping method without
+      the value) is an error of the parameter read (``params/_direct.require_co2_cap_values``).
     """
     for limit, flag, on in _GROUP_LIMIT_FLAGS:
         flagged = _entities_with_value(db, "group", flag, on)
@@ -302,6 +911,19 @@ def validate_group_limit_flags(db, logger: logging.Logger) -> None:
         for g in sorted(flagged - set(values)):
             logger.warning(
                 "Group '%s' has %s = %s but no %s: %s.", g, flag, on, limit, _GROUP_LIMIT_ABSENT[limit])
+    default = _definition_default(db, "group", "co2_method")
+    methods = {pv["entity_byname"][0]: str(pv["parsed_value"])
+               for pv in db.find_parameter_values(entity_class_name="group", parameter_definition_name="co2_method")
+               if pv["type"] is not None}
+    for limit, capping, kind in (("co2_max_period", CO2_MAX_PERIOD_METHODS, "period"),
+                                 ("co2_max_total", CO2_MAX_TOTAL_METHODS, "total")):
+        for g, alt in sorted(_explicit_value_alternatives(db, "group", limit).items()):
+            method = methods.get(g, "none" if default is None else str(default))
+            if method not in capping:
+                logger.warning(
+                    "Group '%s' has %s %s but its co2_method '%s' has no %s cap: the limit is ignored. Use a "
+                    "co2_method with '%s' in it to apply the limit.", g, limit, _where(alt, None), method, kind,
+                    kind)
 
 
 def validate_non_sync_one_variable_connections(db, provider, logger: logging.Logger) -> None:
@@ -588,6 +1210,317 @@ def validate_connection_node_memberships(db, logger: logging.Logger) -> None:
             )
 
 
+def _node_flow_sides(db) -> tuple[set[str], set[str]]:
+    """``(supplied, drained)``: the nodes a unit / connection of the scenario can bring energy into, and take
+    energy out of (``db`` scenario-filtered).
+
+    * A ``unit__outputNode`` supplies its node and a ``unit__inputNode`` drains it.  An anti-energy unit (a
+      negative ``existing`` in some alternative / period of the scenario) runs its flows the other way; its links
+      count on both sides instead of reversed, since it may also invest or have a positive ``existing`` in another
+      period (a false negative rather than a new false positive).
+    * A ``connection__node__node`` (connection, source, sink) whose effective ``transfer_method`` is
+      ``unidirectional`` drains its source and supplies its sink; any other connection flows both ways and counts
+      as both sides at both nodes.  The effective method is the connection's own (or the default), overridden by
+      the ``transfer_method`` of a group (``group__node``) holding both endpoints, as the model does
+      (``_dc_power_flow.derive_dc_power_flow``); groups that set different overrides (an error of the model) count
+      as both ways.
+    """
+    supplied: set[str] = set()
+    drained: set[str] = set()
+    anti_energy = {pv["entity_byname"][0] for pv in _pv_rows(db, "unit", "existing")
+                   if pv["type"] is not None and _bad_hit(pv, lambda v: v < 0.0) is not None}
+    for cls, side in (("unit__outputNode", supplied), ("unit__inputNode", drained)):
+        for ent in db.find_entities(entity_class_name=cls):
+            byname = ent["entity_byname"]
+            if byname and len(byname) >= 2:
+                side.add(byname[1])
+                if byname[0] in anti_energy:
+                    supplied.add(byname[1])
+                    drained.add(byname[1])
+    default_transfer = str(_definition_default(db, "connection", "transfer_method") or "regular")
+    transfer = {k[0]: v for k, v in _str_values(db, "connection", "transfer_method").items()}
+    group_methods = {k[0]: v for k, v in _str_values(db, "group", "transfer_method").items()
+                     if v != "use_connection_transfer_methods"}
+    group_nodes: dict[str, set[str]] = {}
+    if group_methods:
+        for ent in db.find_entities(entity_class_name="group__node"):
+            byname = ent["entity_byname"]
+            if byname and len(byname) >= 2 and byname[0] in group_methods:
+                group_nodes.setdefault(byname[0], set()).add(byname[1])
+    for ent in db.find_entities(entity_class_name="connection__node__node"):
+        byname = ent["entity_byname"]
+        if not byname or len(byname) < 3:
+            continue
+        conn, source, sink = byname[0], byname[1], byname[2]
+        overrides = {m for g, m in group_methods.items() if {source, sink} <= group_nodes.get(g, set())}
+        method = (overrides.pop() if len(overrides) == 1 else "regular") if overrides else transfer.get(
+            conn, default_transfer)
+        if method == "unidirectional":
+            drained.add(source)
+            supplied.add(sink)
+        else:
+            supplied.update((source, sink))
+            drained.update((source, sink))
+    return supplied, drained
+
+
+def warn_node_connections(db) -> None:
+    """Warn about a node whose balance has nothing to work with (#276).  ``db`` is scenario-filtered; called once
+    per run from ``input_derivation.run``; the warnings are printed (:func:`_warn`).  ``commodity`` nodes have no
+    balance and are skipped.
+
+    * A node without any unit (``unit__inputNode`` / ``unit__outputNode``) or connection
+      (``connection__node__node``): with a non-zero ``inflow`` (and ``inflow_method`` other than ``no_inflow``)
+      only the penalty slack can meet the inflow; without one the node does nothing.
+    * A ``balance`` / ``balance_within_period`` node whose units and connections only bring energy in, or only
+      take energy out (:func:`_node_flow_sides`), and whose inflow does not provide the other side: its flows can
+      only be balanced by the penalty slack.  ``inflow`` is energy into the node, negative for a demand
+      (``annual_flow`` is always positive; the scaling methods keep the sign of ``inflow``), so a positive inflow
+      (in some step or period) is a supply and a negative one a demand: a node with only draining links needs a
+      positive inflow, one with only supplying links a negative inflow (or an ``energy_margin_method``
+      *inflow_adder*, extra demand in the investment solve).  A demand-only node with only a negative inflow is
+      still one-sided (nothing supplies the demand nor the flows out).  ``storage`` nodes are exempt (the
+      storage state is the other side).  When in doubt the check stays silent: a missed warning is better than a
+      wrong one.
+    """
+    default_type = str(_definition_default(db, "node", "node_type") or "balance")
+    node_types = {k[0]: v for k, v in _str_values(db, "node", "node_type").items()}
+    default_method = str(_definition_default(db, "node", "inflow_method") or "use_original")
+    methods = {k[0]: v for k, v in _str_values(db, "node", "inflow_method").items()}
+    inflow_alt: dict[str, str] = {}
+    inflow_in: set[str] = set()   # a positive inflow somewhere: the inflow supplies the node
+    inflow_out: set[str] = set()  # a negative inflow somewhere: the inflow drains the node
+    for pv in _pv_rows(db, "node", "inflow"):
+        if pv["type"] is None:
+            continue
+        name = pv["entity_byname"][0]
+        if methods.get(name, default_method) == "no_inflow":
+            continue
+        numbers = _raw_numbers(pv["value"], pv["type"])
+        if _bad_hit(pv, lambda v: v > 0.0, numbers) is not None:
+            inflow_in.add(name)
+            inflow_alt.setdefault(name, pv["alternative_name"])
+        if _bad_hit(pv, lambda v: v < 0.0, numbers) is not None:
+            inflow_out.add(name)
+            inflow_alt.setdefault(name, pv["alternative_name"])
+    for (name, *_rest), method in _str_values(db, "node", "energy_margin_method").items():
+        if method == "inflow_adder":
+            inflow_out.add(name)
+    supplied, drained = _node_flow_sides(db)
+    for node in sorted(_entity_names(db, "node")):
+        node_type = node_types.get(node, default_type)
+        if node_type == "commodity":
+            continue
+        if node not in supplied and node not in drained:
+            if node in inflow_alt:
+                _warn(f"node '{node}' (alternative '{inflow_alt[node]}') has no units or connections; its inflow "
+                      "can only be met by the penalty slack (penalty_up / penalty_down).")
+            else:
+                _warn(f"node '{node}' has no units or connections and no inflow; it does nothing in this scenario.")
+            continue
+        if node_type not in ("balance", "balance_within_period"):
+            continue
+        if node not in supplied and node not in inflow_in:
+            _warn(f"node '{node}' (node_type {node_type}) has no positive inflow and its units / connections only "
+                  "take energy out of it; nothing brings energy in, so those flows stay at 0, or only the penalty "
+                  "slack (penalty_up) can supply them. Add a unit or connection that supplies it, give it a "
+                  "positive inflow, or make it a commodity node.")
+        elif node not in drained and node not in inflow_out:
+            _warn(f"node '{node}' (node_type {node_type}) has no negative inflow (demand) and its units / "
+                  "connections only bring energy into it; nothing takes energy out, so those flows stay at 0, or "
+                  "only the penalty slack (penalty_down) can absorb them. Add a unit or connection that takes from "
+                  "it, or give it a negative inflow.")
+
+
+def validate_node_invest_without_storage(db, logger: logging.Logger) -> None:
+    """Warn when a node that is not a storage node has an ``invest_method`` that invests or retires.
+
+    Node investment and retirement are storage capacity (``state_unitsize``, MWh): only a node with
+    ``node_type`` ``storage`` gets ``v_invest_n`` / ``v_divest_n``.  An ``invest_method`` on a balance,
+    commodity or other node is ignored (no variable); this names the node so that a leftover method is
+    noticed.  ``db`` is scenario-filtered.
+    """
+    default_type = str(_definition_default(db, "node", "node_type") or "balance")
+    node_types = {k[0]: v for k, v in _str_values(db, "node", "node_type").items()}
+    for (name, *_rest), method in sorted(_str_values(db, "node", "invest_method").items()):
+        if method in _NO_INVEST and method in _NO_RETIRE:
+            continue
+        node_type = node_types.get(name, default_type)
+        if node_type == "storage":
+            continue
+        logger.warning(
+            "Node '%s' has invest_method %s but node_type %s: only storage nodes can invest or retire, "
+            "so '%s' gets no investment. Remove its invest_method or make it a storage node.",
+            name, method, node_type, name,
+        )
+
+
+
+#: Group parameters that limit the capacity of the group's members as one sum (invest, retire, cumulative).
+_GROUP_CAPACITY_LIMITS: tuple[str, ...] = (
+    "invest_max_period", "invest_max_total", "invest_min_period", "invest_min_total",
+    "retire_max_period", "retire_max_total", "retire_min_period", "retire_min_total",
+    "cumulative_max_capacity", "cumulative_min_capacity",
+)
+
+
+def node_units_of_measure(db) -> dict[str, str]:
+    """``{node: amount unit}`` of the nodes with a non-default ``unit_of_measure`` (``db`` scenario-filtered).
+    Empty on a database without the definition (every node is MWh)."""
+    return uom.node_units_from_rows((k[0], v) for k, v in _str_values(db, "node", "unit_of_measure").items())
+
+
+def _named_units(nodes, node_units: dict[str, str]) -> str:
+    """``a (MWh), b (m3), c (t) and 2 more``: the nodes with their units, at most three named."""
+    named = [f"{n} ({uom.node_unit(n, node_units)})" for n in nodes[:3]]
+    more = f" and {len(nodes) - 3} more" if len(nodes) > 3 else ""
+    return ", ".join(named) + more
+
+
+def _nodes_by_unit(nodes, node_units: dict[str, str]) -> str:
+    """``MWh: east, elec; MWh_th: heat; m3: water``: the nodes grouped by their unit (units in the order of
+    first appearance), at most three named per unit, so the node that makes a set mixed is always named."""
+    by_unit: dict[str, list[str]] = {}
+    for n in nodes:
+        by_unit.setdefault(uom.node_unit(n, node_units), []).append(n)
+    parts = []
+    for unit, members in by_unit.items():
+        more = f" and {len(members) - 3} more" if len(members) > 3 else ""
+        parts.append(f"{unit}: {', '.join(members[:3])}{more}")
+    return "; ".join(parts)
+
+
+def _unit_capacity_nodes(db) -> dict[str, list[str]]:
+    """``{unit: [capacity-side nodes]}``: the output nodes whose ``conversion_flow_coeff`` is not 0 everywhere
+    (a 0 output is not in the capacity constraints), else the input nodes."""
+    outputs = _arcs(db, "unit__outputNode")
+    inputs = _arcs(db, "unit__inputNode")
+    coeffs = _arc_values(db, "unit__outputNode", "conversion_flow_coeff")
+    out: dict[str, list[str]] = {}
+    for unit in sorted(set(outputs) | set(inputs)):
+        capped = [n for n in outputs.get(unit, []) if any(v != 0.0 for v in coeffs.get((unit, n), [1.0]))]
+        out[unit] = capped or outputs.get(unit, []) or inputs.get(unit, [])
+    return out
+
+
+def validate_units_of_measure(db, logger: logging.Logger) -> None:
+    """Warn about ``node.unit_of_measure`` values that make a result label (or a model feature) mixed.
+
+    ``unit_of_measure`` is a label only (FlexTool converts nothing), so these are warnings, one per entity (the
+    nodes named, at most three):
+
+    1. a connection whose two nodes have different units: its flow, losses and capacity are labelled
+       ``Mixed units of measure!``;
+    2. a commodity whose ``commodity__node`` nodes have different units (its price and ``co2_content`` are per
+       the node's unit);
+    3. a nodeGroup whose member nodes, or a flowGroup whose arc nodes, have different units: its sums are labelled
+       ``Mixed units of measure!``;
+    4. a reserve, inertia, non-synchronous or capacity-margin group with a member node whose unit is not MWh (or
+       ``MWh_<suffix>``): these features are in MW and assume power nodes;
+    5. a group with a capacity limit (``invest_*``, ``retire_*``, ``cumulative_*``) over members whose capacities
+       are in different units: the limit sums them;
+    6. a value that names a rate (``m3/h``, ``MW``): ``unit_of_measure`` is the amount unit.
+
+    A unit whose outputs have different units gets no warning: its capacity label shows how the capacity is used
+    (``MW + MW_th`` or ``MW; MW_th``).  ``db`` is scenario-filtered; a database without the definition gives no
+    warning (every node is MWh).
+    """
+    node_units = node_units_of_measure(db)
+    for (node, *_rest), value in sorted(_str_values(db, "node", "unit_of_measure").items()):
+        if uom.looks_like_rate(value):
+            logger.warning(
+                "Node '%s' has unit_of_measure '%s', which looks like a rate: unit_of_measure is the amount unit "
+                "(m3, MWh), not the rate, and flows would be labelled '%s'. Set '%s'.",
+                node, value, uom.rate_of(uom.normalise(value)), uom.amount_of_rate(value))
+    if not node_units:
+        return
+
+    def mixed(nodes) -> bool:
+        return uom.units_of(nodes, node_units) == uom.MIXED_UOM
+
+    for ent in sorted(db.find_entities(entity_class_name="connection__node__node"),
+                      key=lambda e: tuple(e["entity_byname"])):
+        conn, *ends = ent["entity_byname"]
+        if mixed(ends):
+            logger.warning(
+                "Connection '%s' joins nodes with different units of measure: %s. Its flow, losses and capacity "
+                "are labelled '%s'; a connection moves one quantity, so check that this is intended.",
+                conn, _nodes_by_unit(ends, node_units), uom.MIXED_UOM)
+
+    commodity_nodes: dict[str, list[str]] = {}
+    for ent in db.find_entities(entity_class_name="commodity__node"):
+        commodity_nodes.setdefault(ent["entity_byname"][0], []).append(ent["entity_byname"][1])
+    for commodity, nodes in sorted(commodity_nodes.items()):
+        if mixed(nodes):
+            logger.warning(
+                "Commodity '%s' is used by nodes with different units of measure: %s. Its price and co2_content "
+                "are per the unit of each node, so one value cannot fit them all.",
+                commodity, _nodes_by_unit(sorted(nodes), node_units))
+
+    group_nodes: dict[str, list[str]] = {}
+    for ent in db.find_entities(entity_class_name="group__node"):
+        group_nodes.setdefault(ent["entity_byname"][0], []).append(ent["entity_byname"][1])
+    power_groups: dict[str, list[str]] = {}
+    for ent in db.find_entities(entity_class_name="reserve__upDown__group"):
+        power_groups.setdefault(ent["entity_byname"][2], []).append("reserves")
+    for flag, on, feature in (("has_inertia", {"yes"}, "inertia"),
+                              ("has_non_synchronous", {"yes"}, "the non-synchronous limit"),
+                              ("capacity_margin_method", {"manual", "share_of_peak"}, "the capacity margin")):
+        for value in sorted(on):
+            for name in _entities_with_value(db, "group", flag, value):
+                power_groups.setdefault(name, []).append(feature)
+    unit_capacity = _unit_capacity_nodes(db)
+    member_capacity: dict[str, list[tuple[str, str]]] = {}
+    for cls in ("group__unit", "group__connection"):
+        for ent in db.find_entities(entity_class_name=cls):
+            member_capacity.setdefault(ent["entity_byname"][0], []).append((cls[7:], ent["entity_byname"][1]))
+    connection_ends = {ent["entity_byname"][0]: list(ent["entity_byname"][1:])
+                       for ent in db.find_entities(entity_class_name="connection__node__node")}
+    default_node_type = str(_definition_default(db, "node", "node_type") or "balance")
+    node_types = {k[0]: v for k, v in _str_values(db, "node", "node_type").items()}
+    limited = {pv["entity_byname"][0] for limit in _GROUP_CAPACITY_LIMITS
+               for pv in db.find_parameter_values(entity_class_name="group", parameter_definition_name=limit)
+               if pv["type"] is not None}
+    for g in sorted(set(group_nodes) | set(power_groups) | limited):
+        nodes = sorted(group_nodes.get(g, []))
+        reasons: list[str] = []
+        if mixed(nodes):
+            reasons.append(f"its member nodes have different units of measure ({_nodes_by_unit(nodes, node_units)}), "
+                           f"so its sums are labelled '{uom.MIXED_UOM}'")
+        features = sorted(set(power_groups.get(g, [])))
+        not_power = [n for n in nodes if not re.fullmatch(r"MWh(_.*)?", uom.node_unit(n, node_units))]
+        if features and not_power:
+            reasons.append(f"it has {' and '.join(features)}; these group features are in MW (inertia in MW·s) "
+                           f"and assume power nodes, but {_named_units(not_power, node_units)} "
+                           f"{'is' if len(not_power) == 1 else 'are'} not in MWh")
+        if g in limited:
+            capacity_units: dict[str, list[str]] = {}
+            for n in nodes:
+                if node_types.get(n, default_node_type) == "storage":  # only storage nodes have capacity
+                    capacity_units.setdefault(uom.node_unit(n, node_units), []).append(n)
+            for cls, member in sorted(member_capacity.get(g, [])):
+                side = unit_capacity.get(member, []) if cls == "unit" else connection_ends.get(member, [])
+                capacity_units.setdefault(uom.units_of(side, node_units), []).append(member)
+            if len(capacity_units) > 1:
+                parts = ", ".join(f"{', '.join(members[:3])}{' ...' if len(members) > 3 else ''} ({unit})"
+                                  for unit, members in capacity_units.items())
+                reasons.append(f"its capacity limits sum the capacities of members in different units ({parts})")
+        if reasons:
+            logger.warning("Group '%s': %s.", g, "; ".join(reasons))
+
+    flow_group_nodes: dict[str, list[str]] = {}
+    for cls in ("flowGroup__unit__node", "flowGroup__connection__node"):
+        for ent in db.find_entities(entity_class_name=cls):
+            nodes = flow_group_nodes.setdefault(ent["entity_byname"][0], [])
+            if ent["entity_byname"][2] not in nodes:
+                nodes.append(ent["entity_byname"][2])
+    for g, nodes in sorted(flow_group_nodes.items()):
+        if mixed(nodes):
+            logger.warning(
+                "flowGroup '%s': its flows are at nodes with different units of measure (%s), so its sums are "
+                "labelled '%s'.", g, _nodes_by_unit(sorted(nodes), node_units), uom.MIXED_UOM)
+
+
 def validate_connection_delay(db, logger: logging.Logger) -> None:
     """Warn once per connection that has a non-zero ``delay``.
 
@@ -761,6 +1694,151 @@ def _process_methods(provider) -> dict[str, str]:
                     df.get_column("method").to_list()))
 
 
+#: unit__inputNode.startup_input_method values that give the arc a start-up role.
+STARTUP_ROLES: tuple[str, ...] = ("startup_and_input", "startup_only")
+#: unit__inputNode parameters that only act on an arc's flow: no effect on a startup_only arc (W2).
+_FLOW_ONLY_ARC_PARAMETERS: tuple[str, ...] = (
+    "conversion_flow_coeff", "input_share_min", "input_share_max", "ramp_method", "ramp_speed_up",
+    "ramp_speed_down", "ramp_cost", "other_operational_cost", "inertia_constant", "is_non_synchronous",
+)
+
+
+def startup_input_methods(db) -> dict[tuple[str, str], str]:
+    """``{(unit, node): startup_input_method}`` of every ``unit__inputNode`` arc of the scenario (the explicit value,
+    else the definition's default ``just_input``)."""
+    default = _definition_default(db, "unit__inputNode", "startup_input_method") or "just_input"
+    explicit = {(k[0], k[1]): v for k, v in _str_values(db, "unit__inputNode", "startup_input_method").items()}
+    return {(u, n): explicit.get((u, n), str(default))
+            for u, nodes in _arcs(db, "unit__inputNode").items() for n in nodes}
+
+
+def startup_only_arcs(db) -> set[tuple[str, str]]:
+    """The ``unit__inputNode`` arcs with ``startup_input_method`` ``startup_only``: not arcs of the model (the
+    engine readers hide them), so the arc checks skip them."""
+    return {arc for arc, method in startup_input_methods(db).items() if method == "startup_only"}
+
+
+def validate_startup_inputs(db, provider, logger: logging.Logger) -> None:
+    """Check ``unit__inputNode.startup_input_method`` / ``startup_energy`` (once per scenario, after
+    ``derive_process_method``: the online classification comes from ``input/process_method``).
+
+    Errors (one :class:`FlexToolConfigError`):
+
+    * E1 ``startup_energy`` on a ``just_input`` arc (it would be ignored);
+    * E2 a start-up role on a unit without online variables (``startup_method`` no_startup and no
+      ``minimum_time_method`` promotion): the draw is a term on the units started;
+    * E3 ``constraint_flow_coeff`` on a ``startup_only`` arc (the arc has no flow);
+    * E4 a negative ``startup_energy``;
+    * E5 a ``unit__node__profile``, ``flowGroup__unit__node`` or (enabled) ``reserve__upDown__unit__node`` entity
+      on a ``startup_only`` arc (it names a flow the model does not have; an output arc to the same node is
+      still an arc).
+
+    Warnings: W1 a start-up role without ``startup_energy`` (or with only zeros): no draw; W2 arc parameters
+    without effect on a ``startup_only`` arc (one line per arc); W3 a start-up node of type ``commodity`` that is
+    not a node of a commodity (the draw has no price and no balance: it goes nowhere); W4 a unit whose every
+    input is ``startup_only`` and that has no profile (its output costs only the start-up energy); W5 a
+    ``startup_and_input`` arc with a ``constraint_flow_coeff`` or in a flow group: the start-up input is not in
+    them (v1); W6 a ``min_load_efficiency`` unit whose every input is ``startup_only`` (its part-load section
+    has no input to draw from).
+    """
+    methods = startup_input_methods(db)
+    roles = {arc: m for arc, m in methods.items() if m in STARTUP_ROLES}
+    energy_rows = {(pv["entity_byname"][0], pv["entity_byname"][1]): _numeric_values(pv["parsed_value"])
+                   for pv in db.find_parameter_values(entity_class_name="unit__inputNode",
+                                                      parameter_definition_name="startup_energy")
+                   if pv["type"] is not None}
+    if not roles and not energy_rows:
+        return
+    errors: list[str] = []
+    just = sorted(arc for arc in energy_rows if methods.get(arc, "just_input") == "just_input")
+    if just:
+        errors.append("startup_energy is set on arc(s) with startup_input_method just_input, where it has no "
+                      f"effect: {', '.join(f'({u}, {n})' for u, n in just)}. Set startup_input_method "
+                      "startup_and_input or startup_only, or remove startup_energy.")
+    negative = sorted(arc for arc, vals in energy_rows.items() if any(v < 0.0 for v in vals))
+    if negative:
+        errors.append(f"startup_energy must be 0 or above: {', '.join(f'({u}, {n})' for u, n in negative)}.")
+    online_methods = METHOD_LP | METHOD_MIP
+    process_methods = _process_methods(provider)
+    offline = sorted({u for u, _n in roles if process_methods.get(u) not in online_methods})
+    if offline:
+        errors.append(f"startup_input_method needs online variables, but these units have none: "
+                      f"{', '.join(offline)}. Set startup_method linear or binary (or a minimum_time_method), or "
+                      "set startup_input_method just_input.")
+    only = {arc for arc, m in roles.items() if m == "startup_only"}
+    outputs = {(u, n) for u, nodes in _arcs(db, "unit__outputNode").items() for n in nodes}
+    coeff = {arc for arc, vals in _arc_values(db, "unit__inputNode", "constraint_flow_coeff").items()}
+    flow_coeff_only = sorted(only & coeff)
+    if flow_coeff_only:
+        errors.append("constraint_flow_coeff is set on startup_only arc(s), which have no flow: "
+                      f"{', '.join(f'({u}, {n})' for u, n in flow_coeff_only)}. Remove it, or use "
+                      "startup_input_method startup_and_input.")
+    disabled = {tuple(k) for k, v in _str_values(db, "reserve__upDown__unit__node", "is_enabled").items()
+                if v == "no"}
+    named: list[str] = []
+    for cls, unit_at, node_at in (("unit__node__profile", 0, 1), ("flowGroup__unit__node", 1, 2),
+                                  ("reserve__upDown__unit__node", 2, 3)):
+        for ent in db.find_entities(entity_class_name=cls):
+            byname = tuple(ent["entity_byname"])
+            arc = (byname[unit_at], byname[node_at])
+            if arc in only and arc not in outputs and byname not in disabled:
+                named.append(f"{cls} ({', '.join(byname)})")
+    if named:
+        errors.append("these entities name a startup_only arc, which has no flow: "
+                      f"{', '.join(sorted(named))}. Remove them, or use startup_input_method startup_and_input.")
+    if errors:
+        raise FlexToolConfigError("Invalid start-up inputs:\n  " + "\n  ".join(errors))
+
+    for arc in sorted(roles):
+        if not any(v != 0.0 for v in energy_rows.get(arc, [])):
+            logger.warning("unit__inputNode (%s, %s): startup_input_method %s without a startup_energy (or with "
+                           "only 0): the start-ups take nothing from the node.", arc[0], arc[1], roles[arc])
+    flow_params: dict[tuple[str, str], list[str]] = {}
+    for param in _FLOW_ONLY_ARC_PARAMETERS:
+        for pv in db.find_parameter_values(entity_class_name="unit__inputNode", parameter_definition_name=param):
+            arc = (pv["entity_byname"][0], pv["entity_byname"][1])
+            if pv["type"] is not None and arc in only:
+                flow_params.setdefault(arc, []).append(param)
+    for (u, n), params in sorted(flow_params.items()):
+        logger.warning("unit__inputNode (%s, %s): %s has no effect on a startup_only arc (it has no flow).",
+                       u, n, ", ".join(params))
+    node_types = {k[0]: v for k, v in _str_values(db, "node", "node_type").items()}
+    default_type = str(_definition_default(db, "node", "node_type") or "balance")
+    commodity_nodes = {ent["entity_byname"][1] for ent in db.find_entities(entity_class_name="commodity__node")}
+    for u, n in sorted(roles):
+        if node_types.get(n, default_type) == "commodity" and n not in commodity_nodes:
+            logger.warning("unit__inputNode (%s, %s): the start-up node '%s' has no energy balance and no "
+                           "commodity: the start-up energy is taken from nowhere and costs nothing.", u, n, n)
+    inputs = _arcs(db, "unit__inputNode")
+    with_profile = {ent["entity_byname"][0] for ent in db.find_entities(entity_class_name="unit__node__profile")}
+    min_load_eff = {k[0] for k, v in _str_values(db, "unit", "conversion_method").items()
+                    if v == "min_load_efficiency"}
+    for u in sorted(inputs):
+        if not all((u, n) in only for n in inputs[u]):
+            continue
+        if u not in with_profile:
+            logger.warning("unit '%s': every input is startup_only and the unit has no profile, so its output "
+                           "costs only the start-up energy.", u)
+        if u in min_load_eff:
+            logger.warning("unit '%s': min_load_efficiency with only startup_only inputs: its part-load section "
+                           "has no input to draw from.", u)
+    groups_of: dict[tuple[str, str], list[str]] = {}
+    for ent in db.find_entities(entity_class_name="flowGroup__unit__node"):
+        g, u, n = ent["entity_byname"][:3]
+        groups_of.setdefault((u, n), []).append(g)
+    cn_of = {}
+    for pv in db.find_parameter_values(entity_class_name="unit__inputNode",
+                                       parameter_definition_name="constraint_flow_coeff"):
+        if pv["type"] is not None and hasattr(pv["parsed_value"], "indexes"):
+            cn_of[(pv["entity_byname"][0], pv["entity_byname"][1])] = [str(i) for i in pv["parsed_value"].indexes]
+    for arc in sorted(a for a, m in roles.items() if m == "startup_and_input"):
+        where = ([f"constraint {cn}" for cn in cn_of.get(arc, [])]
+                 + [f"flowGroup {g}" for g in sorted(groups_of.get(arc, []))])
+        if where:
+            logger.warning("unit__inputNode (%s, %s): the start-up input is not in %s (only the flow of the arc "
+                           "is).", arc[0], arc[1], ", ".join(where))
+
+
 def validate_unit_input_shares(db, provider, logger: logging.Logger) -> None:
     """Check ``unit__inputNode.input_share_min`` / ``input_share_max``.
 
@@ -783,9 +1861,11 @@ def validate_unit_input_shares(db, provider, logger: logging.Logger) -> None:
     Warnings: ``input_share_max`` above 1 (same effect as 1);
     ``input_share_min`` on an input with ``conversion_flow_coeff = 0`` or
     on a unit with fewer than two inputs with ``conversion_flow_coeff ≠ 0``
-    (no effect).
+    (no effect).  A ``startup_only`` input arc (``startup_input_method``) has no flow and is not an input here.
     """
-    inputs = _arcs(db, "unit__inputNode")
+    only = startup_only_arcs(db)
+    inputs = {u: [n for n in nodes if (u, n) not in only] for u, nodes in _arcs(db, "unit__inputNode").items()}
+    inputs = {u: nodes for u, nodes in inputs.items() if nodes}
     if not inputs:
         return
     conv = _arc_values(db, "unit__inputNode", "conversion_flow_coeff")
@@ -875,8 +1955,8 @@ def validate_output_min_coeff(db, provider, logger: logging.Logger) -> None:
       ``capacity_min_coeff_k · min_load > capacity_max_coeff_k`` may be
       unable to run while online (static values only; availability and
       time-varying values are not checked).
-    * Warning: an online min-load unit whose outputs all have
-      ``conversion_flow_coeff = 0`` has no output measure and no floor.
+    (A unit whose outputs all have ``conversion_flow_coeff = 0`` is reported by
+    :func:`validate_zero_conversion_coeff`.)
     """
     outputs = _arcs(db, "unit__outputNode")
     if not outputs:
@@ -918,9 +1998,7 @@ def validate_output_min_coeff(db, provider, logger: logging.Logger) -> None:
         live = [n for n in nodes
                 if any(v != 0.0 for v in conv.get((unit, n), [1.0]))]
         if not live:
-            logger.warning(
-                "Unit '%s': all outputs have conversion_flow_coeff = 0, so "
-                "the unit has no minimum-load floor.", unit)
+            # All outputs have conversion_flow_coeff = 0: validate_zero_conversion_coeff reports it.
             continue
         if len(live) < 2:
             continue
@@ -936,3 +2014,1045 @@ def validate_output_min_coeff(db, provider, logger: logging.Logger) -> None:
                 (f"sum to {total:g} of the capacity" if total > 1.0 + 1e-9
                  else "exceed capacity_max_coeff on "
                  + ", ".join(over_cap)))
+
+
+# ---------------------------------------------------------------------------
+# Profile links, zero conversion coefficients and basic value checks (#104, #213, #170).  Called once per run from
+# ``input_derivation.run`` before the parameter read; ``db`` is the scenario-filtered DatabaseMapping.  Errors are
+# gathered and raised in one FlexToolConfigError; warnings are printed (``print(flush=True)``, as the other
+# once-per-run checks), so they reach the run log.
+
+
+def _warn(text: str) -> None:
+    print(f"Warning: {text}", flush=True)
+
+
+def _definition_default(db, entity_class: str, parameter: str):
+    """The parsed default value of a parameter definition (None when unset or unreadable)."""
+    for item in db.find_parameter_definitions(entity_class_name=entity_class, name=parameter):
+        if item["default_type"] is None or item["default_value"] is None:
+            return None
+        try:
+            return api.from_database(item["default_value"], item["default_type"])
+        except Exception:  # noqa: BLE001 - an unreadable default is treated as unset
+            return None
+    return None
+
+
+def _entity_names(db, entity_class: str) -> set[str]:
+    return {ent["entity_byname"][0] for ent in db.find_entities(entity_class_name=entity_class)}
+
+
+def _str_values(src, entity_class: str, parameter: str) -> dict[tuple[str, ...], str]:
+    """``{entity_byname: value}`` of the scenario's explicit string (list) values of ``entity_class.parameter``
+    (``src``: a ``SpineDBBackend`` or a DatabaseMapping, :func:`_pv_rows`)."""
+    return {tuple(pv["entity_byname"]): str(pv["parsed_value"])
+            for pv in _pv_rows(src, entity_class, parameter) if pv["type"] is not None}
+
+
+def value_alternatives(db, entity_class: str, parameter: str) -> dict[str, list[str]]:
+    """``{entity: [alternative, ...]}`` of the values of a one-dimensional class's ``parameter`` in ``db``.
+
+    ``input_derivation.run`` calls it on the whole database (before the scenario filter), so the profile-link
+    check can name the alternatives that hold a profile the scenario does not see."""
+    out: dict[str, list[str]] = {}
+    for pv in db.find_parameter_values(entity_class_name=entity_class, parameter_definition_name=parameter):
+        if pv["type"] is None:
+            continue
+        alts = out.setdefault(pv["entity_byname"][0], [])
+        if pv["alternative_name"] not in alts:
+            alts.append(pv["alternative_name"])
+    return out
+
+
+_PROFILE_LINKS = (
+    # (class, what the profile holds at 0)
+    ("unit__node__profile", "the flow"),
+    ("connection__profile", "the flow"),
+    ("node__profile", "the storage state"),
+)
+
+
+def validate_profile_links(db, profile_alternatives: dict[str, list[str]] | None = None) -> None:
+    """Check the links that apply a profile to a flow or a storage state (#104).
+
+    * Error: a ``unit__node__profile`` / ``connection__profile`` / ``node__profile`` link whose ``profile_method``
+      (authored, or the default: ``upper_limit`` for ``unit__node__profile``) is ``upper_limit`` or ``fixed`` and
+      whose profile has no ``profile`` value in the scenario.  A profile without a value is 0, so the link holds
+      the flow (the storage state) at 0.  ``lower_limit`` without a value is a floor of 0 and is allowed (a
+      documented way to switch a link off in a scenario); so is ``none``.
+    * Warning: a ``node__profile`` / ``connection__profile`` link with no authored ``profile_method`` (the
+      default is ``none``): the profile is not applied.  An explicit ``none`` is silent.
+
+    ``profile_alternatives`` (:func:`value_alternatives` of ``profile.profile`` over the whole database) lets the
+    error name the alternatives that hold the profile's value; without it the message says to check the
+    scenario's alternatives.  Only the links whose entities are in the scenario are checked.
+    """
+    with_data = {pv["entity_byname"][0]
+                 for pv in db.find_parameter_values(entity_class_name="profile", parameter_definition_name="profile")
+                 if pv["type"] is not None}
+    present = {cls: _entity_names(db, cls) for cls in ("unit", "connection", "node", "profile")}
+    errors: list[str] = []
+    for link_class, held in _PROFILE_LINKS:
+        links = [tuple(ent["entity_byname"]) for ent in db.find_entities(entity_class_name=link_class)]
+        if not links:
+            continue
+        authored = _str_values(db, link_class, "profile_method")
+        default = _definition_default(db, link_class, "profile_method")
+        default = str(default) if default is not None else "none"
+        owner = link_class.split("__")[0]
+        for link in sorted(links):
+            if link[0] not in present[owner] or link[-1] not in present["profile"]:
+                continue
+            profile = link[-1]
+            method = authored.get(link, default)
+            name = f"{link_class} ({', '.join(link)})"
+            if method in ("upper_limit", "fixed") and profile not in with_data:
+                elsewhere = (profile_alternatives or {}).get(profile)
+                if elsewhere:
+                    alts = ", ".join(f"'{a}'" for a in elsewhere)
+                    where = (f"profile '{profile}' has no value in this scenario: its value is only in alternative "
+                             f"{alts}, which the scenario does not include")
+                    fix = (f"Add alternative {alts} to the scenario, give the profile a value in an alternative of "
+                           "the scenario")
+                elif profile_alternatives is not None:
+                    where = f"profile '{profile}' has no value in any alternative"
+                    fix = "Give the profile a value in an alternative of the scenario"
+                else:
+                    where = f"profile '{profile}' has no value in this scenario"
+                    fix = "Give the profile a value in an alternative of the scenario"
+                how = "profile_method is " + (method if link in authored else f"{method} (the default)")
+                errors.append(f"{name}: {where}, so it holds {held} at 0 ({how}). {fix}, set profile_method "
+                              "lower_limit or none, or remove the link.")
+            elif link not in authored and method == "none" and link_class != "unit__node__profile":
+                _warn(f"{name} has no profile_method, so the profile is not applied (the default is none). Set "
+                      "profile_method upper_limit, lower_limit or fixed, or remove the link.")
+    if errors:
+        raise FlexToolConfigError("Profile links without profile data:\n  " + "\n  ".join(errors))
+
+
+def _max_flow_unconstrained(db) -> float:
+    for pv in db.find_parameter_values(entity_class_name="model",
+                                       parameter_definition_name="max_flow_for_unconstrained_variables"):
+        vals = _numeric_values(pv["parsed_value"]) if pv["type"] is not None else []
+        if vals:
+            return max(vals)
+    default = _definition_default(db, "model", "max_flow_for_unconstrained_variables")
+    return float(default) if isinstance(default, (int, float)) else 1e6
+
+
+def validate_zero_conversion_coeff(db) -> None:
+    """Warn about unit flows with ``conversion_flow_coeff = 0`` that nothing limits (#213).
+
+    An arc with an explicit 0 coefficient is out of the conversion equation and of every capacity, ramp and
+    minimum-load limit; its flow is bounded only by ``model.max_flow_for_unconstrained_variables``.  That is meant
+    when a user constraint ties the flow (the hydro pass-through pattern), so an arc is *tied* when it has a
+    non-zero ``constraint_flow_coeff``, is in a ``flowGroup__unit__node`` whose flowGroup has
+    ``max_instant_flow`` or ``max_cumulative_flow``, or carries a ``unit__node__profile`` link with an
+    ``upper_limit`` / ``fixed`` profile_method (the profile limits a zero arc too).  ``min_instant_flow`` /
+    ``min_cumulative_flow`` bound from below only and do not tie.  Warnings (data can mean it, e.g. a free
+    by-product output):
+
+    * W1: a unit with an input whose outputs all have coefficient 0, some of them untied: the unit uses no input
+      and those outputs are free (reported once per unit, not again by W2);
+    * W2: any other untied arc with coefficient 0;
+    * W3: ``capacity_max_coeff`` / ``capacity_min_coeff`` on an output with coefficient 0: no effect.
+
+    A ``startup_only`` input arc (``startup_input_method``) has no flow: it is skipped.
+    """
+    # A startup_only arc is not an arc of the model (it has no flow): it is not an input here.
+    only = startup_only_arcs(db)
+    inputs = {u: [n for n in nodes if (u, n) not in only] for u, nodes in _arcs(db, "unit__inputNode").items()}
+    inputs = {u: nodes for u, nodes in inputs.items() if nodes}
+    outputs = _arcs(db, "unit__outputNode")
+    zero: dict[str, set[tuple[str, str]]] = {}
+    for cls in ("unit__inputNode", "unit__outputNode"):
+        zero[cls] = {arc for arc, vals in _arc_values(db, cls, "conversion_flow_coeff").items()
+                     if vals and all(v == 0.0 for v in vals)}
+    zero["unit__inputNode"] -= only
+    if not zero["unit__inputNode"] and not zero["unit__outputNode"]:
+        return
+    tied: set[tuple[str, str]] = set()
+    for cls in ("unit__inputNode", "unit__outputNode"):
+        tied.update(arc for arc, vals in _arc_values(db, cls, "constraint_flow_coeff").items()
+                    if any(v != 0.0 for v in vals))
+    limiting = (set(_explicit_values(db, "flowGroup", "max_instant_flow"))
+                | set(_explicit_values(db, "flowGroup", "max_cumulative_flow")))
+    for ent in db.find_entities(entity_class_name="flowGroup__unit__node"):
+        group, unit, node = ent["entity_byname"][:3]
+        if group in limiting:
+            tied.add((unit, node))
+    authored = _str_values(db, "unit__node__profile", "profile_method")
+    default = _definition_default(db, "unit__node__profile", "profile_method")
+    for ent in db.find_entities(entity_class_name="unit__node__profile"):
+        link = tuple(ent["entity_byname"])
+        if authored.get(link, str(default)) in ("upper_limit", "fixed"):
+            tied.add((link[0], link[1]))
+    limit = _max_flow_unconstrained(db)
+    reported: set[tuple[str, str]] = set()
+    for unit in sorted(outputs):
+        if unit not in inputs:
+            continue
+        arcs = [(unit, n) for n in outputs[unit]]
+        if all(a in zero["unit__outputNode"] for a in arcs) and any(a not in tied for a in arcs):
+            free = ", ".join(f"'{n}'" for u, n in arcs if (u, n) not in tied)
+            _warn(f"unit '{unit}' uses no input: all its outputs have conversion_flow_coeff 0, so its output to "
+                  f"{free} is free up to max_flow_for_unconstrained_variables ({limit:.15g}). Give an output a "
+                  "non-zero conversion_flow_coeff, or tie the flow with a user constraint.")
+            reported.update(arcs)
+    for cls, side in (("unit__inputNode", "input"), ("unit__outputNode", "output")):
+        for unit, node in sorted(zero[cls]):
+            if (unit, node) in tied or (unit, node) in reported:
+                continue
+            risk = (f"the unit can take any amount from '{node}' for free (a dump load on that node)"
+                    if side == "input" else
+                    f"the unit can put any amount into '{node}' for free (a free source on that node)")
+            _warn(f"{cls} ({unit}, {node}): conversion_flow_coeff is 0 and no user constraint, flowGroup maximum "
+                  f"or profile limit ties the {side} flow, so {risk}, up to max_flow_for_unconstrained_variables "
+                  f"({limit:.15g}). Tie it with a user constraint (constraint_flow_coeff), or give it a non-zero "
+                  "conversion_flow_coeff. (A flowGroup min_instant_flow / min_cumulative_flow bounds it only from "
+                  "below.)")
+    for param in ("capacity_max_coeff", "capacity_min_coeff"):
+        for unit, node in sorted(set(_arc_values(db, "unit__outputNode", param)) & zero["unit__outputNode"]):
+            _warn(f"unit__outputNode ({unit}, {node}): {param} has no effect on an output with "
+                  "conversion_flow_coeff 0 (the flow is outside the capacity limits).")
+
+
+# ---- basic value checks (#170) --------------------------------------------
+
+_INVEST_PAIRS = (
+    # (min parameter, max parameter, the word an invest_method must contain to use the pair, period-wise)
+    ("invest_min_period", "invest_max_period", "invest", "period"),
+    ("invest_min_total", "invest_max_total", "invest", "total"),
+    ("retire_min_period", "retire_max_period", "retire", "period"),
+    ("retire_min_total", "retire_max_total", "retire", "total"),
+    ("cumulative_min_capacity", "cumulative_max_capacity", "cumulative", "limits"),
+)
+
+
+def _keyed_numbers(parsed) -> dict[str, float] | None:
+    """``{key: value}`` of a one-level numeric map (a period map), ``{"": v}`` of a constant, None otherwise."""
+    if isinstance(parsed, bool) or parsed is None:
+        return None
+    if isinstance(parsed, (int, float)):
+        return {"": float(parsed)}
+    if isinstance(parsed, api.Map):
+        out: dict[str, float] = {}
+        for key, v in zip(parsed.indexes, parsed.values):
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                return None
+            out[str(key)] = float(v)
+        return out
+    return None
+
+
+def _first_bad(parsed, bad) -> tuple[str | None, float] | None:
+    """``(key, value)`` of the first element of a constant / map / series for which ``bad(value)`` holds (key None
+    for a constant), else None."""
+    if isinstance(parsed, bool) or parsed is None or isinstance(parsed, str):
+        return None
+    if isinstance(parsed, (int, float)):
+        return (None, float(parsed)) if bad(float(parsed)) else None
+    indexes = getattr(parsed, "indexes", None)
+    values = getattr(parsed, "values", None)
+    if values is None:
+        return None
+    for i, v in enumerate(values):
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            if bad(float(v)):
+                return (str(indexes[i]) if indexes is not None else str(i), float(v))
+        elif hasattr(v, "values"):
+            hit = _first_bad(v, bad)
+            if hit is not None:
+                key = str(indexes[i]) if indexes is not None else str(i)
+                return (f"{key}, {hit[0]}" if hit[0] is not None else key, hit[1])
+    return None
+
+
+_RAW_PUNCT = bytes.maketrans(b"{}[],:", b"      ")
+_RAW_RANK = re.compile(rb'"rank"\s*:\s*\d+')
+
+
+def _raw_numbers(raw, kind: str):
+    """The numeric elements of a ``float`` / ``map`` / ``time_series`` value read from its database JSON (one
+    ``json.loads``, the values as numpy arrays; no spinedb-api parse), or None when the fast read cannot tell
+    (another type, booleans or strings among the values, an unknown nested value): the caller then parses."""
+    if isinstance(raw, str):
+        raw = raw.encode()
+    if kind == "float":
+        try:
+            return [np.array([float(raw)])]
+        except ValueError:
+            return None
+    if kind not in ("map", "time_series"):
+        return None
+    if b"\\" not in raw and b'"float"' not in raw:
+        # Byte-level read (no JSON parse): outside the quoted strings (the keys, labels and stamps; no escape, so
+        # the quotes pair) and the ``"rank": n`` fields, a value's JSON holds only punctuation, the numbers and
+        # true / false / null (booleans and nulls are not numbers, as in :func:`_first_bad`).  A float index (unquoted keys) takes the JSON read.
+        bare = (b" ".join(_RAW_RANK.sub(b"", raw).split(b'"')[0::2]).translate(_RAW_PUNCT)
+                .replace(b"true", b" ").replace(b"false", b" ").replace(b"null", b" "))
+        if not bare.strip():
+            return []
+        with warnings.catch_warnings():
+            # A token that is not a number ends the C parse with a warning (a ValueError in later numpy).
+            warnings.simplefilter("error")
+            try:
+                return [np.fromstring(bare, sep=" ")]
+            except (ValueError, DeprecationWarning):
+                pass
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return None
+    out: list = []
+    stack = [value]
+    while stack:
+        node = stack.pop()
+        data = node.get("data") if isinstance(node, dict) else None
+        if isinstance(data, dict):
+            elements = list(data.values())
+        elif isinstance(data, list):
+            elements = [e[1] for e in data] if data and isinstance(data[0], list) else data
+        else:
+            return None
+        try:
+            arr = np.array(elements)
+        except ValueError:  # ragged
+            arr = None
+        if arr is not None and arr.dtype.kind in "fiu":
+            out.append(arr.astype(float, copy=False))
+            continue
+        for e in elements:
+            if isinstance(e, dict) and e.get("type") in ("map", "time_series"):
+                stack.append(e)
+            elif isinstance(e, (int, float)) and not isinstance(e, bool):
+                out.append(np.array([float(e)]))
+            elif e is not None and not isinstance(e, str):
+                return None
+    return out
+
+
+_UNREAD = object()
+
+
+def _bad_hit(pv, bad, numbers=_UNREAD) -> tuple[str | None, float] | None:
+    """:func:`_first_bad` of ``pv``'s value: the numeric screen (``numbers``, :func:`_raw_numbers` of the value
+    unless given; ``bad`` on arrays) first; the value is parsed only to name the key of a hit (or when the screen
+    cannot read it)."""
+    if numbers is _UNREAD:
+        numbers = _raw_numbers(pv["value"], pv["type"])
+    if numbers is not None and not any(arr.size and np.any(bad(arr)) for arr in numbers):
+        return None
+    return _first_bad(_parsed_then_evict(pv), bad)
+
+
+def _where(alt: str, key: str | None) -> str:
+    return f"(alternative '{alt}'" + (f", at {key})" if key is not None else ")")
+
+
+# Shares entered as percent: a share above this is reported.  Capacity factors slightly above 1 (rounding,
+# over-performance in measured or reanalysis series) are common; only percent data reaches 1.5.
+_PERCENT_SUSPECT = 1.5
+
+
+# What a negative ``existing`` means, per class (validate_basic_sanity's warning).
+# ``{class: (what it makes, what it can clash with)}``.
+_NEGATIVE_EXISTING = {
+    "unit": ("a negative capacity makes an anti-energy unit (its flows run the other way)",
+             "a profile, min_load or invest / retire limits"),
+    "connection": ("a negative capacity gives the connection a negative transfer capacity",
+                   "invest / retire limits"),
+    "node": ("a negative capacity gives the node a negative storage capacity",
+             "storage state limits or invest / retire limits"),
+}
+
+
+# invest_method values that forbid investing / retiring: the one definition in preprocess/params/_existing.py.
+_NO_INVEST = INVEST_NOT_ALLOWED
+_NO_RETIRE = DIVEST_NOT_ALLOWED
+_BOUNDED_LIFETIME = frozenset(("reinvest_choice", "no_investment"))
+
+
+def _nonzero_names(src, cls: str, param: str, bad=lambda v: v != 0.0) -> set[str]:
+    """Entities of ``cls`` whose explicit ``param`` has an element where ``bad`` holds (default: not 0)."""
+    out: set[str] = set()
+    for pv in _pv_rows(src, cls, param):
+        if pv["type"] is None:
+            continue
+        if _bad_hit(pv, bad) is not None:
+            out.add(pv["entity_byname"][0])
+    return out
+
+
+def _missing_lifetime(src, cls: str, methods: dict[str, str]) -> list[str]:
+    """Errors for the ``cls`` entities that need a ``lifetime`` and have none.
+
+    A lifetime is needed when the annuity uses it (investing with a non-zero ``invest_cost``, retiring with a
+    non-zero ``salvage_value``) and when the lifetime window does: ``lifetime_method`` ``reinvest_choice`` /
+    ``no_investment`` on an entity that invests or retires, or has ``existing`` capacity (its end of life is
+    start + lifetime).  The default ``reinvest_automatic`` without investment needs none.
+    """
+    with_life = {pv["entity_byname"][0] for pv in _pv_rows(src, cls, "lifetime") if pv["type"] is not None}
+    db = getattr(src, "_db", src)
+    default_method = str(_definition_default(db, cls, "lifetime_method") or "reinvest_automatic")
+    life_methods = {k[0]: v for k, v in _str_values(src, cls, "lifetime_method").items()}
+    invest_cost = _nonzero_names(src, cls, "invest_cost")
+    salvage = _nonzero_names(src, cls, "salvage_value")
+    bounded = {e for e in set(methods) | set(life_methods)
+               if life_methods.get(e, default_method) in _BOUNDED_LIFETIME}
+    existing = _nonzero_names(src, cls, "existing", lambda v: v > 0.0) & bounded if bounded else set()
+    errors: list[str] = []
+    for ent in sorted(set(methods) | existing):
+        if ent in with_life:
+            continue
+        method = methods.get(ent, "not_allowed")
+        why = None
+        if method not in _NO_INVEST and ent in invest_cost:
+            why = f"it can invest (invest_method {method}) and has an invest_cost"
+        elif method not in _NO_RETIRE and ent in salvage:
+            why = f"it can retire (invest_method {method}) and has a salvage_value"
+        elif ent in bounded and (method != "not_allowed" or ent in existing):
+            what = "invests or retires" if method != "not_allowed" else "has existing capacity"
+            why = (f"its lifetime_method is {life_methods.get(ent, default_method)} and it {what}, so its capacity "
+                   "ends after the lifetime")
+        if why is not None:
+            errors.append(f"{cls} '{ent}' has no lifetime, but {why}. Give the lifetime in years.")
+    return errors
+
+
+def validate_basic_sanity(src) -> None:
+    """Values that make no sense, or are almost surely a typing mistake (#170).
+
+    ``src``: the scenario-filtered ``SpineDBBackend`` (its bulk ``(class, param)`` index, shared with
+    :func:`validate_period_keys`) or a DatabaseMapping.  Explicit values only (defaults are fine), every element of a
+    constant, a map or a time series; the first bad element is named.  The values are screened from their database
+    JSON (numpy over the numbers); only a value with a hit is parsed.  Errors (one FlexToolConfigError listing all):
+
+    * unit / connection ``efficiency`` ≤ 0 (no output, or paid to run);
+    * unit ``min_load`` outside [0, 1]; ``availability`` < 0 (unit, connection, node);
+    * unit__outputNode ``capacity_max_coeff`` < 0;
+    * a minimum above its maximum, both explicit, when the entity's ``invest_method`` uses the pair:
+      ``invest_min/max_period``, ``retire_min/max_period``, ``cumulative_min/max_capacity`` (per period: a constant
+      applies to every period, a period that only one of the two names is not compared), ``invest_min/max_total``,
+      ``retire_min/max_total`` (unit, connection, node, group); the problem would be infeasible;
+    * ``lifetime`` ≤ 0 on a unit / connection / node that can invest or retire (``invest_method`` other than
+      ``not_allowed``): the investment would be charged for no years.
+    * no ``lifetime`` on a unit / connection / node whose annuity or lifetime window needs it
+      (:func:`_missing_lifetime`): investing with an ``invest_cost``, retiring with a ``salvage_value``, or a
+      ``lifetime_method`` ``reinvest_choice`` / ``no_investment`` with investment, retirement or ``existing``;
+    * ``discount_rate`` < 0 (unit / connection / node); 0 is the straight-line annuity.
+
+    ``existing`` as a time series, keyed by time steps or by numbers is :func:`validate_period_keys`'.
+
+    Warnings: ``availability`` above 1.5 (entered as percent?); connection ``efficiency`` > 1 (creates energy);
+    ``virtual_unitsize`` ≤ 0 (ignored); ``existing`` < 0 (unit, connection, node; :data:`_NEGATIVE_EXISTING`):
+    supported (a unit with a negative capacity is an "anti-energy" unit), but more often a typing mistake, and with
+    a profile, min_load or invest / retire limits it can make the problem infeasible.  Profiles above 1.5 are
+    :func:`warn_profiles_as_percent`' (after the read).  The warnings are printed before an error is raised.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+    percent = (f"values above {_PERCENT_SUSPECT:g} look like percentages; {{what}} is a share (0.95, not 95)."
+               ).format
+
+    def scan(cls: str, param: str, checks, only: set[str] | None = None) -> None:
+        """``checks``: ``[(bad, message, sink), ...]`` on the values of ``cls.param`` (one read per value)."""
+        for pv in _pv_rows(src, cls, param):
+            if pv["type"] is None:
+                continue
+            name = ", ".join(pv["entity_byname"])
+            if only is not None and name not in only:
+                continue
+            numbers = _raw_numbers(pv["value"], pv["type"])
+            for bad, message, sink in checks:
+                hit = _bad_hit(pv, bad, numbers)
+                if hit is not None:
+                    sink.append(f"{cls} '{name}' {param} = {hit[1]:g} {_where(pv['alternative_name'], hit[0])}: "
+                                + message)
+
+    scan("unit", "efficiency", [(lambda v: v <= 0.0,
+         "efficiency must be above 0 (0 gives no output, a negative value pays the unit to run). Use a "
+         "fraction such as 0.4.", errors)])
+    scan("connection", "efficiency", [
+        (lambda v: v <= 0.0, "efficiency must be above 0 (0 gives no output, a negative value pays the unit to "
+         "run). Use a fraction such as 0.4.", errors),
+        (lambda v: v > 1.0, "a connection efficiency above 1 creates energy on the way.", warnings)])
+    scan("unit", "min_load", [(lambda v: (v < 0.0) | (v > 1.0),
+         "min_load is a share of the online capacity and must lie in [0, 1] (e.g. 0.3 for 30 %).", errors)])
+    for cls in ("unit", "connection", "node"):
+        scan(cls, "availability", [
+            (lambda v: v < 0.0, "availability must be 0 or above.", errors),
+            (lambda v: v > _PERCENT_SUSPECT, percent(what="availability"), warnings)])
+    scan("unit__outputNode", "capacity_max_coeff", [(lambda v: v < 0.0,
+         "capacity_max_coeff must be 0 or above (it is the share of the capacity this output may use).", errors)])
+    for cls in ("unit", "connection", "node"):
+        scan(cls, "virtual_unitsize", [(lambda v: v <= 0.0,
+             "virtual_unitsize must be above 0; the value is ignored (the entity is one unit of its capacity).",
+             warnings)])
+    for cls, (what, clash) in _NEGATIVE_EXISTING.items():
+        scan(cls, "existing", [(lambda v: v < 0.0,
+             f"{what}. If you did not mean that, use 0 or more. Combined with {clash} it can make the problem "
+             "infeasible.", warnings)])
+
+    methods: dict[str, dict[str, str]] = {
+        cls: {k[0]: v for k, v in _str_values(src, cls, "invest_method").items()}
+        for cls in ("unit", "connection", "node", "group")}
+    for cls in ("unit", "connection", "node", "group"):
+        for lo, hi, word, kind in _INVEST_PAIRS:
+            using = {e for e, m in methods[cls].items() if word in m and kind in m}
+            if not using:
+                continue
+            mins = {pv["entity_byname"][0]: pv for pv in _pv_rows(src, cls, lo) if pv["type"] is not None}
+            maxs = {pv["entity_byname"][0]: pv for pv in _pv_rows(src, cls, hi) if pv["type"] is not None}
+            for ent in sorted(using & set(mins) & set(maxs)):
+                a = _keyed_numbers(_parsed_then_evict(mins[ent]))
+                b = _keyed_numbers(_parsed_then_evict(maxs[ent]))
+                if a is None or b is None:
+                    continue
+                if "" in a and "" not in b:
+                    a = dict.fromkeys(b, a[""])
+                elif "" in b and "" not in a:
+                    b = dict.fromkeys(a, b[""])
+                for key in [k for k in a if k in b]:
+                    if a[key] > b[key] + 1e-9 * max(1.0, abs(b[key])):
+                        at = f" in period {key}" if key else ""
+                        errors.append(
+                            f"{cls} '{ent}' {lo} = {a[key]:g} is above {hi} = {b[key]:g}{at} (alternatives "
+                            f"'{mins[ent]['alternative_name']}', '{maxs[ent]['alternative_name']}'; invest_method "
+                            f"{methods[cls][ent]}): no capacity can meet both, so the problem is infeasible. Lower "
+                            f"{lo} or raise {hi}.")
+                        break
+
+    for cls in ("unit", "connection", "node"):
+        investing = {e for e, m in methods[cls].items() if m != "not_allowed"}
+        scan(cls, "lifetime", [(lambda v: v <= 0.0,
+             f"lifetime must be above 0 when the {cls} can invest or retire; with 0 the investment is charged for "
+             "no years. Give the lifetime in years.", errors)], only=investing)
+        scan(cls, "discount_rate", [(lambda v: v < 0.0,
+             "discount_rate must be 0 or above (0 gives the straight-line annuity invest_cost / lifetime).",
+             errors)])
+        errors.extend(_missing_lifetime(src, cls, methods[cls]))
+
+    for text in warnings:
+        _warn(text)
+    if errors:
+        raise FlexToolConfigError("Input values out of range:\n  " + "\n  ".join(errors))
+
+
+_PROFILE_FRAMES = (("input/p_profile", "p_profile"), ("input/pd_profile", "pd_profile"),
+                   ("input/pt_profile", "pt_profile"), ("input/pbt_profile", "pbt_profile"))
+
+
+def warn_profiles_as_percent(src, provider) -> None:
+    """Warn about a profile above 1.5 that limits a unit flow (#170: capacity factors entered as percent, 35 for
+    0.35).  Capacity factors slightly above 1 (rounding, over-performance in measured or reanalysis series) are
+    common and not reported.
+
+    Runs after the parameter read, on the profile frames the reader built (``input/p_profile``, ``pd_profile``,
+    ``pt_profile``, ``pbt_profile``: a polars filter, no second parse of the series); only a profile with a hit is
+    parsed again, to name the alternative and the first key above 1.5.  Profiles of ``unit__node__profile`` links
+    with ``profile_method`` (authored or the default) ``upper_limit`` or ``fixed`` only.  ``src``: the
+    scenario-filtered ``SpineDBBackend`` or a DatabaseMapping."""
+    import polars as pl
+
+    db = getattr(src, "_db", src)
+    authored = _str_values(src, "unit__node__profile", "profile_method")
+    default = _definition_default(db, "unit__node__profile", "profile_method")
+    limiting = {ent["entity_byname"][2] for ent in db.find_entities(entity_class_name="unit__node__profile")
+                if authored.get(tuple(ent["entity_byname"]), str(default)) in ("upper_limit", "fixed")}
+    if not limiting:
+        return
+    hits: set[str] = set()
+    for key, column in _PROFILE_FRAMES:
+        frame = provider.get(key) if provider.has(key) else None
+        if frame is None or frame.height == 0 or column not in frame.columns:
+            continue
+        over = frame.filter(pl.col("profile").cast(pl.Utf8).is_in(sorted(limiting))
+                            & (pl.col(column).cast(pl.Float64, strict=False) > _PERCENT_SUSPECT))
+        hits.update(over.get_column("profile").cast(pl.Utf8).unique().to_list())
+    for pv in _pv_rows(src, "profile", "profile"):
+        if pv["type"] is None or pv["entity_byname"][0] not in hits:
+            continue
+        hit = _first_bad(_parsed_then_evict(pv), lambda v: v > _PERCENT_SUSPECT)
+        if hit is not None:
+            _warn(f"profile '{pv['entity_byname'][0]}' = {hit[1]:g} {_where(pv['alternative_name'], hit[0])} limits "
+                  f"a unit flow (upper_limit or fixed): values above {_PERCENT_SUSPECT:g} look like percentages; the "
+                  "profile is a share of the capacity (0.35, not 35).")
+
+
+# ---- period keys (items 46 / 65) ------------------------------------------
+
+
+@dataclass(frozen=True)
+class DatabaseTimeFacts:
+    """The period and time-step names of the **whole** database (every alternative, so every scenario), read by
+    ``input_derivation.run`` from the mapping it already fetched, before the scenario filter (no second open).
+
+    ``periods``: :func:`_period_universe` of the whole database, its stochastic branch periods included;
+    ``branch_periods``: those branch periods (``p2035_high``; left out of the "did you mean" suggestions);
+    ``timesteps``: every key of every ``timeline.timestep_duration``; ``timelines``: ``(timeline, alternative,
+    steps)`` per ``timestep_duration`` value (for :class:`_DatabaseTimeVocab`)."""
+
+    periods: frozenset[str]
+    timesteps: frozenset[str]
+    timelines: tuple[tuple[str, str, frozenset[str]], ...]
+    branch_periods: frozenset[str] = frozenset()
+
+
+def _branch_periods(src) -> set[str]:
+    """The stochastic branch periods of ``src``, named as the engine names them (``period + "_" + branch``,
+    ``spinedb_backend._axis_enums._collect_stochastic_branch_period_tokens``): each level-1 (period) x level-2
+    (branch) key pair of ``solve.stochastic_branches``, and each period of the declaring solve x each of its
+    branch names (the continuation after the branching period).  The periods of a solve are its
+    ``period_timeset`` keys, else (Rule 5) its ``invest_periods`` + ``realized_periods``, else every
+    ``model.periods_available``.  A branch period's own value in a period map wins over its anchor's
+    (``_param_shapes._with_branch_periods``), so these names are period keys too."""
+    branches: dict[str, set[str]] = {}
+    out: set[str] = set()
+    for pv in _pv_rows(src, "solve", "stochastic_branches"):
+        if pv["type"] != "map":
+            continue
+        names = branches.setdefault(pv["entity_byname"][0], set())
+        value = _parsed_then_evict(pv)
+        for period, sub in zip(value.indexes, value.values):
+            if isinstance(sub, api.Map):
+                for branch in sub.indexes:
+                    out.add(f"{period}_{branch}")
+                    names.add(str(branch))
+    if not branches:
+        return out
+    timeset_periods: dict[str, set[str]] = {}
+    for pv in _pv_rows(src, "solve", "period_timeset"):
+        if pv["type"] == "map" and pv["entity_byname"][0] in branches:
+            timeset_periods.setdefault(pv["entity_byname"][0], set()).update(
+                str(k) for k in _parsed_then_evict(pv).indexes)
+    listed: dict[str, set[str]] = {}
+    for par in ("invest_periods", "realized_periods"):
+        for pv in _pv_rows(src, "solve", par):
+            if pv["type"] == "array" and pv["entity_byname"][0] in branches:
+                listed.setdefault(pv["entity_byname"][0], set()).update(
+                    str(v) for v in _parsed_then_evict(pv).values)
+    available: set[str] = set()
+    for pv in _pv_rows(src, "model", "periods_available"):
+        if pv["type"] == "array":
+            available.update(str(v) for v in _parsed_then_evict(pv).values)
+    for solve, names in branches.items():
+        periods = timeset_periods.get(solve) or listed.get(solve) or available
+        out.update(f"{period}_{branch}" for period in periods for branch in names)
+    return out
+
+
+def _period_universe(src, scenario_periods: set[str] | None = None) -> set[str]:
+    """Every period name ``src`` defines, the stochastic branch periods (:func:`_branch_periods`) not included:
+    the periods of :func:`_scenario_periods` (``solve.period_timeset`` keys, the solve period arrays / maps;
+    ``scenario_periods`` when the caller has them already), the keys of ``solve.years_represented``, the
+    first-level keys of ``solve.stochastic_branches`` (the branch-anchor periods) and ``model.periods_available``
+    (periods kept in the data that no solve names)."""
+    periods = set(scenario_periods) if scenario_periods is not None else _scenario_periods(src)
+    for par in ("years_represented", "stochastic_branches"):
+        for pv in _pv_rows(src, "solve", par):
+            if pv["type"] == "map":
+                periods.update(str(k) for k in _parsed_then_evict(pv).indexes)
+    for pv in _pv_rows(src, "model", "periods_available"):
+        if pv["type"] == "array":
+            periods.update(str(v) for v in _parsed_then_evict(pv).values)
+        elif pv["type"] == "map":
+            periods.update(str(k) for k in _parsed_then_evict(pv).indexes)
+    return periods
+
+
+class _RowsOf:
+    """The parameter values of a few ``(class, parameter)`` keys of a DatabaseMapping, gathered in one pass (one
+    ``find_parameter_values`` per key would scan the whole value table each time); :func:`_pv_rows` reads it."""
+
+    def __init__(self, db, keys: Iterable[tuple[str, str]]) -> None:
+        wanted = {}
+        for cls, par in keys:
+            for item in db.find_parameter_definitions(entity_class_name=cls, name=par):
+                wanted[item["id"]] = (cls, par)
+        self._rows: dict[tuple[str, str], list] = {key: [] for key in wanted.values()}
+        if wanted:
+            for pv in db.find_parameter_values():
+                key = wanted.get(pv["parameter_definition_id"])
+                if key is not None:
+                    self._rows[key].append(pv)
+
+    def parameter_value_items(self, entity_class: str, parameter: str) -> list:
+        return self._rows.get((entity_class, parameter), [])
+
+
+def database_time_facts(db) -> DatabaseTimeFacts:
+    """:class:`DatabaseTimeFacts` of ``db`` (an unfiltered DatabaseMapping whose values are fetched)."""
+    db = _RowsOf(db, [("timeline", "timestep_duration"), ("model", "periods_available")]
+                 + [("solve", par) for par in ("period_timeset", "years_represented", "stochastic_branches",
+                                               *_SOLVE_PERIOD_PARAMS)])
+    timesteps: set[str] = set()
+    timelines: list[tuple[str, str, frozenset[str]]] = []
+    for pv in _pv_rows(db, "timeline", "timestep_duration"):
+        if pv["type"] not in ("map", "time_series"):
+            continue
+        steps = frozenset(str(k) for k in _parsed_then_evict(pv).indexes)
+        timesteps |= steps
+        timelines.append((pv["entity_byname"][0], pv["alternative_name"], steps))
+    branch = frozenset(_branch_periods(db))
+    return DatabaseTimeFacts(frozenset(_period_universe(db)) | branch, frozenset(timesteps), tuple(timelines),
+                             branch)
+
+
+@functools.lru_cache(maxsize=1)
+def _period_axis_params() -> dict[tuple[str, str], bool]:
+    """``{(class, parameter): takes a time map}`` of the parameters with a period axis: ``PERIOD_TIME_PARAMS`` and
+    every parameter of a ``_PARAMETER_SPECS`` entry with a ``period`` column (``existing``, ``lifetime``, ...),
+    except the ``solve`` / ``model`` time structure and the time-only ``timeset_weights``.  A parameter takes a time map when its allowed shapes have
+    one, or (spec-only parameters) when a spec without a ``period`` column reads it by ``time``.  Maps keyed by
+    something else (``constraint_flow_coeff`` by constraint, ``delay`` by hours) are not in the list."""
+    from flextool.engine.input._param_shapes import PARAM_ALLOWED_SHAPES, PERIOD_TIME_PARAMS, Shape
+    from flextool.input_derivation._specs import _PARAMETER_SPECS
+
+    out: dict[tuple[str, str], bool] = {
+        key: bool({Shape.MAP_TIME, Shape.MAP_PERIOD_TIME} & set(PARAM_ALLOWED_SHAPES[key]))
+        for key in PERIOD_TIME_PARAMS
+        if {Shape.MAP_PERIOD, Shape.MAP_PERIOD_TIME} & set(PARAM_ALLOWED_SHAPES[key])}
+    by_time: set[tuple[str, str]] = set()
+    by_period: set[tuple[str, str]] = set()
+    for spec in _PARAMETER_SPECS:
+        header = spec["header"].split(",") if isinstance(spec["header"], str) else list(spec["header"])
+        for cls, par in spec["cl_pars"]:
+            if "period" in header:
+                by_period.add((cls, par))
+            elif "time" in header:
+                by_time.add((cls, par))
+    for key in by_period:
+        if key[0] not in ("solve", "model") and key not in out:
+            out[key] = key in by_time
+    return out
+
+
+# The first key of a Map's database JSON (the outermost level's: nested levels sit inside its data).
+_RAW_FIRST_KEY = re.compile(rb'"data"\s*:\s*\[\s*\[\s*"([^"\\]*)"')
+_DIGIT_RUN = re.compile(r"\d+")
+
+
+def _digit_run(key: str) -> str:
+    """The longest run of digits in ``key`` ('' when none): '2030' of 'p2030x', '2020' of '2020.0'."""
+    runs = _DIGIT_RUN.findall(key)
+    return max(runs, key=len) if runs else ""
+
+
+def _period_suggestions(key: str, missing: list[str], rest: list[str], branch: list[str] = ()) -> list[str]:
+    """Periods ``key`` was probably meant to be: first among the scenario periods the map misses (``missing``),
+    then among the other periods (``rest``), then among the stochastic branch periods (``branch``); by the same
+    longest digit run, else by spelling (``difflib.get_close_matches``, cutoff 0.6).  Up to 3."""
+    run = _digit_run(key)
+    if run:
+        for pool in (missing, rest, branch):
+            hits = [p for p in pool if _digit_run(p) == run]
+            if hits:
+                return hits[:3]
+    for pool in (missing, rest, branch):
+        hits = difflib.get_close_matches(key, pool, n=3, cutoff=0.6)
+        if hits:
+            return hits
+    return []
+
+
+def _did_you_mean(bad: list[str], keys: list[str], scenario_periods: set[str], universe: set[str],
+                  branch: set[str] = frozenset()) -> str:
+    """`` Did you mean 'p2020'?`` for the shown offending keys (empty when no period is close).  The candidates
+    are the scenario periods the map misses, then the other periods of ``universe`` (no branch periods), then the
+    branch periods ``branch``; a period the map already has is never suggested."""
+    missing = sorted(scenario_periods.difference(keys))
+    rest = sorted(universe.difference(missing).difference(keys))
+    branch_rest = sorted(set(branch).difference(keys))
+    parts: list[str] = []
+    for key in bad:
+        hits = _period_suggestions(key, missing, rest, branch_rest)
+        if not hits:
+            continue
+        text = repr(hits[0]) if len(hits) == 1 else "one of " + ", ".join(repr(h) for h in hits)
+        parts.append(text if len(bad) == 1 else f"{text} (for {key!r})")
+    return f" Did you mean {', '.join(parts)}?" if parts else ""
+
+
+def _shown(keys: list[str]) -> str:
+    return ", ".join(repr(k) for k in keys[:3]) + (", …" if len(keys) > 3 else "")
+
+
+def _period_key_finding(raw: bytes, takes_time: bool, universe: set[str],
+                        timesteps: frozenset[str] | set[str], timesteps_b: frozenset[bytes], step_forms=None):
+    """``(code, level keys, offending keys)`` of one Map value of a period-axis parameter, or None when its keys
+    are fine (or not period keys; rank 3 and deeper are not checked).  A value of a time-capable parameter whose
+    first key is a time step is a time series: it is never parsed (one regex on the database JSON).  Codes:
+    ``unknown`` (keys that are no period), ``time`` (a time-step key on a parameter that cannot vary over time; a
+    key that is also a period of the database is a period, #76), ``number`` (numeric keys), ``nothing`` (a silent
+    map of a time-capable parameter whose keys are neither periods nor time steps but look like time steps,
+    :func:`_looks_like_time_keys` against ``step_forms``; keys that do not are ``unknown``).  See
+    :func:`validate_period_keys`."""
+    from flextool.engine.input._param_shapes import _normalise_label
+
+    if takes_time:
+        first = _RAW_FIRST_KEY.search(raw)
+        if first is not None and first.group(1) in timesteps_b:
+            return None  # a time series (its off-timeline keys are validate_time_series_keys')
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        return None
+    levels = _value_levels(value)
+    rank = len(levels)
+    if rank not in (1, 2):
+        return None
+    label = _normalise_label(levels[0][0])
+    keys = list(dict.fromkeys(levels[0][1]))
+    if not keys:
+        return None
+    if value.get("index_type") == "float":
+        return ("number", keys, keys)
+
+    def unknown():
+        bad = [k for k in keys if k not in universe]
+        return ("unknown", keys, bad) if bad else None
+
+    if label == "period":
+        return unknown()
+    if rank == 2:
+        # The outer level of a period x time map (a silent outer level reads as period when its keys hit periods
+        # and no time step; else it is a branch or time level, not checked).
+        if label is None and takes_time and not universe.isdisjoint(keys) and timesteps.isdisjoint(keys):
+            return unknown()
+        return None
+    if label in ("time", "t"):
+        return None if takes_time else ("time", keys, keys)
+    if label is not None:
+        return None
+    if takes_time:
+        if any(k in timesteps for k in keys):
+            return None
+    else:
+        steps = [k for k in keys if k in timesteps and k not in universe]
+        if steps:
+            return ("time", keys, steps)
+    if takes_time and universe.isdisjoint(keys) and _looks_like_time_keys(keys, step_forms or ()):
+        return ("nothing", keys, keys)
+    return unknown()
+
+
+# A nested level in a Map's database JSON (a map or time series value inside the outer map's data).
+_RAW_NESTED = re.compile(rb'"type"\s*:\s*"(?:map|time_series)"')
+
+
+def _profile_period_finding(raw: bytes, universe: set[str], universe_b: tuple[bytes, ...],
+                            timesteps: frozenset[str] | set[str], solve_periods: set[str]):
+    """``(code, keys)`` or None for one Map value of ``profile.profile`` (items 73, 223).
+
+    A profile map without an index name (Spine's ``x``) on its outer level is read by its keys
+    (``_profiles._silent_map_tier``): a 1-D map is a period map when its keys are periods and a time series when
+    they are time steps; a 2-D map is a period x time map when its outer keys are periods (else it would be read
+    as a stochastic map, which has three levels, and give 0).  Codes:
+
+    * ``both``: the (outer) keys match periods and time steps of the model (or one key is both, a period named
+      like a time step) — there is no right reading;
+    * ``time``: the outer keys of a 2-D map are time steps (none a period);
+    * ``unknown``: the outer keys of a 2-D map are neither periods nor time steps (the keys are returned);
+    * ``inner_period``: the inner level of a period x time map (outer level labelled ``period`` or read as periods)
+      has no index name and its keys are periods, none a time step (the keys that are periods are returned);
+    * ``missing``: a period map (labelled ``period``, the outer level of a period x time map labelled ``period``
+      or without a label, or a silent 1-D map read as periods) without a value for some of ``solve_periods``;
+      the profile is 0 in those periods.
+
+    A value naming no period of ``universe`` (``universe_b``: their quoted JSON forms) and without a nested level
+    is a time series or a 1-D map of keys that are no period (:func:`_period_key_finding` reports those) and is
+    not parsed.  Rank 3 and deeper (stochastic maps) are not checked."""
+    from flextool.engine.input._param_shapes import _normalise_label
+
+    if not any(name in raw for name in universe_b) and _RAW_NESTED.search(raw) is None:
+        return None
+    value = json.loads(raw)
+    if not isinstance(value, dict) or value.get("index_type") == "float":
+        return None
+    levels = _value_levels(value)
+    if len(levels) not in (1, 2):
+        return None
+    label = _normalise_label(levels[0][0])
+    keys = set(levels[0][1])
+    if not keys:
+        return None
+    if label is None:
+        hits_periods = not keys.isdisjoint(universe)
+        hits_steps = not keys.isdisjoint(timesteps)
+        if hits_periods and hits_steps:
+            return ("both", sorted(keys & universe) + sorted((keys & set(timesteps)) - universe))
+        if len(levels) == 2 and not hits_periods:
+            return ("time", sorted(keys & set(timesteps))) if hits_steps else ("unknown", list(dict.fromkeys(
+                levels[0][1])))
+        if not hits_periods:
+            return None
+    elif label != "period":
+        return None
+    if len(levels) == 2 and _normalise_label(levels[1][0]) is None:
+        # The inner level of a period x time map without an index name is read as the time step (whatever the
+        # outer level's label).  Inner keys that are not time steps either are reported by
+        # validate_time_series_keys; inner keys that are periods (the levels swapped, or a period map nested in a
+        # period map) are not, because that check takes an unnamed level keyed by periods for a period level.
+        inner = set(levels[1][1])
+        if inner and inner.isdisjoint(timesteps) and not inner.isdisjoint(universe):
+            return ("inner_period", sorted(inner & universe))
+    missing = sorted(solve_periods - keys)
+    return ("missing", missing) if missing else None
+
+
+_PERIOD_KEY_HEADER = "Map keys that are not periods of any solve in the database:\n  "
+_PERIOD_KEY_ESCAPE = "\nIf a key is a period of data you keep for other models, add it to model.periods_available."
+_PERIOD_SHAPE_HEADER = "Period maps that the model cannot read:\n  "
+
+
+def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
+                         time_vocab: tuple[set[str], dict[str, list[str]]] | None = None) -> None:
+    """Stop the run on map keys of a period-axis parameter that are not periods (items 46 / 65).
+
+    The readers join a period map with the solve's periods, so a mistyped key (``y2020`` for ``p2020``, ``2020``,
+    ``p2030x``) is dropped without a word: ``existing`` became 0, ``startup_cost`` vanished, an extra key of
+    ``co2_max_period`` was ignored.  Checked once per run (``input_derivation.run``, before the parameter read):
+    the explicit values of the period-axis parameters (:func:`_period_axis_params`; maps keyed by a constraint or
+    by hours are not period maps), rank 1 and 2 maps (rank 2: the outer level only; rank 3, the stochastic and
+    ladder maps, is out of scope), time series.
+
+    Period universe: the periods of the **whole** database (``whole``, :func:`database_time_facts`), so a key
+    that is a period of another scenario's solve, or listed in ``model.periods_available``, is fine; the
+    stochastic branch periods (``p2035_high``, :func:`_branch_periods`) are periods too, because a branch
+    period's own value wins over its anchor's.  Time steps:
+    every ``timestep_duration`` key of the whole database.  Rules:
+
+    * a level labelled ``period``: every key not in the universe → error;
+    * a silent (``x``) rank-1 map of a parameter that cannot vary over time (``existing``, ``lifetime``, ...): a
+      time-step key that is no period → error (a name that is both a period and a time step is a period, #76), any
+      other key not in the universe → error;
+    * a silent map of a parameter that takes a time map: a key that is a time step makes it a time series (not
+      checked here); else keys hitting the periods make it a period map (the other keys → error); no key a period
+      → error, unless the keys look like time steps (:func:`_looks_like_time_keys`: ``t0099``, a date-time stamp;
+      then a warning, the value is not used, and :func:`validate_time_series_keys` has stopped the run first for a
+      time-series parameter) — ``{p2050: ...}`` is a period map with a key that is no period;
+    * a ``time`` / ``t`` level or a time series on a parameter that cannot vary over time → error;
+    * numeric keys (2020) → error (periods are names; such a value crashed the read);
+    * ``profile.profile`` (:func:`_profile_period_finding`, items 73 / 223): an unnamed 1-D map, and the outer
+      level of an unnamed 2-D map, is read as periods when its keys are periods, so keys that match both periods
+      and time steps of the model (or a key that is both) → error; a 2-D map whose unnamed outer keys are time
+      steps → error, or neither periods nor time steps → error (keys that are no period); an unnamed inner level
+      of a period x time map (outer level labelled ``period`` or read as periods) keyed by periods → error (the
+      inner level is read as time steps; other inner keys are :func:`validate_time_series_keys`'s); a period map (unnamed,
+      or labelled ``period``) without a value for some periods of the solves that run (:func:`_used_solve_periods`; a solve no model runs does not count) → one warning per map (the profile is 0 there; the parameter resolver would drop such an
+      entity without a word, ``_param_shapes._silent_entity_axes``).
+
+    Each error names the entity, the parameter, the alternative and up to 3 keys, with the closest period
+    (:func:`_period_suggestions`).  Without ``whole`` (a source that is not a URL) the universe is the scenario's,
+    so the keys that are not periods are printed as warnings; the time-step, time-series and numeric-key errors
+    still stop the run.  No period at all (no solve periods, no ``periods_available``) → no
+    check (the time-structure checks report that).  Each distinct raw value is classified once.
+
+    ``time_vocab``: :func:`_scenario_time_vocab` of ``src`` when the caller has it (``input_derivation.run``),
+    so the scenario's periods and timelines are not read twice.  The error lists the keys that are not periods
+    (header :data:`_PERIOD_KEY_HEADER`, then the ``periods_available`` hint) and the maps of the wrong kind
+    (:data:`_PERIOD_SHAPE_HEADER`) as two blocks.
+    """
+    if time_vocab is None:
+        time_vocab = _scenario_time_vocab(src)
+    scenario_periods = _period_universe(src, time_vocab[0])
+    branch = _branch_periods(src) | (set(whole.branch_periods) if whole is not None else set())
+    universe = scenario_periods | branch | (set(whole.periods) if whole is not None else set())
+    if not universe:
+        return
+    suggestable = universe - branch
+    timelines = time_vocab[1]
+    timesteps: set[str] = {step for steps in timelines.values() for step in steps}
+    if whole is not None:
+        timesteps |= whole.timesteps
+    timesteps_b = frozenset(t.encode() for t in timesteps)
+    step_forms = _StepForms(lambda: timesteps)
+    seen: dict[tuple, object] = {}
+    profile_seen: dict[bytes, object] = {}
+    universe_b = tuple(f'"{name}"'.encode() for name in universe)
+    solve_periods: set[str] | None = None  # periods of the solves that run, read at the first profile map
+    errors: list[str] = []      # keys that are no period (depend on the universe)
+    shape_errors: list[str] = []  # time steps, time series and numbers (always errors)
+    warnings: list[str] = []
+    for (cls, par), takes_time in sorted(_period_axis_params().items()):
+        for pv in _pv_rows(src, cls, par):
+            kind = pv["type"]
+            where = (f"{cls} '{', '.join(str(b) for b in pv['entity_byname'])}', parameter '{par}' "
+                     f"(alternative '{pv['alternative_name']}')")
+            if kind == "time_series":
+                if not takes_time:
+                    shape_errors.append(f"{where} is a time series, but {par} cannot vary over time. Use a constant or "
+                                  "a map keyed by period (p2020: ..., p2030: ...).")
+                continue
+            if kind != "map":
+                continue
+            raw = pv["value"]
+            if isinstance(raw, str):
+                raw = raw.encode()
+            if (cls, par) == ("profile", "profile"):
+                profile_finding = profile_seen.get(raw, False)
+                if profile_finding is False:
+                    if solve_periods is None:
+                        solve_periods = _used_solve_periods(src)
+                    profile_finding = profile_seen[raw] = _profile_period_finding(
+                        raw, universe, universe_b, timesteps, solve_periods)
+                if profile_finding is not None:
+                    code, names = profile_finding
+                    if code == "both":
+                        shape_errors.append(
+                            f"{where}: the map keys match both periods and time steps of the model; set the "
+                            f"map's index name to 'period' or 'time' (keys {_shown(names)}).")
+                    elif code == "time":
+                        shape_errors.append(
+                            f"{where}: the outer keys of the two-level map are time steps ({_shown(names)}). A "
+                            "two-level profile map is period x time: key the outer level by period (index name "
+                            "'period') and the inner level by time step, or use a one-level time map.")
+                    elif code == "inner_period":
+                        shape_errors.append(
+                            f"{where}: the inner keys of the two-level map are periods ({_shown(names)}), not time "
+                            "steps. A two-level profile map is period x time: key the outer level by period and the "
+                            "inner level by time step.")
+                    elif code == "unknown":
+                        one = len(names) == 1
+                        errors.append(
+                            f"{where}: outer map key{'' if one else 's'} {_shown(names)} "
+                            f"{'is not a period' if one else 'are not periods'} (a two-level profile map is "
+                            f"period x time).{_did_you_mean(names[:3], names, scenario_periods, suggestable, branch)}")
+                    else:
+                        warnings.append(
+                            f"{where} has no value for period(s) {', '.join(names)}: the profile is 0 in those "
+                            "periods. Add the periods to the map, or give the profile a constant value.")
+            cache_key = (raw, takes_time)
+            finding = seen.get(cache_key, False)
+            if finding is False:
+                finding = seen[cache_key] = _period_key_finding(raw, takes_time, universe, timesteps, timesteps_b,
+                                                                   step_forms)
+            if finding is None:
+                continue
+            code, keys, bad = finding
+            if code == "unknown":
+                one = len(bad) == 1
+                errors.append(
+                    f"{where}: map key{'' if one else 's'} {_shown(bad)} {'is not a period' if one else 'are not periods'}"
+                    f".{_did_you_mean(bad[:3], keys, scenario_periods, suggestable, branch)}")
+            elif code == "time":
+                shape_errors.append(f"{where}: map key {bad[0]!r} is a time step, but {par} cannot vary over time. Use a "
+                              "constant or a map keyed by period (p2020: ..., p2030: ...).")
+            elif code == "number":
+                shape_errors.append(f"{where}: map keys are numbers ({_shown(bad)}); periods are names such as "
+                              f"'p2020'.{_did_you_mean(bad[:1], [], scenario_periods, suggestable)}")
+            else:
+                warnings.append(f"{where}: map keys ({_shown(keys)}) are neither periods nor time steps of the "
+                                "model; the value is not used.")
+    for text in warnings:
+        _warn(text)
+    unknown = _PERIOD_KEY_HEADER + "\n  ".join(errors) + _PERIOD_KEY_ESCAPE if errors else ""
+    if whole is None and unknown:
+        _warn(unknown)
+        unknown = ""
+    blocks = [unknown] if unknown else []
+    if shape_errors:
+        blocks.append(_PERIOD_SHAPE_HEADER + "\n  ".join(shape_errors))
+    if blocks:
+        raise FlexToolConfigError("\n".join(blocks))

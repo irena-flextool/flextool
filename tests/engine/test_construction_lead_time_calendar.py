@@ -121,7 +121,8 @@ def test_rounding_on_run_calendar_chain(tmp_path_factory, capsys) -> None:
     first = _solve_of(closest, "y2020_5week")
     assert _offered(first) == []
     assert _invest_columns(first) == []
-    lines = [ln for ln in out.splitlines() if "coal_plant" in ln and "y2020_5week" in ln]
+    lines = [ln for ln in out.splitlines()
+             if "unit coal_plant: construction_lead_time" in ln and "after the end of solve y2020_5week " in ln]
     assert len(lines) == 1, out
     assert "construction_lead_time 8 years" in lines[0]
     assert "investments decided in p2020, p2025" in lines[0]

@@ -157,3 +157,14 @@ def test_to_long_refuses_a_level_that_is_a_row_and_a_column_level() -> None:
     wide = pl.DataFrame({"node": ["east"], "west": [1.0]})
     with pytest.raises(ValueError, match="'node' is both a row level and a column level"):
         to_long(wide, layout)                      # before: polars DuplicateError
+
+
+def test_solve_labels_round_trip_in_the_footer(tmp_path):
+    """#210: the investment tables keep their {period: solve} labels in the footer for a parquet replay."""
+    from flextool.lean_parquet import read_lean_parquet_solve_labels, write_lean_parquet
+
+    df = pd.DataFrame({"x": [1.0, 2.0]}, index=pd.Index(["p1", "p2"], name="period"))
+    write_lean_parquet(df, tmp_path / "a.parquet", solve_labels={"p1": "invest_a", "p2": "invest_b"})
+    write_lean_parquet(df, tmp_path / "b.parquet")
+    assert read_lean_parquet_solve_labels(tmp_path / "a.parquet") == {"p1": "invest_a", "p2": "invest_b"}
+    assert read_lean_parquet_solve_labels(tmp_path / "b.parquet") == {}

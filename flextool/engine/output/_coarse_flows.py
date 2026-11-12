@@ -38,6 +38,7 @@ COARSE_VARS: dict[str, str] = {
     "v_online_linear": "copy", "v_online_integer": "copy", "v_reserve": "copy", "v_exact_forward": "copy",
     "v_startup_linear": "first", "v_startup_integer": "first",
     "v_shutdown_linear": "first", "v_shutdown_integer": "first",
+    "v_ramp_up": "first", "v_ramp_down": "first",
     "v_angle": "copy", "vq_inertia": "copy", "vq_non_synchronous": "copy",
 }
 

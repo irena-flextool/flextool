@@ -62,6 +62,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from flextool._solver_config_source import workspace_solver_config_dir
 from flextool.gui.calibrate_commands import (
     build_calibrate_command,
     build_rp_command,
@@ -443,6 +444,7 @@ def launch_calibration_jobs(
             debug=spec.debug,
             final_write_methods=spec.final_write_methods,
             threads=mgr.execution_limits.max_cores_per_job,
+            solver_config_dir=str(workspace_solver_config_dir()),
         )
         display_name = f"Calibrate: {spec.scenario}"
         action_key = f"calibrate:{spec.scenario}"

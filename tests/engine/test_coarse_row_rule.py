@@ -348,6 +348,68 @@ def test_group_row_equals_tied_fine_model(tmp_path_factory, monkeypatch, family,
     assert vc["value"].sum() > 1e-6
 
 
+def _with_limit(vals: list, group: str, name: str, value: list) -> list:
+    """``vals`` with ``group.name`` replaced by ``value``."""
+    return [v for v in vals if not (v[1] == group and v[2] == name)] + [["group", group, name, value]]
+
+
+def test_inertia_limit_varying_within_a_day_uses_its_step_mean(tmp_path_factory) -> None:
+    """lh2_in's inertia_limit as a time map, 4000 MWs in the first 12 hours of each day and 6000 MWs in the last
+    12.  Hand derivation (EQ. inertia_constraint_coarse, w = Δt/Δ_b = 1/24): the row's right-hand side is the step
+    mean of the limit, (12·4000 + 12·6000)/24 = 5000 MWs, and so is the coefficient of the day's one slack column
+    (vq · mean(L)).  The coarse-flow behaviour notice names the varying limit for the liquefiers."""
+    from flextool.engine.preprocess.flex_data import coarse_process_reasons
+
+    lim = _tmap_lh2(lambda h: 4000.0 if h % 24 < 12 else 6000.0)
+    vals = _with_limit(_INERTIA, "lh2_in", "inertia_limit", lim)
+    fd = last_stochastic(_case(tmp_path_factory, "rr_inertia_tmap", vals, _INERTIA_ENTS)).flex_data
+    pb = build(fd)
+    bounds = row_bounds(pb, "inertia_constraint_coarse", "lh2_in,")
+    assert _steps_of(bounds) == _DAYS
+    assert all(lo == pytest.approx(5000.0, rel=1e-12) for lo, _ in bounds.values())
+    terms = row_terms(pb, "inertia_constraint_coarse", "lh2_in,y2030,t0025")
+    assert terms["inertia_constraint_coarse[lh2_in,y2030,t0025]"]["vq_inertia[lh2_in,y2030,t0025]"] == (
+        pytest.approx(5000.0, rel=1e-12))
+    why = coarse_process_reasons(fd, fd.process_coarse_step)["liquefier_A"]
+    assert any("inertia row of 'lh2_in' uses the step mean" in w for w in why)
+
+
+def test_non_synchronous_limit_varying_within_a_day_is_named(tmp_path_factory) -> None:
+    """lh2_ns's non_synchronous_limit as a time map (1 % then 3 % within each day): the averaged row uses its step
+    mean, which the coarse-flow behaviour notice names for the liquefiers; a constant limit is not named.
+
+    Hand derivation (EQ. non_sync_constraint_coarse, w = Δt/Δ_b = 1/24): every right-hand-side term is × ns_limit
+    and the rest of each term is constant within the day (the coarse flows are one column per day, the inflows a
+    constant −60 MW), so the row's coefficients and bound take the limit's step mean (12·0.01 + 12·0.03)/24 = 0.02:
+    the row of the constant 2 %, coefficient by coefficient."""
+    from flextool.engine.preprocess.flex_data import coarse_process_reasons
+
+    lim = _tmap_lh2(lambda h: 0.01 if h % 24 < 12 else 0.03)
+    vals = _with_limit(_NONSYNC, "lh2_ns", "non_synchronous_limit", lim)
+    fd = last_stochastic(_case(tmp_path_factory, "rr_nonsync_tmap", vals, _NONSYNC_ENTS)).flex_data
+    pb = build(fd)
+    terms = row_terms(pb, "non_sync_constraint_coarse", "lh2_ns,")
+    assert _steps_of(terms) == _DAYS
+    why = coarse_process_reasons(fd, fd.process_coarse_step)["liquefier_A"]
+    assert any("non-synchronous row of 'lh2_ns' uses the step mean" in w for w in why)
+    const = last_stochastic(_case(tmp_path_factory, "rr_nonsync_const", _NONSYNC, _NONSYNC_ENTS)).flex_data
+    pb_const = build(const)
+    terms_const = row_terms(pb_const, "non_sync_constraint_coarse", "lh2_ns,")
+    assert terms.keys() == terms_const.keys()
+    for row, cols in terms_const.items():
+        assert terms[row].keys() == cols.keys(), row
+        for col, v in cols.items():
+            assert terms[row][col] == pytest.approx(v, rel=1e-12), (row, col)
+    assert any(not c.startswith(("vq_", "v_flow[liquefier_A,")) for cols in terms.values() for c in cols), (
+        "no right-hand-side (× ns_limit) column in the coarse row")
+    bounds, bounds_const = (row_bounds(x, "non_sync_constraint_coarse", "lh2_ns,") for x in (pb, pb_const))
+    assert bounds.keys() == bounds_const.keys()
+    for row, (lo, hi) in bounds_const.items():
+        assert bounds[row] == (lo, pytest.approx(hi, rel=1e-12)), row
+    why = coarse_process_reasons(const, const.process_coarse_step).get("liquefier_A", [])
+    assert not any("non-synchronous row of 'lh2_ns' uses the step mean" in w for w in why)
+
+
 _FG_ENTS = [["flowGroup", "fg_pipe", None], ["flowGroup__connection__node", ["fg_pipe", "pipe_AB", "lh2_B"], None]]
 
 
@@ -465,25 +527,50 @@ def test_user_constraint_mixing_coarse_and_fine_flows_stays_per_step(tmp_path_fa
     assert sorted(_keys(c)[-1] for c in pipe) == _DAYS
 
 
-# Capacity margin of h2_A in an investment solve: its consuming unit liquefier_A is coarse.
+# Capacity margin in an investment solve.  Its flow members are the processes at its nodes that do not count at
+# capacity (storage-backed units, connections, consumption).  h2_A has the hourly connection electrolyser_A (from
+# elec_A) and the coarse liquefier_A: a mixed row.  h2_sink, a daily node fed only by the daily connection h2_link
+# from h2_A, has one coarse member.
+_INVEST = [["solve", "lh2_week", "invest_periods", b64({"value_type": "str", "data": ["y2030"]}, "array")],
+           ["solve", "lh2_week", "realized_invest_periods", b64({"value_type": "str", "data": ["y2030"]}, "array")]]
 _CM_ENTS = _group("cm_h2", ["h2_A"])
 _CM = [["group", "cm_h2", "capacity_margin_method", _s("manual")], ["group", "cm_h2", "capacity_margin", _f(10.0)],
-       ["group", "cm_h2", "penalty_capacity_margin", _f(100.0)],
-       ["solve", "lh2_week", "invest_periods", b64({"value_type": "str", "data": ["y2030"]}, "array")],
-       ["solve", "lh2_week", "realized_invest_periods", b64({"value_type": "str", "data": ["y2030"]}, "array")]]
+       ["group", "cm_h2", "penalty_capacity_margin", _f(100.0)]] + _INVEST
+_CM_SINK_ENTS = (_group("cm_sink", ["h2_sink"])
+                 + [["node", "h2_sink", None], ["group__node", ["daily_group", "h2_sink"], None],
+                    ["connection", "h2_link", None], ["connection__node__node", ["h2_link", "h2_A", "h2_sink"], None]])
+_CM_SINK = [["node", "h2_sink", "node_type", _s("balance")], ["node", "h2_sink", "inflow", _f(-5.0)],
+            ["connection", "h2_link", "existing", _f(100.0)], ["connection", "h2_link", "efficiency", _f(1.0)],
+            ["connection", "h2_link", "transfer_method", _s("regular")],
+            ["group", "cm_sink", "capacity_margin_method", _s("manual")],
+            ["group", "cm_sink", "capacity_margin", _f(10.0)],
+            ["group", "cm_sink", "penalty_capacity_margin", _f(100.0)]] + _INVEST
 
 
-def test_capacity_margin_of_coarse_consumers_is_one_row_per_day(tmp_path_factory, monkeypatch) -> None:
-    """Group cm_h2 (h2_A) with a capacity margin: the unit consuming from h2_A (liquefier_A) is coarse, so the
-    margin has one capacityMargin_coarse row per day and none per hour; without a time-varying profile or inflow
-    at h2_A it is the hourly row, so the objective equals the tied hourly model's."""
-    coarse = _case(tmp_path_factory, "rr_cm", _CM, _CM_ENTS)
+def test_capacity_margin_of_coarse_flows_is_one_row_per_day(tmp_path_factory, monkeypatch) -> None:
+    """Group cm_sink (h2_sink): its only flow member, the connection h2_link, is coarse, so the margin has one
+    capacityMargin_coarse row per day and none per hour; with constant inflow it is the hourly row, so the
+    objective equals the tied hourly model's."""
+    coarse = _case(tmp_path_factory, "rr_cm", _CM_SINK, _CM_SINK_ENTS)
     fd = last_stochastic(coarse).flex_data
+    assert "h2_link" in _coarse_procs(fd)
     pb = build(fd)
-    assert _steps_of(row_terms(pb, "capacityMargin_coarse", "cm_h2,")) == _DAYS
-    assert not row_terms(pb, "capacityMargin", "cm_h2,")
+    assert _steps_of(row_terms(pb, "capacityMargin_coarse", "cm_sink,")) == _DAYS
+    assert not row_terms(pb, "capacityMargin", "cm_sink,")
     _tied_fine(monkeypatch)
-    _assert_equals_tied(coarse, _case(tmp_path_factory, "rr_cm_fine", _CM, _CM_ENTS))
+    _assert_equals_tied(coarse, _case(tmp_path_factory, "rr_cm_fine", _CM_SINK, _CM_SINK_ENTS))
+
+
+def test_capacity_margin_mixing_coarse_and_fine_flows_stays_per_step(tmp_path_factory) -> None:
+    """Group cm_h2 (h2_A): the hourly connection electrolyser_A and the coarse liquefier_A both enter by their
+    flow, so the rows stay per solve step (168) and read liquefier_A's flow at one column per day."""
+    fd = last_stochastic(_case(tmp_path_factory, "rr_cm_mixed", _CM, _CM_ENTS)).flex_data
+    assert "liquefier_A" in _coarse_procs(fd)
+    pb = build(fd)
+    rows = row_terms(pb, "capacityMargin", "cm_h2,")
+    assert len(rows) == 168 and not row_terms(pb, "capacityMargin_coarse", "cm_h2,")
+    liq = {c for terms in rows.values() for c in terms if c.startswith("v_flow[liquefier_A,")}
+    assert sorted({_keys(c)[-1] for c in liq}) == _DAYS
 
 
 # ---------------------------------------------------------------------------

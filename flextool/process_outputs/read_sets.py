@@ -246,6 +246,22 @@ def _physical_co2_emission_pieces(
     return pieces
 
 
+def _startup_co2_emission_pieces(flex_data: "FlexData") -> list[pl.DataFrame]:
+    """``(process, commodity, node)`` rows of the start-up input draws (``startup_from_commodity``: a unit's
+    start-up input node of a commodity, unit__inputNode.startup_input_method) of the commodities with a
+    ``co2_content``: the draw emits as a flow from that node does (calc_costs adds the draws to the flows,
+    ``calc_capacity_flows.flows_with_startup``)."""
+    co2_c = _co2_content_commodities(flex_data)
+    fr = getattr(flex_data, "startup_from_commodity", None)
+    if not co2_c or fr is None or fr.height == 0:
+        return []
+    sub = fr.filter(pl.col("c").cast(pl.Utf8).is_in(co2_c))
+    if sub.height == 0:
+        return []
+    return [sub.select(pl.col("p").cast(pl.Utf8).alias("process"), pl.col("c").cast(pl.Utf8).alias("commodity"),
+                       pl.col("n").cast(pl.Utf8).alias("node"))]
+
+
 def _process_commodity_node_from_flex(
     flex_data: "FlexData",
     *,
@@ -404,16 +420,6 @@ def read_sets(
         [p for p in processes if p not in unit_set],
         name="process",
     )
-
-    # process_profile — processes with a profile method (any of the
-    # profile_upper / lower / fixed sets).
-    profile_processes = set()
-    for fld in (flex_data.process_profile_upper,
-                flex_data.process_profile_lower,
-                flex_data.process_profile_fixed):
-        if fld is not None and fld.height > 0 and "p" in fld.columns:
-            profile_processes.update(fld["p"].to_list())
-    s.process_profile = pd.Index(sorted(profile_processes), name="process")
 
     # process_online / process_online_integer / process_online_linear —
     # processes with unit commitment.
@@ -851,6 +857,24 @@ def read_sets(
     else:
         s.dtt_within_period = empty_multi_index(["solve", "period", "time", "t_previous_within_period"])
 
+    # dtt_within_solve — (solve, period, time, d_previous, t_previous_within_solve): the bind_within_solve
+    # predecessors that differ from dtttdt's (with a stochastic fan in the solve's first period, the first step of
+    # each root forecast continues from the last step of its own path); the model's lag
+    # (FlexData.dtttdt_within_solve).  Empty when that lag is dtttdt's.
+    ws_lag = getattr(flex_data, "dtttdt_within_solve", None)
+    if ws_lag is not None and ws_lag.height > 0 and flex_data.dtttdt is not None:
+        lag_cols = ("d", "t", "d_previous", "t_previous_within_solve")
+        ws_u = ws_lag.select(pl.col(c).cast(pl.Utf8) for c in lag_cols)
+        base_u = flex_data.dtttdt.select(pl.col(c).cast(pl.Utf8) for c in lag_cols)
+        pdf = (ws_u.join(base_u, on=list(lag_cols), how="anti")
+               .unique().sort("d", "t")
+               .select(pl.lit(solve_name).alias("solve"), *lag_cols)
+               .to_pandas())
+        s.dtt_within_solve = pd.MultiIndex.from_frame(
+            pdf, names=["solve", "period", "time", "d_previous", "t_previous_within_solve"])
+    else:
+        s.dtt_within_solve = empty_multi_index(["solve", "period", "time", "d_previous", "t_previous_within_solve"])
+
     # dtt — typically (d, t, t_previous). Derive from dtttdt if available.
     # Sort by (solve, period, time, t_previous) so the resulting
     # MultiIndex follows the canonical iteration order — without
@@ -1046,6 +1070,8 @@ def read_sets(
             ("flow_from_commodity_eff", "source"),
             ("flow_from_commodity_noEff", "source"),
             ("flow_to_commodity", "sink"),
+            # The start-up input nodes of a commodity (unit__inputNode.startup_input_method).
+            ("startup_from_commodity", "n"),
         ),
     )
     # Commodities priced on a ladder (price_ladder_annual / price_ladder_cumulative) — calc_costs excludes
@@ -1057,7 +1083,7 @@ def read_sets(
     # rows for every co2_content commodity consumed, even when no group
     # prices or caps it — ``_CO2_EMISSION_FLOW_ATTRS`` alone is empty in
     # that case and under-reports emissions as 0 (#see read_sets diagnosis).
-    _co2_phys_pc_n = _physical_co2_emission_pieces(flex_data)
+    _co2_phys_pc_n = _physical_co2_emission_pieces(flex_data) + _startup_co2_emission_pieces(flex_data)
     _co2_phys_c_n = [
         fr.select("commodity", "node") for fr in _co2_phys_pc_n
     ]
@@ -1154,6 +1180,7 @@ def read_sets(
     # when nodeGroupDispatch features are configured.  No FlexData
     # field carries these directly today.
     s.nodeGroupDispatch = pd.Index([], name="group", dtype="object")
+    s.flowAggregator = pd.Index([], name="group", dtype="object")
     s.nodeGroupIndicators = pd.Index([], name="group", dtype="object")
     s.flowGroupIndicators = pd.Index([], name="group", dtype="object")
     s.nodeGroupDispatch__connection_Not_in_aggregate = empty_multi_index(
@@ -1249,6 +1276,35 @@ def _series_or_df_has_solve(obj) -> bool:
     return False
 
 
+def _set_is_solve_keyed(obj) -> bool:
+    return _multi_index_has_solve(obj) or _series_or_df_has_solve(obj)
+
+
+def with_static_attrs(ns: SimpleNamespace, static_ns: SimpleNamespace, solve_keyed) -> SimpleNamespace:
+    """``ns`` with every attribute that is not solve-keyed (``solve_keyed(value)`` False) taken from ``static_ns``.
+
+    The static sets / parameters of a sub-solve whose ``reduce_*_detail_method`` reduced its data come from its
+    pre-transform data (``preprocess._reduce_detail.output_static_view``), the solve-keyed ones from the reduced
+    data, so a reduced last solve does not erase the tables of earlier full solves."""
+    out = SimpleNamespace()
+    for attr, value in vars(ns).items():
+        setattr(out, attr, value if solve_keyed(value) or not hasattr(static_ns, attr)
+                else getattr(static_ns, attr))
+    return out
+
+
+def read_sets_static(flex_data: "FlexData", solution, *, solve_name: str = "solve") -> SimpleNamespace:
+    """:func:`read_sets` of ``flex_data``, with the static sets of its output static view when the cascade reduced
+    its detail (:func:`with_static_attrs`); the plain :func:`read_sets` otherwise."""
+    from flextool.engine.preprocess._reduce_detail import static_data
+
+    ns = read_sets(flex_data, solution, solve_name=solve_name)
+    view = static_data(flex_data)
+    if view is flex_data:
+        return ns
+    return with_static_attrs(ns, read_sets(view, solution, solve_name=solve_name), _set_is_solve_keyed)
+
+
 def read_sets_multi(
     steps: "list[tuple[str, FlexData, Solution]] | list[tuple[str, FlexData]]",
     solution: "Solution | None" = None,
@@ -1260,7 +1316,8 @@ def read_sets_multi(
     (``period``, ``dt``, ``d_realized_period``, ``dt_realize_dispatch``,
     ``d_realize_invest``, ``ed_invest``, ``dtttdt``, etc.) are unioned
     across sub-solves; static set attributes (``node``, ``process``,
-    ``upDown``, …) are taken from the last step (invariant).
+    ``upDown``, …) are taken from the last step (invariant), from its
+    pre-transform data when its detail was reduced (:func:`read_sets_static`).
     """
     if not steps:
         raise ValueError("read_sets_multi: steps must be non-empty")
@@ -1277,8 +1334,10 @@ def read_sets_multi(
 
     per_step = [
         (s[0], read_sets(s[1], _step_solution(s), solve_name=s[0]))
-        for s in steps
+        for s in steps[:-1]
     ]
+    per_step.append((steps[-1][0], read_sets_static(steps[-1][1], _step_solution(steps[-1]),
+                                                    solve_name=steps[-1][0])))
     last_ns = per_step[-1][1]
     if len(per_step) == 1:
         return last_ns

@@ -74,15 +74,16 @@ class CapArg:
         return ceiling if self.maximum is None else min(self.maximum, ceiling)
 
     def resolve(self, value: Any, caps: Caps) -> int:
-        """*value* clamped to 1…the limit; the default when it is missing, not a number or NaN (``+inf`` is the
-        limit, ``-inf`` 1: Python's JSON reads ``Infinity`` and ``NaN``)."""
+        """*value* clamped to 1…the limit; the default when it is missing, not a number, NaN or 0 or less (a
+        model's placeholder for "no limit given", ``-inf`` included); ``+inf`` is the limit (Python's JSON reads
+        ``Infinity`` and ``NaN``).  A deliberate small limit (1) is kept."""
         top = self.limit(caps)
         if (value is None or isinstance(value, bool) or not isinstance(value, (int, float))
-                or (isinstance(value, float) and math.isnan(value))):
+                or (isinstance(value, float) and math.isnan(value)) or value <= 0):
             base = self.default if self.default is not None else getattr(caps, self.field)
             return max(1, min(int(base), top))
         if isinstance(value, float) and math.isinf(value):
-            return top if value > 0 else 1
+            return top
         return max(1, min(int(value), top))
 
 

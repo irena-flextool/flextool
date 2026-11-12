@@ -11,6 +11,11 @@ lift
     Rewrite ``pyproject.toml`` in place so every capped dependency keeps only
     its lower bound (``<``/``<=`` dropped, ``==X``/``~=X`` turned into
     ``>=X``), and save the original requirement strings to a JSON file.
+    Both ``[project] dependencies`` and every
+    ``[project.optional-dependencies]`` group are lifted (the ``compat``
+    extra repeats the core polars requirement and must stay in step with
+    it).  The caps file has one entry per package name: the first
+    occurrence, which is the core requirement when there is one.
 report
     Print a markdown table: each capped package, its original spec, the
     installed version and whether the installed version exceeds the cap.
@@ -75,23 +80,44 @@ def _requirement_text(req: Requirement, spec: SpecifierSet) -> str:
     return text
 
 
+def _all_requirements(data: dict) -> list[str]:
+    """Requirement strings of ``[project] dependencies`` followed by every
+    ``[project.optional-dependencies]`` group, in file order."""
+    project = data["project"]
+    raws = list(project.get("dependencies", []))
+    for group in project.get("optional-dependencies", {}).values():
+        raws.extend(group)
+    return raws
+
+
 def lift(pyproject: Path, caps_out: Path) -> dict[str, str]:
-    """Drop upper bounds in ``pyproject``; return {name: original spec}."""
+    """Drop upper bounds in ``pyproject``; return {name: original spec}.
+
+    Lifts the core dependencies and every optional-dependency group; a
+    package listed more than once is recorded under its first occurrence.
+    """
     data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     text = pyproject.read_text(encoding="utf-8")
     caps: dict[str, str] = {}
-    for raw in data["project"]["dependencies"]:
+    raws = _all_requirements(data)
+    done: set[str] = set()
+    for raw in raws:
+        if raw in done:
+            continue
+        done.add(raw)
         req = Requirement(raw)
         if not _is_capped(req):
             continue
         new = _requirement_text(req, _lifted_spec(req))
         pattern = re.compile(r'(["\'])' + re.escape(raw) + r"\1")
         text, count = pattern.subn(lambda m: m.group(1) + new + m.group(1), text)
-        if count != 1:
+        expected = raws.count(raw)
+        if count != expected:
             raise SystemExit(
-                f"could not locate dependency {raw!r} exactly once in {pyproject}"
+                f"found dependency {raw!r} {count} times in {pyproject}, "
+                f"expected {expected}"
             )
-        caps[req.name] = _spec_text(req.specifier)
+        caps.setdefault(req.name, _spec_text(req.specifier))
         print(f"lifted: {raw!r} -> {new!r}")
     pyproject.write_text(text, encoding="utf-8")
     caps_out.write_text(json.dumps(caps, indent=2) + "\n", encoding="utf-8")

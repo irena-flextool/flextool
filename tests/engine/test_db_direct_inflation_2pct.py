@@ -174,10 +174,11 @@ def _val(param, *idx_keys: str) -> float:
 
 
 def _approx(actual: float, expected: float, *, abs_tol: float = 1e-9) -> bool:
-    """Strict bit-near comparison.  abs_tol=1e-9 is tight enough that
-    only IEEE-754 last-bit ULP differences pass; logical drift fails.
+    """Strict bit-near comparison: abs_tol=1e-9, or 1e-14 relative (a few
+    ULP of a 1e6-scale annuity, where the code's ``(1+r)^-n`` and the
+    oracle's ``(1/(1+r))^n`` round differently); logical drift fails.
     """
-    return math.isclose(actual, expected, abs_tol=abs_tol, rel_tol=0.0)
+    return math.isclose(actual, expected, abs_tol=abs_tol, rel_tol=1e-14)
 
 
 # ---------------------------------------------------------------------------

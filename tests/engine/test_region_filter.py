@@ -335,3 +335,47 @@ def test_region_ramp_sets_keep_only_region_arcs(lh2_data) -> None:
     sA = split(data, regions=["region_A", "region_B", "region_C"])[0]
     kept = sA.data.process_source_sink_ramp_limit_sink_up["p"].cast(pl.Utf8).unique().to_list()
     assert kept == ["coal_A"]
+
+
+# ---------------------------------------------------------------------------
+# A capacity-margin / inertia / non-synchronous group across regions
+# ---------------------------------------------------------------------------
+
+
+def _with_fields(data, **fields):
+    import dataclasses
+
+    new = dataclasses.replace(data)
+    for k, v in fields.items():
+        setattr(new, k, v)
+    new._axis_enums = getattr(data, "_axis_enums", None)
+    return new
+
+
+def _inertia_limit(group: str, data) -> "object":
+    from polar_high import Param
+
+    dt = data.dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+    return Param(("g", "d", "t"), dt.with_columns(g=pl.lit(group), value=pl.lit(10.0)).select("g", "d", "t", "value"))
+
+
+class TestFeatureGroupAcrossRegions:
+    """``daily_group`` has h2 / lh2 nodes in region_A, region_B and region_C: a group row over it would be
+    required once per region, so an active inertia group over it is an error; an inactive one (no limit, so no
+    row) is not checked."""
+
+    def test_inertia_group_across_regions_raises(self, lh2_data) -> None:
+        data = _with_fields(lh2_data, groupInertia=pl.DataFrame({"g": ["daily_group"]}),
+                            pdtGroup_inertia_limit=_inertia_limit("daily_group", lh2_data))
+        with pytest.raises(RuntimeError, match=r"inertia group 'daily_group' has nodes in regions region_A, "
+                                               r"region_B, region_C.*one group per region"):
+            split(data, regions=["region_A", "region_B", "region_C"])
+
+    def test_inactive_group_is_not_checked(self, lh2_data) -> None:
+        data = _with_fields(lh2_data, groupInertia=pl.DataFrame({"g": ["daily_group"]}), pdtGroup_inertia_limit=None)
+        assert len(split(data, regions=["region_A", "region_B", "region_C"])) == 3
+
+    def test_group_in_one_region_is_kept(self, lh2_data) -> None:
+        data = _with_fields(lh2_data, groupInertia=pl.DataFrame({"g": ["region_A"]}),
+                            pdtGroup_inertia_limit=_inertia_limit("region_A", lh2_data))
+        assert len(split(data, regions=["region_A", "region_B", "region_C"])) == 3

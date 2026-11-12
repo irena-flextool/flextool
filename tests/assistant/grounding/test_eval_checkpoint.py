@@ -285,7 +285,7 @@ def _stopped_at_two(evaluator, grounding, out: Path, runs: Runs) -> None:
     assert evaluator.partial_path(out, "G01__medium__r1").is_file()
 
 
-@pytest.mark.parametrize("change", ["window", "instructions", "format", "missing", "tampered"])
+@pytest.mark.parametrize("change", ["window", "instructions", "format", "missing", "tampered", "behaviour"])
 def test_a_checkpoint_that_no_longer_fits_starts_the_cell_again(evaluator, grounding, tmp_path, monkeypatch,
                                                                 change):
     """A changed window (another setting), changed instructions, a checkpoint of another format, one with a field
@@ -300,7 +300,8 @@ def test_a_checkpoint_that_no_longer_fits_starts_the_cell_again(evaluator, groun
     partial = json.loads(path.read_text(encoding="utf-8"))
     why = {"window": "the level setting changed: window", "instructions": "the instructions or tools changed",
            "format": "a checkpoint of another format", "missing": "a checkpoint of another format",
-           "tampered": "the checkpoint no longer gives the same request"}[change]
+           "tampered": "the checkpoint no longer gives the same request",
+           "behaviour": "the assistant's behaviour changed since this checkpoint"}[change]
     if change == "window":
         runs.window = 200_000
     elif change == "instructions":
@@ -310,6 +311,8 @@ def test_a_checkpoint_that_no_longer_fits_starts_the_cell_again(evaluator, groun
         partial["format"] = 0
     elif change == "missing":
         del partial["current"]["notices"]
+    elif change == "behaviour":
+        del partial["setting_key"]["behaviour"]         # a checkpoint written before ASSISTANT_BEHAVIOUR
     else:
         partial["session"]["conversation"]["messages"][0]["text"] += " (changed)"
     evaluator.write_json(path, partial)
@@ -645,3 +648,32 @@ def test_a_checkpoint_that_cannot_be_written_is_said_once(evaluator, grounding, 
         "G01__medium__r1: the checkpoint could not be written (read-only folder); the cell goes on without one."]
     record = evaluator.read_cells(out)["G01__medium__r1"]
     assert record["requests_by_day"] == {today(): 4} and no_partials(evaluator, out)
+
+
+# --- the key every connection carries -----------------------------------------------------------------------------
+class KeyedRuns(Runs):
+    """Runs that also keep the key of every connection the runner builds (the probe's and each cell's)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.keys: list[object] = []
+
+    def prober(self, preset, conn, cancel, *, needed):
+        self.keys.append(conn.api_key)
+        return super().prober(preset, conn, cancel, needed=needed)
+
+    def factory(self, preset, conn):
+        self.keys.append(conn.api_key)
+        return super().factory(preset, conn)
+
+
+def test_every_connection_carries_the_resolved_key_across_settings_and_cells(evaluator, grounding, tmp_path):
+    """Each cell's checkpoint key (its level setting) is not the API key: over two level settings and two repeats
+    every connection, the probe's and the four cells', is built with the key the environment gives
+    (``OPENROUTER_API_KEY``, the ``key`` fixture), a string, never a level setting's dict."""
+    runs = KeyedRuns()
+    assert run(evaluator, grounding, tmp_path / "out", runs, "--repeat", "2", levels="basic,standard") == 0
+    assert sorted(evaluator.read_cells(tmp_path / "out")) == sorted(
+        evaluator.cell_id("G01", level, r) for level in ("small", "medium") for r in (1, 2))
+    # One probe (both settings send the same model: probed once) and one backend per cell.
+    assert runs.keys == ["sk-or-test-key"] * 5

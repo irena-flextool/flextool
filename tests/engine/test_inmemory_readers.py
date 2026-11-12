@@ -111,7 +111,6 @@ _REQUIRED_SET_ATTRS: tuple[str, ...] = (
     "entityDivest",
     "process_unit",
     "process_connection",
-    "process_profile",
     "process_online",
     "process_online_integer",
     "process_online_linear",

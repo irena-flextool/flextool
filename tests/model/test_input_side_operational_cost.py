@@ -1,6 +1,6 @@
 """``other_operational_cost`` on the input side of a unit with an efficiency is a cost.
 
-docs/reference.md: ``other_operational_cost`` on unit--inputNode / unit--outputNode is
+docs/reference/units.md: ``other_operational_cost`` on unit--inputNode / unit--outputNode is
 "[CUR/MWh] Other operational variable costs for energy flows".  For a unit with a constant
 efficiency, an input-side cost ``c`` per MWh of fuel is economically the same as an
 output-side cost ``c·slope`` per MWh of output (``slope = 1 / efficiency``).  The objective

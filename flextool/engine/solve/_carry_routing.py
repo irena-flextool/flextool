@@ -5,8 +5,8 @@ or a deeper one (owner decision Q-c15e-B, with the nested clarification of 2026-
 
 * a later roll of a rolling solve continues from the previous roll;
 * a later solve of a sequence continues from the previous solve (``storage_start_end_method`` affects only the start
-  of the whole model, reference.md);
-* an upper-level solve continues from the dispatch solved below it (the upward feedback of how_to.md: "the dispatch
+  of the whole model, reference/nodes.md);
+* an upper-level solve continues from the dispatch solved below it (the upward feedback of how_to/solve_sequences.md: "the dispatch
   solves can then send the end storage values to the investment and long-term storage solves as start values");
 * a lower nested level starts from ``fix_start`` at its first appearance (no realised state exists at its level or
   below), and later instances of the level continue from the latest realised state at that level or below; the
@@ -162,10 +162,15 @@ class CarryRouter:
 
     def step_carriers(self, solve: str, first_step: "tuple[str, str] | None") -> dict:
         """``{field: frame | None}`` of :data:`STEP_FIELDS` from the latest entry with a realised end step (all None
-        when there is none: the sub-solve is the first of its level)."""
+        when there is none: the sub-solve is the first of its level), plus ``unit_detail``: the producing solve's
+        ``reduce_unit_detail_method`` (``"none"`` without a producer), and ``online_left_out``: the processes it
+        left without online variables (empty without a producer)."""
         entries = [e for e in self.sources(solve, first_step) if e.end_step is not None]
         handoff = entries[-1].handoff if entries else None
         out = {f: (getattr(handoff, f, None) if handoff is not None else None) for f in STEP_FIELDS}
+        out["unit_detail"] = getattr(handoff, "unit_detail", "none") if handoff is not None else "none"
+        out["online_left_out"] = (frozenset(getattr(handoff, "online_left_out", ()) or ()) if handoff is not None
+                                  else frozenset())
         if self._end_of is not None:
             out["roll_end_step"] = with_end_position(out["roll_end_step"], self._end_of)
         return out

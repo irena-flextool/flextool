@@ -45,9 +45,12 @@ from typing import Any
 import pandas as pd
 from spinedb_api import DatabaseMapping, import_data
 from flextool.update_flextool.db_handle import open_database_mapping
+from flextool._file_lock import lock_exclusive as _lock_exclusive, unlock as _unlock
 from spinedb_api.parameter_value import Map
 
+from flextool import units_of_measure as uom
 from flextool.process_outputs._output_meta import FACTOR, result_key_summary
+from flextool.process_outputs.solve_order import period_solve_labels
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +136,10 @@ SPINEDB_OUTPUT_SPEC: dict[str, dict[str, Any]] = {
                                  entity_dims=2, has_time=False, category=None),
     "unit_inputNode_d_ee": dict(ec="unit__node", param="flow_annualized",
                                 entity_dims=2, has_time=False, category=None),
+    "unit_startup_energy_dt_ee": dict(ec="unit__node", param="startup_energy_t",
+                                      entity_dims=2, has_time=True, category=None),
+    "unit_startup_energy_d_ee": dict(ec="unit__node", param="startup_energy_annualized",
+                                     entity_dims=2, has_time=False, category=None),
     "unit_ramp_outputs_dt_ee": dict(ec="unit__node", param="ramp_t",
                                     entity_dims=2, has_time=True, category=None),
     "unit_ramp_inputs_dt_ee": dict(ec="unit__node", param="ramp_t",
@@ -265,6 +272,16 @@ SPINEDB_OUTPUT_SPEC: dict[str, dict[str, Any]] = {
                                                 param="slack_capacity_margin",
                                                 entity_dims=1, has_time=False,
                                                 category=None),
+    # The capacity margin of each solve at the group's binding step (rows solve, period, group, binding_time;
+    # the binding step is not a time axis: the value is Map category -> solve -> period).
+    "nodeGroup_capacity_margin_d_g": dict(ec="group", param="capacity_margin",
+                                          entity_dims=1, has_time=False,
+                                          category="header", entity_index="group"),
+    "nodeGroup_capacity_margin_entity_d_g": dict(ec="group",
+                                                 param="capacity_margin_contribution",
+                                                 entity_dims=1, has_time=False,
+                                                 category="header",
+                                                 entity_index="group"),
     "nodeGroup_slack_inertia_dt_g": dict(ec="group", param="slack_inertia_t",
                                          entity_dims=1, has_time=True,
                                          category=None),
@@ -276,6 +293,12 @@ SPINEDB_OUTPUT_SPEC: dict[str, dict[str, Any]] = {
                                            param="slack_reserve_t",
                                            entity_dims=3, has_time=True,
                                            category=None),
+    # The reserve requirement (#234): one Map parameter per table, its quantity column level the outermost key
+    # (category "header").  The per-provider table stays out (it would need a 5-dimensional class).
+    "nodeGroup_reserve_dt_eegp": dict(ec="group__reserve__upDown", param="requirement_t",
+                                      entity_dims=3, has_time=True, category="header"),
+    "nodeGroup_reserve_d_eegp": dict(ec="group__reserve__upDown", param="requirement",
+                                     entity_dims=3, has_time=False, category="header"),
     # --- unit/connection__reserve__upDown__node --------------------------
     "process_reserve_upDown_node_dt_eppe": dict(
         ec="unit__reserve__upDown__node", param="reservation_t",
@@ -433,48 +456,6 @@ def _top_up_schema_if_stale(db_url: str) -> None:
                 db.close()
         finally:
             _unlock(lock_fh)
-
-
-def _lock_exclusive(lock_fh) -> None:
-    """Acquire a blocking exclusive lock on an open file handle.
-
-    Portable across POSIX (``fcntl.flock``) and Windows (``msvcrt.locking``);
-    ``fcntl`` does not exist on Windows, so dispatch on what imports."""
-    try:
-        import fcntl
-    except ImportError:
-        import msvcrt
-        import time
-
-        # ``msvcrt.locking`` locks ``nbytes`` from the current file position;
-        # lock a single byte at offset 0.  Use the non-blocking variant in a
-        # retry loop so we block indefinitely rather than giving up after the
-        # ~10s LK_LOCK ceiling.
-        lock_fh.seek(0)
-        while True:
-            try:
-                msvcrt.locking(lock_fh.fileno(), msvcrt.LK_NBLCK, 1)
-                return
-            except OSError:
-                time.sleep(0.05)
-    else:
-        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
-
-
-def _unlock(lock_fh) -> None:
-    """Release a lock taken by :func:`_lock_exclusive` (portable)."""
-    try:
-        import fcntl
-    except ImportError:
-        import msvcrt
-
-        lock_fh.seek(0)
-        try:
-            msvcrt.locking(lock_fh.fileno(), msvcrt.LK_UNLCK, 1)
-        except OSError:
-            pass
-    else:
-        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 
 
 def _replace_with_retry(src: str, dst: str, *, attempts: int = 20,
@@ -656,8 +637,32 @@ def _import_schema(db_url: str) -> None:
         db.close()
 
 
+#: The results-database parameter that names a node's unit of measure.  Its definition is added to a results
+#: database only by a run with a node that is not MWh, so a default run leaves the database as before.
+NODE_UNIT_PARAMETER = "unit_of_measure"
+NODE_UNIT_DESCRIPTION = (
+    "[text] The node's unit_of_measure from the input data, written only when it is not MWh. The node's results "
+    "are in this unit instead of MW and MWh: flows and capacities per hour (m3 -> m3/h), storage and inflow in "
+    "the unit (m3), annual results per year (m3/a), prices in CUR per the unit (CUR/m3). The units in the other "
+    "descriptions are those of an MWh node.")
+
+
+def _node_unit_payload(unit_ctx, alternative_name: str) -> tuple[list, list[tuple]]:
+    """``(parameter_definitions, parameter_values)`` of the ``node.unit_of_measure`` values of a run whose
+    :class:`~flextool.process_outputs._output_meta.UnitContext` has nodes that are not MWh (both empty
+    otherwise)."""
+    if unit_ctx is None or unit_ctx.is_default:
+        return [], []
+    # The default MWh makes Spine's value-or-default lookup right for every node and alternative (an MWh node,
+    # or every node of a default run's alternative, has no value of its own).
+    definitions = [("node", NODE_UNIT_PARAMETER, uom.DEFAULT_A, None, NODE_UNIT_DESCRIPTION)]
+    values = [("node", (node,), NODE_UNIT_PARAMETER, unit, alternative_name)
+              for node, unit in sorted(unit_ctx.node_units.items())]
+    return definitions, values
+
+
 def write_spinedb(results, s, db_url, scenario_name, solve_name,
-                  *, purge_alternative=True, par=None) -> int:
+                  *, purge_alternative=True, par=None, unit_ctx=None) -> int:
     """Write the processed ``results`` into the SpineDB at ``db_url``.
 
     Parameters
@@ -681,6 +686,9 @@ def write_spinedb(results, s, db_url, scenario_name, solve_name,
     par : object, keyword-only, default None
         The engine ``par`` (parameters) namespace.  Required only for the
         two discount-factor params (#33/#34); when None those are skipped.
+    unit_ctx : UnitContext, keyword-only, default None
+        The run's node units.  When some node is not MWh, ``node.unit_of_measure`` is defined (if missing) and
+        written for those nodes; otherwise the database gets nothing new.
 
     Returns
     -------
@@ -696,7 +704,15 @@ def write_spinedb(results, s, db_url, scenario_name, solve_name,
     entities, parameter_values, entity_alternatives = collect_spinedb_payload(
         results, s, alternative_name, solve_name, par=par,
     )
+    unit_definitions, unit_values = _node_unit_payload(unit_ctx, alternative_name)
+    if unit_values:
+        parameter_values = parameter_values + unit_values
+        known = set(entities)
+        new = sorted({(ec, byname) for ec, byname, *_rest in unit_values} - known)
+        entities = sorted(entities + new, key=lambda x: (x[0], x[1]))
+        entity_alternatives = [(ec, byname, alternative_name, True) for ec, byname in entities]
 
+    extra = {"parameter_definitions": unit_definitions} if unit_definitions else {}
     with open_database_mapping(db_url) as db:
         count, errors = import_data(
             db,
@@ -704,6 +720,7 @@ def write_spinedb(results, s, db_url, scenario_name, solve_name,
             entities=entities,
             parameter_values=parameter_values,
             entity_alternatives=entity_alternatives,
+            **extra,
         )
         if errors:
             raise RuntimeError(
@@ -751,7 +768,7 @@ def collect_spinedb_payload(results, s, alternative_name, solve_name,
             logger.debug("spinedb: table '%s' empty — skipped", table_name)
             continue
         try:
-            pvs = df_to_spine_maps(df, spec, s, solve_name, par=par,
+            pvs = df_to_spine_maps(df, spec, s, solve_name, par=par, table_name=table_name,
                                    alternative_name=alternative_name)
         except Exception:
             logger.exception(
@@ -815,7 +832,7 @@ def _member_entities(ec, byname, member_classes):
 # DataFrame -> Spine Map serialization
 # ---------------------------------------------------------------------------
 
-def df_to_spine_maps(df, spec, s, solve_name, *, par=None, alternative_name=None):
+def df_to_spine_maps(df, spec, s, solve_name, *, par=None, alternative_name=None, table_name=None):
     """Serialize one engine DataFrame into a list of
     ``(entity_class, byname, value)`` triples per :data:`SPINEDB_OUTPUT_SPEC`.
 
@@ -833,9 +850,9 @@ def df_to_spine_maps(df, spec, s, solve_name, *, par=None, alternative_name=None
     # Entity-in-index frames (capacity, indicator): the entity is an index
     # level, columns are categories.
     if spec.get("entity_index"):
-        return _serialize_entity_index(df, spec, s, solve_name)
+        return _serialize_entity_index(df, spec, s, solve_name, table_name=table_name)
 
-    df = _ensure_solve_level(df, s, has_time)
+    df = _ensure_solve_level(df, s, has_time, table_name=table_name)
 
     # Reduce the column MultiIndex / Index to a uniform tuple form and
     # split into (entity-part, category-part).  Each yield is
@@ -1092,7 +1109,7 @@ def _is_empty(val) -> bool:
 # Solve reconstruction (mirrors the CSV branch, write_outputs.py:940-978)
 # ---------------------------------------------------------------------------
 
-def _ensure_solve_level(df, s, has_time):
+def _ensure_solve_level(df, s, has_time, table_name=None):
     """Add a ``solve`` index level to ``df`` if it lacks one, mirroring the
     CSV branch logic.  Returns ``df`` unchanged when ``solve`` is already
     present or no ``period`` level exists."""
@@ -1118,10 +1135,9 @@ def _ensure_solve_level(df, s, has_time):
             names=["solve"] + list(df.index.names),
         )
     else:
-        unique_sp = s.solve_period[
-            ~s.solve_period.droplevel("solve").duplicated(keep="last")]
-        period_to_solve = dict(zip(unique_sp.get_level_values("period"),
-                                   unique_sp.get_level_values("solve")))
+        period_to_solve = period_solve_labels(
+            s.solve_period, getattr(s, "solve_invest_period", None),
+            table=table_name)
         if df.index.nlevels == 1:
             solve_vals = df.index.map(lambda p: period_to_solve.get(p, ""))
             df.index = pd.MultiIndex.from_arrays(
@@ -1185,7 +1201,7 @@ def _serialize_total_series(series, spec):
     return [(spec["ec"], spec["fixed_entity"], Map(keys, vals))]
 
 
-def _serialize_entity_index(df, spec, s, solve_name):
+def _serialize_entity_index(df, spec, s, solve_name, *, table_name=None):
     """Serialize an entity-in-index frame (capacity / indicator): index is
     ``(entity[, period[, time]])`` and columns are categories.
 
@@ -1202,7 +1218,7 @@ def _serialize_entity_index(df, spec, s, solve_name):
     result: list[tuple] = []
     for entity, sub in df.groupby(level=entity_level, sort=False):
         sub = sub.droplevel(entity_level)
-        sub = _ensure_solve_level(sub, s, has_time)
+        sub = _ensure_solve_level(sub, s, has_time, table_name=table_name)
         cat_keys: list[str] = []
         cat_vals: list = []
         for col in sub.columns:
@@ -1234,9 +1250,7 @@ def _discount_factor_map(par, attr, s, solve_name):
     period_to_solve = None
     sp = getattr(s, "solve_period", None)
     if sp is not None:
-        unique_sp = sp[~sp.droplevel("solve").duplicated(keep="last")]
-        period_to_solve = dict(zip(unique_sp.get_level_values("period"),
-                                   unique_sp.get_level_values("solve")))
+        period_to_solve = period_solve_labels(sp)
     by_solve: dict[str, list] = {}
     order: list[str] = []
     for period, val in series.items():

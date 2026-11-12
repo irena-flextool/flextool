@@ -30,6 +30,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess.emit._period_params import (
     derive_pdtNodeInflow,
     derive_pdtNodeInflow_vectorized,
@@ -110,7 +111,7 @@ def _pbt_inflow_from_provider(p) -> dict:
     from flextool.engine.preprocess.emit._period_params import _cell_str
 
     out: dict = {}
-    df = p.get("input/pbt_node_inflow")
+    df = p.get("solve_data/pbt_node_inflow")
     if df is None:
         return out
     for row in df.iter_rows():
@@ -337,7 +338,7 @@ def test_vectorized_pdtNodeInflow_synthetic_branches(tmp_path):
     # pbt_node_inflow: (node, branch, time_start, time, value).  stochN b1
     # under d1 hit by TWO (tb, ts) combos (b1×s1, b1×s2) → multi-term
     # stoch sum 5+5 = 10.  b1 also reached via parent pA under dchild.
-    put("input", "pbt_node_inflow", pl.DataFrame({
+    put("solve_data", "pbt_node_inflow", pl.DataFrame({
         "node": ["stochN", "stochN"],
         "branch": ["b1", "b1"],
         "time_start": ["s1", "s2"],
@@ -433,3 +434,41 @@ def test_vectorized_pdtNodeInflow_new_step_base_steps(tmp_path):
     leg = {r[2]: r[3] for r in df_legacy.iter_rows()}
     assert leg == {"t1": repr(-20.0), "t3": repr(20.0)}, leg
     assert _assert_parity(df_legacy, df_vec, "new-step-base-steps") == "A"
+
+
+@pytest.mark.parametrize("case", ["single", "rolling_lookahead", "rolling_uncovered"])
+def test_vectorized_pdtNodeInflow_fan_start_fallback(case, tmp_path):
+    """Item 228: a non-empty ``fan_for_d`` (``branch_time_start``) -- each fold cell reads the forecast at its
+    period's own first step, else at the fan start (a roll's look-ahead period: the fan start only; a cell it
+    does not cover that a later forecast does is an input error in both twins) -- byte-identical in both twins,
+    values hand-derived in
+    :mod:`tests.engine._fan_fold_fixture` (a cell without a fold value takes branch 3: 0.0 here)."""
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+    from tests.engine._fan_fold_fixture import (
+        STEPS, expected_fold, fan_case, pbt_frame, put_fan_scaffold, uncovered_error)
+
+    provider = FlexDataProvider()
+
+    def put(parent: str, stem: str, df: pl.DataFrame) -> None:
+        provider.put(f"{parent}/{stem}", df)
+        provider.put(stem, df)
+
+    rolling, rows = fan_case(case)
+    put_fan_scaffold(put, rolling=rolling)
+    put("solve_data", "pbt_node_inflow", pbt_frame({"node": "entity"}, rows=rows))
+    put("input", "node", pl.DataFrame({"node": ["X", "Y"]}))
+    put("input", "group__node", pl.DataFrame({"group": ["g"], "node": ["X"]}))
+
+    inp, sdd = tmp_path / "input", tmp_path / "solve_data"
+    if case == "rolling_uncovered":
+        for derive in (derive_pdtNodeInflow, derive_pdtNodeInflow_vectorized):
+            with pytest.raises(FlexToolConfigError, match=uncovered_error("node 'Y'", "inflow")):
+                derive(inp, sdd, provider=provider)
+        return
+    df_legacy = derive_pdtNodeInflow(inp, sdd, provider=provider)
+    df_vec = derive_pdtNodeInflow_vectorized(inp, sdd, provider=provider)
+    leg = {(r[0], r[1], r[2]): r[3] for r in df_legacy.iter_rows()}
+    for e in ("X", "Y"):
+        for d, t in STEPS:
+            assert leg[(e, d, t)] == repr(expected_fold(rolling).get((e, d, t), 0.0)), (e, d, t, leg)
+    assert _assert_parity(df_legacy, df_vec, "fan fallback") == "A"

@@ -94,10 +94,11 @@ class Rig:
         self._next = 0
         self.worker.start()
 
-    def job(self, text: str = "question", scenario: str | None = None) -> TurnJob:
+    def job(self, text: str = "question", scenario: str | None = None, *, rewind: int | None = None,
+            seed: str | None = None, again: bool = False) -> TurnJob:
         self._next += 1
         snapshot = ContextSnapshot(project="Project", scenario=scenario, front_end="gui")
-        job = TurnJob(self._next, text, snapshot)
+        job = TurnJob(self._next, text, snapshot, rewind=rewind, seed=seed, again=again)
         self.worker.submit(job)
         return job
 

@@ -166,8 +166,10 @@ def _emit_over_grid(
     # The three ingested frames land under the SAME keys input_derivation
     # registers them under (_provider_key of each spec's filename).
     prov.put("input/energy_margin_adder", ingested["scalar"])
-    prov.put("input/pd_energy_margin_adder", ingested["pd"])
-    prov.put("input/pdt_energy_margin_adder", ingested["pdt"])
+    # The emitter reads the map frames from solve_data/ (create_averaged_timeseries passes them through
+    # verbatim without new_stepduration).
+    prov.put("solve_data/pd_energy_margin_adder", ingested["pd"])
+    prov.put("solve_data/pdt_energy_margin_adder", ingested["pdt"])
 
     state = SimpleNamespace(
         solve=SimpleNamespace(invest_periods={"S": [(d,) for d, _t in grid]}),

@@ -209,18 +209,22 @@ def effective_realized_invest_periods(
 
     Mirrors the ``realized_invest_periods_of_current_solve`` emission in
     ``_run_model``: ``realized_invest_periods`` (the ``p_in`` member
-    of each ``(p_from, p_in)`` tuple), falling back to ``realized_periods``
-    when ``realized_invest_periods`` is empty but both ``invest_periods``
-    and ``realized_periods`` are set.  Order preserved, duplicates removed.
+    of each ``(p_from, p_in)`` tuple), falling back to the
+    ``realized_periods`` that are also ``invest_periods`` when
+    ``realized_invest_periods`` is empty but both ``invest_periods`` and
+    ``realized_periods`` are set (#319).  Order preserved (authored order
+    of the source list), duplicates removed.  ``_run_model`` emits this
+    result as ``realized_invest_periods_of_current_solve``, so the overlap
+    warning and the emission share one source.
     """
     tuples = list(realized_invest_periods.get(solve, []))
-    if (
-        not tuples
-        and invest_periods.get(solve)
-        and realized_periods.get(solve)
-    ):
-        tuples = list(realized_periods.get(solve, []))
-    return list(dict.fromkeys(t[1] for t in tuples))
+    if tuples:
+        return list(dict.fromkeys(t[1] for t in tuples))
+    invest = {t[1] for t in invest_periods.get(solve, [])}
+    realized = realized_periods.get(solve, [])
+    if not invest or not realized:
+        return []
+    return list(dict.fromkeys(t[1] for t in realized if t[1] in invest))
 
 
 def find_realized_invest_overlaps(

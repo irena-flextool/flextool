@@ -44,6 +44,7 @@ from flextool import run_record
 from flextool.cli._console import run_tool
 from flextool.cli._timing import TimingRecorder
 from flextool.run_options import RunOptions
+from flextool._solver_config_source import input_db_filesystem_path, resolve_solver_config_source
 from flextool._thread_budget import header_text, peek_mismatch
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 from spinedb_api.filters.tools import name_from_dict
@@ -179,7 +180,7 @@ def _scan_failure_error(last_step, scenario_name):
     return {"type": "SolveNotAccepted", "message": f"solve {name!r} did not solve to optimality"}
 
 
-def _run_solve(args, scenario_name, work_folder, timing_recorder, run_options=None):
+def _run_solve(args, scenario_name, work_folder, timing_recorder, run_options=None, solver_config_source=None):
     """Δ.21 — drive the native polar_high cascade.
 
     Returns a tuple ``(return_code, last_step)`` where ``last_step``
@@ -211,6 +212,7 @@ def _run_solve(args, scenario_name, work_folder, timing_recorder, run_options=No
         work_folder=work_folder,
         csv_dump=csv_dump_on,
         run_options=run_options,
+        solver_config_source=solver_config_source,
     )
 
     # ``--csv-dump``: snapshot the last sub-solve's Provider to disk.
@@ -521,22 +523,7 @@ def _input_db_filesystem_path(input_db_url):
     ``mysql://``) or when the value is empty.  Does not touch the
     filesystem — purely string → path.
     """
-    if not input_db_url:
-        return None
-    # A non-sqlite scheme (mysql, postgresql, …) is not a local file.
-    if "://" in input_db_url and not input_db_url.startswith("sqlite:"):
-        return None
-    # Strip an appended Spine filter query-config, e.g.
-    # ``sqlite:///proj/input_sources/db.sqlite?spinedbfilter=...``.
-    # ``urlsplit`` keeps everything before ``?`` in ``.path`` for URLs and
-    # leaves a bare path untouched in ``.path`` too, but to stay aligned
-    # with the file-local ``.replace('sqlite:///', '')`` idiom we strip the
-    # scheme prefix first, then split off the query manually.
-    no_scheme = input_db_url.replace("sqlite:///", "", 1)
-    no_query = no_scheme.split("?", 1)[0]
-    if not no_query:
-        return None
-    return Path(no_query)
+    return input_db_filesystem_path(input_db_url)
 
 
 def _run_options_from_args(args):
@@ -560,6 +547,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('input_db_url', help='Database URL to connect to (can be copied from Toolbox workflow db item')
     parser.add_argument('output_db_url', metavar='DB_URL', nargs='?', default=None, help='Save information about result location to database for post-processing')
     parser.add_argument('--settings-db-url', help='Settings for post-processing')
+    parser.add_argument('--migrate', action='store_true', default=False,
+                        help='Migrate the input database to the current FlexTool version before the run, if it is '
+                             'older (the same migration as flextool-migrate-database).  A frozen database is not '
+                             'migrated: the run stops.  Parallel runs with --migrate on one database migrate it '
+                             'once; the others wait for it.  Without the flag, an older database is refused.')
     parser.add_argument('--scenario-name', help='Name for the scenario in the database that should be executed', nargs='?', default=None)
     parser.add_argument(
         '--debug',
@@ -609,6 +601,20 @@ def build_parser() -> argparse.ArgumentParser:
              'to reuse bases across them.  Environment variable: '
              'FLEXTOOL_BASIS_CACHE_DIR; the flag wins.',
     )
+    parser.add_argument(
+        '--solver-config-dir', metavar='PATH', default=None,
+        help='Folder of the solver option files (highs.opt, gurobi.opt, '
+             'cplex.opt, xpress.opt, copt.opt).  Unset: solver_config/ next '
+             'to the input database, then in the workspace of a GUI project '
+             'database (<workspace>/projects/<project>/input_sources/), then '
+             'in the Spine Toolbox project folder (--project-folder-file), '
+             'then in the current folder; when none has an option file, '
+             'FlexTool\'s defaults are used with a warning.  A solver whose '
+             'file is missing in the folder uses FlexTool\'s default.  The run '
+             'copies the files it used to <work folder>/solve_data/'
+             'solver_config/.  Environment variable: '
+             'FLEXTOOL_SOLVER_CONFIG_DIR; the flag wins.',
+    )
     parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
     parser.add_argument('--write-methods', type=str, nargs='+', default=None,
                         choices=['plot', 'parquet', 'excel', 'csv', 'spinedb'],
@@ -617,7 +623,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help='Target SpineDB URL for the spinedb write-method (default: <output-dir>/results.sqlite)')
     parser.add_argument('--output-config', metavar='PATH',
                         default=None,
-                        help='Path to output configuration file (default: templates/default_plots.yaml)')
+                        help='Path to output configuration file (default: the bundled flextool/schemas/default_plots.yaml)')
     parser.add_argument('--active-configs', type=str, nargs='+', default=None,
                         help='Active output configurations to use (default: default)')
     parser.add_argument('--plot-rows', type=int, nargs=2, default=None, metavar=('FIRST', 'LAST'),
@@ -663,6 +669,8 @@ def build_parser() -> argparse.ArgumentParser:
                              'Enables parallel scenario execution by isolating each run.')
     parser.add_argument('--only-first-file-per-plot', action='store_true', default=False,
                         help='Only produce the first file for each plot (quick overview mode)')
+    parser.add_argument('--write-plot-data', action='store_true', default=False,
+                        help='Also write the data drawn in each plot as a CSV file next to it (same name, .csv)')
     parser.add_argument('--region', metavar='GROUP_NAME', default=None,
                         help='Write the filtered inputs of one Benders region '
                              'to ``input_region_<GROUP_NAME>/`` and stop; no '
@@ -783,26 +791,35 @@ def build_parser() -> argparse.ArgumentParser:
                              'flag wins.')
     parser.add_argument('--solver-time-limit', type=float, default=None,
                         metavar='SECONDS',
-                        help='HiGHS wall-clock time limit '
-                             '(``time_limit`` option, seconds).  '
-                             'Unset (default) means no limit; 0 or a '
-                             'negative value is ignored with a warning.  It '
-                             'overrides a time_limit in highs.opt or a '
-                             'solve\'s solver_arguments.  Environment '
-                             'variable: FLEXTOOL_HIGHS_TIME_LIMIT; the '
-                             'flag wins.')
+                        help='Time limit of each solve in seconds, on every '
+                             'solver (HiGHS time_limit, Gurobi TimeLimit, '
+                             'CPLEX timelimit, Xpress MAXTIME, COPT '
+                             'TimeLimit).  Unset (default) means no limit; 0 '
+                             'or a negative value is ignored with a warning.  '
+                             'It overrides a time limit in the solver\'s '
+                             'option file (solver_config/<solver>.opt) or a '
+                             'solve\'s solver_arguments.  A MIP solve stopped '
+                             'at the limit keeps its best solution with a '
+                             'warning; an LP, or a solve without a solution, '
+                             'stops the run.  Environment variable: '
+                             'FLEXTOOL_SOLVER_TIME_LIMIT; the flag wins.  '
+                             '(FLEXTOOL_HIGHS_TIME_LIMIT still works for HiGHS '
+                             'only.)')
     parser.add_argument('--solver-mip-gap', type=float, default=None,
                         metavar='GAP',
-                        help='HiGHS MIP relative optimality gap '
-                             '(``mip_rel_gap`` option) for every solve of '
-                             'the run.  Unset (default): each solve uses its '
-                             '``solver_mip_gap`` in the database, else '
-                             '``mip_rel_gap`` in solver_config/highs.opt.  '
-                             'Only affects MIP solves (integer investments, '
-                             'unit-commitment / online variables); '
-                             'pure-LP solves ignore it.  Environment '
-                             'variable: FLEXTOOL_HIGHS_MIP_GAP; the flag '
-                             'wins.')
+                        help='Relative MIP optimality gap of every solve of the '
+                             'run, on every solver (HiGHS mip_rel_gap, Gurobi '
+                             'MIPGap, CPLEX mip tolerances mipgap, Xpress '
+                             'MIPRELSTOP, COPT RelGap).  Unset (default): each '
+                             'solve uses its ``solver_mip_gap`` in the '
+                             'database, else the gap in the solver\'s option '
+                             'file.  It overrides both, and a gap in a solve\'s '
+                             'solver_arguments.  Only affects MIP solves '
+                             '(integer investments, unit-commitment / online '
+                             'variables); pure-LP solves ignore it.  '
+                             'Environment variable: FLEXTOOL_SOLVER_MIP_GAP; '
+                             'the flag wins.  (FLEXTOOL_HIGHS_MIP_GAP still '
+                             'works for HiGHS only.)')
     parser.add_argument('--csv-dump', action='store_true',
                         default=False,
                         help='Debug visibility for cascade-internal '
@@ -921,6 +938,11 @@ def main():
         except Exception as _exc:
             logging.warning("Failed to auto-seed %s: %s", _candidate, _exc)
 
+    # --migrate: bring an older input database to the current version before anything opens it (the engine refuses
+    # one that is not current).  A frozen database stops the run, as flextool-migrate-database does.
+    if args.migrate:
+        _migrate_input_or_exit(input_db_url)
+
     # Phase-timing recorder: constructed once per CLI invocation, lives
     # on ``runner.state.timing_recorder``, writes a structured timings.csv
     # at <work_folder>/solve_data/timings.csv (one row per phase, atomic
@@ -1035,6 +1057,26 @@ def main():
         _restore_signals()
 
 
+#: The exit code of a run stopped by a frozen database (``--migrate``), as in ``flextool-migrate-database``.
+EXIT_FROZEN = 2
+
+
+def _migrate_input_or_exit(input_db_url: str) -> None:
+    """Migrate the input database for ``--migrate`` (once across parallel runs); exit 2 on a frozen database."""
+    from flextool._file_lock import FileLockError
+    from flextool.update_flextool.frozen import FrozenDatabaseError
+    from flextool.update_flextool.migrate_before_run import migrate_before_run
+
+    try:
+        migrate_before_run(input_db_url)
+    except FrozenDatabaseError as exc:
+        print(str(exc), file=sys.stderr, flush=True)
+        sys.exit(EXIT_FROZEN)
+    except FileLockError as exc:
+        print(f"The input database was not migrated: {exc}", file=sys.stderr, flush=True)
+        sys.exit(1)
+
+
 def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_path, output_location,
                   output_subdir, write_methods, timing_recorder, t_total_start):
     """The run of one scenario after its run record has started: header, cascade, outputs, output-info DB.
@@ -1044,6 +1086,10 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
     input_db_url = args.input_db_url
     settings_db_url = args.settings_db_url
     wf = work_folder
+    # The folder of the solver option files, resolved once: the header shows it and the engine uses it.
+    solver_config_source = resolve_solver_config_source(
+        run_options=run_options, input_db_url=input_db_url, project_folder_file=args.project_folder_file,
+    )
 
     # Header block — one aligned key/value pair per line, blank lines
     # before and after, so the user has a self-contained summary of
@@ -1055,6 +1101,7 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
         ("Output", str(output_location)),
         ("Options", ", ".join(run_options.summary_lines()) or "defaults"),
         ("Threads", header_text(run_options)),
+        ("Solver config", solver_config_source.describe()),
     ]
     _threads_warning = peek_mismatch(run_options)
     if _threads_warning is not None:
@@ -1070,6 +1117,7 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
     try:
         return_code, last_step = _run_solve(
             args, scenario_name, work_folder, timing_recorder, run_options,
+            solver_config_source=solver_config_source,
         )
     except Exception as e:
         # FlexToolUserError signals a user-visible configuration problem
@@ -1161,6 +1209,7 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
                     fallback_output_location=str(output_path),
                     raw_output_dir=str(wf / 'output_raw'),
                     only_first_file=args.only_first_file_per_plot,
+                    write_plot_data=args.write_plot_data,
                     timing_recorder=timing_recorder,
                     flex_data=wo_flex_data,
                     solution=wo_solution,

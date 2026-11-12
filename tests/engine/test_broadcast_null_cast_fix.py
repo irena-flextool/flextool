@@ -263,3 +263,38 @@ def test_all_valid_map_time_and_map_period_unchanged(axis_enums):
         {"group": "fg", "d": "p2025", "value": 10.0},
         {"group": "fg", "d": "p2030", "value": 20.0},
     ]
+
+
+# ---------------------------------------------------------------------------
+# broadcast_to_period (item 65): the same guard on the period-only broadcaster
+
+
+def test_broadcast_to_period_drops_an_unknown_period_token(axis_enums) -> None:
+    """A ``MAP_PERIOD`` row keyed by a token outside the vocabulary (``p2030x``) is dropped, not read as a scalar
+    default broadcast over every period; the valid row and a genuine scalar default (null period) stay."""
+    from flextool.engine.input._param_shapes import broadcast_to_period
+
+    frame = pl.DataFrame({
+        "name": ["u1", "u1", "u2"],
+        "period": ["p2025", "p2030x", None],
+        "value": [10.0, 99.0, 5.0],
+    })
+    resolved = ResolvedShape(shape=Shape.MAP_PERIOD, frame=frame, entity_dim_columns=("name",),
+                             period_index_column="period", time_index_column=None)
+    periods = pl.DataFrame({"d": pl.Series(_PERIODS, dtype=_D_ENUM)})
+    out = _collect(broadcast_to_period(resolved, "e", periods)).sort("e", "d")
+    assert out.rows() == [("u1", "p2025", 10.0), ("u2", "p2025", 5.0), ("u2", "p2030", 5.0)]
+
+
+def test_broadcast_to_period_drops_a_valid_period_outside_the_vocabulary(axis_enums) -> None:
+    """A valid key outside the axis vocabulary (``p2099``: a period of another scenario's solve, or one only in
+    ``model.periods_available``; the input check accepts it) is dropped too: u1 keeps one row per period, its own
+    p2025 value.  Before the guard the p2099 row was spread over p2025 and p2030 next to the p2025 row."""
+    from flextool.engine.input._param_shapes import broadcast_to_period
+
+    frame = pl.DataFrame({"name": ["u1", "u1"], "period": ["p2025", "p2099"], "value": [10.0, 5.0]})
+    resolved = ResolvedShape(shape=Shape.MAP_PERIOD, frame=frame, entity_dim_columns=("name",),
+                             period_index_column="period", time_index_column=None)
+    periods = pl.DataFrame({"d": pl.Series(_PERIODS, dtype=_D_ENUM)})
+    out = _collect(broadcast_to_period(resolved, "e", periods)).sort("e", "d")
+    assert out.rows() == [("u1", "p2025", 10.0)]

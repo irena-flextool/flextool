@@ -37,7 +37,7 @@ from tests.assistant.gui_support.worker_rig import (
     tool_call,
 )
 from tests.assistant.llm.fake_backend import Block
-from tests.gui.assistant.tk_helpers import pump
+from tests.gui.assistant.tk_helpers import key, pump
 from tests.gui.assistant.window_rig import Backends, Windows, ask, wait_idle
 
 pytestmark = pytest.mark.gui
@@ -448,10 +448,10 @@ def test_stop_after_the_question_started_does_not_mark_it_not_sent(windows, back
     started, go = threading.Event(), threading.Event()
     original = Session.run_turn
 
-    def run_turn(self, text, on_event, cancel):
+    def run_turn(self, text, on_event, cancel, **kwargs):
         started.set()
         assert go.wait(10)
-        return original(self, text, on_event, cancel)
+        return original(self, text, on_event, cancel, **kwargs)
 
     monkeypatch.setattr(Session, "run_turn", run_turn)
     window = windows.open()
@@ -511,3 +511,310 @@ def test_the_footer_names_the_selected_chats_provider(windows, backends, monkeyp
     reads[0]()
     pump(window, lambda: window._calls.empty(), timeout=3)
     assert str(window.footer_label.cget("text")) == "Anthropic this month: nothing used yet (this FlexTool installation)"
+
+
+# --- asking a question again, as it was or changed (item 220) -----------------------------------------------------
+def _buttons(tab: ChatTab, turn: int):
+    """(↻, ✎) of question *turn*."""
+    line = tab.transcript.line_of(turn)
+    assert line is not None, f"question {turn} has no buttons"
+    again, edit = tab.transcript.question_buttons(line)
+    return again, edit
+
+
+def _user_texts(tab: ChatTab) -> list[str]:
+    return [m.text for m in tab.worker.session.messages if m.role == "user"]
+
+
+def _two_questions(window, backends, *later) -> ChatTab:
+    backends.add([say("One."), say("Two."), *later])
+    tab = ask(window, "first question")
+    wait_idle(window, tab)
+    ask(window, "second question", tab)
+    wait_idle(window, tab)
+    return tab
+
+
+def test_ask_again_confirms_that_the_later_questions_go_and_cancel_keeps_everything(windows, backends):
+    save_provider(LOCAL)
+    window = windows.open()
+    tab = _two_questions(window, backends, say("One again."))
+    shown = tab.transcript.contents()
+    requests_before = tab._totals["requests"]
+    _buttons(tab, 1)[0].invoke()
+    dialog = tab._confirm
+    assert str(dialog.message_label.cget("text")) == "This also removes the later question and its answer."
+    dialog.cancel_button.invoke()
+    assert tab._confirm is None and tab.transcript.contents() == shown and not tab.busy
+    assert len(backends.made[0].requests) == 2
+    _buttons(tab, 1)[0].invoke()
+    tab._confirm.action_button.invoke()
+    wait_idle(window, tab)
+    contents = tab.transcript.contents()
+    assert contents.count("You  first question") == 1 and "One again." in contents
+    assert "One.\n" not in contents and "second question" not in contents and "Two." not in contents
+    assert tab.transcript.line_of(2) is None and tab.transcript.line_of(1) is not None
+    assert _user_texts(tab)[-1].endswith("first question") and len(_user_texts(tab)) == 1
+    third = backends.made[0].requests[2]
+    assert [m.text for m in third.messages if m.role == "assistant"] == []
+    assert tab.first_question == "first question"
+    assert tab._totals["requests"] == requests_before + 1        # the whole chat still counts the removed answers
+
+
+def test_edit_puts_the_question_in_the_box_escape_gives_the_draft_back_and_enter_sends(windows, backends):
+    save_provider(LOCAL)
+    backends.add([say("One."), say("Changed answer.")])
+    window = windows.open()
+    tab = ask(window, "first question")
+    wait_idle(window, tab)
+    tab.input.insert("1.0", "half typed")
+    _buttons(tab, 1)[1].invoke()
+    assert tab.input.get("1.0", "end-1c") == "first question"
+    assert tab.status_text == "Editing question 1: Enter sends it, Escape cancels."
+    key(tab.input, "<Escape>")
+    assert tab.input.get("1.0", "end-1c") == "half typed" and tab.status_text == ""
+    assert len(backends.made[0].requests) == 1
+    _buttons(tab, 1)[1].invoke()
+    tab.input.delete("1.0", "end")
+    tab.input.insert("1.0", "first question, changed")
+    key(tab.input, "<Return>")                      # no later question: no dialog
+    assert tab._confirm is None
+    wait_idle(window, tab)
+    contents = tab.transcript.contents()
+    assert "You  first question, changed" in contents and "Changed answer." in contents
+    assert "You  first question\n" not in contents and "One." not in contents
+    assert tab.input.get("1.0", "end-1c") == "half typed"       # the draft is back once the question is sent
+    assert tab._editing is None and tab.status_text == ""
+    assert tab.first_question == "first question, changed"
+    assert _user_texts(tab)[-1].endswith("first question, changed") and len(_user_texts(tab)) == 1
+
+
+def test_ask_again_during_an_answer_confirms_first_then_stops_it(windows, backends):
+    save_provider(LOCAL)
+    block = Block(then=say("never shown"))
+    backends.add([say("One."), block, say("One again.")])
+    window = windows.open()
+    tab = ask(window, "first question")
+    wait_idle(window, tab)
+    ask(window, "second question", tab)
+    pump(window, lambda: block.started.is_set() and tab.transcript.line_of(2) is not None, timeout=5)
+    _buttons(tab, 1)[0].invoke()
+    dialog = tab._confirm
+    assert str(dialog.message_label.cget("text")) == "This also removes the later question and its answer."
+    assert tab.active_job is not None and not backends.made[0].aborted.is_set()     # not stopped before the yes
+    dialog.action_button.invoke()
+    wait_idle(window, tab, timeout=10)
+    assert "One again." in tab.transcript.contents() and "second question" not in tab.transcript.contents()
+    assert [m.text for m in tab.worker.session.messages if m.role == "assistant"] == ["One again."]
+
+
+def test_the_question_being_prepared_counts_as_a_later_one(windows, backends):
+    save_provider(LOCAL)
+    release = threading.Event()
+    probes: list[int] = []
+
+    def probe(_preset, _conn, _cancel, **_kwargs) -> ModelFacts:
+        probes.append(1)
+        if len(probes) == 2:
+            release.wait(10)
+        return ModelFacts()
+
+    backends.add([say("One.")], [say("Two.")])     # a new connection for the new settings
+    window = windows.open(probe=probe)
+    tab = ask(window, "first question")
+    wait_idle(window, tab)
+    save_provider(LOCAL, parallel=2)                # prepared again at the next question: the probe waits
+    window.settings_changed()
+    ask(window, "second question", tab)
+    pump(window, lambda: len(probes) == 2, timeout=5)
+    _buttons(tab, 1)[0].invoke()
+    assert str(tab._confirm.message_label.cget("text")) == "This also removes the later question and its answer."
+    tab._confirm.cancel_button.invoke()
+    release.set()
+    wait_idle(window, tab)
+    assert "Two." in tab.transcript.contents()
+
+
+def test_a_question_that_cannot_be_asked_again_keeps_the_edit(windows, backends):
+    """The worker's refusal shows the whole chat again; the changed question is back in the box, still an edit of
+    the same question, until Escape."""
+    save_provider(LOCAL)
+    backends.add([say("One.")])
+    window = windows.open()
+    tab = ask(window, "first question")
+    wait_idle(window, tab)
+    tab.input.insert("1.0", "draft")
+    tab.transcript.set_turn(tab.transcript.line_of(1), 4)        # a number the chat does not have
+    _buttons(tab, 4)[1].invoke()
+    key(tab.input, "<Return>")
+    wait_idle(window, tab)
+    contents = tab.transcript.contents()
+    assert strings.CANNOT_ASK_AGAIN_GONE in contents and "One." in contents
+    assert "You  first question  Not sent." in contents
+    assert tab.input.get("1.0", "end-1c") == "first question"
+    assert tab._editing == 4 and tab.status_text == "Editing question 4: Enter sends it, Escape cancels."
+    key(tab.input, "<Escape>")
+    assert tab.input.get("1.0", "end-1c") == "draft"
+    assert len(backends.made[0].requests) == 1 and len(_user_texts(tab)) == 1
+
+
+def test_a_reopened_chat_asks_again_with_the_history_it_kept(windows, backends):
+    from flextool.assistant.llm_adapter import Message
+
+    save_provider(LOCAL)
+    store = open_store()
+    conv = store.new_conversation(windows.project, ("openai_compatible", "http://127.0.0.1:9/v1", "fake-model"),
+                                  "medium", number=2)
+    conv.messages = [Message("user", "first question", turn=1), Message("assistant", "One.", turn=1),
+                     Message("user", "second question", turn=2), Message("assistant", "Two.", turn=2)]
+    store.save(conv)
+    store.close(conv)
+    backends.add([say("Two again.")])
+    window = windows.open()
+    window.reopen(conv.id)
+    pump(window, lambda: window.tab_for(conv.id) is not None and window.tab_for(conv.id).has_messages, 5)
+    tab = window.tab_for(conv.id)
+    assert tab.transcript.line_of(1) is not None
+    _buttons(tab, 2)[0].invoke()                    # the last question: nothing later, no dialog
+    assert tab._confirm is None
+    wait_idle(window, tab)
+    request = backends.made[0].requests[0]
+    assert [(m.role, m.text) for m in request.messages[-3:-1]] == [("user", "first question"), ("assistant", "One.")]
+    assert request.messages[-1].text.endswith("second question")
+    contents = tab.transcript.contents()
+    assert "Two again." in contents and "Two.\n" not in contents and contents.count("You  second question") == 1
+
+
+def test_a_second_action_replaces_the_waiting_one_and_closing_drops_it(windows, backends):
+    save_provider(LOCAL)
+    window = windows.open()
+    tab = _two_questions(window, backends, say("Two again."))
+    _buttons(tab, 1)[0].invoke()
+    first = tab._confirm
+    _buttons(tab, 2)[0].invoke()                    # replaces the dialog of question 1, and goes (nothing later)
+    assert not first.winfo_exists()
+    wait_idle(window, tab)
+    assert _user_texts(tab)[-1].endswith("second question") and len(_user_texts(tab)) == 2
+    assert "Two again." in tab.transcript.contents()
+    _buttons(tab, 1)[0].invoke()
+    dialog = tab._confirm
+    window.close_chat(tab, ask=False)
+    assert tab._confirm is None and not dialog.winfo_exists()
+    assert len(backends.made[0].requests) == 3
+
+
+def _press_on_question(tab: ChatTab, turn: int, sequence: str) -> None:
+    """*sequence* (``"<Key-r>"``, ``"<Key-e>"``) with the transcript's insert mark on question *turn*."""
+    text = tab.transcript.text
+    text.mark_set("insert", f"user_{tab.transcript.line_of(turn)} + 2 chars")
+    key(text, sequence)
+
+
+def test_a_chat_started_with_a_summary_sends_it_once_and_never_shows_it_in_the_question(windows, backends):
+    """The summary of *New chat with summary* goes with question 1 only, never twice: a redraw after a later question
+    is asked again hides it from question 1, ✎ shows only the question, the title is the question, and ↻ on
+    question 1 sends the summary once (the worker takes the question from the chat, not from the window)."""
+    from flextool.assistant import prompt
+
+    seed = "Summary of the earlier chat:\n- Which units invest? Wind and solar."
+    save_provider(LOCAL)
+    backends.add([say("One."), say("Two."), say("Two again."), say("One again.")])
+    window = windows.open()
+    window.new_chat(seed=seed)
+    tab = ask(window, "first question")
+    wait_idle(window, tab)
+    ask(window, "second question", tab)
+    wait_idle(window, tab)
+    _buttons(tab, 2)[0].invoke()                    # the last question: no dialog; the chat is drawn again
+    wait_idle(window, tab)
+    contents = tab.transcript.contents()
+    assert "Two again." in contents and "Summary of the earlier chat" not in contents
+    assert "You  first question" in contents and tab.first_question == "first question"
+    assert tab.transcript.turn_text(1) == "first question"
+    _buttons(tab, 1)[1].invoke()
+    assert tab.input.get("1.0", "end-1c") == "first question"
+    key(tab.input, "<Escape>")
+    _buttons(tab, 1)[0].invoke()
+    tab._confirm.action_button.invoke()
+    wait_idle(window, tab)
+    sent = [prompt.remove_context_blocks(m.text) for m in backends.made[0].requests[3].messages if m.role == "user"]
+    assert sent == [f"{seed}\n\nfirst question"]
+    assert [prompt.remove_context_blocks(t) for t in _user_texts(tab)] == [f"{seed}\n\nfirst question"]
+    contents = tab.transcript.contents()
+    assert "One again." in contents and "Summary of the earlier chat" not in contents
+    assert tab.first_question == "first question"
+
+
+def test_an_edit_ends_when_its_question_goes_with_an_earlier_one_asked_again(windows, backends):
+    """✎ on question 2, then ↻ on question 1: question 2 is removed, so the edit ends and the box gets back what it
+    held before the edit."""
+    save_provider(LOCAL)
+    window = windows.open()
+    tab = _two_questions(window, backends, say("One again."))
+    tab.input.insert("1.0", "draft")
+    _buttons(tab, 2)[1].invoke()
+    assert tab.input.get("1.0", "end-1c") == "second question" and tab._editing == 2
+    _buttons(tab, 1)[0].invoke()
+    tab._confirm.action_button.invoke()
+    wait_idle(window, tab)
+    assert tab._editing is None and tab._draft is None
+    assert tab.input.get("1.0", "end-1c") == "draft" and tab.status_text == ""
+    assert "One again." in tab.transcript.contents() and len(_user_texts(tab)) == 1
+
+
+def test_the_r_key_always_asks_first_the_button_and_e_do_not(windows, backends):
+    """Review decision D8: R asks "Ask question N again? Its answer is removed." also with no later question (with
+    one, both sentences); ↻ asks only when later questions go; E never (nothing goes until Enter)."""
+    save_provider(LOCAL)
+    backends.add([say("One."), say("One again."), say("Two."), say("Two again.")])
+    window = windows.open()
+    tab = ask(window, "first question")
+    wait_idle(window, tab)
+    _press_on_question(tab, 1, "<Key-r>")
+    dialog = tab._confirm
+    assert str(dialog.message_label.cget("text")) == "Ask question 1 again? Its answer is removed."
+    dialog.cancel_button.invoke()
+    assert len(backends.made[0].requests) == 1 and not tab.busy
+    _press_on_question(tab, 1, "<Key-e>")
+    assert tab._confirm is None and tab.input.get("1.0", "end-1c") == "first question" and tab._editing == 1
+    key(tab.input, "<Escape>")
+    _press_on_question(tab, 1, "<Key-r>")
+    tab._confirm.action_button.invoke()
+    wait_idle(window, tab)
+    assert "One again." in tab.transcript.contents()
+    ask(window, "second question", tab)
+    wait_idle(window, tab)
+    _press_on_question(tab, 1, "<Key-r>")
+    assert str(tab._confirm.message_label.cget("text")) == (
+        "Ask question 1 again? Its answer is removed. This also removes the later question and its answer.")
+    tab._confirm.cancel_button.invoke()
+    _buttons(tab, 2)[0].invoke()                    # ↻ with nothing later: no dialog
+    assert tab._confirm is None
+    wait_idle(window, tab)
+    assert "Two again." in tab.transcript.contents() and len(backends.made[0].requests) == 4
+
+
+def test_a_question_asked_again_and_stopped_keeps_its_stopped_notice_and_counts(windows, backends, monkeypatch):
+    """Stopped in the window before the worker's Rewound arrives: the redraw keeps "Stopped.", and until the worker
+    says whether the question was sent it counts as a later question."""
+    save_provider(LOCAL)
+    entered, stopped = threading.Event(), threading.Event()
+    original = AssistantWorker._rewinding
+
+    def rewinding(self, job, session, conv):
+        entered.set()
+        assert stopped.wait(10)
+        return original(self, job, session, conv)
+
+    monkeypatch.setattr(AssistantWorker, "_rewinding", rewinding)
+    window = windows.open()
+    tab = _two_questions(window, backends, say("never shown"))
+    _buttons(tab, 2)[0].invoke()
+    pump(window, entered.is_set, timeout=5)
+    tab.stop()
+    assert tab._later(1) == 2                       # question 2 as shown, and the one stopped before it was sent
+    stopped.set()
+    wait_idle(window, tab, timeout=10)
+    contents = tab.transcript.contents()
+    assert contents.count("You  second question") == 1
+    assert contents.rstrip().endswith(strings.STOPPED)

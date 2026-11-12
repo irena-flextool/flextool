@@ -35,7 +35,11 @@ the authoritative sources before non-trivial work:
    against the whole timeline (2³² overflow on long runs; silent flatten
    on short ones). `_param_shapes` is the I/O contract only — model-
    internal axes (e.g. rolling `roll`) live in
-   `schemas/flextool_axis_contract.json`, not the resolver.
+   `schemas/flextool_axis_contract.json`, not the resolver. A new time-
+   series parameter also needs its `TIME_AGGREGATION` kind
+   (`engine/input/_solve_step_aggregation.py`: how a solve's
+   `new_stepduration` combines it); emit folds read `solve_data/pt_*` /
+   `pbt_*`, never `input/`.
    → architecture.md "Parameter shapes & (d,t) broadcasting".
 
 3. **Tests build their DB from JSON/schema; never read a checked-in

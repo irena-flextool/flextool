@@ -66,10 +66,12 @@ def add_variables(b: "_Build") -> None:
     # v_online_integer[p,d,t] ∈ ℤ≥0, v_startup_integer[p,d,t], v_shutdown_integer[p,d,t] ≥ 0
     #   ∀ (p,d,t) ∈ p_online_dt, p ∈ process_online_integer
     # As the linear family, but units online are integer; startups and
-    # shutdowns stay continuous.
+    # shutdowns stay continuous.  Continuous when the solve's reduce_unit_detail_method relaxes integers
+    # (d.relax_integrality; same names, rows and _integer class).
     if b.has_online_int:
         b.v_online_integer = _coarse_flows.alias(
-            b, m.add_var("v_online_integer", ("p", "d", "t"), b.p_oint_rows, integer=True), b.p_oint_idx)
+            b, m.add_var("v_online_integer", ("p", "d", "t"), b.p_oint_rows,
+                         integer=not b.d.relax_integrality), b.p_oint_idx)
         b.v_startup_integer = m.add_var("v_startup_integer", ("p", "d", "t"), b.p_oint_rows)
         b.v_shutdown_integer = m.add_var("v_shutdown_integer", ("p", "d", "t"), b.p_oint_rows)
 

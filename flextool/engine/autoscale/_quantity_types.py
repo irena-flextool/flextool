@@ -63,7 +63,9 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('candidate_precapacity_to_avoid_big_m', 'group'): QuantityType.POWER,
     # [MW] Small pre-existing capacity assigned to investment candidate connections in DC power flow groups that have zero existing capacity. This...
     ('capacity_margin', 'group'): QuantityType.POWER,
-    # [MW] Capacity the group needs above its peak net load. Used only with capacity_margin_method manual, and only in investment periods. No valu...
+    # [MW] Capacity the group needs above its demand at every time step of an investment period (capacity_margin_method manual).
+    ('capacity_margin_share', 'group'): QuantityType.FRACTION,
+    # [-] Capacity margin as a share of the group's peak demand (capacity_margin_method share_of_peak).
     # Pre-v70 input-side names, carried during the migration window
     # (renamed to input_share_max / input_share_min by db_migration v70).
     ('capacity_max_coeff', 'unit__inputNode'): QuantityType.FRACTION,
@@ -86,6 +88,10 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Puts the storage capacity in construction in each period on the left side of the user constraint. Capacity...
     ('constraint_in_construction_capacity_coeff', 'unit'): QuantityType.DIMENSIONLESS,
     # Puts the capacity in construction in each period on the left side of the user constraint. Capacity is in con...
+    ('constraint_online_coeff', 'connection'): QuantityType.DIMENSIONLESS,
+    # Puts the number of units of the connection online in each time step on the left side of the user constraint.
+    ('constraint_online_coeff', 'unit'): QuantityType.DIMENSIONLESS,
+    # Puts the number of units online in each time step on the left side of the user constraint.
     ('constraint_retired_capacity_coeff', 'connection'): QuantityType.DIMENSIONLESS,
     # Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.
     ('constraint_retired_capacity_coeff', 'node'): QuantityType.DIMENSIONLESS,
@@ -120,6 +126,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # How yr(order)+construction_lead_time snaps to a period boundary (immediate/closest_seam/previous_seam/next_seam) — an enum string, no physical unit.
     ('debug', 'model'): QuantityType.DIMENSIONLESS,
     # Instruction set for performing model debugging and testing — a string toggle, no physical unit.
+    ('constraint_period_method', 'constraint'): QuantityType.DIMENSIONLESS,
+    # Whether a user constraint has a row per time step or one annualised total per period — an enum string.
     ('constant', 'constraint'): QuantityType.DIMENSIONLESS,
     # Right-hand side of the user constraint. A period map gives each period its own value; it must cover every period of the solve. Constant or p...
     # User constraints aggregate LHS terms whose units depend on the user's coefficient choices; the RHS constant lives
@@ -234,7 +242,7 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('has_capacity_margin', 'group'): QuantityType.DIMENSIONLESS,
     # A flag whether the group of nodes has a capacity margin constraint in the investment mode.
     ('capacity_margin_method', 'group'): QuantityType.DIMENSIONLESS,
-    # Whether the group needs a capacity margin in investment solves. none: no margin. manual: the group needs capacity_margin MW above its peak n...
+    # Whether the group needs a capacity margin in investment solves, and how the margin is given (none, manual, share_of_peak).
     ('has_inertia', 'group'): QuantityType.DIMENSIONLESS,
     # Whether the group has an inertia constraint. Without yes, inertia_limit is ignored.
     ('has_non_synchronous', 'group'): QuantityType.DIMENSIONLESS,
@@ -452,13 +460,13 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('profile_method', 'unit__node__profile'): QuantityType.DIMENSIONLESS,
     # Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.
     ('ramp_cost', 'unit__inputNode'): QuantityType.PRICE_PER_CAPACITY,
-    # [CUR/MW] Cost of ramping the unit. Constant.
+    # [CUR/MW] Cost per MW of change in the step-average flow, up or down, between a time step and the step before it. Charged per change...
     ('ramp_cost', 'unit__outputNode'): QuantityType.PRICE_PER_CAPACITY,
-    # [CUR/MW] Cost of ramping the unit. Constant.
+    # [CUR/MW] Cost per MW of change in the step-average flow, up or down, between a time step and the step before it. Charged per change...
     ('ramp_method', 'unit__inputNode'): QuantityType.DIMENSIONLESS,
-    # Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost is not functional yet.
+    # [choice] Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost charges every change in the flow between consecutive time steps. both adds the limit as well.
     ('ramp_method', 'unit__outputNode'): QuantityType.DIMENSIONLESS,
-    # Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost is not functional yet.
+    # [choice] Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost charges every change in the flow between consecutive time steps. both adds the limit as well.
     ('ramp_speed_down', 'unit__inputNode'): QuantityType.RAMP_RATE,
     # [share of capacity per minute] Largest decrease of the flow between two time steps. No limit across a gap in the timeline. Constant.
     ('ramp_speed_down', 'unit__outputNode'): QuantityType.RAMP_RATE,
@@ -565,6 +573,10 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [CUR/MW] Cost of starting up one MW of capacity. Constant or period.
     ('startup_cost', 'unit'): QuantityType.PRICE_PER_CAPACITY,
     # [CUR/MW] Cost of starting up one MW of capacity. Constant or period.
+    ('startup_energy', 'unit__inputNode'): QuantityType.DURATION,
+    # [MWh per MW started] Energy taken from the input node per MW started (MWh/MW = h). Constant or period.
+    ('startup_input_method', 'unit__inputNode'): QuantityType.DIMENSIONLESS,
+    # [choice] just_input / startup_and_input / startup_only: the arc also, or only, supplies the start-up energy.
     ('startup_method', 'connection'): QuantityType.DIMENSIONLESS,
     # Gives the connection online capacity in both directions. Flows and reserves are limited by the online capacity, and startup_cost is paid per...
     ('startup_method', 'unit'): QuantityType.DIMENSIONLESS,
@@ -575,6 +587,10 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # How stochastic branches invest. none (default): one shared investment plan for all branches. recourse: each branch also invests at and after...
     ('dispatch_realization_method', 'solve'): QuantityType.DIMENSIONLESS,
     # How the committed part of a stochastic solve is realized. within_solve (default): a realized: yes branch gets a realization solve automatica...
+    ('reduce_unit_detail_method', 'solve'): QuantityType.DIMENSIONLESS,
+    # Detail of units and connections this solve leaves out (none, integers, ..., online_ramps).
+    ('reduce_system_detail_method', 'solve'): QuantityType.DIMENSIONLESS,
+    # System detail this solve leaves out (reserves, inertia, non_synchronous, dc_power_flow, combinations).
     ('storage_binding_method', 'node'): QuantityType.DIMENSIONLESS,
     # Choice how the storage state will be maintained over discontinuous timelines. Seven cycle-scope methods (the state-continuity family): 'bind...
     ('storage_nested_fix_method', 'node'): QuantityType.DIMENSIONLESS,
@@ -610,6 +626,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('unitsize', 'commodity'): QuantityType.DIMENSIONLESS,
     # Numeric scaling for the v_trade variable column (analogous to virtual_unitsize on process/node entities).  The variable is in user-MWh divid...
     # Enable automatic row scaling (experimental): derive node_capacity_for_scaling / group_capacity_for_scaling from connected-unit unitsizes (ro...
+    ('unit_of_measure', 'node'): QuantityType.DIMENSIONLESS,
+    # [text] Unit of measure of the node's amounts (m3, t, MWh_th; default MWh). A label only: not read by the LP.
     ('use_for_representative_periods', 'group'): QuantityType.DIMENSIONLESS,
     # yes_no flag marking a group as an aggregation unit for net-load representative-period selection (preprocessor-only; not read by the LP model).
     ('version', 'model'): QuantityType.DIMENSIONLESS,
@@ -660,7 +678,8 @@ QUANTITY_UNITS: dict[QuantityType, frozenset[str]] = {
     QuantityType.RAMP_RATE: frozenset({"[share of capacity per minute]"}),
     QuantityType.DIMENSIONLESS: frozenset({
         "[choice]", "[yes/no]", "[name]", "[text]", "[count]", "[version number]", "[p.u.]",
-        "[unit of the constraint per MW]", "[unit of the constraint per MWh]", "[the constraint's own unit]",
+        "[unit of the constraint per MW]", "[unit of the constraint per MWh]", "[unit of the constraint per unit online]",
+        "[the constraint's own unit]",
     }),
     QuantityType.UNKNOWN: frozenset({"[MW or MWh]"}),
 }
@@ -690,6 +709,8 @@ UNIT_OVERRIDES: dict[tuple[str, str], str] = {
     ("timeline_hole_multiplier", "solve"): "[-]",
     # Compared with every LP coefficient and right-hand side in its own unit.
     ("small_number_threshold", "model"): "[unit of each LP coefficient]",
+    # An energy per capacity started (MWh/MW = h, typed DURATION): the unit says what it is per.
+    ("startup_energy", "unit__inputNode"): "[MWh per MW started]",
 }
 
 

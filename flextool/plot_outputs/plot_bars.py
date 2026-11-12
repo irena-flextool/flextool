@@ -1210,6 +1210,8 @@ def build_bar_figures(
     color_template: dict | None = None,
     category: str | None = None,
     entity_class: str | None = None,
+    keep_plot_data: bool = False,
+    axis_units=None,
 ) -> tuple[list[tuple[str, 'plt.Figure']], int]:
     """Build bar-chart Figures and return them without saving or closing.
 
@@ -1217,6 +1219,9 @@ def build_bar_figures(
     (batch_title, Figure) pairs -- one per file batch.
     Figures where all data is empty are omitted (not returned as None).
     When only_file_index is set, only that batch is built.
+    With *keep_plot_data*, each Figure carries the drawn ``(subplot_title, frame)``
+    list as ``flextool_plot_batch`` for its CSV, with the cells that were empty in
+    the data empty again (the bars draw them as zero).
     """
     if sub_levels is None:
         sub_levels = []
@@ -1295,7 +1300,22 @@ def build_bar_figures(
     # The "items" are visual bar-label rows: n_rows * n_expand_groups.
     # Splitting can happen by expand groups, by rows, or both.
     effective_plots: list[tuple[str | None, pd.DataFrame]] = []
+    # keep_plot_data: the frame before ``fillna(0)`` of each drawn frame, by id.
+    unfilled: dict[int, pd.DataFrame] = {}
+    df_sub_unfilled = None
+    # axis_units: the subplot value each drawn frame was extracted from, by id.
+    sub_of: dict[int, object] = {}
+    current_sub = None
+
+    def _add(title, frame):
+        effective_plots.append((title, frame))
+        if keep_plot_data:
+            unfilled[id(frame)] = df_sub_unfilled
+        if axis_units is not None:
+            sub_of[id(frame)] = current_sub
+
     for sub in subs:
+        current_sub = sub
         df_sub = _extract_subplot_data(df, sub, sub_levels)
         if reattach_sub_names and sub is not None:
             df_sub = _reattach_constant_levels(
@@ -1303,6 +1323,7 @@ def build_bar_figures(
         df_sub = df_sub.dropna(how='all')
         if df_sub.empty:
             continue
+        df_sub_unfilled = df_sub
         df_sub = df_sub.fillna(0)
         title = (
             ' | '.join(str(v) for v in sub) if isinstance(sub, tuple)
@@ -1311,13 +1332,13 @@ def build_bar_figures(
         n_rows = len(df_sub)
 
         if not max_items_per_plot:
-            effective_plots.append((title, df_sub))
+            _add(title, df_sub)
             continue
 
         # Total visual items = n_rows * n_expand_groups
         total_items = n_rows * max(n_expand_groups, 1)
         if total_items <= max_items_per_plot:
-            effective_plots.append((title, df_sub))
+            _add(title, df_sub)
             continue
 
         # Split by expand groups first (if present), then by rows within each group chunk
@@ -1342,18 +1363,18 @@ def build_bar_figures(
                             f"{title}_{gi + 1}.{ri + 1}"
                             if title else f"{gi + 1}.{ri + 1}"
                         )
-                        effective_plots.append((sub_label, row_chunk))
+                        _add(sub_label, row_chunk)
                 else:
                     chunk_label = f"{title}_{gi + 1}" if title else None
-                    effective_plots.append((chunk_label, chunk))
+                    _add(chunk_label, chunk)
         elif n_rows > max_items_per_plot:
             # No expand groups — split by rows
             for i in range(0, n_rows, max_items_per_plot):
                 chunk = df_sub.iloc[i:i + max_items_per_plot]
                 chunk_label = f"{title}_{i // max_items_per_plot + 1}" if title else None
-                effective_plots.append((chunk_label, chunk))
+                _add(chunk_label, chunk)
         else:
-            effective_plots.append((title, df_sub))
+            _add(title, df_sub)
 
     if not effective_plots:
         return [], 0
@@ -1492,6 +1513,13 @@ def build_bar_figures(
         if only_file_index is not None and (batch_idx - 1) != only_file_index:
             continue
         batch_title = f"{key_name} ({batch_idx}/{n_total_batches})" if n_total_batches > 1 else key_name
+        batch_x, batch_y = xlabel, ylabel
+        if axis_units is not None:
+            from flextool.plot_outputs.unit_labels import _sub_dict
+            sub_names = ([df.columns.names[i] for i in sub_levels]
+                         if isinstance(df.columns, pd.MultiIndex) else [])
+            plots = [(d, _sub_dict(sub_of.get(id(d)), sub_names)) for _t, d in batch]
+            batch_x, batch_y = axis_units.batch_label(xlabel, plots), axis_units.batch_label(ylabel, plots)
         fig = _build_bar_figure(
             batch, df, batch_title, plot_dir,
             stack_levels, stack_level_names,
@@ -1499,12 +1527,16 @@ def build_bar_figures(
             sub_levels,
             grouped_bar_levels, grouped_bar_level_names,
             legend_position, subplots_per_row,
-            xlabel, ylabel, bar_orientation, base_bar_length,
+            batch_x, batch_y, bar_orientation, base_bar_length,
             value_fmt, axis_bounds, axis_tick_format,
             always_include_zero_in_axis,
             layout, shared_color_map, skip_data_with_only_zeroes,
             color_bar_level=color_bar_level,
         )
         if fig is not None:
+            if keep_plot_data:
+                fig.flextool_plot_batch = [
+                    (t, unfilled[id(d)].loc[d.index, d.columns]) for t, d in batch
+                ]
             result.append((batch_title, fig))
     return result, total_file_count

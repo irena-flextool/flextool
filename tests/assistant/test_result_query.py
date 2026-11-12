@@ -157,7 +157,7 @@ def test_wide_aggregation_equals_the_long_form(rctx, results_project: Path) -> N
     assert _rows(out) == [("p2020", "west", 26.66666667), ("p2020", "east", 2.0), ("p2025", "west", 50.0),
                           ("p2025", "east", 4.5)]
     assert out["applied"]["how"].startswith("mean of the sum over unit: ")
-    assert out["unit"] == "MW (default convention)" and out["semantics"] == "instantaneous"
+    assert out["unit"] == "MW" and out["semantics"] == "instantaneous"
     assert out["applied"]["combined_over"] == ["entity", "time"]
     assert any("equal step lengths" in n for n in out["notes"])
 
@@ -220,7 +220,7 @@ def test_the_aggregation_guard(rctx) -> None:
     # Annual costs: summed over categories per period (100 + 2.5 = 102.5) yes, over periods no.
     out = _call(rctx, "query_result", run="base_1", table="annualized_costs_d_p", group_by=["period"], agg="sum")
     assert _rows(out) == [("p2020", 102.5), ("p2025", 0.0)]
-    assert out["unit"] == "M CUR/a (default convention)"
+    assert out["unit"] == "M CUR/a"
     assert _refused(rctx, "query_result", run="base_1", table="annualized_costs_d_p", group_by=[],
                     agg="sum").startswith("These are annual values; adding them across periods")
     # Prices do not add up; their mean over time and nodes is the mean of the single values: p2020
@@ -230,6 +230,25 @@ def test_the_aggregation_guard(rctx) -> None:
     out = _call(rctx, "query_result", run="base_1", table="node_prices_dt_e", group_by=["period"], agg="mean")
     assert _rows(out) == [("p2020", 30.0), ("p2025", 60.0)]
     assert out["applied"]["how"] == "mean of the single values over time, node; these values do not add up over node"
+
+
+def test_placeholder_query_arguments_mean_no_argument(rctx) -> None:
+    """B1, T1: an empty map, a sort or time_range with an empty required key, top_n 0 and agg "none" are left out;
+    a filter map keeps its real entries.  node_prices_dt_e means by period: p2020 (30+40+50+10+20+30)/6 = 30,
+    p2025 (60+70+80+40+50+60)/6 = 60; west only: (30+40+50)/3 = 40, (60+70+80)/3 = 70."""
+    def without_notes(out: dict) -> dict:          # a later call names the session's unit note by its key only
+        return {k: v for k, v in out.items() if k != "notes"}
+
+    plain = _call(rctx, "query_result", run="base_1", table="node_prices_dt_e", group_by=["period"], agg="mean")
+    filled = _call(rctx, "query_result", run="base_1", table="node_prices_dt_e", group_by=["period"], agg="mean",
+                   filters={}, sort={"by": ""}, time_range={"from": "", "to": ""}, top_n=0)
+    assert without_notes(filled) == without_notes(plain) and _rows(plain) == [("p2020", 30.0), ("p2025", 60.0)]
+    west = _call(rctx, "query_result", run="base_1", table="node_prices_dt_e", group_by=["period"], agg="mean",
+                 filters={"node": ["west"], "solve": []})
+    assert _rows(west) == [("p2020", 40.0), ("p2025", 70.0)] and west["applied"]["filters"] == {"node": ["west"]}
+    # agg "none" without group_by: the summary per series, as with no agg at all.
+    assert without_notes(_call(rctx, "query_result", run="base_1", table="node_prices_dt_e", agg="none")) == \
+        without_notes(_call(rctx, "query_result", run="base_1", table="node_prices_dt_e"))
 
 
 def test_capacity_parameters_are_not_combined(rctx) -> None:
@@ -335,15 +354,24 @@ def test_mixed_unit_tables(rctx) -> None:
     out = _call(rctx, "query_result", run="base_1", table="nodeGroup_gdt_p",
                 filters={"parameter": ["1. Loss of load"]}, group_by=["group", "period"], agg="sum")
     assert _rows(out) == [("g1", "p2020", 5.0), ("g1", "p2025", 1.0)]
-    assert out["unit"] == "MWh (default convention)" and out["semantics"] == "per_step"
+    assert out["unit"] == "MWh" and out["semantics"] == "per_step"
     assert any("not scaled to a full year" in n for n in out["notes"])
 
 
-def test_values_of_a_period_table_and_a_membership_set(rctx) -> None:
+def test_values_of_a_period_table_and_a_membership_set(rctx, results_project: Path) -> None:
     out = _call(rctx, "query_result", run="base_1", table="unit_outputNode_d_ee", filters={"node": ["west"]})
     assert out["applied"]["mode"] == "values"
-    assert sorted(_rows(out)) == [("p2020", "coal_plant", "west", 1000.0), ("p2020", "wind_plant", "west", 300.0),
-                                  ("p2025", "coal_plant", "west", 2000.0), ("p2025", "wind_plant", "west", 0.0)]
+    # B1 T6: a scaled copy for reading (1 000 MWh/a is ≈1 GWh/a; under 1 000 MWh/a none).
+    assert sorted(_rows(out), key=str) == [
+        ("p2020", "coal_plant", "west", 1000.0, "≈1 GWh/a"), ("p2020", "wind_plant", "west", 300.0, None),
+        ("p2025", "coal_plant", "west", 2000.0, "≈2 GWh/a"), ("p2025", "wind_plant", "west", 0.0, None)]
+    assert out["columns"][-1] == "scaled" and any(n.startswith("scaled: ") for n in out["notes"])
+    # Without room for the copies the rows stay whole and the scaled column is left out (a fresh context each
+    # time: the session note on units is then sent in full in both).
+    args = {"run": "base_1", "table": "unit_outputNode_d_ee", "filters": {"node": ["west"]}}
+    whole = len(call_tool(make_context(results_project), "query_result", args).text)
+    small = _call(make_context(results_project), "query_result", **args, max_chars=whole - 60)
+    assert "scaled" not in small["columns"] and len(small["rows"]) == 4 and small["truncated"] is None
     out = _call(rctx, "query_result", run="base_1", table="group_node", filters={"group": ["g1"]})
     assert out["columns"] == ["group", "node"] and _rows(out) == [("g1", "west"), ("g1", "east")]
     assert "set of names" in _refused(rctx, "query_result", run="base_1", table="group_node", group_by=["group"])
@@ -363,23 +391,24 @@ def test_describe_list_and_find(rctx) -> None:
                      "annualized_costs_d_p", "node_prices_dt_e", "nodeGroup_gdt_p", "group_node",
                      "unit_capacity_ed_p", "CO2_d_g", "costs_dt_p"}
     hits = _call(rctx, "find_result_tables", query="nodal energy price")["tables"]
-    assert hits[0]["table"] == "node_prices_dt_e" and hits[0]["unit"] == "CUR/MWh (default convention)"
+    assert hits[0]["table"] == "node_prices_dt_e" and hits[0]["unit"] == "CUR/MWh"
     message = _refused(rctx, "query_result", run="base_1", table="unit_outputNode_dt")
     assert message.startswith('There is no result table "unit_outputNode_dt" in "base_1".')
 
 
 def test_compare_runs_with_a_missing_key(rctx) -> None:
     out = _call(rctx, "compare_runs", table="unit_outputNode_d_ee", runs=["base_1", "high_1"], by_difference=True)
-    assert out["columns"] == ["period", "unit", "node", "base_1", "high_1", "difference_vs_first"]
+    assert out["columns"] == ["period", "unit", "node", "base_1", "high_1", "difference_vs_first", "scaled"]
     # Largest difference first: coal p2025 4000 − 2000, coal p2020 2000 − 1000, wind 0 and 0; gas_plant is only in
-    # base_1 (no difference, last).
+    # base_1 (no difference, last).  scaled: one copy per run and difference (MWh/a from 1 000 on as GWh/a).
+    none = [None, None, None]
     assert _rows(out) == [
-        ("p2025", "coal_plant", "west", 2000.0, 4000.0, 2000.0),
-        ("p2020", "coal_plant", "west", 1000.0, 2000.0, 1000.0),
-        ("p2020", "wind_plant", "west", 300.0, 300.0, 0.0),
-        ("p2025", "wind_plant", "west", 0.0, 0.0, 0.0),
-        ("p2020", "gas_plant", "east", 50.0, None, None),
-        ("p2025", "gas_plant", "east", 60.0, None, None),
+        ("p2025", "coal_plant", "west", 2000.0, 4000.0, 2000.0, ["≈2 GWh/a", "≈4 GWh/a", "≈2 GWh/a"]),
+        ("p2020", "coal_plant", "west", 1000.0, 2000.0, 1000.0, ["≈1 GWh/a", "≈2 GWh/a", "≈1 GWh/a"]),
+        ("p2020", "wind_plant", "west", 300.0, 300.0, 0.0, none),
+        ("p2025", "wind_plant", "west", 0.0, 0.0, 0.0, none),
+        ("p2020", "gas_plant", "east", 50.0, None, None, none),
+        ("p2025", "gas_plant", "east", 60.0, None, None, none),
     ]
     assert out["missing"] == {"high_1": "2 keys without a value"} and out["source"] == "run_folders"
     # A time table: each series' mean per period (power: the mean, not a sum): coal p2025 (80+100+120)/3 = 100
@@ -427,7 +456,7 @@ def test_budget_and_a_large_table_aggregated_without_expanding(tmp_path: Path, t
     monkeypatch.setattr(pl.DataFrame, "unpivot", counting)
     out = _call(ctx, "query_result", run="big_1", table="unit_outputNode_dt_ee", group_by=["period", "node"],
                 agg="mean")
-    assert _rows(out) == [("p2020", "west", 89700.0), ("p2020", "east", 90000.0)]
+    assert _rows(out) == [("p2020", "west", 89700.0, "≈89.7 GW"), ("p2020", "east", 90000.0, "≈90 GW")]
     assert unpivoted and max(unpivoted) <= 2
 
 

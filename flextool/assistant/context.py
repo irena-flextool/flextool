@@ -16,10 +16,13 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from flextool.assistant.caps import DEFAULT_PRESET, NAME_MAX, Caps, Rendered, cap_text, clean, preset
 from flextool.assistant.redact import Redactor
+
+if TYPE_CHECKING:
+    from flextool.assistant.model_facts import ScenarioFacts
 
 FrontEnd = Literal["agent", "terminal", "gui"]
 
@@ -82,7 +85,8 @@ class GuiState:
 class ContextSnapshot:
     """What the user has chosen when a question is sent: the project, the input source and the scenario the tools
     use by default, the front end, and (in the FlexTool window) its selections.  *taken_at* (UTC) is never in the
-    context block."""
+    context block.  *scenario_facts* are the model facts of the scenario (:mod:`flextool.assistant.model_facts`),
+    filled in when the question is sent; ``None`` without a scenario or when they could not be read."""
 
     project: str
     input_source: str | None = None
@@ -90,6 +94,7 @@ class ContextSnapshot:
     front_end: FrontEnd = "terminal"
     gui: GuiState | None = None
     taken_at: str = ""
+    scenario_facts: ScenarioFacts | None = None
 
 
 #: Entries of one list in :func:`snapshot_payload`; the rest is counted in ``<list>_more``.

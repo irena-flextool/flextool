@@ -64,11 +64,14 @@ VALUES = [
     ("group", ("g_retire",), "invest_method", "retire_period"),
     ("group", ("g_off",), "invest_method", "not_active"),
     ("constraint", ("c1",), "constant", _period({"p2030": 5.0, "p2040": 6.0})),
+    # v79: the group inertia and non-synchronous limits take time and period + time maps.
+    ("group", ("g_inertia",), "inertia_limit", _time({"t01": 200.0, "t02": 800.0})),
+    ("group", ("g_inertia",), "non_synchronous_limit", _period_time({"p2030": {"t01": 0.2, "t02": 0.6}})),
 ]
 
 
 @pytest.fixture(scope="module")
-def round_tripped(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, list]:
+def round_tripped(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, list, str]:
     out = tmp_path_factory.mktemp("v77_rt")
     src = out / "src.sqlite"
     initialize_database(str(MASTER_TEMPLATE), str(src))
@@ -99,7 +102,7 @@ def round_tripped(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, list]
             result[(p["entity_class_name"], tuple(p["entity_byname"]), p["parameter_definition_name"],
                     p["alternative_name"])] = from_database(p["value"], p["type"])
         markers = [(m["name"], m["value"]) for m in db.get_items("metadata")]
-    return result, markers
+    return result, markers, str(xlsx)
 
 
 def _flatten(value) -> object:
@@ -113,15 +116,35 @@ def _flatten(value) -> object:
 
 @pytest.mark.parametrize("cls,byname,name,value", VALUES, ids=[f"{v[0]}.{v[2]}.{v[1][0]}" for v in VALUES])
 def test_value_survives_workbook_round_trip(round_tripped, cls, byname, name, value) -> None:
-    result, _ = round_tripped
+    result, _, _ = round_tripped
     key = (cls, byname, name, "base")
     assert key in result, f"{cls}.{name} of {byname[0]} was lost on the workbook round-trip"
     assert _flatten(result[key]) == _flatten(value)
 
 
 def test_behaviour_markers_survive_workbook_round_trip(round_tripped) -> None:
-    _, markers = round_tripped
+    _, markers, _ = round_tripped
     assert MARKER in markers
+
+
+def test_group_limits_by_time_are_on_the_time_sheets(round_tripped) -> None:
+    """inertia_limit's time map is written to the group time-series sheet (group_t), non_synchronous_limit's
+    period + time map to the group (period, time) sheet (group_s…), as unit.efficiency's; neither is left on the
+    period-only sheets.  The round-trip itself is test_value_survives_workbook_round_trip."""
+    import openpyxl
+
+    _, _, xlsx = round_tripped
+    wb = openpyxl.load_workbook(xlsx, read_only=True)
+    found: dict[str, set[str]] = {}
+    for ws in wb.worksheets:
+        if ws.title.startswith("group_"):
+            for row in ws.iter_rows(values_only=True):
+                for cell in row:
+                    if cell in ("inertia_limit", "non_synchronous_limit"):
+                        found.setdefault(cell, set()).add(ws.title)
+    wb.close()
+    assert "group_t" in found.get("inertia_limit", set()), found
+    assert any(t.startswith("group_s") for t in found.get("non_synchronous_limit", set())), found
 
 
 def test_restored_markers_keep_one_item_per_name(tmp_path) -> None:

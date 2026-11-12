@@ -253,11 +253,13 @@ def _config(**over):
         realized_periods=defaultdict(list, {"p": [("d1", "d1")]}),
         timesets_used_by_solves={"p": [("d1", "ts")]}, stochastic_invest_method={},
         dispatch_realization_method={}, fix_storage_periods={}, realized_dispatch_parent={},
+        reduce_unit_detail_method={}, reduce_system_detail_method={},
     )
     for k, v in over.items():
         setattr(cfg, k, v)
     for name in ("dispatch_realization_method_for", "stochastic_invest_method_for", "register_realization_solve",
-                 "spawn_realized_dispatch_sibling"):
+                 "spawn_realized_dispatch_sibling", "reduce_detail_overridden", "_reduce_detail_for",
+                 "reduce_unit_detail_for", "reduce_system_detail_for"):
         setattr(cfg, name, getattr(SolveConfig, name).__get__(cfg))
     return cfg
 

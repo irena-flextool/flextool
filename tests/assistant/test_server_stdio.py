@@ -1,7 +1,7 @@
 """The connection server for AI agents, ``flextool-assistant --mcp``, started as an agent starts it.
 
 * Over real stdio (the installed console script in a subprocess, newline-delimited JSON-RPC): ``initialize``
-  carries the data-use and units notices, ``tools/list`` gives the 18 read-only tools, a tool call answers from
+  carries the data-use and units notices, ``tools/list`` gives the 19 read-only tools, a tool call answers from
   the synthetic project, and every byte on stdout is a protocol message.  A tool that prints, writes to file
   descriptor 1 and reads stdin does not touch the protocol.
 * With mcp's own client over stdio: the same handshake and a call, as an agent's client sees them.
@@ -36,7 +36,7 @@ except Exception:  # noqa: BLE001 — not installed
 pytestmark = pytest.mark.skipif(_MCP_MAJOR < 2, reason="needs mcp 2.x (reinstall FlexTool: pip install -e .)")
 
 DATA_NOTICE = "Everything these tools return is sent to the AI service that your assistant uses."
-UNITS_NOTICE = "Units of measure are a convention; FlexTool does not check them."
+UNITS_NOTICE = "Units: give the unit the tool returns."
 
 
 def _script() -> Path:
@@ -125,7 +125,7 @@ def test_stdio_handshake_tools_and_a_call(assistant_project: Path) -> None:
         assert f'"{assistant_project.name}"' in init["instructions"]
 
         tools = conn.send("tools/list", {})["tools"]
-        assert len(tools) == 18
+        assert len(tools) == 19
         assert all(t["annotations"] == {"readOnlyHint": True, "openWorldHint": False} for t in tools)
         assert all(t["inputSchema"]["type"] == "object" for t in tools)
 
@@ -225,7 +225,7 @@ def test_mcp_client_over_stdio(assistant_project: Path) -> None:
 
     instructions, tools, sources = anyio.run(session)
     assert DATA_NOTICE in instructions
-    assert len(tools) == 18 and all(t.annotations.read_only_hint for t in tools)
+    assert len(tools) == 19 and all(t.annotations.read_only_hint for t in tools)
     assert "tests.sqlite" in sources
 
 
@@ -268,12 +268,12 @@ def test_documentation_pages_are_resources(ctx) -> None:
 
     async def work(client):
         listed = (await client.list_resources()).resources
-        read = await client.read_resource("flextool-docs:///reference.md")
+        read = await client.read_resource("flextool-docs:///reference/entities_and_time.md")
         return listed, read
 
     listed, read = _in_process(build_server(ctx), work)
     uris = {str(r.uri) for r in listed}
-    assert {"flextool-docs:///reference.md", "flextool-docs:///formulation.md"} <= uris
+    assert {"flextool-docs:///reference/entities_and_time.md", "flextool-docs:///formulation.md"} <= uris
     (contents,) = read.contents
     assert contents.mime_type == "text/markdown" and "Units of measure" in contents.text
 

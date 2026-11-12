@@ -34,6 +34,10 @@ class ProjectDialog(tk.Toplevel):
     *before_project_change(name)* is asked before a project is renamed or
     deleted (the AI assistant closes its chat window of that project and lets
     its workers finish); ``False`` refuses the change.
+
+    **Export…** writes the selected project to a ``.flextool.zip`` package
+    (refused while *jobs_running(name)* is true); **Import…** unpacks one as a
+    new project, which is then opened (``self.result``).
     """
 
     def __init__(
@@ -41,6 +45,7 @@ class ProjectDialog(tk.Toplevel):
         parent: tk.Misc,
         current_project: str | None = None,
         before_project_change: Callable[[str], bool] | None = None,
+        jobs_running: Callable[[str], bool] | None = None,
     ) -> None:
         super().__init__(parent)
         self.title("Project menu")
@@ -49,6 +54,7 @@ class ProjectDialog(tk.Toplevel):
         self.renamed_current: str | None = None
         self._current_project = current_project
         self._before_project_change = before_project_change
+        self._jobs_running = jobs_running
 
         # ── Modal behaviour ─────────────────────────────────────────
         self.transient(parent)
@@ -149,6 +155,13 @@ class ProjectDialog(tk.Toplevel):
         )
         self._delete_btn.pack(side="left", padx=(10, 0))
 
+        self._export_btn = ttk.Button(
+            btn_frame, text="Export…", command=self._on_export_clicked, state="disabled",
+        )
+        self._export_btn.pack(side="left", padx=(10, 0))
+        self._import_btn = ttk.Button(btn_frame, text="Import…", command=self._on_import_clicked)
+        self._import_btn.pack(side="left", padx=(10, 0))
+
         self._cancel_btn = ttk.Button(btn_frame, text="Cancel", command=self._on_cancel)
         self._cancel_btn.pack(side="right")
 
@@ -156,12 +169,9 @@ class ProjectDialog(tk.Toplevel):
 
     def _update_ok_state(self) -> None:
         """Enable Open/Delete buttons when a project is selected."""
-        if self._project_listbox.curselection():
-            self._open_btn.configure(state="normal")
-            self._delete_btn.configure(state="normal")
-        else:
-            self._open_btn.configure(state="disabled")
-            self._delete_btn.configure(state="disabled")
+        state = "normal" if self._project_listbox.curselection() else "disabled"
+        for button in (self._open_btn, self._delete_btn, self._export_btn):
+            button.configure(state=state)
 
     def _populate_projects(self) -> None:
         """Refresh the listbox with the current project list."""
@@ -236,6 +246,37 @@ class ProjectDialog(tk.Toplevel):
 
     def _on_cancel(self) -> None:
         self.result = None
+        self.grab_release()
+        self.destroy()
+
+    # ── Export / import ─────────────────────────────────────────────
+
+    def _on_export_clicked(self) -> None:
+        """Export the selected project to a project package."""
+        from flextool.gui.dialogs.project_package_dialog import show_export_dialog
+
+        name = self._selected_project()
+        if name is None:
+            return
+        jobs = None
+        if self._jobs_running is not None:
+            def jobs() -> bool:
+                return self._jobs_running(name)
+        show_export_dialog(self, get_projects_dir() / name, jobs_running=jobs)
+
+    def _on_import_clicked(self) -> None:
+        """Import a project package as a new project and open it."""
+        from flextool import project_package
+        from flextool.gui.dialogs.project_package_dialog import ask_import
+
+        report = ask_import(self, get_projects_dir())
+        if report is None:
+            self._populate_projects()
+            return
+        messagebox.showinfo(
+            "Project imported", "\n\n".join(project_package.describe_import(report)), parent=self,
+        )
+        self.result = report.name
         self.grab_release()
         self.destroy()
 

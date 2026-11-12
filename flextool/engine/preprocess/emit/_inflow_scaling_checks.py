@@ -1,7 +1,7 @@
 """Input checks for the node inflow scaling methods.
 
 ``inflow_method`` ``scale_to_annual_flow``, ``scale_in_proportion`` and ``scale_to_annual_and_peak_flow`` rescale
-the node's ``inflow`` per period (docs/how_to.md "How to set the demand in a node"; docs/reference.md node ``inflow_method``):
+the node's ``inflow`` per period (docs/how_to/basics.md "How to set the demand in a node"; docs/reference/nodes.md ``inflow_method``):
 
 * ``scale_to_annual_flow``  — ``inflow · annual_flow / (|Σ inflow| / period share of year)``;
 * ``scale_in_proportion``   — ``inflow · annual_flow / (|Σ inflow| / timeline duration in years)``;
@@ -244,7 +244,7 @@ def check_inflow_scaling_inputs(input_dir: Path, solve_data_dir: Path, *, provid
     if errors:
         raise FlexToolConfigError(
             "Inflow scaling cannot be applied:\n  - " + "\n  - ".join(errors)
-            + "\nSee docs/how_to.md 'How to set the demand in a node' for what each inflow_method needs.")
+            + "\nSee docs/how_to/basics.md 'How to set the demand in a node' for what each inflow_method needs.")
 
 
 def _warn_peak(n: str, d: str, af: float, peak: float, slope: float | None, section: float | None,

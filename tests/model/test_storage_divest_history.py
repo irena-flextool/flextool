@@ -119,9 +119,11 @@ def test_node_divest_without_its_retirement_map_is_refused(tmp_path_factory, mon
 
     from flextool.engine import build_flextool
 
-    # The inverter invests but never retires (invest_total), so only the battery node divests.
+    # The inverter and coal_plant invest but never retire (invest_total / invest_no_limit; coal_plant's
+    # cumulative_limits would retire its existing capacity, #218), so only the battery node divests.
     step = _solve(tmp_path_factory, monkeypatch,
-                  extra=(["connection", "battery_inverter", "invest_method", "invest_total"],))
+                  extra=(["connection", "battery_inverter", "invest_method", "invest_total"],
+                         ["unit", "coal_plant", "invest_method", "invest_no_limit"]))
     fd = step.flex_data
     assert fd is not None
     assert fd.pd_divest_set is None or fd.pd_divest_set.height == 0, "the model must divest nodes only"

@@ -1,9 +1,9 @@
 """The level texts and tool sets (P3 §8 test 1; §2).
 
 * the instructions and tool schemas of each level and front end fit the level's prefix budget (digit-aware
-  estimate, P3 §4.1);
+  estimate, P3 §4.1), the room the chat keeps for them;
 * basic sends exactly the eight tools of P3-O15 (with list_sources, 2026-11-08), standard and advanced all
-  eighteen;
+  nineteen;
 * no layer sent at a level — the chat's five layers for each front end, and the connection's instructions —
   names a tool outside that level's set (critique M1);
 * the level texts are the owner-approved ones (P3-O9, O15's tool sentence), byte-stable across builds;
@@ -33,24 +33,13 @@ BASIC_TOOL_SENTENCE = ("- Use only these tools: search_docs, read_doc, get_entit
                        "list_runs, find_result_tables and query_result.")
 #: sha256 of each level text as approved (P3 §2.1, word for word; any change goes back to the owner, P3-O9).  The
 #: basic text has said "at most three steps" since owner decision D1 (2026-11-09); every level's text ends with
-#: "How to answer" since 2026-11-11 (basic: its lookup bullets).
+#: "How to answer" since 2026-11-11 (basic: its lookup bullets).  The owner approved the 2026-11-12 texts (plain words
+#: with the FlexTool term, "More detail:", the alternative, rounding, no guessing, inactive entity first; basic: the
+#: inactive-entity sentence, no guessing, shorter "Do not:" bullets).
 ADDENDA_SHA256 = {
-    "small": "ce7ad3895e2fff568565a97d8bdca678bb2d07bac8c3e36a7a48e8d3ca5e1afa",
-    "medium": "6fa116ed1687fe0887347c0a3cc0993747bfb459adca42bdbe17d949f3ef954a",
-    "large": "80a5c5b2b37d0069447907c6f94b7dd3022b2d4d424b93731eae0c0511e4ddca",
-}
-
-
-#: The prefix budgets (C2-OD2, Cycle 2 C2-D1: basic 4 920, standard 9 000, advanced 9 100; with "How to answer"
-#: 2026-11-11: 5 000, 9 350, 9 450).
-PREFIX_BUDGETS = {"small": 5_000, "medium": 9_350, "large": 9_450}
-#: The prefix estimate (layers and tool schemas, digit-aware) of every level and front end.  A change of a level
-#: text or a tool description moves one of them on purpose: update the pin, and the budget table in
-#: ``specs/ai_assistant_autonomous_decisions.md`` (Cycle 2 C2-D2), in the same commit.
-PREFIX_PINS = {
-    ("small", "gui"): 4_975, ("small", "terminal"): 4_955, ("small", "agent"): 4_895,
-    ("medium", "gui"): 9_263, ("medium", "terminal"): 9_243, ("medium", "agent"): 9_183,
-    ("large", "gui"): 9_362, ("large", "terminal"): 9_342, ("large", "agent"): 9_282,
+    "small": "d54ffa8327ef1df765d21571fe2cc56c1e1d48085cbd6ea1aaaf95c381e8351c",
+    "medium": "41f0f85cc42a56e11aeeb04a34a23668def897d7939c2b7491dea1d82da30685",
+    "large": "c211a6938561730aad9eddac0261187bcb40c38e1b5834b2cc7458a94c6b7402",
 }
 
 
@@ -67,27 +56,17 @@ def _named_tools(text: str) -> set[str]:
 @pytest.mark.parametrize("front_end", FRONT_ENDS)
 @pytest.mark.parametrize("level", LEVELS)
 def test_the_prefix_fits_the_level_budget(front_end, level):
+    """The level's prefix budget is the room the chat keeps for the instructions and tool schemas when it fits
+    results into the window (``budget.fit_caps`` / ``fitting_calls``), so it must cover the real prefix.  It bites
+    at basic (a 16 384-token window); exact per-front-end pins were dropped 2026-11-11."""
     prefix = _prefix(front_end, level)
     assert prefix <= LEVEL_BUDGETS[level].prefix_tokens, f"{level} {front_end}: {prefix} tokens"
-
-
-@pytest.mark.parametrize("front_end", FRONT_ENDS)
-@pytest.mark.parametrize("level", LEVELS)
-def test_the_prefix_estimate_is_pinned(front_end, level):
-    """Every level × front end (the agent's connection lists the same forms, ``test_mcp_levels``) equals its pin,
-    and the pin is within the budget.  Before Cycle 2: no pins, budgets 4 850 / 8 700 / 9 000."""
-    assert LEVEL_BUDGETS[level].prefix_tokens == PREFIX_BUDGETS[level]
-    prefix = _prefix(front_end, level)
-    assert prefix == PREFIX_PINS[(level, front_end)], (
-        f"{level} {front_end}: {prefix} tokens, pinned {PREFIX_PINS[(level, front_end)]}: update the pin and the "
-        "budget table in the decisions file")
-    assert PREFIX_PINS[(level, front_end)] <= PREFIX_BUDGETS[level]
 
 
 def test_basic_is_the_eight_tools():
     assert tuple(t.name for t in registry.tools_for_tier("small")) == BASIC_TOOLS
     assert tuple(t.name for t in tool_specs("basic")) == BASIC_TOOLS
-    assert len(registry.all_tools()) == 18
+    assert len(registry.all_tools()) == 19
     for level in ("medium", "large"):
         assert {t.name for t in registry.tools_for_tier(level)} == set(registry.all_tools())
     assert not registry.all_tools()["get_gui_context"].small_tier

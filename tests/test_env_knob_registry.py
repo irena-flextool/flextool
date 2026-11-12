@@ -79,6 +79,9 @@ def _python_files(root: Path) -> list[Path]:
             cwd=REPO, capture_output=True, text=True, check=True, timeout=60,
         ).stdout.splitlines()
     except (OSError, subprocess.SubprocessError):
+        # ``Path.rglob`` on a file finds nothing, so a single module is listed by itself.
+        if root.is_file():
+            return [root] if root.suffix == ".py" else []
         return sorted(root.rglob("*.py"))
     return sorted(REPO / name for name in listed if name.endswith(".py") and (REPO / name).is_file())
 

@@ -417,3 +417,69 @@ def file_member_period(file_member, file_level_names: list) -> object:
     members = file_member if isinstance(file_member, tuple) else (file_member,)
     pos = _level_position(file_level_names, _PERIOD_NAMES)
     return None if pos is None or pos >= len(members) else members[pos]
+
+
+def unique_series_names(columns: list[str], taken: set[str]) -> list[str]:
+    """*columns* with each name that is already in *taken* (an index column, ``subplot``) or earlier in the list
+    renamed to ``<name> (series)``, then ``<name> (series) 2``, ...; so the CSV header never repeats a name."""
+    used = set(taken)
+    out = []
+    for name in columns:
+        unique, n = name, 1
+        while unique in used:
+            unique = f'{name} (series)' if n == 1 else f'{name} (series) {n}'
+            n += 1
+        used.add(unique)
+        out.append(unique)
+    return out
+
+
+def plot_data_frame(batch: list[tuple[str | None, pd.DataFrame]]) -> pd.DataFrame:
+    """The data drawn in one plot file, as one flat table for its CSV.
+
+    *batch* is the ``(subplot_title, frame)`` list a builder drew into one figure. Rows are the x axis (time steps
+    or bar categories, from the frame index), columns the plotted series: a column MultiIndex is flattened into one
+    header with the level values joined by ``" | "``.  A leading ``subplot`` column names the subplot when the file
+    has more than one.  A series whose name is already an index column (an entity called ``time``) or ``subplot``
+    is written as ``<name> (series)``.  The gap rows that :func:`insert_timeline_breaks` adds (all empty, repeating
+    the previous row's label) are dropped; a row that is empty in the data itself stays.  Empty cells stay empty.
+    """
+    parts = []
+    for title, frame in batch:
+        gap = frame.index.duplicated(keep='first') & frame.isna().all(axis=1).to_numpy()
+        if gap.any():
+            frame = frame.loc[~gap]
+        if isinstance(frame.columns, pd.MultiIndex):
+            columns = [' | '.join(str(v) for v in col) for col in frame.columns]
+        else:
+            columns = [str(c) for c in frame.columns]
+        index_part = pd.DataFrame(index=frame.index).reset_index()
+        taken = {str(c) for c in index_part.columns}
+        if len(batch) > 1:
+            taken.add('subplot')
+        values = frame.set_axis(unique_series_names(columns, taken), axis=1).reset_index(drop=True)
+        part = pd.concat([index_part, values], axis=1)
+        if len(batch) > 1:
+            part.insert(0, 'subplot', '' if title is None else str(title))
+        parts.append(part)
+    if not parts:
+        return pd.DataFrame()
+    return parts[0] if len(parts) == 1 else pd.concat(parts, ignore_index=True)
+
+
+def write_plot_data_csv(fig, image_path: str | os.PathLike) -> None:
+    """Write the data drawn in *fig* next to its image file: same stem, ``.csv``.
+
+    Builders store the drawn ``(subplot_title, frame)`` list as ``fig.flextool_plot_batch`` only when asked to keep
+    the plot data; a figure without it writes nothing.  A failure is logged as a warning naming the file and
+    does not stop the plotting.
+    """
+    batch = getattr(fig, 'flextool_plot_batch', None)
+    if batch is None:
+        return
+    from pathlib import Path
+    csv_path = Path(image_path).with_suffix('.csv')
+    try:
+        plot_data_frame(batch).to_csv(csv_path, index=False, float_format='%.8g', encoding='utf-8')
+    except Exception as exc:  # an opt-in side output must never stop the plotting
+        logger.warning("Plot data CSV %s not written: %s", csv_path, exc)

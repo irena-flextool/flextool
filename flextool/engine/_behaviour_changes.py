@@ -207,6 +207,79 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             published="7.11.2026",
         ),
         BehaviourChange(
+            id="solve_step_series_combined",
+            summary=("A solve with new_stepduration now combines every time series over the time steps of each "
+                     "new step by the kind of its value: prices, costs, limits, availability, min_load, penalties, "
+                     "reservations, self-discharge, time-step weights and profiles take the duration-weighted "
+                     "mean, efficiencies the harmonic mean (exact fuel use at a constant flow), inflow the sum and "
+                     "storage_state_reference_value the value at the end of the step. Before, these took the value "
+                     "of the step's first time step; only time-map profiles and inflow were combined "
+                     "(results change). A stochastic (branch) inflow used to take its first time step's value "
+                     "once; it is now summed like a deterministic inflow, so it grows by the number of time steps "
+                     "each new step combines, also where it is constant within the step."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "solve_step_series_combined"),
+        ),
+        BehaviourChange(
+            id="energy_margin_adder_per_original_step",
+            summary=("energy_margin_adder is now an energy per time step of the timeline: when the investment "
+                     "solve has new_stepduration, a solve step adds the sum of the values of the time steps it "
+                     "combines (a constant or period value counts once per time step). Before, a solve step "
+                     "added the value of its first time step once, so a coarse investment solve added less "
+                     "demand (results change). To keep the old demand, divide the value by the number of time "
+                     "steps a solve step combines."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "energy_margin_adder_per_original_step"),
+        ),
+        BehaviourChange(
+            id="capacity_margin_counts_by_flow",
+            summary=("The capacity margin now counts firm and VRE units at their capacity derated by availability "
+                     "(and capacity_max_coeff), units fed from a storage node, connections and the units "
+                     "consuming from the group by their actual flow; energy dumped through the downward balance "
+                     "slack does not count. Before, availability was ignored, storage-backed units counted at full capacity and "
+                     "connections not at all. Exports now add to the requirement; connections and lossy units "
+                     "inside the group are left out (results change). In an investment -> dispatch chain the investment solve's "
+                     "shortfall and its penalty are now reported (slack__capacity_margin__d, the costs) instead of "
+                     "0, so the total cost includes the penalty; capacity_margin__d explains each solve's margin."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "capacity_margin_counts_by_flow"),
+        ),
+        BehaviourChange(
+            id="discount_rate_zero_is_zero",
+            summary=("A discount_rate of 0 is now 0 %: the annuity of an investment is invest_cost / lifetime "
+                     "(salvage_value / lifetime for a retirement). Before, a discount_rate of 0 or below was "
+                     "read as 5 %, so these investments cost more per year (results change). A negative "
+                     "discount_rate is now an input error, and an investing or retiring entity with a cost "
+                     "needs a lifetime (before: 20 years)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "discount_rate_zero_is_zero"),
+        ),
+        BehaviourChange(
+            id="invest_without_cost_offered",
+            summary=("An invest_method that allows investing (retiring) now offers the investment (retirement) "
+                     "in every investment period, also where invest_cost (salvage_value) is missing or 0: that "
+                     "capacity has no annuity, its fixed_cost still counts. Before, such a period had no "
+                     "investment (retirement) variable unless a user constraint had a capacity coefficient on "
+                     "the entity, so a 0 in an invest_cost map blocked investment in that period (results "
+                     "change). To forbid investment in a period, set invest_max_period 0 there under a *_period "
+                     "invest_method (the other methods do not use invest_max_period), or use not_allowed. With "
+                     "neither invest_cost nor fixed_cost the invested amount is arbitrary."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "invest_without_cost_offered"),
+        ),
+        BehaviourChange(
+            id="stochastic_storage_paths_tied",
+            summary=("In a stochastic solve, bind_within_solve now closes one loop per path: the last step of "
+                     "every forecast branch ends at the level the solve's first step starts from, and with "
+                     "forecasts opening in the solve's first period each forecast's first step continues from the "
+                     "end of its own path. Before, only the branch listed last closed the loop and the others "
+                     "ended free (a fan in the first period looped each forecast within its first period). With "
+                     "bind_forward_only and a free start (no fix_start, no carried state), the forecasts opening "
+                     "in the solve's first period now start at the same level; before, each chose its own "
+                     "(results change). With storage_start_end_method fix_start the start of each forecast is "
+                     "the storage_state_start share of that forecast's own storage capacity, so where the "
+                     "capacity differs by forecast (investment or divestment per forecast) the starting energy "
+                     "differs. The upgrade marks every stochastic database with a storage node on "
+                     "bind_within_solve, or on bind_forward_only without a fixed start; such a "
+                     "bind_forward_only node changes only when a fan opens in the solve's first period."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "stochastic_storage_paths_tied"),
+        ),
+        BehaviourChange(
             id="gui_solver_defaults",
             summary=("Runs started from the FlexTool GUI now use the same solver settings as terminal and Spine "
                      "Toolbox runs: presolve is on (before: choose), and the MIP gap of each solve comes from its "
@@ -344,6 +417,12 @@ def display_text(notices: Iterable[Iterable[str]]) -> str:
     return "\n\n".join("\n".join(parts) for parts in notices)
 
 
+def unannounced(change_id: str, names: Iterable[str]) -> list[str]:
+    """The *names* (de-duplicated, in order) that :func:`notice` has not yet announced for *change_id* in this
+    run, so that a caller can build its ``detail`` from the fresh names only."""
+    return [n for n in dict.fromkeys(str(n) for n in names) if (change_id, n) not in _announced]
+
+
 def notice(change_id: str, kind: str, names: Iterable[str], detail: str = "") -> bool:
     """Print the notice of *change_id* for the *names* not yet announced in this run.
 
@@ -353,7 +432,7 @@ def notice(change_id: str, kind: str, names: Iterable[str], detail: str = "") ->
         raise KeyError(f"unknown behaviour change {change_id!r}")
     if change_id not in _markers:
         return False
-    fresh = [str(n) for n in dict.fromkeys(str(n) for n in names) if (change_id, str(n)) not in _announced]
+    fresh = unannounced(change_id, names)
     if not fresh:
         return False
     _announced.update((change_id, n) for n in fresh)

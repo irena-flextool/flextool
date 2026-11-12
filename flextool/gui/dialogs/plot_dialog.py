@@ -33,6 +33,17 @@ def _relative_config_path(abs_path: Path) -> str:
         return str(abs_path)
 
 
+PLOT_DATA_ON_IN_YAML_HINT = "on in plot_settings.yaml"
+
+
+def _plot_data_on_in_yaml(project_path: Path | None) -> bool:
+    """Whether the project's ``plot_settings.yaml`` has ``write_plot_data: true``."""
+    if project_path is None:
+        return False
+    from flextool.plot_outputs.color_template import plot_settings_write_plot_data, resolve_plot_settings_path
+    return plot_settings_write_plot_data(resolve_plot_settings_path(project_path))
+
+
 class _PlotSection:
     """Widget group for one plot-settings section (single or comparison).
 
@@ -108,12 +119,29 @@ class _PlotSection:
                 dispatch_row, text="Dispatch plots", variable=self._dispatch_var,
             ).pack(side="left")
 
-        # ── "Just one file per plot" checkbox ─────────────────────
+        # ── "Just one file per plot" + "Write plotted data (CSV)" ─
         row = 4 if show_dispatch else 3
+        files_row = ttk.Frame(self.frame)
+        files_row.grid(row=row, column=0, columnspan=2, sticky="w", pady=(4, 2))
         self._only_first_file_var = tk.BooleanVar(value=settings.only_first_file)
         ttk.Checkbutton(
-            self.frame, text="Just one file per plot", variable=self._only_first_file_var,
-        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(4, 2))
+            files_row, text="Just one file per plot", variable=self._only_first_file_var,
+        ).pack(side="left")
+        # ``write_plot_data: true`` in the project's plot_settings.yaml turns the CSVs on whatever the checkbox
+        # says, so the checkbox then shows it: checked, disabled, with a hint.  The project's own setting is kept.
+        self._plot_data_on_in_yaml = _plot_data_on_in_yaml(project_path)
+        self._write_plot_data_var = tk.BooleanVar(
+            value=True if self._plot_data_on_in_yaml else settings.write_plot_data,
+        )
+        self._write_plot_data_check = ttk.Checkbutton(
+            files_row,
+            text=(f"Write plotted data (CSV) \u2014 {PLOT_DATA_ON_IN_YAML_HINT}" if self._plot_data_on_in_yaml
+                  else "Write plotted data (CSV)"),
+            variable=self._write_plot_data_var,
+        )
+        if self._plot_data_on_in_yaml:
+            self._write_plot_data_check.state(["disabled"])
+        self._write_plot_data_check.pack(side="left", padx=(12, 0))
 
         # ── Active configs list (Treeview with checkboxes) ─────────
         row += 1
@@ -183,6 +211,8 @@ class _PlotSection:
             active_configs=active,
             dispatch_plots=dispatch,
             only_first_file=self._only_first_file_var.get(),
+            write_plot_data=(self._settings.write_plot_data if self._plot_data_on_in_yaml
+                             else self._write_plot_data_var.get()),
         )
 
     # ── Internal ──────────────────────────────────────────────────

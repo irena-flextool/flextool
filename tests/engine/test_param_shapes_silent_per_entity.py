@@ -1,7 +1,7 @@
 """Per-entity silent-label fallback in ``resolve_param_shape`` (#167, #168).
 
 ``resolve_param_shape`` classifies a whole ``(entity_class, parameter_name)`` frame at once: when the
-registry admits both ``MAP_PERIOD`` and ``MAP_TIME`` at depth 1 (the 19 keys of ``PARAM_ALLOWED_SHAPES``
+registry admits both ``MAP_PERIOD`` and ``MAP_TIME`` at depth 1 (the 21 keys of ``PARAM_ALLOWED_SHAPES``
 that do) and the DB carried no ``index_name`` label, the whole-frame value-domain probe
 (``_disambiguate_shape_by_value_domain``) looks at the UNION of every entity's keys.  When that union
 still cannot decide (no overlap at all, or overlap on both axes), the parameter resolved to ``None`` for

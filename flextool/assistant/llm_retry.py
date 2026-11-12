@@ -1,9 +1,10 @@
 """FlexTool's own retries of a model request (P1 §5); the provider libraries never retry (``max_retries=0``).
 
-Retried, and only before any part of the answer was shown: a rate limit (:class:`RateLimited`) and an overloaded
-service (:class:`ServerBusy`); a remote endpoint that could not be reached (:class:`Unreachable`) once after two
-seconds.  A wait longer than ``longest_auto_wait`` is not waited for: the error is raised with the "long wait"
-message.  While waiting, :class:`RetryWait` is pushed every second and the cancel event is honoured.
+Retried, and only before any part of the answer was shown: a rate limit (:class:`RateLimited`), an overloaded
+service (:class:`ServerBusy`) and a tool call the service could not read (:class:`UnreadableToolCall`); a remote
+endpoint that could not be reached (:class:`Unreachable`) once after two seconds.  A wait longer than
+``longest_auto_wait`` is not waited for: the error is raised with the "long wait" message.  While waiting,
+:class:`RetryWait` is pushed every second and the cancel event is honoured.
 
 * **Rate limit**: at most ``max_retries`` retries (``free_plan_rate_retries`` with the free plan on), and all their
   waits together at most ``longest_auto_wait``.  The wait is what the provider names (``retry_after``), else the
@@ -17,6 +18,10 @@ message.  While waiting, :class:`RetryWait` is pushed every second and the cance
   at most ``local_busy_retries`` retries, a doubling backoff from ``local_busy_backoff_start`` up to
   ``local_busy_backoff_cap`` per wait (``retry_after`` when named), and all these waits together at most
   ``local_busy_longest_wait``.
+* **A tool call the service could not read** (Ollama's ``error parsing tool call``): the model's answer, not the
+  service, failed, so it is asked again at once (``unreadable_wait``), at most ``unreadable_retries`` times, counted
+  apart from the other retries; not told to *on_rejected* (the service did not refuse the request).  The last
+  message says how many answers failed.
 
 With a :class:`Pacing`, every attempt first waits for its turn (unless the backend paces itself, the window's
 gate) and reports its outcome and the answer's request-limit headers to the pacer.
@@ -38,6 +43,7 @@ from flextool.assistant.llm_errors import (
     RateLimited,
     ServerBusy,
     Unreachable,
+    UnreadableToolCall,
     cancelled,
 )
 from flextool.assistant.pacing import PROCESS_PACER, Pacer
@@ -58,6 +64,9 @@ class RetryPolicy:
     local_busy_backoff_start: float = 2.0
     local_busy_backoff_cap: float = 60.0
     local_busy_longest_wait: float = 300.0
+    #: A tool call the service could not read (gpt-oss on Ollama, 2026-11-11): two more answers asked for at once.
+    unreadable_retries: int = 2
+    unreadable_wait: float = 0.5
 
     def backoff(self, n: int, rng: random.Random, *, local: bool = False) -> float:
         """The wait before retry *n* (1-based) when the provider names none; *local*: a local server's backoff."""
@@ -105,6 +114,7 @@ def call_with_retries(fn: Callable[[], Reply], policy: RetryPolicy, on_event: On
     retries = 0
     rate_waited = 0.0
     busy_waited = 0.0
+    unreadable_retried = 0
     connection_retried = False
     while True:
         if cancel.is_set():
@@ -164,6 +174,19 @@ def call_with_retries(fn: Callable[[], Reply], policy: RetryPolicy, on_event: On
                 key = ("ended_early_retry" if err.message_key == "ended_early"
                        else "busy_local_retry" if err.local else "busy_retry")
                 attempt, of = retries, busy_retries
+            elif isinstance(err, UnreadableToolCall):
+                if unreadable_retried >= policy.unreadable_retries:
+                    count = policy.unreadable_retries + 1
+                    if count > 1:
+                        err.fields = {**err.fields, "count": count}
+                        err.user_message = _message("tool_call_unreadable_final", err)
+                        err.args = (err.user_message,)
+                        err.message_key = "tool_call_unreadable_final"
+                    raise
+                unreadable_retried += 1
+                wait = policy.unreadable_wait
+                key = "tool_call_unreadable_retry"
+                attempt, of = unreadable_retried, policy.unreadable_retries
             elif isinstance(err, Unreachable) and not err.local and not connection_retried:
                 connection_retried = True
                 wait = policy.connection_wait

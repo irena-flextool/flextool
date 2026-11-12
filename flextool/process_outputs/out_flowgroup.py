@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from flextool.process_outputs._annualize import annualize_dt_to_d
+
 
 def _member_legs(s, g: str) -> pd.MultiIndex:
     """Return the ``(process, node)`` legs belonging to group ``g``.
@@ -34,9 +36,10 @@ def flowGroup_indicators(par, s, v, r, debug):
     timestep:
 
     * ``magnitude_dt`` — the UNSIGNED sum of all member unit- and
-      connection-flow magnitudes (``.abs()``).  This is weighted by step
-      duration to get energy per period and divided by period hours for the
-      average power.  This path is unchanged (byte-identical).
+      connection-flow magnitudes (``.abs()``).  It is annualised like the
+      flows (× step duration × timestep weight, Σ over the period, ÷ the
+      period's share of a year) to the annual energy; the average power is
+      that energy over 8760 h.
     * ``net_dt`` — the SIGNED net flow into the group's nodes (into-node
       ``+``, out-of-node ``−``; matches ``calc_group_flows``/
       ``calc_connections``).  A unit leg whose ``node`` is the flow's *sink*
@@ -48,7 +51,7 @@ def flowGroup_indicators(par, s, v, r, debug):
     Returns a list of two ``(frame, name)`` tuples:
 
     * ``flowGroup_gd_p`` — keyed ``(group, period)`` with columns
-      ``cumulative_flow`` [MWh] and ``average_flow`` [MW].  A group with no
+      ``cumulative_flow`` [MWh/a, annualised] and ``average_flow`` [MW].  A group with no
       matched member flows gets zeros rather than being dropped.
     * ``flowGroup_gd_t`` — keyed ``(group, period, time)`` with the single
       column ``net_flow`` [MW], the signed per-timestep net flow.
@@ -81,9 +84,6 @@ def flowGroup_indicators(par, s, v, r, debug):
 
     rows: list[dict] = []
     net_rows: list[dict] = []
-    # Period hours = share of year * 8760 (same convention used by
-    # out_flows.unit_online_and_startup for period-hour normalization).
-    period_hours = par.complete_period_share_of_year.mul(8760.0)
 
     for g in s.flowGroupIndicators:
         legs = _member_legs(s, g)  # MultiIndex[(process, node)]
@@ -142,16 +142,17 @@ def flowGroup_indicators(par, s, v, r, debug):
                         r.to_conn[conn_legs_to].sum(axis=1), fill_value=0.0,
                     )
 
-        # Weight MW → MWh per step, then sum to period level.
-        energy_dt = magnitude_dt.mul(step_dur, fill_value=0.0)
-        cumulative_d = energy_dt.groupby(level='period').sum()
+        # MW → MWh per step, × timestep weight, Σ over the period, ÷ the
+        # period's share of a year: annual energy (MWh/a), like the flows.
+        cumulative_d = annualize_dt_to_d(
+            magnitude_dt.to_frame('v'), par.timestep_weight,
+            par.complete_period_share_of_year, step_dur)['v']
         # Reindex to the full realized-period set so groups with no matched
         # flows still produce a row per realized period.
         cumulative_d = cumulative_d.reindex(s.d_realized_period, fill_value=0.0)
-
-        hours_d = period_hours.reindex(cumulative_d.index)
-        average_d = cumulative_d.div(hours_d.where(hours_d != 0, pd.NA))
-        average_d = average_d.fillna(0.0)
+        # Average power over the year: the annual energy over 8760 h (the
+        # weighted mean of the sampled MW).
+        average_d = cumulative_d.div(8760.0).fillna(0.0)
 
         for period in cumulative_d.index:
             rows.append({

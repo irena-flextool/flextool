@@ -136,7 +136,7 @@ def test_section_counts_in_requirement(tmp_path_factory) -> None:
     """A min_load_efficiency e_boiler with linear online variables draws v_online · section · unitsize too:
     the dynamic and n-1-down rows carry v_online_linear[e_boiler] with the coefficient nodeBalance_eq has
     (× ratio 1), and the scales use slope + section.  The full-load input per unit of capacity is slope +
-    section = 1/efficiency (docs/how_to.md: the input is linear from min_load/efficiency_at_min_load to
+    section = 1/efficiency (docs/how_to/thermal_chp.md: the input is linear from min_load/efficiency_at_min_load to
     1/efficiency), so the full-load input is unitsize / 0.5 (#140: slope and section from one unrounded slope)."""
     ents, vals = _reserves()
     step = solve(tmp_path_factory, alt="drawn_sec", base_chain=BASE, entities=EB_ENTS + ents,

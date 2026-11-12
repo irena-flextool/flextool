@@ -3,6 +3,66 @@ import pandas as pd
 from flextool.process_outputs._annualize import annualize_dt_to_d
 
 
+def _with_startup_draws(node_to_unit: pd.DataFrame, r, s) -> "tuple[pd.DataFrame, pd.MultiIndex]":
+    """``(node_to_unit with the units' start-up input draws, the (process, node) of the startup_only draws)``.
+
+    The draw (``r.startup_draw_dt``, unit__inputNode.startup_input_method) is energy the unit takes from the node,
+    as in nodeBalance_eq: added to the flow of a startup_and_input arc, its own column for a startup_only arc
+    (which has no flow and no row in the arc sets)."""
+    draw = getattr(r, 'startup_draw_dt', None)
+    empty = pd.MultiIndex.from_tuples([], names=['process', 'node'])
+    if draw is None or len(draw.columns) == 0:
+        return node_to_unit, empty
+    draw = draw[draw.columns[draw.columns.get_level_values('process').isin(s.process_unit)]]
+    if len(draw.columns) == 0:
+        return node_to_unit, empty
+    draw = draw.reindex(node_to_unit.index)
+    draw.columns = draw.columns.set_names(['process', 'node'])
+    only = draw.columns.difference(node_to_unit.columns)
+    out = node_to_unit.add(draw, fill_value=0.0)
+    out.columns = out.columns.set_names(['process', 'node'])
+    return out, pd.MultiIndex.from_tuples(list(only), names=['process', 'node'])
+
+
+def _startup_only_aggregators(s, p: str) -> list:
+    """The flow aggregators (``s.flowAggregator``) of the unit ``p`` of a startup_only draw: those whose flowGroup
+    lists the unit at any node.  The draw has no (process, node) membership of its own (a flowGroup cannot name a
+    startup_only arc, ``validate_startup_inputs``), so it goes where the unit goes."""
+    aggregators = getattr(s, 'flowAggregator', None)
+    gpn = getattr(s, 'group_process_node', None)
+    if aggregators is None or len(aggregators) == 0 or gpn is None or len(gpn) == 0:
+        return []
+    members = {(g, q) for g, q, _n in gpn}
+    return [ga for ga in aggregators if (ga, p) in members]
+
+
+def _with_startup_only_rows(node_set: pd.MultiIndex, startup_only: pd.MultiIndex, s, *,
+                            aggregate: bool = False) -> pd.MultiIndex:
+    """``node_set`` with the startup_only draws (process, node) of each dispatch group at a node of the group, unless
+    the process is wholly inside the group (its draw is then an internal loss).
+
+    ``aggregate`` False: ``node_set`` is (group, process, node) and gets the draws in no flow aggregator; True:
+    ``node_set`` is (group, group_aggregate, process, node) and gets a row per aggregator of the draw."""
+    if len(startup_only) == 0:
+        return node_set
+    inside = set(s.nodeGroupDispatch__process_fully_inside)
+    rows = []
+    for g in s.nodeGroupDispatch:
+        for p, n in startup_only:
+            if (g, n) not in s.group_node or (g, p) in inside:
+                continue
+            aggregators = _startup_only_aggregators(s, p)
+            if aggregate:
+                rows += [(g, ga, p, n) for ga in aggregators]
+            elif not aggregators:
+                rows.append((g, p, n))
+    if not rows:
+        return node_set
+    names = ['group', 'group_aggregate', 'process', 'node'] if aggregate else ['group', 'process', 'node']
+    extra = pd.MultiIndex.from_tuples(rows, names=names)
+    return node_set.append(extra.reorder_levels(list(node_set.names))) if len(node_set) else extra
+
+
 def compute_group_flows(par, s, v, r) -> None:
     """Compute all group-level flow aggregations (connection and unit flows, inflow, losses).
 
@@ -85,6 +145,7 @@ def compute_group_flows(par, s, v, r) -> None:
 
     unit_to_node.columns.names = ['process', 'node']
     node_to_unit.columns.names = ['process', 'node']
+    node_to_unit, startup_only = _with_startup_draws(node_to_unit, r, s)
 
     unit_to_node_set = s.nodeGroupDispatch__process__unit__to_node_Not_in_aggregate.droplevel('unit')
     group_sets = unit_to_node.columns.join(unit_to_node_set, how='inner')
@@ -92,7 +153,8 @@ def compute_group_flows(par, s, v, r) -> None:
     unit_to_node_selected.columns = group_sets
     r.nodeGroupDispatch__unit_to_node_not_in_aggregate__dt = unit_to_node_selected
 
-    node_to_unit_set = s.nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.droplevel('unit')
+    node_to_unit_set = _with_startup_only_rows(
+        s.nodeGroupDispatch__process__node__to_unit_Not_in_aggregate.droplevel('unit'), startup_only, s)
     group_sets = node_to_unit.columns.join(node_to_unit_set, how='inner')
     node_to_unit_selected = node_to_unit[group_sets.droplevel('group')]
     node_to_unit_selected.columns = group_sets
@@ -111,7 +173,8 @@ def compute_group_flows(par, s, v, r) -> None:
     r.nodeGroupDispatch__group_aggregate_Unit_to_group_positive__dt = unit_to_group_selected_positive.T.groupby(level=['group', 'group_aggregate']).sum().T
     r.nodeGroupDispatch__group_aggregate_Unit_to_group_negative__dt = unit_to_group_selected_negative.T.groupby(level=['group', 'group_aggregate']).sum().T
 
-    group_to_unit_set = s.nodeGroupDispatch__processGroup__process__node__to_unit.droplevel('unit')
+    group_to_unit_set = _with_startup_only_rows(
+        s.nodeGroupDispatch__processGroup__process__node__to_unit.droplevel('unit'), startup_only, s, aggregate=True)
     group_agg_sets = node_to_unit.columns.join(group_to_unit_set, how='inner')
     group_to_unit_selected = node_to_unit[group_agg_sets.droplevel(['group', 'group_aggregate'])]
     group_to_unit_selected.columns = group_agg_sets
@@ -131,6 +194,14 @@ def compute_group_flows(par, s, v, r) -> None:
 
     losses_set = s.nodeGroupDispatch__process_fully_inside
     group_losses_sets_node_to_unit = losses_set.join(node_to_unit.columns, how='inner')
+    if len(startup_only) and len(group_losses_sets_node_to_unit):
+        # A startup_only draw is an internal loss of a group only at a node of the group.
+        only = set(startup_only)
+        sets = group_losses_sets_node_to_unit
+        keep = [(p, n) not in only or (g, n) in s.group_node
+                for g, p, n in zip(sets.get_level_values('group'), sets.get_level_values('process'),
+                                   sets.get_level_values('node'))]
+        group_losses_sets_node_to_unit = sets[keep]
     group_losses_sets_unit_to_node = losses_set.join(unit_to_node.columns, how='inner')
 
     node_to_unit_filtered = node_to_unit[group_losses_sets_node_to_unit.droplevel('group')]

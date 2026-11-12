@@ -21,17 +21,19 @@ The model grows one **alternative** at a time. Each alternative is a self-contai
 
 ## Setting up the project
 
-1. **Launch the FlexTool GUI** from the FlexTool installation directory:
+1. **Launch the FlexTool GUI** from the FlexTool installation directory, with its virtual environment active:
 
     ```
-    python -m flextool.gui
+    flextool-gui
     ```
+
+    (`python -m flextool.gui` does the same.)
 
 2. **Create a new project.** From the **Project** menu choose *New project*, name it `tutorial`, and pick a location. The GUI creates `projects/tutorial/` with an empty `input_sources/` folder and a `settings.yaml`.
 
-3. **Add the seed input source.** Click **Add** in the **Input sources** panel and pick `templates/time_settings_only.sqlite` from the FlexTool repository. The GUI copies the file into your project's `input_sources/` (migrating it to the current schema version if needed) and renames it to whatever you typed in the dialog — `tutorial.sqlite` is a good name. This seed database already contains the basic time settings (`init` and `init_2day-test` alternatives) that every FlexTool model needs. See [How to create basic time settings](how_to.md) if you want to know how those were built.
+3. **Add the seed input source.** Click **Add** in the **Input sources** panel and pick `templates/time_settings_only.sqlite` from the FlexTool installation directory. The GUI copies the file into your project's `input_sources/` (migrating it to the current schema version if needed) and renames it to whatever you typed in the dialog — `tutorial.sqlite` is a good name. This seed database already contains the basic time settings (`init` and `init_2day-test` alternatives) that every FlexTool model needs. See [How to create basic time settings](how_to/index.md) if you want to know how those were built.
 
-4. **Open the input source in the Spine database editor.** Double-click the `tutorial.sqlite` row in **Input sources** (or select it and press **Edit**). The Spine database editor opens in its own window — that is where the rest of the modelling steps happen.
+4. **Open the input source in the Spine database editor.** Double-click the `tutorial.sqlite` row in **Input sources** (or select it and press **Edit**). The Spine database editor opens in its own window — that is where the rest of the modelling steps happen. It comes with the recommended install (`flextool[toolbox]`); the lighter install without Spine Toolbox does not have it.
 
 !!! warning "Always commit before running"
     The Spine database editor stages changes locally until you **commit** them with **Ctrl-Enter** (or *Session → Commit…* from the menu). Until you commit, the FlexTool GUI sees the previous, uncommitted state. Every step below ends with a commit reminder for this reason.
@@ -211,6 +213,41 @@ Create a scenario *network* with alternatives *init*, *init_2day-test*, *west*, 
 !!! tip "Enable Auto-generate for repeated runs"
     The **Auto-generate** checkboxes in the main GUI window (Scenario plots, Comparison plots, Comparison Excel, …) run the same outputs automatically after each execution. Tick them once and every subsequent **Execute** produces a fresh set of PNGs and workbooks without further input.
 
+## Step 5 — Let the model invest
+
+So far the model has only dispatched the capacity you gave it. Now let it decide how much wind capacity to build.
+
+### Alternative and parameters
+
+Add alternative *wind_invest*. On *wind_plant* (under *wind_invest*):
+
+- `invest_method` = *invest_no_limit* — the model may build any amount of new capacity.
+- `invest_cost` = `1000` — the overnight cost of new capacity [CUR/kW].
+- `lifetime` = `25` — years.
+- `discount_rate` = `0.04` — the cost of capital, 4 %.
+
+The model turns the investment cost into a yearly payment (an annuity) over the lifetime:
+1000 × 0.04 / (1 − 1.04^−25) ≈ 64 CUR/kW per year.
+
+On the solve *2day-dispatch* (under *wind_invest*):
+
+- `invest_periods` = an array with *p2020* — the periods in which the model may invest.
+
+Commit with **Ctrl-Enter**.
+
+### Execute and inspect
+
+Create a scenario *wind_invest* with alternatives *init*, *init_2day-test*, *west*, *coal*, *wind*, *network*, *wind_invest*. Commit, queue, execute. In the results:
+
+- **Capacity.** The unit capacity table (`unit_capacity__d`) shows the *existing* capacity of *wind_plant*, the capacity *invested* and the *total*. The model builds wind until one more MW would save less in fuel and penalties than its annuity.
+- **Costs.** The annualized costs (`annualized_costs__d`) now have a *unit investment & retirement* category: the annuity of the new capacity for one year, in M CUR.
+- **Dispatch.** Compare *network* and *wind_invest* in the comparison view: more wind output and less coal.
+
+!!! note "One period, two days"
+    The model weighs one year of the annuity against the costs of the two days scaled to a full year. Two days are far too short a sample for a real investment decision: the [investment how-tos](how_to/investment.md) use longer samples and several periods, and [How to make investments (storage/unit)](how_to/investment.md#how-to-make-investments-storageunit) adds a battery (the scenario *wind_battery_invest* in `templates/examples.sqlite`).
+
+See [Reading results](reading_results.md) for the order in which to check the results of a run.
+
 ## Inspecting and comparing results
 
 The **Result viewer** reads parquet directly, so it is always live: changing scenarios or plots does not re-run anything.
@@ -238,8 +275,9 @@ After many iterations the database accumulates committed alternatives and scenar
 
 You now have the building blocks: alternatives, scenarios, units, profiles, connections, commodities, and the FlexTool GUI's execute / inspect loop.
 
-- [How-to recipes](how_to.md) — small focused examples (storage, investments, reserves, CHP, hydro, …).
-- [Model parameters](reference.md) — every entity class and parameter, organised by topic.
+- [How-to recipes](how_to/index.md) — small focused examples (storage, investments, reserves, CHP, hydro, …).
+- [Model parameters](reference/index.md) — every entity class and parameter, organised by topic.
+- [Reading results](reading_results.md) — where to look first in the results of a run.
 - [Model outputs](results.md) — what every parquet column means.
 - [Advanced concepts](advanced_concepts.md) — stochastics, representative periods, multi-year solves.
 - [FlexTool GUI](flextool_gui_interface.md) — full reference for the GUI used here.

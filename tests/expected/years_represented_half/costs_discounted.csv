@@ -11,6 +11,7 @@ commodity_sales,0.0
 co2,0.0
 other operational,0.0
 starts,0.0
+ramps,0.0
 upward slack penalty,465.0739
 downward slack penalty,0.0
 inertia slack penalty,0.0

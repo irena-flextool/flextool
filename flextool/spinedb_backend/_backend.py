@@ -72,6 +72,12 @@ _IS_ENABLED_CLASSES: frozenset[str] = frozenset({
     "reserve__upDown__connection__node",
 })
 
+#: Classes with entities the input derivation does not see: the ``is_enabled = no`` entities of
+#: :data:`_IS_ENABLED_CLASSES` and the ``unit__inputNode`` arcs with ``startup_input_method`` ``startup_only`` (not
+#: an arc of the model: the unit only takes start-up energy from the node; the engine reads it through
+#: ``SpineDbReader.startup_arcs``).
+_HIDING_CLASSES: frozenset[str] = _IS_ENABLED_CLASSES | {"unit__inputNode"}
+
 
 
 
@@ -259,11 +265,47 @@ class SpineDBBackend:
         entities = list(
             self._db.find_entities(entity_class_name=entity_class_name)
         )
-        if entity_class_name in _IS_ENABLED_CLASSES:
-            disabled_ids = self._disabled_entity_ids(entity_class_name)
+        if entity_class_name in _HIDING_CLASSES:
+            disabled_ids = self._hidden_entity_ids(entity_class_name)
             if disabled_ids:
                 entities = [e for e in entities if e["id"] not in disabled_ids]
         return entities
+
+    def _hidden_entity_ids(self, entity_class_name: str) -> frozenset[int]:
+        """Entity IDs of *entity_class_name* the input derivation does not see: the ``is_enabled = no`` entities
+        (:meth:`_disabled_entity_ids`) and, for ``unit__inputNode``, the ``startup_only`` arcs
+        (:meth:`_startup_only_arc_ids`)."""
+        hidden = frozenset()
+        if entity_class_name in _IS_ENABLED_CLASSES:
+            hidden = self._disabled_entity_ids(entity_class_name)
+        if entity_class_name == "unit__inputNode":
+            hidden = hidden | self._startup_only_arc_ids()
+        return hidden
+
+    def _startup_only_arc_ids(self) -> frozenset[int]:
+        """Entity IDs of the ``unit__inputNode`` arcs whose ``startup_input_method`` is ``startup_only`` under the
+        active scenario filter (lazy-cached with :meth:`_disabled_entity_ids`).  Before v79 the definition does
+        not exist: no arc is hidden."""
+        cache = self._disabled_entity_id_cache
+        if cache is None:
+            cache = {}
+            self._disabled_entity_id_cache = cache
+        key = ("startup_only", "unit__inputNode")
+        if key in cache:
+            return cache[key]
+        if self._db is None:
+            raise RuntimeError("SpineDBBackend is closed")
+        try:
+            pv_rows = self._db.find_parameter_values(
+                entity_class_name="unit__inputNode",
+                parameter_definition_name="startup_input_method",
+            )
+        except Exception:  # noqa: BLE001 — pre-v79 DBs lack the pdef
+            pv_rows = []
+        result = frozenset(pv["entity_id"] for pv in pv_rows
+                           if pv.get("type") == "str" and pv.get("parsed_value") == "startup_only")
+        cache[key] = result
+        return result
 
     def _disabled_entity_ids(self, entity_class_name: str) -> frozenset[int]:
         """Return entity IDs of *entity_class_name* whose effective
@@ -515,8 +557,8 @@ class SpineDBBackend:
             # three affected classes.  Replaces the entity_alternative
             # gating spinedb_api's scenario_filter applied pre-v56.
             disabled_ids: frozenset[int] = frozenset()
-            if ent_class in _IS_ENABLED_CLASSES:
-                disabled_ids = self._disabled_entity_ids(ent_class)
+            if ent_class in _HIDING_CLASSES:
+                disabled_ids = self._hidden_entity_ids(ent_class)
             for entity in self._db.find_entities(entity_class_name=ent_class):
                 if disabled_ids and entity["id"] in disabled_ids:
                     continue
@@ -620,8 +662,8 @@ class SpineDBBackend:
         for cl_par in cl_pars:
             bucket = index.get((cl_par[0], cl_par[1]), ())
             ent_class = cl_par[0]
-            if ent_class in _IS_ENABLED_CLASSES:
-                disabled_ids = self._disabled_entity_ids(ent_class)
+            if ent_class in _HIDING_CLASSES:
+                disabled_ids = self._hidden_entity_ids(ent_class)
                 if disabled_ids:
                     bucket = [
                         p for p in bucket

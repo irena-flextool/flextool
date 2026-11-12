@@ -19,6 +19,7 @@ class PlotSettings:
     active_configs: list[str] = field(default_factory=list)
     dispatch_plots: bool = True  # comparison only: include --dispatch-plots
     only_first_file: bool = False  # limit to one file per plot (quick overview)
+    write_plot_data: bool = False  # also write each plot's drawn data as CSV next to it
     # Per-variant duration, keyed by variant letter (e.g. {"h": 168, "w": 8760}).
     # Only ints — "all" sentinel from the template is resolved to a concrete
     # integer the first time the variant is seen and stored here.
@@ -321,7 +322,9 @@ class InputSourceInfo:
     name: str
     file_type: str  # "xlsx" or "sqlite"
     number: int
-    status: str  # "ok", "error", "empty", "editing", or "retired"
+    # "ok", "error", "empty", "editing", "retired", or "frozen_old" (a frozen
+    # sqlite older than this FlexTool that the user did not migrate: not runnable)
+    status: str
     scenarios: list[str] = field(default_factory=list)
     # Set when the source lives outside the project; stored as POSIX path
     # relative to the project root (e.g. "../data/input.xlsx").
@@ -333,6 +336,10 @@ class InputSourceInfo:
     # Number of executed-scenario result folders that resolve to this
     # source number (used for the ghost-row tooltip / GC decision).
     result_count: int = 0
+    # The label of a frozen sqlite (``flextool-freeze``), or None.
+    frozen_label: str | None = None
+    # The frozen marker and version for the status tooltip ("" when not frozen).
+    frozen_note: str = ""
 
 
 @dataclass

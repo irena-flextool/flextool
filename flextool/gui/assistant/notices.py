@@ -76,6 +76,14 @@ def settings_symbol(widget: tk.Misc) -> str:
     return strings.SETTINGS_SYMBOL
 
 
+def question_symbols(widget: tk.Misc) -> tuple[str, str]:
+    """The labels of a question's buttons: "↻" and "✎", or "Ask again" and "Edit" on Windows when the font that has
+    the symbols (Segoe UI Symbol) is missing (as :func:`settings_symbol`)."""
+    if settings_symbol(widget) == strings.SETTINGS_SYMBOL_FALLBACK:
+        return strings.ASK_AGAIN, strings.EDIT_QUESTION
+    return strings.ASK_AGAIN_SYMBOL, strings.EDIT_SYMBOL
+
+
 def centre_on(dialog: tk.Toplevel, parent: tk.Misc) -> None:
     """Place *dialog* in the middle of *parent* (``main_window.py``'s dialogs do the same)."""
     try:

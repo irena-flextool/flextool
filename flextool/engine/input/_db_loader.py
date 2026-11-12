@@ -1,10 +1,11 @@
 import logging
+from contextlib import ExitStack
 import spinedb_api as api
 from flextool import run_record
 from flextool.update_flextool.db_handle import open_database_mapping
 from pathlib import Path
 
-from flextool.engine.input._db_reader import check_version
+from flextool.engine.input._db_reader import check_version, schema_version_message
 from flextool.input_derivation import run as _input_derivation_run
 from flextool.engine.input._solve_config import SolveConfig
 from flextool.engine.input._timeline import TimelineConfig
@@ -38,6 +39,7 @@ class FlexToolRunner:
         auto_scale=False,
         timing_recorder: "TimingRecorder | None" = None,
         run_options: "RunOptions | None" = None,
+        timeset_warned: "set[tuple] | None" = None,
     ):
         logger = logging.getLogger(__name__)
         # Resolve work_folder: default to cwd for backward compatibility
@@ -50,12 +52,16 @@ class FlexToolRunner:
         (resolved_work_folder / "solve_data").mkdir(exist_ok=True)
         # Build PathConfig — defaults are PyPI-friendly: the
         # ``flextool`` package directory for static data, CWD for
-        # outputs and user-editable ``solver_config/highs.opt``.
+        # outputs; the solver option folder as a run resolves it
+        # (``flextool._solver_config_source``; ``run_chain_from_db`` passes its own).
         from flextool._resources import package_data_path
+        from flextool._solver_config_source import resolve_solver_config_source
         _pkg_dir = package_data_path("")
+        if solver_config_dir is None:
+            solver_config_dir = resolve_solver_config_source(run_options=run_options, input_db_url=input_db_url).dir
         paths = PathConfig(
             flextool_dir=Path(flextool_dir) if flextool_dir is not None else _pkg_dir,
-            solver_config_dir=Path(solver_config_dir) if solver_config_dir is not None else Path.cwd() / "solver_config",
+            solver_config_dir=Path(solver_config_dir) if solver_config_dir is not None else None,
             root_dir=Path(root_dir) if root_dir is not None else Path.cwd(),
             output_path=Path(output_path) if output_path is not None else Path.cwd(),
             work_folder=resolved_work_folder,
@@ -64,7 +70,11 @@ class FlexToolRunner:
         # open connection to input db
         if scenario_name:
             scen_config = api.filters.scenario_filter.scenario_filter_config(scenario_name)
-        with (open_database_mapping(input_db_url) as db):
+        with ExitStack() as _db_stack:
+            try:
+                db = _db_stack.enter_context(open_database_mapping(input_db_url))
+            except api.SpineDBVersionError as exc:
+                raise FlexToolConfigError(schema_version_message(input_db_url, exc)) from None
             if scenario_name:
                 api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
             else:
@@ -102,6 +112,8 @@ class FlexToolRunner:
 
         # Post-DB initialization of timeline
         timeline.create_assumptive_parts(solve)
+        # ``timeset_warned``: the warnings this run printed already (see validate_timeset_blocks).
+        timeline.validate_timeset_blocks(solve, timeset_warned)
         timeline.create_timeline_from_timestep_duration(solve)
 
         # Assemble RunnerState — the single cross-cutting state container

@@ -209,7 +209,7 @@ def test_expand_coarse_copies_to_missing_steps() -> None:
 
 
 def test_expand_coarse_first_step_mode() -> None:
-    """An event variable (start-ups): the value stays at the coarse step's first fine step and the other fine steps
+    """An event variable (start-ups, ramp changes): the value stays at the coarse step's first fine step and the other fine steps
     of the step get 0, so the sum over the step is the LP's value; a fine process and the dtypes are unchanged."""
     from flextool.engine.output._coarse_flows import COARSE_VARS, expand_coarse
 
@@ -222,7 +222,8 @@ def test_expand_coarse_first_step_mode() -> None:
     assert pipe["t"].to_list() == [f"t{h}" for h in range(1, 7)]
     assert pipe["value"].to_list() == [2.0, 0.0, 0.0, 3.0, 0.0, 0.0]
     assert {n for n, m in COARSE_VARS.items() if m == "first"} == {
-        "v_startup_linear", "v_startup_integer", "v_shutdown_linear", "v_shutdown_integer"}
+        "v_startup_linear", "v_startup_integer", "v_shutdown_linear", "v_shutdown_integer",
+        "v_ramp_up", "v_ramp_down"}
     with pytest.raises(ValueError):
         expand_coarse(lp, _Steps(), mode="spread")
 

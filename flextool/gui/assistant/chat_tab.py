@@ -9,7 +9,17 @@ the window ("Stopped."); the worker repairs the history before the next question
 
 Keys in the input box (bound on the box's own tag, so they run before the Text class): Enter sends (also with
 Shift or Alt), Ctrl+Enter (Command+Enter on macOS) inserts a new line, Tab and Shift+Tab move the focus, Ctrl+A
-selects all, Escape stops, and the window's tab commands (Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+T, Ctrl+W) work here too.
+selects all, Escape stops (or, with no answer coming, cancels an edit), and the window's tab commands (Ctrl+Tab,
+Ctrl+Shift+Tab, Ctrl+T, Ctrl+W) work here too.
+
+Asking a question again (item 220): ↻ on a question (or R, or its menu) asks it again as it was; ✎ (or E) puts it
+in the input box, the box's text kept aside until Escape gives it back, and Enter sends the changed question.
+Either way, when later questions would go too, a dialog asks first ("This also removes the N later questions and
+answers.", a question still being answered or stopped before it was sent counted); the R key always asks ("Ask
+question N again? Its answer is removed.", review decision D8), E never (nothing goes until Enter).  During an
+answer the answer is stopped after that, and the question goes when the worker is idle.  One such action waits at a time: a second one replaces it.  The worker's
+``Rewound`` redraws the chat from what it keeps; an edit lasts until its question is sent (``TurnStarted``), so a
+question that is not sent can be sent again from the box.
 """
 from __future__ import annotations
 
@@ -92,6 +102,12 @@ class ChatTab(ttk.Frame):
         self._pending_name: str | None = None
         self._totals: dict[str, Any] = {}
         self._question_usage: list | None = None      # the Usage of the last question answered in this window
+        self._carry_seed: str | None = None     # the summary the chat's first question started with (seed)
+        self._editing: int | None = None        # the number of the question being changed in the input box
+        self._draft: str | None = None          # what the box held before the edit (given back by Escape)
+        self._edit_job: int | None = None       # the job that sends the changed question
+        self._pending: Callable[[], None] | None = None   # an action that waits for the worker's Idle
+        self._confirm: Any = None               # the open "This also removes …" dialog
         self._build()
         if new:
             self.transcript.show_example(strings.EXAMPLE)
@@ -107,7 +123,8 @@ class ChatTab(ttk.Frame):
         cw, lh = metrics.cw, metrics.lh
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
-        self.transcript = Transcript(self, on_escape=self.stop, bind_commands=self.window.bind_tab_commands)
+        self.transcript = Transcript(self, on_escape=self.escape, bind_commands=self.window.bind_tab_commands,
+                                     on_question=self.question_action)
         self.transcript.grid(row=0, column=0, sticky="nsew")
         from flextool.gui.assistant.fonts import CHAT_FONT, sync_fonts
 
@@ -170,7 +187,7 @@ class ChatTab(ttk.Frame):
             box.bind("<ISO_Left_Tab>", lambda _e: self._focus(next_=False))
         except tk.TclError:
             pass
-        box.bind("<Escape>", lambda _e: (self.stop(), "break")[1])
+        box.bind("<Escape>", lambda _e: (self.escape(), "break")[1])
         box.bind("<<Modified>>", self._on_modified)
         box.bind("<KeyRelease>", lambda _e: self.refresh_placeholder(), add="+")
         box.bind("<FocusIn>", lambda _e: self.refresh_placeholder(), add="+")
@@ -316,17 +333,19 @@ class ChatTab(ttk.Frame):
         """Stop and let the worker finish on its own (never waits): the question it has not taken yet, too."""
         if self.phase is not Phase.CLOSED:
             self.phase = Phase.CLOSING
+        self._drop_pending()
         if self.worker is not None:
             self.worker.shutdown(self.active_job or self._stopped_job)
 
     # --- user actions ---------------------------------------------------------------------------------------
     def send(self) -> None:
-        from flextool.gui.assistant.worker import TurnJob
-
         if self.closed:
             return
         if self.phase is Phase.LOADING:
             self._set_status(strings.SEND_WHEN_OPEN)          # the text stays in the box (P2-O9, G17-D3)
+            return
+        if self._editing is not None:
+            self._send_edit()
             return
         if self.phase is Phase.ANSWERING:
             self._set_status(strings.SEND_WHEN_DONE)
@@ -335,6 +354,13 @@ class ChatTab(ttk.Frame):
         if not text:
             return
         self.input.delete("1.0", "end")
+        self._submit(text)
+
+    def _submit(self, text: str, rewind: int | None = None, *, again: bool = False) -> None:
+        """Show *text* as a question and give it to the worker (with *rewind*: question *rewind* asked again; with
+        *again* as it was: the worker takes the question from the chat, *text* is only what the window shows)."""
+        from flextool.gui.assistant.worker import TurnJob
+
         if self.is_new:
             self.window.promote(self)
         line = self.transcript.append_user(text, pending=True)
@@ -342,9 +368,16 @@ class ChatTab(ttk.Frame):
             self.first_question = " ".join(text.split())
         self.has_messages = True
         self.refresh_placeholder()
-        sent = f"{self.seed}\n\n{text}" if self.seed else text
+        if rewind is None:
+            seed = self.seed
+            if seed:
+                self._carry_seed = seed
+        else:
+            seed = self._carry_seed             # the session puts it back only when the question started with it
         self.seed = None
-        job = TurnJob(next(_job_ids), sent, self.window.take_snapshot())
+        job = TurnJob(next(_job_ids), text, self.window.take_snapshot(), rewind=rewind, seed=seed, again=again)
+        if rewind is not None and self._editing == rewind:
+            self._edit_job = job.job_id
         self._job_lines[job.job_id] = (line, text)
         self.active_job = job
         self.phase = Phase.ANSWERING
@@ -354,6 +387,170 @@ class ChatTab(ttk.Frame):
         self.stop_button.state(["!disabled"])
         self._set_state(WORKING, strings.STATUS_PREPARING)
         self.ensure_worker().submit(job)
+
+    def escape(self) -> None:
+        """Escape: stops the answer; with no answer coming, cancels the edit of a question."""
+        if self.phase is Phase.ANSWERING and self.active_job is not None:
+            self.stop()
+        elif self._editing is not None:
+            self.cancel_edit()
+
+    # --- asking a question again (item 220) -----------------------------------------------------------------
+    def question_action(self, action: str, turn: int, *, key: bool = False) -> None:
+        """↻ (``"again"``) or ✎ (``"edit"``) on question *turn*, from its buttons, keys (*key*) or menu."""
+        from flextool.gui.assistant.transcript import EDIT
+
+        if self.closed or self.phase in (Phase.NEW, Phase.LOADING):
+            return
+        text = self.transcript.turn_text(turn)
+        if not text:
+            return
+        self._drop_pending()                    # one action waits at a time: this one replaces it
+        if action == EDIT:
+            self._begin_edit(turn, text)
+        else:
+            ask = strings.CONFIRM_ASK_AGAIN.format(n=turn) if key else None
+            self._confirm_then(turn, strings.ASK_AGAIN, strings.ASK_AGAIN, lambda: self._submit(text, turn, again=True),
+                               ask=ask)
+
+    def _later(self, turn: int) -> int:
+        """The questions after *turn* that go with it: those the chat shows as sent, and the one being prepared or
+        stopped before the worker said whether it was sent (it may still get ``TurnStarted``)."""
+        later = self.transcript.later_turns(turn)
+        jobs = {job.job_id for job in (self.active_job, self._stopped_job) if job is not None}
+        later += len(jobs & self._job_lines.keys())
+        return later
+
+    def _confirm_then(self, turn: int, title: str, action: str, run: Callable[[], None], *,
+                      ask: str | None = None) -> None:
+        """Ask first when later questions would go too, or always with *ask* (its first sentence); then stop the
+        answer (if one is coming) and *run* when the worker is idle."""
+        def go() -> None:
+            if self.closed:
+                return
+            if self.phase is Phase.ANSWERING:
+                self._pending = run
+                self.stop()
+            else:
+                run()
+
+        later = self._later(turn)
+        if later == 0 and ask is None:
+            go()
+            return
+        from flextool.gui.assistant.notices import ConfirmDialog
+
+        parts = [ask] if ask is not None else []
+        if later:
+            parts.append(strings.CONFIRM_LATER_ONE if later == 1 else strings.CONFIRM_LATER.format(n=later))
+        message = " ".join(parts)
+
+        def answered(accepted: bool) -> None:
+            if self._confirm is not dialog:
+                return                          # replaced by a later action, or the tab closed
+            self._confirm = None
+            if accepted:
+                go()
+
+        dialog = ConfirmDialog(self.window, title, message, action, answered)
+        self._confirm = dialog
+
+    def _drop_pending(self) -> None:
+        """Forget the action that waits (its dialog closes as Cancel)."""
+        self._pending = None
+        dialog, self._confirm = self._confirm, None
+        if dialog is not None:
+            try:
+                dialog.cancel()
+            except tk.TclError:
+                pass
+
+    def _begin_edit(self, turn: int, text: str) -> None:
+        if self._editing is None:
+            self._draft = self.input.get("1.0", "end-1c")
+        self._editing = turn
+        self._edit_job = None
+        self.input.delete("1.0", "end")
+        self.input.insert("1.0", text)
+        self.input.mark_set("insert", "end-1c")
+        self.input.see("insert")
+        self.input.focus_set()
+        self.refresh_placeholder()
+        self._set_status(strings.EDITING.format(n=turn))
+
+    def _send_edit(self) -> None:
+        turn = self._editing
+        assert turn is not None
+        text = self.input.get("1.0", "end-1c").strip()
+        if not text:
+            return
+
+        def run() -> None:
+            if self._editing != turn:
+                return                          # cancelled meanwhile
+            self.input.delete("1.0", "end")
+            self._submit(text, turn)
+
+        self._drop_pending()
+        self._confirm_then(turn, strings.EDIT_SEND_TITLE, strings.EDIT_SEND, run)
+
+    def cancel_edit(self) -> None:
+        """Escape: the question stays as it was and the box gets back what it held."""
+        if self._editing is None:
+            return
+        self._drop_pending()
+        self._end_edit()
+
+    def _end_edit(self) -> None:
+        """The edit is over without its question sent: the box gets back what it held before the edit."""
+        draft = self._draft or ""
+        self._editing = self._draft = self._edit_job = None
+        self.input.delete("1.0", "end")
+        if draft:
+            self.input.insert("1.0", draft)
+        self.refresh_placeholder()
+        if not self.busy:
+            self._set_status("")
+
+    def _edit_sent(self, job_id: int) -> None:
+        """The changed question was sent: the edit is over and the box gets its earlier text back (when empty)."""
+        if self._edit_job != job_id:
+            return
+        draft = self._draft or ""
+        self._editing = self._draft = self._edit_job = None
+        if draft and self.input.get("1.0", "end-1c") == "":
+            self.input.insert("1.0", draft)
+            self.refresh_placeholder()
+
+    def _rewound(self, event: Any) -> None:
+        """The worker asks a question again: the chat as it keeps it, then the question on its way."""
+        from flextool.assistant.store import first_question
+
+        messages = list(event.messages)
+        entry = self._job_lines.get(event.job_id)
+        # The summary the chat started with stays hidden (it goes with question 1 again, never twice).
+        self.transcript.render_history(messages, self.provider, seed=self._carry_seed)
+        if entry is not None:
+            self._job_lines[event.job_id] = (self.transcript.append_user(entry[1], pending=True), entry[1])
+        stopped = self._stopped_job
+        if stopped is not None and stopped.job_id == event.job_id:
+            self.transcript.notice(strings.STOPPED)     # stopped in the window before the worker got here
+        self._tool_lines.clear()
+        self.first_question = (first_question(messages, self._carry_seed)
+                               or (" ".join(entry[1].split()) if entry else ""))
+        if (event.turn is not None and self._editing is not None and self._editing >= event.turn
+                and event.job_id != self._edit_job):
+            self._end_edit()                            # the question being changed went with this one
+        self._question_usage = None
+        self._show_totals()
+        self.window.tab_changed(self)
+
+    def _started(self, event: Any) -> None:
+        entry = self._job_lines.pop(event.job_id, None)
+        if entry is not None:
+            self.transcript.mark_user(entry[0], "sent")
+            self.transcript.set_turn(entry[0], event.turn)
+        self._edit_sent(event.job_id)
 
     def stop(self) -> None:
         """Stop the answer at once in the window; whether the question was sent is the worker's word (its
@@ -430,10 +627,10 @@ class ChatTab(ttk.Frame):
             return
         if isinstance(event, w.ConsentNeeded):
             self.window.consents.request(self, event)
+        elif isinstance(event, w.Rewound):
+            self._rewound(event)
         elif isinstance(event, w.TurnStarted):
-            entry = self._job_lines.pop(event.job_id, None)
-            if entry is not None:
-                self.transcript.mark_user(entry[0], "sent")
+            self._started(event)
             self._step = "answer"
             self._set_state(WORKING, strings.STATUS_THINKING)
         elif isinstance(event, w.TurnRefused):
@@ -499,10 +696,10 @@ class ChatTab(ttk.Frame):
         from flextool.assistant import llm_adapter as la
         from flextool.gui.assistant import worker as w
 
-        if isinstance(event, w.TurnStarted):
-            entry = self._job_lines.pop(event.job_id, None)
-            if entry is not None:
-                self.transcript.mark_user(entry[0], "sent")
+        if isinstance(event, w.Rewound):
+            self._rewound(event)            # the session deletes the questions also when the answer is stopped
+        elif isinstance(event, w.TurnStarted):
+            self._started(event)
         elif isinstance(event, w.TurnRefused):
             self._not_sent(event.job_id)
         elif isinstance(event, la.ToolDone) and self._tool_lines:
@@ -549,7 +746,7 @@ class ChatTab(ttk.Frame):
         from flextool.assistant.llm_errors import message_for
 
         result = event.result
-        self.transcript.end_answer()
+        self.transcript.end_answer(result.text)
         self._question_usage = list(result.usage)
         self._totals = dict(event.totals)
         self._show_totals()
@@ -580,10 +777,14 @@ class ChatTab(ttk.Frame):
         state = ERROR if self.state == ERROR else IDLE
         if not self.window.is_shown(self) and state == IDLE and self.has_messages:
             self.unseen = True
-        self.status_text = ""
-        self.status.configure(text="")
+        status = strings.EDITING.format(n=self._editing) if self._editing is not None else ""
+        self.status_text = status
+        self.status.configure(text=status)
         self._set_state(state)
         self.window.chat_finished(self)
+        pending, self._pending = self._pending, None
+        if pending is not None and not self.closed and self.phase is Phase.IDLE:
+            pending()
 
     def shown(self) -> None:
         """The tab became the selected one."""

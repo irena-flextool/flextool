@@ -2,7 +2,7 @@
 
 ``scale_to_annual_flow`` / ``scale_in_proportion`` / ``scale_to_annual_and_peak_flow`` need ``annual_flow`` (and
 ``peak_inflow`` for the peak method) for every period in use, and an ``inflow`` profile to scale
-(docs/how_to.md "How to set the demand in a node").  Before the check a missing or zero ingredient made the node's
+(docs/how_to/basics.md "How to set the demand in a node").  Before the check a missing or zero ingredient made the node's
 inflow silently 0, and the peak method without an inflow profile turned the demand into a constant supply of
 ``annual_flow / 8760`` (+1027 MW for 9e6 MWh).  ``check_inflow_scaling_inputs`` now stops the solve with a
 ``FlexToolConfigError`` naming node, method, period and the missing input, and warns once per node where the
@@ -108,7 +108,7 @@ def test_peak_scaling_beyond_reach_warns(tmp_path_factory, capsys) -> None:
 
 
 def test_peak_scaling_direction_flip_warns(tmp_path_factory, capsys) -> None:
-    """Hand derivation (docs/how_to.md formula): r = peak/peak_old = 1100/872, the profile scaled to the peak
+    """Hand derivation (docs/how_to/basics.md formula): r = peak/peak_old = 1100/872, the profile scaled to the peak
     annualises to S = r x 29103 x 8760/48 = 6.70e6 MWh, N = 1100 x 8760 = 9.636e6, so for annual_flow 1e6
     c = (S - A)/(N - S) = 1.94 and the smallest-demand step becomes r(1+c) x 423 - 1100c = 1569 - 2135 < 0
     in demand terms: the node supplies there (warning)."""

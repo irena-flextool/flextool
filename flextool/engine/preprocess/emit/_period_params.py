@@ -28,7 +28,16 @@ from flextool.engine.preprocess._provider_io import (
     _provider_key,
 )
 from flextool.engine.preprocess.emit._base_steps import read_new_step_base_steps
-from flextool.engine.preprocess.emit._pdt_lookup import inherit_pd_branch_periods
+from flextool.engine.preprocess.emit._pdt_lookup import (
+    _anchor_fan_members,
+    _check_pbt_branch_coverage,
+    _check_roll_forecast_covers_lookahead,
+    _check_ungrouped_reads_have_realized_branch,
+    fold_over_tiers,
+    inherit_pd_branch_periods,
+    read_fan_for_d,
+    ts_tiers,
+)
 from flextool.engine.preprocess.emit._vectorize import (
     build_entity_dt_grid,
     build_entity_period_grid,
@@ -145,6 +154,54 @@ def _read_stochastic_entities(group_entity_csv: Path,
 # ---------------------------------------------------------------------------
 
 
+def _check_stochastic_inflow(pbt_inflow: dict[tuple[str, str, str, str], float],
+                             stoch_node: set[str],
+                             eligible_nodes: list[str],
+                             solve_data_dir: Path,
+                             tb_for_d: dict[str, list[str]],
+                             ts_for_d: dict[str, list[str]],
+                             fan_for_d: dict[str, list[str]],
+                             pe_for_d: dict[str, list[str]],
+                             *, provider: "object | None" = None) -> None:
+    """The input checks of the other stochastic-time readers, for a node's stochastic ``inflow``.
+
+    A node outside every ``include_stochastics`` group reads the realized branch's inflow on a fan's branch
+    periods, so a forecasts-only fan cannot serve it; a node must author every active forecast of a fan, or
+    none; and in a roll of a rolling solve the roll's own forecast must cover the roll's look-ahead periods.
+    Shared by :func:`derive_pdtNodeInflow` and :func:`derive_pdtNodeInflow_vectorized`.
+    """
+    eligible = set(eligible_nodes)
+    keyed = {(n, "inflow", tb, ts, t): v for (n, tb, ts, t), v in pbt_inflow.items() if n in eligible}
+    if not keyed:
+        return
+    anchor_members = _anchor_fan_members(solve_data_dir / "period__branch.csv", provider=provider)
+    _check_ungrouped_reads_have_realized_branch(keyed, 1, stoch_node, anchor_members, tb_for_d, ts_for_d,
+                                                fan_for_d=fan_for_d, kind="node")
+    _check_pbt_branch_coverage(keyed, 1, anchor_members, tb_for_d, ts_for_d, fan_for_d, kind="node")
+    _check_roll_forecast_covers_lookahead(keyed, 1, stoch_node, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
+                                          solve_data_dir, provider=provider, kind="node")
+
+
+def _check_profile_roll_coverage(pbt_profile: dict[tuple[str, str, str, str], float],
+                                 profiles: list[str],
+                                 stoch_profile: set[str],
+                                 tb_for_d: dict[str, list[str]],
+                                 ts_for_d: dict[str, list[str]],
+                                 pe_for_d: dict[str, list[str]],
+                                 fan_for_d: dict[str, list[str]],
+                                 solve_data_dir: Path,
+                                 *, provider: "object | None" = None) -> None:
+    """In a roll of a rolling solve, the roll's own forecast of a profile must cover the roll's look-ahead
+    periods (:func:`_check_roll_forecast_covers_lookahead`).  Shared by :func:`derive_pdtProfile` and
+    :func:`derive_pdtProfile_vectorized`."""
+    if not getattr(fan_for_d, "fan_first", None):
+        return
+    read = set(profiles)
+    keyed = {(p, "profile", tb, ts, t): v for (p, tb, ts, t), v in pbt_profile.items() if p in read}
+    _check_roll_forecast_covers_lookahead(keyed, 1, stoch_profile, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
+                                          solve_data_dir, provider=provider, kind="profile")
+
+
 def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
                          *, provider: "object | None" = None,
                          ) -> pl.DataFrame:
@@ -205,7 +262,7 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
 
     # pbt_node_inflow{(n, branch, ts, t) → value}
     pbt_inflow: dict[tuple[str, str, str, str], float] = {}
-    pbt_path = input_dir / "pbt_node_inflow.csv"
+    pbt_path = solve_data_dir / "pbt_node_inflow.csv"
     pbt_df = provider.get(_provider_key(pbt_path))
     if pbt_df is not None:
         for row in pbt_df.iter_rows():
@@ -286,7 +343,12 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
     eligible_nodes = [
         n for n in nodes if (n, "no_inflow") not in inflow_method_pairs
     ]
+    fan_for_d = read_fan_for_d(solve_data_dir, provider=provider)
+    _check_stochastic_inflow(pbt_inflow, stoch_node, eligible_nodes, solve_data_dir,
+                             tb_for_d, ts_for_d, fan_for_d, pe_for_d, provider=provider)
 
+    # ts tiers per period: d's own first step and the fan start, in ts_tiers order (per value cell).
+    tiers_by_d = {d: ts_tiers(d, ts_for_d, fan_for_d) for d in dict.fromkeys(d for d, _t in dt)}
     nodes_col: list[str] = []
     periods_col: list[str] = []
     times_col: list[str] = []
@@ -300,34 +362,16 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
         has_use_original = (n, "use_original") in inflow_method_pairs
         for (d, t) in dt:
             emit_v: float | None = None
+            tiers = tiers_by_d[d]
             # Branch 1: stochastic fold-in.
             if is_stoch:
-                total = 0.0
-                hit = False
-                for tb in tb_for_d.get(d, ()):
-                    for ts in ts_for_d.get(d, ()):
-                        v = pbt_inflow.get((n, tb, ts, t))
-                        if v is not None:
-                            total += v
-                            hit = True
-                if hit:
-                    emit_v = total
+                emit_v = fold_over_tiers(pbt_inflow, (n,), [tb_for_d.get(d, ())], tiers, t)
             # Branch 2: parent-period fold-in.
             if emit_v is None:
                 pe_list = pe_for_d.get(d, ())
-                ts_list = ts_for_d.get(d, ())
-                if pe_list and ts_list:
-                    total = 0.0
-                    hit = False
-                    for pe in pe_list:
-                        for tb in tb_for_d.get(pe, ()):
-                            for ts in ts_list:
-                                v = pbt_inflow.get((n, tb, ts, t))
-                                if v is not None:
-                                    total += v
-                                    hit = True
-                    if hit:
-                        emit_v = total
+                if pe_list:
+                    emit_v = fold_over_tiers(pbt_inflow, (n,), [tb_for_d.get(pe, ()) for pe in pe_list],
+                                             tiers, t)
             # Branch 3: deterministic additive sum.
             if emit_v is None:
                 value = 0.0
@@ -360,8 +404,18 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
 def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
                                     *,
                                     provider: "object | None" = None,
-                                    engine: str = "eager") -> pl.DataFrame:
+                                    engine: str = "eager",
+                                    steps: "list[tuple[str, str]] | None" = None,
+                                    pt_inflow: "dict[tuple[str, str], float] | None" = None,
+                                    pbt_path: "Path | None" = None,
+                                    per_original_step: bool = False) -> pl.DataFrame:
     """Vectorized ``pdtNodeInflow`` derive — parity with the legacy.
+
+    The keyword overrides evaluate the same inflow on another grid (the capacity margin's peak demand over the
+    period's original timeline, :mod:`._capacity_margin_peak`): ``steps`` replaces the ``(period, time)`` grid of
+    ``steps_in_use``, ``pt_inflow`` the ``(node, time)`` inflow of ``ptNode_inflow``, ``pbt_path`` the stochastic
+    ``pbt_node_inflow`` frame, and ``per_original_step`` counts the peak section once per step (every step is an
+    original step).  Without them the output is the solve's ``pdtNodeInflow``.
 
     Replaces the per-cell 3-branch scalar cascade in
     :func:`derive_pdtNodeInflow` with vectorized polars, still per roll
@@ -391,7 +445,8 @@ def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
     """
     # --- Step 1: reader block copied VERBATIM from derive_pdtNodeInflow ----
     nodes = _read_singles(input_dir / "node.csv", provider=provider)
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+    dt = (steps if steps is not None
+          else _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider))
 
     inflow_method_pairs = frozenset(
         _read_pairs(solve_data_dir / "node__inflow_method.csv",
@@ -428,7 +483,8 @@ def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
 
     # pbt_node_inflow{(n, branch, ts, t) → value}
     pbt_inflow: dict[tuple[str, str, str, str], float] = {}
-    pbt_path = input_dir / "pbt_node_inflow.csv"
+    if pbt_path is None:
+        pbt_path = solve_data_dir / "pbt_node_inflow.csv"
     pbt_df = provider.get(_provider_key(pbt_path))
     if pbt_df is not None:
         for row in pbt_df.iter_rows():
@@ -443,9 +499,11 @@ def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
                     continue
 
     # ptNode_inflow{(n, t) → value}
-    pt_inflow: dict[tuple[str, str], float] = {}
-    pti_path = solve_data_dir / "ptNode_inflow.csv"
-    pti_df = provider.get(_provider_key(pti_path))
+    pti_df = None
+    if pt_inflow is None:
+        pt_inflow = {}
+        pti_path = solve_data_dir / "ptNode_inflow.csv"
+        pti_df = provider.get(_provider_key(pti_path))
     if pti_df is not None:
         for row in pti_df.iter_rows():
             if len(row) < 3:
@@ -505,10 +563,15 @@ def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
     # Original time steps per solve step (``new_stepduration``; absent → 1):
     # the peak section is per original step.
     n_of, _absorbed = read_new_step_base_steps(solve_data_dir, provider=provider)
+    if per_original_step:
+        n_of = {}
 
     eligible_nodes = [
         n for n in nodes if (n, "no_inflow") not in inflow_method_pairs
     ]
+    fan_for_d = read_fan_for_d(solve_data_dir, provider=provider)
+    _check_stochastic_inflow(pbt_inflow, stoch_node, eligible_nodes, solve_data_dir,
+                             tb_for_d, ts_for_d, fan_for_d, pe_for_d, provider=provider)
 
     # --- Step 2: grid + fold (branches 1 & 2), pdtProfile-shaped ----------
     key_cols = ["node"]
@@ -528,6 +591,7 @@ def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
         stoch_entities=stoch_node,
         stoch_filter_cols=["node"],
         periods=periods,
+        fan_for_d=fan_for_d,
     )
 
     # --- Step 3: branch 3 — deterministic gated additive sum --------------
@@ -677,7 +741,7 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
 
     # pbt / pt / p loaders.
     pbt_profile: dict[tuple[str, str, str, str], float] = {}
-    pbt_path = input_dir / "pbt_profile.csv"
+    pbt_path = solve_data_dir / "pbt_profile.csv"
     pbt_df = provider.get(_provider_key(pbt_path))
     if pbt_df is not None:
         for row in pbt_df.iter_rows():
@@ -730,6 +794,7 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
         solve_data_dir / "period__branch.csv", key_col=1,
         provider=provider,
     )
+    fan_for_d = read_fan_for_d(solve_data_dir, provider=provider)
 
     # Stochastic profile UNION: any profile referenced via a stochastic
     # process / node / process_node binding.
@@ -772,6 +837,11 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
             if c0 in stoch_processes and c2:
                 stoch_profile.add(c2)
 
+    _check_profile_roll_coverage(pbt_profile, profiles, stoch_profile, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
+                                 solve_data_dir, provider=provider)
+
+    # ts tiers per period: d's own first step and the fan start, in ts_tiers order (per value cell).
+    tiers_by_d = {d: ts_tiers(d, ts_for_d, fan_for_d) for d in dict.fromkeys(d for d, _t in dt)}
     profiles_col: list[str] = []
     periods_col: list[str] = []
     times_col: list[str] = []
@@ -780,34 +850,19 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
         is_stoch = p in stoch_profile
         for (d, t) in dt:
             cell: str | None = None
+            tiers = tiers_by_d[d]
             # Branch 1: stochastic fold-in.
             if is_stoch:
-                total = 0.0
-                hit = False
-                for tb in tb_for_d.get(d, ()):
-                    for ts in ts_for_d.get(d, ()):
-                        v = pbt_profile.get((p, tb, ts, t))
-                        if v is not None:
-                            total += v
-                            hit = True
-                if hit:
-                    cell = repr(total)
+                v = fold_over_tiers(pbt_profile, (p,), [tb_for_d.get(d, ())], tiers, t)
+                if v is not None:
+                    cell = repr(v)
             # Branch 2: parent-period fold-in.
             if cell is None:
                 pe_list = pe_for_d.get(d, ())
-                ts_list = ts_for_d.get(d, ())
-                if pe_list and ts_list:
-                    total = 0.0
-                    hit = False
-                    for pe in pe_list:
-                        for tb in tb_for_d.get(pe, ()):
-                            for ts in ts_list:
-                                v = pbt_profile.get((p, tb, ts, t))
-                                if v is not None:
-                                    total += v
-                                    hit = True
-                    if hit:
-                        cell = repr(total)
+                if pe_list:
+                    v = fold_over_tiers(pbt_profile, (p,), [tb_for_d.get(pe, ()) for pe in pe_list], tiers, t)
+                    if v is not None:
+                        cell = repr(v)
             # Branch 3: time axis.
             if cell is None:
                 v = pt_profile.get((p, t))
@@ -865,7 +920,7 @@ def derive_pdtProfile_vectorized(input_dir: Path, solve_data_dir: Path,
 
     # pbt / pt / p loaders.
     pbt_profile: dict[tuple[str, str, str, str], float] = {}
-    pbt_path = input_dir / "pbt_profile.csv"
+    pbt_path = solve_data_dir / "pbt_profile.csv"
     pbt_df = provider.get(_provider_key(pbt_path))
     if pbt_df is not None:
         for row in pbt_df.iter_rows():
@@ -918,6 +973,7 @@ def derive_pdtProfile_vectorized(input_dir: Path, solve_data_dir: Path,
         solve_data_dir / "period__branch.csv", key_col=1,
         provider=provider,
     )
+    fan_for_d = read_fan_for_d(solve_data_dir, provider=provider)
 
     # Stochastic profile UNION: any profile referenced via a stochastic
     # process / node / process_node binding.
@@ -960,6 +1016,9 @@ def derive_pdtProfile_vectorized(input_dir: Path, solve_data_dir: Path,
             if c0 in stoch_processes and c2:
                 stoch_profile.add(c2)
 
+    _check_profile_roll_coverage(pbt_profile, profiles, stoch_profile, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
+                                 solve_data_dir, provider=provider)
+
     # --- vectorized assembly ----------------------------------------------
     key_cols = ["profile"]
     out_cols = [*key_cols, "period", "time"]
@@ -981,6 +1040,7 @@ def derive_pdtProfile_vectorized(input_dir: Path, solve_data_dir: Path,
         stoch_entities=stoch_profile,
         stoch_filter_cols=["profile"],
         periods=periods,
+        fan_for_d=fan_for_d,
     )
 
     out = (
@@ -1191,7 +1251,7 @@ def emit_pdtConversion_rate_section_slope(
 
 # flextool_base.dat L196-201 — group period param taxonomies.
 _GROUP_PERIOD_PARAM: frozenset[str] = frozenset((
-    "capacity_margin", "co2_price", "co2_max_period", "co2_max_total",
+    "capacity_margin", "capacity_margin_share", "co2_price", "co2_max_period", "co2_max_total",
     "inertia_limit", "invest_max_period", "invest_min_period",
     "max_cumulative_flow", "min_cumulative_flow", "non_synchronous_limit",
     "penalty_inertia", "penalty_non_synchronous",
@@ -1496,7 +1556,7 @@ def derive_pdtGroup(input_dir: Path, solve_data_dir: Path,
     ``p_group[g, param]`` → 0.  A stochastic branch period without a
     ``pd_group`` row of its own uses its anchor period's.
     """
-    pt_g = _read_pd_2(input_dir / "pt_group.csv", provider=provider)  # same (k1, k2, k3, v) shape
+    pt_g = _read_pd_2(solve_data_dir / "pt_group.csv", provider=provider)  # same (k1, k2, k3, v) shape
     pd_g = _read_pd_2(input_dir / "pd_group.csv", provider=provider)
     p_g = _read_p_2(input_dir / "p_group.csv", provider=provider)
     groups = _read_singles(input_dir / "group.csv", provider=provider)
@@ -1551,7 +1611,7 @@ def derive_pdtGroup_vectorized(input_dir: Path, solve_data_dir: Path,
     Cascade (inline 4-branch, time-first):
     ``pt_group`` → ``pd_group`` → ``p_group`` → ``0.0``.
     """
-    pt_g = _read_pd_2(input_dir / "pt_group.csv", provider=provider)
+    pt_g = _read_pd_2(solve_data_dir / "pt_group.csv", provider=provider)
     pd_g = _read_pd_2(input_dir / "pd_group.csv", provider=provider)
     p_g = _read_p_2(input_dir / "p_group.csv", provider=provider)
     groups = _read_singles(input_dir / "group.csv", provider=provider)
@@ -1615,7 +1675,7 @@ def derive_pdtCommodity(input_dir: Path, solve_data_dir: Path,
     A stochastic branch period without a ``pd_commodity`` row of its own
     uses its anchor period's.
     """
-    pt = _read_pd_2(input_dir / "pt_commodity.csv", provider=provider)
+    pt = _read_pd_2(solve_data_dir / "pt_commodity.csv", provider=provider)
     pd_ = _read_pd_2(input_dir / "pd_commodity.csv", provider=provider)
     p = _read_p_2(input_dir / "p_commodity.csv", provider=provider)
     commodities = _read_singles(input_dir / "commodity.csv", provider=provider)
@@ -1663,7 +1723,7 @@ def derive_pdtCommodity_vectorized(input_dir: Path, solve_data_dir: Path,
     Cascade (inline 3-branch, time-first):
     ``pt_commodity`` → ``pd_commodity`` → ``p_commodity`` → ``0.0``.
     """
-    pt = _read_pd_2(input_dir / "pt_commodity.csv", provider=provider)
+    pt = _read_pd_2(solve_data_dir / "pt_commodity.csv", provider=provider)
     pd_ = _read_pd_2(input_dir / "pd_commodity.csv", provider=provider)
     p = _read_p_2(input_dir / "p_commodity.csv", provider=provider)
     commodities = _read_singles(input_dir / "commodity.csv", provider=provider)

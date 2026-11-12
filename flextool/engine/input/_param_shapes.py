@@ -77,6 +77,15 @@ silent ``x`` labels).  For the parameters of :data:`STOCHASTIC_TIME_PARAMS` the 
 authoring one out of its view (the period / time classifier never sees them) and :func:`broadcast_to_period_time`
 gives them the values the solve's emit folded from ``pbt_*`` onto its ``(d, t)``; every other entity is read as
 before.  The emit frames are armed by ``load_flextool`` (:func:`activate_stochastic_time_source`).
+
+Solve-step aggregation
+----------------------
+
+In a solve with ``new_stepduration`` a solve step combines several time steps of the timeline.
+:func:`broadcast_to_period_time` gives the time-keyed rows one value per solve step, by the parameter's kind in
+``_solve_step_aggregation.TIME_AGGREGATION`` (mean, harmonic mean, last) through
+``_solve_step_aggregation.aggregate_if_active`` (keyed by :attr:`ResolvedShape.key`), before the zero filter and
+the axis cast.  The base steps are armed per load by ``load_flextool``; without ``new_stepduration`` nothing runs.
 """
 from __future__ import annotations
 
@@ -97,6 +106,7 @@ from flextool.engine.input._axis_enums import (
     rename_to_axis,
 )
 from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_step_aggregation import active_base_steps, aggregate_if_active
 from flextool.spinedb_backend._axis_enums import FlexDataIntegrityError
 
 _LOGGER = logging.getLogger(__name__)
@@ -253,6 +263,14 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("group", "co2_price"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
     },
+    # The inertia and non-synchronous limits apply per time step: constant, period, time or period + time
+    # (read by broadcast_to_period_time; the Param keeps the authored dims ⊆ (g, d, t)).
+    ("group", "inertia_limit"): {
+        Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
+    },
+    ("group", "non_synchronous_limit"): {
+        Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
+    },
     # v58: the four flow-limit params live on the ``flowGroup`` class.
     ("flowGroup", "max_instant_flow"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
@@ -275,10 +293,9 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     # ``period``).  Cascade: pd → p (entity_period_calc_params:write_pdGroup
     # — same as ``co2_max_period``).
     ("group", "capacity_margin"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("group", "capacity_margin_share"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "penalty_capacity_margin"): {Shape.SCALAR, Shape.MAP_PERIOD},
-    ("group", "inertia_limit"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "penalty_inertia"): {Shape.SCALAR, Shape.MAP_PERIOD},
-    ("group", "non_synchronous_limit"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "penalty_non_synchronous"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "invest_max_period"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "invest_min_period"): {Shape.SCALAR, Shape.MAP_PERIOD},
@@ -299,6 +316,9 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("unit", "startup_cost"): {Shape.SCALAR, Shape.MAP_PERIOD},
     # Connection startup cost (connections with a startup_method): same shapes as the unit's.
     ("connection", "startup_cost"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    # Start-up input energy [MWh per MW started] of a unit__inputNode arc with a startup_input_method other than
+    # just_input: constant or period, as startup_cost (read by params/_direct.p_startup_energy_from_source).
+    ("unit__inputNode", "startup_energy"): {Shape.SCALAR, Shape.MAP_PERIOD},
     # Tier-2 silent-default migration (ed_* multi-class union 1d_map(period)).
     # These six parameters are declared on each of unit/node/connection and
     # are unioned in :func:`_e_period_param_union` into a single
@@ -329,7 +349,7 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("node",       "cumulative_min_capacity"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("connection", "cumulative_min_capacity"): {Shape.SCALAR, Shape.MAP_PERIOD},
     # Investment cost / salvage value: constant or 1d_map(period) per the docs; read through
-    # _e_period_param_union by the ed_invest/ed_divest predicate (_per_entity_period_cost).
+    # _e_period_param_union (the annuities, and the notice of investment offered without a cost).
     ("unit",       "invest_cost"):   {Shape.SCALAR, Shape.MAP_PERIOD},
     ("node",       "invest_cost"):   {Shape.SCALAR, Shape.MAP_PERIOD},
     ("connection", "invest_cost"):   {Shape.SCALAR, Shape.MAP_PERIOD},
@@ -344,6 +364,13 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     },
     ("node", "storage_state_reference_value"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
+    },
+    # Additive energy margin [MWh per time step] of the investment solve: a constant, a period map or a period + time
+    # map (ingested by input_derivation/_specs.py, applied by emit/_energy_margin_adder.py).  A time-only map has
+    # no ingestion spec and would be silently ignored: the allow-list refuses it
+    # (params/_direct.check_energy_margin_adder_shape).
+    ("node", "energy_margin_adder"): {
+        Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_PERIOD_TIME,
     },
     # Self-discharge loss per hour (schema: "Constant or time"; GMPL NODE_TIME_PARAM).  Consumer: the per-step
     # loss weights of model/_self_discharge.py.
@@ -509,7 +536,7 @@ PERIOD_TIME_PARAMS: "frozenset[tuple[str, str]]" = frozenset(
 # ---------------------------------------------------------------------------
 #
 # The PERIOD_TIME_PARAMS keys whose schema type list has map rank 3 (stochastic time: branch,
-# analysis_time, time; ``spinedb_schema.json`` ``parameter_types``, docs/reference.md "stochastic time").
+# analysis_time, time; ``spinedb_schema.json`` ``parameter_types``, docs/reference/ "stochastic time").
 # An entity authoring such a map gets its values from the per-solve emit, which folds ``pbt_*`` onto the
 # solve's (d, t) (emit ``_pdt_params`` PdtLookup / ``_reserve_sets._resolve_pdtReserve``).  Value: (emit
 # provider key, emit entity columns in class-dim order).  Pinned against the schema and the pbt specs by
@@ -648,6 +675,9 @@ class ResolvedShape:
       solve's emit (:func:`broadcast_to_period_time`).
     * :attr:`stochastic_key` — the ``(entity_class, parameter_name)`` of
       those entities (a :data:`STOCHASTIC_TIME_PARAMS` key), or ``None``.
+    * :attr:`key` — the ``(entity_class, parameter_name)`` it was resolved
+      for (set by :func:`resolve_param_shape`); the solve-step aggregation
+      of a solve with ``new_stepduration`` reads its kind by it.
     """
 
     shape: Shape
@@ -657,6 +687,7 @@ class ResolvedShape:
     time_index_column: "str | None"
     stochastic_entities: "frozenset[tuple[str, ...]]" = frozenset()
     stochastic_key: "tuple[str, str] | None" = None
+    key: "tuple[str, str] | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -1413,12 +1444,14 @@ def stochastic_time_values(
     from flextool.engine.preprocess.params._branch import active_branch_anchor_pairs
 
     if active_branch_anchor_pairs() is None and not scope.has_realized_branch_rows():
-        names = ", ".join("/".join(e) for e in sorted(entities))
+        names = ", ".join("'" + "/".join(e) + "'" for e in sorted(entities))
         raise FlexToolConfigError(
-            f"{key[0]}.{key[1]}: {names} authors a stochastic-time (rank-3) value, but this solve has no "
-            "realized branch to take the value from: no stochastic_branches row anywhere designates one "
-            "realized: yes, and no sibling solve projected one onto it (#82). Either add a realized: yes "
-            "row to this solve's stochastic_branches, or give the parameter a non-stochastic value.")
+            f"{key[0]} {names}, parameter '{key[1]}': the value is a stochastic forecast (a map over branch, "
+            "analysis time and time), but this solve has no realized branch to take the value from: no row of "
+            "its stochastic_branches says realized: yes, and no other solve hands its realized branch to this "
+            "one. Either mark one branch realized: yes in this solve's stochastic_branches, or give the "
+            "parameter a plain value instead of a forecast map. Check also which alternative of the scenario "
+            "gives the value.")
     emit_cols = list(STOCHASTIC_TIME_PARAMS[key][1])
     dim_cols = list(entity_dim_columns)
     ents = pl.DataFrame([list(e) for e in sorted(entities)], schema={c: pl.Utf8 for c in emit_cols},
@@ -2065,6 +2098,8 @@ def resolve_param_shape(
     resolved = _resolve_param_shape(source, entity_class, parameter_name, period_filter)
     if resolved is not None:
         _shape_read_notice(source, entity_class, parameter_name, resolved)
+        if resolved.key != (entity_class, parameter_name):
+            resolved = dataclasses.replace(resolved, key=(entity_class, parameter_name))
     return resolved
 
 
@@ -2185,7 +2220,7 @@ def _resolve_param_shape(
             # of the parameter is re-resolved without it; when the remaining silent entities split across
             # both axes (only reachable without the reader's own axis Enums — see
             # :func:`_per_entity_resolved`), the frame is built directly.  Runs only for the parameters
-            # whose allow-list admits both ``MAP_PERIOD`` and ``MAP_TIME`` at depth 1 (the 19 keys of
+            # whose allow-list admits both ``MAP_PERIOD`` and ``MAP_TIME`` at depth 1 (the 21 keys of
             # :data:`PARAM_ALLOWED_SHAPES` that can reach this branch — Δ.17c-silent-per-entity) and only
             # with an active *period_filter* (the probe above already requires one; spelled out again here
             # because this is where the fallback actually changes behaviour).
@@ -2632,6 +2667,13 @@ def broadcast_to_period_time(
     lf = (df.lazy()
             .pipe(rename_to_axis, rename_map)
             .filter(pl.col("value").is_not_null()))
+    # A solve with new_stepduration: the time-keyed rows take one value per solve step by the parameter's
+    # aggregation kind (_solve_step_aggregation).  Before the zero filter (a 0 hour is part of the step mean)
+    # and before the axis cast (the original steps that are not solve-step labels are not in the vocabulary).
+    # Only the steps of this solve's dt are aggregated (a roll pays for its own steps).
+    if resolved.time_index_column is not None and active_base_steps() is not None:
+        lf = aggregate_if_active(lf.collect(), resolved.key, time_col=resolved.time_index_column,
+                                 steps=period_filter.get_column("t")).lazy()
     if filter_zero:
         lf = lf.filter(pl.col("value") != 0.0)
     # Phase 4 — align producer-side dim dtypes to the canonical Enum
@@ -2922,9 +2964,42 @@ def broadcast_to_period(
     # carries Enum d after :func:`apply_derived_a` runs) doesn't trip
     # over Utf8-vs-Enum on the ``d`` (or entity) axis.  See the matching
     # comment in :func:`broadcast_to_period_time`.
+    #
+    # Failed-cast guard (item 65; mirrors the §3.4 guard of
+    # :func:`broadcast_to_period_time`): ``cast_frame_axes`` runs with
+    # ``strict=False``, so a ``period`` token outside the model's Enum
+    # vocabulary becomes ``null``, and the MAP_PERIOD split below reads a
+    # null ``d`` as a scalar default and broadcasts it over every active
+    # period.  Drop the rows whose ``period`` was non-null before the cast
+    # and null after (DEBUG log); never treat them as a scalar.
+    #
+    # The cast runs only while an axis-Enum vocabulary is live
+    # (``provider.axis_enums``; production loads leave it None, so there
+    # the explicit rows meet the solve's periods in the inner join below
+    # and an inactive key drops out the same way).  The input check
+    # (``validate_period_keys``) stops a mistyped key before this runs,
+    # but valid data can still carry a key outside the Enum: a period of
+    # another scenario's solve, or one only in ``model.periods_available``
+    # (the Enum is the scenario's periods and branch periods).  Without
+    # the guard such a row was spread as a scalar over every period, next
+    # to the entity's own rows (duplicate (entity, d) keys).
+    _has_period = "period" in lf.collect_schema().names()
+    if _has_period:
+        lf = lf.with_columns(pl.col("period").is_null().alias("__period_was_null"))
     _enums = get_global_axis_enums()
     if _enums is not None:
         lf = cast_frame_axes(lf, _enums)
+        if _has_period:
+            _failed = (~pl.col("__period_was_null")) & pl.col("period").is_null()
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _n = lf.select(_failed.sum().alias("n")).collect().item()
+                if _n:
+                    _LOGGER.debug(
+                        "broadcast_to_period: dropped %d row(s) with unknown/inactive "
+                        "'period' token (failed Enum cast)", _n)
+            lf = lf.filter(~_failed)
+    if _has_period:
+        lf = lf.drop("__period_was_null")
 
     shape = resolved.shape
     if shape == Shape.SCALAR:
@@ -3099,3 +3174,333 @@ def fill_default_over_grid(
     if out.height == 0:
         return None
     return Param(tuple(keys), out)
+
+
+# ---------------------------------------------------------------------------
+# Period coverage — a period map must give a value for every period of the solve
+# ---------------------------------------------------------------------------
+
+#: The periods a :class:`PeriodNeed` lists, by ``kind``: the noun of the error message and the closing rule.
+_PERIOD_NEED_WORDING: dict[str, tuple[str, str]] = {
+    "solve": ("period(s) {periods} used by {solve} (including look-ahead periods)",
+              "every period of the solve, including its look-ahead periods"),
+    "invest": ("investment period(s) {periods} of {solve}",
+               "every investment period of the solve"),
+    "online": ("period(s) {periods} in which investments of {solve} start to operate (construction lead time)",
+               "every period in which an investment of the solve starts to operate"),
+}
+
+
+@dataclass(frozen=True)
+class PeriodNeed:
+    """The periods a limit's period map must cover in one solve (:func:`require_period_coverage`).
+
+    * ``periods`` — one set for every entity, or ``{entity label: periods}`` when the periods differ per entity
+      (an entity missing from the mapping needs none);
+    * ``kind`` — what the periods are, for the error message: ``"solve"`` (every period of the solve, look-ahead
+      included), ``"invest"`` (the investment periods) or ``"online"`` (the periods in which investments start
+      to operate, with a construction lead time);
+    * ``solve`` — the name of the active solve (a roll ``<solve>_roll_<n>`` is named as solve and roll), or
+      ``None`` when not known.
+
+    Falsy when no entity needs a period, which skips the check.
+    """
+
+    periods: "frozenset[str] | dict[str, frozenset[str]]"
+    kind: str = "solve"
+    solve: "str | None" = None
+
+    def __post_init__(self) -> None:
+        if self.kind not in _PERIOD_NEED_WORDING:
+            raise ValueError(f"PeriodNeed.kind must be one of {sorted(_PERIOD_NEED_WORDING)}, not {self.kind!r}")
+
+    def __bool__(self) -> bool:
+        if isinstance(self.periods, dict):
+            return any(self.periods.values())
+        return bool(self.periods)
+
+    def of(self, entity: str) -> "frozenset[str]":
+        """The periods ``entity`` (an entity label) must cover."""
+        if isinstance(self.periods, dict):
+            return self.periods.get(entity, frozenset())
+        return self.periods
+
+    def solve_words(self) -> str:
+        """``"solve 'a'"``, ``"solve 'a', roll 3"`` or ``"this solve"``."""
+        return _solve_words(self.solve)
+
+
+def _period_coverage_problems(
+    resolved: ResolvedShape,
+    out: "Param | None",
+    entity_keys: "tuple[str, ...]",
+    period_filter: pl.DataFrame,
+    *,
+    need: PeriodNeed,
+    active: "set[str] | None",
+) -> "list[tuple[str, list[str], list[str]]]":
+    """``[(entity, missing periods, periods without a time step)]`` of the entities whose period map leaves out
+    a needed period.
+
+        need[k]    = { d ∈ period_filter.d : d ∈ need.of(k) }                  (period_filter order)
+        mapped     = { k : resolved has a row of k with a non-null period } ∩ active
+        stepped[k] = { d : a (period, time) map of k has a number in period d }
+        have[k]    = { d : out[k, d(, t)] is not null and not NaN }
+        lacking[k] = need[k] − have[k]                                          ∀ k ∈ mapped, lacking[k] ≠ ∅
+        missing[k] = lacking[k] − stepped[k];  no_step[k] = lacking[k] ∩ stepped[k]
+
+    ``no_step`` is a period a (period, time) map gives but none of whose time steps is in the solve.  A
+    constant (a null-period row) applies to every period and is never checked.  ``out`` is the broadcast
+    without the zero filter, so an authored 0 counts as a value.  Entity labels are the entity's dim values
+    joined with ``", "`` (the bare name for a 0-dim class); ``active`` holds the same labels.
+    """
+    if resolved.frame is None or resolved.period_index_column is None:
+        return []
+    order = [str(d) for d in period_filter.get_column("d").cast(pl.Utf8).unique(maintain_order=True).to_list()]
+    ent_cols = list(resolved.entity_dim_columns)
+    label = pl.concat_str([pl.col(c).cast(pl.Utf8) for c in ent_cols], separator=", ").alias("__k")
+    mapped = set(resolved.frame.filter(pl.col(resolved.period_index_column).is_not_null())
+                 .select(label).get_column("__k").to_list())
+    if active is not None:
+        mapped &= set(active)
+    mapped = {k for k in mapped if need.of(k)}
+    if not mapped:
+        return []
+    # A period a (period, time) map gives with a number in it, but at none of the solve's time steps.
+    stepped: dict[str, set[str]] = {}
+    if resolved.time_index_column is not None and "value" in resolved.frame.columns:
+        num = pl.col("value").cast(pl.Float64, strict=False)
+        for k, d in (resolved.frame.filter(pl.col(resolved.period_index_column).is_not_null()
+                                           & num.is_not_null() & num.is_not_nan())
+                     .select(label, pl.col(resolved.period_index_column).cast(pl.Utf8).alias("__d"))
+                     .iter_rows()):
+            stepped.setdefault(k, set()).add(d)
+    have: dict[str, set[str]] = {}
+    if out is not None and "d" in out.dims:
+        value = pl.col("value").cast(pl.Float64, strict=False)
+        rows = (out.lazy
+                .filter(value.is_not_null() & value.is_not_nan())
+                .select(pl.concat_str([pl.col(c).cast(pl.Utf8) for c in entity_keys], separator=", ").alias("__k"),
+                        pl.col("d").cast(pl.Utf8))
+                .unique()
+                .collect())
+        for k, d in rows.iter_rows():
+            have.setdefault(k, set()).add(d)
+    problems = []
+    for k in sorted(mapped):
+        wanted = need.of(k)
+        lacking = [d for d in order if d in wanted and d not in have.get(k, set())]
+        if lacking:
+            given = stepped.get(k, set())
+            problems.append((k, [d for d in lacking if d not in given], [d for d in lacking if d in given]))
+    return problems
+
+
+def _raise_period_coverage(problems: "list[tuple[str, list[str], list[str]]]", *, entity_class: str,
+                           parameter_name: str, need: PeriodNeed) -> None:
+    """Raise one :class:`FlexToolConfigError` listing every entity of ``problems`` (no-op when empty).
+
+    The message names the class, the entity, the parameter, the missing periods with what they are
+    (``need.kind``) and the solve (and roll)."""
+    if not problems:
+        return
+    noun, rule = _PERIOD_NEED_WORDING[need.kind]
+    solve = need.solve_words()
+    parts = []
+    for k, missing, no_step in problems:
+        what = []
+        if missing:
+            what.append("the period map has no value for " + noun.format(periods=", ".join(missing), solve=solve))
+        if no_step:
+            what.append(f"the period map gives period(s) {', '.join(no_step)} but none of their time steps is in "
+                        f"{solve}")
+        parts.append(f"{entity_class} '{k}', parameter '{parameter_name}': " + "; ".join(what))
+    raise FlexToolConfigError(
+        "; ".join(parts) + f". A period map must give a value for {rule} (a constant applies to all periods).")
+
+
+def _drop_zero_rows(out: "Param | None") -> "Param | None":
+    """``out`` without its rows of value 0 (None stays None)."""
+    if out is None:
+        return None
+    return Param(out.dims, out.lazy.filter(pl.col("value") != 0.0))
+
+
+def require_period_coverage(
+    resolved: "ResolvedShape | None",
+    entity_dim_aliases: "str | dict[str, str]",
+    period_filter: "pl.DataFrame | None",
+    *,
+    entity_class: str,
+    parameter_name: str,
+    need_periods: "PeriodNeed | None",
+    active: "set[str] | None" = None,
+    filter_zero: bool = False,
+) -> "Param | None":
+    """:func:`broadcast_to_period`, after checking that every period map covers the periods it must.
+
+        out        = broadcast_to_period(resolved, aliases, period_filter, filter_zero=False)
+        missing[k] = (need_periods.of(k) ∩ period_filter.d) − { d : out[k, d] is a number }
+                     ∀ entity k with a period map (∩ active)
+        raise FlexToolConfigError naming entity_class, k, parameter_name, missing[k] and the solve
+                                                                                    if any missing[k] ≠ ∅
+        return out, without the rows of value 0 when filter_zero
+
+    A period a limit applies to but its period map leaves out would otherwise get no row, or a null that a
+    consumer reads as 0, so it is an error.  A constant applies to every period and is never checked.  A
+    stochastic branch period without a value of its own inherits the value of its anchor in the broadcast
+    (:func:`_with_branch_periods`), so it counts as covered.  The zero filter runs after the check, so an
+    authored 0 is never read as a missing period.  ``need_periods`` (:class:`PeriodNeed`) is intersected with
+    ``period_filter``'s periods, because the broadcast only keeps those; None or an empty need skips the check
+    (e.g. a solve with no investment periods).  ``active`` (entity labels, see
+    :func:`_period_coverage_problems`) limits the check to the entities whose limit is switched on; None
+    checks every entity.  Pure: the caller works out the period sets, the gate and the solve name.
+    """
+    if not need_periods or period_filter is None or period_filter.height == 0:
+        return broadcast_to_period(resolved, entity_dim_aliases, period_filter, filter_zero=filter_zero)
+    out = broadcast_to_period(resolved, entity_dim_aliases, period_filter, filter_zero=False)
+    if resolved is not None and resolved.frame is not None:
+        _rename, keys = _resolve_entity_dim_aliases(resolved, entity_dim_aliases, "require_period_coverage")
+        _raise_period_coverage(
+            _period_coverage_problems(resolved, out, keys, period_filter, need=need_periods, active=active),
+            entity_class=entity_class, parameter_name=parameter_name, need=need_periods)
+    return _drop_zero_rows(out) if filter_zero else out
+
+
+def require_period_coverage_time(
+    resolved: "ResolvedShape | None",
+    entity_dim_aliases: "str | dict[str, str]",
+    period_filter: "pl.DataFrame | None",
+    *,
+    entity_class: str,
+    parameter_name: str,
+    need_periods: "PeriodNeed | None",
+    active: "set[str] | None" = None,
+    filter_zero: bool = False,
+) -> "Param | None":
+    """:func:`broadcast_to_period_time` with the period check of :func:`require_period_coverage`.
+
+    Only the entities with a period level (a period map, or the period level of a period + time map) are
+    checked, and only against the periods: a time map, a constant and the time steps inside a period are
+    not.  The value of a (period, time) map covers a period when it has at least one number in it; a period
+    the map gives but with none of the solve's time steps is reported as such.
+    """
+    if not need_periods or period_filter is None or period_filter.height == 0:
+        return broadcast_to_period_time(resolved, entity_dim_aliases, period_filter, filter_zero=filter_zero)
+    out = broadcast_to_period_time(resolved, entity_dim_aliases, period_filter, filter_zero=False)
+    if resolved is not None and resolved.frame is not None:
+        _rename, keys = _resolve_entity_dim_aliases(resolved, entity_dim_aliases, "require_period_coverage_time")
+        _raise_period_coverage(
+            _period_coverage_problems(resolved, out, keys, period_filter, need=need_periods, active=active),
+            entity_class=entity_class, parameter_name=parameter_name, need=need_periods)
+    return _drop_zero_rows(out) if filter_zero else out
+
+
+# ---------------------------------------------------------------------------
+# Time coverage — a time map must give a value for every time step of the solve
+# ---------------------------------------------------------------------------
+
+#: How many missing time steps an error message names (the rest are counted).
+_TIME_COVERAGE_SHOWN = 5
+
+
+def _solve_words(solve: "str | None") -> str:
+    """``"solve 'a'"``, ``"solve 'a', roll 3"`` or ``"this solve"``."""
+    if not solve:
+        return "this solve"
+    base, sep, roll = solve.rpartition("_roll_")
+    if sep and base and roll.isdigit():
+        return f"solve '{base}', roll {roll}"
+    return f"solve '{solve}'"
+
+
+def _time_coverage_problems(
+    resolved: "ResolvedShape | None",
+    steps: "pl.DataFrame | None",
+    *,
+    active: "set[str] | None",
+) -> "list[tuple[str, list[str]]]":
+    """``[(entity, missing steps)]`` of the entities whose time map leaves out a time step of ``steps``.
+
+        need       = the (d, t) pairs of steps                                   (steps order)
+        timed      = { k : resolved has a row of k with a time step } ∩ active
+        miss[k]    = { t : (d, t) ∈ need } − { t : k's time map has a number at t }      k has a time map
+                   = { (d, t) ∈ need : k's map gives d } − { (d, t) : a number at (d, t) }  period + time map
+        ∀ k ∈ timed, miss[k] ≠ ∅
+
+    A constant and a period map have no time level and are never checked.  A period that a period + time map
+    does not give at all is left to the period check (:func:`require_period_coverage_time`, where a stochastic
+    branch period inherits its anchor's value).  An authored 0 counts as a value, a null or NaN does not.
+    ``steps`` are the original time steps (a solve with ``new_stepduration`` lists the time steps its solve
+    steps combine).  A missing pair of a period + time map is named ``period/time``.  The time steps of a period
+    that a period + time map does not give are not checked here (the inner join on ``d``): a stochastic branch
+    period it leaves out has its anchor's time steps, which the anchor's own entry covers.
+    """
+    if (resolved is None or resolved.frame is None or resolved.time_index_column is None
+            or steps is None or steps.height == 0):
+        return []
+    frame = resolved.frame
+    tcol, pcol = resolved.time_index_column, resolved.period_index_column
+    label = pl.concat_str([pl.col(c).cast(pl.Utf8) for c in resolved.entity_dim_columns], separator=", ")
+    num = pl.col("value").cast(pl.Float64, strict=False) if "value" in frame.columns else pl.lit(None, pl.Float64)
+    rows = (frame.filter(pl.col(tcol).is_not_null())
+            .select(label.alias("__k"),
+                    (pl.col(pcol).cast(pl.Utf8) if pcol is not None else pl.lit(None, pl.Utf8)).alias("__d"),
+                    pl.col(tcol).cast(pl.Utf8).alias("__t"),
+                    num.alias("__v")))
+    if active is not None:
+        rows = rows.filter(pl.col("__k").is_in(sorted(active)))
+    if rows.height == 0:
+        return []
+    need = (steps.select(pl.col("d").cast(pl.Utf8).alias("__d"), pl.col("t").cast(pl.Utf8).alias("__t"))
+            .unique(maintain_order=True).with_row_index("__i"))
+    given = rows.filter(pl.col("__v").is_not_null() & pl.col("__v").is_not_nan())
+    time_only = rows.filter(pl.col("__d").is_null()).select("__k").unique()
+    missing_t = (time_only.join(need.select("__i", "__t"), how="cross")
+                 .join(given.filter(pl.col("__d").is_null()).select("__k", "__t").unique(), on=["__k", "__t"],
+                       how="anti")
+                 .group_by("__k", "__t").agg(pl.col("__i").min())
+                 .select("__k", "__i", pl.col("__t").alias("__what")))
+    periods = rows.filter(pl.col("__d").is_not_null()).select("__k", "__d").unique()
+    missing_dt = (periods.join(need, on="__d", how="inner")
+                  .join(given.filter(pl.col("__d").is_not_null()).select("__k", "__d", "__t").unique(),
+                        on=["__k", "__d", "__t"], how="anti")
+                  .select("__k", "__i", pl.concat_str(["__d", "__t"], separator="/").alias("__what")))
+    missing = pl.concat([missing_t, missing_dt]).sort("__k", "__i")
+    return [(k, list(group.get_column("__what")))
+            for (k,), group in missing.group_by("__k", maintain_order=True)]
+
+
+def require_time_coverage(
+    resolved: "ResolvedShape | None",
+    steps: "pl.DataFrame | None",
+    *,
+    entity_class: str,
+    parameter_name: str,
+    active: "set[str] | None" = None,
+    solve: "str | None" = None,
+    hint: str = "",
+) -> None:
+    """Raise :class:`FlexToolConfigError` when a time map (or the time level of a period + time map) leaves out a
+    time step of ``steps`` (``(d, t)``, the original time steps the solve uses; :func:`_time_coverage_problems`).
+
+    The message names the class, each entity, the parameter, the first missing time steps with their count and
+    the solve (``solve``: the solve or roll name, None for "this solve").  ``active`` (entity labels) limits the
+    check to the entities whose limit is switched on; None checks every entity.  ``hint``: an extra clause of the
+    message (what to give for a time step without a limit).  Pure: the caller works out the
+    steps, the gate and the solve name.
+    """
+    problems = _time_coverage_problems(resolved, steps, active=active)
+    if not problems:
+        return
+    where = _solve_words(solve)
+    parts = []
+    for k, missing in problems:
+        shown = ", ".join(missing[:_TIME_COVERAGE_SHOWN])
+        more = f" and {len(missing) - _TIME_COVERAGE_SHOWN} more" if len(missing) > _TIME_COVERAGE_SHOWN else ""
+        parts.append(f"{entity_class} '{k}', parameter '{parameter_name}': the map has no value for "
+                     f"{len(missing)} time step(s) used by {where}: {shown}{more}")
+    raise FlexToolConfigError(
+        "; ".join(parts) + ". A time map (or the time level of a period+time map) must give a value for every "
+        "time step of the solve, look-ahead included (a constant applies to every time step"
+        + (f"; {hint}" if hint else "") + ").")

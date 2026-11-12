@@ -12,7 +12,7 @@ from typing import Any
 
 from flextool.assistant.caps import fit_page
 from flextool.assistant.context import AssistantContext
-from flextool.assistant.errors import ToolError, name_list
+from flextool.assistant.errors import ToolError, message, name_list
 from flextool.assistant.registry import BasicForm, Fit, make_tool
 from flextool.assistant.results import _overview as _overview_mod
 from flextool.assistant.results import _query, _runs
@@ -122,6 +122,34 @@ def _record_notes(selected: list[_runs.Run], sent: list[_runs.Run]) -> list[str]
     return notes
 
 
+#: The arguments of list_runs that filter the runs, in the order the hidden line names them.
+_FILTER_ARGS = ("source", "scenario", "state", "results_usable", "folders")
+
+
+def _filters_given(args: dict) -> list[str]:
+    """The filter arguments of the call (a placeholder, such as ``scenario: ""``, never reaches here)."""
+    return [key for key in _FILTER_ARGS if (bool(args.get(key)) if key == "folders" else args.get(key) is not None)]
+
+
+def _hidden_counts(args: dict, every: list[_runs.Run], selected: list[_runs.Run]) -> dict | None:
+    """The fields of the hidden-by-filters text: the filters given, how many runs they hide and how many of those
+    have usable results; ``None`` when no filter is given or none hides a run."""
+    given = _filters_given(args)
+    kept = {r.folder.name for r in selected}
+    hidden = [r for r in every if r.folder.name not in kept]
+    if not given or not hidden:
+        return None
+    return {"what": ", ".join(given), "n": len(hidden),
+            "usable": sum(1 for r in hidden if r.entry["results_usable"])}
+
+
+def _hidden_by_filters(args: dict, every: list[_runs.Run], selected: list[_runs.Run]) -> str | None:
+    """The ``hidden_by_filters`` line of list_runs (helpfulness analysis 2026-11-12, #32: ``results_usable: false``
+    hid the one run that succeeded, in eight calls)."""
+    counts = _hidden_counts(args, every, selected)
+    return message("hidden_by_filters", **counts) if counts is not None else None
+
+
 def _names(names: list[str]) -> str:
     return str(name_list(names, NAMES_MAX))
 
@@ -131,13 +159,13 @@ def list_runs(ctx: AssistantContext, args: dict) -> Fit:
     if detail == "overview":
         return _overview(ctx, args)
     folders = args.get("folders")
+    every = _runs.runs(ctx)             # one scan of the run folders for the whole call
     selected = _runs.select_runs(ctx, source=args.get("source"), scenario=args.get("scenario"),
                                  state=args.get("state"), results_usable=args.get("results_usable"),
-                                 folders=folders)
+                                 folders=folders, all_runs=every)
     n = len(selected)
     offset = max(int(args.get("offset") or 0), 0)
-    filtered = any(args.get(key) is not None for key in ("source", "scenario", "state", "results_usable")) or \
-        bool(folders)
+    filtered = bool(_filters_given(args))
     latest = not filtered and not args.get("all")
     # A given detail wins; without one, a short or named list gets full detail (critique M6).
     if detail is None:
@@ -147,6 +175,9 @@ def list_runs(ctx: AssistantContext, args: dict) -> Fit:
     scan = detail == "scan"
     header: dict[str, Any] = {"total": n, "counts": _state_counts(selected),
                               "results_usable": sum(1 for r in selected if r.entry["results_usable"])}
+    hidden = _hidden_by_filters(args, every, selected)
+    if hidden is not None:
+        header["hidden_by_filters"] = hidden
     changed = sum(1 for r in selected if r.entry["stale_vs_input"])
     if changed:
         header["input_changed_since"] = changed
@@ -269,7 +300,7 @@ def _overview(ctx: AssistantContext, args: dict) -> Fit:
     selected = _runs.select_runs(ctx, source=args.get("source"), scenario=scenario, state=args.get("state"),
                                  results_usable=args.get("results_usable"), folders=folders or None)
     if not selected:
-        _refuse_empty_overview(ctx, folders[0] if one else None, scenario)
+        _refuse_empty_overview(ctx, folders[0] if one else None, scenario, args)
     run = selected[0]
     entry = run.entry
     row = _overview_row(run)
@@ -302,7 +333,7 @@ def _overview_row(run: _runs.Run) -> dict:
     return dict(items)
 
 
-def _refuse_empty_overview(ctx: AssistantContext, folder: str | None, scenario: str | None) -> None:
+def _refuse_empty_overview(ctx: AssistantContext, folder: str | None, scenario: str | None, args: dict) -> None:
     """Refuse an overview whose request selects no run (Cycle 2 review m4), saying what did not match: the folder is a run
     of another scenario, no run is of the scenario (with the closest scenarios that have runs), or the other
     filters left nothing."""
@@ -320,7 +351,8 @@ def _refuse_empty_overview(ctx: AssistantContext, folder: str | None, scenario: 
         if scenario not in known:
             raise ToolError("overview_no_scenario_run", scenario=scenario,
                             scenarios=name_list(close_names(scenario, known) or known, NAMES_MAX))
-    raise ToolError("overview_filtered_out")
+    counts = _hidden_counts(args, every, []) or {"what": ", ".join(_filters_given(args)), "n": 0, "usable": 0}
+    raise ToolError("overview_filtered_out", **counts)
 
 
 def _refuse_overview(ctx: AssistantContext) -> None:
@@ -336,6 +368,14 @@ def _prepare_runs(args: dict) -> dict:
         args = dict(args)
         args["folders"] = [args["folders"]]
     return args
+
+
+def _check_runs(ctx: AssistantContext, args: dict) -> None:
+    """A state that is no run state is refused in plain English with the states of the project's runs (the
+    schema's enum refusal would list every state FlexTool knows)."""
+    state = args.get("state")
+    if isinstance(state, str) and state not in _runs.RUN_STATES:
+        _runs.check_state(state, _runs.runs(ctx))
 
 
 TOOLS = [
@@ -361,12 +401,16 @@ TOOLS = [
                      "entity (existing, invested, total), slacks. detail full (also named folders, up to 5 runs): "
                      "verdict, times, version, error. Filters: source, scenario, state, results_usable, folders "
                      "(names, * patterns). offset pages."),
-        properties={"source": {"type": "string"}, "scenario": {"type": "string"}, "state": {"type": "string"},
+        # state: the run states as an enum (gpt-oss on Ollama invented "success", "*" and "", 2026-11-11).  A state
+        # only a newer FlexTool writes is listed by the call without the filter, but cannot be filtered by.  Another
+        # value is refused by _check_runs, naming the states of the project's runs, before the schema refuses it.
+        properties={"source": {"type": "string"}, "scenario": {"type": "string"},
+                    "state": {"type": "string", "enum": list(_runs.RUN_STATES)},
                     "results_usable": {"type": "boolean"},
                     "folders": {"type": "array", "items": {"type": "string"}},
                     "detail": {"type": "string", "enum": ["scan", "overview", "full"]},
                     "all": {"type": "boolean"}, "offset": {"type": "integer"}},
-        handler=list_runs, area="discovery", small_tier=True, prepare=_prepare_runs,
+        handler=list_runs, area="discovery", small_tier=True, prepare=_prepare_runs, check=_check_runs,
         basic=BasicForm(
             description=("Result folders (scenario + source number, as S2_Dry_1), newest first: the latest runs, "
                          "with counts of the older ones; all true: every run. folder, state, finished, "

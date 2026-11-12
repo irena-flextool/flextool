@@ -187,27 +187,55 @@ def test_generic_id_parsers() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write_fake_gurobi(tmp_path: Path, sol_lines: list[str]) -> Path:
+def _write_fake_gurobi(tmp_path: Path, sol_lines: list[str], stdout: str = "", *, solve_mps: bool = False) -> Path:
     """Executable stub mimicking ``gurobi_cl``: read ``ResultFile=<path>``
-    from argv, write *sol_lines* there (Gurobi ResultFile format), exit 0."""
+    from argv, write *sol_lines* there (Gurobi ResultFile format), print
+    *stdout*, record its argv in ``<tmp_path>/argv.json``, exit 0.
+
+    With *solve_mps* it instead solves the model file (the last argument) with
+    highspy and writes a Gurobi JSON result (status 2, objective, the non-zero
+    values), so a whole FlexTool run can go through it."""
     body = textwrap.dedent(
         """\
         #!{py}
-        import sys
+        import json, sys
         result = None
         for a in sys.argv[1:]:
             if a.startswith("ResultFile="):
                 result = a.split("=", 1)[1]
         assert result is not None, "fake gurobi_cl: no ResultFile= in argv"
+        with open({argv_log!r}, "a") as fh:
+            fh.write(json.dumps(sys.argv[1:]) + "\\n")
+        payload = {payload!r}
+        if {solve_mps!r}:
+            import highspy
+            h = highspy.Highs()
+            h.setOptionValue("output_flag", False)
+            h.readModel(sys.argv[-1])
+            h.run()
+            assert h.getModelStatus() == highspy.HighsModelStatus.kOptimal
+            names = h.allVariableNames()
+            values = h.getSolution().col_value
+            payload = json.dumps({{
+                "SolutionInfo": {{"Status": 2, "ObjVal": h.getInfo().objective_function_value, "SolCount": 1}},
+                "Vars": [{{"VarName": n, "X": v}} for n, v in zip(names, values) if v != 0.0],
+            }})
         with open(result, "w") as fh:
-            fh.write({payload!r})
+            fh.write(payload)
+        sys.stdout.write({stdout!r})
         sys.exit(0)
         """
-    ).format(py=sys.executable, payload="\n".join(sol_lines) + "\n")
+    ).format(py=sys.executable, payload="\n".join(sol_lines) + "\n", stdout=stdout,
+             argv_log=str(tmp_path / "argv.json"), solve_mps=solve_mps)
     stub = tmp_path / "fake_gurobi_cl"
     stub.write_text(body)
     stub.chmod(stub.stat().st_mode | stat.S_IEXEC | stat.S_IRWXU)
     return stub
+
+
+def _argv_of_calls(tmp_path: Path) -> list[list[str]]:
+    """The argv of each call of the stub, in order."""
+    return [json.loads(line) for line in (tmp_path / "argv.json").read_text().splitlines()]
 
 
 def test_commercial_path_maps_generic_primal_by_index(
@@ -225,7 +253,8 @@ def test_commercial_path_maps_generic_primal_by_index(
         "C0000002 5",    # col_id 1 -> x[gas,p0]
         "C0000003 0",    # col_id 2 -> x[wind,p0]
     ]
-    stub = _write_fake_gurobi(tmp_path, sol_lines)
+    # A text result file has no status: Gurobi's console line says the LP finished.
+    stub = _write_fake_gurobi(tmp_path, sol_lines, stdout="Optimal objective  2.000000000e+01\n")
     monkeypatch.setattr(sps, "_find_solver_binary", lambda name: stub)
 
     sol = _solve_commercial_subprocess(
@@ -360,10 +389,7 @@ for line in sys.stdin.read().splitlines():
 import sys, coptpy as cp
 env = cp.Envr()
 m = env.createModel()
-try:
-    m.setParam("Logging", 0)
-except Exception:
-    pass
+# The log stays on, as copt_cmd's is by default: FlexTool reads how the solve ended from it.
 for line in sys.stdin.read().splitlines():
     t = line.split()
     if not t:
@@ -434,3 +460,291 @@ def test_real_commercial_solver_handles_spaces(
     # Objective recovered for every solver (COPT via the '=?'-tolerant
     # regex, Xpress via writeprtsol).
     assert float(sol.obj) == pytest.approx(20.0, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# 4. Options, status and messages of the commercial path (item 230), through the fake gurobi_cl
+# ---------------------------------------------------------------------------
+
+import json  # noqa: E402
+import logging  # noqa: E402
+
+from flextool.cli.cmd_run_flextool import build_parser  # noqa: E402
+from flextool.engine.input._solve_config import SolverConfig  # noqa: E402
+from flextool.engine.solve._acceptance import classify_acceptance  # noqa: E402
+from flextool.engine.solve._solver_dispatch import FlexToolUserError, run_one_solve  # noqa: E402
+from flextool.run_options import RunOptions  # noqa: E402
+
+_GUROBI_TIME_LIMIT_LOG = (
+    "Explored 2055 nodes (12153 simplex iterations) in 0.30 seconds (0.34 work units)\n"
+    "\n"
+    "Time limit reached\n"
+    "Best objective 1.000000000000e+02, best bound 9.900000000000e+01, gap 1.0101%\n"
+)
+_SOL_20 = ["# Objective value = 20", "C0000001 10", "C0000002 5", "C0000003 0"]
+
+
+def _mip_lp(nodes: list[str]) -> Problem:
+    """``_cost_lp`` with an extra integer column, so the problem is a MIP."""
+    pb = _cost_lp(nodes)
+    pb.add_var("u", ("node",), pl.DataFrame({"node": ["n"]}), lower=0.0, upper=1.0, integer=True)
+    return pb
+
+
+def _gurobi(stub: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sps, "_find_solver_binary", lambda name: stub)
+
+
+def test_gurobi_time_limit_from_the_console(tmp_path, monkeypatch) -> None:
+    """A text result file has no status: ``Time limit reached`` on the console makes it TIME_LIMIT, and the
+    gap line gives the gap; a MIP is then kept with a warning naming it."""
+    _gurobi(_write_fake_gurobi(tmp_path, _SOL_20, stdout=_GUROBI_TIME_LIMIT_LOG), monkeypatch)
+    sol = _solve_commercial_subprocess(
+        _mip_lp(["A", "B", "C"]), "gurobi", options=None, solve_name="unit", logger=None, work_folder=None,
+    )
+    assert (sol.shim_status, sol.optimal) == ("TIME_LIMIT", False)
+    assert sol.shim_mip_gap == pytest.approx(0.010101)
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="unit")
+    assert acc.accepted and acc.time_limited and "1.0101%" in acc.message
+
+
+def test_gurobi_without_the_time_limit_line_is_optimal(tmp_path, monkeypatch) -> None:
+    _gurobi(_write_fake_gurobi(tmp_path, _SOL_20, stdout="Optimal solution found\n"), monkeypatch)
+    sol = _solve_commercial_subprocess(
+        _cost_lp(["A", "B", "C"]), "gurobi", options=None, solve_name="unit", logger=None, work_folder=None,
+    )
+    assert (sol.shim_status, sol.optimal) == ("OPTIMAL", True)
+
+
+def test_gurobi_json_result_gives_status_and_gap_with_logging_off(tmp_path, monkeypatch, caplog) -> None:
+    """The JSON result file carries the status whatever the console says; it lists non-zero values only, so a
+    missing column is a zero, not a warning."""
+    payload = json.dumps({
+        "SolutionInfo": {"Status": 9, "ObjVal": 20, "ObjBound": 19.5, "MIPGap": 0.025, "SolCount": 2},
+        "Vars": [{"VarName": "C0000001", "X": 10}, {"VarName": "C0000002", "X": 5}],
+    })
+    _gurobi(_write_fake_gurobi(tmp_path, [payload]), monkeypatch)
+    with caplog.at_level(logging.WARNING):
+        sol = _solve_commercial_subprocess(
+            _cost_lp(["A", "B", "C"]), "gurobi", options=None, solve_name="unit",
+            logger=logging.getLogger("t"), work_folder=None,
+        )
+    assert sol.shim_status == "TIME_LIMIT" and sol.shim_mip_gap == pytest.approx(0.025)
+    np.testing.assert_allclose(sol.col_value, [10.0, 5.0, 0.0])
+    assert sol.obj == pytest.approx(20.0)
+    assert not [r for r in caplog.records if "absent" in r.getMessage()]
+    # An LP stopped at its limit stops the run.
+    assert not classify_acceptance(sol, ranges_post=None, solve_name="unit").accepted
+
+
+_GUROBI_JSON_FIXTURES = Path(__file__).parent / "fixtures" / "gurobi_json"
+
+
+def _knapsack_value(i: int) -> int:
+    """Item values of ``time_limited_mip.json`` (``fixtures/gurobi_json/make_fixtures.py``)."""
+    return 100 + (i * 7919) % 901
+
+
+def _knapsack_weight(i: int, k: int) -> int:
+    return 50 + ((i + 1) * (k + 3) * 104729) % 951
+
+
+def test_gurobi_json_files_written_by_gurobi_parse() -> None:
+    """Result files written by gurobipy 13.0.2 (``Model.write("<x>.json")``, the format of ``gurobi_cl
+    ResultFile=<x>.json``), generated once by ``fixtures/gurobi_json/make_fixtures.py`` and committed.
+
+    * optimal MIP: min -5 x - 4 y, 6 x + 4 y <= 24, x + 2 y <= 6, integer: x = 4, y = 0 (the only non-zero, so
+      the only ``Vars`` entry), objective -20, gap 0;
+    * time-limited 1500-item, 40-row binary knapsack: status 9, the incumbent's objective is the sum of the
+      chosen items' (negated) values, each row holds, and the gap is (ObjVal - ObjBound) / |ObjVal|;
+    * infeasible LP (x + y >= 3, x + y <= 1): status 3 and no ``Vars``, so no solution.
+    """
+    optimal = sps._parse_gurobi_json(_GUROBI_JSON_FIXTURES / "optimal_mip.json")
+    assert optimal is not None
+    assert (optimal.status, optimal.objective, optimal.primal, optimal.mip_gap) == (
+        "OPTIMAL", -20.0, {"C0000001": 4.0}, 0.0,
+    )
+
+    limited = sps._parse_gurobi_json(_GUROBI_JSON_FIXTURES / "time_limited_mip.json")
+    assert limited is not None and limited.status == "TIME_LIMIT"
+    chosen = [int(name[1:]) - 1 for name, x in limited.primal.items() if x == 1.0]
+    assert len(chosen) == len(limited.primal) > 0           # binaries: every listed value is 1
+    assert limited.objective == pytest.approx(-sum(_knapsack_value(i) for i in chosen))
+    for k in range(40):
+        capacity = sum(_knapsack_weight(i, k) for i in range(1500)) // 2
+        assert sum(_knapsack_weight(i, k) for i in chosen) <= capacity
+    info = json.loads((_GUROBI_JSON_FIXTURES / "time_limited_mip.json").read_text())["SolutionInfo"]
+    assert limited.mip_gap == pytest.approx((info["ObjVal"] - info["ObjBound"]) / abs(info["ObjVal"]))
+    assert 0.0 < limited.mip_gap < 0.01
+
+    infeasible = sps._parse_gurobi_json(_GUROBI_JSON_FIXTURES / "infeasible_lp.json")
+    assert infeasible is not None
+    assert (infeasible.status, infeasible.objective, infeasible.primal, infeasible.mip_gap) == (
+        "INFEASIBLE", None, None, None,
+    )
+
+
+def test_gurobi_text_result_with_another_limit_is_not_optimal(tmp_path, monkeypatch) -> None:
+    """A text result file with ``Node limit reached`` on the console is ``NODE_LIMIT``: rejected, by name."""
+    _gurobi(_write_fake_gurobi(tmp_path, _SOL_20, stdout="Node limit reached\nBest objective 2.0e+01\n"),
+            monkeypatch)
+    sol = _solve_commercial_subprocess(
+        _mip_lp(["A", "B", "C"]), "gurobi", options=None, solve_name="unit", logger=None, work_folder=None,
+    )
+    assert (sol.shim_status, sol.optimal) == ("NODE_LIMIT", False)
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="unit")
+    assert not acc.accepted and "NODE_LIMIT" in acc.message
+
+
+def test_gurobi_text_result_without_a_status_line_is_not_optimal(tmp_path, monkeypatch) -> None:
+    """Review L2-2: a text result file and a console without a status line (``LogToConsole 0``): how the solve
+    ended is unknown (a node limit would read the same), so it is ``NO_STATUS`` and the run stops, saying why."""
+    _gurobi(_write_fake_gurobi(tmp_path, _SOL_20, stdout=""), monkeypatch)
+    sol = _solve_commercial_subprocess(
+        _mip_lp(["A", "B", "C"]), "gurobi", options=None, solve_name="unit", logger=None, work_folder=None,
+    )
+    assert (sol.shim_status, sol.optimal) == ("NO_STATUS", False)
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="unit")
+    assert not acc.accepted and "LogToConsole 1" in acc.message and "(solver status NO_STATUS)" in acc.message
+
+
+def _cplex_file(tmp_path: Path, status_string: str, status_value: str | None) -> Path:
+    path = tmp_path / "x.sol"
+    value = "" if status_value is None else f' solutionStatusValue="{status_value}"'
+    path.write_text(
+        '<?xml version="1.0"?>\n<CPLEXSolution version="1.2">\n'
+        f' <header objectiveValue="20"{value} solutionStatusString="{status_string}"/>\n'
+        ' <variables><variable name="C0000001" index="0" value="10"/></variables>\n'
+        '</CPLEXSolution>\n'
+    )
+    return path
+
+
+@pytest.mark.parametrize("status_value, status_string, expected", [
+    # The codes of the CPLEX reference manual ("Solution status codes"), with the string CPLEX writes beside each.
+    ("1", "optimal", "OPTIMAL"),
+    ("101", "integer optimal solution", "OPTIMAL"),
+    ("102", "integer optimal, tolerance", "OPTIMAL"),
+    ("5", "optimal with unscaled infeasibilities", "OPTIMAL_INFEASIBLE"),
+    ("115", "integer optimal with unscaled infeasibilities", "OPTIMAL_INFEASIBLE"),
+    ("20", "optimal face unbounded", "OPTIMAL_FACE_UNBOUNDED"),
+    ("11", "time limit exceeded", "TIME_LIMIT"),
+    ("107", "time limit exceeded, integer feasible", "TIME_LIMIT"),
+    ("131", "deterministic time limit exceeded, integer feasible", "TIME_LIMIT"),
+    ("105", "node limit exceeded, integer feasible", "NODE_LIMIT"),
+    ("113", "aborted, integer feasible", "INTERRUPTED"),
+    # The code decides when the string says something else.
+    ("115", "integer optimal solution", "OPTIMAL_INFEASIBLE"),
+    # An unlisted code falls back to the string.
+    ("999", "integer optimal solution", "OPTIMAL"),
+    # No code (an older writer): the string, the unscaled cases before plain "optimal".
+    (None, "integer optimal with unscaled infeasibilities", "OPTIMAL_INFEASIBLE"),
+    (None, "optimal face unbounded", "OPTIMAL_FACE_UNBOUNDED"),
+])
+def test_cplex_status_code_with_a_solution(status_value, status_string, expected, tmp_path) -> None:
+    """Review L2-3: the numeric ``solutionStatusValue`` first; "optimal with unscaled infeasibilities" and
+    "optimal face unbounded" are not optimal."""
+    parsed = sps._parse_cplex_sol(_cplex_file(tmp_path, status_string, status_value))
+    assert (parsed.status, parsed.primal) == (expected, {"C0000001": 10.0})
+
+
+@pytest.mark.parametrize("status, reason", [
+    ("OPTIMAL_INFEASIBLE", "once unscaled, the solution breaks the feasibility tolerances"),
+    ("OPTIMAL_FACE_UNBOUNDED", "has an unbounded optimal face"),
+])
+def test_cplex_uncertified_optimum_is_rejected_with_its_reason(status, reason) -> None:
+    from types import SimpleNamespace
+
+    sol = SimpleNamespace(optimal=False, shim_status=status, shim_mip_gap=None, _vars=_cost_lp(["A"])._vars)
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="unit")
+    assert not acc.accepted and reason in acc.message and f"(solver status {status})" in acc.message
+
+
+def test_cplex_without_a_solution_file_at_its_time_limit_says_so(tmp_path) -> None:
+    """CPLEX writes no file without a solution; its console's ``time limit exceeded`` makes the reason the time
+    limit (the run says "stopped at its time limit before finding a solution"), else nothing is known."""
+    missing = tmp_path / "none.sol"
+    log = "Dual simplex - Time limit exceeded, no solution.\nCPLEX Error  1217: No solution exists.\n"
+    assert sps._parse_cplex_sol(missing, log) == sps._ParsedSolution("TIME_LIMIT", None, None, None)
+    assert sps._parse_cplex_sol(missing, "CPLEX Error  1217: No solution exists.\n").status == "OTHER"
+    assert sps._NO_SOLUTION_REASONS["TIME_LIMIT"] == "stopped at its time limit before finding a solution"
+
+
+@pytest.mark.parametrize("status_string, expected", [
+    ("integer optimal solution", "OPTIMAL"),
+    ("integer optimal, tolerance", "OPTIMAL"),
+    ("time limit exceeded, integer feasible", "TIME_LIMIT"),
+    ("aborted, integer feasible", "INTERRUPTED"),
+    ("node limit exceeded, integer feasible", "NODE_LIMIT"),
+    ("solution limit exceeded", "SOLUTION_LIMIT"),
+    ("integer infeasible or unbounded", "INF_OR_UNBD"),
+    ("something new", "OTHER"),
+    ("", "OPTIMAL"),     # no status string at all: the values are all there is
+])
+def test_cplex_status_string_with_a_solution(status_string, expected, tmp_path) -> None:
+    """Review L3: a CPLEX file with values is "optimal" only when its status string says so (or has none)."""
+    path = tmp_path / "x.sol"
+    path.write_text(
+        '<?xml version="1.0"?>\n<CPLEXSolution version="1.2">\n'
+        f' <header objectiveValue="20" solutionStatusString="{status_string}"/>\n'
+        ' <variables><variable name="C0000001" index="0" value="10"/></variables>\n'
+        '</CPLEXSolution>\n'
+    )
+    parsed = sps._parse_cplex_sol(path)
+    assert (parsed.status, parsed.primal) == (expected, {"C0000001": 10.0})
+
+
+def test_cplex_aborted_mip_is_rejected_naming_the_status() -> None:
+    """The status of an aborted CPLEX MIP with an incumbent stops the run (it used to be read as optimal)."""
+    from types import SimpleNamespace
+
+    sol = SimpleNamespace(optimal=False, shim_status=sps._cplex_status("aborted, integer feasible"),
+                          shim_mip_gap=None, _vars=_mip_lp(["A"])._vars)
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="unit")
+    assert not acc.accepted and "interrupted" in acc.message
+
+
+def test_gurobi_unknown_parameter_is_a_warning_naming_its_layer(tmp_path, monkeypatch, caplog) -> None:
+    _gurobi(_write_fake_gurobi(tmp_path, _SOL_20, stdout="Unknown parameter: 'MIPGapp' (ignored)\n"), monkeypatch)
+    with caplog.at_level(logging.WARNING):
+        _solve_commercial_subprocess(
+            _cost_lp(["A", "B", "C"]), "gurobi", options={"MIPGapp": "0.01"}, solve_name="unit",
+            logger=logging.getLogger("t"), work_folder=None,
+            option_layers={"MIPGapp": "solver_arguments of solve unit"},
+        )
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "MIPGapp" in warnings[0] and "solver_arguments of solve unit" in warnings[0]
+
+
+def test_flags_reach_gurobi_and_set_the_watchdog(tmp_path, monkeypatch) -> None:
+    """End to end through ``run_one_solve``: the flags become Gurobi parameters and the subprocess timeout is
+    2 x 60 + 600 = 720 s."""
+    _gurobi(_write_fake_gurobi(tmp_path, _SOL_20), monkeypatch)
+    (tmp_path / "cfg").mkdir()
+    (tmp_path / "cfg" / "gurobi.opt").write_text("Threads 0\nMIPGap 0.002\n")
+    timeouts: list = []
+    real_run = sps.subprocess.run
+
+    def spy(*args, **kwargs):
+        timeouts.append(kwargs.get("timeout"))
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(sps.subprocess, "run", spy)
+    flags = ["sqlite:///x.sqlite", "--solver-time-limit", "60", "--solver-mip-gap", "0.001"]
+    run_one_solve(
+        _cost_lp(["A", "B", "C"]), SolverConfig(name="gurobi"), solve_name="unit",
+        run_options=RunOptions.from_cli(build_parser().parse_args(flags), environ={}),
+        solver_config_dir=tmp_path / "cfg",
+    )
+    (argv,) = _argv_of_calls(tmp_path)
+    assert argv[:-2] == ["Threads=0", "MIPGap=0.001", "TimeLimit=60"]
+    assert timeouts == [720.0]
+
+
+def test_xpress_refuses_a_mip(monkeypatch) -> None:
+    """The Xpress script runs ``lpoptimize``, which returns the LP relaxation of a MIP: refused up front."""
+    monkeypatch.setattr(sps, "_find_solver_binary", lambda name: pytest.fail("no solver may be started"))
+    with pytest.raises(FlexToolUserError, match="integer variables"):
+        run_one_solve(_mip_lp(["A", "B"]), SolverConfig(name="xpress"), solve_name="unit",
+                      run_options=RunOptions.from_env({}))

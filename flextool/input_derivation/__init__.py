@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 import spinedb_api as api
 from flextool.update_flextool.db_handle import open_database_mapping
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 if TYPE_CHECKING:
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
@@ -59,6 +60,53 @@ def _provider_key(filename: str) -> str:
     """
     p = Path(filename)
     return f"{p.parent.name}/{p.stem}" if p.parent.name else p.stem
+
+
+def _timestep_keyed_drops() -> dict[str, tuple[list[str], str, frozenset[str]]]:
+    """``{spec filename: (key columns, parameter column, parameter names)}`` of the period specs whose
+    timestep-keyed rows :func:`_drop_timestep_keyed_rows` drops."""
+    from flextool.input_derivation._specs import (
+        PD_NODE_DROP_TIMESTEP_KEYS,
+        PD_PROCESS_DROP_TIMESTEP_KEYS,
+        PD_SOURCE_SINK_DROP_TIMESTEP_KEYS,
+    )
+    return {
+        "input/pd_process.csv": (["process", "processParam", "period"], "processParam",
+                                 PD_PROCESS_DROP_TIMESTEP_KEYS),
+        "input/pd_node.csv": (["node", "nodeParam", "period"], "nodeParam", PD_NODE_DROP_TIMESTEP_KEYS),
+        "input/pd_process_sink.csv": (["process", "sink", "sourceSinkPeriodParam", "period"],
+                                      "sourceSinkPeriodParam", PD_SOURCE_SINK_DROP_TIMESTEP_KEYS),
+        "input/pd_process_source.csv": (["process", "source", "sourceSinkPeriodParam", "period"],
+                                        "sourceSinkPeriodParam", PD_SOURCE_SINK_DROP_TIMESTEP_KEYS),
+    }
+
+
+def _drop_timestep_keyed_rows(backend, kwargs: dict, frame: pl.DataFrame, *, key_cols: list[str],
+                              param_col: str, drop_keys: frozenset[str], timesteps: list[str]) -> pl.DataFrame:
+    """``frame`` (a period spec read with ``kwargs``) without its rows whose ``period`` is a time step and whose
+    ``param_col`` is in ``drop_keys``.
+
+    The period twins of time-series parameters (``pd_process`` / ``pd_node`` / ``pd_process_sink`` /
+    ``pd_process_source`` next to their ``pt_*`` specs) also catch silent-``x`` time maps.  A timestep is never a
+    period, so those rows would only pollute ``periodAll`` and be copied into the per-roll period lookups.  An
+    explicitly period-labelled row (``index_name: "period"``) is never a silent-``x`` leak even when its key
+    happens to also be a timestep name (#76): the spec is re-read filtered to that index and any row it names is
+    kept."""
+    drop = pl.col(param_col).is_in(list(drop_keys)) & pl.col("period").is_in(timesteps)
+    if not frame.select(drop.any()).item():
+        return frame
+    explicit_period = backend.parameter_values(**{**kwargs, "filter_in_index": "period"})
+    is_explicit = (
+        frame.join(
+            explicit_period.select(key_cols).unique().with_columns(pl.lit(True).alias("__explicit")),
+            on=key_cols, how="left",
+        )["__explicit"].fill_null(False)
+    )
+    return (
+        frame.with_columns(is_explicit.alias("__explicit"))
+        .filter(~drop | pl.col("__explicit"))
+        .drop("__explicit")
+    )
 
 
 def run(
@@ -114,11 +162,14 @@ def run(
         _ENTITY_SPECS,
         _PARAMETER_SPECS,
         _DEFAULT_VALUES_SPECS,
-        PD_PROCESS_DROP_TIMESTEP_KEYS,
     )
     from flextool.input_derivation._validators import (
         validate_timeline_timestep_duration,
         validate_node_inflow_not_period,
+        validate_time_series_keys,
+        validate_period_keys,
+        database_time_facts,
+        _scenario_time_vocab,
         validate_ladder_methods,
         validate_group_output_memberships,
         validate_capacity_margin_groups,
@@ -126,12 +177,21 @@ def run(
         validate_non_sync_one_variable_connections,
         validate_min_load_efficiency_inputs,
         validate_connection_node_memberships,
+        warn_node_connections,
+        validate_node_invest_without_storage,
+        validate_units_of_measure,
         validate_connection_delay,
         validate_connection_startup,
         validate_group_increase_reserve_ratio,
         warn_existing_not_whole_units,
         validate_unit_input_shares,
+        validate_startup_inputs,
         validate_output_min_coeff,
+        validate_profile_links,
+        validate_zero_conversion_coeff,
+        validate_basic_sanity,
+        warn_profiles_as_percent,
+        value_alternatives,
     )
     from flextool.input_derivation._dc_power_flow import derive_dc_power_flow
     from flextool.input_derivation._process_method import derive_process_method
@@ -162,6 +222,8 @@ def run(
             memory_recorder.checkpoint(label, logger, user_label=user_label)
 
     wf = work_folder if work_folder is not None else Path.cwd()
+    # Facts read from the whole database before the scenario filter (URL sources only).
+    whole_db: dict = {}
 
     def _do(db) -> None:
         # Step 1 — SpineDBBackend spec loops.
@@ -187,43 +249,43 @@ def run(
             )
             provider.put(_provider_key(spec.filename), frame)
 
-        validate_timeline_timestep_duration(db)
-        validate_node_inflow_not_period(backend)
+        validate_timeline_timestep_duration(backend)
+        time_vocab = _scenario_time_vocab(backend)
+        validate_node_inflow_not_period(backend, time_vocab)
+        validate_time_series_keys(backend, time_vocab, whole_db.get("time"))
+        # The input-value checks report together: one FlexToolConfigError with the errors of all three (their
+        # warnings are printed as they go), so a database with several kinds of mistake needs one rerun.
+        input_errors: list[str] = []
+        for check in (lambda: validate_period_keys(backend, whole_db.get("time"), time_vocab),
+                      lambda: validate_profile_links(db, whole_db.get("profile_alternatives")),
+                      lambda: validate_basic_sanity(backend)):
+            try:
+                check()
+            except FlexToolConfigError as err:
+                input_errors.append(str(err))
+        validate_zero_conversion_coeff(db)
+        if input_errors:
+            raise FlexToolConfigError("\n\n".join(input_errors))
 
-        timesteps: list[str] | None = None
+        # Every time step of the scenario's timelines (``_scenario_time_vocab``, the steps ``input/timeline.csv``
+        # holds); read before the parameter specs because ``pd_node`` precedes ``timeline.csv`` among them.
+        # The steps are ``str(key)`` of the timeline map keys, the form the spec frames carry.  A
+        # ``time_series``-typed ``timestep_duration`` (its steps would be date-time stamps) is unreachable today:
+        # the timeline reader (``_solve_config.params_to_dict``) keeps only Map / Array / scalar values, so such a
+        # timeline is never built and none of its steps reaches the model.
+        timesteps = sorted(set().union(*time_vocab[1].values()))
+        timestep_keyed_drops = _timestep_keyed_drops()
         for spec in _PARAMETER_SPECS:
             kwargs = {k: v for k, v in spec.items() if k != "filename"}
             frame = backend.parameter_values(**kwargs)
-            if spec["filename"] == "input/timeline.csv":
-                timesteps = frame["timestep"].unique().to_list()
-            elif spec["filename"] == "input/pd_process.csv":
-                if timesteps is None:
-                    raise RuntimeError("_PARAMETER_SPECS: input/timeline.csv must precede input/pd_process.csv")
-                # The period twins of the ``pt_process`` parameters (and ``startup_cost``) also catch silent-``x``
-                # time maps; drop their timestep-keyed rows (a timestep is never a period) so they neither pollute
-                # ``periodAll`` nor get copied into the per-roll ``pd_process`` lookups. An explicitly
-                # period-labelled row (``index_name: "period"``) is never a silent-``x`` leak even when its key
-                # happens to also be a timestep name (#76) — re-read the spec filtered to that index and keep any
-                # row it names.
-                key_cols = ["process", "processParam", "period"]
-                explicit_period = backend.parameter_values(**{**kwargs, "filter_in_index": "period"})
-                is_explicit = (
-                    frame.join(
-                        explicit_period.select(key_cols).unique().with_columns(
-                            pl.lit(True).alias("__explicit")),
-                        on=key_cols, how="left",
-                    )["__explicit"].fill_null(False)
-                )
-                drop = (
-                    pl.col("processParam").is_in(list(PD_PROCESS_DROP_TIMESTEP_KEYS))
-                    & pl.col("period").is_in(timesteps)
-                )
-                frame = (
-                    frame.with_columns(is_explicit.alias("__explicit"))
-                    .filter(~drop | pl.col("__explicit"))
-                    .drop("__explicit")
-                )
+            drop = timestep_keyed_drops.get(spec["filename"])
+            if drop is not None:
+                key_cols, param_col, drop_keys = drop
+                frame = _drop_timestep_keyed_rows(
+                    backend, kwargs, frame, key_cols=key_cols, param_col=param_col, drop_keys=drop_keys,
+                    timesteps=timesteps)
             provider.put(_provider_key(spec["filename"]), frame)
+        warn_profiles_as_percent(backend, provider)
         _mem("spine_db_read_end", "Spine DB loaded")
 
         # Step 2 — DB-driven derivations.
@@ -235,6 +297,7 @@ def run(
         # Once per scenario: input shares and output floors (need the
         # process method for the online / indirect classification).
         validate_unit_input_shares(db, provider, logger)
+        validate_startup_inputs(db, provider, logger)
         validate_min_load_efficiency_inputs(db, logger)
         validate_output_min_coeff(db, provider, logger)
         validate_ladder_methods(db, logger)
@@ -305,6 +368,9 @@ def run(
         validate_non_sync_one_variable_connections(db, provider, logger)
         validate_group_output_memberships(db, logger)
         validate_connection_node_memberships(db, logger)
+        warn_node_connections(db)
+        validate_node_invest_without_storage(db, logger)
+        validate_units_of_measure(db, logger)
 
     # Accept either a backend, a DatabaseMapping or a URL string.
     if isinstance(backend_or_db_url, str):
@@ -317,6 +383,8 @@ def run(
             # parameter_value lookups.
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
+            whole_db["profile_alternatives"] = value_alternatives(db, "profile", "profile")
+            whole_db["time"] = database_time_facts(db)
             if scen_config is not None:
                 api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
             os.makedirs(wf / "input", exist_ok=True)

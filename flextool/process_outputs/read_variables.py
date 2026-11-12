@@ -350,7 +350,9 @@ def _read_from_parquet(parquet_dir: Path) -> SimpleNamespace:
     # when no such arc is present).  Folded into the signed net flow by
     # calc_capacity_flows.
     v.flow_back = _read("v_flow_back", ("process", "source", "sink"))
-    v.ramp = _read("v_ramp", ("process", "source", "sink"))
+    # The ramp-cost split of the flow change (empty frames without a ramp cost); read by calc_costs.
+    v.ramp_up = _read("v_ramp_up", ("process", "source", "sink"))
+    v.ramp_down = _read("v_ramp_down", ("process", "source", "sink"))
     v.reserve = _read("v_reserve", ("process", "reserve", "updown", "node"))
     v.state = _read("v_state", ("node",))
     # Self-discharge per step (MWh) as the balance rows used it (engine writer write_v_self_discharge); empty
@@ -402,6 +404,20 @@ def _read_from_parquet(parquet_dir: Path) -> SimpleNamespace:
     v.dual_minInvestGroup_cumulative = _read("v_dual_minInvestGroup_cumulative", ("group",), has_time=False)
     v.dual_co2_max_period = _read("v_dual_co2_max_period", ("group",), has_time=False)
     v.dual_co2_max_total = _read("v_dual_co2_max_total", ("group",), has_period=False, has_time=False)
+    # The capacity margin of each solve with investment periods (engine.output._capacity_margin): long polars
+    # frames, one solve after the other with no dedup (an invest solve keeps its rows under its own name); None
+    # without a capacity margin.
+    from flextool.engine.output._capacity_margin import ENTITY_PREFIX, REPORT_PREFIX, read_capacity_margin_parts
+
+    v.capacity_margin_report = read_capacity_margin_parts(parquet_dir, REPORT_PREFIX, solve_order)
+    v.capacity_margin_entity = read_capacity_margin_parts(parquet_dir, ENTITY_PREFIX, solve_order)
+    # The reserve requirement of each reserve group (engine.output._reserve_report): long polars frames over the
+    # realized steps, a step from the last solve that realizes it; None without a reserve requirement.
+    from flextool.engine.output._reserve_report import PROVIDER_PREFIX, REPORT_PREFIX as RESERVE_PREFIX
+    from flextool.engine.output._reserve_report import read_reserve_report_parts
+
+    v.reserve_group = read_reserve_report_parts(parquet_dir, RESERVE_PREFIX, solve_order)
+    v.reserve_group_provider = read_reserve_report_parts(parquet_dir, PROVIDER_PREFIX, solve_order)
 
     # ``group_entity_invest`` is set by the caller (``read_variables``) from the
     # sub-solve's FlexDataProvider — item 163 addendum; no polars producer

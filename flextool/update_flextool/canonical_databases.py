@@ -8,8 +8,9 @@ relative to the user's current working directory.
 The user-facing workflow is one of:
 
 ``python -m flextool.update_flextool.canonical_databases materialize``
-    Recreate any missing ``.sqlite`` files from the bundled JSON sources.
-    Idempotent for files that already exist.  Called automatically by
+    Recreate any missing ``.sqlite`` files from the bundled JSON sources,
+    and rebuild one older than this FlexTool (the old file is kept as a
+    ``.bak``).  Idempotent for files that are current.  Called automatically by
     :func:`flextool.update_flextool.update_flextool` and by
     ``tests/conftest.py`` so users and CI always have ``.sqlite`` files
     to point Spine Toolbox at.
@@ -34,6 +35,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -74,11 +76,49 @@ def _json_source(db: CanonicalDatabase) -> Path:
     return package_data_path(f"schemas/canonical_databases/{db.json_name}")
 
 
+def _stale_version(sqlite_abs: Path) -> int | None:
+    """The FlexTool data version of a materialized file older than this FlexTool, else ``None``.
+
+    Read read-only.  A frozen file, or one whose version or marker cannot be read, is never stale: it is left as it
+    is.
+    """
+    from flextool.update_flextool import FLEXTOOL_DB_VERSION
+    from flextool.update_flextool.frozen import FrozenCheckError, read_db_version_ro, read_frozen
+
+    version = read_db_version_ro(sqlite_abs)
+    if version is None or version >= FLEXTOOL_DB_VERSION:
+        return None
+    try:
+        if read_frozen(sqlite_abs) is not None:
+            return None
+    except FrozenCheckError:
+        return None
+    return version
+
+
+def _build(json_abs: Path, sqlite_abs: Path) -> None:
+    """Build *sqlite_abs* from *json_abs* next to it and move it in place in one step.
+
+    Parallel callers (pytest-xdist workers) each build their own file, so none of them reads a half-written one.
+    """
+    staging = sqlite_abs.with_name(f".{sqlite_abs.stem}.{os.getpid()}.staging.sqlite")
+    staging.unlink(missing_ok=True)
+    try:
+        initialize_database(str(json_abs), str(staging))
+        os.replace(staging, sqlite_abs)
+    finally:
+        staging.unlink(missing_ok=True)
+
+
 def materialize(overwrite: bool = False) -> None:
     """Create every canonical SQLite from its JSON source.
 
-    With ``overwrite=False`` (the default), existing ``.sqlite`` files
-    in the working tree are left untouched — preserves user edits.
+    With ``overwrite=False`` (the default), an existing ``.sqlite`` file
+    at the current FlexTool data version is left untouched — preserves
+    user edits.  One at an older version (left by an earlier FlexTool;
+    the engine does not run it) is rebuilt from the JSON, which
+    ``migrate-all`` keeps current; the old file is kept as
+    ``<name>.v<version>.bak``.  A frozen file is never replaced.
     Pass ``overwrite=True`` to force a refresh (used by the migrate-all
     command and by callers that need a guaranteed-current SQLite).
 
@@ -92,9 +132,19 @@ def materialize(overwrite: bool = False) -> None:
         if not json_abs.is_file():
             print(f"!! canonical JSON missing in package: {db.json_name}")
             continue
-        if sqlite_abs.exists():
-            if not overwrite:
+        if sqlite_abs.exists() and not overwrite:
+            old_version = _stale_version(sqlite_abs)
+            if old_version is None:
                 continue
+            backup = sqlite_abs.with_name(f"{sqlite_abs.name}.v{old_version}.bak")
+            if not backup.exists():
+                staging = backup.with_name(f".{backup.name}.{os.getpid()}")
+                shutil.copy2(sqlite_abs, staging)
+                os.replace(staging, backup)
+            _build(json_abs, sqlite_abs)
+            print(f"Rebuilt {db.sqlite_path} (version {old_version}) from {db.json_name}; old file: {backup.name}")
+            continue
+        if sqlite_abs.exists():
             sqlite_abs.unlink()
         sqlite_abs.parent.mkdir(parents=True, exist_ok=True)
         initialize_database(str(json_abs), str(sqlite_abs))

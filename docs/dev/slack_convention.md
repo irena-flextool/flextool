@@ -68,7 +68,7 @@ dimension).
 | `vq_state_up`        | `(n, d, t)` for `n` in `nodeBalance ∪ nodeBalancePeriod` | `node_capacity_for_scaling[n, d]` | none |
 | `vq_state_down`      | `(n, d, t)` for `n` in `nodeBalance ∪ nodeBalancePeriod` | `node_capacity_for_scaling[n, d]` | none |
 | `vq_reserve`         | `(r, ud, ng, d, t)` for `(r, ud, ng)` in `reserve__upDown__group` | `pdtReserve_upDown_group[r, ud, ng, 'reservation', d, t]` | `<= 1` |
-| `vq_inertia`         | `(g, d, t)` for `g` in `groupInertia` | `pdGroup[g, 'inertia_limit', d]` | `<= 1` |
+| `vq_inertia`         | `(g, d, t)` for `g` in `groupInertia` | `pdtGroup_inertia_limit[g, d, t]` | `<= 1` |
 | `vq_non_synchronous` | `(g, d, t)` for `g` in `groupNonSync` | `group_capacity_for_scaling[g, d]` | none |
 | `vq_capacity_margin` | `(g, d)` for `g` in `groupCapacityMargin` — no t | `group_capacity_for_scaling[g, d]` | none |
 | `vq_state_up_group`  | `(g, d, t)` for `g` in `group_loss_share` | `group_capacity_for_scaling[g, d]` | none; penalised indirectly through `vq_state_up` via `group_loss_share_constraint` |

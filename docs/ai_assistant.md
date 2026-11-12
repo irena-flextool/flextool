@@ -27,8 +27,9 @@ The window and the terminal share the settings, the keys, the accepted data noti
 
 ## Where your data goes
 
-Your questions and everything the tools return — input data, results, run logs and documentation, and the names of
-your project and scenarios — are sent to the AI service that answers. FlexTool cannot say how that service stores
+Your questions and everything the tools return — input data, results, run logs and documentation, the names of
+your project and scenarios, and the model facts of the chosen scenario (its solves, periods, time steps and latest
+run, see "Ask") — are sent to the AI service that answers. FlexTool cannot say how that service stores
 or uses the data: it may be kept, reviewed or used for training, depending on the service, your account and your
 plan. Free plans often let the provider use your data for training. Check the provider's current policies yourself
 before you use a project with data you may not share. FlexTool takes local folder paths, your user name and the
@@ -77,10 +78,41 @@ Type in the box at the bottom and press Enter to send; Ctrl+Enter starts a new l
 and you can type the next one while the answer comes; Send is available again when the answer is done. Stop (or
 Escape) stops the answer; what arrived stays in the chat.
 
+Each question you sent has two small buttons after it: ↻ asks it again as it was, and ✎ puts it in the box to
+change it (where the symbols cannot be shown, on Windows without the Segoe UI Symbol font, they read "Ask again" and
+"Edit"). R or E on a question line, and its right-click menu, do the same. The question's answer, and every later
+question with its answer, are removed from the chat and from what the assistant is sent next; when later questions
+go too, the window asks first ("This also removes the 2 later questions and answers.", a question still being
+answered counted). R always asks first ("Ask question 2 again? Its answer is removed."), so a stray key press
+removes nothing. During an answer, the answer stops once you confirm, and the question goes right after. With ✎
+the status line says "Editing question N: Enter sends it, Escape cancels."; nothing is removed until you press
+Enter, and Escape gives the box back what you had typed in it (while an answer is coming, Escape stops the answer
+instead; press it again to cancel the edit). If the question you are changing is removed meanwhile (you asked an
+earlier one again), the edit ends and the box gets back what you had typed. A question asked again goes to the
+chat's own model, also the first one. A chat started with a summary of an earlier one (*New chat with summary*)
+keeps the summary hidden and sends it with its first question again. Results the assistant had already shortened
+to keep the conversation short stay shortened. The token line's "Whole chat" still counts the tokens of the removed answers:
+they were used.
+
 Each question also tells the assistant what you have selected in the FlexTool window: the input sources and
 scenarios checked and highlighted, the results checked and highlighted (with whether their latest run succeeded),
 and what the result viewer shows (mode, scenarios, plot and time range). The assistant uses the highlighted input
 source and scenario when your question names none.
+
+When a scenario is chosen (the highlighted one in the window, `--scenario` in the terminal), each question also
+gives the assistant the scenario's **model facts**, read from the input data and the scenario's latest run, so it
+does not have to guess them: the solves in their order (nested ones too) and how each solves (one solve, a rolling
+window with its horizon and jump, stochastic forecast branches with their weights, representative periods), the
+periods with the years each represents and which of them a solve does not realise (look-ahead periods, and periods
+whose investments only it realises; with solves of different periods, also the periods realised across all solves),
+the length of the time steps each solve really uses (with `new_stepduration`, the aggregated steps), the share of a
+year each realised period covers (from the result table `period_share_of_year__d`), and whether the latest run
+succeeded, with its error when it did not. The annualised per-period (`_d_`) results (flows, energy, annualised
+costs, emissions, start-ups) are, per realised period, its weighted sum over its time steps divided by that share;
+capacities, prices, averages, ratios and discounted costs are not scaled. A stochastic solve without a realized
+branch is said to have empty operational results. When the time steps are not all of the same length, the facts say so
+and how to deal with it. Without a chosen scenario there are no model facts. The facts are short (at most about
+200 tokens) and are sent again only when they change.
 
 Each tool call is one line in the chat; click it (or press Enter on it) to see the arguments and the first 4 000
 characters of what was sent to the service. Under the buttons, always in view, a line gives the tokens of the last
@@ -216,11 +248,13 @@ ever read from piped text.
 | `/help` | The list of commands. |
 | `/new` | Start a new conversation. |
 | `/new carry` | Start a new conversation whose first question carries a short summary of this one. |
+| `/retry` | Ask your last question again; its answer is replaced. |
+| `/edit` | Change your last question and ask it again; its answer is replaced. On a terminal with GNU readline the question is put on the input line to change; elsewhere it is printed for you to copy, with `\` line ends. An empty line keeps the question and its answer. |
 | `/model NAME` | Go on with another model of the same service; `/model` alone lists the models. |
 | `/provider` | Choose another service. |
 | `/privacy` | Where the data goes, the privacy settings sent with each request, and the settings only your account can change. |
 | `/usage` | The tokens used today and this month for each service, then by month, service and model. |
-| `/context` | What the assistant is told about your choices (project, input source, scenario); after the first question also the model's context size, how much one tool result may hold and how often earlier results are shortened. |
+| `/context` | What the assistant is told about your choices (project, input source, scenario) and, with a scenario, its model facts; after the first question also the model's context size, how much one tool result may hold and how often earlier results are shortened. |
 | `/welcome` | The text on how the assistant works. |
 | `/save` | Keep this service, model and level for the next start, and the free plan when `--free-tier` was given. |
 | `/quit` | Leave the chat. |
@@ -385,7 +419,9 @@ While the project is open in the FlexTool window, the agent's `get_gui_context` 
 ask about "the selected run". The window keeps these names and selections in a small file in the assistant folder
 (no paths, no data values, nothing from your chats) and deletes it when the project closes; the agent's service
 gets them only when the agent calls the tool. Without the window, the tool says so and gives the options the tools
-were started with.
+were started with. The tool also gives the model facts of the scenario it names (`model_facts`, as in "Ask"; read
+by the connection itself, not from the window's file), and the connection asks the agent to call it first; a
+connection with `--tier basic` has no such tool, so its agent gets no model facts.
 
 To connect another project, add it under another name (`claude mcp add flextool-other -- …`), or remove the first
 one (`claude mcp remove flextool`).
@@ -542,7 +578,9 @@ short and focused. The saved conversation keeps everything.
 |---|---|---|---|
 | Earlier questions in each request | the last two, each with its final answer (text only) | every one, with its final answer (text only) | the whole conversation, with the tool calls and results |
 
-The context block (your project, input source and scenario) is always sent. The context size also sets how much one
+The context block (your project, input source and scenario, and with a scenario its model facts) is always sent; the
+model facts, too, go to the AI service: the names of the scenario's solves, periods, forecast branches and
+timesets, its time steps, and the run folder name and state of its latest run with that run's error message. The context size also sets how much one
 tool result may hold and, at the advanced level, how often the tool results of earlier questions are replaced by a
 short note:
 
@@ -600,12 +638,14 @@ wait.
 
 ## Units
 
-FlexTool does not check units. Its documented default units are MW for power, MWh for energy and CUR for the model's
-currency (see [Units of measure](reference.md#units-of-measure)), and the result labels always use them. A model may
-use other units consistently, for example kg/h and kg for a hydrogen node. The tools therefore word every unit as the
-default convention ("MW (default convention)"), and the agent is told to ask, or to say that values are in the
-model's own units, when the description of a node, carrier or parameter suggests other units. Describing such
-entities (their `description` in the input data) helps the agent.
+Each node's `unit_of_measure` sets the units of its values
+(see [Units of measure](reference/entities_and_time.md#units-of-measure)): a node without it is MWh, so its flows
+are MW and its prices CUR/MWh; CUR is the model's currency. A node that sets
+it (m3 for water) has its inputs and results in that unit (`inflow` in m3, `penalty_up` in CUR/m3, a flow in m3/h).
+The tools show each unit as it is, say which node set it, and refuse to add up values of nodes of different units.
+The assistant gives the unit the tools return; it raises a doubt only when a node's name or description contradicts
+its unit. FlexTool labels units and does not convert them: if a model holds, say, kg in a node without
+`unit_of_measure`, set it to `kg` so that the labels, and the assistant, say so.
 
 ## Try a tool from the terminal
 
@@ -661,6 +701,29 @@ Other tools keep their results short so that a project with many runs fits the a
   1 %), then fewer entities. A cut never brings back what an earlier one dropped, and each says what it shows. A
   request that selects no run says why: the folder is a run of another scenario, no run is of the scenario (with
   the closest scenario names), or the other filters leave nothing. A run whose results may not be used gets its state and error, and no numbers.
+- `explain_entity` (standard and advanced levels) gives one unit, connection or node of one run in one call:
+  `{"entity": "coal_plant", "run": "multi_year_1"}`, or a `scenario` alone for its newest run (a scenario whose
+  latest run did not succeed is refused, as `query_result` refuses it). It lists the entity's inputs in the run's
+  scenario as `get_entity` does (`invest_method` and `existing` also when no alternative sets them: `default` or
+  `not set`), its flow and profile links with their parameters and its group, reserve and flowGroup memberships;
+  then, per period and each with its table and unit: its capacity (existing, invested, divested, in construction,
+  total; never added up over periods), its flows to and from each connected node (annualized; never added up over
+  nodes), capacity factor, curtailment (VRE units), storage state, the prices at its nodes (mean, minimum and maximum
+  over each period's time steps, unweighted), its non-zero discounted cost categories (their total over the periods
+  first) and its investment value. A node gets its prices, slacks, costs and, for a storage, its capacity and
+  state; the units and connections that feed it are not listed. `hints` say when a result is consistent with an
+  input: what was invested equals `invest_max_total`, or `invest_max_period` in a period, a minimum or a
+  retirement limit (each only when the `invest_method` uses that limit); `invest_method` allows no investment; or
+  the investment value is positive (an upper limit holds the investment back) or negative in a period where
+  nothing was invested (more capacity does not pay off). `not_in_run` names the tables the run has no values of
+  the entity in, `too_large` those with too many values to summarise in one call (read them with `query_result`
+  filtered to a period). When the input data changed after the run and no longer has the entity, its class is
+  taken from the run's results. `entity_class` is needed only for a
+  name that is a unit, a connection or a node at once. A long result is shortened in this order: the costs per
+  period (totals kept), cost categories under 1 % of the entity's costs, maps summarised, the inputs that do not
+  concern investment, the periods between the first and the last; then only the capacity and the hints are kept,
+  then the capacity's total and fewer hints ("2 more hints") with only the note on what was left out, and last
+  that note alone: the result always fits `max_chars`.
 - `list_sources` with `"scenario": "coal_chp"` gives that scenario's alternatives, highest rank first, and its base
   alternative.
 - `compare_runs` without `group_by`, `agg`, `sort` and `top_n` gives each run's totals per period and category

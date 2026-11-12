@@ -109,7 +109,7 @@ def test_vectorized_pdtCommodity_branch_period_inherits_anchor_pd(tmp_path):
     put("input", "pd_commodity", pl.DataFrame({
         "commodity": ["coal", "gas", "gas", "oil"], "param": ["price"] * 4,
         "period": ["d1", "d1", "d1_b", "d1"], "value": [17.0, 6.0, 8.0, 30.0]}))
-    put("input", "pt_commodity", pl.DataFrame({
+    put("solve_data", "pt_commodity", pl.DataFrame({
         "commodity": ["oil"], "param": ["price"], "time": ["t2"], "value": [40.0]}))
     put("input", "p_commodity", pl.DataFrame({
         "commodity": ["coal"], "param": ["price"], "value": [16.0]}))

@@ -58,7 +58,8 @@ from flextool.engine.input._param_shapes import (
     facet_long_frame,
     resolve_facet_groups,
 )
-from flextool.engine.preprocess._reserve_methods import RESERVE_METHODS_BY_PARTITION
+from flextool.engine.preprocess._co2_methods import CO2_MAX_PERIOD_METHODS
+from flextool.engine.preprocess._reserve_methods import RESERVE_METHODS_BY_PARTITION, RESERVE_NO_RESERVE
 
 
 def _to_e(expr: pl.Expr) -> pl.Expr:
@@ -72,6 +73,8 @@ def _to_e(expr: pl.Expr) -> pl.Expr:
     return cast_dim(expr, get_global_axis_enums(), "e")
 
 if TYPE_CHECKING:
+    from polar_high import Param
+
     from flextool.engine.input._input_source import InputSource
 
 
@@ -554,8 +557,8 @@ def process_source_sink_noEff(source: "InputSource",
 #       (p, src, m) ∈ process__node__ramp_method, m ∈ RAMP_LIMIT_METHOD
 #       AND p_process_source[p, src, 'ramp_speed_up'] > 0.
 #   * Symmetric for sink/up, source/down, sink/down.
-#   * ``process_source_sink_ramp_cost`` — OR of source/sink-side membership
-#       in RAMP_COST_METHOD (no speed-gate).
+#   * ``process_source_sink_ramp_cost`` — the arcs whose ramp cost
+#       ``p_ramp_cost_arc`` (:func:`ramp_cost_arc_frame`) is > 0 (no speed-gate).
 #
 # In Spine, the per-arc ramp_method + ramp_speed_*  parameters live on
 # ``unit__inputNode`` (source side) and ``unit__outputNode`` (sink side).
@@ -571,13 +574,6 @@ def process_source_sink_noEff(source: "InputSource",
 #                   : m in ramp_limit_method} 1
 #               && p_process_source[p, source, 'ramp_speed_up'] > 0
 #             )};
-#
-#     set process_source_sink_ramp_cost :=
-#         {(p, source, sink) in process_source_sink :
-#             sum{(p, source, m) in process_node_ramp_method
-#                  : m in ramp_cost_method} 1
-#             || sum{(p, sink, m) in process_node_ramp_method
-#                     : m in ramp_cost_method} 1};
 
 
 # Mirror of :mod:`flextool.input_derivation._method_constants`.
@@ -692,25 +688,65 @@ def process_source_sink_ramp_limit_sink_down(
     return _ramp_limit_set(source, "sink", "down")
 
 
-def process_source_sink_ramp_cost(source: "InputSource") -> pl.DataFrame:
-    """``{(p, src, sink) ∈ pss : ramp_cost on source-side OR sink-side}``.
+def _ramp_cost_side(source: "InputSource", relationship_class: str, side: str) -> "pl.LazyFrame":
+    """``[p, <side>, value]``: the ``ramp_cost`` of the ``relationship_class`` sides whose own ``ramp_method`` is
+    ``ramp_cost`` or ``both`` (``side`` = ``source`` for ``unit__inputNode``, ``sink`` for ``unit__outputNode``).
+    A negative value is an error: the up / down split of ``ramp_change_eq`` needs a cost > 0."""
+    df = _try_param(source, relationship_class, "ramp_cost")
+    if df is None:
+        # Through ``rename_to_axis`` like the found case, so ``p`` / ``side`` take the axis dtype of
+        # ``process_source_sink_canonical`` (Enum in axis-Enum mode) and the join keys match.
+        empty = pl.DataFrame(schema={"unit": pl.Utf8, "node": pl.Utf8, "value": pl.Float64}).lazy()
+        return empty.pipe(rename_to_axis, {"unit": "p", "node": side})
+    gated = (df.lazy()
+               .filter(pl.col("value").is_not_null())
+               .join(_ramp_pairs(source, relationship_class, _RAMP_COST_METHOD), on=["unit", "node"], how="semi")
+               .select("unit", "node", pl.col("value").cast(pl.Float64))
+               .collect())
+    negative = gated.filter(pl.col("value") < 0.0)
+    if negative.height > 0:
+        from flextool.engine.input._solve_state import FlexToolConfigError
+        pairs = ", ".join(f"{u}__{n}" for u, n in negative.select("unit", "node").sort("unit", "node").iter_rows())
+        raise FlexToolConfigError(
+            f"{relationship_class}.ramp_cost is negative for {pairs}.  A ramp cost is a cost per MW of change "
+            "and must be >= 0 (a negative one would pay for ramping without limit).")
+    return gated.lazy().pipe(rename_to_axis, {"unit": "p", "node": side})
 
-    Mirrors mod L1115-1119 + the user's Δ.17c MathProg snippet (no
-    speed-gate; pure method membership).
-    """
-    src_cost = (_ramp_pairs(source, "unit__inputNode", _RAMP_COST_METHOD)
-                  .pipe(rename_to_axis, {"unit": "p", "node": "source"}))
-    sink_cost = (_ramp_pairs(source, "unit__outputNode", _RAMP_COST_METHOD)
-                   .pipe(rename_to_axis, {"unit": "p", "node": "sink"}))
-    canonical = process_source_sink_canonical(source).lazy().select(
-        "p", "source", "sink").unique()
-    via_source = canonical.join(src_cost, on=["p", "source"], how="inner")
-    via_sink = canonical.join(sink_cost, on=["p", "sink"], how="inner")
-    return (pl.concat([via_source, via_sink], how="vertical_relaxed")
-              .select("p", "source", "sink")
-              .unique()
+
+def ramp_cost_arc_frame(source: "InputSource") -> pl.DataFrame:
+    """``[p, source, sink, value]``: the ramp cost of each process arc (CUR/MW of change in its flow), the sum of
+    the ``ramp_cost`` of each side whose own ``ramp_method`` is ``ramp_cost`` or ``both``; only arcs with a cost
+    > 0.  An indirect unit's input arc ``(p, s, p)`` takes its input side, its output arc ``(p, p, k)`` its output
+    side; a direct unit's single arc takes both sides (both price the change of its one flow, as both sides of a
+    direct arc limit it)."""
+    canonical = process_source_sink_canonical(source).lazy().select("p", "source", "sink").unique()
+    via_source = canonical.join(_ramp_cost_side(source, "unit__inputNode", "source"),
+                                on=["p", "source"], how="inner")
+    via_sink = canonical.join(_ramp_cost_side(source, "unit__outputNode", "sink"),
+                              on=["p", "sink"], how="inner")
+    return (pl.concat([via_source.select("p", "source", "sink", "value"),
+                       via_sink.select("p", "source", "sink", "value")], how="vertical_relaxed")
+              .group_by("p", "source", "sink")
+              .agg(pl.col("value").sum())
+              .filter(pl.col("value") > 0.0)
               .sort("p", "source", "sink")
               .collect())
+
+
+def process_source_sink_ramp_cost(source: "InputSource") -> pl.DataFrame:
+    """``{(p, src, sink) ∈ pss : p_ramp_cost_arc > 0}`` (:func:`ramp_cost_arc_frame`): the arcs whose flow
+    change is priced (``ramp_change_eq``).  No speed gate."""
+    return ramp_cost_arc_frame(source).select("p", "source", "sink")
+
+
+def p_ramp_cost_arc_from_source(source: "InputSource") -> "Param | None":
+    """``p_ramp_cost_arc`` (p, source, sink): :func:`ramp_cost_arc_frame` as a Param; ``None`` without a ramp
+    cost.  Constant only (no ``_param_shapes`` route: ``ramp_cost`` has no period or time shape)."""
+    from polar_high import Param
+    frame = ramp_cost_arc_frame(source)
+    if frame.height == 0:
+        return None
+    return Param(("p", "source", "sink"), frame.lazy())
 
 
 _METHOD_2WAY_1VAR_OFF_LOCAL = frozenset(("method_2way_1var_off",))
@@ -823,14 +859,21 @@ def flow_to_commodity(source: "InputSource",
 # ---------------------------------------------------------------------------
 
 def group_co2_max_period(source: "InputSource") -> pl.DataFrame:
-    """Distinct groups with a non-empty ``co2_max_period`` Map.
+    """Groups whose ``co2_method`` caps the emissions per period (``period``, ``price_period``,
+    ``period_total``, ``price_period_total``).
+
+    The same set as the period-cap rows of the LP (the method-gated ``solve_data/group_co2_max_period``,
+    ``emit/_leaf_sets.derive_group_co2``).  A group with ``co2_max_period`` but another method has no cap
+    (an input warning); a capping method without the value is an input error
+    (``params/_direct.require_co2_cap_values``).
 
     Schema: ``[g]``.
     """
-    df = _try_param(source, "group", "co2_max_period")
+    df = _try_param(source, "group", "co2_method")
     if df is None:
         return _empty({"g": pl.Utf8})
     return (df.lazy()
+              .filter(pl.col("value").cast(pl.Utf8).is_in(list(CO2_MAX_PERIOD_METHODS)))
               .select(alias_to_axis("name", "g"))
               .unique()
               .sort("g")
@@ -1297,7 +1340,27 @@ def _group_param_equals(
 
 
 def groupCapacityMargin(source: "InputSource") -> pl.DataFrame:
+    """Groups with a capacity margin: ``capacity_margin_method`` manual or share_of_peak.  Schema: ``[g]``."""
+    df = _try_param(source, "group", "capacity_margin_method")
+    if df is None:
+        return _empty({"g": pl.Utf8})
+    return (df.lazy()
+              .filter(pl.col("value").is_in(["manual", "share_of_peak"]))
+              .select(alias_to_axis("name", "g"))
+              .unique()
+              .sort("g")
+              .collect())
+
+
+def groupCapacityMarginManual(source: "InputSource") -> pl.DataFrame:
+    """Groups whose margin is ``capacity_margin`` MW (``capacity_margin_method = manual``).  Schema: ``[g]``."""
     return _group_param_equals(source, "capacity_margin_method", "manual")
+
+
+def groupCapacityMarginShareOfPeak(source: "InputSource") -> pl.DataFrame:
+    """Groups whose margin is ``capacity_margin_share`` times their peak demand (``capacity_margin_method =
+    share_of_peak``).  Schema: ``[g]``."""
+    return _group_param_equals(source, "capacity_margin_method", "share_of_peak")
 
 
 def groupInertia(source: "InputSource") -> pl.DataFrame:
@@ -1395,9 +1458,13 @@ def process_sink_nonSync(source: "InputSource") -> pl.DataFrame:
 # ---------------------------------------------------------------------------
 
 def reserve_upDown_group(source: "InputSource") -> pl.DataFrame:
-    """Distinct ``(r, ud, g)`` tuples for reserves with a populated
-    ``reserve_method`` (the active reserve subset; entities without a
-    method are silently dropped, mirroring flextool's preprocessing).
+    """Distinct ``(r, ud, g)`` tuples for reserves with a ``reserve_method``
+    other than ``no_reserve`` (the active reserve subset; the same set as
+    ``emit/_leaf_sets.derive_reserve_upDown_group``).  A
+    ``reserve__upDown__group`` without an explicit method gets the schema
+    default ``no_reserve`` from the source, so it is left out as well.  A
+    ``no_reserve`` group has no requirement, so it gets no shortfall
+    variable or reserve rows.
 
     Schema: ``[r, ud, g]``.
     """
@@ -1405,6 +1472,7 @@ def reserve_upDown_group(source: "InputSource") -> pl.DataFrame:
     if df is None:
         return _empty({"r": pl.Utf8, "ud": pl.Utf8, "g": pl.Utf8})
     return (df.lazy()
+              .filter(pl.col("value").cast(pl.Utf8) != RESERVE_NO_RESERVE)
               .pipe(rename_to_axis, {"reserve": "r", "upDown": "ud", "group": "g"})
               .select("r", "ud", "g")
               .unique()
@@ -1951,6 +2019,14 @@ _AUTHORITATIVE_SETS: tuple[str, ...] = (
     # Method-gated (invest_method), a complete read of entity__invest_method —
     # "nothing in the DB" must not fall back to a stale/wrong seed.
     "g_invest_total", "g_divest_total", "g_invest_cumulative",
+    # Gated by ramp_cost > 0 (ramp_cost_arc_frame): "no priced arc" must not fall back to a seed.
+    "process_source_sink_ramp_cost",
+    # Method-gated (co2_method / reserve_method), complete reads: with no period cap / only no_reserve
+    # groups the seed is empty too, so a stale seed must not come back.
+    "group_co2_max_period", "reserve_upDown_group",
+    # Non-zero inertia_constant arcs: the seed (_group_slack._read_inertia_constants) drops the zero
+    # constants too, so an empty projection always meets an empty seed.
+    "process_sink_inertia", "process_source_inertia",
 )
 
 

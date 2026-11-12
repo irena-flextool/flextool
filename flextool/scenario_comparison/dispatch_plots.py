@@ -1,5 +1,7 @@
 """Dispatch area plots: render and save stacked-area dispatch plots for nodeGroups and nodes."""
 
+import logging
+
 import pandas as pd
 from pathlib import Path
 import matplotlib
@@ -13,6 +15,12 @@ from flextool.scenario_comparison.dispatch_data import (
     prepare_dispatch_data,
     prepare_node_dispatch_data,
 )
+from flextool.plot_outputs.format_helpers import unique_series_names
+from flextool.plot_outputs.plot_lines import draw_stacked_area
+from flextool.plot_outputs.unit_labels import dispatch_ylabel
+from flextool.process_outputs._sheet_names import excel_sheet_name
+
+logger = logging.getLogger(__name__)
 
 
 def _auto_assign_node_colors_with_existing(
@@ -103,6 +111,41 @@ def _compute_ylim(
     return (float(neg_min), float(pos_max))
 
 
+def _set_step_ticks(ax, index: pd.Index) -> None:
+    """Label the x axis (row positions) with the time steps, and the periods below them.
+
+    The rows are ``(period, time)`` steps in timeline order (``time`` alone in
+    old outputs).  A gap row at a timeline break carries the label of the row
+    before it and gets no label.  When the window covers several periods, the
+    first step of each period is marked with the period name on a second row.
+    """
+    from matplotlib.ticker import FuncFormatter
+
+    names = [str(n).lower() if n is not None else None for n in index.names]
+    if 'time' not in names:
+        return
+    times = index.get_level_values(names.index('time')).astype(str).to_numpy()
+    repeated = np.zeros(len(index), dtype=bool)
+    repeated[1:] = index[1:] == index[:-1]
+    labels = np.where(repeated, '', times)
+
+    def _label(x, _pos):
+        i = int(round(x))
+        return labels[i] if abs(x - i) < 1e-9 and 0 <= i < len(labels) else ''
+
+    ax.xaxis.set_major_formatter(FuncFormatter(_label))
+    ax.set_xlabel('time')
+    if 'period' in names and len(index):
+        periods = index.get_level_values(names.index('period')).astype(str).to_numpy()
+        starts = np.flatnonzero(np.r_[True, periods[1:] != periods[:-1]])
+        if len(starts) > 1:
+            period_axis = ax.secondary_xaxis(-0.1)
+            period_axis.set_xticks(starts, labels=periods[starts])
+            period_axis.tick_params(length=0)
+            period_axis.spines['bottom'].set_visible(False)
+            ax.set_xlabel('')
+
+
 def _build_dispatch_figure(
     df_dispatch: pd.DataFrame,
     inflow_series: pd.Series | None,
@@ -163,17 +206,13 @@ def _build_dispatch_figure(
     # Position axes to leave room for legend on the right
     left_margin = 0.08
     right_margin = (legend_width_in + 0.2) / fig_width
-    ax = fig.add_axes([left_margin, 0.15, 1.0 - left_margin - right_margin, 0.75])
+    ax = fig.add_axes([left_margin, 0.2, 1.0 - left_margin - right_margin, 0.7])
 
-    # Plot area chart (NaN rows create visual gaps at timeline breaks)
+    # Plot area chart.  A timeline-break row (all NaN) is a gap: nothing is
+    # drawn there (pandas' stacked plot.area filled it with 0).  The x axis is
+    # the row position; _set_step_ticks labels it with the steps.
     if has_area:
-        df_plot[plot_cols].plot.area(
-            ax=ax,
-            stacked=True,
-            linewidth=0,
-            color=plot_colors,
-            legend=False
-        )
+        draw_stacked_area(ax, df_plot[plot_cols].reset_index(drop=True), plot_colors)
 
     # Use integer x-positions for line overlays so NaN gap rows create visible gaps
     # (matching the area chart's internal integer positioning)
@@ -193,12 +232,18 @@ def _build_dispatch_figure(
         ax.plot(np.arange(len(inflow_plot)), inflow_plot.values, linestyle='solid', color='black', linewidth=1.5, label='Demand')
 
     ax.axhline(y=0, color='black', linestyle=':', linewidth=0.5)
+    _set_step_ticks(ax, df_plot.index)
 
     ax.set_ylabel(ylabel)
     ax.set_title(title)
 
     if ylim:
         ax.set_ylim(ylim)
+
+    # No x margin (as pandas' plot.area).  Last: set_xlim turns the x
+    # autoscale off, so nothing drawn after it can widen the axis.
+    if len(df_plot) > 1:
+        ax.set_xlim(0, len(df_plot) - 1)
 
     # Legend — read top-to-bottom to match the VISUAL stack.  The area draw
     # order is neg-block (stacks down, first = nearest axis = top of the
@@ -227,6 +272,37 @@ def _build_dispatch_figure(
     return fig
 
 
+def dispatch_plot_data(
+    df_dispatch: pd.DataFrame,
+    inflow_series: pd.Series | None,
+    timeline: tuple[int, int],
+) -> pd.DataFrame:
+    """The data drawn in one dispatch plot: the time window of the flows plus the demand line.
+
+    Rows are the ``(period, time)`` steps of the window, written as the ``period`` and ``time`` columns (no gap
+    rows at timeline breaks); columns are the stacked flows and ``Curtailed`` as plotted, then the demand line as
+    ``Demand`` (its legend label).  When a flow column is already called ``Demand``, the line is
+    ``Demand (line)`` (then ``Demand (line) 2``, ...).  A flow whose name is an index column (``period``,
+    ``time``) is written as ``<name> (series)``.  Empty cells stay empty.
+    """
+    out = df_dispatch.iloc[timeline[0]:timeline[1]]
+    index_part = pd.DataFrame(index=out.index).reset_index()
+    names = unique_series_names([str(c) for c in out.columns], {str(c) for c in index_part.columns})
+    out = out.set_axis(names, axis=1)
+    if inflow_series is not None and not inflow_series.empty:
+        name = 'Demand'
+        n = 1
+        while name in out.columns or name in index_part.columns:
+            name = 'Demand (line)' if n == 1 else f'Demand (line) {n}'
+            n += 1
+        inflow = inflow_series.iloc[timeline[0]:timeline[1]]
+        if len(inflow) == len(out):
+            out[name] = inflow.to_numpy()
+        else:
+            out[name] = inflow.reindex(out.index)
+    return pd.concat([index_part, out.reset_index(drop=True)], axis=1)
+
+
 def plot_dispatch_area(
     df_dispatch: pd.DataFrame,
     inflow_series: pd.Series | None,
@@ -238,8 +314,13 @@ def plot_dispatch_area(
     show_plot: bool = False,
     ylim: tuple[float, float] | None = None,
     break_times: pd.MultiIndex | None = None,
+    write_plot_data: bool = False,
 ) -> None:
-    """Create a stacked area dispatch plot with demand line."""
+    """Create a stacked area dispatch plot with demand line.
+
+    With *write_plot_data*, also write the plotted window as a CSV with the same stem
+    (see :func:`dispatch_plot_data`).
+    """
     fig = _build_dispatch_figure(
         df_dispatch, inflow_series, title,
         ylabel=ylabel, colors=colors, timeline=timeline,
@@ -252,6 +333,14 @@ def plot_dispatch_area(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
+    if write_plot_data:
+        csv_path = output_path.with_suffix('.csv')
+        try:
+            dispatch_plot_data(df_dispatch, inflow_series, timeline).to_csv(
+                csv_path, index=False, float_format='%.8g', encoding='utf-8',
+            )
+        except Exception as exc:  # an opt-in side output must never stop the plotting
+            logger.warning("Plot data CSV %s not written: %s", csv_path, exc)
 
     if show_plot:
         plt.show()
@@ -432,11 +521,16 @@ def create_dispatch_plots(
     show_plot: bool = False,
     write_xlsx: bool = False,
     plot_rows: list[int] | tuple[int, int] | None = None,
-    break_times: pd.MultiIndex | None = None,
+    break_times: pd.MultiIndex | dict[str, pd.MultiIndex] | None = None,
     debug: bool = False,
     settings_path: str | Path | None = None,
+    write_plot_data: bool = False,
+    unit_ctx: dict | None = None,
 ) -> None:
     """Create dispatch plots for all nodeGroups (and, in debug, all nodes).
+
+    *unit_ctx* (``{scenario: UnitContext}``) gives each plot's y-axis the unit of its node or the nodeGroup's
+    members (:func:`~flextool.plot_outputs.unit_labels.dispatch_ylabel`; ``MWh/h`` for MWh nodes).
 
     nodeGroup dispatch plots are always generated.  Per-node dispatch plots
     are generated for ALL nodes that have dispatch data (discovered from the
@@ -450,6 +544,13 @@ def create_dispatch_plots(
     orchestrator resolves it against the derived project root).  When omitted
     it is resolved from ``plot_dir.parent`` — the legacy assumption that the
     comparison output dir lives directly under the project root.
+    
+    *write_plot_data* also writes each plot's drawn data as a CSV with the
+    PNG's stem (see :func:`dispatch_plot_data`).
+
+    *break_times*: the ``(period, time)`` break steps, as ``{scenario: breaks}``
+    (each scenario's own plot breaks where its own timeline does) or one set for
+    all scenarios.
     """
     plot_dir = Path(plot_dir)
 
@@ -585,6 +686,9 @@ def create_dispatch_plots(
 
     for scenario in scenarios:
         print(f"Creating dispatch plots for scenario: {scenario}")
+        scenario_breaks = (
+            break_times.get(scenario) if isinstance(break_times, dict) else break_times
+        )
 
         # Plot nodeGroup dispatches
         for ng in node_groups:
@@ -623,11 +727,13 @@ def create_dispatch_plots(
                 plot_dispatch_area(
                     df_dispatch, inflow, output_path,
                     title=f"{ng} - {scenario}",
+                    ylabel=dispatch_ylabel((unit_ctx or {}).get(scenario), group=ng),
                     colors=colors,
                     timeline=timeline,
                     show_plot=show_plot,
                     ylim=ng_ylims.get((scenario, ng)),
-                    break_times=break_times,
+                    break_times=scenario_breaks,
+                    write_plot_data=write_plot_data,
                 )
 
                 if write_xlsx:
@@ -670,11 +776,13 @@ def create_dispatch_plots(
                 plot_dispatch_area(
                     df_node, inflow_node, output_path,
                     title=f"{node} - {scenario}",
+                    ylabel=dispatch_ylabel((unit_ctx or {}).get(scenario), node=node),
                     colors=node_colors,
                     timeline=timeline,
                     show_plot=show_plot,
                     ylim=node_ylims.get((scenario, node)),
-                    break_times=break_times,
+                    break_times=scenario_breaks,
+                    write_plot_data=write_plot_data,
                 )
                 if write_xlsx:
                     excel_data[f"node_{node}_{scenario}"] = df_node
@@ -684,8 +792,11 @@ def create_dispatch_plots(
     # Write Excel file
     if write_xlsx and excel_data:
         excel_path = plot_dir / "dispatch_data.xlsx"
+        used_sheet_names: set[str] = set()
         with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
             for name, df in excel_data.items():
-                sheet_name = name[:31]  # Excel sheet name limit
-                df.to_excel(writer, sheet_name=sheet_name)
+                # At most 31 characters and distinct without regard to case (two long node names could collide).
+                sheet_name = excel_sheet_name(name, used_sheet_names)
+                # merge_cells=False: every row shows its period
+                df.to_excel(writer, sheet_name=sheet_name, merge_cells=False)
         print(f"Wrote dispatch data to {excel_path}")

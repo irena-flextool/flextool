@@ -469,9 +469,9 @@ def gurobi_db(tmp_path_factory) -> str:
 
 
 def test_second_run_in_a_process_uses_its_own_solver_config(gurobi_db, tmp_path, monkeypatch) -> None:
-    """Run 1 seeds from an explicit folder; run 2 (same process, no folder given) must seed from
-    ``<cwd>/solver_config`` and its commercial-solver ``.opt`` file must come from that, not from run 1's work
-    folder.  The commercial binary is replaced by HiGHS in process; the ``.opt`` file is built by the real code."""
+    """Run 1 takes an explicit folder; run 2 (same process, no folder given) must take
+    ``<cwd>/solver_config`` (its database folder has none) and its commercial-solver ``.opt`` file must come from
+    that, not from run 1's.  The commercial binary is replaced by HiGHS in process; the ``.opt`` file is built by the real code."""
     from flextool.engine import run_chain_from_db
     from flextool.engine.solve import _subprocess_solve
 
@@ -485,9 +485,8 @@ def test_second_run_in_a_process_uses_its_own_solver_config(gurobi_db, tmp_path,
     monkeypatch.chdir(cwd)
     built: list[str] = []
 
-    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, config_dir=None):
-        opt = _subprocess_solve._build_commercial_opt_file(
-            solver_name, options, Path(work_folder) / f"{solve_name}.gurobi.opt", config_dir=config_dir)
+    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None):
+        opt = _subprocess_solve._write_commercial_opt_file(options, Path(work_folder) / f"{solve_name}.gurobi.opt")
         built.append(opt.read_text() if opt is not None else "")
         return problem.solve(keep_solver=True)
 
@@ -496,5 +495,162 @@ def test_second_run_in_a_process_uses_its_own_solver_config(gurobi_db, tmp_path,
                       solver_config_dir=first)
     assert "FLEXTOOL_SOLVER_CONFIG_DIR" not in os.environ
     run_chain_from_db(input_db_url=gurobi_db, scenario_name="custom", work_folder=tmp_path / "w2")
-    assert (tmp_path / "w2" / "solver_config" / "gurobi.opt").read_text() == "Threads 22\n"
+    assert (tmp_path / "w2" / "solve_data" / "solver_config" / "gurobi.opt").read_text() == "Threads 22\n"
     assert len(built) == 2 and "11" in built[0] and "22" in built[1], built
+
+
+def test_cli_gap_reaches_the_commercial_solver_and_its_args_line(gurobi_db, tmp_path, monkeypatch, capsys) -> None:
+    """``--solver-mip-gap`` on a Gurobi solve: the passed set holds ``MIPGap 0.001`` (over the file's 0.002),
+    and the echoed line names the solver and the native name, not HiGHS' ``mip_rel_gap``."""
+    from flextool.cli.cmd_run_flextool import build_parser
+    from flextool.engine import run_chain_from_db
+    from flextool.engine.solve import _subprocess_solve
+    from flextool.run_options import RunOptions
+
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "gurobi.opt").write_text("Threads 0\nMIPGap 0.002\n")
+    passed: list[dict] = []
+
+    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None):
+        passed.append(dict(options))
+        return problem.solve(keep_solver=True)
+
+    monkeypatch.setattr(_subprocess_solve, "_solve_commercial_subprocess", commercial)
+    run_options = RunOptions.from_cli(
+        build_parser().parse_args([gurobi_db, "--solver-mip-gap", "0.001"]), environ={})
+    run_chain_from_db(input_db_url=gurobi_db, scenario_name="custom", work_folder=tmp_path / "w",
+                      solver_config_dir=cfg, run_options=run_options)
+    assert passed and all(p == {"Threads": "0", "MIPGap": "0.001"} for p in passed), passed
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("Solver args")]
+    assert lines and all(line == "Solver args (gurobi): Threads=0, MIPGap=0.001" for line in lines), lines
+
+
+def test_option_files_are_read_once_per_run(gurobi_db, tmp_path, monkeypatch) -> None:
+    """The run reads each source ``.opt`` once at its start and never reads its snapshot back: the ``Solver
+    args`` line and the solve itself take the options from the texts read then.  An edit after the start (here
+    in the commercial solve) leaves the passed set unchanged."""
+    from flextool.engine import run_chain_from_db
+    from flextool.engine.solve import _subprocess_solve
+
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "gurobi.opt").write_text("Threads 3\n")
+    (cfg / "highs.opt").write_text("threads=1\n")
+    reads: list[Path] = []
+    real_read_text = Path.read_text
+
+    def counting_read_text(self, *args, **kwargs):
+        if self.suffix == ".opt":
+            reads.append(Path(self))
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+    passed: list[dict] = []
+
+    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None):
+        (cfg / "gurobi.opt").write_text("Threads 9\n")
+        passed.append(dict(options))
+        return problem.solve(keep_solver=True)
+
+    monkeypatch.setattr(_subprocess_solve, "_solve_commercial_subprocess", commercial)
+    run_chain_from_db(input_db_url=gurobi_db, scenario_name="custom", work_folder=tmp_path / "w",
+                      solver_config_dir=cfg)
+    assert passed and all(p == {"Threads": "3"} for p in passed), passed
+    assert reads.count(cfg / "gurobi.opt") == 1 and reads.count(cfg / "highs.opt") == 1, reads
+    snapshot = tmp_path / "w" / "solve_data" / "solver_config"
+    assert not [r for r in reads if r.parent == snapshot], reads
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the solver stub is a POSIX shebang script")
+def test_cli_flags_reach_a_fake_gurobi_cl_through_the_whole_run(gurobi_db, tmp_path, monkeypatch, caplog) -> None:
+    """Review L6, end to end through ``run_chain_from_db`` and the real subprocess path: a fake ``gurobi_cl``
+    (it solves the MPS with highspy and writes a Gurobi JSON result) records its argv.
+
+    ``--solver-config-dir cfg`` holds ``Threads 5`` / ``MIPGap 0.002``; ``--solver-mip-gap 0.001`` replaces the
+    file's gap in place and ``--solver-time-limit 60`` is added after it, so every call passes
+    ``Threads=5 MIPGap=0.001 TimeLimit=60`` before ``ResultFile=`` and the model.  The log names the folder
+    and why, and the run's snapshot holds the file as read."""
+    import logging
+
+    from flextool.cli.cmd_run_flextool import build_parser
+    from flextool.engine import run_chain_from_db
+    from flextool.engine.solve import _subprocess_solve
+    from flextool.run_options import RunOptions
+    from tests.engine.test_subprocess_gurobi_name_recovery import _argv_of_calls, _write_fake_gurobi
+
+    monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "gurobi.opt").write_text("Threads 5\nMIPGap 0.002\n")
+    stub_dir = tmp_path / "stub"
+    stub_dir.mkdir()
+    stub = _write_fake_gurobi(stub_dir, [], solve_mps=True)
+    monkeypatch.setattr(_subprocess_solve, "_find_solver_binary", lambda name: stub)
+    run_options = RunOptions.from_cli(build_parser().parse_args([
+        gurobi_db, "--solver-config-dir", str(cfg), "--solver-mip-gap", "0.001", "--solver-time-limit", "60",
+    ]), environ={})
+    work = tmp_path / "w"
+    with caplog.at_level(logging.INFO):
+        run_chain_from_db(input_db_url=gurobi_db, scenario_name="custom", work_folder=work,
+                          run_options=run_options)
+    calls = _argv_of_calls(stub_dir)
+    assert calls
+    for argv in calls:
+        assert argv[:3] == ["Threads=5", "MIPGap=0.001", "TimeLimit=60"], argv
+        assert argv[3].startswith("ResultFile=") and len(argv) == 5, argv
+    assert f"Solver config: {cfg} (--solver-config-dir)" in [r.getMessage() for r in caplog.records]
+    assert (work / "solve_data" / "solver_config" / "gurobi.opt").read_text() == "Threads 5\nMIPGap 0.002\n"
+
+
+@pytest.mark.parametrize("next_to_db", [False, True])
+def test_the_cli_resolves_the_option_folder_from_its_own_arguments(gurobi_db, tmp_path, monkeypatch, capsys,
+                                                                   next_to_db) -> None:
+    """Review L2-4: ``cmd_run_flextool.main`` resolves the folder itself (``--project-folder-file``, the input
+    database) and hands it to the engine.  Started from an empty folder with ``--project-folder-file
+    tb/templates/project_folder.txt``: the engine gets ``tb/solver_config`` (Spine Toolbox project folder); with a
+    ``solver_config/`` next to the database, that one (it comes first).  The header names the same folder."""
+    import shutil
+    import sys
+
+    import flextool.engine
+    from flextool._solver_config_source import REASON_DB_FOLDER, REASON_TOOLBOX
+    from flextool.cli import cmd_run_flextool
+
+    monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
+    tb = tmp_path / "tb"
+    (tb / "templates").mkdir(parents=True)
+    (tb / "templates" / "project_folder.txt").write_text("")
+    (tb / "solver_config").mkdir()
+    (tb / "solver_config" / "gurobi.opt").write_text("Threads 4\n")
+    models = tmp_path / "models"
+    models.mkdir()
+    db = models / "f.sqlite"
+    shutil.copyfile(gurobi_db.removeprefix("sqlite:///"), db)
+    if next_to_db:
+        (models / "solver_config").mkdir()
+        (models / "solver_config" / "gurobi.opt").write_text("Threads 6\n")
+        expected = (models / "solver_config", REASON_DB_FOLDER)
+    else:
+        expected = (tb / "solver_config", REASON_TOOLBOX)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    got: dict = {}
+
+    def fake_run_chain_from_db(*args, **kwargs):
+        got.update(kwargs)
+        raise RuntimeError("stopped by the test after the folder was resolved")
+
+    monkeypatch.setattr(flextool.engine, "run_chain_from_db", fake_run_chain_from_db)
+    monkeypatch.setattr(sys, "argv", [
+        "cmd_run_flextool", str(db), "--scenario-name", "custom", "--work-folder", str(tmp_path / "w"),
+        "--output-location", str(tmp_path / "out"), "--project-folder-file", str(tb / "templates" / "project_folder.txt"),
+    ])
+    with pytest.raises(SystemExit) as excinfo:
+        cmd_run_flextool.main()
+    assert excinfo.value.code == 1
+    source = got["solver_config_source"]
+    assert (source.dir, source.reason) == expected
+    header = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("Solver config:")]
+    assert header == [f"Solver config: {expected[0]} ({expected[1]})"], header

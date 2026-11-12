@@ -201,3 +201,70 @@ def test_after_visible_text_the_error_is_not_retried(serve):
     assert script.count == 1
     assert info.value.streamed and info.value.partial_text == "West has"
     assert info.value.message_key == "busy_streamed"
+
+
+# --- Ollama: a tool call it could not read (gpt-oss, eval cell G04, 2026-11-11) -----------------------------------
+OLLAMA_UNREADABLE = json.dumps({"error": {
+    "message": "error parsing tool call: raw='We need latest successful run folder. Probably list_runs "
+               "{\"state\":\"succeeded\"}', err=invalid character 'W' looking for beginning of value",
+    "type": "api_error", "param": None}}).encode()
+
+
+def _ollama_chunk(delta: dict, finish: str | None = None) -> dict:
+    return {"id": "chatcmpl-001", "object": "chat.completion.chunk", "created": 1794226502, "model": "gpt-oss:20b",
+            "system_fingerprint": "fp_ollama", "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+
+
+REASONING = _ollama_chunk({"role": "assistant", "content": "", "reasoning": "We need the latest run."})
+GOOD_CALL = openai_sse([REASONING, _ollama_chunk({"content": "", "tool_calls": [{
+    "index": 0, "id": "call_good1", "type": "function", "function": {"name": "get_entity",
+                                                                     "arguments": "{\"name\":\"west\"}"}}]}),
+    _ollama_chunk({}, "tool_calls")])
+
+
+@pytest.fixture
+def ollama_serve():
+    servers: list[Script] = []
+
+    def start(answers: list[bytes]):
+        script = Script(answers)
+        servers.append(script)
+        return script, make_backend(PRESETS["ollama"], connection("ollama", model="gpt-oss:20b", url=script.url))
+
+    yield start
+    for script in servers:
+        script.close()
+
+
+@pytest.mark.parametrize("failure", [
+    http(500, OLLAMA_UNREADABLE, "application/json"),
+    # inside the stream, after reasoning only (never shown, so nothing of the answer was shown)
+    http(200, openai_sse([REASONING], done=False) + b"data: " + OLLAMA_UNREADABLE + b"\n\n"),
+], ids=["status 500", "in the stream"])
+def test_an_unreadable_tool_call_is_asked_again_at_once(ollama_serve, failure):
+    """Ollama's "error parsing tool call", as a 500 or inside the stream, is asked again half a second later (not
+    the local server's busy backoff), and the next answer's call goes through."""
+    script, backend = ollama_serve([failure, http(200, GOOD_CALL)])
+    try:
+        reply, events = ask(backend)
+    finally:
+        backend.close()
+    assert script.count == 2
+    assert reply.stop == "tools" and [c.name for c in reply.message.tool_calls] == ["get_entity"]
+    waits = [e for e in events if isinstance(e, RetryWait)]
+    assert [(w.seconds_left, w.attempt, w.of) for w in waits] == [(1, 1, 2)]
+    assert waits[0].reason == ("Ollama could not read a tool call in the model's answer. Asking again (attempt 1 "
+                               "of 2).")
+    assert not [e for e in events if isinstance(e, TextDelta)]
+
+
+def test_three_unreadable_tool_calls_end_the_answer(ollama_serve):
+    script, backend = ollama_serve([http(500, OLLAMA_UNREADABLE, "application/json")] * 3)
+    try:
+        with pytest.raises(E.UnreadableToolCall) as info:
+            ask(backend)
+    finally:
+        backend.close()
+    assert script.count == 3 and info.value.message_key == "tool_call_unreadable_final"
+    assert "loading a model" not in info.value.user_message
+    assert info.value.provider_said.message.startswith("error parsing tool call: raw=")

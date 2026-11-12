@@ -7,7 +7,9 @@ inflow, 589 MW in the first hour) and no unit or connection, so only the node's 
 * The successful run starts under the ``flextool-run`` supervisor (``python -m flextool_run_supervisor``), which
   owns the output pipe and writes ``_run.log`` (``log_capture: "parent"``, launcher ``flextool-run``).
 * The infeasible run adds the alternative ``no_slack``, which sets ``west.penalty_method = off``: the node balance
-  becomes a hard equality ``0 = demand``, which no solution satisfies.  It is started as ``python -m
+  becomes a hard equality ``0 = demand``, which no solution satisfies.  The model then has no variable at all
+  (only the 48 balance rows): HiGHS reports such an LP as ``kModelEmpty`` without reading its rows, and the
+  acceptance check finds the rows that cannot hold and reports the solve infeasible.  It is started as ``python -m
   flextool.cli.cmd_run_flextool`` with no pipe owner, so the engine writes the log itself (``log_capture:
   "python"``).
 """
@@ -21,7 +23,6 @@ from pathlib import Path
 import pytest
 import spinedb_api as api
 
-from flextool.engine.solve._acceptance import _FAILURE_MESSAGES
 from flextool.run_record import MARKER, RUN_LOG_FILE, RUN_LOG_OWNER_ENV, read_status_file
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_handle import open_database_mapping
@@ -134,10 +135,12 @@ def test_infeasible_run_writes_both_files(infeasible_db, tmp_path):
     last = status["solves"][-1]
     assert last["name"] == SOLVE and last["kind"] == "lp"
     assert last["state"] == "rejected" and last["acceptance"] == "rejected"
-    assert last["model_status"] in ("kInfeasible", "kUnboundedOrInfeasible")
+    assert last["model_status"] == "kInfeasible"
     assert status["verdict"] == "infeasible"
-    acceptance_message = f"solve for {SOLVE} {_FAILURE_MESSAGES[last['model_status']]}"
-    assert last["message"] == acceptance_message
+    acceptance_message = last["message"]
+    assert acceptance_message.startswith(
+        f"solve for {SOLVE} is infeasible: the model has no variables, and 48 of its 48 constraints cannot hold "
+        "with nothing in them: nodeBalance_eq[west,p2020,t0001] (0 not in [589, 589]), ")
     assert status["error"]["message"] == acceptance_message
 
     assert not list(folder.glob("*.parquet"))

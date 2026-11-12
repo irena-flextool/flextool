@@ -15,6 +15,10 @@ caps.  Then the evidence for the owner (P3 §7.6 (a)–(c)): tasks per level, th
 evidence level against its automatic level.  With round 1's few cells per class these are evidence for the owner's
 review, not pass/fail decisions.
 
+**Failed requests** (:func:`failed_attempt_codes`, :func:`failed_attempts_line`): per model, the failed request
+attempts of the saved turns by code, which ``summary`` prints as the service's and the format's problems (an
+overload, a tool call the service could not read), never as part of a grade or rate.
+
 **Agreement** (:func:`agreement_report`): the owner's verdicts, given before Opus's were shown, against Opus's on
 the reviewed cells: per item (right / missing / wrong), per outcome (four) and for understandability (1–3, also
 linear-weighted kappa): n, agreement, Cohen's kappa with a bootstrap interval resampled by question, the confusion
@@ -253,6 +257,104 @@ def evidence(lines: Sequence[Mapping[str, Any]]) -> dict[tuple[str, str, bool], 
         if line["outcome"] in ("answered", "escalated") and invented == 0:
             ev.safe[cell].k += 1
     return out
+
+
+#: The start of Ollama's message for a tool call it could not read (an older record holds it as ``busy``).
+UNREADABLE_TOOL_CALL_MESSAGE = "error parsing tool call"
+
+
+def attempt_code(attempt: Mapping[str, Any]) -> str:
+    """The code of one failed attempt: ``tool_call_unreadable`` also for one recorded before that code existed."""
+    code = str(attempt.get("code"))
+    if code == "busy" and attempt.get("status") == 500 \
+            and str(attempt.get("message") or "").startswith(UNREADABLE_TOOL_CALL_MESSAGE):
+        return "tool_call_unreadable"
+    return code
+
+
+def failed_attempt_codes(records: Iterable[Mapping[str, Any]]) -> dict[tuple[str, str], dict[str, int]]:
+    """Per (provider, model): how many failed request attempts of each code the records' turns hold
+    (``failed_attempts``: retried and recovered, or the stopping one of a turn), codes in alphabetical order.  These
+    are the service's and the format's problems (an overload, a rate limit, a tool call the service could not read),
+    not the model's grade: no rate counts them.  An attempt recorded before ``tool_call_unreadable`` was its own
+    code (``busy``, status 500, a message starting "error parsing tool call": Ollama's) is counted as one."""
+    out: dict[tuple[str, str], dict[str, int]] = {}
+    for record in records:
+        model = record.get("model") or {}
+        key = (str(model.get("preset")), str(model.get("model") or (record.get("cell") or {}).get("model")))
+        counts = out.setdefault(key, {})
+        for turn in record.get("turns") or []:
+            for attempt in turn.get("failed_attempts") or []:
+                code = attempt_code(attempt)
+                counts[code] = counts.get(code, 0) + 1
+    return {key: dict(sorted(counts.items())) for key, counts in out.items()}
+
+
+#: The hashes of a cell's level setting (``setting_key`` of its record) whose mix within one model and level the
+#: summary and grade-ai warn of: cells asked with other instructions, tools, tool behaviour (``behaviour``,
+#: :data:`flextool.assistant.ASSISTANT_BEHAVIOUR`; a record before it was recorded: unknown) or model facts version
+#: (``facts_version``, :data:`flextool.assistant.model_facts.FACTS_VERSION`) are not of one setting.
+SETTING_HASHES = (("tools_hash", "tools"), ("system_hash", "instructions"), ("behaviour", "tool behaviours"),
+                  ("facts_version", "model facts versions"))
+
+
+def mixed_settings(records: Iterable[Mapping[str, Any]]) -> list[str]:
+    """One warning per (provider, model, level) and hash of :data:`SETTING_HASHES` that more than one value holds
+    among the records' ``setting_key`` (a record without it, written before the key was recorded: ``unknown``,
+    which alone warns of nothing).  In provider, model, level order; then the warnings of :func:`mixed_facts`."""
+    records = list(records)
+    seen: dict[tuple[str, str, str], dict[str, set[str]]] = {}
+    for record in records:
+        cell = record.get("cell") or {}
+        model = record.get("model") or {}
+        key = (str(model.get("preset")), str(cell.get("model") or model.get("model")), str(cell.get("level_setting")))
+        setting = record.get("setting_key")
+        hashes = seen.setdefault(key, {name: set() for name, _what in SETTING_HASHES})
+        for name, _what in SETTING_HASHES:
+            value = setting.get(name) if isinstance(setting, Mapping) else None
+            hashes[name].add(str(value) if value else "unknown")
+    out = []
+    for (preset, model, level), hashes in sorted(seen.items()):
+        for name, what in SETTING_HASHES:
+            if len(hashes[name]) > 1:
+                values = sorted(hashes[name], key=lambda v: (v == "unknown", v))
+                out.append(f"Warning: the cells of {preset} {model} at level {level} were asked with "
+                           f"{len(values)} different {what} ({name} {', '.join(values)}): their grades are not "
+                           "of one setting.")
+    return out + mixed_facts(records)
+
+
+def mixed_facts(records: Iterable[Mapping[str, Any]]) -> list[str]:
+    """One warning per (provider, model, level, question) whose repeats carried different model facts (their
+    records' ``facts_hash``: another latest run or changed input data between the repeats, so they did not answer
+    the same question).  Records without a ``facts_hash`` (no facts, or written before it was recorded) are left
+    out.  In provider, model, level, question order."""
+    seen: dict[tuple[str, str, str, str], set[str]] = {}
+    for record in records:
+        value = record.get("facts_hash")
+        if not value:
+            continue
+        cell = record.get("cell") or {}
+        model = record.get("model") or {}
+        key = (str(model.get("preset")), str(cell.get("model") or model.get("model")), str(cell.get("level_setting")),
+               str(cell.get("question")))
+        seen.setdefault(key, set()).add(str(value))
+    return [f"Warning: the repeats of {question} by {preset} {model} at level {level} carried {len(hashes)} different "
+            "model facts (facts_hash): the input data or the latest run changed between them, so they did not "
+            "answer the same question."
+            for (preset, model, level, question), hashes in sorted(seen.items()) if len(hashes) > 1]
+
+
+def failed_attempts_line(counts: Mapping[tuple[str, str], Mapping[str, int]]) -> str | None:
+    """The summary's line of :func:`failed_attempt_codes` for one model: ``None`` when no request failed."""
+    merged: dict[str, int] = {}
+    for by_code in counts.values():
+        for code, n in by_code.items():
+            merged[code] = merged.get(code, 0) + n
+    if not merged:
+        return None
+    listed = ", ".join(f"{code} {merged[code]}" for code in sorted(merged))
+    return f"  failed requests (service or format problems, not part of the grade): {listed}"
 
 
 def _pct(rate: Rate) -> str:

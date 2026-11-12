@@ -21,9 +21,10 @@ Cluster B fields (per
 * ``e_invest_total`` / ``e_divest_total`` — projections of the above
   filtered by INVEST_TOTAL / RETIRE_TOTAL methods
   (``preprocessing/invest_total_sets.py``).
-* ``ed_invest_set`` / ``ed_divest_set`` — (e, d) cross-product gated
-  by entityInvest × period_invest, eea ≠ 0 OR capacity-constraint
-  membership, and the no_investment lifetime-expiry forbidden set.
+* ``ed_invest_set`` / ``ed_divest_set`` — (e, d) cross-product
+  entityInvest (entityDivest) × period_invest, minus the no_investment
+  lifetime-expiry forbidden set (retirement: only with pre-existing
+  capacity); the cost does not gate it (#218).
 * ``pd_invest_set`` / ``nd_invest_set`` / ``pd_divest_set`` /
   ``nd_divest_set`` — partitions of ``ed_invest_set`` / ``ed_divest_set``
   by entity-class (``unit ∪ connection`` → process-side; ``node`` →
@@ -94,14 +95,37 @@ if TYPE_CHECKING:
     from flextool.engine.preprocess._solve_context import SolveContext
 
 
-# -- Method-enum constants (mirror flextool/flextool_base.dat:211-212) -------
+# -- Method-enum constants ---------------------------------------------------
+# The one definition of which ``invest_method`` values forbid investing /
+# retiring.  Every other module imports these (pinned against the schema
+# value lists ``invest_methods`` / ``group_invest_methods`` by
+# tests/engine/test_invest_method_lists.py).
 
-_INVEST_NOT_ALLOWED: frozenset[str] = frozenset((
+# Every value of the schema list ``invest_methods``.
+INVEST_METHODS_ALL: frozenset[str] = frozenset((
+    "not_allowed", "invest_no_limit", "invest_period", "invest_total",
+    "invest_period_total",
+    "retire_no_limit", "retire_period", "retire_total", "retire_period_total",
+    "invest_retire_no_limit", "invest_retire_period",
+    "invest_retire_total", "invest_retire_period_total",
+    "cumulative_limits",
+))
+INVEST_NOT_ALLOWED: frozenset[str] = frozenset((
     "not_allowed", "retire_period", "retire_total", "retire_no_limit",
+    "retire_period_total",
 ))
-_DIVEST_NOT_ALLOWED: frozenset[str] = frozenset((
+DIVEST_NOT_ALLOWED: frozenset[str] = frozenset((
     "not_allowed", "invest_period", "invest_total", "invest_no_limit",
+    "invest_period_total",
 ))
+# Groups have their own value list (``group_invest_methods``, database
+# version 77): ``not_active`` is the group's "no limits" value.
+GROUP_INVEST_NOT_ACTIVE: frozenset[str] = frozenset(
+    {"not_active"} | (INVEST_NOT_ALLOWED - {"not_allowed"}))
+GROUP_DIVEST_NOT_ACTIVE: frozenset[str] = frozenset(
+    {"not_active"} | (DIVEST_NOT_ALLOWED - {"not_allowed"}))
+_INVEST_NOT_ALLOWED = INVEST_NOT_ALLOWED
+_DIVEST_NOT_ALLOWED = DIVEST_NOT_ALLOWED
 # preprocessing/invest_total_sets.py:25-32
 _INVEST_TOTAL_METHODS: frozenset[str] = frozenset((
     "invest_total", "invest_period_total",
@@ -787,9 +811,10 @@ def entity_invest_set_lf(source: "InputSource") -> pl.LazyFrame:
                                 AND m ∉ invest_method_not_allowed}
 
     The Δ.5 ``ed_*``-derivation trap: an entity may have an
-    ``invest_method`` row but no ``ed_invest_set`` row (e.g. eea == 0
-    AND no capacity constraint).  Such an entity is in ``entityInvest``
-    but not in any ``ed_invest`` (e, d) pair.  Cluster A's
+    ``invest_method`` row but no ``ed_invest_set`` row (e.g. its
+    no_investment window has ended, or the solve has no investment
+    period).  Such an entity is in ``entityInvest`` but not in any
+    ``ed_invest`` (e, d) pair.  Cluster A's
     ``ed_lifetime_fixed_cost_divest`` produces rows for these entities;
     deriving from ``ed_*`` would miss them.
     """
@@ -1071,16 +1096,29 @@ def pd_invest_set_lf(source: "InputSource",
               .sort("p", "d"))
 
 
+def _storage_nodes_only(nd_lf: pl.LazyFrame, source: "InputSource") -> pl.LazyFrame:
+    """``nd_lf`` restricted to the nodes with ``node_type`` ``storage`` (``nodeState``)."""
+    from flextool.engine.preprocess.params._projection import nodeState
+
+    state = nodeState(source)
+    n_dtype = nd_lf.collect_schema().get("n")
+    return nd_lf.join(state.lazy().select(pl.col("n").cast(n_dtype)), on="n", how="semi")
+
+
 def nd_invest_set_lf(source: "InputSource",
                             ed_invest_lf: pl.LazyFrame,
                             ) -> pl.LazyFrame:
-    """Lazy ``[n, d]`` — ``ed_invest_set`` partitioned to nodes."""
+    """Lazy ``[n, d]`` — ``ed_invest_set`` partitioned to storage nodes (``nodeState``).
+
+    Node capacity is storage capacity (``state_unitsize``): a non-storage node with an
+    ``invest_method`` gets no variable (``validate_node_invest_without_storage`` warns).
+    """
     cls_lf = _entity_class_partition_lf(source)
-    return (ed_invest_lf
+    return (_storage_nodes_only(ed_invest_lf
               .join(cls_lf, on="e", how="inner")
               .filter(pl.col("kind") == "node")
               .pipe(rename_to_axis, {"e": "n"})
-              .select("n", "d")
+              .select("n", "d"), source)
               .unique()
               .sort("n", "d"))
 
@@ -1102,13 +1140,17 @@ def pd_divest_set_lf(source: "InputSource",
 def nd_divest_set_lf(source: "InputSource",
                             ed_divest_lf: pl.LazyFrame,
                             ) -> pl.LazyFrame:
-    """Lazy ``[n, d]`` — ``ed_divest_set`` partitioned to nodes."""
+    """Lazy ``[n, d]`` — ``ed_divest_set`` partitioned to storage nodes (``nodeState``).
+
+    Node capacity is storage capacity (``state_unitsize``): a non-storage node with an
+    ``invest_method`` gets no variable (``validate_node_invest_without_storage`` warns).
+    """
     cls_lf = _entity_class_partition_lf(source)
-    return (ed_divest_lf
+    return (_storage_nodes_only(ed_divest_lf
               .join(cls_lf, on="e", how="inner")
               .filter(pl.col("kind") == "node")
               .pipe(rename_to_axis, {"e": "n"})
-              .select("n", "d")
+              .select("n", "d"), source)
               .unique()
               .sort("n", "d"))
 
@@ -1596,15 +1638,17 @@ def p_entity_pre_existing_lf(source: "InputSource",
                  else p_node[e, 'virtual_unitsize'] (if e ∈ node)
                  else 0
         if lifetime_method = reinvest_automatic →
-            v = v_existing * v_unit  if v_unit else v_existing
+            v = v_existing * v_unit  if v_unit > 0 else v_existing
         if lifetime_method ∈ {reinvest_choice, no_investment} →
-            v = (v_existing * v_unit if v_unit else v_existing)
+            v = (v_existing * v_unit if v_unit > 0 else v_existing)
                 while pdy[d] < life_sum(e); 0 thereafter.
         else → 0.
 
     The ``v_existing × v_unit`` term is the canonical capacity (a
     counted entity's ``existing`` is the count, not the capacity).
-    Only applied when ``v_unit > 0``.
+    Only applied when ``v_unit > 0``: a ``virtual_unitsize`` of 0 or below
+    is ignored (``validate_basic_sanity`` warns about it), so ``existing``
+    is then the capacity itself.
     """
     if not period_in_use:
         return pl.LazyFrame(schema={
@@ -1653,8 +1697,8 @@ def p_entity_pre_existing_lf(source: "InputSource",
         workdir=workdir, provider=provider)
     expired_marked = expired_lf.with_columns(_expired=pl.lit(True))
 
-    # Compose: value = ex × vu (or ex if vu=0) if alive; 0 else.
-    capacity_expr = (pl.when(pl.col("vu") != 0.0)
+    # Compose: value = ex × vu (or ex if vu ≤ 0: ignored) if alive; 0 else.
+    capacity_expr = (pl.when(pl.col("vu") > 0.0)
                           .then(pl.col("ex") * pl.col("vu"))
                           .otherwise(pl.col("ex")))
     return (grid_with_vu
@@ -1840,6 +1884,8 @@ def apply_existing_chain(flex_data: object,
 
 __all__ = [
     # Method-enum constants (re-exported for direct-test use).
+    "INVEST_METHODS_ALL", "INVEST_NOT_ALLOWED", "DIVEST_NOT_ALLOWED",
+    "GROUP_INVEST_NOT_ACTIVE", "GROUP_DIVEST_NOT_ACTIVE",
     "_INVEST_NOT_ALLOWED", "_DIVEST_NOT_ALLOWED",
     "_INVEST_TOTAL_METHODS", "_DIVEST_TOTAL_METHODS",
     "_INVEST_PERIOD_METHODS", "_DIVEST_PERIOD_METHODS",

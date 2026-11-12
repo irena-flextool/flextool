@@ -466,6 +466,29 @@ def test_empirical_a_times_W_is_injected_annual_demand(tmp_path_factory):
 
 @pytest.mark.solver
 @pytest.mark.slow
+def test_empirical_a_times_W_coarse_invest_solve(tmp_path_factory):
+    """PROVE ``a·W`` when the invest solve has ``new_stepduration``.
+
+    The single-period scenario with ``new_stepduration`` = 4 h on its solve: the 48 hourly steps of the 2day
+    timeset become 12 solve steps of 4 h.  The adder is MWh per ORIGINAL time step, so each solve step adds
+    4·a and the annual demand grows by 12 · 4a / (48 / 8760) = a · 8760 = a·W, the same W as the hourly solve
+    (W counts the original steps).  Before, a solve step added a once: a·W / 4.
+    """
+    import json
+
+    fixture = tmp_path_factory.mktemp("coarse_fixture") / "tests_coarse.json"
+    data = json.loads(FIXTURE_JSON.read_text(encoding="utf-8"))
+    data["parameter_values"].append(
+        ["solve", "y2020_2029_1x10y", "new_stepduration", ["NC4w", "float"], "1x10y"])  # 4.0
+    fixture.write_text(json.dumps(data), encoding="utf-8")
+    a = 100.0
+    W, delta = _aw_delta_inflow(tmp_path_factory, fixture, FLAT_SCENARIO, "west", a)
+    assert W == pytest.approx(FLAT_W)
+    assert delta == pytest.approx(a * W, rel=1e-3)
+
+
+@pytest.mark.solver
+@pytest.mark.slow
 def test_empirical_a_times_W_representative_periods(tmp_path_factory):
     """PROVE ``a·W`` on an RP scenario — the calibrator's PRIMARY target.
 

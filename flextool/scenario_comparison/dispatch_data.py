@@ -92,40 +92,79 @@ def load_dispatch_bundle(
 # Shared helpers (S4, S5, S6)
 # ---------------------------------------------------------------------------
 
+def _scenario_rows(
+    df: pd.DataFrame, scenario: str | None = None, own: pd.Index | None = None,
+) -> pd.DataFrame:
+    """The rows of one scenario: its column slice on its own ``(period, time)`` steps, in its own order.
+
+    The combined comparison frames concatenate the scenarios side by side, so
+    the row index is the union of all scenarios' steps in first-seen order: a
+    step that only a later scenario has comes after all of the first
+    scenario's steps.  *own* is the scenario's row index in its file
+    (``TimeSeriesResults.own_rows``); the slice is reindexed to it, so it holds
+    the scenario's steps in the scenario's order, also a step whose cells are
+    all empty.  Without *own* (frames combined by hand), a frame of one
+    scenario keeps all its rows, and a frame of several drops the all-empty
+    rows (the other scenarios' steps).  ``scenario=None`` is for a frame
+    without a scenario column level.
+    """
+    several = (
+        scenario is not None
+        and df.columns.get_level_values('scenario').nunique() > 1
+    )
+    if scenario is not None:
+        df = df.xs(scenario, axis=1, level='scenario')
+    if own is not None:
+        return df.reindex(own[own.isin(df.index)])
+    return df.dropna(how='all') if several else df
+
+
+def _per_step(data: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
+    """Sum the rows of each step, keeping every row-index level and the order.
+
+    The row index is ``(period, time)`` (or ``time`` alone in old outputs), so
+    steps of the same name in different periods stay apart, and
+    ``sort=False`` keeps the realized order of the file.
+    """
+    return data.groupby(level=list(data.index.names), sort=False).sum()
+
+
 def _get_time_index(results: TimeSeriesResults, scenario: str) -> pd.Index | None:
-    """Find a time index from the first available result DataFrame.
+    """Find the scenario's own ``(period, time)`` steps from the first available result DataFrame.
 
     Tries unit flows and connection flows first, then falls back to
     slack and inflow data so that nodeGroups with only demand / loss-of-load
     still get a valid time index.
     """
     candidates = [
-        results.unit_outputNode_dt_ee,
-        results.connection_leftward_dt_eee,
-        results.node_slack_up_dt_e,
-        results.node_inflow__dt,
+        'unit_outputNode_dt_ee',
+        'connection_leftward_dt_eee',
+        'node_slack_up_dt_e',
+        'node_inflow__dt',
     ]
-    for df in candidates:
+    for name in candidates:
+        df = getattr(results, name)
         if df is None:
             continue
         if isinstance(df.columns, pd.MultiIndex) and 'scenario' in df.columns.names:
             if scenario in df.columns.get_level_values('scenario'):
-                return df.xs(scenario, axis=1, level='scenario').groupby('time').sum().index
+                return _per_step(_scenario_rows(df, scenario, results.own_rows(name, scenario))).index
         elif df.index.nlevels >= 2:
             # node_inflow__dt may not have a scenario column level
-            return df.groupby('time').sum().index
+            return _per_step(_scenario_rows(df)).index
     return None
 
 
 def _slice_scenario_df(
-    df: pd.DataFrame | None, scenario: str,
+    results: TimeSeriesResults, name: str, scenario: str,
 ) -> pd.DataFrame | None:
-    """Extract scenario columns and sum over time.  Returns None if scenario absent."""
+    """Extract the scenario's columns and rows of frame *name*, one row per step.  Returns None if scenario absent."""
+    df = getattr(results, name)
     if df is None:
         return None
     if scenario not in df.columns.get_level_values('scenario'):
         return None
-    return df.xs(scenario, axis=1, level='scenario').groupby('time').sum()
+    return _per_step(_scenario_rows(df, scenario, results.own_rows(name, scenario)))
 
 
 def _connection_series_at_node(
@@ -505,7 +544,7 @@ def prepare_dispatch_data(
         if unit_to_group_df is not None and not unit_to_group_df.empty:
             group_aggregates = unit_to_group_df[unit_to_group_df['group'] == output_node_group]['group_aggregate'].unique()
 
-            unit_output = _slice_scenario_df(results.unit_outputNode_dt_ee, scenario)
+            unit_output = _slice_scenario_df(results, 'unit_outputNode_dt_ee', scenario)
 
             if unit_output is not None:
                 for group_agg in group_aggregates:
@@ -533,7 +572,7 @@ def prepare_dispatch_data(
         if group_to_unit_df is not None and not group_to_unit_df.empty:
             group_aggregates = group_to_unit_df[group_to_unit_df['group'] == output_node_group]['group_aggregate'].unique()
 
-            unit_input = _slice_scenario_df(results.unit_inputNode_dt_ee, scenario)
+            unit_input = _slice_scenario_df(results, 'unit_inputNode_dt_ee', scenario)
 
             if unit_input is not None:
                 for group_agg in group_aggregates:
@@ -575,8 +614,8 @@ def prepare_dispatch_data(
         # ``processGroup_Connection``) they stayed ``None`` and every
         # non-aggregated connection (batteries, transport links) was silently
         # dropped from the dispatch.
-        conn_left = _slice_scenario_df(results.connection_leftward_dt_eee, scenario)
-        conn_right = _slice_scenario_df(results.connection_rightward_dt_eee, scenario)
+        conn_left = _slice_scenario_df(results, 'connection_leftward_dt_eee', scenario)
+        conn_right = _slice_scenario_df(results, 'connection_rightward_dt_eee', scenario)
         if connection_df is not None and not connection_df.empty:
             group_aggregates = connection_df[connection_df['group'] == output_node_group]['group_aggregate'].unique()
 
@@ -615,7 +654,7 @@ def prepare_dispatch_data(
         not_agg_unit_to_node = mappings.get_for_scenario('not_in_aggregate_unit_to_node', scenario)
         if not_agg_unit_to_node is not None and not not_agg_unit_to_node.empty:
             entries = not_agg_unit_to_node[not_agg_unit_to_node['group'] == output_node_group]
-            unit_output = _slice_scenario_df(results.unit_outputNode_dt_ee, scenario)
+            unit_output = _slice_scenario_df(results, 'unit_outputNode_dt_ee', scenario)
 
             if unit_output is not None:
                 for _, row in entries.iterrows():
@@ -630,7 +669,7 @@ def prepare_dispatch_data(
         not_agg_node_to_unit = mappings.get_for_scenario('not_in_aggregate_node_to_unit', scenario)
         if not_agg_node_to_unit is not None and not not_agg_node_to_unit.empty:
             entries = not_agg_node_to_unit[not_agg_node_to_unit['group'] == output_node_group]
-            unit_input = _slice_scenario_df(results.unit_inputNode_dt_ee, scenario)
+            unit_input = _slice_scenario_df(results, 'unit_inputNode_dt_ee', scenario)
 
             if unit_input is not None:
                 for _, row in entries.iterrows():
@@ -703,7 +742,7 @@ def prepare_dispatch_data(
         if process_fully_inside is not None and not process_fully_inside.empty:
             entries = process_fully_inside[process_fully_inside['group'] == output_node_group]
             if not entries.empty:
-                conn_losses = _slice_scenario_df(results.connection_losses_dt_eee, scenario)
+                conn_losses = _slice_scenario_df(results, 'connection_losses_dt_eee', scenario)
 
                 if conn_losses is not None:
                     loss_sum = pd.Series(0.0, index=time_index)
@@ -723,10 +762,10 @@ def prepare_dispatch_data(
         if results.node_slack_up_dt_e is not None:
             slack = results.node_slack_up_dt_e
             if scenario in slack.columns.get_level_values('scenario'):
-                slack = slack.xs(scenario, axis=1, level='scenario')
+                slack = _scenario_rows(slack, scenario, results.own_rows('node_slack_up_dt_e', scenario))
                 slack_filtered = slack.loc[:, slack.columns.isin(nodes_in_group)]
                 if not slack_filtered.empty:
-                    lol = slack_filtered.groupby('time').sum().sum(axis=1)
+                    lol = _per_step(slack_filtered).sum(axis=1)
                     if lol.abs().sum() > 0:
                         df_dispatch['LossOfLoad'] = lol
 
@@ -734,11 +773,11 @@ def prepare_dispatch_data(
         if results.unit_curtailment_outputNode_dt_ee is not None:
             curtail = results.unit_curtailment_outputNode_dt_ee
             if scenario in curtail.columns.get_level_values('scenario'):
-                curtail = curtail.xs(scenario, axis=1, level='scenario')
+                curtail = _scenario_rows(curtail, scenario, results.own_rows('unit_curtailment_outputNode_dt_ee', scenario))
                 node_level = 'sink' if 'sink' in curtail.columns.names else 'node'
                 curtail_filtered = curtail.loc[:, curtail.columns.get_level_values(node_level).isin(nodes_in_group)]
                 if not curtail_filtered.empty:
-                    curtailed = curtail_filtered.groupby('time').sum().sum(axis=1).clip(lower=0)
+                    curtailed = _per_step(curtail_filtered).sum(axis=1).clip(lower=0)
                     if curtailed.abs().sum() > 0:
                         df_dispatch['Curtailed'] = curtailed
 
@@ -755,14 +794,18 @@ def prepare_dispatch_data(
         if node_inflow is not None and not node_inflow.empty:
             if isinstance(node_inflow.columns, pd.MultiIndex):
                 if scenario in node_inflow.columns.get_level_values('scenario'):
-                    inflow_data = node_inflow.xs(scenario, axis=1, level='scenario')
+                    inflow_data = _scenario_rows(node_inflow, scenario, results.own_rows('node_inflow__dt', scenario))
                     inflow_filtered = inflow_data.loc[:, inflow_data.columns.isin(nodes_in_group)]
                     if not inflow_filtered.empty:
-                        inflow_series = -inflow_filtered.groupby('time').sum().sum(axis=1)
+                        inflow_series = -_per_step(inflow_filtered).sum(axis=1)
             else:
-                inflow_filtered = node_inflow.loc[:, node_inflow.columns.isin(nodes_in_group)]
+                inflow_rows = _scenario_rows(node_inflow)
+                inflow_filtered = inflow_rows.loc[:, inflow_rows.columns.isin(nodes_in_group)]
                 if not inflow_filtered.empty:
-                    inflow_series = -inflow_filtered.groupby('time').sum().sum(axis=1)
+                    inflow_series = -_per_step(inflow_filtered).sum(axis=1)
+        if inflow_series is not None:
+            # The demand line is drawn by row position: on the dispatch steps
+            inflow_series = inflow_series.reindex(df_dispatch.index)
 
         return df_dispatch, inflow_series
 
@@ -807,7 +850,7 @@ def prepare_node_dispatch_data(
         df_dispatch: dict[str, pd.Series] = {}
 
         # --- Unit outputs to this node (positive) ---
-        unit_output = _slice_scenario_df(results.unit_outputNode_dt_ee, scenario)
+        unit_output = _slice_scenario_df(results, 'unit_outputNode_dt_ee', scenario)
         if unit_output is not None:
             for col in unit_output.columns:
                 col_node = col[1] if isinstance(col, tuple) else col
@@ -818,7 +861,7 @@ def prepare_node_dispatch_data(
                         df_dispatch[f"{unit_name}_out"] = series
 
         # --- Unit inputs from this node (negative) ---
-        unit_input = _slice_scenario_df(results.unit_inputNode_dt_ee, scenario)
+        unit_input = _slice_scenario_df(results, 'unit_inputNode_dt_ee', scenario)
         if unit_input is not None:
             for col in unit_input.columns:
                 col_node = col[1] if isinstance(col, tuple) else col
@@ -834,7 +877,7 @@ def prepare_node_dispatch_data(
                         df_dispatch[f"{unit_name}_in"] = neg_part
 
         # --- Connection leftward flows (node receives) ---
-        conn_left = _slice_scenario_df(results.connection_leftward_dt_eee, scenario)
+        conn_left = _slice_scenario_df(results, 'connection_leftward_dt_eee', scenario)
         if conn_left is not None:
             for col in conn_left.columns:
                 col_node = col[1] if isinstance(col, tuple) else col
@@ -854,7 +897,7 @@ def prepare_node_dispatch_data(
                         df_dispatch[col_label] = neg_part
 
         # --- Connection rightward flows (node sends) ---
-        conn_right = _slice_scenario_df(results.connection_rightward_dt_eee, scenario)
+        conn_right = _slice_scenario_df(results, 'connection_rightward_dt_eee', scenario)
         if conn_right is not None:
             for col in conn_right.columns:
                 col_node = col[1] if isinstance(col, tuple) else col
@@ -877,9 +920,9 @@ def prepare_node_dispatch_data(
         if results.node_slack_up_dt_e is not None:
             slack = results.node_slack_up_dt_e
             if scenario in slack.columns.get_level_values('scenario'):
-                slack_data = slack.xs(scenario, axis=1, level='scenario')
+                slack_data = _scenario_rows(slack, scenario, results.own_rows('node_slack_up_dt_e', scenario))
                 if node in slack_data.columns:
-                    lol = slack_data[node].groupby('time').sum()
+                    lol = _per_step(slack_data[node])
                     if lol.abs().sum() > 0:
                         df_dispatch['LossOfLoad'] = lol
 
@@ -898,12 +941,15 @@ def prepare_node_dispatch_data(
         if node_inflow is not None and not node_inflow.empty:
             if isinstance(node_inflow.columns, pd.MultiIndex):
                 if scenario in node_inflow.columns.get_level_values('scenario'):
-                    inflow_data = node_inflow.xs(scenario, axis=1, level='scenario')
+                    inflow_data = _scenario_rows(node_inflow, scenario, results.own_rows('node_inflow__dt', scenario))
                     if node in inflow_data.columns:
-                        inflow_series = -inflow_data[node].groupby('time').sum()
+                        inflow_series = -_per_step(inflow_data[node])
             else:
                 if node in node_inflow.columns:
-                    inflow_series = -node_inflow[node].groupby('time').sum()
+                    inflow_series = -_per_step(_scenario_rows(node_inflow)[node])
+        if inflow_series is not None:
+            # The demand line is drawn by row position: on the dispatch steps
+            inflow_series = inflow_series.reindex(df_dispatch.index)
 
         return df_dispatch, inflow_series
 

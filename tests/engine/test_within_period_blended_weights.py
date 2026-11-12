@@ -125,7 +125,11 @@ def _build_toy_rp_two_periods(*, method: str) -> FlexData:
 
     nodeState = pl.DataFrame({"n": ["bat"]})
     nodeState_dt = nodeState.join(dt, how="cross")
-    nodeState_first_dt = (nodeState_dt.sort(["n", "d", "t"])
+    # The first step of the solve's first period only, as the engine builds it (from
+    # period_first_of_solve, flex_data.py).  A first step of y2030 here would make y2030 a second root
+    # of the solve: rp_inter_period_fan_start (item 125) would then tie its chain start to y2025's, as
+    # for a fan of forecasts in the first period, and forward_only would no longer be unclosed.
+    nodeState_first_dt = (nodeState_dt.filter(pl.col("d") == "y2025").sort(["n", "d", "t"])
         .group_by(["n", "d"], maintain_order=True).first()
         .select("n", "d", "t"))
     nodeState_last_dt = (nodeState_dt.sort(["n", "d", "t"])

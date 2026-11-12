@@ -46,10 +46,9 @@ the number of runs executed at once. N covers FlexTool's data processing and the
 
 ## The shipped workflow
 
-The v4 workflow has been streamlined from the v3 layout: there is **no longer an
-`Export_to_csv` step**, because the v4 engine builds the LP in memory directly from the
-Spine database. CSV is now an optional output renderer, not a hand-off format inside the
-workflow.
+The workflow has **no `Export_to_csv` step**: the engine builds the LP in memory directly
+from the Spine database. CSV is an optional output renderer, not a hand-off format inside
+the workflow.
 
 The items that actually ship in `.spinetoolbox/project.json` are:
 
@@ -156,9 +155,11 @@ Two caveats apply to the **replay** path only:
 
 Place a `plot_settings.yaml` in the project folder
 (`projects/<Name>/plot_settings.yaml`) to control plot colours and stacking
-order. It is now honored automatically by both the per-scenario plots and the
-comparison plots in the Toolbox track (previously the Toolbox track silently used
-the bundled default).
+order. It is honored automatically by both the per-scenario plots and the
+comparison plots in the Toolbox track. A top-level `write_plot_data: true` in it
+also writes the data drawn in each plot as a CSV file next to the plot (or add
+`--write-plot-data` to the tool's command-line arguments); see
+[Plotted data as CSV](results.md#plotted-data-as-csv).
 
 ### FlexTool GUI interoperability
 

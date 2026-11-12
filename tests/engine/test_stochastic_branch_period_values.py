@@ -237,8 +237,8 @@ def test_group_period_maps_reach_branches(maps_2day) -> None:
     _assert_dispatch_periods(d.p_co2_price, 50.0, **g)
     _assert_dispatch_periods(d.p_co2_max_period, 1e6, **g)
     _assert_dispatch_periods(d.pdGroup_capacity_margin, 10.0, **g)
-    _assert_dispatch_periods(d.pdGroup_inertia_limit, 11.0, **g)
-    _assert_dispatch_periods(d.pdGroup_non_synchronous_limit, 0.9, **g)
+    _assert_dispatch_periods(d.pdtGroup_inertia_limit, 11.0, **g)
+    _assert_dispatch_periods(d.pdtGroup_non_synchronous_limit, 0.9, **g)
     _assert_dispatch_periods(d.pdGroup_penalty_non_synchronous, 77.0, **g)
 
 

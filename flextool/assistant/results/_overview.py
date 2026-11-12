@@ -29,7 +29,7 @@ from typing import Any
 from flextool.assistant.caps import dumps, sent_payload
 from flextool.assistant.errors import ToolError
 from flextool.assistant.results import _query, _slacks
-from flextool.assistant.unit_wording import shown_unit
+from flextool.assistant.unit_wording import scaled, shown_unit, table_scaling
 from flextool.lean_parquet import to_long
 
 COSTS_TABLE = "costs_discounted_p_"
@@ -196,8 +196,9 @@ def _capacity_part(meta: dict, rows: list[CapacityRow], level: str, cap: int) ->
 
 
 def read_slacks(folder: Path) -> list[list]:
-    """``[slack, table, unit, entries, largest]`` of every slack table with a value of at least
-    :data:`SLACK_MIN`; largest is ``[[entity levels], period, value]``."""
+    """``[slack, table, unit, entries, largest, largest_scaled]`` of every slack table with a value of at least
+    :data:`SLACK_MIN`; largest is ``[[entity levels], period, value]``, largest_scaled its rounded copy in a larger
+    unit (``None`` when it gets none; the overview leaves the column out when no slack has one)."""
     import polars as pl
 
     out = []
@@ -217,8 +218,12 @@ def read_slacks(folder: Path) -> list[list]:
         levels = [c for c in long.columns if c not in ("period", "value")]
         top = long.sort("value", descending=True, maintain_order=True).row(0, named=True)
         unit = shown_unit(table.measures[0].unit) if table.measures else None
+        largest = _query._number(top["value"])
+        # A copy for reading only when every column of the table has the one unit shown.
+        scaling = table_scaling(_query._units(table, list(table.layout.physical)), table.measures, table.row_units)
         out.append([spec.slack, spec.table, unit, long.height,
-                    [[top[c] for c in levels], top.get("period"), _query._number(top["value"])]])
+                    [[top[c] for c in levels], top.get("period"), largest],
+                    scaled(largest, scaling[0], carrier=scaling[1]) if scaling else None])
     return out
 
 
@@ -278,7 +283,12 @@ def overview_numbers(folder: Path, max_entities: int, max_chars: int, head: dict
             out["capacity_periods"] = (when + "invested, divested: summed over periods; changed: invested, "
                                        "divested or in construction above 0; never summed over entities")
         shown_slacks = slacks if n_slacks is None else slacks[:n_slacks]
-        block: dict[str, Any] = {"columns": ["slack", "table", "unit", "entries", "largest"], "rows": shown_slacks}
+        columns = ["slack", "table", "unit", "entries", "largest"]
+        if any(r[5] for r in shown_slacks):
+            columns.append("largest_scaled")
+        else:
+            shown_slacks = [r[:5] for r in shown_slacks]
+        block: dict[str, Any] = {"columns": columns, "rows": shown_slacks}
         if len(shown_slacks) < len(slacks):
             block["shown"] = f"{len(shown_slacks)} of {len(slacks)} slacks"
         out["slacks"] = block

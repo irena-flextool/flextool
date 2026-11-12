@@ -13,6 +13,7 @@ matplotlib.use("Agg")
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from flextool.plot_outputs.config import PlotConfig
 from flextool.plot_outputs.orchestrator import (
@@ -120,6 +121,30 @@ class TestPeriodWeightingRules:
         assert not any(
             "years_represented" in r.getMessage() for r in caplog.records
         )
+
+
+class TestSummedTitleLevels:
+    """The title names a level as summed only when the sum changes something: a plain 'm' over a one-member level
+    (the single 'horizon' row of a horizon table) is not named; a 'y' level is named even with one period."""
+
+    @staticmethod
+    def _summed(index_name: str, members: list[str], rules: str) -> list:
+        df = pd.DataFrame({"gA": [0.5] * len(members)}, index=pd.Index(members, name=index_name))
+        df.columns.name = "group"
+        letter = "d" if index_name == "period" else "x"
+        cfg = PlotConfig(plot_name="title test", map_dimensions_for_plots=[f"{letter}_g", rules])
+        out = _apply_dimension_rules(df, cfg, (0, 100))
+        assert out is not None
+        return out[3]
+
+    def test_one_member_m_level_is_not_named(self):
+        assert self._summed("horizon", ["total"], "m_b") == []
+
+    def test_many_member_m_level_is_named(self):
+        assert self._summed("horizon", ["a", "b"], "m_b") == ["horizon"]
+
+    def test_one_period_y_level_is_named(self):
+        assert self._summed("period", ["p1"], "y_b") == ["period"]
 
 
 class TestPreparePlotData:
@@ -1324,3 +1349,159 @@ class TestRebuildPlanColorMapParity:
         )
         assert rebuild_plan_color_map(plan, color_path=None) is None
         assert plan.shared_color_map is None
+
+
+# ---------------------------------------------------------------------------
+# Plotted data as CSV next to each plot file (write_plot_data)
+# ---------------------------------------------------------------------------
+
+class TestWritePlotData:
+    """Each plot file gets a CSV with the data drawn in it, same stem; off by default."""
+
+    @staticmethod
+    def _time_df() -> pd.DataFrame:
+        # 24 steps of one period, 8 nodes; value = 8 * row + column.  Row t0010 is empty for nodes 0-4 only.
+        times = [f"t{i:04d}" for i in range(1, 25)]
+        index = pd.MultiIndex.from_arrays([["p1"] * 24, times], names=["period", "time"])
+        columns = pd.Index([f"node_{i}" for i in range(8)], name="node")
+        df = pd.DataFrame(np.arange(24 * 8, dtype=float).reshape(24, 8), index=index, columns=columns)
+        df.iloc[9, :5] = np.nan
+        return df
+
+    @staticmethod
+    def _bar_df() -> pd.DataFrame:
+        index = pd.Index(["p1", "p2", "p3"], name="period")
+        columns = pd.MultiIndex.from_tuples(
+            [("A", "u1"), ("A", "u2"), ("B", "u1"), ("B", "u2")], names=["group", "unit"])
+        return pd.DataFrame(
+            [[1, 2, 3, 4], [5, np.nan, 7, 8], [9, 10, 11, 12]], index=index, columns=columns, dtype=float)
+
+    def _plot_time(self, plot_dir, **kwargs):
+        breaks = pd.MultiIndex.from_tuples([("p1", "t0006")], names=["period", "time"])
+        settings = {"x_dt_e": {"plot_name": "T", "map_dimensions_for_plots": ["dt_e", "tt_l"],
+                               "max_items_per_plot": 5}}
+        plot_dict_of_dataframes({"x_dt_e": self._time_df()}, str(plot_dir), settings,
+                                plot_rows=(0, 19), break_times=breaks, **kwargs)
+
+    def test_off_writes_no_csv_and_keeps_no_data(self, tmp_path):
+        self._plot_time(tmp_path)
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["T_01.png", "T_02.png"]
+        cfg = PlotConfig(map_dimensions_for_plots=["dt_e", "tt_l"], max_items_per_plot=5)
+        figures, _ = prepare_plot_data(self._time_df(), cfg, plot_name="T", plot_rows=(0, 19))
+        assert figures and not any(hasattr(fig, "flextool_plot_batch") for _, fig in figures)
+
+    def test_split_time_plot_one_csv_per_file(self, tmp_path):
+        self._plot_time(tmp_path, write_plot_data=True)
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["T_01.csv", "T_01.png", "T_02.csv", "T_02.png"]
+        first = pd.read_csv(tmp_path / "T_01.csv")
+        second = pd.read_csv(tmp_path / "T_02.csv")
+        # The items of the two files together; one subplot each, so no subplot column.
+        assert list(first.columns) == ["period", "time", "node_0", "node_1", "node_2", "node_3", "node_4"]
+        assert list(second.columns) == ["period", "time", "node_5", "node_6", "node_7"]
+        # The plot_rows window t0001..t0019 without the gap rows of the break at t0006; the row that is empty
+        # in the first file's nodes stays, with empty cells.
+        expected_times = [f"t{i:04d}" for i in range(1, 20)]
+        assert first["time"].tolist() == expected_times
+        assert second["time"].tolist() == expected_times
+        assert first.loc[first["time"] == "t0010", "node_0":].isna().all(axis=None)
+        assert second.loc[second["time"] == "t0010", "node_5"].item() == 77.0  # 8 * 9 + 5
+        assert first.loc[first["time"] == "t0006", "node_3"].item() == 43.0  # 8 * 5 + 3
+
+    def test_bar_plot_with_subplots_and_multiplier(self, tmp_path):
+        settings = {"b_d_ee": {"plot_name": "B", "map_dimensions_for_plots": ["d_ge", "b_ue"],
+                               "multiply_by": 10}}
+        plot_dict_of_dataframes({"b_d_ee": self._bar_df()}, str(tmp_path), settings, write_plot_data=True)
+        assert sorted(p.name for p in tmp_path.glob("*.csv")) == ["B.csv"]
+        text = (tmp_path / "B.csv").read_text(encoding="utf-8").splitlines()
+        # Hand-checked: source x 10, one block of rows per subplot (group), the cell empty in the data empty.
+        assert text == [
+            "subplot,period,u1,u2",
+            "A,p1,10,20",
+            "A,p2,50,",
+            "A,p3,90,100",
+            "B,p1,30,40",
+            "B,p2,70,80",
+            "B,p3,110,120",
+        ]
+
+    def test_comparison_frame_header_flattened(self, tmp_path):
+        results = {"c_dt_se": _make_time_multi_df(n_rows=10, n_entities=2, n_scenarios=2)}
+        settings = {"c_dt_se": {"plot_name": "C", "map_dimensions_for_plots": ["t_se", "t_ll"]}}
+        plot_dict_of_dataframes(results, str(tmp_path), settings, plot_rows=(0, 10), write_plot_data=True)
+        frame = pd.read_csv(tmp_path / "C.csv")
+        # One header row: scenario and entity joined (the plot orders the lines by entity).
+        assert frame.columns[0] == "time"
+        assert sorted(frame.columns[1:]) == [
+            "scen_0 | entity_0", "scen_0 | entity_1", "scen_1 | entity_0", "scen_1 | entity_1"]
+        source = results["c_dt_se"]
+        np.testing.assert_allclose(frame["scen_1 | entity_0"], source[("scen_1", "entity_0")], rtol=1e-7)
+
+    def test_plot_settings_key_turns_it_on(self, tmp_path):
+        settings_file = tmp_path / "plot_settings.yaml"
+        settings_file.write_text("write_plot_data: true\n", encoding="utf-8")
+        plot_dir = tmp_path / "plots"
+        plot_dir.mkdir()
+        self._plot_time(plot_dir, color_path=settings_file)
+        assert sorted(p.name for p in plot_dir.glob("*.csv")) == ["T_01.csv", "T_02.csv"]
+
+    def test_dispatch_csv_with_demand_named_entity(self, tmp_path):
+        from flextool.scenario_comparison.dispatch_plots import plot_dispatch_area
+
+        index = pd.Index([f"t{i:04d}" for i in range(1, 7)], name="time")
+        flows = pd.DataFrame({"wind": [1.0, 2, 3, 4, 5, 6], "Demand": [-1.0, -2, -3, -4, -5, -6],
+                              "time": [0.5] * 6}, index=index)
+        inflow = pd.Series([7.0, 8, 9, 10, 11, 12], index=index)
+        out = tmp_path / "dispatch_nodeGroup_g_s.png"
+        plot_dispatch_area(flows, inflow, out, title="g - s", timeline=(1, 4), write_plot_data=True)
+        frame = pd.read_csv(out.with_suffix(".csv"))
+        # The demand line has its legend name; a flow already called that, or called like the index, is renamed.
+        assert list(frame.columns) == ["time", "wind", "Demand", "time (series)", "Demand (line)"]
+        assert frame["time"].tolist() == ["t0002", "t0003", "t0004"]
+        assert frame["Demand (line)"].tolist() == [8.0, 9.0, 10.0]
+        assert frame["Demand"].tolist() == [-2.0, -3.0, -4.0]
+        plot_dispatch_area(flows, inflow, tmp_path / "no_csv.png", title="g - s", timeline=(1, 4))
+        assert not (tmp_path / "no_csv.csv").exists()
+
+    def test_series_named_like_an_index_level(self, tmp_path):
+        df = self._time_df().iloc[:, :2].set_axis(pd.Index(["time", "period"], name="node"), axis=1)
+        settings = {"x_dt_e": {"plot_name": "N", "map_dimensions_for_plots": ["dt_e", "tt_l"]}}
+        plot_dict_of_dataframes({"x_dt_e": df}, str(tmp_path), settings, plot_rows=(0, 3), write_plot_data=True)
+        frame = pd.read_csv(tmp_path / "N.csv")
+        assert list(frame.columns[:2]) == ["period", "time"]
+        assert sorted(frame.columns[2:]) == ["period (series)", "time (series)"]
+        assert frame["time (series)"].tolist() == [0.0, 8.0, 16.0]
+
+    def test_csv_failure_warns_and_plotting_goes_on(self, tmp_path, monkeypatch, caplog):
+        import flextool.plot_outputs.format_helpers as fh
+
+        def broken(batch):
+            raise ValueError("boom")
+
+        monkeypatch.setattr(fh, "plot_data_frame", broken)
+        with caplog.at_level("WARNING"):
+            self._plot_time(tmp_path, write_plot_data=True)
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["T_01.png", "T_02.png"]
+        assert "T_01.csv not written: boom" in caplog.text
+
+    @pytest.mark.parametrize("value", ['"false"', '"true"', "1", "yes please"])
+    def test_plot_settings_key_must_be_a_yaml_bool(self, tmp_path, caplog, value):
+        settings_file = tmp_path / "plot_settings.yaml"
+        settings_file.write_text(f"write_plot_data: {value}\n", encoding="utf-8")
+        plot_dir = tmp_path / "plots"
+        plot_dir.mkdir()
+        with caplog.at_level("WARNING"):
+            self._plot_time(plot_dir, color_path=settings_file)
+        assert not list(plot_dir.glob("*.csv"))
+        assert "not true or false" in caplog.text
+
+    def test_summed_lines_csv_has_the_drawn_sums(self, tmp_path):
+        # tt_le: the unit level has no rule, so each node's line is drawn as the sum over its units.
+        index = pd.MultiIndex.from_arrays([["p1"] * 3, ["t0001", "t0002", "t0003"]], names=["period", "time"])
+        columns = pd.MultiIndex.from_tuples([("n1", "u1"), ("n1", "u2"), ("n2", "u1")], names=["node", "unit"])
+        df = pd.DataFrame(np.arange(9, dtype=float).reshape(3, 3), index=index, columns=columns)
+        settings = {"x_dt_ee": {"plot_name": "S", "map_dimensions_for_plots": ["dt_ee", "tt_le"]}}
+        plot_dict_of_dataframes({"x_dt_ee": df}, str(tmp_path), settings, plot_rows=(0, 3), write_plot_data=True)
+        frame = pd.read_csv(tmp_path / "S.csv")
+        assert list(frame.columns) == ["period", "time", "n1", "n2"]
+        assert frame["n1"].tolist() == [1.0, 7.0, 13.0]  # 0+1, 3+4, 6+7
+        assert frame["n2"].tolist() == [2.0, 5.0, 8.0]

@@ -8,12 +8,9 @@ from flextool.process_outputs._annualize import annualize_dt_to_d
 _logger = logging.getLogger(__name__)
 
 
-def compute_storage_and_vre(par, s, v, r) -> None:
-    """Compute storage state changes, self-discharge, node inflow, VRE potential, and storage usage."""
-    step_duration = par.step_duration
-    unitsize = par.entity_unitsize
-
-    # node_state_change_dt (four storage binding methods)
+def node_state_change_dt(s, v, unitsize) -> pd.DataFrame:
+    """``(v_state[t] − v_state[t⁻]) · unitsize`` per storage node over ``s.dt_realize_dispatch``; t⁻ is the
+    state-change lag of the node's storage_binding_method in the model (``_self_discharge.state_links``)."""
     current_idx = s.dtt.droplevel('t_previous')
     # bind_within_period: the previous step in the same period, the first step wrapping to the period's own
     # last step (the model's lag; dtttdt's t_previous of a period's first step may point into another period).
@@ -45,6 +42,23 @@ def compute_storage_and_vre(par, s, v, r) -> None:
         .droplevel(['period', 'time', 't_previous', 't_previous_within_timeset'])
         .set_names(['period', 'time'])
     )
+    # bind_within_solve: dtttdt's predecessor, except where the model's lag differs (dtt_within_solve: with a
+    # stochastic fan in the solve's first period, the first step of each root forecast continues from the last step
+    # of its own path).  ws_relinked marks those steps of current_idx; ws_prev_idx is their predecessors.
+    ws_prev_idx = ws_relinked = None
+    ws_lag = getattr(s, "dtt_within_solve", None)
+    if (len(current_idx) and ws_lag is not None and len(ws_lag)
+            and (methods.get_level_values('method') == 'bind_within_solve').any()):
+        ws_key = pd.MultiIndex.from_arrays(
+            [ws_lag.get_level_values('period'), ws_lag.get_level_values('time')], names=['period', 'time'])
+        keep = ~ws_key.duplicated(keep='last')
+        ws_prev = pd.MultiIndex.from_arrays(
+            [ws_lag.get_level_values('d_previous')[keep], ws_lag.get_level_values('t_previous_within_solve')[keep]],
+            names=['period', 'time'])
+        position = ws_key[keep].get_indexer(current_idx)
+        if (position >= 0).any():
+            ws_relinked = position >= 0
+            ws_prev_idx = ws_prev[position[ws_relinked]]
     exclude_idx = s.period__time_first[
         s.period__time_first.get_level_values('period').isin(s.period_first_of_solve)
     ]
@@ -80,7 +94,11 @@ def compute_storage_and_vre(par, s, v, r) -> None:
             state_change += ((v_current - v_forward) * unitsize[n]).where(mask, 0)
 
         if (n, 'bind_within_solve') in s.node__storage_binding_method:
-            state_change += (v_current - v_forward) * unitsize[n]
+            v_within_solve = v_forward
+            if ws_prev_idx is not None:
+                v_within_solve = v_forward.copy()
+                v_within_solve[ws_relinked] = v.state[n].squeeze().reindex(ws_prev_idx).to_numpy()
+            state_change += (v_current - v_within_solve) * unitsize[n]
 
         if (n, 'bind_within_period') in s.node__storage_binding_method:
             state_change += (v_current - v_prev_period) * unitsize[n]
@@ -90,7 +108,15 @@ def compute_storage_and_vre(par, s, v, r) -> None:
 
         r_state_change[n] = state_change
 
-    r.node_state_change_dt = r_state_change
+    return r_state_change
+
+
+def compute_storage_and_vre(par, s, v, r) -> None:
+    """Compute storage state changes, self-discharge, node inflow, VRE potential, and storage usage."""
+    step_duration = par.step_duration
+    unitsize = par.entity_unitsize
+
+    r.node_state_change_dt = node_state_change_dt(s, v, unitsize)
     r.node_state_change_d = r.node_state_change_dt.groupby(level='period').sum()
 
     # self_discharge_loss — the loss the balance rows used, per step in MWh (v.self_discharge, written by the

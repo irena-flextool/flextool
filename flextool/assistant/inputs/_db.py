@@ -4,7 +4,9 @@
 only counts with ``uri=true``, and the path is percent-encoded, because a raw ``#`` or ``%`` in it makes SQLite
 open (and create) another file.  ``sqlite_timeout=5``: an exclusive lock held by a program that saves the
 database makes the open wait at most 5 s, then the tools say the database is busy.  ``model.version`` and the
-behaviour-change markers (``metadata``) are read while the mapping is open; then exactly :data:`FETCHED` is fetched,
+behaviour-change markers (``metadata``) are read while the mapping is open (their texts are made only when a tool
+asks for them, :attr:`InputDB.behaviour_notices`: loading a database never imports :mod:`flextool.engine`); then
+exactly :data:`FETCHED` is fetched,
 the mapping is closed (no file handle stays open) and its items are copied into plain tables, reading each item
 type of :data:`FETCHED` from the closed mapping.  The mapping itself is dropped: values stay as the stored bytes
 and are parsed with ``spinedb_api.from_database`` when a tool needs them, so nothing parsed is kept.
@@ -39,6 +41,9 @@ FETCHED = (
     "parameter_value_list", "list_value", "parameter_definition", "parameter_value",
 )
 SQLITE_TIMEOUT_S = 5
+#: The metadata name prefix of a behaviour-change marker: ``flextool.engine._behaviour_changes.MARKER_PREFIX``
+#: (pinned equal in ``tests/assistant/test_model_facts.py``), here so that a load does not import the engine.
+MARKER_PREFIX = "flextool_behaviour_change:"
 LRU_SIZE = 2
 #: Scenario views kept per database: two is the most one tool uses at once (compare_inputs); a running call
 #: holds its views by reference, so an eviction never affects it.
@@ -133,7 +138,7 @@ class InputDB:
     path: Path
     key: SourceKey
     version: int | float | str | None
-    behaviour_notices: list[str]
+    markers: dict[str, str]                                 # behaviour-change id -> marker value
     alternatives: list[str]
     scenarios: dict[str, list[str]]                         # scenario -> alternatives, lowest rank first
     classes: dict[str, ClassItem]
@@ -147,6 +152,15 @@ class InputDB:
     _params_of: dict[tuple[str, Byname], tuple[str, ...]] = field(default_factory=dict, repr=False)
     _views: "OrderedDict[str, ScenarioView]" = field(default_factory=OrderedDict, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _notices: list[str] | None = field(default=None, repr=False)
+
+    @property
+    def behaviour_notices(self) -> list[str]:
+        """One text per behaviour-change marker of the database, made on first use (the registry of the changes
+        is in :mod:`flextool.engine`, which only a database with markers imports)."""
+        if self._notices is None:
+            self._notices = _behaviour_notices(self.markers) if self.markers else []
+        return self._notices
 
     def __post_init__(self) -> None:
         self._by_name = {cls: {e.name: e for e in ents.values()} for cls, ents in self.entities.items()}
@@ -340,7 +354,7 @@ def _int_version(raw: Any) -> int | float | str | None:
 
 
 def _behaviour_notices(markers: dict[str, str]) -> list[str]:
-    from flextool.engine._behaviour_changes import BEHAVIOUR_CHANGES, MARKER_PREFIX, version_phrase
+    from flextool.engine._behaviour_changes import BEHAVIOUR_CHANGES, version_phrase
 
     out: list[str] = []
     for change_id in sorted(markers):
@@ -367,13 +381,22 @@ def _first_line(exc: BaseException) -> str:
     return text.splitlines()[0] if text else type(exc).__name__
 
 
+def _read_markers(db: Any) -> dict[str, str]:
+    """``{change id: marker value}`` of the behaviour-change markers of an open mapping (as
+    ``flextool.engine._behaviour_changes.read_markers`` reads them)."""
+    out: dict[str, str] = {}
+    for md in db.get_items("metadata"):
+        name = str(md["name"])
+        if name.startswith(MARKER_PREFIX):
+            out[name[len(MARKER_PREFIX):]] = str(md["value"])
+    return out
+
+
 def closed_mapping(path: Path) -> tuple[Any, Any, dict[str, str]]:
     """Open *path* read-only, read ``model.version`` and the behaviour-change markers, fetch :data:`FETCHED` and
     close the mapping.  Returns ``(closed mapping, raw version, markers)``; raises :class:`ToolError`."""
     from spinedb_api import DatabaseMapping, from_database
     from spinedb_api.exception import SpineDBAPIError, SpineDBVersionError
-
-    from flextool.engine._behaviour_changes import read_markers
 
     name = Path(path).name
     try:
@@ -398,7 +421,7 @@ def closed_mapping(path: Path) -> tuple[Any, Any, dict[str, str]]:
             version_item = db.get_parameter_definition_item(entity_class_name="model", name="version")
             raw_version = (from_database(version_item["default_value"], version_item["default_type"])
                            if version_item else None)
-            markers = read_markers(db)
+            markers = _read_markers(db)
             db.fetch_all(*FETCHED)
         finally:
             db.__exit__(None, None, None)
@@ -466,7 +489,7 @@ def load_uncached(path: Path) -> InputDB:
     tables = _tables(db)
     del db
     return InputDB(path=Path(path), key=key, version=_int_version(raw_version),
-                   behaviour_notices=_behaviour_notices(markers), **tables)
+                   markers=dict(markers), **tables)
 
 
 _cache: "OrderedDict[SourceKey, InputDB]" = OrderedDict()

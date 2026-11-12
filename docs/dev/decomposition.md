@@ -118,7 +118,7 @@ for r in ("A", "B"):
 ```
 
 The reference catalogue entry is `group.decomposition_method` in
-[reference.md](../reference.md); the only accepted value is
+[Groups](../reference/groups.md#decomposition-spatial-benders); the only accepted value is
 `benders_regional` (the `_region` suffix makes the geographic flavour
 explicit, leaving naming room for any future temporal variant). The
 source of truth is
@@ -453,7 +453,7 @@ The engine-side overview of flex-temporal lives in
 ## 4. Rolling / nested solves
 
 These are user-facing patterns documented in
-[how_to.md](../how_to.md); this section covers the engine wiring.
+[Solve sequences, rolling and nested solves](../how_to/solve_sequences.md); this section covers the engine wiring.
 
 ### 4.1 Rolling
 
@@ -582,12 +582,12 @@ features. Quick map (full text in
 - [scaling.md](scaling.md) — auto-scaling pipeline; runs per
   sub-problem, so each region / each roll / each block gets its own
   scaling pass.
-- [reference.md](../reference.md) — the parameters touched here:
+- [Model parameters](../reference/index.md) — the parameters touched here:
   `solve.solve_mode`, `solve.rolling_solve_jump`,
   `solve.rolling_solve_horizon`, `solve.contains_solves`,
   `solve.fix_storage_periods`, `solve.stochastic_branches`,
   `solve.new_stepduration`, `group.new_stepduration`,
   `group.decomposition_method`, `node.storage_nested_fix_method`.
-- [how_to.md](../how_to.md) — practical recipes for setting up
+- [How-to recipes](../how_to/index.md) — practical recipes for setting up
   Benders regions, rolling windows, nested solves, and stochastic
   branches.

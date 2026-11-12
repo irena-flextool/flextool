@@ -4,6 +4,7 @@ No solver binary or licence is needed: the argv builders are pure functions and 
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -71,3 +72,314 @@ def test_licence_banner_of_an_infeasible_solve_is_not_a_licence_error() -> None:
 def test_licence_failure_is_a_licence_error(text: str) -> None:
     assert _looks_like_license_error("", text)
     assert _looks_like_license_error(_GUROBI_INFEASIBLE_LOG + text + "\n", "")
+
+
+# ---------------------------------------------------------------------------
+# One option stack for every solver (item 230): option file < solver_mip_gap < solver_arguments < flag / env.
+# Expected values are worked out by hand from the layer rules (specs/gurobi_options_fix_design.md §3).
+# ---------------------------------------------------------------------------
+
+from flextool.cli.cmd_run_flextool import build_parser  # noqa: E402
+from flextool.engine.input._solve_config import SolverConfig  # noqa: E402
+from flextool.engine.solve._solver_dispatch import (  # noqa: E402
+    _operator_native_overrides,
+    commercial_time_limit,
+    commercial_watchdog_seconds,
+    reset_run_warnings,
+    resolve_commercial_options,
+)
+from flextool.engine.solve._subprocess_solve import _SCRIPTS, _write_commercial_opt_file  # noqa: E402
+from flextool.run_options import RunOptions  # noqa: E402
+
+_FLAGS = ["--solver-mip-gap", "0.001", "--solver-time-limit", "1800"]
+
+
+def _options(flags: list[str], environ: dict | None = None) -> RunOptions:
+    return RunOptions.from_cli(build_parser().parse_args(["sqlite:///x.sqlite", *flags]), environ=environ or {})
+
+
+def _passed(solver: str, tmp_path: Path, opt_text: str, cfg: SolverConfig, flags: list[str]):
+    """The argv parameters (Gurobi) or the stdin script (the others) the CLI would get."""
+    opt_file = tmp_path / f"{solver}.opt"
+    opt_file.write_text(opt_text)
+    resolved = resolve_commercial_options(solver, opt_file=opt_file, solver_config=cfg, run_options=_options(flags))
+    merged = _write_commercial_opt_file({o.name: o.value for o in resolved}, tmp_path / "solve.opt")
+    argv, stdin = _SCRIPTS[solver](Path("bin"), tmp_path / "m.mps", tmp_path / "m.sol", merged)
+    return argv[1:-2], stdin
+
+
+def test_gurobi_stack_flags_win_and_one_gap_entry(tmp_path: Path) -> None:
+    cfg = SolverConfig(name="gurobi", mip_gap=0.01, options={"Presolve": 2, "mipgap": 0.005})
+    params, _ = _passed("gurobi", tmp_path, "Threads 0\nMIPGap 0.002\n", cfg, _FLAGS)
+    assert params == ["Threads=0", "MIPGap=0.001", "Presolve=2", "TimeLimit=1800"]
+
+
+def test_gurobi_stack_without_flags_solver_arguments_win(tmp_path: Path) -> None:
+    """solver_arguments beat the solver_mip_gap knob and the file; the winning spelling is kept, at the file's
+    position."""
+    cfg = SolverConfig(name="gurobi", mip_gap=0.01, options={"Presolve": 2, "mipgap": 0.005})
+    params, _ = _passed("gurobi", tmp_path, "Threads 0\nMIPGap 0.002\n", cfg, [])
+    assert params == ["Threads=0", "mipgap=0.005", "Presolve=2"]
+
+
+@pytest.mark.parametrize("solver, opt_text, gap_line, time_line", [
+    ("cplex", "threads 1\nmip tolerances mipgap 0.002\n", "set mip tolerances mipgap 0.001", "set timelimit 1800"),
+    ("xpress", "THREADS 1\nMIPRELSTOP 0.002\n", "setControl MIPRELSTOP 0.001", "setControl MAXTIME 1800"),
+    ("copt", "Threads 1\nRelGap 0.002\n", "set RelGap 0.001", "set TimeLimit 1800"),
+])
+def test_flags_reach_cplex_xpress_copt_under_native_names(solver, opt_text, gap_line, time_line, tmp_path) -> None:
+    cfg = SolverConfig(name=solver, mip_gap=0.01)
+    _, stdin = _passed(solver, tmp_path, opt_text, cfg, _FLAGS)
+    lines = stdin.splitlines()
+    assert gap_line in lines and time_line in lines
+    gap_word = {"cplex": "mipgap", "xpress": "MIPRELSTOP", "copt": "RelGap"}[solver]
+    assert sum(gap_word.lower() in line.lower() for line in lines) == 1, stdin
+    assert "mip.tolerances.mipgap" not in stdin
+
+
+def test_cplex_dotted_name_lands_on_the_interactive_spelling(tmp_path: Path) -> None:
+    cfg = SolverConfig(name="cplex", options={"mip.tolerances.mipgap": 0.004})
+    _, stdin = _passed("cplex", tmp_path, "threads 1\nmip tolerances mipgap 0.002\n", cfg, [])
+    assert [line for line in stdin.splitlines() if "mipgap" in line] == ["set mip tolerances mipgap 0.004"]
+
+
+def test_highs_environment_names_never_reach_a_commercial_solver() -> None:
+    """D5: FLEXTOOL_HIGHS_* stay HiGHS-only; FLEXTOOL_SOLVER_* are the flags' twins for every solver."""
+    from flextool.engine.solve._orchestration import _operator_highs_overrides
+
+    highs_only = RunOptions.from_env({"FLEXTOOL_HIGHS_TIME_LIMIT": "120", "FLEXTOOL_HIGHS_MIP_GAP": "0.3"})
+    assert _operator_native_overrides("gurobi", highs_only) == []
+    assert _operator_highs_overrides(highs_only) == {"time_limit": 120.0, "mip_rel_gap": 0.3}
+    both = RunOptions.from_env({"FLEXTOOL_HIGHS_TIME_LIMIT": "120", "FLEXTOOL_SOLVER_TIME_LIMIT": "90"})
+    assert [(o.name, o.value) for o in _operator_native_overrides("gurobi", both)] == [("TimeLimit", "90")]
+    assert _operator_highs_overrides(both) == {"time_limit": 90.0}
+
+
+@pytest.mark.parametrize("solver, opts, expected", [
+    ("gurobi", {"TimeLimit": "1800.0"}, 4200.0),
+    ("gurobi", {"timelimit": "60"}, 720.0),
+    ("cplex", {"timelimit": "300"}, 1200.0),
+    ("xpress", {"MAXTIME": "60"}, 720.0),
+    ("xpress", {"MAXTIME": "-60"}, 720.0),      # a negative MAXTIME is a hard limit of 60 s (review F2)
+    ("xpress", {"TIMELIMIT": "30.5"}, 661.0),
+    ("gurobi", {"Threads": "0"}, None),
+    ("gurobi", {"TimeLimit": "inf"}, None),
+])
+def test_watchdog_is_twice_the_native_limit_plus_ten_minutes(solver, opts, expected) -> None:
+    assert commercial_watchdog_seconds(commercial_time_limit(solver, opts)) == expected
+
+
+def test_result_file_in_solver_arguments_is_dropped_with_a_warning(tmp_path: Path, caplog) -> None:
+    cfg = SolverConfig(name="gurobi", options={"ResultFile": "mine.sol", "Presolve": 2})
+    with caplog.at_level("WARNING"):
+        params, _ = _passed("gurobi", tmp_path, "Threads 0\n", cfg, [])
+    assert params == ["Threads=0", "Presolve=2"]
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1 and "ResultFile" in warnings[0] and "solver_arguments" in warnings[0]
+
+
+def test_result_file_warning_is_once_per_run_not_per_solve(tmp_path: Path, caplog) -> None:
+    """Review L7: the same ``ResultFile`` in the ``solver_arguments`` of two solves (or two rolls) warns once in a
+    run, naming the first; the next run warns again."""
+    reset_run_warnings()
+    cfg = SolverConfig(name="gurobi", options={"ResultFile": "mine.sol"})
+    with caplog.at_level("WARNING"):
+        for solve in ("dispatch_roll_1", "dispatch_roll_2", "invest"):
+            resolve_commercial_options("gurobi", opt_file=None, solver_config=cfg, run_options=_options([]),
+                                       solve_name=solve)
+        first_run = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        reset_run_warnings()
+        resolve_commercial_options("gurobi", opt_file=None, solver_config=cfg, run_options=_options([]),
+                                   solve_name="invest")
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert len(first_run) == 1 and "solver_arguments of solve dispatch_roll_1" in first_run[0]
+    assert len(warnings) == 2 and "solver_arguments of solve invest" in warnings[1]
+
+
+# ---------------------------------------------------------------------------
+# The native names are real parameter names (checked against the installed wheels; skipped where absent)
+# ---------------------------------------------------------------------------
+
+_VALUES = {"time_limit": 60, "mip_gap": 0.01, "threads": 1}
+
+
+def _set_through_wheel(solver: str, name: str, value) -> None:
+    """Set parameter *name* (as FlexTool passes it to the CLI) through the solver's Python wheel; an unknown
+    name raises."""
+    if solver == "gurobi":
+        import gurobipy as gp
+
+        with gp.Env(params={"OutputFlag": 0}) as env, gp.Model(env=env) as m:
+            m.setParam(name, value)
+    elif solver == "cplex":
+        import cplex
+
+        c = cplex.Cplex()  # kept alive: the parameter tree holds only a weak reference to it
+        node = c.parameters
+        for part in name.split():  # the interactive ``set`` path: "mip tolerances mipgap"
+            node = getattr(node, part)
+        node.set(value)
+    elif solver == "xpress":
+        import xpress as xp
+
+        p = xp.problem()
+        p.setControl(name, value)
+        assert p.getControl(name) == value
+    else:
+        import coptpy as cp
+
+        cp.Envr().createModel().setParam(name, value)
+
+
+@pytest.mark.parametrize("solver", ["gurobi", "cplex", "xpress", "copt"])
+def test_native_names_are_known_to_the_solver(solver: str) -> None:
+    import importlib.util
+
+    from flextool.engine.solve._solver_dispatch import _PARAM_MAP
+
+    module = {"gurobi": "gurobipy", "cplex": "cplex", "xpress": "xpress", "copt": "coptpy"}[solver]
+    if importlib.util.find_spec(module) is None:
+        pytest.skip(f"{module} not installed")
+    for knob, name in _PARAM_MAP[solver].items():
+        try:
+            _set_through_wheel(solver, name, _VALUES[knob])
+        except Exception as exc:  # noqa: BLE001 - a licence problem skips; a name problem fails below
+            if any(h in str(exc).lower() for h in ("licen", "size-limited")):
+                pytest.skip(f"{solver}: no usable licence ({exc})")
+            raise AssertionError(f"{solver} does not know {name!r} ({knob}): {exc}") from exc
+
+
+def test_whole_number_database_values_are_written_as_integers(tmp_path: Path) -> None:
+    """The database stores every number as a float: ``solver_arguments`` ``Threads 4`` arrives as "4.0" and must
+    reach the solver as ``4`` (the Xpress library refuses ``1.0`` for an integer control); a fraction keeps its
+    digits, and a huge whole number keeps the float form."""
+    cfg = SolverConfig(name="gurobi", options={"Threads": "4.0", "Method": 2.0, "MIPGap": "0.0005",
+                                               "Cutoff": 1e20, "Seed": "-3.00"})
+    params, _ = _passed("gurobi", tmp_path, "", cfg, [])
+    assert params == ["Threads=4", "Method=2", "MIPGap=0.0005", "Cutoff=1e+20", "Seed=-3"]
+
+
+# COPT 8.0.4's summary of an LP stopped by its time limit (coptpy log; copt_cmd prints the library's log).
+_COPT_LP_TIMEOUT_LOG = """\
+Method   Iteration           Objective  Primal.NInf   Dual.NInf        Time
+Dual             0    1.0943977500e+03           12           0       0.00s
+
+Solving unfinished
+Status: Timeout  Objective: 1.0943977500e+03  Iterations: 0  Time: 0.00s
+"""
+
+
+def test_copt_lp_time_limit_is_read_with_and_without_a_solution_file(tmp_path: Path) -> None:
+    """An LP stopped by its COPT time limit says ``Status: Timeout`` (not the MIP's ``stopped (time limit
+    reached)``): ``TIME_LIMIT`` whether COPT wrote a solution file or not, so the acceptance check rejects the
+    LP iterate, and a run without a file is told it hit the limit."""
+    from flextool.engine.solve._subprocess_solve import _parse_copt_sol
+
+    missing = _parse_copt_sol(tmp_path / "none.sol", _COPT_LP_TIMEOUT_LOG)
+    assert (missing.status, missing.primal, missing.objective) == ("TIME_LIMIT", None, None)
+    sol = tmp_path / "lp.sol"
+    sol.write_text("# Objective value 1094.39775\nC0000001  1\nC0000002  0\n")
+    written = _parse_copt_sol(sol, _COPT_LP_TIMEOUT_LOG)
+    assert written.status == "TIME_LIMIT" and written.primal == {"C0000001": 1.0, "C0000002": 0.0}
+    assert _parse_copt_sol(sol, "Status: Optimal  Objective: 1.0943977500e+03\n").status == "OPTIMAL"
+
+
+#: The ends of COPT logs (coptpy 8.0.4, the library ``copt_cmd`` runs): the market split MIP stopped by
+#: ``NodeLimit 5`` and by ``TimeLimit 0.5``, a small MIP solved, an LP stopped by ``BarIterLimit 1``.
+_COPT_MIP_NODE_LIMIT_LOG = """\
+Best solution   : 1.000000000
+Best bound      : 0.000000000
+Best gap        : 100.0000%
+Solve time      : 0.21
+Solve node      : 5
+MIP status      : stopped (node limit reached)
+Solution status : integer feasible
+"""
+_COPT_MIP_TIME_LIMIT_LOG = _COPT_MIP_NODE_LIMIT_LOG.replace("node limit", "time limit")
+_COPT_MIP_SOLVED_LOG = "MIP status      : solved\nSolution status : integer optimal (relative gap limit 0.0001)\n"
+_COPT_LP_ITER_LIMIT_LOG = "Solving unfinished\nStatus: IterLimit  Objective: 0.0000000000e+00  Iterations: 1(0)\n"
+
+
+@pytest.mark.parametrize("log, status, gap", [
+    (_COPT_MIP_NODE_LIMIT_LOG, "NODE_LIMIT", None),
+    (_COPT_MIP_NODE_LIMIT_LOG.replace("(node limit reached)", "(interrupted by user)"), "INTERRUPTED", None),
+    (_COPT_MIP_NODE_LIMIT_LOG.replace("(node limit reached)", "(something new)"), "STOPPED", None),
+    (_COPT_MIP_TIME_LIMIT_LOG, "TIME_LIMIT", 1.0),
+    (_COPT_MIP_SOLVED_LOG, "OPTIMAL", None),
+    (_COPT_LP_ITER_LIMIT_LOG, "ITERATION_LIMIT", None),
+    (_COPT_LP_ITER_LIMIT_LOG.replace("IterLimit", "Numerical"), "NUMERICAL", None),
+    ("", "NO_STATUS", None),   # Logging 0: the log says nothing
+])
+def test_copt_status_with_a_solution_comes_from_its_log(log, status, gap, tmp_path: Path) -> None:
+    """Review L2-2: only ``MIP status : solved`` / ``Status: Optimal`` is optimal; every other limit or an
+    interrupt is named (and rejected), only a time limit keeps a MIP solution, and values with no status in the
+    log are ``NO_STATUS``."""
+    from flextool.engine.solve._subprocess_solve import _parse_copt_sol
+
+    sol = tmp_path / "mip.sol"
+    sol.write_text("# Objective value 1\nC0000001  1\nC0000002  0\n")
+    parsed = _parse_copt_sol(sol, log)
+    assert (parsed.status, parsed.primal, parsed.mip_gap) == (status, {"C0000001": 1.0, "C0000002": 0.0}, gap)
+
+
+def test_copt_mip_at_a_node_limit_is_rejected_naming_it(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from flextool.engine.solve._acceptance import classify_acceptance
+    from flextool.engine.solve._subprocess_solve import _parse_copt_sol
+
+    sol_file = tmp_path / "mip.sol"
+    sol_file.write_text("# Objective value 1\nC0000001  1\n")
+    parsed = _parse_copt_sol(sol_file, _COPT_MIP_NODE_LIMIT_LOG)
+    sol = SimpleNamespace(optimal=False, shim_status=parsed.status, shim_mip_gap=parsed.mip_gap, _vars={})
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="unit")
+    assert not acc.accepted and "(solver status NODE_LIMIT)" in acc.message
+
+
+_RECORDING_SOLVER = """\
+#!{py}
+import json, os, sys
+with open({record!r}, "w") as fh:
+    json.dump({{"argv": sys.argv[1:], "cwd": os.getcwd(), "stdin": sys.stdin.read()}}, fh)
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the solver stub is a POSIX shebang script")
+@pytest.mark.parametrize("solver", ["gurobi", "cplex", "xpress", "copt"])
+def test_a_work_folder_with_a_space_reaches_the_solver_as_bare_file_names(solver: str, tmp_path: Path,
+                                                                          monkeypatch) -> None:
+    """The solver program runs in ``<work>/solve_data/subprocess`` and gets bare file names, so a work folder
+    named ``my runs`` needs no quoting in any console script (nor a Windows path's backslashes any escaping).
+    The console script is saved there as ``<solve>.script``."""
+    import json
+    import stat
+    import sys
+
+    from flextool.engine.solve import _subprocess_solve as sps
+    from tests.engine.test_subprocess_gurobi_name_recovery import _cost_lp
+
+    record = tmp_path / "record.json"
+    stub = tmp_path / "solver_stub"
+    stub.write_text(_RECORDING_SOLVER.format(py=sys.executable, record=str(record)))
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setattr(sps, "_find_solver_binary", lambda name: stub)
+    pb = _cost_lp(["coal fired", "gas"])
+    work = tmp_path / "my runs"
+    with pytest.raises(RuntimeError, match="no solution file"):
+        sps._solve_commercial_subprocess(pb, solver, {"Threads" if solver != "xpress" else "THREADS": 1},
+                                         solve_name="y2020 dispatch", logger=None, work_folder=work)
+    got = json.loads(record.read_text())
+    out_dir = work / "solve_data" / "subprocess"
+    assert Path(got["cwd"]) == out_dir
+    assert (out_dir / "y2020_dispatch.mps").is_file()
+    result = "y2020_dispatch.json" if solver == "gurobi" else "y2020_dispatch.sol"
+    if solver == "gurobi":
+        assert got["argv"] == ["Threads=1", f"ResultFile={result}", "y2020_dispatch.mps"]
+    else:
+        read, write = {"cplex": ("read", f"write {result} sol"), "xpress": ("readprob", f"writeslxsol {result}"),
+                       "copt": ("read", f"write {result}")}[solver]
+        lines = got["stdin"].splitlines()
+        assert f"{read} y2020_dispatch.mps" in lines and write in lines, lines
+        # Review F7: the script is kept next to the MPS for a replay by hand.
+        assert (out_dir / "y2020_dispatch.script").read_text() == got["stdin"]
+    assert "my runs" not in json.dumps(got["argv"]) + got["stdin"]

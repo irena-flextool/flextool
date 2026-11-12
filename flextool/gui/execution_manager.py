@@ -1509,10 +1509,18 @@ class ExecutionManager:
 
         if single.only_first_file:
             cmd.append("--only-first-file-per-plot")
+        if single.write_plot_data:
+            cmd.append("--write-plot-data")
 
         # "Threads per run" (Execution jobs window): FlexTool's data processing and the solver of this run.
         # ``--threads`` gives HiGHS ``threads=N`` with its parallel simplex left off.
         cmd.extend(["--threads", str(max(1, int(self.execution_limits.max_cores_per_job)))])
+
+        # The solver option files of the workspace (``FLEXTOOL_SOLVER_CONFIG_DIR`` when set, else
+        # ``<workspace>/solver_config``), given explicitly so a run never depends on where its input database is
+        # (an external source database may sit in another tree).  Project export / import use the same folder.
+        from flextool._solver_config_source import workspace_solver_config_dir
+        cmd.extend(["--solver-config-dir", str(workspace_solver_config_dir())])
 
         # "Debug" radio group in the main window: Off / Basic / Full.
         # Basic → --debug=basic only (verbose checkpoints, no tracemalloc).
@@ -1680,6 +1688,8 @@ class ExecutionManager:
 
         if comp.only_first_file:
             cmd.append("--only-first-file-per-plot")
+        if comp.write_plot_data:
+            cmd.append("--write-plot-data")
 
         logger.info("Running post-execution comparison:\n%s", format_cmd_for_log(cmd))
 

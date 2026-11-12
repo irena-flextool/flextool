@@ -40,6 +40,7 @@ import importlib.util
 import os
 import platform
 import re
+import signal
 import subprocess
 import sys
 
@@ -134,12 +135,40 @@ class StackProbe:
         return f"solver stack: error (exit {self.returncode})"
 
 
+#: The POSIX signals that mean the code itself is broken or its memory is
+#: corrupt (a native fault), by name, with what each means.
+_FAULT_SIGNALS = {
+    "SIGILL": "illegal instruction",
+    "SIGABRT": "abort",
+    "SIGBUS": "bus error",
+    "SIGFPE": "floating-point exception",
+    "SIGSEGV": "segmentation fault",
+}
+
+
+def signal_name(signum: int | None) -> str | None:
+    """The name of signal *signum* (``"SIGBUS"``) in the running system's
+    numbering, or ``None`` when it has no signal with that number.
+
+    Signal numbers differ between systems: 10 is SIGBUS on macOS and SIGUSR1
+    on Linux, 7 is SIGBUS on Linux and SIGEMT on macOS.  An exit code
+    ``-signum`` comes from a child on this computer, so it is named with
+    this computer's table (:class:`signal.Signals`).
+    """
+    try:
+        return signal.Signals(signum).name
+    except (TypeError, ValueError):
+        return None
+
+
 def is_native_fault(returncode: int | None, plat: str | None = None) -> bool:
     """True if *returncode* indicates a native crash (segfault / illegal
     instruction / abort), as opposed to a normal Python exit.
 
     ``plat`` defaults to :data:`sys.platform`; it is a parameter so the
     classifier can be unit-tested for both platform families on one host.
+    A POSIX ``-signum`` is named in the running system's numbering
+    (:func:`signal_name`).
     """
     if returncode is None or returncode == 0:
         return False
@@ -155,10 +184,10 @@ def is_native_fault(returncode: int | None, plat: str | None = None) -> bool:
         return u >= 0xC0000000 and u != 0xC000013A
 
     # POSIX: subprocess reports a signal-terminated child as ``-signal``.
-    # Treat the fatal "the code itself is broken / corrupted memory" signals
-    # as native faults; SIGILL=4, SIGABRT=6, SIGBUS=7, SIGFPE=8, SIGSEGV=11.
+    # The fatal "the code itself is broken / corrupted memory" signals are
+    # native faults, by name: the numbers differ between systems.
     if returncode < 0:
-        return (-returncode) in (4, 6, 7, 8, 11)
+        return signal_name(-returncode) in _FAULT_SIGNALS
     return False
 
 
@@ -178,15 +207,11 @@ def describe_fault(returncode: int | None, plat: str | None = None) -> str:
         }
         return names.get(u, f"native fault (0x{u:08X})")
     if returncode < 0:
-        sig = -returncode
-        names = {
-            4: "SIGILL (illegal instruction)",
-            6: "SIGABRT (abort)",
-            7: "SIGBUS (bus error)",
-            8: "SIGFPE (floating-point exception)",
-            11: "SIGSEGV (segmentation fault)",
-        }
-        return names.get(sig, f"signal {sig}")
+        name = signal_name(-returncode)
+        if name is None:
+            return f"signal {-returncode}"
+        meaning = _FAULT_SIGNALS.get(name)
+        return f"{name} ({meaning})" if meaning else name
     return f"exit code {returncode}"
 
 

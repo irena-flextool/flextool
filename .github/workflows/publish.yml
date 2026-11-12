@@ -94,7 +94,7 @@ jobs:
               "solver_config",
               "process_inputs/import_old_excel_input.json",
               # The curated documentation the build step copies in (_flextool_build.py).
-              "assistant/_docs/md/reference.md",
+              "assistant/_docs/md/reference/index.md",
           ]
           for rel in required:
               p = package_data_path(rel)
@@ -124,7 +124,7 @@ jobs:
           # The connection for AI agents starts from the wheel (its entry module is a
           # top-level module) and keeps stdout for protocol messages only.
           mkdir -p /tmp/assistant-project
-          /tmp/wheeltest/bin/python .github/scripts/mcp_smoke.py --tools 18 -- \
+          /tmp/wheeltest/bin/python .github/scripts/mcp_smoke.py --tools 19 -- \
             /tmp/wheeltest/bin/flextool-assistant --mcp --project-path /tmp/assistant-project
 
       - name: Check distribution metadata

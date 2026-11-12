@@ -553,3 +553,84 @@ def test_index_less_fragments_continue_the_last_call(fragments, expected):
     reply = backend.stream(request(ask()), lambda e: None, threading.Event())
     assert reply.stop == "tools"
     assert [(c.id, c.name, c.arguments) for c in reply.message.tool_calls] == expected
+
+
+# --- Ollama's reasoning (gpt-oss "error parsing tool call", 2026-11-11) -------------------------------------------
+def _ollama_chunk(delta: dict, finish: str | None = None) -> dict:
+    return {"id": "chatcmpl-001", "object": "chat.completion.chunk", "created": 1794226502, "model": "example-model",
+            "system_fingerprint": "fp_ollama", "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+
+
+OLLAMA_CALL = {"index": 0, "id": "call_reasoned1", "type": "function",
+               "function": {"name": "get_entity", "arguments": '{"name":"west"}'}}
+#: Ollama's stream: the reasoning in pieces of ``delta.reasoning`` (the content empty), then the call.
+REASONED_CALL = [_ollama_chunk({"role": "assistant", "content": "", "reasoning": "We need "}),
+                 _ollama_chunk({"content": "", "reasoning": "the units of west."}),
+                 _ollama_chunk({"content": "", "tool_calls": [OLLAMA_CALL]}),
+                 _ollama_chunk({}, "tool_calls")]
+REASONED_TEXT = [_ollama_chunk({"role": "assistant", "content": "", "reasoning": "Two units."}),
+                 _ollama_chunk({"content": "West has 2 units."}), _ollama_chunk({}, "stop")]
+
+
+def test_ollama_reasoning_is_joined_and_never_shown():
+    backend, _ = backend_for("ollama", [sse_response(openai_sse(REASONED_CALL))])
+    events, on_event = collect()
+    reply = backend.stream(request(ask()), on_event, threading.Event())
+    assert reply.stop == "tools" and reply.message.text == ""
+    assert reply.message.provider_extra == {"reasoning_text": "We need the units of west."}
+    assert not [e for e in events if isinstance(e, TextDelta)]
+    assert [(e.index, e.name) for e in events if isinstance(e, ToolCallStarted)] == [(0, "get_entity")]
+
+
+def test_ollama_reasoning_of_a_whole_answer_is_kept():
+    body = {"id": "chatcmpl-002", "object": "chat.completion", "created": 1794226502, "model": "example-model",
+            "choices": [{"index": 0, "finish_reason": "tool_calls", "message": {
+                "role": "assistant", "content": "", "reasoning": "Look up west.",
+                "tool_calls": [{k: v for k, v in OLLAMA_CALL.items() if k != "index"}]}}],
+            "usage": {"prompt_tokens": 900, "completion_tokens": 15, "total_tokens": 915}}
+    recorder = Recorder([json_response(200, body)])
+    conn = dataclasses.replace(connection("ollama"), stream=False)
+    backend = make_backend(PRESETS["ollama"], conn, transport=recorder.transport)
+    reply = backend.stream(request(ask()), lambda e: None, threading.Event())
+    assert reply.stop == "tools" and reply.message.provider_extra == {"reasoning_text": "Look up west."}
+
+
+def test_ollama_reasoning_is_replayed_only_in_the_tool_round_of_the_same_model():
+    """Sent back as ``reasoning`` on the assistant messages after the last user message (the tool round), to the
+    same model and endpoint only; once the next question is asked, not at all."""
+    backend, recorder = backend_for("ollama", [sse_response(openai_sse(REASONED_CALL)),
+                                               sse_response(openai_sse(REASONED_TEXT)),
+                                               sse_response(openai_sse(REASONED_TEXT))])
+    first = backend.stream(request(ask()), lambda e: None, threading.Event())
+    result = Message("tool", '{"units": 2}', tool_call_id="call_reasoned1", tool_name="get_entity")
+    round_two = [Message("user", "How many units has west?"), first.message, result]
+    final = backend.stream(request(round_two), lambda e: None, threading.Event())
+    assert final.message.provider_extra == {"reasoning_text": "Two units."}
+    sent = recorder.last.body["messages"]
+    assert sent[2] == {"role": "assistant", "content": None, "reasoning": "We need the units of west.",
+                       "tool_calls": [{"id": "call_reasoned1", "type": "function",
+                                       "function": {"name": "get_entity", "arguments": '{"name":"west"}'}}]}
+    assert sent[3] == {"role": "tool", "tool_call_id": "call_reasoned1", "content": '{"units": 2}'}
+    history_check.validate_openai_body(recorder.last.body)
+    # The next question: both earlier answers are before the last user message.
+    backend.stream(request([*round_two, final.message, Message("user", "And east?")]), lambda e: None,
+                   threading.Event())
+    sent = recorder.last.body["messages"]
+    assert [m["role"] for m in sent] == ["system", "user", "assistant", "tool", "assistant", "user"]
+    assert not any("reasoning" in m for m in sent)
+    # Another model of the same server, and the same model on another server, never get it.
+    for kw in ({"model": "another-model"}, {"url": "http://192.0.2.1:11434/v1"}):
+        other, recorder = backend_for("ollama", [sse_response(openai_sse(REASONED_TEXT))], **kw)
+        other.stream(request(round_two), lambda e: None, threading.Event())
+        assert "reasoning" not in recorder.last.body["messages"][2], kw
+
+
+def test_a_preset_without_the_reasoning_key_keeps_none_of_it():
+    """LM Studio has no reasoning key: a ``reasoning`` field in its stream is neither kept nor sent back."""
+    backend, recorder = backend_for("lmstudio", [sse_response(openai_sse(REASONED_CALL)),
+                                                 sse_response(openai_sse(REASONED_TEXT))])
+    first = backend.stream(request(ask()), lambda e: None, threading.Event())
+    assert first.message.provider_extra == {}
+    result = Message("tool", "{}", tool_call_id="call_reasoned1", tool_name="get_entity")
+    backend.stream(request([Message("user", "q"), first.message, result]), lambda e: None, threading.Event())
+    assert "reasoning" not in recorder.last.body["messages"][2]

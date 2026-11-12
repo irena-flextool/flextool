@@ -404,3 +404,123 @@ def test_apply_profile_cascade_param_shape() -> None:
     assert out.dims == ("f", "d", "t")
     assert out.frame.height == 1
     assert out.frame["value"][0] == pytest.approx(1.5)
+
+
+# ---------------------------------------------------------------------------
+# Item 73: the column fallback (``InMemoryReader``) reads a map without an index name (one ``x`` column) by its
+# keys, the same rule as a raw Spine value (``_silent_map_tier``) -- never as a stochastic map.
+# ---------------------------------------------------------------------------
+
+
+def _silent_x_source(keys: list[str], values: list[float]) -> InMemoryReader:
+    return InMemoryReader(
+        entities={"profile": pl.DataFrame({"name": ["wind"]})},
+        parameters={("profile", "profile"): pl.DataFrame(
+            {"name": ["wind"] * len(keys), "x": keys, "value": values})},
+    )
+
+
+def test_column_fallback_silent_x_period_keys_read_as_period() -> None:
+    """{d1: 0.3, d2: 0.4} under ``x`` -> tier ``period``; cell (d, t) = map[d] on every t."""
+    src = _silent_x_source(["d1", "d2"], [0.3, 0.4])
+    dt = _make_dt(["d1", "d2"], ["t01", "t02"])
+    assert _classify_profile_rows(src, dt) == {"wind": "period"}
+    out = p_profile_value_lf(src, dt).collect()
+    expected = pl.DataFrame({"f": ["wind"] * 4, "d": ["d1", "d1", "d2", "d2"], "t": ["t01", "t02"] * 2,
+                             "value": [0.3, 0.3, 0.4, 0.4]})
+    eq, diff = _frames_equal(out, expected, ("f", "d", "t"))
+    assert eq, diff
+
+
+def test_column_fallback_silent_x_time_keys_read_as_time() -> None:
+    """{t01: 0.5, t02: 0.7} under ``x`` -> tier ``time``; cell (d, t) = map[t] in every period."""
+    src = _silent_x_source(["t01", "t02"], [0.5, 0.7])
+    dt = _make_dt(["d1", "d2"], ["t01", "t02"])
+    assert _classify_profile_rows(src, dt) == {"wind": "time"}
+    out = p_profile_value_lf(src, dt).collect()
+    expected = pl.DataFrame({"f": ["wind"] * 4, "d": ["d1", "d1", "d2", "d2"], "t": ["t01", "t02"] * 2,
+                             "value": [0.5, 0.7, 0.5, 0.7]})
+    eq, diff = _frames_equal(out, expected, ("f", "d", "t"))
+    assert eq, diff
+
+
+def test_column_fallback_silent_x_other_solve_periods_read_as_zero() -> None:
+    """{d3: 0.3} under ``x`` in a solve of d1 only: no period of this solve -> the profile is 0 here."""
+    src = _silent_x_source(["d3"], [0.3])
+    dt = _make_dt(["d1"], ["t01"])
+    out = p_profile_value_lf(src, dt).collect()
+    assert out["value"].to_list() == [0.0]
+
+
+# ---------------------------------------------------------------------------
+# Item 223: a 2-D map whose outer level has no index name (the reader's ``x`` and ``x_2`` / ``t`` columns) is a
+# period x time map when its outer keys are periods (item 73's rule); before it was taken for a stochastic map
+# and the profile was 0.
+# ---------------------------------------------------------------------------
+
+
+def _silent_2d_source(inner: str) -> InMemoryReader:
+    """{d1: {t01: 0.2, t02: 0.4}, d2: {t01: 0.6, t02: 0.8}} under ``x`` and ``inner``."""
+    return InMemoryReader(
+        entities={"profile": pl.DataFrame({"name": ["wind"]})},
+        parameters={("profile", "profile"): pl.DataFrame(
+            {"name": ["wind"] * 4, "x": ["d1", "d1", "d2", "d2"], inner: ["t01", "t02", "t01", "t02"],
+             "value": [0.2, 0.4, 0.6, 0.8]})},
+    )
+
+
+@pytest.mark.parametrize("inner", ["x_2", "t"])
+def test_column_fallback_silent_2d_period_keys_read_as_period_time(inner: str) -> None:
+    src = _silent_2d_source(inner)
+    dt = _make_dt(["d1", "d2"], ["t01", "t02"])
+    assert _classify_profile_rows(src, dt) == {"wind": "period_time"}
+    out = p_profile_value_lf(src, dt).collect()
+    expected = pl.DataFrame({"f": ["wind"] * 4, "d": ["d1", "d1", "d2", "d2"], "t": ["t01", "t02"] * 2,
+                             "value": [0.2, 0.4, 0.6, 0.8]})
+    eq, diff = _frames_equal(out, expected, ("f", "d", "t"))
+    assert eq, diff
+
+
+def test_column_fallback_silent_2d_time_outer_keys_stay_stochastic() -> None:
+    """Outer keys that are time steps are no period x time map (the input check stops such a run)."""
+    src = InMemoryReader(
+        entities={"profile": pl.DataFrame({"name": ["wind"]})},
+        parameters={("profile", "profile"): pl.DataFrame(
+            {"name": ["wind"] * 2, "x": ["t01", "t02"], "x_2": ["t01", "t02"], "value": [0.2, 0.4]})},
+    )
+    assert _classify_profile_rows(src, _make_dt(["d1"], ["t01", "t02"])) == {"wind": "stochastic"}
+
+
+def test_raw_silent_2d_map_tiers() -> None:
+    """The raw-value classification (SpineDbReader path): unnamed outer level keyed by periods -> period_time;
+    by time steps -> stochastic; a 3-level map stays stochastic."""
+    from spinedb_api import Map
+
+    from flextool.engine.preprocess.params._profiles import _tier_for_value
+
+    periods, steps = {"p2020"}, {"t0001", "t0002"}
+    pt = Map(["p2020"], [Map(["t0001", "t0002"], [0.2, 0.4])])
+    assert _tier_for_value(pt, periods, steps) == "period_time"
+    assert _tier_for_value(pt) == "stochastic"  # no vocabulary: the pre-item-73 reading
+    tt = Map(["t0001"], [Map(["t0001", "t0002"], [0.2, 0.4])])
+    assert _tier_for_value(tt, periods, steps) == "stochastic"
+    deep = Map(["p2020"], [Map(["t0001"], [Map(["t0001"], [0.2])])])
+    assert _tier_for_value(deep, periods, steps) == "stochastic"
+
+
+def test_column_fallback_period_outer_unnamed_inner_reads_as_period_time() -> None:
+    """Outer level labelled ``period``, inner level without an index name: the reader names the inner level ``x``
+    (the first unnamed level), so ``x`` is the time step on the rows whose ``period`` is set."""
+    src = InMemoryReader(
+        entities={"profile": pl.DataFrame({"name": ["wind"]})},
+        parameters={("profile", "profile"): pl.DataFrame(
+            {"name": ["wind"] * 4, "period": ["d1", "d1", "d2", "d2"], "x": ["t01", "t02", "t01", "t02"],
+             "value": [0.2, 0.4, 0.6, 0.8]})},
+    )
+    dt = _make_dt(["d1", "d2"], ["t01", "t02"])
+    assert _classify_profile_rows(src, dt) == {"wind": "period_time"}
+    out = p_profile_value_lf(src, dt).collect()
+    expected = pl.DataFrame({"f": ["wind"] * 4, "d": ["d1", "d1", "d2", "d2"], "t": ["t01", "t02"] * 2,
+                             "value": [0.2, 0.4, 0.6, 0.8]})
+    eq, diff = _frames_equal(out, expected, ("f", "d", "t"))
+    assert eq, diff

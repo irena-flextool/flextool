@@ -40,7 +40,7 @@ def main() -> None:
                         help='Settings database URL (fills in unset params; CLI overrides DB)')
     parser.add_argument(
         '--output-config-path', default=None,
-        help='Path to output configuration YAML file (default: templates/default_plots.yaml — '
+        help='Path to output configuration YAML file (default: the bundled flextool/schemas/default_plots.yaml — '
              'comparison mode reads scenario_rule + comparison_overrides from each leaf)'
     )
     parser.add_argument('--active-configs', type=str, default=None, nargs="+",
@@ -86,6 +86,10 @@ def main() -> None:
     parser.add_argument(
         '--only-first-file-per-plot', action='store_true', default=False,
         help='Only produce the first file for each plot (quick overview mode)'
+    )
+    parser.add_argument(
+        '--write-plot-data', action='store_true', default=False,
+        help='Also write the data drawn in each plot as a CSV file next to it (same name, .csv)'
     )
     parser.add_argument(
         '--comparison-parquet-dir', default=None,
@@ -275,6 +279,7 @@ def main() -> None:
         excel_dir=args.excel_dir,
         shared_legend=shared_legend,
         only_first_file=args.only_first_file_per_plot,
+        write_plot_data=args.write_plot_data,
         comparison_parquet_dir=args.comparison_parquet_dir,
         debug=args.debug != 'off',
         plot_dir_is_default=plot_dir_is_default,

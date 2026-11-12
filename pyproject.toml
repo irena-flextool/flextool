@@ -78,7 +78,10 @@ dependencies = [
     # an older one sets it to 1 at import, and child processes inherit that value.
     # 3.12.3 runs its join chains in written order on polars 2.x — required with
     # polars 2: an older one lets polars reorder them, about 3x the peak RAM.
-    "polar-high>=3.12.3",
+    # 3.12.4 writes every column into the MPS file and gives the basis-cache key
+    # with generic names — required: on the MPS solve path an older one shifts
+    # the solution values after a variable used nowhere.
+    "polar-high>=3.12.4",
     # Autoscale Layer 3 drives HiGHS' power-of-two objective conditioning
     # through the ``user_objective_scale`` option.  HiGHS renamed the older
     # ``user_cost_scale`` to ``user_objective_scale`` after 1.10.0, so older
@@ -207,6 +210,9 @@ flextool-run = "flextool_run_supervisor:main"
 flextool-update = "flextool.cli.cmd_update_flextool:main"
 flextool-write-outputs = "flextool.cli.cmd_write_outputs:main"
 flextool-migrate-database = "flextool.cli.cmd_migrate_database:main"
+flextool-freeze = "flextool.cli.cmd_freeze_database:main"
+flextool-project = "flextool.cli.cmd_project_package:main"
+flextool-time-runs = "flextool.cli.cmd_time_runs:main"
 flextool-scenario-results = "flextool.cli.cmd_scenario_results:main"
 flextool-execute-workflow = "flextool.cli.cmd_execute_flextool_workflow:main"
 flextool-export-to-tabular = "flextool.cli.cmd_export_to_tabular:main"
@@ -240,7 +246,9 @@ pythonpath = ["."]
 # ``not axis_enums`` likewise deselects the opt-in axis-Enum mode LP parity run
 # (``tests/engine/axis_enums/``; ``pytest -m axis_enums tests/engine/axis_enums -n 8``),
 # skipped by ``tests/engine/axis_enums/conftest.py`` unless ``-m`` names ``axis_enums``.
-addopts = "--import-mode=importlib -n auto --dist loadfile -m 'not csv_reload and not axis_enums'"
+# ``not commercial_shim`` deselects the opt-in commercial-solver shim checks (``tests/engine/commercial_shim/``;
+# ``pytest -m commercial_shim tests/engine/commercial_shim -n 0``; they need the solvers' Python packages).
+addopts = "--import-mode=importlib -n auto --dist loadfile -m 'not csv_reload and not axis_enums and not commercial_shim'"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "nightly_heavy: the heaviest tests (~1 h of CI worker time); the PR Tests workflow deselects them and its nightly job runs them. Local runs include them",
@@ -249,6 +257,7 @@ markers = [
     "gui: opens a real interactive Tk window; opt-in via --run-gui (deselected by default)",
     "csv_reload: CSV reload contract tests in tests/csv_reload/; opt-in via -m csv_reload (deselected by default)",
     "axis_enums: axis-Enum mode LP parity run (tests/engine/axis_enums/); opt-in via -m axis_enums",
+    "commercial_shim: item 230 against the commercial solvers' Python packages through CLI shims (tests/engine/commercial_shim/); opt-in via -m commercial_shim",
 ]
 testpaths = ["tests"]
 # Hard per-test wallclock cap.  Used by ``pytest-timeout`` (installed
@@ -323,4 +332,6 @@ flextool = [
     "assistant/_docs/md/*.md",
     "assistant/_docs/md/dev/*.md",
     "assistant/_docs/md/solvers/*.md",
+    "assistant/_docs/md/reference/*.md",
+    "assistant/_docs/md/how_to/*.md",
 ]

@@ -89,6 +89,26 @@ TOOL_DONE = "done"
 TOOL_ERROR = "error"
 TOOL_NOT_RUN = "not run"
 
+# --- asking a question again, as it was or changed (item 220) ------------------------------------------------------
+ASK_AGAIN_SYMBOL = "↻"
+EDIT_SYMBOL = "✎"
+#: The buttons' text where the font that has the symbols is missing, and the entries of the question's menu.
+ASK_AGAIN = "Ask again"
+EDIT_QUESTION = "Edit"
+ASK_AGAIN_TOOLTIP = "Ask this question again (R). Its answer is replaced."
+EDIT_TOOLTIP = "Change this question and ask it again (E). Its answer is replaced."
+ASK_AGAIN_KEY = "R"
+EDIT_KEY = "E"
+#: The R key always asks first (review decision D8); the ↻ button and the menu only when later questions go too.
+CONFIRM_ASK_AGAIN = "Ask question {n} again? Its answer is removed."
+CONFIRM_LATER = "This also removes the {n} later questions and answers."
+CONFIRM_LATER_ONE = "This also removes the later question and its answer."
+EDIT_SEND_TITLE = "Send the changed question"
+EDIT_SEND = "Send"
+EDITING = "Editing question {n}: Enter sends it, Escape cancels."
+CANNOT_ASK_AGAIN_WAITING = "This question cannot be asked again now: a saved request of this chat waits to be sent."
+CANNOT_ASK_AGAIN_GONE = "This chat no longer has that question, so it was not asked again."
+
 NOTICE_TITLE = "Before sending to {provider}"
 NOTICE_CHAT = "Chat {number}"
 NOTICE_SEND = "Send to {provider}"

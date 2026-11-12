@@ -1,6 +1,6 @@
 """``bind_within_period`` storage: the state cycles within each FlexTool period, blocks chain inside it (#124).
 
-reference.md: "state cycles within each FlexTool period; blocks chain inside the period" (GMPL:
+reference/nodes.md: "state cycles within each FlexTool period; blocks chain inside the period" (GMPL:
 ``v_state[n,d,t] − v_state[n,d,t_previous]`` with the period's first step wrapping to its own last step).  Before
 c22 the method had no implementation: such a node got no state-change term and no error.  Databases are built
 from JSON fixtures plus an override alternative (``tools/lp_snapshot.py`` overlays), never a checked-in sqlite.
@@ -211,7 +211,7 @@ def test_stochastic_forecast_periods_cycle_on_themselves(tmp_path_factory):
 
 def test_rolling_roll_wraps_to_its_last_step_in_the_period(tmp_path_factory):
     """In a roll the period's steps are the roll's: its first step wraps to the roll's last step of the period
-    (how_to.md: use whole periods as rolling_jump)."""
+    (how_to/solve_sequences.md: use whole periods as rolling_jump)."""
     steps = _run(tmp_path_factory, "stochastics.json",
                  _overlay("1_week_rolling_wind", [["node", "hydro_reservoir", "storage_binding_method", WP]]))
     assert len(steps) > 1

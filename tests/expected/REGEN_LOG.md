@@ -1226,3 +1226,298 @@ Results: with the higher invest-solve demand, wind investment in p2025/p2030/p20
 M CUR discounted) disappears.  Discounted costs: investment 469.65 -> 573.61, commodity 352.92 -> 233.26 M CUR.
 Battery state, `costs__dt` and the unit cost tables follow.  At the parent commit the scenario still matches the
 previous golden.  Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>`.
+
+## 2026-11-09 — every `costs__dt.csv` and `costs_discounted.csv` (the new cost category `ramps`)
+
+**Context.** `ramp_cost` is now charged (C-3, schema v79) and reported in the new cost category *ramps*, which is
+always written, as *starts* is.  No golden scenario has a ramp cost, so the column is 0 everywhere and nothing else
+changes; the LP of every standard fixture is byte-identical (`tools/lp_snapshot.py`).
+
+- `costs__dt.csv` (60 scenarios): a column `ramps` of zeros after `starts`.
+- `costs_discounted.csv` (13 scenarios): a row `ramps,0.0` after `starts`.
+- The per-entity cost tables are unchanged (a unit has a *ramps* column only with a ramp cost).
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the 60 failing scenarios.  The
+regenerated values of every other column and row matched the previous goldens within the comparison tolerance
+(largest relative difference 1.2e-5, solver noise against the frozen references), so the previous files were kept
+and only the zero column / row was added; the other files the regeneration rewrote (header spelling, number
+formatting, `summary_solve.csv` timestamps) were put back.
+
+## 2026-11-09 — `coal_wind_inertia/group_inertia__dt.csv` (the inertia tables were always empty)
+
+**Context.** `inertia_results` (`flextool/process_outputs/out_ancillary.py`) picked the `(process, node)`
+columns of a group by intersecting them with the group's node names only, so no column matched and
+`group_inertia__dt` and `group__unit__node_inertia__dt` were empty in every run (the golden had the index
+columns and no value column).  The columns are now those whose node is in the group, as in `inertia_constraint`.
+
+- `group_inertia__dt.csv`: a column `electricity`, = coal_plant's output flow × its `inertia_constant` 5 (coal_plant
+  has no online variable, so its flow counts): hand-checked t0001 209 MW × 5 = 1045 MWs, t0002 137 MW × 5 = 685 MWs,
+  t0003 76 MW × 5 = 380 MWs.
+- The LP and every other output are unchanged.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate coal_wind_inertia`.  The other two files the
+regeneration rewrote (`costs__dt.csv`, `unit__outputNode__dt.csv`) had the same values (header spelling only) and
+were put back.  `all`, `test_a_lot` and `online_bin_lin` also have an inertia group but no inertia golden; their
+goldens still match.
+
+## 2026-11-09 — `coal_wind_inertia/group__unit__node_inertia__dt.csv` (new golden)
+
+**Context.** A regression guard for the inertia output fix above: the per-unit table is now populated, and the
+scenario gets it as a golden (`tests/scenarios.yaml`).
+
+- One column (electricity, coal_plant, west) = coal_plant's output flow in `unit__outputNode__dt.csv` × its
+  `inertia_constant` 5, checked in every hour (48 rows): t0001 209 × 5 = 1045 MWs, t0004 40 × 5 = 200 MWs.
+- No other golden changed.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate coal_wind_inertia`; the other two files the
+regeneration rewrote (`costs__dt.csv`, `unit__outputNode__dt.csv`, header spelling only) were put back.
+
+## 2026-11-10 — new goldens for the must-run and emission-trajectory how-to scenarios
+
+**Context.** Eleven new scenarios in `tests/fixtures/tests.json` (added by
+`tests/fixtures/_augment_phase3_examples.py`, append-only): `must_run_none`, `must_run_profile`,
+`must_run_constraint_one`, `must_run_fleet_output_floor`, `must_run_fleet_two_online`, `must_run_flowgroup`,
+`must_run_heat_demand`, `must_run_min_load_only` (`docs/how_to/thermal_chp.md`) and `co2_without_measures`,
+`co2_existing_measures`, `co2_additional_measures` (`docs/how_to/emissions.md`).  No existing golden changed: the
+LP of every `tests/fixtures/tests.json` fixture of `tools/lp_snapshot.py` (115 fixtures, 480 files) is
+byte-identical before and after the augment.
+
+- Hand values (independent oracle, `tests/scenarios.yaml` comments) and the goldens agree: must-run dispatch per hour
+  wind 300 / baseload_plant 200 + wind 100 / coal_plant 150 + wind 150 / steam_1 100 + wind 200 (output floor and
+  flowGroup) / steam_1 50 + steam_2 50, online 1, 1, 0 + wind 200 / coal_chp heat 300, electricity 150 + wind 150 /
+  all steam offline + wind 300.  Emissions per period = the cap where it binds (2.0, 1.8, 1.6, 1.4 and 2.0, 1.5,
+  1.0, 0.5 Mt/a), 2 233 800 t/a without measures; CO2 price 30 / 0.85 = 35.2941 CUR/t in every binding period;
+  objectives 2628.0, 3004.8, 3322.447059.
+- `must_run_profile` has no `costs_discounted.csv` golden and pins `expected_solver_objective` (88.476): the written
+  fuel input of a unit with a profile equals its output (efficiency left out), so its calculated cost (35.916) is
+  wrong.  `tests/model/test_howto_must_run.py::test_profile_unit_reported_fuel_input` is a strict xfail for it.
+
+Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for each of the eleven scenarios.
+
+## 2026-11-10 — a unit with a profile reports its input with efficiency
+
+**Context.** `flextool/process_outputs/calc_capacity_flows.py` skipped the output/input conversion (slope, and the
+min-load section) for every process with a profile, so the reported input of a direct unit with a profile and an
+input equalled its output.  In the LP the profile limits the unit's single `v_flow` (its output) and
+`nodeBalance_eq` draws `v_flow · slope` from the input node (`balance_flow_terms`, `source_eff`), as for any
+direct unit; the old model's `process_profile` held only units without an input or an output.  The LP is unchanged.
+
+- `test_a_lot`, `test_a_lot_but_not_multi_year`, `node__dt.csv`: only column (`west`, `To units`) changed; the
+  difference is `ev_charger`'s input (efficiency 0.9, profile), now output / 0.9 (e.g. −96.0 → −101.1111 where
+  ev_charger makes 46 MW).
+- `must_run_profile`: new `costs_discounted.csv` golden; the calculated total is now the hand value 88.476
+  (commodity_cost 87.6 = 200 MW / 0.4 × 20 CUR/MWh × 48 h × 182.5 / 10⁶; other operational 0.876 = wind_plant 100 MW ×
+  1 CUR/MWh over the same hours), checked as
+  `expected_objective` instead of `expected_solver_objective`.  The strict xfail
+  `test_profile_unit_reported_fuel_input` is now a plain test.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the three scenarios; the other files
+the regeneration rewrote (`costs__dt.csv` of both test_a_lot scenarios, `0` → `0.0` in `ramps` only) were put back.
+
+## 2026-11-10 — new goldens for the desalination and CSP how-to scenarios
+
+**Context.** Nine new scenarios in `tests/fixtures/tests.json` (added by
+`tests/fixtures/_augment_phase3_examples.py`, append-only): `desal_backpressure`, `desal_extraction`,
+`desal_ro_invest`, `desal_water_storage` (`docs/how_to/thermal_chp.md`) and `csp_without`, `csp_existing`,
+`csp_fixed_design`, `csp_optimised_design`, `csp_gas_backup` (`docs/how_to/investment.md`).  No existing golden
+changed (only new directories under `tests/expected/`), and the LP of every `tools/lp_snapshot.py` fixture is
+byte-identical before and after the augment.
+
+- Hand values (independent oracle, `tests/scenarios.yaml` comments) and the goldens agree.  Desalination, per hour:
+  MED 3000 m³/h ← heat 250, bp_chp power 125, fuel 441.1765, coal_plant 175 / ext_chp heat 250, power 300, fuel
+  750, coal_plant 0 / ro_desal invested 2000 m³/h (input 8 MW), MED 1000, heat 83.3333, power 41.6667, coal_plant
+  266.3333 / water state 0 → 12 000 (t0012) → 0 (t0024), twice.  Objectives 153.944118, 131.4, 147.233261
+  (commodity 142.4187 + unit investment 4.8146), 153.944118.
+- CSP, period files: field 1 441 750 MWh_th/a (7900 × 182.5), turbine 576 700 MWh_e/a (3160 × 182.5), coal
+  737 300 MWh/a (4040 × 182.5); with the gas boiler 748 250 (4100 × 182.5), turbine 876 000, coal 438 000.  The
+  curtailment (500) and potential (8400) `__d` files are sums over the 48 h, not scaled to a year.  Fixed design
+  capacities 100 / 500 / 2500, unit investment 10.7263 + storage investment 3.2179 = 13.944209.  Objectives 65.7,
+  36.865, 50.809209, 31.876667; `csp_optimised_design` 43.352629 (summary_solve only; not solved by hand,
+  `tests/model/test_howto_csp.py` checks it is ≤ the fixed design).  The CSP timing is degenerate, so no `__dt`
+  file is compared.
+
+Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for each of the nine scenarios.
+
+## 2026-11-10 — new node-group indicator goldens for `base_weighted` and `wind` (item 198 review)
+
+**Context.** No golden held a node-group period table, so the weighted ratios of item 198 (`group_node__d.csv`,
+`group_node_VRE_share__d.csv`) were not pinned through the real loader.  The two files are added to `base_weighted`
+(the only scenario with time-step weights; it has no VRE, so it pins the weight alignment, the loss-of-load share and
+the annualized inflow) and to `wind` (curtailment, unit weights).  No existing golden changed.
+
+- Hand values, from the inputs in `tests/fixtures/tests.json` and the existing goldens (not from the new files):
+  - `wind`: from `unit__outputNode__dt.csv` (flow) and `unit_outputNode_VRE_potential__dt.csv` (potential), 48
+    steps of 1 h: *Curtailed VRE of potential VRE* = Σ(pot − flow) / Σ pot = 0.090211; *VRE share of demand* =
+    Σ flow / Σ inflow = 0.932516; *Curtailed VRE of demand* = 0.092465; *Annualized inflow* = Σ inflow · 8760/48 =
+    5 311 297.5.  The goldens (rounded to 4 decimals) are 0.0902, 0.9325, 0.0925, 5311297.5.
+  - `base_weighted`: `timeset_weights` of `2day` sum to 60 over the 48 steps and are normalised to a mean of 1
+    (factor 48/60), so *Annualized inflow* = Σ w·inflow · 0.8 · 8760/48 = 7 074 247.5 · 0.8 = 5 659 398 (golden
+    5659398.0); *Loss of load share* = 1 (no units, all demand is slack).
+
+Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the two scenarios; the other files the
+regeneration rewrote (number formatting of `costs__dt.csv`, `unit__outputNode__dt.csv`,
+`unit_outputNode_VRE_potential__dt.csv`, the timestamp of `summary_solve.csv`) were put back.
+
+## 2026-11-10 — capacity margin counts by entity class (WP-1 of `capacity_margin_design.md`)
+
+**Context.** The capacity margin row now counts firm units at capacity × availability × capacity_max_coeff, VRE at
+capacity × profile × availability, and storage-backed units, connections and consumption by their flow; the dumped
+energy (downward balance slack) is subtracted.  A connection with both ends in the group enters at both ends, so
+its losses at a time step are part of the requirement.  Six scenarios have a capacity margin (alternative
+`capacity_margin`, group {east, north, west}); `capacity_margin`, `all` and `test_a_lot_but_not_multi_year` match
+their goldens unchanged.  Three were regenerated:
+
+- `network_coal_wind_capacity_margin` (`unit__outputNode__dt`, `connection__dt`, `costs__dt`) and
+  `network_coal_wind_reserve_co2_capacity_margin` (the same, `process__reserve__upDown__node__dt`, `co2`): the
+  group's internal lines `west_east` (0.9), `west_north` (0.9) and `east_north` (0.8) now add their losses to the
+  requirement.  The LP sheds east and north at the binding steps to remove those losses from the requirement (a
+  shed MWh costs one hour of `penalty_up`, a margin MW a year of `penalty_capacity_margin`; corrected in the fix
+  pass below, where these goldens are restored): less is sent to east and north, the coal output there falls and
+  those nodes take more upward slack.  The shortfall stays 122.4522 MW (`slack__capacity_margin__d`
+  unchanged: with no line flow at the binding steps the requirement is the old one).  Over the 48 h, `west_east`
+  18 994.6 → 18 087.9 MWh, `west_north` 4 800 → 4 700, `east_north` 4 800 → 4 374.7; commodity cost 2 296 173 →
+  2 240 250 and upward slack penalty 702 720 → 1 415 528 (reserve/CO2 variant: CO2 7.255 → 7.0945 Mt).
+- `test_a_lot` (`unit__outputNode__dt`, `node__dt`, `costs__dt`): the same totals (the summed costs and CO2 are
+  unchanged to the printed digits, `costs_discounted` is unchanged): in p2035 `coal_chp` is off in other hours of
+  equal cost (heat taken as upward slack, `coal_plant` covering west), another optimal vertex of a degenerate LP
+  after the row's coefficients changed (availability alternative, connection flows, the dump term).  The
+  `costs__dt` file also changes its number format (0 → 0.0) in the rows the regeneration rewrote.
+
+Hand values for the new row are in `tests/model/test_capacity_margin_flow_credit.py` (design and critique, checked
+by a separate agent).  Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the three.
+
+## 2026-11-10 — capacity margin fix pass: lines and lossy units inside the group left out (option B)
+
+**Context.** The WP-1 row required the losses of the group's internal lines at each step, and the LP shed east
+and north at the binding steps to remove them (the logic check in `capacity_margin_incentives.md` reproduces it).
+The fix pass leaves connections with both ends in the group and lossy units inside it out of the row, counts a
+multi-output unit's capacity once (maxOutputSum), and takes back the slack energy of storage nodes feeding the
+group.  `capacity_margin`, `all` and `test_a_lot_but_not_multi_year` match their goldens unchanged.
+
+- `network_coal_wind_capacity_margin` and `network_coal_wind_reserve_co2_capacity_margin`: back to their goldens
+  before `7ed575d0` (the files are those of `4eb0c857`, byte for byte; the regenerated run matches them to the
+  printed digits).  The east/north shedding is gone: upward slack penalty 1 415 528 → **702 720** (reserve/CO2
+  variant 1 426 975 → **754 341**), `west_east` 18 087.9 → 18 994.6 MWh, `west_north` 4 700 → 4 800,
+  `east_north` 4 374.7 → 4 800, CO2 7.0945 → 7.255 Mt; the shortfall stays 122.4522 MW.
+- `test_a_lot` (`unit__outputNode__dt`, `node__dt`, `costs__dt`): the row changed again (its group's internal
+  lines are left out), and the degenerate LP lands on a third vertex: in p2035 `coal_chp` and `wind_plant` move
+  between hours of equal cost.  Every column total is unchanged (commodity 834 347.447, CO2 709 195.331, upward
+  slack penalty 10 342 768.41, `coal_chp` heat 23 882.374, heat loss of load 1 217.626), and `costs_discounted`
+  is unchanged.  heat is not in the group, so the one-capacity rule of a CHP does not apply there.
+
+Generated with `pytest tests/test_scenarios.py --regenerate test_a_lot`; the two network scenarios were written
+from `4eb0c857` after their regenerated files were checked equal to them (max abs difference 1e-4, the rounding).
+
+## 2026-11-11 — per-period solve labels (#210): the complete solve, and the investment solve for capacities
+
+**Context.** The `solve` column of the per-period tables named the last roll that realized a part of the period
+(`dispatch_fullYear_roll_roll_17`).  It now names the complete solve (roll suffix removed); the capacity and
+investment-marginal tables name the solve that realized the period's investments.
+
+- `multi_fullYear_battery_nested_multi_invest`, `multi_fullYear_battery_nested_sample_invest_one_solve`,
+  `multi_fullYear_battery_nested_24h_invest_one_solve`: `cost_{unit,node,connection}_{annualized,discounted}__d`
+  `dispatch_fullYear_roll_roll_{17,35,53,71}` → `dispatch_fullYear_roll`; `unit_capacity__d` → the investment
+  solve (`invest_5weeks_p2020` … `invest_5weeks_p2035`, `invest_5weeks`, `invest_24h`).  21 files; a column-wise
+  comparison against the previous files shows only the `solve` column changed (every value identical).
+
+Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the three.  The regeneration also
+rewrote `costs__dt`, `node_state__dt` and `unit__outputNode__dt` with last-digit rounding differences (≤ 4e-4) and
+a 0 → 0.0 number format; those three files were restored to their previous content (not committed).
+
+Missed in that commit (gate 5): `5weeks_invest_fullYear_dispatch_coal_wind/unit_capacity__d` `solve`
+`y2020_fullYear_dispatch` → `invest_1year_5weeks` (the investment solve), 2 rows; a column-wise comparison shows
+only the `solve` column changed (the regenerated file prints `500` as `500.0`, same value).  Generated with
+`pytest tests/test_scenarios.py --regenerate 5weeks_invest_fullYear_dispatch_coal_wind`; the rewritten
+`costs__dt` and `unit__outputNode__dt` (number format only) were put back to their previous content.
+
+## 2026-11-11 — curtailment / VRE potential `_d` and flowGroup `cumulative_flow` scaled to a full year
+
+**Context.** `unit_curtailment__outputNode__d`, `unit_outputNode_VRE_potential__d` and `group_flow__d`
+(`cumulative_flow`) were sums over the sampled time steps; the plot "total" multiplied them by the years
+represented, which is neither a total nor comparable with the other per-period energies.  They are now annualised
+like the flows (`× step_duration × timestep_weight`, Σ over the period, ÷ `complete_period_share_of_year`).  With a
+2-day period (share 48/8760) every value is the old one × 8760/48 = 182.5; `average_flow` is unchanged with these
+uniform weights (cumulative / 8760 h = the old cumulative / 48 h).  With timeset weights it is now the weighted mean
+(a fix: before, the flow group ignored the weights; the unit test's value goes 35 → 32.5 MW).
+
+- `csp_existing`, `csp_fixed_design`, `csp_gas_backup` `unit_curtailment__outputNode__d`: 500 → 91 250 MWh/a.
+- `csp_existing/unit_outputNode_VRE_potential__d`: 8 400 → 1 533 000 MWh/a.
+- `aggregate_outputs_network_coal_wind_chp/group_flow__d` `cumulative_flow`: 25 930.444 → 4 732 306.1,
+  51 315.811 → 9 365 135.5, 52 587.889 → 9 597 289.7 (× 182.5 to the printed digits); `average_flow` unchanged.
+
+Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the four.  The regeneration also
+rewrote `summary_solve.csv` (time stamp) of the csp scenarios and `costs__dt.csv` of the aggregate scenario
+(`0` → `0.0` number format); those files were put back to their previous content.
+
+## 2026-11-11 — new golden `wind_weighted` (item 198 follow-up)
+
+**Context.** New scenario `wind_weighted` (`tests/fixtures/_augment_wind_weighted.py`): the `wind` system
+(`init → west → wind`) with the timeset weights of `base_weighted` (`weighted_2day`: 0.5 / 1 / 1.5 / 2 per 12 steps
+of t0001-t0048, normalised to mean 1, ×0.8).  `wind_plant` is the only unit and there is no storage, so each
+step's flow is min(1000·profile, demand) whatever the weights; the period shares are ratios of weighted sums.
+
+Hand values (from `tests.json`, exact arithmetic; re-derived by an independent oracle, which also reproduces the
+unweighted `wind` golden 0.0902 / 0.9325 / 0.0925 / 0.0675):
+
+- Σw·potential 39 580, Σw·curtailed 2 900, Σw·flow 36 680, Σw·inflow 38 763, Σw·loss of load 2 083 (raw w, MWh).
+- Curtailed VRE of potential VRE 2900/39580 = 0.073269 → **0.0733**; VRE share of demand 36680/38763 = 0.946263 →
+  **0.9463** (also `group_node_VRE_share__d`); curtailed VRE of demand **0.0748**; loss of load share **0.0537**;
+  excess load **0.0**; annualized inflow 38763·0.8·8760/48 = **5 659 398.0** (as `base_weighted`).
+- `unit_curtailment__outputNode__d` = Σw_norm·curtailed·8760/48 = 2320·182.5 = **423 400** MWh/a.
+- Objective 900·2083·0.8·8760/48/1e6 = **273.7062** M CUR (`expected_objective`, tolerance 1e-5).
+
+The generated CSVs carry exactly these 4-dp values.  Generated with
+`pytest tests/test_scenarios.py --regenerate wind_weighted`.
+
+## 2026-11-11 — `network_coal_wind_battery_invest_cumulative/unit_capacity__d.csv` (item 218)
+
+**Context.** An `invest_method` now offers retirement in every investment period with pre-existing capacity, also
+without `salvage_value` (before: only with a non-zero salvage value or a user-constraint capacity coefficient).
+`coal_plant` (`cumulative_limits`, existing 500 MW, no salvage value) therefore gets `v_divest` in p2020-p2035.
+
+**Effect.** The optimum is unchanged: coal invests up to its cumulative cap in every period, and retiring existing
+coal would only mean reinvesting at 400 CUR/kW, so `v_divest` = 0.  The `divested` column of `coal_plant` goes from
+empty to `0.0` in the four periods (a retirement-eligible cell is a number, an ineligible one is empty); every other
+cell and every other CSV of the scenario is unchanged (objective unchanged).  The LP gains the four `v_divest_p`
+columns with their bound, `maxRetired_existing_p` and cumulative-capacity terms (`tools/lp_snapshot.py compare
+--canonical`: the only differences over all fixtures are this scenario and the `cumulative_capacity` fixture,
+same columns).  The lp_snapshot fixture `invest_total_no_var` relied on a missing `invest_cost` for its entity
+without `v_invest`; it now gives `x_unit` a 20-year `construction_lead_time` (start after the model horizon, so no
+decision is offered), and its LP is equivalent to the one before.
+
+Generated with `pytest tests/test_scenarios.py --regenerate network_coal_wind_battery_invest_cumulative`; the
+regeneration also rewrote `costs__dt.csv` (`0` → `0.0` number format), which was put back to its previous content.
+
+## 2026-11-11 — `wind_weighted` / `base_weighted` `summary_solve.csv` slack lines (item 219)
+
+**Context.** The Created / Removed / Inertia / NonSync / Reserve lines of `summary_solve.csv` are now
+Σ_t w·Δt·slack (timestep weight w, as the objective's penalty), not the unweighted Σ_t Δt·slack.
+
+Hand values (from `tests/fixtures/tests.json`, `weighted_2day` weights 0.5 / 1 / 1.5 / 2 per 12 steps of
+t0001-t0048, normalised to mean 1: 0.4 / 0.8 / 1.2 / 1.6; re-derived by an independent oracle):
+
+- `wind_weighted`: Created, west, p2020 **1964 → 1666.4** (Σ w_raw·slack = 2083, / 1.25); check: objective
+  900 · 1666.4 · 8760/48 / 1e6 = 273.7062 M CUR, the golden objective.
+- `base_weighted`: Created, west, p2020 **29103 → 31010** (31 010.4 printed with 5 significant digits); check:
+  900 · 31 010.4 = 27 909 360 CUR, the sum of the `upward slack penalty` column of the golden `costs__dt.csv`.
+
+The goldens with uniform weights are unchanged.  Generated with `pytest tests/test_scenarios.py --regenerate
+<scenario>`; the regeneration also rewrote the time stamp of `summary_solve.csv` and `base_weighted/costs__dt.csv`
+(`0` → `0.0` number format), which were put back to their previous content.  The section header ("Slack variables
+multiplied by timestep duration ...") is unchanged, so the other 17 goldens that print it stay as they are.
+
+## 2026-11-11 — `summary_solve.csv` slack section header, 19 scenarios (item 219 follow-up)
+
+**Context.** The header of the slack section said "Slack variables multiplied by timestep duration (... decreasing
+capacity margin ...)". Since item 219 the lines are also weighted by the timestep weight, and the CapMargin line was
+never multiplied by a duration (it is per period). The header now reads "Slack variables multiplied by timestep
+duration and timestep weight, summed over the solved time steps of each period (creating or removing energy/matter,
+creating inertia, adding synchronous generation, creating reserve); capacity margin per period".
+
+**Effect.** Only that header line changes, in the 19 goldens that print it: `2_day_stochastic_dispatch`, `5weeks_battery_intraperiod_blocks`, `base`, `base_weighted`, `capacity_margin`, `co2_additional_measures`, `co2_existing_measures`, `co2_without_measures`, `csp_existing`, `csp_fixed_design`, `csp_gas_backup`, `csp_optimised_design`, `csp_without`, `fullYear`, `fullYear_roll`, `multi_year_wind_growth_cap`, `multi_year_wind_no_investment`, `scale_to_peak_flow`, `wind_weighted`.
+No value, no other line and no other CSV changes (`git diff`: 19 lines removed, 19 added, all the header).
+
+Generated with `pytest "tests/test_scenarios.py::test_scenario[<scenario>]" --regenerate <scenario>` per scenario;
+the regeneration also rewrote the time stamp line of `summary_solve.csv` and the number / header format of some
+other CSVs (`costs__dt.csv`, `node__d.csv`, `node__dt.csv`, `slack__upward__node_state__dt.csv`), which were put
+back to their previous content (copied from a backup taken before the run). The 19 scenarios then pass in compare mode.

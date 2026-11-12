@@ -194,6 +194,19 @@ class ModelBuilder:
                     node_names, cum_dist, pair, cost_per_kw, cost_per_kw_per_km, loss_per_100km
                 )
 
+    def _add_invest_method(self, entity_class: str, name: str, spec: dict) -> None:
+        """Offer investment only when the spec asks for it.
+
+        An ``invest_method`` alone offers investment even without ``invest_cost``
+        (then the investment is free). So the builder writes one only when the spec
+        has an ``invest_cost`` (method ``invest_no_limit``) or names an
+        ``invest_method`` itself; a spec with neither gets no investment.
+        """
+        if "invest_method" in spec:
+            self._add_param(entity_class, name, "invest_method", spec["invest_method"])
+        elif "invest_cost" in spec:
+            self._add_param(entity_class, name, "invest_method", "invest_no_limit")
+
     def _create_connection_entity(
         self,
         node_names: list[str],
@@ -340,7 +353,7 @@ class ModelBuilder:
                     # Storage node
                     self._add_entity("node", storage_node_name)
                     self._add_param("node", storage_node_name, "node_type", "storage")
-                    self._add_param("node", storage_node_name, "invest_method", "invest_no_limit")
+                    self._add_invest_method("node", storage_node_name, storage_params)
                     self._add_param("node", storage_node_name, "storage_binding_method", "bind_within_solve")
                     self._add_param("node", storage_node_name, "lifetime", storage_params.get("lifetime", 20))
                     self._add_param("node", storage_node_name, "discount_rate", storage_params.get("discount_rate", 0.05))
@@ -350,7 +363,7 @@ class ModelBuilder:
                     # Storage connection (grid_node <-> storage_node)
                     self._add_entity("connection", conn_name)
                     self._add_entity("connection__node__node", [conn_name, grid_node, storage_node_name])
-                    self._add_param("connection", conn_name, "invest_method", "invest_no_limit")
+                    self._add_invest_method("connection", conn_name, conn_params)
                     self._add_param("connection", conn_name, "transfer_method", "regular")
                     self._add_param("connection", conn_name, "lifetime", conn_params.get("lifetime", 20))
                     self._add_param("connection", conn_name, "discount_rate", conn_params.get("discount_rate", 0.05))
@@ -422,7 +435,7 @@ class ModelBuilder:
             self._add_entity("unit", unit_name)
 
             # Unit parameters
-            self._add_param("unit", unit_name, "invest_method", "invest_no_limit")
+            self._add_invest_method("unit", unit_name, tech_spec)
             self._add_param("unit", unit_name, "lifetime", tech_spec.get("lifetime", 20))
             self._add_param("unit", unit_name, "discount_rate", tech_spec.get("discount_rate", 0.05))
             if "conversion_method" in tech_spec:

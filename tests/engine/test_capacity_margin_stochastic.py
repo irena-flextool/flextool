@@ -102,3 +102,23 @@ def test_deterministic_capacity_margin_penalty_unweighted(tmp_path_factory) -> N
     base = _unweighted(fd)
     for d, c in coefs.items():
         assert c == pytest.approx(base[d], rel=1e-12), d
+
+
+def test_fan_capacity_margin_table_has_one_row_per_forecast_branch_period(tmp_path_factory) -> None:
+    """The per-solve capacity-margin table (item 85) keeps each forecast branch period of the fan: one row per
+    branch period, its shortfall the row's deficit at the binding step, and its shadow price the penalty
+    (1 CUR/kW/a): the probability weight of the objective is divided out."""
+    from flextool.engine import run_chain_from_db
+    from flextool.engine.output._capacity_margin import REPORT_PREFIX, read_capacity_margin_parts
+
+    url, scen = make_db(tmp_path_factory, alt="cm_stoch_out", values=MARGIN, base_chain=CHAIN,
+                        fixture_json=RECOURSE_JSON, entities=CM_G)
+    work = tmp_path_factory.mktemp("cm_stoch_out_w")
+    run_chain_from_db(url, scen, work_folder=work)
+    table = read_capacity_margin_parts(work / "output_raw", REPORT_PREFIX)
+    assert sorted(table["period"].to_list()) == list(FAN)
+    assert table["group"].unique().to_list() == ["cm_g"]
+    for row in table.iter_rows(named=True):
+        assert row["shortfall"] > 0, row["period"]
+        assert row["shortfall"] == pytest.approx(row["requirement"] - row["counted"], rel=1e-9), row["period"]
+        assert row["capacity_price"] == pytest.approx(1.0, rel=1e-6), row["period"]

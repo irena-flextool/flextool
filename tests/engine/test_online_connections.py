@@ -1,6 +1,6 @@
 """Online variables of connections (``startup_method`` on connections, #50) and the online sets of units.
 
-docs/reference.md: a connection's ``startup_method`` (``linear`` / ``binary``) gives it online capacity; its flow in
+docs/reference/connections.md: a connection's ``startup_method`` (``linear`` / ``binary``) gives it online capacity; its flow in
 each direction is limited by the online capacity × availability and ``startup_cost`` is paid per MW brought online.
 GMPL mapped one-way connections with a startup method to online methods; the engine had lost that:
 

@@ -75,11 +75,17 @@ from flextool.engine.preprocess.params._per_solve_sets import (
     timeset_timeline_lf,
 )
 from flextool.engine.input._solve_state import CommissioningLagError, FlexToolConfigError, LineageFilterError
+from flextool.engine.input._solve_step_aggregation import aggregate_if_active
 from flextool.engine.input._param_shapes import (
     broadcast_to_period_time,
     parameter_has_values,
     promote_param_to_dt,
     resolve_param_shape,
+)
+from flextool.engine.preprocess.params._existing import (
+    DIVEST_NOT_ALLOWED as _DIVEST_NOT_ALLOWED,
+    INVEST_METHODS_ALL as _INVEST_METHODS_ALL,
+    INVEST_NOT_ALLOWED as _INVEST_NOT_ALLOWED,
 )
 
 
@@ -154,7 +160,7 @@ def _recourse_invest_active(
 # (``apply_derived_c`` / ``apply_npv`` / ``apply_synthetic_invest_sets``)
 # to the recourse pairs, or ``None`` when the flag is off / deterministic.
 # Read by the explicit-per-period producers (_resolve_per_period_lf and
-# _ed_period_param_lf, which serves _per_entity_period_cost and
+# _ed_period_param_lf, which serves the zero-cost investment notice and
 # p_entity_max_units_from_source) to inherit each
 # anchor's per-(e,d) value onto its branch periods (§4.1).  ``None`` ==
 # no-op == flag-off byte-parity.  The set-at-boundary-top invariant means
@@ -1122,6 +1128,11 @@ def p_timestep_weight_from_source(
     # resolved and validated by the shape registry; any other shape raises.
     resolved_tw = resolve_param_shape(source, "timeset", "timeset_weights")
     tw = resolved_tw.frame if resolved_tw is not None else None
+    if tw is not None and tw.height > 0:
+        # A solve with new_stepduration: one weight per solve step, the step mean (_solve_step_aggregation).
+        tw = aggregate_if_active(
+            tw.select("name", resolved_tw.time_index_column, pl.col("value").cast(pl.Float64)),
+            ("timeset", "timeset_weights"), time_col=resolved_tw.time_index_column, steps=dt.get_column("t"))
     if tw is None or tw.height == 0:
         # No flat ``timeset_weights`` — but this may be an RP solve.
         # ``representative_period_weights`` are folded into
@@ -1265,85 +1276,6 @@ def pdt_branch_weight_from_source(
 
 
 # ---------------------------------------------------------------------------
-# §3.2.1 — p_inflow (scaling step over node.inflow)
-# ---------------------------------------------------------------------------
-
-
-def p_inflow_from_source(
-    source: "InputSource",
-    dt: pl.DataFrame,
-    step_dur: Param,
-) -> Param | None:
-    """Per-(n, d, t) node inflow with scaling applied.
-
-    Audit §3.2.1 algorithm:
-
-    1. ``p_inflow_raw`` = unrolled ``node.inflow`` (Map / TimeSeries /
-       3d_map for stochastic).  Source already produces this.
-    2. ``inflow_method`` decides the scaling:
-       * ``use_original`` — pass-through.
-       * ``no_inflow`` — drop.
-       * ``scale_to_annual_flow`` — scale so sum_t (raw * step_dur) =
-         annual_flow * period_share.
-       * ``scale_to_peak_inflow`` / ``use_peak_inflow`` — scale so
-         max_t raw' = peak_inflow * availability.
-       * ``scale_to_annual_and_peak`` — combination.
-
-    For Γ.3.A: cover the **default ``use_original``** path which
-    requires no scaling.  This handles all non-time-scaled inflow
-    fixtures (most of the suite).  The scaling cascade for
-    ``scale_to_*`` methods is deferred to Batch B; fixtures that
-    activate it retain their CSV-loaded value.
-
-    Returns ``None`` if the helper can't safely override (any
-    non-default ``inflow_method`` present, or the source frame's shape
-    doesn't match what the simple path expects).
-    """
-    if dt is None:
-        return None
-    method = _try_param(source, "node", "inflow_method")
-    if method is not None and method.height > 0:
-        # Any non-`use_original` (and non-default) method → scaling path.
-        # We don't yet implement scaling — defer to CSV.
-        non_trivial = method.filter(
-            ~pl.col("value").is_in(["use_original"])
-        )
-        if non_trivial.height > 0:
-            return None
-    raw = _try_param(source, "node", "inflow")
-    if raw is None:
-        return None
-    cols = raw.columns
-    # Expected 1d-period-keyed Map(t) → cols ['name', 'period', 't', 'value']
-    # or 3d_map ['name','period','branch','t','value'] (stochastic).
-    if "branch" in cols:
-        # Stochastic — defer (Batch C scope).
-        return None
-    if not {"name", "period", "t", "value"}.issubset(cols):
-        return None
-    out = (raw.lazy()
-              .select(alias_to_axis("name", "n"),
-                      alias_to_axis("period", "d"),
-                      pl.col("t"),
-                      pl.col("value").cast(pl.Float64))
-              # Restrict to the active solve's (d, t) — matches CSV-side
-              # which only emits rows for periods/timesteps in dt.
-              # Defensive re-cast: align d/t to canonical Enum so this
-              # inner-join composes cleanly against the alias_to_axis-cast
-              # base above even when ``dt`` arrives with Utf8 d/t.
-              .join(dt.lazy()
-                       .select(alias_to_axis("d", "d"),
-                               alias_to_axis("t", "t"))
-                       .unique(),
-                    on=["d", "t"], how="inner")
-              .sort("n", "d", "t")
-              .collect())
-    if out.height == 0:
-        return None
-    return Param(("n", "d", "t"), out)
-
-
-# ---------------------------------------------------------------------------
 # §3.6.2 — p_process_existing_count
 # ---------------------------------------------------------------------------
 
@@ -1386,8 +1318,9 @@ def _process_capacity_per_unit_lf(cap_lf: pl.LazyFrame, source: "InputSource") -
     """Lazy ``[p, d, value]``: the capacity ``[e, d, value]`` (MW / MWh) of each entity divided by its unitsize
     (:func:`_entity_unitsize_lf`; ``UNITSIZE_DEFAULT`` where absent).
 
-    capacity = existing × virtual_unitsize when virtual_unitsize is set, else existing, so the result is the existing
-    unit count: ``existing`` itself with virtual_unitsize, 1 without it (unitsize = existing).
+    capacity = existing × virtual_unitsize when virtual_unitsize is above 0, else existing, so the result is the
+    existing unit count: ``existing`` itself with virtual_unitsize, 1 without it (unitsize = existing; a
+    virtual_unitsize of 0 or below is ignored).
     """
     us_lf = _entity_unitsize_lf(source)
     return (cap_lf.pipe(rename_to_axis, {"e": "p"})
@@ -1433,12 +1366,12 @@ def p_process_existing_count_from_source(
     *,
     provider: "object | None" = None,
 ) -> Param | None:
-    """Per-(p, d) existing unit count = capacity / unitsize (= ``existing`` when virtual_unitsize is set).
+    """Per-(p, d) existing unit count = capacity / unitsize (= ``existing`` when virtual_unitsize is above 0).
 
-    capacity[p, d] = existing[p, d] × virtual_unitsize[p] when virtual_unitsize is set, else existing[p, d];
+    capacity[p, d] = existing[p, d] × virtual_unitsize[p] when virtual_unitsize is above 0, else existing[p, d];
     unitsize per the canonical cascade (:func:`_entity_unitsize_lf`)::
 
-        unitsize = virtual_unitsize (if explicitly set and non-zero)
+        unitsize = virtual_unitsize (if explicitly set and above 0)
                   OR existing       (if non-zero)
                   OR 1000.0
 
@@ -1474,114 +1407,6 @@ def p_process_existing_count_from_source(
     if out.height == 0:
         return None
     return Param(("p", "d"), out)
-
-
-# ---------------------------------------------------------------------------
-# §3.6.1 — p_profile_value (alternative cascade)
-# ---------------------------------------------------------------------------
-
-
-def p_profile_value_from_source(
-    source: "InputSource",
-    dt: pl.DataFrame,
-) -> Param | None:
-    """Per-(f, d, t) profile value, resolved across the alternative
-    cascade.
-
-    Audit §3.6.1 algorithm:
-        ``profile.profile`` parameter cascades scalar → period → time-of-
-        period → branch.  Each tier is the next narrower index space.
-
-    Implementation strategy (single-collect lazy chain):
-
-    1. Pull ``source.parameter("profile", "profile")``.  The source has
-       already collapsed alternative ranks into a single per-entity
-       view.  The shape depends on the value's runtime type:
-        - scalar → ``[name, value]`` (broadcast over (d, t) of dt).
-        - 1d_map(period) → ``[name, period, value]``
-          (broadcast over t of dt for matching periods).
-        - time_series → ``[name, t, value]``
-          (broadcast over d of dt for matching t).
-        - 2d_map(period, t) → ``[name, period, t, value]`` (direct).
-        - 3d_map(period, branch, t) → ``[name, period, branch, t, value]``
-          (stochastic — drops branch dim downstream via period_branch).
-
-    The cascade is per-entity, not within an entity: each profile picks
-    one tier based on the alternative chain's resolution.  The returned
-    frame is ``[f, d, t, value]`` with one row per (profile × dt).
-
-    Stochastic 3d_map case is deferred (Batch C scope) — caller falls
-    back to CSV when the source returns a branch-dim'd profile frame.
-    """
-    if dt is None:
-        return None
-    raw = _try_param(source, "profile", "profile")
-    if raw is None:
-        return None
-    cols = raw.columns
-    if "branch" in cols:
-        # Stochastic 3d_map (named branch column) — deferred.
-        return None
-    # Δ.7: dropped the ``_check_canonical_keys`` predicate (per the
-    # Δ.6 close-stanza TODO #5).  The Δ.7 ``_profiles`` module
-    # owns the canonical cascade; this legacy helper is preserved as a
-    # ``parameter()``-only fast path that handles the deterministic
-    # period/t/scalar cases via column-name detection (still useful as
-    # a fallback when the new cascade can't be wired — eg. ad-hoc
-    # callers in the test suite).  Generic ``x`` / ``i`` keys are now
-    # tolerated and routed through the time-axis branch by the column
-    # detector below.
-    # Defensive re-cast: ensure d/t are canonical Enum so the joins
-    # below against alias_to_axis-cast raw frames compose cleanly.
-    dt_lf = dt.lazy().with_columns(
-        alias_to_axis(pl.col("d"), "d"),
-        alias_to_axis(pl.col("t"), "t"),
-    )
-    # Detect tier by which columns are present.
-    has_period = "period" in cols
-    has_t = "t" in cols
-    if has_period and has_t:
-        # 2d_map: direct (f, d, t, value).
-        out = (raw.lazy()
-                  .select(alias_to_axis("name", "f"),
-                          alias_to_axis("period", "d"),
-                          pl.col("t"),
-                          pl.col("value").cast(pl.Float64))
-                  .join(dt_lf, on=["d", "t"], how="inner")
-                  .sort("f", "d", "t")
-                  .collect())
-    elif has_period:
-        # 1d_map(period): broadcast over t of dt for matching periods.
-        out = (raw.lazy()
-                  .select(alias_to_axis("name", "f"),
-                          alias_to_axis("period", "d"),
-                          pl.col("value").cast(pl.Float64))
-                  .join(dt_lf, on="d", how="inner")
-                  .select("f", "d", "t", "value")
-                  .sort("f", "d", "t")
-                  .collect())
-    elif has_t:
-        # time_series: broadcast over d for matching t.
-        out = (raw.lazy()
-                  .select(alias_to_axis("name", "f"),
-                          pl.col("t"),
-                          pl.col("value").cast(pl.Float64))
-                  .join(dt_lf, on="t", how="inner")
-                  .select("f", "d", "t", "value")
-                  .sort("f", "d", "t")
-                  .collect())
-    else:
-        # Scalar — broadcast over the full dt × profiles grid.
-        out = (raw.lazy()
-                  .select(alias_to_axis("name", "f"),
-                          pl.col("value").cast(pl.Float64))
-                  .join(dt_lf, how="cross")
-                  .select("f", "d", "t", "value")
-                  .sort("f", "d", "t")
-                  .collect())
-    if out.height == 0:
-        return None
-    return Param(("f", "d", "t"), out)
 
 
 # ---------------------------------------------------------------------------
@@ -2427,10 +2252,10 @@ def p_flow_upper_existing_from_source(source: "InputSource",
                                          provider: "object | None" = None,
                                          ) -> "Param | None":
     """Per-arc structural existing bound: the existing unit count (capacity / unitsize per (p, d), =
-    ``existing`` when virtual_unitsize is set) cross-joined with ``pss``.
+    ``existing`` when virtual_unitsize is above 0) cross-joined with ``pss``.
 
-    capacity[p, d] = existing[p, d] × virtual_unitsize[p] when virtual_unitsize is set, else existing[p, d];
-    unitsize = virtual_unitsize, else existing, else 1000 (:func:`_entity_unitsize_lf`).  The capacity comes from
+    capacity[p, d] = existing[p, d] × virtual_unitsize[p] when virtual_unitsize is above 0, else existing[p, d];
+    unitsize = virtual_unitsize above 0, else existing, else 1000 (:func:`_entity_unitsize_lf`).  The capacity comes from
     the canonical chained ``p_entity_all_existing`` (multi-solve handoff and lifetime gate integrated) when the run
     has emitted it; otherwise from ``p_entity_pre_existing`` (the lifetime-gated existing × virtual_unitsize
     cascade) over ``period_in_use`` (:func:`_fallback_period_in_use`) for the units / connections with an explicit
@@ -3274,21 +3099,8 @@ def _entityDivest_set(source: "InputSource") -> pl.LazyFrame:
     return _entity_invest_filter(source, _INVEST_METHODS_DIVEST_ALLOWED)
 
 
-# Mirror flextool/flextool_base.dat:211-212 (cf. entity_annual_calc_params.py).
-_INVEST_NOT_ALLOWED: frozenset[str] = frozenset((
-    "not_allowed", "retire_period", "retire_total", "retire_no_limit",
-))
-_DIVEST_NOT_ALLOWED: frozenset[str] = frozenset((
-    "not_allowed", "invest_period", "invest_total", "invest_no_limit",
-))
-_INVEST_METHODS_ALL: frozenset[str] = frozenset((
-    "not_allowed", "invest_no_limit", "invest_period", "invest_total",
-    "invest_period_total",
-    "retire_no_limit", "retire_period", "retire_total", "retire_period_total",
-    "invest_retire_no_limit", "invest_retire_period",
-    "invest_retire_total", "invest_retire_period_total",
-    "cumulative_limits",
-))
+# The invest/retire method lists (_INVEST_METHODS_ALL / _INVEST_NOT_ALLOWED /
+# _DIVEST_NOT_ALLOWED) are imported from params/_existing.py, their one definition.
 _INVEST_METHODS_INVEST_ALLOWED: frozenset[str] = (
     _INVEST_METHODS_ALL - _INVEST_NOT_ALLOWED
 )
@@ -3355,108 +3167,6 @@ def _entity_invest_filter(source: "InputSource",
                 .select("e").unique())
 
 
-#: User-constraint coefficients that give an entity its ``ed_invest`` pairs (the investment variable appears in
-#: the constraint) and its ``ed_divest`` pairs (the retirement variable appears).
-_CAPACITY_CONSTRAINT_INVEST_COEFFS: tuple[str, ...] = (
-    "constraint_invested_capacity_coeff",
-    "constraint_cumulative_pre_built_capacity_coeff",
-    "constraint_capacity_coeff",
-    "constraint_in_construction_capacity_coeff",
-)
-_CAPACITY_CONSTRAINT_DIVEST_COEFFS: tuple[str, ...] = (
-    *_CAPACITY_CONSTRAINT_INVEST_COEFFS,
-    "constraint_retired_capacity_coeff",
-)
-
-
-def _has_capacity_constraint_invest_set(source: "InputSource", *, divest: bool = False
-                                          ) -> pl.LazyFrame:
-    """Set of entities that a user-constraint coefficient links to their
-    investment variable (``divest=False``: invested, pre-built, capacity or
-    in-construction coefficient) or to their retirement variable (``divest=True``: those and
-    the retired-capacity coefficient).  Such an entity gets its invest /
-    divest pairs even when its annuity is zero.  Mirrors flextool's
-    ``_has_capacity_constraint_invest`` predicate.  Returns a lazy frame ``[e]``.
-    """
-    parts: list[pl.LazyFrame] = []
-    names = _CAPACITY_CONSTRAINT_DIVEST_COEFFS if divest else _CAPACITY_CONSTRAINT_INVEST_COEFFS
-    for ec in ("unit", "node", "connection"):
-        for pname in names:
-            df = _try_param(source, ec, pname)
-            if df is None:
-                continue
-            # Spine reader returns the entity name column as ``name``.
-            if "name" in df.columns:
-                parts.append(df.lazy().select(
-                    alias_to_axis("name", "e")).unique())
-    if not parts:
-        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e")}).lazy()
-    return pl.concat(parts).unique()
-
-
-def _eea_pairs(source: "InputSource",
-                entityInvest_lf: pl.LazyFrame,
-                period_invest: list[str]) -> pl.LazyFrame:
-    """Compute non-zero ``ed_entity_annual`` pairs (e, d).
-
-    Algorithm (audit §3.7.5/6, ``entity_annual_calc_params.py:177-198``):
-      annuity[e, d] = #methods_for_e * invest_value[e, d] * 1000 * r
-                       / (1 - 1/(1+r)^n)
-    where r = max(0.05, discount_rate); n = max(20, lifetime).
-
-    For ``ed_invest`` we only need the *non-zero* predicate, so we can
-    short-circuit: a pair (e, d) has non-zero annuity iff
-    ``invest_cost[e] != 0`` AND ``methods_for_e ∩ INVEST_ALLOWED`` is
-    non-empty.  Same for ``ed_divest`` with ``salvage_value`` and the
-    divest-allowed method intersection.  This is an exact mirror of
-    flextool's predicate at ``invest_divest_sets.py:177-180``.
-    """
-    return _eea_predicate(source, entityInvest_lf, period_invest,
-                            cost_param="invest_cost",
-                            allowed=_INVEST_METHODS_INVEST_ALLOWED)
-
-
-def _eead_pairs(source: "InputSource",
-                  entityDivest_lf: pl.LazyFrame,
-                  period_invest: list[str]) -> pl.LazyFrame:
-    return _eea_predicate(source, entityDivest_lf, period_invest,
-                            cost_param="salvage_value",
-                            allowed=_INVEST_METHODS_DIVEST_ALLOWED)
-
-
-def _eea_predicate(source: "InputSource",
-                     entity_lf: pl.LazyFrame,
-                     period_invest: list[str],
-                     cost_param: str,
-                     allowed: frozenset[str]) -> pl.LazyFrame:
-    """Predicate frame ``[e, d]`` where the per-method annuity sum is
-    structurally non-zero, given:
-
-      * Some method m ∈ allowed exists for e (``entity__invest_method``).
-      * ``cost_param`` (per-(e[, d])) is non-zero.
-
-    Used as the ``eea != 0`` short-circuit in ``ed_invest``/``ed_divest``
-    composition.
-    """
-    if not period_invest:
-        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
-                                     "d": schema_dtype(_enums, "d")}).lazy()
-    eim = _entity_invest_method(source)
-    if eim is None:
-        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
-                                     "d": schema_dtype(_enums, "d")}).lazy()
-    has_method = (eim.filter(pl.col("method").is_in(list(allowed)))
-                       .select("e").unique())
-    cost_lf = _per_entity_period_cost(source, cost_param, period_invest)
-    if cost_lf is None:
-        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
-                                     "d": schema_dtype(_enums, "d")}).lazy()
-    return (has_method.join(entity_lf, on="e", how="inner")
-                       .join(cost_lf, on="e", how="inner")
-                       .filter(pl.col("v") != 0.0)
-                       .select("e", "d").unique())
-
-
 def _ed_period_param_lf(source: "InputSource",
                         parameter_name: str,
                         periods: list[str]) -> pl.LazyFrame | None:
@@ -3472,7 +3182,8 @@ def _ed_period_param_lf(source: "InputSource",
     ``periods``.
 
     Zero values are kept (``filter_zero=False``) so that a branch-native explicit 0 wins over
-    its anchor's non-zero value in the expansion.  Anchor periods are added to the period
+    its anchor's non-zero value in the expansion (the value only: whether an investment or
+    retirement variable exists does not depend on the cost).  Anchor periods are added to the period
     filter so that their explicit rows survive the resolver's inner join until the expansion
     has used them.  ``None`` when no entity authors the parameter.
     """
@@ -3493,18 +3204,6 @@ def _ed_period_param_lf(source: "InputSource",
     if periods_d.collect_schema().get("d") != d_dtype:
         periods_d = periods_d.with_columns(pl.col("d").cast(d_dtype))
     return lf.join(periods_d, on="d", how="semi")
-
-
-def _per_entity_period_cost(source: "InputSource",
-                              parameter_name: str,
-                              period_invest: list[str]) -> pl.LazyFrame | None:
-    """``unit/node/connection.<parameter_name>`` as ``(e, d, v)`` over the solve's invest periods.
-
-    :func:`_ed_period_param_lf` restricted to ``period_invest``, value column named ``v``.
-    :func:`_eea_predicate` drops ``v == 0`` afterwards.
-    """
-    lf = _ed_period_param_lf(source, parameter_name, period_invest)
-    return None if lf is None else lf.rename({"value": "v"})
 
 
 # ---------------------------------------------------------------------------
@@ -3733,15 +3432,15 @@ def ed_invest_set_from_source(source: "InputSource",
                                 ) -> pl.DataFrame | None:
     """Compute the (entity, period) pairs where invest is allowed.
 
-    Algorithm (audit §3.7.1, ``invest_divest_sets.py:171-183``):
+    ::
 
-        ed_invest = { (e, d) :
-                       e ∈ entityInvest, d ∈ period_invest_of_solve,
-                       (eea[e, d] != 0  OR  e has capacity constraint) }
+        ed_invest = { (e, d) : e ∈ entityInvest, d ∈ period_invest_of_solve }
 
-    For the simple case (no per-entity-period invest_cost Maps, no
-    capacity constraints), this reduces to the cross-product of
-    entityInvest × period_invest, intersected with the eea-non-zero set.
+    Every entity whose ``invest_method`` allows investing gets its investment variable in every
+    investment period of the solve, also without an ``invest_cost`` (or with a 0 in a period):
+    such capacity has no annuity, its ``fixed_cost`` still counts.  (Before, a pair needed a
+    non-zero annuity or a user-constraint capacity coefficient; :func:`zero_cost_invest_notice`
+    names the pairs that rule left out.)
 
     Γ.6.D: ``ed_invest_forbidden_no_investment`` rows (entities with
     ``lifetime_method = no_investment`` whose lifetime window has
@@ -3757,17 +3456,9 @@ def ed_invest_set_from_source(source: "InputSource",
         return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
                                      "d": schema_dtype(_enums, "d")})
 
-    ei_lf = _entityInvest_set(source)
-    has_cc = _has_capacity_constraint_invest_set(source)
-    eea_pred = _eea_pairs(source, ei_lf, period_invest)
-
-    # Cross ei × period_invest, then keep where (eea != 0) OR (e in has_cc).
-    pi_lf = axis_lazyframe({"d": period_invest})
-    cross = ei_lf.join(pi_lf, how="cross")
-    has_cc_marked = (cross.join(has_cc, on="e", how="inner")
-                            .select("e", "d"))
-    out = (pl.concat([eea_pred.select("e", "d"),
-                       has_cc_marked])
+    out = (_entityInvest_set(source)
+              .join(axis_lazyframe({"d": period_invest}), how="cross")
+              .select("e", "d")
               .unique()
               .sort("e", "d")
               .collect())
@@ -3799,14 +3490,13 @@ def ed_divest_set_from_source(source: "InputSource",
                                 provider: "object | None" = None,
                                 existing_only: bool = True,
                                 ) -> pl.DataFrame | None:
-    """Mirror of ``ed_invest_set`` for divest.  Algorithm
-    (``invest_divest_sets.py:185-193``)::
+    """Mirror of ``ed_invest_set`` for divest::
 
         ed_divest = { (e, d) :
                        e ∈ entityDivest, d ∈ period_invest_of_solve,
-                       (eead[e, d] != 0  OR  e has capacity constraint),
                        pre_existing[e, d] > 0 }
 
+    Also without a ``salvage_value``: retiring still saves the ``fixed_cost`` of the capacity.
     Only capacity that existed before the run can be retired: a period where the entity has no pre-existing
     capacity (none given, or past its end of life) has no retirement (:func:`retirable_existing_pairs`).
     ``existing_only=False`` gives the retirement options before that filter.
@@ -3817,16 +3507,9 @@ def ed_divest_set_from_source(source: "InputSource",
     if not period_invest:
         return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
                                      "d": schema_dtype(_enums, "d")})
-    ed_lf = _entityDivest_set(source)
-    has_cc = _has_capacity_constraint_invest_set(source, divest=True)
-    eead_pred = _eead_pairs(source, ed_lf, period_invest)
-
-    pi_lf = axis_lazyframe({"d": period_invest})
-    cross = ed_lf.join(pi_lf, how="cross")
-    has_cc_marked = (cross.join(has_cc, on="e", how="inner")
-                            .select("e", "d"))
-    out = (pl.concat([eead_pred.select("e", "d"),
-                       has_cc_marked])
+    out = (_entityDivest_set(source)
+              .join(axis_lazyframe({"d": period_invest}), how="cross")
+              .select("e", "d")
               .unique()
               .sort("e", "d")
               .collect())
@@ -4169,9 +3852,12 @@ def unitsize_cascade(base: pl.LazyFrame,
                      *, key: str) -> pl.LazyFrame:
     """The unitsize cascade, ``[key, us]`` for every row of ``base``::
 
-        unitsize = virtual_unitsize (if explicitly set non-zero)
+        unitsize = virtual_unitsize (if explicitly set above 0)
                   OR existing       (if explicitly set non-zero)
                   OR UNITSIZE_DEFAULT (1000.0)
+
+    A ``virtual_unitsize`` of 0 or below is ignored, as if it were not set
+    (``validate_basic_sanity`` warns about it).
 
     ``base`` is ``[key]`` (one row per entity); ``vu`` is ``[key, vu]``
     and ``ex`` is ``[key, ex]`` with only the explicitly set values
@@ -4198,7 +3884,7 @@ def unitsize_cascade(base: pl.LazyFrame,
                    .group_by(key).agg(pl.col(name).max()))
         out = out.join(reduced, on=key, how="left")
     return out.with_columns(
-        us=pl.when(pl.col("vu").fill_null(0.0) != 0.0)
+        us=pl.when(pl.col("vu").fill_null(0.0) > 0.0)
               .then(pl.col("vu"))
               .when(pl.col("ex").fill_null(0.0) != 0.0)
               .then(pl.col("ex"))
@@ -4210,7 +3896,7 @@ def _entity_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
     """Per-entity unitsize cascade across unit + node + connection,
     mirroring ``entity_period_calc_params.py:159-202``::
 
-        unitsize = virtual_unitsize (if explicitly set non-zero)
+        unitsize = virtual_unitsize (if explicitly set above 0)
                   OR existing       (if explicitly set non-zero)
                   OR 1000.0
 
@@ -4491,6 +4177,9 @@ def p_entity_max_units_from_source(source: "InputSource",
                 continue  # defensive; piu is the period_in_use list
             if (e, d) in ed_invest_cumulative:
                 if e in cmc_authors:
+                    # A period map that leaves out an investment period of the solve never gets here:
+                    # pass 1b refuses it (``require_period_coverage``).  The 0.0 is only reached for
+                    # a period the solve does not invest in.
                     v = cmc_map.get((e, d), 0.0)
                 else:
                     # A cumulative_limits entity that never authors
@@ -5981,7 +5670,27 @@ def _apply_lead_time_sets(flex_data: object,
                               ) -> None:
     """``flex_data.edd_invest_commission`` / ``edd_invest_in_construction`` / ``e_construction_lead_time`` (``[e, L]``,
     the longest lead time of the entity's decisions) of a solve where some investment decision has a construction
-    lead time (offered or not); all ``None`` otherwise, so the model keeps the formulation without lead times."""
+    lead time (offered or not); all ``None`` otherwise, so the model keeps the formulation without lead times.
+
+    Then checks the period maps of the per-period investment limits against the periods in which the solve's
+    investments start to operate (:func:`._direct.require_invest_period_coverage`)."""
+    _set_lead_time_sets(flex_data, source, active_solve, ed_inv, commission_lf, period_in_use, workdir,
+                        lineage=lineage)
+    from flextool.engine.preprocess.params._direct import require_invest_period_coverage
+    require_invest_period_coverage(source, flex_data, active_solve)
+
+
+def _set_lead_time_sets(flex_data: object,
+                        source: "InputSource",
+                        active_solve: str | None,
+                        ed_inv: "pl.DataFrame | None",
+                        commission_lf: "pl.LazyFrame | None",
+                        period_in_use,
+                        workdir: "Path | None",
+                        *,
+                        lineage: "pl.DataFrame | None" = None,
+                        ) -> None:
+    """The lead-time sets of :func:`_apply_lead_time_sets`."""
     flex_data.edd_invest_commission = None
     flex_data.edd_invest_in_construction = None
     flex_data.e_construction_lead_time = None
@@ -6117,6 +5826,66 @@ def _retirement_notice(offered: pl.DataFrame, kept: pl.DataFrame) -> None:
     detail = ("Without existing capacity in the retirement periods (no retirement variable): "
               + ", ".join(lost) + ".") if lost else ""
     _behaviour_changes.notice("retirement_of_existing_capacity_only", "entities", names, detail)
+
+
+#: User-constraint coefficients that offered an entity's investment (retirement) variable before
+#: ``invest_without_cost_offered`` whatever its cost: such entities are not named by the notice.
+_OLD_RULE_INVEST_COEFFS: tuple[str, ...] = (
+    "constraint_invested_capacity_coeff",
+    "constraint_cumulative_pre_built_capacity_coeff",
+    "constraint_capacity_coeff",
+    "constraint_in_construction_capacity_coeff",
+)
+_OLD_RULE_DIVEST_COEFFS: tuple[str, ...] = (*_OLD_RULE_INVEST_COEFFS, "constraint_retired_capacity_coeff")
+
+
+def _zero_cost_pairs(source: "InputSource", pairs: "pl.DataFrame | None", cost_param: str,
+                     coeffs: tuple[str, ...]) -> dict[str, list[str]]:
+    """``{entity: [periods]}`` of the ``pairs`` (``[e, d]``) whose ``cost_param`` is missing or 0 in the period,
+    leaving out the entities a user-constraint capacity coefficient names (their variable existed before)."""
+    if pairs is None or pairs.height == 0:
+        return {}
+    rows = [(str(e), str(d)) for e, d in pairs.select("e", "d").iter_rows()]
+    coeff_entities: set[str] = set()
+    for cls in ("unit", "node", "connection"):
+        for pname in coeffs:
+            df = _try_param(source, cls, pname)
+            if df is not None and "name" in df.columns:
+                coeff_entities.update(df.get_column("name").cast(pl.Utf8).to_list())
+    periods = list(dict.fromkeys(d for _e, d in rows))
+    cost = _ed_period_value_map(source, cost_param, periods)
+    out: dict[str, list[str]] = {}
+    for e, d in rows:
+        if e not in coeff_entities and cost.get((e, d), 0.0) == 0.0:
+            out.setdefault(e, []).append(d)
+    return out
+
+
+def zero_cost_invest_notice(source: "InputSource", ed_invest: "pl.DataFrame | None",
+                            ed_divest: "pl.DataFrame | None") -> None:
+    """Behaviour-change notice ``invest_without_cost_offered``: names the entities that now get an investment
+    variable where their ``invest_cost`` is missing or 0, or a retirement variable where their ``salvage_value``
+    is (before, such a period had no variable unless a user-constraint capacity coefficient named the entity)."""
+    from flextool.engine import _behaviour_changes
+    if not _behaviour_changes.has_marker("invest_without_cost_offered"):
+        return
+    invest = _zero_cost_pairs(source, ed_invest, "invest_cost", _OLD_RULE_INVEST_COEFFS)
+    divest = _zero_cost_pairs(source, ed_divest, "salvage_value", _OLD_RULE_DIVEST_COEFFS)
+    # A later solve of a multi-solve / rolling run lists only the entities not yet announced.
+    fresh = set(_behaviour_changes.unannounced("invest_without_cost_offered", sorted(set(invest) | set(divest))))
+    invest = {e: ds for e, ds in invest.items() if e in fresh}
+    divest = {e: ds for e, ds in divest.items() if e in fresh}
+
+    def _listed(found: dict[str, list[str]]) -> str:
+        return ", ".join(f"{e} ({', '.join(ds)})" for e, ds in sorted(found.items()))
+
+    detail = []
+    if invest:
+        detail.append("Investment without invest_cost (entity, periods): " + _listed(invest) + ".")
+    if divest:
+        detail.append("Retirement without salvage_value (entity, periods): " + _listed(divest) + ".")
+    _behaviour_changes.notice("invest_without_cost_offered", "entities", sorted(set(invest) | set(divest)),
+                              " ".join(detail))
 
 
 def apply_derived_c(
@@ -6271,6 +6040,7 @@ def apply_derived_c(
         if ed_div_db.height == 0:
             # The seeds of the retirement partitions describe the options before the filter.
             flex_data.pd_divest_set = flex_data.nd_divest_set = flex_data.ed_divest_period_set = None
+    zero_cost_invest_notice(source, ed_inv_db, ed_div_db)
 
     # Δ.17c Gap D — pd/nd_invest_set, pd/nd_divest_set, edd_invest_set:
     # partition the (e, d) frames to (process, d) / (node, d) by
@@ -6472,7 +6242,7 @@ def p_entity_all_existing_from_source(source: "InputSource",
     where ``pre_existing[e, d]`` is the lifetime-gated existing
     capacity (:func:`._existing.p_entity_pre_existing_lf`), with
     capacity[e, d] = existing[e, d] × virtual_unitsize[e] when
-    virtual_unitsize is set, else existing[e, d]:
+    virtual_unitsize is above 0, else existing[e, d]:
 
       * ``reinvest_automatic`` → capacity[e, d].
       * ``reinvest_choice`` / ``no_investment`` → capacity[e, d]
@@ -8234,6 +8004,69 @@ def dtttdt_forward_only_from_dtttdt(dtttdt: pl.DataFrame | None,
     return out if out.height > 0 else None
 
 
+def dtttdt_within_solve_from_dtttdt(dtttdt: pl.DataFrame | None,
+                                    first_periods: "list[str] | None" = None,
+                                    ) -> pl.DataFrame | None:
+    """``dtttdt`` with the bind_within_solve wrap of a stochastic fan in the solve's first period; None when the
+    plain ``dtttdt`` wrap is already the bind_within_solve one.
+
+    *first_periods* are the periods of ``period_first_of_solve``: with a fan in the solve's first period, its
+    forecast branch periods (the roots; the period label has no steps).  ``dtttdt`` (``make_step_jump``) wraps the
+    first step of each root to the root's own last step.  bind_within_solve closes one loop per path instead: the
+    first step of each root continues from the last step of the last period on its own path (the leaf the root's
+    continuation branch periods lead to; with several, the last in name order).  A root that is its own leaf (a
+    single-period solve) keeps its wrap, so only a fan in the first period of a multi-period solve gives a frame.
+    The tree is read from the first-step rows of ``dtttdt``: a period whose first step continues from another
+    period is its child.  A period's first and last steps are its smallest and largest time steps (as
+    :func:`dtttdt_forward_only_from_dtttdt` takes the first).
+    """
+    if dtttdt is None or dtttdt.height == 0 or first_periods is None or len(first_periods) < 2:
+        return None
+    roots = [str(p) for p in first_periods]
+    u = dtttdt.select(_d=pl.col("d").cast(pl.Utf8), _t=pl.col("t").cast(pl.Utf8),
+                      _dp=pl.col("d_previous").cast(pl.Utf8))
+    span = u.group_by("_d").agg(_first=pl.col("_t").min(), _last=pl.col("_t").max())
+    last = dict(span.select("_d", "_last").iter_rows())
+    first = dict(span.select("_d", "_first").iter_rows())
+    children: dict[str, list[str]] = {}
+    for d_name, d_prev in (u.join(span.select("_d", _t=pl.col("_first")), on=["_d", "_t"], how="semi")
+                           .select("_d", "_dp").unique().iter_rows()):
+        if d_prev != d_name and d_name not in roots:
+            children.setdefault(d_prev, []).append(d_name)
+
+    def leaf_of(root: str) -> str:
+        leaves, seen, stack = [], set(), [root]
+        while stack:
+            node = stack.pop()
+            if node in seen:
+                continue
+            seen.add(node)
+            kids = children.get(node, [])
+            if kids:
+                stack.extend(kids)
+            else:
+                leaves.append(node)
+        # Convention: with several leaves, the last in sorted name order (as core._eq_storage_within_solve_path_end
+        # picks d*).
+        return max(leaves)
+
+    relink = {r: leaf_of(r) for r in roots if r in last}
+    relink = {r: leaf for r, leaf in relink.items() if leaf != r}
+    if not relink:
+        return None
+    wrap = pl.DataFrame({"_d": list(relink), "_t": [first[r] for r in relink],
+                         "_dp_new": list(relink.values()), "_tp_new": [last[leaf] for leaf in relink.values()]},
+                        schema={"_d": pl.Utf8, "_t": pl.Utf8, "_dp_new": pl.Utf8, "_tp_new": pl.Utf8})
+    dp_dtype, tp_dtype = dtttdt.schema["d_previous"], dtttdt.schema["t_previous_within_solve"]
+    return (dtttdt.with_columns(_d=pl.col("d").cast(pl.Utf8), _t=pl.col("t").cast(pl.Utf8))
+            .join(wrap, on=["_d", "_t"], how="left")
+            .with_columns(
+                d_previous=pl.coalesce(pl.col("_dp_new"), pl.col("d_previous").cast(pl.Utf8)).cast(dp_dtype),
+                t_previous_within_solve=pl.coalesce(pl.col("_tp_new"),
+                                                    pl.col("t_previous_within_solve").cast(pl.Utf8)).cast(tp_dtype))
+            .select(dtttdt.columns))
+
+
 def read_period_first_of_solve(sd: Path, *, provider: "object | None" = None) -> "list[str] | None":
     """The periods of ``solve_data/period_first_of_solve.csv``; None when absent."""
     p = Path(sd) / "period_first_of_solve.csv"
@@ -8347,6 +8180,7 @@ def _rolling_realized_steps(flex_data: object, workdir: Path | None,
 E_PUBLIC_FIELDS: tuple[str, ...] = (
     "dtttdt",
     "dtttdt_forward_only",
+    "dtttdt_within_solve",
     "dtttdt_block_interior",
     "dtttdt_block_lag",
     "nodeStateBlock",
@@ -8461,6 +8295,17 @@ def apply_derived_e(
                         pl.col("method") == "bind_forward_only").height > 0)
                     or (per_solve_fo is not None and per_solve_fo.height > 0)):
                 flex_data.dtttdt_forward_only = fwd
+        # bind_within_solve: the first step of each root of a fan in the solve's first period continues from the
+        # last step of its own path (the state-change lag of the bind_within_solve nodes).  This value is
+        # authoritative: it overwrites the seed value of flex_data._load_storage, which uses the same function and
+        # must agree with it.
+        ws_nodes = getattr(flex_data, "storage_bind_within_solve", None)
+        flex_data.dtttdt_within_solve = (
+            dtttdt_within_solve_from_dtttdt(
+                getattr(flex_data, "dtttdt", None),
+                read_period_first_of_solve(Path(workdir) / "solve_data", provider=provider)
+                if workdir is not None else None)
+            if ws_nodes is not None and ws_nodes.height > 0 else None)
         flex_data.dtttdt_block_interior = dtttdt_block_interior_from_dtttdt(
             dtttdt_db, period_block_time_for_arc)
         flex_data.dtttdt_block_lag = dtttdt_block_lag_from_dtttdt(
@@ -9008,28 +8853,6 @@ def p_entity_divested_from_handoff(
 # ---------------------------------------------------------------------------
 
 
-_INVEST_NOT_ALLOWED_F: frozenset[str] = frozenset((
-    "not_allowed", "retire_period", "retire_total", "retire_no_limit",
-))
-_DIVEST_NOT_ALLOWED_F: frozenset[str] = frozenset((
-    "not_allowed", "invest_period", "invest_total", "invest_no_limit",
-))
-
-
-def _annuity(invest_value: float, discount_rate: float,
-              lifetime: float) -> float:
-    """Mirror :func:`flextool/preprocessing/entity_annual_calc_params._annuity`.
-
-    annuity = invest_value * 1000 * r / (1 - 1/(1+r)^n) with mod's
-    ≤ 0 fallbacks: r → 0.05, n → 20.
-    """
-    r = discount_rate if discount_rate > 0 else 0.05
-    n = lifetime if lifetime > 0 else 20.0
-    if r == 0:
-        return 0.0
-    return invest_value * 1000.0 * r / (1.0 - (1.0 / (1.0 + r)) ** n)
-
-
 def _entity_classes_lookup(source: "InputSource"
                               ) -> tuple[set[str], set[str], set[str]]:
     """Return ``(process_set, node_set, connection_set)`` of entity names.
@@ -9177,38 +9000,6 @@ def _resolve_pdX(per_period: dict[tuple[str, str], float] | None,
         if v is not None:
             return v
     return scalar.get(e, 0.0)
-
-
-def _per_method_annuity(e: str, d: str,
-                            cost_param_name: str,
-                            cost_per: dict[tuple[str, str], float] | None,
-                            cost_scalar: dict[str, float],
-                            disc_per: dict[tuple[str, str], float] | None,
-                            disc_scalar: dict[str, float],
-                            life_per: dict[tuple[str, str], float] | None,
-                            life_scalar: dict[str, float],
-                            methods_for_e: list[str],
-                            disallowed: frozenset[str],
-                            unit_set: set[str],
-                            node_set: set[str],
-                            conn_set: set[str]) -> float:
-    """Sum-over-allowed-methods annuity reproducing
-    ``entity_annual_calc_params._per_method_annuity_invest/divest``.
-
-    Each method m ∈ methods_for_e \\ disallowed contributes
-    ``_annuity(cost_value(e, d), discount_rate(e, d), lifetime(e, d))``.
-    """
-    v = 0.0
-    if e not in unit_set and e not in node_set and e not in conn_set:
-        return 0.0
-    for m in methods_for_e:
-        if m in disallowed:
-            continue
-        cost = _resolve_pdX(cost_per, cost_scalar, e, d)
-        disc = _resolve_pdX(disc_per, disc_scalar, e, d)
-        life = _resolve_pdX(life_per, life_scalar, e, d)
-        v += _annuity(cost, disc, life)
-    return v
 
 
 def _p_discount_years_from_source(source: "InputSource",
@@ -10146,6 +9937,7 @@ def apply_synthetic_invest_sets(flex_data: object,
         source, active_solve, workdir, provider=provider)
     if ed_div is not None and ed_div.height > 0:
         flex_data.ed_divest_set = ed_div
+    zero_cost_invest_notice(source, ed_inv, ed_div)
 
     # ed_invest_forbidden_no_investment — derived from the lifetime
     # gate; consumed by apply_existing_chain.

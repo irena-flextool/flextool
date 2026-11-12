@@ -280,6 +280,11 @@
       null
     ],
     [
+      "commodity",
+      "natural_gas",
+      null
+    ],
+    [
       "connection",
       "battery_inverter",
       null
@@ -316,7 +321,47 @@
     ],
     [
       "constraint",
+      "bp_chp_ratio",
+      null
+    ],
+    [
+      "constraint",
       "coal_chp_fix",
+      null
+    ],
+    [
+      "constraint",
+      "coal_plant_floor",
+      null
+    ],
+    [
+      "constraint",
+      "csp_solar_multiple",
+      null
+    ],
+    [
+      "constraint",
+      "csp_storage_hours",
+      null
+    ],
+    [
+      "constraint",
+      "ext_chp_backpressure_line",
+      null
+    ],
+    [
+      "constraint",
+      "ext_chp_max_heat",
+      null
+    ],
+    [
+      "constraint",
+      "steam_fleet_output_floor",
+      null
+    ],
+    [
+      "constraint",
+      "steam_fleet_two_online",
       null
     ],
     [
@@ -337,6 +382,11 @@
     [
       "flowGroup",
       "connections_with_east",
+      null
+    ],
+    [
+      "flowGroup",
+      "steam_fleet",
       null
     ],
     [
@@ -411,6 +461,16 @@
     ],
     [
       "node",
+      "csp_heat",
+      null
+    ],
+    [
+      "node",
+      "desal_heat",
+      null
+    ],
+    [
+      "node",
       "dr_storage",
       null
     ],
@@ -441,7 +501,17 @@
     ],
     [
       "node",
+      "natural_gas_market",
+      null
+    ],
+    [
+      "node",
       "north",
+      null
+    ],
+    [
+      "node",
+      "water",
       null
     ],
     [
@@ -461,12 +531,22 @@
     ],
     [
       "profile",
+      "csp_field_yield",
+      null
+    ],
+    [
+      "profile",
       "ev_connected_share",
       null
     ],
     [
       "profile",
       "ev_minimum_storage",
+      null
+    ],
+    [
+      "profile",
+      "must_run_share",
       null
     ],
     [
@@ -527,6 +607,11 @@
     [
       "solve",
       "y2020_2029_2x5y",
+      null
+    ],
+    [
+      "solve",
+      "y2020_2035_2day_dispatch",
       null
     ],
     [
@@ -621,6 +706,21 @@
     ],
     [
       "unit",
+      "baseload_plant",
+      null
+    ],
+    [
+      "unit",
+      "bp_chp",
+      null
+    ],
+    [
+      "unit",
+      "clean_plant",
+      null
+    ],
+    [
+      "unit",
       "coal_chp",
       null
     ],
@@ -628,6 +728,21 @@
       "unit",
       "coal_plant",
       ""
+    ],
+    [
+      "unit",
+      "csp_backup_boiler",
+      null
+    ],
+    [
+      "unit",
+      "csp_field",
+      null
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      null
     ],
     [
       "unit",
@@ -651,7 +766,37 @@
     ],
     [
       "unit",
+      "ext_chp",
+      null
+    ],
+    [
+      "unit",
       "fusion_plant",
+      null
+    ],
+    [
+      "unit",
+      "med_desal",
+      null
+    ],
+    [
+      "unit",
+      "ro_desal",
+      null
+    ],
+    [
+      "unit",
+      "steam_1",
+      null
+    ],
+    [
+      "unit",
+      "steam_2",
+      null
+    ],
+    [
+      "unit",
+      "steam_3",
       null
     ],
     [
@@ -687,6 +832,14 @@
       [
         "coal",
         "coal_market"
+      ],
+      null
+    ],
+    [
+      "commodity__node",
+      [
+        "natural_gas",
+        "natural_gas_market"
       ],
       null
     ],
@@ -845,6 +998,22 @@
     [
       "unit__inputNode",
       [
+        "baseload_plant",
+        "coal_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "bp_chp",
+        "coal_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
         "coal_chp",
         "coal_market"
       ],
@@ -855,6 +1024,22 @@
       [
         "coal_plant",
         "coal_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "csp_backup_boiler",
+        "natural_gas_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "csp_turbine",
+        "csp_heat"
       ],
       null
     ],
@@ -885,6 +1070,54 @@
     [
       "unit__inputNode",
       [
+        "ext_chp",
+        "coal_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "med_desal",
+        "desal_heat"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "ro_desal",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "steam_1",
+        "coal_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "steam_2",
+        "coal_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "steam_3",
+        "coal_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
         "water_pump",
         "water_source"
       ],
@@ -909,6 +1142,38 @@
     [
       "unit__outputNode",
       [
+        "baseload_plant",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "bp_chp",
+        "desal_heat"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "bp_chp",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "clean_plant",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
         "coal_chp",
         "heat"
       ],
@@ -926,6 +1191,30 @@
       "unit__outputNode",
       [
         "coal_plant",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "csp_backup_boiler",
+        "csp_heat"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "csp_field",
+        "csp_heat"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "csp_turbine",
         "west"
       ],
       null
@@ -957,7 +1246,63 @@
     [
       "unit__outputNode",
       [
+        "ext_chp",
+        "desal_heat"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "ext_chp",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
         "fusion_plant",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "med_desal",
+        "water"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "ro_desal",
+        "water"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_1",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_2",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_3",
         "west"
       ],
       null
@@ -1107,6 +1452,33 @@
     [
       "flowGroup__unit__node",
       [
+        "steam_fleet",
+        "steam_1",
+        "west"
+      ],
+      null
+    ],
+    [
+      "flowGroup__unit__node",
+      [
+        "steam_fleet",
+        "steam_2",
+        "west"
+      ],
+      null
+    ],
+    [
+      "flowGroup__unit__node",
+      [
+        "steam_fleet",
+        "steam_3",
+        "west"
+      ],
+      null
+    ],
+    [
+      "flowGroup__unit__node",
+      [
         "to_west_node",
         "anti_energy_plant",
         "west"
@@ -1164,6 +1536,24 @@
         "primary",
         "up",
         "electricity"
+      ],
+      null
+    ],
+    [
+      "unit__node__profile",
+      [
+        "baseload_plant",
+        "west",
+        "must_run_share"
+      ],
+      null
+    ],
+    [
+      "unit__node__profile",
+      [
+        "csp_field",
+        "csp_heat",
+        "csp_field_yield"
       ],
       null
     ],
@@ -1310,6 +1700,22 @@
     [
       "node",
       [
+        "csp_heat"
+      ],
+      "csp_plant",
+      true
+    ],
+    [
+      "node",
+      [
+        "desal_heat"
+      ],
+      "desal_system",
+      true
+    ],
+    [
+      "node",
+      [
         "dr_storage"
       ],
       "dr_shift_demand",
@@ -1358,9 +1764,25 @@
     [
       "node",
       [
+        "natural_gas_market"
+      ],
+      "csp_gas_backup",
+      true
+    ],
+    [
+      "node",
+      [
         "north"
       ],
       "network",
+      true
+    ],
+    [
+      "node",
+      [
+        "water"
+      ],
+      "desal_system",
       true
     ],
     [
@@ -1434,6 +1856,38 @@
     [
       "unit",
       [
+        "baseload_plant"
+      ],
+      "must_run_profile",
+      true
+    ],
+    [
+      "unit",
+      [
+        "bp_chp"
+      ],
+      "desal_extraction",
+      false
+    ],
+    [
+      "unit",
+      [
+        "bp_chp"
+      ],
+      "desal_system",
+      true
+    ],
+    [
+      "unit",
+      [
+        "clean_plant"
+      ],
+      "co2_trajectory_system",
+      true
+    ],
+    [
+      "unit",
+      [
         "coal_chp"
       ],
       "coal_chp",
@@ -1445,6 +1899,30 @@
         "coal_plant"
       ],
       "coal",
+      true
+    ],
+    [
+      "unit",
+      [
+        "csp_backup_boiler"
+      ],
+      "csp_gas_backup",
+      true
+    ],
+    [
+      "unit",
+      [
+        "csp_field"
+      ],
+      "csp_plant",
+      true
+    ],
+    [
+      "unit",
+      [
+        "csp_turbine"
+      ],
+      "csp_plant",
       true
     ],
     [
@@ -1482,9 +1960,57 @@
     [
       "unit",
       [
+        "ext_chp"
+      ],
+      "desal_extraction",
+      true
+    ],
+    [
+      "unit",
+      [
         "fusion_plant"
       ],
       "fusion",
+      true
+    ],
+    [
+      "unit",
+      [
+        "med_desal"
+      ],
+      "desal_system",
+      true
+    ],
+    [
+      "unit",
+      [
+        "ro_desal"
+      ],
+      "desal_ro_invest",
+      true
+    ],
+    [
+      "unit",
+      [
+        "steam_1"
+      ],
+      "must_run_fleet",
+      true
+    ],
+    [
+      "unit",
+      [
+        "steam_2"
+      ],
+      "must_run_fleet",
+      true
+    ],
+    [
+      "unit",
+      [
+        "steam_3"
+      ],
+      "must_run_fleet",
       true
     ],
     [
@@ -1554,6 +2080,13 @@
       ]
     ],
     [
+      "capacity_margin_methods",
+      [
+        "InNoYXJlX29mX3BlYWsi",
+        "str"
+      ]
+    ],
+    [
       "co2_methods",
       [
         "Im5vbmUi",
@@ -1606,6 +2139,20 @@
       "co2_methods",
       [
         "InByaWNlX3BlcmlvZF90b3RhbCI=",
+        "str"
+      ]
+    ],
+    [
+      "constraint_period_methods",
+      [
+        "InBlcl90aW1lc3RlcCI=",
+        "str"
+      ]
+    ],
+    [
+      "constraint_period_methods",
+      [
+        "InBlcmlvZF90b3RhbCI=",
         "str"
       ]
     ],
@@ -2198,6 +2745,111 @@
       ]
     ],
     [
+      "reduce_system_detail_methods",
+      [
+        "Im5vbmUi",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "InJlc2VydmVzIg==",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "ImluZXJ0aWEi",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "Im5vbl9zeW5jaHJvbm91cyI=",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "ImluZXJ0aWFfbm9uX3N5bmNocm9ub3VzIg==",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "InJlc2VydmVzX2luZXJ0aWFfbm9uX3N5bmNocm9ub3VzIg==",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "ImRjX3Bvd2VyX2Zsb3ci",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "InJlc2VydmVzX2luZXJ0aWFfbm9uX3N5bmNocm9ub3VzX2RjX3Bvd2VyX2Zsb3ci",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "Im5vbmUi",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "ImludGVnZXJzIg==",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "ImludGVnZXJzX3JhbXBzIg==",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "ImludGVnZXJzX21pbl9saW1pdHMi",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "ImludGVnZXJzX3JhbXBzX21pbl9saW1pdHMi",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "Im9ubGluZSI=",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "Im9ubGluZV9yYW1wcyI=",
+        "str"
+      ]
+    ],
+    [
       "reserve_methods",
       [
         "Im5vX3Jlc2VydmUi",
@@ -2404,6 +3056,27 @@
       "solvers",
       [
         "ImNvcHQi",
+        "str"
+      ]
+    ],
+    [
+      "startup_input_methods",
+      [
+        "Imp1c3RfaW5wdXQi",
+        "str"
+      ]
+    ],
+    [
+      "startup_input_methods",
+      [
+        "InN0YXJ0dXBfYW5kX2lucHV0Ig==",
+        "str"
+      ]
+    ],
+    [
+      "startup_input_methods",
+      [
+        "InN0YXJ0dXBfb25seSI=",
         "str"
       ]
     ],
@@ -2837,7 +3510,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the connection's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW. Capacity in construction is not included.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the connection's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW. Capacity in construction is not included.",
       "constraint"
     ],
     [
@@ -2848,7 +3521,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -2859,7 +3532,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -2870,7 +3543,18 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MW.",
+      "constraint"
+    ],
+    [
+      "connection",
+      "constraint_online_coeff",
+      [
+        null,
+        null
+      ],
+      null,
+      "[unit of the constraint per unit online] A map of coefficients (Index: constraint name, value: coefficient). Puts the number of units of the connection online in each time step on the left side of the user constraint. One unit is virtual_unitsize; without it, the largest existing capacity, else 1000 MW (set virtual_unitsize when the capacity is invested). Needs online variables (startup_method linear or binary); a coefficient without them is an error. With linear startup the number is continuous. For MW online, use the unit size (MW per unit) as the coefficient.",
       "constraint"
     ],
     [
@@ -2881,7 +3565,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -2947,7 +3631,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / lifetime. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -3068,7 +3752,7 @@
         null
       ],
       null,
-      "[years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Constant or period.",
+      "[years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Required when the connection invests or retires with a cost (invest_cost, salvage_value), and when lifetime_method is reinvest_choice or no_investment (also for existing capacity without investment). Constant or period.",
       "investment"
     ],
     [
@@ -3238,6 +3922,17 @@
     ],
     [
       "constraint",
+      "constraint_period_method",
+      [
+        "InBlcl90aW1lc3RlcCI=",
+        "str"
+      ],
+      "constraint_period_methods",
+      "[choice] How the user constraint is applied in time. per_timestep (default): a row for every time step (a constraint with only capacity terms has one row per period). period_total: one row per period over the sum of the time steps, each step's terms times its duration and weight, annualised (divided by the period's share of a year): flows count in MWh per year and units online in unit-hours per year; capacity terms and their existing capacity are multiplied by the hours of the year, and constant is per year. A state coefficient is not allowed. In a rolling solve the row is written only in a roll that realizes the whole period; otherwise the solve leaves it out with a warning. Constant.",
+      "constraint"
+    ],
+    [
+      "constraint",
       "is_enabled",
       [
         "InllcyI=",
@@ -3343,7 +4038,7 @@
         null
       ],
       null,
-      "[MW] Capacity the group needs above its peak net load. Used only with capacity_margin_method manual, and only in investment periods. No value means 0. Constant or period.",
+      "[MW] Capacity the group needs above its demand at every time step of an investment period. Used only with capacity_margin_method manual. No value means 0 (the demand must still be covered). Constant or period.",
       "investment"
     ],
     [
@@ -3354,7 +4049,18 @@
         "str"
       ],
       "capacity_margin_methods",
-      "[choice] Whether the group needs a capacity margin in investment solves. none: no margin. manual: the group needs capacity_margin MW above its peak net load.",
+      "[choice] Whether the group needs a capacity margin in investment solves, and how the margin is given. none (default): no margin. manual: capacity_margin MW. share_of_peak: capacity_margin_share times the group's peak demand in the period. At every time step of an investment period, the capacity of the group's firm units (capacity x availability x capacity_max_coeff) and VRE units (capacity x profile x availability) must cover the group's demand plus the margin. Units fed from a storage node, connections and the units consuming from the group count by their actual flow, so exports add to the requirement; connections and lossy units inside the group are left out (their losses are not required). Units fed from fuel or commodity nodes count at capacity: the fuel is assumed to last.",
+      "investment"
+    ],
+    [
+      "group",
+      "capacity_margin_share",
+      [
+        null,
+        null
+      ],
+      null,
+      "[-] e.g. 0.15 means 15%. Capacity margin as a share of the group's peak demand: the largest sum of the demand of the group's nodes over the period's full time series (before representative periods and new_stepduration). Used only with capacity_margin_method share_of_peak. No value means 0. Constant or period.",
       "investment"
     ],
     [
@@ -3475,7 +4181,7 @@
         null
       ],
       null,
-      "[MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value means no requirement. Constant or period.",
+      "[MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value (or 0) means no requirement. Constant, period, time or period+time. A time map must give a value for every time step of the solve (a missing time step is an error). Over a coarse time step the row uses the step mean.",
       "network"
     ],
     [
@@ -3552,7 +4258,7 @@
         null
       ],
       null,
-      "[-] e.g. 0.8 means 80%. Largest share of non-synchronous supply in the group, measured against the real demand. Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no value means 0. Constant or period.",
+      "[-] e.g. 0.8 means 80%. Largest share of non-synchronous supply in the group, measured against the real demand. Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no value means 0. Constant, period, time or period+time. A time map must give a value for every time step of the solve (a missing time step is an error). Over a coarse time step the row uses the step mean.",
       "network"
     ],
     [
@@ -3790,7 +4496,7 @@
       "model",
       "version",
       [
-        "NzguMA==",
+        "NzkuMA==",
         "float"
       ],
       null,
@@ -3827,7 +4533,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MWh] Puts the node's storage capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MWh. Capacity in construction is not included.",
+      "[unit of the constraint per MWh] A map of coefficients (Index: constraint name, value: coefficient). Puts the node's storage capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MWh. Capacity in construction is not included.",
       "constraint"
     ],
     [
@@ -3838,7 +4544,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MWh] Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MWh.",
+      "[unit of the constraint per MWh] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MWh.",
       "constraint"
     ],
     [
@@ -3849,7 +4555,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MWh] Puts the storage capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MWh.",
+      "[unit of the constraint per MWh] A map of coefficients (Index: constraint name, value: coefficient). Puts the storage capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MWh.",
       "constraint"
     ],
     [
@@ -3860,7 +4566,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MWh] Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MWh.",
+      "[unit of the constraint per MWh] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MWh.",
       "constraint"
     ],
     [
@@ -3871,7 +4577,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MWh] Puts the storage capacity retired in each period on the left side of the user constraint. Coefficient per MWh.",
+      "[unit of the constraint per MWh] A map of coefficients (Index: constraint name, value: coefficient). Puts the storage capacity retired in each period on the left side of the user constraint. Coefficient per MWh.",
       "constraint"
     ],
     [
@@ -3937,7 +4643,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / lifetime. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -3948,7 +4654,7 @@
         "float"
       ],
       null,
-      "[MWh] per time step. Extra demand (negative inflow) added to every time step of the investment solve, when `energy_margin_method` = `inflow_adder`. The value is not a total that is divided over the steps: each step gets the full value. On 24 h steps, a margin of 10 MW needs a value of 240. FlexTool does not rescale it, including when the investment solve uses `new_stepduration`. Dispatch solves are not affected. 0 = off. Constant, period or period+time.",
+      "[MWh] per time step of the timeline. Extra demand (negative inflow) added to every time step of the investment solve, when `energy_margin_method` = `inflow_adder`. The value is not a total that is divided over the steps: each time step gets the full value. On a timeline of 24 h time steps, a margin of 10 MW needs a value of 240. When the investment solve uses `new_stepduration`, a solve step gets the sum of the values of the time steps it combines (a constant or period value counts once per time step). Dispatch solves are not affected. 0 = off. Constant, period or period+time.",
       "investment"
     ],
     [
@@ -4102,7 +4808,7 @@
         null
       ],
       null,
-      "[years] Operating lifetime. It starts when the storage capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the storage capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Constant or period.",
+      "[years] Operating lifetime. It starts when the storage capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the storage capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Required when the node invests or retires with a cost (invest_cost, salvage_value), and when lifetime_method is reinvest_choice or no_investment (also for existing capacity without investment). Constant or period.",
       "investment"
     ],
     [
@@ -4245,7 +4951,7 @@
         "str"
       ],
       "storage_binding_methods",
-      "[choice] Choice how the storage state will be maintained over discontinuous timelines. Seven cycle-scope methods (the state-continuity family): 'bind_within_timeblock' cycles state within each timeblock (cycle closes at block boundaries); 'bind_within_period' cycles within each FlexTool period and chains blocks inside the period; 'bind_within_solve' cycles across the whole solve horizon; 'bind_forward_only' (default) chains state forward across the solve with no end-to-start closure; 'bind_within_solve_blended_weights' is the representative-period variant of bind_within_solve (RP weighting + solve-level cycle closure); 'bind_within_period_blended_weights' is the RP variant of bind_within_period (per-period RP weighting, each period closes independently); 'bind_forward_only_blended_weights' is the RP variant of bind_forward_only (RP weighting, no cycle closure). One additional value, 'bind_intraperiod_blocks', is structurally an aggregation method rather than a cycle-scope method: state is held constant within each block and the block-total flow is balanced at the boundary. Silent-degrade behaviour: any '*_blended_weights' method on a node in a solve whose active timeset has no representative_period_weights is automatically downgraded to the corresponding non-RP variant for that solve, so the same storage entity can drive an RP investment solve and a chronological dispatch solve back-to-back. Separate parameters (e.g. 'storage_state_start') can force additional bindings. By default, storage start state is bound to 0. The blended_weights methods do not work with stochastic branches.",
+      "[choice] Choice how the storage state will be maintained over discontinuous timelines. Seven cycle-scope methods (the state-continuity family): 'bind_within_timeblock' cycles state within each timeblock (cycle closes at block boundaries); 'bind_within_period' cycles within each FlexTool period and chains blocks inside the period; 'bind_within_solve' cycles across the whole solve horizon; 'bind_forward_only' (default) chains state forward across the solve with no end-to-start closure; 'bind_within_solve_blended_weights' is the representative-period variant of bind_within_solve (RP weighting + solve-level cycle closure); 'bind_within_period_blended_weights' is the RP variant of bind_within_period (per-period RP weighting, each period closes independently); 'bind_forward_only_blended_weights' is the RP variant of bind_forward_only (RP weighting, no cycle closure). One additional value, 'bind_intraperiod_blocks', is structurally an aggregation method rather than a cycle-scope method: state is held constant within each block and the block-total flow is balanced at the boundary. Silent-degrade behaviour: any '*_blended_weights' method on a node in a solve whose active timeset has no representative_period_weights is automatically downgraded to the corresponding non-RP variant for that solve, so the same storage entity can drive an RP investment solve and a chronological dispatch solve back-to-back. Separate parameters (e.g. 'storage_state_start') can force additional bindings. By default, storage start state is bound to 0. In a stochastic solve each forecast branch uses the representative periods of its period, and the blended_weights methods work per branch. In a rolling_window solve on representative periods the blended_weights methods are not applied: those nodes bind forward only (bind_forward_only), with a warning.",
       "storage"
     ],
     [
@@ -4324,6 +5030,17 @@
       null,
       "[-] 0-1, share of the storage capacity. Storage state at the start of the first solve, as a share of the storage capacity. Needed by fix_start and fix_start_end. Constant.",
       "storage"
+    ],
+    [
+      "node",
+      "unit_of_measure",
+      [
+        "Ik1XaCI=",
+        "str"
+      ],
+      null,
+      "[text] Unit of measure of this node's amounts, e.g. m3, t, MWh_th (default MWh). A label only: FlexTool converts nothing. Flows into and out of the node, and the capacity of a unit whose output is this node (of a connection when both of its nodes have this unit), are rates in this unit per hour (MWh \u2192 MW, m3 \u2192 m3/h); storage state, storage capacity and inflow per time step are amounts (m3); annual results are per year (m3/a); prices and penalty_up/down are CUR per this unit. The per-kW costs (invest_cost, fixed_cost, salvage_value) of a unit whose capacity is in this unit, and the per-kWh costs of this node's storage, are per 0.001 of the rate or amount: 500 CUR per m3/h of capacity is entered as 0.5, and 20 CUR per m3 of storage as 0.02. An efficiency into or out of this node is output units per input unit (e.g. m3/MWh).",
+      "basics"
     ],
     [
       "node",
@@ -4657,6 +5374,28 @@
     ],
     [
       "solve",
+      "reduce_system_detail_method",
+      [
+        "Im5vbmUi",
+        "str"
+      ],
+      "reduce_system_detail_methods",
+      "[choice] System detail that this solve leaves out, to make it faster. none (default): all detail. reserves: no reserve requirements. inertia: no inertia limits. non_synchronous: no non-synchronous share limits. dc_power_flow: the lines of dc_power_flow_with_angles groups are lossless transport limited by their capacity (no angles). A combination leaves out each named part. The capacity margin is always kept.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "reduce_unit_detail_method",
+      [
+        "Im5vbmUi",
+        "str"
+      ],
+      "reduce_unit_detail_methods",
+      "[choice] Detail of units and connections that this solve leaves out, to make it faster (typically an investment solve). none (default): all detail. integers: binary startup_method is solved as continuous and exact connections behave as regular. integers_ramps: integers, and no ramp limits or ramp costs. integers_min_limits: integers, and no min_load, capacity_min_coeff floors or minimum up / down times. integers_ramps_min_limits: integers, no ramps and no min limits. Under the integers levels, a unit or connection whose online variables nothing in the solve still uses (no start-up cost, min_load, capacity_min_coeff floor, minimum up / down time, min_load_efficiency curve, constraint_online_coeff in a user constraint, reserve, inertia or ramp limit left) has none, as with startup_method no_startup; the run log names them. online: everything of integers_min_limits, and no online variables: no start-up costs, user constraints that count units online are left out whole, min_load_efficiency units use their full-load efficiency (less fuel than the curve at part load), and ramp limits apply to the capacity. Reserves are then limited by built capacity, not online capacity, and inertia is counted from flows. online_ramps: online, and no ramp limits or ramp costs. Never adds detail.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
       "rolling_duration",
       [
         null,
@@ -4839,7 +5578,7 @@
         null
       ],
       null,
-      "[-] Representative-period weighting map (rank-2 nested Map: base period start timestep -> representative period start timestep -> weight).  Created by the representative-periods preprocess tool; declares how much each representative period stands in for each base period.  Its presence enables RP-aware storage-binding ('*_blended_weights'); its absence silently downgrades those methods to the non-RP behaviour.  Mutually exclusive with 'timeset_weights' on the same timeset. Not allowed in a stochastic solve.",
+      "[-] Representative-period weighting map (rank-2 nested Map: base period start timestep -> representative period start timestep -> weight).  Created by the representative-periods preprocess tool; declares how much each representative period stands in for each base period.  Its presence enables RP-aware storage-binding ('*_blended_weights'); its absence silently downgrades those methods to the non-RP behaviour.  Mutually exclusive with 'timeset_weights' on the same timeset. The forecast branches of a stochastic solve use the representative periods of their period.",
       "solve_advanced"
     ],
     [
@@ -4861,7 +5600,7 @@
         null
       ],
       null,
-      "[count of time steps] Index: name of the the timestep that starts the timeset, value: duration of the block in timesteps. Defines the *selection*: which timesteps are in the solve and how many (this sets 'hours_in_solve'). Representativeness - each timestep's share of the year - is set separately by 'timeset_weights'.",
+      "[count of time steps] Index: name of the timestep that starts the timeset, value: duration of the block in timesteps. Defines the *selection*: which timesteps are in the solve and how many (this sets 'hours_in_solve'). Representativeness - each timestep's share of the year - is set separately by 'timeset_weights'.",
       "timeline"
     ],
     [
@@ -4894,7 +5633,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the unit's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW. Capacity in construction is not included.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the unit's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW. Capacity in construction is not included.",
       "constraint"
     ],
     [
@@ -4905,7 +5644,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -4916,7 +5655,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -4927,7 +5666,18 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MW.",
+      "constraint"
+    ],
+    [
+      "unit",
+      "constraint_online_coeff",
+      [
+        null,
+        null
+      ],
+      null,
+      "[unit of the constraint per unit online] A map of coefficients (Index: constraint name, value: coefficient). Puts the number of units online in each time step on the left side of the user constraint. One unit is virtual_unitsize; without it, the largest existing capacity, else 1000 MW (set virtual_unitsize when the capacity is invested). Needs online variables (startup_method linear or binary, or a minimum_time_method); a coefficient without them is an error. With linear startup the number is continuous. For MW online, use the unit size (MW per unit) as the coefficient.",
       "constraint"
     ],
     [
@@ -4938,7 +5688,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -5015,7 +5765,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / lifetime. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -5026,7 +5776,7 @@
         "float"
       ],
       null,
-      "[-] Efficiency of the unit at full load: outputs / inputs, each flow weighted by its conversion_flow_coeff (default 1, giving plain sum of outputs / sum of inputs). A min_load_efficiency unit can have different efficiency below full load (see efficiency_at_min_load). No effect on a unit without inputs or without outputs. Constant, period, time, period+time or stochastic time.",
+      "[-] Efficiency of the unit at full load: outputs / inputs, each flow weighted by its conversion_flow_coeff (default 1, giving plain sum of outputs / sum of inputs). May be above 1: a heat pump with COP 3 has 3; a unit whose output is measured in another unit of measure (e.g. m\u00b3 of water per MWh of electricity) uses that ratio. A min_load_efficiency unit can have different efficiency below full load (see efficiency_at_min_load). No effect on a unit without inputs or without outputs. Constant, period, time, period+time or stochastic time.",
       "basics"
     ],
     [
@@ -5037,7 +5787,7 @@
         null
       ],
       null,
-      "[-] e.g. 0.4 means 40%. Efficiency of a min_load_efficiency unit at its minimum load. Fuel use is a straight line from minimum load (this efficiency) to full load (efficiency). Has no effect when min_load is 0: the efficiency at zero output is not defined. No value: efficiency applies at minimum load too. Constant, period, time or period+time.",
+      "[-] Output / input at minimum load, like efficiency (e.g. 0.4; may be above 1). Efficiency of a min_load_efficiency unit at its minimum load. Fuel use is a straight line from minimum load (this efficiency) to full load (efficiency). Has no effect when min_load is 0: the efficiency at zero output is not defined. No value: efficiency applies at minimum load too. Constant, period, time or period+time.",
       "basics"
     ],
     [
@@ -5136,7 +5886,7 @@
         null
       ],
       null,
-      "[years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Constant or period.",
+      "[years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Required when the unit invests or retires with a cost (invest_cost, salvage_value), and when lifetime_method is reinvest_choice or no_investment (also for existing capacity without investment). Constant or period.",
       "investment"
     ],
     [
@@ -5367,7 +6117,7 @@
         null
       ],
       null,
-      "[CUR/MW] Cost of ramping the unit. Constant.",
+      "[CUR/MW] Cost per MW of change in the step-average flow, up or down, between a time step and the step before it. Charged per change, independent of step length. Needs ramp_method ramp_cost or both. Constant. On a constant_efficiency unit with one input and one output, an input-side ramp cost prices the change of the unit's output flow.",
       "tech_advanced"
     ],
     [
@@ -5378,7 +6128,7 @@
         "str"
       ],
       "ramp_methods",
-      "[choice] Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost is not functional yet.",
+      "[choice] Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost charges every change in the flow between consecutive time steps. both adds the limit as well.",
       "tech_advanced"
     ],
     [
@@ -5401,6 +6151,28 @@
       ],
       null,
       "[share of capacity per minute] Largest increase of the flow between two time steps. No limit across a gap in the timeline. Constant.",
+      "tech_advanced"
+    ],
+    [
+      "unit__inputNode",
+      "startup_energy",
+      [
+        null,
+        null
+      ],
+      null,
+      "[MWh per MW started] Energy taken from this input node per MW of capacity started up (start-ups x unit size). Used with startup_input_method startup_and_input or startup_only. Constant or period.",
+      "tech_advanced"
+    ],
+    [
+      "unit__inputNode",
+      "startup_input_method",
+      [
+        "Imp1c3RfaW5wdXQi",
+        "str"
+      ],
+      "startup_input_methods",
+      "[choice] What the input arc supplies. just_input (default): the normal input flow. startup_and_input: the normal input flow, and each start-up of the unit also takes startup_energy x MW started from this node. startup_only: only the start-up energy; the arc has no flow and takes no part in the conversion, the capacity, input shares or ramps. The start-up input can be fuel (oil to start a coal unit), heat (from the tank of a CSP plant) or electricity. Needs online variables (startup_method linear or binary, or a minimum_time_method). The start-up input is priced as the node's commodity, counts in CO2 prices and caps and is dropped with the start-ups by reduce_unit_detail_method online. It is not part of constraint_flow_coeff, flow groups or the capacity margin.",
       "tech_advanced"
     ],
     [
@@ -5499,7 +6271,7 @@
         null
       ],
       null,
-      "[CUR/MW] Cost of ramping the unit. Constant.",
+      "[CUR/MW] Cost per MW of change in the step-average flow, up or down, between a time step and the step before it. Charged per change, independent of step length. Needs ramp_method ramp_cost or both. Constant. On a constant_efficiency unit with one input and one output, an input-side ramp cost prices the change of the unit's output flow.",
       "tech_advanced"
     ],
     [
@@ -5510,7 +6282,7 @@
         "str"
       ],
       "ramp_methods",
-      "[choice] Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost is not functional yet.",
+      "[choice] Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost charges every change in the flow between consecutive time steps. both adds the limit as well.",
       "tech_advanced"
     ],
     [
@@ -5624,6 +6396,12 @@
     [
       "connection",
       "constraint_invested_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "connection",
+      "constraint_online_coeff",
       "map",
       1
     ],
@@ -5947,6 +6725,12 @@
     ],
     [
       "constraint",
+      "constraint_period_method",
+      "str",
+      0
+    ],
+    [
+      "constraint",
       "is_enabled",
       "str",
       0
@@ -6055,6 +6839,18 @@
     ],
     [
       "group",
+      "capacity_margin_share",
+      "float",
+      0
+    ],
+    [
+      "group",
+      "capacity_margin_share",
+      "map",
+      1
+    ],
+    [
+      "group",
       "co2_max_period",
       "float",
       0
@@ -6157,6 +6953,12 @@
     ],
     [
       "group",
+      "inertia_limit",
+      "map",
+      2
+    ],
+    [
+      "group",
       "invest_max_period",
       "float",
       0
@@ -6214,6 +7016,12 @@
       "non_synchronous_limit",
       "map",
       1
+    ],
+    [
+      "group",
+      "non_synchronous_limit",
+      "map",
+      2
     ],
     [
       "group",
@@ -6871,6 +7679,12 @@
     ],
     [
       "node",
+      "unit_of_measure",
+      "str",
+      0
+    ],
+    [
+      "node",
       "virtual_unitsize",
       "float",
       0
@@ -7117,6 +7931,18 @@
     ],
     [
       "solve",
+      "reduce_system_detail_method",
+      "str",
+      0
+    ],
+    [
+      "solve",
+      "reduce_unit_detail_method",
+      "str",
+      0
+    ],
+    [
+      "solve",
       "rolling_duration",
       "float",
       0
@@ -7280,6 +8106,12 @@
     [
       "unit",
       "constraint_invested_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "unit",
+      "constraint_online_coeff",
       "map",
       1
     ],
@@ -7698,6 +8530,24 @@
       0
     ],
     [
+      "unit__inputNode",
+      "startup_energy",
+      "float",
+      0
+    ],
+    [
+      "unit__inputNode",
+      "startup_energy",
+      "map",
+      1
+    ],
+    [
+      "unit__inputNode",
+      "startup_input_method",
+      "str",
+      0
+    ],
+    [
       "unit__node__profile",
       "profile_method",
       "str",
@@ -7858,6 +8708,16 @@
         "str"
       ],
       "ladder_cum_on"
+    ],
+    [
+      "commodity",
+      "natural_gas",
+      "price",
+      [
+        "MTIuMA==",
+        "float"
+      ],
+      "csp_gas_backup"
     ],
     [
       "connection",
@@ -8171,6 +9031,26 @@
     ],
     [
       "constraint",
+      "bp_chp_ratio",
+      "constant",
+      [
+        "MC4w",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "constraint",
+      "bp_chp_ratio",
+      "sense",
+      [
+        "ImVxdWFsIg==",
+        "str"
+      ],
+      "desal_system"
+    ],
+    [
+      "constraint",
       "coal_chp_fix",
       "constant",
       [
@@ -8198,6 +9078,146 @@
         "str"
       ],
       "coal_chp"
+    ],
+    [
+      "constraint",
+      "coal_plant_floor",
+      "constant",
+      [
+        "MTUwLjA=",
+        "float"
+      ],
+      "must_run_constraint_one"
+    ],
+    [
+      "constraint",
+      "coal_plant_floor",
+      "sense",
+      [
+        "ImdyZWF0ZXJfdGhhbiI=",
+        "str"
+      ],
+      "must_run_constraint_one"
+    ],
+    [
+      "constraint",
+      "csp_solar_multiple",
+      "constant",
+      [
+        "MC4w",
+        "float"
+      ],
+      "csp_fixed_design"
+    ],
+    [
+      "constraint",
+      "csp_solar_multiple",
+      "sense",
+      [
+        "ImVxdWFsIg==",
+        "str"
+      ],
+      "csp_fixed_design"
+    ],
+    [
+      "constraint",
+      "csp_storage_hours",
+      "constant",
+      [
+        "MC4w",
+        "float"
+      ],
+      "csp_fixed_design"
+    ],
+    [
+      "constraint",
+      "csp_storage_hours",
+      "sense",
+      [
+        "ImVxdWFsIg==",
+        "str"
+      ],
+      "csp_fixed_design"
+    ],
+    [
+      "constraint",
+      "ext_chp_backpressure_line",
+      "constant",
+      [
+        "MC4w",
+        "float"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "constraint",
+      "ext_chp_backpressure_line",
+      "sense",
+      [
+        "ImdyZWF0ZXJfdGhhbiI=",
+        "str"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "constraint",
+      "ext_chp_max_heat",
+      "constant",
+      [
+        "MC4w",
+        "float"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "constraint",
+      "ext_chp_max_heat",
+      "sense",
+      [
+        "Imxlc3NfdGhhbiI=",
+        "str"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "constraint",
+      "steam_fleet_output_floor",
+      "constant",
+      [
+        "MTAwLjA=",
+        "float"
+      ],
+      "must_run_fleet_output_floor"
+    ],
+    [
+      "constraint",
+      "steam_fleet_output_floor",
+      "sense",
+      [
+        "ImdyZWF0ZXJfdGhhbiI=",
+        "str"
+      ],
+      "must_run_fleet_output_floor"
+    ],
+    [
+      "constraint",
+      "steam_fleet_two_online",
+      "constant",
+      [
+        "Mi4w",
+        "float"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "constraint",
+      "steam_fleet_two_online",
+      "sense",
+      [
+        "ImdyZWF0ZXJfdGhhbiI=",
+        "str"
+      ],
+      "must_run_fleet_two_online"
     ],
     [
       "constraint",
@@ -8271,6 +9291,16 @@
     ],
     [
       "flowGroup",
+      "steam_fleet",
+      "min_instant_flow",
+      [
+        "MTAwLjA=",
+        "float"
+      ],
+      "must_run_flowgroup"
+    ],
+    [
+      "flowGroup",
       "to_west_node",
       "flow_aggregator",
       [
@@ -8314,8 +9344,48 @@
       "co2_limit",
       "co2_max_period",
       [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwMjAyMCIsIDIwMDAwMDAuMF0sIFsicDIwMjUiLCAxNTAwMDAwLjBdLCBbInAyMDMwIiwgMTAwMDAwMC4wXSwgWyJwMjAzNSIsIDUwMDAwMC4wXV0sICJpbmRleF9uYW1lIjogInBlcmlvZCJ9",
+        "map"
+      ],
+      "co2_additional_measures"
+    ],
+    [
+      "group",
+      "co2_limit",
+      "co2_max_period",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwMjAyMCIsIDIwMDAwMDAuMF0sIFsicDIwMjUiLCAxODAwMDAwLjBdLCBbInAyMDMwIiwgMTYwMDAwMC4wXSwgWyJwMjAzNSIsIDE0MDAwMDAuMF1dLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "map"
+      ],
+      "co2_existing_measures"
+    ],
+    [
+      "group",
+      "co2_limit",
+      "co2_max_period",
+      [
         "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwMjAyMCIsIDMwMDAwMDAuMF0sIFsicDIwMjUiLCAyNDAwMDAwLjBdLCBbInAyMDMwIiwgMTgwMDAwMC4wXSwgWyJwMjAzNSIsIDEyMDAwMDAuMF1dLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QiLCAidHlwZSI6ICJtYXAifQ==",
         "map"
+      ],
+      "co2_limit"
+    ],
+    [
+      "group",
+      "co2_limit",
+      "co2_max_period",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwMjAyMCIsIDMwMDAwMDAuMF0sIFsicDIwMjUiLCAzMDAwMDAwLjBdLCBbInAyMDMwIiwgMzAwMDAwMC4wXSwgWyJwMjAzNSIsIDMwMDAwMDAuMF1dLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "map"
+      ],
+      "co2_without_measures"
+    ],
+    [
+      "group",
+      "co2_limit",
+      "co2_method",
+      [
+        "InBlcmlvZCI=",
+        "str"
       ],
       "co2_limit"
     ],
@@ -8327,7 +9397,7 @@
         "InBlcmlvZCI=",
         "str"
       ],
-      "co2_limit"
+      "co2_trajectory_system"
     ],
     [
       "group",
@@ -8508,6 +9578,16 @@
         "array"
       ],
       "5weeks_only_invest"
+    ],
+    [
+      "model",
+      "flexTool",
+      "solves",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJ5MjAyMF8yMDM1XzJkYXlfZGlzcGF0Y2giXSwgImluZGV4X25hbWUiOiAic2VxdWVuY2VfaW5kZXgifQ==",
+        "array"
+      ],
+      "co2_trajectory_system"
     ],
     [
       "model",
@@ -8961,6 +10041,156 @@
     ],
     [
       "node",
+      "csp_heat",
+      "constraint_capacity_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJjc3Bfc3RvcmFnZV9ob3VycyIsIDEuMF1dLCAiaW5kZXhfbmFtZSI6ICJjb25zdHJhaW50In0=",
+        "map"
+      ],
+      "csp_fixed_design"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "discount_rate",
+      [
+        "MC4wNw==",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "existing",
+      [
+        "MC4w",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "existing",
+      [
+        "MjUwMC4w",
+        "float"
+      ],
+      "csp_plant"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "invest_cost",
+      [
+        "MTUuMA==",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "invest_max_total",
+      [
+        "NTAwMC4w",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "invest_method",
+      [
+        "ImludmVzdF90b3RhbCI=",
+        "str"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "lifetime",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "node_type",
+      [
+        "InN0b3JhZ2Ui",
+        "str"
+      ],
+      "csp_plant"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "penalty_down",
+      [
+        "MTAwMC4w",
+        "float"
+      ],
+      "csp_plant"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "penalty_up",
+      [
+        "MTAwMC4w",
+        "float"
+      ],
+      "csp_plant"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "storage_binding_method",
+      [
+        "ImJpbmRfd2l0aGluX3RpbWVibG9jayI=",
+        "str"
+      ],
+      "csp_plant"
+    ],
+    [
+      "node",
+      "desal_heat",
+      "node_type",
+      [
+        "ImJhbGFuY2Ui",
+        "str"
+      ],
+      "desal_system"
+    ],
+    [
+      "node",
+      "desal_heat",
+      "penalty_down",
+      [
+        "MTAwMC4w",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "node",
+      "desal_heat",
+      "penalty_up",
+      [
+        "MTAwMC4w",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "node",
       "dr_storage",
       "existing",
       [
@@ -9301,6 +10531,16 @@
     ],
     [
       "node",
+      "natural_gas_market",
+      "node_type",
+      [
+        "ImNvbW1vZGl0eSI=",
+        "str"
+      ],
+      "csp_gas_backup"
+    ],
+    [
+      "node",
       "north",
       "inflow",
       [
@@ -9348,6 +10588,106 @@
         "float"
       ],
       "network"
+    ],
+    [
+      "node",
+      "water",
+      "existing",
+      [
+        "MTUwMDAuMA==",
+        "float"
+      ],
+      "desal_water_storage"
+    ],
+    [
+      "node",
+      "water",
+      "inflow",
+      [
+        "LTMwMDAuMA==",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "node",
+      "water",
+      "inflow",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ0MDAwMSIsIC0yMDAwLjBdLCBbInQwMDAyIiwgLTIwMDAuMF0sIFsidDAwMDMiLCAtMjAwMC4wXSwgWyJ0MDAwNCIsIC0yMDAwLjBdLCBbInQwMDA1IiwgLTIwMDAuMF0sIFsidDAwMDYiLCAtMjAwMC4wXSwgWyJ0MDAwNyIsIC0yMDAwLjBdLCBbInQwMDA4IiwgLTIwMDAuMF0sIFsidDAwMDkiLCAtMjAwMC4wXSwgWyJ0MDAxMCIsIC0yMDAwLjBdLCBbInQwMDExIiwgLTIwMDAuMF0sIFsidDAwMTIiLCAtMjAwMC4wXSwgWyJ0MDAxMyIsIC00MDAwLjBdLCBbInQwMDE0IiwgLTQwMDAuMF0sIFsidDAwMTUiLCAtNDAwMC4wXSwgWyJ0MDAxNiIsIC00MDAwLjBdLCBbInQwMDE3IiwgLTQwMDAuMF0sIFsidDAwMTgiLCAtNDAwMC4wXSwgWyJ0MDAxOSIsIC00MDAwLjBdLCBbInQwMDIwIiwgLTQwMDAuMF0sIFsidDAwMjEiLCAtNDAwMC4wXSwgWyJ0MDAyMiIsIC00MDAwLjBdLCBbInQwMDIzIiwgLTQwMDAuMF0sIFsidDAwMjQiLCAtNDAwMC4wXSwgWyJ0MDAyNSIsIC0yMDAwLjBdLCBbInQwMDI2IiwgLTIwMDAuMF0sIFsidDAwMjciLCAtMjAwMC4wXSwgWyJ0MDAyOCIsIC0yMDAwLjBdLCBbInQwMDI5IiwgLTIwMDAuMF0sIFsidDAwMzAiLCAtMjAwMC4wXSwgWyJ0MDAzMSIsIC0yMDAwLjBdLCBbInQwMDMyIiwgLTIwMDAuMF0sIFsidDAwMzMiLCAtMjAwMC4wXSwgWyJ0MDAzNCIsIC0yMDAwLjBdLCBbInQwMDM1IiwgLTIwMDAuMF0sIFsidDAwMzYiLCAtMjAwMC4wXSwgWyJ0MDAzNyIsIC00MDAwLjBdLCBbInQwMDM4IiwgLTQwMDAuMF0sIFsidDAwMzkiLCAtNDAwMC4wXSwgWyJ0MDA0MCIsIC00MDAwLjBdLCBbInQwMDQxIiwgLTQwMDAuMF0sIFsidDAwNDIiLCAtNDAwMC4wXSwgWyJ0MDA0MyIsIC00MDAwLjBdLCBbInQwMDQ0IiwgLTQwMDAuMF0sIFsidDAwNDUiLCAtNDAwMC4wXSwgWyJ0MDA0NiIsIC00MDAwLjBdLCBbInQwMDQ3IiwgLTQwMDAuMF0sIFsidDAwNDgiLCAtNDAwMC4wXSwgWyJ0MDA0OSIsIC0yMDAwLjBdLCBbInQwMDUwIiwgLTIwMDAuMF0sIFsidDAwNTEiLCAtMjAwMC4wXSwgWyJ0MDA1MiIsIC0yMDAwLjBdLCBbInQwMDUzIiwgLTIwMDAuMF0sIFsidDAwNTQiLCAtMjAwMC4wXSwgWyJ0MDA1NSIsIC0yMDAwLjBdLCBbInQwMDU2IiwgLTIwMDAuMF0sIFsidDAwNTciLCAtMjAwMC4wXSwgWyJ0MDA1OCIsIC0yMDAwLjBdLCBbInQwMDU5IiwgLTIwMDAuMF0sIFsidDAwNjAiLCAtMjAwMC4wXSwgWyJ0MDA2MSIsIC00MDAwLjBdLCBbInQwMDYyIiwgLTQwMDAuMF0sIFsidDAwNjMiLCAtNDAwMC4wXSwgWyJ0MDA2NCIsIC00MDAwLjBdLCBbInQwMDY1IiwgLTQwMDAuMF0sIFsidDAwNjYiLCAtNDAwMC4wXSwgWyJ0MDA2NyIsIC00MDAwLjBdLCBbInQwMDY4IiwgLTQwMDAuMF0sIFsidDAwNjkiLCAtNDAwMC4wXSwgWyJ0MDA3MCIsIC00MDAwLjBdLCBbInQwMDcxIiwgLTQwMDAuMF0sIFsidDAwNzIiLCAtNDAwMC4wXV0sICJpbmRleF9uYW1lIjogInRpbWUifQ==",
+        "map"
+      ],
+      "desal_water_storage"
+    ],
+    [
+      "node",
+      "water",
+      "node_type",
+      [
+        "ImJhbGFuY2Ui",
+        "str"
+      ],
+      "desal_system"
+    ],
+    [
+      "node",
+      "water",
+      "node_type",
+      [
+        "InN0b3JhZ2Ui",
+        "str"
+      ],
+      "desal_water_storage"
+    ],
+    [
+      "node",
+      "water",
+      "penalty_down",
+      [
+        "NTAuMA==",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "node",
+      "water",
+      "penalty_up",
+      [
+        "NTAuMA==",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "node",
+      "water",
+      "storage_binding_method",
+      [
+        "ImJpbmRfd2l0aGluX3RpbWVibG9jayI=",
+        "str"
+      ],
+      "desal_water_storage"
+    ],
+    [
+      "node",
+      "water",
+      "storage_start_end_method",
+      [
+        "ImZpeF9zdGFydCI=",
+        "str"
+      ],
+      "desal_water_storage"
+    ],
+    [
+      "node",
+      "water",
+      "storage_state_start",
+      [
+        "MC4w",
+        "float"
+      ],
+      "desal_water_storage"
     ],
     [
       "node",
@@ -9484,6 +10824,46 @@
       "west",
       "inflow",
       [
+        "LTMwMC4w",
+        "float"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "node",
+      "west",
+      "inflow",
+      [
+        "LTE1MC4w",
+        "float"
+      ],
+      "csp_system"
+    ],
+    [
+      "node",
+      "west",
+      "inflow",
+      [
+        "LTMwMC4w",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "node",
+      "west",
+      "inflow",
+      [
+        "LTMwMC4w",
+        "float"
+      ],
+      "must_run_system"
+    ],
+    [
+      "node",
+      "west",
+      "inflow",
+      [
         "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ0MDAwMSIsIC01ODkuMF0sIFsidDAwMDIiLCAtNTM3LjBdLCBbInQwMDAzIiwgLTUwNi4wXSwgWyJ0MDAwNCIsIC00ODIuMF0sIFsidDAwMDUiLCAtNDcyLjBdLCBbInQwMDA2IiwgLTQ1NC4wXSwgWyJ0MDAwNyIsIC00MjMuMF0sIFsidDAwMDgiLCAtNDM4LjBdLCBbInQwMDA5IiwgLTQ3NC4wXSwgWyJ0MDAxMCIsIC01MTguMF0sIFsidDAwMTEiLCAtNTM4LjBdLCBbInQwMDEyIiwgLTU1OC4wXSwgWyJ0MDAxMyIsIC01NzIuMF0sIFsidDAwMTQiLCAtNTY0LjBdLCBbInQwMDE1IiwgLTU1My4wXSwgWyJ0MDAxNiIsIC01NDEuMF0sIFsidDAwMTciLCAtNTM0LjBdLCBbInQwMDE4IiwgLTU2Ny4wXSwgWyJ0MDAxOSIsIC02ODkuMF0sIFsidDAwMjAiLCAtNjk2LjBdLCBbInQwMDIxIiwgLTY3MC4wXSwgWyJ0MDAyMiIsIC02MjcuMF0sIFsidDAwMjMiLCAtNTUwLjBdLCBbInQwMDI0IiwgLTQ1OC4wXSwgWyJ0MDAyNSIsIC00MzYuMF0sIFsidDAwMjYiLCAtNDQ2LjBdLCBbInQwMDI3IiwgLTQzNi4wXSwgWyJ0MDAyOCIsIC00NTIuMF0sIFsidDAwMjkiLCAtNDY5LjBdLCBbInQwMDMwIiwgLTUwNy4wXSwgWyJ0MDAzMSIsIC01NDkuMF0sIFsidDAwMzIiLCAtNTk0LjBdLCBbInQwMDMzIiwgLTY4Mi4wXSwgWyJ0MDAzNCIsIC03MzAuMF0sIFsidDAwMzUiLCAtNzc0LjBdLCBbInQwMDM2IiwgLTgwMi4wXSwgWyJ0MDAzNyIsIC04MDcuMF0sIFsidDAwMzgiLCAtNzkzLjBdLCBbInQwMDM5IiwgLTc4MC4wXSwgWyJ0MDA0MCIsIC03NjguMF0sIFsidDAwNDEiLCAtNzU1LjBdLCBbInQwMDQyIiwgLTc2Ny4wXSwgWyJ0MDA0MyIsIC04NzIuMF0sIFsidDAwNDQiLCAtODY1LjBdLCBbInQwMDQ1IiwgLTgwOC4wXSwgWyJ0MDA0NiIsIC03MzUuMF0sIFsidDAwNDciLCAtNjY5LjBdLCBbInQwMDQ4IiwgLTU5Ny4wXSwgWyJ0MDA0OSIsIC01MzMuMF0sIFsidDAwNTAiLCAtNTA3LjBdLCBbInQwMDUxIiwgLTQ4Ny4wXSwgWyJ0MDA1MiIsIC00OTIuMF0sIFsidDAwNTMiLCAtNTExLjBdLCBbInQwMDU0IiwgLTUzOS4wXSwgWyJ0MDA1NSIsIC01NDkuMF0sIFsidDAwNTYiLCAtNjEyLjBdLCBbInQwMDU3IiwgLTY2NS4wXSwgWyJ0MDA1OCIsIC03MTUuMF0sIFsidDAwNTkiLCAtNzYwLjBdLCBbInQwMDYwIiwgLTc4OS4wXSwgWyJ0MDA2MSIsIC03ODQuMF0sIFsidDAwNjIiLCAtNzY2LjBdLCBbInQwMDYzIiwgLTc0MC4wXSwgWyJ0MDA2NCIsIC03MjcuMF0sIFsidDAwNjUiLCAtNzE0LjBdLCBbInQwMDY2IiwgLTcyMy4wXSwgWyJ0MDA2NyIsIC04NDkuMF0sIFsidDAwNjgiLCAtODQ4LjBdLCBbInQwMDY5IiwgLTgxMi4wXSwgWyJ0MDA3MCIsIC03MjMuMF0sIFsidDAwNzEiLCAtNjQ3LjBdLCBbInQwMDcyIiwgLTYzNS4wXV0sICJpbmRleF9uYW1lIjogInRpbWUiLCAidHlwZSI6ICJtYXAifQ==",
         "map"
       ],
@@ -9597,6 +10977,16 @@
     ],
     [
       "profile",
+      "csp_field_yield",
+      "profile",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ0MDAwMSIsIDAuMF0sIFsidDAwMDIiLCAwLjBdLCBbInQwMDAzIiwgMC4wXSwgWyJ0MDAwNCIsIDAuMF0sIFsidDAwMDUiLCAwLjBdLCBbInQwMDA2IiwgMC4wXSwgWyJ0MDAwNyIsIDEuMF0sIFsidDAwMDgiLCAxLjBdLCBbInQwMDA5IiwgMS4wXSwgWyJ0MDAxMCIsIDEuMF0sIFsidDAwMTEiLCAxLjBdLCBbInQwMDEyIiwgMS4wXSwgWyJ0MDAxMyIsIDEuMF0sIFsidDAwMTQiLCAxLjBdLCBbInQwMDE1IiwgMS4wXSwgWyJ0MDAxNiIsIDEuMF0sIFsidDAwMTciLCAxLjBdLCBbInQwMDE4IiwgMS4wXSwgWyJ0MDAxOSIsIDAuMF0sIFsidDAwMjAiLCAwLjBdLCBbInQwMDIxIiwgMC4wXSwgWyJ0MDAyMiIsIDAuMF0sIFsidDAwMjMiLCAwLjBdLCBbInQwMDI0IiwgMC4wXSwgWyJ0MDAyNSIsIDAuMF0sIFsidDAwMjYiLCAwLjBdLCBbInQwMDI3IiwgMC4wXSwgWyJ0MDAyOCIsIDAuMF0sIFsidDAwMjkiLCAwLjBdLCBbInQwMDMwIiwgMC4wXSwgWyJ0MDAzMSIsIDAuNF0sIFsidDAwMzIiLCAwLjRdLCBbInQwMDMzIiwgMC40XSwgWyJ0MDAzNCIsIDAuNF0sIFsidDAwMzUiLCAwLjRdLCBbInQwMDM2IiwgMC40XSwgWyJ0MDAzNyIsIDAuNF0sIFsidDAwMzgiLCAwLjRdLCBbInQwMDM5IiwgMC40XSwgWyJ0MDA0MCIsIDAuNF0sIFsidDAwNDEiLCAwLjRdLCBbInQwMDQyIiwgMC40XSwgWyJ0MDA0MyIsIDAuMF0sIFsidDAwNDQiLCAwLjBdLCBbInQwMDQ1IiwgMC4wXSwgWyJ0MDA0NiIsIDAuMF0sIFsidDAwNDciLCAwLjBdLCBbInQwMDQ4IiwgMC4wXSwgWyJ0MDA0OSIsIDAuMF0sIFsidDAwNTAiLCAwLjBdLCBbInQwMDUxIiwgMC4wXSwgWyJ0MDA1MiIsIDAuMF0sIFsidDAwNTMiLCAwLjBdLCBbInQwMDU0IiwgMC4wXSwgWyJ0MDA1NSIsIDEuMF0sIFsidDAwNTYiLCAxLjBdLCBbInQwMDU3IiwgMS4wXSwgWyJ0MDA1OCIsIDEuMF0sIFsidDAwNTkiLCAxLjBdLCBbInQwMDYwIiwgMS4wXSwgWyJ0MDA2MSIsIDEuMF0sIFsidDAwNjIiLCAxLjBdLCBbInQwMDYzIiwgMS4wXSwgWyJ0MDA2NCIsIDEuMF0sIFsidDAwNjUiLCAxLjBdLCBbInQwMDY2IiwgMS4wXSwgWyJ0MDA2NyIsIDAuMF0sIFsidDAwNjgiLCAwLjBdLCBbInQwMDY5IiwgMC4wXSwgWyJ0MDA3MCIsIDAuMF0sIFsidDAwNzEiLCAwLjBdLCBbInQwMDcyIiwgMC4wXV0sICJpbmRleF9uYW1lIjogInRpbWUifQ==",
+        "map"
+      ],
+      "csp_system"
+    ],
+    [
+      "profile",
       "ev_connected_share",
       "profile",
       [
@@ -9614,6 +11004,16 @@
         "map"
       ],
       "ev"
+    ],
+    [
+      "profile",
+      "must_run_share",
+      "profile",
+      [
+        "MC40",
+        "float"
+      ],
+      "must_run_profile"
     ],
     [
       "profile",
@@ -10492,6 +11892,46 @@
     ],
     [
       "solve",
+      "y2020_2035_2day_dispatch",
+      "period_timeset",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwMjAyMCIsICIyZGF5Il0sIFsicDIwMjUiLCAiMmRheSJdLCBbInAyMDMwIiwgIjJkYXkiXSwgWyJwMjAzNSIsICIyZGF5Il1dLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "map"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "solve",
+      "y2020_2035_2day_dispatch",
+      "realized_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAyMCIsICJwMjAyNSIsICJwMjAzMCIsICJwMjAzNSJdLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "array"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "solve",
+      "y2020_2035_2day_dispatch",
+      "solve_mode",
+      [
+        "InNpbmdsZV9zb2x2ZSI=",
+        "str"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "solve",
+      "y2020_2035_2day_dispatch",
+      "years_represented",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwMjAyMCIsIDUuMF0sIFsicDIwMjUiLCA1LjBdLCBbInAyMDMwIiwgNS4wXSwgWyJwMjAzNSIsIDUuMF1dLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "map"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "solve",
       "y2020_2035_5week",
       "invest_periods",
       [
@@ -10608,6 +12048,26 @@
         "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAyMCJdLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
         "array"
       ],
+      "csp_invest_common"
+    ],
+    [
+      "solve",
+      "y2020_2day_dispatch",
+      "invest_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAyMCJdLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "array"
+      ],
+      "desal_ro_invest"
+    ],
+    [
+      "solve",
+      "y2020_2day_dispatch",
+      "invest_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAyMCJdLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "array"
+      ],
       "retire"
     ],
     [
@@ -10659,6 +12119,26 @@
         "str"
       ],
       "unidirectional"
+    ],
+    [
+      "solve",
+      "y2020_2day_dispatch",
+      "solver_mip_gap",
+      [
+        "MC4w",
+        "float"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "solve",
+      "y2020_2day_dispatch",
+      "solver_mip_gap",
+      [
+        "MC4w",
+        "float"
+      ],
+      "must_run_min_load_only"
     ],
     [
       "solve",
@@ -11142,6 +12622,86 @@
     ],
     [
       "unit",
+      "baseload_plant",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "must_run_profile"
+    ],
+    [
+      "unit",
+      "baseload_plant",
+      "efficiency",
+      [
+        "MC40",
+        "float"
+      ],
+      "must_run_profile"
+    ],
+    [
+      "unit",
+      "baseload_plant",
+      "existing",
+      [
+        "NTAwLjA=",
+        "float"
+      ],
+      "must_run_profile"
+    ],
+    [
+      "unit",
+      "bp_chp",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "desal_system"
+    ],
+    [
+      "unit",
+      "bp_chp",
+      "efficiency",
+      [
+        "MC44NQ==",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "unit",
+      "bp_chp",
+      "existing",
+      [
+        "NjAwLjA=",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "unit",
+      "clean_plant",
+      "conversion_method",
+      [
+        "Im5vbmUi",
+        "str"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "unit",
+      "clean_plant",
+      "existing",
+      [
+        "NTAwLjA=",
+        "float"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "unit",
       "coal_chp",
       "conversion_method",
       [
@@ -11552,6 +13112,226 @@
     ],
     [
       "unit",
+      "csp_backup_boiler",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "csp_gas_backup"
+    ],
+    [
+      "unit",
+      "csp_backup_boiler",
+      "efficiency",
+      [
+        "MC45",
+        "float"
+      ],
+      "csp_gas_backup"
+    ],
+    [
+      "unit",
+      "csp_backup_boiler",
+      "existing",
+      [
+        "MjUwLjA=",
+        "float"
+      ],
+      "csp_gas_backup"
+    ],
+    [
+      "unit",
+      "csp_field",
+      "constraint_capacity_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJjc3Bfc29sYXJfbXVsdGlwbGUiLCAxLjBdXSwgImluZGV4X25hbWUiOiAiY29uc3RyYWludCJ9",
+        "map"
+      ],
+      "csp_fixed_design"
+    ],
+    [
+      "unit",
+      "csp_field",
+      "conversion_method",
+      [
+        "Im5vbmUi",
+        "str"
+      ],
+      "csp_plant"
+    ],
+    [
+      "unit",
+      "csp_field",
+      "discount_rate",
+      [
+        "MC4wNw==",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_field",
+      "existing",
+      [
+        "MC4w",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_field",
+      "existing",
+      [
+        "NTAwLjA=",
+        "float"
+      ],
+      "csp_plant"
+    ],
+    [
+      "unit",
+      "csp_field",
+      "invest_cost",
+      [
+        "MTUwLjA=",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_field",
+      "invest_max_total",
+      [
+        "MTAwMC4w",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_field",
+      "invest_method",
+      [
+        "ImludmVzdF90b3RhbCI=",
+        "str"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_field",
+      "lifetime",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "constraint_capacity_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJjc3Bfc29sYXJfbXVsdGlwbGUiLCAtNS4wXSwgWyJjc3Bfc3RvcmFnZV9ob3VycyIsIC0yNS4wXV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
+        "map"
+      ],
+      "csp_fixed_design"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "csp_plant"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "discount_rate",
+      [
+        "MC4wNw==",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "efficiency",
+      [
+        "MC40",
+        "float"
+      ],
+      "csp_plant"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "existing",
+      [
+        "MC4w",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "existing",
+      [
+        "MTAwLjA=",
+        "float"
+      ],
+      "csp_plant"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "invest_cost",
+      [
+        "NTAwLjA=",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "invest_max_total",
+      [
+        "MTAwLjA=",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "invest_method",
+      [
+        "ImludmVzdF90b3RhbCI=",
+        "str"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "lifetime",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
       "dr_decrease_demand",
       "conversion_method",
       [
@@ -11662,6 +13442,46 @@
     ],
     [
       "unit",
+      "ext_chp",
+      "constraint_capacity_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJleHRfY2hwX21heF9oZWF0IiwgLTAuNl1dLCAiaW5kZXhfbmFtZSI6ICJjb25zdHJhaW50In0=",
+        "map"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "unit",
+      "ext_chp",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "unit",
+      "ext_chp",
+      "efficiency",
+      [
+        "MC40NQ==",
+        "float"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "unit",
+      "ext_chp",
+      "existing",
+      [
+        "MTAwMC4w",
+        "float"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "unit",
       "fusion_plant",
       "conversion_method",
       [
@@ -11679,6 +13499,346 @@
         "float"
       ],
       "fusion"
+    ],
+    [
+      "unit",
+      "med_desal",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "desal_system"
+    ],
+    [
+      "unit",
+      "med_desal",
+      "efficiency",
+      [
+        "MTIuMA==",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "unit",
+      "med_desal",
+      "existing",
+      [
+        "MzAwMC4w",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "unit",
+      "ro_desal",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "desal_ro_invest"
+    ],
+    [
+      "unit",
+      "ro_desal",
+      "discount_rate",
+      [
+        "MC4wNQ==",
+        "float"
+      ],
+      "desal_ro_invest"
+    ],
+    [
+      "unit",
+      "ro_desal",
+      "efficiency",
+      [
+        "MjUwLjA=",
+        "float"
+      ],
+      "desal_ro_invest"
+    ],
+    [
+      "unit",
+      "ro_desal",
+      "invest_cost",
+      [
+        "MzAuMA==",
+        "float"
+      ],
+      "desal_ro_invest"
+    ],
+    [
+      "unit",
+      "ro_desal",
+      "invest_max_total",
+      [
+        "MjAwMC4w",
+        "float"
+      ],
+      "desal_ro_invest"
+    ],
+    [
+      "unit",
+      "ro_desal",
+      "invest_method",
+      [
+        "ImludmVzdF90b3RhbCI=",
+        "str"
+      ],
+      "desal_ro_invest"
+    ],
+    [
+      "unit",
+      "ro_desal",
+      "lifetime",
+      [
+        "MjAuMA==",
+        "float"
+      ],
+      "desal_ro_invest"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "constraint_online_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJzdGVhbV9mbGVldF90d29fb25saW5lIiwgMS4wXV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
+        "map"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "efficiency",
+      [
+        "MC40",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "existing",
+      [
+        "MTAwLjA=",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "min_load",
+      [
+        "MC41",
+        "float"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "min_load",
+      [
+        "MC41",
+        "float"
+      ],
+      "must_run_min_load_only"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "startup_method",
+      [
+        "ImJpbmFyeSI=",
+        "str"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "startup_method",
+      [
+        "ImJpbmFyeSI=",
+        "str"
+      ],
+      "must_run_min_load_only"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "constraint_online_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJzdGVhbV9mbGVldF90d29fb25saW5lIiwgMS4wXV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
+        "map"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "efficiency",
+      [
+        "MC40",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "existing",
+      [
+        "MTAwLjA=",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "min_load",
+      [
+        "MC41",
+        "float"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "min_load",
+      [
+        "MC41",
+        "float"
+      ],
+      "must_run_min_load_only"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "startup_method",
+      [
+        "ImJpbmFyeSI=",
+        "str"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "startup_method",
+      [
+        "ImJpbmFyeSI=",
+        "str"
+      ],
+      "must_run_min_load_only"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "constraint_online_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJzdGVhbV9mbGVldF90d29fb25saW5lIiwgMS4wXV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
+        "map"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "efficiency",
+      [
+        "MC40",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "existing",
+      [
+        "MTAwLjA=",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "min_load",
+      [
+        "MC41",
+        "float"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "min_load",
+      [
+        "MC41",
+        "float"
+      ],
+      "must_run_min_load_only"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "startup_method",
+      [
+        "ImJpbmFyeSI=",
+        "str"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "startup_method",
+      [
+        "ImJpbmFyeSI=",
+        "str"
+      ],
+      "must_run_min_load_only"
     ],
     [
       "unit",
@@ -11974,6 +14134,34 @@
     [
       "unit__node__profile",
       [
+        "baseload_plant",
+        "west",
+        "must_run_share"
+      ],
+      "profile_method",
+      [
+        "Imxvd2VyX2xpbWl0Ig==",
+        "str"
+      ],
+      "must_run_profile"
+    ],
+    [
+      "unit__node__profile",
+      [
+        "csp_field",
+        "csp_heat",
+        "csp_field_yield"
+      ],
+      "profile_method",
+      [
+        "InVwcGVyX2xpbWl0Ig==",
+        "str"
+      ],
+      "csp_plant"
+    ],
+    [
+      "unit__node__profile",
+      [
         "ev_charger",
         "ev_battery",
         "ev_connected_share"
@@ -11998,6 +14186,45 @@
         "str"
       ],
       "wind"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "bp_chp",
+        "desal_heat"
+      ],
+      "constraint_flow_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJicF9jaHBfcmF0aW8iLCAtMC41XV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
+        "map"
+      ],
+      "desal_system"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "bp_chp",
+        "west"
+      ],
+      "constraint_flow_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJicF9jaHBfcmF0aW8iLCAxLjBdXSwgImluZGV4X25hbWUiOiAiY29uc3RyYWludCJ9",
+        "map"
+      ],
+      "desal_system"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "clean_plant",
+        "west"
+      ],
+      "other_operational_cost",
+      [
+        "ODAuMA==",
+        "float"
+      ],
+      "co2_trajectory_system"
     ],
     [
       "unit__outputNode",
@@ -12096,6 +14323,19 @@
         "coal_plant",
         "west"
       ],
+      "constraint_flow_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJjb2FsX3BsYW50X2Zsb29yIiwgMS4wXV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
+        "map"
+      ],
+      "must_run_constraint_one"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "coal_plant",
+        "west"
+      ],
       "inertia_constant",
       [
         "NQ==",
@@ -12145,6 +14385,58 @@
     [
       "unit__outputNode",
       [
+        "ext_chp",
+        "desal_heat"
+      ],
+      "constraint_flow_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJleHRfY2hwX2JhY2twcmVzc3VyZV9saW5lIiwgLTAuNV0sIFsiZXh0X2NocF9tYXhfaGVhdCIsIDEuMF1dLCAiaW5kZXhfbmFtZSI6ICJjb25zdHJhaW50In0=",
+        "map"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "ext_chp",
+        "desal_heat"
+      ],
+      "conversion_flow_coeff",
+      [
+        "MC4xNQ==",
+        "float"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "ext_chp",
+        "west"
+      ],
+      "constraint_flow_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJleHRfY2hwX2JhY2twcmVzc3VyZV9saW5lIiwgMS4wXV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
+        "map"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "ext_chp",
+        "west"
+      ],
+      "conversion_flow_coeff",
+      [
+        "MS4w",
+        "float"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "unit__outputNode",
+      [
         "fusion_plant",
         "west"
       ],
@@ -12154,6 +14446,97 @@
         "float"
       ],
       "fusion"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_1",
+        "west"
+      ],
+      "constraint_flow_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJzdGVhbV9mbGVldF9vdXRwdXRfZmxvb3IiLCAxLjBdXSwgImluZGV4X25hbWUiOiAiY29uc3RyYWludCJ9",
+        "map"
+      ],
+      "must_run_fleet_output_floor"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_1",
+        "west"
+      ],
+      "other_operational_cost",
+      [
+        "MC4w",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_2",
+        "west"
+      ],
+      "constraint_flow_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJzdGVhbV9mbGVldF9vdXRwdXRfZmxvb3IiLCAxLjBdXSwgImluZGV4X25hbWUiOiAiY29uc3RyYWludCJ9",
+        "map"
+      ],
+      "must_run_fleet_output_floor"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_2",
+        "west"
+      ],
+      "other_operational_cost",
+      [
+        "MS4w",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_3",
+        "west"
+      ],
+      "constraint_flow_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJzdGVhbV9mbGVldF9vdXRwdXRfZmxvb3IiLCAxLjBdXSwgImluZGV4X25hbWUiOiAiY29uc3RyYWludCJ9",
+        "map"
+      ],
+      "must_run_fleet_output_floor"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_3",
+        "west"
+      ],
+      "other_operational_cost",
+      [
+        "Mi4w",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "wind_plant",
+        "west"
+      ],
+      "other_operational_cost",
+      [
+        "MS4w",
+        "float"
+      ],
+      "must_run_system"
     ]
   ],
   "alternatives": [
@@ -12210,12 +14593,28 @@
       ""
     ],
     [
+      "co2_additional_measures",
+      "Emission-trajectory how-to: CO2 limit 2.0, 1.5, 1.0, 0.5 Mt/a."
+    ],
+    [
+      "co2_existing_measures",
+      "Emission-trajectory how-to: CO2 limit 2.0, 1.8, 1.6, 1.4 Mt/a."
+    ],
+    [
       "co2_limit",
       ""
     ],
     [
       "co2_price",
       ""
+    ],
+    [
+      "co2_trajectory_system",
+      "Emission-trajectory how-to: four 5-year periods p2020..p2035 on the 2-day timeset, constant 300 MW demand at west, a carbon-free clean_plant at 80 CUR/MWh and a per-period CO2 limit on group co2_limit."
+    ],
+    [
+      "co2_without_measures",
+      "Emission-trajectory how-to: CO2 limit 3.0 Mt/a in every period (does not bind)."
     ],
     [
       "coal",
@@ -12254,12 +14653,48 @@
       ""
     ],
     [
+      "csp_fixed_design",
+      "CSP how-to: solar multiple 2 and 10 storage hours at design efficiency 0.4, as user constraints on the capacities (field = 5 x turbine, storage = 25 x turbine)."
+    ],
+    [
+      "csp_gas_backup",
+      "CSP how-to: a natural-gas boiler csp_backup_boiler (250 MW_th, efficiency 0.9) that can also charge the heat storage."
+    ],
+    [
+      "csp_invest_common",
+      "CSP how-to: no existing capacity; field, storage and turbine may be invested (bounds 1000 MW_th, 5000 MWh_th, 100 MW_e)."
+    ],
+    [
+      "csp_plant",
+      "CSP how-to: existing CSP plant: solar field csp_field 500 MW_th, heat storage csp_heat 2500 MWh_th, turbine csp_turbine 100 MW_e (efficiency 0.4)."
+    ],
+    [
+      "csp_system",
+      "CSP how-to: constant 150 MW demand at west (coal_plant is the backup) and the field-yield profile csp_field_yield (a clear day, a cloudy day, a clear day)."
+    ],
+    [
       "cumulative_investment",
       ""
     ],
     [
       "delay_source_coef_on",
       "Phase 3d: override unit__inputNode.(water_pump, water_source).conversion_flow_coeff from 1.0 to 2.0 for test_flex_delay_source_coef.py."
+    ],
+    [
+      "desal_extraction",
+      "Desalination how-to: bp_chp off; an extraction CHP ext_chp with an operating region (power >= 0.5 x heat, heat <= 0.6 x capacity) instead."
+    ],
+    [
+      "desal_ro_invest",
+      "Desalination how-to: a reverse-osmosis unit ro_desal (250 m3/MWh_e) that may be invested up to 2000 m3/h at 30 000 CUR per m3/h."
+    ],
+    [
+      "desal_system",
+      "Desalination how-to: constant 300 MW demand at west; a backpressure CHP bp_chp (coal, heat = 2 x power) feeds desal_heat; a thermal desalination unit med_desal (12 m3/MWh_th, 3000 m3/h) serves a water demand of 3000 m3/h."
+    ],
+    [
+      "desal_water_storage",
+      "Desalination how-to: water becomes a 15 000 m3 storage and the water demand varies (12 h at 2000, 12 h at 4000 m3/h)."
     ],
     [
       "dispatch_fullYear_roll",
@@ -12364,6 +14799,38 @@
     [
       "lossless_2way",
       "Lossless 2-way connection forced-reverse test"
+    ],
+    [
+      "must_run_constraint_one",
+      "Must-run how-to: user constraint coal_plant output >= 150 MW."
+    ],
+    [
+      "must_run_fleet",
+      "Must-run how-to: three identical 100 MW coal steam units steam_1..3 (other_operational_cost 0, 1, 2 CUR/MWh breaks the tie)."
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "Must-run how-to: user constraint on the fleet output, sum >= 100 MW."
+    ],
+    [
+      "must_run_fleet_two_online",
+      "Must-run how-to: binary online steam units with min_load 0.5 and a user constraint on the online count, sum >= 2 units."
+    ],
+    [
+      "must_run_flowgroup",
+      "Must-run how-to: flowGroup steam_fleet with min_instant_flow 100 MW."
+    ],
+    [
+      "must_run_min_load_only",
+      "Must-run how-to: binary online steam units with min_load 0.5 and no must-run (control case: min_load is not a must-run)."
+    ],
+    [
+      "must_run_profile",
+      "Must-run how-to: a 500 MW coal unit baseload_plant whose output is at least 0.4 of its capacity (profile lower_limit)."
+    ],
+    [
+      "must_run_system",
+      "Must-run how-to: constant 300 MW demand at west; wind costs 1 CUR/MWh."
     ],
     [
       "network",
@@ -12471,6 +14938,21 @@
       ""
     ],
     [
+      "co2_additional_measures",
+      false,
+      ""
+    ],
+    [
+      "co2_existing_measures",
+      false,
+      ""
+    ],
+    [
+      "co2_without_measures",
+      false,
+      ""
+    ],
+    [
       "coal",
       false,
       ""
@@ -12556,9 +15038,54 @@
       ""
     ],
     [
+      "csp_existing",
+      false,
+      ""
+    ],
+    [
+      "csp_fixed_design",
+      false,
+      ""
+    ],
+    [
+      "csp_gas_backup",
+      false,
+      ""
+    ],
+    [
+      "csp_optimised_design",
+      false,
+      ""
+    ],
+    [
+      "csp_without",
+      false,
+      ""
+    ],
+    [
       "delay_source_coef",
       false,
       null
+    ],
+    [
+      "desal_backpressure",
+      false,
+      ""
+    ],
+    [
+      "desal_extraction",
+      false,
+      ""
+    ],
+    [
+      "desal_ro_invest",
+      false,
+      ""
+    ],
+    [
+      "desal_water_storage",
+      false,
+      ""
     ],
     [
       "dr_decrease_demand",
@@ -12647,6 +15174,46 @@
     ],
     [
       "multi_year_wind_no_investment",
+      false,
+      ""
+    ],
+    [
+      "must_run_constraint_one",
+      false,
+      ""
+    ],
+    [
+      "must_run_fleet_output_floor",
+      false,
+      ""
+    ],
+    [
+      "must_run_fleet_two_online",
+      false,
+      ""
+    ],
+    [
+      "must_run_flowgroup",
+      false,
+      ""
+    ],
+    [
+      "must_run_heat_demand",
+      false,
+      ""
+    ],
+    [
+      "must_run_min_load_only",
+      false,
+      ""
+    ],
+    [
+      "must_run_none",
+      false,
+      ""
+    ],
+    [
+      "must_run_profile",
       false,
       ""
     ],
@@ -12759,6 +15326,11 @@
       "wind_battery_invest_lifetime_renew_inflation_2pct",
       false,
       null
+    ],
+    [
+      "wind_weighted",
+      false,
+      ""
     ],
     [
       "y2020_2029_1x10y",
@@ -13030,6 +15602,81 @@
     [
       "capacity_margin",
       "capacity_margin",
+      null
+    ],
+    [
+      "co2_additional_measures",
+      "init",
+      "west"
+    ],
+    [
+      "co2_additional_measures",
+      "west",
+      "coal"
+    ],
+    [
+      "co2_additional_measures",
+      "coal",
+      "co2_trajectory_system"
+    ],
+    [
+      "co2_additional_measures",
+      "co2_trajectory_system",
+      "co2_additional_measures"
+    ],
+    [
+      "co2_additional_measures",
+      "co2_additional_measures",
+      null
+    ],
+    [
+      "co2_existing_measures",
+      "init",
+      "west"
+    ],
+    [
+      "co2_existing_measures",
+      "west",
+      "coal"
+    ],
+    [
+      "co2_existing_measures",
+      "coal",
+      "co2_trajectory_system"
+    ],
+    [
+      "co2_existing_measures",
+      "co2_trajectory_system",
+      "co2_existing_measures"
+    ],
+    [
+      "co2_existing_measures",
+      "co2_existing_measures",
+      null
+    ],
+    [
+      "co2_without_measures",
+      "init",
+      "west"
+    ],
+    [
+      "co2_without_measures",
+      "west",
+      "coal"
+    ],
+    [
+      "co2_without_measures",
+      "coal",
+      "co2_trajectory_system"
+    ],
+    [
+      "co2_without_measures",
+      "co2_trajectory_system",
+      "co2_without_measures"
+    ],
+    [
+      "co2_without_measures",
+      "co2_without_measures",
       null
     ],
     [
@@ -13453,6 +16100,146 @@
       null
     ],
     [
+      "csp_existing",
+      "init",
+      "west"
+    ],
+    [
+      "csp_existing",
+      "west",
+      "coal"
+    ],
+    [
+      "csp_existing",
+      "coal",
+      "csp_system"
+    ],
+    [
+      "csp_existing",
+      "csp_system",
+      "csp_plant"
+    ],
+    [
+      "csp_existing",
+      "csp_plant",
+      null
+    ],
+    [
+      "csp_fixed_design",
+      "init",
+      "west"
+    ],
+    [
+      "csp_fixed_design",
+      "west",
+      "coal"
+    ],
+    [
+      "csp_fixed_design",
+      "coal",
+      "csp_system"
+    ],
+    [
+      "csp_fixed_design",
+      "csp_system",
+      "csp_plant"
+    ],
+    [
+      "csp_fixed_design",
+      "csp_plant",
+      "csp_invest_common"
+    ],
+    [
+      "csp_fixed_design",
+      "csp_invest_common",
+      "csp_fixed_design"
+    ],
+    [
+      "csp_fixed_design",
+      "csp_fixed_design",
+      null
+    ],
+    [
+      "csp_gas_backup",
+      "init",
+      "west"
+    ],
+    [
+      "csp_gas_backup",
+      "west",
+      "coal"
+    ],
+    [
+      "csp_gas_backup",
+      "coal",
+      "csp_system"
+    ],
+    [
+      "csp_gas_backup",
+      "csp_system",
+      "csp_plant"
+    ],
+    [
+      "csp_gas_backup",
+      "csp_plant",
+      "csp_gas_backup"
+    ],
+    [
+      "csp_gas_backup",
+      "csp_gas_backup",
+      null
+    ],
+    [
+      "csp_optimised_design",
+      "init",
+      "west"
+    ],
+    [
+      "csp_optimised_design",
+      "west",
+      "coal"
+    ],
+    [
+      "csp_optimised_design",
+      "coal",
+      "csp_system"
+    ],
+    [
+      "csp_optimised_design",
+      "csp_system",
+      "csp_plant"
+    ],
+    [
+      "csp_optimised_design",
+      "csp_plant",
+      "csp_invest_common"
+    ],
+    [
+      "csp_optimised_design",
+      "csp_invest_common",
+      null
+    ],
+    [
+      "csp_without",
+      "init",
+      "west"
+    ],
+    [
+      "csp_without",
+      "west",
+      "coal"
+    ],
+    [
+      "csp_without",
+      "coal",
+      "csp_system"
+    ],
+    [
+      "csp_without",
+      "csp_system",
+      null
+    ],
+    [
       "delay_source_coef",
       "init",
       "west"
@@ -13480,6 +16267,101 @@
     [
       "delay_source_coef",
       "delay_source_coef_on",
+      null
+    ],
+    [
+      "desal_backpressure",
+      "init",
+      "west"
+    ],
+    [
+      "desal_backpressure",
+      "west",
+      "coal"
+    ],
+    [
+      "desal_backpressure",
+      "coal",
+      "desal_system"
+    ],
+    [
+      "desal_backpressure",
+      "desal_system",
+      null
+    ],
+    [
+      "desal_extraction",
+      "init",
+      "west"
+    ],
+    [
+      "desal_extraction",
+      "west",
+      "coal"
+    ],
+    [
+      "desal_extraction",
+      "coal",
+      "desal_system"
+    ],
+    [
+      "desal_extraction",
+      "desal_system",
+      "desal_extraction"
+    ],
+    [
+      "desal_extraction",
+      "desal_extraction",
+      null
+    ],
+    [
+      "desal_ro_invest",
+      "init",
+      "west"
+    ],
+    [
+      "desal_ro_invest",
+      "west",
+      "coal"
+    ],
+    [
+      "desal_ro_invest",
+      "coal",
+      "desal_system"
+    ],
+    [
+      "desal_ro_invest",
+      "desal_system",
+      "desal_ro_invest"
+    ],
+    [
+      "desal_ro_invest",
+      "desal_ro_invest",
+      null
+    ],
+    [
+      "desal_water_storage",
+      "init",
+      "west"
+    ],
+    [
+      "desal_water_storage",
+      "west",
+      "coal"
+    ],
+    [
+      "desal_water_storage",
+      "coal",
+      "desal_system"
+    ],
+    [
+      "desal_water_storage",
+      "desal_system",
+      "desal_water_storage"
+    ],
+    [
+      "desal_water_storage",
+      "desal_water_storage",
       null
     ],
     [
@@ -14295,6 +17177,266 @@
     [
       "multi_year_wind_no_investment",
       "wind_no_investment_10yr",
+      null
+    ],
+    [
+      "must_run_constraint_one",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_constraint_one",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_constraint_one",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_constraint_one",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_constraint_one",
+      "must_run_system",
+      "must_run_constraint_one"
+    ],
+    [
+      "must_run_constraint_one",
+      "must_run_constraint_one",
+      null
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "must_run_system",
+      "must_run_fleet"
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "must_run_fleet",
+      "must_run_fleet_output_floor"
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "must_run_fleet_output_floor",
+      null
+    ],
+    [
+      "must_run_fleet_two_online",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_fleet_two_online",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_fleet_two_online",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_fleet_two_online",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_fleet_two_online",
+      "must_run_system",
+      "must_run_fleet"
+    ],
+    [
+      "must_run_fleet_two_online",
+      "must_run_fleet",
+      "must_run_fleet_two_online"
+    ],
+    [
+      "must_run_fleet_two_online",
+      "must_run_fleet_two_online",
+      null
+    ],
+    [
+      "must_run_flowgroup",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_flowgroup",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_flowgroup",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_flowgroup",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_flowgroup",
+      "must_run_system",
+      "must_run_fleet"
+    ],
+    [
+      "must_run_flowgroup",
+      "must_run_fleet",
+      "must_run_flowgroup"
+    ],
+    [
+      "must_run_flowgroup",
+      "must_run_flowgroup",
+      null
+    ],
+    [
+      "must_run_heat_demand",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_heat_demand",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_heat_demand",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_heat_demand",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_heat_demand",
+      "must_run_system",
+      "coal_chp"
+    ],
+    [
+      "must_run_heat_demand",
+      "coal_chp",
+      "heat"
+    ],
+    [
+      "must_run_heat_demand",
+      "heat",
+      null
+    ],
+    [
+      "must_run_min_load_only",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_min_load_only",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_min_load_only",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_min_load_only",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_min_load_only",
+      "must_run_system",
+      "must_run_fleet"
+    ],
+    [
+      "must_run_min_load_only",
+      "must_run_fleet",
+      "must_run_min_load_only"
+    ],
+    [
+      "must_run_min_load_only",
+      "must_run_min_load_only",
+      null
+    ],
+    [
+      "must_run_none",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_none",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_none",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_none",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_none",
+      "must_run_system",
+      null
+    ],
+    [
+      "must_run_profile",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_profile",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_profile",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_profile",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_profile",
+      "must_run_system",
+      "must_run_profile"
+    ],
+    [
+      "must_run_profile",
+      "must_run_profile",
       null
     ],
     [
@@ -15320,6 +18462,26 @@
     [
       "wind_battery_invest_lifetime_renew_inflation_2pct",
       "inflation_2pct",
+      null
+    ],
+    [
+      "wind_weighted",
+      "init",
+      "west"
+    ],
+    [
+      "wind_weighted",
+      "west",
+      "wind"
+    ],
+    [
+      "wind_weighted",
+      "wind",
+      "weighted_2day"
+    ],
+    [
+      "wind_weighted",
+      "weighted_2day",
       null
     ],
     [

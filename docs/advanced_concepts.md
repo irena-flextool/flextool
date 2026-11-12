@@ -42,6 +42,7 @@ Economic values can be expressed in two ways:
 - **Nominal (current prices)**: Values include inflation. The same plant might cost 1300 EUR/kW in 2040 at 2% annual inflation, even though its real cost hasn't changed.
 
 **Example**: A coal plant costs 1500 EUR/kW today. At 2% inflation:
+
 - Real cost in 2035: 1500 EUR/kW (unchanged)
 - Nominal cost in 2035: 1500 x (1.02)^10 = 1829 EUR/kW approximately
 
@@ -51,10 +52,22 @@ Economic values can be expressed in two ways:
 
 The model-level `inflation_rate` parameter (default: 0) adjusts all future costs to a common price base. It applies uniformly to all cost types: investment costs, fuel costs, fixed O&M, penalties, etc.
 
-- **Real inputs** (most common): Set `inflation_rate` = 0. All costs in all years use today's prices. A fuel cost of 50 EUR/MWh means the same purchasing power whether it occurs in 2025 or 2040.
+- **Real inputs** (most common): Set `inflation_rate` = 0. All costs in all years use today's prices. A fuel cost of 50 EUR/MWh means the same purchasing power whether it occurs in 2025 or 2040. To discount future costs with a social discount rate, set `inflation_rate` to that rate instead (see [Discounting between milestone years](#discounting-between-milestone-years)).
 - **Nominal inputs**: Set `inflation_rate` to expected inflation (e.g., 0.02 for 2%). The model deflates future costs: a nominal cost of 60 EUR/MWh in 2035 is treated as 60 / (1.02)^10 = 49.2 EUR/MWh approximately in today's money.
 
 The inflation rate applies via the factor `1 / (1 + inflation_rate)^years`. Investment costs are assumed to occur at the beginning of each year; operational costs at the middle of the year (adjustable with `inflation_offset_investment` and `inflation_offset_operations`).
+
+### Discounting between milestone years
+
+**Only `inflation_rate` discounts.** FlexTool discounts the costs of later periods (milestone years) with the `model` parameter `inflation_rate` and nothing else. Each period's costs are multiplied by a discount factor: the sum, over the years the period represents, of `1 / (1 + inflation_rate)^years_from_start`. The per-technology `discount_rate` does not discount between periods: it only turns an `invest_cost` into a yearly payment (see [The discount rate](#the-discount-rate-per-technology)).
+
+**How the years are counted.** The years from the start of the run come from `years_represented`: a period starts after the years that the periods before it represent. The period names are only labels, so *p2030* is not read as the year 2030. Give each milestone the number of years until the next milestone (for example 5 for *p2025* when the next period is *p2030*). Investment costs are discounted from the start of a year (`inflation_offset_investment`, default 0), operating costs from the middle of it (`inflation_offset_operations`, default 0.5).
+
+**With `inflation_rate` 0 there is no discounting.** A cost in 2040 then weighs the same as the same cost in 2025: each period's yearly costs are only multiplied by its `years_represented`. This is right for a model in real terms that should not prefer earlier or later costs, but it is not what most planning studies want.
+
+**A social discount rate.** In a model with real (constant-price) inputs, enter the social discount rate as `inflation_rate`, for example 0.05 for 5 %. The model applies the same factor whether the rate stands for inflation or for time preference, so the discounted costs are then present values at that rate. Keep the per-technology `discount_rate` at the real cost of capital of each technology. In a model with nominal inputs, use the combined rate: (1 + inflation) × (1 + social discount rate) − 1.
+
+**Where to see it.** `summary_solve.csv` lists the *Operational discount factor* and the *Investment discount factor* of each period. The cost results come both annualized (one year of the period, not discounted) and discounted (present value over the years the periods represent); see [Costs](results.md#costs).
 
 ### The discount rate (per technology)
 
@@ -66,12 +79,17 @@ The discount rate converts a lump-sum investment cost into annual payments over 
 annual_payment = invest_cost * discount_rate / (1 - (1 / (1 + discount_rate))^lifetime)
 ```
 
+A `discount_rate` of 0 gives the straight-line annuity `invest_cost / lifetime` (no interest). Without a value the rate is 0.05; a negative rate is an input error. The `lifetime` has no default: it is required when the entity invests or retires with a cost (`invest_cost`, `salvage_value`), and when its `lifetime_method` is `reinvest_choice` or `no_investment` (also for existing capacity without investment), since the capacity then ends after the lifetime.
+
+An `invest_method` other than `not_allowed` offers investment (retirement) in every investment period, also without an `invest_cost` (`salvage_value`) or where it is 0: that capacity has no annuity, and its `fixed_cost` still counts (a retirement saves it). A 0 in an `invest_cost` map therefore does not block investment in that period; to forbid investment in a period, use a period method (`invest_period`, `invest_period_total` or their `invest_retire_` forms) and set `invest_max_period` 0 for it; the other methods do not use `invest_max_period`. With neither `invest_cost` nor `fixed_cost` any invested amount is optimal, so the result is arbitrary. A zero-cost investment needs a `lifetime` only with `lifetime_method` `reinvest_choice` or `no_investment`.
+
 **Example**: A solar plant costs 800 EUR/kW with a 25-year lifetime and 5% discount rate:
 ```
 annual_payment = 800 * 0.05 / (1 - 1/1.05^25) = 800 * 0.0710 = 56.8 EUR/kW/year approximately
 ```
 
 Different technologies can have different discount rates reflecting their risk profiles:
+
 - Low risk (e.g., established solar PV): 3-5%
 - Medium risk (e.g., natural gas turbine): 5-7%
 - High risk (e.g., novel technology): 8-12%
@@ -82,7 +100,7 @@ The `discount_rate` and `inflation_rate` must use the same price basis across on
 
 | Inputs | inflation_rate | discount_rate (entity) |
 |--------|---------------|----------------------|
-| Real (constant prices) | 0 | Real WACC (e.g., 5%) |
+| Real (constant prices) | 0, or the social discount rate | Real WACC (e.g., 5%) |
 | Nominal (current and future prices) | Expected inflation (e.g., 2%) | Nominal WACC (e.g., 7%) |
 
 The relationship between real and nominal rates follows the Fisher equation:
@@ -97,7 +115,7 @@ Fixed costs (`fixed_cost` parameter on units, connections, and nodes) represent 
 
 For **existing** assets, fixed costs are applied each year with inflation adjustment.
 
-For **invested** assets, fixed costs are calculated over the full economic lifetime at the time of the investment decision. This allows the optimizer to correctly weigh the total cost of ownership when deciding whether to invest. In the results, these costs are reported as a separate line item from the investment annuity.
+For **invested** assets, the fixed cost is paid in every period the new capacity operates within the model horizon: until its `lifetime` ends, or in every later period with `lifetime_method` *reinvest_automatic*. Each period's fixed cost is discounted like the other costs of that period. Years after the model horizon are not counted, the same as for the investment annuity, so the investment decision weighs the costs of the years the model covers. In the results, these costs are reported as a separate line item (*fixed cost invested*) from the investment annuity.
 
 ### Summary of economic parameters
 
@@ -106,9 +124,9 @@ For **invested** assets, fixed costs are calculated over the full economic lifet
 | `inflation_rate` | Model | 0 | General inflation rate. Set to 0 for real inputs. |
 | `inflation_offset_investment` | Model | 0 | When in the year investment costs occur (0 = start) |
 | `inflation_offset_operations` | Model | 0.5 | When in the year operational costs occur (0.5 = middle) |
-| `discount_rate` | Entity | 0.05 | Technology-specific WACC for annualizing investments |
+| `discount_rate` | Entity | 0.05 | Technology-specific WACC for annualizing investments; 0 gives invest_cost / lifetime |
 | `invest_cost` | Entity | - | Overnight investment cost [CUR/kW] |
-| `lifetime` | Entity | - | Economic lifetime [years] |
+| `lifetime` | Entity | - | Economic lifetime [years]; required when the entity invests or retires with a cost |
 | `fixed_cost` | Entity | - | Annual fixed O&M cost [CUR/kW/year] |
 | `salvage_value` | Entity | - | Residual value at end of life [CUR/kW] |
 

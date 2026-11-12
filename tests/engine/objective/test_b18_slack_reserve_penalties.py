@@ -9,7 +9,7 @@ Closed-form perturbation tests for six currently-untested terms:
 * B18-4 — ``vq_reserve · pdtReserve_upDown_group_reservation
           · p_reserve_upDown_group_penalty_reserve · op_factor``
           (_reserve.objective_terms)
-* B18-5 — ``vq_inertia · pdGroup_inertia_limit · pdGroup_penalty_inertia
+* B18-5 — ``vq_inertia · pdtGroup_inertia_limit · pdGroup_penalty_inertia
           · op_factor``  (_group_slack.objective_terms)
 * B18-6 — ``vq_non_synchronous · p_group_capacity_for_scaling
           · pdGroup_penalty_non_synchronous · op_factor``
@@ -171,7 +171,7 @@ def test_b18_5_vq_inertia_penalty_isolated(toy_group_reserve):
     d = toy_group_reserve
     base = replace(d,
         groupInertia=pl.DataFrame({"g": ["g"]}),
-        pdGroup_inertia_limit=Param(("g", "d"),
+        pdtGroup_inertia_limit=Param(("g", "d"),
             pl.DataFrame({"g": ["g"], "d": ["d1"], "value": [100.0]})),
         pdGroup_penalty_inertia=Param(("g", "d"),
             pl.DataFrame({"g": ["g"], "d": ["d1"], "value": [200.0]})),
@@ -222,7 +222,7 @@ def test_b18_6_vq_non_synchronous_penalty_isolated(toy_group_reserve):
         p_inflow=p_inflow,
         groupNonSync=pl.DataFrame({"g": ["g"]}),
         process_sink_nonSync=pl.DataFrame({"p": ["u"], "sink": ["n1"]}),
-        pdGroup_non_synchronous_limit=Param(("g", "d"),
+        pdtGroup_non_synchronous_limit=Param(("g", "d"),
             pl.DataFrame({"g": ["g"], "d": ["d1"], "value": [0.0]})),
         pdGroup_penalty_non_synchronous=Param(("g", "d"),
             pl.DataFrame({"g": ["g"], "d": ["d1"], "value": [200.0]})),

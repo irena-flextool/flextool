@@ -28,7 +28,8 @@ from typing import Any
 from flextool import run_record
 from flextool.assistant import project
 from flextool.assistant.context import NO_RECORD_STATE, AssistantContext
-from flextool.assistant.errors import ToolError, close_names, message, name_list
+from flextool.assistant.caps import Rendered
+from flextool.assistant.errors import ToolError, close_names, message, name_list, quoted
 
 RESULTS_DIR = "output_parquet"
 COMPARISON_DIR = "output_parquet_comparison"
@@ -379,16 +380,27 @@ def runs(ctx: AssistantContext) -> list[Run]:
     return [_run(ctx, folder, settings, sources, installed) for folder in run_folders(ctx)]
 
 
+def check_state(state: str, all_runs: list[Run]) -> None:
+    """Refuse a *state* that is neither a known state nor one a run of *all_runs* has, naming the states the runs
+    have (all the known states when there is no run)."""
+    if state in RUN_STATES:
+        return
+    present = sorted({r.entry["state"] for r in all_runs}, key=lambda s: (state_order(s), s))
+    if state not in present:
+        raise ToolError("unknown_run_state", value=state, values=present or list(RUN_STATES))
+
+
 def select_runs(ctx: AssistantContext, *, source: str | None = None, scenario: str | None = None,
                 state: str | None = None, results_usable: bool | None = None,
-                folders: list[str] | None = None) -> list[Run]:
+                folders: list[str] | None = None, all_runs: list[Run] | None = None) -> list[Run]:
     """The runs that pass every filter given (AND), newest first (:func:`newest_first`: a page offset counts in
     that order).  *folders* holds names and ``*`` patterns; an exact name that
     is no run folder, or a pattern that matches none, is refused with the close names; a *state* that is neither
-    a known state nor one a run has, with the states there are."""
+    a known state nor one a run has, with the states there are.  *all_runs*: a scan of :func:`runs` the caller
+    made already (one scan per call)."""
     from flextool.assistant.results._query import _matching
 
-    all_runs = runs(ctx)
+    all_runs = runs(ctx) if all_runs is None else all_runs
     selected = all_runs
     if source is not None:
         wanted = project.resolve_source(ctx, source)
@@ -396,9 +408,7 @@ def select_runs(ctx: AssistantContext, *, source: str | None = None, scenario: s
     if scenario is not None:
         selected = [r for r in selected if r.entry["db_scenario"] == scenario]
     if state is not None:
-        present = sorted({r.entry["state"] for r in all_runs}, key=lambda s: (state_order(s), s))
-        if state not in RUN_STATES and state not in present:
-            raise ToolError("unknown_run_state", value=state, values=present or list(RUN_STATES))
+        check_state(state, all_runs)
         selected = [r for r in selected if r.entry["state"] == state]
     if results_usable is not None:
         selected = [r for r in selected if r.entry["results_usable"] is results_usable]
@@ -431,11 +441,12 @@ class ResolvedRun:
         return self.run.verified
 
 
-def find_run(ctx: AssistantContext, run: str) -> Run:
-    """The run folder *run*, a name :func:`list_runs` gives, whatever its latest run did."""
+def find_run(ctx: AssistantContext, run: str, all_runs: list[Run] | None = None) -> Run:
+    """The run folder *run*, a name :func:`list_runs` gives, whatever its latest run did (*all_runs*: a scan of
+    :func:`runs` the caller made already)."""
     if not run or any(part in run for part in ("/", "\\", "..")):
         raise ToolError("bad_run_name", run=run)
-    all_runs = runs(ctx)
+    all_runs = runs(ctx) if all_runs is None else all_runs
     found = next((r for r in all_runs if r.folder.name == run), None)
     if found is None:
         names = [r.folder.name for r in all_runs]
@@ -445,10 +456,10 @@ def find_run(ctx: AssistantContext, run: str) -> Run:
     return found
 
 
-def resolve_run(ctx: AssistantContext, run: str) -> ResolvedRun:
+def resolve_run(ctx: AssistantContext, run: str, all_runs: list[Run] | None = None) -> ResolvedRun:
     """The run folder *run* (a name from :func:`list_runs`) when its results may be read; else the message of its
-    ``unusable_code`` (O1: never an earlier run's files)."""
-    found = find_run(ctx, run)
+    ``unusable_code`` (O1: never an earlier run's files).  *all_runs*: as :func:`find_run`."""
+    found = find_run(ctx, run, all_runs)
     status = found.status
     if not found.entry["results_usable"]:
         code = found.entry["unusable_code"] or "failed"
@@ -480,6 +491,31 @@ def run_notes(found: Run) -> list[str]:
         notes.append(f"This run was made with FlexTool {found.entry['flextool_version']}; this is FlexTool "
                      f"{_flextool_version()}.")
     return notes
+
+
+def run_inputs(ctx: AssistantContext, rr: ResolvedRun, *, not_shown: str, current: str
+               ) -> tuple[Any, Any, str | None]:
+    """``(input database, scenario view, note)``: the input data of the run's scenario in the run's own input
+    source, which a result tool shows beside the run's results.  ``(None, None, why not)`` when the source is not
+    known, no longer has the scenario or cannot be read now (*not_shown* says what is then left out, "its units and
+    connections are not listed"); with a view, the note says when the input changed after the run (*current*
+    names what is then of the current data, "the units and connections are those of the current data")."""
+    run = rr.run
+    scenario = rr.entry.get("db_scenario")
+    if run is None or run.source is None or not scenario:
+        return None, None, f"The input source of this run is not known, so {not_shown}."
+    try:
+        db, _ = project.open_source(ctx, run.source)
+        if scenario not in db.scenarios:
+            return None, None, Rendered(f"The input source no longer has the scenario {quoted(scenario, ctx.redact)} "
+                                        "of this run.")
+        view = db.view(scenario)
+    except ToolError as exc:
+        return None, None, Rendered(f"The input data of this run could not be read: {exc.render(ctx.redact)}")
+    note = None
+    if rr.entry.get("stale_vs_input"):
+        note = f"The input data changed after this run; {current}."
+    return db, view, note
 
 
 def member_notes(ctx: AssistantContext, folders: list[str]) -> dict[str, list[str]]:

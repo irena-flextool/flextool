@@ -1,14 +1,18 @@
-# COPT baseline parameter file (FlexTool default).
+# COPT baseline parameters (FlexTool default).
 #
-# Format: one "<ParamName> <value>" per line.  Lines starting with "#"
-# are comments.  Consumed by FlexTool's commercial-solver subprocess
-# driver (flextool/engine/solve/_subprocess_solve.py): each non-comment
-# line is translated to ``set <ParamName> <value>`` and piped on stdin
-# to ``copt_cmd`` before ``read <mps>`` / ``optimize``.
+# Format: one "<ParamName> <value>" per line; "#" starts a comment.
+# FlexTool turns each line into ``set <ParamName> <value>`` and pipes it to
+# ``copt_cmd`` before ``read <mps>`` / ``optimize``
+# (flextool/engine/solve/_subprocess_solve.py).
 #
-# Any value set here is overridden line-by-line by the scenario's
-# ``solver_options`` Map (and by the translated convenience knobs
-# ``solver_time_limit`` / ``solver_mip_gap`` / ``solver_threads``).
+# Precedence (later wins): this file < the solve's solver_mip_gap < the solve's
+# solver_arguments < the run's --solver-mip-gap / --solver-time-limit (or
+# FLEXTOOL_SOLVER_MIP_GAP / FLEXTOOL_SOLVER_TIME_LIMIT; the GUI's time limit).
+# Names match without regard to case; one value per parameter is passed.
+#
+# FlexTool reads this file from the run's solver_config folder (see
+# docs/solvers/index.md, "Where the option files come from") and copies it to
+# <work folder>/solve_data/solver_config/ as the record of the run.
 #
 # Reference: https://guide.coap.online/copt/en-doc/parameter.html
 #

@@ -2,8 +2,8 @@
 
 ``generate(markdown_root, out_dir)`` writes, as UTF-8 with LF line ends:
 
-- ``formulation.md`` and ``results_catalogue.md`` — the generated pages (``render_pages``), from the
-  installed code, so their source lines match it;
+- ``formulation.md`` and ``results_catalogue.md`` — the generated pages of ``scope.GENERATED_PAGES``
+  (``render_pages``; the web-only pages are left out), from the installed code, so their source lines match it;
 - ``docs_index.json`` — the search chunks of every shipped document, with their BM25 term counts;
 - ``formulations.json`` — one record per model header (``{name, names, kind, module, file, line, formula,
   notes, function}``);
@@ -187,7 +187,7 @@ def _size(lines: list[str]) -> int:
 def _split_long(lines: list[str]) -> list[list[str]]:
     """A section body of at most :data:`CHUNK_MAX` characters is one part.  A longer one is split into its
     paragraphs (at blank lines outside code fences), and a paragraph longer than that into its top-level
-    list items (the parameter lists of reference.md: one definition per part)."""
+    list items (the parameter lists of the reference/ pages: one definition per part)."""
     if _size(lines) <= CHUNK_MAX:
         return [lines]
     paragraphs: list[list[str]] = [[]]
@@ -218,7 +218,7 @@ def _list_items(paragraph: list[str]) -> list[list[str]]:
 
 def defined_names(text: str) -> list[str]:
     """The names that definition bullets of ``text`` introduce: ``- `penalty_up` - …`` or ``- `a` / `b` - …``
-    (the parameter lists of reference.md).  They weigh like heading terms: the passage that defines a name
+    (the parameter lists of the reference/ pages).  They weigh like heading terms: the passage that defines a name
     outranks a longer one that merely uses it."""
     out: list[str] = []
     for m in _DEFINITION_RE.finditer(text):
@@ -292,7 +292,7 @@ def generate(markdown_root: Path, out_dir: Path, manifest: dict | None = None) -
     ``manifest.json`` goes last, so a folder with a manifest is complete.  Return the written paths."""
     from flextool.docs_build.catalogue import records
 
-    pages = render_pages(markdown_root)
+    pages = render_pages(markdown_root, scope.GENERATED_PAGES)
     files: dict[str, str] = dict(pages)
     files[INDEX_FILE] = _dump(build_index(documents(markdown_root, pages)))
     files[FORMULATIONS_FILE] = _dump({"format": INDEX_FORMAT, "records": formulation_records()})

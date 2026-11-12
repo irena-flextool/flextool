@@ -28,6 +28,11 @@ from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine.input._axis_enums import alias_to_axis
 from flextool.engine.preprocess._provider_io import _emit
 from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.engine.preprocess._co2_methods import (
+    CO2_MAX_PERIOD_METHODS, CO2_MAX_TOTAL_METHODS, CO2_PRICE_METHODS)
+from flextool.engine.preprocess.params._existing import (
+    DIVEST_NOT_ALLOWED, GROUP_DIVEST_NOT_ACTIVE, GROUP_INVEST_NOT_ACTIVE,
+    INVEST_NOT_ALLOWED)
 
 
 # ---------------------------------------------------------------------------
@@ -35,30 +40,15 @@ from flextool.engine.input._solve_state import FlexToolConfigError
 # constants in preprocessing/{invest_method_sets,co2_method_sets}.py.
 # ---------------------------------------------------------------------------
 
-_INVEST_METHOD_NOT_ALLOWED: frozenset[str] = frozenset((
-    "not_allowed", "retire_period", "retire_total", "retire_no_limit",
-))
-_DIVEST_METHOD_NOT_ALLOWED: frozenset[str] = frozenset((
-    "not_allowed", "invest_period", "invest_total", "invest_no_limit",
-))
-# Groups have their own value list (``group_invest_methods``, database
-# version 77): ``not_active`` is the group's "no limits" value.
-_GROUP_INVEST_METHOD_NOT_ACTIVE: frozenset[str] = frozenset((
-    "not_active", "retire_period", "retire_total", "retire_no_limit",
-))
-_GROUP_DIVEST_METHOD_NOT_ACTIVE: frozenset[str] = frozenset((
-    "not_active", "invest_period", "invest_total", "invest_no_limit",
-))
+# The invest/retire method lists live once in params/_existing.py.
+_INVEST_METHOD_NOT_ALLOWED = INVEST_NOT_ALLOWED
+_DIVEST_METHOD_NOT_ALLOWED = DIVEST_NOT_ALLOWED
+_GROUP_INVEST_METHOD_NOT_ACTIVE = GROUP_INVEST_NOT_ACTIVE
+_GROUP_DIVEST_METHOD_NOT_ACTIVE = GROUP_DIVEST_NOT_ACTIVE
 
-_CO2_PRICE_METHOD: frozenset[str] = frozenset((
-    "price", "price_period", "price_total", "price_period_total",
-))
-_CO2_MAX_PERIOD_METHOD: frozenset[str] = frozenset((
-    "period", "price_period", "period_total", "price_period_total",
-))
-_CO2_MAX_TOTAL_METHOD: frozenset[str] = frozenset((
-    "total", "price_total", "period_total", "price_period_total",
-))
+_CO2_PRICE_METHOD = CO2_PRICE_METHODS
+_CO2_MAX_PERIOD_METHOD = CO2_MAX_PERIOD_METHODS
+_CO2_MAX_TOTAL_METHOD = CO2_MAX_TOTAL_METHODS
 
 
 # ---------------------------------------------------------------------------

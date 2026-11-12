@@ -104,6 +104,22 @@ def load_color_template(path: Path | None = None) -> dict:
     return data
 
 
+def plot_settings_write_plot_data(path: Path | None) -> bool:
+    """Whether the plot settings file at *path* turns the plotted-data CSVs on (``write_plot_data: true``).
+
+    Only a YAML boolean ``true`` turns it on; a quoted ``"false"`` or ``"true"`` or any other value that is not a
+    boolean is off, with a warning.
+    """
+    value = load_color_template(path).get("write_plot_data")
+    if value is None or isinstance(value, bool):
+        return value is True
+    logger.warning(
+        "write_plot_data in %s is %r, not true or false: the plotted-data CSVs stay off.",
+        path if path is not None else _default_path(), value,
+    )
+    return False
+
+
 def _parse_color_value(value) -> tuple[float, float, float] | None:
     """Normalize a YAML color value to an ``(r, g, b)`` float tuple in 0..1.
 

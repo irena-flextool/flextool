@@ -387,7 +387,7 @@ def at_first_steps(b: "_Build", param: "Param | None") -> "Param | None":
     return Param(param.dims, pl.concat([fine.select(*param.dims, "value"), coarse]), name=param.name)
 
 
-def ramp_rows(b: "_Build", arcs: pl.DataFrame, ramp_speed: Param, side: str, link: pl.DataFrame,
+def ramp_rows(b: "_Build", arcs: pl.DataFrame, ramp_speed: "Param | None", side: str, link: pl.DataFrame,
               carry: pl.DataFrame) -> pl.DataFrame:
     """The ramp rows of the coarse-process ``arcs`` ``(p, source, sink)``: one per coarse step b with a
     predecessor, in the columns of ``core._ramp_rows`` (``t`` = b_first).
@@ -399,20 +399,27 @@ def ramp_rows(b: "_Build", arcs: pl.DataFrame, ramp_speed: Param, side: str, lin
     first coarse step of a period ramps from the previous roll's flow (``carry``, ``p_roll_continue_flow``) over
     that arc's carried step length (``p_roll_continue_flow_duration``: its last realized coarse step).  The reserve
     the arc holds in this direction is in these rows too (with the flow change); the reserve's own room at the solve's
-    steps of each coarse step is :func:`reserve_room_rows`."""
+    steps of each coarse step is :func:`reserve_room_rows`.  With ``ramp_speed=None`` (the ramp cost,
+    ``core._eq_ramp_cost``) every row with a predecessor (no room filter) and ``__room`` null."""
     d = b.d
     keys = ["p", "source", "sink"]
-    speed = ramp_speed.frame.select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col(side).cast(pl.Utf8).alias("_n"),
-                                    pl.col("value").cast(pl.Float64).alias("__speed"))
     base = (arcs.select(keys).unique(maintain_order=True)
-            .with_columns(*(pl.col(k).cast(pl.Utf8).alias(f"_{k}") for k in keys))
-            .with_columns(pl.col(f"_{side}").alias("_n"))
-            .join(speed, on=["_p", "_n"], how="inner")
-            .join(spans(b), on="_p", how="inner"))
+            .with_columns(*(pl.col(k).cast(pl.Utf8).alias(f"_{k}") for k in keys)))
+    if ramp_speed is not None:
+        speed = ramp_speed.frame.select(pl.col("p").cast(pl.Utf8).alias("_p"),
+                                        pl.col(side).cast(pl.Utf8).alias("_n"),
+                                        pl.col("value").cast(pl.Float64).alias("__speed"))
+        base = (base.with_columns(pl.col(f"_{side}").alias("_n"))
+                .join(speed, on=["_p", "_n"], how="inner"))
+    base = base.join(spans(b), on="_p", how="inner")
     with_link = (base.join(coarse_links(b, link).drop("__dur"), on=["_p", "_d", "_b"], how="inner")
                  .with_columns(__kind=pl.lit("link"), __f_hat=pl.lit(None, pl.Float64)))
-    parts = [with_link.filter((pl.col("__d_prev") != pl.col("_d"))
-                              | (pl.col("__speed") * 60.0 * (pl.col("__dur") + pl.col("__dur_prev")) / 2.0 < 1.0))]
+    if ramp_speed is None:
+        parts = [with_link]
+    else:
+        parts = [with_link.filter((pl.col("__d_prev") != pl.col("_d"))
+                                  | (pl.col("__speed") * 60.0 * (pl.col("__dur") + pl.col("__dur_prev")) / 2.0
+                                     < 1.0))]
     f_hat_p = getattr(d, "p_roll_continue_flow", None)
     if carry.height > 0 and f_hat_p is not None:
         f_hat = f_hat_p.frame.select(*(pl.col(k).cast(pl.Utf8).alias(f"_{k}") for k in (*keys, "d", "t")),
@@ -431,9 +438,10 @@ def ramp_rows(b: "_Build", arcs: pl.DataFrame, ramp_speed: Param, side: str, lin
         parts.append(carried.with_columns(pl.coalesce(pl.col("__dur_arc"), pl.col("__dur_step")).alias("__dur_prev"),
                                           __kind=pl.lit("carry")))
     t_dtype, d_dtype = b.pss_dt.schema["t"], b.pss_dt.schema["d"]
+    room = (pl.lit(None, pl.Float64) if ramp_speed is None
+            else pl.col("__speed") * 60.0 * (pl.col("__dur") + pl.col("__dur_prev")) / 2.0)
     cols = [*(pl.col(k) for k in keys), pl.col("_d").cast(d_dtype).alias("d"), pl.col("_b").cast(t_dtype).alias("t"),
-            "__kind", "__d_prev", "__t_prev", "__f_hat",
-            (pl.col("__speed") * 60.0 * (pl.col("__dur") + pl.col("__dur_prev")) / 2.0).alias("__room")]
+            "__kind", "__d_prev", "__t_prev", "__f_hat", room.alias("__room")]
     out = pl.concat([p.select(cols) for p in parts])
     return out.with_columns(*(pl.col(k).cast(arcs.schema[k]) for k in keys))
 

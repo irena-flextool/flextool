@@ -25,7 +25,6 @@ import json
 import logging
 import os
 import re
-import signal
 import socket
 import sys
 import threading
@@ -833,20 +832,20 @@ def _load_env_check() -> ModuleType:
 
 
 def signal_name(signum: int | None) -> str:
-    """The name of signal *signum* (``SIGTERM``) in this computer's numbering, or ``signal <n>`` when it has none."""
-    try:
-        return signal.Signals(signum).name
-    except (TypeError, ValueError):
-        return f"signal {signum}"
+    """The name of signal *signum* (``SIGTERM``) in this computer's numbering, or ``signal <n>`` when it has none.
+
+    One table for the run record, the supervisor and ``env_check``: :func:`env_check.signal_name`.
+    """
+    return _load_env_check().signal_name(signum) or f"signal {signum}"
 
 
 def classify_exit(returncode: int | None, plat: str | None = None) -> tuple[str, str]:
     """``(state, reason)`` for an engine that ended with *returncode* without finishing its status.
 
-    POSIX: SIGKILL is ``killed`` (often the out-of-memory killer), SIGTERM / SIGHUP / SIGINT ``interrupted``, a
-    native fault (``env_check.is_native_fault``) ``crashed``, any other signal ``killed``.  Windows: Ctrl-C
-    (``0xC000013A``) is ``interrupted``, an NTSTATUS fault ``crashed``.  Exit code 0 is ``succeeded`` (the record
-    was not finished), any other code ``failed``.
+    POSIX (signals named in this computer's numbering, :func:`signal_name`): SIGKILL is ``killed`` (often the
+    out-of-memory killer), SIGTERM / SIGHUP / SIGINT ``interrupted``, a native fault (``env_check.is_native_fault``)
+    ``crashed``, any other signal ``killed``.  Windows: Ctrl-C (``0xC000013A``) is ``interrupted``, an NTSTATUS
+    fault ``crashed``.  Exit code 0 is ``succeeded`` (the record was not finished), any other code ``failed``.
     """
     plat = sys.platform if plat is None else plat
     if returncode is None:
@@ -854,15 +853,16 @@ def classify_exit(returncode: int | None, plat: str | None = None) -> tuple[str,
     windows = plat.startswith("win")
     if windows and (returncode & 0xFFFFFFFF) == WINDOWS_CTRL_C_EXIT:
         return "interrupted", "interrupted by Ctrl-C"
-    if not windows and returncode == -9:
+    name = signal_name(-returncode) if not windows and returncode < 0 else None  # "signal <n>" if unnamed
+    if name == "SIGKILL":
         return "killed", "terminated by SIGKILL (often the operating system's out-of-memory killer)"
-    if not windows and returncode in (-15, -1, -2):
-        return "interrupted", f"stopped by {signal_name(-returncode)}"
+    if name in ("SIGTERM", "SIGHUP", "SIGINT"):
+        return "interrupted", f"stopped by {name}"
     env_check = _load_env_check()
     if env_check.is_native_fault(returncode, plat):
         return "crashed", env_check.describe_fault(returncode, plat)
     if not windows and returncode < 0:
-        return "killed", f"terminated by {signal_name(-returncode)}"
+        return "killed", f"terminated by {name}"
     if returncode == 0:
         return "succeeded", "the engine exited 0 without finishing its run record"
     return "failed", f"exit code {returncode}"

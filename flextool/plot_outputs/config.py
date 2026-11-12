@@ -120,6 +120,34 @@ def default_ylabel_for(
     return unit
 
 
+def default_axis_label_for(result_key: str, variant_letter: str | None = None) -> str | None:
+    """The default value-axis label of a plot: :func:`default_ylabel_for`, as a unit template (``{R}``,
+    ``{A}``) when the table's unit follows its nodes' ``unit_of_measure``, so it is filled per subplot like the
+    labels of ``default_plots.yaml`` (for MWh nodes the text of :func:`default_ylabel_for`)."""
+    unit = default_ylabel_for(result_key, variant_letter)
+    if unit is None:
+        return None
+    return _unit_template(result_key, variant_letter) or unit
+
+
+def _unit_template(result_key: str, variant_letter: str | None) -> str | None:
+    """The unit template (``{A}/a``, ``{R}``) of a table whose unit follows its nodes' ``unit_of_measure``, so
+    the default label is filled per subplot like the labels of ``default_plots.yaml``; ``None`` for a table
+    that does not follow its nodes (or has several units).  The ``a`` variant drops ``/a`` as
+    :func:`~flextool.process_outputs._output_meta.result_variant_summary` does."""
+    from flextool.process_outputs._output_meta import (
+        DEFAULT_UNITS_ONLY, OUTPUT_TRANSFORM, UNIT_SOURCE, Transform,
+    )
+    tf = OUTPUT_TRANSFORM.get(result_key)
+    if (not isinstance(tf, Transform) or not tf.template or result_key in DEFAULT_UNITS_ONLY
+            or result_key not in UNIT_SOURCE):
+        return None
+    template = tf.template
+    if variant_letter == 'a' and template.endswith('/a'):
+        template = template[:-2]
+    return template
+
+
 def _is_single_config(d: dict) -> bool:
     """Return True if *d* is a single-plot config (has known field names), not a named-config dict."""
     return any(k in PLOT_FIELD_NAMES for k in d)

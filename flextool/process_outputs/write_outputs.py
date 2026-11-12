@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 import re
@@ -16,11 +15,24 @@ from spinedb_api import from_database, Array
 from flextool.update_flextool.db_handle import open_database_mapping
 from flextool import run_record
 
-from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
+from flextool.lean_parquet import read_lean_parquet, read_lean_parquet_solve_labels, write_lean_parquet
+from flextool.process_outputs._sheet_names import excel_sheet_name
+from flextool.process_outputs._excel_writer import reserved_sheet_names, write_excel_with_metadata
+from flextool.process_outputs.solve_order import INVESTMENT_PERIOD_TABLES, period_solve_labels
 from flextool.process_outputs._output_meta import (
     datapackage_resource,
     derive_column_meta,
-    output_metadata_rows,
+    replay_unit_context,
+    row_units,
+    write_unit_context,
+)
+from flextool.process_outputs._unit_context import unit_context_from
+from flextool.process_outputs._csv_sidecars import (
+    reserved_csv_names,
+    summary_solve_row,
+    units_rows,
+    write_datapackage,
+    write_units_csv,
 )
 from flextool.plot_outputs.orchestrator import plot_dict_of_dataframes
 from flextool.plot_outputs.color_template import resolve_plot_settings_path
@@ -28,7 +40,7 @@ from flextool.process_outputs.out_ancillary import (
     connection, connection_wards, connection_cf,
     reserves, investment_duals, inertia_results,
     slack_variables, input_sets, dc_power_flow,
-    co2_duals,
+    co2_duals, capacity_margin, reserve_requirement,
 )
 from flextool.process_outputs.out_capacity import unit_capacity, connection_capacity, node_capacity
 from flextool.process_outputs.out_costs import (
@@ -39,7 +51,7 @@ from flextool.process_outputs.out_flows import (
     unit_outputNode, unit_inputNode,
     unit_cf_outputNode, unit_cf_inputNode,
     unit_VRE_curtailment_and_potential, unit_ramps,
-    unit_online_and_startup, connection_online_and_startup,
+    unit_online_and_startup, connection_online_and_startup, unit_startup_energy,
 )
 from flextool.process_outputs.out_group import (
     nodeGroup_indicators, nodeGroup_VRE_share,
@@ -48,13 +60,13 @@ from flextool.process_outputs.out_group import (
 from flextool.process_outputs.out_node import node_summary, node_additional_results
 from flextool.process_outputs.process_results import post_process_results
 from flextool.process_outputs.read_parameters import (
-    read_parameters,
     read_parameters_multi,
+    read_parameters_static,
     warn_if_run_fields_missing,
 )
 from flextool.process_outputs.read_sets import (
-    read_sets,
     read_sets_multi,
+    read_sets_static,
 )
 from flextool.process_outputs.read_variables import read_variables
 from flextool.process_outputs.union_realized_slice import (
@@ -111,57 +123,6 @@ def _frame_axes(df) -> tuple[list, list]:
     if isinstance(df, pd.Series):
         return index_names, [df.name if df.name is not None else 'value']
     return index_names, list(df.columns)
-
-
-def write_excel_with_metadata(excel_path, sheets) -> None:
-    """Write ``sheets`` to ``excel_path`` with embedded output metadata.
-
-    ``sheets`` is a list of ``(sheet_name, raw_output_key, df)``.  Each frame
-    is written to its own sheet; per-column unit/semantics (derived from the
-    metadata catalog via the raw output key) are surfaced two ways:
-
-    * header-cell **comments** (hover notes) on the measure columns of
-      single-level-column frames, and
-    * a trailing ``_output_metadata`` index sheet listing every documented
-      ``(sheet, output, column, unit, semantics, tooltip, formula)``.
-
-    The data grid itself is untouched — metadata rides alongside it.
-    """
-    meta_rows: list[dict] = []
-    with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
-        for sheet_name, raw_key, df in sheets:
-            df.to_excel(writer, sheet_name=sheet_name)
-            _, measure_cols = _frame_axes(df)
-            rows = output_metadata_rows(raw_key, measure_cols)
-            for r in rows:
-                meta_rows.append({"sheet": sheet_name, **r})
-            # Header comments only for single-level DataFrame columns — pandas
-            # writes multi-level column headers across several rows (plus an
-            # index-name row), which the simple (0, nidx+j) anchor below would
-            # not address correctly; the _output_metadata sheet still covers
-            # those (and Series-valued sheets).
-            if rows and isinstance(df, pd.DataFrame) and df.columns.nlevels == 1:
-                worksheet = writer.sheets[sheet_name]
-                nidx = df.index.nlevels
-                by_col = {r["column"]: r for r in rows}
-                for j, col in enumerate(df.columns):
-                    r = by_col.get(str(col))
-                    if r is None:
-                        continue
-                    note = [f"unit: {r['unit'] or '—'}",
-                            f"semantics: {r['semantics']}"]
-                    if r["tooltip"]:
-                        note.append(r["tooltip"])
-                    if r["formula"]:
-                        note.append(f"formula: {r['formula']}")
-                    worksheet.write_comment(0, nidx + j, "\n".join(note))
-        if meta_rows:
-            meta_df = pd.DataFrame(
-                meta_rows,
-                columns=["sheet", "output", "column", "unit",
-                         "semantics", "tooltip", "long", "formula"],
-            )
-            meta_df.to_excel(writer, sheet_name="_output_metadata", index=False)
 
 
 def _provider_lookup_df(provider, parent: str, stem: str):
@@ -243,6 +204,7 @@ def _backfill_group_indicator_sets(s, output_dir, *, provider=None):
         ('nodeGroupDispatch', 'nodeGroupDispatch.csv'),
         ('nodeGroupIndicators', 'nodeGroupIndicators.csv'),
         ('flowGroupIndicators', 'flowGroupIndicators.csv'),
+        ('flowAggregator', 'flowAggregator.csv'),
     ):
         stem = fname[:-4]
         df_pl = _provider_lookup_df(provider, "input", stem)
@@ -431,10 +393,10 @@ def _read_outputs(
         and solution is not None
         and has_persisted_slices(output_dir)
     ):
-        last_par = read_parameters(
+        last_par = read_parameters_static(
             flex_data, solution, solve_name=solve_name or "solve"
         )
-        last_s = read_sets(
+        last_s = read_sets_static(
             flex_data, solution, solve_name=solve_name or "solve"
         )
         p = union_params(last_par, output_dir)
@@ -457,8 +419,8 @@ def _read_outputs(
             "_read_outputs requires flex_data and solution; "
             "the CSV-based read_parameters / read_sets path is gone."
         )
-    p = read_parameters(flex_data, solution, solve_name=solve_name or "solve")
-    s = read_sets(flex_data, solution, solve_name=solve_name or "solve")
+    p = read_parameters_static(flex_data, solution, solve_name=solve_name or "solve")
+    s = read_sets_static(flex_data, solution, solve_name=solve_name or "solve")
     _backfill_group_indicator_sets(s, output_dir, provider=flex_data_provider)
     v = read_variables(output_dir, group_entity_invest=_group_entity_invest(flex_data_provider))
     return p, s, v
@@ -668,32 +630,33 @@ def write_summary_csv(par, s, v, r, csv_dir):
             f.write(f'"CO2 [Mt]",{co2_total:.6g},"System-wide annualized CO2 emissions for realized periods"\n')
 
         # Slack variables section
-        f.write('\n"Slack variables multiplied by timestep duration (creating or removing energy/matter, ')
-        f.write('creating inertia, adding synchronous generation, decreasing capacity margin, creating reserve)"\n')
+        f.write('\n"Slack variables multiplied by timestep duration and timestep weight, summed over the solved '
+                'time steps of each period (creating or removing energy/matter, creating inertia, adding '
+                'synchronous generation, creating reserve); capacity margin per period"\n')
 
         # Node state slack - upward (creating energy)
-        for node in r.upward_node_slack_d_not_annualized.columns:
+        for node in r.upward_node_slack_d_sample.columns:
             for period in d_realized_period:
-                if period in r.upward_node_slack_d_not_annualized.index and r.upward_node_slack_d_not_annualized.loc[period, node] > 0:
-                    f.write(f'Created, {node}, {period}, {r.upward_node_slack_d_not_annualized.loc[period, node]:.5g}\n')
+                if period in r.upward_node_slack_d_sample.index and r.upward_node_slack_d_sample.loc[period, node] > 0:
+                    f.write(f'Created, {node}, {period}, {r.upward_node_slack_d_sample.loc[period, node]:.5g}\n')
 
         # Node state slack - downward (removing energy)
-        for node in r.downward_node_slack_d_not_annualized.columns:
+        for node in r.downward_node_slack_d_sample.columns:
             for period in d_realized_period:
-                if period in r.downward_node_slack_d_not_annualized.index and r.downward_node_slack_d_not_annualized.loc[period, node] > 0:
-                    f.write(f'Removed, {node}, {period}, {r.downward_node_slack_d_not_annualized.loc[period, node]:.5g}\n')
+                if period in r.downward_node_slack_d_sample.index and r.downward_node_slack_d_sample.loc[period, node] > 0:
+                    f.write(f'Removed, {node}, {period}, {r.downward_node_slack_d_sample.loc[period, node]:.5g}\n')
 
         # Inertia slack
-        for group in r.q_inertia_d_not_annualized.columns:
+        for group in r.q_inertia_d_sample.columns:
             for period in d_realized_period:
-                if period in r.q_inertia_d_not_annualized.index and r.q_inertia_d_not_annualized.loc[period, group] > 0:
-                    f.write(f'Inertia, {group}, {period}, {r.q_inertia_d_not_annualized.loc[period, group]:.5g}\n')
+                if period in r.q_inertia_d_sample.index and r.q_inertia_d_sample.loc[period, group] > 0:
+                    f.write(f'Inertia, {group}, {period}, {r.q_inertia_d_sample.loc[period, group]:.5g}\n')
 
         # Non-synchronous slack
-        for group in r.q_non_synchronous_d_not_annualized.columns:
+        for group in r.q_non_synchronous_d_sample.columns:
             for period in d_realized_period:
-                if period in r.q_non_synchronous_d_not_annualized.index and r.q_non_synchronous_d_not_annualized.loc[period, group] > 0:
-                    f.write(f'NonSync, {group}, {period}, {r.q_non_synchronous_d_not_annualized.loc[period, group]:.5g}\n')
+                if period in r.q_non_synchronous_d_sample.index and r.q_non_synchronous_d_sample.loc[period, group] > 0:
+                    f.write(f'NonSync, {group}, {period}, {r.q_non_synchronous_d_sample.loc[period, group]:.5g}\n')
 
         # Capacity margin slack — iterate realized periods rather than
         # d_realize_invest.  The capacity-margin constraint is defined
@@ -707,10 +670,10 @@ def write_summary_csv(par, s, v, r, csv_dir):
                     f.write(f'CapMargin, {group}, {period}, {r.q_capacity_margin_d_not_annualized.loc[period, group]:.5g}\n')
 
         # Reserve slack
-        for group in r.q_reserves_d_not_annualized.columns:
+        for group in r.q_reserves_d_sample.columns:
             for period in d_realized_period:
-                if period in r.q_reserves_d_not_annualized.index and r.q_reserves_d_not_annualized.loc[period, group] > 0:
-                    f.write(f'Reserve, {group}, {period}, {r.q_reserves_d_not_annualized.loc[period, group]:.5g}\n')
+                if period in r.q_reserves_d_sample.index and r.q_reserves_d_sample.loc[period, group] > 0:
+                    f.write(f'Reserve, {group}, {period}, {r.q_reserves_d_sample.loc[period, group]:.5g}\n')
 
 
 # List of all output functions
@@ -722,11 +685,14 @@ ALL_OUTPUTS = [
     reserves,
     unit_online_and_startup,
     connection_online_and_startup,
+    unit_startup_energy,
     node_summary,
     node_additional_results,
     investment_duals,
     inertia_results,
     slack_variables,
+    capacity_margin,
+    reserve_requirement,
     unit_capacity,
     connection_capacity,
     node_capacity,
@@ -913,7 +879,7 @@ def _note_parquet_written(parquet_dir: str) -> None:
     _note_parquet(parquet_dir, written=True)
 
 
-def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False, timing_recorder=None, flex_data=None, solution=None, solve_name=None, solve_steps=None, flex_data_provider=None, results_db_url=None):
+def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False, write_plot_data=False, timing_recorder=None, flex_data=None, solution=None, solve_name=None, solve_steps=None, flex_data_provider=None, results_db_url=None):
     """
     Write FlexTool outputs to various formats.
 
@@ -1037,15 +1003,22 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         from flextool.plot_outputs.format_helpers import TIMELINE_BREAKS_FILE, load_timeline_breaks
         break_index = load_timeline_breaks(parquet_dir)
         results = {}
+        # {period: solve} of the realized investments, from the investment tables' footers (#210).
+        replay_invest_labels: dict[str, str] = {}
         for filename in os.listdir(parquet_dir):
             if filename.endswith('.parquet') and filename != TIMELINE_BREAKS_FILE:
                 key = filename[:-8]  # Remove '.parquet' extension
                 filepath = os.path.join(parquet_dir, filename)
                 results[key] = read_lean_parquet(filepath)
+                if key in INVESTMENT_PERIOD_TABLES:
+                    replay_invest_labels.update(read_lean_parquet_solve_labels(filepath))
                 if len(results[key].columns.names) == 1:
                     results[key] = results[key].squeeze()
                 else:
                     results[key] = results[key].droplevel('scenario', axis=1)
+        # The units the run that wrote the parquets resolved: each table's footer first, then the node units of
+        # its _unit_context.json (none: every node is MWh) for what the footers do not hold.
+        unit_ctx = replay_unit_context(parquet_dir)
         start = log_time("Read parquet files", start, timing_recorder)
 
     # Read original raw outputs from FlexTool
@@ -1059,6 +1032,14 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             flex_data_provider=flex_data_provider,
         )
         start = log_time("Read flextool outputs", start, timing_recorder)
+        # The node units and the nodes each result column carries; empty when every node is MWh.  Every
+        # renderer of this call gets it in memory; only replays read it from _unit_context.json.
+        unit_ctx = unit_context_from(s, par, flex_data_provider)
+
+        # The steps and periods of solves that left a feature out (reduce_*_detail_method), from the solve-keyed
+        # sets before post-processing drops the solve level: their cells of that feature stay empty.
+        from flextool.process_outputs.reduced_cells import read_reduced_markers, reduced_cells_of
+        s.reduced_cells = reduced_cells_of(s, read_reduced_markers(raw_output_dir or 'output_raw'))
 
         # Pre-process results to be closer to what needed for output writing
         r = post_process_results(par, s, v)
@@ -1089,6 +1070,8 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 # Use excel_sheet as the key to allow multiple outputs per function
                 all_results[table_name] = result_df
 
+        from flextool.process_outputs.reduced_cells import mask_reduced_cells
+        mask_reduced_cells(all_results, s.reduced_cells)
         results = all_results
         start = log_time("Formatted for output", start, timing_recorder)
 
@@ -1129,6 +1112,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
 
         for name, df in results.items():
             col_meta = None
+            table_row_units = None
             if isinstance(df, (pd.MultiIndex, pd.Index)):
                 df = df.to_frame(index=False)
                 df.insert(0, 'scenario', scenario_name)
@@ -1139,12 +1123,17 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 # the logical column names, not arrow's flattened tuples.
                 # Series-valued outputs have no columns — skip them for now.
                 if isinstance(df, pd.DataFrame):
-                    derived = derive_column_meta(name, df.columns)
+                    derived = derive_column_meta(name, df.columns, ctx=unit_ctx, rows=df.index)
                     if derived:
                         col_meta = {k: v.as_dict() for k, v in derived.items()}
+                    table_row_units = row_units(name, df.index, df.columns, unit_ctx)
                 df = pd.concat({scenario_name: df}, axis=1, names=['scenario'])
+            # An investment table's solve label is not in its frame: keep it in the footer for a replay (#210).
+            invest_labels = (period_solve_labels(None, getattr(s, 'solve_invest_period', None), table=name)
+                             if name in INVESTMENT_PERIOD_TABLES else None)
             write_lean_parquet(df, f'{parquet_dir}/{name}.parquet',
-                               column_metadata=col_meta)
+                               column_metadata=col_meta, solve_labels=invest_labels,
+                               row_units=table_row_units)
 
         # The plot break steps, written also when empty so a parquet replay knows there are none.
         from flextool.plot_outputs.format_helpers import write_timeline_breaks
@@ -1153,6 +1142,12 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         start = log_time("Wrote to parquet", start, timing_recorder)
         if not single_result:
             _note_parquet_written(parquet_dir)
+
+    # The node units beside the parquets: written with the parquets when some node is not MWh, deleted
+    # otherwise, on every non-replay call (also a single-result one).  A call that writes no parquets deletes
+    # the file, so the units of this run never sit beside an earlier run's parquets (their footers hold theirs).
+    if not read_parquet_dir and ('parquet' in write_methods or os.path.isdir(parquet_dir)):
+        write_unit_context(parquet_dir, unit_ctx if 'parquet' in write_methods else None)
 
     # Raw horizon dump (``model.output_horizon``): stream the per-roll parts
     # from ``output_raw/horizon/`` into ``<parquet_dir>/horizon/``.  An
@@ -1178,6 +1173,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 active_settings=active_configs, plot_rows=plot_rows,
                 break_times=break_index,
                 color_path=resolve_plot_settings_path(Path(output_location)),
+                unit_ctx=unit_ctx,
             )
             start = log_time("Computed plot plans", start, timing_recorder)
         except Exception as exc:
@@ -1255,7 +1251,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         delete_plots = not bool(single_result)
         results = {k: v.to_frame() if isinstance(v, pd.Series) else v for k, v in results.items()}
         # Load timeline breaks for visual gaps in time-series plots
-        plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots, plot_file_format=plot_file_format, only_first_file=only_first_file, break_times=break_index, color_path=resolve_plot_settings_path(Path(output_location)))
+        plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots, plot_file_format=plot_file_format, only_first_file=only_first_file, break_times=break_index, color_path=resolve_plot_settings_path(Path(output_location)), write_plot_data=write_plot_data, unit_ctx=unit_ctx)
 
         start = log_time('Plotted figures', start, timing_recorder)
 
@@ -1272,29 +1268,40 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 if os.path.isfile(file_path):
                     os.remove(file_path)
 
-        # Accumulate Frictionless resources for the sidecar datapackage.json
-        # (units + semantics per column; CSVs themselves stay byte-identical).
+        # Accumulate the sidecars: Frictionless resources for datapackage.json and
+        # the units.csv rows (units + semantics per column; the CSVs themselves
+        # stay byte-identical).
         dp_resources: list[dict] = []
+        unit_rows: list[dict] = []
+
+        def _describe_csv(table_name, csv_filename, frame, written):
+            index_names, measure_cols = _frame_axes(frame)
+            header = list(written.columns)
+            rows = frame.index if isinstance(frame, pd.DataFrame) else None
+            dp_resources.append(datapackage_resource(
+                table_name, csv_filename, index_names, measure_cols, header=header, ctx=unit_ctx, rows=rows))
+            unit_rows.extend(units_rows(
+                table_name, csv_filename, header, len(index_names), measure_cols, ctx=unit_ctx, rows=rows))
 
         # Different CSV writing logic depending on data source
         if read_parquet_dir:
             # Simplified CSV writing from parquet (no par,s,v,r available)
             rename_raw = settings.get('rename', {})
-            used_csv_names: dict[str, str] = {}
+            used_csv_names = reserved_csv_names(with_summary=True)
             for table_name, df in results.items():
                 csv_filename = _csv_filename(table_name, rename_raw, used_csv_names)
                 csv_path = os.path.join(csv_dir, csv_filename)
-                dp_resources.append(datapackage_resource(
-                    table_name, csv_filename, *_frame_axes(df)))
                 df_copy = df.reset_index()
                 df_copy.columns.names = [None] * df_copy.columns.nlevels
+                _describe_csv(table_name, csv_filename, df, df_copy)
                 df_copy.to_csv(csv_path, index=False, float_format='%.8g')
         else:
             # Full CSV writing from output_raw (par,s,v,r available)
             write_summary_csv(par, s, v, r, csv_dir)
+            unit_rows.append(summary_solve_row())
 
             rename_raw = settings.get('rename', {})
-            used_csv_names = {'summary_solve.csv': 'summary_solve'}
+            used_csv_names = reserved_csv_names(with_summary=True)
             for table_name, df in results.items():
                 if isinstance(df, (pd.MultiIndex, pd.Index)):
                     df = df.to_frame(index=False)
@@ -1317,10 +1324,11 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                             names=['solve'] + list(df.index.names)
                         )
                     else:
-                        # For period-only data, use solve_period to add solve column
-                        # Use dict lookup to preserve index order (join reorders alphabetically)
-                        unique_sp = s.solve_period[~s.solve_period.droplevel('solve').duplicated(keep='last')]
-                        period_to_solve = dict(zip(unique_sp.get_level_values('period'), unique_sp.get_level_values('solve')))
+                        # Period-only data: the last complete solve that realized the period (roll suffix removed);
+                        # the investment tables name the solve that realized the period's investments (#210).
+                        # Dict lookup preserves the index order (a join reorders alphabetically).
+                        period_to_solve = period_solve_labels(
+                            s.solve_period, getattr(s, 'solve_invest_period', None), table=table_name)
                         if df.index.nlevels == 1:
                             solve_vals = df.index.map(lambda p: period_to_solve.get(p, ''))
                             df.index = pd.MultiIndex.from_arrays(
@@ -1345,23 +1353,17 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
 
                 csv_filename = _csv_filename(table_name, rename_raw, used_csv_names)
                 csv_path = os.path.join(csv_dir, csv_filename)
-                dp_resources.append(datapackage_resource(
-                    table_name, csv_filename, *_frame_axes(df)))
-                df = df.reset_index()
-                df.columns.names = [None] * df.columns.nlevels
-                df.to_csv(csv_path, index=False, float_format='%.8g')
+                written = df.reset_index()
+                written.columns.names = [None] * written.columns.nlevels
+                _describe_csv(table_name, csv_filename, df, written)
+                written.to_csv(csv_path, index=False, float_format='%.8g')
 
-        # Sidecar metadata descriptor for the CSV bundle (units + semantics).
+        # Sidecar metadata for the CSV bundle (units + semantics).  A single-result
+        # write replaces only its own table's entries in the existing sidecars.
         if dp_resources:
-            dp = {
-                "name": "flextool-output-csv",
-                "profile": "tabular-data-package",
-                "title": "FlexTool processed outputs",
-                "resources": sorted(dp_resources, key=lambda r: r["path"]),
-            }
-            with open(os.path.join(csv_dir, 'datapackage.json'),
-                      'w', encoding='utf-8') as fh:
-                json.dump(dp, fh, indent=2)
+            write_datapackage(csv_dir, dp_resources, merge=bool(single_result))
+        if unit_rows:
+            write_units_csv(csv_dir, unit_rows, merge=bool(single_result))
 
         start = log_time('Wrote to csv', start, timing_recorder)
 
@@ -1374,7 +1376,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         # Build list of (sheet_name, raw_key, df) sorted alphabetically.  The
         # raw key is kept so unit/semantics metadata can be derived per sheet.
         sheets: list[tuple[str, str, pd.DataFrame]] = []
-        used_names: set[str] = set()
+        used_names: set[str] = reserved_sheet_names()
         for name, df in results.items():
             display_name, export = _parse_rename_entry(
                 rename_raw.get(name, name)
@@ -1384,17 +1386,12 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             if isinstance(df, (pd.MultiIndex, pd.Index)):
                 df = df.to_frame(index=False)
             if (not df.empty) & (len(df) > 0):
-                sheet_name = display_name[:31]
-                if sheet_name in used_names:
-                    suffix = 1
-                    while f"{sheet_name[:28]}_{suffix}" in used_names:
-                        suffix += 1
-                    sheet_name = f"{sheet_name[:28]}_{suffix}"
-                used_names.add(sheet_name)
+                # At most 31 characters, the __d / __dt suffix kept, distinct without regard to case.
+                sheet_name = excel_sheet_name(display_name, used_names)
                 sheets.append((sheet_name, name, df))
         sheets.sort(key=lambda x: x[0].lower())
 
-        write_excel_with_metadata(excel_path, sheets)
+        write_excel_with_metadata(excel_path, sheets, ctx=unit_ctx)
 
         start = log_time('Wrote to Excel', start, timing_recorder)
 
@@ -1411,7 +1408,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             # the two discount-factor params (#33/#34) are intentionally
             # dropped — the writer degrades gracefully and logs that.
             from flextool.process_outputs.spinedb_replay import build_replay_s
-            s_shim = build_replay_s(results)
+            s_shim = build_replay_s(results, invest_labels=replay_invest_labels)
             # Prefer the real solve label recovered from node_prices_dt_e so
             # the ``collapse_solve`` frame (cost_discounted_solve) gets the
             # same single ``solve`` Map key the native path used; fall back
@@ -1422,10 +1419,11 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             )
             write_spinedb(
                 results, s_shim, db_url, scenario_name,
-                replay_solve_name, par=None,
+                replay_solve_name, par=None, unit_ctx=unit_ctx,
             )
         else:
-            write_spinedb(results, s, db_url, scenario_name, solve_name or scenario_name, par=par)
+            write_spinedb(results, s, db_url, scenario_name, solve_name or scenario_name, par=par,
+                          unit_ctx=unit_ctx)
         start = log_time('Wrote to SpineDB', start, timing_recorder)
 
     # Phase F — write manifest.json describing the output bundle.

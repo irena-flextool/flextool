@@ -1,6 +1,49 @@
 import pandas as pd
 
-from flextool.process_outputs._annualize import annualize_dt_to_d
+from flextool.process_outputs._annualize import annualize_dt_to_d, realized_timestep_weight, weighted_period_average
+
+
+def reserve_period_average(frame: pd.DataFrame, par, reduced_cells=None) -> pd.DataFrame:
+    """The period average of a per-step reserve frame (MW, rows ``(period, time)``):
+    ``Σ_t w·Δt·X / Σ_t w·Δt`` over the period's steps (:func:`._annualize.weighted_period_average`), ``w`` the
+    timestep weight of each step (a ``ValueError`` when a step has none).
+
+    The rows of the steps whose solve left reserves out (``reduced_cells``, ``reduce_system_detail_method``) are
+    emptied first, so they count in neither sum.  An empty frame gives an empty per-period frame.
+    """
+    if frame.empty or len(frame.index) == 0:
+        if 'period' in (frame.index.names or ()):
+            return frame.groupby(level='period').sum()
+        return pd.DataFrame(index=pd.Index([], name='period'), columns=frame.columns, dtype=float)
+    if reduced_cells:
+        mask = reduced_cells.step_mask('reserves', frame.index)
+        if mask.any():
+            frame = frame.astype(float)
+            frame.loc[mask, :] = float('nan')
+    weight = realized_timestep_weight(par, frame.index, what='Reserve results')
+    return weighted_period_average(frame, weight, par.step_duration)
+
+
+def inertia_limit_on_slack_cells(limit: pd.DataFrame, q_inertia: pd.DataFrame) -> pd.DataFrame:
+    """``group_inertia_limit`` on the ``(period, time) × group`` cells of ``vq_inertia``, 0 where it has no value.
+
+    The limit is per (period, time); a step without a limit (not authored, or authored 0) has no requirement, so
+    its slack is 0 MWs rather than a blank cell.  The 0 must not stand in for a limit that is there but whose index
+    does not line up with the slack's (other level names, or time labels of another type or spelling): that would
+    report every shortfall as 0.  A group whose limit has a value but none on the slack's cells raises.
+    """
+    if limit.empty or q_inertia.empty:
+        return limit.reindex(index=q_inertia.index, columns=q_inertia.columns).fillna(0.0)
+    if list(limit.index.names) != list(q_inertia.index.names):
+        raise ValueError(f"group_inertia_limit is indexed by {list(limit.index.names)}, the inertia slack by "
+                         f"{list(q_inertia.index.names)}")
+    on_cells = limit.reindex(index=q_inertia.index, columns=q_inertia.columns)
+    lost = [g for g in q_inertia.columns.intersection(limit.columns)
+            if limit[g].notna().any() and not on_cells[g].notna().any()]
+    if lost:
+        raise ValueError(f"group_inertia_limit of {lost} has values, but none at the (period, time) steps of the "
+                         f"inertia slack: the indexes do not line up")
+    return on_cells.fillna(0.0)
 
 
 def compute_slacks(par, s, v, r) -> None:
@@ -35,11 +78,12 @@ def compute_slacks(par, s, v, r) -> None:
     # Reserve held at each step, MW: v_reserve counts in units of the process's unit size, like v_flow
     # (model/_reserve.py: MW = v_reserve · unitsize[p]).  A capacity held, not an energy: no step_duration.
     r.reserves_dt = v.reserve.mul(par.entity_unitsize, axis=1, level='process')
-    # Average MW held over the period: Σ(MW × step_duration) / total period hours.
-    # Reserves are MW capacity held per hour (not consumed energy), so the
-    # meaningful per-period figure is the average MW held across the period.
-    period_hours = par.complete_period_share_of_year * 8760
-    r.reserves_d = r.reserves_dt.mul(par.step_duration, axis=0).groupby('period').sum().div(period_hours, axis=0)
+    # Average MW held over the period (item 188): Σ_t w·Δt·MW / Σ_t w·Δt over the period's realized steps,
+    # w = timestep_weight (the ratio rule of the period shares; complete_period_share_of_year, the max over the
+    # solves after a rolling union, is not needed).  Steps whose solve left reserves out
+    # (reduce_system_detail_method) are zero-filled by the variable reader; they are left out of both sums, so a
+    # period shared with a solve that kept reserves is not averaged with 0 MW.
+    r.reserves_d = reserve_period_average(r.reserves_dt, par, getattr(s, 'reduced_cells', None))
 
     # upward_node_slack_dt is already MWh per step (q_state_up × capacity × step_duration),
     # so the period aggregate is a plain groupby-sum; no extra step_duration.
@@ -50,13 +94,17 @@ def compute_slacks(par, s, v, r) -> None:
     # The annualised ``_d`` reporting series weights each (d, t) by
     # par.timestep_weight (=1.0 with no/uniform timeset_weights →
     # byte-identical) before the period sum, matching the cost-weighted
-    # objective.  The ``_not_annualized`` diagnostic sums (used for the raw
-    # Created/Removed slack-event reports) stay unweighted.
+    # objective.  The ``_d_sample`` sums (the Created / Removed / Inertia /
+    # NonSync / Reserve lines of summary_solve.csv) are weighted the same way,
+    # Σ_t w·Δt·slack, but not annualised (no / period_share, no inflation): the
+    # slack over the represented sample, on the scale of "Time in use".  Before,
+    # they were unweighted sums, which disagree with the penalty the objective
+    # charges whenever the timestep weights are not uniform.
     r.upward_node_slack_dt = v.q_state_up.mul(par.node_capacity_for_scaling[v.q_state_up.columns]).mul(par.step_duration, axis=0)
-    r.upward_node_slack_d_not_annualized = r.upward_node_slack_dt.groupby('period').sum()
+    r.upward_node_slack_d_sample = r.upward_node_slack_dt.mul(par.timestep_weight, axis=0).groupby('period').sum()
     r.upward_node_slack_d = annualize_dt_to_d(r.upward_node_slack_dt, par.timestep_weight, par.complete_period_share_of_year)
     r.downward_node_slack_dt = v.q_state_down.mul(par.node_capacity_for_scaling[v.q_state_down.columns]).mul(par.step_duration, axis=0)
-    r.downward_node_slack_d_not_annualized = r.downward_node_slack_dt.groupby('period').sum()
+    r.downward_node_slack_d_sample = r.downward_node_slack_dt.mul(par.timestep_weight, axis=0).groupby('period').sum()
     r.downward_node_slack_d = annualize_dt_to_d(r.downward_node_slack_dt, par.timestep_weight, par.complete_period_share_of_year)
     # Node-state slack penalty: apply timestep_weight (step_duration already in _slack_dt).
     upward_node_penalty = r.upward_node_slack_dt.mul(par.node_penalty_up[v.q_state_up.columns]) \
@@ -69,15 +117,14 @@ def compute_slacks(par, s, v, r) -> None:
 
     # Inertia penalty: mod uses × step_duration × timestep_weight (objective line ~2380).
     # Per-step cost = q × inertia_limit × penalty × step_duration × timestep_weight.
-    r.q_inertia_dt = v.q_inertia.mul(par.group_inertia_limit)
-    r.q_inertia_d_not_annualized = r.q_inertia_dt.mul(par.step_duration, axis=0).groupby('period').sum()
+    r.q_inertia_dt = v.q_inertia.mul(inertia_limit_on_slack_cells(par.group_inertia_limit, v.q_inertia))
+    r.q_inertia_d_sample = r.q_inertia_dt.mul(step_x_rp, axis=0).groupby('period').sum()
     r.q_inertia_d = annualize_dt_to_d(r.q_inertia_dt, par.timestep_weight, par.complete_period_share_of_year, par.step_duration)
     r.costPenalty_inertia_dt = r.q_inertia_dt.mul(par.group_penalty_inertia).mul(step_x_rp, axis=0)
 
     # Non-synchronous penalty: mod uses × step_duration × timestep_weight (objective line ~2382).
     r.q_non_synchronous_dt = v.q_non_synchronous.mul(par.group_capacity_for_scaling[s.groupNonSync])
-    r.q_non_synchronous_d_not_annualized = r.q_non_synchronous_dt.mul(par.step_duration, axis=0) \
-        .groupby('period').sum()
+    r.q_non_synchronous_d_sample = r.q_non_synchronous_dt.mul(step_x_rp, axis=0).groupby('period').sum()
     r.q_non_synchronous_d = annualize_dt_to_d(
         r.q_non_synchronous_dt, par.timestep_weight,
         par.complete_period_share_of_year, par.step_duration)
@@ -99,15 +146,20 @@ def compute_slacks(par, s, v, r) -> None:
     # vq_reserve is a fraction of the group's largest possible requirement
     # (``reserve_upDown_group_shortfall_scale``, the same multiplier the LP
     # uses in the reserve balances and the penalty; the reservation for
-    # timeseries groups).
-    r.q_reserves_dt = v.q_reserve.mul(par.reserve_upDown_group_shortfall_scale[v.q_reserve.columns], axis=1)
-    r.q_reserves_d_not_annualized = r.q_reserves_dt.mul(par.step_duration, axis=0).groupby(level='period').sum()
+    # timeseries groups).  ``reindex``, not ``[...]``: the output static view keeps the reserve groups of every
+    # solve, while a solve that left reserves out (``reduce_system_detail_method``) has no scale for them; those
+    # cells become NaN, and ``reduced_cells`` empties them anyway.
+    r.q_reserves_dt = v.q_reserve.mul(
+        par.reserve_upDown_group_shortfall_scale.reindex(columns=v.q_reserve.columns), axis=1)
+    r.q_reserves_d_sample = r.q_reserves_dt.mul(step_x_rp, axis=0).groupby(level='period').sum()
     r.q_reserves_d = annualize_dt_to_d(r.q_reserves_dt, par.timestep_weight, par.complete_period_share_of_year, par.step_duration)
     # Reserve slack penalty: step_duration is already here (line below);
     # add timestep_weight to match mod line ~2388.  ``shortfall_scale`` is the same multiplier the LP uses (it
     # equals the reservation for timeseries-only groups), so it is applied once here — not alongside
-    # ``reservation``.
+    # ``reservation``.  The scale is reindexed to vq_reserve's columns as above: its column level is named
+    # ``upDown`` and vq_reserve's ``updown``, so a plain ``.mul`` of two frames whose columns differ in set or
+    # order aligns on the level names and multiplies every group by every upDown (the penalty came out doubled).
     r.costPenalty_reserve_upDown_dt = v.q_reserve.mul(par.step_duration, axis=0) \
         .mul(par.timestep_weight, axis=0) \
         .mul(par.reserve_upDown_group_penalty.reindex(v.q_reserve.columns), axis=1) \
-        .mul(par.reserve_upDown_group_shortfall_scale, axis=1)
+        .mul(par.reserve_upDown_group_shortfall_scale.reindex(columns=v.q_reserve.columns), axis=1)

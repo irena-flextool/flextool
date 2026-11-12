@@ -113,7 +113,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "process_source_sink_ramp_limit_sink_up.csv",
     "process_source_sink_ramp_limit_source_down.csv",
     "process_source_sink_ramp_limit_sink_down.csv",
-    "process_source_sink_ramp_cost.csv",
     # — param_in_use family
     "node__PeriodParam_in_use.csv",
     "process__PeriodParam_in_use.csv",
@@ -261,6 +260,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "period__branch.csv",
     "solve_branch_weight.csv",
     "solve_branch__time_branch.csv",
+    "branch_time_start.csv",
     "p_entity_invested.csv",
     "p_entity_divested.csv",
     "p_entity_period_existing_capacity.csv",

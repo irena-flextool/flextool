@@ -432,7 +432,7 @@ jobs:
           New-Item -ItemType Directory -Force (Join-Path $project "input_sources") | Out-Null
           Copy-Item (Join-Path $root "flextool/templates/examples.sqlite") (Join-Path $project "input_sources")
           cd $Env:RUNNER_TEMP
-          & $py (Join-Path $root "flextool/.github/scripts/mcp_smoke.py") --tools 18 --call list_sources --expect "examples.sqlite" -- $py -m flextool_assistant_entry --mcp --project-path $project
+          & $py (Join-Path $root "flextool/.github/scripts/mcp_smoke.py") --tools 19 --call list_sources --expect "examples.sqlite" -- $py -m flextool_assistant_entry --mcp --project-path $project
       - name: "Smoke: the assistant chat in the bundled Python"
         run: |
           $PSNativeCommandUseErrorActionPreference = $true

@@ -7,6 +7,8 @@ the solve_data CSV producer (``emit/_mid_sets.derive_reserve_method_partition``)
 """
 from __future__ import annotations
 
+#: The ``reserve_method`` without a requirement (the schema default): its groups get no reserve variables or rows.
+RESERVE_NO_RESERVE: str = "no_reserve"
 RESERVE_TIMESERIES_METHODS: frozenset[str] = frozenset((
     "timeseries_only", "timeseries_and_dynamic",
     "timeseries_and_large_failure", "all",

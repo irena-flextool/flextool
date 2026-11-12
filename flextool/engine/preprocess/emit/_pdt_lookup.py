@@ -298,11 +298,121 @@ def _read_singles(path: Path,
 
 
 # ---------------------------------------------------------------------------
+# Which forecast a branch period reads.  ``branch_time_start`` (period, step, read_first) has one row per period
+# from the fan's period onwards (none for a pre-reveal trunk period, none in a solve without a fan); ``step`` is
+# the solve's fan start, its analysis time.  Each fold reads, per value cell, the first analysis-time tier that
+# authors a value for the cell:
+#
+# * a single (non-rolling) solve (``read_first`` = ``own``): the forecast authored at the period's own first step
+#   (``first_timesteps``), else the one authored at the fan start.  A value authored at a later period's own
+#   first step overrides the fan-start forecast there.
+# * a roll of a rolling solve (``read_first`` = ``fan``): the forecast authored at the roll's fan start, else the
+#   one at the period's own first step.  A roll decides at its fan's analysis time and must not see a forecast
+#   made later, so its look-ahead periods -- every period whose own first step is later than the roll's fan
+#   start, i.e. every row except the fan's own period, whose first step is the fan start -- read the roll's
+#   forecast before a later roll's (a later roll starts, and fans, at its own analysis time).  A cell the
+#   fan-start forecast does not author but the own-step (later) forecast does is an input error, raised once per
+#   reader before its value loop (:func:`_check_roll_forecast_covers_lookahead`): the roll's forecast must cover
+#   its whole horizon.  The own tier therefore never supplies a value there; it stays in the tiers only so the
+#   check and the folds share one tier order.  The realization sibling of a rolling solve is itself rolling and
+#   follows the same rule.
+#
+# Non-stochastic (plain time-series) data has no analysis time and is not read through these tiers: unchanged.
+# See docs/how_to/stochastics.md "Stochastics over multiple periods" and "Rolling horizon stochastics".
+# ---------------------------------------------------------------------------
+
+BRANCH_TIME_START_CSV = "branch_time_start.csv"
+READ_FIRST_OWN = "own"
+READ_FIRST_FAN = "fan"
+
+
+class FanStarts(dict):
+    """``period -> [fan start step]`` of ``branch_time_start``, plus :attr:`fan_first`: the periods whose fold
+    reads the fan-start forecast before the forecast at its own first step (``read_first`` = ``fan``, the
+    rolls of a rolling solve).  A plain dict works wherever a :class:`FanStarts` is taken (no fan-first
+    periods)."""
+
+    def __init__(self, *args, fan_first: "frozenset[str]" = frozenset(), **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.fan_first = frozenset(fan_first)
+
+
+def read_fan_starts(path: Path, *, provider: "object | None" = None) -> FanStarts:
+    """Read a ``branch_time_start`` frame at *path* into a :class:`FanStarts`; empty when absent or without a
+    fan.  A frame without the ``read_first`` column reads as own-first."""
+    out = FanStarts()
+    df = provider.get(_provider_key(path))
+    if df is None:
+        return out
+    fan_first: set[str] = set()
+    has_read_first = "read_first" in df.columns
+    for row in df.iter_rows():
+        if len(row) < 2:
+            continue
+        d, step = _cell_str(row[0]), _cell_str(row[1])
+        if d and step:
+            out.setdefault(d, []).append(step)
+            if has_read_first and _cell_str(row[2]) == READ_FIRST_FAN:
+                fan_first.add(d)
+    out.fan_first = frozenset(fan_first)
+    return out
+
+
+def read_fan_for_d(solve_data_dir: Path,
+                   *, provider: "object | None" = None) -> FanStarts:
+    """``solve_data/branch_time_start`` as a :class:`FanStarts`; empty without a fan."""
+    return read_fan_starts(solve_data_dir / BRANCH_TIME_START_CSV, provider=provider)
+
+
+def ts_tiers(d: str, ts_for_d: "dict[str, list[str]]",
+             fan_for_d: "dict[str, list[str]]") -> list[list[str]]:
+    """The analysis-time tiers a fold of period *d* reads, in priority order.
+
+    ``own`` (the period's own first steps, duplicates kept) and ``fan`` (the fan start steps that are not among
+    the own steps), when there are any: ``[own, fan]``, or ``[fan, own]`` for a period in
+    ``fan_for_d.fan_first`` (a look-ahead period of a roll, see the section comment above).  A fold reads the
+    first tier that has a value for the cell.  A period without steps of its own (a period label: no dispatch)
+    reads nothing, not the fan start.
+    """
+    own = list(ts_for_d.get(d, ()))
+    if not own:
+        return [own]
+    fan = [ts for ts in fan_for_d.get(d, ()) if ts not in own]
+    if not fan:
+        return [own]
+    return [fan, own] if d in getattr(fan_for_d, "fan_first", ()) else [own, fan]
+
+
+def fold_over_tiers(pbt: dict, prefix: tuple, tb_groups: "Iterable[Iterable[str]]",
+                    tiers: "list[list[str]]", t: str) -> "float | None":
+    """Sum ``pbt[(*prefix, tb, ts, t)]`` over the branches of *tb_groups* and the steps of the first tier of
+    *tiers* that has at least one value; ``None`` when no tier has one.
+
+    Summation order: tier, then each branch group in order (one per parent period for the parent-period fold),
+    its branches, then the tier's steps -- the order the single-tier folds used.
+    """
+    tb_groups = [list(g) for g in tb_groups]
+    for tier in tiers:
+        total = 0.0
+        hit = False
+        for tbs in tb_groups:
+            for tb in tbs:
+                for ts in tier:
+                    v = pbt.get((*prefix, tb, ts, t))
+                    if v is not None:
+                        total += v
+                        hit = True
+        if hit:
+            return total
+    return None
+
+
+# ---------------------------------------------------------------------------
 # A stochastic-time value of a fan: the forecast branch periods take their own
 # branch's value; the period label (the reveal / continuation self-row) has no
 # dispatch, so it needs no value of its own and a forecasts-only fan is valid.
 # A stochastic-time value that authors only part of a fan's forecasts is an
-# input error (never a silent class default).  See docs/how_to.md
+# input error (never a silent class default).  See docs/how_to/stochastics.md
 # "Stochastics over multiple periods".
 # ---------------------------------------------------------------------------
 
@@ -322,12 +432,47 @@ def _anchor_fan_members(period_branch_csv: Path,
     return out
 
 
+# The entity kinds of the stochastic-time input checks below (``kind=``): how a message names the entity
+# and how the user puts it in a group with ``include_stochastics``.
+def _subject(kind: str, ent: tuple) -> str:
+    if kind == "reserve":
+        reserve, up_down, group = ent
+        return f"reserve '{reserve}' ({up_down}) of group '{group}'"
+    if kind == "process_side":
+        process, side = ent
+        return f"unit or connection '{process}' ({side})"
+    return f"{_KIND_NAME[kind]} '{ent[0]}'"
+
+
+_KIND_NAME = {"node": "node", "process": "unit or connection", "profile": "profile"}
+
+_NOT_GROUPED = {
+    "node": "The node is not in a group with include_stochastics",
+    "process": "The unit or connection is not in a group with include_stochastics",
+    "process_side": "The unit or connection is not in a group with include_stochastics",
+    "profile": "No unit, connection or node that uses this profile is in a group with include_stochastics",
+    "reserve": "The group of this reserve does not have include_stochastics",
+}
+
+_GROUP_FIX = {
+    "node": lambda ent: f"Add node '{ent[0]}' to a group that has include_stochastics",
+    "process": lambda ent: f"Add '{ent[0]}' to a group that has include_stochastics",
+    "process_side": lambda ent: f"Add '{ent[0]}' to a group that has include_stochastics",
+    "profile": lambda ent: (f"Add a unit, connection or node that uses profile '{ent[0]}' to a group that has "
+                            "include_stochastics"),
+    "reserve": lambda ent: f"Set include_stochastics on group '{ent[2]}'",
+}
+
+
 def _check_pbt_branch_coverage(
     pbt: dict[tuple, float],
     n_ent: int,
     anchor_members: dict[str, list[str]],
     tb_for_d: dict[str, list[str]],
     ts_for_d: dict[str, list[str]],
+    fan_for_d: "dict[str, list[str]] | None" = None,
+    *,
+    kind: str,
 ) -> None:
     """Raise when a pbt entity/param authors SOME of a reveal cohort's active branches but not ALL
     of them -- the engine must never silently fall back to the class default for a branch an entity
@@ -336,14 +481,18 @@ def _check_pbt_branch_coverage(
     *pbt* keys are ``(*entity, param, branch, ts, time)`` (``n_ent`` entity-key columns).  A cohort's
     active-branch roster is the fan members' own tokens (*anchor_members* / *tb_for_d*); a roster of 0 or
     1 members can never be "partial", so those cohorts are skipped.  The cohort's time starts are its
-    members' first steps (the period label has no steps of its own).
+    members' first steps (the period label has no steps of its own) and the fan start they fall back to
+    (*fan_for_d*, ``branch_time_start``).  *kind* (``node`` / ``process`` / ``process_side`` / ``profile`` /
+    ``reserve``) names the entity in the message.
     """
+    fan_for_d = fan_for_d or {}
     roster_by_ts: dict[str, frozenset[str]] = {}
     for anchor, members in anchor_members.items():
         tokens = frozenset(tb_for_d[m][0] for m in members if tb_for_d.get(m))
         if len(tokens) <= 1:
             continue
-        starts = dict.fromkeys([*ts_for_d.get(anchor, ()), *(ts for m in members for ts in ts_for_d.get(m, ()))])
+        starts = dict.fromkeys([*ts_for_d.get(anchor, ()), *fan_for_d.get(anchor, ()),
+                                *(ts for m in members for ts in (*ts_for_d.get(m, ()), *fan_for_d.get(m, ())))])
         for ts in starts:
             roster_by_ts[ts] = tokens
     if not roster_by_ts:
@@ -360,10 +509,10 @@ def _check_pbt_branch_coverage(
         if branches & tokens and branches < tokens:
             missing = sorted(tokens - branches)
             raise FlexToolConfigError(
-                f"{'/'.join(ent)}.{param}: a stochastic-time value authors branch(es) "
-                f"{sorted(branches & tokens)} of this reveal but is missing {missing} -- give every "
-                "active forecast branch a value, or none; the engine never silently substitutes the "
-                "class default for a branch left out."
+                f"{_subject(kind, ent)}, parameter '{param}': the forecasts that start at time step '{ts}' "
+                f"have values for {sorted(branches & tokens)} but are missing {missing}.  Give a value for "
+                "every forecast of the solve, or for none of them: FlexTool does not fill a missing forecast "
+                "with the default value.  Check which alternative of the scenario gives this value."
             )
 
 
@@ -376,6 +525,8 @@ def _check_ungrouped_reads_have_realized_branch(
     ts_for_d: dict[str, list[str]],
     *,
     member_pos: int = 0,
+    fan_for_d: "dict[str, list[str]] | None" = None,
+    kind: str,
 ) -> None:
     """Raise when an entity outside every ``include_stochastics`` group authors a stochastic-time value
     that a forecasts-only fan of this solve would read.
@@ -388,12 +539,15 @@ def _check_ungrouped_reads_have_realized_branch(
     *pbt* keys are ``(*entity, param, branch, ts, time)`` (``n_ent`` entity-key columns); group membership
     is tested on ``key[member_pos]``: the process (``0``) for the per-side tables, the group (``2``) for the
     ``(reserve, upDown, group)`` reservation table.  The fan's analysis times are its
-    members' first steps (the period label has no steps of its own).
+    members' first steps (the period label has no steps of its own) and the fan start they fall back to
+    (*fan_for_d*, ``branch_time_start``).  *kind* (as for :func:`_check_pbt_branch_coverage`) names the entity
+    and the way to put it in a group with ``include_stochastics`` in the message.
     """
+    fan_for_d = fan_for_d or {}
     for anchor, members in anchor_members.items():
         if tb_for_d.get(anchor):
             continue  # a ``realized: yes`` row (or one projected from a parent) supplies the value.
-        starts = frozenset(ts for m in members for ts in ts_for_d.get(m, ()))
+        starts = frozenset(ts for m in members for ts in (*ts_for_d.get(m, ()), *fan_for_d.get(m, ())))
         if not starts:
             continue
         ungrouped = sorted({(key[:n_ent], key[n_ent]) for key in pbt
@@ -401,13 +555,120 @@ def _check_ungrouped_reads_have_realized_branch(
         if ungrouped:
             ent, param = ungrouped[0]
             raise FlexToolConfigError(
-                f"{'/'.join(ent)}.{param}: a stochastic-time (rank-3) value of an entity in no "
-                f"include_stochastics group, read in the forecasts-only fan of period {anchor!r}.  Outside "
-                "such a group the value of the realized branch is read on every branch period, and no branch "
-                "of this fan is designated realized: yes.  Add the entity to an include_stochastics group (for a "
-                "reservation, set include_stochastics on its reserve group; each forecast then reads its own "
-                "branch), designate a realized: yes branch, or give the parameter a non-stochastic value."
+                f"{_subject(kind, ent)}, parameter '{param}': the value has forecasts, and the solve reads it "
+                f"in the forecasts that start in period '{anchor}'.  {_NOT_GROUPED[kind]}, so every forecast "
+                "reads the value of the forecast marked realized: yes, but no forecast of this solve is marked "
+                f"realized: yes.  {_GROUP_FIX[kind](ent)} (then each forecast reads its own value), mark one "
+                f"forecast realized: yes in the solve's stochastic_branches, or give '{param}' a value without "
+                "forecasts.  Check which alternative of the scenario gives this value."
             )
+
+
+def _tier_has_value(pbt: dict, prefix: tuple, tb_groups: "list[Iterable[str]]", tier: "list[str]",
+                    t: str) -> bool:
+    """Whether *tier* authors a value for the cell ``(prefix, t)`` on any branch of *tb_groups* (the hit test
+    of :func:`fold_over_tiers`)."""
+    return any((*prefix, tb, ts, t) in pbt for tbs in tb_groups for tb in tbs for ts in tier)
+
+
+_UNCOVERED_SHOWN = 5
+
+
+def _check_roll_forecast_covers_lookahead(
+    pbt: dict[tuple, float],
+    n_ent: int,
+    stochastic_entities: "set[str] | frozenset[str]",
+    tb_for_d: dict[str, list[str]],
+    ts_for_d: dict[str, list[str]],
+    pe_for_d: dict[str, list[str]],
+    fan_for_d: "dict[str, list[str]]",
+    solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
+    member_pos: int = 0,
+    kind: str,
+) -> None:
+    """Raise when a roll of a rolling solve would read, in a look-ahead period, a forecast made later than the
+    roll's own start (owner decision 2026-11-12, item 228).
+
+    A look-ahead period of a roll (``read_first`` = ``fan``, :func:`ts_tiers` ``[fan, own]``) reads the
+    forecast made at the roll's fan start.  A value cell that forecast does not cover would otherwise fall back
+    to the forecast made at the period's own first step -- a later roll's analysis time -- so the roll would
+    decide on information it does not have yet.  That fallback is an input error: the roll's forecast must
+    cover its whole horizon.  A cell neither forecast covers reads the plain value as before, and single solves
+    and ``read_first`` = ``own`` periods keep the own-step fallback (nothing to check: the function returns at
+    once without a ``fan_first`` period).
+
+    The check mirrors the readers' folds exactly (branch 1, the stochastic fold over ``tb_for_d[d]``, when
+    ``key[member_pos]`` is in *stochastic_entities*; then branch 2, the parent-period fold over the parents'
+    branches) on every ``(d, t)`` of ``solve_data/steps_in_use``, so it runs once per reader, before the
+    reader's value loop.  *pbt* keys are ``(*entity, param, branch, ts, time)`` (``n_ent`` entity-key
+    columns); *kind* (as for :func:`_check_pbt_branch_coverage`) names the entity in the message.
+    """
+    fan_first = getattr(fan_for_d, "fan_first", frozenset())
+    if not fan_first or not pbt:
+        return
+    times_by_d = _read_pairs_to_dict(solve_data_dir / "steps_in_use.csv", key_col=0, provider=provider)
+    tiers_by_d: dict[str, list[list[str]]] = {}
+    for d in times_by_d:
+        if d in fan_first:
+            tiers = ts_tiers(d, ts_for_d, fan_for_d)
+            if len(tiers) == 2:
+                tiers_by_d[d] = tiers
+    if not tiers_by_d:
+        return
+    # Own (later) analysis time -> the look-ahead periods that would fall back to it.
+    d_by_own_ts: dict[str, list[str]] = {}
+    for d, (_fan, own) in tiers_by_d.items():
+        for ts in dict.fromkeys(own):
+            d_by_own_ts.setdefault(ts, []).append(d)
+    time_sets = {d: set(times_by_d[d]) for d in tiers_by_d}
+    candidates: dict[tuple, set[tuple[str, str]]] = {}
+    for key in pbt:
+        ts, t = key[n_ent + 2], key[n_ent + 3]
+        for d in d_by_own_ts.get(ts, ()):
+            if t in time_sets[d]:
+                candidates.setdefault(key[:n_ent + 1], set()).add((d, t))
+    uncovered: dict[tuple, list[tuple[str, str]]] = {}
+    for prefix, cells in candidates.items():
+        stochastic = prefix[member_pos] in stochastic_entities
+        for d, t in cells:
+            fan, own = tiers_by_d[d]
+            folds = [[tb_for_d.get(d, ())]] if stochastic else []
+            pe_list = pe_for_d.get(d, ())
+            if pe_list:
+                folds.append([tb_for_d.get(pe, ()) for pe in pe_list])
+            for tb_groups in folds:
+                if _tier_has_value(pbt, prefix, tb_groups, fan, t):
+                    break
+                if _tier_has_value(pbt, prefix, tb_groups, own, t):
+                    uncovered.setdefault(prefix, []).append((d, t))
+                    break
+    if not uncovered:
+        return
+    prefix = min(uncovered)
+    ent, param = prefix[:n_ent], prefix[n_ent]
+    order = {dt: i for i, dt in enumerate((d, t) for d, ts_list in times_by_d.items() for t in ts_list)}
+    cells = sorted(uncovered[prefix], key=order.__getitem__)
+    steps = list(dict.fromkeys(t for _d, t in cells))
+    periods = list(dict.fromkeys(d for d, _t in cells))
+    shown = ", ".join(f"'{t}'" for t in steps[:_UNCOVERED_SHOWN])
+    if len(steps) > _UNCOVERED_SHOWN:
+        shown += f" and {len(steps) - _UNCOVERED_SHOWN} more"
+    fan_steps = ", ".join(f"'{ts}'" for ts in dict.fromkeys(ts for d in periods for ts in tiers_by_d[d][0]))
+    own_steps = ", ".join(f"'{ts}'" for ts in dict.fromkeys(ts for d in periods for ts in tiers_by_d[d][1]))
+    solve = next(iter(_read_singles(solve_data_dir / "solve_current.csv", provider=provider)), None)
+    roll = f"roll '{solve}'" if solve else "this roll"
+    period_names = ", ".join(f"'{d}'" for d in periods)
+    raise FlexToolConfigError(
+        f"{_subject(kind, ent)}, parameter '{param}': {roll} of a rolling solve starts at time step "
+        f"{fan_steps} and reads the forecasts made then over its whole horizon, but those forecasts have no "
+        f"value at time step{'s' if len(steps) > 1 else ''} {shown} (period{'s' if len(periods) > 1 else ''} "
+        f"{period_names}).  Only the forecasts made later, at "
+        f"{own_steps}, have values there, and a roll must not use a forecast made after it starts.  Give "
+        f"the forecasts that start at {fan_steps} values for the whole horizon of the roll, look-ahead "
+        "included.  Check which alternative of the scenario gives this value."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -557,9 +818,12 @@ class PdtLookup:
     Branches in order:
 
       1. stochastic-fold: e ∈ groupStochastic-flagged group — sum pbt rows
-         over ts ∈ first_timesteps[d], tb ∈ solve_branch[d].
+         over ts ∈ first_timesteps[d], tb ∈ solve_branch[d]; a cell with no
+         such row takes ts ∈ branch_time_start[d] (the fan start; in a roll
+         of a rolling solve the fan start is read first, :func:`ts_tiers`).
       2. parent-period-fold: for each pe with (pe, d) ∈ period__branch,
-         sum pbt rows over ts ∈ first_timesteps[d], tb ∈ solve_branch[pe].
+         sum pbt rows over ts ∈ first_timesteps[d], tb ∈ solve_branch[pe]
+         (same fan-start fallback per cell).
       2b. pdt row (``pdt_process`` / ``pdt_node``; empty when ``pdt_csv``
          is ``None``): a genuine 2-D period × time map, read before
          pd/pt so it outranks the 1-D tiers for an entity that authors
@@ -593,6 +857,7 @@ class PdtLookup:
         class_default_values: dict[str, float] | None = None,
         *,
         provider: "object | None" = None,
+        branch_time_start_csv: "Path | None" = None,
     ) -> None:
         self._pbt = _read_pbt(pbt_csv, provider=provider)
         self._pd = _read_pd(pd_csv, provider=provider)
@@ -602,8 +867,15 @@ class PdtLookup:
         self._ts_for_d = _read_pairs_to_dict(period_time_first_csv, key_col=0, provider=provider)
         self._tb_for_d = _read_pairs_to_dict(solve_branch_csv, key_col=0, provider=provider)
         self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1, provider=provider)
+        self._fan_for_d = read_fan_starts(
+            branch_time_start_csv if branch_time_start_csv is not None
+            else period_time_first_csv.parent / BRANCH_TIME_START_CSV, provider=provider)
+        self._tiers = {d: ts_tiers(d, self._ts_for_d, self._fan_for_d)
+                       for d in dict.fromkeys([*self._ts_for_d, *self._fan_for_d])}
         anchor_members = _anchor_fan_members(period_branch_csv, provider=provider)
-        _check_pbt_branch_coverage(self._pbt, 1, anchor_members, self._tb_for_d, self._ts_for_d)
+        kind = "node" if Path(group_entity_csv).name == "group__node.csv" else "process"
+        _check_pbt_branch_coverage(self._pbt, 1, anchor_members, self._tb_for_d, self._ts_for_d,
+                                   self._fan_for_d, kind=kind)
         self._pd = inherit_pd_branch_periods(self._pd, self._pe_for_d, key_cols=["e", "param", "d"],
                                              period_pos=2, periods=list(self._ts_for_d))
         self._pdt = inherit_pd_branch_periods(self._pdt, self._pe_for_d, key_cols=["e", "param", "d", "t"],
@@ -619,41 +891,28 @@ class PdtLookup:
                 if c0 in groups_stoch and c1:
                     self._stoch_entity.add(c1)
         _check_ungrouped_reads_have_realized_branch(self._pbt, 1, self._stoch_entity, anchor_members,
-                                                    self._tb_for_d, self._ts_for_d)
+                                                    self._tb_for_d, self._ts_for_d, fan_for_d=self._fan_for_d,
+                                                    kind=kind)
+        _check_roll_forecast_covers_lookahead(self._pbt, 1, self._stoch_entity, self._tb_for_d, self._ts_for_d,
+                                              self._pe_for_d, self._fan_for_d, Path(period_time_first_csv).parent,
+                                              provider=provider, kind=kind)
         self._param_def1 = param_def1
         self._time_first = time_first_priority
         self._class_defaults = class_default_values or {}
 
     def get(self, e: str, param: str, d: str, t: str) -> float:
-        # Branch 1: stochastic fold-in.
+        tiers = self._tiers.get(d, ())
+        # Branch 1: stochastic fold-in (the ts_tiers tiers: own first step and fan start -- per value cell).
         if e in self._stoch_entity:
-            ts_list = self._ts_for_d.get(d, ())
-            tb_list = self._tb_for_d.get(d, ())
-            total = 0.0
-            hit = False
-            for tb in tb_list:
-                for ts in ts_list:
-                    v = self._pbt.get((e, param, tb, ts, t))
-                    if v is not None:
-                        total += v
-                        hit = True
-            if hit:
-                return total
-        # Branch 2: parent-period fold-in.
-        ts_list = self._ts_for_d.get(d, ())
+            v = fold_over_tiers(self._pbt, (e, param), [self._tb_for_d.get(d, ())], tiers, t)
+            if v is not None:
+                return v
+        # Branch 2: parent-period fold-in (same tiers).
         pe_list = self._pe_for_d.get(d, ())
-        if pe_list and ts_list:
-            total = 0.0
-            hit = False
-            for pe in pe_list:
-                for tb in self._tb_for_d.get(pe, ()):
-                    for ts in ts_list:
-                        v = self._pbt.get((e, param, tb, ts, t))
-                        if v is not None:
-                            total += v
-                            hit = True
-            if hit:
-                return total
+        if pe_list:
+            v = fold_over_tiers(self._pbt, (e, param), [self._tb_for_d.get(pe, ()) for pe in pe_list], tiers, t)
+            if v is not None:
+                return v
         # Branch 2b: genuine period x time map.
         v = self._pdt.get((e, param, d, t))
         if v is not None:
@@ -712,6 +971,7 @@ class PdtLookupPerSide:
         group_stochastic_csv: Path,
         *,
         provider: "object | None" = None,
+        branch_time_start_csv: "Path | None" = None,
     ) -> None:
         self._pbt = _read_pbt_3(pbt_csv, provider=provider)
         self._pd = _read_pd_3(pd_csv, provider=provider)
@@ -720,8 +980,14 @@ class PdtLookupPerSide:
         self._ts_for_d = _read_pairs_to_dict(period_time_first_csv, key_col=0, provider=provider)
         self._tb_for_d = _read_pairs_to_dict(solve_branch_csv, key_col=0, provider=provider)
         self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1, provider=provider)
+        self._fan_for_d = read_fan_starts(
+            branch_time_start_csv if branch_time_start_csv is not None
+            else period_time_first_csv.parent / BRANCH_TIME_START_CSV, provider=provider)
+        self._tiers = {d: ts_tiers(d, self._ts_for_d, self._fan_for_d)
+                       for d in dict.fromkeys([*self._ts_for_d, *self._fan_for_d])}
         anchor_members = _anchor_fan_members(period_branch_csv, provider=provider)
-        _check_pbt_branch_coverage(self._pbt, 2, anchor_members, self._tb_for_d, self._ts_for_d)
+        _check_pbt_branch_coverage(self._pbt, 2, anchor_members, self._tb_for_d, self._ts_for_d,
+                                   self._fan_for_d, kind="process_side")
         self._pd = inherit_pd_branch_periods(self._pd, self._pe_for_d,
                                              key_cols=["p", "side", "param", "d"], period_pos=3,
                                              periods=list(self._ts_for_d))
@@ -736,36 +1002,24 @@ class PdtLookupPerSide:
                 if c0 in groups_stoch and c1:
                     self._stoch_process.add(c1)
         _check_ungrouped_reads_have_realized_branch(self._pbt, 2, self._stoch_process, anchor_members,
-                                                    self._tb_for_d, self._ts_for_d)
+                                                    self._tb_for_d, self._ts_for_d, fan_for_d=self._fan_for_d,
+                                                    kind="process_side")
+        _check_roll_forecast_covers_lookahead(self._pbt, 2, self._stoch_process, self._tb_for_d, self._ts_for_d,
+                                              self._pe_for_d, self._fan_for_d, Path(period_time_first_csv).parent,
+                                              provider=provider, kind="process_side")
 
     def get(self, p: str, side: str, param: str, d: str, t: str) -> float:
+        tiers = self._tiers.get(d, ())
         if p in self._stoch_process:
-            ts_list = self._ts_for_d.get(d, ())
-            tb_list = self._tb_for_d.get(d, ())
-            total = 0.0
-            hit = False
-            for tb in tb_list:
-                for ts in ts_list:
-                    v = self._pbt.get((p, side, param, tb, ts, t))
-                    if v is not None:
-                        total += v
-                        hit = True
-            if hit:
-                return total
-        ts_list = self._ts_for_d.get(d, ())
+            v = fold_over_tiers(self._pbt, (p, side, param), [self._tb_for_d.get(d, ())], tiers, t)
+            if v is not None:
+                return v
         pe_list = self._pe_for_d.get(d, ())
-        if pe_list and ts_list:
-            total = 0.0
-            hit = False
-            for pe in pe_list:
-                for tb in self._tb_for_d.get(pe, ()):
-                    for ts in ts_list:
-                        v = self._pbt.get((p, side, param, tb, ts, t))
-                        if v is not None:
-                            total += v
-                            hit = True
-            if hit:
-                return total
+        if pe_list:
+            v = fold_over_tiers(self._pbt, (p, side, param), [self._tb_for_d.get(pe, ()) for pe in pe_list],
+                                tiers, t)
+            if v is not None:
+                return v
         v = self._pd.get((p, side, param, d))
         if v is not None:
             return v

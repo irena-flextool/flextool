@@ -15,6 +15,7 @@ from flextool.assistant.errors import (
     close_names,
     closest_names,
     did_you_mean,
+    inactive_consequence,
     name_list,
     render,
     similar_text,
@@ -22,7 +23,7 @@ from flextool.assistant.errors import (
 from flextool.assistant.inputs import _db, _values
 from flextool.assistant.inputs._notes import notes_for
 from flextool.assistant.inputs._schema import ranks_in_words, shipped_schema
-from flextool.assistant.inputs._units import parameter_unit
+from flextool.assistant.inputs._units import NodeTopology, node_topology, parameter_unit_info
 from flextool.assistant.registry import Fit, make_tool
 from flextool.assistant.unit_wording import (
     STORED_VALUES,
@@ -78,6 +79,15 @@ def _entity_text(byname: tuple[str, ...]) -> NameList:
     return NameList(tuple(byname), form="join")
 
 
+def inactive_note(ctx: AssistantContext, entity_class: str, entity: Any, scenario: str, reason: str | None, *,
+                  consequence: str | None = None) -> str:
+    """The note that an entity is not part of the scenario and its stored values are not used there
+    (``inactive_entity``); *consequence* overrides what that means for its class (:func:`inactive_consequence`)."""
+    return render("inactive_entity", {"entity": entity, "scenario": scenario, "reason": reason or "inactive",
+                                      "consequence": inactive_consequence(entity_class) if consequence is None
+                                      else consequence}, ctx.redact)
+
+
 def _find(db: _db.InputDB, entity_class: str, names: list[str]) -> tuple[str, ...] | None:
     """The entity's names per dimension, or ``None`` when the class has no such entity; one name names a
     0-dimensional entity, or a multi-dimensional one by its own name (``coal_chp__heat``)."""
@@ -105,9 +115,10 @@ def _byname(db: _db.InputDB, source: project.Source, entity_class: str, entity: 
     return byname
 
 
-def _entity_value(value: Any) -> Any:
-    """A value as get_entity lists it: a constant itself, a map of at most :data:`ENTITY_TABLE_ROWS` rows with its
-    table, a longer one as its summary (kind, index names, rows, minimum, mean, maximum)."""
+def entity_value(value: Any) -> Any:
+    """A value as get_entity (and explain_entity) lists it: a constant itself, a map of at most
+    :data:`ENTITY_TABLE_ROWS` rows with its table, a longer one as its summary (kind, index names, rows, minimum,
+    mean, maximum)."""
     if _values.is_indexed(value) and len(_values.rows_of(value)) <= ENTITY_TABLE_ROWS:
         return _values.summarize(value, max_rows=ENTITY_TABLE_ROWS)
     return _values.compact(value)
@@ -133,15 +144,29 @@ def _group_members(view: _db.ScenarioView, group: str) -> set[str]:
     return out
 
 
-def _unit(view: _db.ScenarioView | None, entity_class: str, parameter: str,
-          byname: tuple[str, ...] | None) -> tuple[str | None, str | None]:
+def _node_topology(view: _db.ScenarioView) -> NodeTopology:
+    """The scenario's node units and topology (:func:`node_topology`), built once per view."""
+    topology = getattr(view, "_node_topology", None)
+    if topology is None:
+        topology = node_topology(view)
+        view._node_topology = topology
+    return topology
+
+
+def unit_of(view: _db.ScenarioView | None, entity_class: str, parameter: str,
+            byname: tuple[str, ...] | None) -> tuple[str | None, str | None]:
+    """``(unit as shown, reason)`` of a parameter (the input tools' and explain_entity's); for an entity of a
+    scenario, the units of the nodes it is about (a node's ``unit_of_measure``), shown plain (not as a convention
+    unit) when a node set them."""
     if view is None or byname is None:
-        unit, reason = parameter_unit(entity_class, parameter)
+        info = parameter_unit_info(entity_class, parameter)
     else:
         members = _group_members(view, byname[0]) if entity_class == "group" else None
-        unit, reason = parameter_unit(entity_class, parameter, value_of=_value_of(view, entity_class, byname),
-                                      members=members)
-    return shown_unit(unit), reason
+        info = parameter_unit_info(entity_class, parameter, value_of=_value_of(view, entity_class, byname),
+                                   members=members, nodes=_node_topology(view), byname=byname)
+    if info.node_set:
+        return info.unit, info.reason
+    return shown_unit(info.unit), info.reason
 
 
 def _session_notes(ctx: AssistantContext, payload: dict, *, units: bool, stored: bool) -> dict:
@@ -179,18 +204,24 @@ def _check_parameter(db: _db.InputDB, entity_class: str, parameter: str) -> None
 def value_record(ctx: AssistantContext, db: _db.InputDB, view: _db.ScenarioView, entity_class: str,
                  byname: tuple[str, ...], parameter: str, *, max_rows: int,
                  time_range: tuple[str, str] | None = None) -> dict:
-    """The value record of one (entity, parameter) in the scenario (P0 §4.3)."""
+    """The value record of one (entity, parameter) in the scenario (P0 §4.3).  For an entity that is not part of
+    the scenario: ``used_in_scenario: false``, the note on it first, a stored value as stored (not used), and no
+    default shown as if it applied."""
     record: dict[str, Any] = {"entity": _names(byname), "parameter": parameter, "scenario": view.scenario}
     notes: list[str] = []
     active, reason = view.active(entity_class, byname)
     if not active:
+        record["used_in_scenario"] = False
         record["active"] = False
-        notes.append(render("inactive_entity", {"entity": _entity_text(byname), "scenario": view.scenario,
-                                                "reason": reason}, ctx.redact))
+        notes.append(inactive_note(ctx, entity_class, _entity_text(byname), view.scenario, reason))
     winner = view.value(entity_class, byname, parameter)
     relation = _version_relation(db)
     value: Any = None
-    if winner is not None:
+    if winner is None and not active:
+        record.update(stored=False, is_default=False, value=None)
+        record["provenance"] = {"from_alternative": None, "alternatives_highest_first": list(reversed(view.ranked)),
+                                "overridden": []}
+    elif winner is not None:
         value = winner.parsed()
         record.update(stored=True, is_default=False, **_values.summarize(value, max_rows=max_rows,
                                                                           time_range=time_range))
@@ -226,7 +257,7 @@ def value_record(ctx: AssistantContext, db: _db.InputDB, view: _db.ScenarioView,
         shape, shape_note = _values.shape_of(entity_class, parameter, ", ".join(byname), value)
         record["shape"] = shape
         record["shape_note"] = shape_note
-    unit, unit_reason = _unit(view, entity_class, parameter, byname)
+    unit, unit_reason = unit_of(view, entity_class, parameter, byname)
     record["unit"] = unit
     record["unit_reason"] = unit_reason
     notes += notes_for(entity_class, parameter, value_of=_value_of(view, entity_class, byname))
@@ -260,6 +291,13 @@ def list_entities(ctx: AssistantContext, args: dict) -> Fit:
         else:
             active_names.append({"entity": _names(e.byname), "description": _description(e.description)})
     limit = args["max_results"]
+    lead: list[str] = []
+    if not active_names and not inactive and (contains or member is not None):
+        given = [key for key in ("name_contains", "member") if args.get(key) is not None]
+        lead.append(render("no_entity_matches", {"entity_class": entity_class, "what": ", ".join(given),
+                                                 "n": len(db.entities.get(entity_class, {}))}, ctx.redact))
+    elif view is not None and not active_names and inactive:
+        lead.append(render("none_active", {"entity_class": entity_class, "scenario": scenario}, ctx.redact))
     payload = {
         "source": source.name,
         "scenario": scenario,
@@ -270,12 +308,14 @@ def list_entities(ctx: AssistantContext, args: dict) -> Fit:
         "inactive_in_scenario": inactive[:limit] if view is not None else None,
         "truncated": (f"showing {limit} of {len(active_names)} entities — {LIST_HINT}"
                       if len(active_names) > limit else None),
-        "notes": notes,
+        "notes": lead + notes,
     }
     return Fit(payload, rows_key="entities", what="entities", hint=LIST_HINT)
 
 
-def _match_names(db: _db.InputDB, name: Any) -> list[_db.EntityItem]:
+def match_names(db: _db.InputDB, name: Any) -> list[_db.EntityItem]:
+    """The entities named *name* (one name, or one per dimension) in every class that has one (get_entity;
+    explain_entity's refusal of a name of another class)."""
     names = [name] if isinstance(name, str) else [str(n) for n in name]
     out: list[_db.EntityItem] = []
     for cls in db.classes:
@@ -292,7 +332,7 @@ def get_entity(ctx: AssistantContext, args: dict) -> Fit:
     source, db, notes = _open(ctx, args)
     scenario = _scenario(ctx, source, db, args)
     view = db.view(scenario)
-    matches = _match_names(db, args["name"])
+    matches = match_names(db, args["name"])
     if not matches:
         name = args["name"]
         names = [name] if isinstance(name, str) else list(name)
@@ -310,26 +350,32 @@ def get_entity(ctx: AssistantContext, args: dict) -> Fit:
             item = view.value(cls, byname, param)
             if item is None:
                 continue
-            unit, _ = _unit(view, cls, param, byname)
+            unit, _ = unit_of(view, cls, param, byname)
             any_convention = any_convention or (bool(unit) and is_convention_unit(unit))
-            parameters.append({"parameter": param, "value": _entity_value(item.parsed()), "unit": unit,
+            parameters.append({"parameter": param, "value": entity_value(item.parsed()), "unit": unit,
                                "from_alternative": item.alternative})
         relationships = []
         if len(e.byname) == 1:
             for rel in sorted(db.relationships_of(e.entity_class, e.name), key=lambda r: (r.entity_class, r.byname)):
                 relationships.append({"entity_class": rel.entity_class, "entity": _names(rel.byname),
                                       "active": view.active(rel.entity_class, rel.byname)[0]})
-        match: dict[str, Any] = {
+        # An entity that is not part of the scenario: the note first, its values as stored but not used (an
+        # inactive coal_chp with "parameters: existing 1200 MW" read as a unit of the scenario, 2026-11-12).
+        values_key = "parameters" if active else "stored_not_used"
+        match: dict[str, Any] = {}
+        if not active:
+            match["note"] = inactive_note(ctx, cls, _entity_text(byname), scenario, reason)
+        match.update({
             "entity_class": e.entity_class,
             "entity": _names(e.byname),
             "description": _description(e.description),
             "active": active,
             "inactive_reason": reason,
-            "parameters": parameters[:max_rows],
-            "parameters_total": len(parameters),
+            values_key: parameters[:max_rows],
+            f"{values_key}_total": len(parameters),
             "relationships": relationships[:max_rows],
-        }
-        cut = [k for k, rows in (("parameters", parameters), ("relationships", relationships)) if len(rows) > max_rows]
+        })
+        cut = [k for k, rows in ((values_key, parameters), ("relationships", relationships)) if len(rows) > max_rows]
         if cut:
             match["truncated"] = (f"showing at most {max_rows} {' and '.join(cut)} — use get_parameter for one "
                                   "parameter, or list_entities with member for the relationships")
@@ -358,7 +404,8 @@ def get_parameter(ctx: AssistantContext, args: dict) -> Fit | dict:
         record = value_record(ctx, db, view, entity_class, byname, parameter, max_rows=max_rows,
                               time_range=time_range)
         record["source"] = source.name
-        record["notes"] = notes + record["notes"]
+        lead = record["notes"][:1] if record.get("used_in_scenario") is False else []   # the inactive note first
+        record["notes"] = lead + notes + record["notes"][len(lead):]
         return record
     rows = []
     inactive = 0
@@ -376,7 +423,7 @@ def get_parameter(ctx: AssistantContext, args: dict) -> Fit | dict:
             rows.append({"entity": _names(e.byname), "stored": False,
                          "value": _values.compact(default) if default is not None else None,
                          "is_default": default is not None})
-    unit, unit_reason = _unit(None, entity_class, parameter, None)
+    unit, unit_reason = unit_of(None, entity_class, parameter, None)
     payload = {
         "source": source.name, "scenario": scenario, "entity_class": entity_class, "parameter": parameter,
         "unit": unit, "unit_reason": unit_reason, "entities": rows, "total": len(rows),
@@ -459,13 +506,18 @@ def _cell_value(value: Any, row_limit: int, time_range: tuple[str, str] | None) 
 
 
 def _cell(ctx: AssistantContext, db: _db.InputDB, view: _db.ScenarioView, entity_class: str,
-          byname: tuple[str, ...], parameter: str, row_limit: int, time_range: tuple[str, str] | None) -> dict:
-    """One (entity, parameter) cell: value, shape, alternative, default, unit and notes (as value_record)."""
+          byname: tuple[str, ...], parameter: str, row_limit: int, time_range: tuple[str, str] | None,
+          inactive: str | None = None) -> dict:
+    """One (entity, parameter) cell: value, shape, alternative, default, unit and notes (as value_record).
+    *inactive*: the note of an entity that is not part of the scenario, the cell's first note; such a cell shows
+    a stored value as stored and no default as if it applied."""
     winner = view.value(entity_class, byname, parameter)
-    notes: list[str] = []
+    notes: list[str] = [inactive] if inactive is not None else []
     value: Any = None
     alternative = None
-    if winner is not None:
+    if winner is None and inactive is not None:
+        is_default = False
+    elif winner is not None:
         value, alternative, is_default = winner.parsed(), winner.alternative, False
     elif _version_relation(db) is not None:
         is_default = None
@@ -483,7 +535,7 @@ def _cell(ctx: AssistantContext, db: _db.InputDB, view: _db.ScenarioView, entity
         shape, shape_note = _values.shape_of(entity_class, parameter, ", ".join(byname), value)
         if shape_note:
             notes.append(shape_note)
-    unit, unit_reason = _unit(view, entity_class, parameter, byname)
+    unit, unit_reason = unit_of(view, entity_class, parameter, byname)
     if unit_reason:
         notes.append(unit_reason)
     notes += notes_for(entity_class, parameter, value_of=_value_of(view, entity_class, byname))
@@ -531,6 +583,7 @@ def _parameter_table(ctx: AssistantContext, args: dict) -> Fit:
     entities: list[tuple[str, ...]] = []
     unknown_entities: list[dict] = []
     inactive: list[list[str]] = []
+    inactive_notes: dict[tuple[str, ...], str] = {}
     hidden = 0
     if given:
         dims = db.classes[entity_class].dimensions
@@ -550,8 +603,10 @@ def _parameter_table(ctx: AssistantContext, args: dict) -> Fit:
             if byname in entities:
                 continue
             entities.append(byname)
-            if not view.active(entity_class, byname)[0]:
+            active, reason = view.active(entity_class, byname)
+            if not active:
                 inactive.append(_names(byname))
+                inactive_notes[byname] = inactive_note(ctx, entity_class, _entity_text(byname), scenario, reason)
     else:
         for e in sorted(db.entities.get(entity_class, {}).values(), key=lambda e: e.byname):
             if view.active(entity_class, e.byname)[0]:
@@ -561,7 +616,8 @@ def _parameter_table(ctx: AssistantContext, args: dict) -> Fit:
 
     n_cells = len(entities) * len(known)
     row_limit = max(1, min(args["max_rows"], max(ENTITY_TABLE_ROWS, args["max_rows"] // max(n_cells, 1))))
-    cells = [(byname, p, _cell(ctx, db, view, entity_class, byname, p, row_limit, time_range))
+    cells = [(byname, p, _cell(ctx, db, view, entity_class, byname, p, row_limit, time_range,
+                               inactive_notes.get(byname)))
              for byname in entities for p in known]
 
     # What the cells of a parameter share goes in the header: its unit (the most common) and its notes.
@@ -572,7 +628,9 @@ def _parameter_table(ctx: AssistantContext, args: dict) -> Fit:
         if not mine:
             continue
         units[p] = Counter(c["unit"] for c in mine).most_common(1)[0][0]
-        common = [n for n in mine[0]["notes"] if all(n in c["notes"] for c in mine[1:])]
+        # The inactive note stays on its rows: it is about the entity, never a note of the parameter.
+        own = set(inactive_notes.values())
+        common = [n for n in mine[0]["notes"] if n not in own and all(n in c["notes"] for c in mine[1:])]
         if common:
             shared_notes[p] = common
     unit_column = any(c["unit"] != units.get(p) for _, p, c in cells)
@@ -644,7 +702,7 @@ def describe_parameter(ctx: AssistantContext, args: dict) -> Fit | dict:
         cls = schema.classes[entity_class]
         rows = []
         for p in sorted(schema.class_parameters(entity_class), key=lambda p: p.name):
-            unit, _ = _unit(None, entity_class, p.name, None)
+            unit, _ = unit_of(None, entity_class, p.name, None)
             rows.append({"parameter": p.name, "unit": unit, "group": p.group, "description": cap_text(p.description, 160)})
         payload = {"entity_class": entity_class, "description": cls.description,
                    "dimensions": list(cls.dimensions) or [entity_class], "parameters": rows,
@@ -658,7 +716,7 @@ def describe_parameter(ctx: AssistantContext, args: dict) -> Fit | dict:
     allowed = PARAM_ALLOWED_SHAPES.get((entity_class, parameter))
     shapes = (allowed_shapes_in_words(allowed) if allowed is not None
               else ranks_in_words(schema.value_types.get((entity_class, parameter), ())))
-    unit, unit_reason = _unit(None, entity_class, parameter, None)
+    unit, unit_reason = unit_of(None, entity_class, parameter, None)
     payload = {
         "entity_class": entity_class,
         "parameter": parameter,
@@ -677,7 +735,7 @@ def describe_parameter(ctx: AssistantContext, args: dict) -> Fit | dict:
 
 
 def _reference_sections(parameter: str) -> list[dict]:
-    """The reference.md sections that best match the parameter name (none when the documentation is not
+    """The reference/*.md sections that best match the parameter name (none when the documentation is not
     available)."""
     from flextool.assistant import docs_store
 
@@ -685,7 +743,7 @@ def _reference_sections(parameter: str) -> list[dict]:
         store = docs_store.load()
     except docs_store.DocsUnavailable:
         return []
-    hits = [h for h in store.search(parameter, kind="docs", max_results=8) if h["doc"] == "reference.md"]
+    hits = [h for h in store.search(parameter, kind="docs", max_results=8) if h["doc"].startswith("reference/")]
     return [{"doc": h["doc"], "section": h["section"], "anchor": h["anchor"]} for h in hits[:2]]
 
 

@@ -1,4 +1,4 @@
-"""The generated documentation pages: the formulation page and the results catalogue.
+"""The generated documentation pages: the formulation page, the results catalogue and the parameter catalogue.
 
 They render from the installed code and are written as UTF-8 with LF line ends whatever the locale; the
 private-names check fails the build with a list file and is silent without one; results.md names a result
@@ -34,7 +34,7 @@ DOCS = REPO / "docs"
 
 def test_pages_render_and_are_written_utf8_lf(tmp_path: Path) -> None:
     written = write_pages(tmp_path, DOCS, private_names=tmp_path / "absent.txt")
-    assert sorted(p.name for p in written) == sorted(scope.GENERATED_PAGES)
+    assert sorted(p.name for p in written) == sorted(scope.WEB_PAGES)
     for path in written:
         raw = path.read_bytes()
         assert b"\r" not in raw
@@ -66,7 +66,7 @@ def test_pages_do_not_depend_on_the_locale_encoding(tmp_path: Path) -> None:
                          cwd=REPO, capture_output=True, text=True, encoding="utf-8", timeout=300)
     assert out.returncode == 0, out.stderr[-2000:]
     assert out.stdout.splitlines()[-1].lower() not in ("utf-8", "utf8")
-    for name in scope.GENERATED_PAGES:
+    for name in scope.WEB_PAGES:
         assert (ascii_dir / name).read_bytes() == (here / name).read_bytes(), name
 
 
@@ -130,7 +130,7 @@ def test_the_mkdocs_hook_adds_the_pages_and_writes_nothing_to_docs() -> None:
     config = load_config(str(REPO / "mkdocs.yml"))
     files = config.plugins.on_files(Files([]), config=config)
     added = {f.src_uri: f for f in files if f.generated_by is not None}
-    assert sorted(added) == sorted(scope.GENERATED_PAGES)
+    assert sorted(added) == sorted(scope.WEB_PAGES)
     pages = render_pages(DOCS)
     for name, f in added.items():
         assert f.content_string == pages[name]
@@ -168,7 +168,7 @@ def test_the_build_step_fails_on_a_scope_file_missing_from_docs(tmp_path: Path) 
     (project / _flextool_build.SCOPE_FILE).write_bytes((REPO / _flextool_build.SCOPE_FILE).read_bytes())
     (project / "docs").mkdir()
     (project / "docs" / "index.md").write_text("# FlexTool\n", encoding="utf-8")
-    with pytest.raises(FileNotFoundError, match=r"reference\.md"):
+    with pytest.raises(FileNotFoundError, match=r"reference/index\.md"):
         _flextool_build.copy_docs(tmp_path / "build", project_root=project)
 
 
@@ -199,7 +199,7 @@ def _nav_pages(entries: list) -> list[str]:
 
 def test_every_user_page_of_the_nav_is_in_the_scope() -> None:
     """The user sections of the mkdocs nav (all but the developer guide, the changelog and the archive) are
-    USER_DOCS plus the generated pages, in the same order (review C2-10: the AI assistant page was missing)."""
+    USER_DOCS plus the generated pages (web-only ones included), in the same order (review C2-10: the AI assistant page was missing)."""
 
     class _Loader(yaml.SafeLoader):
         pass
@@ -208,7 +208,7 @@ def test_every_user_page_of_the_nav_is_in_the_scope() -> None:
     nav = yaml.load((REPO / "mkdocs.yml").read_text(encoding="utf-8"), Loader=_Loader)["nav"]
     skipped = {"Developer guide", "Changelog", "Archived"}
     user = _nav_pages([e for e in nav if not (isinstance(e, dict) and next(iter(e)) in skipped)])
-    assert [p for p in user if p not in scope.GENERATED_PAGES] == list(scope.USER_DOCS)
+    assert [p for p in user if p not in scope.WEB_PAGES] == list(scope.USER_DOCS)
 
 
 def test_the_command_defaults_to_the_installed_documentation(tmp_path: Path, monkeypatch, capsys) -> None:

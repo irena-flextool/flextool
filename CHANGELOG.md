@@ -1,3 +1,1068 @@
+## Unreleased (4.4.0) — capacity margin, units of measure, start-up inputs, period-total constraints, FT2 import and many fixes (schema v79)
+
+Input databases move to data version 79. The FlexTool window, the Spine Toolbox workflow and `flextool-run
+--migrate` migrate them; upgrading prints a notice for each behaviour change that affects the database. FlexTool now
+needs polar-high 3.12.4 or newer (installed with FlexTool).
+
+### Behaviour changes — read before upgrading
+
+Each line says what changes for a model that ran before and what to do; the details are in the sections below.
+
+- **Capacity margin rewritten.** Units count at capacity derated by `availability` (VRE by its profile), storage-fed
+  units, connections and consumption by their flow, exports add to the requirement; an investment solve's shortfall
+  and penalty are now reported in an investment → dispatch chain. Check the margin in the new `capacity_margin__d`.
+- **`discount_rate` 0 now means 0 %** (before: 5 %), a negative rate is an error, and an entity that invests or
+  retires with a cost needs a `lifetime`. Set 0.05 to keep the old results.
+- **A zero or missing `invest_cost` no longer blocks investment** (nor a missing `salvage_value` retirement) where
+  `invest_method` allows it. To forbid a period, use a *_period* method with `invest_max_period` 0, or *not_allowed*.
+- **A solve-level `new_stepduration` combines every time series by rule** (mean, harmonic mean for efficiency, sum
+  for `inflow` and `energy_margin_adder`); before, most took the first time step's value. To keep the old
+  `energy_margin_adder` demand, divide it by the number of time steps a solve step combines.
+- **VRE curtailment, VRE potential and a flowGroup's `cumulative_flow` per period are MWh per year** like the
+  flows (a 2-day period: 182.5 times larger). Update scripts that read these tables.
+- **A period-map limit that leaves out a period of the solve is an error** (before: a CO2 cap of 0, no inertia
+  requirement, no investment limit, ...). Fill in the missing periods.
+- **A mistyped period key is an error** (*y2020* for *p2020*, numeric or time-step keys on a period parameter;
+  before, the value was dropped). Correct the key; data for extra years goes in `model.periods_available`.
+- **A profile link without profile data is an error** (*upper_limit* or *fixed*; before, it held the flow at 0).
+  Give the profile a value in the scenario's alternatives, or remove the link.
+- **More input errors stop the run:** out-of-range `efficiency`, `min_load`, `availability`, `capacity_max_coeff`,
+  `lifetime`, `ramp_cost`, a minimum above its maximum, `existing` as a time series, a used timeline without
+  `timestep_duration`, a time series with no time step on a timeline, a timeset block that starts off its timeline,
+  a CO2 method without its value, a `realized_invest_periods` outside `invest_periods`, partial or ungrouped
+  stochastic inflow / reservation, a time-only `energy_margin_adder`, capacity-margin groups across Benders regions
+  or with a *balance_within_period* node (see "Input checks" and the entries below). Each error names what to fix.
+- **New warnings name data that ran silently:** nodes with nothing to balance them, untied zero
+  `conversion_flow_coeff` flows, negative `existing`, time-series keys off the timeline, a CO2 cap on a method
+  without one, an `invest_method` on a non-storage node, percent-like values. The model is unchanged; check them.
+- **Profile and time maps without `index_name` are read as written.** A profile keyed by periods, or a period × time
+  profile with an unnamed level, read 0 before; a node penalty, `availability` or `other_operational_cost` time map
+  without `index_name` no longer adds its time steps to the periods. Results of such models change; name the map's
+  levels where the run says so.
+- **A reserve on a group without nodes is dropped with a warning** (before, it crashed the run or was met only by
+  shortfall). Add the group's nodes if the reserve is meant.
+- **An explicit 0 in a flowGroup limit** (`max_` / `min_cumulative_flow`, `max_` / `min_instant_flow`) is now a
+  limit of 0; before, it meant no limit. Delete the value if no limit is meant.
+- **`ramp_cost` is now charged** on unit flows with `ramp_method` *ramp_cost* or *both* (new cost category *ramps*).
+- **The engine refuses a database that is not at the current version.** Migrate it with `flextool-run --migrate` or
+  `flextool-migrate-database`; the FlexTool window, the Spine Toolbox workflow and `execute_flextool_workflow.py`
+  migrate first.
+- **Per-period result tables of a rolling solve name the solve, not the roll**, and the capacity tables the solve
+  that realized the investments. Update scripts that filter on roll names.
+- **Excel sheet names and layout changed:** long names keep their `__d` / `__dt` suffix, several shipped sheets are
+  renamed, a `unit of measure` header row or a unit block is added, and dispatch data has a `period` column. Update
+  Power Query and scripts (CSV names do not change).
+- **Smaller output changes:** a storage node's `entity_annuity_d_p` is per MWh (was per MW; values unchanged),
+  *no_reserve* groups no longer have an empty reserve-shortfall column, and only groups whose `co2_method` caps
+  emissions are listed as CO2-limited.
+- **FlexTool 2 import corrected** (invested capacity becomes `existing`, CHP output2, must-run profiles, storage
+  start / finish, `availability`, the kW/kWh ratio, `interest` 0). Re-convert FlexTool 2 workbooks.
+- **Storage in stochastic solves follows each path.** *bind_within_solve* closes the cycle on every forecast branch
+  (before: only the one listed last), and forecasts opening in the solve's first period start from one level. The
+  upgrade marks such databases and the run names the nodes; check their results.
+- **Forecasts given at the fan's analysis time are read in later branch periods** (before, they read 0 there, so a
+  wind unit could not run). Results of multi-period stochastic models with such forecasts change.
+- **A roll of a rolling stochastic solve reads only its own forecast**, never a later roll's; a look-ahead time step
+  that only a later forecast covers is an error. Extend each roll-start forecast to the end of the roll's horizon.
+- **`--solver-time-limit` and `--solver-mip-gap` now reach Gurobi, CPLEX, Xpress and COPT** and win over the
+  database and option file; the environment variables are now `FLEXTOOL_SOLVER_TIME_LIMIT` / `_MIP_GAP` (the
+  `FLEXTOOL_HIGHS_*` names still work for HiGHS only). Commercial runs with these flags can give other results.
+- **At its time limit a MIP with a solution keeps it, with a warning; an LP or a solve without a solution stops the
+  run**, for every solver. A commercial solve stopped by another limit, or not certified optimal, now stops the run.
+- **Solver option files come from one `solver_config` folder per run** (`--solver-config-dir`, next to the
+  database, the workspace, ...), not from the folder FlexTool starts in. Check the `Solver config:` line of the run
+  log and move your `.opt` files there.
+- **Other commercial-solver fixes that can change results:** CPLEX now gets `solver_mip_gap`; one value per solver
+  parameter, whatever its case; Xpress refuses a MIP (it returned the LP relaxation); Gurobi file-writing parameters
+  are not passed on.
+- **The memory-saving solve (`--save-memory`, or warm start off) could put values on the wrong variables**; results
+  of such runs can change. FlexTool now needs polar-high 3.12.4 or newer (installed with FlexTool).
+- **Fixes that change results:** a user constraint without capacity terms got a right-hand side of 0 when another
+  constraint had one (since 4.0); the reported fuel, CO2 and cost of a unit with a profile and an input were too
+  low; the reported reserve penalty could be doubled; the period node-group indicators and VRE share are now ratios
+  of the period energies; the `summary_solve.csv` slack lines and the period reserve averages use the time-step
+  weights; without `realized_invest_periods` a solve realizes only the `realized_periods` that are also
+  `invest_periods`; `invest_period_total` could retire and `retire_period_total` invest; a `virtual_unitsize` ≤ 0
+  is now ignored. Details below.
+
+### New features
+
+#### Units of measure and result files
+
+- **Units of measure for nodes (`node.unit_of_measure`).** A node can name the unit of its amounts (`m3` for water,
+  `t` for hydrogen, `MWh_th` for heat; default `MWh`). It is a label only: FlexTool converts nothing and no number
+  changes. The results of the node follow it in the parquet footer, the Excel workbook (unit row, unit block,
+  `Units` and `_output_metadata` sheets), `units.csv`, `datapackage.json`, the results database and the plots: flows
+  and the capacity of a unit on its side per hour (`m3/h`, `MW_th`), storage and inflow in the unit (`m3`), annual
+  results per year (`m3/a`), prices per the unit (`CUR/m3`). A unit whose outputs are in different units shows how
+  its capacity is used (`MW + MW_th` shared, `MW; MW_th` per output). One quantity summed over nodes of different
+  units, such as a nodeGroup's flows or a connection's net flow between an electricity and a water node, is
+  labelled `Mixed units of measure!`; reserves, inertia, the non-synchronous share and the capacity margin stay in
+  MW. Tables whose rows have different units get a per-row `unit of measure` column in Excel, a `row` column in
+  `units.csv` and row units in the parquet footer, written only when some node is not MWh, so outputs of models
+  whose nodes are all MWh are unchanged (except the annuity label below). The plot labels of `default_plots.yaml`
+  are unit templates (`{A}/h`, `{R}`, `CUR/{kR}`) that read as before for MWh nodes; a label in your own
+  `plot_settings.yaml` without tokens is shown as written. The dispatch plots' y-axis and the GUI hover follow the
+  node, and the AI assistant shows the units of the inputs and results of such a node (`inflow` in m3, `penalty_up`
+  in CUR/m3, `startup_energy` in m3 per MW started) and does not add up values of nodes of different units. A
+  node without `unit_of_measure` is MWh, so the assistant now states every unit plainly instead of adding "(default
+  convention)" to it.
+  Warnings when the input data is read: a connection, commodity, nodeGroup, flowGroup or group capacity limit over
+  nodes of different units, a reserve / inertia / non-synchronous / capacity-margin group with a member that is not
+  MWh, and a value that looks like a rate (`m3/h`). Costs entered per kW or kWh (`invest_cost`, `fixed_cost`,
+  `salvage_value`) are per 0.001 of the node's rate or amount: 500 CUR per m3/h of capacity is `invest_cost` 0.5.
+  See [Units of measure](reference/entities_and_time.md#units-of-measure) and
+  [Unit of measure](reference/nodes.md#unit-of-measure).
+- **Units of measure in the result workbooks and CSV folder; layout change of the Excel sheets.** The scenario
+  workbook and the scenario-comparison workbook (which had no units at all) open on a new `Units` sheet: one row
+  per result sheet with its table, unit(s), semantics and description, the sheet names linking to the sheets;
+  `_output_metadata` follows it. A sheet with several header rows (two or more column levels; a comparison adds the
+  `scenario` level, so this is every comparison sheet except those of entity-less tables such as
+  `costs_discounted`) gains one header row, `unit of measure`, as its last header row: a Power Query or script that reads
+  such a sheet with a fixed number of header rows shifts by one. A sheet with one header row (in a comparison: an entity-less table,
+  with the scenarios as columns) keeps its header at `A1`, but its data is now an Excel Table `tbl_<sheet>`, its row
+  index values are repeated on every row instead of merged, a set-membership sheet no longer has the 0..n row-number
+  column, and a unit block sits to the right of the Table (`pd.read_excel` of the whole sheet also returns those
+  columns: read the Table, or pass `usecols`). The CSV files are unchanged; a new `units.csv` lists the unit of every
+  value column (file, position, header labels, unit, semantics), and `datapackage.json` now names each field by the
+  header written to the file (labels joined with `|` as Frictionless joins them, `headerRows` for several header
+  rows, `commentRows` for header rows that are blank in every column), so every file validates with Frictionless.
+  The header cells no longer carry comments (LibreOffice could not save a workbook with them); the `Units` and
+  `_output_metadata` sheets hold the same information, and in a comparison `_output_metadata` gives the scenario of
+  a column in its own column. A mixed-unit table with unitless columns lists `per unit` among its units in the
+  results database, the plot labels and the GUI hover as on the `Units` sheet (for example `MWh/a; per unit`).
+  `units.csv` and `datapackage.json` are reserved names in the `rename` section. Fixed: the per-column units of
+  `reserve__upDown__group__d` (and of any mixed-unit table with several column levels) were missing from the parquet
+  metadata, the `_output_metadata` sheet and `datapackage.json`, and the result tools of the AI assistant gave the
+  capacity-margin `penalty_cost` and `capacity_price` columns the unit MW. A single-result write updates only its
+  own entries in `units.csv` and `datapackage.json`. See [Units in the files](results.md#units-in-the-files).
+- **New result table `period_share_of_year__d`.** For each realised period, the share of a year it covers (its
+  hours / 8760 in the solve that realises it): the annualised per-period (`…__d`) tables are the period's sums
+  divided by this share (a 48-hour period has 0.005479, so its per-period values are 182.5 times its 48-hour sums).
+  Results saved before this version have no such table. See [Costs](results.md#costs).
+
+#### Capacity margin and reserves
+
+- **`capacity_margin_method` *share_of_peak* with `group.capacity_margin_share`.** The margin is the share
+  times the group's peak demand, taken over the period's full time series (before representative periods and
+  `new_stepduration`), so a sample that misses the peak still gets the real peak's margin. Periods that use
+  different parts of one timeline each take the peak of their own part.
+- **The capacity margin of each investment solve, explained.** `capacity_margin__d` (results database
+  `group.capacity_margin`) has, per solve, group and investment period, the binding time step (the largest
+  deficit), the margin, the demand, the requirement, what firm and VRE units, storage-backed units, other units,
+  connections and consumption count there, the shortfall, its penalty and the shadow price of the margin.
+  `capacity_margin_entity__d` (`group.capacity_margin_contribution`) has what each unit, connection and node counts.
+  An investment solve keeps its rows under its own name (look-ahead and forecast branch periods included), and the
+  run log prints `capacity margin shortfall: solve …, group …, period …: … MW at … (penalty … M CUR)` after each
+  solve that leaves a shortfall. The results database has both tables without the binding step (it is in the CSV
+  and parquet tables).
+- **The reserve requirement of each reserve group (#234).** `reserve__upDown__group__dt` (results database
+  `group__reserve__upDown.requirement_t`) has, per reserve, direction, group and time step, the requirement of
+  each method the group has (timeseries, dynamic, large failure: the largest failure), the requirement that binds
+  (the largest deficit), the reserve provided (× `reliability`), the reserve that requirement counts (a
+  large-failure requirement does not count the failing unit's own reserve, so the shortfall is requirement −
+  counted) and the shortfall. `reserve__upDown__group__d` (`group__reserve__upDown.requirement`) has the period's
+  time-step-weighted averages of the requirement, the provision, the counted reserve and the shortfall and their
+  step maxima;
+  `reserve__group__provider__dt` (CSV and Excel only) what each unit and connection counts for each group. The
+  requirements are the model's own constraints evaluated at the solution; the run log prints `reserve requirement
+  check: …` for a step where they disagree with the solver's shortfall (at most 10 lines per solve, then a count).
+- **A capacity-margin, inertia or non-synchronous group across Benders regions is an error.** Each region
+  subproblem required the whole requirement before; use one group per region.
+- **A `balance_within_period` node in a capacity-margin group is an error** (it balances per period, the
+  margin holds per time step); a storage node with demand in a capacity-margin group gets a warning (its demand is
+  left out of the margin).
+
+#### Model
+
+- **Start-up fuel and start-up heat (`unit__inputNode.startup_input_method`, `startup_energy`).** An input
+  arc can also (*startup_and_input*) or only (*startup_only*) supply the energy a unit's start-ups take:
+  `startup_energy` [MWh per MW started, constant or period] × MW started, taken from the node in the step the unit
+  starts in (an event, like `startup_cost`). The start-up input can be fuel (a coal unit started on oil), heat (a CSP
+  turbine warmed up from its tank) or electricity. It is priced as the node's commodity (also on a price ladder),
+  counts in the CO2 price and caps (also when it is a group's only emitter) and in their rolling carry, and needs
+  online variables (linear start-ups keep the model an LP). A *startup_only* arc has no flow: it takes no part in
+  the conversion, capacity, input shares or ramps, so a coal unit with an oil start-up arc stays a one-input unit.
+  Not part of `constraint_flow_coeff`, flow groups or the capacity margin; left out with the start-ups under
+  `reduce_unit_detail_method` *online* / *online_ramps*, and a use of the online variables under *integers*. New
+  outputs `unit_startup_energy__dt` / `__d` (results database `unit__node` `startup_energy_t` /
+  `startup_energy_annualized`); the unit's input from the node, the commodity cost, the CO2 and the node balance
+  include it. Input checks for the combinations that have no effect or no meaning. Default *just_input*: the model
+  is unchanged.
+- **User constraints summed over a period (`constraint.constraint_period_method`).** *per_timestep*
+  (default) keeps the rows of before. *period_total* writes one row per period over the period's total: each step's
+  flow and online terms are multiplied by its duration and timestep weight and divided by the period's share of a
+  year, so flows count in MWh per year and units online in unit-hours per year, and the `constant` is per year.
+  Capacity terms and their existing capacity are multiplied by the hours of the year, so a flow − 0.3 × capacity row
+  caps the annual capacity factor at 30 %. Shares such as "gas backup at most 15 % of the CSP output over the year"
+  can now be written. A state coefficient on such a constraint is an error. A rolling solve whose rolls do not each
+  realize whole periods leaves the constraint out with a warning; the run stops when no solve enforces it. Each
+  forecast branch period has its own row.
+- **Units online in user constraints (`constraint_online_coeff`).** A map on `unit` and
+  `connection` (index: constraint name) puts the number of units online in each time step on the left side of a
+  user `constraint`, for example "at least two of three units online": `constraint_online_coeff` 1 on each unit and
+  `constant` 2 with `sense` *greater_than*. One unit is `virtual_unitsize` (else the largest `existing` capacity,
+  else 1000 MW), so the same row works for three entities or for one entity of three units. The count is a whole
+  number with *binary* startup and continuous with *linear*; for MW online use the unit size as the coefficient. A
+  constraint with an online term is written once per time step. The unit or connection needs online variables
+  (`startup_method` *linear* or *binary*; on a unit also a `minimum_time_method`); a coefficient on one without
+  them stops the run with an error naming it and the constraint. Databases are migrated automatically; nothing
+  else changes.
+- **`ramp_cost` is charged.** A unit flow with `ramp_method` *ramp_cost* or *both* pays
+  `ramp_cost` [CUR/MW] for every MW its step-average flow changes from the previous time step, up and down alike.
+  A change is an event, like a start-up, so the step length does not enter: ramping 0 → X → 0 costs
+  2 × `ramp_cost` × X. The previous step is the one the ramp limits use: no cost at the first step of a solve,
+  after a gap in the timeline or at the start of a representative period, and a rolling window pays once for the
+  change from the flow the previous window realized. *ramp_cost* works without any `ramp_speed`; *both* adds the
+  limit. On a `constant_efficiency` unit with one input and one output, an input-side cost prices the change of
+  the unit's output flow. A negative `ramp_cost` is an error. The cost is reported in the new cost category
+  *ramps* (a zero column in the cost tables of models without a ramp cost) and in the per-unit cost tables.
+  Databases are migrated automatically (new descriptions of `ramp_method` and `ramp_cost` only); a model whose
+  `ramp_method` was already *ramp_cost* or *both* with a `ramp_cost` value now pays that cost.
+- **`inertia_limit` and `non_synchronous_limit` per time step.** Both group limits now
+  take a constant, a period map, a time map or a period+time map (before: constant or period), e.g. a
+  non-synchronous share that steps up by hour or season, or an inertia requirement that is higher in some hours.
+  A time map (or the time level of a period+time map) must give a value for every time step of the solve,
+  look-ahead included: a missing time step stops the run before its first solve (also in a rolling solve) with
+  an error naming the group, the parameter and the missing time steps (a solve whose
+  `reduce_system_detail_method` leaves the limit out is not checked). An authored 0 is no inertia requirement
+  and a non-synchronous limit of 0. Over a coarse time step (group `new_stepduration`) the averaged row uses the
+  step mean of the limit (the check is on the original time steps), and the coarse-flow info line names a limit
+  that varies within a coarse step. The hourly inertia shortfall table shows 0 instead of an
+  empty cell in a time step without a requirement. The Excel export puts both limits also on the time sheets.
+  Databases are migrated automatically; constant and period values are unchanged and give the same model.
+
+- **Representative periods in stochastic solves (#125).** A stochastic solve can now use a timeset with
+  `representative_period_weights` (before: an error). Each forecast branch period uses the representative periods of
+  the period it branches from, and the `*_blended_weights` storage methods work per branch: a branch's first period
+  continues from the last base period of the trunk period (the shared period before the split), a later one from
+  the previous period of the same branch; *bind_within_solve_blended_weights* closes once per path (every branch
+  ends at the level the trunk period starts from); *bind_within_period_blended_weights* closes each branch period on
+  itself. When the forecasts open in the solve's first period they start from the same level
+  (*bind_forward_only_blended_weights* gets the new row `rp_inter_period_fan_start`, also with `fix_start`). For a
+  storage node in an `include_stochastics` group the start levels of the representative blocks are tied across the
+  forecasts inside the non-anticipativity window (`non_anticipativity_rp_block_start`). Two identical forecasts give
+  the deterministic result. Databases are migrated automatically (new descriptions of `storage_binding_method` and
+  `representative_period_weights` only); models that ran before are unchanged.
+
+#### Faster solves: leaving out detail
+
+- **A solve can leave out unit detail (`reduce_unit_detail_method`).** Set it on a
+  `solve` to make that solve faster, typically an investment solve followed by a full dispatch. *none* (default)
+  keeps everything. *integers*: units with `startup_method` *binary* get continuous units online and `exact`
+  connections behave as *regular*, so the solve is an LP. *integers_ramps* also leaves out ramp limits and ramp
+  costs, *integers_min_limits* `min_load`, the `capacity_min_coeff` floors and minimum up / down times,
+  *integers_ramps_min_limits* both. *online* leaves out the online variables and with them the min limits and
+  start-up costs; `min_load_efficiency` units use their full-load efficiency (the same fuel at full load, less at
+  part load), ramp limits apply to the capacity, and a user constraint with a `constraint_online_coeff` term is
+  left out of the solve, with a warning naming it. *online_ramps* is *online* without ramps. Under the
+  *integers* levels a unit or connection whose online variables nothing in the solve still uses (no start-up cost,
+  min load or `capacity_min_coeff` floor, minimum up / down time, part-load curve, online term in a user
+  constraint, reserve, inertia, ramp limit or parent commitment left) loses them, as with `startup_method`
+  *no_startup*: the same result from a smaller solve. The run log names these units and connections, and their
+  online cells of that solve are empty. A level never adds detail. Every roll of a rolling solve uses the solve's
+  level, and a realization solve uses its parent solve's levels, whatever is set on the realization solve itself
+  (a warning names a different value set on a declared realization solve). Databases are migrated automatically;
+  models that do not set the parameters are unchanged.
+- **A solve can leave out system detail (`reduce_system_detail_method`).** *reserves*
+  leaves out the reserve requirements (and with them the units' reserve limits and the reserve ties of a
+  stochastic solve), *inertia* the inertia limits, *non_synchronous* the non-synchronous share limits, and
+  *dc_power_flow* the angles of `dc_power_flow_with_angles` groups: their lines become lossless transport limited
+  by their capacity, so loop flows disappear. *inertia_non_synchronous*, *reserves_inertia_non_synchronous* and
+  *reserves_inertia_non_synchronous_dc_power_flow* combine them. The capacity margin is always kept. An
+  investment solve without reserves invests less in flexible capacity. With either parameter set, the result
+  tables of earlier full solves keep their online, reserve, inertia and DC columns when a later solve leaves them
+  out, a dispatch solve that continues the ramp of a solve without online variables starts its commitment and
+  ramp cold (an info line) instead of stopping, and a Benders decomposition can split connections whose reserve,
+  online variables or `exact` method the solve leaves out (its warning about integer variables now points to
+  *integers*).
+- **The run log and the results say what a solve left out.** A solve with `reduce_unit_detail_method` or
+  `reduce_system_detail_method` other than *none* writes one info line to the run log at its first roll: what each
+  level left out, for how many units, connections and groups, and how it changes the detail that was kept (for
+  example "the reserves of 1 unit (g1) now come from built capacity, not online capacity"); a level with nothing
+  to leave out says so. Every roll's entry in `_run_status.json` records `reduced` (the two levels and that line).
+  In the result tables, the cells of a feature that a solve left out are empty, not 0, in the time steps that
+  solve realized: units online and start-ups, reserves, reserve prices and shortfall, group inertia, its largest
+  flow and shortfall, the non-synchronous shortfall and the DC angles. A per-period cell is empty when every solve
+  that realized the period left the feature out. Costs are unchanged. Models that do not set the parameters get
+  the same results as before.
+
+#### Databases and projects
+
+- **`flextool-run --migrate`** (also `run_flextool.py`, `python -m flextool.cli.cmd_run_flextool`) migrates an
+  older input database before the run, the same way as `flextool-migrate-database`; without the flag the run still
+  refuses it, and the refusal now names the flag. A frozen database is not migrated: the run stops with the frozen
+  message and exit code 2. Runs started at the same time with `--migrate` on one database migrate it once (a lock on
+  `<database>.migrate.lock`); the others print one "Waiting for another migration" line, wait and then run. Every
+  in-place migration takes the same lock: `flextool-migrate-database`, the Toolbox **Migrate database** tool, the
+  FlexTool window's refresh and `execute_flextool_workflow.py`. A database that is already current does not wait for the
+  lock and gets no lock file. On Windows the wait is bounded (10 minutes, set
+  `FLEXTOOL_MIGRATION_LOCK_TIMEOUT` in seconds); a file system without file locks stops the migration with a message.
+- **Frozen databases.** `flextool-freeze DB --label "Reference case 1.0"` (or right-click → **Freeze
+  database…** in the FlexTool window) marks a database at the current version as frozen, `--unfreeze` removes the
+  mark and `--status` shows it. A frozen database is never migrated in place without consent:
+  `flextool-migrate-database` exits with code 2 unless given `--copy-to NEW.sqlite` (migrates a copy that records
+  the label, the old version and the SHA-256 of the original, which stays byte-identical) or
+  `--allow-migrate-frozen` (migrates the file and keeps the marker with the new version); `flextool-update` skips
+  and lists frozen databases; the FlexTool window asks: migrate a copy (a new input source), migrate in place
+  (second confirm) or cancel (the source is not runnable until the project is reopened and not asked about again).
+  A frozen database that is already current, or newer than this FlexTool, is left unchanged. When the marker
+  cannot be read (another program holds a lock on the file, an unreadable network path) the database is not
+  migrated and the message says so.
+- **Project packages.** A project can be sent to another computer as one `<Name>_<YYYYMMDD>.flextool.zip`:
+  **Manage projects… → Export… / Import…** in the FlexTool window, or `flextool-project export|import|verify` in
+  the terminal. A package holds the input sources (external input files copied in under their own source numbers,
+  so shipped and re-run results pair up), `settings.yaml` without the machine-specific settings, `plot_settings.yaml`,
+  the workspace's solver `.opt` files and the result runs picked in a checkbox list (with sizes; a run whose input
+  changed after the run is warned about). Plots, CSV/Excel outputs, `results.sqlite` and scratch folders are left
+  out. `manifest.json` records the FlexTool and library versions, each database's data version and frozen marker
+  (frozen databases stay frozen), and the SHA-256, size and modification time of each file. Import checks every
+  checksum before writing, refuses paths outside the project, keeps the files' modification times (so imported
+  results are not flagged as made from a changed input), suggests `<Name>_2` when the name is taken (exit code 3
+  in the terminal), refuses a database newer than this FlexTool, migrates older ones on open (asking first for a
+  frozen one), and unpacks the shipped solver options to `imported_solver_config/` with a note on how to use them.
+  The viewer's axis ranges file is cut to the shipped runs; run records have this computer's folder paths, user
+  name and host name replaced and run logs stay home (on by default; `--keep-run-records` / untick to keep them);
+  a run still being written is refused (`--results all` leaves it out); a `.sqlite` input that may be in the middle
+  of a write is copied through SQLite, `-wal`/`-shm`/`-journal` files never; names Windows cannot hold, names that
+  differ only in case and a package that does not fit on the disk are refused before anything is written; an
+  existing package file is replaced only after asking (`--force` in the terminal); errors are one message, no
+  traceback; a stopped import's hidden `.<name>.partial` folder is not listed as a project; import names inputs
+  left out of the package; `verify` prints one `pip install` line pinning FlexTool, polar-high, highspy and polars.
+
+#### Plots, timings and the parameter catalogue
+
+- **Plotted data as CSV.** Each plot file can get a CSV file next to it with the data drawn in it (same name,
+  `.csv`; a plot split into files gets `_01.csv`, `_02.csv`, …), for the scenario plots, the comparison plots and
+  the dispatch plots. Rows are the plotted time steps or bars (no gap rows at timeline breaks), columns the plotted
+  series in one header row, a `subplot` column when a file has several subplots, values after `multiply_by`; empty
+  result cells stay empty. Turn it on with **Write plotted data (CSV)** in the GUI's Png settings,
+  `--write-plot-data` on `flextool-run`, `flextool-write-outputs` and `flextool-scenario-results`, or a top-level
+  `write_plot_data: true` in the project's `plot_settings.yaml` (the GUI checkbox then shows checked and greyed
+  out). Off by default. A CSV that cannot be written gives a warning and the plots are still made. See *Plotted
+  data as CSV* in Model outputs.
+- **`flextool-time-runs`, a timing check for exercises.** Runs scenarios one after another (default: every
+  example and how-to scenario that comes with FlexTool; `--db PATH --scenario S ...` for a project's own database)
+  with the FlexTool window's default threads per run (1; `--threads N` for another) and plots off unless
+  `--plots on|both`; a `--db` database is copied first and the runs read the copy. It prints the computer (processor, cores, memory) and a table of each
+  run's seconds by phase: start-up, read input, preprocess, solve, outputs, viewer, plots and untimed, slowest
+  first, with `!` on runs over `--target` (default 60 s). Exit code 1 when a run fails, 2 with `--strict` when a run
+  is over the target; `--csv` writes the table to a file. See *Check that exercises run fast enough* in Running
+  FlexTool from the terminal.
+- **`read_input` row in `timings.csv`**: the time to read the input database, prepare the input data and set
+  up the run, up to the start of preprocessing.
+- **Parameter catalogue (data dictionary).** The web docs have a *Parameter catalogue* page (under Model
+  parameters): every input parameter in one table per entity class with its unit, allowed shapes, default, allowed
+  values, parameter group and definition, generated from the schema of the installed FlexTool. `python -m
+  flextool.docs_build --xlsx catalogue.xlsx` writes the same as an Excel file: a **Read me** sheet (what the file
+  is, the versions, what each column means and how to fill **Source** and **How to replace**), the **parameters**
+  sheet (also a **quantity type** column, a frozen, filterable header and empty **Source**, **How to replace** and
+  **Notes** columns for a project team) and a **classes** sheet that explains each entity class. `--input-db
+  FILE_OR_URL [--scenario NAME]` adds **used in DB**, **entities** and **alternatives** columns from the keys of the
+  stored values (the file is opened read-only; a missing file is an error) and lists the parameters a database has
+  but this FlexTool does not define. See *How to make a data dictionary for your model* in the how-to recipes.
+
+#### AI assistant
+
+- **New tool `explain_entity`: one unit, connection or node of one run in one call.** At the standard and advanced
+  levels (and for agents connected with `flextool-assistant --mcp`) the assistant can read an entity's inputs and
+  its results side by side: capacity per period, the flows to and from each connected node, capacity factor,
+  curtailment, storage state, the prices at its nodes, its non-zero costs and its investment value, with hints that
+  name the input a result is consistent with (an investment limit that binds, an `invest_method` that allows no
+  investment). The tool descriptions of the standard and advanced levels changed, so a chat resumed at those levels
+  starts a fresh history with the AI service (its reasoning data from before is not sent again), and an evaluation
+  run asks its unfinished cells again. See `explain_entity` in "The AI assistant".
+- **Ask a question again, as it was or changed.** In the AI assistant window each question has two small buttons:
+  ↻ asks it again and ✎ puts it in the box to change (Enter sends it, Escape keeps the question as it was); R and E
+  on a question line and its right-click menu do the same. The answer, and the questions and answers after it, are
+  replaced; when later questions go too, or with the R key, the window asks first. A question asked again goes to
+  the chat's own model. In the terminal chat, `/retry` asks the last
+  question again and `/edit` changes it first. See "Ask" and "Commands" in "The AI assistant".
+- **The assistant knows the scenario's time steps, periods and latest run.** With a chosen scenario (highlighted in
+  the window, `--scenario` in the terminal), each question carries the scenario's model facts, read from the input
+  data and its latest run: the solves in their order (nested ones too) and how each solves (rolling window horizon
+  and jump, stochastic forecast branches and weights, representative periods), the periods and the years each
+  represents (and which of them each solve does not realise), the length of the time steps each solve really uses
+  (the aggregated steps with `new_stepduration`), the share of a year of each realised period (from
+  `period_share_of_year__d`, for runs saved with it, with which per-period results it scales) and whether
+  the latest run succeeded, with its error when not. Steps of different lengths are pointed out, with how to treat
+  per-step results. The facts are at most about 200 tokens, are sent only when they change, and go to the AI
+  service like the rest of the context block. Agents get them in `get_gui_context` (`model_facts`), and the
+  connection asks them to call it first. The units note no longer says that time steps are in hours. In the
+  smallest context windows the basic level keeps 260 tokens free for the facts, so a tool result there holds a
+  little less; an evaluation run asks its unfinished cells again. See "Ask" in "The AI assistant".
+- **The assistant's tools give plainer, more complete answers.** `find_result_tables` knows users' words (fuel,
+  built capacity, unserved energy or loss of load, excess load) and lists the main table first for capacity,
+  unserved energy, fuel and system-cost questions, the dual tables only when duals, marginal or shadow prices are
+  asked. Placeholder values that a model puts in optional arguments (an empty time range, `top_n` 0) are left out
+  instead of giving an empty or refused result; `list_runs` says how many runs its filters hide, `list_entities`
+  when nothing matches, and a value outside a tool's list is refused in plain words with the allowed values. An
+  entity the scenario does not use is said so first, with its values shown as stored, not used, and no default
+  as if it applied. A note that depends on another parameter gives the conclusion for the entity's own value
+  ("invest_method is invest_total, so invest_max_period is not used"), and `explain_entity` says first when a
+  limit is set that the `invest_method` does not use. Large values come with a rounded copy in a larger unit
+  (≈1.03 TWh/a, M CUR) beside the exact value, in the summaries and, for a table of one unit, in `query_result`
+  and `compare_runs`. The working notes a model keeps during a long answer stay its own: a leaked "Keep: 1, 3"
+  line is left out of the answer. An evaluation checkpoint made with the earlier tools is refused.
+- **Answers are written for a FlexTool user.** At every level the assistant gives demand as a positive number
+  (FlexTool stores it as negative inflow) and, for an entity the scenario does not use, says that first. At the
+  standard and advanced levels it uses plain words with the FlexTool term in parentheses ("demand that could not be
+  met (upward slack)"), gives the cause first in one sentence and then the numbers under "More detail:", names the
+  alternative of each input value it cites, rounds to three significant digits in readable units (GWh or TWh, M
+  CUR) and does not guess at problems the data does not show. The basic level, too, no longer guesses. The level
+  texts changed, so a chat resumed starts a fresh history with the AI service, and an evaluation run asks its
+  unfinished cells again.
+
+### Fixes
+
+#### Investment and discounting
+
+- **An `invest_method` offers investment and retirement also without `invest_cost` / `salvage_value`.** A unit,
+  connection or node whose `invest_method` allows investing now has its investment variable in every investment
+  period of the solve, also where `invest_cost` is missing or 0; one that allows retiring has its retirement
+  variable in every period with existing capacity, also without `salvage_value`. Such capacity has no annuity; its
+  `fixed_cost` still counts (retiring saves it). Before, a period without a non-zero cost had no variable unless a
+  user constraint had a capacity coefficient on the entity, so an `invest_method` without a cost silently offered
+  nothing. **A 0 in an `invest_cost` map no longer blocks investment in that period (also a stochastic branch's own
+  0): it is now free investment there. To forbid investment in a period, use a *_period* `invest_method`
+  (*invest_period*, *invest_period_total* and their *invest_retire_* forms) and set `invest_max_period` 0 for it, or
+  use *not_allowed*: the other methods do not read `invest_max_period`.** With neither `invest_cost` nor
+  `fixed_cost` the invested amount is arbitrary (any amount is optimal). A zero-cost investment needs a `lifetime`
+  only with `lifetime_method` `reinvest_choice` / `no_investment`. The FlexTool 2 importer no longer reports a
+  storage with a `max invest (MWh)` and no `inv.cost/kWh`: FlexTool 4 now adds it at no cost, as FlexTool 2 does.
+  Fixed with it: `invest_period_total` allowed retiring and `retire_period_total` investing (the method lists left
+  them out), and an `invest_period_total` entity with a `salvage_value` and no `lifetime` got a false lifetime
+  error. The database upgrade writes the marker `invest_without_cost_offered` on a database with an entity that can
+  invest (retire) without an `invest_cost` (`salvage_value`) or with a 0 in it; the run then names the entities and
+  periods that are newly offered.
+- **`discount_rate` 0 is 0 % (annuity = invest_cost / lifetime); before it was 5 %.** Any
+  `discount_rate` of 0 or below used to be replaced by 0.05 in the annuity, and a missing or non-positive `lifetime`
+  by 20 years. Now 0 gives the straight-line annuity (`salvage_value / lifetime` for a retirement) and a missing
+  rate is the schema default 0.05, as before. A negative `discount_rate` is an input error. A unit, connection or
+  node that invests with an `invest_cost` or retires with a `salvage_value` without a `lifetime` is an error, and so
+  is one with `lifetime_method` `reinvest_choice` / `no_investment` that invests, retires or has `existing`
+  capacity (its capacity ends after the lifetime). The database upgrade marks the entities whose results change
+  (`discount_rate_zero_is_zero`, entities that can invest or retire with an explicit rate ≤ 0) and the run prints a
+  notice for them. The FlexTool 2 importer now writes an `interest` of 0 as `discount_rate` 0 (before it was left
+  out, so it became 5 %); a `lifetime` of 0 is still left out, so such an investing unit now needs a lifetime.
+- **A realized investment period must be an investment period of the same solve (#319).** A
+  solve whose `realized_invest_periods` lists a period that is not in its `invest_periods` now stops with an error
+  naming the solve and the periods. This includes a solve with `realized_invest_periods` but no `invest_periods`
+  (before, a rolling solve only got a warning and a single solve ignored the value): a database with a leftover
+  `realized_invest_periods` on a dispatch or rolling solve needs that value deleted. A 1D
+  `realized_invest_periods` on a solve whose `invest_periods` is a 2D map was ignored; it is now an error too
+  (use a 2D map with the same solve names).
+- **Without `realized_invest_periods`, a solve realized the investments of every `realized_periods` period
+  (#319).** It now realizes the `realized_periods` that are also `invest_periods`, so a dispatch-only period of an
+  investment solve is no longer reported as an investment period.
+
+#### Time resolution
+
+- **A solve's `new_stepduration` combines every time series over the new time step (results change).** A
+  solve with its own `new_stepduration` used to take the value of the first original time step of each new step for
+  every time map other than profiles and inflows: commodity `price`, `co2_price`, `availability` of units,
+  connections and nodes, `efficiency`, `min_load`, `efficiency_at_min_load`, `other_operational_cost`,
+  `penalty_up` / `penalty_down`, `reservation`, `self_discharge_loss`, `inertia_limit`, `non_synchronous_limit`,
+  `max_instant_flow` / `min_instant_flow`, `storage_state_reference_value`, `timeset_weights` and profiles given
+  as a period+time map. Each now follows one rule per parameter: prices, costs, limits, availability, min load,
+  penalties, reserves, self-discharge, weights and profiles take the duration-weighted mean of the step's time
+  steps; an efficiency takes the mean of 1/efficiency (so the fuel of a flow that is constant over the step is
+  right: 0.4 and 0.5 give 1/efficiency 2.25, not 1/0.45); `storage_state_reference_value` takes the value at the
+  step's end; `inflow` stays summed. A time map with values for only some hours of a new step uses the hours it
+  has (a warning names the parameter), and a `min_load` that varies within a new step makes the
+  `min_load_efficiency` curve of that step approximate (a warning names the units). Results change for models
+  that combine a solve-level `new_stepduration` with such time maps; models without a solve-level
+  `new_stepduration`, and time series other than stochastic (branch) inflow that are constant within each new
+  step, give the same model as before. Stochastic (branch) time series are combined the same way, each branch on
+  its own, and a rolling solve's rolls use the combined values too. A stochastic (branch) inflow used to take its
+  first time step's value once; it is now summed like a deterministic inflow, so it grows by the number of time
+  steps each new step combines. The step means are exact (before, a profile whose hours in a step were equal was
+  rounded to 6 decimals; it now keeps the exact value, a change of at most 5e-7). A database upgraded to version
+  79 that has a solve with `new_stepduration` prints a notice naming the parameters and entities whose values
+  change.
+- **`energy_margin_adder` is summed over a solve's `new_stepduration` step (results change).**
+  The adder is MWh per time step of the timeline. When the investment solve has `new_stepduration`, a
+  solve step now gets the sum of the values of the time steps it combines: a period+time map is summed, and a
+  constant or period value counts once per time step (on 4 h solve steps of an hourly timeline, a constant 10
+  adds 40 MWh to each solve step). Before, a solve step added the value of its first time step once, so a coarse
+  investment solve added a fraction of the intended demand. The adequacy calibrator's uniform sizing already sized
+  the adder per time step of the timeline, so its correction now injects the demand it computes on coarse
+  investment solves too. The database upgrade rewrites the parameter description and, on a database with both
+  `new_stepduration` and `energy_margin_adder`, writes a notice marker; to keep the old demand, divide the value by
+  the number of time steps a solve step combines. A time-only `energy_margin_adder` map (no period level), which
+  was silently ignored, now stops the run with an error naming the shapes the parameter takes.
+
+#### Capacity margin and reserves
+
+- **The capacity margin counts what each entity can really deliver.** Before, every unit with an
+  output into the group counted at its full capacity, whatever its `availability`, also a turbine on an empty
+  storage, and connections did not count at all. Now, at each time step of an investment period, firm units count
+  at capacity × `availability` × `capacity_max_coeff` (a unit with several outputs into the group, such as a CHP,
+  counts its capacity once, as the sum of its outputs is limited), VRE at capacity × min(profile,
+  `capacity_max_coeff`) × `availability`, and units fed from a storage node, units fed from the group's own nodes,
+  connections and consumption by their actual flow. So only firm and VRE capacity can hold the margin: imports and
+  storage help by what they deliver, exports add to the requirement, and energy dumped through a node's downward
+  slack no longer counts, nor does energy that the balance slack of a storage node feeding the group makes.
+  Connections with both ends in the group and lossy units inside it (efficiency below 1, e.g. an electric boiler)
+  are left out, so their losses are not part of the requirement (and shedding load behind them cannot lower it);
+  heat pumps inside the group count by their flow. Units fed from fuel or commodity nodes count at capacity (the
+  fuel is assumed to last). The energy margin does not change the capacity requirement. Results of models with a
+  capacity margin change. An upgraded database with a *manual* capacity-margin group gets the behaviour-change
+  notice `capacity_margin_counts_by_flow`.
+- **An investment solve's capacity-margin shortfall was reported nowhere in an investment → dispatch chain.**
+  The dispatch solve that realizes the period has no capacity margin, and its 0 replaced the
+  investment solve's shortfall, so `slack__capacity_margin__d` showed 0 and the costs no *capacity margin penalty*.
+  Now both show the shortfall of the solve that decided the investments, as the invested capacity already did.
+  Behaviour change: the total cost of such a chain now includes that penalty (it is part of the plan's cost); a
+  model without a shortfall is unchanged. The forecast branch periods of a stochastic fan are not realized, so
+  their shortfalls stay out of these tables and the costs.
+- **A reserve on a group without nodes no longer crashes the run.** A `reserve__upDown__group` whose group
+  has no `group__node` row in the solve stopped the run with an internal error ("multiple values for keyword
+  argument 'group_node'") when no group of the solve had a node. When another group had nodes, its requirement
+  could only be met by shortfall, at the reserve penalty. Such a reserve is now left out, with a warning naming
+  the group (none for a group with `reserve_method` *no_reserve*). Models where every reserve group has nodes are
+  unchanged.
+- **A reserve group with `reserve_method` *no_reserve* no longer gets reserve variables.** Such a group (also a
+  `reserve__upDown__group` without a method, as *no_reserve* is the default) has no requirement, but every solve
+  built an unused reserve shortfall variable for it at each time step, and a model whose only reserve groups were
+  *no_reserve* switched the reserve constraints on. These are no longer built: results are unchanged, except that
+  the reserve shortfall tables (`slack__reserve__upDown__group__d` / `__dt`) no longer have an empty column for
+  such groups, and in a model whose only reserve groups are *no_reserve* the reserve-provision tables are empty.
+- **A model without any variable is reported as infeasible when one of its constraints cannot hold.** HiGHS
+  reports a model with constraints but no variables as empty and does not look at the constraints, so FlexTool
+  said the solve "has no variables or constraints". Now it checks them: a constraint that cannot hold with
+  nothing in it (e.g. a node balance with demand and `penalty_method` *off*, but no unit or connection) makes the
+  solve infeasible, and the message names the first such constraints.
+- **The reserve shortfall penalty in the cost tables could be doubled.** In a model with several reserve groups
+  (for example an up and a down reserve), the *upward / downward reserve slack penalty* of `costs__dt` and the cost
+  summaries multiplied each group's shortfall by the scale of every group of the same reserve when the groups were
+  listed in another order, and so came out twice too large. The optimisation was right; only the reported cost was
+  wrong. Each group's shortfall now takes its own scale.
+- **The period average of the reserve a unit or connection holds ignored the time-step weights.**
+  `process__reserve__upDown__node__d_average` (`reservation_average`) was the plain mean of the steps, too high
+  or too low on representative periods with unequal weights. It is now the time-step-weighted average over the
+  period's realized steps, and the steps of a solve that left reserves out (`reduce_system_detail_method`) no
+  longer count as 0 MW. Models without time-step weights are unchanged.
+
+#### Solving
+
+- **`--solver-time-limit` and `--solver-mip-gap` now apply to Gurobi, CPLEX, Xpress and COPT** (the GUI's time
+  limit too), and win over the solve's `solver_mip_gap`, its `solver_arguments` and the solver's option file, as
+  they do for HiGHS. Before, they set only HiGHS options: a commercial solve used the database gap and ran without
+  a time limit, although the run header listed both flags (and the 4.3.0 notes said the time limit was passed to
+  Gurobi; it was not). Results of commercial-solver runs started with these flags can change. Their environment
+  variables are now `FLEXTOOL_SOLVER_TIME_LIMIT` and `FLEXTOOL_SOLVER_MIP_GAP`; the old names
+  `FLEXTOOL_HIGHS_TIME_LIMIT` and `FLEXTOOL_HIGHS_MIP_GAP` still work, for HiGHS only, so a setting made for HiGHS
+  never limits a commercial solver. Commercial solvers keep their thread count from their option file.
+- **A solve that stops at its time limit:** a MIP with a solution keeps it, with a warning (with the gap reached
+  when the solver reports it), and the run goes on; an LP, or a solve without a solution, stops the run. This is
+  the same for every solver (a Benders master or region solve stops the run at its limit, as before). Before,
+  HiGHS and CPLEX stopped the run at the limit even with a usable MIP solution, so such runs now finish; Gurobi,
+  COPT and Xpress reported a solve stopped at its time limit as optimal, without a word. A CPLEX, Gurobi or COPT
+  solve stopped by another limit (nodes, iterations, solutions, memory) or aborted was also reported optimal; it
+  now stops the run, naming the solver's status. So does a CPLEX solution "optimal with unscaled
+  infeasibilities" or with an "optimal face unbounded", which is not a certified optimum, and a COPT solve (or a
+  Gurobi one with a text result file) whose log is turned off, since how it ended cannot be read.
+- **Solver option files come from one `solver_config` folder chosen per run**, no longer from the folder
+  FlexTool is started from: `--solver-config-dir` (new) or `FLEXTOOL_SOLVER_CONFIG_DIR`, else `solver_config/`
+  next to the input database or in the workspace of a GUI project database, else the Spine Toolbox project
+  folder, else the current folder, else FlexTool's defaults with a warning. A Spine Toolbox run used FlexTool's
+  default `.opt` files instead of the workspace's, and a terminal run from another folder used the defaults and
+  left a copy there that later runs took for your file. The run header and log show the folder used
+  (`Solver config:`). Each run reads the files once at its start and copies them afresh to
+  `<work folder>/solve_data/solver_config/`. A `<work folder>/solver_config/` left by an earlier version is no
+  longer read as the work folder's copy (the run warns when it differs); when it is `solver_config/` in the
+  current folder and holds only unedited FlexTool templates, the run skips it, uses the next folder or the
+  defaults, and warns, naming it (not in the FlexTool folder itself, whose `solver_config/` is always used). The
+  GUI and the calibrator pass the workspace's folder to their runs.
+- **CPLEX did not get `solver_mip_gap`.** It was sent with the Python-API name `mip.tolerances.mipgap`, which the
+  CPLEX interactive optimizer that FlexTool runs does not know; it is now sent as `mip tolerances mipgap`. CPLEX
+  results with a `solver_mip_gap` can change.
+- **One value per solver parameter.** Parameter names from the option file, `solver_arguments` and the flags are
+  now matched without regard to case (`mipgap` and `MIPGap` are one parameter; for CPLEX a dot is read as a
+  space), and the highest layer's value is the only one passed. Before, both spellings reached the solver and the
+  result depended on its argument order.
+- **A time-limited commercial solve could fail with a solution in hand.** With a `TimeLimit` in
+  `solver_arguments`, FlexTool stopped the solver after exactly that time, possibly while it was writing its
+  result. The solver now enforces its own limit, and FlexTool stops it only after twice the limit plus
+  10 minutes.
+- **An unknown Gurobi parameter is reported.** Gurobi ignores a misspelt name with a message; FlexTool now repeats
+  it as a warning naming where it was set. Gurobi parameters that make it write files (`ResultFile`, `LogFile`,
+  `SolFiles`, `NodefileDir`) are not passed on, with a warning.
+- **Xpress returned the LP relaxation of a MIP.** FlexTool's Xpress driver solves linear problems only; a solve
+  with integer variables now stops with a message instead of reporting the relaxation as the solution.
+- **The `Solver args` line of a commercial solve showed HiGHS options**; it is now
+  `Solver args (<solver>): ...` with what the solver receives, under its own names.
+- **The log of a commercial solver is shown.** Gurobi, CPLEX, Xpress and COPT printed nothing on a successful
+  run (their log was read for the status and dropped), so the parameters they took, how the solve ended and the
+  gap a time-limit warning refers to could not be seen. The log is now printed when the solve ends, after the
+  `Solver args` line.
+- **Whole numbers reach a commercial solver as integers** (`Threads=4`, `TimeLimit=60`, not `Threads=4.0`), from
+  `solver_arguments`, `solver_mip_gap` and the flags alike (the database stores every number as a decimal). An
+  integer parameter can refuse `4.0`: the Xpress library does.
+- **A COPT solve stopped by a limit, or infeasible,** without a solution was reported as a licence error under
+  COPT's size-limited licence, or as a missing solution file; it now names the limit (or the infeasibility).
+  With a solution, a COPT solve stopped by any limit but the time limit is no longer taken as optimal.
+- **A CPLEX solve stopped at its time limit without a solution** stopped the run with "no solution file"; it now
+  says the solve stopped at its time limit.
+- **A work folder with a space in its name** broke CPLEX, Xpress and COPT runs (FlexTool wrote the file paths
+  into their command script unquoted). The solver program now runs in `solve_data/subprocess/` with bare file
+  names, and its command script is saved there as `<solve>.script`, to replay by hand. CPLEX's and Gurobi's own
+  log files (`cplex.log`, `gurobi.log`) are written there too, no longer in the folder the run started from.
+- **A negative Xpress `MAXTIME`** (a hard limit) set no watchdog for the solver process; its absolute value now
+  counts as the time limit.
+- **The commercial solver option templates** described how options were passed before 4.3.0 (`ReadParams`, the
+  `solver_options` map, `solver_time_limit` / `solver_threads`); their header now gives the actual mechanism and
+  precedence. Existing `solver_config/*.opt` copies keep their old comment until you replace them.
+- **The memory-saving solve could put solution values on the wrong variables.** With `--save-memory`, or with
+  warm start off, HiGHS solves the model from an MPS file in a separate process. When the model had a variable
+  that no constraint and no cost used, the values read back after it were shifted onto the next variables, so
+  results could be wrong without any message: one test model reported its capacity-margin shortfall (122.45 MW)
+  as a 1224.5 MW reserve shortfall. An entity name with a space (`Battery Farm`) could also be misread in the
+  file, which could change the model, for example force a unit to 0. Both are fixed: the file now uses generic
+  names, every value is read back to its own variable, and a solution that does not match the model stops the run
+  with an error. Needs polar-high 3.12.4. The first `--save-memory` run after the upgrade does not reuse a
+  warm-start basis saved by an earlier version.
+- **A crash on macOS could be reported as "killed".** The run record, `flextool-run` and the solver-stack check
+  (`python -m flextool.env_check`) read a signal number with Linux's numbering, so on macOS a bus error (SIGBUS,
+  signal 10 there) was recorded as a kill by SIGUSR1, and signal 7 as a bus error. Signals are now named by the
+  computer's own numbering.
+- **A rolling solve on representative periods with `*_blended_weights` storage nodes runs (#126).** It stopped with
+  an error; now those nodes bind forward only (*bind_forward_only*) and the storage state is passed directly from
+  roll to roll, with one warning per solve naming them (`storage_binding_method` is not applied in a rolling solve).
+  The same holds when such a solve mixes periods with and without representative periods.
+
+#### Stochastic solves
+
+- **Storage in stochastic solves follows each path (results change).** Plain *bind_within_solve* now closes the
+  cycle once per path: every forecast branch ends at the level the solve's first step starts from (before, only the
+  branch listed last did and the others ended free), and when the forecasts open in the solve's first period each
+  forecast continues from the end of its own path (before, it looped within its first period). With
+  *bind_forward_only* and nothing fixing the start (no `fix_start`, no carried state) the forecasts of a fan in the
+  solve's first period now start from the same level (before, each chose its own). With `fix_start` /
+  `fix_start_end` each forecast starts from the `storage_state_start` share of its own storage capacity, so where
+  the capacity differs by forecast (investment or divestment per forecast) the starting energy differs although the
+  share is the same; without a fixed start all the forecasts start from the same level. Results of such stochastic
+  models change; the upgrade marks the databases and runs name the nodes.
+- **Stochastic values in the later periods of a stochastic solve.** A stochastic-time value (`branch` /
+  `analysis_time` / `time` map) given only at the fan's analysis time read 0 in the forecast branch periods after
+  the fan's period, in the realization dispatch of those periods and, for entities outside every
+  `include_stochastics` group, in the realized-branch read: a wind profile was 0 there and the unit did not run.
+  In a single solve each value now comes from the forecast authored at the branch period's own first step, else from
+  the one authored at the fan's analysis time (per time step); a period before the reveal never reads the latter.
+  A roll of a rolling solve decides at its fan's analysis time, so every period of the roll after its fan's
+  period (look-ahead periods and the later committed periods of a multi-period jump) reads the forecast given
+  at the roll's own fan analysis time, even where a later roll's forecast is given at that period's first step
+  (before, such a look-ahead period read the later roll's forecast); a time step that forecast does not cover
+  but a later one does is an input error (see "Input checks"). A single (non-rolling) solve still lets a
+  forecast at a later period's own first step override. The realization dispatch reads its branch the same
+  way.
+
+#### Input checks
+
+- **A stochastic node `inflow` outside every `include_stochastics` group needs a realized branch.** In a fan
+  without a `realized: yes` branch such a node read an inflow of 0 in every branch period without a message; it is
+  now a configuration error naming the node, as for the other stochastic-time parameters. Add the node to an
+  `include_stochastics` group, designate a realized branch, or give the inflow a non-stochastic value.
+- **A stochastic inflow or reservation that gives a value to only some of a fan's forecast branches is an
+  error,** as for the other stochastic-time parameters (it read 0 in the branches left out). The check also covers
+  values given at the fan's analysis time that later periods read.
+- **A roll's forecast must cover the roll's whole horizon.** In a rolling stochastic solve, a look-ahead period
+  whose time step has no value in the forecast given at the roll's start, but has one in a forecast given later (at
+  the period's own first step, a later roll's analysis time), is an error naming the entity, the parameter, the roll
+  and the uncovered time steps, raised before the roll is solved. Extend the forecasts at each roll start to the end
+  of the roll's horizon. Single solves keep reading the forecast at a period's own first step.
+- **A `co2_max_period` or `co2_max_total` on a group whose `co2_method` has no such cap is reported.** The
+  value is ignored (for example `co2_max_period` with `co2_method` *price*); the run now warns, naming the group,
+  the alternative and its method. Before, such a group with `co2_max_period` was also listed as CO2-limited in
+  the group CO2 results although no limit applied; the results now list only the groups whose method caps their emissions.
+- **A limit given as a period map no longer drops the periods it leaves out without a word.** A period
+  the solve uses (look-ahead periods included) but a period map does not cover is now an error naming the entity,
+  the parameter and the missing periods. Before, such a period got a CO2 cap of 0 (`co2_max_period`), no
+  inertia requirement, a non-synchronous limit of 0 (no non-synchronous infeed without a penalty), no limit or
+  floor (`cumulative_min_capacity`, `invest_min_period`, cumulative and instant flow limits), an error about
+  another entity (the investment maxima), or a capacity margin of 0. This covers
+  `co2_max_period`, `inertia_limit`, `non_synchronous_limit`, `capacity_margin`, the per-period investment and
+  retirement limits, `cumulative_max_capacity` / `cumulative_min_capacity` and the flow group limits; the
+  investment limits and the capacity margin need a value in the investment periods of the solve only
+  (`invest_max_period` / `invest_min_period` with a construction lead time: in the periods the investments start
+  to operate). Only limits that are switched on are checked, and a constant still applies to every period. The
+  error names the solve (and the roll of a rolling solve); each solve and roll checks its own periods, so the run
+  stops at the first solve or roll that uses the missing period. Fill in the missing periods if a model now stops
+  with this error.
+- **An explicit 0 in a flow group limit is a limit of 0.** `max_cumulative_flow`, `min_cumulative_flow`,
+  `max_instant_flow` and `min_instant_flow` dropped a value of 0 (also one time step of a time map), so there was
+  no limit at all. The net flow into a flow group can be negative, so a 0 limit now binds.
+- **A CO2 cap method without its value is an error.** A group whose `co2_method` has *period* in it and no
+  `co2_max_period` got a cap of 0 in every period (or the run stopped with an internal error); a *total* method
+  without `co2_max_total` had no cap. Both now stop with an error naming the group, the method and the parameter.
+- **A profile link without profile data held the flow at 0 without a word (#104).** `profile_method`
+  defaults to *upper_limit* on `unit__node__profile`, and a profile without a value in the scenario is 0, so the
+  linked unit did not run (typically when the profile's value is in an alternative the scenario leaves out). Now
+  an *upper_limit* or *fixed* link (unit, node or connection) to a profile without a value stops the run with an
+  error that names the link, the profile and the alternatives that hold its value; *lower_limit* stays allowed. A
+  `node__profile` or `connection__profile` link without a `profile_method` (default *none*: not applied) gets a
+  warning.
+- **A unit flow with `conversion_flow_coeff` 0 and nothing tying it was free without a word (#213).** Such a
+  flow is outside the conversion and every capacity, ramp and minimum-load limit, so a unit whose only output had
+  coefficient 0 produced free power. A warning, printed once per run, now names each zero-coefficient flow that no
+  user constraint, flowGroup maximum or *upper_limit* / *fixed* profile ties (an input is a free dump load on its
+  node, an output a free source), a unit with an input whose outputs all have coefficient 0 (it uses no input), and
+  `capacity_max_coeff` / `capacity_min_coeff` on such an output (no effect). The narrower "no minimum-load floor"
+  warning for such units is replaced. The model is unchanged.
+- **Typing mistakes in common values ran on silently (#170).** The run now stops, before the data is read, with
+  one error that lists every value of (together with the period-key and profile-link errors): unit or connection
+  `efficiency` at or below 0, unit `min_load` outside [0, 1], `availability` below 0, `capacity_max_coeff` below 0,
+  an invest / retire / cumulative minimum above its maximum (total, and per period) when the `invest_method` uses
+  it, `lifetime` at or below 0 on an entity that can invest or retire, and `existing` as a time series, keyed by
+  time steps or keyed by numbers such as 2020 (a period whose name is also a time step is fine). Before, these
+  turned a unit off, paid it to run, ended "infeasible" without a hint, gave no capacity or crashed. Warnings:
+  `availability` above 1.5 and a profile above 1.5 on an *upper_limit* / *fixed* unit link (values above 1.5 look
+  like percentages; capacity factors slightly above 1 are not reported), connection `efficiency` above 1 and
+  `virtual_unitsize` at or below 0. *Model parameters → Parameter groups and conventions* has a new section *Input
+  checks* listing them. Valid data runs as before.
+- **A negative `existing` ran without a word (#170).** A unit, connection or node with `existing` below 0 now
+  gets a warning naming it, the alternative and the period. Such a unit is a supported "anti-energy" unit (its
+  flows run the other way), so the run continues, but a negative value is more often a typing mistake, and with a
+  profile, `min_load` or invest / retire limits it can make the problem infeasible.
+- **An `invest_method` on a node that is not a storage node is reported.** Only storage nodes invest or
+  retire. Such a node got an investment variable that did nothing; it now gets none, and a warning names it.
+  Remove the `invest_method` or make the node a storage node.
+- **A `virtual_unitsize` at or below 0 was not ignored, although the warning said so.** A negative value became
+  the unit size and multiplied `existing` (200 units of −5 MW: an anti-energy unit of −1000 MW). Now it is ignored
+  as the warning says: `existing` is the capacity itself and the entity is one unit of it. Results of valid data do
+  not change.
+- **A node with nothing to balance it ran without a word (#276).** A node without any unit or connection in the
+  scenario (because none was linked, or because they are not active in it) now gets a warning: with an `inflow`,
+  only the penalty slack can meet it; without one, the node does nothing. A *balance* node whose units and
+  connections only take energy out of it (a fuel node that should be a *commodity* node) and that has no positive
+  `inflow`, or whose units and connections only bring energy into it and that has no negative `inflow` (demand),
+  gets a warning too. A connection's direction follows its `transfer_method`, or the `transfer_method` of a group
+  that holds both its nodes; a unit with a negative `existing` counts both ways. Commodity nodes are not checked,
+  storage nodes only for being empty. The run continues and the model is unchanged.
+- **A mistyped period key was dropped without a word.** A period map keyed *y2020* in a
+  model whose period is *p2020* gave `existing` 0, an extra key such as *p2030x* was ignored, and `startup_cost`
+  keyed by time steps or by 2020 vanished or crashed. Now a map key of a period parameter that is not a period of
+  the database (any scenario's solve periods, `years_represented`, `stochastic_branches`, the stochastic branch
+  periods such as *p2035_high* or `model.periods_available`) stops the run with an error that names the entity,
+  the parameter, the alternative and the key, and suggests the closest period; data that covers more years than
+  the solves name goes in `model.periods_available`. A period parameter that cannot vary over time keyed by time
+  steps, and numeric keys, are errors too; maps keyed by constraint names are not checked. A map without
+  `index_name` of a parameter that takes a period or a time map (`self_discharge_loss`, `efficiency`, ...) whose
+  keys are neither periods nor time steps and do not look like time steps (*p2050*, *p_none*) gets this error too
+  (before: the entity silently got the parameter's default); keys that look like time steps (*t0099*, *T0001*, a
+  date-time stamp) get the time-series error below.
+- **The period-only reader never spreads a period key it does not know over every period.**
+  A key that is no period of the solve, such as a period of another scenario or one only in
+  `model.periods_available`, gives no value in this solve. Normal runs already read it this way, so their
+  results do not change; with the axis vocabulary switched on (a development option) the value of such a key
+  was used as a default for every period of the entity.
+- **A spare timeline without `timestep_duration` stopped the run.** Only the timelines a
+  solve uses (through the timesets of its `period_timeset`, or the timeset a solve without one takes by default)
+  need durations now; a used timeline without them, or with a step of 0 hours or less or no number, stops the run
+  with an error naming the timeline, the timeset and the solve.
+- **Time series values whose time step is not on any timeline were dropped without a word.** Hourly data
+  on a 3-hour timeline used every third value, keys past the end of the timeline or in a different case (`T0001`)
+  were left out, and a series with no key on the timeline fell back to the parameter's default. Now a warning,
+  printed once per run for each class and parameter, names the entities, the number of such time steps and the
+  first five, and the timelines; a time series with none of its time steps on a timeline stops the run with an
+  error that names the entity, the parameter and the alternative. The keys are compared with the steps of all the
+  scenario's timelines; stochastic branch names and the periods of a period+time map (also the periods of another
+  scenario, in a map without `index_name`) are not checked. Date-time stamps are compared as dates. A series on a
+  timeline of another scenario gets a warning, not an error. The model is unchanged.
+- **A timeset block that starts off its timeline, or runs past its end, was skipped or cut without a word.**
+  A `timeset_duration` block whose start is not a time step of the timeset's timeline (a typo, a different case
+  such as `T0001`) was left out of the model, and when no block was left the error pointed at the `timeline`
+  parameter. Now the run stops with an error that names the timeset, the solve and the block (and the step it
+  probably means, when only the case differs). A block longer than the rest of the timeline is still cut at the
+  end of the timeline, but a warning, printed once per run, names the timeset, the block, the timeline and the
+  number of time steps not used; on a representative-period timeset this is an error (before, the run crashed
+  later with an internal error). A timeset whose `timeline` is not a timeline of the scenario is an error. Only
+  the timesets used by the solves of the model are checked. A block length that is not a whole number gets a
+  warning. No change to the model otherwise.
+- **A time map without `index_name` of a node `penalty_up` / `penalty_down` / `availability` /
+  `self_discharge_loss` / `storage_state_reference_value` or of an `other_operational_cost` added its time steps to
+  the model's periods.** It now reads only as a time series, as the same map with `index_name` *time* does.
+- **A run reloaded from edited `solve_data` files left out the operating costs of a period or time step without
+  a word** when the inflation factor, the share of the year, the time step duration or the time step weight had no
+  value for it; it now stops with an error that names the file and the missing periods or time steps.
+- **A `profile` map without `index_name` keyed by periods was read as a time series and gave 0.** A map such
+  as *p2020: 0.3, p2025: 0.35* now gives each period its value in every time step, as the same map with
+  `index_name` *period* does (single, rolling, nested and stochastic solves). A map whose keys are both periods and
+  time steps of the model (or a key that is both) stops the run with an error naming the profile and the
+  alternative: set its `index_name` to *period* or *time*. A profile period map (with or without `index_name`)
+  that leaves out periods of the solves the scenario runs gets one warning per run naming the profile and those
+  periods; the profile is 0 there.
+- **A two-level (period + time) `profile` map with an unnamed level gave 0.** Two shapes were affected: a map
+  without `index_name` on its outer level (its inner level with or without `index_name` *time*), which was taken
+  for a stochastic map (those have three levels), and a map with `index_name` *period* on its outer level but none
+  on its inner level, whose time steps were not read. Either way the profile was 0 in every time step without a
+  word. Both now read as the same map with `index_name` *period* and *time* (item 223), when the outer keys are
+  periods (the stochastic branch periods take their anchor period's curve), in single, rolling and stochastic
+  solves. Unnamed outer keys that are time steps, both periods and time steps, or no period, and unnamed inner keys
+  that are periods, stop the run with an error naming the profile and the alternative; a period missing from the
+  map gets the warning above. Three-level (stochastic) maps are unchanged.
+
+#### User constraints
+
+- **A user constraint without capacity terms lost its `constant` when another constraint had one** (since
+  4.0). When some constraint used `constraint_cumulative_pre_built_capacity_coeff` or `constraint_capacity_coeff`
+  (whose existing capacity moves to the right-hand side) or, in a chain of solves with a construction lead time,
+  `constraint_invested_capacity_coeff` or `constraint_in_construction_capacity_coeff` (capacity an earlier solve
+  decided), and `constant` was a single value, every constraint without such a term got a right-hand side of 0
+  instead of its `constant` (e.g. `flow ≤ 800` became `flow ≤ 0`), in per-step and once-per-period rows alike.
+  Models without these terms, or with a period-map `constant`, are unchanged.
+
+#### Outputs and plots
+
+- **VRE curtailment, VRE potential and flow-group energies per period are scaled to
+  a full year.** `unit_curtailment__outputNode__d`, `unit_outputNode_VRE_potential__d` and the `cumulative_flow` of
+  `group_flow__d` were sums over the sampled time steps (the flow group's also without the timestep weights); they
+  are now MWh per year, weighted and annualised like the flows, so with a 2-day period they are 182.5 times larger.
+  The curtailment share is unchanged; `average_flow` is unchanged with uniform timestep weights and is now the
+  weighted mean with timeset weights (before, it ignored them). The "total" plots multiply each period by its years
+  represented. New tables `group_node__horizon` and `group_node_VRE_share__horizon`: the node-group indicators and
+  the VRE share over the whole horizon as ratios of the total energies (each period scaled to a year and times its
+  years represented), not averages of the period shares; the "total" plots use them. Plot labels say what the
+  numbers are: "(annualized)", "(horizon total)", costs in "M CUR/a (annualized)", "M CUR (horizon total,
+  undiscounted)" and "M CUR (discounted)", CO2 in "Mt CO2 (horizon total)".
+- **The inertia result tables were always empty.** `group_inertia__dt` and `group__unit__node_inertia__dt` had
+  no value column; they now hold the inertia of each group's units (flow × `inertia_constant`). The model was
+  right.
+- **The unit of a storage node's annuity.** `entity_annuity_d_p` holds units, connections and
+  storage nodes in one table. A storage node's capacity is an amount (how much it holds), so its annuity is per
+  amount unit: `CUR/MWh` (was `CUR/MW`), or `CUR/m3` for a node whose `unit_of_measure` is m3. A unit's or
+  connection's capacity is a rate, so its annuity stays per rate unit (`CUR/MW`, or `CUR/(m3/h)`). This changes the
+  storage-node columns' unit in the parquet footer, the Excel unit row, `Units` and `_output_metadata` sheets,
+  `units.csv` and `datapackage.json`; values are unchanged. The combined scenario-comparison parquets now carry the
+  units of each scenario's columns in their footer, as the scenarios' own parquets do.
+- **The slack lines of `summary_solve.csv` are weighted like the objective.** The Created /
+  Removed / Inertia / NonSync / Reserve lines summed the slack over the time steps × duration without the timestep
+  weights, so with `timeset_weights` or representative periods they did not match the penalty the objective
+  charges. They are now Σ w·Δt·slack per period (not annualised, as before). Uniform weights give the same numbers;
+  in a representative-period solve the line is now on the scale of the represented sample. The CapMargin line (per
+  period) is unchanged.
+- **The per-period result tables of a rolling solve were labelled with one roll (#210).** The `solve` column of
+  the `…__d` tables (CSV, Excel, results database) named the last roll that realized a part of the period
+  (`dispatch_fullYear_roll_roll_17`). It now names the complete solve (`dispatch_fullYear_roll`). The capacity tables
+  (`unit_capacity__d`, `connection_capacity__d`, `node_capacity__d`) and the investment marginal values name the
+  solve that realized the period's investments, for example the investment solve of an investment → dispatch
+  chain, instead of the dispatch solve. The per-step tables are unchanged. Values do not change.
+- **An Excel sheet name over 31 characters lost its time-resolution suffix.** Excel cuts sheet
+  names at 31 characters, so `unit_curtailment__outputNode__dt` became the sheet `unit_curtailment__outputNode__d`
+  and the real per-period table `unit_curtailment__outputNode_1`. A long name now keeps its `__d` / `__dt` suffix
+  and is shortened in front of it, with `_1`, `_2`, … before the suffix when two names would be the same (also
+  without regard to case, as Excel compares them). The shipped long names get hand-made sheet names instead
+  (`process__reserve__node__dt`, `process__reserve__node__d_avg`, `reserve_price__group__dt`,
+  `slack__reserve__group__d` / `__dt`, `unit_VRE_potential__d` / `__dt`, `unit_VRE_curtailment_share__d` /
+  `__dt`), and the curtailment table `unit_curtailment__outputNode__d` / `__dt` gets the sheet name
+  `unit_VRE_curtailment__d` / `__dt` like its neighbours; the CSV file names do not change.
+  The scenario-comparison workbook and the dispatch-data workbook name their sheets the same way.
+- **The comparison dispatch plots added together the time steps of the same name in different periods.** In
+  a multi-period scenario each step (pv, loss of load, curtailment, demand, ...) was the sum over the periods, in
+  the order of the step names. The periods now follow one another in the realized order, with a gap where a
+  period does not continue the previous one, and the x axis names the time steps with the period below them. In
+  a comparison of scenarios with different steps, each scenario shows its own steps in its own order (not zero
+  rows for the other scenarios' steps), and its plot has gaps only where its own timeline breaks. The same fix applies to the dispatch plots in the result viewer. **Output format:** the
+  plotted-data CSV of a dispatch plot and `dispatch_data.xlsx` now have a `period` column before `time`.
+- **The period node-group indicators and VRE share were not shares of the period's energy.** *Curtailed VRE
+  of potential VRE* was divided by the inflow instead of the potential VRE generation and, per period, summed over
+  the time steps (so it could exceed 1); *Curtailed VRE of demand* was an average of the time-step shares;
+  `nodeGroup_VRE_share_d_g` was an average of the time-step shares and *VRE share of demand* lost the VRE of a
+  time step without inflow. Every period share (`group` `indicator`, `nodeGroup_VRE_share_d_g`) is now the ratio of
+  the period sums weighted by the time-step weights, so the values of these results change. The VRE share takes
+  the VRE generation into all member nodes, as the indicators do; the curtailed VRE is taken on the arcs that have
+  a potential (VRE units with an `upper_limit` profile), so the flow of a VRE arc without a profile no longer offsets
+  it; the time-step VRE share is 0 (not infinite) at a
+  time step without inflow; a realized time step without a time-step weight stops the output processing with an
+  error.
+- **The reported input of a unit with a profile** (`unit__node__profile` on a unit that also has an input)
+  equalled its output: the efficiency was left out. Its fuel or electricity use, the node results at its input
+  node, and the commodity cost, CO2 emissions and CO2 cost computed from that input (per unit, per group and the
+  calculated total cost) were too low. The optimisation itself was right (the solver objective in
+  `summary_solve.csv` was correct).
+- **Line and stacked-area plots leave a gap where there are no results.** A time step whose plotted cells
+  are all empty, and the gap at a timeline break, were drawn as 0 in a line that sums several columns and in
+  every stacked-area plot (scenario, comparison and result-viewer plots); a time step with no result at all was
+  dropped, so the line joined across it. They are now gaps. In a sum, an empty cell next to values adds nothing.
+  Bar charts are unchanged (an empty value draws no bar). The scenario comparison's dispatch plots now leave a gap
+  at a timeline break too (before, they drew it as 0).
+
+#### Databases and the FlexTool window
+
+- **The model run refuses an input database that is not at the current FlexTool version.**
+  Before, only databases below version 25 were refused, so an unmigrated database ran old data under the new
+  version's semantics without a word. `flextool-run` (and `run_flextool.py`, `python -m
+  flextool.cli.cmd_run_flextool`) now stops with a message that names `flextool-migrate-database <file>`; a
+  database newer than FlexTool asks for a FlexTool update. The standard ways to run migrate first:
+  `execute_flextool_workflow.py` migrates the input database before the model run (new), the FlexTool window
+  migrates its sources on refresh and now also checks the sources of the scenarios added to the execution list,
+  and the Spine Toolbox workflow runs its **Migrate database** tool before FlexTool.
+- **Checking the version of an input source no longer upgrades its SpineDB schema.** The FlexTool window
+  read the version by opening each `.sqlite` source with a schema upgrade, so an external file's schema changed
+  before the consent dialog was shown. The version and the SpineDB schema revision are now read read-only; a
+  source at the current FlexTool version with an older SpineDB schema (e.g. after a `spinedb_api` update) is
+  migrated like an older one (an internal source quietly, an external one after asking, a frozen one through the
+  frozen dialog), and the model run reports such a database with the migrate command instead of a SpineDB error.
+- **A canonical example database left at an older version is rebuilt.** `templates/examples.sqlite`, the
+  time-settings template and the how-to example databases are rebuilt from their JSON sources when the file in
+  the FlexTool folder is older than this FlexTool (the old file is kept as `<name>.v<version>.bak`); before, an
+  existing file was never refreshed, and the model run now refuses it. **Calibrate investments** migrates its
+  scenarios' sources first, as a normal run does.
+- **The Excel export of an input database put a flowGroup's `max_cumulative_flow` / `min_cumulative_flow`
+  on the time-series sheets;** they are constant or per period and are now on the period sheets.
+- **The Solver options dialog said the `.opt` files are in the project's `solver_config` folder.** They are
+  in the `solver_config` folder of the FlexTool workspace (or `$FLEXTOOL_SOLVER_CONFIG_DIR`).
+
+#### FlexTool 2 import
+
+- **FlexTool 2 `invested capacity (MW)` / `invested storage (MWh)` are imported as existing capacity.**
+  They are capacity already built in FlexTool 2. The importer wrote them as a forced investment, which a
+  dispatch-only workbook (`mode_invest` 0) never made, nor any solve for an entity without an investment cost, so
+  that capacity was lost; with `capacity (MW)` empty it was also written as `existing`, so counted twice; and a
+  `max invest` beside it was dropped. Now `existing` is capacity + invested capacity (units, storage, connections,
+  also in sensitivities) and `max invest` stays the investment limit. FlexTool 2 adds the annuity of that
+  capacity to its total cost, FlexTool 4 does not: the import report lists the entities that have an investment
+  cost (base data and sensitivities). A sensitivity that sets `invested storage (MWh)` or `storage (MWh)` to 0
+  keeps a storage that can still invest (`max invest (MWh)`) a storage node; before, it became a balance node and
+  lost the investment.
+- **A FlexTool 2 storage with only one `max invest` can invest.** FlexTool 2 derives the other limit through
+  the `fixed kW/kWh ratio` (MW = ratio × MWh); the import left that side without an investment option, so the
+  ratio link held both at 0. Now both limits are written (also when a sensitivity changes one). A sensitivity on
+  `inv.cost/kWh` sets the storage node's cost (before: the discharger's cost per kW). A storage that can invest in
+  MWh with neither a cost per kWh nor a ratio is listed in the import report: FlexTool 2 adds it at no cost,
+  FlexTool 4 does not invest in it.
+- **An annuity typed over the FlexTool 2 workbook's formula is listed in the import report.** FlexTool 4 computes
+  the annuity from `invest_cost`, `discount_rate` and `lifetime` and ignores that column.
+- **The FlexTool 2 `fixed kW/kWh ratio` was inverted.** FlexTool 2 sets invested MW = ratio × invested MWh;
+  the import wrote ratio × MW = MWh (a ratio of 0.25 gave a 1/16 h storage instead of a 4 h one).
+- **The FlexTool 2 importer (`flextool-read-old`, GUI "Convert from FlexTool 2.0 input file") translates
+  more and reports what it cannot.** Sensitivities are now imported in the same run as the base data
+  (`--master MASTER.xlsm`; in the GUI the master workbook is asked for before the conversion), before the
+  database is migrated: before, the GUI wrote them into an already migrated database, where a renamed parameter
+  such as the capacity margin was dropped with only a log line. A target that is a FlexTool database at another
+  version than the import's (56) is refused, as is `flextool-import-sensitivities` on a migrated database. The FlexTool 2 master workbook given as the input file stops with a message naming the right files
+  (before: an empty database). `fix unit generation`, `use min generation` and `use max generation` with their
+  `ts_unit` series (shares of capacity) become profiles with `profile_method` `fixed`, `lower_limit` and
+  `upper_limit` on the unit's primary output (before: ignored, so must-run units were free). `storage start` /
+  `storage finish` set `storage_start_end_method` explicitly (`fix_start`, `fix_end`, `fix_start_end`, else
+  `fix_nothing`): before, a `storage start` of 0 fixed the first state at 0 (FlexTool 2 leaves it free), a
+  `storage finish` was not read, and with both set the storage still wrapped from the last step to the first
+  (now `bind_forward_only`, as in FlexTool 2). The import ends with a report of failed writes and of every
+  FlexTool 2 input that was not carried over or works differently, with its entities and what to do, grouped by
+  topic in plain sentences (`flextool-read-old --strict` makes a failed write an error), and the imported
+  database carries no behaviour-change notices.
+- **FlexTool 2 CHP units (output2) are imported as FlexTool 2 defines them.** The output2 (e.g. heat) used
+  fuel and shared the unit's capacity with the primary output, and `output2 max capacity ratio` was divided by
+  the capacity and written as `conversion_flow_coeff`, which changed the fuel use. The `output2 eq / gt / lt`
+  rows had output1 and output2 swapped (`heat >= 1.4 × elec` became `elec >= 1.4 × heat`), their constants were
+  not multiplied by the capacity, and a row with only a constant was dropped. Now the output2 edge has
+  `conversion_flow_coeff` 0 (no fuel, outside the capacity, ramp and minimum-load limits, as in FlexTool 2), and
+  each row, and the capacity ratio, becomes a user constraint `output2 − coeff × output1 {=, ≥, ≤} constant ×
+  capacity in service`. Headers written with underscores (`output2_max_capacity_ratio`) are read.
+- **An invested FlexTool 2 CHP keeps its output2 in the dispatch solve.** The output2 constraints counted
+  only the capacity invested in the same solve, so in the dispatch solve after the investment solve the heat was
+  limited to 0. They now use the capacity in service (pre-built + invested). The import report notes an output2
+  without any row (free heat).
+- **In older FlexTool 2 workbooks the output2 constants are MW.** A workbook with the `output2 max capacity
+  (MW)` column (in place of `output2 max capacity ratio`) gives the `output2 eq / gt / lt constant` in MW; the
+  importer multiplied them by the unit's capacity (a constant of 100 on a 50 MW unit became 5000 MW). They are now
+  written as MW, with no capacity term, and the import report says so under "How some inputs were read". Newer
+  workbooks are unchanged (constants per unit of capacity).
+- **FlexTool 2 `availability` no longer derates dispatch.** FlexTool 2 uses it only in the capacity margin;
+  the import wrote it as FlexTool 4 `availability`, which reduces every flow of the unit. It is now left out and
+  listed in the import report (FlexTool 4 has no per-unit share in the capacity margin).
+- **A FlexTool 2 sensitivity that turns `use_ramps` off is imported** (it wrote a ramp method the import's
+  database version does not have, and the import stopped).
+- **A FlexTool 2 workbook with no time step in use is refused with a message.** When no `ts_time` step has
+  `in_use` (or `in_use_invest` for an investment run) 1, the import stopped with a SpineDB error after creating
+  the database; now it says which column is empty, before writing anything.
+- **The FlexTool 2 import report flags a `time_in_years` that does not match the time series.** FlexTool 2
+  scales operating costs by the years the series represents, FlexTool 4 by the hours it covers; the report now
+  compares `time_in_years` with steps × duration / 8760 (before: with 1, which missed a two-week workbook with
+  `time_in_years` = 1 and flagged a consistent two-year one) and gives the factor by which the ratio of operating
+  to investment costs differs, with the remedy. It also lists cf and inflow series that FlexTool 2 rescales over
+  the steps in use. In the FlexTool window, a converted FlexTool 2 model is written outside `input_sources` and
+  moved in only after the conversion, and the new source and its scenarios are ticked again.
+  The CLI now prints its log, and a failed import leaves no database file behind.
+
+#### Examples
+
+- **The demand how-to example (demand.sqlite) served its demand only from the penalty slack.** Its coal plant
+  was not active in any scenario and had no capacity, and the *scale_to_peak_and_annual* scenario asked for peaks
+  of 500 / 600 / 700 MW that cannot reach the annual flows (the scaled demand went above the peak). The coal plant
+  now has 3500 MW and is active in the *coal* alternative, and the peaks are 1500 / 2200 / 3000 MW. The example's
+  results change.
+- **The battery of the non-synchronous how-to example was a node without anything connected in the *wind*
+  scenario.** The battery node is now active only in the *battery* alternative, like its connection. The *wind*
+  scenario no longer has the idle node; its results do not change otherwise.
+- **Getting the corrected example databases.** A `how to example databases/Demand.sqlite` or
+  `non_sync_and_curtailment.sqlite` left by FlexTool 4.3 or older is rebuilt from the new data when the FlexTool
+  window starts or FlexTool is updated (see "A canonical example database left at an older version is rebuilt"
+  above; the old file is kept as `<name>.v<version>.bak`). A file already at this FlexTool's version is never
+  replaced, so your edits are kept: to get the corrected copy, rename or delete the file and start the FlexTool
+  window again (or run `python -m flextool.update_flextool.canonical_databases materialize` in the FlexTool
+  folder).
+
+#### AI assistant
+
+- **A tool call the AI service could not read is asked again at once, not waited for.** With gpt-oss on Ollama,
+  Ollama sometimes answered "error parsing tool call": the model had written its reasoning into the tool call. The
+  assistant took that for a busy server, waited up to five minutes and said a model was likely being loaded. It
+  now asks the model again at once, at most twice, and then says that the service could not read a tool call in
+  the model's answer: ask again, or try another model or level. The assistant also sends the model's own
+  reasoning back to Ollama between the tool calls of a question, as gpt-oss expects, which keeps the reasoning out
+  of its tool calls; the reasoning is never shown and is kept with the saved conversation. When the model lists
+  the runs of one state, it now picks from FlexTool's run states (it guessed names such as "success" before).
+
+### Docs
+
+- **Planning-practitioner pages.** New pages *Reading results* (where to look first, units) and *Model
+  limitations*; a tutorial step that lets the model invest; how-tos for a minimum inertia (with a synchronous
+  condenser), a sensitivity as one alternative on top of a scenario, replacing a dataset through a partial Excel
+  import (`--no-purge`), several milestones with representative-period investment and full-year dispatch, and a
+  terminal batch loop (bash and PowerShell); *Advanced concepts* says how costs are discounted between milestones
+  (set `inflation_rate` to the social discount rate in a real-terms model). **Fix (docs):** the fixed cost of new
+  capacity counts only within the model horizon, not over its full lifetime as *Advanced concepts* said, and the
+  solve-sequence how-to used old names for `rolling_solve_jump`, `rolling_solve_horizon`, `contains_solves` and
+  `fix_storage_periods`. *Results* and *Reading results* now give `invest_marginal` in CUR/kW (CUR/kWh for a
+  storage), the unit of `invest_cost` and of the result files; they said per MW.
+- **How-to "How to make a unit run all the time (must-run)"** (Thermal, CHP and reserves). Six ways to make
+  a unit or a fleet run (profile lower limit, a user constraint on a flow or on a fleet's output, a flowGroup
+  `min_instant_flow`, a demand that needs the unit's other product, a user constraint on the units online) with
+  when to use each, an exact online count (`constraint_online_coeff` with `sense` *equal*), why `min_load` alone is
+  not a must-run and why a negative cost is a poor must-run bonus. Eight example scenarios `must_run_*` in
+  examples.sqlite.
+- **How-to "How to compare emission trajectories"** (Emissions and system limits): one `co2_max_period`
+  trajectory per alternative on the same four-period system, without, with existing and with additional measures,
+  and how to compare them. Three example scenarios `co2_*_measures` in examples.sqlite.
+- **How-to "How to model cogeneration with desalination"** (Thermal, CHP and reserves): a water node in m³,
+  a thermal desalination unit fed by a backpressure CHP, the same with an extraction CHP whose operating region is
+  made of user constraints, a reverse-osmosis investment (an `invest_cost` per m³/h is entered ÷ 1000) and a water
+  storage that lets the plant run flat. Four example scenarios `desal_*` in examples.sqlite.
+- **How-to "How to model CSP with thermal storage"** (Investment and multi-year models): a solar field, a heat
+  storage and a turbine; the solar multiple and the storage hours as user constraints on the capacities (with the
+  design efficiency and `constraint_capacity_coeff`), an optimised design, a gas backup, a plant summary (field
+  potential and curtailment, capacity factor, tank cycles, levelised cost) from the existing outputs, and the
+  limitations. Five example scenarios `csp_*` in examples.sqlite.
+- **The CHP how-to gave the coefficient 2 on the electricity output of *coal_chp_fix*;** the example
+  has 1 (with −0.5 on heat, so heat = 2 × electricity). The how-to also says how the *coal_chp_extraction*
+  alternative builds its operating area.
+- **The ramp-limit text in Units no longer names the internal `p_fix_online`** as something a user
+  sets; it names the online status a stochastic realization fixes and a user constraint on the units online.
+- **A unit `efficiency` may be above 1** (no change in results). A heat pump with COP 3 has `efficiency` 3;
+  a desalination unit with an electricity input and a water output in m³ uses the m³ per MWh ratio (e.g. 250). The
+  database upgrade to version 79 rewrites the `efficiency` and `efficiency_at_min_load` descriptions to say so.
+- **The user-constraint capacity coefficients** (`constraint_capacity_coeff`, `..._invested_capacity_coeff`,
+  and the other `constraint_*capacity_coeff` of unit, node and connection) say in their description that they are a
+  map of coefficients indexed by constraint name (description only).
+- **Solver pages.** *Solver selection* gives the one option precedence for every solver, where the option files
+  come from (new section) and what happens at a time limit; the Gurobi, CPLEX, Xpress and COPT pages describe the
+  command-line solvers FlexTool runs, not the retired Python adapters, and give the native names the flags
+  reach. **Fix (docs):** the 4.3.0 notes and the Gurobi page said `--solver-time-limit` (and `--highs-threads`)
+  reached Gurobi; neither did before this release (`--highs-threads` still does not), and a misspelt Gurobi
+  parameter does not raise an error (see above).
+
 ## Release 4.3.0 (11.11.2026) — AI assistant
 
 ### Behaviour changes — read before upgrading
@@ -6927,8 +7992,8 @@ General:
 
 **New features**
 - *Breaking change*: `realized_periods` (solve objects) is supplemented with a `realized_invest_periods` so that the user can state from which solves the results should take investment results and from which solves dispatch results.
-- New parameters for solve objects: `solve_mode`, `rolling_duration`, `rolling_solve_horizon`, `rolling_solve_jump` and `rolling_start_time` that enable to build rolling window models. See [How to use a rolling window for a dispatch model](how_to.md#how-to-use-a-rolling-window-for-a-dispatch-model).
-- New parameter `contains_solves` that enables nesting solves inside solves (e.g. to calculate shadow values for long term storages or to implement rolling dispatch inside a multi-year investment model). See [How to use Nested Rolling window solves (investments and long term storage)](how_to.md#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage).
+- New parameters for solve objects: `solve_mode`, `rolling_duration`, `rolling_solve_horizon`, `rolling_solve_jump` and `rolling_start_time` that enable to build rolling window models. See [How to use a rolling window for a dispatch model](how_to/solve_sequences.md#how-to-use-a-rolling-window-for-a-dispatch-model).
+- New parameter `contains_solves` that enables nesting solves inside solves (e.g. to calculate shadow values for long term storages or to implement rolling dispatch inside a multi-year investment model). See [How to use Nested Rolling window solves (investments and long term storage)](how_to/solve_sequences.md#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage).
 - New outputs: For groups: `VRE_share_t`. For unit__nodes (VRE units): `curtailment_share`, `curtailment_share_t`.
 - Name changes to outputs: `flow` to `flow_annualized`, `sum_flow` to `sum_flow_annualized`.
 - Add migration for results database (parameter descriptions can be migrated).

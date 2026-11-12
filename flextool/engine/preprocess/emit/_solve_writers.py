@@ -751,6 +751,71 @@ def emit_branch_weights_and_map(
     )
 
 
+def branch_time_start_rows(
+    period__branch: list[tuple[str, str]],
+    branch_start_time: tuple[str, str] | None,
+) -> list[tuple[str, str]]:
+    """``(period, fan start step)`` rows of a solve's fan.
+
+    *branch_start_time* is the solve's ``(fan period, fan step)`` (one fan per solve, roll and nested
+    inner solve; ``None`` without one).  Every anchor period from the fan's period onwards and each of its
+    ``<period>_<branch>`` copies gets one row; a pre-reveal trunk period gets none.  Row order: the anchors in
+    the order they first appear in the period column of *period__branch*, each anchor followed by its copies
+    in their *period__branch* row order (the anchor's own ``(period, period)`` row, if any, adds no second
+    row).  A branch period whose own first step authors no stochastic-time value for a cell reads the
+    forecast authored at this step.
+    """
+    if branch_start_time is None:
+        return []
+    fan_period, fan_step = branch_start_time
+    order = list(dict.fromkeys(period for period, _branch in period__branch))
+    if fan_period not in order:
+        return []
+    after = set(order[order.index(fan_period):])
+    members: dict[str, list[str]] = {}
+    for period, branch in period__branch:
+        if period in after:
+            members.setdefault(period, []).append(branch)
+    rows: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for period in order[order.index(fan_period):]:
+        for d in (period, *members.get(period, ())):
+            if d not in seen:
+                seen.add(d)
+                rows.append((d, fan_step))
+    return rows
+
+
+def project_branch_time_start_rows(
+    parent_rows: list[tuple[str, str]],
+    parent_period_branch: list[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    """The parent's ``branch_time_start`` rows of its real period names, for its realization-dispatch sibling.
+
+    The sibling dispatches the real period names with the parent's realized branch (the projected
+    ``solve_branch__time_branch`` rows), so it falls back to the same fan start; the ``(p, p)`` self-row
+    predicate is the one of ``project_realized_branch_time_branch_rows``.
+    """
+    period_branch = set(parent_period_branch)
+    return [(d, step) for d, step in parent_rows if (d, d) in period_branch]
+
+
+def derive_branch_time_start(rows: list[tuple[str, str]], *, fan_first: bool = False) -> pl.DataFrame:
+    """Build the ``branch_time_start`` frame (period, step, read_first); header-only without a fan.
+
+    ``read_first`` is ``fan`` in a roll of a rolling solve (*fan_first*: the roll's look-ahead periods read the
+    roll's fan-start forecast before one authored at their own first step, a later roll's analysis time) and
+    ``own`` otherwise; see ``_pdt_lookup`` "Which forecast a branch period reads".
+    """
+    read_first = "fan" if fan_first else "own"
+    return _to_utf8_frame(("period", "step", "read_first"), [(d, step, read_first) for d, step in rows])
+
+
+def emit_branch_time_start(rows: list[tuple[str, str]], *, provider, fan_first: bool = False) -> None:
+    """Emit ``solve_data/branch_time_start`` to the Provider."""
+    _emit(provider, "solve_data/branch_time_start.csv", derive_branch_time_start(rows, fan_first=fan_first))
+
+
 # ---------------------------------------------------------------------------
 # Init / empty files
 # ---------------------------------------------------------------------------

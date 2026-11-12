@@ -1,30 +1,48 @@
 """CLI entry point for importing an old-format FlexTool .xlsm file to a Spine DB.
 
-This runs the full pipeline: initialise the target from the frozen v56 import
-template (if not already a FlexTool DB), write the workbook's data, then
-``migrate_database`` the result up to the current schema version.  See
-``import_old_flextool_xlsm`` for why the importer is pinned to a fixed version
-and relies on migration rather than tracking the live schema.
+This runs the full pipeline: initialise a new target from the frozen v56
+import template, write the workbook's data (and, with ``--master``, the
+sensitivities of the FlexTool 2 master workbook), then ``migrate_database``
+the result up to the current schema version.  See ``import_old_flextool_xlsm``
+for why the importer is pinned to a fixed version and relies on migration
+rather than tracking the live schema.  The end report lists every input the
+importer could not translate.
 """
 
 import argparse
+import logging
+import sys
 
+from flextool.cli._console import run_tool
 from flextool.process_inputs.write_old_flextool_to_db import (
+    ImportStrictError,
     import_old_flextool_xlsm,
 )
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Import an old-format FlexTool Excel (.xlsm) into a Spine DB."
     )
     parser.add_argument(
         "xlsm_path",
-        help="Path to the old-format FlexTool Excel file (.xlsm)",
+        help="Path to the old-format FlexTool input data file (.xlsm)",
     )
     parser.add_argument(
         "target_db_url",
-        help="Target database URL (e.g. sqlite:///output.sqlite)",
+        help=(
+            "Target database URL (e.g. sqlite:///output.sqlite). A new file is "
+            "created; an existing FlexTool database must be at version 56."
+        ),
+    )
+    parser.add_argument(
+        "--master",
+        default=None,
+        help=(
+            "FlexTool 2 master workbook (the one with the 'Sensitivity "
+            "definitions' sheet): import its sensitivities as alternatives "
+            "and scenarios"
+        ),
     )
     parser.add_argument(
         "--alternative-name",
@@ -40,24 +58,51 @@ def main() -> None:
         "--no-migrate",
         action="store_true",
         help=(
-            "Do not migrate the database to the current schema version after "
-            "writing. The GUI uses this so it can run migration as a separate "
-            "execution job; standalone use should leave migration on."
+            "Leave the database at the import schema version (56) instead of "
+            "migrating it to the current version"
         ),
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Stop with an error (and no database) when a value cannot be "
+            "written, instead of listing it in the report"
+        ),
+    )
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable verbose (DEBUG) logging",
     )
     args = parser.parse_args()
 
-    print(f"Importing old FlexTool Excel: {args.xlsm_path}")
-    print(f"Target database: {args.target_db_url}")
-    import_old_flextool_xlsm(
-        args.xlsm_path,
-        args.target_db_url,
-        alternative_name=args.alternative_name,
-        purge=not args.no_purge,
-        migrate=not args.no_migrate,
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(levelname)s: %(message)s",
     )
+
+    print(f"Importing old FlexTool Excel: {args.xlsm_path}")
+    if args.master:
+        print(f"Sensitivities from: {args.master}")
+    print(f"Target database: {args.target_db_url}")
+    try:
+        report = import_old_flextool_xlsm(
+            args.xlsm_path,
+            args.target_db_url,
+            alternative_name=args.alternative_name,
+            purge=not args.no_purge,
+            migrate=not args.no_migrate,
+            master=args.master,
+            strict=args.strict,
+        )
+    except (ValueError, ImportStrictError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    print(report.format())
     print("Import complete!")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    run_tool(main)

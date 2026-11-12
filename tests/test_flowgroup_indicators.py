@@ -48,9 +48,13 @@ def _build_fixture() -> tuple[SimpleNamespace, SimpleNamespace, SimpleNamespace,
         index=pd.Index(periods, name='period'),
     )
 
+    # timestep weights: 1 in p1, 1.5 / 0.5 in p2 (mean 1).
+    timestep_weight = pd.Series([1.0, 1.0, 1.5, 0.5], index=dt_index, name='value')
+
     par = SimpleNamespace(
         step_duration=step_duration,
         complete_period_share_of_year=period_share,
+        timestep_weight=timestep_weight,
     )
 
     # Two flow-indicator groups:
@@ -130,21 +134,22 @@ def test_flowgroup_indicators_basic_shape_and_values() -> None:
     assert list(frame.columns) == ['cumulative_flow', 'average_flow']
     assert frame.columns.name == 'parameter'
 
-    # gU: unit flow is 10 MW + 20 MW in p1 (1h each) → 30 MWh cumulative,
-    # 30 MW + 40 MW in p2 (2h each) → 140 MWh.
-    #   average_flow = cumulative / hours  (hours = share × 8760)
-    assert frame.loc[('gU', 'p1'), 'cumulative_flow'] == pytest.approx(30.0)
-    assert frame.loc[('gU', 'p2'), 'cumulative_flow'] == pytest.approx(140.0)
-    assert frame.loc[('gU', 'p1'), 'average_flow'] == pytest.approx(15.0)   # 30/2
-    assert frame.loc[('gU', 'p2'), 'average_flow'] == pytest.approx(35.0)   # 140/4
+    # cumulative_flow is annualised like the flows: Σ_t MW·duration·weight ÷ share, share = 2/8760 (p1),
+    # 4/8760 (p2); average_flow = cumulative / 8760 h.
+    # gU: p1 10·1 + 20·1 = 30 MWh → 30·4380 = 131 400 MWh/a, avg 15 MW;
+    #     p2 30·2·1.5 + 40·2·0.5 = 130 MWh → 130·2190 = 284 700 MWh/a, avg 32.5 MW.
+    assert frame.loc[('gU', 'p1'), 'cumulative_flow'] == pytest.approx(131400.0)
+    assert frame.loc[('gU', 'p2'), 'cumulative_flow'] == pytest.approx(284700.0)
+    assert frame.loc[('gU', 'p1'), 'average_flow'] == pytest.approx(15.0)
+    assert frame.loc[('gU', 'p2'), 'average_flow'] == pytest.approx(32.5)
 
-    # gC: |from_conn| + |to_conn| summed per step, weighted by step_duration.
-    #   p1: (5+1)*1 + (5+2)*1 = 13 MWh,  hours=2  → avg=6.5
-    #   p2: (5+3)*2 + (5+4)*2 = 34 MWh,  hours=4  → avg=8.5
-    assert frame.loc[('gC', 'p1'), 'cumulative_flow'] == pytest.approx(13.0)
-    assert frame.loc[('gC', 'p2'), 'cumulative_flow'] == pytest.approx(34.0)
+    # gC: |from_conn| + |to_conn| per step.
+    #   p1: (5+1)·1 + (5+2)·1 = 13 MWh → 56 940 MWh/a, avg 6.5 MW
+    #   p2: (5+3)·2·1.5 + (5+4)·2·0.5 = 33 MWh → 72 270 MWh/a, avg 8.25 MW
+    assert frame.loc[('gC', 'p1'), 'cumulative_flow'] == pytest.approx(56940.0)
+    assert frame.loc[('gC', 'p2'), 'cumulative_flow'] == pytest.approx(72270.0)
     assert frame.loc[('gC', 'p1'), 'average_flow'] == pytest.approx(6.5)
-    assert frame.loc[('gC', 'p2'), 'average_flow'] == pytest.approx(8.5)
+    assert frame.loc[('gC', 'p2'), 'average_flow'] == pytest.approx(8.25)
 
     # gEmpty: no member flows → zeros (not dropped, not NaN).
     assert frame.loc[('gEmpty', 'p1'), 'cumulative_flow'] == 0.0
@@ -167,8 +172,9 @@ def test_flowgroup_indicators_empty_realized_dispatch() -> None:
 
 def test_flowgroup_period_frame_byte_identical_regression() -> None:
     """The unsigned per-period frame must be unchanged by the addition of the
-    signed series — a byte-identical regression guard.  The expected values
-    below replicate exactly what the period-only implementation produced."""
+    signed series — a regression guard of the whole frame.  The values are the
+    hand values of ``test_flowgroup_indicators_basic_shape_and_values``
+    (annualised with the timestep weights since the item-3 label fix)."""
     par, s, v, r = _build_fixture()
 
     results = flowGroup_indicators(par, s, v, r, debug=False)
@@ -176,14 +182,14 @@ def test_flowgroup_period_frame_byte_identical_regression() -> None:
 
     expected = pd.DataFrame(
         [
-            {'group': 'gU', 'period': 'p1', 'cumulative_flow': 30.0,
+            {'group': 'gU', 'period': 'p1', 'cumulative_flow': 131400.0,
              'average_flow': 15.0},
-            {'group': 'gU', 'period': 'p2', 'cumulative_flow': 140.0,
-             'average_flow': 35.0},
-            {'group': 'gC', 'period': 'p1', 'cumulative_flow': 13.0,
+            {'group': 'gU', 'period': 'p2', 'cumulative_flow': 284700.0,
+             'average_flow': 32.5},
+            {'group': 'gC', 'period': 'p1', 'cumulative_flow': 56940.0,
              'average_flow': 6.5},
-            {'group': 'gC', 'period': 'p2', 'cumulative_flow': 34.0,
-             'average_flow': 8.5},
+            {'group': 'gC', 'period': 'p2', 'cumulative_flow': 72270.0,
+             'average_flow': 8.25},
             {'group': 'gEmpty', 'period': 'p1', 'cumulative_flow': 0.0,
              'average_flow': 0.0},
             {'group': 'gEmpty', 'period': 'p2', 'cumulative_flow': 0.0,
@@ -192,7 +198,7 @@ def test_flowgroup_period_frame_byte_identical_regression() -> None:
     ).set_index(['group', 'period'])[['cumulative_flow', 'average_flow']]
     expected.columns.name = 'parameter'
 
-    pd.testing.assert_frame_equal(frame, expected, check_exact=True)
+    pd.testing.assert_frame_equal(frame, expected, check_exact=False, rtol=1e-12)
 
 
 def test_flowgroup_gd_t_signed_net_flow() -> None:

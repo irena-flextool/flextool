@@ -57,6 +57,71 @@ Side-paths off this trunk:
   and accumulates the sub-problems' duals as optimality cuts until
   the optimality gap closes.
 
+### Solve-level detail reduction
+
+`solve.reduce_unit_detail_method` / `reduce_system_detail_method` (user docs: entities_and_time.md "Leaving out
+detail in a solve") are applied in one place: `preprocess._reduce_detail.apply_reduce_detail(d, unit, system)`,
+called by the cascade right after `load_flextool` for every sub-solve (`_orchestration._drive_cascade`). Every
+consumer after it reads the reduced data: the online / ramp carry check (`check_online_ramp_carry`, moved out of
+`load_flextool` so that it sees the reduced online set), the realization checks, the Benders split, the cold and
+warm build, the handoff and the per-roll outputs. The per-roll emit and the input derivation are not changed.
+
+- **Copy, not replace.** The transform returns a `copy.copy` of the FlexData with the changed fields set, not `dataclasses.replace`.
+
+    A shallow copy keeps the extra attributes that the cascade and the emit hang on a FlexData (the axis
+    vocabulary, `output_static_data`, `reduced_output_features`); `dataclasses.replace` would rebuild the object
+    from its fields only and drop them. Unchanged frames are shared. A level that changes nothing returns the
+    same object, so the LP is byte-identical.
+
+- **Only clears, prunes, relaxes or folds.** Each part sets its fields to `None` (the field lists `RAMP_FIELDS`, `ONLINE_FIELDS`, `RESERVE_FIELDS`, ... in `_reduce_detail.py`), except `relax_integrality` (integer online columns continuous), the `min_load_efficiency` fold (`p_slope + p_section`, `p_section = 0`) and the pruning of online variables without a use.
+
+    Under the `integers*` levels, `online_uses` lists, on the data after the level's removals, the uses of each
+    process's online variables (`ONLINE_USES`: start-up cost, min load / capacity_min_coeff floors, min up / down
+    times, the min_load_efficiency section, a written user constraint with `constraint_online_coeff`, a reserve,
+    inertia, ramp limits, the parent's commitment pin; non-anticipativity ties are no use). The processes
+    without a use lose their online variables: `_prune_online` filters the rows of `PRUNE_FIELDS` (the online sets
+    and their parameters, the carry and pin, the min-time sets, `p_startup_cost`) to the other processes, and
+    clears `dt_online_carry` with the last carried commitment (`ReduceReport.removed["online_unused"]`). The
+    reserve use is conservative: maxFlow and the connection reserve rows hold the same reserve terms without the
+    units online, so a reserve-only unit could be pruned too; it keeps its online variables, as the user docs say.
+    `test_reduce_detail_online_uses.py` classifies every model reader of the online sets / variables (a new
+    reader must be added as a use or as no use) and checks that pruning gives the optimum of the same units
+    authored as `no_startup`.
+
+    `test_reduce_detail.py` and `test_reduce_system_detail.py` check that every FlexData field of a feature is in
+    its list by name, and for the system features also by the columns the frames hold. A new field of a feature
+    must be added there.
+
+- **Warm start.** `relax_integrality` is a FlexData field in `_warm._STRUCTURAL_FIELDS`, so a warm LP built under one integrality is never reused under the other.
+
+    The level strings are not fields: two sub-solves whose reduced data are identical may share a warm LP.
+
+- **Run log and run status.** The cascade prints one info line per solve at its first roll (`_reduce_detail.summary_line`: what each level left out and the interaction notes, `ReduceReport.notes`), logs the dropped user constraints as warnings, and records `reduced = {unit, system, summary}` on the run-status entry of every roll (`RunRecorder.solve_reduced`); `summary` is the line on the solve's first roll and None on the later ones.
+- **Outputs.** The static sets of the last sub-solve come from its pre-transform data (`output_static_view`), so a reduced last solve keeps the tables of earlier full solves.
+
+    The cells of a left-out feature in a reduced solve's steps are emptied after the tables are built
+    (`process_outputs.reduced_cells`): the cascade sets `reduced_output_features` on the reduced data, the per-roll
+    writer writes it as `output_raw/reduced_detail__<roll>.parquet`, and `write_outputs` maps the markers onto
+    the realised steps and periods (from the solve-keyed sets before `drop_levels`) and empties the rows of the
+    feature tables (`FEATURE_TABLES`). Unreduced solves write no marker, so their tables are unchanged.
+
+    A whole feature is one whose `OUTPUT_FEATURES` fields the transform cleared; `online` is keyed on the online
+    sets alone (`process_online*`), since the carry and pin fields lose all their rows when every carried process
+    is pruned while others keep their online variables. Online variables pruned for some processes only are
+    per-entity markers (`output_entities` → `reduced_output_entities`): the marker's `entity` column holds the
+    process (null for a whole feature), `read_reduced_markers` gives `(feature, entity)` keys, and
+    `mask_reduced_cells` empties only that entity's column in the steps of the solves that pruned it. A period
+    realised by both a keeping and a pruning solve keeps its average, with the pruning solve's steps in it as
+    zeros (the same convention as whole features). The static online sets of the outputs keep every process that
+    some solve so far kept (`output_static_view(…, online_gone_everywhere)`, `online_gone`).
+
+- **Carry across levels.** The handoff records its producer's unit level (`SolveHandoff.unit_detail`) and the processes the producer left without online variables (`SolveHandoff.online_left_out`: all online processes under `online*`, those without a use under `integers*`).
+
+    A solve that keeps online variables and continues the ramp flow of such a producer drops that flow for those
+    processes only and starts their ramp and commitment cold (`cold_start_online_flow_carry`). Any other online
+    process with a carried ramp flow but no online carry is a real inconsistency: `check_online_ramp_carry`
+    raises for it.
+
 ## FlexData — the central data carrier
 
 `FlexData` (in `flex_data.py`) is a `@dataclass` of roughly 220 fields. Five
@@ -316,9 +381,13 @@ adds:
 | `nodeState_rp_block_first_dt` | `_pdt_join.compute_nodeState_rp_block_first_dt` | Index set for `v_state_rp_start` — RP-block-first `(d, t)` tuples per RP node. |
 | `state_change_rp_interior` / `state_change_rp_start` | `model._state_change_terms` (`nodeBalance_eq` terms) | Intra-period state-change. Interior steps use the ordinary within-timeset lag; the first step of each RP block replaces the lag with `v_state_rp_start` so each block starts free. |
 | `rp_inter_period_balance` | `model._eq_rp_storage_chain` | Inter-period balance over `(n, d, b, d′, b′)`: the within-period edges `(d, b, b′) ∈ rp_base_chain` (`d′ = d`) for every `nodeState_rp` node, and for the within-solve / forward-only variants the period-to-period edges `(d, d′) ∈ rp_period_previous` from the last base period of `d′` to the first of `d` (solve order, the predecessor the `bind_within_solve` state lag uses). The drift sums the per-RP-block state change weighted by `rp_base__rep[d, b, r]`. |
-| `rp_inter_period_cyclic` | `model._eq_rp_storage_chain` | End-to-start closure: within-period — every rp period's first base period ← its own last; within-solve — the first rp period's first base period ← the last rp period's last. The forward-only variant skips this constraint. |
+| `rp_inter_period_cyclic` | `model._eq_rp_storage_chain` | End-to-start closure: within-period — every rp period's first base period ← its own last; within-solve — every rp period without a predecessor ← every rp period that is no period's predecessor (`d_first × d_last`: deterministic one pair; a stochastic fan after the trunk period one pair per branch path; a fan in the first period N × N, the path loops plus equal chain starts). The forward-only variant skips this constraint. |
+| `rp_inter_period_fan_start` | `model._eq_rp_storage_chain` | Forward-only blended nodes in a fan that opens in the solve's first period: the chain start `v_state_inter − drift` of the first base period is equal in every root (`period_first_of_solve`), fix_start nodes included (fix_start pins the first block, not the chain start). |
 | `rp_inter_period_max_state` | `model._eq_rp_storage_chain` | Capacity bound on `v_state_inter[n, d, b]` over `(n, d, b) ∈ nodeState_rp × rp_base_period`, `d ∈ period_in_use` (a base period of `d` by `d`'s capacity), tightened by cumulative invest/divest exactly as the ordinary `maxState`. |
 | `maxState_rp_start` | `model._eq_rp_storage_chain` | Sibling capacity bound on `v_state_rp_start[n, d, t]` over `rp_block_first`. Both bounds depend on invest/divest, so they are rows rather than variable bounds. |
+| `non_anticipativity_rp_block_start` | `model._non_anticipativity.add_dispatch_constraints` | `v_state_rp_start` equal across the forecast star at the block starts inside the tie window, for `include_stochastics` nodes in `nodeState_rp`; a block already tied by a `non_anticipativity_storage_state_first` row is left out. |
+
+In a stochastic solve every forecast branch period is an rp period with the timeset of the period it branches from (`_solve_writers._with_branch_period_timesets`); `rp_period_previous` is then a tree (a branch's first period ← the trunk period, later periods ← the same branch). A rolling_window solve on representative periods maps every blended method to `bind_forward_only` before the model (`_run_model._downgrade_blended_for_rolling_rp`, one warning per solve).
 
 The three blended-weights methods that activate the block —
 `bind_within_solve_blended_weights`, `bind_within_period_blended_weights`,
@@ -434,6 +503,18 @@ Two rules keep the rendered output exact:
   Lifting a lookup frame straight from the raw CSV would re-introduce
   duplicate join keys and explode the left-join (one grid row matching
   many lookup rows). Always lift from the dict.
+
+The time-series sources of the folds (`pt_*`, `pbt_*`, `pdt_process`,
+`pdt_node`, `pdt_energy_margin_adder`, and `pd_energy_margin_adder`, passed
+through verbatim) are read from `solve_data/`, never from `input/`: `create_averaged_timeseries` writes them there, combined
+to the solve's steps when the solve has `new_stepduration` (one rule per
+parameter, `TIME_AGGREGATION`; see docs/dev/architecture.md "Solve-step
+aggregation") and verbatim otherwise. A derive and its `_vectorized`
+twin switch a source in the same commit, and their parity fixtures
+seed the `solve_data/` key. The `input/pt_node_inflow` reads of the
+peak scaling stay on `input/`: `peak_inflow` is per original step; so does
+the `input/pbt_node_inflow` read of the inflow-scaling checks, which takes
+only the node names (the same in both folders).
 
 ### Writer → emitter rename (Phases 1–5)
 
@@ -916,7 +997,7 @@ for `fix_price` (an objective term).  The horizon-end reference value
 `fix_price` included (`ndt_fix_storage_price`, the steps of
 `handoff/fix_storage_price`).
 
-A `fix_start_end` node ignores its `storage_binding_method` (reference.md,
+A `fix_start_end` node ignores its `storage_binding_method` (reference/nodes.md,
 exception `bind_forward_only`): `_run_model._fix_start_end_chains_forward`
 rewrites the per-solve `input/node__storage_binding_method` frame right
 after `_downgrade_rp_methods_for_non_rp_solve` (so a blended node of a

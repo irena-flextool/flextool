@@ -19,11 +19,14 @@ SAMPLES: dict[str, tuple[object, str, object, object]] = {
     "solver_log_level": ("verbose", "silent", "silent", "verbose"),
     "solver_time_limit": (30.0, "120", 120.0, 60.0),
     "solver_mip_gap": (0.01, "0.0005", 0.0005, 0.002),
+    "highs_time_limit": (30.0, "120", 120.0, 60.0),
+    "highs_mip_gap": (0.01, "0.0005", 0.0005, 0.002),
     "scaling": ("off", "basic", "basic", "solver_only"),
     "user_bound_scale": (-4, "-2", -2, -6),
     "save_memory": (True, "1", True, True),
     "warm_start": (True, "1", True, True),
     "basis_cache_dir": ("/flag/cache", "/env/cache", "/env/cache", "/db/cache"),
+    "solver_config_dir": ("/flag/cfg", "/env/cfg", "/env/cfg", "/db/cfg"),
     "benders_workers": (3, "5", 5, 2),
     "benders_in_out_weight": (0.5, "0.3", 0.3, 0.7),
 }
@@ -133,7 +136,7 @@ def test_out_of_range_flag_lets_the_environment_variable_through():
     from flextool.cli.cmd_run_flextool import build_parser
 
     args = build_parser().parse_args(["sqlite:///x.sqlite", "--solver-time-limit", "0"])
-    opts = RunOptions.from_cli(args, environ={"FLEXTOOL_HIGHS_TIME_LIMIT": "120"})
+    opts = RunOptions.from_cli(args, environ={"FLEXTOOL_SOLVER_TIME_LIMIT": "120"})
     assert (opts.value("solver_time_limit"), opts.source("solver_time_limit")) == (120.0, "env")
 
 
@@ -204,6 +207,7 @@ def test_to_argv_round_trips_through_the_run_parser():
         "threads": 5, "highs_threads": 3, "presolve": "off", "solver_log_level": "silent", "solver_time_limit": 12.5,
         "solver_mip_gap": 0.0005, "scaling": "basic", "user_bound_scale": -3,
         "save_memory": True, "warm_start": True, "basis_cache_dir": "/tmp/cache", "benders_workers": 2,
+        "solver_config_dir": "/tmp/solver_config",
     }
     flagged = {key for key, spec in OPTIONS.items() if spec.flag}
     assert set(given) == flagged

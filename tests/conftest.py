@@ -189,7 +189,8 @@ def pytest_configure(config: pytest.Config) -> None:
     # Materialize canonical example/template SQLites (templates/examples.sqlite,
     # how to example databases/*.sqlite, ...) from their JSON sources so tests
     # that reference these paths directly work on a fresh clone.  Idempotent —
-    # skips files already present in the working tree.  Tests that need a
+    # skips files already present in the working tree at the current FlexTool
+    # version, and rebuilds an older one (the engine refuses it).  Tests that need a
     # guaranteed-current SQLite (e.g. after a ``FLEXTOOL_DB_VERSION`` bump
     # invalidates the on-disk copy) should build their own from the JSON
     # source under ``tmp_path`` rather than mutating these user-facing files.
@@ -473,6 +474,8 @@ def lh2_master_build_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
         ["unit", "liquefier_B", "invest_method", _val("invest_no_limit"),
          alt],
         ["unit", "liquefier_B", "invest_cost", _val(25.0), alt],
+        ["node", "lh2_B", "lifetime", _val(20.0), alt],
+        ["unit", "liquefier_B", "lifetime", _val(20.0), alt],
     ]
     root = tmp_path_factory.mktemp("db_lh2mb")
     json_path = root / "lh2_master_build.json"
@@ -522,6 +525,8 @@ def lh2_master_hourly_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
         ["unit", "liquefier_B", "invest_method", _val("invest_no_limit"),
          alt],
         ["unit", "liquefier_B", "invest_cost", _val(25.0), alt],
+        ["node", "lh2_B", "lifetime", _val(20.0), alt],
+        ["unit", "liquefier_B", "lifetime", _val(20.0), alt],
         # Small DISTINCT flow costs on the (potential) coupling
         # connections: the pure-hourly storage coupling is otherwise
         # heavily degenerate (flat optimal-flow faces), which gives the

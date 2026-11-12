@@ -232,13 +232,13 @@ def test_capacity_only_rows_per_period_same_objective(tmp_path_factory) -> None:
     assert inv["value"].sum() > 0
 
 
-@pytest.mark.parametrize(("kind", "invest", "divest"), [
-    ("constraint_cumulative_pre_built_capacity_coeff", True, True),
-    ("constraint_capacity_coeff", True, True),
-    ("constraint_retired_capacity_coeff", False, True),
-])
-def test_coefficient_gives_zero_cost_entity_its_variables(tmp_path_factory, kind, invest, divest) -> None:
-    """A zero-cost entity (no annuity, no salvage) gets investment / retirement pairs only from a link."""
+@pytest.mark.parametrize("kind", ["constraint_cumulative_pre_built_capacity_coeff", "constraint_capacity_coeff",
+                                  "constraint_retired_capacity_coeff"])
+def test_coefficient_gives_zero_cost_entity_its_variables(tmp_path_factory, kind) -> None:
+    """A zero-cost entity (no annuity, no salvage) with a capacity coefficient gets investment and retirement
+    pairs from its ``invest_method`` (item 218: a zero or missing cost no longer blocks investment), whichever
+    coefficient names it.  Before, the pairs came only from a coefficient, and a retired-capacity coefficient
+    gave retirement alone."""
     values = (_constraint("c_link", constant=None)
               + [["unit", "wind_plant", "invest_method", b64("invest_retire_no_limit", "str")],
                  ["unit", "wind_plant", "invest_cost", b64(0.0, "float")],
@@ -254,5 +254,31 @@ def test_coefficient_gives_zero_cost_entity_its_variables(tmp_path_factory, kind
     def has(frame) -> bool:
         return frame is not None and utf8(frame).filter(pl.col("e") == "wind_plant").height > 0
 
-    assert has(fd.ed_invest_set) is invest
-    assert has(fd.ed_divest_set) is divest
+    assert has(fd.ed_invest_set)
+    assert has(fd.ed_divest_set)
+
+
+@pytest.mark.parametrize("chain", [SINGLE, CHAIN], ids=["single_solve", "chain_of_solves"])
+def test_constant_kept_beside_capacity_terms_of_other_constraints(tmp_path_factory, chain) -> None:
+    """Constraints without existing-capacity terms keep their constant as the right-hand side when other
+    constraints have such terms: the per-step ``flow ≤ 7`` and the once-per-period ``invested ≤ 5`` (hand
+    values), in a single solve and in a chain of solves.  Before: the (cn,) constant summed with the (cn, d)
+    existing-capacity constants of the other constraints lost its period, and the rows read ``≤ 0``."""
+    unit_twin = [v for v in _twin_values("unit", PLANT) if v[2] != "constraint_invested_capacity_coeff"]
+    values = (RETIRABLE + _constraint("c_cap") + _constraint("c_twin") + unit_twin
+              + [["unit", PLANT, "constraint_invested_capacity_coeff", _map({"c_twin": 1.0, "c_inv": 1.0})]]
+              + _twin_values("node", "battery")
+              + _constraint("c_flow_cap", "less_than", 7.0) + _constraint("c_inv", "less_than", 5.0)
+              + [["unit__outputNode", [PLANT, "west"], "constraint_flow_coeff", _map({"c_flow_cap": 1.0})]])
+    url, scen = make_db(tmp_path_factory, alt="uc_flow_cap", values=values, base_chain=chain,
+                        entities=TWIN_ENTITIES + [["constraint", "c_flow_cap", None], ["constraint", "c_inv", None]])
+    for step in run(tmp_path_factory, url, scen).values():
+        pb = build(step.flex_data)
+        bounds = row_bounds(pb, "process_constraint_less_than", "c_flow_cap,")
+        assert len(bounds) == step.flex_data.dt.height
+        assert {upper for _, upper in bounds.values()} == {7.0}
+        per_period = _period_rows(pb, "process_constraint_less_than_period", "c_inv")
+        assert per_period, "no once-per-period rows"
+        assert {upper for _, (_, upper) in per_period.values()} == {5.0}
+        assert all(any(c.startswith("v_invest") for c in terms) for terms, _ in per_period.values())
+        _assert_twin(pb)

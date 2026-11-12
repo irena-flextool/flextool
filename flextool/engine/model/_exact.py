@@ -111,7 +111,9 @@ def add_variables(b: "_Build") -> None:
     # v_exact_forward[p,d,t] ∈ {0, 1}   ∀ p ∈ process_exact with both arcs, (d,t) ∈ dt
     # 1: the exact connection is set to its forward direction (node_1 → node_2 of connection__node__node) in the
     # step, 0: to the reverse direction.  One binary per connection: the whole connection transfers in one
-    # direction.  No cost, no inter-temporal link.
+    # direction.  No cost, no inter-temporal link.  Continuous in [0, 1] when the solve's reduce_unit_detail_method
+    # relaxes integers (d.relax_integrality); every such level also clears process_exact, so the variable is then
+    # not declared at all.
     # ─── VAR. ─── v_exact_forward (coarse connections) ───────────────────────
     # v_exact_forward[p,d,b] ∈ {0, 1}   ∀ p ∈ processCoarse ∩ process_exact, (d,b) the coarse steps of p
     #   (b = its first fine step b_first)
@@ -120,7 +122,7 @@ def add_variables(b: "_Build") -> None:
     idx = arcs.select("p").unique(maintain_order=True).join(d.dt.select("d", "t"), how="cross")
     b.v_exact_forward = _coarse_flows.alias(
         b, b.m.add_var("v_exact_forward", ("p", "d", "t"), _coarse_flows.domain(b, idx), lower=0.0, upper=1.0,
-                       integer=True), idx)
+                       integer=not d.relax_integrality), idx)
 
 
 def add_constraints(b: "_Build") -> None:

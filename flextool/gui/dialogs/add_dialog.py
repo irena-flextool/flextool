@@ -19,6 +19,45 @@ logger = logging.getLogger(__name__)
 _OLD_FLEX_ALTERNATIVE = "base"
 
 
+def ask_old_flextool_master(
+    parent: tk.Misc, initial_dir: Path, width: int, screen_height: int,
+) -> Path | None | bool:
+    """Ask for the optional FlexTool 2.0 master workbook of a conversion.
+
+    Returns the chosen path, ``None`` for no sensitivities, or ``False`` when
+    the user cancelled (the conversion should not start).
+    """
+    while True:
+        answer = messagebox.askyesnocancel(
+            "FlexTool 2.0 sensitivities",
+            "Import the sensitivities too?\n\n"
+            "They are in the FlexTool 2.0 master workbook (the one with the "
+            "'Sensitivity definitions' sheet), and are imported as "
+            "alternatives and scenarios.",
+            parent=parent,
+        )
+        if answer is None:
+            return False
+        if not answer:
+            return None
+        picker = FilePickerDialog(
+            parent,
+            title="Select FlexTool 2.0 master workbook (with sensitivity definitions)",
+            initialdir=str(initial_dir),
+            filetypes=[
+                ("Old FlexTool Excel", "*.xlsm *.xlsx"),
+                ("All files", "*"),
+            ],
+            multiple=False,
+            width=width,
+            height=int(screen_height * 0.75),
+        )
+        if picker.result:
+            return Path(picker.result)
+        # No file chosen: ask again (Yes / No / Cancel), so a cancelled
+        # picker never aborts the conversion without a word.
+
+
 def _ask_migration_choice(
     parent: tk.Misc,
     filename: str,
@@ -241,28 +280,12 @@ class AddDialog(tk.Toplevel):
 
         convert_row = ttk.Frame(old_frame)
         convert_row.pack(fill="x")
-        ttk.Label(convert_row, text="1st step:").pack(side="left")
         convert_btn = ttk.Button(
             convert_row,
-            text="Convert base input data file...",
+            text="Convert input data file (and its sensitivities)...",
             command=self._on_convert_old_flextool,
         )
-        convert_btn.pack(side="left", padx=(5, 0))
-
-        sens_row = ttk.Frame(old_frame)
-        sens_row.pack(fill="x", pady=(5, 0))
-        ttk.Label(sens_row, text="2nd optional step:").pack(side="left")
-        self._import_sens_btn = ttk.Button(
-            sens_row,
-            text="Import sensitivities from compatible master file...",
-            command=self._on_import_sensitivities,
-            state="disabled",
-        )
-        self._import_sens_btn.pack(side="left", padx=(5, 0))
-
-        # Stored after successful 2.0 base conversion
-        self._last_base_xlsm: Path | None = None
-        self._last_target_sqlite: Path | None = None
+        convert_btn.pack(side="left")
 
         # ── Close button (very bottom) ───────────────────────────────
         close_frame = ttk.Frame(self)
@@ -701,7 +724,14 @@ class AddDialog(tk.Toplevel):
         )
 
     def _on_convert_old_flextool(self) -> None:
-        """Open a file chooser for an old FlexTool .xlsm, convert to Spine DB.
+        """Convert a FlexTool 2.0 input data file (and optionally the
+        sensitivities of its master workbook) to a Spine DB.
+
+        The whole import runs in ``cmd_read_old_flextool``: a new database at
+        the frozen import schema, the base data, the sensitivities (when a
+        master workbook is given), migration to the current version and the
+        end report of what could not be translated.  The sensitivities must
+        be written before the migration, so the master is asked for here.
 
         The conversion runs as an auxiliary job in the ExecutionManager.
         The dialog closes immediately and progress is shown in the
@@ -719,7 +749,7 @@ class AddDialog(tk.Toplevel):
 
         picker = FilePickerDialog(
             self,
-            title="Select old FlexTool input file",
+            title="Select FlexTool 2.0 input data file",
             initialdir=str(initial_dir),
             filetypes=[
                 ("Old FlexTool Excel", "*.xlsm *.xlsx"),
@@ -732,8 +762,14 @@ class AddDialog(tk.Toplevel):
         filepath = picker.result
         if not filepath:
             return
-
         filepath = Path(filepath)
+
+        master_path = ask_old_flextool_master(
+            self, filepath.parent, main_window_width, screen_height,
+        )
+        if master_path is False:
+            return
+
         dest_name = filepath.stem + ".sqlite"
         dest = self._input_dir / dest_name
 
@@ -746,66 +782,31 @@ class AddDialog(tk.Toplevel):
             )
             if not overwrite:
                 return
-            try:
-                dest.unlink()
-            except OSError as exc:
-                messagebox.showerror(
-                    "Error",
-                    f"Could not remove existing file:\n{exc}",
-                    parent=self,
-                )
-                return
 
-        # The old-FlexTool importer targets a FROZEN schema version (v56) and
-        # relies on migration to reach the live schema — so initialise from the
-        # frozen import template, not the live schema.  The conversion
-        # subprocess (or the sync fallback below) migrates to current after
-        # writing.
-        from flextool.process_inputs.write_old_flextool_to_db import (
-            OLD_FLEXTOOL_IMPORT_SCHEMA,
-        )
-        json_template = package_data_path(OLD_FLEXTOOL_IMPORT_SCHEMA)
-        if not json_template.exists():
-            messagebox.showerror(
-                "Template missing",
-                f"Cannot find template:\n{json_template}",
-                parent=self,
-            )
-            return
+        # Import into a working file OUTSIDE input_sources/ (the only folder
+        # the input-source scan reads) and move it in only when the import,
+        # which includes the migration, has succeeded.  A refresh during the
+        # import (another job finishing, the Refresh button) can then never
+        # find the database at the import version and migrate it under the
+        # importer.  Same filesystem (both under the project): the move is
+        # an atomic rename, which also replaces an existing destination.
+        work_dir = self._project_path / "intermediate"
+        work_dir.mkdir(parents=True, exist_ok=True)
+        work = work_dir / f"{filepath.stem}.ft2import.sqlite"
+        work.unlink(missing_ok=True)  # leftover of a crashed import
+        old_sources: set[str] = set()
+        if self._input_source_mgr is not None:
+            old_sources = {s.name for s in self._input_source_mgr._sources}
 
-        # Create empty Spine DB from template
-        try:
-            from flextool.update_flextool.initialize_database import (
-                initialize_database,
-            )
-            initialize_database(str(json_template), str(dest))
-        except Exception as exc:
-            messagebox.showerror(
-                "Initialisation failed",
-                f"Could not create target database:\n{exc}",
-                parent=self,
-            )
-            if dest.exists():
-                dest.unlink(missing_ok=True)
-            return
-
-        # Build the commands. The importer targets a frozen v56 schema and the
-        # migration to the current version runs afterwards as its OWN execution
-        # job (``--no-migrate`` keeps it out of the conversion subprocess), so
-        # the user sees a distinct, visible migration step.
-        db_url = f"sqlite:///{dest}"
+        db_url = f"sqlite:///{work}"
         cmd = [
             sys.executable, "-m",
             "flextool.cli.cmd_read_old_flextool",
             str(filepath),
             db_url,
-            "--no-migrate",
         ]
-        migrate_cmd = [
-            sys.executable, "-m",
-            "flextool.cli.cmd_migrate_database",
-            str(dest),
-        ]
+        if master_path is not None:
+            cmd += ["--master", str(master_path)]
 
         if self._execution_mgr is not None:
             # Run as auxiliary job — close dialog, show in execution window
@@ -830,100 +831,53 @@ class AddDialog(tk.Toplevel):
             if main_window.execution_window is not None:
                 main_window.execution_window.select_job(job.job_id)
 
-            def _stream(stream_cmd: list[str], stream_job) -> int:
-                """Run a subprocess, piping its output into ``stream_job``.
-
-                Returns the process exit code.
-                """
-                import os as _os
-                env = {**_os.environ, "PYTHONUNBUFFERED": "1"}
-                proc = subprocess.Popen(
-                    stream_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, bufsize=1, cwd=str(self._flextool_root), env=env,
-                )
-                with mgr._lock:
-                    stream_job.process = proc
-                for line in proc.stdout:  # type: ignore[union-attr]
-                    mgr.append_stdout(stream_job.job_id, line.rstrip("\n"))
-                proc.wait()
-                return proc.returncode
-
-            def _start_migration_job() -> None:
-                """Create and run migration as its own job (Tk main thread)."""
-                mig_job = mgr.add_auxiliary_job(
-                    JobType.MIGRATION,
-                    f"Migrate database: {dest_name}",
-                    f"old_convert_migrate:{filepath.name}",
-                )
-                mgr.append_stdout(
-                    mig_job.job_id,
-                    f"Migrating '{dest_name}' to the current schema version",
-                )
-                mgr.append_stdout(mig_job.job_id, " ".join(migrate_cmd))
-                mgr.append_stdout(mig_job.job_id, "")
-                main_window._open_or_raise_execution_window()
-                if main_window.execution_window is not None:
-                    main_window.execution_window.select_job(mig_job.job_id)
-
-                def _mig_worker() -> None:
-                    rc = 1
-                    try:
-                        rc = _stream(migrate_cmd, mig_job)
-                        if rc != 0:
-                            mgr.append_stdout(
-                                mig_job.job_id,
-                                f"\nMigration failed (exit code {rc}).",
-                            )
-                            if dest.exists():
-                                dest.unlink(missing_ok=True)
-                    except Exception as exc:
-                        logger.error("Database migration failed: %s", exc, exc_info=True)
-                        mgr.append_stdout(mig_job.job_id, f"\nError: {exc}")
-                        if dest.exists():
-                            dest.unlink(missing_ok=True)
-                    mgr.finish_job(mig_job.job_id, rc == 0)
-                    if rc == 0:
-                        try:
-                            main_window.after(0, main_window._refresh_input_sources)
-                        except Exception:
-                            pass
-
-                threading.Thread(target=_mig_worker, daemon=True).start()
-
             def _worker() -> None:
+                import os as _os
                 rc = 1
                 try:
-                    rc = _stream(cmd, job)
+                    env = {**_os.environ, "PYTHONUNBUFFERED": "1"}
+                    proc = subprocess.Popen(
+                        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        text=True, bufsize=1, cwd=str(self._flextool_root),
+                        env=env,
+                    )
+                    with mgr._lock:
+                        job.process = proc
+                    for line in proc.stdout:  # type: ignore[union-attr]
+                        mgr.append_stdout(job.job_id, line.rstrip("\n"))
+                    proc.wait()
+                    rc = proc.returncode
                     if rc != 0:
                         mgr.append_stdout(
                             job.job_id,
                             f"\nConversion failed (exit code {rc}).",
                         )
-                        if dest.exists():
-                            dest.unlink(missing_ok=True)
+                    else:
+                        _os.replace(work, dest)
+                        mgr.append_stdout(
+                            job.job_id, f"Input source '{dest_name}' is ready.")
                 except Exception as exc:
+                    rc = 1
                     logger.error("Old FlexTool conversion failed: %s", exc, exc_info=True)
                     mgr.append_stdout(job.job_id, f"\nError: {exc}")
-                    if dest.exists():
-                        dest.unlink(missing_ok=True)
+                work.unlink(missing_ok=True)
 
                 mgr.finish_job(job.job_id, rc == 0)
                 if rc == 0:
-                    # Chain migration as its own job, created on the Tk main
-                    # thread (job/window creation must not run off-thread).
+                    def _show_new_source() -> None:
+                        # Tick the new source and its scenarios (the dialog
+                        # closed before the database existed).
+                        main_window._refresh_input_sources()
+                        main_window._autocheck_new_sources(old_sources)
                     try:
-                        main_window.after(0, _start_migration_job)
+                        main_window.after(0, _show_new_source)
                     except Exception:
-                        pass
+                        pass  # Main window may be gone
 
             threading.Thread(target=_worker, daemon=True).start()
 
             self.result = True
             self.old_convert_started = True
-            # Store paths so sensitivity import can find them
-            self._last_base_xlsm = filepath
-            self._last_target_sqlite = dest
-            self._import_sens_btn.configure(state="normal")
         else:
             # Fallback: no execution manager — run synchronously with busy cursor
             self.config(cursor="watch")
@@ -933,162 +887,32 @@ class AddDialog(tk.Toplevel):
                     import_old_flextool_xlsm,
                 )
 
-                # Full pipeline: the DB was initialised from the frozen
-                # template above, so this writes the data and migrates the
-                # result up to the current schema version.
-                import_old_flextool_xlsm(
+                report = import_old_flextool_xlsm(
                     str(filepath), db_url,
                     alternative_name=_OLD_FLEX_ALTERNATIVE,
+                    master=str(master_path) if master_path is not None else None,
                 )
+                import os as _os
+                _os.replace(work, dest)
             except Exception as exc:
                 logger.error("Old FlexTool conversion failed: %s", exc, exc_info=True)
                 messagebox.showerror("Conversion failed", str(exc), parent=self)
-                if dest.exists():
-                    dest.unlink(missing_ok=True)
                 return
             finally:
+                work.unlink(missing_ok=True)
                 self.config(cursor="")
 
+            logger.info("%s", report.format())
             self.result = True
-            self._last_base_xlsm = filepath
-            self._last_target_sqlite = dest
-            self._import_sens_btn.configure(state="normal")
+            failed = (f"{len(report.failed)} value(s) could not be written. "
+                      if report.failed else "")
             messagebox.showinfo(
                 "Done",
-                f"Converted '{filepath.name}' \u2192 '{dest_name}' in input_sources.\n\n"
-                "You can now import sensitivities from a master file, "
-                "or close this dialog.",
-                parent=self,
-            )
-
-    def _on_import_sensitivities(self) -> None:
-        """Import sensitivities from a FlexTool 2.0 master file into the
-        database that was just created by the base conversion."""
-        if self._last_base_xlsm is None or self._last_target_sqlite is None:
-            return
-
-        try:
-            root = self.winfo_toplevel()
-            main_window_width = root.winfo_width()
-            screen_height = root.winfo_screenheight()
-        except Exception:
-            main_window_width = 700
-            screen_height = 800
-
-        # Let user pick the master file (start in same directory as base)
-        picker = FilePickerDialog(
-            self,
-            title="Select FlexTool 2.0 master file (with sensitivity definitions)",
-            initialdir=str(self._last_base_xlsm.parent),
-            filetypes=[
-                ("Old FlexTool Excel", "*.xlsm *.xlsx"),
-                ("All files", "*"),
-            ],
-            multiple=False,
-            width=main_window_width,
-            height=int(screen_height * 0.75),
-        )
-        master_path = picker.result
-        if not master_path:
-            return
-
-        target_db_url = f"sqlite:///{self._last_target_sqlite}"
-        cmd = [
-            sys.executable, "-m",
-            "flextool.cli.cmd_import_sensitivities",
-            str(master_path),
-            str(self._last_base_xlsm),
-            target_db_url,
-        ]
-
-        if self._execution_mgr is not None:
-            from flextool.gui.execution_manager import JobType
-
-            job = self._execution_mgr.add_auxiliary_job(
-                JobType.CONVERSION,
-                f"Import sensitivities → '{self._last_target_sqlite.name}'",
-                f"import_sensitivities:{self._last_target_sqlite.name}",
-            )
-            self._execution_mgr.append_stdout(
-                job.job_id,
-                f"Importing sensitivities from '{Path(master_path).name}'\n",
-            )
-            self._execution_mgr.append_stdout(job.job_id, " ".join(cmd))
-            self._execution_mgr.append_stdout(job.job_id, "")
-
-            mgr = self._execution_mgr
-
-            def _worker() -> None:
-                import os as _os
-                success = False
-                try:
-                    env = {**_os.environ, "PYTHONUNBUFFERED": "1"}
-                    proc = subprocess.Popen(
-                        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                        text=True, bufsize=1,
-                        cwd=str(self._flextool_root), env=env,
-                    )
-                    with mgr._lock:
-                        job.process = proc
-
-                    for line in proc.stdout:  # type: ignore[union-attr]
-                        mgr.append_stdout(job.job_id, line.rstrip("\n"))
-
-                    proc.wait()
-                    success = proc.returncode == 0
-                    if success:
-                        mgr.append_stdout(job.job_id, "\nSensitivity import succeeded.")
-                    else:
-                        mgr.append_stdout(
-                            job.job_id,
-                            f"\nSensitivity import failed (exit code {proc.returncode}).",
-                        )
-                except Exception as exc:
-                    logger.error("Sensitivity import failed: %s", exc, exc_info=True)
-                    mgr.append_stdout(job.job_id, f"\nError: {exc}")
-
-                mgr.finish_job(job.job_id, success)
-                # Refresh the main window so new scenarios appear checked
-                if success:
-                    try:
-                        main_window.after(0, main_window._refresh_and_check_new_scenarios)
-                    except Exception:
-                        pass  # Main window may be gone
-
-            main_window = self.master  # capture before thread starts
-            threading.Thread(target=_worker, daemon=True).start()
-            self._import_sens_btn.configure(state="disabled")
-            self.result = True
-        else:
-            # Fallback: run synchronously
-            self.config(cursor="watch")
-            self.update()
-            try:
-                from flextool.process_inputs.read_old_flextool import (
-                    read_old_flextool, read_old_flextool_sensitivities,
-                )
-                from flextool.process_inputs.write_old_flextool_to_db import (
-                    write_sensitivities_to_db,
-                )
-
-                data = read_old_flextool(str(self._last_base_xlsm))
-                sensitivities = read_old_flextool_sensitivities(str(master_path))
-                write_sensitivities_to_db(
-                    sensitivities, data, target_db_url,
-                    base_alternative=_OLD_FLEX_ALTERNATIVE,
-                )
-            except Exception as exc:
-                logger.error("Sensitivity import failed: %s", exc, exc_info=True)
-                messagebox.showerror("Import failed", str(exc), parent=self)
-                return
-            finally:
-                self.config(cursor="")
-
-            self._import_sens_btn.configure(state="disabled")
-            self.result = True
-            messagebox.showinfo(
-                "Done",
-                f"Sensitivities imported into '{self._last_target_sqlite.name}'.",
+                f"Converted '{filepath.name}' \u2192 '{dest_name}' in "
+                f"input_sources.\n\n{failed}{len(report.unmapped)} FlexTool 2 "
+                "input(s) were not carried over or work differently in "
+                "FlexTool 4. The import report, with what to do for each, is "
+                "in the FlexTool log (flextool_gui.log in the projects folder).",
                 parent=self,
             )
 

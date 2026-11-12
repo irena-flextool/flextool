@@ -112,6 +112,11 @@ def test_list_runs_filters(mctx) -> None:
     # The 4 failed runs, at most five: with full detail.
     assert sorted(r["folder"] for r in unusable["runs"]) == sorted(_folders()[-4:])
     assert unusable["same_in_every_row"]["state"] == "failed"
+    # The filter hides the other 63 runs (43 without a record + 20 succeeded), all with usable results (B1, T1:
+    # a model that meant results_usable false as "no filter" sees what it hid).
+    assert unusable["hidden_by_filters"] == ("Result folders hidden by the filters (results_usable): 63, 63 of them "
+                                             "with usable results. Leave a filter out to see them.")
+    assert "hidden_by_filters" not in _call(mctx, "list_runs", all=True)
     y2020 = _call(mctx, "list_runs", folders=["y2020*"])
     assert sorted(r["folder"] for r in y2020["runs"]) == ["y2020_2029_1x10y_1", "y2020_2029_2x5y_1"]
     assert all(r["verdict"] == "infeasible" for r in y2020["runs"])
@@ -124,9 +129,20 @@ def test_list_runs_filters(mctx) -> None:
     # Many runs named exactly: still full.
     many = _call(mctx, "list_runs", folders=_folders()[:8])
     assert "columns" not in many and len(many["runs"]) == 8
+    # The state is an enum of the run states (gpt-oss invented "success", 2026-11-11); another is refused in plain
+    # English with the states of this project's runs, as before the enum.
     refused = call_tool(mctx, "list_runs", {"state": "finished"})
     assert not refused.ok and refused.message == ('There is no run state "finished". The states of this project\'s '
                                                   'runs are: "succeeded", "failed", "no_record".')
+    # An empty state is a placeholder (B1, T1): the call lists as one without the filter, with no hidden line.
+    assert _call(mctx, "list_runs", state="") == _call(mctx, "list_runs")
+    # Any other enum is refused in plain English by the schema check, its values quoted as names.
+    detail = call_tool(mctx, "list_runs", {"detail": "summary"})
+    assert not detail.ok and detail.message == ('The arguments of "list_runs" are not valid: detail: "summary" is '
+                                                'not one of its values, which are "scan", "overview", "full".')
+    assert all_tools()["list_runs"].input_schema["properties"]["state"] == {
+        "type": "string", "enum": ["succeeded", "failed", "killed", "interrupted", "crashed", "running", "abandoned",
+                                   "unknown", "unreadable", "malformed", "no_record"]}
     unknown = call_tool(mctx, "list_runs", {"folders": ["base_2"]})
     assert not unknown.ok and unknown.message.startswith('There is no result folder "base_2".')
     assert all_tools()["list_runs"].input_schema["properties"]["detail"] == {

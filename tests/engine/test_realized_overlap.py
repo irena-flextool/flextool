@@ -279,3 +279,26 @@ def test_effective_realized_invest_periods_falls_back_to_realized_periods():
         invest_periods={},
         realized_periods={"s": [("p2020", "p2020")]},
     ) == []
+
+
+def test_effective_realized_invest_periods_fallback_keeps_only_invest_periods():
+    """#319: the fallback realizes the realized_periods that are also invest_periods (realized order)."""
+    assert effective_realized_invest_periods(
+        "s",
+        realized_invest_periods={},
+        invest_periods={"s": [("p1", "p1")]},
+        realized_periods={"s": [("p1", "p1"), ("p2", "p2")]},
+    ) == ["p1"]
+    assert effective_realized_invest_periods(
+        "s",
+        realized_invest_periods={},
+        invest_periods={"s": [("p3", "p3"), ("p1", "p1")]},
+        realized_periods={"s": [("p1", "p1"), ("p2", "p2"), ("p3", "p3")]},
+    ) == ["p1", "p3"]
+    # An explicit realized_invest_periods is used as it is.
+    assert effective_realized_invest_periods(
+        "s",
+        realized_invest_periods={"s": [("p2", "p2")]},
+        invest_periods={"s": [("p1", "p1"), ("p2", "p2")]},
+        realized_periods={"s": [("p1", "p1"), ("p2", "p2")]},
+    ) == ["p2"]

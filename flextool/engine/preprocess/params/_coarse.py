@@ -130,14 +130,15 @@ def coarse_node_frames(*, node_group: dict[str, str], group_step: dict[str, floa
                        dtttdt: "pl.DataFrame | None", rp_block_first: "pl.DataFrame | None" = None,
                        realized: "pl.DataFrame | None" = None, balance_nodes: "pl.DataFrame | None" = None,
                        state_nodes: "pl.DataFrame | None" = None, block_nodes: "pl.DataFrame | None" = None,
-                       solve: str = "") -> "CoarseFrames | None":
+                       solve: str = "", rolling: bool = False) -> "CoarseFrames | None":
     """Coarse steps of the balance / storage nodes of every coarse group (see the module docstring).
 
     ``node_group`` node -> group (``default`` for none), ``group_step`` group -> new_stepduration (h),
     ``solve_step`` the solve's step (h).  ``dt`` ``(d, t)`` in solve order, ``step_duration`` ``(d, t, value)``,
     ``dtttdt`` ``(d, t, t_previous_within_timeset)``, ``rp_block_first`` ``(d, t)``, ``realized`` ``(d, t)``
     the realized steps (``None``: every step), ``balance_nodes`` / ``state_nodes`` / ``block_nodes`` ``(n)``:
-    the nodes with a per-step balance, the storage nodes and the ``bind_intraperiod_blocks`` nodes.
+    the nodes with a per-step balance, the storage nodes and the ``bind_intraperiod_blocks`` nodes;
+    ``rolling`` a roll of a rolling solve (names the roll boundary that cuts a coarse step in the error).
     Returns ``None`` when no node is coarse."""
     groups = coarse_groups(node_group, group_step, solve_step, solve)
     if not groups:
@@ -224,16 +225,8 @@ def coarse_node_frames(*, node_group: dict[str, str], group_step: dict[str, floa
                     acc, cur = 0.0, []
             if cur:
                 if has_rp:
-                    raise FlexToolConfigError(
-                        "Coarse time resolution is not aligned with the representative periods.\n\n"
-                        f"The group {g!r} sets a coarser time resolution (new_stepduration {gstep:g} h) on its "
-                        "nodes, but that step length does not evenly divide the length of a representative "
-                        f"period (period {d!r}, coarse step starting {cur[0]!r}).\n\n"
-                        "Representative periods are individual days/weeks sampled from across the year; a coarse "
-                        "time step cannot reach across the boundary between two of them.\n\n"
-                        "Fix: choose a new_stepduration that divides the representative-period length exactly "
-                        "(e.g. for 24-hour representative days use 2, 3, 4, 6, 8, 12 or 24 hours), or remove the "
-                        "coarse resolution from these nodes.")
+                    raise FlexToolConfigError(_rp_misaligned_message(
+                        g, gstep, d, run, cur, steps_by_period, rp_first, realized_end, rolling))
                 chunks.append((d, cur))
         for n in nodes_by_group[g]:
             for d, ts in chunks:
@@ -250,6 +243,50 @@ def coarse_node_frames(*, node_group: dict[str, str], group_step: dict[str, floa
                 if interior_rows else None)
     return CoarseFrames(nodeCoarse=node_coarse_step.select("n").unique(maintain_order=True),
                         node_coarse_step=node_coarse_step, node_coarse_interior=interior)
+
+
+def _rp_misaligned_message(g: str, gstep: float, d: str, run: list[str], cur: list[str],
+                           steps_by_period: dict[str, list[str]], rp_first: set[tuple[str, str]],
+                           realized_end: set[tuple[str, str]], rolling: bool) -> str:
+    """The error for a run of steps ``run`` of period ``d`` whose last coarse step ``cur`` is cut short, naming
+    the boundary that cuts it: in a roll its realized end (rolling_solve_jump), its start (the previous roll's
+    realized end) or its horizon end (rolling_solve_horizon), otherwise a representative period's length."""
+    ts = steps_by_period[d]
+    i0, i1 = ts.index(run[0]), ts.index(run[-1])
+    nxt = ts[i1 + 1] if i1 + 1 < len(ts) else None
+    head = ("Coarse time resolution is not aligned with the representative periods.\n\n"
+            f"The group {g!r} sets a coarser time resolution (new_stepduration {gstep:g} h) on its nodes, but ")
+    # A representative block starts at an rp_block_first step; a run starting or ending elsewhere is cut by a roll.
+    cut = None
+    if (d, run[-1]) in realized_end and nxt is not None and (d, nxt) not in rp_first:
+        cut = f"the realized part of this roll ends at step {run[-1]!r} (rolling_solve_jump)"
+    elif (d, run[0]) not in rp_first and i0 > 0 and (d, ts[i0 - 1]) in realized_end:
+        cut = f"the realized part of this roll ends at step {ts[i0 - 1]!r} (rolling_solve_jump)"
+    elif rolling and i0 == 0 and (d, run[0]) not in rp_first:
+        cut = (f"this roll starts at step {run[0]!r}, where the previous roll's realized part ended "
+               "(rolling_solve_jump)")
+    elif rolling and realized_end and nxt is None and d == next(reversed(steps_by_period)):
+        cut = f"this roll's horizon ends at step {run[-1]!r} (rolling_solve_horizon)"
+    if cut is not None:
+        return (head + f"{cut}, inside a representative period and inside the coarse step starting {cur[0]!r} "
+                f"(period {d!r}).\n\n"
+                "A coarse time step cannot reach across a roll boundary, and in a rolling solve on representative "
+                "periods the rolls start, realize and end inside the representative periods wherever "
+                "rolling_solve_jump and rolling_solve_horizon put them.\n\n"
+                "Fix: choose rolling_solve_jump and rolling_solve_horizon so that every roll boundary falls on a "
+                "coarse step boundary of its representative period, or a new_stepduration that divides both the "
+                "representative-period length and the hours from the start of the representative period to each "
+                "roll boundary (e.g. a 36 h jump over 24-hour representative days cuts them at 12 h: use 2, 3, 4, "
+                "6 or 12 hours), or remove the coarse resolution from these nodes.")
+    return (head + "that step length does not evenly divide the length of a representative "
+            f"period (period {d!r}, coarse step starting {cur[0]!r}).\n\n"
+            "Representative periods are individual days/weeks sampled from across the year; a coarse "
+            "time step cannot reach across the boundary between two of them.\n\n"
+            "Fix: choose a new_stepduration that divides the representative-period length exactly "
+            "(e.g. for 24-hour representative days use 2, 3, 4, 6, 8, 12 or 24 hours), or remove the "
+            "coarse resolution from these nodes."
+            + ("  In a rolling solve the end of each roll (rolling_solve_horizon) must also fall on a coarse "
+               "step boundary." if rolling else ""))
 
 
 def coarse_membership_warnings(process_group: list[tuple[str, str]], process_nodes: dict[str, set[str]],

@@ -4,10 +4,10 @@
 
 Gurobi is a commercial linear, mixed-integer, and quadratic programming
 solver used widely on large energy-system optimisation models. FlexTool
-dispatches to Gurobi through polar-high's adapter; FlexTool itself never
-imports `gurobipy` directly and never inspects a licence. Pre-configured
-`gurobipy.Env` objects (for example with WLS credentials) can be passed
-through, but the licence-discovery path is Gurobi's own.
+writes each solve's model to an MPS file and runs Gurobi's command-line
+solver `gurobi_cl` on it in a separate process (found on `PATH`, or in
+`~/gurobi/bin`), passing every parameter as a `Name=value` argument. FlexTool
+never inspects a licence: the licence-discovery path is Gurobi's own.
 
 Official site: <https://www.gurobi.com/>
 
@@ -32,13 +32,8 @@ Install the Python wrapper:
 pip install gurobipy
 ```
 
-polar-high also requires `scipy` for the vectorised matrix load on the
-Gurobi path; it is normally already present in a FlexTool environment, but
-if `pip install gurobipy` complains about a missing dependency, add it:
-
-```bash
-pip install scipy
-```
+`gurobipy` lets FlexTool detect Gurobi at start ("Solvers:" line); the solve
+itself runs `gurobi_cl`, which comes with the Gurobi installation.
 
 After installing the wrapper, set up a licence file. The simplest
 single-machine path:
@@ -53,11 +48,8 @@ single-machine path:
    - any path of your choice, then set the `GRB_LICENSE_FILE` environment
      variable to that path.
 
-WLS and Compute Server users typically build a `gurobipy.Env` programmatically
-with credentials from the Gurobi web portal; FlexTool's dispatch
-accepts a pre-built env via the polar-high `env=` kwarg, but routing one
-through from a FlexTool scenario is currently a developer-level operation
-(no Spine parameter for the env object yet).
+WLS and Compute Server users set up the licence the way `gurobi_cl` reads it
+(a `gurobi.lic` with the WLS credentials, or `GRB_LICENSE_FILE`).
 
 ## Verification
 
@@ -86,28 +78,34 @@ A clean exit (no `GurobiError`) means the licence is found.
 
 ## Common errors
 
-The error messages below are what FlexTool surfaces as
-`FlexToolUserError` — they wrap polar-high's exception, which in turn wraps
-Gurobi's raw `GurobiError`. The raw vendor text appears in the FlexTool log
-as the cause of the wrapped exception.
+FlexTool runs Gurobi as the `gurobi_cl` command-line program. When it fails,
+FlexTool stops the run with a `FlexToolUserError` whose message includes
+`gurobi_cl`'s own output (its `stdout` and `stderr`), so Gurobi's text is in
+the FlexTool log.
 
-- **No licence file found.** Gurobi `GurobiError` with `errno` in
-  `10009..10015` (most commonly `10009` "No Gurobi license found"). FlexTool
-  shows: *"Solver 'gurobi' is installed but its license check failed.
-  Details: Gurobi license check failed (code 10009): No Gurobi license
-  found. Place gurobi.lic at $HOME or /opt/gurobi/, set GRB_LICENSE_FILE,
-  or pass a configured gurobipy.Env via env=..."*. Fix by placing the
-  `gurobi.lic` file or setting `GRB_LICENSE_FILE`.
-- **Licence expired.** Same FlexTool message family with the vendor text
-  *"License has expired"*. Renew through the Gurobi web portal.
-- **Wrapper installed but `scipy` missing.** FlexTool shows: *"Solver
-  'gurobi' is not installed on this system. ..."* with the underlying
-  cause "*scipy is not installed (required by the Gurobi adapter for
-  vectorized matrix load)*". Run `pip install scipy`.
-- **Unknown Gurobi option.** Setting a typo'd key in `solver_arguments`
-  (e.g. `TimeLImit` instead of `TimeLimit`) raises `GurobiError` from
-  `Model.setParam`; FlexTool surfaces it as *"Solver 'gurobi' returned an
-  error: Gurobi error (code ...): unknown parameter ..."*. Fix the typo.
+- **No licence, or the licence check failed.** `gurobi_cl` exits with an
+  error and prints, for example, *"No Gurobi license found"*. FlexTool shows:
+  *"Solver 'gurobi' subprocess failed a license check. Details: 'gurobi'
+  CLI for solve '<solve>' exited with returncode=... --- stdout --- ..."*
+  (see [License options](#license-options)). Fix by placing the
+  `gurobi.lic` file in your home folder (or `/opt/gurobi/`) or by setting
+  `GRB_LICENSE_FILE` in the environment FlexTool runs in.
+- **Licence expired.** The same message, with Gurobi's text *"License has
+  expired"*. Renew the licence through the Gurobi web portal.
+- **`gurobi_cl` not found.** *"Solver 'gurobi' CLI binary is not installed on
+  this system."* Install Gurobi and put `gurobi_cl` on the `PATH`.
+- **Unknown Gurobi parameter.** A misspelt name in `solver_arguments` or
+  `gurobi.opt` (e.g. `MIPGapp`) is ignored by Gurobi, which prints
+  `Unknown parameter: 'MIPGapp' (ignored)` and solves on. FlexTool repeats it
+  as a warning naming where the parameter was set (the option file, or the
+  `solver_arguments` of which solve). Fix the name. With console logging off
+  (`LogToConsole 0`) Gurobi prints no such line, and there is no warning.
+- **File-writing parameters.** `ResultFile`, `LogFile`, `SolFiles` and
+  `NodefileDir` are not passed to Gurobi (with a warning): FlexTool reads the
+  solution from its own result file.
+- **Time limit reached.** A MIP stopped at its time limit with a solution is
+  kept with a warning that gives the gap reached; an LP, or a MIP without a
+  solution, stops the run. See [Time limit](index.md#time-limit).
 
 ## How to set it in FlexTool
 
@@ -122,12 +120,21 @@ solve_advanced.solver_arguments:
   MIPFocus   = 1
 ```
 ```bash
-flextool <input_db_url> --solver-time-limit 60 --highs-threads 8
+flextool <input_db_url> --solver-time-limit 60 --solver-mip-gap 0.001
 ```
 
-The convenience knobs translate to `TimeLimit`, `MIPGap`, and `Threads`
-respectively. Raw `solver_arguments` entries pass through untouched and win
-on any key collision with the convenience knobs.
+`--solver-time-limit 60` reaches Gurobi as `TimeLimit=60` and
+`--solver-mip-gap 0.001` as `MIPGap=0.001`, over the solve's
+`solver_mip_gap` (0.005) and any `MIPGap` in `solver_arguments` or
+`gurobi.opt`. Without the flags, `solver_mip_gap` gives `MIPGap=0.005`, and a
+`MIPGap` (or `mipgap`: names match without regard to case) in
+`solver_arguments` wins over it. The thread count comes from `Threads` in
+`gurobi.opt` (`--threads` and `--highs-threads` do not change it). The run
+prints what Gurobi receives, for example:
+
+```text
+Solver args (gurobi): Threads=1, MIPGap=0.001, LogToConsole=1, Method=2, Presolve=2, MIPFocus=1, TimeLimit=60
+```
 
 ---
 

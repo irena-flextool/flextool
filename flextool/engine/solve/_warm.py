@@ -108,8 +108,9 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "process_source_sink_ramp_limit_sink_down",
     "process_source_sink_ramp_limit_source_up",
     "process_source_sink_ramp_limit_source_down",
+    "process_source_sink_ramp_cost",
     # Online / UC.
-    "process_online", "process_online_linear", "process_online_integer", "process_exact",
+    "process_online", "process_online_linear", "process_online_integer", "process_exact", "relax_integrality",
     "process_minload", "process_min_load_eff",
     "p_online_dt", "pdt_online_linear", "pdt_online_integer",
     "pdt_uptime_set", "pdt_downtime_set",
@@ -126,7 +127,7 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     # Phase E — landed with the per-period cyclic-closure variant.
     "storage_bind_within_period_blended_weights",
     "storage_fix_start", "storage_fix_end", "storage_solve_at_model_end",
-    "dtttdt", "dtttdt_forward_only",
+    "dtttdt", "dtttdt_forward_only", "dtttdt_within_solve",
     "n_fix_storage_quantity", "ndt_fix_storage_quantity", "ndt_fix_storage_price",
     "dtt_timeline_matching", "period_branch", "period_last",
     "nodeState_last_dt",

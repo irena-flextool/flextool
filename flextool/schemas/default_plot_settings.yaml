@@ -19,6 +19,14 @@
 #
 #   scenarios:    colors for comparison scenarios.
 #
+#   write_plot_data: true   (optional, top level)
+#                 also write the data drawn in each plot as a CSV file
+#                 next to its image (same name, .csv), for the scenario and
+#                 the comparison plots.  The same as the --write-plot-data
+#                 command-line option and the GUI's "Write plotted data
+#                 (CSV)" checkbox; any of them turns it on, so a ``true``
+#                 here cannot be switched off from the GUI.
+#
 # Entry VALUES may be either a ``#RRGGBB`` hex string or an ``[r, g, b]``
 # list.  RGB components are accepted as floats in ``0..1`` or ints in
 # ``0..255``.  An entity entry may instead be a mapping with an optional
@@ -69,6 +77,8 @@ categories:
     other operational:                     '#8856a7'   # purple
     # Startup (amber/yellow — "ignition")
     starts:                                '#e6a41a'   # amber
+    # Ramping (lighter amber — the startup's operational sibling)
+    ramps:                                 '#f2cf73'   # light amber
     # Slack / penalties (red / magenta family — alarming)
     upward slack penalty:                  '#d62728'   # strong red
     downward slack penalty:                '#ff7f7f'   # light red

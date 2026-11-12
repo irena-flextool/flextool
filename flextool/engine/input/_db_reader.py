@@ -31,17 +31,69 @@ def check_version(db: api.DatabaseMapping, logger: logging.Logger) -> None:
         run_record.active().note_input(db_version=int(_version) if _version.is_integer() else _version)
     except (TypeError, ValueError):
         run_record.active().note_input(db_version=str(database_version))
-    tool_version = 25.0
-    if float(database_version) < tool_version:
-        message = (
-            "The input database is in an older version than the tool.\n"
-            "Please migrate the database to the new version:\n"
-            "- Make sure FlexTool python environment is activated\n"
-            "- cd to flextool directory\n"
-            "- run command: python migrate_database.py path_to_database\n"
-            "where path_to_database is replaced by the filepath of your current input database"
+    from flextool.update_flextool import FLEXTOOL_DB_VERSION
+
+    try:
+        found = float(database_version)
+    except (TypeError, ValueError):
+        raise FlexToolConfigError(
+            f"The FlexTool version of the input database ({database_version!r}) is not a number; "
+            "check you have a correct database."
+        ) from None
+    if found == FLEXTOOL_DB_VERSION:
+        return
+    location = _database_location(db)
+    shown = int(found) if found.is_integer() else found
+    if found < FLEXTOOL_DB_VERSION:
+        raise FlexToolConfigError(
+            f"The input database is at FlexTool data version {shown}; this FlexTool needs version "
+            f"{FLEXTOOL_DB_VERSION}. FlexTool does not run a database that has not been migrated.\n"
+            f"Migrate it first:  flextool-migrate-database {location}\n"
+            "or add --migrate to the flextool-run command to migrate it before the run.\n"
+            "A frozen database is not migrated in place: add --copy-to NEW.sqlite to migrate a copy and run that.\n"
+            "(The FlexTool window migrates its input sources when it refreshes them, and Spine Toolbox runs the "
+            "'Migrate database' tool before FlexTool.)"
         )
-        raise FlexToolConfigError(message)
+    raise FlexToolConfigError(
+        f"The input database is at FlexTool data version {shown}, newer than this FlexTool (version "
+        f"{FLEXTOOL_DB_VERSION}). Update FlexTool (flextool-update, or pip install --upgrade flextool) to run it."
+    )
+
+
+def schema_version_message(db_url: str, exc: Exception) -> str:
+    """The run error for an input database whose SpineDB schema revision is not this spinedb_api's."""
+    from flextool.update_flextool.frozen import sqlite_path_from
+
+    path = sqlite_path_from(str(db_url))
+    location = str(path) if path is not None else str(db_url)
+    if any(ch.isspace() for ch in location):
+        location = f'"{location}"'
+    if getattr(exc, "upgrade_available", True):
+        return (
+            "The SpineDB schema of the input database is older than this FlexTool's spinedb_api, and FlexTool does "
+            "not upgrade it when it runs.\n"
+            f"Migrate it first:  flextool-migrate-database {location}\n"
+            "or add --migrate to the flextool-run command to migrate it before the run.\n"
+            "A frozen database is not migrated in place: add --copy-to NEW.sqlite to migrate a copy and run that.\n"
+            "(The FlexTool window migrates its input sources when it refreshes them, and Spine Toolbox runs the "
+            "'Migrate database' tool before FlexTool.)"
+        )
+    return (
+        "The SpineDB schema of the input database is newer than this FlexTool's spinedb_api (it was written by a "
+        "newer Spine Toolbox or FlexTool). Update FlexTool (flextool-update, or pip install --upgrade flextool) to "
+        f"run it. ({exc})"
+    )
+
+
+def _database_location(db: api.DatabaseMapping) -> str:
+    """The file of a sqlite input database for the migrate hint (its URL otherwise, ``<database>`` if unknown)."""
+    url = getattr(db, "sa_url", None)
+    if url is None:
+        return "<database>"
+    database = getattr(url, "database", None)
+    if getattr(url, "drivername", "").startswith("sqlite") and database:
+        return f'"{database}"' if any(ch.isspace() for ch in database) else database
+    return str(url)
 
 
 def get_single_entities(db: api.DatabaseMapping, entity_class_name: str) -> list[str]:

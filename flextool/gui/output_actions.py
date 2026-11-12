@@ -227,6 +227,8 @@ class OutputActionManager:
 
         if single.only_first_file:
             cmd.append("--only-first-file-per-plot")
+        if single.write_plot_data:
+            cmd.append("--write-plot-data")
 
         return cmd
 
@@ -296,6 +298,8 @@ class OutputActionManager:
 
         if comp.only_first_file:
             cmd.append("--only-first-file-per-plot")
+        if comp.write_plot_data:
+            cmd.append("--write-plot-data")
 
         return cmd
 

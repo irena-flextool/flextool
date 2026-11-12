@@ -267,6 +267,7 @@ def load_project_settings(
             config_file=single_plot.get("config_file", ""),
             active_configs=single_plot.get("active_configs", []),
             only_first_file=single_plot.get("only_first_file", False),
+            write_plot_data=single_plot.get("write_plot_data", False),
             variant_durations=_clean_variant_durations(
                 single_plot.get("variant_durations", {})
             ),
@@ -281,6 +282,7 @@ def load_project_settings(
             active_configs=comp_plot.get("active_configs", []),
             dispatch_plots=comp_plot.get("dispatch_plots", True),
             only_first_file=comp_plot.get("only_first_file", False),
+            write_plot_data=comp_plot.get("write_plot_data", False),
             variant_durations=_clean_variant_durations(
                 comp_plot.get("variant_durations", {})
             ),

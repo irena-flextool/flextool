@@ -5,7 +5,7 @@ import pandas as pd
 
 # Variables: droplevel('solve') only
 _V_DROP = [
-    'flow', 'ramp', 'reserve', 'state', 'self_discharge',
+    'flow', 'ramp_up', 'ramp_down', 'reserve', 'state', 'self_discharge',
     'online_linear', 'startup_linear', 'shutdown_linear',
     'online_integer', 'startup_integer', 'shutdown_integer',
     'q_state_up', 'q_state_down', 'q_reserve',
@@ -57,7 +57,7 @@ _PAR_DROP = [
     'process_availability', 'process_source_sink_varCost',
     'process_slope', 'process_section',
     'node_self_discharge_loss', 'node_penalty_up', 'node_penalty_down',
-    'node_inflow', 'commodity_price', 'group_co2_price',
+    'node_inflow', 'commodity_price', 'group_co2_price', 'group_inertia_limit',
     # ladder_price_ann (commodity price ladder, #57): authored per period, invariant across rolls that
     # touch the same period — same keep='last' bucket as commodity_price for symmetry.
     'ladder_price_ann',
@@ -107,10 +107,10 @@ _PAR_DEDUP = [
     'years_from_start_d', 'years_represented_d',
     'entity_max_units',
     'process_startup_cost',
+    'process_ramp_cost',
     'entity_fixed_cost', 'entity_lifetime_fixed_cost', 'entity_lifetime_fixed_cost_divest',
     'node_annual_flow',
     'group_penalty_inertia', 'group_penalty_non_synchronous',
-    'group_inertia_limit',
     'node_capacity_for_scaling', 'group_capacity_for_scaling',
 ]
 
@@ -283,6 +283,15 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
         obj = obj.droplevel('solve')
         setattr(par, attr, obj[~obj.index.duplicated(keep='first')])
 
+    # process_node_startup_energy is the same in every solve that has it; a solve whose reduce_unit_detail_method
+    # left out the start-ups has no value (NaN): the first value per period and (process, node).
+    se = getattr(par, 'process_node_startup_energy', None)
+    if se is not None and 'solve' in (se.index.names or ()):
+        se = se.droplevel('solve')
+        if not se.empty:
+            se = se.groupby(level='period', sort=False).first()
+        par.process_node_startup_energy = se
+
     # complete_period_share_of_year — order-independent max-per-period
     # reduction (deterministic across multi-solve union order).  See
     # _reduce_share_per_period for the full rationale.
@@ -292,6 +301,8 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
 
     # Sets have varied special handling so are done individually
     s.solve_period = s.d_realized_period
+    # (solve, period) of the realized investments, for the solve label of the investment tables (#210).
+    s.solve_invest_period = s.d_realize_invest
     # Save per-timestep solve mapping before dropping (for correct re-join in CSV output)
     # For rolling scenarios, keep only the last solve's mapping per (period, time)
     s.solve_period_time = s.dt_realize_dispatch

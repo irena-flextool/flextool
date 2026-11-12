@@ -18,7 +18,7 @@ def main():
         parser.add_argument('--settings-db-url', type=str, default=None,
                             help='URL of the settings database (fills in unset params)')
         parser.add_argument('--config-path', type=str, default=None,
-                            help='Path to output configuration YAML file (default: templates/default_plots.yaml)')
+                            help='Path to output configuration YAML file (default: the bundled flextool/schemas/default_plots.yaml)')
         parser.add_argument('--active-configs', type=str, nargs='+', default=None,
                             help='Which plot configurations from config_path yaml to use (default: default)')
         parser.add_argument('--output-location', type=str, default=None,
@@ -41,6 +41,8 @@ def main():
                             help='Enable debug output')
         parser.add_argument('--only-first-file-per-plot', action='store_true', default=False,
                             help='Only produce the first file for each plot (quick overview mode)')
+        parser.add_argument('--write-plot-data', action='store_true', default=False,
+                            help='Also write the data drawn in each plot as a CSV file next to it (same name, .csv)')
         parser.add_argument('--single-result', type=str, nargs=6,
                             metavar=('KEY', 'CSV_NAME', 'PLOT_NAME', 'PLOT_TYPE', 'SUBPLOTS_PER_ROW', 'LEGEND_POSITION'),
                             help='Process a single result (overrides --config): key csv_name plot_name plot_type subplots_per_row legend_position. Use "null" for None values.')
@@ -116,6 +118,7 @@ def main():
                     settings_db_url=args.settings_db_url,
                     plot_file_format=args.plot_file_format,
                     only_first_file=args.only_first_file_per_plot,
+                    write_plot_data=args.write_plot_data,
                     results_db_url=args.results_db_url,
                 )
         finally:

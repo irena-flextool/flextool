@@ -27,20 +27,25 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine.preprocess.emit._pdt_lookup import PdLookup
+from flextool.engine.preprocess._annuity import (
+    DEFAULT_DISCOUNT_RATE,
+    annuity_factor,
+    require_lifetime,
+)
 from flextool.engine.preprocess.params._branch import annuity_window_pairs
 from flextool.engine.preprocess._provider_io import _emit
+from flextool.engine.preprocess.params._existing import (
+    DIVEST_NOT_ALLOWED as _DIVEST_NOT_ALLOWED,
+    INVEST_NOT_ALLOWED as _INVEST_NOT_ALLOWED,
+)
 
 
 # ---------------------------------------------------------------------------
 # Method-enum constants — mirror flextool/flextool_base.dat:211-212.
 # ---------------------------------------------------------------------------
 
-_INVEST_NOT_ALLOWED: frozenset[str] = frozenset((
-    "not_allowed", "retire_period", "retire_total", "retire_no_limit",
-))
-_DIVEST_NOT_ALLOWED: frozenset[str] = frozenset((
-    "not_allowed", "invest_period", "invest_total", "invest_no_limit",
-))
+# The invest/retire method lists (_INVEST_NOT_ALLOWED / _DIVEST_NOT_ALLOWED)
+# are imported from params/_existing.py, their one definition.
 
 
 # ---------------------------------------------------------------------------
@@ -134,18 +139,22 @@ def _rows_to_frame(rows: list[tuple[str, str, float]]) -> pl.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def _annuity(invest_value: float, discount_rate: float, lifetime: float) -> float:
-    """Mod-faithful annuity:  inv * 1000 * r / (1 - 1/(1+r)^n).
+def _annuity(lookup: PdLookup, e: str, d: str, cost_param: str) -> float:
+    """``cost × 1000 × annuity_factor(r, n)`` of entity ``e`` in period ``d`` (:mod:`.._annuity`).
 
-    Falls back to ``r = 0.05`` when discount_rate ≤ 0 and ``n = 20`` when
-    lifetime ≤ 0 (mirrors the ``else 0.05`` / ``else 20`` legs in
-    ``flextool.mod``).
+    A missing ``discount_rate`` is ``DEFAULT_DISCOUNT_RATE`` (the schema default); an explicit 0 stays 0 (the
+    straight-line annuity ``cost / lifetime``).  A zero cost gives 0 whatever the lifetime; a non-zero cost
+    without a positive lifetime is an error (:func:`require_lifetime`).
     """
-    r = discount_rate if discount_rate > 0 else 0.05
-    n = lifetime if lifetime > 0 else 20.0
-    if r == 0:
+    cost = lookup.get(e, cost_param, d)
+    if cost == 0:
         return 0.0
-    return invest_value * 1000.0 * r / (1.0 - (1.0 / (1.0 + r)) ** n)
+    r = (lookup.get(e, "discount_rate", d) if lookup.has(e, "discount_rate", d)
+         else DEFAULT_DISCOUNT_RATE)
+    n = lookup.get(e, "lifetime", d) if lookup.has(e, "lifetime", d) else 0.0
+    if not n > 0:
+        require_lifetime([(e, d)], cost_param)
+    return cost * 1000.0 * annuity_factor(r, n)
 
 
 def _inflation_window_sum(
@@ -268,17 +277,9 @@ def _per_method_annuity_invest(inp: dict, e: str, d: str) -> float:
         if m in _INVEST_NOT_ALLOWED:
             continue
         if e in inp["node_set"]:
-            v += _annuity(
-                inp["pn"].get(e, "invest_cost", d),
-                inp["pn"].get(e, "discount_rate", d),
-                inp["pn"].get(e, "lifetime", d),
-            )
+            v += _annuity(inp["pn"], e, d, "invest_cost")
         elif e in inp["process_set"]:
-            v += _annuity(
-                inp["pp"].get(e, "invest_cost", d),
-                inp["pp"].get(e, "discount_rate", d),
-                inp["pp"].get(e, "lifetime", d),
-            )
+            v += _annuity(inp["pp"], e, d, "invest_cost")
     return v
 
 
@@ -288,17 +289,9 @@ def _per_method_annuity_divest(inp: dict, e: str, d: str) -> float:
         if m in _DIVEST_NOT_ALLOWED:
             continue
         if e in inp["node_set"]:
-            v += _annuity(
-                inp["pn"].get(e, "salvage_value", d),
-                inp["pn"].get(e, "discount_rate", d),
-                inp["pn"].get(e, "lifetime", d),
-            )
+            v += _annuity(inp["pn"], e, d, "salvage_value")
         elif e in inp["process_set"]:
-            v += _annuity(
-                inp["pp"].get(e, "salvage_value", d),
-                inp["pp"].get(e, "discount_rate", d),
-                inp["pp"].get(e, "lifetime", d),
-            )
+            v += _annuity(inp["pp"], e, d, "salvage_value")
     return v
 
 

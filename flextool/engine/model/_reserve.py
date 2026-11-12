@@ -71,7 +71,8 @@ def load_data(inp: Path | str, sd: Path | str, dt: pl.DataFrame | None = None, *
     feature is off).  ``inp`` / ``sd`` are the input and solve_data directories (files are read through
     ``provider``); ``dt`` clips the reservation to the steps of the horizon (None keeps every row).
     The remaining reserve fields (prundt, process_reserve_upDown_node_active, reliability, penalty,
-    max_share, ratio values) are filled by the derived- and direct-parameter passes.
+    max_share, ratio values) are filled by the derived- and direct-parameter passes; ``group_node`` comes from
+    ``_group_slack.load_data`` (None when no group has a node).
     """
     inp = Path(inp)
     sd = Path(sd)
@@ -100,23 +101,6 @@ def load_data(inp: Path | str, sd: Path | str, dt: pl.DataFrame | None = None, *
             out[name] = (df.pipe(rename_to_axis, _PRUN).select("p", "r", "ud", "n") if df.height > 0
                          else _empty(("p", "r", "ud", "n")))
 
-    # group_node: solve_data/group_node.csv, else the raw input/group__node.csv.  The first file with
-    # rows wins; when the files exist but are empty the field is an empty frame.
-    gn = None
-    seen_any = False
-    for path in (sd / "group_node.csv", inp / "group__node.csv"):
-        df = _provider_get(provider, path)
-        if df is None:
-            continue
-        seen_any = True
-        if df.height > 0:
-            gn = df.pipe(rename_to_axis, {"group": "g", "node": "n"}).select("g", "n").unique()
-            break
-    if gn is not None:
-        out["group_node"] = gn
-    elif seen_any:
-        out["group_node"] = _empty(("g", "n"))
-
     # Reservation timeseries (r, ud, g, d, t), from the long-format pdtReserve_upDown_group.
     pdtR = _provider_get(provider, sd / "pdtReserve_upDown_group.csv")
     if pdtR is not None and pdtR.height > 0:
@@ -129,6 +113,54 @@ def load_data(inp: Path | str, sd: Path | str, dt: pl.DataFrame | None = None, *
         out["pdtReserve_upDown_group_reservation"] = Param(("r", "ud", "g", "d", "t"), res_only)
 
     return out
+
+
+# Reserve fields keyed on (r, ud, g): the requirement sets and the group parameters.
+_RUG_SETS = ("reserve_upDown_group", "reserve_upDown_group_method_timeseries",
+             "reserve_upDown_group_method_dynamic", "reserve_upDown_group_method_n_1")
+_RUG_PARAMS = ("pdtReserve_upDown_group_reservation", "p_reserve_upDown_group_penalty_reserve",
+               "p_reserve_upDown_group_reserve_duration", "p_reserve_upDown_group_increase_reserve_ratio")
+
+
+def drop_groups_without_nodes(d) -> None:
+    """Leave out the reserves of groups that have no node in the solve (no ``group__node`` row), with a warning
+    naming the groups that have a reserve_method other than no_reserve.
+
+    No node of such a group can hold its reserve, and no flow of the solve drives or fails into it, so its
+    requirement has nothing to act on; written, it would be met by shortfall only, at the reserve penalty.  The
+    requirement sets and the (r, ud, g) parameters keep the other groups; with none left the reserve fields are
+    None (the feature is off), as for a model without reserves.  Changes ``d`` in place.
+    """
+    from flextool.engine import _behaviour_changes
+
+    rug = getattr(d, "reserve_upDown_group", None)
+    if not _has_rows(rug):
+        return
+    gn = getattr(d, "group_node", None)
+    with_nodes = (set(gn.get_column("g").cast(pl.Utf8).unique().to_list()) if _has_rows(gn) else set())
+    empty = sorted(set(rug.get_column("g").cast(pl.Utf8).unique().to_list()) - with_nodes)
+    if not empty:
+        return
+    # A group with reserve_method no_reserve (the default) has no requirement to lose: left out silently.
+    required = {str(g) for name in _RUG_SETS[1:] if _has_rows(getattr(d, name, None))
+                for g in getattr(d, name).get_column("g").cast(pl.Utf8).unique().to_list()}
+    lost = [g for g in empty if g in required]
+    if lost:
+        _behaviour_changes.warn_once_each(
+            "reserve_group_without_nodes", lost,
+            lambda names: (f"Warning: reserve group(s) {', '.join(names)} have no nodes in the solve (no "
+                           "group__node row): their reserve requirements are left out."))
+    keep = pl.col("g").cast(pl.Utf8).is_in(sorted(with_nodes))
+    kept = rug.filter(keep)
+    for name in _RUG_SETS:
+        frame = getattr(d, name, None)
+        if frame is not None:
+            setattr(d, name, frame.filter(keep) if kept.height > 0 else None)
+    for name in _RUG_PARAMS:
+        param = getattr(d, name, None)
+        if param is not None:
+            setattr(d, name, Param(param.dims, param.frame.filter(keep), name=param.name)
+                    if kept.height > 0 else None)
 
 
 # ---------------------------------------------------------------------------
@@ -1503,3 +1535,294 @@ def objective_terms(b: "_Build"):
     if scale is None or pen is None:
         return None
     return Sum(b.vq_reserve * scale * pen * b.op_factor)
+
+
+# ---------------------------------------------------------------------------
+# Output: the requirement rows evaluated at the solution
+
+#: The requirement methods in the tie-break order of the binding row (the first of equal deficits).
+REQUIREMENT_METHODS = ("timeseries", "dynamic", "n_1")
+_GROUP_STEP = ["r", "ud", "g", "d", "t"]
+#: A deficit check fails above ``REPORT_TOLERANCE · max(1, scale)`` MW (an absolute floor of 1e-6 MW).
+REPORT_TOLERANCE = 1e-6
+
+
+def _frame_u8(frame: "pl.DataFrame | pl.LazyFrame | None") -> "pl.DataFrame | None":
+    """``frame`` collected, its key columns (all but ``value``) Utf8 and ``value`` Float64; None when absent."""
+    if frame is None:
+        return None
+    frame = frame.collect() if isinstance(frame, pl.LazyFrame) else frame
+    return frame.with_columns(*(pl.col(c).cast(pl.Utf8) for c in frame.columns if c != "value"),
+                              *((pl.col("value").cast(pl.Float64),) if "value" in frame.columns else ()))
+
+
+def _sol_values(sol, d, name: str, processes: "list[str] | None" = None) -> "pl.DataFrame | None":
+    """``name``'s values on every solve step (a coarse process's on each fine step, as the requirement rows read
+    them: ``engine.output._coarse_flows.var_values``), Utf8 keys; None without the variable or rows.  With
+    ``processes``, only the rows of those ``p`` (filtered before the keys are cast)."""
+    from flextool.engine.output._coarse_flows import var_values
+
+    frame = var_values(sol, d, name)
+    if frame is not None and processes is not None:
+        frame = frame.filter(pl.col("p").cast(pl.Utf8).is_in(processes))
+    if frame is None or frame.height == 0:
+        return None
+    return _frame_u8(frame)
+
+
+def _param_on_dt(param, d, keys: list[str], alias: str) -> "pl.DataFrame | None":
+    """``param`` on the solve steps (``promote_param_to_dt``) as ``(*keys, alias)``, Utf8 keys; None without it."""
+    if param is None:
+        return None
+    frame = _frame_u8(promote_param_to_dt(param, d.dt))
+    return frame.select(*keys, pl.col("value").alias(alias))
+
+
+def _flows_at_nodes(d, sol, processes: list[str]) -> pl.DataFrame:
+    """``(p, n, kind, d, t, value)``: the flow of process p at node n in MW, as the requirement rows count it, for
+    the ``processes`` whose flow a requirement row has (an ``increase_reserve_ratio`` or a ``large_failure_ratio``;
+    the other arcs are dropped before any join).
+
+    ``kind`` ``into``: what arrives at n, ``v_flow · unitsize`` of the arcs whose sink is n and ``v_flow_back ·
+    unitsize`` of the one-variable / DC arcs whose source is n.  ``kind`` ``drawn``: what leaves n, per arc whose
+    source is n ``v_flow · unitsize · slope`` (plus ``v_online · section · unitsize`` of a min_load_efficiency unit
+    with online variables) on an arc of process_source_sink_eff, else ``v_flow · unitsize``, and ``v_flow_back ·
+    unitsize`` of the one-variable / DC arcs whose sink is n (:func:`_drawn_terms` and the back terms of the
+    dynamic and n-1 rows)."""
+    cols = ["p", "n", "kind", "d", "t", "value"]
+    parts: list[pl.DataFrame] = []
+    us = _frame_u8(d.p_unitsize.frame).select("p", pl.col("value").alias("__us"))
+    pss = getattr(d, "process_source_sink", None)
+    vf = _sol_values(sol, d, "v_flow", processes) if _has_rows(pss) else None
+    if vf is not None:
+        vf = vf.join(us, on="p", how="inner").with_columns(__mw=pl.col("value") * pl.col("__us"))
+        parts.append(vf.select("p", pl.col("sink").alias("n"), pl.lit("into").alias("kind"), "d", "t",
+                               pl.col("__mw").alias("value")))
+        eff = getattr(d, "process_source_sink_eff", None)
+        slope = _param_on_dt(getattr(d, "p_slope", None), d, ["p", "d", "t"], "__slope")
+        if not _has_rows(eff) or slope is None:
+            parts.append(vf.select("p", pl.col("source").alias("n"), pl.lit("drawn").alias("kind"), "d", "t",
+                                   pl.col("__mw").alias("value")))
+        else:
+            arc = ["p", "source", "sink"]
+            eff_arcs = _frame_u8(eff.select(arc)).unique().join(_frame_u8(pss.select(arc)), on=arc, how="semi")
+            on_eff = vf.join(eff_arcs, on=arc, how="semi")
+            parts.append(vf.join(eff_arcs, on=arc, how="anti").select(
+                "p", pl.col("source").alias("n"), pl.lit("drawn").alias("kind"), "d", "t",
+                pl.col("__mw").alias("value")))
+            parts.append(on_eff.join(slope, on=["p", "d", "t"], how="inner").select(
+                "p", pl.col("source").alias("n"), pl.lit("drawn").alias("kind"), "d", "t",
+                (pl.col("__mw") * pl.col("__slope")).alias("value")))
+            pml = getattr(d, "process_min_load_eff", None)
+            section = _param_on_dt(getattr(d, "p_section", None), d, ["p", "d", "t"], "__sec")
+            if _has_rows(pml) and section is not None:
+                sec_arcs = eff_arcs.join(_frame_u8(pml.select("p")).unique(), on="p", how="semi")
+                for var in ("v_online_linear", "v_online_integer"):
+                    online = _sol_values(sol, d, var, processes)
+                    if online is None or sec_arcs.height == 0:
+                        continue
+                    parts.append(sec_arcs.join(online, on="p", how="inner")
+                                 .join(section, on=["p", "d", "t"], how="inner").join(us, on="p", how="inner")
+                                 .select("p", pl.col("source").alias("n"), pl.lit("drawn").alias("kind"), "d", "t",
+                                         (pl.col("value") * pl.col("__sec") * pl.col("__us")).alias("value")))
+    back = _back_arcs(d)
+    vb = _sol_values(sol, d, "v_flow_back", processes) if back is not None else None
+    if vb is not None:
+        vb = (vb.join(_frame_u8(back.select("p", "source", "sink")).unique(), on=["p", "source", "sink"], how="semi")
+              .join(us, on="p", how="inner").with_columns(__mw=pl.col("value") * pl.col("__us")))
+        for side, kind in (("source", "into"), ("sink", "drawn")):
+            parts.append(vb.select("p", pl.col(side).alias("n"), pl.lit(kind).alias("kind"), "d", "t",
+                                   pl.col("__mw").alias("value")))
+    if not parts:
+        return pl.DataFrame(schema={**{c: pl.Utf8 for c in cols[:-1]}, "value": pl.Float64})
+    return (pl.concat([p.select(cols) for p in parts])
+            .group_by("p", "n", "kind", "d", "t").agg(pl.col("value").sum()))
+
+
+def _ratio_flows(flows: pl.DataFrame, rel: pl.DataFrame, ratio, kinds: tuple[str, ...]) -> "pl.DataFrame | None":
+    """``(r, ud, g, p, d, t, value)``: Σ_n flow[p,n] (of ``kinds``) · ratio[p,r,ud,n] over the relationships ``rel``
+    (p, r, ud, n, g); None without a ratio."""
+    if ratio is None:
+        return None
+    ratio_u = _frame_u8(ratio.frame).select("p", "r", "ud", "n", pl.col("value").alias("__ratio"))
+    return (_frame_u8(rel.select("p", "r", "ud", "n", "g")).join(ratio_u, on=["p", "r", "ud", "n"], how="inner")
+            .join(flows.filter(pl.col("kind").is_in(list(kinds))), on=["p", "n"], how="inner")
+            .group_by("r", "ud", "g", "p", "d", "t").agg((pl.col("value") * pl.col("__ratio")).sum()))
+
+
+def reserve_requirement_rows(d, sol) -> "pl.DataFrame | None":
+    """``(r, ud, g, method, f, d, t, need)``: the right-hand side of every reserve requirement row of the solve at
+    the solution, one row per LP row (``method`` timeseries / dynamic / n_1; ``f`` the failing process of an n-1
+    row, else null), Utf8 keys, need in MW.  None when the solve has no reserve requirement.
+
+        timeseries: need = reservation (0 where none is authored)
+        dynamic:    need = Σ_{(p,n) ∈ irr_g} flow[p,n] · increase_reserve_ratio[p,r,ud,n] + group_demand
+                    (flow: what arrives at n and what leaves it, :func:`_flows_at_nodes`)
+        n-1 of f:   need = Σ_{n : (f,r,ud,n) ∈ lfr_g} flow[f,n] · large_failure_ratio[f,r,ud,n]
+                    (up: what f brings into n; down: what f draws from n)
+    """
+    if not _has_rows(getattr(d, "reserve_upDown_group", None)):
+        return None
+    dt_u = _frame_u8(d.dt.select("d", "t"))
+    gn = _group_nodes(d)
+    method_dyn = getattr(d, "reserve_upDown_group_method_dynamic", None)
+    irr_set = getattr(d, "process_reserve_upDown_node_increase_reserve_ratio", None)
+    irr_g = (irr_set.join(gn, on="n", how="inner")
+             .join(method_dyn.select("r", "ud", "g").unique(), on=["r", "ud", "g"], how="inner")
+             if _has_rows(method_dyn) and _has_rows(irr_set) else None)
+    n_1 = _n_1_failing(d, gn)
+    # Only the processes a row multiplies by a ratio: the flows of every other arc are never read.
+    ratio_p = [f["p"] for f in (irr_g, *(part["lfr_g"] for part in n_1.values())) if f is not None]
+    processes = (pl.concat([p.cast(pl.Utf8) for p in ratio_p]).unique().to_list() if ratio_p else [])
+    flows = (_flows_at_nodes(d, sol, processes)
+             if processes and getattr(sol, "_vars", {}).get("v_flow") is not None else None)
+    rows: list[pl.DataFrame] = []
+    row_cols = ["r", "ud", "g", "method", "f", "d", "t", "need"]
+
+    def _over_dt(groups: pl.DataFrame, method: str) -> pl.DataFrame:
+        return (_frame_u8(groups.select("r", "ud", "g")).unique()
+                .join(dt_u.select("d", "t"), how="cross")
+                .with_columns(method=pl.lit(method), f=pl.lit(None, dtype=pl.Utf8)))
+
+    def _plus(base: pl.DataFrame, part: "pl.DataFrame | None", keys: list[str]) -> pl.DataFrame:
+        if part is None or part.height == 0:
+            return base
+        return (base.join(part.select(*keys, pl.col("value").alias("__add")), on=keys, how="left")
+                .with_columns(need=pl.col("need") + pl.col("__add").fill_null(0.0)).drop("__add"))
+
+    method_ts = getattr(d, "reserve_upDown_group_method_timeseries", None)
+    if _has_rows(method_ts):
+        ts = _over_dt(method_ts, "timeseries").with_columns(need=pl.lit(0.0))
+        res = _param_on_dt(getattr(d, "pdtReserve_upDown_group_reservation", None), d, _GROUP_STEP, "value")
+        rows.append(_plus(ts, res, _GROUP_STEP).select(row_cols))
+    if _has_rows(method_dyn):
+        dyn = _over_dt(method_dyn, "dynamic").with_columns(need=pl.lit(0.0))
+        if flows is not None and irr_g is not None:
+            by_flow = _ratio_flows(flows, irr_g, getattr(d, "p_process_reserve_upDown_node_increase_reserve_ratio_value",
+                                                         None), ("into", "drawn"))
+            if by_flow is not None:
+                dyn = _plus(dyn, by_flow.group_by(_GROUP_STEP).agg(pl.col("value").sum()), _GROUP_STEP)
+        demand = group_demand_requirement(d)
+        if demand is not None:
+            dyn = _plus(dyn, _frame_u8(demand.frame), _GROUP_STEP)
+        rows.append(dyn.select(row_cols))
+    lfr_param = getattr(d, "p_process_reserve_upDown_node_large_failure_ratio_value", None)
+    for ud_filter, part in (n_1.items() if flows is not None else ()):
+        fail = (_frame_u8(part["fail_g"]).rename({"p_fail": "f"})
+                .join(dt_u.select("d", "t"), how="cross")
+                .with_columns(method=pl.lit("n_1"), need=pl.lit(0.0)))
+        failing = _ratio_flows(flows, part["lfr_g"], lfr_param, ("into",) if ud_filter == "up" else ("drawn",))
+        if failing is not None:
+            fail = _plus(fail, failing.rename({"p": "f"}), [*_GROUP_STEP, "f"])
+        rows.append(fail.select(row_cols))
+    return pl.concat(rows) if rows else None
+
+
+def reserve_requirement_report(d, sol) -> "tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame] | None":
+    """The reserve requirement of each reserve group at each solve step, evaluated at the solution:
+    ``(summary, provider, violations)``; None when the solve has no reserve requirement.
+
+    Each requirement row k of the group (reserveBalance_timeseries_eq, reserveBalance_dynamic_eq, one
+    reserveBalance_{up,down}_n_1_eq per failing process f) is evaluated from the frames the row is built from
+    (:func:`_providers_by_group`, :func:`_n_1_failing`, :func:`group_demand_requirement`, the arcs of
+    :func:`_drawn_terms`):
+
+        need_k     = the right-hand side: the reservation; Σ flow · increase_reserve_ratio + group_demand; the
+                     failing flow of f · large_failure_ratio (flows by :func:`_flows_at_nodes`)
+        counted_k  = reserve_sum (Σ_{providers of g} v_reserve · unitsize · reliability) for the timeseries and
+                     dynamic rows; reserve_sum − own_f for the n-1 row of f (f's own reserve does not count).
+                     From v_reserve, not v_reserve_total, which is only bounded above by reserve_sum.
+        binding row = argmax_k (need_k − counted_k), the first of equal ones in the order timeseries, dynamic,
+                     n-1 (f by name)
+
+    ``summary`` ``(reserve, updown, node_group, period, time, requirement, requirement_timeseries,
+    requirement_dynamic, requirement_n_1, n_1_process, binding_method, binding_process, provided, counted,
+    shortfall)`` [MW]: ``requirement`` / ``counted`` are the binding row's need and counted reserve (so
+    shortfall = requirement − counted when there is a shortfall), ``requirement_<method>`` the method's need
+    (null where the group does not have it; n-1: the largest failure, ``n_1_process`` its process),
+    ``binding_method`` / ``binding_process`` the binding row (the failing process of an n-1 row, else null),
+    ``provided`` = reserve_sum and ``shortfall`` = vq_reserve · scale.
+    ``provider`` ``(reserve, updown, node_group, process, node, period, time, value)``: v_reserve · unitsize ·
+    reliability of each provider of the group (a provider at node n counts in every group with n); its values
+    sum to ``provided``.
+    ``violations``: the group steps where max(0, max_k (need_k − counted_k)) differs from the shortfall by more
+    than ``REPORT_TOLERANCE · max(1, scale)`` (a shortfall above the deficit only when penalty_reserve > 0),
+    with columns ``(reserve, updown, node_group, period, time, deficit, shortfall)``.
+    """
+    rug = getattr(d, "reserve_upDown_group", None)
+    if not _has_rows(rug) or "vq_reserve" not in getattr(sol, "_vars", {}):
+        return None
+    req = reserve_requirement_rows(d, sol)
+    if req is None:
+        return None
+    dt_u = _frame_u8(d.dt.select("d", "t")).with_row_index("__order")
+    gn = _group_nodes(d)
+
+    # The reserve the rows count: each provider's v_reserve · unitsize · reliability.
+    prov_cols = ["r", "ud", "g", "p", "n", "d", "t", "value"]
+    pruna_g = _providers_by_group(d, gn)
+    rel = getattr(d, "p_process_reserve_upDown_node_reliability", None)
+    v_res = _sol_values(sol, d, "v_reserve")
+    if rel is not None and pruna_g.height > 0 and v_res is not None:
+        us = _frame_u8(d.p_unitsize.frame).select("p", pl.col("value").alias("__us"))
+        rel_u = _frame_u8(rel.frame).select("p", "r", "ud", "n", pl.col("value").alias("__rel"))
+        provider = (_frame_u8(pruna_g).join(v_res, on=["p", "r", "ud", "n"], how="inner")
+                    .join(us, on="p", how="inner").join(rel_u, on=["p", "r", "ud", "n"], how="inner")
+                    .with_columns(value=pl.col("value") * pl.col("__us") * pl.col("__rel"))
+                    .select(prov_cols))
+    else:
+        provider = pl.DataFrame(schema={**{c: pl.Utf8 for c in prov_cols[:-1]}, "value": pl.Float64})
+    provided = provider.group_by(_GROUP_STEP).agg(pl.col("value").sum().alias("provided"))
+    own = provider.group_by("r", "ud", "g", "p", "d", "t").agg(pl.col("value").sum().alias("__own")).rename({"p": "f"})
+    req = (req.join(provided, on=_GROUP_STEP, how="left")
+           .join(own, on=[*_GROUP_STEP, "f"], how="left")
+           .with_columns(counted=pl.col("provided").fill_null(0.0) - pl.col("__own").fill_null(0.0),
+                         __m=pl.col("method").replace_strict({m: i for i, m in enumerate(REQUIREMENT_METHODS)},
+                                                             return_dtype=pl.Int32))
+           .with_columns(deficit=pl.col("need") - pl.col("counted")))
+
+    binding = (req.sort(*_GROUP_STEP, "deficit", "__m", "f", descending=[False] * 5 + [True, False, False],
+                        nulls_last=True)
+               .unique(_GROUP_STEP, keep="first", maintain_order=True)
+               .select(*_GROUP_STEP, pl.col("need").alias("requirement"), "counted", "deficit",
+                       pl.col("method").alias("binding_method"),
+                       pl.when(pl.col("method") == "n_1").then(pl.col("f")).alias("binding_process"),
+                       pl.col("provided").fill_null(0.0).alias("provided")))
+    per_method = [req.filter(pl.col("method") == m).select(*_GROUP_STEP, pl.col("need").alias(f"requirement_{m}"))
+                  for m in ("timeseries", "dynamic")]
+    largest = (req.filter(pl.col("method") == "n_1")
+               .sort(*_GROUP_STEP, "need", "f", descending=[False] * 5 + [True, False])
+               .unique(_GROUP_STEP, keep="first", maintain_order=True)
+               .select(*_GROUP_STEP, pl.col("need").alias("requirement_n_1"), pl.col("f").alias("n_1_process")))
+    out = binding
+    for frame in (*per_method, largest):
+        out = out.join(frame, on=_GROUP_STEP, how="left")
+
+    # The shortfall the LP priced, vq_reserve · scale (0 where the group step has no scale: no vq term).
+    vq = _sol_values(sol, d, "vq_reserve")
+    scale = _param_on_dt(reserve_shortfall_scale(d), d, _GROUP_STEP, "__scale")
+    out = (out.join(vq.select(*_GROUP_STEP, pl.col("value").alias("__vq")), on=_GROUP_STEP, how="left")
+           if vq is not None else out.with_columns(__vq=pl.lit(None, dtype=pl.Float64)))
+    out = (out.join(scale, on=_GROUP_STEP, how="left") if scale is not None
+           else out.with_columns(__scale=pl.lit(None, dtype=pl.Float64)))
+    pen = _frame_u8(reserve_penalty(d).frame).select("r", "ud", "g", pl.col("value").alias("__pen"))
+    out = (out.join(pen, on=["r", "ud", "g"], how="left")
+           .with_columns(shortfall=pl.col("__vq").fill_null(0.0) * pl.col("__scale").fill_null(0.0) + 0.0,
+                         __tol=REPORT_TOLERANCE * pl.max_horizontal(pl.lit(1.0), pl.col("__scale").fill_null(1.0))))
+    uncovered = pl.col("deficit").clip(lower_bound=0.0)
+    broken = ((uncovered > pl.col("shortfall") + pl.col("__tol"))
+              | ((pl.col("shortfall") > uncovered + pl.col("__tol")) & (pl.col("__pen").fill_null(0.0) > 0.0)))
+    names = {"r": "reserve", "ud": "updown", "g": "node_group", "d": "period", "t": "time"}
+    out = out.join(dt_u, on=["d", "t"], how="left").sort("r", "ud", "g", "__order")
+    violations = (out.filter(broken)
+                  .select(*(pl.col(k).alias(v) for k, v in names.items()), "deficit", "shortfall"))
+    measures = ["requirement", "requirement_timeseries", "requirement_dynamic", "requirement_n_1"]
+    summary = out.select(*(pl.col(k).alias(v) for k, v in names.items()),
+                         *((pl.col(c) + 0.0).alias(c) for c in measures),
+                         "n_1_process", "binding_method", "binding_process",
+                         *((pl.col(c) + 0.0).alias(c) for c in ("provided", "counted", "shortfall")))
+    provider = (provider.join(dt_u, on=["d", "t"], how="left").sort("r", "ud", "g", "p", "n", "__order")
+                .select(*(pl.col(k).alias(v) for k, v in names.items() if k in ("r", "ud", "g")),
+                        pl.col("p").alias("process"), pl.col("n").alias("node"),
+                        pl.col("d").alias("period"), pl.col("t").alias("time"), pl.col("value") + 0.0))
+    return summary, provider, violations

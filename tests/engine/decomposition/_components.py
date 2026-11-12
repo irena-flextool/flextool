@@ -769,14 +769,15 @@ def vq_inertia_obj(data, sol) -> float:
     vq = _sol_value_or_empty(sol, "vq_inertia")
     if _is_empty(vq):
         return 0.0
-    if (data.pdGroup_inertia_limit is None
+    if (data.pdtGroup_inertia_limit is None
             or data.pdGroup_penalty_inertia is None):
         return 0.0
     op = _op_factor_frame(data)
-    lim = data.pdGroup_inertia_limit.frame.rename({"value": "lim"})
+    # The limit keeps its authored dims ⊆ (g, d, t): promoted onto the solve's (d, t).
+    lim = promote_param_to_dt(data.pdtGroup_inertia_limit, data.dt).rename({"value": "lim"}).collect()
     pen = data.pdGroup_penalty_inertia.frame.rename({"value": "pen"})
     df = (vq.rename({"value": "vq"})
-            .join(lim, on=["g", "d"])
+            .join(lim, on=["g", "d", "t"])
             .join(pen, on=["g", "d"])
             .join(op, on=["d", "t"]))
     return float(df.select(

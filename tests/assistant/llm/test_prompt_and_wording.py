@@ -64,6 +64,7 @@ def _texts() -> list[tuple[str, str]]:
     out += [(f"get_gui_context {name}", getattr(orientation, name))
             for name in ("NOT_SHARED", "WINDOW_CLOSED", "FROM_WINDOW")]
     out += [(f"SESSION_MESSAGES[{k}]", v) for k, v in session.SESSION_MESSAGES.items()]
+    out += [(f"REWIND_REFUSALS[{k}]", v) for k, v in session.REWIND_REFUSALS.items()]
     out += [(f"probes {name}", getattr(probes, name)) for name in ("PARTLY_ON_CPU", "LMSTUDIO_NO_TOOL_USE")]
     out += [(f"tiers {name}", getattr(tiers, name)) for name in dir(tiers)
             if name.isupper() and isinstance(getattr(tiers, name), str)]
@@ -150,8 +151,8 @@ def test_layers_per_level_and_front_end():
     assert prompt.system_layers("gui", "large")[4].startswith("You are answering in the FlexTool window.")
     assert prompt.system_layers("terminal", "small") == prompt.system_layers("terminal", "basic")
     assert prompt.system_layers("agent", "medium") == layers[:4]
-    # Units are a convention; the shared layers name no tool outside the basic set (P3 §2.5).
-    assert "Units of measure are a convention; FlexTool does not check them." in layers[1]
+    # Units come from the tools; the shared layers name no tool outside the basic set (P3 §2.5).
+    assert "Units: give the unit the tool returns." in layers[1]
     assert "compare_inputs" not in "".join(prompt.core_layers())
 
 

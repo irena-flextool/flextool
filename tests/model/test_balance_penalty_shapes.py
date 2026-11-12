@@ -92,7 +92,7 @@ def stoch_map(branch_values: dict, analysis_times: dict, *, labelled: bool) -> l
     """3-D stochastic-time map branch -> analysis time -> time -> value (constant per branch).
 
     ``analysis_times`` maps each analysis time to its timesteps.  ``labelled``: index names
-    ``branch / analysis_time / time`` (as ``docs/how_to.md`` names them); otherwise Spine's silent ``x``.
+    ``branch / analysis_time / time`` (as ``docs/how_to/stochastics.md`` names them); otherwise Spine's silent ``x``.
     """
     def level(name: str, data: list) -> dict:
         m = {"type": "map", "index_type": "str", "data": data}

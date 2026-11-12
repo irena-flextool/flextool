@@ -1,6 +1,6 @@
 """A group's ``transfer_method`` overrides the transfer method of its connections on every path.
 
-docs/reference.md: a group ``transfer_method`` other than ``use_connection_transfer_methods`` applies to the
+docs/reference/groups.md: a group ``transfer_method`` other than ``use_connection_transfer_methods`` applies to the
 connections with both endpoints in the group (``dc_power_flow_with_angles``: the DC power-flow lines, one
 signed flow each).  The input derivation applied it (``derived/ct_method_overrides`` →
 ``input/process_method``), but the engine's own classifier (``_derived._classify_process_method``) read

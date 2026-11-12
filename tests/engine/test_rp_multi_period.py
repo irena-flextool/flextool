@@ -216,8 +216,9 @@ def test_mixed_rp_and_non_rp_periods_keep_both_weights(tmp_path_factory):
 # ---------------------------------------------------------------------------
 
 
-def test_stochastic_solve_with_rp_timeset_raises(tmp_path_factory):
-    """The forecast branch periods have no timeset of their own, so they would get no rp data."""
+def test_stochastic_solve_with_rp_timeset_solves(tmp_path_factory):
+    """The forecast branch periods take the timeset of the period they branch from, so each gets its own rp data
+    (item 125; before: a FlexToolConfigError)."""
     rpw = {"type": "map", "index_type": "str", "index_name": "base_period", "rank": 1,
            "data": [[b, {"type": "map", "index_type": "str", "index_name": "representative_period", "rank": 1,
                          "data": [["t0001", 1.0]]}] for b in ("t0001", "t0025")]}
@@ -226,16 +227,31 @@ def test_stochastic_solve_with_rp_timeset_raises(tmp_path_factory):
         return L._overlay(data, name="custom", base="2_day_stochastic_dispatch", values=[
             ["timeset", "2day", "timeset_duration", L._pmap({"t0001": 24.0}, "time")],
             ["timeset", "2day", "representative_period_weights", rpw]])
-    with pytest.raises(FlexToolConfigError, match="does not support this combination"):
-        _run(tmp_path_factory, patch, STOCH_JSON)
+    steps = _run(tmp_path_factory, patch, STOCH_JSON)
+    fd = list(steps.values())[-1].flex_data
+    rp_periods = set(_utf8(fd.rp_block_first)["d"].unique().to_list())
+    branch_periods = {str(b) for a, b in _utf8(fd.period_branch_full).select("d", "b").iter_rows()
+                      if a != b and b in rp_periods}
+    assert branch_periods and rp_periods >= branch_periods
+    # tsw = (Σ_b w[b,r]) · n_blocks / n_bases = 2 · 1 / 2 on the one block t0001-t0024.
+    assert all(_weights(fd, p) == [1.0] for p in branch_periods)
 
 
-def test_rolling_solve_with_blended_nodes_raises(tmp_path_factory):
+def test_rolling_solve_with_blended_nodes_binds_forward_only(tmp_path_factory, caplog):
+    """A rolling_window solve on representative periods: the blended nodes bind forward only, with one warning
+    (item 126; before: a FlexToolConfigError)."""
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="flextool.engine.solve._run_model")
     patch = _overlay([["solve", SOLVE, "solve_mode", "rolling_window"],
                       ["solve", SOLVE, "rolling_solve_horizon", 48.0],
                       ["solve", SOLVE, "rolling_solve_jump", 24.0]])
-    with pytest.raises(FlexToolConfigError, match="rolling_window solve on representative periods"):
-        _run(tmp_path_factory, patch)
+    steps = _run(tmp_path_factory, patch)
+    assert len(steps) > 1
+    warnings = [r.getMessage() for r in caplog.records if "storage_binding_method is not applied" in r.getMessage()]
+    assert len(warnings) == 1 and "lh2_A, lh2_B, lh2_C" in warnings[0]
+    for step in steps.values():
+        assert step.flex_data.nodeState_rp is None or step.flex_data.nodeState_rp.height == 0
 
 
 # ---------------------------------------------------------------------------

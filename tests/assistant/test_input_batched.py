@@ -66,7 +66,7 @@ def test_three_parameters_of_two_entities_in_one_table(ctx) -> None:
     assert (cells[chp, "availability"]["value"], cells[chp, "availability"]["is_default"]) == (1.0, True)
     # One unit per parameter in the header (neither unit has virtual_unitsize in all, so existing is MW); no unit
     # column, since no cell differs.
-    assert out["units"] == {"existing": "MW (default convention)", "invest_cost": "CUR/kW (default convention)",
+    assert out["units"] == {"existing": "MW", "invest_cost": "CUR/kW",
                             "availability": "dimensionless"}
     assert "unit" not in out["columns"]
     # A note every cell of a parameter shares is in the header once, not in the rows.
@@ -119,6 +119,27 @@ def test_an_inactive_entity_is_named_in_the_header(ctx) -> None:
     assert _cells(out)["coal_chp", "existing"]["value"] == 1200.0
 
 
+def test_an_inactive_entity_has_its_note_on_its_rows(ctx) -> None:
+    """B1, T3.  coal_chp in scenario coal: existing 1200 is stored (alternative coal) but not used; efficiency is
+    set only in alternative coal_chp, so no value, and its default 1.0 is not shown as applying.  coal_plant's
+    efficiency is 0.4 (alternative coal).  The note is on coal_chp's rows, first, never a parameter's note."""
+    out = _call(ctx, entity_class="unit", parameters=["existing", "efficiency"],
+                entities=[["coal_plant"], ["coal_chp"]], scenario="coal")
+    cells = _cells(out)
+    note = ('"coal_chp" is not part of scenario "coal" ("no alternative of the scenario makes it active, and unit '
+            'entities are inactive unless an alternative makes them active"). Its stored values are not used there: '
+            "it has no capacity, flows or results in this scenario.")
+    for parameter in ("existing", "efficiency"):
+        assert cells["coal_chp", parameter]["notes"][0] == note
+        assert note not in cells["coal_plant", parameter]["notes"]
+        assert note not in out.get("notes_by_parameter", {}).get(parameter, [])
+    assert (cells["coal_chp", "efficiency"]["value"], cells["coal_chp", "efficiency"]["is_default"]) == (None, False)
+    assert cells["coal_plant", "efficiency"]["value"] == 0.4
+    # One inactive entity alone: its note stays on its row (not lifted into the parameter's shared notes).
+    alone = _call(ctx, entity_class="unit", parameters=["existing"], entities=[["coal_chp"]], scenario="coal")
+    assert _cells(alone)["coal_chp", "existing"]["notes"][0] == note
+
+
 def test_the_size_cap(ctx) -> None:
     parameters = [f"p{i}" for i in range(MAX_PARAMETERS + 1)]
     out = call_tool(ctx, "get_parameter", {"entity_class": "unit", "parameters": parameters,
@@ -137,12 +158,13 @@ def test_the_size_cap(ctx) -> None:
 
 
 def test_at_a_small_result_cap_the_notes_give_way_to_the_rows(ctx) -> None:
-    """At the result cap of a 16 384-token window (2 000 characters) the six cells all fit: the notes are cut to 160
-    or 80 characters first.  At 1 200 characters the notes are left out (and say so); the rows stay whole."""
+    """At 1 800 characters (below the result cap of a 16 384-token window, 2 000, which now holds the whole table:
+    the invest notes state their conclusion in fewer words) the six cells all fit: the notes are cut to 160 or 80
+    characters first.  At 1 200 characters the notes are left out (and say so); the rows stay whole."""
     from flextool.assistant.caps import Caps
     from flextool.assistant.tools.inputs import NOTES_LEFT_OUT
 
-    ctx.caps = Caps(17, 2_000, 3, 33)
+    ctx.caps = Caps(17, 1_800, 3, 33)
     out = call_tool(ctx, "get_parameter", {"entity_class": "unit", "parameters": ["existing", "invest_cost",
                                                                                    "availability"],
                                            "entities": [["coal_plant"], ["coal_chp"]], "scenario": "all"})

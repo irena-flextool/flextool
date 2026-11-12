@@ -112,7 +112,7 @@ def test_vectorized_pdtGroup_branch_period_inherits_anchor_pd(tmp_path):
     put("input", "pd_group", pl.DataFrame({
         "group": ["g1", "g2", "g2", "g3"], "param": ["co2_price"] * 4,
         "period": ["d1", "d1", "d1_b", "d1"], "value": [50.0, 60.0, 70.0, 80.0]}))
-    put("input", "pt_group", pl.DataFrame({
+    put("solve_data", "pt_group", pl.DataFrame({
         "group": ["g3"], "param": ["co2_price"], "time": ["t2"], "value": [90.0]}))
     put("input", "p_group", pl.DataFrame({
         "group": ["g1"], "param": ["co2_price"], "value": [10.0]}))

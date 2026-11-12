@@ -1,6 +1,6 @@
 """The ``exact`` transfer method: a connection flows in one direction per time step.
 
-docs/how_to.md: "*Exact* method does not allow flow in both directions at the same time, but it requires a binary
+docs/how_to/basics.md: "*Exact* method does not allow flow in both directions at the same time, but it requires a binary
 variable".  The engine mapped ``exact`` to an online integer that capped both arcs (v_flow ≤ cap·v_online_integer)
 but did not stop simultaneous flow, so a lossy exact line could dissipate a surplus by flowing both ways, and it
 got free "startups".  Now one binary per connection and step, v_exact_forward, switches the direction:

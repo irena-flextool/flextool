@@ -190,8 +190,11 @@ def state_links(d, *, has_rp: bool, has_nsb: bool) -> list[StateLink]:
         links.append(StateLink("state_change_fo", d.storage_bind_forward_only, d.dtttdt_forward_only,
                                "t_previous_within_solve", True, False))
     if _has_rows(d.storage_bind_within_solve):
-        # bind_within_solve: t⁻ crosses period boundaries and the first step of the solve wraps to the last one.
-        links.append(StateLink("state_change_ws", d.storage_bind_within_solve, d.dtttdt,
+        # bind_within_solve: t⁻ crosses period boundaries and the first step of the solve wraps to the last one;
+        # with a stochastic fan in the solve's first period, each root forecast's first step wraps to the last
+        # step of its own path (dtttdt_within_solve).
+        ws_lag = d.dtttdt_within_solve if _has_rows(getattr(d, "dtttdt_within_solve", None)) else d.dtttdt
+        links.append(StateLink("state_change_ws", d.storage_bind_within_solve, ws_lag,
                                "t_previous_within_solve", True, True))
     if _has_rows(d.storage_bind_within_period) and _has_rows(d.dtttdt_within_period):
         # bind_within_period: t⁻ is the previous step of the period; the first step of each period wraps to the
@@ -334,7 +337,7 @@ def node_union(frames) -> "pl.DataFrame | None":
 
 def block_forward_nodes(d) -> "pl.DataFrame | None":
     """bind_intraperiod_blocks nodes (n) with storage_start_end_method fix_start_end: the binding method's loop is
-    ignored (reference.md), so their blocks chain forward in every period of the solve (:func:`block_forward_lag`).
+    ignored (reference/nodes.md), so their blocks chain forward in every period of the solve (:func:`block_forward_lag`).
     A node has one storage_start_end_method, so storage_fix_start ∩ storage_fix_end is the fix_start_end set.  None
     when there are none."""
     nsb = getattr(d, "nodeStateBlock", None)

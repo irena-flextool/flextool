@@ -20,8 +20,9 @@ An option that has more than one of these forms is resolved here, always in the 
    inherits the parent's environment untouched, so a variable set in the shell reaches the child as set.
 4. Process-level variables (``MALLOC_ARENA_MAX``, ``_RJEM_MALLOC_CONF``, ``POLARS_*``) keep ``setdefault``
    semantics and are listed in :data:`ENV_KNOBS`, not in :data:`OPTIONS`.
-5. HiGHS keys keep their own stack (baseline < ``highs.opt`` < ``solve.solver_mip_gap`` <
-   ``solve.solver_arguments`` < operator layer); this registry supplies only the operator layer.
+5. Solver options keep their own stack, the same for every solver (HiGHS: baseline < ``highs.opt``; a
+   commercial solver: ``<solver>.opt``; then ``solve.solver_mip_gap`` < ``solve.solver_arguments`` < operator
+   layer); this registry supplies only the operator layer.
 
 The database tier is not read here: the caller passes the database value (``db=``) because only it knows
 which solve is active.
@@ -171,14 +172,37 @@ OPTIONS: dict[str, OptionSpec] = {
             help="HiGHS log verbosity (silent / normal / verbose)",
         ),
         _spec(
-            key="solver_time_limit", flag="--solver-time-limit", env="FLEXTOOL_HIGHS_TIME_LIMIT", db=None,
+            key="solver_time_limit", flag="--solver-time-limit", env="FLEXTOOL_SOLVER_TIME_LIMIT", db=None,
             parse=_positive_float, default=None, audience="user",
-            help="HiGHS wall-clock time limit in seconds; unset means no limit",
+            help="time limit of each solve in seconds, on every solver (HiGHS time_limit, Gurobi TimeLimit, CPLEX "
+                 "timelimit, Xpress MAXTIME, COPT TimeLimit); unset means no limit",
         ),
         _spec(
-            key="solver_mip_gap", flag="--solver-mip-gap", env="FLEXTOOL_HIGHS_MIP_GAP", db="solve.solver_mip_gap",
+            key="solver_mip_gap", flag="--solver-mip-gap", env="FLEXTOOL_SOLVER_MIP_GAP", db="solve.solver_mip_gap",
             parse=_non_negative_float, default=None, audience="user",
-            help="HiGHS MIP relative gap for every solve; unset keeps the solve's solver_mip_gap, else highs.opt",
+            help="relative MIP gap of every solve, on every solver (HiGHS mip_rel_gap, Gurobi MIPGap, CPLEX mip "
+                 "tolerances mipgap, Xpress MIPRELSTOP, COPT RelGap); unset keeps the solve's solver_mip_gap, else "
+                 "the solver's option file",
+        ),
+        # The former environment names of the two options above, kept for HiGHS only: a shell or CI setting made
+        # for HiGHS must not start limiting a commercial solver.  The flag and the FLEXTOOL_SOLVER_* twin win.
+        _spec(
+            key="highs_time_limit", flag=None, env="FLEXTOOL_HIGHS_TIME_LIMIT", db=None,
+            parse=_positive_float, default=None, audience="user",
+            help="HiGHS-only time limit of each solve in seconds; --solver-time-limit and "
+                 "FLEXTOOL_SOLVER_TIME_LIMIT win over it",
+        ),
+        _spec(
+            key="highs_mip_gap", flag=None, env="FLEXTOOL_HIGHS_MIP_GAP", db=None,
+            parse=_non_negative_float, default=None, audience="user",
+            help="HiGHS-only relative MIP gap of every solve; --solver-mip-gap and FLEXTOOL_SOLVER_MIP_GAP win "
+                 "over it",
+        ),
+        _spec(
+            key="solver_config_dir", flag="--solver-config-dir", env="FLEXTOOL_SOLVER_CONFIG_DIR", db=None,
+            parse=_path_text, default=None, audience="user",
+            help="folder of the solver option files (highs.opt, gurobi.opt, ...); unset looks next to the input "
+                 "database, in its workspace, the Spine Toolbox project folder and the current folder",
         ),
         _spec(
             key="scaling", flag="--scaling", env="FLEXTOOL_SCALING", db="solve.scaling",
@@ -262,8 +286,6 @@ ENV_KNOBS: dict[str, EnvKnob] = {
     knob.name: knob
     for knob in (
         # --- user: process-level and GUI settings ---------------------------------------------------------
-        _user("FLEXTOOL_SOLVER_CONFIG_DIR",
-              "folder whose solver option files (highs.opt, ...) seed a run's work folder"),
         _user("FLEXTOOL_NO_ENV_CHECK", "skip the start-up check of the native libraries (polars, highspy)"),
         _user("FLEXTOOL_NO_UPDATE_CHECK", "the GUI does not look for a newer FlexTool at start"),
         _user("FLEXTOOL_DPI", "GUI screen resolution override"),
@@ -273,6 +295,8 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         _user("POLARS_FORCE_PKG", "force one polars build; also skips FlexTool's processor check"),
         _user("FLEXTOOL_RUN_LOG_MAX_BYTES", "bytes of a run's _run.log kept from its end (4 MiB, at most 256 MiB); "
               "the first 64 KiB are kept too"),
+        _user("FLEXTOOL_MIGRATION_LOCK_TIMEOUT", "Windows: seconds a migration waits for the lock of another "
+              "migration of the same database (600); not read on Linux or macOS"),
         _user("POLARS_MAX_THREADS", "polars thread pool size, in place of FlexTool's limit of 8 but at most the "
               "run's --threads; the run header prints the effective count", read_by="polars"),
         # --- dev: solve acceptance ------------------------------------------------------------------------
@@ -339,6 +363,8 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         _test("FLEXTOOL_NATIVE_PARITY_SWEEP", "run the slow parity sweep over every fixture"),
         _test("FLEXTOOL_TEST_RSS_BUDGET_MB", "RSS budget of the input-derivation memory test (1500)"),
         _test("FLEXTOOL_TEST_KEYRING_LOG", "set by the root conftest: the file the session's keyring violations go to"),
+        _test("FLEXTOOL_SHIM_RECORD", "set by the commercial_shim tests: the file each solver shim appends its "
+              "call record to"),
     )
 }
 

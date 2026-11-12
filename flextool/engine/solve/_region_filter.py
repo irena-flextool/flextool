@@ -49,6 +49,7 @@ import polars as pl
 from polar_high import Param
 
 from flextool.engine.preprocess.flex_data import FlexData
+from flextool.engine.preprocess._reduce_detail import STARTUP_FIELDS
 from flextool.engine.input._axis_enums import (
     cast_dim,
     get_global_axis_enums,
@@ -485,6 +486,9 @@ def _validate_no_straddling_units(
     straddling arc, and severing any unit arc silently loses conversion
     terms.  Never a silent degrade (the fix_start precedent is the
     anti-pattern this guards against).
+
+    A unit's start-up input nodes (``process_startup_node``: the start-up draw is a term on its units started,
+    which live in the region subproblem) count as its endpoints too.
     """
     if data.process_source_sink is None:
         return
@@ -501,6 +505,11 @@ def _validate_no_straddling_units(
         if r["p"] in units:
             endpoints_by_unit.setdefault(r["p"], set()).update(
                 (r["source"], r["sink"]))
+    startup_pn = getattr(data, "process_startup_node", None)
+    if startup_pn is not None and startup_pn.height > 0:
+        for p, n in startup_pn.select(pl.col("p").cast(pl.Utf8), pl.col("n").cast(pl.Utf8)).iter_rows():
+            if p in units:
+                endpoints_by_unit.setdefault(p, set()).add(n)
     for unit in sorted(endpoints_by_unit):
         eps = endpoints_by_unit[unit]
         region_touch = eps & all_region_nodes
@@ -518,6 +527,29 @@ def _validate_no_straddling_units(
                 f"connection, and keep the unit's arcs wholly on one "
                 f"side."
             )
+
+
+def _validate_startup_nodes(data: FlexData, region_nodes: dict[str, set[str]],
+                            region_procs: dict[str, set[str]]) -> None:
+    """Hard-error on a unit that takes start-up energy (``process_startup_node``, startup_input_method) from a node
+    of a region the unit is not in: the draw is a term on the unit's units started, which live in the unit's own
+    region subproblem, so it cannot enter the other region's balance."""
+    pn = getattr(data, "process_startup_node", None)
+    if pn is None or pn.height == 0:
+        return
+    bad: list[str] = []
+    all_region_procs = {q for ps in region_procs.values() for q in ps}
+    for p, n in pn.select(pl.col("p").cast(pl.Utf8), pl.col("n").cast(pl.Utf8)).iter_rows():
+        for r, nodes in region_nodes.items():
+            if n in nodes and p not in region_procs.get(r, set()):
+                who = f"unit {p!r}" if p in all_region_procs else f"unit {p!r} of no region"
+                bad.append(f"{who} takes start-up energy from node {n!r} of region {r!r}")
+    if bad:
+        raise RuntimeError(
+            "split: " + "; ".join(sorted(bad)) + ".  A start-up draw is a term on the unit's start-ups, which are "
+            "in the unit's own region subproblem (a unit of no region is copied into every region).  Take the "
+            "start-up input from a node of the unit's region or a node of no region (a commodity node), take it "
+            "through a connection into a node of the unit's region, or bring the node into the unit's region.")
 
 
 def _user_constraint_sides(
@@ -602,7 +634,8 @@ def _user_constraint_sides(
                 "p_process_constraint_prebuilt_capacity_coeff",
                 "p_process_constraint_capacity_coeff",
                 "p_process_constraint_retired_capacity_coeff",
-                "p_process_constraint_in_construction_capacity_coeff"):
+                "p_process_constraint_in_construction_capacity_coeff",
+                "p_process_constraint_online_coeff"):
         f = _frame_of(getattr(data, fld, None))
         if f is None or "cn" not in f.columns:
             continue
@@ -725,14 +758,64 @@ def _master_side_feature_groups(
     return kept
 
 
+def _validate_feature_groups_in_one_region(
+    data: FlexData,
+    region_nodes: dict[str, set[str]],
+) -> None:
+    """A capacity-margin, inertia or non-synchronous group whose nodes lie in more than one region is an error.
+
+    Each region subproblem would get its own copy of the group's row over the group's nodes in that region, so
+    the requirement (the whole margin, inertia limit or share) would apply once per region instead of once for the
+    group.  Only the families active in the solve are checked (``_group_slack.has_*``: a capacity margin needs
+    investment periods; ``reduce_system_detail_method`` may leave inertia and non-synchronous out).  Nodes in no
+    region (shared, replicated into every region) do not count.
+    """
+    from flextool.engine.model import _group_slack
+
+    families = (("capacity margin", "groupCapacityMargin", _group_slack.has_capacity_margin),
+                ("inertia", "groupInertia", _group_slack.has_inertia),
+                ("non-synchronous", "groupNonSync", _group_slack.has_non_sync))
+    gn = data.group_node
+    if gn is None or gn.height == 0:
+        return
+    region_of: dict[str, str] = {}
+    for r, ns in region_nodes.items():
+        for n in ns:
+            region_of[n] = r
+    members: dict[str, set[str]] = {}
+    for g, n in gn.select(pl.col("g").cast(pl.Utf8), pl.col("n").cast(pl.Utf8)).iter_rows():
+        members.setdefault(g, set()).add(n)
+    errors: list[str] = []
+    for what, set_name, active in families:
+        groups = getattr(data, set_name, None)
+        if groups is None or groups.height == 0 or not active(data):
+            continue
+        for g in sorted({str(x) for x in groups.get_column("g").to_list()}):
+            regions = sorted({region_of[n] for n in members.get(g, ()) if n in region_of})
+            if len(regions) > 1:
+                errors.append(f"{what} group {g!r} has nodes in regions {', '.join(regions)}")
+    if errors:
+        raise RuntimeError(
+            "split: " + "; ".join(errors) + ". A group's requirement cannot be split between Benders region "
+            "subproblems (each region would require all of it). Use one group per region.")
+
+
 def _co2_master_partition(
     data: FlexData,
     master_local_triples: set[tuple[str, str, str]],
     region_master_triples: set[tuple[str, str, str]],
+    master_local_procs: "set[str] | frozenset[str]" = frozenset(),
 ) -> set[str]:
     """Validate the CO2 frames against the master boundary and return
     the CO2-capped groups whose EVERY capped flow is a master-local arc
     (those cap constraints live whole in the master).
+
+    A start-up draw (``startup_from_co2_capped`` / ``_capped_total``,
+    unit__inputNode.startup_input_method) is a term on the unit's
+    ``v_startup``: it is on the master side when the unit is a
+    master-local process (``master_local_procs``), else on the region
+    side (the unit's own region subproblem), and counts towards the
+    group's side like a capped flow.
 
     Hard errors (never a silent degrade):
 
@@ -767,6 +850,12 @@ def _co2_master_partition(
             t = (r["p"], r["source"], r["sink"])
             master_flags_by_g.setdefault(r["g"], []).append(
                 t in master_local_triples)
+    for fld in ("startup_from_co2_capped", "startup_from_co2_capped_total"):
+        df = getattr(data, fld, None)
+        if df is None or df.height == 0:
+            continue
+        for p, g in df.select(pl.col("p").cast(pl.Utf8), pl.col("g").cast(pl.Utf8)).iter_rows():
+            master_flags_by_g.setdefault(g, []).append(p in master_local_procs)
     kept: set[str] = set()
     for g in sorted(master_flags_by_g):
         flags = master_flags_by_g[g]
@@ -776,7 +865,8 @@ def _co2_master_partition(
             raise RuntimeError(
                 f"split: CO2-capped group {g!r} straddles the "
                 f"region/master boundary — it caps both master-local "
-                f"and region-side flows.  A shared CO2 cap cannot be "
+                f"and region-side flows (a start-up draw is on its "
+                f"unit's side).  A shared CO2 cap cannot be "
                 f"split between a region subproblem and the Benders "
                 f"master — regroup so every capped flow is on one side."
             )
@@ -964,12 +1054,14 @@ def _build_region_data(
     new.p_slope = _filter_param(src.p_slope, "p", keep_procs)
     new.p_process_existing_count = _filter_param(src.p_process_existing_count, "p", keep_procs)
     new.p_process_availability = _filter_param(src.p_process_availability, "p", keep_procs)
-    # Ramp limits: only this region's arcs (dt_ramp_link / dt_online_wrap / dt_ramp_carry / dt_online_carry are
+    # Ramp limits and ramp costs: only this region's arcs (dt_ramp_link / dt_online_wrap / dt_ramp_carry / dt_online_carry are
     # (d, t)-keyed, process-independent, and pass through; so do process_online / p_roll_continue_online, online sets
     # never filtered by region).
     for _f in ("process_source_sink_ramp_limit_sink_up", "process_source_sink_ramp_limit_sink_down",
-               "process_source_sink_ramp_limit_source_up", "process_source_sink_ramp_limit_source_down"):
+               "process_source_sink_ramp_limit_source_up", "process_source_sink_ramp_limit_source_down",
+               "process_source_sink_ramp_cost"):
         setattr(new, _f, _filter_arc_by_proc(getattr(src, _f)))
+    new.p_ramp_cost_arc = _filter_param_arc(getattr(src, "p_ramp_cost_arc", None))
     new.p_roll_continue_flow = _filter_param_arc(src.p_roll_continue_flow)
     new.p_roll_continue_flow_duration = _filter_param_arc(getattr(src, "p_roll_continue_flow_duration", None))
 
@@ -1050,6 +1142,18 @@ def _build_region_data(
         )
     new.process_unit = _filter_frame(src.process_unit, "p", keep_procs)
     new.process_exact = _filter_frame(getattr(src, "process_exact", None), "p", keep_procs)
+    # Start-up input draws (startup_input_method): the region's units.  Their start-up nodes are in the region or in
+    # no region (a shared commodity node, replicated and priced in each region): a node of another region is refused
+    # by split (_validate_startup_nodes), a master-hosted one is a straddling unit (_validate_no_straddling_units).
+    for _f in STARTUP_FIELDS:
+        _obj = getattr(src, _f, None)
+        if isinstance(_obj, Param):
+            _obj = _filter_param(_obj, "p", keep_procs)
+        elif _obj is not None:
+            _obj = _filter_frame(_obj, "p", keep_procs)
+        if _obj is not None and (_obj.frame if isinstance(_obj, Param) else _obj).height == 0:
+            _obj = None
+        setattr(new, _f, _obj)
 
     # ---- Master-hosted mode: scrub master entities from the frames the
     # splitter otherwise carries through whole (invest/annuity/cost,
@@ -1532,6 +1636,7 @@ _MASTER_NODE_FIELDS: tuple[str, ...] = (
     "p_process_constraint_retired_capacity_coeff",
     "p_node_constraint_in_construction_capacity_coeff",
     "p_process_constraint_in_construction_capacity_coeff",
+    "p_process_constraint_online_coeff",
     "groupCapacityMargin", "groupInertia", "groupNonSync", "group_node",
     "process_sink_inertia", "process_source_inertia",
     "process_sink_nonSync", "process_group_inside_nonSync",
@@ -1593,6 +1698,7 @@ _MASTER_CN_KEYED_FIELDS: tuple[str, ...] = (
     "p_process_constraint_retired_capacity_coeff",
     "p_node_constraint_in_construction_capacity_coeff",
     "p_process_constraint_in_construction_capacity_coeff",
+    "p_process_constraint_online_coeff",
 )
 
 #: Arc-keyed CO2-priced flow frames → keep master-local arc rows
@@ -1784,7 +1890,7 @@ def master_network_data(
         master_groups_feature = _master_side_feature_groups(
             data, all_region_nodes, master_hosted_nodes)
         master_groups_co2 = _co2_master_partition(
-            data, master_local_keys, region_master_keys)
+            data, master_local_keys, region_master_keys, _ml_procs)
         # Arc keep-set = cross ∪ region↔master coupling ∪ master-local
         # (audit 0.D: the coupling-arc-only case is load-bearing).
         cross_keys = cross_keys | region_master_keys | master_local_keys
@@ -1895,10 +2001,12 @@ def master_network_data(
     new.p_slope = _keep_proc_param(data.p_slope)
     new.p_process_existing_count = _keep_proc_param(data.p_process_existing_count)
     new.p_process_availability = _keep_proc_param(data.p_process_availability)
-    # Ramp limits: only the kept (cross) arcs.
+    # Ramp limits and ramp costs: only the kept (cross) arcs.
     for _f in ("process_source_sink_ramp_limit_sink_up", "process_source_sink_ramp_limit_sink_down",
-               "process_source_sink_ramp_limit_source_up", "process_source_sink_ramp_limit_source_down"):
+               "process_source_sink_ramp_limit_source_up", "process_source_sink_ramp_limit_source_down",
+               "process_source_sink_ramp_cost"):
         setattr(new, _f, _keep_cross_triple(getattr(data, _f)))
+    new.p_ramp_cost_arc = _keep_cross_triple_param(getattr(data, "p_ramp_cost_arc", None))
     new.p_roll_continue_flow = _keep_cross_triple_param(data.p_roll_continue_flow)
     new.p_roll_continue_flow_duration = _keep_cross_triple_param(getattr(data, "p_roll_continue_flow_duration", None))
     new.pd_neg_cap = _keep_proc_param(data.pd_neg_cap)
@@ -2049,6 +2157,27 @@ def master_network_data(
                         _keep_proc_param(obj) if isinstance(obj, Param)
                         else _keep_proc(obj))
 
+    # Start-up input draws (startup_input_method): none in the network-only master; in master-hosted mode the
+    # units of the kept arcs (the master-local units: a region unit's draw is in its region subproblem) at a
+    # master-hosted node or a node of no region (a commodity node, priced like the unit's fuel arc).  A master-local
+    # unit drawing from a region node straddles the boundary (_validate_no_straddling_units).
+    _startup_pn = getattr(data, "process_startup_node", None)
+    _region_node_union = {n for ns in region_nodes.values() for n in ns}
+    startup_nodes_kept = (set() if _startup_pn is None else
+                          {str(n) for n in _startup_pn.get_column("n").to_list()} - _region_node_union)
+    for fld in STARTUP_FIELDS:
+        obj = getattr(data, fld, None)
+        if master_mode and obj is not None:
+            if isinstance(obj, Param):
+                obj = _filter_param(_filter_param(obj, "p", cross_procs), "n", startup_nodes_kept)
+            else:
+                obj = _filter_frame(_filter_frame(obj, "p", cross_procs), "n", startup_nodes_kept)
+            if (obj.frame if isinstance(obj, Param) else obj).height == 0:
+                obj = None
+        else:
+            obj = None
+        setattr(new, fld, obj)
+
     # ``build_flextool``'s ALWAYS feature requires these four fields to be
     # PRESENT (not None) even when empty (model/core.py ``ALWAYS``).  Emptying
     # them (head(0)) — rather than nulling — OMITS every terminal node from
@@ -2157,24 +2286,31 @@ def _validate_cross_region_connections(data: FlexData, cross: pl.DataFrame,
         raise FlexToolConfigError(
             "Benders decomposition: connection(s) between regions (or between a region and the master) cannot "
             "have online variables, the exact transfer method or reserve, because the split replaces them with "
-            "half-flows in each region: " + "; ".join(problems) + ".  Remove these from the connections, or put "
-            "both of their nodes in one region.")
+            "half-flows in each region: " + "; ".join(problems) + ".  Remove these from the connections, put "
+            "both of their nodes in one region, or leave them out of the solve (reduce_system_detail_method "
+            "reserves, reduce_unit_detail_method integers for exact, online for online variables).")
 
 
 def _warn_integer_region(region: str, rdata: FlexData) -> None:
     """Warn when a region subproblem has integer columns (binary online status, exact direction switch): the
-    Benders cuts use the subproblem's duals, which are not valid for a mixed-integer subproblem."""
+    Benders cuts use the subproblem's duals, which are not valid for a mixed-integer subproblem.  Quiet when the
+    solve's ``reduce_unit_detail_method`` relaxes integers (``relax_integrality``: the binary online columns are
+    continuous, and ``process_exact`` is already cleared)."""
     pss = getattr(rdata, "process_source_sink", None)
     in_region = ({str(p) for p in pss.get_column("p").to_list()} if pss is not None and pss.height > 0 else set())
-    names = sorted(in_region & {str(p) for f in (getattr(rdata, "process_online_integer", None),
-                                                 getattr(rdata, "process_exact", None))
+    integer_sets = [getattr(rdata, "process_exact", None)]
+    if not getattr(rdata, "relax_integrality", False):
+        integer_sets.append(getattr(rdata, "process_online_integer", None))
+    names = sorted(in_region & {str(p) for f in integer_sets
                                 if f is not None and f.height > 0 for p in f.get_column("p").to_list()})
     if names:
-        _logger.warning(
-            "Benders: region %s has integer variables (binary startup_method or exact transfer method: %s). "
-            "Benders cuts come from the duals of the region subproblem, which are not valid for a mixed-integer "
-            "subproblem; the decomposition may stop at a wrong solution. Use startup_method linear and a "
-            "non-exact transfer method in decomposed regions.", region, ", ".join(names))
+        msg = (f"Benders: region {region} has integer variables (binary startup_method or exact transfer method: "
+               f"{', '.join(names)}). Benders cuts come from the duals of the region subproblem, which are not "
+               "valid for a mixed-integer subproblem; the decomposition may stop at a wrong solution. Set "
+               "reduce_unit_detail_method = integers (or a level that contains it) on the solve to solve the "
+               "regions as LPs, or use startup_method linear and a non-exact transfer method in decomposed regions.")
+        _logger.warning(msg)
+        print(f"Warning: {msg}", flush=True)
 
 
 def split(
@@ -2276,6 +2412,7 @@ def split(
 
     shared_nodes = all_nodes - all_region_nodes
     shared_procs = all_procs - all_region_procs
+    _validate_startup_nodes(data, region_nodes, region_procs)
 
     if master_hosted_nodes:
         overlap = set(master_hosted_nodes) & all_region_nodes
@@ -2296,6 +2433,8 @@ def split(
             RegionSplit(region=r, data=data, half_flows=[])
             for r in regions
         ]
+
+    _validate_feature_groups_in_one_region(data, region_nodes)
 
     pss_tagged, cross, region_master, master_local = _classify_arcs(
         data.process_source_sink, region_nodes,
@@ -2337,7 +2476,8 @@ def split(
         master_groups = (
             _master_side_feature_groups(
                 data, all_region_nodes, master_hosted_nodes)
-            | _co2_master_partition(data, _ml_triples, _rm_triples)
+            | _co2_master_partition(data, _ml_triples, _rm_triples,
+                                    master_local_procs)
         )
         # Master-local procs live wholly in the master (F3): regions
         # carry neither their arcs nor their entity rows.

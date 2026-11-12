@@ -17,8 +17,19 @@ stopped job ends with ``TurnRefused(job_id, "Stopped.")``:
 4. the probe (an Ollama model may turn out to be forwarded to the cloud: a new :class:`RouteShown` and notice);
 5. the backend behind the process-wide :class:`~flextool.gui.assistant.gate.ProviderGate` and the session
    (``Session.switch`` when a chat goes on with other settings);
-6. the window's snapshot of this question as the tools' defaults, :class:`TurnStarted`, ``Session.run_turn`` (its
-   events go straight to the queue), :class:`TurnFinished`.
+6. the window's snapshot of this question as the tools' defaults, :class:`TurnStarted` (with the question's
+   number), ``Session.run_turn`` (its events go straight to the queue), :class:`TurnFinished`.
+
+A question asked again (item 220: ``TurnJob.rewind`` is its number) goes the same way; just before
+:class:`TurnStarted` the worker checks that the chat has that question and no restored request waits, and posts
+:class:`Rewound` with the messages that stay (the session deletes the others under its turn lock, in
+``run_turn(..., rewind=)``).  A question that cannot be asked again posts :class:`Rewound` with the whole history
+and ``TurnRefused`` with the reason; nothing changed.  ``TurnJob.seed`` is the summary a new chat's first question
+starts with (hidden: the window shows only the question typed).  A question asked again as it was
+(``TurnJob.again``) is taken from the chat (:func:`~flextool.assistant.session.question_text`, without the seed,
+which the session puts back), never from the window's text, so the seed is never sent twice.  A question asked
+again keeps the chat's own model, also from question 1 (review decision D7): the chat is prepared from what it was
+held with before its questions were deleted.
 
 Steps 2–5 run again only after :class:`SettingsChanged` and only when what the settings give changed, so a change
 during an answer applies to the chat's next question.  A chat a model has answered in keeps that provider, address
@@ -73,6 +84,9 @@ class TurnJob:
     text: str
     snapshot: ContextSnapshot | None
     cancel: threading.Event = field(default_factory=threading.Event, compare=False)
+    rewind: int | None = None       # ask question *rewind* again: it and every later one are deleted first
+    seed: str | None = None         # the summary a new chat's first question starts with (not shown)
+    again: bool = False             # with *rewind*: as it was — the text is the chat's, not *text*
 
 
 @dataclass(frozen=True)
@@ -146,7 +160,22 @@ class ChatReady:
 
 @dataclass(frozen=True)
 class TurnStarted:
+    """The question was sent; *turn* is its number in the chat (a question that got no answer and the next one
+    share one)."""
+
     job_id: int
+    turn: int = 0
+
+
+@dataclass(frozen=True)
+class Rewound:
+    """A question is asked again: *messages* is what the chat keeps (or, when it cannot be asked again, the whole
+    history, before ``TurnRefused``); the window shows them again.  *turn* is the question deleted from (``None``
+    when nothing was deleted)."""
+
+    job_id: int
+    messages: tuple[Message, ...]
+    turn: int | None = None
 
 
 @dataclass(frozen=True)
@@ -585,14 +614,51 @@ class AssistantWorker:
         # that source only (project.default_scenario_for).
         ctx.default_source = snapshot.input_source if snapshot is not None else None
         ctx.default_scenario = snapshot.scenario if snapshot is not None else None
-        self._emit(jid, TurnStarted(jid))
-        result = session.run_turn(job.text, lambda ev: self._emit(jid, ev), job.cancel)
+        from flextool.assistant.session import RewindRefused, next_turn
+
+        text = job.text
+        try:
+            self._check(job)
+            if job.rewind is not None:
+                asked = self._rewinding(job, session, conv)
+                if job.again:
+                    text = asked
+        except _Refused:
+            return
+        self._emit(jid, TurnStarted(jid, next_turn(conv.messages, job.rewind)))
+        try:
+            result = session.run_turn(text, lambda ev: self._emit(jid, ev), job.cancel, rewind=job.rewind,
+                                      seed=job.seed)
+        except RewindRefused as exc:
+            # Checked just before (one worker thread runs this chat's questions): nothing changed.
+            self._emit(jid, Rewound(jid, tuple(conv.messages)))
+            self._emit(jid, TurnRefused(jid, _rewind_refusal(exc.reason)))
+            return
         summary = None
         if result.error is not None and result.error.code == "context":
             from flextool.assistant.session import carry_summary
 
             summary = carry_summary(conv.messages)
         self._emit(jid, TurnFinished(jid, result, dict(conv.usage), summary))
+
+    def _rewinding(self, job: TurnJob, session: Session, conv: Conversation) -> str:
+        """Before a question asked again is shown as sent: :class:`Rewound` with the messages that stay, or, when it
+        cannot be asked again, the whole history and ``TurnRefused`` (:class:`_Refused`).  Returns the question as
+        the chat keeps it, without the seed (:func:`~flextool.assistant.session.question_text`)."""
+        from flextool.assistant.session import RewindRefused, rewind
+
+        assert job.rewind is not None
+        kept = list(conv.messages)
+        try:
+            if session.checkpoint_waiting:
+                raise RewindRefused("checkpoint", job.rewind)
+            asked = rewind(kept, job.rewind, job.seed)
+        except RewindRefused as exc:
+            self._emit(job.job_id, Rewound(job.job_id, tuple(conv.messages)))
+            self._emit(job.job_id, TurnRefused(job.job_id, _rewind_refusal(exc.reason)))
+            raise _Refused from None
+        self._emit(job.job_id, Rewound(job.job_id, tuple(kept), job.rewind))
+        return asked
 
     def _check(self, job: TurnJob) -> None:
         if job.cancel.is_set():
@@ -664,6 +730,7 @@ class AssistantWorker:
         return _Setup(settings, preset, base_url, conn, level, level_source, fingerprint, override)
 
     def _bound(self) -> tuple[str, str, str] | None:
+        """The model the chat is held with (:func:`~flextool.assistant.store.bound_origin`)."""
         from flextool.assistant.store import bound_origin
 
         conv = self._conversation
@@ -851,6 +918,11 @@ class AssistantWorker:
     def session(self) -> Session | None:
         with self._session_lock:
             return self._session
+
+
+def _rewind_refusal(reason: str) -> str:
+    """The window's words for a question that cannot be asked again (``RewindRefused.reason``)."""
+    return strings.CANNOT_ASK_AGAIN_WAITING if reason == "checkpoint" else strings.CANNOT_ASK_AGAIN_GONE
 
 
 def _settings_name(provider, preset: Preset, model: str, base_url: str) -> bool:

@@ -3,10 +3,11 @@
 ## What it is
 
 IBM ILOG CPLEX is a long-established commercial linear, mixed-integer, and
-quadratic programming solver. Its Python API is more verbose than Gurobi's,
-and FlexTool's polar-high adapter accommodates that by feeding row-major
-sparse data and using CPLEX's native ranged-row support. FlexTool itself
-never imports `cplex` directly.
+quadratic programming solver. FlexTool writes each solve's model to an MPS
+file and runs the CPLEX interactive optimizer (`cplex`, found on `PATH` or in
+`~/cplex/bin`) on it in a separate process, giving every parameter as a
+`set <name> <value>` command. FlexTool itself never imports `cplex`
+directly.
 
 Official site: <https://www.ibm.com/products/ilog-cplex-optimization-studio>
 
@@ -75,22 +76,21 @@ discoverable.
 
 ## Authoring `solver_arguments` for CPLEX
 
-CPLEX parameters live under a nested attribute namespace
-(`c.parameters.<group>.<sub>...<name>`). polar-high's CPLEX adapter
-expects option keys as **dotted parameter paths** relative to
-`c.parameters`. In FlexTool's `solver_arguments` Map, write the dotted name
-directly:
+Write the parameter names of the interactive optimizer's `set` command, in
+full and with spaces (`mip tolerances mipgap`). A dotted name
+(`mip.tolerances.mipgap`, the Python-API spelling) is read as the spaced
+one; an abbreviation (`mip tol mipg`) is passed as written and does not
+replace the full name from another layer.
 
 ```text
 solver_arguments:
   timelimit                = 60
-  mip.tolerances.mipgap    = 0.01
+  mip tolerances mipgap    = 0.01
   threads                  = 8
 ```
 
-These three correspond to the `--solver-time-limit` CLI flag, FlexTool's
-`solver_mip_gap` parameter, and the `--highs-threads` CLI flag convenience
-knobs; either form works.
+`--solver-time-limit` (CPLEX `timelimit`) and `--solver-mip-gap`
+(`mip tolerances mipgap`) win over these; `solver_mip_gap` is below them.
 
 ## Common errors
 
@@ -104,12 +104,13 @@ The error messages below are what FlexTool surfaces as `FlexToolUserError`.
 - **ILM / subscription failure.** Code `32024` (and other 32000-range
   codes). Same FlexTool licence-error message family. Re-authenticate
   your IBM Cloud subscription or refresh the ILM token.
-- **Unknown CPLEX parameter.** Typing `timeLimit` instead of `timelimit`
-  in `solver_arguments` raises `CplexError` from the parameter setter;
-  FlexTool surfaces it as *"Solver 'cplex' returned an error: ..."*. The
-  parameter names are documented at the IBM CPLEX parameters reference
-  ([FIXME: confirm URL] — typically under the IBM CPLEX online
-  documentation for the installed version).
+- **Unknown CPLEX parameter.** A `set` command CPLEX does not know is
+  reported in the solver output; FlexTool does not check CPLEX's names. The
+  names are in the IBM CPLEX parameters reference
+  (<https://www.ibm.com/docs/en/icos/22.1.0?topic=cplex-list-parameters>).
+- **Time limit reached.** A MIP stopped at its time limit with a solution is
+  kept with a warning; an LP, or a MIP without a solution, stops the run. See
+  [Time limit](index.md#time-limit).
 
 ## How to set it in FlexTool
 
@@ -123,12 +124,16 @@ solve_advanced.solver_arguments:
   preind     = 1
 ```
 ```bash
-flextool <input_db_url> --solver-time-limit 60 --highs-threads 8
+flextool <input_db_url> --solver-time-limit 60 --solver-mip-gap 0.001
 ```
 
-The convenience knobs translate to CPLEX's `timelimit`,
-`mip.tolerances.mipgap`, and `threads`. Raw `solver_arguments` win on key
-collision.
+`--solver-time-limit` and `--solver-mip-gap` reach CPLEX as `timelimit 60` and
+`mip tolerances mipgap 0.001`, over the solve's `solver_mip_gap`, its `solver_arguments` and
+`cplex.opt` (precedence in [Solver selection](index.md)). Parameter names
+match without regard to case (and a dot is read as a space). The thread count comes from `threads` in
+`cplex.opt`; `--threads` and `--highs-threads` do not change it. The run
+prints what CPLEX receives in a `Solver args (cplex):` line before each
+solve.
 
 ---
 

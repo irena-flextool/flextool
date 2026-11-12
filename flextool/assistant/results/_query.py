@@ -34,6 +34,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
 from typing import Any
 
@@ -141,6 +142,11 @@ class Table:
     membership: bool
     #: The frame :func:`preload` read (row levels and every column a query selects); ``None`` reads from the file.
     wide: Any = field(default=None, repr=False, compare=False)
+    #: ``{row entity: {footer column key: unit}}`` of a table whose unit varies by row (a node's
+    #: ``unit_of_measure``: unit capacities, nodeGroup and flowGroup rows), from its footer; ``None`` otherwise.
+    row_units: dict | None = field(default=None, compare=False)
+    #: The row level :attr:`row_units` is keyed by (``unit``, ``node``, ``group`` ...), ``None`` without them.
+    row_level: str | None = None
 
     @property
     def row_levels(self) -> list[str]:
@@ -160,6 +166,20 @@ class Table:
 
     def measure_of(self) -> dict[str, Measure]:
         return dict(zip(self.layout.physical, self.measures))
+
+    @cached_property
+    def _footer_keys(self) -> dict[str, tuple[str, str]]:
+        """``{physical: (footer key without the scenario level, footer key of the whole label)}``."""
+        return {p: (_catalog._footer_key(key, self.layout), str(tuple(key)))
+                for p, key in zip(self.layout.physical, self.layout.columns)}
+
+    def row_unit(self, entity: str, physical: str) -> str | None:
+        """The unit of the column *physical* in the rows of *entity* (``None`` when the unit does not vary by row)."""
+        if not self.row_units:
+            return None
+        key, full = self._footer_keys[physical]
+        per_row = self.row_units.get(entity) or {}
+        return per_row.get(key, per_row.get(full))
 
 
 def table_stems(folder: Path) -> list[str]:
@@ -186,7 +206,40 @@ def open_table(folder: Path, stem: str, *, where: str) -> Table:
     clash = [level for level in layout.col if level in layout.idx]
     if clash:
         raise ToolError("level_name_clash", table=stem, level=clash[0])
-    return Table(stem, path, layout, _catalog.measures(stem, layout), _catalog.membership_set(stem, layout))
+    row_units, row_level = _row_units(path, stem, layout)
+    return Table(stem, path, layout, _catalog.measures(stem, layout), _catalog.membership_set(stem, layout),
+                 row_units=row_units, row_level=row_level)
+
+
+def _row_units(path: Path, stem: str, layout: LeanLayout) -> tuple[dict | None, str | None]:
+    """The footer's row units of a table whose unit varies by row, with the row level they are keyed by."""
+    source = _output_meta.UNIT_SOURCE.get(stem)
+    if source is None or not source.row or source.level not in layout.idx:
+        return None, None
+    from flextool.lean_parquet import read_lean_parquet_row_units
+    try:
+        rows = read_lean_parquet_row_units(path)
+    except Exception:  # noqa: BLE001 — a footer being written: the columns' units stand
+        return None, None
+    return (rows, source.level) if rows else (None, None)
+
+
+def row_units_payload(table: Table, keep: list[str], entities: list[str] | None = None) -> dict | None:
+    """``{row entity: unit}`` (or ``{row entity: {column label: unit}}`` when the kept columns of a row differ) of a
+    table whose unit varies by row, for the kept columns *keep* and the row entities *entities* (all of them by
+    default); ``None`` for any other table."""
+    if not table.row_units:
+        return None
+    labels = dict(zip(table.layout.physical, (key[-1] for key in table.layout.columns)))
+    out: dict[str, Any] = {}
+    for entity in entities if entities is not None else list(table.row_units):
+        per = {labels[p]: table.row_unit(str(entity), p) for p in keep}
+        per = {k: v for k, v in per.items() if v is not None}
+        if not per:
+            continue
+        values = set(per.values())
+        out[str(entity)] = values.pop() if len(values) == 1 else per
+    return out or None
 
 
 def read_wide(table: Table, keep: list[str]):
@@ -434,6 +487,12 @@ def _aggregate(table: Table, q: Query, keep: list[str], kept: list[str], agg: st
             level = next(lv for lv in cd if _varying(keys_of[p][position[lv]] for p in cols))
             raise ToolError("mixed_units", table=table.stem, units=sorted(u or "no unit" for u in group_units),
                             level=level)
+    # A row level whose rows have different units (a node's unit_of_measure) is not combined either.
+    if table.row_level in varying and table.row_units:
+        for p in keep:
+            row_units = {table.row_unit(e, p) for e in varying[table.row_level]} - {None}
+            if len(row_units) > 1:
+                raise ToolError("mixed_units", table=table.stem, units=sorted(row_units), level=table.row_level)
     for level, values in varying.items():
         if kind[level] == "quantity":
             raise ToolError("combine_quantities", table=table.stem, level=level, values=name_list(values, 10))

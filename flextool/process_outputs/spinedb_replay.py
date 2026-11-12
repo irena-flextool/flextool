@@ -78,7 +78,7 @@ def _frame_column_labels(df) -> list:
     return [name]
 
 
-def build_replay_s(results: dict) -> SimpleNamespace:
+def build_replay_s(results: dict, invest_labels: "dict[str, str] | None" = None) -> SimpleNamespace:
     """Build the minimal ``s`` shim for ``write_spinedb`` from ``results``.
 
     Parameters
@@ -89,10 +89,14 @@ def build_replay_s(results: dict) -> SimpleNamespace:
         (``scenario`` column level already stripped / single levels
         squeezed).
 
+    invest_labels : dict[str, str], optional
+        ``{period: solve}`` of the realized investments, as the native writer stored it in the investment tables'
+        parquet footers; becomes ``solve_invest_period`` so the investment tables get the native labels (#210).
+
     Returns
     -------
     types.SimpleNamespace
-        Object exposing ``solve_period_time``, ``solve_period``,
+        Object exposing ``solve_period_time``, ``solve_period``, ``solve_invest_period``,
         ``process_unit``, ``process_connection`` and ``process_source_sink``
         with the exact shapes ``write_spinedb`` expects, plus a
         ``replay_solve_name`` convenience attribute (the canonical solve
@@ -107,9 +111,13 @@ def build_replay_s(results: dict) -> SimpleNamespace:
     process_source_sink = _build_process_source_sink(results)
     replay_solve_name = _last_solve_name(solve_period)
 
+    labels = invest_labels or {}
+    solve_invest_period = pd.MultiIndex.from_arrays(
+        [list(labels.values()), list(labels.keys())], names=["solve", "period"])
     return SimpleNamespace(
         solve_period_time=solve_period_time,
         solve_period=solve_period,
+        solve_invest_period=solve_invest_period,
         process_unit=process_unit,
         process_connection=process_connection,
         process_source_sink=process_source_sink,

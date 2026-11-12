@@ -150,7 +150,10 @@ REGISTRY: dict[str, ParquetSpec] = {}
 # -- raw / v_*.parquet (per-solve LP decision/slack/dual variables) ----------
 for _spec in (
     _v("v_flow",            ("process", "source", "sink")),
-    _v("v_ramp",            ("process", "source", "sink")),
+    _v("v_ramp_up",         ("process", "source", "sink"),
+       note="Increase of v_flow from its ramp predecessor; only arcs with a ramp cost."),
+    _v("v_ramp_down",       ("process", "source", "sink"),
+       note="Decrease of v_flow from its ramp predecessor; only arcs with a ramp cost."),
     _v("v_reserve",         ("process", "reserve", "updown", "node")),
     _v("v_state",           ("node",)),
     _v("v_online_linear",   ("process",)),
@@ -212,6 +215,41 @@ for _spec in (
 ):
     REGISTRY[_spec.key] = _spec
 del _spec
+
+# -- raw / the capacity margin of each solve with investment periods (engine.output._capacity_margin) --------
+for _key, _cols, _note in (
+    ("capacity_margin_report",
+     ("margin", "peak_demand", "demand", "requirement", "firm", "vre", "storage_flow", "unit_flow",
+      "connections_net", "consumption", "dumped", "counted", "shortfall", "penalty_cost", "capacity_price"),
+     "capacity margin per (group, period) of the solve at its binding step; only when a capacity margin is active."),
+    ("capacity_margin_entity", ("class", "entity", "value"),
+     "each entity's capacity-margin contribution at the binding step; only when a capacity margin is active."),
+):
+    REGISTRY[_key] = ParquetSpec(
+        key=_key, category="raw", filename=f"{_key}__*.parquet",
+        columns=("solve", "group", "period", "binding_time", *_cols),
+        indices=("solve", "group", "period", "binding_time"), note=_note,
+        producer="flextool.engine.output._capacity_margin.write_capacity_margin_report",
+    )
+del _key, _cols, _note
+
+# -- raw / the reserve requirement of each reserve group (engine.output._reserve_report) --------------------
+for _key, _cols, _idx, _note in (
+    ("reserve_group",
+     ("requirement", "requirement_timeseries", "requirement_dynamic", "requirement_n_1", "n_1_process",
+      "binding_method", "binding_process", "provided", "counted", "shortfall"),
+     ("solve", "reserve", "updown", "node_group", "period", "time"),
+     "reserve requirement per (reserve, updown, group) and realized step of the solve; only with reserves active."),
+    ("reserve_group_provider", ("value",),
+     ("solve", "reserve", "updown", "node_group", "process", "node", "period", "time"),
+     "each provider's counted reserve (× reliability) per group and realized step; only with reserves active."),
+):
+    REGISTRY[_key] = ParquetSpec(
+        key=_key, category="raw", filename=f"{_key}__*.parquet",
+        columns=(*_idx, *_cols), indices=_idx, note=_note,
+        producer="flextool.engine.output._reserve_report.write_reserve_report",
+    )
+del _key, _cols, _idx, _note
 
 
 # NOTE: the legacy raw/handoff capacity CSVs (``entity_all_capacity.csv``,
@@ -295,9 +333,9 @@ for _key, _producer, _note in (
     ("unit_outputs_cf_d_ee",       "out_flows.unit_cf_outputNode",     "Per-period capacity factor of unit->node flows."),
     ("unit_inputs_cf_d_ee",        "out_flows.unit_cf_inputNode",      "Per-period capacity factor of node->unit flows."),
     ("unit_VRE_potential_outputNode_dt_ee",     "out_flows.unit_VRE_curtailment_and_potential", "VRE potential; only with VRE units."),
-    ("unit_VRE_potential_outputNode_d_ee",      "out_flows.unit_VRE_curtailment_and_potential", "VRE potential per period; only with VRE units."),
+    ("unit_VRE_potential_outputNode_d_ee",      "out_flows.unit_VRE_curtailment_and_potential", "VRE potential per period, scaled to a full year (MWh/a); only with VRE units."),
     ("unit_curtailment_outputNode_dt_ee",       "out_flows.unit_VRE_curtailment_and_potential", "VRE curtailment; only with VRE units."),
-    ("unit_curtailment_outputNode_d_ee",        "out_flows.unit_VRE_curtailment_and_potential", "VRE curtailment per period; only with VRE units."),
+    ("unit_curtailment_outputNode_d_ee",        "out_flows.unit_VRE_curtailment_and_potential", "VRE curtailment per period, scaled to a full year (MWh/a); only with VRE units."),
     ("unit_curtailment_share_outputNode_dt_ee", "out_flows.unit_VRE_curtailment_and_potential", "VRE curtailment share; only with VRE units."),
     ("unit_curtailment_share_outputNode_d_ee",  "out_flows.unit_VRE_curtailment_and_potential", "VRE curtailment share per period; only with VRE units."),
     ("unit_ramp_inputs_dt_ee",     "out_flows.unit_ramps",             "Per-(period,time) input-side unit ramp; only with ramp limits set."),
@@ -305,6 +343,8 @@ for _key, _producer, _note in (
     ("unit_online_dt_e",           "out_flows.unit_online_and_startup", "Per-(period,time) unit online state; only with online tracking."),
     ("unit_online_average_d_e",    "out_flows.unit_online_and_startup", "Per-period unit online average; only with online tracking."),
     ("unit_startup_d_e",           "out_flows.unit_online_and_startup", "Per-period unit startup count; only with online tracking."),
+    ("unit_startup_energy_dt_ee",  "out_flows.unit_startup_energy",    "Per-(period,time) start-up input energy (MWh) per unit and start-up node."),
+    ("unit_startup_energy_d_ee",   "out_flows.unit_startup_energy",    "Per-period start-up input energy (MWh/a) per unit and start-up node."),
     ("connection_online_dt_e",     "out_flows.connection_online_and_startup", "Connection online state; only with online connections."),
     ("connection_online_average_d_e", "out_flows.connection_online_and_startup", "Connection online average; only with online connections."),
     ("connection_startup_d_e",     "out_flows.connection_online_and_startup", "Connection startup count; only with online connections."),
@@ -340,6 +380,9 @@ for _key, _producer, _note in (
     ("process_reserve_upDown_node_dt_eppe", "out_ancillary.reserves",   "Per-(period,time) reserve provision; only with reserves active."),
     ("process_reserve_average_d_eppe",      "out_ancillary.reserves",   "Per-period average reserve provision; only with reserves active."),
     ("reserve_prices_dt_ppg",               "out_ancillary.reserves",   "Per-(period,time) reserve price (dual); only with reserves active."),
+    ("nodeGroup_reserve_dt_eegp",           "out_ancillary.reserve_requirement", "Per-(period,time) reserve requirement, provision and shortfall by group; only with reserves active."),
+    ("nodeGroup_reserve_d_eegp",            "out_ancillary.reserve_requirement", "Per-period weighted averages and maxima of the reserve requirement by group; only with reserves active."),
+    ("nodeGroup_reserve_provider_dt_eegee", "out_ancillary.reserve_requirement", "Per-(period,time) counted reserve of each provider by group; only with reserves active."),
 ):
     REGISTRY[_key] = _proc(
         _key, note=_note, producer=f"flextool.process_outputs.{_producer}",
@@ -361,8 +404,10 @@ del _key, _producer, _note
 for _key, _producer, _note in (
     ("nodeGroup_gdt_p",                  "out_group.nodeGroup_indicators",   "Per-(group, period, time) indicators."),
     ("nodeGroup_gd_p",                   "out_group.nodeGroup_indicators",   "Per-(group, period) indicators."),
+    ("nodeGroup_g_p",                    "out_group.nodeGroup_indicators",   "Per-group indicators over the horizon (energy ratios)."),
     ("nodeGroup_VRE_share_dt_g",         "out_group.nodeGroup_VRE_share",    "Per-(period,time) VRE share by group."),
     ("nodeGroup_VRE_share_d_g",          "out_group.nodeGroup_VRE_share",    "Per-period VRE share by group."),
+    ("nodeGroup_VRE_share_g",            "out_group.nodeGroup_VRE_share",    "VRE share by group over the horizon (total VRE energy / total inflow)."),
     ("nodeGroup_flows_dt_g",             "out_group.nodeGroup_flows",        "Per-(period,time) group net flow."),
     ("nodeGroup_flows_d_g",              "out_group.nodeGroup_flows",        "Per-period group net flow."),
     ("nodeGroup_flows_dt_gpe",           "out_group.nodeGroup_flows",        "Per-(period,time) group flow by participant."),
@@ -371,6 +416,8 @@ for _key, _producer, _note in (
     ("nodeGroup_inertia_largest_flow_dt_g",        "out_ancillary.inertia_results", "Largest-flow inertia decomposition; only with N-1 / dynamic reserves."),
     ("nodeGroup_unit_node_inertia_dt_gee",         "out_ancillary.inertia_results", "Per-unit inertia contribution; only with inertia constraint."),
     ("nodeGroup_slack_capacity_margin_d_g", "out_ancillary.slack_variables", "Per-period capacity-margin slack by group."),
+    ("nodeGroup_capacity_margin_d_g",       "out_ancillary.capacity_margin", "Per-solve capacity margin by group and investment period at the binding step; only with a capacity margin."),
+    ("nodeGroup_capacity_margin_entity_d_g", "out_ancillary.capacity_margin", "Per-solve capacity-margin contribution of each entity; only with a capacity margin."),
     ("nodeGroup_slack_inertia_d_g",         "out_ancillary.slack_variables", "Per-period inertia slack by group."),
     ("nodeGroup_slack_inertia_dt_g",        "out_ancillary.slack_variables", "Per-(period,time) inertia slack."),
     ("nodeGroup_slack_nonsync_d_g",         "out_ancillary.slack_variables", "Per-period non-sync slack."),
@@ -391,6 +438,7 @@ del _key, _producer, _note
 # Misc input-side sets propagated to processed outputs
 for _key, _producer, _note in (
     ("years_represented__d",      "out_ancillary.input_sets", "Years represented per period (annualisation factor)."),
+    ("period_share_of_year__d",   "out_ancillary.input_sets", "Share of a year per realised period (annualisation divisor)."),
     ("group_node",                "out_ancillary.input_sets", "Group -> node membership set."),
     ("group_process",             "out_ancillary.input_sets", "Group -> process membership set."),
     ("group_process_node",        "out_ancillary.input_sets", "Group -> (process, node) membership set."),

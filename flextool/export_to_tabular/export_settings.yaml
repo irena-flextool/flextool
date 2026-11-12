@@ -65,13 +65,13 @@ unpack_map_params:
     source_classes: ["unit"]
     params: ["constraint_invested_capacity_coeff", "constraint_cumulative_pre_built_capacity_coeff",
              "constraint_capacity_coeff", "constraint_retired_capacity_coeff",
-             "constraint_in_construction_capacity_coeff"]
+             "constraint_in_construction_capacity_coeff", "constraint_online_coeff"]
     index_column: "constraint"
   connection_constraint:
     source_classes: ["connection"]
     params: ["constraint_invested_capacity_coeff", "constraint_cumulative_pre_built_capacity_coeff",
              "constraint_capacity_coeff", "constraint_retired_capacity_coeff",
-             "constraint_in_construction_capacity_coeff"]
+             "constraint_in_construction_capacity_coeff", "constraint_online_coeff"]
     index_column: "constraint"
 
 # Add columns from a related multi-dim entity class to a sheet.
@@ -91,7 +91,8 @@ split_params:
                "timeline_hole_multiplier",
                "decomposition", "benders_tolerance",
                "benders_max_iter", "benders_in_out_weight",
-               "stochastic_invest_method", "dispatch_realization_method"]
+               "stochastic_invest_method", "dispatch_realization_method",
+               "reduce_unit_detail_method", "reduce_system_detail_method"]
     solve_period:
       params: ["period_timeset", "years_represented", "realized_periods",
                "invest_periods", "realized_invest_periods", "fix_storage_periods",
@@ -325,7 +326,6 @@ period_only_params:
     - cumulative_min_capacity
     - existing
     - fixed_cost
-    - interest_rate
     - invest_cost
     - invest_forced
     - invest_max_period
@@ -344,11 +344,11 @@ period_only_params:
     - constraint_capacity_coeff
     - constraint_retired_capacity_coeff
     - constraint_in_construction_capacity_coeff
+    - constraint_online_coeff
     - cumulative_max_capacity
     - cumulative_min_capacity
     - existing
     - fixed_cost
-    - interest_rate
     - invest_cost
     - invest_max_period
     - invest_min_period
@@ -364,11 +364,11 @@ period_only_params:
     - constraint_capacity_coeff
     - constraint_retired_capacity_coeff
     - constraint_in_construction_capacity_coeff
+    - constraint_online_coeff
     - cumulative_max_capacity
     - cumulative_min_capacity
     - existing
     - fixed_cost
-    - interest_rate
     - invest_cost
     - invest_max_period
     - invest_min_period
@@ -380,19 +380,16 @@ period_only_params:
     - startup_cost
   group:
     - co2_max_period
-    - inertia_limit
     - invest_max_period
     - invest_min_period
-    - max_cumulative_flow
-    - max_instant_flow
-    - min_cumulative_flow
-    - min_instant_flow
-    - non_synchronous_limit
     - penalty_capacity_margin
     - penalty_inertia
     - penalty_non_synchronous
     - retire_max_period
     - retire_min_period
+  flowGroup:
+    - max_cumulative_flow
+    - min_cumulative_flow
   constraint:
     - constant
   solve:

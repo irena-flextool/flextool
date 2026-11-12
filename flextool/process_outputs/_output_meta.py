@@ -23,8 +23,12 @@ new processed outputs may not land undocumented.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from enum import Enum
+
+from flextool import units_of_measure as uom
+from flextool.units_of_measure import UnitSource, UnitSourceKind
 
 
 class Semantics(str, Enum):
@@ -69,6 +73,13 @@ class Transform:
     tooltip: str               # short, one-line (plot/CSV/hover).
     description: str = ""       # optional longer form (docs/datapackage); falls back to tooltip.
     algebra: str = ""
+    #: The unit as a template of the node's unit of measure (``{A}``, ``{R}``, ``{kR}``, ``{kA}``, see
+    #: :mod:`flextool.units_of_measure`); ``""`` for a unit that never follows the nodes (costs, CO2, counts,
+    #: reserves, inertia).  ``fill(template, "MWh") == unit`` for every transform (a registry test).
+    template: str = ""
+    #: The template when the column's entity is a node (``entity_annuity_d_p`` holds units, connections and
+    #: storage nodes in one table: per MW of capacity, per MWh of storage); ``""`` = :attr:`template`.
+    node_template: str = ""
 
 
 # The transform catalog.  Each entry is the result of applying one output-stage
@@ -77,21 +88,25 @@ RATE = Transform(
     "MW", Semantics.INSTANTANEOUS,
     "Power at the timestep (a rate). Multiply by step_duration for energy.",
     algebra="v_flow",
+    template="{R}",
 )
 ENERGY_ANNUAL = Transform(
     "MWh/a", Semantics.ANNUALIZED,
     "Energy, scaled from the sampled timeline to a full-year equivalent.",
     algebra="MW · step_duration · timestep_weight / period_share",
+    template="{A}/a",
 )
 ENERGY_PERIOD = Transform(
     "MWh", Semantics.PER_PERIOD,
     "Energy summed over the sampled timeline (NOT scaled to a full year).",
     algebra="MW · step_duration · timestep_weight  (no /period_share)",
+    template="{A}",
 )
 PREENERGY_ANNUAL = Transform(
     "MWh/a", Semantics.ANNUALIZED,
     "Energy (already per-step MWh), scaled to a full-year equivalent.",
     algebra="MWh_step · timestep_weight / period_share",
+    template="{A}/a",
 )
 MONEY_PERSTEP = Transform(
     "CUR", Semantics.PER_STEP,
@@ -148,6 +163,7 @@ AVERAGE_MW = Transform(
     "MW", Semantics.AVERAGE,
     "Time-average power held over the period.",
     algebra="Σ(MW · step_duration) / period_hours",
+    template="{R}",
 )
 RATIO = Transform(
     "", Semantics.RATIO,
@@ -156,11 +172,13 @@ RATIO = Transform(
 ENERGY_PERSTEP = Transform(
     "MWh", Semantics.PER_STEP,
     "Energy within the timestep (already per-step MWh, not a rate).",
+    template="{A}",
 )
 RAMP = Transform(
     "MW", Semantics.INSTANTANEOUS,
     "Change in flow between consecutive timesteps (a ramp).",
     algebra="flow[t] − flow[t-1]",
+    template="{R}",
 )
 CAPACITY_FACTOR = Transform(
     "", Semantics.RATIO,
@@ -174,6 +192,7 @@ CAPACITY_MW = Transform(
                 "in_construction (capacity decided but not yet operating; empty without a construction lead "
                 "time), divested and total (capacity in service). Capacity in construction is not in the total.",
     algebra="total = existing + invested − divested (cumulative; in_construction excluded)",
+    template="{R}",
 )
 CAPACITY_MWH = Transform(
     "MWh", Semantics.LEVEL,
@@ -182,11 +201,13 @@ CAPACITY_MWH = Transform(
                 "in_construction (capacity decided but not yet operating; empty without a construction lead "
                 "time), divested and total (capacity in service). Capacity in construction is not in the total.",
     algebra="total = existing + invested − divested (cumulative; in_construction excluded)",
+    template="{A}",
 )
 STORAGE_STATE = Transform(
     "MWh", Semantics.LEVEL,
     "Stored energy at the timestep (state of charge).",
     algebra="v_state · unitsize",
+    template="{A}",
 )
 PRICE_ENERGY = Transform(
     "CUR/MWh", Semantics.PRICE,
@@ -207,6 +228,13 @@ PRICE_ENERGY = Transform(
                 "be shifted by end-of-horizon, rolling and inter-period "
                 "(blended-weight) storage linking.",
     algebra="σ·dual(node_balance) / s / (timestep_weight · inflation / period_share · branch_weight)",
+    template="CUR/{A}",
+)
+ENERGY_HORIZON = Transform(
+    "MWh", Semantics.HORIZON,
+    "Energy over the represented horizon: each period's energy per year times its years represented, summed.",
+    algebra="Σ_d years_represented · MWh_step · timestep_weight / period_share",
+    template="{A}",
 )
 EMISSION_MT = Transform(
     "Mt", Semantics.HORIZON,
@@ -225,10 +253,16 @@ INVEST_COST_DISCOUNTED = Transform(
     "Discounted investment cost per MW of capacity (per MWh for storage nodes): the yearly annuity summed "
     "with the inflation factors over the years of the lifetime inside the horizon.",
     algebra="annuity · Σ inflation_factor over the lifetime window",
+    template="CUR/{R}", node_template="CUR/{A}",
 )
 YEARS = Transform(
     "a", Semantics.COUNT,
     "Calendar years the period represents (annualisation weight).",
+)
+SHARE_OF_YEAR = Transform(
+    "", Semantics.RATIO,
+    "Share of a year the realised period covers (the divisor that scales the per-period tables to a year).",
+    algebra="complete hours of the period in the realising solve / 8760",
 )
 PRICE_RESERVE = Transform(
     "CUR/MW", Semantics.PRICE,
@@ -249,11 +283,13 @@ DUAL_INVEST_KW = Transform(
     "Effective marginal system value of +1 unit of capacity "
     "(same convention as invest_cost).",
     algebra="dual(invest constraint) / entity_unitsize",
+    template="CUR/{kR}",
 )
 DUAL_INVEST_KWH = Transform(
     "CUR/kWh", Semantics.PRICE,
     "Effective marginal system value of +1 unit of storage capacity "
     "(same convention as invest_cost).",
+    template="CUR/{kA}",
 )
 INERTIA = Transform(
     "MW·s", Semantics.LEVEL,
@@ -274,7 +310,28 @@ ONLINE_AVG = Transform(
 )
 RESERVE_AVG = Transform(
     "MW", Semantics.AVERAGE,
-    "Average reserve held over the period.",
+    "Time-step-weighted average MW held over the period's realized steps.",
+    algebra="Σₜ w·Δt·MW / Σₜ w·Δt over the realized steps where reserves were modelled (w = timestep_weight)",
+)
+RESERVE_REQUIREMENT_MW = Transform(
+    "MW", Semantics.LEVEL,
+    "Reserve requirement term of the group at the time step (MW held, not an energy).",
+    algebra="the group's reserveBalance rows evaluated at the solution: need, counted reserve, shortfall",
+)
+RESERVE_REQUIREMENT_AVG = Transform(
+    "MW", Semantics.AVERAGE,
+    "Time-step-weighted average over the period's realized steps where reserves were modelled.",
+    algebra="Σₜ w·Δt·X / Σₜ w·Δt (w = timestep_weight)",
+)
+RESERVE_REQUIREMENT_MAX = Transform(
+    "MW", Semantics.LEVEL,
+    "Largest value of the period's time steps (not weighted).",
+    algebra="maxₜ X",
+)
+RESERVE_PROVIDER_MW = Transform(
+    "MW", Semantics.LEVEL,
+    "Counted reserve (× reliability) of the provider for the group at the time step.",
+    algebra="v_reserve · unitsize · reliability",
 )
 ANGLE = Transform(
     "rad", Semantics.LEVEL,
@@ -284,6 +341,22 @@ ANGLE = Transform(
 SLACK_CAP_MARGIN = Transform(
     "MW", Semantics.LEVEL,
     "Capacity-margin slack — per-period MW shortfall (not annualized).",
+)
+CAPACITY_MARGIN_MW = Transform(
+    "MW", Semantics.LEVEL,
+    "Capacity-margin term of the group at its binding step (MW, not annualized).",
+    algebra="the capacityMargin row's terms at the step with the largest deficit (requirement − counted)",
+)
+CAPACITY_MARGIN_PENALTY = Transform(
+    "M CUR", Semantics.DISCOUNTED,
+    "Penalty of the capacity-margin shortfall: shortfall · penalty_capacity_margin · 1000 · inflation / 1e6, "
+    "priced once per period.",
+    algebra="shortfall · penalty_capacity_margin · 1000 · inflation_op / 1e6",
+)
+CAPACITY_MARGIN_PRICE = Transform(
+    "CUR/kW/a", Semantics.PRICE,
+    "Shadow price of the capacity margin (equals penalty_capacity_margin while there is a shortfall).",
+    algebra="Σₜ dual(capacityMargin) · inv_group_cap / s / (1000 · inflation_op · branch_weight)",
 )
 # Sentinel: an output that is a pure membership/index set (no measures).
 DIMENSION_TABLE = Transform(
@@ -340,9 +413,30 @@ _NODEGROUP_GD_P = {
     '5. Annualized inflow': PREENERGY_ANNUAL,
     '6. Curtailed VRE of potential VRE': RATIO,
 }
+_NODEGROUP_G_P = {
+    '1. Loss of load share': RATIO,
+    '2. VRE share of demand': RATIO,
+    '3. Excess load share': RATIO,
+    '4. Curtailed VRE of demand': RATIO,
+    '5. Inflow (horizon total)': ENERGY_HORIZON,
+    '6. Curtailed VRE of potential VRE': RATIO,
+}
+_RESERVE_REQUIREMENT_D = {
+    'requirement_avg': RESERVE_REQUIREMENT_AVG,
+    'provided_avg': RESERVE_REQUIREMENT_AVG,
+    'counted_avg': RESERVE_REQUIREMENT_AVG,
+    'shortfall_avg': RESERVE_REQUIREMENT_AVG,
+    'requirement_max': RESERVE_REQUIREMENT_MAX,
+    'shortfall_max': RESERVE_REQUIREMENT_MAX,
+}
+_CAPACITY_MARGIN_D_G = {
+    '*': CAPACITY_MARGIN_MW,
+    'penalty_cost': CAPACITY_MARGIN_PENALTY,
+    'capacity_price': CAPACITY_MARGIN_PRICE,
+}
 _FLOWGROUP_GD_P = {
-    'cumulative_flow': ENERGY_PERIOD,   # MWh summed over the sample (not annualized)
-    'average_flow': AVERAGE_MW,         # MW time-average
+    'cumulative_flow': ENERGY_ANNUAL,   # MWh/a: the period's energy scaled to a full year
+    'average_flow': AVERAGE_MW,         # MW: the weighted time-average
 }
 
 
@@ -398,11 +492,12 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     # potential are SUM-ONLY over the sample (per_period), NOT annualized —
     # unlike unit_outputNode_d_ee (see Task #4 / Stage-1 finding).
     "nodeGroup_VRE_share_d_g": RATIO,
+    "nodeGroup_VRE_share_g": RATIO,
     "nodeGroup_VRE_share_dt_g": RATIO,
     "unit_VRE_potential_outputNode_dt_ee": RATE,
     "unit_curtailment_outputNode_dt_ee": RATE,
-    "unit_VRE_potential_outputNode_d_ee": ENERGY_PERIOD,
-    "unit_curtailment_outputNode_d_ee": ENERGY_PERIOD,
+    "unit_VRE_potential_outputNode_d_ee": ENERGY_ANNUAL,
+    "unit_curtailment_outputNode_d_ee": ENERGY_ANNUAL,
     "unit_curtailment_share_outputNode_dt_ee": RATIO,
     "unit_curtailment_share_outputNode_d_ee": RATIO,
     # Ramps
@@ -424,9 +519,12 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "discountFactors_d_p": FACTOR,
     "entity_annuity_d_p": INVEST_COST_DISCOUNTED,
     "years_represented__d": YEARS,
+    "period_share_of_year__d": SHARE_OF_YEAR,
     # Start-ups
     "unit_startup_d_e": COUNT_ANNUAL,
     "connection_startup_d_e": COUNT_ANNUAL,
+    "unit_startup_energy_dt_ee": ENERGY_PERSTEP,
+    "unit_startup_energy_d_ee": PREENERGY_ANNUAL,
     # Prices / duals
     "node_prices_dt_e": PRICE_ENERGY,
     "reserve_prices_dt_ppg": PRICE_RESERVE,
@@ -452,7 +550,12 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "flowGroup_gd_t": RATE,
     "nodeGroup_slack_reserve_dt_eeg": RATE,
     "nodeGroup_slack_reserve_d_eeg": ENERGY_ANNUAL,
+    "nodeGroup_reserve_dt_eegp": RESERVE_REQUIREMENT_MW,
+    "nodeGroup_reserve_d_eegp": _RESERVE_REQUIREMENT_D,
+    "nodeGroup_reserve_provider_dt_eegee": RESERVE_PROVIDER_MW,
     "nodeGroup_slack_capacity_margin_d_g": SLACK_CAP_MARGIN,
+    "nodeGroup_capacity_margin_d_g": _CAPACITY_MARGIN_D_G,
+    "nodeGroup_capacity_margin_entity_d_g": CAPACITY_MARGIN_MW,
     # Node balance tables.  _dt_ep is the un-integrated MW level (assembled
     # from raw flow_dt / inflow / slacks with no step_duration, like the dt
     # group flows); _d_ep integrates + annualizes to MWh/a.
@@ -461,6 +564,7 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     # Mixed-unit tables — per-column transform maps.
     "nodeGroup_gdt_p": _NODEGROUP_GDT_P,
     "nodeGroup_gd_p": _NODEGROUP_GD_P,
+    "nodeGroup_g_p": _NODEGROUP_G_P,
     "flowGroup_gd_p": _FLOWGROUP_GD_P,
     # Pure membership / index sets (no measure columns)
     "group_node": DIMENSION_TABLE,
@@ -596,6 +700,8 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
     "entity_annuity_d_p": "Discounted investment cost per MW of the capacity of each unit, connection and storage "
                           "node decided in a period (written only in a debug run).",
     "years_represented__d": "Number of years each period represents.",
+    "period_share_of_year__d": "Share of a year that each realised period covers; the per-period tables are "
+                               "divided by it to give values per year.",
     # Unit and connection flows
     "unit_outputNode_dt_ee": "Flow from each unit to each of its output nodes in each time step.",
     "unit_outputNode_d_ee": "Flow from each unit to each of its output nodes summed over the period and scaled "
@@ -655,19 +761,26 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
                        "generation, excess load, curtailed VRE, inflow and VRE shares.",
     "nodeGroup_gd_p": "Indicators of each indicator group in each period: loss of load, excess load and "
                       "curtailment as shares of demand, the VRE share of demand and the annualized inflow.",
+    "nodeGroup_g_p": "Indicators of each indicator group over the whole horizon: loss of load, excess load and "
+                     "curtailment as shares of demand, the VRE share of demand and the curtailed share of the VRE "
+                     "potential, each a ratio of the energies over all periods (each period scaled to a year and "
+                     "times its years represented), and the inflow over the horizon.",
+    "nodeGroup_VRE_share_g": "Share of the inflow (demand) of each indicator group covered by VRE units over the "
+                             "whole horizon: the total VRE energy over the total inflow (each period scaled to a "
+                             "year and times its years represented).",
     "nodeGroup_VRE_share_dt_g": "Share of the inflow (demand) of each indicator group covered by VRE units in "
                                 "each time step.",
-    "nodeGroup_VRE_share_d_g": "Share of the inflow (demand) of each indicator group covered by VRE units, "
-                               "averaged over the time steps of the period.",
+    "nodeGroup_VRE_share_d_g": "Share of the period's inflow (demand) of each indicator group covered by VRE "
+                               "units: the VRE energy over the inflow, both summed with the timestep weights.",
     # VRE curtailment and potential
     "unit_VRE_potential_outputNode_dt_ee": "Potential output of each VRE unit to each output node in each time "
                                            "step: capacity times the upper-limit profile.",
-    "unit_VRE_potential_outputNode_d_ee": "Potential output of each VRE unit to each output node summed over the "
-                                          "period with the timestep weights, not scaled to a full year.",
+    "unit_VRE_potential_outputNode_d_ee": "Potential output of each VRE unit to each output node in the period, "
+                                          "summed with the timestep weights and scaled to a full year (MWh/a).",
     "unit_curtailment_outputNode_dt_ee": "Curtailment of each VRE unit at each output node in each time step: "
                                          "the potential minus the actual output.",
-    "unit_curtailment_outputNode_d_ee": "Curtailment of each VRE unit at each output node summed over the period "
-                                        "with the timestep weights, not scaled to a full year.",
+    "unit_curtailment_outputNode_d_ee": "Curtailment of each VRE unit at each output node in the period, summed "
+                                        "with the timestep weights and scaled to a full year (MWh/a).",
     "unit_curtailment_share_outputNode_dt_ee": "Curtailment of each VRE unit as a share of its potential output "
                                                "in each time step.",
     "unit_curtailment_share_outputNode_d_ee": "Curtailment of each VRE unit as a share of its potential output "
@@ -680,6 +793,11 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
     "unit_online_average_d_e": "Average number of units online of each unit with online variables over the "
                                "period, weighted by step duration.",
     "unit_startup_d_e": "Startups of each unit with online variables in the period, scaled to a full year.",
+    "unit_startup_energy_dt_ee": "Energy that the start-ups of each unit take from each of its start-up input "
+                                 "nodes (startup_input_method) in each time step: startup_energy times the MW "
+                                 "started.  Also in the unit's input from the node, the commodity cost and CO2.",
+    "unit_startup_energy_d_ee": "Energy that the start-ups of each unit take from each of its start-up input "
+                                "nodes, summed over the period and scaled to a full year.",
     "connection_online_dt_e": "Number of units online of each connection with a startup method, in each time "
                               "step.",
     "connection_online_average_d_e": "Average number of units online of each connection with a startup method "
@@ -712,7 +830,16 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
     "process_reserve_upDown_node_dt_eppe": "Reserve held by each unit or connection for each reserve, direction "
                                            "and node in each time step.",
     "process_reserve_average_d_eppe": "Reserve held by each unit or connection for each reserve, direction and "
-                                      "node, averaged over the period.",
+                                      "node, the time-step-weighted average MW over the period's realized steps.",
+    "nodeGroup_reserve_dt_eegp": "Reserve requirement of each reserve, direction and group in each time step: the "
+                                 "need of the binding requirement row and the reserve it counts (for an n-1 row "
+                                 "without the failing process's own reserve, so requirement − counted is the "
+                                 "shortfall), the need of each method, the reserve provided and the shortfall.",
+    "nodeGroup_reserve_d_eegp": "Reserve requirement, provision and shortfall of each reserve, direction and group "
+                                "in each period: time-step-weighted averages and step maxima.",
+    "nodeGroup_reserve_provider_dt_eegee": "Counted reserve (× reliability) of each unit or connection at each "
+                                           "node for each reserve, direction and group in each time step, summing "
+                                           "to the group's provided reserve.",
     # Inertia
     "nodeGroup_inertia_dt_g": "Inertia available in each inertia group in each time step.",
     "nodeGroup_unit_node_inertia_dt_gee": "Inertia contribution of each unit or connection at each node of each "
@@ -722,6 +849,13 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
     # Slacks of group constraints
     "nodeGroup_slack_capacity_margin_d_g": "Capacity margin shortfall of each group in each investment period, "
                                            "not scaled to a year.",
+    "nodeGroup_capacity_margin_d_g": "Capacity margin of each solve with investment periods, per group and "
+                                     "investment period at the step with the largest deficit: the requirement, "
+                                     "what firm, VRE, storage, other units, connections and consumption count, "
+                                     "the shortfall, its penalty and the shadow price.",
+    "nodeGroup_capacity_margin_entity_d_g": "Contribution of each unit, connection and node to the capacity margin "
+                                            "of each group at its binding step, per solve and investment period, "
+                                            "summing to the counted capacity.",
     "nodeGroup_slack_inertia_dt_g": "Inertia shortfall of each inertia group in each time step.",
     "nodeGroup_slack_inertia_d_g": "Inertia shortfall of each inertia group summed over the period and scaled to "
                                    "a full year.",
@@ -733,8 +867,9 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
     "nodeGroup_slack_reserve_d_eeg": "Reserve shortfall of each reserve, direction and group summed over the "
                                      "period and scaled to a full year.",
     # Flow groups
-    "flowGroup_gd_p": "Sum of the absolute flows of the member legs of each flow group over the period "
-                      "(cumulative_flow) and its average power (average_flow).",
+    "flowGroup_gd_p": "Sum of the absolute flows of the member legs of each flow group in the period, summed "
+                      "with the timestep weights and scaled to a full year (cumulative_flow, MWh/a), and its "
+                      "average power (average_flow, MW).",
     "flowGroup_gd_t": "Signed net flow into the nodes of each flow group in each time step (into the group's "
                       "nodes positive).",
     # DC power flow
@@ -768,6 +903,7 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "discountFactors_d_p": OutputDims(_D, ("param",), kinds=_PARAM_QUANTITY),
     "entity_annuity_d_p": OutputDims(("solve", "period"), ("entity",)),
     "years_represented__d": OutputDims(_D, ("param",), kinds=_PARAM_QUANTITY),
+    "period_share_of_year__d": OutputDims(_D, ("param",), kinds=_PARAM_QUANTITY),
     "unit_outputNode_dt_ee": OutputDims(_DT, ("unit", "node"), "unit_outputNode_d_ee"),
     "unit_outputNode_d_ee": OutputDims(_D, ("unit", "node"), "unit_outputNode_dt_ee"),
     "unit_inputNode_dt_ee": OutputDims(_DT, ("unit", "node"), "unit_inputNode_d_ee"),
@@ -804,8 +940,10 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "nodeGroup_gdt_p": OutputDims(("group", "period", "time"), ("parameter",), "nodeGroup_gd_p",
                                    _PARAMETER_QUANTITY),
     "nodeGroup_gd_p": OutputDims(("group", "period"), ("parameter",), "nodeGroup_gdt_p", _PARAMETER_QUANTITY),
+    "nodeGroup_g_p": OutputDims(("group",), ("parameter",), kinds=_PARAMETER_QUANTITY),
     "nodeGroup_VRE_share_dt_g": OutputDims(_DT, ("group",), "nodeGroup_VRE_share_d_g"),
     "nodeGroup_VRE_share_d_g": OutputDims(_D, ("group",), "nodeGroup_VRE_share_dt_g"),
+    "nodeGroup_VRE_share_g": OutputDims(("horizon",), ("group",), kinds=(("horizon", "quantity"),)),
     "unit_VRE_potential_outputNode_dt_ee": OutputDims(_DT, ("unit", "sink"), "unit_VRE_potential_outputNode_d_ee"),
     "unit_VRE_potential_outputNode_d_ee": OutputDims(_D, ("unit", "sink"), "unit_VRE_potential_outputNode_dt_ee"),
     "unit_curtailment_outputNode_dt_ee": OutputDims(_DT, ("unit", "sink"), "unit_curtailment_outputNode_d_ee"),
@@ -819,6 +957,8 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "unit_online_dt_e": OutputDims(_DT, ("process",), "unit_online_average_d_e"),
     "unit_online_average_d_e": OutputDims(_D, ("process",), "unit_online_dt_e"),
     "unit_startup_d_e": OutputDims(_D, ("process",)),
+    "unit_startup_energy_dt_ee": OutputDims(_DT, ("unit", "node"), "unit_startup_energy_d_ee"),
+    "unit_startup_energy_d_ee": OutputDims(_D, ("unit", "node"), "unit_startup_energy_dt_ee"),
     "connection_online_dt_e": OutputDims(_DT, ("process",), "connection_online_average_d_e"),
     "connection_online_average_d_e": OutputDims(_D, ("process",), "connection_online_dt_e"),
     "connection_startup_d_e": OutputDims(_D, ("process",)),
@@ -840,12 +980,26 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "nodeGroup_unit_node_inertia_dt_gee": OutputDims(_DT, ("group", "process", "node")),
     "nodeGroup_inertia_largest_flow_dt_g": OutputDims(_DT, ("group",)),
     "nodeGroup_slack_capacity_margin_d_g": OutputDims(_D, ("group",)),
+    "nodeGroup_capacity_margin_d_g": OutputDims(("solve", "period", "group", "binding_time"), ("parameter",),
+                                                kinds=(*_PARAMETER_QUANTITY, ("binding_time", "quantity"))),
+    "nodeGroup_capacity_margin_entity_d_g": OutputDims(("solve", "period", "group", "binding_time"),
+                                                       ("class", "entity"),
+                                                       kinds=(("binding_time", "quantity"), ("class", "part"))),
     "nodeGroup_slack_inertia_dt_g": OutputDims(_DT, ("group",), "nodeGroup_slack_inertia_d_g"),
     "nodeGroup_slack_inertia_d_g": OutputDims(_D, ("group",), "nodeGroup_slack_inertia_dt_g"),
     "nodeGroup_slack_nonsync_dt_g": OutputDims(_DT, ("group",), "nodeGroup_slack_nonsync_d_g"),
     "nodeGroup_slack_nonsync_d_g": OutputDims(_D, ("group",), "nodeGroup_slack_nonsync_dt_g"),
     "nodeGroup_slack_reserve_dt_eeg": OutputDims(_DT, ("reserve", "updown", "node_group"),
                                                  "nodeGroup_slack_reserve_d_eeg", _RESERVE_QUANTITY),
+    "nodeGroup_reserve_dt_eegp": OutputDims(_DT, ("reserve", "updown", "node_group", "quantity"),
+                                            "nodeGroup_reserve_d_eegp",
+                                            (*_RESERVE_QUANTITY, ("quantity", "quantity"))),
+    "nodeGroup_reserve_d_eegp": OutputDims(_D, ("reserve", "updown", "node_group", "quantity"),
+                                           "nodeGroup_reserve_dt_eegp",
+                                           (*_RESERVE_QUANTITY, ("quantity", "quantity"))),
+    "nodeGroup_reserve_provider_dt_eegee": OutputDims(_DT, ("reserve", "updown", "node_group", "process", "node"),
+                                                      None,
+                                                      (*_RESERVE_QUANTITY, ("process", "part"), ("node", "part"))),
     "nodeGroup_slack_reserve_d_eeg": OutputDims(_D, ("reserve", "updown", "node_group"),
                                                 "nodeGroup_slack_reserve_dt_eeg", _RESERVE_QUANTITY),
     "flowGroup_gd_p": OutputDims(("group", "period"), ("parameter",), "flowGroup_gd_t", _PARAMETER_QUANTITY),
@@ -890,12 +1044,15 @@ def result_key_summary(result_key: str) -> "tuple[str, str, str] | None":
     if spec is None:
         return None
     if isinstance(spec, dict):
-        units = sorted({t.unit for t in spec.values() if t.unit})
-        sems = sorted({t.semantics.value for t in spec.values()
-                       if t.semantics is not Semantics.DIMENSION})
+        measures = [t for t in spec.values() if t.semantics is not Semantics.DIMENSION]
+        sems = sorted({t.semantics.value for t in measures})
         if not sems:
             return None
-        return ("; ".join(units) if units else "ratio",
+        # A unitless column counts as ``per unit``, as on the workbook's ``Units`` sheet; a table of only
+        # unitless columns gets the ``ratio`` sentinel of a uniform unitless output.
+        units = (summarise_units([t.unit or UNITLESS for t in measures])
+                 if any(t.unit for t in measures) else "")
+        return (units or "ratio",
                 "mixed" if len(sems) > 1 else sems[0],
                 "Mixed-unit table — units vary by column.")
     if spec.semantics is Semantics.DIMENSION:
@@ -942,15 +1099,40 @@ def result_variant_summary(
     return base
 
 
-def output_metadata_rows(output_key: str, columns) -> list[dict[str, str]]:
+def written_variant_summary(parquet_dir, result_key: str, variant_letter: str) -> "tuple[str, str, str] | None":
+    """:func:`result_variant_summary` with the units the run wrote into the footer of *result_key*'s parquet in
+    the scenario folder *parquet_dir* (columns and row units joined, :func:`summarise_units`), when the folder has
+    a :data:`UNIT_CONTEXT_FILE` (some node is not MWh); ``None`` otherwise, so the caller shows the static
+    summary.  For the ``a`` variant each unit drops its ``/a``.  The GUI hover of a result whose units follow
+    the nodes."""
+    import os
+
+    base = result_variant_summary(result_key, variant_letter)
+    if base is None or not os.path.exists(os.path.join(str(parquet_dir), UNIT_CONTEXT_FILE)):
+        return None
+    written = FooterUnits(parquet_dir).table(result_key)
+    if written is None:
+        return None
+    columns, rows = written
+    units = [u for u in columns.values() if u]
+    if rows:
+        units.extend(u for per_row in rows.values() for u in per_row.values() if u)
+    if variant_letter == 'a':
+        units = [u[:-2] if u.endswith('/a') else u for u in units]
+    text = summarise_units(units)
+    return (text, base[1], base[2]) if text else None
+
+
+def output_metadata_rows(output_key: str, columns, *, ctx=None, rows=None) -> list[dict[str, str]]:
     """Flat ``[{output, column, unit, semantics, tooltip, formula}, …]`` rows
     for the *measure* columns of one output (dimension columns dropped).
 
     Single source for the tabular renderers that list metadata in a side
     table (the Excel ``_output_metadata`` sheet).  Returns ``[]`` for an
-    undeclared output or a pure membership/index set.
+    undeclared output or a pure membership/index set.  *ctx* and *rows* as in :func:`resolve_columns`.
     """
-    meta = derive_column_meta(output_key, columns)
+    resolved = resolve_columns(output_key, columns, ctx=ctx, rows=rows)
+    meta = None if resolved is None else {m.name: m for m in resolved}
     if not meta:
         return []
     rows: list[dict[str, str]] = []
@@ -961,7 +1143,7 @@ def output_metadata_rows(output_key: str, columns) -> list[dict[str, str]]:
         rows.append({
             "output": output_key,
             "column": cm.name,
-            "unit": cm.unit,
+            "unit": display_unit(cm),
             "semantics": cm.semantics.value,
             "tooltip": cm.tooltip,
             "long": cm.long,
@@ -970,8 +1152,19 @@ def output_metadata_rows(output_key: str, columns) -> list[dict[str, str]]:
     return rows
 
 
+def _joined_label(texts: list[str]) -> str:
+    """The field name a Frictionless reader derives from the header-row cells *texts* of one column: the
+    cells joined with ``|``, where a cell equal to the one above it is skipped (Frictionless's reading of a
+    merged header cell, so ``solve, "", "", ""`` gives ``solve|``)."""
+    parts = texts[:1]
+    for text in texts[1:]:
+        if text != parts[-1]:
+            parts.append(text)
+    return "|".join(parts)
+
+
 def datapackage_resource(
-    output_key: str, path: str, index_names, measure_columns,
+    output_key: str, path: str, index_names, measure_columns, *, header=None, ctx=None, rows=None,
 ) -> dict:
     """A Frictionless ``tabular-data-resource`` describing one written CSV.
 
@@ -982,33 +1175,27 @@ def datapackage_resource(
     descriptor stays valid Frictionless).  Always returns a resource (an
     undeclared output simply yields string/dimension fields), so the sidecar
     documents the full ``output_csv/`` tree, declared or not.
+
+    ``header`` is the list of column labels as written to the CSV (index
+    columns first, a tuple per column when the file has several header rows).
+    When given, the field names are the written header: the labels of a
+    column joined with ``|`` the way Frictionless joins them (see :func:`_joined_label`; with ``flextool:header`` = the label list) and a
+    ``dialect`` with ``headerRows`` / ``headerJoin`` for a multi-row header,
+    so a Frictionless reader derives the same field names from the file.  Header rows that are blank in
+    every column (a wide table with no value columns) are ``commentRows`` and left out of the names.  *ctx* and
+    *rows* as in :func:`resolve_columns` (a row-keyed table's field unit joins the units of its rows).
     """
-    meta = derive_column_meta(output_key, measure_columns) or {}
-    fields: list[dict[str, str]] = []
+    resolved = resolve_columns(output_key, measure_columns, ctx=ctx, rows=rows) or []
+    meta = {i: m for i, m in enumerate(resolved)}
+    n_index = len(list(index_names))
+    fields: list[dict] = []
     seen: set[str] = set()
 
-    def _dimension_field(name: str) -> dict[str, str]:
+    def _dimension_field(name: str) -> dict:
         return {"name": name, "type": "string", "flextool:semantics": "dimension"}
 
-    for name in index_names:
-        if name is None:
-            continue
-        key = str(name)
-        if key in seen:
-            continue
-        seen.add(key)
-        fields.append(_dimension_field(key))
-
-    for col in measure_columns:
-        name = str(col)
-        if name in seen:
-            continue
-        seen.add(name)
-        cm = meta.get(name)
-        if cm is None or cm.semantics is Semantics.DIMENSION:
-            fields.append(_dimension_field(name))
-            continue
-        spec: dict[str, str] = {
+    def _measure_field(name: str, cm: ColumnMeta) -> dict:
+        spec: dict = {
             "name": name,
             "type": "number",
             "flextool:semantics": cm.semantics.value,
@@ -1022,51 +1209,630 @@ def datapackage_resource(
             spec["flextool:formula"] = cm.formula
         if cm.docs:
             spec["flextool:docs"] = cm.docs
-        fields.append(spec)
+        return spec
 
-    return {
+    header_rows: list[int] = [1]
+    blank_rows: list[int] = []
+    if header is not None:
+        labels = [c if isinstance(c, tuple) else (c,) for c in header]
+        n_header_rows = max((len(t) for t in labels), default=1)
+        all_texts = [["" if v is None else str(v) for v in label] + [""] * (n_header_rows - len(label))
+                     for label in labels]
+        # A header row that is blank in every column (a wide table written without value columns) is not
+        # a header row to a reader: Frictionless would skip it as a blank row and take the next data row
+        # as the header.  It is described as a comment row, and the field names leave it out.
+        kept = [i for i in range(n_header_rows) if i == 0 or any(t[i] for t in all_texts)]
+        header_rows = [i + 1 for i in kept]
+        blank_rows = [i + 1 for i in range(n_header_rows) if i not in kept]
+        for pos, full in enumerate(all_texts):
+            texts = [full[i] for i in kept]
+            name = _joined_label(texts)
+            cm = meta.get(pos - n_index) if pos >= n_index else None
+            if cm is None or cm.semantics is Semantics.DIMENSION:
+                spec = _dimension_field(name)
+            else:
+                spec = _measure_field(name, cm)
+            if len(header_rows) > 1:
+                spec["flextool:header"] = texts
+            fields.append(spec)
+    else:
+        for name in index_names:
+            if name is None:
+                continue
+            key = str(name)
+            if key in seen:
+                continue
+            seen.add(key)
+            fields.append(_dimension_field(key))
+
+        for i, col in enumerate(measure_columns):
+            name = str(col)
+            if name in seen:
+                continue
+            seen.add(name)
+            cm = meta.get(i)
+            if cm is None or cm.semantics is Semantics.DIMENSION:
+                fields.append(_dimension_field(name))
+                continue
+            fields.append(_measure_field(name, cm))
+
+    resource = {
         "name": output_key.replace("_", "-").strip("-").lower() or "resource",
         "path": path,
         "profile": "tabular-data-resource",
         "schema": {"fields": fields},
     }
+    if len(header_rows) > 1:
+        resource["dialect"] = {"headerRows": header_rows, "headerJoin": "|"}
+    if blank_rows:
+        resource.setdefault("dialect", {})["commentRows"] = blank_rows
+    return resource
 
 
-def derive_column_meta(
-    output_key: str, columns,
-) -> dict[str, ColumnMeta] | None:
-    """Derive ``{column_name: ColumnMeta}`` for one output.
+# ── Column → unit resolver ──────────────────────────────────────────────────
+# One function gives the unit of every column of a result table; the parquet footer, the Excel sheets, the CSV
+# sidecars (``units.csv``, ``datapackage.json``), the results-database descriptions and the plot labels all
+# read it, so they cannot disagree.
 
-    ``columns`` is the iterable of *leaf* column names (e.g. cost categories),
-    typically ``df.columns`` before any scenario-level wrapping.  Dimension
-    columns get ``Semantics.DIMENSION``; measure columns get the output's
-    declared transform.  The declared value may be a single ``Transform``
-    (uniform) or a ``{column_label: Transform}`` map (mixed-unit tables, with
-    an optional ``'*'`` default).  Returns ``None`` when the output is not (yet)
-    declared in :data:`OUTPUT_TRANSFORM`, so callers can treat absence as
-    "no metadata".
-    """
+#: The name of the column level that a scenario comparison puts above the table's own column levels.
+SCENARIO_LEVEL = "scenario"
+#: The display word of a measure that has no unit (a share, a capacity factor), as in the results database.
+UNITLESS = "per unit"
+
+
+#: The file of a scenario's parquet folder that holds its :class:`UnitContext` when some node is not MWh (absent
+#: = every node is MWh).  Written or deleted by every non-replay ``write_outputs`` call; read only by replays.
+UNIT_CONTEXT_FILE = "_unit_context.json"
+#: The format version of :data:`UNIT_CONTEXT_FILE`.
+UNIT_CONTEXT_VERSION = 1
+
+
+@dataclass(frozen=True)
+class UnitContext:
+    """What the units of one scenario's result columns can depend on beyond the table itself.
+
+    ``node_units`` maps a node to its amount unit (``node.unit_of_measure``; only the nodes that are not MWh, see
+    :func:`flextool.units_of_measure.read_node_units`).  ``capacity_nodes`` maps a unit to its capacity-side nodes
+    (its output nodes with a non-zero ``conversion_flow_coeff``, in arc order, else its input nodes),
+    ``shared_capacity`` names the units whose outputs share the capacity
+    (:func:`flextool.units_of_measure.shares_capacity`), ``connection_nodes`` maps a connection to its two ends,
+    ``group_nodes`` a nodeGroup to its member nodes and ``flowgroup_nodes`` a flowGroup to the nodes of its arcs.
+    :data:`UNIT_SOURCE` says which of them a table's unit comes from.  A context without ``node_units`` gives
+    the default units, except that ``entity_annuity_d_p`` tells its storage nodes (CUR per amount, ``CUR/MWh``)
+    from its units and connections (CUR per rate, ``CUR/MW``) whenever the context knows the units and
+    connections (:func:`_follows_nodes`).  ``footer`` holds the units a writer already resolved
+    (:class:`FooterUnits`, set by :func:`replay_unit_context`); a replay reads them first.  Holds dicts, so it is
+    not hashable: do not key a cache on it."""
+
+    node_units: Mapping[str, str] = field(default_factory=dict)
+    capacity_nodes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    shared_capacity: frozenset[str] = frozenset()
+    group_nodes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    connection_nodes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    flowgroup_nodes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    footer: "FooterUnits | None" = field(default=None, compare=False)
+
+    @property
+    def is_default(self) -> bool:
+        """Whether every node is MWh (the units are then exactly the transforms' default units)."""
+        return not self.node_units
+
+    def to_json(self) -> dict:
+        """The context as the JSON object of :data:`UNIT_CONTEXT_FILE` (sorted, so the file is deterministic)."""
+        def nodes(m: Mapping[str, tuple[str, ...]]) -> dict[str, list[str]]:
+            return {k: list(m[k]) for k in sorted(m)}
+        return {
+            "version": UNIT_CONTEXT_VERSION,
+            "node_units": {k: self.node_units[k] for k in sorted(self.node_units)},
+            "capacity_nodes": nodes(self.capacity_nodes),
+            "shared_capacity": sorted(self.shared_capacity),
+            "connection_nodes": nodes(self.connection_nodes),
+            "group_nodes": nodes(self.group_nodes),
+            "flowgroup_nodes": nodes(self.flowgroup_nodes),
+        }
+
+    @classmethod
+    def from_json(cls, data: Mapping) -> "UnitContext":
+        """The context of a :meth:`to_json` object (missing maps read as empty)."""
+        def nodes(key: str) -> dict[str, tuple[str, ...]]:
+            return {str(k): tuple(str(n) for n in v) for k, v in (data.get(key) or {}).items()}
+        return cls(
+            node_units={str(k): str(v) for k, v in (data.get("node_units") or {}).items()},
+            capacity_nodes=nodes("capacity_nodes"),
+            shared_capacity=frozenset(str(u) for u in data.get("shared_capacity") or ()),
+            group_nodes=nodes("group_nodes"),
+            connection_nodes=nodes("connection_nodes"),
+            flowgroup_nodes=nodes("flowgroup_nodes"),
+        )
+
+
+def write_unit_context(parquet_dir: str, ctx: "UnitContext | None") -> None:
+    """Write :data:`UNIT_CONTEXT_FILE` into *parquet_dir* when *ctx* has a node that is not MWh, else delete the
+    file (a run whose nodes are all MWh again must not leave a stale context behind).  The folder is created only
+    when there is something to write."""
+    import json
+    import os
+
+    path = os.path.join(parquet_dir, UNIT_CONTEXT_FILE)
+    if ctx is None or ctx.is_default:
+        if os.path.exists(path):
+            os.remove(path)
+        return
+    os.makedirs(parquet_dir, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(ctx.to_json(), fh, indent=1)
+
+
+class FooterUnits:
+    """The units the writer resolved into the parquet footers of one scenario folder (``units`` of each column
+    and ``flextool_row_units``), read from a table's file on first use.  A replay takes a table's units from
+    here before it resolves them again, so a replay shows what the run wrote (one source of the units)."""
+
+    def __init__(self, parquet_dir) -> None:
+        import os
+
+        self._dir = str(parquet_dir)
+        self._cache: dict[str, "tuple[dict[str, str], dict | None] | None"] = {}
+        self._exists = os.path.isdir(self._dir)
+
+    def table(self, output_key: str) -> "tuple[dict[str, str], dict | None] | None":
+        """``({column: unit}, row units or None)`` of *output_key*'s footer, ``None`` without a file or units."""
+        if output_key in self._cache:
+            return self._cache[output_key]
+        found = None
+        if self._exists:
+            import os
+
+            path = os.path.join(self._dir, f"{output_key}.parquet")
+            if os.path.isfile(path):
+                from flextool.lean_parquet import read_lean_parquet_column_meta, read_lean_parquet_row_units
+                try:
+                    meta = read_lean_parquet_column_meta(path)
+                    rows = read_lean_parquet_row_units(path)
+                except Exception:  # noqa: BLE001 - an unreadable footer: resolve the units instead
+                    meta, rows = None, None
+                if meta:
+                    found = ({str(k): str(v.get("unit", "")) for k, v in meta.items() if isinstance(v, dict)}, rows)
+        self._cache[output_key] = found
+        return found
+
+
+def replay_unit_context(parquet_dir) -> UnitContext:
+    """The :class:`UnitContext` of a replay of the scenario folder *parquet_dir*: its
+    :data:`UNIT_CONTEXT_FILE` (an empty context without one) with the folder's footers
+    (:class:`FooterUnits`), so the replayed units are those the run wrote."""
+    from dataclasses import replace
+
+    ctx = load_unit_context(parquet_dir) or UnitContext()
+    return replace(ctx, footer=FooterUnits(parquet_dir))
+
+
+def _footer_of(ctx, output_key: str) -> "tuple[dict[str, str], dict | None] | None":
+    """The written units of *output_key* in the footer of *ctx* (one context), ``None`` without them."""
+    footer = getattr(ctx, "footer", None) if ctx is not None else None
+    return footer.table(output_key) if footer is not None else None
+
+
+def _leaf_name(label: tuple, scen_pos: "int | None") -> str:
+    """The footer key of a column: ``str`` of its label without the comparison ``scenario`` level (a one-level
+    label as its value, as the writer keyed it)."""
+    leaf = label if scen_pos is None else label[:scen_pos] + label[scen_pos + 1:]
+    return str(leaf[0]) if len(leaf) == 1 else str(tuple(leaf))
+
+
+def load_unit_context(parquet_dir) -> "UnitContext | None":
+    """The :class:`UnitContext` of a scenario's parquet folder, ``None`` when it has no
+    :data:`UNIT_CONTEXT_FILE` (every node is MWh) or the file cannot be read."""
+    import json
+    import logging
+    import os
+
+    path = os.path.join(str(parquet_dir), UNIT_CONTEXT_FILE)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return UnitContext.from_json(json.load(fh))
+    except (OSError, ValueError, AttributeError) as exc:
+        logging.warning("Could not read %s (%s): the units are shown for MWh nodes.", path, exc)
+        return None
+
+
+_U = UnitSourceKind
+
+#: Where the unit of a result table that follows its nodes' ``unit_of_measure`` comes from: the level that
+#: carries the node(s) and how (:class:`flextool.units_of_measure.UnitSource`).  A ``node`` level beats the
+#: "connection -> both ends" rule (``connection_leftward_*`` take the unit of their node).  Every table with a
+#: power or energy unit is here or in :data:`DEFAULT_UNITS_ONLY` (pinned by a registry test).  An
+#: ``entity`` level (``entity_annuity_d_p``) is read by class: a connection, else a unit, else a node; a node and
+#: a unit of the same name cannot be told apart there.
+UNIT_SOURCE: dict[str, UnitSource] = {
+    "entity_annuity_d_p": UnitSource("entity", _U.ENTITY_BY_CLASS),
+    "unit_outputNode_dt_ee": UnitSource("node", _U.NODE),
+    "unit_outputNode_d_ee": UnitSource("node", _U.NODE),
+    "unit_inputNode_dt_ee": UnitSource("node", _U.NODE),
+    "unit_inputNode_d_ee": UnitSource("node", _U.NODE),
+    "connection_dt_eee": UnitSource("process", _U.CONNECTION_ENDS),
+    "connection_d_eee": UnitSource("process", _U.CONNECTION_ENDS),
+    "connection_leftward_dt_eee": UnitSource("node", _U.NODE),
+    "connection_leftward_d_eee": UnitSource("node", _U.NODE),
+    "connection_rightward_dt_eee": UnitSource("node", _U.NODE),
+    "connection_rightward_d_eee": UnitSource("node", _U.NODE),
+    "connection_losses_dt_eee": UnitSource("process", _U.CONNECTION_ENDS),
+    "connection_losses_d_eee": UnitSource("process", _U.CONNECTION_ENDS),
+    "node_dt_ep": UnitSource("node", _U.NODE),
+    "node_d_ep": UnitSource("node", _U.NODE),
+    "node_state_dt_e": UnitSource("node", _U.NODE),
+    "node_inflow__dt": UnitSource("node", _U.NODE),
+    "node_prices_dt_e": UnitSource("node", _U.NODE),
+    "node_slack_up_dt_e": UnitSource("node", _U.NODE),
+    "node_slack_down_dt_e": UnitSource("node", _U.NODE),
+    "node_slack_up_d_e": UnitSource("node", _U.NODE),
+    "node_slack_down_d_e": UnitSource("node", _U.NODE),
+    "nodeGroup_flows_dt_g": UnitSource("group", _U.GROUP_MEMBERS),
+    "nodeGroup_flows_d_g": UnitSource("group", _U.GROUP_MEMBERS),
+    "nodeGroup_flows_dt_gpe": UnitSource("group", _U.GROUP_MEMBERS),
+    "nodeGroup_flows_d_gpe": UnitSource("group", _U.GROUP_MEMBERS),
+    "nodeGroup_gdt_p": UnitSource("group", _U.GROUP_MEMBERS, row=True),
+    "nodeGroup_gd_p": UnitSource("group", _U.GROUP_MEMBERS, row=True),
+    "nodeGroup_g_p": UnitSource("group", _U.GROUP_MEMBERS, row=True),
+    "unit_VRE_potential_outputNode_dt_ee": UnitSource("sink", _U.NODE),
+    "unit_VRE_potential_outputNode_d_ee": UnitSource("sink", _U.NODE),
+    "unit_curtailment_outputNode_dt_ee": UnitSource("sink", _U.NODE),
+    "unit_curtailment_outputNode_d_ee": UnitSource("sink", _U.NODE),
+    "unit_ramp_inputs_dt_ee": UnitSource("source", _U.NODE),
+    "unit_ramp_outputs_dt_ee": UnitSource("sink", _U.NODE),
+    "unit_startup_energy_dt_ee": UnitSource("node", _U.NODE),
+    "unit_startup_energy_d_ee": UnitSource("node", _U.NODE),
+    "unit_capacity_ed_p": UnitSource("unit", _U.CAPACITY_SIDE, row=True),
+    "connection_capacity_ed_p": UnitSource("connection", _U.CONNECTION_ENDS, row=True),
+    "node_capacity_ed_p": UnitSource("node", _U.NODE, row=True),
+    "dual_invest_effective_unit_d_e": UnitSource("entity", _U.CAPACITY_SIDE),
+    "dual_invest_effective_connection_d_e": UnitSource("entity", _U.CONNECTION_ENDS),
+    "dual_invest_effective_node_d_e": UnitSource("entity", _U.NODE),
+    "flowGroup_gd_p": UnitSource("group", _U.FLOWGROUP_ARCS, row=True),
+    "flowGroup_gd_t": UnitSource("group", _U.FLOWGROUP_ARCS, row=True),
+}
+
+#: Tables with a power or energy unit that stay in MW / MWh whatever their nodes' ``unit_of_measure``: reserves,
+#: inertia, non-synchronous share and the capacity margin are power features (the input validators warn about a
+#: member node that is not MWh).  The resolver must consult this set before it fills a template from a node or
+#: group level (critique M1: several of them use templated transforms such as RATE).
+DEFAULT_UNITS_ONLY: frozenset[str] = frozenset({
+    "reserve_prices_dt_ppg",
+    "process_reserve_upDown_node_dt_eppe",
+    "process_reserve_average_d_eppe",
+    "nodeGroup_inertia_dt_g",
+    "nodeGroup_unit_node_inertia_dt_gee",
+    "nodeGroup_inertia_largest_flow_dt_g",
+    "nodeGroup_slack_capacity_margin_d_g",
+    "nodeGroup_capacity_margin_d_g",
+    "nodeGroup_capacity_margin_entity_d_g",
+    "nodeGroup_slack_inertia_dt_g",
+    "nodeGroup_slack_inertia_d_g",
+    "nodeGroup_slack_nonsync_dt_g",
+    "nodeGroup_slack_nonsync_d_g",
+    "nodeGroup_slack_reserve_dt_eeg",
+    "nodeGroup_slack_reserve_d_eeg",
+    "nodeGroup_reserve_dt_eegp",
+    "nodeGroup_reserve_d_eegp",
+    "nodeGroup_reserve_provider_dt_eegee",
+})
+
+
+def _column_labels(columns) -> tuple[list[tuple], list | None]:
+    """``(labels, level_names)`` of *columns*: every label as a tuple (one element per column level) and the
+    level names when *columns* is a pandas index that names its levels."""
+    names = getattr(columns, "names", None)
+    labels = [c if isinstance(c, tuple) else (c,) for c in columns]
+    if names is not None and all(n is None for n in names):
+        names = None
+    return labels, (list(names) if names is not None else None)
+
+
+def _label_level(output_key: str, n_levels: int, level_names) -> int:
+    """The position of the column level whose labels a mixed-unit table's map is keyed by.
+
+    The map labels are on the table's innermost declared column level (``parameter`` / ``quantity`` in
+    :data:`OUTPUT_DIMS`).  The level is found by its name when the columns name their levels, else by its
+    position below an optional leading ``scenario`` level, so an entity or group that happens to be named like
+    a map label is never read as one."""
+    dims = OUTPUT_DIMS.get(output_key)
+    declared = dims.columns if dims is not None else ()
+    if level_names is not None and declared and declared[-1] in level_names:
+        return list(level_names).index(declared[-1])
+    return n_levels - 1
+
+
+def _scenario_level(output_key: str, n_levels: int, level_names) -> int | None:
+    """The position of the comparison's ``scenario`` column level, or ``None`` when there is none."""
+    if level_names is not None:
+        return list(level_names).index(SCENARIO_LEVEL) if SCENARIO_LEVEL in level_names else None
+    dims = OUTPUT_DIMS.get(output_key)
+    if dims is not None and dims.columns and n_levels == len(dims.columns) + 1:
+        return 0
+    return None
+
+
+def _context_for(ctx, scenario) -> "UnitContext | None":
+    """The :class:`UnitContext` of one column: *ctx* itself, or its entry for the column's scenario."""
+    if ctx is None or isinstance(ctx, UnitContext):
+        return ctx
+    return ctx.get(scenario) if scenario is not None else None
+
+
+def _any_node_units(ctx) -> bool:
+    """Whether *ctx* (one context or one per scenario) has a node that is not MWh."""
+    if ctx is None:
+        return False
+    if isinstance(ctx, UnitContext):
+        return not ctx.is_default
+    return any(c is not None and not c.is_default for c in ctx.values())
+
+
+def _follows_nodes(output_key: str, tf: Transform, ctx: "UnitContext | None") -> bool:
+    """Whether the unit of a column of *output_key* that underwent *tf* follows its nodes in *ctx*: the transform
+    has a template, the table is in :data:`UNIT_SOURCE` and not in :data:`DEFAULT_UNITS_ONLY` (checked first:
+    the power features stay MW whatever their nodes), and the context has a node that is not MWh.
+
+    Also with every node MWh, a table of entities by class (``entity_annuity_d_p``: storage nodes, units and
+    connections in one table) follows when the context knows the units and connections: a storage node's
+    capacity is an amount, so its cost is per amount (``CUR/MWh``); a unit's or connection's capacity is a
+    rate, so its cost is per rate (``CUR/MW``)."""
+    if ctx is None or not tf.template or output_key in DEFAULT_UNITS_ONLY or output_key not in UNIT_SOURCE:
+        return False
+    if not ctx.is_default:
+        return True
+    return (bool(tf.node_template) and UNIT_SOURCE[output_key].kind is _U.ENTITY_BY_CLASS
+            and bool(ctx.capacity_nodes or ctx.connection_nodes))
+
+
+def entity_unit(tf: Transform, kind: UnitSourceKind, value, ctx: UnitContext) -> str:
+    """The unit of a quantity that underwent *tf* for the level value *value* (a node, unit, connection or group,
+    read as *kind* says), with the node units of *ctx*."""
+    return entity_label(tf.template, kind, value, ctx, node_template=tf.node_template)
+
+
+def entity_label(template: str, kind: UnitSourceKind, value, ctx: UnitContext, *, node_template: str = "") -> str:
+    """*template* (a unit template, or a plot label with unit tokens) filled for the level value *value* (a node,
+    unit, connection or group, read as *kind* says) with the node units of *ctx*.  *node_template* is the
+    template of an ``entity`` level value that is a node (:attr:`Transform.node_template`; ``""`` =
+    *template*).  The one rule of :func:`entity_unit` and the plot labels."""
+    units = ctx.node_units
+    name = str(value)
+    if kind is _U.ENTITY_BY_CLASS:
+        if name in ctx.connection_nodes:
+            kind = _U.CONNECTION_ENDS
+        elif name in ctx.capacity_nodes:
+            kind = _U.CAPACITY_SIDE
+        else:
+            return uom.fill(node_template or template, uom.node_unit(name, units))
+    if kind is _U.NODE:
+        return uom.fill(template, uom.node_unit(name, units))
+    if kind is _U.CAPACITY_SIDE:
+        return uom.capacity_units(template, ctx.capacity_nodes.get(name, ()), units,
+                                  shared=name in ctx.shared_capacity)
+    nodes = {_U.CONNECTION_ENDS: ctx.connection_nodes, _U.GROUP_MEMBERS: ctx.group_nodes,
+             _U.FLOWGROUP_ARCS: ctx.flowgroup_nodes}[kind].get(name, ())
+    return uom.fill(template, uom.units_of(nodes, units))
+
+
+def _unit_of(tf: Transform, ctx: "UnitContext | None", output_key: str = "", value=None) -> str:
+    """The unit of a column of *output_key* that underwent *tf*, whose node-bearing level (:data:`UNIT_SOURCE`)
+    has the value *value*.  With no context, a context whose nodes are all MWh, a transform without a template
+    or a table that does not follow its nodes this is the transform's unit, so the default is byte-identical by
+    construction."""
+    if value is None or not _follows_nodes(output_key, tf, ctx):
+        return tf.unit
+    return entity_unit(tf, UNIT_SOURCE[output_key].kind, value, ctx)
+
+
+def _level_position(output_key: str, level: str, n_levels: int, level_names) -> int | None:
+    """The position of the column level *level* of *output_key* in a column label of *n_levels* levels (found
+    by name when the columns name their levels, else by its declared position below an optional leading
+    ``scenario`` level); ``None`` when it cannot be placed."""
+    if level_names is not None:
+        names = list(level_names)
+        return names.index(level) if level in names else None
+    dims = OUTPUT_DIMS.get(output_key)
+    if dims is None or level not in dims.columns:
+        return None
+    if n_levels == len(dims.columns):
+        return dims.columns.index(level)
+    if n_levels == len(dims.columns) + 1:
+        return dims.columns.index(level) + 1
+    return None
+
+
+def _column_transforms(output_key: str, columns, level_names=None):
+    """``(column, label, transform or None, scenario)`` for every column of *output_key*: the transform the
+    column underwent (``None`` for a dimension column, a membership set and a column absent from a mixed-unit
+    map) and the value of its comparison ``scenario`` level (``None`` without one).  Empty for an undeclared
+    table."""
     spec = OUTPUT_TRANSFORM.get(output_key)
     if spec is None:
+        return [], None
+    labels, names = _column_labels(columns)
+    if level_names is not None:
+        names = list(level_names)
+    out = []
+    for col, label in zip(columns, labels):
+        n = len(label)
+        scen_pos = _scenario_level(output_key, n, names)
+        if isinstance(spec, dict):
+            pos = _label_level(output_key, n, names)
+            key = label[pos] if pos != scen_pos else None
+            tf = spec.get(str(key), spec.get('*')) if key is not None else spec.get('*')
+        else:
+            tf = spec
+        if tf is None or tf.semantics is Semantics.DIMENSION or is_dimension(str(col)):
+            tf = None
+        out.append((col, label, tf, label[scen_pos] if scen_pos is not None else None))
+    return out, names
+
+
+def _row_entities(index, level: str) -> list | None:
+    """The distinct values of the row level *level* of *index*, in first-seen order (``None`` when *index* has
+    no such level)."""
+    names = list(getattr(index, "names", None) or [])
+    if level not in names:
         return None
-    docs = DOCS_ANCHOR.get(output_key, "")
-    out: dict[str, ColumnMeta] = {}
-    for col in columns:
-        name = str(col)
-        tf = spec.get(name, spec.get('*')) if isinstance(spec, dict) else spec
-        # Index/key dimension, a pure membership set, or a column absent from a
-        # mixed-table map → dimension.
-        if tf is None or tf.semantics is Semantics.DIMENSION or is_dimension(name):
-            out[name] = ColumnMeta(name, "", Semantics.DIMENSION,
-                                   "Index / key dimension.")
+    values = index.get_level_values(level) if hasattr(index, "get_level_values") else index
+    return list(dict.fromkeys(str(v) for v in values))
+
+
+def row_units(output_key: str, index, columns, ctx=None, *, level_names=None) -> "dict[str, dict[str, str]] | None":
+    """``{row entity: {column: unit}}`` of a row-keyed table whose unit varies by row (its node, unit,
+    connection or group is a row level, :data:`UNIT_SOURCE` with ``row=True``), else ``None``.
+
+    ``None`` also when no node in *ctx* (one context, or one per comparison scenario) is non-MWh and for the
+    tables of :data:`DEFAULT_UNITS_ONLY`, so the default outputs do not change.  The keys are the row level's
+    values (each entity once, never one entry per row) and ``str`` of each measure column; each column's own
+    template is filled for the entity, so a mixed-column table (``nodeGroup_gdt_p``: m3, a ratio, m3/a) gets one
+    unit per column.  A column that does not follow its nodes keeps its unit (``""`` for a unitless one)."""
+    source = UNIT_SOURCE.get(output_key)
+    if source is None or not source.row or output_key in DEFAULT_UNITS_ONLY:
+        return None
+    if not _any_node_units(ctx) and not _any_footer_rows(ctx, output_key):
+        return None
+    entities = _row_entities(index, source.level)
+    if entities is None:
+        return None
+    cols, names = _column_transforms(output_key, columns, level_names)
+    if not cols:
+        return None
+    measures = []
+    for col, label, tf, scen in cols:
+        if tf is None:
             continue
-        out[name] = ColumnMeta(
+        c = _context_for(ctx, scen)
+        footer = _footer_of(c, output_key)
+        written = footer[1] if footer is not None else None
+        leaf = _leaf_name(label, _scenario_level(output_key, len(label), names))
+        measures.append((str(col), tf, c, written, leaf))
+    out: dict[str, dict[str, str]] = {}
+    for entity in entities:
+        units: dict[str, str] = {}
+        for name, tf, c, written, leaf in measures:
+            if written is not None and leaf in written.get(entity, {}):
+                units[name] = written[entity][leaf]
+            elif _follows_nodes(output_key, tf, c):
+                units[name] = entity_unit(tf, source.kind, entity, c)
+            else:
+                units[name] = tf.unit
+        out[entity] = units
+    return out
+
+
+def _any_footer_rows(ctx, output_key: str) -> bool:
+    """Whether a footer of *ctx* (one context, or one per scenario) holds row units of *output_key*."""
+    if ctx is None:
+        return False
+    contexts = [ctx] if isinstance(ctx, UnitContext) else list(ctx.values())
+    for c in contexts:
+        footer = _footer_of(c, output_key)
+        if footer is not None and footer[1]:
+            return True
+    return False
+
+
+def resolve_columns(
+    output_key: str, columns, *, level_names=None,
+    ctx: "UnitContext | Mapping[str, UnitContext] | None" = None, rows=None,
+) -> list[ColumnMeta] | None:
+    """One :class:`ColumnMeta` per column of the result table *output_key*, in column order.
+
+    *columns* is ``df.columns`` (single- or multi-level, with or without the comparison's top ``scenario``
+    level) or a list of labels.  A mixed-unit table's per-column map is looked up on the label of its declared
+    label level (see :func:`_label_level`), never on the text of the whole tuple.  *level_names* overrides the
+    level names of *columns*.  *ctx* is one :class:`UnitContext` or one per scenario (keyed by the
+    ``scenario`` level's value): a column whose node-bearing column level names a node of another unit gets
+    that unit (:data:`UNIT_SOURCE`).  For a row-keyed table, *rows* (``df.index``) gives each column the units
+    of its rows joined (:func:`row_units`, :func:`summarise_units`); without *rows* it keeps the default unit.
+    ``ColumnMeta.name`` is ``str`` of the column label, the key of the parquet footer.  Returns ``None`` when the
+    output is not declared in :data:`OUTPUT_TRANSFORM`."""
+    if output_key not in OUTPUT_TRANSFORM:
+        return None
+    cols, names = _column_transforms(output_key, columns, level_names)
+    docs = DOCS_ANCHOR.get(output_key, "")
+    source = UNIT_SOURCE.get(output_key)
+    by_row = (row_units(output_key, rows, columns, ctx, level_names=level_names)
+              if rows is not None and source is not None and source.row else None)
+    out: list[ColumnMeta] = []
+    for col, label, tf, scenario in cols:
+        name = str(col)
+        if tf is None:
+            out.append(ColumnMeta(name, "", Semantics.DIMENSION, "Index / key dimension."))
+            continue
+        c = _context_for(ctx, scenario)
+        footer = _footer_of(c, output_key)
+        written = (footer[0].get(_leaf_name(label, _scenario_level(output_key, len(label), names)))
+                   if footer is not None else None)
+        if by_row is not None:
+            unit = summarise_units(units[name] for units in by_row.values()) or tf.unit
+        elif written is not None:
+            unit = written
+        elif source is not None and not source.row and _follows_nodes(output_key, tf, c):
+            pos = _level_position(output_key, source.level, len(label), names)
+            unit = _unit_of(tf, c, output_key, label[pos] if pos is not None else None)
+        else:
+            unit = tf.unit
+        out.append(ColumnMeta(
             name=name,
-            unit=tf.unit,
+            unit=unit,
             semantics=tf.semantics,
             tooltip=tf.tooltip,
             long=tf.description,
             formula=FORMULA_OVERRIDE.get((output_key, name), ""),
             docs=docs,
-        )
+        ))
     return out
+
+
+def column_units(output_key: str, columns, *, level_names=None, ctx=None) -> list[str]:
+    """The unit of every column of *output_key*, in column order (``""`` for a dimension column, a unitless
+    measure and an undeclared table).  See :func:`resolve_columns`."""
+    resolved = resolve_columns(output_key, columns, level_names=level_names, ctx=ctx)
+    if resolved is None:
+        return [""] * len(list(columns))
+    return [m.unit for m in resolved]
+
+
+def row_unit_label(units: Mapping[str, str]) -> str:
+    """The text of one row's units (a value of :func:`row_units`): its measure columns' units joined
+    (:func:`summarise_units`; unitless columns left out)."""
+    return summarise_units(units.values())
+
+
+def display_unit(meta: ColumnMeta) -> str:
+    """The unit of a measure column as shown to people: its unit, or ``per unit`` for a unitless measure."""
+    if meta.semantics is Semantics.DIMENSION:
+        return ""
+    return meta.unit or UNITLESS
+
+
+def summarise_units(units) -> str:
+    """One text for a set of units: the unit when all agree, else the distinct units sorted and joined with
+    ``"; "``; ``""`` when there is none.  A unit that is itself a ``"; "`` list (a per-arc capacity label,
+    ``MW; MW_th``) counts as its parts.  The single reducer of the ``Units`` sheet, the results-database
+    descriptions, the GUI hover and the plot labels."""
+    distinct = sorted({part for u in units if u for part in u.split("; ")})
+    return "; ".join(distinct)
+
+
+def derive_column_meta(
+    output_key: str, columns, *, ctx: "UnitContext | None" = None, rows=None,
+) -> dict[str, ColumnMeta] | None:
+    """Derive ``{column_name: ColumnMeta}`` for one output.
+
+    ``columns`` is ``df.columns`` before the scenario level is prepended (the keys are ``str`` of each
+    column label, the parquet-footer keys).  Dimension columns get ``Semantics.DIMENSION``; measure columns
+    get the output's declared transform, for a mixed-unit table the entry of the column's label on its
+    declared label level (see :func:`resolve_columns`, which also says what *ctx* and *rows* do).  Returns
+    ``None`` when the output is not (yet) declared in :data:`OUTPUT_TRANSFORM`, so callers can treat absence as
+    "no metadata".
+    """
+    resolved = resolve_columns(output_key, columns, ctx=ctx, rows=rows)
+    if resolved is None:
+        return None
+    return {m.name: m for m in resolved}

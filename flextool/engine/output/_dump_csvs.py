@@ -174,6 +174,9 @@ DIRECT_WRITES: dict[str, tuple[str, str, dict[str, str]]] = {
                                 {"p": "process"}),
     "process_minload": ("solve_data", "process_minload.csv", {"p": "process"}),
     "process_exact": ("solve_data", "process_exact.csv", {"p": "process"}),
+    # Start-up input draws (startup_input_method): reloaded by flex_data._load_startup_inputs.
+    "p_startup_energy": ("solve_data", "process_node_startup_energy.csv",
+                         {"p": "process", "n": "node", "d": "period", "value": "value"}),
     # ─── Storage ──────────────────────────────────────────────────────
     "nodeState": ("solve_data", "nodeState.csv", {"n": "node"}),
     "nodeStateBlock": ("solve_data", "nodeStateBlock.csv", {"n": "node"}),

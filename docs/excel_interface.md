@@ -153,6 +153,10 @@ python -m flextool.cli.cmd_read_self_describing_tabular_input \
     sqlite:///input_data.sqlite
 ```
 
+This import first deletes the data of the target database (entities, alternatives, scenarios and parameter
+values) and then writes the workbook's data. To add a workbook's data to a database instead, give `--no-purge`:
+see [How to replace a dataset and keep the old one as an alternative](how_to/outputs.md#how-to-replace-a-dataset-and-keep-the-old-one-as-an-alternative).
+
 For v1 specification-driven workbooks — kept for backwards compatibility:
 
 ```bash

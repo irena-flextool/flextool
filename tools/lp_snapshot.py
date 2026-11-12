@@ -389,9 +389,11 @@ def _patch_multi_year_reinvest_choice(data: dict) -> dict:
 def _patch_invest_total_no_var(data: dict) -> dict:
     """c16a #28/#43 probe (review's ``i28_skip2``): ``wind_plant`` and
     ``battery_inverter`` switched to ``invest_no_limit`` (no entity-total
-    row of their own), leaving ``x_unit`` (new, ``invest_total``, no
-    ``invest_cost`` -> no ``v_invest`` -> no ``maxInvest_entity_total`` row
-    under #43) and the storage node ``battery`` (``invest_total`` +
+    row of their own), leaving ``x_unit`` (new, ``invest_total``, a
+    ``construction_lead_time`` of 20 years: its capacity would start after
+    the model horizon 2030, so no decision is offered -> no ``v_invest`` ->
+    no ``maxInvest_entity_total`` row under #43; before #218 the missing
+    ``invest_cost`` did this) and the storage node ``battery`` (``invest_total`` +
     ``invest_min_total`` 5 -> the #28 ``minInvest_entity_total_path_n`` row
     that used to need the process-side ``edd_invest_set`` to avoid a
     ``break`` skipping the node side entirely)."""
@@ -405,6 +407,7 @@ def _patch_invest_total_no_var(data: dict) -> dict:
                 ["unit", "x_unit", "invest_method", "invest_total"],
                 ["unit", "x_unit", "invest_max_total", 10.0],
                 ["unit", "x_unit", "existing", 1.0],
+                ["unit", "x_unit", "construction_lead_time", 20.0],
                 ["node", "battery", "invest_min_total", 5.0]])
 
 
@@ -659,7 +662,7 @@ def _patch_stoch_na_reserve(data: dict) -> dict:
 def _stoch_rank3(values: dict) -> dict:
     """3-level ``branch -> analysis_time -> time`` map, constant per branch over the fixture's
     48 hourly timesteps (``t0001``..``t0048``), analysis time ``t0001`` -- the stochastic-time
-    (rank-3) shape ``docs/how_to.md`` "Single solve stochastics" describes.  Every nested level
+    (rank-3) shape ``docs/how_to/stochastics.md`` "Single solve stochastics" describes.  Every nested level
     needs its own explicit ``"type": "map"`` (unlike :func:`_pmap`'s single, unnested level)."""
     def level(name: str, data: list) -> dict:
         return {"type": "map", "index_type": "str", "index_name": name, "data": data}
@@ -1420,6 +1423,54 @@ def _patch_rp_downgrade_within_solve(data: dict) -> dict:
            for n in ("lh2_A", "lh2_B", "lh2_C")])
 
 
+_RP_SOLVE = "lh2_rp_invest__lh2_three_region_rp_invest"
+_RP_METHODS_MIX = {"lh2_A": "bind_within_solve_blended_weights", "lh2_B": "bind_forward_only_blended_weights",
+                   "lh2_C": "bind_within_period_blended_weights"}
+
+
+def _rp_stoch_branches(period: str, step: str, weights: dict) -> dict:
+    def level(name: str, rows: list) -> dict:
+        return {"type": "map", "index_type": "str", "index_name": name, "data": rows}
+    return level("period", [[period, level("branch", [
+        [b, level("analysis_time", [[step, level("realized", [["no", w]])]])] for b, w in weights.items()])]])
+
+
+def _rp_stoch(data: dict, name: str, period: str, step: str) -> dict:
+    """lh2_three_region_rp_invest with the three blended methods (lh2_A within_solve, lh2_B forward_only,
+    lh2_C within_period) and two forecasts (0.3 / 0.7) opening at ``period`` / ``step``; lh2_B is in an
+    include_stochastics group (its block starts are tied over the tie window) (items 125)."""
+    return _overlay(data, name=name, base="lh2_three_region_rp_invest",
+                    entities=[["group", "rp_stoch_g"], ["group__node", ["rp_stoch_g", "lh2_B"]]],
+                    values=[["solve", _RP_SOLVE, "stochastic_branches",
+                             _rp_stoch_branches(period, step, {"a": 0.3, "b": 0.7})],
+                            ["group", "rp_stoch_g", "include_stochastics", "yes"]]
+                    + [["node", n, "storage_binding_method", m] for n, m in _RP_METHODS_MIX.items()])
+
+
+def _patch_rp_stoch_midhorizon(data: dict) -> dict:
+    """Forecasts open at y2040: each branch period's base-period chain continues from the trunk period y2030."""
+    return _rp_stoch(data, "rp_stoch_midhorizon", "y2040", "t0049")
+
+
+def _patch_rp_stoch_first_period(data: dict) -> dict:
+    """Forecasts open at y2030 (the first period): rp_inter_period_fan_start ties lh2_B's chain starts."""
+    return _rp_stoch(data, "rp_stoch_first_period", "y2030", "t0001")
+
+
+def _patch_rp_rolling_blended(data: dict) -> dict:
+    """lh2_three_region_rp_invest rolling (horizon 48 h, jump 36 h; no investment) with the three blended methods:
+    every blended node binds forward only (item 126); daily_group's coarse step 12 h aligns with the jump."""
+    data["parameter_values"] = [
+        v for v in data["parameter_values"]
+        if not (v[0] == "solve" and v[1] == _RP_SOLVE and v[2] in ("invest_periods", "realized_invest_periods"))]
+    return _overlay(data, name="rp_rolling_blended", base="lh2_three_region_rp_invest", values=[
+        ["solve", _RP_SOLVE, "solve_mode", "rolling_window"],
+        ["solve", _RP_SOLVE, "rolling_solve_horizon", 48.0],
+        ["solve", _RP_SOLVE, "rolling_solve_jump", 36.0],
+        ["group", "daily_group", "new_stepduration", 12.0]]
+        + [["node", n, "storage_binding_method", m] for n, m in _RP_METHODS_MIX.items()])
+
+
 def _patch_nested_rolling_storage_uc(data: dict) -> dict:
     """Nested invest -> rolling storage (48 h / 24 h, 6-h steps) -> rolling dispatch (24 h / 12 h) with the battery
     bind_forward_only + fix_start (no nested fix) and coal unit commitment (linear, min_load 0.4, min_uptime 8 h, ramp
@@ -1945,6 +1996,9 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "bind_within_period_2p": _patch_bind_within_period_2p,
     "rp_downgrade_within_solve": _patch_rp_downgrade_within_solve,
     "rolling_intraperiod_blocks": _patch_rolling_intraperiod_blocks,
+    "rp_stoch_midhorizon": _patch_rp_stoch_midhorizon,
+    "rp_stoch_first_period": _patch_rp_stoch_first_period,
+    "rp_rolling_blended": _patch_rp_rolling_blended,
     "nested_rolling_storage_uc": _patch_nested_rolling_storage_uc,
     "storage_sequence_start_end": _patch_storage_sequence_start_end,
     "nested_fix_quantity_reference": _patch_nested_fix_quantity_reference,
@@ -2176,6 +2230,9 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("flowgroup_cum_stoch_rolling", _F + "stochastics.json"),
     ("stoch_rank3_anchor", _F + "stochastics.json"),
     ("stoch_rank3_profile_anchor", _F + "stochastics.json"),
+    ("rp_stoch_midhorizon", _F + "lh2_three_region_rp_invest.json"),
+    ("rp_stoch_first_period", _F + "lh2_three_region_rp_invest.json"),
+    ("rp_rolling_blended", _F + "lh2_three_region_rp_invest.json"),
 )
 
 FIXTURES: tuple[Fixture, ...] = (

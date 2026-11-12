@@ -50,6 +50,10 @@ from flextool.engine.input._param_shapes import (
     activate_stochastic_time_source,
     deactivate_stochastic_time_source,
 )
+from flextool.engine.input._solve_step_aggregation import (
+    activate_solve_step_aggregation,
+    deactivate_solve_step_aggregation,
+)
 from flextool.engine.preprocess.params._block_layout import BlockLayout
 from flextool.engine.preprocess.params._branch import (
     activate_branch_anchor_pairs,
@@ -59,6 +63,9 @@ from flextool.engine.preprocess.params._branch import (
     solve_branch_anchor_pairs,
 )
 from flextool.engine.preprocess._provider_io import _provider_key
+# The FlexData fields of the start-up input (cleared together by reduce_unit_detail_method online).
+from flextool.engine.preprocess._reduce_detail import STARTUP_FIELDS
+from flextool.engine.preprocess.emit._base_steps import NEW_STEP_BASE_STEPS
 
 
 def _loadflex_prof(label: str) -> None:
@@ -415,7 +422,8 @@ def _apply_coarse_frames(flex_data: "FlexData", sd: Path, *, provider: "object |
         solve_step=float(layout.block_step_duration["default"]), dt=flex_data.dt,
         step_duration=None if psd is None else psd.frame, dtttdt=flex_data.dtttdt,
         rp_block_first=flex_data.rp_block_first, realized=realized, balance_nodes=flex_data.nodeBalance,
-        state_nodes=flex_data.nodeState, block_nodes=flex_data.nodeStateBlock)
+        state_nodes=flex_data.nodeState, block_nodes=flex_data.nodeStateBlock,
+        rolling=bool(getattr(flex_data, "solve_is_rolling", False)))
     if frames is None:
         return
     flex_data.nodeCoarse = frames.nodeCoarse
@@ -561,6 +569,18 @@ def _node_param_by_group(gn: "pl.DataFrame | None", param: "Param | None") -> "p
     return gn.join(f, on="n", how="inner").select("g", "n", "d", "t", "value")
 
 
+def _time_varying_groups(part: pl.DataFrame, param: "Param | None") -> set[str]:
+    """The groups of ``part`` ``(g, d, b_first, t)`` whose group limit ``param`` (authored dims ⊆ ``(g, d, t)``)
+    takes more than one value within a coarse step; a limit without a time axis never does.  A time step the
+    limit leaves out (a dropped zero) is not counted."""
+    cap = _param_frame(param)
+    if cap is None or "t" not in cap.columns:
+        return set()
+    keys = [c for c in ("g", "d", "t") if c in cap.columns]
+    return _spread_keys(part, cap.select(*(pl.col(c).cast(pl.Utf8) for c in keys),
+                                         pl.col("value").cast(pl.Float64)), "g")
+
+
 def _row_rule_reasons(flex_data: "FlexData", coarse: set[str]) -> list[tuple[str, str]]:
     """``(p, reason)`` of the coarse processes ``coarse`` in rows under the row rule (:func:`coarse_process_reasons`):
     a row mixing coarse and fine members (per solve step, the coarse flow constant over its step), and an averaged
@@ -611,13 +631,12 @@ def _row_rule_reasons(flex_data: "FlexData", coarse: set[str]) -> list[tuple[str
         elif family == "non_sync":
             for name in ("p_positive_inflow", "p_negative_inflow"):
                 varying |= _spread_keys(part, _node_param_by_group(gn, getattr(d, name, None)), "g")
+            varying |= _time_varying_groups(part, d.pdtGroup_non_synchronous_limit)
+        elif family == "inertia":
+            varying |= _time_varying_groups(part, d.pdtGroup_inertia_limit)
         elif family == "instant_flow":
             for name in ("pdt_max_instant_flow", "pdt_min_instant_flow"):
-                cap = _param_frame(getattr(d, name, None))
-                if cap is not None and "t" in cap.columns:
-                    keys = [c for c in ("g", "d", "t") if c in cap.columns]
-                    varying |= _spread_keys(part, cap.select(*(pl.col(c).cast(pl.Utf8) for c in keys),
-                                                             pl.col("value").cast(pl.Float64)), "g")
+                varying |= _time_varying_groups(part, getattr(d, name, None))
         varying_rows = procs.filter(pl.col(key).is_in(sorted(varying))).select(key, "e").unique().sort(key, "e")
         for k, p in varying_rows.iter_rows():
             out.append((p, f"the {what} row of {k!r} uses the step mean of a demand, inflow, profile or limit that "
@@ -813,11 +832,14 @@ def coarse_row_members(flex_data: "FlexData", family: str) -> pl.DataFrame:
     variable keyed like the row (the inertia and non-synchronous slacks) has the steps of its row.  A superset of
     the row's entities is safe (one more member can only keep the row at the solve's step).
 
-    * ``capacity_margin`` (key ``g``): the units consuming from a node of g without a storage state;
+    * ``capacity_margin`` (key ``g``): the processes whose flows enter the row (storage-backed units, connections,
+      consumption: the arcs at N(g) that neither count at capacity, ``_group_slack.capacity_margin_counted_arcs``,
+      nor are left out, ``_group_slack.capacity_margin_left_out_arcs``);
     * ``inertia`` (``g``): the processes with an inertia constant on a side at a node of g;
     * ``non_sync`` (``g``): the processes with an arc at a node of g, without those inside g;
     * ``instant_flow`` (``g``): the processes of the flow group (``group_process_node``);
-    * ``user_constraint`` (``cn``): the processes with a flow coefficient and the nodes with a state coefficient;
+    * ``user_constraint`` (``cn``): the processes with a flow coefficient, the processes of the solve with an
+      online coefficient (``constraint_online_coeff``) and the nodes with a state coefficient;
     * ``storage_use`` (``n``): the processes with an arc at the stochastic node n."""
     d = flex_data
     key = {"user_constraint": "cn", "storage_use": "n"}.get(family, "g")
@@ -840,15 +862,18 @@ def coarse_row_members(flex_data: "FlexData", family: str) -> pl.DataFrame:
             return empty
         nodes = gn.filter(pl.col("g").is_in(sorted(gs)))
         if family == "capacity_margin":
-            nodes = nodes.filter(~pl.col("n").is_in(sorted(_frame_values(getattr(d, "nodeState", None), "n"))))
-            units = _frame_values(getattr(d, "process_unit", None), "p")
-            for frame in (d.process_source_sink_eff, d.process_source_sink_noEff):
-                arcs = _utf8_frame(frame, ("p", "source", "sink"))
-                if arcs is None:
-                    continue
-                if units:
-                    arcs = arcs.filter(pl.col("p").is_in(sorted(units)))
-                procs(_arcs_at_nodes(arcs, nodes, "source"))
+            from flextool.engine.model import _group_slack
+
+            nodes = _utf8_frame(_group_slack.capacity_margin_nodes(d), ("g", "n"))
+            if nodes is None:
+                return empty
+            at = pl.concat([_arcs_at_nodes(pss, nodes, "source"), _arcs_at_nodes(pss, nodes, "sink")],
+                           how="diagonal_relaxed").select("g", "p", "source", "sink")
+            for left in (_group_slack.capacity_margin_counted_arcs(d), _group_slack.capacity_margin_left_out_arcs(d)):
+                if left is not None:
+                    at = at.join(left.select("g", "p", "source", "sink"), on=["g", "p", "source", "sink"],
+                                 how="anti")
+            procs(at.select("g", "p").unique())
         elif family == "inertia":
             for side in ("source", "sink"):
                 idx = _utf8_frame(getattr(d, f"process_{side}_inertia", None), ("p", side))
@@ -870,6 +895,9 @@ def coarse_row_members(flex_data: "FlexData", family: str) -> pl.DataFrame:
         procs(gpn.filter(pl.col("g").is_in(sorted(gs))))
     elif family == "user_constraint":
         procs(_utf8_frame(getattr(d, "flow_constraint_idx", None), ("cn", "p")))
+        online = _utf8_frame(_param_frame(getattr(d, "p_process_constraint_online_coeff", None)), ("cn", "p"))
+        if online is not None and pss is not None:
+            procs(online.join(pss.select("p").unique(), on="p", how="semi"))
         state = _utf8_frame(_param_frame(getattr(d, "p_node_constraint_state_coeff", None)), ("cn", "n"))
         if state is not None:
             parts.append(state.select("cn", kind=pl.lit("n"), e=pl.col("n")))
@@ -1192,6 +1220,11 @@ class FlexData:
     cdt_eq: pl.DataFrame | None = None  # (cn, d, t)
     cdt_le: pl.DataFrame | None = None  # (cn, d, t)
     cdt_ge: pl.DataFrame | None = None  # (cn, d, t)
+    # Constraints with constraint_period_method period_total (one annualised row per period); None = all per_timestep.
+    constraint_period_total: pl.DataFrame | None = None  # set: (cn,)
+    # A rolling solve whose rolls do not each realize whole periods leaves the period_total rows out
+    # (solve_data/user_constraint_period_total_off, written per sub-solve by _run_model).
+    user_constraint_period_total_off: bool = False
     p_node_constraint_invested_capacity_coeff: Param | None = None  # (n, cn)
     p_process_constraint_invested_capacity_coeff: Param | None = None  # (p, cn)
     p_node_constraint_state_coeff: Param | None = None  # (n, cn) — user-cstr v_state coefficient
@@ -1203,6 +1236,7 @@ class FlexData:
     p_process_constraint_retired_capacity_coeff: Param | None = None  # (p, cn) — capacity retired in d
     p_node_constraint_in_construction_capacity_coeff: Param | None = None  # (n, cn) — storage in construction
     p_process_constraint_in_construction_capacity_coeff: Param | None = None  # (p, cn) — capacity in construction
+    p_process_constraint_online_coeff: Param | None = None  # (p, cn) — units online (count of unitsize)
 
     # ─── Profiles ─────────────────────────────────────────────────────────
     process_profile_upper: pl.DataFrame | None = None    # (p, source, sink, f)
@@ -1289,13 +1323,12 @@ class FlexData:
     process_source_sink_ramp_limit_sink_down: pl.DataFrame | None = None
     process_source_sink_ramp_limit_source_up: pl.DataFrame | None = None
     process_source_sink_ramp_limit_source_down: pl.DataFrame | None = None
-    # Δ.17c Gap D — process_source_sink_ramp_cost (mod L1115-1119): (p, src,
-    # sink) rows whose source-side OR sink-side ramp_method ∈
-    # RAMP_COST_METHOD.  Populated by ``apply_projection_params``; not yet
-    # consumed by model/core.py (the LP doesn't carry a per-arc ramp-cost
-    # objective term in the current scope) but kept for parity with
-    # flextool's preprocessing set family.
+    # The arcs whose flow change is priced (ramp_change_eq, v_ramp_up / v_ramp_down, the ramp_cost objective
+    # term): p_ramp_cost_arc > 0.  Populated by ``apply_projection_params`` (params._projection.ramp_cost_arc_frame).
     process_source_sink_ramp_cost: pl.DataFrame | None = None
+    # (p, source, sink): the ramp cost of each arc in CUR/MW of change, the sum of the ramp_cost of its sides whose
+    # own ramp_method is ramp_cost or both (> 0 only).  Populated by ``apply_direct_params``.
+    p_ramp_cost_arc: Param | None = None
     # method_2way_1var_off arcs (the .mod's signed-flow 2-way method,
     # ``v_flow ∈ [-cap, +cap]``).  The engine emits ``v_flow ≥ 0`` on the
     # forward arc only, so these arcs carry sink→source flow via a
@@ -1327,6 +1360,9 @@ class FlexData:
     process_online: pl.DataFrame | None = None              # set: (p,)
     process_online_linear: pl.DataFrame | None = None        # set: (p,)
     process_online_integer: pl.DataFrame | None = None       # set: (p,)
+    # True when the solve's reduce_unit_detail_method relaxes integers (preprocess._reduce_detail): v_online_integer
+    # and v_exact_forward are then declared continuous.  False (default): integer as authored.
+    relax_integrality: bool = False
     # Connections with the ``exact`` transfer method (internal method_2way_2var_MIP_exclude, override-aware):
     # their direction switch v_exact_forward (model/_exact.py).
     process_exact: pl.DataFrame | None = None                 # set: (p,)
@@ -1339,6 +1375,16 @@ class FlexData:
     p_process_sink_min_capacity_coef: Param | None = None    # (p, sink) — capacity_min_coeff: optional per-output floor (minFlow_output_floor), default 0
     p_startup_cost: Param | None = None                      # (p, d)
     p_section: Param | None = None                           # (p, d, t)
+    # Start-up input (unit__inputNode.startup_input_method startup_and_input / startup_only, startup_energy):
+    # each start-up draws startup_energy · MW started from node n (core._startup_draw).  A startup_only arc is
+    # not an arc: the readers hide it, so it is in none of the arc sets.  All None without start-up roles.
+    process_startup_node: pl.DataFrame | None = None         # (p, n): units of the solve, startup_energy ≠ 0
+    p_startup_energy: Param | None = None                    # (p, n, d) MWh per MW started
+    startup_to_balance: pl.DataFrame | None = None           # (p, n): n has an energy balance
+    startup_from_commodity: pl.DataFrame | None = None       # (p, n, c): n is a node of commodity c
+    startup_from_co2_priced: pl.DataFrame | None = None      # (p, n, c, g): n in a CO2-priced group, c with CO2
+    startup_from_co2_capped: pl.DataFrame | None = None      # (p, n, c, g): co2_max_period groups
+    startup_from_co2_capped_total: pl.DataFrame | None = None  # (p, n, c, g): co2_max_total groups
     pdt_uptime_set: pl.DataFrame | None = None               # (p, d, t) — minimum_uptime constraint domain
     pdt_downtime_set: pl.DataFrame | None = None             # (p, d, t) — minimum_downtime constraint domain
     uptime_lookback: pl.DataFrame | None = None              # (p, d, t, d_back, t_back) — startup lookback window
@@ -1399,6 +1445,10 @@ class FlexData:
     storage_solve_at_model_end: bool = True
     dtttdt: pl.DataFrame | None = None           # (d, t, t_previous_*, ...)
     dtttdt_forward_only: pl.DataFrame | None = None  # dtttdt with first (d,t) per solve dropped
+    # The bind_within_solve lag (columns of dtttdt) where it differs from dtttdt: with a stochastic fan in the
+    # solve's first period, the first step of each root forecast continues from the last step of its own path
+    # (_derived.dtttdt_within_solve_from_dtttdt); None otherwise (the lag is dtttdt).
+    dtttdt_within_solve: pl.DataFrame | None = None
     # (d, t, t_previous_within_period): the previous step of t in its own period; the first step of each period
     # wraps to the period's own last step (the bind_within_period lag; blocks chain inside the period).
     dtttdt_within_period: pl.DataFrame | None = None
@@ -1534,11 +1584,13 @@ class FlexData:
     process_group_inside_nonSync: pl.DataFrame | None = None  # (p, g)
     p_inv_group_cap: Param | None = None                 # (g, d)
     p_group_capacity_for_scaling: Param | None = None    # (g, d)
-    pdGroup_capacity_margin: Param | None = None         # (g, d)
+    pdGroup_capacity_margin: Param | None = None         # (g, d) MW: manual, and share_of_peak once resolved
+    pdGroup_capacity_margin_share: Param | None = None   # (g, d) share of the peak (share_of_peak groups)
+    pdGroup_peak_demand: Param | None = None             # (g, d) MW: peak demand over the period's timeline
     pdGroup_penalty_capacity_margin: Param | None = None # (g, d)
-    pdGroup_inertia_limit: Param | None = None           # (g, d)
+    pdtGroup_inertia_limit: Param | None = None          # authored dims ⊆ (g, d, t)
     pdGroup_penalty_inertia: Param | None = None         # (g, d)
-    pdGroup_non_synchronous_limit: Param | None = None   # (g, d)
+    pdtGroup_non_synchronous_limit: Param | None = None  # authored dims ⊆ (g, d, t)
     pdGroup_penalty_non_synchronous: Param | None = None # (g, d)
     p_process_sink_inertia_constant: Param | None = None    # (p, sink)
     p_process_source_inertia_constant: Param | None = None  # (p, source)
@@ -2094,14 +2146,124 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
 
 
 # ---------------------------------------------------------------------------
+# Start-up input nodes (unit__inputNode.startup_input_method / startup_energy)
+
+
+
+def _load_startup_inputs(inp: Path, sd: Path, dt: pl.DataFrame, pss: "pl.DataFrame | None",
+                         nb: "pl.DataFrame | None", nbp: "pl.DataFrame | None", *,
+                         source: "InputSource | None" = None,
+                         provider: "object | None" = None) -> dict:
+    """The start-up input nodes of the solve's units (Utf8 frames; the end-of-load sweep casts them).
+
+    ``process_startup_node`` (p, n): the arcs with ``startup_input_method`` ``startup_and_input`` or
+    ``startup_only`` (``source.startup_arcs()``: the readers hide the startup_only arcs from every arc set, so
+    their start-up values are read through it) of the units in the solve, with a ``startup_energy`` other than
+    0 in a period of the solve.  ``p_startup_energy`` (p, n, d) [MWh per MW started] via
+    :func:`params._direct.p_startup_energy_from_source` (constant or period).  ``startup_to_balance``: the pairs
+    whose node has an energy balance (nodeBalance or nodeBalancePeriod); ``startup_from_commodity`` (p, n, c):
+    the pairs at a commodity node.  The CO2 sets come from :func:`_startup_co2_sets`.  Every field is None
+    without a start-up input.  A reader-less reload (``flextool.engine._csv_reload``) reads the dumped
+    ``p_startup_energy`` (``solve_data/process_node_startup_energy``, ``output._dump_csvs``) instead."""
+    blank = {f: None for f in STARTUP_FIELDS}
+    if pss is None or pss.height == 0:
+        return blank
+    in_solve = pss.select(pl.col("p").cast(pl.Utf8)).unique()
+    arcs_fn = getattr(source, "startup_arcs", None)
+    if arcs_fn is not None:
+        arcs = arcs_fn()
+        if arcs is None or arcs.height == 0:
+            return blank
+        from flextool.engine.preprocess.params._direct import p_startup_energy_from_source
+        se = p_startup_energy_from_source(source, period_filter=dt)
+        if se is None:
+            return blank
+        pn = (arcs.select(pl.col("unit").cast(pl.Utf8).alias("p"), pl.col("node").cast(pl.Utf8).alias("n"))
+              .join(in_solve, on="p", how="semi").unique().sort("p", "n"))
+        se_frame = se.frame.collect() if isinstance(se.frame, pl.LazyFrame) else se.frame
+        se_frame = se_frame.select(pl.col("p").cast(pl.Utf8), pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                   pl.col("value").cast(pl.Float64))
+    elif source is None and _provider_has(provider, "solve_data/process_node_startup_energy",
+                                          sd / "process_node_startup_energy.csv"):
+        # A reader-less reload of a dump: the dumped p_startup_energy (output._dump_csvs).
+        se_frame = _provider_read(provider, "solve_data/process_node_startup_energy",
+                                  sd / "process_node_startup_energy.csv")
+        se_frame = se_frame.select(pl.col("process").cast(pl.Utf8).alias("p"),
+                                   pl.col("node").cast(pl.Utf8).alias("n"),
+                                   pl.col("period").cast(pl.Utf8).alias("d"), pl.col("value").cast(pl.Float64))
+        pn = se_frame.select("p", "n").join(in_solve, on="p", how="semi").unique().sort("p", "n")
+    else:
+        return blank
+    se_frame = (se_frame.join(pn, on=["p", "n"], how="semi")
+                .join(dt.select(pl.col("d").cast(pl.Utf8)).unique(), on="d", how="semi"))
+    pn = pn.join(se_frame.filter(pl.col("value") != 0.0).select("p", "n").unique(), on=["p", "n"], how="semi")
+    if pn.height == 0:
+        return blank
+    out = dict(blank)
+    out["process_startup_node"] = pn
+    out["p_startup_energy"] = Param(("p", "n", "d"),
+                                    se_frame.join(pn, on=["p", "n"], how="semi").sort("p", "n", "d"))
+    balance = [f.select(pl.col("n").cast(pl.Utf8)) for f in (nb, nbp) if f is not None and f.height > 0]
+    if balance:
+        to_balance = pn.join(pl.concat(balance).unique(), on="n", how="semi")
+        out["startup_to_balance"] = to_balance if to_balance.height > 0 else None
+    if _provider_has(provider, "input/commodity__node", inp / "commodity__node.csv"):
+        cn = _provider_read(provider, "input/commodity__node", inp / "commodity__node.csv")
+        cn = cn.select(pl.col("commodity").cast(pl.Utf8).alias("c"), pl.col("node").cast(pl.Utf8).alias("n"))
+        from_c = pn.join(cn, on="n", how="inner").select("p", "n", "c").sort("p", "n", "c")
+        out["startup_from_commodity"] = from_c if from_c.height > 0 else None
+    return out
+
+
+def _startup_co2_sets(inp: Path, sd: Path, startup_pn: "pl.DataFrame | None", *,
+                      provider: "object | None" = None) -> dict:
+    """``startup_from_co2_priced`` / ``_capped`` / ``_capped_total`` (p, n, c, g), Utf8: the start-up input nodes
+    ``startup_pn`` (p, n) at a node of a CO2-priced / co2_max_period / co2_max_total group that carries a
+    CO2-bearing commodity c (the gcn sets of :func:`_load_co2_price` / :func:`_load_co2_cap` /
+    :func:`_load_co2_cap_total`).  Built apart from those loaders' arc gates, so a group whose only emitter is a
+    start-up draw is still priced and capped.  The total-cap set is filtered to the groups with a cap value by
+    the caller."""
+    out = {"startup_from_co2_priced": None, "startup_from_co2_capped": None,
+           "startup_from_co2_capped_total": None}
+    if startup_pn is None or startup_pn.height == 0:
+        return out
+    if not (_provider_has(provider, "solve_data/commodity_node_co2", sd / "commodity_node_co2.csv")
+            and _provider_has(provider, "input/group__node", inp / "group__node.csv")):
+        return out
+    cn_co2 = _provider_read(provider, "solve_data/commodity_node_co2", sd / "commodity_node_co2.csv")
+    cn_co2 = cn_co2.select(pl.col("commodity").cast(pl.Utf8).alias("c"), pl.col("node").cast(pl.Utf8).alias("n"))
+    g_node = _provider_read(provider, "input/group__node", inp / "group__node.csv")
+    g_node = g_node.select(pl.col("group").cast(pl.Utf8).alias("g"), pl.col("node").cast(pl.Utf8).alias("n"))
+    pn = startup_pn.select(pl.col("p").cast(pl.Utf8), pl.col("n").cast(pl.Utf8))
+    for field, key in (("startup_from_co2_priced", "group_co2_price"),
+                       ("startup_from_co2_capped", "group_co2_max_period"),
+                       ("startup_from_co2_capped_total", "group_co2_max_total")):
+        if not _provider_has(provider, f"solve_data/{key}", sd / f"{key}.csv"):
+            continue
+        groups = _provider_read(provider, f"solve_data/{key}", sd / f"{key}.csv")
+        if groups.height == 0:
+            continue
+        groups = groups.select(pl.col("group").cast(pl.Utf8).alias("g")).unique()
+        rows = (pn.join(g_node.join(groups, on="g", how="semi"), on="n", how="inner")
+                .join(cn_co2, on="n", how="inner")
+                .select("p", "n", "c", "g").unique().sort("p", "n", "c", "g"))
+        out[field] = rows if rows.height > 0 else None
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Optional features (CO2 price, CO2 cap, indirect, user-defined, profiles)
 
-def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
+def _load_co2_price(
+inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                      pss_noEff: pl.DataFrame | None = None,
                      *,
                      pss: pl.DataFrame | None = None,
-                     provider: "object | None" = None):
-    if pss_eff is None:
+                     provider: "object | None" = None,
+                     startup_emitters: bool = False):
+    """``startup_emitters``: a start-up draw emits in a priced group (:func:`_startup_co2_sets`), so the price
+    term stays on without an emitting arc."""
+    if pss_eff is None and not startup_emitters:
         return (None, None, None, None, None)
     files = ["group_co2_price.csv", "commodity_node_co2.csv", "pdtGroup.csv"]
     if not all(_provider_has(provider, f"solve_data/{Path(f).stem}", sd / f)
@@ -2123,7 +2285,7 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     # narrower side to ``e`` so the join is a native Enum match under
     # Phase 4 activation.
     gcn_e = gcn.with_columns(cast_dim(pl.col("n"), None, "e"))
-    flow_from_co2_priced = (pss_eff
+    flow_from_co2_priced = None if pss_eff is None else (pss_eff
         .join(gcn_e, left_on="source", right_on="n", how="inner")
         .select("p","source","sink","c","g"))
     # noEff variant: source flow into a CO2-priced commodity node where the
@@ -2148,8 +2310,8 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
             flow_to_co2_priced = None
     # A pure-removal group (no emitting flow at all, only a removal credit)
     # still needs the price term active — don't drop it here.
-    if (flow_from_co2_priced.height == 0 and flow_from_co2_priced_noEff is None
-            and flow_to_co2_priced is None):
+    if ((flow_from_co2_priced is None or flow_from_co2_priced.height == 0) and flow_from_co2_priced_noEff is None
+            and flow_to_co2_priced is None and not startup_emitters):
         return (None, None, None, None, None)
     # ``p_co2_content`` is written by ``apply_direct_params_a`` on every DB path (a reader-less reload seeds it in
     # ``_csv_reload._field_seeds``), so this slot is None.
@@ -2169,8 +2331,11 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                    pss_noEff: pl.DataFrame | None = None,
                    *,
                    pss: pl.DataFrame | None = None,
-                   provider: "object | None" = None):
-    if pss_eff is None and pss_noEff is None:
+                   provider: "object | None" = None,
+                   startup_emitters: bool = False):
+    """``startup_emitters``: a start-up draw emits in a capped group (:func:`_startup_co2_sets`), so the cap
+    rows stay on without an emitting arc."""
+    if pss_eff is None and pss_noEff is None and not startup_emitters:
         return (None, None, None, None, None, None)
     p = sd / "group_co2_max_period.csv"
     if not _provider_has(provider, "solve_data/group_co2_max_period", p):
@@ -2228,7 +2393,7 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     # against a positive cap — so there's no need to keep the constraint
     # active for a removal-only group; the original emitting-flow gate is
     # kept as-is.
-    if flow_from_co2_capped_eff is None and flow_from_co2_capped_noEff is None:
+    if flow_from_co2_capped_eff is None and flow_from_co2_capped_noEff is None and not startup_emitters:
         return (None, None, None, None, None, None)
     # Δ.17c Gap C: ``p_co2_max_period`` produced authoritatively by
     # ``apply_direct_params`` via ``p_co2_max_period_from_source`` (uses
@@ -2244,7 +2409,8 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                           pss_noEff: pl.DataFrame | None = None,
                           *,
                           pss: pl.DataFrame | None = None,
-                          provider: "object | None" = None):
+                          provider: "object | None" = None,
+                          startup_emitters: bool = False):
     """Sibling of :func:`_load_co2_cap` for the multi-period total cap.
 
     Mirrors the period-cap topology (``group_co2_max_period.csv`` → eff /
@@ -2261,8 +2427,10 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     Returns a 5-tuple (g_max_total, flow_eff, flow_noEff, p_co2_max_total,
     flow_to_co2_capped_total) — the last is the (#19) removal credit:
     sink-side flow into the same capped group's node(s), unsplit (no slope).
+    ``startup_emitters``: a start-up draw emits in a total-capped group (:func:`_startup_co2_sets`), so the cap
+    row stays on without an emitting arc.
     """
-    if pss_eff is None and pss_noEff is None:
+    if pss_eff is None and pss_noEff is None and not startup_emitters:
         return (None, None, None, None, None)
     p = sd / "group_co2_max_total.csv"
     if not _provider_has(provider, "solve_data/group_co2_max_total", p):
@@ -2304,7 +2472,7 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
             .select("p", "source", "sink", "c", "g"))
         if rem.height > 0:
             flow_to_co2_capped_total = rem
-    if flow_eff is None and flow_noEff is None:
+    if flow_eff is None and flow_noEff is None and not startup_emitters:
         return (None, None, None, None, None)
     # Read the cap value from pdGroup.csv (param='co2_max_total').  Legacy
     # preprocessing writes one row per (group, period) by broadcasting the
@@ -2347,7 +2515,7 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
             cap_groups, on="g", how="inner")
         if flow_to_co2_capped_total.height == 0:
             flow_to_co2_capped_total = None
-    if flow_eff is None and flow_noEff is None:
+    if flow_eff is None and flow_noEff is None and not startup_emitters:
         return (None, None, None, None, None)
     return (g_max, flow_eff, flow_noEff, p_cap, flow_to_co2_capped_total)
 
@@ -3026,9 +3194,10 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
                 dt: "pl.DataFrame | None" = None,
                 provider: "object | None" = None) -> dict:
     """Load ramp-limit sets and ramp_speed params, the ramp predecessor links (``dt_ramp_link``) and, on a
-    continuation roll, the previous roll's flow (``dt_ramp_carry``, ``p_roll_continue_flow``).  The sets and
-    the carry are empty when no process_source_sink_ramp_limit_* row is populated.  ``dt_online_wrap`` is set with
-    ``dt_ramp_link`` (``params._ramp_links.ramp_link_fields``)."""
+    continuation roll, the previous roll's flow (``dt_ramp_carry``, ``p_roll_continue_flow``).  The sets are empty
+    when no process_source_sink_ramp_limit_* row is populated; the carried flow is kept also then (an arc with
+    only a ramp cost ramps from it, ``ramp_change_eq``).  ``dt_online_wrap`` is set with ``dt_ramp_link``
+    (``params._ramp_links.ramp_link_fields``)."""
     from flextool.engine.preprocess.params._ramp_links import ramp_link_fields
 
     blank = dict(
@@ -3046,9 +3215,12 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
         p_roll_continue_flow_duration=None,
     )
     # One read of the carry (pure on the Provider): dt_ramp_carry is needed also without ramp limits (the ramp
-    # output), p_roll_continue_flow only with them.
+    # output), p_roll_continue_flow by the ramp limits and the ramp cost (the previous roll wrote roll_end_flow
+    # only for arcs with either, _roll_end_flow).
     dt_ramp_carry, p_roll_continue_flow, p_roll_continue_flow_duration = _load_ramp_carry(sd, dt, provider=provider)
     blank["dt_ramp_carry"] = dt_ramp_carry
+    blank["p_roll_continue_flow"] = p_roll_continue_flow
+    blank["p_roll_continue_flow_duration"] = p_roll_continue_flow_duration
     if pss is None:
         return blank
 
@@ -3208,9 +3380,9 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
                 sc_p = sc_frame.select("p", "d").unique()
                 pdt_online_lin = (p_odt.join(p_online_lin, on="p", how="inner")
                                        .join(sc_p, on=["p", "d"], how="inner"))
-            if p_online_int.height > 0:
-                pdt_online_int = (p_odt.join(p_online_int, on="p", how="inner")
-                                        .join(sc_p, on=["p", "d"], how="inner"))
+                if p_online_int.height > 0:
+                    pdt_online_int = (p_odt.join(p_online_int, on="p", how="inner")
+                                            .join(sc_p, on=["p", "d"], how="inner"))
 
     # Δ.12-drop: ``p_section`` produced authoritatively by
     # ``apply_derived_c.p_section_from_source`` when dt and classified
@@ -3664,6 +3836,16 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         from flextool.engine.preprocess.params._derived import (
             dtttdt_forward_only_from_dtttdt, read_period_first_of_solve)
         dtttdt_forward_only_df = dtttdt_forward_only_from_dtttdt(
+            dtttdt, read_period_first_of_solve(sd, provider=provider))
+
+    # The seed value of the bind_within_solve lag.  _derived.apply_derived_e recomputes it from the source dtttdt
+    # with the same dtttdt_within_solve_from_dtttdt and overwrites this one: that value is authoritative, and the
+    # two must agree (same function, same period_first_of_solve).
+    dtttdt_within_solve_df = None
+    if binding_within_solve is not None and dtttdt is not None and dtttdt.height > 0:
+        from flextool.engine.preprocess.params._derived import (
+            dtttdt_within_solve_from_dtttdt, read_period_first_of_solve)
+        dtttdt_within_solve_df = dtttdt_within_solve_from_dtttdt(
             dtttdt, read_period_first_of_solve(sd, provider=provider))
 
     dtttdt_within_period_df = None
@@ -4146,6 +4328,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         p_storage_state_reference_price = p_storage_state_reference_price,
         dtttdt = dtttdt,
         dtttdt_forward_only = dtttdt_forward_only_df,
+        dtttdt_within_solve = dtttdt_within_solve_df,
         dtttdt_within_period = dtttdt_within_period_df,
         nodeStateBlock = nodeStateBlock,
         period_block = period_block,
@@ -4851,6 +5034,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
     _branch_tok = None
     _stoch_tok = None
+    _steps_tok = None
     try:
         # Stochastic branch periods inherit the period-keyed input values of their anchor period:
         # arm the solve's (anchor, branch) pairs for the DB-direct readers before any of them runs
@@ -4864,6 +5048,22 @@ def load_flextool(source: "Path | str | FlexInputSource",
             _memo = getattr(db_reader, "run_memo", None)
             _stoch_tok = activate_stochastic_time_source(
                 provider, _memo(("stochastic_time_warnings",), set) if _memo is not None else None)
+            # The solve's new_stepduration steps (empty without one): the DB-direct readers combine a time
+            # series to them by its TIME_AGGREGATION kind.
+            _steps_key = _provider_key(Path("solve_data") / NEW_STEP_BASE_STEPS)
+            # A varying min_load is approximate only on the min_load_efficiency units (their curve).
+            from flextool.engine.preprocess.params._direct import _names_with_method
+
+            def _mle_units() -> "dict[tuple[str, str], frozenset[str]]":
+                return {("unit", "min_load"): frozenset(_names_with_method(
+                    db_reader, "unit", "conversion_method", frozenset({"min_load_efficiency"})))}
+
+            _steps = provider.get(_steps_key) if provider.has(_steps_key) else None
+            _approx = None
+            if _steps is not None and _steps.height > 0:
+                _approx = _memo(("solve_step_approx_entities",), _mle_units) if _memo is not None else _mle_units()
+            _steps_tok = activate_solve_step_aggregation(
+                _steps, _memo(("solve_step_aggregation_notes",), set) if _memo is not None else None, _approx)
 
         # Reuse the recorder bound at the function entry above so the
         # sub-checkpoints (axis_enums / SpineDbReader / load_flextool
@@ -4946,17 +5146,28 @@ def load_flextool(source: "Path | str | FlexInputSource",
                            .join(proc["pss"], on="p", how="inner")
                            .select("p", "source", "sink", "d", "value"))
 
+        # Start-up input nodes and their CO2 groups: before the CO2 loaders, whose arc gates they widen.
+        startup = _load_startup_inputs(inp, sd, dt, proc["pss"], nb, nbp, source=db_reader, provider=provider)
+        startup.update(_startup_co2_sets(inp, sd, startup["process_startup_node"], provider=provider))
         flow_co2_p, flow_co2_p_noEff, co2c, co2pr, flow_co2_p_rem = _load_co2_price(
             inp, sd, proc["pss_eff"], proc.get("pss_noEff"),
-            pss=proc.get("pss"), provider=provider)
+            pss=proc.get("pss"), provider=provider,
+            startup_emitters=startup["startup_from_co2_priced"] is not None)
         (g_co2_max, flow_co2_cap, flow_co2_cap_noEff, co2_max_p, g_d_capped,
          flow_co2_cap_rem) = _load_co2_cap(
             inp, sd, proc["pss_eff"], dt, pss_noEff=proc.get("pss_noEff"),
-            pss=proc.get("pss"), provider=provider)
+            pss=proc.get("pss"), provider=provider,
+            startup_emitters=startup["startup_from_co2_capped"] is not None)
         (g_co2_max_total, flow_co2_cap_total, flow_co2_cap_total_noEff,
          co2_max_total_p, flow_co2_cap_total_rem) = _load_co2_cap_total(
             inp, sd, proc["pss_eff"], pss_noEff=proc.get("pss_noEff"),
-            pss=proc.get("pss"), provider=provider)
+            pss=proc.get("pss"), provider=provider,
+            startup_emitters=startup["startup_from_co2_capped_total"] is not None)
+        # The total cap counts only the groups with a cap value (the loader's gate).
+        if startup["startup_from_co2_capped_total"] is not None:
+            kept = (None if g_co2_max_total is None else startup["startup_from_co2_capped_total"].join(
+                g_co2_max_total.select(pl.col("g").cast(pl.Utf8)).unique(), on="g", how="semi"))
+            startup["startup_from_co2_capped_total"] = kept if kept is not None and kept.height > 0 else None
         co2_f_d_k, co2_cum_realized, co2_cum_realized_rep, co2_horizon_fraction = _load_co2_rolling_carry(
             sd, provider=provider)
 
@@ -4999,18 +5210,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # The online carry lands on the ramp's seam roots: one adjacency for ramp, min up / down and online.
         if online.get("p_roll_continue_online") is not None and ramp.get("dt_ramp_carry") is not None:
             online["dt_online_carry"] = ramp["dt_ramp_carry"].select("d", "t").unique(maintain_order=True)
-        # The online carry and the ramp carry / ramp link must agree — raise instead of silently falling back to
-        # a predecessor of 0 (params._ramp_links).
-        from flextool.engine.preprocess.params._ramp_links import check_online_ramp_carry_consistency
-        _rco = online.get("p_roll_continue_online")
-        _rcf = ramp.get("p_roll_continue_flow")
-        check_online_ramp_carry_consistency(
-            online.get("dt_online_carry"),
-            _rco.frame.select("p") if _rco is not None else None,
-            ramp.get("dt_ramp_carry"),
-            _rcf.frame.select("p") if _rcf is not None else None,
-            online.get("process_online"),
-            ramp.get("dt_ramp_link"))
+        # The online carry and the ramp carry / ramp link must agree.  Checked by the caller on the solve's
+        # reduced data (params._ramp_links.check_online_ramp_carry, after preprocess._reduce_detail), since a
+        # reduce_unit_detail_method that leaves out online variables also removes the online carry.
         invest = _load_invest(sd, dt, inp, proc["pss"], db_reader=db_reader,
                               provider=provider)
         varcost = _load_varcost(sd, proc["pss"], provider=provider)
@@ -5043,14 +5245,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # ─── Reserves (timeseries / dynamic / n_1 / per-process upper) ────────
         reserve_data = _reserve.load_data(inp=inp, sd=sd, dt=dt,
                                             provider=provider)
-        # ``group_node`` is shared between _group_slack and _reserve (both
-        # populate it from the canonical solve_data/group_node.csv).  Drop the
-        # reserve copy to avoid duplicate-kwargs at the FlexData(...) call when
-        # group_slack already provided it; reserve will read it back off d in
-        # add_constraints.  If group_slack didn't populate it, hand the
-        # reserve copy through.
-        if "group_node" in reserve_data and group_slack.get("group_node") is not None:
-            reserve_data = {k: v for k, v in reserve_data.items() if k != "group_node"}
+        # ``group_node`` comes from group_slack only (None when no group has
+        # a node); the reserve groups without nodes are left out at the end
+        # of the load (``_reserve.drop_groups_without_nodes``).
 
         # ─── Cumulative / group-invest / min-invest data ─────────────────────
         ci_data = _load_cumulative_invest(inp=inp, sd=sd, dt=dt, provider=provider)
@@ -5187,6 +5384,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
             p_process_availability = avail,
 
             p_fix_reserve = _load_fix_reserve(provider),
+            **startup,
             **online,
             **ramp,
             **invest,
@@ -5380,6 +5578,16 @@ def load_flextool(source: "Path | str | FlexInputSource",
             flex_data.p_window_fraction = p_window_fraction_from_shares(
                 flex_data.dt, flex_data.p_step_duration, flex_data.p_period_share)
 
+        # constraint_period_method period_total: off in the rolls of a rolling solve that does not realize whole
+        # periods in one roll (the run's pre-solve check warned).
+        from flextool.engine.preprocess import _provider_keys as _pk
+        if provider is not None and _provider_has(provider, _pk.SOLVE_DATA_USER_CONSTRAINT_PERIOD_TOTAL_OFF,
+                                                  sd / "user_constraint_period_total_off.csv"):
+            pto = _provider_read(provider, _pk.SOLVE_DATA_USER_CONSTRAINT_PERIOD_TOTAL_OFF,
+                                 sd / "user_constraint_period_total_off.csv")
+            if pto is not None and pto.height > 0 and "value" in pto.columns:
+                flex_data.user_constraint_period_total_off = bool(pto["value"].cast(pl.Boolean)[0])
+
         # Coarse new_stepduration groups: the coarse steps of their nodes, from this solve's own steps (every
         # solve, roll, nested and stochastic sub-solve).
         _apply_coarse_frames(flex_data, sd, provider=provider)
@@ -5388,6 +5596,16 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # period's tier curve.  Runs after every producer of the ladder Params (load_data and the
         # direct-parameter pass).
         _commodity_ladder.inherit_branch_periods(flex_data, provider)
+
+        # Reserves of groups without nodes in the solve are left out (with a warning).  After every producer
+        # of the reserve sets and parameters, and of group_node.
+        _reserve.drop_groups_without_nodes(flex_data)
+
+        # The margin of a share_of_peak capacity-margin group: capacity_margin_share times its peak demand, in
+        # pdGroup_capacity_margin with the manual groups' MW.  After the direct-parameter pass (the share) and
+        # load_data (the peak).
+        if db_reader is not None:
+            _group_slack.resolve_capacity_margin(flex_data)
 
         # The minFlow_minload floor's units: min_load > 0 on some (d, t) of this solve, read from the
         # solve-resolved p_min_load (every DB path, synthetic sub-solves included, has produced it by now).
@@ -5430,6 +5648,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
         _loadflex_prof("return")
         return result
     finally:
+        if _steps_tok is not None:
+            deactivate_solve_step_aggregation(_steps_tok)
         if _stoch_tok is not None:
             deactivate_stochastic_time_source(_stoch_tok)
         if _branch_tok is not None:
@@ -5462,7 +5682,7 @@ def _warn_fractional_integer_unit_counts(flex_data: "FlexData", db_reader: "Inpu
     ``min_instant_flow`` infeasible.  Without ``virtual_unitsize`` the unit size is the largest ``existing`` over
     the periods, so a period-Map ``existing`` that drops (17 → 8.5 MW) gives a fraction.  Read from the solve's own
     Param, so single, rolling, nested and stochastic sub-solves are all checked, and a count derived from a wrong
-    unit size shows too.  Entities with an explicit ``virtual_unitsize`` are left to the input check
+    unit size shows too.  Entities with a positive ``virtual_unitsize`` are left to the input check
     (``input_derivation._validators.warn_existing_not_whole_units``, where ``existing`` is the count itself).
     Results are unchanged.
     """
@@ -5482,7 +5702,7 @@ def _warn_fractional_integer_unit_counts(flex_data: "FlexData", db_reader: "Inpu
             vu = _try_param_explicit(db_reader, cls, "virtual_unitsize")
             if vu is not None and vu.height > 0:
                 names -= {str(n) for n, v in zip(vu["name"].to_list(), vu["value"].to_list())
-                          if v is not None and float(v) != 0.0}
+                          if v is not None and float(v) > 0.0}
     names -= warned
     if not names:
         return
@@ -5657,7 +5877,8 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # ``_load_time``).  Run pass 1b so broadcast-needing Direct
         # Params still apply against the CSV-loaded dt.
         _loadflex_prof("apply_db_overrides:pass_direct_params_b")
-        _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data)
+        _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data,
+               active_solve=active_solve)
 
         # RESERVE-1 — the synthetic-solve early-return skips passes 3-10
         # entirely, but two reserve-feature fields are produced by those
@@ -5926,7 +6147,8 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # ``p_commodity_price`` / ``p_process_availability`` / similar
     # fields empty on the fast path even when Spine carried the data.
     _loadflex_prof("apply_db_overrides:pass_direct_params_b")
-    _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data)
+    _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data,
+               active_solve=active_solve)
 
     _loadflex_prof("apply_db_overrides:pass_derived_b")
     _timed("4  derived_b", _drv.apply_derived_b, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
@@ -6589,12 +6811,13 @@ def _step_duration_at(flex_data: "FlexData | None", step: "tuple[str, str]") -> 
 
 
 def _roll_end_flow(sol, flex_data: "FlexData | None", last: "tuple[str, str] | None") -> "pl.DataFrame | None":
-    """``[process, source, sink, period, step, duration, value]``: ``v_flow`` of the ramp-limited arcs at the
-    solve's last realized step; ``None`` without ramp limits, realized steps or ``v_flow``."""
+    """``[process, source, sink, period, step, duration, value]``: ``v_flow`` of the ramp-limited and the
+    ramp-cost arcs at the solve's last realized step; ``None`` without either, realized steps or ``v_flow``."""
     if flex_data is None or "v_flow" not in sol._vars:
         return None
     sets = [getattr(flex_data, f"process_source_sink_ramp_limit_{k}", None)
             for k in ("sink_up", "sink_down", "source_up", "source_down")]
+    sets.append(getattr(flex_data, "process_source_sink_ramp_cost", None))
     sets = [x.select(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink")) for x in sets
             if x is not None and x.height > 0]
     if not sets or last is None:
@@ -7047,7 +7270,7 @@ def build_handoff_from_solution(
             roll_end_online_df = pl.DataFrame(
                 rco_rows, schema=["process", "value"], orient="row")
 
-    # ---- roll_end_flow: v_flow of the ramp-limited arcs at the last realized step ----
+    # ---- roll_end_flow: v_flow of the ramp-limited and ramp-cost arcs at the last realized step ----
     # The next roll's first step ramps from this flow (``_load_ramp_carry``; the next roll applies it only
     # where the complete solve's predecessor of its first step is this step and adjacent).  Units of
     # unitsize, like v_flow.  ``duration`` = this step's length (the ramp room uses both step lengths).

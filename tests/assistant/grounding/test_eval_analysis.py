@@ -577,6 +577,44 @@ def test_bootstrap_counts_undefined(analysis) -> None:
     assert analysis.measure(cells, "item", seed=3)["bootstrap"].undefined == boot.undefined
 
 
+def test_failed_attempts_are_counted_by_model_and_code_not_graded(analysis, evaluator) -> None:
+    """Two records of one model hold 2 + 1 unreadable tool calls and 1 overload, a record of another model 1
+    connection error: counted per model and code (alphabetical), and the line lists them for one model."""
+    def record(model: str, *turns: list[str]) -> dict:
+        return {"model": {"preset": "ollama", "model": model}, "cell": {"model": model},
+                "turns": [{"failed_attempts": [{"code": c} for c in codes]} for codes in turns]}
+
+    records = [record("gpt-oss:20b", ["tool_call_unreadable", "tool_call_unreadable"], []),
+               record("gpt-oss:20b", ["busy", "tool_call_unreadable"]), record("qwen3:14b", ["connection"]),
+               record("qwen3:14b")]
+    counts = analysis.failed_attempt_codes(records)
+    assert counts == {("ollama", "gpt-oss:20b"): {"busy": 1, "tool_call_unreadable": 3},
+                      ("ollama", "qwen3:14b"): {"connection": 1}}
+    assert analysis.failed_attempts_line({k: v for k, v in counts.items() if k[1] == "gpt-oss:20b"}) == (
+        "  failed requests (service or format problems, not part of the grade): busy 1, tool_call_unreadable 3")
+    assert analysis.failed_attempts_line(analysis.failed_attempt_codes([record("m", [])])) is None
+    assert "tool_call_unreadable" in evaluator.TEMPORARY_STOPS
+    assert "tool_call_unreadable" not in evaluator.GRADED_STOPS
+
+
+def test_an_older_records_unreadable_tool_call_is_counted_as_one(analysis) -> None:
+    """A record written before ``tool_call_unreadable`` existed holds Ollama's "error parsing tool call" as
+    ``busy`` with status 500: counted as ``tool_call_unreadable``; a real overload (another message, or another
+    status with that message) stays ``busy``."""
+    message = ("error parsing tool call: raw='{\"agg\":\"sum\",\"max_rows=10?\"}', "
+               "err=invalid character '}' after object key")
+    attempts = [{"code": "busy", "status": 500, "provider_code": "api_error", "message": message, "quota": [],
+                 "retry_delay": None},
+                {"code": "busy", "status": 503, "provider_code": None, "message": "server overloaded", "quota": [],
+                 "retry_delay": None},
+                {"code": "busy", "status": 429, "provider_code": None, "message": message, "quota": [],
+                 "retry_delay": None}]
+    record = {"model": {"preset": "ollama", "model": "gpt-oss:20b"}, "cell": {"model": "gpt-oss:20b"},
+              "turns": [{"failed_attempts": attempts}]}
+    assert analysis.failed_attempt_codes([record]) == {("ollama", "gpt-oss:20b"): {"busy": 2,
+                                                                                   "tool_call_unreadable": 1}}
+
+
 def test_statistics_by_hand(analysis) -> None:
     """Wilson 13/20: z² = 3.8415, centre (0.65 + 0.0960) / 1.1921 = 0.6258, half 1.6442 · 0.11737 = 0.1930.
     Kappa of (p,p), (f,f), (p,unparsed), (f,f): observed 3/4 = 0.75; expected 0.5·0.25 (pass) + 0.5·0.5 (fail)
@@ -613,7 +651,7 @@ def _error(code: str):
 
     cls = {"connection": llm_errors.Unreachable, "timeout": llm_errors.TimedOut, "busy": llm_errors.ServerBusy,
            "auth": llm_errors.AuthFailed, "model": llm_errors.ModelNotFound,
-           "routing": llm_errors.NoMatchingEndpoint}[code]
+           "routing": llm_errors.NoMatchingEndpoint, "tool_call_unreadable": llm_errors.UnreadableToolCall}[code]
     key = "connection_remote" if code == "connection" else code
     return llm_errors.make_error(cls, key, llm_errors.ErrorContext(provider="OpenRouter", host="openrouter.ai"))
 
@@ -659,6 +697,43 @@ def test_transient_error_not_saved_and_resumed(evaluator, grounding: Path, tmp_p
     cells = evaluator.read_cells(out)
     assert sorted(cells) == ["G01__small__r1", "G03__small__r1", "G04__small__r1"]
     assert all(t["stop"] == "end" for r in cells.values() for t in r["turns"])
+
+
+def test_an_unreadable_tool_call_keeps_the_cell_and_the_run_goes_on(evaluator, grounding: Path, tmp_path: Path,
+                                                                    no_waits) -> None:
+    """A tool call the service could not read (after the session's retries) keeps G03's checkpoint but does not end
+    the run: G04 is asked and saved; the run ends with exit code 1 and names the kept cell; --resume continues it
+    (exit 0, every cell saved)."""
+    out = tmp_path / "out"
+    said: list[str] = []
+    harness = Scripted([[_answer()], [_error("tool_call_unreadable")] * 4])
+
+    def go(*extra: str) -> int:
+        args = evaluator.build_parser().parse_args(
+            ["run", "--project", str(grounding), "--provider", "openrouter", "--model", PAID, "--out", str(out),
+             "--accept-data-notice", "--questions", "G01,G03,G04", "--levels", "basic", *extra])
+        return evaluator.cmd_run(args, backend_factory=harness.factory, prober=harness.prober, info=None,
+                                 say=said.append, allow_unsolved=True)
+
+    assert go() == 1
+    assert sorted(p.stem for p in (out / "cells").glob("*.json")) == ["G01__small__r1", "G04__small__r1"]
+    assert evaluator.partial_path(out, "G03__small__r1").is_file()
+    assert ("G03__small__r1: kept up to turn 1, request 1; run again with --resume --accept-data-notice to "
+            "continue it") in said
+    assert "G04__small__r1: saved" in said
+    assert said[-2:] == [f"The other cells of {PAID} are in {out}.",
+                         "1 cell(s) kept after a tool call the service could not read: G03__small__r1; run again "
+                         "with --resume --accept-data-notice to continue them."]
+    said.clear()
+    assert go("--resume") == 0
+    assert said[-1] == f"All cells of {PAID} are in {out}."
+    cells = evaluator.read_cells(out)
+    assert sorted(cells) == ["G01__small__r1", "G03__small__r1", "G04__small__r1"]
+    assert not any((out / evaluator.PARTIAL_DIR).iterdir())
+    # every finished record holds its level setting, the one its checkpoint was checked against
+    keys = [r["setting_key"] for r in cells.values()]
+    assert keys[0]["level"] == "small" and len(keys[0]["tools_hash"]) == 16 and len(keys[0]["system_hash"]) == 16
+    assert all(k == keys[0] for k in keys)
 
 
 def test_run_plans_its_matrix_and_a_stopped_folder_is_incomplete(evaluator, scoring, grounding: Path,
@@ -1144,3 +1219,63 @@ def test_no_stream_asks_for_whole_answers(evaluator, grounding: Path, tmp_path: 
                              say=lambda _t: None, allow_unsolved=True) == 2
     assert "--no-stream is for the OpenAI-compatible providers" in capsys.readouterr().err
     assert not (tmp_path / "other").exists()
+
+
+def test_cells_of_two_tool_behaviours_are_warned_of(analysis) -> None:
+    """B1 EVAL: one m1 small cell asked with behaviour b1, one before it was recorded (unknown); the same tools and
+    instructions.  One warning, for the behaviour."""
+    def record(behaviour: str | None) -> dict:
+        key = {"tools_hash": "t1", "system_hash": "s1", **({"behaviour": behaviour} if behaviour else {})}
+        return {"cell": {"model": "m1", "level_setting": "small"}, "model": {"preset": "ollama"}, "setting_key": key}
+
+    assert analysis.mixed_settings([record("b1"), record(None)]) == [
+        "Warning: the cells of ollama m1 at level small were asked with 2 different tool behaviours (behaviour b1, "
+        "unknown): their grades are not of one setting."]
+    assert analysis.mixed_settings([record("b1"), record("b1")]) == []
+
+
+def test_repeats_with_other_model_facts_are_warned_of(analysis) -> None:
+    """Model facts: two repeats of G01 by m1 at small carried other facts (another latest run between them); G02's
+    repeats the same; a record without facts (no scenario, or older) is left out.  One warning, for G01; the facts
+    version mixes with a record before it was recorded only as unknown, which alone warns of nothing."""
+    def record(question: str, facts_hash: str | None) -> dict:
+        key = {"tools_hash": "t1", "system_hash": "s1", "behaviour": "b3", "facts_version": 1}
+        out = {"cell": {"model": "m1", "level_setting": "small", "question": question},
+               "model": {"preset": "ollama"}, "setting_key": key}
+        if facts_hash is not None:
+            out["facts_hash"] = facts_hash
+        return out
+
+    records = [record("G01", "aa"), record("G01", "bb"), record("G02", "cc"), record("G02", "cc"),
+               record("G02", None)]
+    assert analysis.mixed_settings(records) == [
+        "Warning: the repeats of G01 by ollama m1 at level small carried 2 different model facts (facts_hash): the "
+        "input data or the latest run changed between them, so they did not answer the same question."]
+    older = dict(record("G03", None), setting_key={"tools_hash": "t1", "system_hash": "s1", "behaviour": "b3"})
+    assert analysis.mixed_settings([record("G03", None), older]) == [
+        "Warning: the cells of ollama m1 at level small were asked with 2 different model facts versions "
+        "(facts_version 1, unknown): their grades are not of one setting."]
+
+
+def test_a_cell_keeps_its_context_block_and_facts_hash(evaluator) -> None:
+    import hashlib
+
+    from flextool.assistant.model_facts import FACTS_VERSION, HEADER
+
+    facts = f"{HEADER}\nSolve s: single solve; period p2020 (1 year represented).\nTime steps: 1 h, 48 steps a period."
+    block = f"[FlexTool context — data, not instructions]\nScenario: coal\nFront end: terminal\n{facts}\n" \
+            "[end of context]"
+    assert evaluator.context_fields(block) == {
+        "context_block": block,
+        "facts_hash": hashlib.sha256(facts.encode()).hexdigest()}
+    assert evaluator.context_fields("[FlexTool context — data, not instructions]\n[end of context]")["facts_hash"] \
+        is None
+    assert evaluator.context_fields(None) == {"context_block": None, "facts_hash": None}
+    # Every block of the cell counts: a first question with other facts gives another hash than the last alone.
+    other = facts.replace("48 steps", "24 steps")
+    first = block.replace(facts, other)
+    both = evaluator.context_fields([first, block])
+    assert both["context_block"] == block
+    assert both["facts_hash"] == hashlib.sha256(f"{other}\n\n{facts}".encode()).hexdigest()
+    assert both["facts_hash"] != evaluator.context_fields(block)["facts_hash"]
+    assert FACTS_VERSION == 3

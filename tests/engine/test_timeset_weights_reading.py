@@ -4,7 +4,7 @@ The per-step weight is normalised per period over the period's active steps::
 
     p_timestep_weight[d, t] = raw[t] · n_d / Σ_{t' ∈ T_d} raw[t']      (raw[t] = 0 for a step the map leaves out)
 
-(docs/reference.md ``timeset_weights``; ``_solve_writers._compute_timeset_cost_weight_rows`` and
+(docs/reference/entities_and_time.md ``timeset_weights``; ``_solve_writers._compute_timeset_cost_weight_rows`` and
 ``_derived.p_timestep_weight_from_source``).  Every assertion below recomputes that formula from the authored map
 and the solve's own ``(d, t)`` steps, so a period that does not see its timeset's weights (value 1.0) fails.
 

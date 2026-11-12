@@ -28,13 +28,15 @@ read it: ``docs/dev/assistant_evaluation.md``.
 
 Exit codes: 0 done (also: the daily request budget is used, run again with --resume) · 1 failed (also: an error
 that is not the model's behaviour stopped a cell: after a temporary one its checkpoint is kept and --resume
-continues it from the request that failed; after any other nothing of it is saved) · 2 usage or a refused project /
-results folder · 3 the data notice was not accepted.
+continues it from the request that failed; after any other nothing of it is saved; and a run that went on past
+cells kept after a tool call the service could not read, also when it then ended for the day's budget) · 2 usage
+or a refused project / results folder · 3 the data notice was not accepted.
 """
 from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import dataclasses
 import json
 import math
@@ -735,9 +737,11 @@ TURN_KEYS = ("user", "answer", "tool_calls", "rounds", "calls", "continuations",
 STOP_KEYS = ("code", "turn", "round", "request", "request_sha256", "est_input", "provider", "lost_usage",
              "stopped_at", "pace", "stream")
 #: The stops after which the cell is kept and ``--resume`` continues it from its checkpoint: the provider busy or
-#: limiting (also its per-minute input-token quota and its daily quota), no connection, no answer in time.  Any
-#: other stop (key, permission, credit, model, routing, tools, history, a fault) throws the checkpoint away.
-TEMPORARY_STOPS = frozenset({"busy", "rpm", "tpm_input", "connection", "timeout", "quota"})
+#: limiting (also its per-minute input-token quota and its daily quota), no connection, no answer in time, and the
+#: service unable to read a tool call in the model's answer (``tool_call_unreadable``, Ollama's "error parsing tool
+#: call": the service's format problem with one answer, never a graded stop).  Any other stop (key, permission,
+#: credit, model, routing, tools, history, a fault) throws the checkpoint away.
+TEMPORARY_STOPS = frozenset({"busy", "rpm", "tpm_input", "connection", "timeout", "quota", "tool_call_unreadable"})
 #: A cell whose same request the provider refused for its input tokens per minute this many times in a row is not
 #: applicable (the request alone is over the quota; CAL-FINDING 2026-11-10): recorded, never asked again.
 QUOTA_PER_REQUEST = "provider quota per request"
@@ -787,8 +791,11 @@ def unfinished_text(partial: Any) -> str:
 def setting_key(setting: Setting) -> dict[str, Any]:
     """What a cell's requests are made from beyond the folder's identity: the level, the model id sent, the window
     and its source, the caps and result caps, the compaction rhythm, the history policy, the free plan, the route
-    kind and the hashes of the instructions and tools.  A checkpoint of another key starts its cell again."""
-    from flextool.assistant import budget, prompt
+    kind, the hashes of the instructions and tools, the tools' behaviour batch
+    (:data:`flextool.assistant.ASSISTANT_BEHAVIOUR`) and the version of the model facts
+    (:data:`flextool.assistant.model_facts.FACTS_VERSION`).  A checkpoint of another key starts its cell again."""
+    from flextool.assistant import ASSISTANT_BEHAVIOUR, budget, prompt
+    from flextool.assistant.model_facts import FACTS_VERSION
     from flextool.assistant.session import text_hash, tool_specs, tools_hash
 
     b = setting.budget
@@ -802,13 +809,15 @@ def setting_key(setting: Setting) -> dict[str, Any]:
            "history": [history, history_turns], "free_tier": b.free_tier,
            "route": setting.route.kind if setting.route else None,
            "system_hash": text_hash(list(prompt.system_layers("terminal", setting.level))),
-           "tools_hash": tools_hash(tool_specs(setting.level))}
+           "tools_hash": tools_hash(tool_specs(setting.level)), "behaviour": ASSISTANT_BEHAVIOUR,
+           "facts_version": FACTS_VERSION}
     return json.loads(json.dumps(key))
 
 
 def partial_problem(partial: Any, identity: Mapping[str, Any], key: Mapping[str, Any]) -> str | None:
     """Why a checkpoint file cannot continue its cell here (``None``: it can): another format (a key missing or
-    unknown: never a default), another model or project, another level setting, other instructions or tools."""
+    unknown: never a default), another model or project, another behaviour of the tools, another level setting,
+    other instructions or tools."""
     if not isinstance(partial, dict) or set(partial) != set(PARTIAL_KEYS) or partial.get("format") != PARTIAL_FORMAT:
         return "a checkpoint of another format"
     current = partial.get("current")
@@ -824,6 +833,9 @@ def partial_problem(partial: Any, identity: Mapping[str, Any], key: Mapping[str,
     if partial["identity"] != {k: identity[k] for k in IDENTITY_KEYS}:
         return "the checkpoint belongs to another model or project"
     saved = partial["setting_key"]
+    if isinstance(saved, dict) and saved.get("behaviour") != key["behaviour"]:
+        # Before the tools' behaviour was recorded (no "behaviour") or under another batch: never continued.
+        return "the assistant's behaviour changed since this checkpoint"
     if not isinstance(saved, dict) or set(saved) != set(key):
         return "a checkpoint of another format"
     if saved.get("system_hash") != key["system_hash"] or saved.get("tools_hash") != key["tools_hash"]:
@@ -1061,7 +1073,29 @@ def run_cell(project: Path, qset: scoring.QuestionSet, question: scoring.Questio
         })
         say(f"  {question.id} turn {number}: {result.rounds} round(s), {result.calls} call(s), "
             f"{'ok' if result.ok else turns[-1]['stop']}")
-    return {"turns": turns}
+    from flextool.assistant.prompt import context_blocks
+
+    return {"turns": turns,
+            **context_fields(context_blocks([m.text for m in conversation.messages if m.role == "user"]))}
+
+
+def context_fields(blocks: str | list[str] | None) -> dict[str, Any]:
+    """``{context_block, facts_hash}`` of a cell from the context blocks its questions carried, oldest first
+    (redacted, as they were sent; one block or ``None`` also do): the last block, and the SHA-256 of the model
+    facts of every block that has them, in order (one block: of its facts; ``None`` without facts), so the summary
+    can warn of repeats that saw other facts (another latest run, changed input data) in any of their questions."""
+    from flextool.assistant.model_facts import HEADER
+    from flextool.assistant.prompt import CONTEXT_END
+
+    if blocks is None:
+        blocks = []
+    elif isinstance(blocks, str):
+        blocks = [blocks]
+    facts = [block[block.index(HEADER):].removesuffix(CONTEXT_END).rstrip("\n")
+             for block in blocks if HEADER in block]
+    joined = "\n\n".join(facts)
+    return {"context_block": blocks[-1] if blocks else None,
+            "facts_hash": hashlib.sha256(joined.encode("utf-8")).hexdigest() if facts else None}
 
 
 def _record(question: scoring.Question, setting: Setting, repeat: int, *, preset: Any, identity: Mapping[str, Any],
@@ -1235,15 +1269,17 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
     sending = {"pace": args.pace, "stream": not args.no_stream}
     _log_run(out, sending)
 
-    key, source = _key_or_refuse(preset, base_url, args.model, endpoint.route_for(preset, base_url, model=args.model))
+    api_key, key_source = _key_or_refuse(preset, base_url, args.model,
+                                         endpoint.route_for(preset, base_url, model=args.model))
     knobs = dict(DEFAULT_KNOBS)
     if args.relax_data_collection:
         knobs["openrouter.data_collection"] = "allow"
     knobs_sent = providers.request_fields(preset, knobs)
 
-    def conn_for(model: str, route: Any) -> Connection:
-        return Connection(base_url=base_url, model=model, api_key=key, key_source=source, knobs=knobs, route=route,
-                          stream=not args.no_stream)
+    # The resolved key is bound as defaults, once: a name rebound later in this function cannot reach a connection.
+    def conn_for(model: str, route: Any, *, api_key: str = api_key, key_source: str = key_source) -> Connection:
+        return Connection(base_url=base_url, model=model, api_key=api_key, key_source=key_source, knobs=knobs,
+                          route=route, stream=not args.no_stream)
 
     daily = daily_budget(preset.id, args.model, args.max_requests_per_day)
     ledger = CalibrationLedger(Ledger())
@@ -1278,6 +1314,18 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
 
     def budget_used() -> bool:
         return daily is not None and today_count() >= daily
+
+    # The cells kept after a tool call the service could not read (one answer's format problem, not the
+    # service's state): the run goes on with the next cell and ends with exit code 1, naming them.
+    unreadable: list[str] = []
+    again = "--resume" + (" --accept-data-notice" if accepted else "")
+
+    def ended(code: int) -> int:
+        if not unreadable:
+            return code
+        say(f"{len(unreadable)} cell(s) kept after a tool call the service could not read: "
+            f"{', '.join(unreadable)}; run again with {again} to continue them.")
+        return 1
 
     probed: dict[str, Any] = {}
     for level in levels:
@@ -1325,17 +1373,19 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                     continue
                 if budget_used():
                     say(done)
-                    return 0
-                key = setting_key(setting)
+                    return ended(0)
+                setting_id = setting_key(setting)
 
-                def checkpoint_for(previous: dict | None, cid: str = cid, key: dict = key) -> CellCheckpoint:
-                    return CellCheckpoint(out, cid, identity=identity, key=key, git=git, say=say, previous=previous,
+                def checkpoint_for(previous: dict | None, cid: str = cid, setting_id: dict = setting_id) \
+                        -> CellCheckpoint:
+                    return CellCheckpoint(out, cid, identity=identity, key=setting_id, git=git, say=say,
+                                          previous=previous,
                                           over_budget=lambda days, cid=cid: daily is not None
                                           and today_count(days, without=cid) >= daily)
 
                 cp = checkpoint_for(None)
                 if has_partial:
-                    problem = partial_problem(partial, identity, key)
+                    problem = partial_problem(partial, identity, setting_id)
                     if problem is None and partial.get("session") is None:
                         problem = "a checkpoint of another format"
                     if problem is not None:
@@ -1357,15 +1407,16 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                 pacer.set_floor(pace_key(backend.origin), args.pace)
                 try:
                     try:
-                        turns = run_cell(project, qset, question, setting, backend=backend, preset=preset,
-                                         ledger=ledger, say=say, checkpoint=cp)["turns"]
+                        cell = run_cell(project, qset, question, setting, backend=backend, preset=preset,
+                                        ledger=ledger, say=say, checkpoint=cp)
                     except CheckpointRefused as refused:
                         say(f"{cid}: started again from the start ({refused})")
                         cp.discard(spend)
                         held.pop(cid, None)
                         cp = checkpoint_for(None)
-                        turns = run_cell(project, qset, question, setting, backend=backend, preset=preset,
-                                         ledger=ledger, say=say, checkpoint=cp)["turns"]
+                        cell = run_cell(project, qset, question, setting, backend=backend, preset=preset,
+                                        ledger=ledger, say=say, checkpoint=cp)
+                    turns = cell["turns"]
                 except CellStopped as exc:
                     outcome = _stopped(exc, cp, cid, spend=spend, sending=sending, say=say)
                     held[cid] = cp.on_disk if cp.exists else {}
@@ -1388,17 +1439,23 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                         continue
                     if outcome in ("budget", "quota") or cp.budget_stop or isinstance(exc, DailyBudgetUsed):
                         say(done)
-                        return 0
+                        return ended(0)
                     if outcome == "kept":
                         say(f"{cid}: {exc.kept_text}; run again with {again} to continue it")
+                        if exc.code == "tool_call_unreadable":
+                            unreadable.append(cid)       # the service's state is fine: the next cell is asked
+                            continue
                     else:
                         say(f"{cid}: nothing was saved for this cell. Run again with {again}.")
-                    return 1
+                    return ended(1)
                 finally:
                     backend.close()
                 record = _record(question, setting, repeat, preset=preset, identity=identity,
                                  knobs_sent=knobs_sent, free_tier=free, git=git, turns=turns, sending=sending)
                 record.update(_resume_fields(cp, turns))
+                record["setting_key"] = setting_id              # the summary warns of a level's mixed settings
+                record["context_block"] = cell["context_block"]  # the summary warns of repeats with other facts
+                record["facts_hash"] = cell["facts_hash"]
                 if saved is not None and int(saved.get("requests_sent") or 0):
                     # The replaced record's requests stay counted for their day (written first: a crash
                     # between the two counts them twice, never not at all).
@@ -1410,7 +1467,11 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                 say(f"{cid}: saved")
                 if budget_used():
                     say(done)
-                    return 0
+                    return ended(0)
+    if unreadable:
+        say(f"The other cells of {args.model} are in {out}"
+            + (f" ({len(skipped)} skipped by the owner)." if skipped else "."))
+        return ended(0)
     say(f"All cells of {args.model} are in {out}"
         + (f" ({len(skipped)} skipped by the owner)." if skipped else "."))
     return 0
@@ -1547,7 +1608,10 @@ EXPORT_INSTRUCTIONS = (
     "A <n>.retry.request.txt is the whole conversation of a retry (your first reply was not the asked JSON): "
     "write the reply to its last USER section to <n>.retry.reply.json.")
 NO_GRADING_FILE_ROUTE = ("No grading in {folder}: the file route continues a grading that grade-ai started (its "
-                         "grading.json fixes the blind order).")
+                         "grading.json fixes the blind order). Start it without any request: grade-ai ... "
+                         "--start-only.")
+START_ONLY_ALONE = ("--start-only only starts a grading (nothing is sent): give it without --export-requests, "
+                    "--import-replies or --changed.")
 
 CellKey = tuple[str, str]
 
@@ -1998,6 +2062,8 @@ def _to_grade(grading: Grading, changed: bool) -> tuple[list[GradingCell], list[
 def cmd_grade_ai(args: argparse.Namespace, *, backend_factory: BackendFactory | None = None,
                  say: Callable[[str], None] = print) -> int:
     try:
+        if args.start_only and (args.export_requests or args.import_replies or args.changed):
+            raise Refused(START_ONLY_ALONE)
         if args.export_requests and args.import_replies:
             raise Refused("Give --export-requests or --import-replies, not both.")
         if args.export_requests or args.import_replies:
@@ -2011,6 +2077,8 @@ def cmd_grade_ai(args: argparse.Namespace, *, backend_factory: BackendFactory | 
             raise Refused("Grading one model is not blind: give the results folders of every model of the matrix "
                           "(their cells are shuffled together), or --single-model.")
         with _Lock(Path(args.dir)):
+            if args.start_only:
+                return _start_only(args, say)
             return _grade_ai(args, backend_factory or _default_backend_factory, say)
     except Refused as exc:
         print(str(exc), file=sys.stderr)
@@ -2027,6 +2095,8 @@ def _grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say: Ca
     from flextool.assistant.usage import Ledger
 
     grading = load_grading(args, create=True)
+    for line in analysis.mixed_settings(c.record for c in grading.cells):
+        say(line)
     if grading.old_grades:
         say(f"{grading.old_grades} cells carry grades from the earlier grading; they are ignored.")
     todo, send = _to_grade(grading, args.changed)
@@ -2090,6 +2160,31 @@ def _grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say: Ca
         backend.close()
     say(f"Every cell is graded ({total}; {sum(c.empty for c in grading.cells)} without an answer are failed in "
         "code). Next: review --dir.")
+    return 0
+
+
+def _start_only(args: argparse.Namespace, say: Callable[[str], None]) -> int:
+    """``grade-ai --start-only``: every check of a first ``grade-ai`` (the folder set, every folder complete, the
+    blinding self-test of every request it would send) and its ``grading.json`` (the blind order, its one seed
+    drawn now), without any request: no key, no data notice, no cell graded.  The file route then continues it.
+    A grading folder already started is left as it is."""
+    if _read_grading(Path(args.dir)) is not None:
+        say(f"The grading in {args.dir} is started already (its grading.json fixes the blind order); nothing was "
+            "changed. Next: grade-ai ... --export-requests OUT, or grade-ai without --start-only.")
+        return 0
+    import assistant_eval_analysis as analysis
+
+    grading = load_grading(args, create=True)
+    for line in analysis.mixed_settings(c.record for c in grading.cells):
+        say(line)
+    if grading.old_grades:
+        say(f"{grading.old_grades} cells carry grades from the earlier grading; they are ignored.")
+    todo, send = _to_grade(grading, False)
+    write_json(grading.folder / GRADING_FILE, grading.state)
+    empty = len(todo) - len(send)
+    say(f"Started the grading in {grading.folder}: {len(grading.cells)} cells in blind order, {len(send)} to "
+        "send" + (f", {empty} without an answer (failed in code)" if empty else "") + "; nothing was sent. Next: "
+        "grade-ai ... --export-requests OUT (the file route), or grade-ai without --start-only (the API).")
     return 0
 
 
@@ -3215,6 +3310,8 @@ def _summary(args: argparse.Namespace, say: Callable[[str], None]) -> int:
     graded = sum(c.graded for c in grading.cells)
     review = review_state(grading) if graded == len(grading.cells) else None
     grades = {c.token: final_grade(c, review) for c in grading.cells}
+    for line in analysis.mixed_settings(c.record for c in grading.cells):
+        say(line)
     for folder in grading.state["results"]:
         cells = [c for c in grading.cells if c.key[0] == folder]
         run = read_json(Path(folder) / RUN_FILE)
@@ -3242,6 +3339,9 @@ def _summary(args: argparse.Namespace, say: Callable[[str], None]) -> int:
                         f"{row['incomplete']:>3}  escalated {row['escalated']:>3}  failed {row['failed']:>3} "
                         f"(no answer {row['no answer']})  waiting {row['waiting']:>3}  invented {row['invented']:>3}"
                         f"  understandability 1/2/3 {row['u1']}/{row['u2']}/{row['u3']}")
+        attempts = analysis.failed_attempts_line(analysis.failed_attempt_codes(c.record for c in cells))
+        if attempts:
+            say(attempts)
         na = sum(1 for f, _r, _rec, _c in grading.not_applicable if str(f) == folder)
         if na:
             say(f"  not applicable (context): {na}")
@@ -3374,6 +3474,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="grade again the cells whose answer, key or rubric changed (their review starts over)")
     p.add_argument("--accept-data-notice", action="store_true",
                    help="accept Anthropic's data notice for this run only")
+    p.add_argument("--start-only", action="store_true",
+                   help="only start the grading: every check and its grading.json (the blind order), nothing sent "
+                        "(no key or data notice needed); then --export-requests")
     p.add_argument("--export-requests", type=_abs_path, metavar="OUT",
                    help="the file route: write the requests grade-ai would send now to OUT (nothing is sent, "
                         "nothing written to --dir) for Claude Code subagents to grade")

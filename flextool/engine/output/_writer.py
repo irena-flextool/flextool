@@ -15,10 +15,11 @@ renaming the live HiGHS column names BEFORE delegating;
 ``passColName`` accepts a post-solve update.  The rename is a no-op
 for variables already named correctly.
 
-``v_ramp`` is absent from the polars LP entirely — the extractor
-handles "no matching columns" gracefully by emitting an empty-but-
-well-shaped parquet (see ``read_highs_solution.extract_variable``'s
-``if not seen_cols`` fallback).
+``v_ramp_up`` / ``v_ramp_down`` exist only with a ramp cost — without
+one the extractor handles "no matching columns" gracefully by emitting an
+empty-but-well-shaped parquet (see
+``read_highs_solution.extract_variable``'s ``if not seen_cols``
+fallback).
 
 The carry-forward dependency is the support CSV cluster
 (``p_step_duration.csv``, ``entity_block.csv``, …) read by
@@ -416,6 +417,15 @@ def write_outputs_for_solve(
             "append_solve_order failed for solve '%s': %s", solve_name, exc,
         )
 
+    # The features this sub-solve left out (reduce_*_detail_method, set by the cascade on its reduced data), whole
+    # or for some entities only: the outputs leave their cells empty in its steps (process_outputs.reduced_cells).
+    _left_out = getattr(flex_data, "reduced_output_features", None)
+    _left_out_of = getattr(flex_data, "reduced_output_entities", None)
+    if _left_out or _left_out_of:
+        from flextool.process_outputs.reduced_cells import write_reduced_marker
+
+        write_reduced_marker(Path(output_dir), roll_name, list(_left_out or ()), _left_out_of)
+
     # Raw horizon dump (``model.output_horizon``, developer debug flag):
     # every LP variable and constraint over all rows, as raw solver values,
     # one part per family under ``output_raw/horizon/``.  After
@@ -479,6 +489,25 @@ def write_outputs_for_solve(
         _logger.warning(
             "write_all_variables failed for solve '%s': %s", solve_name, exc,
         )
+
+    # The capacity margin of a solve with investment periods: its per-solve tables (kept under this solve's
+    # name over all its investment periods, not realized-filtered) and the run-log line of a shortfall.
+    try:
+        from flextool.engine.output._capacity_margin import write_capacity_margin_report
+
+        write_capacity_margin_report(sol, flex_data, output_dir=output_dir, solve_name=roll_name,
+                                     scale_the_objective=scale_the_objective)
+    except Exception as exc:  # noqa: BLE001
+        _logger.error("capacity margin report failed for solve '%s': %s", solve_name, exc)
+
+    # The reserve requirement of each reserve group (#234): its per-solve tables over the realized steps (unioned
+    # with the last solve winning a step, as the other per-step outputs) and the run-log line of a broken check.
+    try:
+        from flextool.engine.output._reserve_report import write_reserve_report
+
+        write_reserve_report(sol, flex_data, output_dir=output_dir, solve_name=roll_name, provider=provider)
+    except Exception as exc:  # noqa: BLE001
+        _logger.error("reserve requirement report failed for solve '%s': %s", solve_name, exc)
 
     try:
         write_all_handoffs(

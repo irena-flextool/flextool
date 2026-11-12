@@ -49,28 +49,17 @@ def _restore_from_backup(db_path: Path, backup: Path) -> bool:
 def _read_flextool_version(db_url: str) -> int | None:
     """Read the current FlexTool data version from a database.
 
-    Returns the integer version, or ``None`` if it cannot be determined.
+    Reads with sqlite3 in read-only mode, so probing a file never upgrades its
+    SpineDB schema or writes to it (an external or frozen source is only
+    changed after the user agrees).  Returns the integer version, or ``None``
+    if it cannot be determined.
     """
-    try:
-        from spinedb_api import from_database
-        from flextool.update_flextool.db_handle import open_database_mapping
+    from flextool.update_flextool.frozen import read_db_version_ro, sqlite_path_from
 
-        with open_database_mapping(db_url, create=False, upgrade=True) as db:
-            sq = db.object_parameter_definition_sq
-            settings_param = (
-                db.query(sq)
-                .filter(sq.c.object_class_name == "model")
-                .filter(sq.c.parameter_name == "version")
-                .one_or_none()
-            )
-            if settings_param is None:
-                return 0
-            return int(
-                from_database(settings_param.default_value, settings_param.default_type)
-            )
-    except Exception:
-        logger.debug("Could not read FlexTool version from %s", db_url, exc_info=True)
+    path = sqlite_path_from(db_url)
+    if path is None:
         return None
+    return read_db_version_ro(path)
 
 
 def get_target_flextool_version() -> int:
@@ -79,16 +68,21 @@ def get_target_flextool_version() -> int:
 
 
 def needs_flextool_migration(db_path: Path) -> bool | None:
-    """Return True if this file's FlexTool data version is below the target.
+    """Return True if this file's FlexTool data version is below the target,
+    or it is at the target but its SpineDB schema is an older revision.
 
-    Returns ``None`` if the version cannot be determined (file unreadable,
-    not a FlexTool DB, etc.).
+    Both are read read-only.  Returns ``None`` if the version cannot be
+    determined (file unreadable, not a FlexTool DB, etc.).
     """
+    from flextool.update_flextool.frozen import schema_outdated_ro
+
     db_url = f"sqlite:///{db_path}"
     current = _read_flextool_version(db_url)
     if current is None:
         return None
-    return current < FLEXTOOL_DB_VERSION
+    if current < FLEXTOOL_DB_VERSION:
+        return True
+    return current == FLEXTOOL_DB_VERSION and schema_outdated_ro(db_path)
 
 
 def check_and_upgrade_database(
@@ -96,6 +90,7 @@ def check_and_upgrade_database(
     *,
     progress_callback: Callable[[int, int, int], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
+    allow_frozen: bool = False,
 ) -> tuple[bool, bool, list[str]]:
     """Check and upgrade a FlexTool database if needed.
 
@@ -124,6 +119,10 @@ def check_and_upgrade_database(
             migration stops cleanly between steps, the database is restored
             to its original state, and this function returns instead of
             raising.
+        allow_frozen: Migrate a frozen database in place (the user agreed);
+            its marker is kept with the new version.  Without it, a frozen
+            database is never opened for writing: one that needs an upgrade
+            is reported as failed, one that is current is left as it is.
 
     Returns:
         A ``(was_upgraded, failed, messages)`` tuple where *was_upgraded* is
@@ -140,11 +139,66 @@ def check_and_upgrade_database(
     failed = False
 
     try:
-        from flextool.update_flextool.db_handle import open_database_mapping
+        from flextool.update_flextool.db_handle import open_database_mapping  # noqa: F401  (availability check)
     except ImportError as exc:
         messages.append(f"Cannot check database version (spinedb_api not available): {exc}")
         return was_upgraded, failed, messages
 
+    # The frozen check reads the file read-only, before anything below can
+    # open it with ``upgrade=True``.  A marker that cannot be read now (another
+    # migration is committing) is checked again under the migration lock.
+    from flextool._file_lock import FileLockError
+    from flextool.update_flextool.frozen import FrozenCheckError, FrozenDatabaseError, frozen_guard, is_current_ro
+    from flextool.update_flextool.migrate_before_run import migration_lock
+
+    def _guard() -> bool:
+        """Whether the migration may go on; adds the frozen refusal to *messages*."""
+        nonlocal failed
+        try:
+            frozen_guard(db_path, allow_frozen=allow_frozen)
+        except FrozenDatabaseError as exc:
+            if not exc.up_to_date:
+                messages.append(str(exc))
+                failed = True
+            return False
+        return True
+
+    try:
+        frozen_guard(db_path, allow_frozen=allow_frozen)
+    except FrozenCheckError:
+        pass
+    except FrozenDatabaseError:
+        _guard()
+        return was_upgraded, failed, messages
+    # A current database is never opened for writing and never waits for the lock.
+    if is_current_ro(db_path):
+        return was_upgraded, failed, messages
+
+    # Every in-place migration of the file holds ``<db>.migrate.lock``
+    # (shared with flextool-run --migrate and flextool-migrate-database); the
+    # state is read again under it, as another process may have migrated it.
+    try:
+        with migration_lock(Path(db_path)):
+            if not _guard():
+                return was_upgraded, failed, messages
+            return _upgrade_locked(db_path, messages, progress_callback, cancel_check, allow_frozen)
+    except FileLockError as exc:
+        messages.append(f"{Path(db_path).name}: not migrated: {exc}")
+        return was_upgraded, True, messages
+
+
+def _upgrade_locked(
+    db_path: Path,
+    messages: list[str],
+    progress_callback: Callable[[int, int, int], None] | None,
+    cancel_check: Callable[[], bool] | None,
+    allow_frozen: bool,
+) -> tuple[bool, bool, list[str]]:
+    """The upgrade of :func:`check_and_upgrade_database`, run while holding the migration lock."""
+    from flextool.update_flextool.db_handle import open_database_mapping
+
+    was_upgraded = False
+    failed = False
     db_url = f"sqlite:///{db_path}"
 
     # Probe the schema read-only first so a database that is already current
@@ -189,7 +243,6 @@ def check_and_upgrade_database(
             logger.info("SpineDB schema upgraded for %s", db_path)
 
         # ── Step 2: FlexTool data version upgrade ──────────────────
-        # Schema is current now, so reading the version does not mutate.
         version_before = _read_flextool_version(db_url)
         if version_before is not None and version_before < FLEXTOOL_DB_VERSION:
             if not _ensure_backup():
@@ -205,6 +258,7 @@ def check_and_upgrade_database(
                 str(db_path),
                 progress_callback=progress_callback,
                 cancel_check=cancel_check,
+                allow_frozen=allow_frozen,
             )
 
             version_after = _read_flextool_version(db_url)

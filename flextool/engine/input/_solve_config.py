@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
@@ -31,6 +32,16 @@ from typing import TYPE_CHECKING, Any
 import spinedb_api as api
 
 from flextool.engine.input._solve_state import FlexToolConfigError
+
+#: The values of ``solve.reduce_unit_detail_method`` / ``solve.reduce_system_detail_method`` the engine accepts:
+#: the v79 value lists ``reduce_unit_detail_methods`` / ``reduce_system_detail_methods`` (pinned against the schema
+#: by tests/engine/test_reduce_detail.py).
+REDUCE_UNIT_DETAIL_METHODS: tuple[str, ...] = (
+    "none", "integers", "integers_ramps", "integers_min_limits", "integers_ramps_min_limits", "online",
+    "online_ramps")
+REDUCE_SYSTEM_DETAIL_METHODS: tuple[str, ...] = (
+    "none", "reserves", "inertia", "non_synchronous", "inertia_non_synchronous",
+    "reserves_inertia_non_synchronous", "dc_power_flow", "reserves_inertia_non_synchronous_dc_power_flow")
 
 if TYPE_CHECKING:
     from spinedb_api import DatabaseMapping
@@ -245,6 +256,8 @@ class SolveConfig:
         scaling: dict | None = None,
         stochastic_invest_method: dict | None = None,
         dispatch_realization_method: dict | None = None,
+        reduce_unit_detail_method: dict | None = None,
+        reduce_system_detail_method: dict | None = None,
     ) -> None:
         # Base fields (read directly from DB in load_from_db).
         self.model = model
@@ -316,6 +329,15 @@ class SolveConfig:
             if dispatch_realization_method is not None else {}
         )
 
+        # v79 per-solve detail reductions (solve-name -> value-list string); only authored solves appear.
+        # Resolved at access time via :meth:`reduce_unit_detail_for` / :meth:`reduce_system_detail_for`.
+        self.reduce_unit_detail_method: dict = (
+            reduce_unit_detail_method if reduce_unit_detail_method is not None else {}
+        )
+        self.reduce_system_detail_method: dict = (
+            reduce_system_detail_method if reduce_system_detail_method is not None else {}
+        )
+
         # Computed fields — populated by load_from_db after construction.
         self.roll_counter: dict[str, int] = {}
         self.timesets_used_by_solves: defaultdict = defaultdict(list)
@@ -323,6 +345,14 @@ class SolveConfig:
         self.realized_periods: defaultdict = defaultdict(list)
         self.realized_invest_periods: defaultdict = defaultdict(list)
         self.fix_storage_periods: defaultdict = defaultdict(list)
+        # Solve entities whose value of a period parameter is a 2D map
+        # (``periods_to_tuples`` fans them out into ``<solve>_<outer>``
+        # duplicates), keyed by parameter name.  Read by
+        # ``_check_realized_invest_periods``.
+        self.map2d_period_parents: defaultdict = defaultdict(set)
+        # ``{<solve>_<outer>: (solve, outer)}`` of those duplicates, so an
+        # error can name the database solve and its 2D-map entry.
+        self.map2d_duplicate_of: dict[str, tuple[str, str]] = {}
         # Slice G (Axis B) — operational non-anticipativity window.
         # TRI-STATE per solve, distinct from the period dicts above:
         #   absent key / None -> unset -> legacy realized u fix window;
@@ -356,6 +386,12 @@ class SolveConfig:
         # no stochastic solve has a realization solve (the consumers then
         # no-op, preserving byte-parity on deterministic fixtures).
         self.realized_dispatch_parent: dict[str, str] = {}
+
+        # User constraints with constraint_period_method period_total (load_from_db); the rolls that leave their
+        # rows out and the solves that write them (RecursiveSolveBuilder._check_period_total_rolls).
+        self.period_total_constraints: list[str] = []
+        self.period_total_off_solves: set[str] = set()
+        self.period_total_enforcing_solves: set[str] = set()
 
         # Mutable tracking — populated during the recursive solve loop.
         self.real_solves: list[str] = []
@@ -557,6 +593,15 @@ class SolveConfig:
             mode=DictMode.DICT,
         )
 
+        # v79 per-solve detail reductions.  Only solves that author them appear; absent solves resolve to
+        # "none" via ``reduce_unit_detail_for`` / ``reduce_system_detail_for``.
+        reduce_unit_detail_method: dict = params_to_dict(
+            db=db, cl="solve", par="reduce_unit_detail_method", mode=DictMode.DICT,
+        )
+        reduce_system_detail_method: dict = params_to_dict(
+            db=db, cl="solve", par="reduce_system_detail_method", mode=DictMode.DICT,
+        )
+
         # rolling_times: assemble per-solve [jump, horizon, duration].
         rolling_duration: dict = params_to_dict(
             db=db, cl="solve", par="rolling_duration", mode=DictMode.DICT
@@ -657,6 +702,8 @@ class SolveConfig:
             scaling=scaling,
             stochastic_invest_method=stochastic_invest_method,
             dispatch_realization_method=dispatch_realization_method,
+            reduce_unit_detail_method=reduce_unit_detail_method,
+            reduce_system_detail_method=reduce_system_detail_method,
         )
 
         # Computed fields — loading order MUST be preserved exactly.
@@ -677,6 +724,21 @@ class SolveConfig:
         obj.fix_storage_periods = obj.periods_to_tuples(
             db=db, cl="solve", par="fix_storage_periods"
         )
+        period_method: dict = params_to_dict(
+            db=db, cl="constraint", par="constraint_period_method", mode=DictMode.DICT
+        )
+        disabled = {name for name, value in params_to_dict(
+            db=db, cl="constraint", par="is_enabled", mode=DictMode.DICT
+        ).items() if value == "no"}
+        # Only a constraint with a sense has rows (flex_data builds cdt_* from the sense); one without would
+        # trigger a spurious rolling warning or the "no solve enforces" error.
+        with_sense = {name for name, value in params_to_dict(
+            db=db, cl="constraint", par="sense", mode=DictMode.DICT
+        ).items() if value in ("equal", "less_than", "greater_than")}
+        obj.period_total_constraints = sorted(
+            name for name, value in period_method.items()
+            if value == "period_total" and name not in disabled and name in with_sense
+        )
         # Slice G — tri-state operational non-anticipativity window
         # (read AFTER the four period dicts so any duplicate_solve they
         # triggered has already registered the new solve names; the
@@ -695,6 +757,8 @@ class SolveConfig:
         obj.non_anticipativity_invest_periods = obj.periods_to_tuples(
             db=db, cl="solve", par="shared_invest_periods"
         )
+        # After every period dict, so the 2D-map duplicate solves exist.
+        obj._check_realized_invest_periods()
 
         return obj
 
@@ -768,6 +832,67 @@ class SolveConfig:
     # ------------------------------------------------------------------
     # Methods
     # ------------------------------------------------------------------
+
+    def _check_realized_invest_periods(self) -> None:
+        """Raise when a solve realizes investments in a period it does not invest in (#319).
+
+        A realized investment period must be one of the solve's
+        ``invest_periods`` (the inner period ``p_in`` of each
+        ``(p_from, p_in)`` tuple is compared).  Checked over the solves
+        that run (``model_solve`` and ``contains_solves`` children, with
+        the 2D-map duplicates already made); rolls are made later from a
+        checked complete solve.  A 1D ``realized_invest_periods`` left on
+        a solve whose ``invest_periods`` is a 2D map never runs (the
+        duplicates replace it), so it gets its own message.
+        """
+        inv_2d = self.map2d_period_parents.get("invest_periods", set())
+        rinv_2d = self.map2d_period_parents.get("realized_invest_periods", set())
+        for parent in sorted(inv_2d - rinv_2d):
+            if self.realized_invest_periods.get(parent):
+                raise FlexToolConfigError(
+                    f"solve '{parent}': invest_periods is a 2D map, so "
+                    "realized_invest_periods must be a 2D map with the same "
+                    "solve names (outer keys)"
+                )
+        running: list[str] = []
+        for solves in (
+            list(self.model_solve.values())
+            + list(self.contains_solves.values())
+        ):
+            for s in solves:
+                if s not in running:
+                    running.append(s)
+        problems: list[str] = []
+        for s in running:
+            realized = [t[1] for t in self.realized_invest_periods.get(s, [])]
+            if not realized:
+                continue
+            invest = [t[1] for t in self.invest_periods.get(s, [])]
+            # Plain ``str`` for the messages: numpy 2 shows a ``np.str_`` as ``np.str_('p1')`` in a list.
+            bad = [str(p) for p in dict.fromkeys(realized) if p not in set(invest)]
+            if not bad:
+                continue
+            if s in self.map2d_duplicate_of:
+                parent, outer = self.map2d_duplicate_of[s]
+                where = f"solve '{parent}' (2D-map entry '{outer}')"
+            else:
+                where = f"solve '{s}'"
+            if not invest:
+                problems.append(
+                    f"{where} has realized_invest_periods {bad} but no "
+                    "invest_periods: remove realized_invest_periods (or set "
+                    "invest_periods if this solve should invest)"
+                )
+            else:
+                problems.append(
+                    f"{where}: realized_invest_periods lists period(s) "
+                    f"{bad} that are not in its invest_periods "
+                    f"{[str(p) for p in dict.fromkeys(invest)]}. A realized investment "
+                    "period must also be an investment period: add it to "
+                    "invest_periods, or remove it from realized_invest_periods"
+                )
+        if problems:
+            raise FlexToolConfigError("; ".join(problems))
 
     def make_roll_counter(self) -> dict[str, int]:
         """Return a roll counter initialised to 0 for every rolling-window
@@ -878,6 +1003,8 @@ class SolveConfig:
                 self.benders_tolerance,
                 self.benders_in_out_weight,
                 self.scaling,
+                self.reduce_unit_detail_method,
+                self.reduce_system_detail_method,
             ]
             for dup_map in dup_map_list:
                 if old_solve in dup_map.keys():
@@ -1088,6 +1215,56 @@ class SolveConfig:
             "within_solve", "separate_dispatch"
         ) else "within_solve"
 
+    def _reduce_detail_for(self, solve_name: str, values: dict, param: str, valid: tuple[str, ...]) -> str:
+        """The authored ``solve.<param>`` of *solve_name*: its roll suffix stripped, a realization solve mapped to
+        its parent (:attr:`realized_dispatch_parent`), absent or blank -> ``"none"``.  Case and surrounding blanks
+        are ignored.  An unknown value raises :class:`FlexToolConfigError` naming the solve and the valid values (a
+        typo must not silently run the full model)."""
+        base = re.sub(r"_roll_\d+$", "", solve_name)
+        owner = self.realized_dispatch_parent.get(base, base)
+        owner = re.sub(r"_roll_\d+$", "", owner)
+        raw = values.get(owner)
+        if raw is None or str(raw).strip() == "":
+            return "none"
+        value = str(raw).strip().lower()
+        if value not in valid:
+            raise FlexToolConfigError(
+                f"solve '{owner}': {param} = '{raw}' is not one of {', '.join(valid)}.")
+        return value
+
+    def reduce_detail_overridden(self, realization_solve: str) -> list[str]:
+        """The levels an author set on the realization solve *realization_solve* that its parent's levels override
+        (one line per parameter whose authored value differs from the parent's): a realization solve pins units
+        online and reserves to its parent's values, so it uses the parent's levels.  Empty when it sets none, or
+        the same."""
+        parent = self.realized_dispatch_parent.get(realization_solve)
+        if parent is None:
+            return []
+        out = []
+        for param, values, resolve in (
+                ("reduce_unit_detail_method", self.reduce_unit_detail_method, self.reduce_unit_detail_for),
+                ("reduce_system_detail_method", self.reduce_system_detail_method, self.reduce_system_detail_for)):
+            raw = values.get(realization_solve)
+            if raw is None or str(raw).strip() == "":
+                continue
+            own, used = str(raw).strip().lower(), resolve(realization_solve)
+            if own != used:
+                out.append(f"realization solve '{realization_solve}' sets {param} = '{raw}', but it uses "
+                           f"'{used}', the value of its parent solve '{parent}' (it takes the parent's units "
+                           "online and reserves).")
+        return out
+
+    def reduce_unit_detail_for(self, solve_name: str) -> str:
+        """Resolve ``solve.reduce_unit_detail_method`` for *solve_name* (a roll ``<solve>_roll_N`` and a
+        realization solve take the base solve's / the parent's value).  ``"none"`` when not authored."""
+        return self._reduce_detail_for(solve_name, self.reduce_unit_detail_method, "reduce_unit_detail_method",
+                                       REDUCE_UNIT_DETAIL_METHODS)
+
+    def reduce_system_detail_for(self, solve_name: str) -> str:
+        """Resolve ``solve.reduce_system_detail_method`` for *solve_name*, as :meth:`reduce_unit_detail_for`."""
+        return self._reduce_detail_for(solve_name, self.reduce_system_detail_method,
+                                       "reduce_system_detail_method", REDUCE_SYSTEM_DETAIL_METHODS)
+
     def benders_config_for(self, solve_name: str) -> tuple[int, float, float]:
         """Resolve ``(max_iter, tol, in_out_weight)`` for *solve_name*.
 
@@ -1149,6 +1326,13 @@ class SolveConfig:
                                 )
                                 self.duplicate_solve(
                                     param["entity_name"], new_name
+                                )
+                                self.map2d_period_parents[par].add(
+                                    param["entity_name"]
+                                )
+                                self.map2d_duplicate_of[new_name] = (
+                                    param["entity_name"],
+                                    str(param_value.indexes[i]),
                                 )
                                 result_dict[new_name].append(
                                     (

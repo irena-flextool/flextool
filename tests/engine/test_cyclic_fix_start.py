@@ -105,7 +105,7 @@ def test_stochastic_within_solve_pins_the_wrap_of_the_first_step(tmp_path_factor
 def test_fix_start_end_pins_the_start(tmp_path_factory, method):
     """``storage_start_end_method`` *fix_start_end* fixes the start like *fix_start* (the schema: "fix start and
     end"): the node is in storage_fix_start and its first step starts from the start energy.  With fix_start_end the
-    storage_binding_method is ignored (reference.md), so a cyclic node chains forward: the start energy is in the
+    storage_binding_method is ignored (reference/nodes.md), so a cyclic node chains forward: the start energy is in the
     first step's balance, not on a wrap target.  Before (item 133) it was in neither set, so the storage started
     from free energy; later a cyclic node got the wrap-target pin (and, with the end pin, two pins on one state)."""
     url, scen = make_db(tmp_path_factory, alt=f"cfse_{method[5:12]}", base_chain=CHAIN, values=[

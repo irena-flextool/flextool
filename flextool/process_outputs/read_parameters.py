@@ -195,6 +195,24 @@ def _pdX_per_entity(
     return out
 
 
+def _ramp_cost_by_period(flex_data: "FlexData") -> "object | None":
+    """``p_ramp_cost_arc`` (p, source, sink) repeated over the periods of the solve, as a Param
+    ``(p, source, sink, d)`` (the cost is constant; the period key keeps it solve-keyed like
+    ``process_startup_cost``).  ``None`` without a ramp cost."""
+    from polar_high import Param
+
+    param = getattr(flex_data, "p_ramp_cost_arc", None)
+    if param is None or flex_data.dt is None or flex_data.dt.height == 0:
+        return None
+    frame = param.frame.collect() if isinstance(param.frame, pl.LazyFrame) else param.frame
+    if frame.height == 0:
+        return None
+    periods = flex_data.dt.select("d").unique(maintain_order=True)
+    return Param(("p", "source", "sink", "d"),
+                 frame.select("p", "source", "sink", "value").join(periods, how="cross")
+                 .select("p", "source", "sink", "d", "value"))
+
+
 def _pX_per_entity(
     param,
     *,
@@ -964,6 +982,8 @@ def _build_p_process_per_arc(
             if key in cols:
                 out.loc[row, key] = float(r["value"])
 
+    # The "ramp_cost" row stays 0 and nothing reads it: the ramp cost of an arc (both sides summed) is
+    # par.process_ramp_cost (p_ramp_cost_arc).
     _fill_row("ramp_speed_up", ramp_up)
     _fill_row("ramp_speed_down", ramp_down)
     _fill_row("inertia_constant", inertia)
@@ -1462,6 +1482,20 @@ def read_parameters(
         entity_dim="p", col_name="process", flex_data=flex_data,
     )
 
+    # process_node_startup_energy — (solve, period) × (process, node): MWh per MW started that a unit's start-up
+    # takes from its start-up input node (unit__inputNode.startup_input_method / startup_energy).
+    p.process_node_startup_energy = _pdX_multi_col(
+        getattr(flex_data, "p_startup_energy", None), solve_name=solve_name,
+        col_dims=("p", "n"), col_names=("process", "node"),
+    )
+
+    # process_ramp_cost — (solve, period) × (process, source, sink): the ramp cost of each arc (CUR/MW of
+    # change, p_ramp_cost_arc), constant over the periods.
+    p.process_ramp_cost = _pdX_multi_col(
+        _ramp_cost_by_period(flex_data), solve_name=solve_name,
+        col_dims=("p", "source", "sink"), col_names=("process", "source", "sink"),
+    )
+
     # entity_fixed_cost / entity_lifetime_fixed_cost / entity_lifetime_fixed_cost_divest.
     # Densify across the full entity universe — calc_costs.py:154-155
     # indexes these by ``v.invest.columns`` / ``v.divest.columns``,
@@ -1491,7 +1525,7 @@ def read_parameters(
     )
 
     # group_penalty_inertia / group_penalty_non_synchronous /
-    # group_penalty_capacity_margin / group_inertia_limit / group_capacity_margin.
+    # group_penalty_capacity_margin / group_inertia_limit (per time step) / group_capacity_margin.
     #
     # SCEN-6: ``calc_slacks.py`` indexes ``par.group_penalty_capacity_margin
     # [s.groupCapacityMargin]`` and raises ``KeyError`` on a group of
@@ -1522,8 +1556,9 @@ def read_parameters(
         entity_dim="g", col_name="group", flex_data=flex_data,
         densify_entities=_group_cap_margin_universe,
     )
-    p.group_inertia_limit = _pdX_per_entity(
-        flex_data.pdGroup_inertia_limit, solve_name=solve_name,
+    # The inertia limit is per (period, time step): constant, period, time or period + time map.
+    p.group_inertia_limit = _pdtX_per_entity(
+        flex_data.pdtGroup_inertia_limit, solve_name=solve_name,
         entity_dim="g", col_name="group", flex_data=flex_data,
     )
     p.group_capacity_margin = _pdX_per_entity(
@@ -1711,6 +1746,19 @@ def _has_solve_level(obj) -> bool:
     return False
 
 
+def read_parameters_static(flex_data: "FlexData", solution, *, solve_name: str = "solve") -> SimpleNamespace:
+    """:func:`read_parameters` of ``flex_data``, with the static parameters of its output static view when the
+    cascade reduced its detail (``read_sets.with_static_attrs``); the plain :func:`read_parameters` otherwise."""
+    from flextool.engine.preprocess._reduce_detail import static_data
+    from flextool.process_outputs.read_sets import with_static_attrs
+
+    ns = read_parameters(flex_data, solution, solve_name=solve_name)
+    view = static_data(flex_data)
+    if view is flex_data:
+        return ns
+    return with_static_attrs(ns, read_parameters(view, solution, solve_name=solve_name), _has_solve_level)
+
+
 def read_parameters_multi(
     steps: "list[tuple[str, FlexData, Solution]] | list[tuple[str, FlexData]]",
     solution: "Solution | None" = None,
@@ -1758,8 +1806,10 @@ def read_parameters_multi(
 
     per_step = [
         (s[0], read_parameters(s[1], _step_solution(s), solve_name=s[0]))
-        for s in steps
+        for s in steps[:-1]
     ]
+    per_step.append((steps[-1][0], read_parameters_static(steps[-1][1], _step_solution(steps[-1]),
+                                                          solve_name=steps[-1][0])))
     last_ns = per_step[-1][1]
     if len(per_step) == 1:
         return last_ns

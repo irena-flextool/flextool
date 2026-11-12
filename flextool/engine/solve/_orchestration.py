@@ -109,6 +109,7 @@ def _format_solver_args_line(
     effective_options: Mapping[str, Any] | None,
     *,
     prefer_first: "Sequence[str]" = (),
+    solver: str | None = None,
 ) -> str | None:
     """Render the effective solver options as a one-liner.
 
@@ -131,13 +132,18 @@ def _format_solver_args_line(
 
     Returns ``None`` when *effective_options* is empty (nothing the
     operator set → no line).
+
+    A commercial solve passes *solver*: the line then reads
+    ``Solver args (<solver>): ...`` and lists the native parameters the
+    CLI receives (option file included, since it has no engine baseline).
     """
     if not effective_options:
         return None
     order = [k for k in prefer_first if k in effective_options]
     order += [k for k in effective_options if k not in order]
     body = ", ".join(f"{k}={effective_options[k]}" for k in order)
-    return f"Solver args: {body}"
+    label = f"Solver args ({solver})" if solver else "Solver args"
+    return f"{label}: {body}"
 
 
 # Legacy ``scale_the_objective`` default — historically the
@@ -253,9 +259,10 @@ def _operator_highs_overrides(run_options: "RunOptions | None" = None) -> dict[s
     contribute; a registry default adds nothing, so an unset option leaves the lower layers in charge.  ``None``
     reads the environment (:meth:`RunOptions.from_env`).
 
-    * ``--solver-time-limit S`` (``FLEXTOOL_HIGHS_TIME_LIMIT``) → ``time_limit``
-    * ``--solver-mip-gap GAP`` (``FLEXTOOL_HIGHS_MIP_GAP``) → ``mip_rel_gap``
-      (only bites MIP solves)
+    * ``--solver-time-limit S`` (``FLEXTOOL_SOLVER_TIME_LIMIT``, else the HiGHS-only
+      ``FLEXTOOL_HIGHS_TIME_LIMIT``) → ``time_limit``
+    * ``--solver-mip-gap GAP`` (``FLEXTOOL_SOLVER_MIP_GAP``, else the HiGHS-only
+      ``FLEXTOOL_HIGHS_MIP_GAP``) → ``mip_rel_gap`` (only bites MIP solves)
     * ``--presolve {on,off,choose}`` (``FLEXTOOL_HIGHS_PRESOLVE``) → ``presolve``
     * ``--threads B`` (``FLEXTOOL_THREADS``) and ``--highs-threads N``
       (``FLEXTOOL_HIGHS_THREADS``), by
@@ -280,9 +287,13 @@ def _operator_highs_overrides(run_options: "RunOptions | None" = None) -> dict[s
 
     cli: dict[str, object] = {}
     tlim = given("solver_time_limit")
+    if tlim is None:
+        tlim = given("highs_time_limit")
     if tlim is not None:
         cli["time_limit"] = float(tlim)
     mip_gap = given("solver_mip_gap")
+    if mip_gap is None:
+        mip_gap = given("highs_mip_gap")
     if mip_gap is not None:
         cli["mip_rel_gap"] = float(mip_gap)
     presolve = given("presolve")
@@ -318,21 +329,26 @@ def _solve_highs_options(
     the solve's convenience knobs (``solve.solver_mip_gap``) < the solve's
     ``solver_arguments`` < the operator's flags / environment variables
     (:func:`_operator_highs_overrides`, from ``state.run_options``).
-    ``run_chain_from_db`` seeds ``state.paths.solver_config_dir`` to the
-    work-folder ``solver_config`` copy; a bare ``PathConfig`` leaves it
-    None and the highs.opt layer is empty.
+    ``run_chain_from_db`` reads the run's option files once at its start
+    (``state.paths.solver_option_files``); a bare ``PathConfig`` reads
+    ``<solver_config_dir>/highs.opt``, or has no highs.opt layer when that is
+    None.
     """
     from flextool.engine.input._solve_config import SolverConfig
     from flextool.engine.solve._solver_dispatch import (
         _resolve_effective_highs_options,
     )
 
-    highs_opt_path = (
-        state.paths.solver_config_dir / "highs.opt"
-        if state.paths.solver_config_dir is not None
-        else None
-    )
+    files = state.paths.solver_option_files
+    highs_opt_text = files.text("highs") if files is not None else None
+    if files is not None:
+        highs_opt_path = files.origin("highs") if highs_opt_text is not None else None
+    elif state.paths.solver_config_dir is not None:
+        highs_opt_path = state.paths.solver_config_dir / "highs.opt"
+    else:
+        highs_opt_path = None
     return _resolve_effective_highs_options(
+        highs_opt_text=highs_opt_text,
         solver_arguments_map=state.solve.solver_settings.arguments.get(
             complete_solve_name, {}
         ),
@@ -862,6 +878,7 @@ if TYPE_CHECKING:
     from polar_high import Problem, Solution
     from polar_high.autoscale import ScalingConfig
 
+    from flextool._solver_config_source import SolverConfigSource
     from flextool.engine.preprocess.flex_data import FlexData
 
 
@@ -1935,6 +1952,13 @@ def _spawn_realized_dispatch_siblings(
                     "registered author-declared realization solve '%s' for "
                     "stochastic solve '%s'", configured, p,
                 )
+            # A realization solve takes its parent's detail levels (it pins
+            # the parent's units online and reserves): name an authored
+            # value that is overridden.
+            for _line in solve_cfg.reduce_detail_overridden(configured):
+                if logger is not None:
+                    logger.warning(_line)
+                print(f"Warning: {_line}", flush=True)
             continue
         if not _realization.designation_reaches_committed_window(solve_cfg, p):
             continue
@@ -2260,18 +2284,16 @@ def run_orchestration(
     _reset_coarse_warnings()
     work_folder = Path(work_folder)
     work_folder.mkdir(parents=True, exist_ok=True)
-    # Rebuild ``paths`` for this run's work_folder, but CARRY FORWARD
-    # ``solver_config_dir`` from the incoming state — the per-solve loop
-    # reads it to resolve ``<dir>/highs.opt`` for the in-process HiGHS
-    # options.  ``run_chain_from_db`` sets it (to the work-folder
-    # ``solver_config`` copy); a bare ``PathConfig(work_folder=...)`` here
-    # would silently drop the ``highs.opt`` floor on the in-process path.
-    _prior_solver_config_dir = (
-        state.paths.solver_config_dir if state.paths is not None else None
-    )
+    # Rebuild ``paths`` for this run's work_folder, but CARRY FORWARD the
+    # solver option files from the incoming state — every solve reads its
+    # ``highs.opt`` / ``<solver>.opt`` layer from them.  ``run_chain_from_db``
+    # sets them (read once at run start); a bare ``PathConfig(work_folder=...)``
+    # here would silently drop the option-file floor.
+    _prior_paths = state.paths
     state.paths = PathConfig(
         work_folder=work_folder,
-        solver_config_dir=_prior_solver_config_dir,
+        solver_config_dir=_prior_paths.solver_config_dir if _prior_paths is not None else None,
+        solver_option_files=_prior_paths.solver_option_files if _prior_paths is not None else None,
     )
 
     logger = state.logger
@@ -2397,6 +2419,10 @@ def _drive_cascade(
     # Push our state's handoff slot onto the runner's state so the
     # cascade and any consume hooks share the same dict.
     runner.state.handoffs = state.handoffs
+    # The solves run on the runner's state: give it the option files the run
+    # read at its start (``run_chain_from_db``), so no solve reads them again.
+    if state.paths is not None and state.paths.solver_option_files is not None:
+        runner.state.paths.solver_option_files = state.paths.solver_option_files
     # Per-level Provider cache (Design A).  ``native_run_model`` lazily
     # initialises this on first iter, but seeding it here makes the
     # invariant ``state._level_providers is dict`` explicit at every
@@ -2464,6 +2490,12 @@ def _drive_cascade(
             "cascade_spinedb_reader_constructed", _drive_logger,
             user_label="Inputs prepared",
         )
+    # One dedupe set for the solve-step aggregation warnings of the run: the CSV frames
+    # (TimelineConfig.create_averaged_timeseries, once per complete solve) and the DB-direct readers
+    # (load_flextool arms the reader's memo) warn once per run between them.
+    _timeline_cfg = getattr(runner.state, "timeline", None)
+    if _timeline_cfg is not None:
+        _timeline_cfg.solve_step_notes = cascade_db_reader.run_memo(("solve_step_aggregation_notes",), set)
 
     # ``input/p_all_entity_unitsize`` — solve-invariant entity-unitsize
     # cascade (virtual_unitsize OR existing OR 1000.0) over ALL entities
@@ -2986,6 +3018,25 @@ def _drive_cascade(
             self._prev_step_key = complete_solve_name
             return 0
 
+        def check_run_inputs(self, steps_of_run) -> None:
+            """Before the first solve: a group limit's time map covers every time step of the run's solves
+            (:func:`~flextool.engine.preprocess.params._direct.check_group_limit_time_coverage`, read through the
+            run's reader, in the cascade's axis vocabulary like the per-solve loads).  A solve whose
+            ``reduce_system_detail_method`` leaves a limit out is not checked for it."""
+            from flextool.engine.input._axis_enums import reset_global_axis_enums, set_global_axis_enums
+            from flextool.engine.preprocess._reduce_detail import system_parts
+            from flextool.engine.preprocess.params._direct import check_group_limit_time_coverage
+
+            def _reduced(solve: str) -> frozenset:
+                return system_parts(self.state.solve.reduce_system_detail_for(solve))
+
+            token = (set_global_axis_enums(_cascade_axis_enums) if _cascade_axis_enums is not None else None)
+            try:
+                check_group_limit_time_coverage(cascade_db_reader, steps_of_run, _reduced)
+            finally:
+                if token is not None:
+                    reset_global_axis_enums(token)
+
         def run(self, complete_solve_name: str) -> int:
             _phase_prof("run_enter")
             # Slice D Guard 1 (authoritative): validate the RAW authored
@@ -3102,12 +3153,17 @@ def _drive_cascade(
             _sub_solve_provider = getattr(
                 self.state, "current_provider", None,
             )
-            data = load_flextool(
-                self.state.paths.work_folder,
-                handoff=prior_for_load,
-                db_reader=cascade_db_reader,
-                provider=_sub_solve_provider,
-            )
+            # The solve's reduce_system_detail_method parts: a limit the solve leaves out need not cover its steps.
+            from flextool.engine.preprocess._reduce_detail import system_parts as _system_parts
+            from flextool.engine.preprocess.params._direct import reduced_system_parts
+            with reduced_system_parts(_system_parts(
+                    self.state.solve.reduce_system_detail_for(complete_solve_name))):
+                data = load_flextool(
+                    self.state.paths.work_folder,
+                    handoff=prior_for_load,
+                    db_reader=cascade_db_reader,
+                    provider=_sub_solve_provider,
+                )
             # Release heap held by the broadcast cascade scratch frames.
             # On H2_trade y2050 this drops RSS ~1.6 GB / 41 %; expected
             # to scale with timeline size.  No-op on non-glibc.
@@ -3125,6 +3181,104 @@ def _drive_cascade(
                     "load_flextool_end", self.state.logger,
                     user_label="FlexData built",
                 )
+
+            # Solve-level detail reduction (solve.reduce_unit_detail_method /
+            # reduce_system_detail_method): every consumer below — the
+            # realization checks, Benders, the cold / warm build, the handoff
+            # and the outputs — reads the reduced data.  A roll and a
+            # realization solve take their base / parent solve's levels.
+            from flextool.engine.preprocess._reduce_detail import (
+                apply_reduce_detail,
+                cold_start_online_flow_carry,
+                online_gone,
+                output_static_view,
+            )
+            from flextool.engine.preprocess.params._ramp_links import check_online_ramp_carry
+            _unit_level = self.state.solve.reduce_unit_detail_for(complete_solve_name)
+            _unreduced = data
+            data, _reduce_report = apply_reduce_detail(
+                data,
+                _unit_level,
+                self.state.solve.reduce_system_detail_for(complete_solve_name),
+            )
+            _reduce_base = re.sub(r"_roll_\d+$", "", complete_solve_name)
+            if _reduce_report.warnings:
+                _warned = self.__dict__.setdefault("_reduce_detail_warned", set())
+                # One warning per chain: a realization solve repeats its parent's.
+                _warn_key = (getattr(self.state.solve, "realized_dispatch_parent", {}) or {}).get(
+                    _reduce_base, _reduce_base)
+                if _warn_key not in _warned:
+                    _warned.add(_warn_key)
+                    for _line in _reduce_report.warnings:
+                        self.state.logger.warning("Solve %s: %s", _reduce_base, _line)
+                        print(f"Warning: solve {_reduce_base}: {_line}", flush=True)
+            # One info line per solve (at its first roll) says what was left
+            # out and how the levels interact; the run status of every roll
+            # records both levels, and the first roll's entry the line too; the
+            # outputs leave the cells of the left-out features empty for this
+            # sub-solve (process_outputs.reduced_cells).
+            if _reduce_report.unit != "none" or _reduce_report.system != "none":
+                from flextool.engine.preprocess._reduce_detail import (
+                    output_entities,
+                    output_features,
+                    summary_line,
+                )
+                _info_seen = self.__dict__.setdefault("_reduce_info_printed", set())
+                _summary = None
+                if _reduce_base not in _info_seen:
+                    _info_seen.add(_reduce_base)
+                    _summary = summary_line(_reduce_report, _unreduced, _reduce_base)
+                    self.state.logger.info(_summary)
+                    print(_summary, flush=True)
+                run_record.active().solve_reduced(_reduce_report.unit, _reduce_report.system, _summary)
+                if data is not _unreduced:
+                    # Written with this sub-solve's outputs (output._writer).
+                    data.reduced_output_features = output_features(_reduce_report, _unreduced)
+                    data.reduced_output_entities = output_entities(_reduce_report)
+            # The outputs read static sets from the last sub-solve: give
+            # them the pre-transform data, except the fields every
+            # sub-solve so far reduced, so a reduced solve never erases the
+            # tables of a full one (_reduce_detail.output_static_view).
+            _everywhere = self.__dict__.get("_reduce_everywhere")
+            _everywhere = (_reduce_report.fields if _everywhere is None
+                           else _everywhere & _reduce_report.fields)
+            self._reduce_everywhere = _everywhere
+            # The processes every sub-solve so far left without online variables (the online sets of the
+            # outputs keep the others, _reduce_detail.output_static_view).
+            _gone = online_gone(_unreduced, data)
+            _gone_everywhere = self.__dict__.get("_online_gone_everywhere")
+            _gone_everywhere = _gone if _gone_everywhere is None else _gone_everywhere & _gone
+            self._online_gone_everywhere = _gone_everywhere
+            if data is not _unreduced:
+                data.output_static_data = output_static_view(data, _unreduced, _everywhere, _gone_everywhere)
+                # Only the last sub-solve's view is read: release the views of the stored earlier steps.
+                for _prev in (getattr(self, "_all_steps", None) or {}).values():
+                    _prev_fd = getattr(_prev, "flex_data", None)
+                    if _prev_fd is not None and getattr(_prev_fd, "output_static_data", None) is not None:
+                        _prev_fd.output_static_data = None
+            # A ramp-carry flow from a producer that left out online
+            # variables (online*, or under integers* those of units
+            # without a use) has no online carry: those online units start
+            # their ramp and commitment cold (the carry routing is kept).
+            # Only the processes the producer left out: any other missing
+            # online carry is an inconsistency and the check below raises.
+            _carry_left_out = getattr(self.state, "current_carry_online_left_out", frozenset()) or frozenset()
+            if _carry_left_out:
+                data, _cold = cold_start_online_flow_carry(data, _carry_left_out)
+                if _cold:
+                    _cold_msg = (
+                        f"Solve {complete_solve_name}: ramp and commitment of {', '.join(_cold)} start cold "
+                        "(the solve it continues from left out online variables, "
+                        "reduce_unit_detail_method).")
+                    _cold_seen = self.__dict__.setdefault("_reduce_cold_printed", set())
+                    if _reduce_base not in _cold_seen:
+                        _cold_seen.add(_reduce_base)
+                        self.state.logger.info(_cold_msg)
+                        print(_cold_msg, flush=True)
+            # The online carry and the ramp carry / ramp link must agree on the
+            # reduced sets (params._ramp_links): raise instead of silently
+            # falling back to a predecessor of 0.
+            check_online_ramp_carry(data)
 
             # A realization solve pins units online and reserves to the
             # stochastic solve's NA-tied values: name the hard-balance node
@@ -3987,10 +4141,43 @@ def _drive_cascade(
                 # sit in the same stdout stream as the blank separator
                 # above and HiGHS' native banner below — the GUI's
                 # ``execution_window`` parses these printed markers.
-                _eff_touched = _solve_highs_options(state, complete_solve_name, baseline=None)
-                _sa_line = _format_solver_args_line(
-                    _eff_touched, prefer_first=list(_solver_args_map or {}),
-                )
+                # A commercial solve echoes the parameters it passes, under
+                # their native names (``Solver args (gurobi): ...``), from the
+                # same resolved list ``run_one_solve`` hands to the CLI.
+                _commercial_opts = None
+                if _active_solver_cfg.name != "highs":
+                    from flextool.engine.solve._solver_dispatch import (
+                        _PARAM_MAP as _NATIVE_NAMES,
+                        commercial_opt_file_layer,
+                        resolve_commercial_options,
+                    )
+                    if _active_solver_cfg.name in _NATIVE_NAMES:
+                        _opt_text, _opt_label = commercial_opt_file_layer(
+                            _active_solver_cfg.name,
+                            solver_option_files=state.paths.solver_option_files,
+                            solver_config_dir=state.paths.solver_config_dir,
+                            run_options=run_options,
+                        )
+                        _commercial_opts = resolve_commercial_options(
+                            _active_solver_cfg.name,
+                            opt_file=_opt_label,
+                            opt_text=_opt_text,
+                            solver_config=_active_solver_cfg,
+                            run_options=run_options,
+                            solve_name=complete_solve_name,
+                            logger=state.logger,
+                        )
+                        _sa_line = _format_solver_args_line(
+                            {o.name: o.value for o in _commercial_opts},
+                            solver=_active_solver_cfg.name,
+                        )
+                    else:
+                        _sa_line = None
+                else:
+                    _eff_touched = _solve_highs_options(state, complete_solve_name, baseline=None)
+                    _sa_line = _format_solver_args_line(
+                        _eff_touched, prefer_first=list(_solver_args_map or {}),
+                    )
                 if _sa_line:
                     print(_sa_line, flush=True)
                 _phase_prof("solve_start")
@@ -4004,6 +4191,8 @@ def _drive_cascade(
                     work_folder=state.paths.work_folder,
                     run_options=run_options,
                     solver_config_dir=state.paths.solver_config_dir,
+                    commercial_options=_commercial_opts,
+                    solver_option_files=state.paths.solver_option_files,
                 )
                 _t_solve_end = (
                     time.perf_counter() if _phase_timing else 0.0
@@ -4158,7 +4347,9 @@ def _drive_cascade(
                 if _acc.scaling_hint:
                     print(_acc.scaling_hint, flush=True)
                 return 1
-            if _acc.near_optimal:
+            if _acc.time_limited:
+                self.state.logger.warning(_acc.message)
+            elif _acc.near_optimal:
                 self.state.logger.info(_acc.message)
             if _acc.above_fixed_ceiling:
                 from flextool.engine import _behaviour_changes
@@ -4274,6 +4465,10 @@ def _drive_cascade(
                     seconds=time.perf_counter() - _t_bhf_start,
                     t_start=_t_bhf_start,
                 )
+            # The producer's unit level travels with the routed carriers
+            # (a later solve that keeps online variables starts cold).
+            handoff.unit_detail = _unit_level
+            handoff.online_left_out = _gone
             # Deposit so the next iteration's translator picks it up
             # AND we have it for the result dict.
             self.state.handoffs[complete_solve_name] = handoff
@@ -4609,75 +4804,6 @@ def _drive_cascade(
     return results
 
 
-# ---------------------------------------------------------------------------
-# Solver-config work-folder seeding
-# ---------------------------------------------------------------------------
-
-# The five solvers whose ``<solver>.opt`` files FlexTool manages.  Kept in
-# sync with the seed list in
-# :func:`flextool.update_flextool.self_update.ensure_runtime_files`.
-_SOLVER_CONFIG_NAMES = ("highs", "gurobi", "cplex", "xpress", "copt")
-
-
-def _seed_work_folder_solver_config(
-    work_folder: Path,
-    source_dir: Path,
-    logger: logging.Logger,
-) -> Path:
-    """Populate ``<work_folder>/solver_config/`` with per-solver ``.opt`` files.
-
-    For each of :data:`_SOLVER_CONFIG_NAMES`, copy a ``<solver>.opt`` into
-    ``<work_folder>/solver_config/`` so the run is self-contained and
-    repeatable, and both the in-process and subprocess solve paths read the
-    *same* files.
-
-    Copy-if-missing: a ``<solver>.opt`` already present in the work folder is
-    left untouched, so a user can hand-tweak a work-folder opt file and re-run
-    with it.
-
-    Source per file (first that exists wins):
-
-    1. ``<source_dir>/<solver>.opt`` — the operator's active/edited file (or an
-       explicitly-passed ``solver_config_dir``).
-    2. the packaged ``solver_config/<solver>.opt.template``.
-
-    If neither exists for a given solver, that solver is skipped silently.
-
-    Returns the destination directory (``<work_folder>/solver_config``).  Any
-    failure is logged as a WARNING and swallowed — seeding must never fail the
-    run.
-    """
-    dest_dir = work_folder / "solver_config"
-    try:
-        from flextool._resources import package_data_path
-
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        for _solver in _SOLVER_CONFIG_NAMES:
-            dest = dest_dir / f"{_solver}.opt"
-            if dest.exists():
-                # Do not clobber a work-folder file the user may have edited.
-                continue
-            src = source_dir / f"{_solver}.opt"
-            if not src.is_file():
-                try:
-                    src = Path(
-                        package_data_path(f"solver_config/{_solver}.opt.template")
-                    )
-                except Exception:
-                    src = None  # type: ignore[assignment]
-                if src is None or not src.is_file():
-                    # No operator file and no bundled template — skip silently.
-                    continue
-            shutil.copy2(str(src), str(dest))
-    except Exception as exc:  # pragma: no cover — defensive; never fail a run
-        logger.warning(
-            "Seeding %s failed (%s); solver options fall back to defaults.",
-            dest_dir,
-            exc,
-        )
-    return dest_dir
-
-
 AXIS_ENUMS_ENV = "FLEXTOOL_AXIS_ENUMS"
 
 AXIS_ENUMS_WARNING = (
@@ -4723,6 +4849,7 @@ def run_chain_from_db(
     csv_dump: bool = False,
     override_provider: "Callable[[], dict[str, pl.DataFrame]] | None" = None,
     run_options: "RunOptions | None" = None,
+    solver_config_source: "SolverConfigSource | None" = None,
 ) -> dict[str, OrchestrationStep]:
     """Run a flextool multi-solve scenario end-to-end natively.
 
@@ -4750,9 +4877,13 @@ def run_chain_from_db(
     work_folder : Path | str, optional
         Where to materialise the CSVs.  ``None`` uses an auto-cleaned
         tempdir.
-    flextool_dir, solver_config_dir : Path, optional
-        Override the default flextool install location.  Default:
-        ``/home/jkiviluo/sources/flextool/{flextool,bin}``.
+    flextool_dir : Path, optional
+        Override the installed flextool package directory.
+    solver_config_dir : Path, optional
+        The folder of the solver option files (``highs.opt``, ``gurobi.opt``,
+        ...); wins over ``--solver-config-dir`` / ``FLEXTOOL_SOLVER_CONFIG_DIR``
+        and the database-layout search
+        (:func:`flextool._solver_config_source.resolve_solver_config_source`).
     logger : logging.Logger, optional
         Logger to use.  ``None`` constructs one named after the scenario.
     warm : bool, default True
@@ -4776,6 +4907,9 @@ def run_chain_from_db(
         flags over the environment).  ``None`` resolves them from the
         environment variables alone (Spine Toolbox tools, a Python
         console, tests).  Stored on ``RunnerState.run_options``.
+    solver_config_source : SolverConfigSource, optional
+        The option-file folder already resolved by the caller (the CLI, which
+        shows it in its run header); ``None`` resolves it here.
 
     Returns
     -------
@@ -4796,6 +4930,10 @@ def run_chain_from_db(
             "to that scenario. Pass the scenario to run (CLI: --scenario-name)."
         )
     from flextool.engine.input._db_loader import FlexToolRunner
+
+    # The timeset block warnings of this run, shared by its two TimelineConfig construction sites so each is
+    # printed once per run (a new run starts with a new set).
+    _timeset_warned: set[tuple] = set()
 
     if logger is None:
         logger = logging.getLogger(
@@ -4846,40 +4984,32 @@ def run_chain_from_db(
 
     # ``flextool_dir`` defaults to the installed flextool package directory
     # (resolved via importlib.resources so it works both editable and wheel).
-    # ``solver_config_dir`` defaults to ``<cwd>/solver_config`` — this is where the user's
-    # editable ``highs.opt`` lives; the package's ``highs.opt.template``
-    # is only used to seed that file on first run.
     from flextool._resources import package_data_path
     flextool_dir_resolved = (
         Path(flextool_dir) if flextool_dir is not None
         else package_data_path("")
     )
-    # Seeding SOURCE precedence: explicit ``solver_config_dir`` arg >
-    # ``$FLEXTOOL_SOLVER_CONFIG_DIR`` (a user / CI override; only read, never
-    # written, so a second run in the same process seeds from the same source
-    # as the first) > ``<cwd>/solver_config``.
-    _env_solver_config = os.environ.get("FLEXTOOL_SOLVER_CONFIG_DIR")
-    if solver_config_dir is not None:
-        solver_config_dir_resolved = Path(solver_config_dir)
-    elif _env_solver_config:
-        solver_config_dir_resolved = Path(_env_solver_config)
-    else:
-        solver_config_dir_resolved = Path.cwd() / "solver_config"
-
-    # Make the run self-contained and repeatable: copy the active
-    # ``<solver>.opt`` files into ``<work_folder>/solver_config/`` (copy-if-
-    # missing so a hand-tweaked work-folder file survives a re-run), then
-    # point BOTH solve paths at that copy.  The GUI's cwd is frequently not
-    # the folder that holds the project's ``highs.opt``; reading from the
-    # work-folder copy instead of ``<cwd>/solver_config`` ensures project-
-    # level solver options are actually applied, and leaves a durable on-disk
-    # record of exactly which options the run used.
-    _workdir_solver_config = _seed_work_folder_solver_config(
-        work_folder, solver_config_dir_resolved, logger
+    # The solver option files: one folder per run (explicit argument >
+    # --solver-config-dir > FLEXTOOL_SOLVER_CONFIG_DIR > the database layout >
+    # the Toolbox project folder > the current folder > FlexTool's defaults),
+    # read ONCE here and kept on ``state.paths.solver_option_files``, so every
+    # roll and solve uses the files as they were at run start.  The copy under
+    # ``solve_data/solver_config/`` is the record of what the run used; it is
+    # written afresh every run and never read back.
+    from flextool._solver_config_source import (
+        resolve_solver_config_source,
+        snapshot_solver_option_files,
     )
-    # Every solve path reads this copy: ``state.paths.solver_config_dir`` feeds
-    # the HiGHS options and is passed to the commercial-solver subprocess path.
-    solver_config_dir_resolved = _workdir_solver_config
+    if solver_config_source is None or solver_config_dir is not None:
+        solver_config_source = resolve_solver_config_source(
+            explicit=solver_config_dir, run_options=run_options, input_db_url=db_url,
+        )
+    from flextool.engine.solve._solver_dispatch import reset_run_warnings
+    reset_run_warnings()
+    solver_option_files = snapshot_solver_option_files(solver_config_source, work_folder, logger)
+    solver_config_dir_resolved = (
+        solver_option_files.snapshot_dir or solver_config_source.dir
+    )
 
     # Cascade-input Provider population from the Spine DB.  Pure
     # in-memory: ``write_workdir_inputs`` runs the input_derivation
@@ -4925,6 +5055,14 @@ def run_chain_from_db(
     from flextool.engine.input._axis_enums import reset_global_axis_enums, set_global_axis_enums
     _axis_enums_token = set_global_axis_enums(cascade_input_provider.axis_enums)
     try:
+        # ``read_input`` timing row: the DB read, the input preparation and
+        # the run set-up (solve and timeline configuration, runner) up to the
+        # runner's construction, before ``preprocessing_global``.  The runner
+        # built in ``_runner_factory`` below makes the recorder that starts
+        # timings.csv afresh, so the row is recorded there, once the runner
+        # exists, and only by the first call.
+        _t_read_input_start = time.perf_counter()
+        _read_input_recorded = False
         write_workdir_inputs(
             db_url,
             scenario_name,
@@ -4947,6 +5085,7 @@ def run_chain_from_db(
         # preprocessing chain (``preprocessing_solve_time``,
         # ``solve_writers``, ``handoff_writers``).  No write_input call.
         def _runner_factory() -> "FlexToolRunner":
+            nonlocal _read_input_recorded
             runner = FlexToolRunner(
                 input_db_url=db_url,
                 scenario_name=scenario_name,
@@ -4954,8 +5093,17 @@ def run_chain_from_db(
                 solver_config_dir=solver_config_dir_resolved,
                 work_folder=work_folder,
                 run_options=run_options,
+                timeset_warned=_timeset_warned,
             )
             runner.state.logger.setLevel(logging.ERROR)
+            _recorder = runner.state.timing_recorder
+            if _recorder is not None and not _read_input_recorded:
+                _read_input_recorded = True
+                _recorder.record(
+                    "read_input",
+                    seconds=time.perf_counter() - _t_read_input_start,
+                    t_start=_t_read_input_start,
+                )
             return runner
 
         # Build a minimal native RunnerState so callers can introspect
@@ -4970,21 +5118,19 @@ def run_chain_from_db(
                            user_label="SolveConfig loaded (from DB)")
         tc = TimelineConfig.load_from_db_url(db_url, scenario_name, logger=logger)
         tc.create_assumptive_parts(sc)
+        tc.validate_timeset_blocks(sc, _timeset_warned)
         tc.create_timeline_from_timestep_duration(sc)
         _memrec.checkpoint("timeline_constructed", logger,
                            user_label="TimelineConfig constructed (from DB)")
 
         state = RunnerState(
-            # ``solver_config_dir`` MUST be carried here: this is the state the
-            # per-solve loop reads when it resolves ``<dir>/highs.opt`` for the
-            # in-process HiGHS options (``_highs_opt_path`` in the solve loop).
-            # Omitting it leaves ``solver_config_dir`` None, so the ``highs.opt``
-            # floor is silently dropped on the in-process path even though the
-            # factory runner below got the dir.  It points at the work-folder
-            # copy seeded above.
+            # The solver option files MUST be carried here: this is the state the
+            # per-solve loop reads its ``highs.opt`` / ``<solver>.opt`` layer
+            # from.  Omitting them silently drops the option-file floor.
             paths=PathConfig(
                 work_folder=work_folder,
                 solver_config_dir=solver_config_dir_resolved,
+                solver_option_files=solver_option_files,
             ),
             solve=sc,
             logger=logger,

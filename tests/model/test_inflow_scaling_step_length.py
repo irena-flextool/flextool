@@ -2,7 +2,7 @@
 
 The method maps the profile affinely, ``new = (peak/peak_old)(1 + c) old − peak c``, with ``c`` chosen so the
 annualised sum meets ``annual_flow``; the annual sum of a constant peak is ``peak × (time steps in the period) /
-(period share of the year)`` (docs/how_to.md "How to set the demand in a node").  It used to be ``peak × 8760``,
+(period share of the year)`` (docs/how_to/basics.md "How to set the demand in a node").  It used to be ``peak × 8760``,
 right only on 1 h steps.  ``peak_inflow`` and ``inflow`` are energy per time step of the timeline; a solve with
 ``new_stepduration`` scales each original time step as the solve without it does and sums them into its steps.
 

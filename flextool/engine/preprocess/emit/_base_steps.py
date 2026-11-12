@@ -2,7 +2,8 @@
 
 ``TimelineConfig.create_averaged_timeseries`` writes ``solve_data/new_step_base_steps``: one row per original time
 step of the coarsened timeline, ``time`` (the original step), ``new_step`` (the solve's time step that combines it;
-its label is its first original step) and ``value`` (how many original steps that new step combines).  A solve
+its label is its first original step), ``value`` (how many original steps that new step combines), ``duration``
+(the original step's hours) and ``pos`` (its position in the timeline).  A solve
 without ``new_stepduration`` gets an empty frame, so a later uncoarsened solve never reads an earlier solve's
 rows.  An absent or empty frame means every solve step is one original step.
 
@@ -18,7 +19,8 @@ import polars as pl
 from flextool.engine.preprocess._provider_io import _provider_key
 
 NEW_STEP_BASE_STEPS = "new_step_base_steps.csv"
-NEW_STEP_BASE_STEPS_SCHEMA = {"time": pl.Utf8, "new_step": pl.Utf8, "value": pl.Float64}
+NEW_STEP_BASE_STEPS_SCHEMA = {"time": pl.Utf8, "new_step": pl.Utf8, "value": pl.Float64, "duration": pl.Float64,
+                              "pos": pl.Int64}
 
 
 def read_new_step_base_steps(solve_data_dir: Path, *, provider) -> tuple[dict[str, float], frozenset[str]]:

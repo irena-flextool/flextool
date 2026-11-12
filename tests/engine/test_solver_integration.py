@@ -27,6 +27,7 @@ the FlexTool surface even when polar-high's internal layout drifts.
 """
 from __future__ import annotations
 
+import json
 import logging
 import sys
 from pathlib import Path
@@ -344,7 +345,7 @@ def test_solver_options_passthrough(
        parameter-file argument and ignores ``ReadParams=<file>``).
 
     The subprocess itself is mocked — we synthesise a minimal Gurobi
-    ``.sol`` as a side effect so the parser + downstream
+    JSON result file as a side effect so the parser + downstream
     ``setSolution`` plumbing still exercises real code.  The assertions
     target the constructed argv and the merged opt-file contents that
     Gurobi would actually have seen.
@@ -381,20 +382,23 @@ def test_solver_options_passthrough(
         # Persist argv + the opt-file contents for assertions below.
         captured["argv"] = list(argv)
         captured["kwargs"] = kwargs
-        # Locate the ResultFile=<path> argv token and write a minimal
-        # Gurobi-style .sol so the parser returns OPTIMAL.  The single
-        # primal value (for column "x[a]") matches _make_minimal_problem.
+        # Locate the ResultFile=<name> argv token and write a minimal
+        # Gurobi JSON result (FlexTool asks for ``<solve>.json``: it
+        # carries the status whatever the console logging) so the parser
+        # returns OPTIMAL.  The program runs in ``cwd`` with bare file
+        # names, so the name resolves against it.  The single primal value
+        # is the generic MPS name of _make_minimal_problem's only column.
         sol_arg = next(
             (a for a in argv if isinstance(a, str)
              and a.startswith("ResultFile=")),
             None,
         )
         if sol_arg is not None:
-            sol_path = Path(sol_arg.split("=", 1)[1])
-            sol_path.write_text(
-                "# Objective value = 1.0\n"
-                "x[a] 1.0\n"
-            )
+            sol_path = Path(kwargs["cwd"]) / sol_arg.split("=", 1)[1]
+            sol_path.write_text(json.dumps({
+                "SolutionInfo": {"Status": 2, "ObjVal": 1.0, "SolCount": 1},
+                "Vars": [{"VarName": "C0000001", "X": 1.0}],
+            }))
 
         class _CP:
             returncode = 0
@@ -462,8 +466,8 @@ def test_solver_options_passthrough(
     [
         ("highs",  "time_limit", "mip_rel_gap",          "threads"),
         ("gurobi", "TimeLimit",  "MIPGap",                "Threads"),
-        ("cplex",  "timelimit",  "mip.tolerances.mipgap", "threads"),
-        ("xpress", "maxtime",    "miprelstop",            "threads"),
+        ("cplex",  "timelimit",  "mip tolerances mipgap", "threads"),
+        ("xpress", "MAXTIME",    "MIPRELSTOP",            "THREADS"),
         ("copt",   "TimeLimit",  "RelGap",                "Threads"),
     ],
 )

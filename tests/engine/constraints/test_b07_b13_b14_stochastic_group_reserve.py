@@ -124,7 +124,7 @@ def test_b13_inertia_source_and_sink_separately(toy_group_reserve):
     p_src_iner = Param(("p", "source"),
         pl.DataFrame({"p": ["u"], "source": ["FUEL_n"], "value": [1.0]}))
     groupInertia = pl.DataFrame({"g": ["g"]})
-    pdGroup_inertia_limit = Param(("g", "d"),
+    pdtGroup_inertia_limit = Param(("g", "d"),
         pl.DataFrame({"g": ["g"], "d": ["d1"], "value": [100.0]}))
     pdGroup_penalty_inertia = Param(("g", "d"),
         pl.DataFrame({"g": ["g"], "d": ["d1"], "value": [1.0]}))
@@ -135,7 +135,7 @@ def test_b13_inertia_source_and_sink_separately(toy_group_reserve):
         process_source_inertia=process_source_inertia,
         p_process_sink_inertia_constant=p_sink_iner,
         p_process_source_inertia_constant=p_src_iner,
-        pdGroup_inertia_limit=pdGroup_inertia_limit,
+        pdtGroup_inertia_limit=pdtGroup_inertia_limit,
         pdGroup_penalty_inertia=pdGroup_penalty_inertia,
     )
     pb, sol = _solve(data)
@@ -204,7 +204,7 @@ def test_b13_non_sync_inside_exclusion(toy_group_reserve):
         {"p": ["u", "u2"], "sink": ["n1", "n1"]})
     process_group_inside_nonSync = pl.DataFrame({"p": ["u2"], "g": ["g"]})
     groupNonSync = pl.DataFrame({"g": ["g"]})
-    pdGroup_non_synchronous_limit = Param(("g", "d"),
+    pdtGroup_non_synchronous_limit = Param(("g", "d"),
         pl.DataFrame({"g": ["g"], "d": ["d1"], "value": [0.5]}))
     pdGroup_penalty_non_synchronous = Param(("g", "d"),
         pl.DataFrame({"g": ["g"], "d": ["d1"], "value": [1.0]}))
@@ -220,7 +220,7 @@ def test_b13_non_sync_inside_exclusion(toy_group_reserve):
         groupNonSync=groupNonSync,
         process_sink_nonSync=process_sink_nonSync,
         process_group_inside_nonSync=process_group_inside_nonSync,
-        pdGroup_non_synchronous_limit=pdGroup_non_synchronous_limit,
+        pdtGroup_non_synchronous_limit=pdtGroup_non_synchronous_limit,
         pdGroup_penalty_non_synchronous=pdGroup_penalty_non_synchronous,
         # Disable reserve subsystem.
         reserve_upDown_group=None,

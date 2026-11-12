@@ -127,7 +127,7 @@ def test_ensure_results_db_creates_schema(tmp_path):
     ensure_results_db(url)
     with DatabaseMapping(url) as db:
         assert len(db.get_entity_class_items()) == 12
-        assert len(db.get_parameter_definition_items()) == 61
+        assert len(db.get_parameter_definition_items()) == 67
         assert [a["name"] for a in db.get_alternative_items()] == ["Base"]
     # idempotent: second call is a no-op and does not raise
     ensure_results_db(url)
@@ -211,6 +211,59 @@ def test_cost_breakdown_by_entity_round_trips(tmp_path):
                     .get_value("s1").get_value("p2020") == 3.5)
             assert (val.get_value("co2")
                     .get_value("s1").get_value("p2020") == 1.25)
+
+
+def _capacity_margin_frames():
+    """``nodeGroup_capacity_margin_d_g`` and ``_entity_d_g`` as ``out_ancillary.capacity_margin`` builds them: rows
+    (solve, period, group, binding_time), columns the measures / (class, entity)."""
+    idx = pd.MultiIndex.from_tuples([("s1", "p2020", "g1", "t02")],
+                                    names=["solve", "period", "group", "binding_time"])
+    summary = pd.DataFrame({"requirement": [1050.0], "firm": [1000.0], "shortfall": [50.0]}, index=idx)
+    summary.columns = pd.Index(summary.columns, name="parameter")
+    cols = pd.MultiIndex.from_tuples([("firm", "u1"), ("connection", "c1")], names=["class", "entity"])
+    entity = pd.DataFrame([[1000.0, -20.0]], index=idx, columns=cols)
+    return summary, entity
+
+
+def test_capacity_margin_tables_round_trip(tmp_path):
+    """``group.capacity_margin`` and ``group.capacity_margin_contribution`` are Map(category -> solve -> period);
+    the binding step is not carried (it is in the CSV / parquet tables, as the schema description says)."""
+    url = "sqlite:///" + str(tmp_path / "results.sqlite")
+    summary, entity = _capacity_margin_frames()
+    results = {"nodeGroup_capacity_margin_d_g": summary, "nodeGroup_capacity_margin_entity_d_g": entity}
+    assert write_spinedb(results, StubS(), url, "scenCM", "s1") > 0
+    with DatabaseMapping(url) as db:
+        margin = _read_value(db, "group", ("g1",), "capacity_margin", "scenCM")
+        assert set(margin.indexes) == {"requirement", "firm", "shortfall"}
+        assert margin.get_value("shortfall").get_value("s1").get_value("p2020") == 50.0
+        assert margin.get_value("requirement").get_value("s1").get_value("p2020") == 1050.0
+        contribution = _read_value(db, "group", ("g1",), "capacity_margin_contribution", "scenCM")
+        assert set(contribution.indexes) == {"firm__u1", "connection__c1"}
+        assert contribution.get_value("connection__c1").get_value("s1").get_value("p2020") == -20.0
+
+
+def test_reserve_requirement_tables_round_trip(tmp_path):
+    """#234: ``group__reserve__upDown.requirement_t`` is Map(quantity -> solve -> period -> time) and
+    ``requirement`` Map(quantity -> solve -> period), keyed (reserve, upDown, group); the per-provider table has no
+    mapping (it would need a five-dimensional class)."""
+    from flextool.process_outputs.write_spinedb import SPINEDB_OUTPUT_SPEC
+
+    url = "sqlite:///" + str(tmp_path / "results.sqlite")
+    cols = pd.MultiIndex.from_tuples([("r1", "up", "g1", "requirement"), ("r1", "up", "g1", "shortfall")],
+                                     names=["reserve", "updown", "node_group", "quantity"])
+    dt = pd.DataFrame([[30.0, 10.0], [50.0, 30.0]], index=_dt_index(), columns=cols)
+    pcols = pd.MultiIndex.from_tuples([("r1", "up", "g1", "requirement_avg"), ("r1", "up", "g1", "shortfall_max")],
+                                      names=["reserve", "updown", "node_group", "quantity"])
+    period = pd.DataFrame([[40.0, 30.0]], index=pd.Index(["p2020"], name="period"), columns=pcols)
+    results = {"nodeGroup_reserve_dt_eegp": dt, "nodeGroup_reserve_d_eegp": period}
+    assert write_spinedb(results, StubS(), url, "scenR", "s1") > 0
+    assert "nodeGroup_reserve_provider_dt_eegee" not in SPINEDB_OUTPUT_SPEC
+    with DatabaseMapping(url) as db:
+        per_step = _read_value(db, "group__reserve__upDown", ("r1", "up", "g1"), "requirement_t", "scenR")
+        assert set(per_step.indexes) == {"requirement", "shortfall"}
+        assert per_step.get_value("shortfall").get_value("s1").get_value("p2020").get_value("t02") == 30.0
+        per_period = _read_value(db, "group__reserve__upDown", ("r1", "up", "g1"), "requirement", "scenR")
+        assert per_period.get_value("requirement_avg").get_value("s1").get_value("p2020") == 40.0
 
 
 def test_two_runs_two_alternatives(tmp_path):
@@ -402,7 +455,7 @@ def test_concurrent_cold_start_creates_one_valid_db(tmp_path):
     assert not leftovers, f"leftover temp DBs: {leftovers}"
     with DatabaseMapping(url) as db:
         assert len(db.get_entity_class_items()) == 12
-        assert len(db.get_parameter_definition_items()) == 61
+        assert len(db.get_parameter_definition_items()) == 67
 
     # The DB stays usable for an append after the concurrent create.
     write_spinedb({"unit_outputNode_dt_ee": _flow_df()}, StubS(), url,
@@ -552,7 +605,7 @@ def test_top_up_restores_missing_param_def(tmp_path):
         assert it["description"].startswith(expected_unit), (
             f"restored description missing derived unit {expected_unit!r}: "
             f"{it['description']!r}")
-        assert len(db.get_parameter_definition_items()) == 61
+        assert len(db.get_parameter_definition_items()) == 67
 
     # End-to-end: the previously-crashing write now round-trips.
     s = StubS()
@@ -609,7 +662,7 @@ def test_top_up_restores_missing_entity_class(tmp_path):
         assert any(p["entity_class_name"] == "group"
                    for p in db.get_parameter_definition_items())
         assert len(db.get_entity_class_items()) == 12
-        assert len(db.get_parameter_definition_items()) == 61
+        assert len(db.get_parameter_definition_items()) == 67
 
 
 def test_top_up_excludes_alternatives(tmp_path):
@@ -642,7 +695,7 @@ def test_concurrent_top_up_on_stale_shared_db(tmp_path):
     ensure_results_db(url)
     _remove_param_def(url, "node", "cost_annualized")
     with DatabaseMapping(url) as db:
-        assert len(db.get_parameter_definition_items()) == 60
+        assert len(db.get_parameter_definition_items()) == 66
 
     ctx = mp.get_context("spawn")
     n = 6
@@ -654,7 +707,7 @@ def test_concurrent_top_up_on_stale_shared_db(tmp_path):
         defs = db.get_parameter_definition_items(
             entity_class_name="node", name="cost_annualized")
         assert len(defs) == 1, f"expected exactly one def, got {len(defs)}"
-        assert len(db.get_parameter_definition_items()) == 61
+        assert len(db.get_parameter_definition_items()) == 67
         assert len(db.get_entity_class_items()) == 12
 
     # No leftover temp DBs; the sidecar lock (if present) is not held.

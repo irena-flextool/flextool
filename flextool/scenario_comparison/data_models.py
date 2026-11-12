@@ -6,7 +6,7 @@ DispatchMappings — dispatch mapping DataFrames combined across scenarios (scen
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 
 import pandas as pd
 
@@ -50,6 +50,8 @@ class TimeSeriesResults:
       1. Add a field below with type ``pd.DataFrame | None = None``
       2. The field name must exactly match the parquet filename (without .parquet)
       3. from_dict() will populate it automatically; a warning flags unknown files
+         (tests/scenario_comparison/test_data_models_registry.py checks every processed parquet table of
+         ``engine.output._parquet_bundle.REGISTRY`` has a field)
     """
 
     # --- Unit outputs ---
@@ -70,6 +72,8 @@ class TimeSeriesResults:
     unit_online_dt_e: pd.DataFrame | None = None
     unit_online_average_d_e: pd.DataFrame | None = None
     unit_startup_d_e: pd.DataFrame | None = None
+    unit_startup_energy_dt_ee: pd.DataFrame | None = None
+    unit_startup_energy_d_ee: pd.DataFrame | None = None
     unit_capacity_ed_p: pd.DataFrame | None = None
 
     # --- Connection outputs ---
@@ -106,24 +110,33 @@ class TimeSeriesResults:
     nodeGroup_flows_dt_g: pd.DataFrame | None = None
     nodeGroup_gd_p: pd.DataFrame | None = None
     nodeGroup_gdt_p: pd.DataFrame | None = None
+    nodeGroup_g_p: pd.DataFrame | None = None            # horizon totals (energy ratios)
     nodeGroup_VRE_share_d_g: pd.DataFrame | None = None
     nodeGroup_VRE_share_dt_g: pd.DataFrame | None = None
+    nodeGroup_VRE_share_g: pd.DataFrame | None = None    # horizon total (energy ratio)
     nodeGroup_inertia_dt_g: pd.DataFrame | None = None
     nodeGroup_inertia_largest_flow_dt_g: pd.DataFrame | None = None
     nodeGroup_unit_node_inertia_dt_gee: pd.DataFrame | None = None
     nodeGroup_slack_capacity_margin_d_g: pd.DataFrame | None = None
+    nodeGroup_capacity_margin_d_g: pd.DataFrame | None = None
+    nodeGroup_capacity_margin_entity_d_g: pd.DataFrame | None = None
     nodeGroup_slack_inertia_d_g: pd.DataFrame | None = None
     nodeGroup_slack_inertia_dt_g: pd.DataFrame | None = None
     nodeGroup_slack_nonsync_d_g: pd.DataFrame | None = None
     nodeGroup_slack_nonsync_dt_g: pd.DataFrame | None = None
     nodeGroup_slack_reserve_d_eeg: pd.DataFrame | None = None
     nodeGroup_slack_reserve_dt_eeg: pd.DataFrame | None = None
+    nodeGroup_reserve_dt_eegp: pd.DataFrame | None = None
+    nodeGroup_reserve_d_eegp: pd.DataFrame | None = None
+    nodeGroup_reserve_provider_dt_eegee: pd.DataFrame | None = None
 
     # --- Costs ---
     costs_dt_p: pd.DataFrame | None = None
     costs_discounted_d_p: pd.DataFrame | None = None
     costs_discounted_p_: pd.DataFrame | None = None
     annualized_costs_d_p: pd.DataFrame | None = None
+    discountFactors_d_p: pd.DataFrame | None = None      # debug runs only
+    entity_annuity_d_p: pd.DataFrame | None = None       # debug runs only
 
     # --- Per-entity cost break-down (unit/connection/node, period level) ---
     cost_unit_annualized_d_ec: pd.DataFrame | None = None
@@ -149,6 +162,7 @@ class TimeSeriesResults:
     # --- Other ---
     reserve_prices_dt_ppg: pd.DataFrame | None = None
     years_represented__d: pd.DataFrame | None = None
+    period_share_of_year__d: pd.DataFrame | None = None
     dual_invest_effective_node_d_e: pd.DataFrame | None = None
     dual_invest_effective_unit_d_e: pd.DataFrame | None = None
     dual_invest_effective_connection_d_e: pd.DataFrame | None = None
@@ -157,29 +171,48 @@ class TimeSeriesResults:
     flowGroup_gd_p: pd.DataFrame | None = None
     flowGroup_gd_t: pd.DataFrame | None = None
 
+    # --- Not a result: each scenario's own rows of each combined frame ---
+    # {variable: {scenario: row index of that scenario's file, in file order}}.
+    # The combined frames are the scenarios side by side, so their row index is
+    # the union of the scenarios' steps in first-seen order; this keeps each
+    # scenario's own steps and their order (see combine_parquet_files).
+    scenario_rows: dict[str, dict[str, pd.Index]] = field(default_factory=dict, repr=False)
+
     def to_dict(self) -> dict[str, pd.DataFrame]:
         """All non-None DataFrames as a dict, for plot_dict_of_dataframes()."""
         return {
             f.name: getattr(self, f.name)
             for f in fields(self)
-            if getattr(self, f.name) is not None
+            if f.name != 'scenario_rows' and getattr(self, f.name) is not None
         }
 
+    def own_rows(self, name: str, scenario: str) -> pd.Index | None:
+        """The rows of *scenario* in the combined frame *name*, in its file order (None if not recorded)."""
+        return self.scenario_rows.get(name, {}).get(scenario)
+
     @classmethod
-    def from_dict(cls, d: dict[str, pd.DataFrame]) -> TimeSeriesResults:
+    def from_dict(
+        cls,
+        d: dict[str, pd.DataFrame],
+        scenario_rows: dict[str, dict[str, pd.Index]] | None = None,
+    ) -> TimeSeriesResults:
         """Build from the raw dict produced by combine_parquet_files().
 
+        *scenario_rows* is the ``row_order`` that combine_parquet_files() filled.
         Warns about unknown keys (signals a field needs to be added).
         Dispatch mapping files (loaded separately) are silently excluded.
         """
-        known = {f.name for f in fields(cls)}
+        known = {f.name for f in fields(cls)} - {'scenario_rows'}
         unknown = set(d.keys()) - known - _DISPATCH_MAPPING_FILENAMES
         if unknown:
             print(
                 f"Warning: Result variables not registered in TimeSeriesResults "
                 f"(add fields to data_models.py): {sorted(unknown)}"
             )
-        return cls(**{k: v for k, v in d.items() if k in known})
+        return cls(
+            **{k: v for k, v in d.items() if k in known},
+            scenario_rows=dict(scenario_rows or {}),
+        )
 
 
 @dataclass

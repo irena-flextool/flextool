@@ -75,11 +75,10 @@ LAYER_ORIENTATION = (
     "number, not a scenario name. Result table names: _dt_ means per period and timestep, _d_ means per period; the "
     "entity classes come first (for example unit, node, connection).\n"
     "\n"
-    "Units of measure are a convention; FlexTool does not check them. MW, MWh and CUR (the model currency) are the "
-    "documented defaults and result labels always use them, but a model may use other units consistently, for "
-    "example kg/h and kg for a hydrogen node. When a node, commodity or description suggests other units, ask, or "
-    "say the values are in the model's own units; do not assert MW. Time steps are in hours and lifetimes in "
-    "years.\n"
+    "Units: give the unit the tool returns. A node's unit_of_measure (default MWh) sets its units: amounts in that "
+    "unit, flows in that unit per hour (MW for MWh), prices per that unit; CUR is the model currency. Mention a "
+    "doubt only when a node's name or description contradicts its unit. Demand is stored as negative inflow; when "
+    "you say demand, give it as a positive number.\n"
     "\n"
     "Parameters can be a constant, a value per period, a time series or a map; the tools say which. Start from an "
     "entity with get_entity."
@@ -87,8 +86,8 @@ LAYER_ORIENTATION = (
 
 # --- layer 3: documentation map ------------------------------------------------------------------------------------
 LAYER_DOCUMENTS = (
-    "Documents to fetch with search_docs and read_doc (do not rely on memory): reference.md for parameters and "
-    '"Units of measure"; results.md and results_catalogue.md for outputs; how_to.md for modelling methods; '
+    "Documents to fetch with search_docs and read_doc (do not rely on memory): reference/*.md for parameters and "
+    '"Units of measure"; results.md and results_catalogue.md for outputs; how_to/*.md for modelling methods; '
     'formulation.md, or search_docs with kind "formulations", for equations; env_vars.md for run options, flags, '
     "environment variables and their precedence."
 )
@@ -142,15 +141,34 @@ AGENT_DATA_SENTENCE = (
 )
 
 
-def instructions(project_name: str, redact: Callable[[str], str] | None = None) -> str:
+#: What the connection asks of an agent whose level lists get_gui_context (the model facts are in its result).
+GUI_CONTEXT_FIRST = (
+    "Call get_gui_context first: its model_facts give the scenario's solves, time step lengths, periods and "
+    "latest run, so you need not guess them."
+)
+#: The *tier* of :func:`instructions` for a connection without a level (``--tier`` not given): every tool.
+NO_LEVEL = "none"
+
+
+def instructions(project_name: str, redact: Callable[[str], str] | None = None, tier: str | None = None) -> str:
     """The instructions the connection server sends when an AI agent connects to the project *project_name*: the
     preamble, the data sentence, the rules of layer 1 and layers 2 and 3.  The project's folder name is a name from
-    the user's computer: quoted, one line, redacted (*redact*) and cut, as the tool messages quote names."""
+    the user's computer: quoted, one line, redacted (*redact*) and cut, as the tool messages quote names.
+
+    *tier* is the connection's level (internal or user-facing name, :data:`NO_LEVEL` for a connection without
+    one): when that level lists ``get_gui_context``, :data:`GUI_CONTEXT_FIRST` follows the data sentence.
+    ``None`` (the default) leaves it out."""
     from flextool.assistant.errors import quoted
 
     name = quoted(project_name, redact if redact is not None else (lambda s: s))
-    return "\n\n".join((MCP_PREAMBLE.format(name=name), AGENT_DATA_SENTENCE, RULES, LAYER_ORIENTATION,
-                          LAYER_DOCUMENTS))
+    parts = [MCP_PREAMBLE.format(name=name), AGENT_DATA_SENTENCE]
+    if tier is not None:
+        from flextool.assistant import registry
+
+        level = None if tier == NO_LEVEL else level_name(tier)
+        if any(t.name == "get_gui_context" for t in registry.tools_for_tier(level)):
+            parts.append(GUI_CONTEXT_FIRST)
+    return "\n\n".join((*parts, RULES, LAYER_ORIENTATION, LAYER_DOCUMENTS))
 
 
 # --- the context block --------------------------------------------------------------------------------------------
@@ -161,7 +179,9 @@ FRONT_END_LABELS: dict[str, str] = {"terminal": "terminal", "gui": "FlexTool win
 _CONTEXT_BLOCK = re.compile(re.escape(CONTEXT_START) + r".*?" + re.escape(CONTEXT_END), re.DOTALL)
 
 
-def _name(value: str | None, redact: Callable[[str], str] | None) -> str:
+def _name(value: str | None, redact: Callable[[str], str] | None, limit: int | None = None) -> str:
+    """*value* as the block shows a name: one line, nothing invisible, never the block's end marker, redacted and
+    then cut to *limit* characters (default :data:`~flextool.assistant.caps.NAME_MAX`)."""
     from flextool.assistant.caps import NAME_MAX, cap_text, clean
 
     if not value:
@@ -170,7 +190,7 @@ def _name(value: str | None, redact: Callable[[str], str] | None) -> str:
     text = text.replace(CONTEXT_END, "(end of context)")
     if redact is not None:
         text = redact(text)
-    return cap_text(text, NAME_MAX)
+    return cap_text(text, NAME_MAX if limit is None else limit)
 
 
 NONE = "none"
@@ -237,9 +257,10 @@ def _gui_lines(gui: GuiState, redact: Callable[[str], str] | None) -> list[str]:
 
 def context_block(snapshot: ContextSnapshot, redact: Callable[[str], str] | None = None) -> str:
     """The context block put at the start of a user message: the project, the input source and scenario the
-    tools use by default, in the FlexTool window also its selections and the result viewer (P2 §7), and the front
-    end.  Names are on one line, length-capped and redacted (*redact*); non-ASCII is kept.  The snapshot's time
-    is never in it, so the block changes only when what it shows changes."""
+    tools use by default, in the FlexTool window also its selections and the result viewer (P2 §7), the front
+    end, and the scenario's model facts when the snapshot has them (:mod:`flextool.assistant.model_facts`; without
+    them, or when they cannot be rendered, the block is as before).  Names are on one line, length-capped and redacted (*redact*); non-ASCII is kept.
+    The snapshot's time is never in it, so the block changes only when what it shows changes."""
     lines = [
         CONTEXT_START,
         f"Project: {_name(snapshot.project, redact)}",
@@ -248,7 +269,15 @@ def context_block(snapshot: ContextSnapshot, redact: Callable[[str], str] | None
     ]
     if snapshot.gui is not None:
         lines += _gui_lines(snapshot.gui, redact)
-    lines += [f"Front end: {FRONT_END_LABELS[snapshot.front_end]}", CONTEXT_END]
+    lines.append(f"Front end: {FRONT_END_LABELS[snapshot.front_end]}")
+    if snapshot.scenario_facts is not None:
+        from flextool.assistant.model_facts import render
+
+        try:
+            lines.append(render(snapshot.scenario_facts, redact))
+        except Exception:  # noqa: BLE001 — the facts are an aid: a failure to render them leaves them out
+            pass
+    lines.append(CONTEXT_END)
     return "\n".join(lines)
 
 
@@ -261,6 +290,11 @@ def strip_context_block(text: str) -> str:
 def remove_context_blocks(text: str) -> str:
     """*text* without any context block (a question merged with an unanswered one may hold two)."""
     return "\n\n".join(part.strip() for part in _CONTEXT_BLOCK.split(text) if part.strip())
+
+
+def context_blocks(texts: list[str]) -> list[str]:
+    """Every context block in *texts* (user messages, oldest first), in order."""
+    return [block for text in texts for block in _CONTEXT_BLOCK.findall(text)]
 
 
 def last_context_block(texts: list[str]) -> str | None:
@@ -287,20 +321,30 @@ BASIC_PLAN_SENTENCES: dict[str, str] = {
 #: level's text, so its pinned hash (tests/assistant/test_prompt_budget.py) and P3 §4.7 change with it.
 BASIC_PLAN_OPTION = "b"
 
-#: How to shape an answer (owner-approved 2026-11-11): every level's text ends with it; basic has only the
-#: lookup bullets, as it hands the other questions over.
+#: The one-value bullet's sentence for an entity the scenario does not use (owner-approved 2026-11-12).
+INACTIVE_FIRST = "If the entity is not part of the scenario, say that first."
+
+#: How to shape an answer (owner-approved 2026-11-11, revised 2026-11-12): every level's text ends with it; basic
+#: has only the lookup bullets, as it hands the other questions over.
 ANSWER_STYLE_BULLETS: tuple[str, ...] = (
     "- Start with the answer itself, in one or two plain sentences.\n",
+    "- Use plain words, with the FlexTool term in parentheses: \"demand that could not be met (upward slack)\". "
+    "Keep solver words such as right-hand side for the detail.\n",
     "- A question about one value: give the value, its unit and where it is stored (entity and parameter, "
-    "alternative, or result table and run). Nothing more unless asked.\n",
-    "- A why-question or a problem: first the cause in plain words. Then \"In more detail:\" the few numbers that "
-    "show it, usually one comparison: what was needed, what was available, the gap. If several things contribute, "
-    "explain the one or two that matter most and name the others you checked in one line (\"Also checked, not the "
-    "cause: …\"). Then what the user could change: a few options, each with the entity and parameter, what it "
-    "would do and its drawback.\n",
+    f"alternative, or result table and run). {INACTIVE_FIRST} Nothing more unless asked.\n",
+    "- A why-question or a problem: first the cause in one plain sentence, for example \"the battery was empty "
+    "before the evening peak\". Then \"More detail:\" the few numbers that show it, usually one comparison: what "
+    "was needed, what was available, the gap. If several things contribute, explain the one or two that matter "
+    "most and name the others you checked in one line (\"Also checked, not the cause: …\"). Then what the user "
+    "could change: a few options, each with the entity, parameter and alternative, what it would do and its "
+    "drawback.\n",
+    "- Name the alternative of each input value you cite.\n",
+    "- In explanations, round to three significant digits and use a readable unit: GWh or TWh for large MWh, "
+    "M CUR for large CUR. Check the factor of 1 000.\n",
     "- Check every link the question needs before answering, but put in the answer only what explains the result. "
     "When you left out something the user may want, offer it in one closing sentence.\n",
     "- Write for a FlexTool user: name entities, parameters, result tables and documents, never your tools.\n",
+    "- Do not guess at problems the data does not show; say what is still unknown.\n",
     "- Add a caveat only when it changes what the user should conclude.",
 )
 ANSWER_STYLE = "\n\nHow to answer:\n" + "".join(ANSWER_STYLE_BULLETS)
@@ -308,8 +352,9 @@ ANSWER_STYLE = "\n\nHow to answer:\n" + "".join(ANSWER_STYLE_BULLETS)
 ANSWER_STYLE_BASIC = (
     "\n\nHow to answer:\n" + ANSWER_STYLE_BULLETS[0]
     + "- A question about one value: give the value exactly as the tool returned it, its unit and where it is "
-      "stored (entity and parameter, alternative, or result table and run). Nothing more unless asked.\n"
-    + ANSWER_STYLE_BULLETS[4].rstrip("\n"))
+      f"stored (entity and parameter, alternative, or result table and run). {INACTIVE_FIRST} Nothing more unless "
+      "asked.\n"
+    + ANSWER_STYLE_BULLETS[7].rstrip("\n"))
 
 #: The level texts by internal level name (P3 §2.1, owner-approved; do not edit without the owner).
 ADDENDA: dict[str, str] = {
@@ -323,9 +368,8 @@ ADDENDA: dict[str, str] = {
         "- If the latest run of a scenario failed, say so, give the reason the tool returned, and suggest reading "
         "the run log. Do not use its results.\n"
         "Do not:\n"
-        "- Do not compare scenarios, trace why a result happened, or explain equations beyond what a document "
-        "says.\n"
-        "- Do not estimate or calculate values the tools did not return.\n"
+        "- Compare scenarios, trace why a result happened, or explain equations beyond what a document says.\n"
+        "- Estimate or calculate values the tools did not return, or guess at problems the data does not show.\n"
         "When a question needs more than this — for example why there is slack, why two scenarios differ, or what "
         'limits an investment — say: "This needs a deeper analysis than the basic level does. A higher assistant '
         'level or a more capable model can trace it." Then give what you found so far.'
