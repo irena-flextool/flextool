@@ -50,6 +50,7 @@ from pathlib import Path
 from tkinter import ttk
 from typing import Any
 
+from flextool._solver_config_source import workspace_solver_config_dir
 from flextool.gui.calibrate_commands import (
     build_calibrate_command,
     build_rp_command,
@@ -1226,6 +1227,7 @@ class CalibrateDialog(tk.Toplevel):
                 debug=s.calib_keep_artifacts,
                 final_write_methods=final_write_methods_from_settings(s),
                 threads=self._threads_per_run(),
+                solver_config_dir=str(workspace_solver_config_dir()),
             )
             lines.append(command_to_display_string(argv))
         return "\n".join(lines)

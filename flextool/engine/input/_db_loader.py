@@ -52,12 +52,16 @@ class FlexToolRunner:
         (resolved_work_folder / "solve_data").mkdir(exist_ok=True)
         # Build PathConfig — defaults are PyPI-friendly: the
         # ``flextool`` package directory for static data, CWD for
-        # outputs and user-editable ``solver_config/highs.opt``.
+        # outputs; the solver option folder as a run resolves it
+        # (``flextool._solver_config_source``; ``run_chain_from_db`` passes its own).
         from flextool._resources import package_data_path
+        from flextool._solver_config_source import resolve_solver_config_source
         _pkg_dir = package_data_path("")
+        if solver_config_dir is None:
+            solver_config_dir = resolve_solver_config_source(run_options=run_options, input_db_url=input_db_url).dir
         paths = PathConfig(
             flextool_dir=Path(flextool_dir) if flextool_dir is not None else _pkg_dir,
-            solver_config_dir=Path(solver_config_dir) if solver_config_dir is not None else Path.cwd() / "solver_config",
+            solver_config_dir=Path(solver_config_dir) if solver_config_dir is not None else None,
             root_dir=Path(root_dir) if root_dir is not None else Path.cwd(),
             output_path=Path(output_path) if output_path is not None else Path.cwd(),
             work_folder=resolved_work_folder,

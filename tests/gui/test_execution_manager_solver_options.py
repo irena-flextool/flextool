@@ -2,7 +2,7 @@
 
 A GUI run sends a solver flag only for a setting the user changed, so it solves like a terminal run of the same
 database: the default settings send no solver flag apart from ``--threads`` (the Execution jobs window's
-"Threads per run").  The GUI has no MIP-gap setting.  A settings.yaml of an earlier GUI held the old defaults
+"Threads per run") and ``--solver-config-dir`` (the workspace's option files).  The GUI has no MIP-gap setting.  A settings.yaml of an earlier GUI held the old defaults
 (presolve ``choose``, MIP gap 0.001 sent with every run); loading it updates them once.
 
 No Tk: the manager constructor only stores ``project_path`` / ``settings`` and reads package-bundled plot
@@ -48,9 +48,21 @@ def _run_options(cmd: list[str]) -> RunOptions:
 
 def test_default_settings_send_only_the_thread_count(tmp_path: Path):
     cmd = _cmd_for(tmp_path)
-    assert _registry_flags_in(cmd) == {"--threads"}
+    assert _registry_flags_in(cmd) == {"--threads", "--solver-config-dir"}
     options = _run_options(cmd)
-    assert {k for k, r in options.resolved.items() if r.source == "cli"} == {"threads"}
+    assert {k for k, r in options.resolved.items() if r.source == "cli"} == {"threads", "solver_config_dir"}
+
+
+def test_the_workspace_option_folder_is_sent_explicitly(tmp_path: Path, monkeypatch):
+    """A GUI run names the workspace's ``solver_config`` (the GUI's current folder), or the folder of
+    ``FLEXTOOL_SOLVER_CONFIG_DIR`` when that is set, so the run never looks for it near an external database."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+    monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
+    assert _run_options(_cmd_for(tmp_path)).value("solver_config_dir") == str(workspace / "solver_config")
+    monkeypatch.setenv("FLEXTOOL_SOLVER_CONFIG_DIR", str(tmp_path / "chosen"))
+    assert _run_options(_cmd_for(tmp_path)).value("solver_config_dir") == str(tmp_path / "chosen")
 
 
 @pytest.mark.parametrize(
@@ -70,7 +82,7 @@ def test_a_changed_setting_sends_exactly_its_flag(tmp_path: Path, field, value, 
     """Each changed setting reaches the run as the same option a terminal user would set by hand."""
     cmd = _cmd_for(tmp_path, ProjectSettings(**{field: value}))
     gui = _run_options(cmd)
-    assert {k for k, r in gui.resolved.items() if r.source == "cli"} == {"threads", key}
+    assert {k for k, r in gui.resolved.items() if r.source == "cli"} == {"threads", "solver_config_dir", key}
     by_hand = RunOptions.from_cli(
         build_parser().parse_args(["in.sqlite", OPTIONS[key].flag, str(value), "--threads", "1"]), environ={},
     )
@@ -101,10 +113,22 @@ def test_calibration_sends_threads_per_run(tmp_path: Path):
     argv = build_calibrate_command(
         "python", "sqlite:///in.sqlite", "scen", iterations=2, sizing="uniform", overshoot=1.0,
         damping_first=1.0, damping_remaining=0.5, stall_fraction=0.05, warm_start_cache_dir=None, work_dir=None,
-        output_location=None, debug=False, threads=3,
+        output_location=None, debug=False, threads=3, solver_config_dir="/ws/solver_config",
     )
     assert argv[1:3] == ["-m", "flextool.calibrate"]
-    assert calibrate_parser().parse_args(argv[3:]).threads == 3
+    parsed = calibrate_parser().parse_args(argv[3:])
+    assert parsed.threads == 3 and parsed.solver_config_dir == Path("/ws/solver_config")
+
+
+def test_calibrator_solves_get_the_option_folder(tmp_path: Path):
+    """The calibrator passes its ``--solver-config-dir`` on to each solve it starts."""
+    from flextool.calibrate._solve import solve_argv
+
+    argv = solve_argv("in.sqlite", "scen", work_dir=tmp_path / "w", out_root=tmp_path / "o", cache_dir=tmp_path / "c",
+                      solver_config_dir=Path("/ws/solver_config"))
+    assert argv[1:3] == ["-m", "flextool_run_supervisor"]
+    options = RunOptions.from_cli(build_parser().parse_args(argv[3:]), environ={})
+    assert (options.value("solver_config_dir"), options.source("solver_config_dir")) == ("/ws/solver_config", "cli")
 
 
 def test_the_gui_never_sends_a_mip_gap(tmp_path: Path):
@@ -141,7 +165,7 @@ def test_old_default_settings_are_updated_once(tmp_path: Path):
     settings, notices = _load_counting(project)
     assert (settings.presolve, settings.scaling) == (None, None)
     assert notices == 1
-    assert _registry_flags_in(_cmd_for(tmp_path, settings)) == {"--threads"}
+    assert _registry_flags_in(_cmd_for(tmp_path, settings)) == {"--threads", "--solver-config-dir"}
 
     save_project_settings(project, settings)
     stored = _read_settings(project)

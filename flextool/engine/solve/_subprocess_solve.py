@@ -808,29 +808,6 @@ _SCRIPTS = {
 # per parameter; CPLEX/Xpress/COPT: inline set/setControl commands on stdin).
 
 
-def _resolve_solver_config_dir(config_dir: Path | None = None) -> Path:
-    """Resolve the directory holding ``<solver>.opt`` baseline files.
-
-    Lookup order:
-
-    1. *config_dir* — the run's solver-config folder (``run_chain_from_db``
-       passes its work-folder copy, ``<work_folder>/solver_config``).
-    2. ``$FLEXTOOL_SOLVER_CONFIG_DIR`` environment variable, for a caller
-       that passes no folder.
-    3. ``<cwd>/solver_config``.
-
-    Returns the resolved :class:`Path` regardless of whether it exists;
-    callers check ``.is_file()`` on the specific solver file before
-    parsing.
-    """
-    if config_dir is not None:
-        return Path(config_dir)
-    env = os.environ.get("FLEXTOOL_SOLVER_CONFIG_DIR")
-    if env:
-        return Path(env)
-    return Path.cwd() / "solver_config"
-
-
 def _parse_native_opt_file(path: Path) -> dict[str, str]:
     """Parse a native solver ``.opt`` file into a name → value dict.
 
@@ -846,21 +823,26 @@ def _parse_native_opt_file(path: Path) -> dict[str, str]:
 
     Returns an empty dict when the file is missing or unreadable.
     """
-    out: dict[str, str] = {}
     if not path.is_file():
-        return out
+        return {}
     try:
-        with path.open("r") as fh:
-            for raw in fh:
-                line = raw.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if " " not in line and "\t" not in line:
-                    continue
-                name, value = line.rsplit(maxsplit=1)
-                out[name.strip()] = value.strip()
+        text = path.read_text()
     except OSError:
         return {}
+    return _parse_native_opt_text(text)
+
+
+def _parse_native_opt_text(text: str) -> dict[str, str]:
+    """The ``name value`` lines of a native ``.opt`` text (rules of :func:`_parse_native_opt_file`)."""
+    out: dict[str, str] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if " " not in line and "\t" not in line:
+            continue
+        name, value = line.rsplit(maxsplit=1)
+        out[name.strip()] = value.strip()
     return out
 
 

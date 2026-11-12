@@ -44,6 +44,7 @@ from flextool import run_record
 from flextool.cli._console import run_tool
 from flextool.cli._timing import TimingRecorder
 from flextool.run_options import RunOptions
+from flextool._solver_config_source import input_db_filesystem_path, resolve_solver_config_source
 from flextool._thread_budget import header_text, peek_mismatch
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 from spinedb_api.filters.tools import name_from_dict
@@ -179,7 +180,7 @@ def _scan_failure_error(last_step, scenario_name):
     return {"type": "SolveNotAccepted", "message": f"solve {name!r} did not solve to optimality"}
 
 
-def _run_solve(args, scenario_name, work_folder, timing_recorder, run_options=None):
+def _run_solve(args, scenario_name, work_folder, timing_recorder, run_options=None, solver_config_source=None):
     """Δ.21 — drive the native polar_high cascade.
 
     Returns a tuple ``(return_code, last_step)`` where ``last_step``
@@ -211,6 +212,7 @@ def _run_solve(args, scenario_name, work_folder, timing_recorder, run_options=No
         work_folder=work_folder,
         csv_dump=csv_dump_on,
         run_options=run_options,
+        solver_config_source=solver_config_source,
     )
 
     # ``--csv-dump``: snapshot the last sub-solve's Provider to disk.
@@ -521,22 +523,7 @@ def _input_db_filesystem_path(input_db_url):
     ``mysql://``) or when the value is empty.  Does not touch the
     filesystem — purely string → path.
     """
-    if not input_db_url:
-        return None
-    # A non-sqlite scheme (mysql, postgresql, …) is not a local file.
-    if "://" in input_db_url and not input_db_url.startswith("sqlite:"):
-        return None
-    # Strip an appended Spine filter query-config, e.g.
-    # ``sqlite:///proj/input_sources/db.sqlite?spinedbfilter=...``.
-    # ``urlsplit`` keeps everything before ``?`` in ``.path`` for URLs and
-    # leaves a bare path untouched in ``.path`` too, but to stay aligned
-    # with the file-local ``.replace('sqlite:///', '')`` idiom we strip the
-    # scheme prefix first, then split off the query manually.
-    no_scheme = input_db_url.replace("sqlite:///", "", 1)
-    no_query = no_scheme.split("?", 1)[0]
-    if not no_query:
-        return None
-    return Path(no_query)
+    return input_db_filesystem_path(input_db_url)
 
 
 def _run_options_from_args(args):
@@ -613,6 +600,20 @@ def build_parser() -> argparse.ArgumentParser:
              '<work folder>/basis_cache).  Share one folder between runs '
              'to reuse bases across them.  Environment variable: '
              'FLEXTOOL_BASIS_CACHE_DIR; the flag wins.',
+    )
+    parser.add_argument(
+        '--solver-config-dir', metavar='PATH', default=None,
+        help='Folder of the solver option files (highs.opt, gurobi.opt, '
+             'cplex.opt, xpress.opt, copt.opt).  Unset: solver_config/ next '
+             'to the input database, then in the workspace of a GUI project '
+             'database (<workspace>/projects/<project>/input_sources/), then '
+             'in the Spine Toolbox project folder (--project-folder-file), '
+             'then in the current folder; when none has an option file, '
+             'FlexTool\'s defaults are used with a warning.  A solver whose '
+             'file is missing in the folder uses FlexTool\'s default.  The run '
+             'copies the files it used to <work folder>/solve_data/'
+             'solver_config/.  Environment variable: '
+             'FLEXTOOL_SOLVER_CONFIG_DIR; the flag wins.',
     )
     parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
     parser.add_argument('--write-methods', type=str, nargs='+', default=None,
@@ -1085,6 +1086,10 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
     input_db_url = args.input_db_url
     settings_db_url = args.settings_db_url
     wf = work_folder
+    # The folder of the solver option files, resolved once: the header shows it and the engine uses it.
+    solver_config_source = resolve_solver_config_source(
+        run_options=run_options, input_db_url=input_db_url, project_folder_file=args.project_folder_file,
+    )
 
     # Header block — one aligned key/value pair per line, blank lines
     # before and after, so the user has a self-contained summary of
@@ -1096,6 +1101,7 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
         ("Output", str(output_location)),
         ("Options", ", ".join(run_options.summary_lines()) or "defaults"),
         ("Threads", header_text(run_options)),
+        ("Solver config", solver_config_source.describe()),
     ]
     _threads_warning = peek_mismatch(run_options)
     if _threads_warning is not None:
@@ -1111,6 +1117,7 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
     try:
         return_code, last_step = _run_solve(
             args, scenario_name, work_folder, timing_recorder, run_options,
+            solver_config_source=solver_config_source,
         )
     except Exception as e:
         # FlexToolUserError signals a user-visible configuration problem

@@ -199,6 +199,12 @@ OPTIONS: dict[str, OptionSpec] = {
                  "over it",
         ),
         _spec(
+            key="solver_config_dir", flag="--solver-config-dir", env="FLEXTOOL_SOLVER_CONFIG_DIR", db=None,
+            parse=_path_text, default=None, audience="user",
+            help="folder of the solver option files (highs.opt, gurobi.opt, ...); unset looks next to the input "
+                 "database, in its workspace, the Spine Toolbox project folder and the current folder",
+        ),
+        _spec(
             key="scaling", flag="--scaling", env="FLEXTOOL_SCALING", db="solve.scaling",
             parse=_choice("off", "solver_only", "basic", "full"), default="full", audience="user",
             help="autoscaler strategy (off / solver_only / basic / full)",
@@ -280,8 +286,6 @@ ENV_KNOBS: dict[str, EnvKnob] = {
     knob.name: knob
     for knob in (
         # --- user: process-level and GUI settings ---------------------------------------------------------
-        _user("FLEXTOOL_SOLVER_CONFIG_DIR",
-              "folder whose solver option files (highs.opt, ...) seed a run's work folder"),
         _user("FLEXTOOL_NO_ENV_CHECK", "skip the start-up check of the native libraries (polars, highspy)"),
         _user("FLEXTOOL_NO_UPDATE_CHECK", "the GUI does not look for a newer FlexTool at start"),
         _user("FLEXTOOL_DPI", "GUI screen resolution override"),

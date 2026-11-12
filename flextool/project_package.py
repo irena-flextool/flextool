@@ -252,10 +252,12 @@ CHECKSUM_NOTE = ("The checksums detect files damaged on the way, not deliberate 
 
 
 def default_solver_config_dir() -> Path:
-    """The folder of the solver option files a run uses: ``$FLEXTOOL_SOLVER_CONFIG_DIR``, else
-    ``<workspace>/solver_config`` (the current folder, where FlexTool and the GUI run)."""
-    env = os.environ.get("FLEXTOOL_SOLVER_CONFIG_DIR")
-    return Path(env) if env else Path.cwd() / SOLVER_CONFIG_DIR
+    """The folder of the solver option files a GUI run uses: ``$FLEXTOOL_SOLVER_CONFIG_DIR``, else
+    ``<workspace>/solver_config`` (the current folder, where FlexTool and the GUI run).  The GUI passes the same
+    folder to its runs as ``--solver-config-dir``, so an exported project ships the files its runs use."""
+    from flextool._solver_config_source import workspace_solver_config_dir
+
+    return workspace_solver_config_dir()
 
 
 def default_package_name(project: str, today: datetime | None = None) -> str:

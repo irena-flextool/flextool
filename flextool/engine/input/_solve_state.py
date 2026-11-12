@@ -17,6 +17,7 @@ from typing import Callable, NamedTuple, TYPE_CHECKING
 if TYPE_CHECKING:
     import polars as pl
 
+    from flextool._solver_config_source import SolverOptionFiles
     from flextool.cli._timing import TimingRecorder
     from flextool.engine.input._solve_config import SolveConfig
     from flextool.engine.solve._handoff import SolveHandoff
@@ -130,6 +131,9 @@ class PathConfig:
     flextool_dir: Path | None = None
     solver_config_dir: Path | None = None
     root_dir: Path | None = None
+    # The run's solver option files, read once at run start (``run_chain_from_db``); every solve reads its
+    # options from here, not from disk.  ``None`` (a bare PathConfig): ``solver_config_dir`` is read instead.
+    solver_option_files: "SolverOptionFiles | None" = None
 
 
 @dataclass

@@ -236,6 +236,15 @@ def build_parser() -> argparse.ArgumentParser:
             "available cores."
         ),
     )
+    parser.add_argument(
+        "--solver-config-dir",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Folder of the solver option files (highs.opt, gurobi.opt, ...) for each solve (passed on as --solver-config-dir). Default: each solve finds the folder itself (FLEXTOOL_SOLVER_CONFIG_DIR, next to the input database, its workspace)."
+        ),
+    )
     return parser
 
 
@@ -267,6 +276,7 @@ def _config_from_args(args: argparse.Namespace) -> CalibConfig:
         stall_fraction=args.stall_fraction,
         final_write_methods=final_write_methods,
         threads=args.threads if args.threads is not None and args.threads >= 1 else None,
+        solver_config_dir=args.solver_config_dir,
     )
 
 

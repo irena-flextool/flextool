@@ -60,7 +60,7 @@ def _install_scripted_solve(monkeypatch, signals):
     def fake_write_calib_alt(url, scenario, adders):
         return None
 
-    def fake_run_solve(url, scenario, *, work_dir, out_root, cache_dir, threads=None):
+    def fake_run_solve(url, scenario, *, work_dir, out_root, cache_dir, threads=None, solver_config_dir=None):
         state["i"] += 1
         return SimpleNamespace(
             assess_dir=Path(out_root) / f"iter_{state['i']}",

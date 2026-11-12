@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
     from polar_high import Problem
 
+    from flextool._solver_config_source import SolverOptionFiles
     from flextool.run_options import RunOptions
 
 
@@ -57,8 +58,13 @@ def _parse_highs_opt_file(path: Path | None) -> dict[str, str]:
     """
     if path is None or not path.is_file():
         return {}
+    return _parse_highs_opt_text(path.read_text(encoding="utf-8"))
+
+
+def _parse_highs_opt_text(text: str) -> dict[str, str]:
+    """The ``key=value`` options of a ``highs.opt`` text (rules of :func:`_parse_highs_opt_file`)."""
     options: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
@@ -121,6 +127,7 @@ def _resolve_effective_highs_options(
     cli_overrides: Mapping[str, Any] | None,
     baseline: Mapping[str, Any] | None = None,
     solver_config: SolverConfig | None = None,
+    highs_opt_text: str | None = None,
 ) -> dict[str, Any]:
     """Resolve the effective HiGHS solver options for one solve.
 
@@ -160,6 +167,10 @@ def _resolve_effective_highs_options(
     highs_opt_path
         Path to ``solver_config/highs.opt`` (or any equivalent).
         ``None`` skips this layer.
+    highs_opt_text
+        The ``highs.opt`` text the run read at its start
+        (:class:`flextool._solver_config_source.SolverOptionFiles`); when
+        given it is the layer and *highs_opt_path* only names it in messages.
     cli_overrides
         Dict of HiGHS option-keys → values to apply at the top of the
         precedence chain.  ``None`` and ``{}`` are equivalent.
@@ -179,11 +190,11 @@ def _resolve_effective_highs_options(
         ``polar_high.Problem.set_solver_options``.
     """
     options: dict[str, Any] = dict(baseline) if baseline else {}
-    options.update(
-        _drop_solution_file_options(
-            _parse_highs_opt_file(highs_opt_path), highs_opt_path
-        )
+    file_options = (
+        _parse_highs_opt_text(highs_opt_text) if highs_opt_text is not None
+        else _parse_highs_opt_file(highs_opt_path)
     )
+    options.update(_drop_solution_file_options(file_options, highs_opt_path))
     if solver_config is not None:
         knobs = _PARAM_MAP["highs"]
         for knob in ("time_limit", "mip_gap", "threads"):
@@ -395,31 +406,38 @@ def _operator_native_overrides(
 def resolve_commercial_options(
     solver: str,
     *,
-    opt_file: Path | None,
+    opt_file: Path | str | None,
     solver_config: SolverConfig | None,
     run_options: "RunOptions | None",
     solve_name: str | None = None,
     logger: logging.Logger | None = None,
+    opt_text: str | None = None,
 ) -> list[CommercialOption]:
     """The parameters a commercial solve passes to *solver*, in final order.
 
     Layers (lowest -> highest): *opt_file* < the solve's ``solver_mip_gap`` <
     its ``solver_arguments`` < the operator layer
     (:func:`_operator_native_overrides`).  See the block comment above for the
-    merge rule.  File-writing parameters (:data:`_FILE_WRITING_OPTIONS`) are
+    merge rule.  *opt_text* is the option file's text as the run read it at its
+    start; when given, *opt_file* only names the file in messages (else the file
+    is read).  File-writing parameters (:data:`_FILE_WRITING_OPTIONS`) are
     dropped with one warning per name and layer.
     """
     from flextool.engine.solve._subprocess_solve import (
         _format_native_opt_value,
         _parse_native_opt_file,
+        _parse_native_opt_text,
     )
 
     of_solve = f" of solve {solve_name}" if solve_name else ""
     entries: list[CommercialOption] = []
-    if opt_file is not None:
-        entries += [
-            CommercialOption(k, v, str(opt_file)) for k, v in _parse_native_opt_file(Path(opt_file)).items()
-        ]
+    if opt_text is not None:
+        file_options = _parse_native_opt_text(opt_text)
+    elif opt_file is not None:
+        file_options = _parse_native_opt_file(Path(opt_file))
+    else:
+        file_options = {}
+    entries += [CommercialOption(k, v, str(opt_file)) for k, v in file_options.items()]
     if solver_config is not None:
         names = _PARAM_MAP[solver]
         entries += [
@@ -452,6 +470,36 @@ def resolve_commercial_options(
             continue
         merged[key] = option._replace(name=key) if solver == "cplex" else option
     return list(merged.values())
+
+
+def commercial_opt_file_layer(
+    solver: str,
+    *,
+    solver_option_files: "SolverOptionFiles | None",
+    solver_config_dir: "Path | None" = None,
+    run_options: "RunOptions | None" = None,
+) -> tuple[str | None, str | None]:
+    """The option-file layer of a commercial solve: ``(text, where it came from)``, or ``(None, None)``.
+
+    The run's files read at its start win (*solver_option_files*); else ``<solver_config_dir>/<solver>.opt``;
+    else the folder :func:`flextool._solver_config_source.resolve_solver_config_source` picks without a
+    database (``--solver-config-dir`` / ``FLEXTOOL_SOLVER_CONFIG_DIR``, the current folder, the packaged
+    default), for a caller outside ``run_chain_from_db``.
+    """
+    from flextool._solver_config_source import read_solver_option_files, resolve_solver_config_source
+
+    files = solver_option_files
+    if files is None:
+        if solver_config_dir is not None:
+            path = Path(solver_config_dir) / f"{solver}.opt"
+            try:
+                return path.read_text(encoding="utf-8"), str(path)
+            except OSError:
+                return None, None
+        source = resolve_solver_config_source(run_options=run_options)
+        files = read_solver_option_files(source, (solver,))
+    text = files.text(solver)
+    return (text, files.origin(solver)) if text is not None else (None, None)
 
 
 def commercial_time_limit(solver: str, options: "list[CommercialOption] | Mapping[str, Any] | None") -> float | None:
@@ -541,6 +589,7 @@ def run_one_solve(
     run_options: "RunOptions | None" = None,
     solver_config_dir: "Path | None" = None,
     commercial_options: "list[CommercialOption] | None" = None,
+    solver_option_files: "SolverOptionFiles | None" = None,
 ):
     """Dispatch *problem* to the chosen solver.
 
@@ -598,13 +647,16 @@ def run_one_solve(
         The run's operator options, handed to the subprocess path (warm-start
         basis cache).  ``None`` reads the environment.
     solver_config_dir
-        The run's solver-config folder; the commercial path reads its
-        ``<solver>.opt`` baseline there.  ``None`` falls back to
-        ``$FLEXTOOL_SOLVER_CONFIG_DIR``, else ``<cwd>/solver_config``.
+        A folder whose ``<solver>.opt`` the commercial path reads, for a caller
+        without *solver_option_files*.
     commercial_options
         The commercial parameters already resolved by the caller
         (:func:`resolve_commercial_options`, as the orchestrator does for its
         ``Solver args`` line); ``None`` resolves them here.
+    solver_option_files
+        The run's option files, read once at run start (``run_chain_from_db``);
+        win over *solver_config_dir*.  With neither, the folder is resolved like
+        a run without a database (:func:`commercial_opt_file_layer`).
 
     Returns
     -------
@@ -661,7 +713,6 @@ def run_one_solve(
     # FLEXTOOL_SOLVER_*); the resolved time limit also sets the watchdog.
     from flextool.engine.solve._subprocess_solve import (
         _BINARY_NAMES,
-        _resolve_solver_config_dir,
         solve_via_subprocess,
     )
     if solver_config.name not in _BINARY_NAMES and solver_config.name != "highs":
@@ -687,10 +738,16 @@ def run_one_solve(
             logger.error(msg)
         raise FlexToolUserError(msg)
     if commercial_options is None:
-        config_dir = _resolve_solver_config_dir(solver_config_dir)
+        opt_text, opt_label = commercial_opt_file_layer(
+            solver_config.name,
+            solver_option_files=solver_option_files,
+            solver_config_dir=solver_config_dir,
+            run_options=run_options,
+        )
         commercial_options = resolve_commercial_options(
             solver_config.name,
-            opt_file=config_dir / f"{solver_config.name}.opt",
+            opt_file=opt_label,
+            opt_text=opt_text,
             solver_config=solver_config,
             run_options=run_options,
             solve_name=solve_name,

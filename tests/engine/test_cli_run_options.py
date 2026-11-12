@@ -18,7 +18,7 @@ _OPTION_ENV_VARS = (
     "FLEXTOOL_HIGHS_THREADS", "FLEXTOOL_HIGHS_PRESOLVE", "FLEXTOOL_SOLVER_LOG_LEVEL", "FLEXTOOL_HIGHS_TIME_LIMIT",
     "FLEXTOOL_HIGHS_MIP_GAP", "FLEXTOOL_SOLVER_TIME_LIMIT", "FLEXTOOL_SOLVER_MIP_GAP", "FLEXTOOL_SCALING", "FLEXTOOL_USER_BOUND_SCALE",
     "FLEXTOOL_SAVE_MEMORY", "FLEXTOOL_WARM_START", "FLEXTOOL_BASIS_CACHE_DIR", "FLEXTOOL_BENDERS_WORKERS",
-    "FLEXTOOL_THREADS",
+    "FLEXTOOL_THREADS", "FLEXTOOL_SOLVER_CONFIG_DIR",
 )
 
 
@@ -118,3 +118,23 @@ def test_threads_flag_reaches_highs_and_the_header(clean_env, monkeypatch, tmp_p
     header = capsys.readouterr().out
     line = next(ln for ln in header.splitlines() if ln.startswith("Threads:"))
     assert "2 (flag)" in line and "HiGHS 2" in line
+
+
+def test_solver_config_folder_is_resolved_once_and_shown_in_the_header(clean_env, monkeypatch, tmp_path, capsys):
+    """No ``--solver-config-dir``: the ``solver_config`` next to the input database wins over the current folder;
+    the header names it with its reason and the engine gets the same resolved source.  The flag then wins."""
+    (tmp_path / "solver_config").mkdir()
+    (tmp_path / "solver_config" / "highs.opt").write_text("threads=1\n")
+    cwd = tmp_path / "elsewhere"
+    (cwd / "solver_config").mkdir(parents=True)
+    (cwd / "solver_config" / "highs.opt").write_text("threads=2\n")
+    monkeypatch.chdir(cwd)
+    seen = _run_main(monkeypatch, tmp_path)
+    source = seen["kwargs"]["solver_config_source"]
+    assert (source.dir, source.reason) == (tmp_path / "solver_config", "next to the input database")
+    line = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("Solver config:"))
+    assert line.endswith(f"{tmp_path / 'solver_config'} (next to the input database)")
+    chosen = tmp_path / "chosen"
+    seen = _run_main(monkeypatch, tmp_path, "--solver-config-dir", str(chosen))
+    source = seen["kwargs"]["solver_config_source"]
+    assert (source.dir, source.reason) == (chosen, "--solver-config-dir")

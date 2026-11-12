@@ -469,9 +469,9 @@ def gurobi_db(tmp_path_factory) -> str:
 
 
 def test_second_run_in_a_process_uses_its_own_solver_config(gurobi_db, tmp_path, monkeypatch) -> None:
-    """Run 1 seeds from an explicit folder; run 2 (same process, no folder given) must seed from
-    ``<cwd>/solver_config`` and its commercial-solver ``.opt`` file must come from that, not from run 1's work
-    folder.  The commercial binary is replaced by HiGHS in process; the ``.opt`` file is built by the real code."""
+    """Run 1 takes an explicit folder; run 2 (same process, no folder given) must take
+    ``<cwd>/solver_config`` (its database folder has none) and its commercial-solver ``.opt`` file must come from
+    that, not from run 1's.  The commercial binary is replaced by HiGHS in process; the ``.opt`` file is built by the real code."""
     from flextool.engine import run_chain_from_db
     from flextool.engine.solve import _subprocess_solve
 
@@ -495,7 +495,7 @@ def test_second_run_in_a_process_uses_its_own_solver_config(gurobi_db, tmp_path,
                       solver_config_dir=first)
     assert "FLEXTOOL_SOLVER_CONFIG_DIR" not in os.environ
     run_chain_from_db(input_db_url=gurobi_db, scenario_name="custom", work_folder=tmp_path / "w2")
-    assert (tmp_path / "w2" / "solver_config" / "gurobi.opt").read_text() == "Threads 22\n"
+    assert (tmp_path / "w2" / "solve_data" / "solver_config" / "gurobi.opt").read_text() == "Threads 22\n"
     assert len(built) == 2 and "11" in built[0] and "22" in built[1], built
 
 
@@ -524,3 +524,39 @@ def test_cli_gap_reaches_the_commercial_solver_and_its_args_line(gurobi_db, tmp_
     assert passed and all(p == {"Threads": "0", "MIPGap": "0.001"} for p in passed), passed
     lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("Solver args")]
     assert lines and all(line == "Solver args (gurobi): Threads=0, MIPGap=0.001" for line in lines), lines
+
+
+def test_option_files_are_read_once_per_run(gurobi_db, tmp_path, monkeypatch) -> None:
+    """The run reads each source ``.opt`` once at its start and never reads its snapshot back: the ``Solver
+    args`` line and the solve itself take the options from the texts read then.  An edit after the start (here
+    in the commercial solve) leaves the passed set unchanged."""
+    from flextool.engine import run_chain_from_db
+    from flextool.engine.solve import _subprocess_solve
+
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "gurobi.opt").write_text("Threads 3\n")
+    (cfg / "highs.opt").write_text("threads=1\n")
+    reads: list[Path] = []
+    real_read_text = Path.read_text
+
+    def counting_read_text(self, *args, **kwargs):
+        if self.suffix == ".opt":
+            reads.append(Path(self))
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+    passed: list[dict] = []
+
+    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None):
+        (cfg / "gurobi.opt").write_text("Threads 9\n")
+        passed.append(dict(options))
+        return problem.solve(keep_solver=True)
+
+    monkeypatch.setattr(_subprocess_solve, "_solve_commercial_subprocess", commercial)
+    run_chain_from_db(input_db_url=gurobi_db, scenario_name="custom", work_folder=tmp_path / "w",
+                      solver_config_dir=cfg)
+    assert passed and all(p == {"Threads": "3"} for p in passed), passed
+    assert reads.count(cfg / "gurobi.opt") == 1 and reads.count(cfg / "highs.opt") == 1, reads
+    snapshot = tmp_path / "w" / "solve_data" / "solver_config"
+    assert not [r for r in reads if r.parent == snapshot], reads
