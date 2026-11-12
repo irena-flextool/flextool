@@ -585,10 +585,14 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   with integer variables now stops with a message instead of reporting the relaxation as the solution.
 - **The `Solver args` line of a commercial solve showed HiGHS options**; it is now
   `Solver args (<solver>): ...` with what the solver receives, under its own names.
-- **The log of a commercial solver is shown.** Gurobi, CPLEX, Xpress and COPT printed nothing on a successful
-  run (their log was read for the status and dropped), so the parameters they took, how the solve ended and the
-  gap a time-limit warning refers to could not be seen. The log is now printed when the solve ends, after the
-  `Solver args` line.
+- **The log of a commercial solver is shown as the solver writes it.** Gurobi, CPLEX, Xpress and COPT printed
+  nothing on a successful run (their log was read for the status and dropped), so the parameters they took, how
+  the solve ended and the gap a time-limit warning refers to could not be seen. The log now streams to the
+  console, the FlexTool window (greyed, like HiGHS') and the run log, after a `Running <solver>` line, and is
+  saved as `solve_data/subprocess/<solve>.log`. A failed solve no longer prints the log a second time inside its
+  error message (nor the error twice), and a solve stopped by FlexTool's watchdog keeps its log. When FlexTool
+  stops a solver (watchdog, Ctrl-C), the processes it started are stopped too. `--solver-log-level silent` now
+  also hides a commercial solver's log (FlexTool still reads and saves it); `verbose` remains HiGHS-only.
 - **Whole numbers reach a commercial solver as integers** (`Threads=4`, `TimeLimit=60`, not `Threads=4.0`), from
   `solver_arguments`, `solver_mip_gap` and the flags alike (the database stores every number as a decimal). An
   integer parameter can refuse `4.0`: the Xpress library does.

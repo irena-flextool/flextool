@@ -27,7 +27,7 @@ read (for example `FLEXTOOL_HIGHS_THREADS=many`) is ignored with one warning tha
 | `FLEXTOOL_SOLVER_MIP_GAP` | `--solver-mip-gap` | relative gap, e.g. `0.005` | MIP gap for every solve of the run, on every solver (HiGHS `mip_rel_gap`, Gurobi `MIPGap`, CPLEX `mip tolerances mipgap`, Xpress `MIPRELSTOP`, COPT `RelGap`). Unset: each solve's `solver_mip_gap`, else the gap in the solver's option file. |
 | `FLEXTOOL_HIGHS_TIME_LIMIT` | none | seconds | The former name of `FLEXTOOL_SOLVER_TIME_LIMIT`, now for HiGHS only: it never limits a commercial solver. The flag and `FLEXTOOL_SOLVER_TIME_LIMIT` win over it. |
 | `FLEXTOOL_HIGHS_MIP_GAP` | none | relative gap | The former name of `FLEXTOOL_SOLVER_MIP_GAP`, now for HiGHS only. The flag and `FLEXTOOL_SOLVER_MIP_GAP` win over it. |
-| `FLEXTOOL_SOLVER_LOG_LEVEL` | `--solver-log-level` | `silent` / `normal` / `verbose` | HiGHS log output (default `normal`). |
+| `FLEXTOOL_SOLVER_LOG_LEVEL` | `--solver-log-level` | `silent` / `normal` / `verbose` | Solver log output (default `normal`); `silent` also hides a commercial solver's log (still saved as `solve_data/subprocess/<solve>.log`); `verbose` is HiGHS only. |
 | `FLEXTOOL_SCALING` | `--scaling` | `off` / `solver_only` / `basic` / `full` | Autoscaler strategy for every solve; overrides each solve's `scaling` (default `full`). See [LP scaling pipeline](dev/scaling.md). |
 | `FLEXTOOL_USER_BOUND_SCALE` | `--user-bound-scale` | integer in `[-10, 0]` | Pins HiGHS' `user_bound_scale` exponent; unset lets the autoscaler choose. |
 | `FLEXTOOL_SAVE_MEMORY` | `--save-memory` | `1` | Solve each LP in a separate process to lower peak memory (slower). |

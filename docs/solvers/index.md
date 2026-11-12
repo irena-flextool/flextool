@@ -56,10 +56,10 @@ solve):
 | `--solver-mip-gap`     |                          | Relative MIP gap of every solve, on every solver (HiGHS `mip_rel_gap`, Gurobi `MIPGap`, CPLEX `mip tolerances mipgap`, Xpress `MIPRELSTOP`, COPT `RelGap`); wins over the solve's `solver_mip_gap` |
 | `--solver-config-dir`  |                          | The folder of the solver option files; see [Where the option files come from](#where-the-option-files-come-from) |
 | `--highs-threads`      | `solver_threads`         | HiGHS only: integer thread count (default 1); `>1` enables HiGHS parallel mode |
-| `--solver-log-level`   | `solver_log_level`       | HiGHS only: `silent` / `normal` / `verbose`     |
+| `--solver-log-level`   | `solver_log_level`       | `silent` hides the log of every solver; `normal` (default) shows it; `verbose` is HiGHS only |
 
-`--presolve`, `--highs-threads`, `--solver-log-level` and `--user-bound-scale`
-are HiGHS options. When one of them is given and a solve runs on a commercial
+`--presolve`, `--highs-threads`, `--user-bound-scale` and
+`--solver-log-level verbose` are HiGHS options. When one of them is given and a solve runs on a commercial
 solver, the run warns once: set the solver's own parameter in the solve's
 `solver_arguments` or in its option file instead. Commercial solvers take
 their thread count from their option file (for example `Threads` in
@@ -166,7 +166,9 @@ received) and feeds it to the solver via the per-solver mechanism:
 1. The run's flags: `--solver-time-limit` and `--solver-mip-gap` (or
    `FLEXTOOL_SOLVER_TIME_LIMIT` / `FLEXTOOL_SOLVER_MIP_GAP`; the GUI's time
    limit is sent as the flag). HiGHS also takes `--highs-threads`,
-   `--presolve`, `--solver-log-level` and `--threads` here.
+   `--presolve`, `--solver-log-level` and `--threads` here (a commercial
+   solver's log is hidden by `--solver-log-level silent` too, but that is not
+   one of its parameters).
 2. Raw `solver_arguments` entries on the solve.
 3. Translated convenience knobs (`solver_mip_gap`).
 4. The baseline file `<solver>.opt`.
@@ -188,6 +190,17 @@ in that folder with the script as its input, for example
 `cd solve_data/subprocess && cplex < y2020_dispatch.script`. The solver's
 result file and its own log file (`gurobi.log`, `cplex.log`) are written there
 too.
+
+The solver's log is shown as the solver writes it, in the terminal, the
+FlexTool window (greyed, like HiGHS' log) and the run log, after a line
+`Running <solver> (<program>)`, and it is saved as `<solve>.log` in the same
+folder. Like the other files there, `<solve>.log` holds the last roll of a
+rolling solve. A failed solve's message points to the log instead of repeating
+it. With `--solver-log-level silent` the log is not shown (nor the `Running`
+line), but FlexTool still reads it to know how the solve ended, saves it, and a
+failure message then carries its last 20 lines. If FlexTool stops the solver
+(the time-limit watchdog, Ctrl-C, a failure), it also stops the processes the
+solver started.
 
 ### Where the option files come from
 

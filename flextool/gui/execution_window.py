@@ -18,6 +18,11 @@ THREADS_PER_RUN_TIP = (
 
 logger = logging.getLogger(__name__)
 
+#: A line that opens a solver's log block, which the run output greys until the next phase row: HiGHS' banner and
+#: the line FlexTool prints before a commercial solver's log (``Running <Solver> (<program>)``; the names are the
+#: engine's ``_subprocess_solve._DISPLAY_NAMES``, pinned by a test; the GUI does not import the engine).
+_SOLVER_BLOCK_STARTS = ("Running HiGHS", "Running Gurobi", "Running CPLEX", "Running Xpress", "Running COPT")
+
 # Status icons for the scenarios list.
 # Restricted to glyphs that render in the default Windows Tk fonts: the
 # check/ballot marks (U+2713/2717) and the Geometric Shapes block (U+25xx).
@@ -858,8 +863,10 @@ class ExecutionWindow(tk.Toplevel):
         entry — usually a single visual line, but the command echo is one
         multi-line element).
 
-        A small state machine tracks the HiGHS solver-output block so its
-        whole console dump greys out until the next phase-progress row.
+        A small state machine tracks the solver-output block (HiGHS' or a
+        commercial solver's, :data:`_SOLVER_BLOCK_STARTS`) so its whole
+        console dump greys out until the next phase-progress row.  A line
+        with "warning" or "error" inside the block stays red as well.
         """
         low = element.lower()
         # Command echo — a multi-line bash block (yellow wash).
@@ -878,8 +885,8 @@ class ExecutionWindow(tk.Toplevel):
         if element.startswith("Solve start:"):
             self._highs_block_active = False
             return ["solvestart"]
-        # HiGHS console dump opens here and greys until the next phase row.
-        if element.startswith("Running HiGHS"):
+        # A solver's console dump opens here and greys until the next phase row.
+        if element.startswith(_SOLVER_BLOCK_STARTS):
             self._highs_block_active = True
         tags: list[str] = []
         if self._highs_block_active:
