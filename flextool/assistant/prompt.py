@@ -77,8 +77,8 @@ LAYER_ORIENTATION = (
     "\n"
     "Units: give the unit the tool returns. A node's unit_of_measure (default MWh) sets its units: amounts in that "
     "unit, flows in that unit per hour (MW for MWh), prices per that unit; CUR is the model currency. Mention a "
-    "doubt only when a node's name or description contradicts its unit. Time steps are in hours and lifetimes in "
-    "years.\n"
+    "doubt only when a node's name or description contradicts its unit. Demand is stored as negative inflow; when "
+    "you say demand, give it as a positive number.\n"
     "\n"
     "Parameters can be a constant, a value per period, a time series or a map; the tools say which. Start from an "
     "entity with get_entity."
@@ -286,20 +286,30 @@ BASIC_PLAN_SENTENCES: dict[str, str] = {
 #: level's text, so its pinned hash (tests/assistant/test_prompt_budget.py) and P3 §4.7 change with it.
 BASIC_PLAN_OPTION = "b"
 
-#: How to shape an answer (owner-approved 2026-11-11): every level's text ends with it; basic has only the
-#: lookup bullets, as it hands the other questions over.
+#: The one-value bullet's sentence for an entity the scenario does not use (owner-approved 2026-11-12).
+INACTIVE_FIRST = "If the entity is not part of the scenario, say that first."
+
+#: How to shape an answer (owner-approved 2026-11-11, revised 2026-11-12): every level's text ends with it; basic
+#: has only the lookup bullets, as it hands the other questions over.
 ANSWER_STYLE_BULLETS: tuple[str, ...] = (
     "- Start with the answer itself, in one or two plain sentences.\n",
+    "- Use plain words, with the FlexTool term in parentheses: \"demand that could not be met (upward slack)\". "
+    "Keep solver words such as right-hand side for the detail.\n",
     "- A question about one value: give the value, its unit and where it is stored (entity and parameter, "
-    "alternative, or result table and run). Nothing more unless asked.\n",
-    "- A why-question or a problem: first the cause in plain words. Then \"In more detail:\" the few numbers that "
-    "show it, usually one comparison: what was needed, what was available, the gap. If several things contribute, "
-    "explain the one or two that matter most and name the others you checked in one line (\"Also checked, not the "
-    "cause: …\"). Then what the user could change: a few options, each with the entity and parameter, what it "
-    "would do and its drawback.\n",
+    f"alternative, or result table and run). {INACTIVE_FIRST} Nothing more unless asked.\n",
+    "- A why-question or a problem: first the cause in one plain sentence, for example \"the battery was empty "
+    "before the evening peak\". Then \"More detail:\" the few numbers that show it, usually one comparison: what "
+    "was needed, what was available, the gap. If several things contribute, explain the one or two that matter "
+    "most and name the others you checked in one line (\"Also checked, not the cause: …\"). Then what the user "
+    "could change: a few options, each with the entity, parameter and alternative, what it would do and its "
+    "drawback.\n",
+    "- Name the alternative of each input value you cite.\n",
+    "- In explanations, round to three significant digits and use a readable unit: GWh or TWh for large MWh, "
+    "M CUR for large CUR. Check the factor of 1 000.\n",
     "- Check every link the question needs before answering, but put in the answer only what explains the result. "
     "When you left out something the user may want, offer it in one closing sentence.\n",
     "- Write for a FlexTool user: name entities, parameters, result tables and documents, never your tools.\n",
+    "- Do not guess at problems the data does not show; say what is still unknown.\n",
     "- Add a caveat only when it changes what the user should conclude.",
 )
 ANSWER_STYLE = "\n\nHow to answer:\n" + "".join(ANSWER_STYLE_BULLETS)
@@ -307,8 +317,9 @@ ANSWER_STYLE = "\n\nHow to answer:\n" + "".join(ANSWER_STYLE_BULLETS)
 ANSWER_STYLE_BASIC = (
     "\n\nHow to answer:\n" + ANSWER_STYLE_BULLETS[0]
     + "- A question about one value: give the value exactly as the tool returned it, its unit and where it is "
-      "stored (entity and parameter, alternative, or result table and run). Nothing more unless asked.\n"
-    + ANSWER_STYLE_BULLETS[4].rstrip("\n"))
+      f"stored (entity and parameter, alternative, or result table and run). {INACTIVE_FIRST} Nothing more unless "
+      "asked.\n"
+    + ANSWER_STYLE_BULLETS[7].rstrip("\n"))
 
 #: The level texts by internal level name (P3 §2.1, owner-approved; do not edit without the owner).
 ADDENDA: dict[str, str] = {
@@ -322,9 +333,8 @@ ADDENDA: dict[str, str] = {
         "- If the latest run of a scenario failed, say so, give the reason the tool returned, and suggest reading "
         "the run log. Do not use its results.\n"
         "Do not:\n"
-        "- Do not compare scenarios, trace why a result happened, or explain equations beyond what a document "
-        "says.\n"
-        "- Do not estimate or calculate values the tools did not return.\n"
+        "- Compare scenarios, trace why a result happened, or explain equations beyond what a document says.\n"
+        "- Estimate or calculate values the tools did not return, or guess at problems the data does not show.\n"
         "When a question needs more than this — for example why there is slack, why two scenarios differ, or what "
         'limits an investment — say: "This needs a deeper analysis than the basic level does. A higher assistant '
         'level or a more capable model can trace it." Then give what you found so far.'

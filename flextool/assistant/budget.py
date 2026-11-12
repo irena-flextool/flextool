@@ -211,15 +211,18 @@ class LevelBudget:
 #: 2026-11-11 "How to answer" in the level texts: basic 5 000 (three float-heavy 2 000-character results, 4 088
 #: tokens, now overflow a 16 384-token window by about 50 tokens; the pre-send fit handles it), standard 9 350,
 #: advanced 9 450; 2026-11-12 explain_entity (item 209; its schema is about 500 tokens, standard and advanced only):
-#: standard 9 850, advanced 9 950 (the worst front end's prefix before it plus the schema plus 50).  This changes
+#: standard 9 850, advanced 9 950 (the worst front end's prefix before it plus the schema plus 50); 2026-11-12
+#: owner-approved answer rules (plain words, "More detail:", alternatives, rounding, no guessing, inactive entity
+#: first, demand as a positive number): standard 10 050, advanced 10 150 (worst front end 9 992 and 10 091, plus
+#: about 55), basic stays 5 000 (4 987 at the GUI; the dropped time-step sentence pays for its additions).  This changes
 #: nothing at runtime for windows of 32 768 tokens or more (the prefix budget only plans the results that fit a
 #: smaller window, ``fit_caps`` / ``fitting_calls``).
 #: The history and the continuations are the owner's of 2026-11-08 (P3 §4.7).  Budgets count steps and calls:
 #: basic 3 steps, 6 calls a part, 3 calls a step (batching 2026-11-08; was 3 calls a part).
 LEVEL_BUDGETS: dict[str, LevelBudget] = {
     "small": LevelBudget(5_000, 3, 6, 3, 4_096, 6, 12_288, max_continuations=2, history="answers", history_turns=2),
-    "medium": LevelBudget(9_850, 8, 16, 8, 8_000, 6, 32_768, max_continuations=1, history="answers"),
-    "large": LevelBudget(9_950, 12, 30, 8, 16_000, 8, 65_536, max_continuations=0, history="full"),
+    "medium": LevelBudget(10_050, 8, 16, 8, 8_000, 6, 32_768, max_continuations=1, history="answers"),
+    "large": LevelBudget(10_150, 12, 30, 8, 16_000, 8, 65_536, max_continuations=0, history="full"),
 }
 #: The free plan: fewer requests per question (P3 §4.6, §4.7).  Its steps are what cost requests, so it keeps
 #: fewer steps (3 / 4 / 6) and the level's calls a step; its calls a part are the level's, at most steps × calls a

@@ -33,11 +33,13 @@ BASIC_TOOL_SENTENCE = ("- Use only these tools: search_docs, read_doc, get_entit
                        "list_runs, find_result_tables and query_result.")
 #: sha256 of each level text as approved (P3 §2.1, word for word; any change goes back to the owner, P3-O9).  The
 #: basic text has said "at most three steps" since owner decision D1 (2026-11-09); every level's text ends with
-#: "How to answer" since 2026-11-11 (basic: its lookup bullets).
+#: "How to answer" since 2026-11-11 (basic: its lookup bullets).  The owner approved the 2026-11-12 texts (plain words
+#: with the FlexTool term, "More detail:", the alternative, rounding, no guessing, inactive entity first; basic: the
+#: inactive-entity sentence, no guessing, shorter "Do not:" bullets).
 ADDENDA_SHA256 = {
-    "small": "ce7ad3895e2fff568565a97d8bdca678bb2d07bac8c3e36a7a48e8d3ca5e1afa",
-    "medium": "6fa116ed1687fe0887347c0a3cc0993747bfb459adca42bdbe17d949f3ef954a",
-    "large": "80a5c5b2b37d0069447907c6f94b7dd3022b2d4d424b93731eae0c0511e4ddca",
+    "small": "d54ffa8327ef1df765d21571fe2cc56c1e1d48085cbd6ea1aaaf95c381e8351c",
+    "medium": "41f0f85cc42a56e11aeeb04a34a23668def897d7939c2b7491dea1d82da30685",
+    "large": "c211a6938561730aad9eddac0261187bcb40c38e1b5834b2cc7458a94c6b7402",
 }
 
 

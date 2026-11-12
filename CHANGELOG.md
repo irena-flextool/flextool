@@ -380,6 +380,14 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   replaced; when later questions go too, or with the R key, the window asks first. A question asked again goes to
   the chat's own model. In the terminal chat, `/retry` asks the last
   question again and `/edit` changes it first. See "Ask" and "Commands" in "The AI assistant".
+- **Answers are written for a FlexTool user.** At every level the assistant gives demand as a positive number
+  (FlexTool stores it as negative inflow) and, for an entity the scenario does not use, says that first. At the
+  standard and advanced levels it uses plain words with the FlexTool term in parentheses ("demand that could not be
+  met (upward slack)"), gives the cause first in one sentence and then the numbers under "More detail:", names the
+  alternative of each input value it cites, rounds to three significant digits in readable units (GWh or TWh, M
+  CUR) and does not guess at problems the data does not show. The basic level, too, no longer guesses. The level
+  texts changed, so a chat resumed starts a fresh history with the AI service, and an evaluation run asks its
+  unfinished cells again.
 
 ### Fixes
 
