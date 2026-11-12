@@ -122,6 +122,40 @@ Gurobi parameters that make it write files (`ResultFile`, `LogFile`,
 `SolFiles`, `NodefileDir`) are not passed on, with a warning: FlexTool reads
 the solution from its own result file.
 
+#### What the database may set
+
+An input database can come from someone else, so FlexTool trusts
+`solver_arguments` (and `solver_mip_gap`) less than the files and the command
+line of your own computer:
+
+- **Ordinary parameters** (gaps, tolerances, methods, thread counts, switches)
+  are taken from the database as they are.
+- **A parameter that names a file or folder** takes only a plain file name in
+  the database: ASCII letters, digits and `_ . + -`, starting with a letter,
+  digit or `_`, with no `/`, `\`, `:` or `..`. The file is written in the
+  solve's work folder, `<work folder>/solve_data/subprocess/`. A full path is
+  refused. These are the parameters whose name contains *file*, *dir* or
+  *path*, and also: HiGHS `log_file`, `solution_file`, `write_model_file`,
+  `write_presolved_model_file`, `write_iis_model_file`, `write_basis_file`,
+  `read_basis_file`, `read_solution_file`, `mip_improving_solution_file`;
+  Gurobi `InputFile`, `ResultFile`, `LogFile`, `SolFiles`, `NodefileDir`;
+  CPLEX `logfile`, `workdir`, `output intsolfileprefix` and names starting with
+  `read` or `write`; Xpress `TUNEROUTPUTPATH`, `TUNERMETHODFILE`,
+  `TUNERSESSIONNAME`; COPT `LogFile`. A number or a switch in such a parameter
+  (Gurobi `NodefileStart 0.5`) passes.
+- **Gurobi server, cloud and licence parameters** are refused in the database:
+  `ComputeServer`, `ServerPassword`, `ServerTimeout`, the `CS...` Cluster
+  Manager parameters (`CSManager`, `CSAPIAccessID`, `CSAPISecret`, `CSGroup`,
+  `CSPriority`, `CSRouter`, ...), the `Cloud...` Instant Cloud parameters, the
+  `WLS...` Web License Service parameters, `TokenServer`, `TSPort`,
+  `LicenseID`, `UserName`, `WorkerPool` and `WorkerPassword`.
+
+The error names the parameter, its value and the solve. Put a file path or a
+server parameter in the solver's option file, `solver_config/<solver>.opt`
+(or that file in a folder given with `--solver-config-dir`), which keeps them.
+The checks against extra commands (no line breaks, spaces, quotes, `;`, `#`,
+`=` or a backslash at the end) apply to every source.
+
 ### Per-solver baseline `.opt` files
 
 Every solver gets a baseline parameter file in a `solver_config/` folder
@@ -145,7 +179,8 @@ FlexTool reads results from the solver directly and needs no HiGHS solution
 file, so `write_solution_to_file`, `solution_file` and `write_solution_style`
 are ignored in `highs.opt` (older templates set them; projects created then
 still have the lines). To have HiGHS write a solution file anyway, set these
-options in the solve's `solver_arguments`.
+options in the solve's `solver_arguments` (`solution_file` takes a plain file
+name there; the file is written in `<work folder>/solve_data/subprocess/`).
 
 FlexTool reads each solver's baseline once at the start of the run, overlays
 the solve's `solver_mip_gap`, its `solver_arguments` Map and the run's flags

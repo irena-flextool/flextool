@@ -91,6 +91,11 @@ Each line says what changes for a model that ran before and what to do; the deta
   error names the solve and parameter, or the option file and line. Numbers (`-1`, `1e-4`, `inf`) and paths without
   spaces still pass; a value with a space, such as a file path, or ending in a backslash is now refused: use a path
   without spaces.
+- **Solver options in the input database take no file paths or server settings.** A solve's `solver_arguments`
+  option that names a file or folder (HiGHS `log_file` / `solution_file`, Gurobi `InputFile`, CPLEX `workdir`, ...)
+  takes only a plain file name, written in the solve's work folder (`solve_data/subprocess`); a full path, and a
+  Gurobi Compute Server, Cloud, WLS or token-server option, is refused. Move such options to
+  `solver_config/<solver>.opt`, which keeps them.
 
 ### New features
 
@@ -558,6 +563,14 @@ Each line says what changes for a model that ran before and what to do; the deta
   Xpress or COPT, or address another Gurobi or HiGHS option. Every option of every solver is now checked before the
   solve; a refused one stops the run with a message naming the solve and parameter, or the option file and line,
   and the option. The solver's command script and arguments are checked again just before it starts.
+- **A database could point a solver at any file or at another computer** (since 4.0). A `solver_arguments` entry
+  such as `log_file`, `write_model_file`, `read_basis_file`, Gurobi `InputFile` / `ComputeServer` / `CloudAccessID`,
+  CPLEX `workdir` or Xpress `TUNEROUTPUTPATH` could read or write a file anywhere the user may, or send the model
+  and credentials to another machine. Options from the input database are now trusted less than those of the
+  user's own computer: a file option there takes a plain file name, placed in the solve's work folder, and a server
+  option is refused, with a message naming the option, its value and the solve and saying to set it in
+  `solver_config/<solver>.opt` instead. The option files, flags and environment variables keep full paths and server
+  options.
 - **`--solver-time-limit` and `--solver-mip-gap` now apply to Gurobi, CPLEX, Xpress and COPT** (the GUI's time
   limit too), and win over the solve's `solver_mip_gap`, its `solver_arguments` and the solver's option file, as
   they do for HiGHS. Before, they set only HiGHS options: a commercial solve used the database gap and ran without

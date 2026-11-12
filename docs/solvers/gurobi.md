@@ -49,7 +49,11 @@ single-machine path:
      variable to that path.
 
 WLS and Compute Server users set up the licence the way `gurobi_cl` reads it
-(a `gurobi.lic` with the WLS credentials, or `GRB_LICENSE_FILE`).
+(a `gurobi.lic` with the WLS credentials, or `GRB_LICENSE_FILE`). Server,
+cloud and licence parameters (`ComputeServer`, `CS...`, `Cloud...`, `WLS...`,
+`TokenServer`, ...) are taken from `solver_config/gurobi.opt` only: the
+input database's `solver_arguments` may not set them (see
+[What the database may set](index.md#what-the-database-may-set)).
 
 ## Verification
 

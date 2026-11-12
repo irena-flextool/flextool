@@ -6,7 +6,8 @@ Older ``highs.opt.template`` versions carried the GLPK-era lines
 ``flextool.sol`` and HiGHS warned "The cost row for the Glpsol solution file
 is reported last".  Projects created earlier still have that ``highs.opt``;
 the engine drops those keys from the ``highs.opt`` layer.  A solution file
-requested through the solve's ``solver_arguments`` is still honoured, and
+requested through the solve's ``solver_arguments`` (a plain file name, written
+in the solve's work folder) is still honoured, and
 then HiGHS' writer mangles spaces in the live LP's names — so the
 ``_restore_space_mangled_names`` repair must keep entity names with spaces
 intact in the outputs.
@@ -169,26 +170,28 @@ def test_requested_solution_file_keeps_space_names(
         tmp_path, tmp_path_factory, monkeypatch) -> None:
     """A deliberately requested solution file is written, and HiGHS'
     space→underscore mangling of the live LP names is repaired, so the
-    outputs still carry ``coal chp``."""
+    outputs still carry ``coal chp``.  The database gives a plain file
+    name (a path is refused there), written in the solve's work folder."""
     from flextool.engine import run_chain_from_db
 
-    sol_file = tmp_path / "requested.sol"
+    work = tmp_path / "work"
+    sol_file = work / "solve_data" / "subprocess" / "requested.sol"
     args_map = {
         "type": "map", "index_type": "str",
         "data": [["write_solution_to_file", "true"],
-                 ["solution_file", str(sol_file)],
+                 ["solution_file", "requested.sol"],
                  ["write_solution_style", "0"]],
     }
     url = _build_db(tmp_path_factory, "requested_sol", [
         ["solve", SOLVE, "solver_arguments", _b64(args_map, "map"), "init"],
     ])
     monkeypatch.chdir(tmp_path)
-    work = tmp_path / "work"
     run_chain_from_db(
         url, SCENARIO, work_folder=work,
         solver_config_dir=_legacy_solver_config(tmp_path),
     )
     assert sol_file.is_file()
+    assert not (tmp_path / "requested.sol").exists()
     # The file itself carries HiGHS' mangled names ...
     assert "coal_chp" in sol_file.read_text()
     # ... but the outputs keep the real entity name.
