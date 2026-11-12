@@ -5,10 +5,11 @@ the scenarios of the example and how-to databases that come with FlexTool (built
 temporary folder); ``--db PATH --scenario S ...`` runs the scenarios of your own project database instead.
 
 Each run is the command the FlexTool window starts (``python -m flextool.cli.cmd_run_flextool ...``) with the
-same ``--threads`` as the window's default *Threads per run* (1; ``--threads`` sets another) and the same UTF-8
-output, with plots off unless ``--plots`` says otherwise.  It does not pass the project's active output
-configurations, so with plots on the default plot set is drawn.  A ``--db`` database is copied into the temporary
-folder first and the runs read the copy.  The time of each phase is read from the run's ``timings.csv``:
+same ``--threads`` as the window's default *Threads per run* (1; ``--threads`` sets another), the same solver
+option folder (``--solver-config-dir``: ``$FLEXTOOL_SOLVER_CONFIG_DIR``, else ``solver_config/`` in the current
+folder, the workspace when run from there) and the same UTF-8 output, with plots off unless ``--plots`` says
+otherwise.  It does not pass the project's active output configurations, so with plots on the default plot set
+is drawn.  A ``--db`` database is copied into the temporary folder first and the runs read the copy.  The time of each phase is read from the run's ``timings.csv``:
 
 * **start-up**: the run's wall time minus the engine's ``total`` row (Python start and the imports);
 * **read input**: ``read_input`` (reading the database, preparing the input data, setting up the run);
@@ -47,6 +48,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from flextool._resources import package_data_path
+from flextool._solver_config_source import workspace_solver_config_dir
 
 #: "Threads per run" default of the FlexTool window (``gui/data_models.py``, ``max_cores_per_job``).
 GUI_DEFAULT_THREADS = 1
@@ -247,6 +249,8 @@ def run_one(run: Run, folder: Path, threads: int = GUI_DEFAULT_THREADS) -> RunRe
         "--write-methods", *write_methods,
         "--run-launcher", "time-runs",
         "--threads", str(threads),
+        # As the FlexTool window: the workspace's option files, wherever the database is.
+        "--solver-config-dir", str(workspace_solver_config_dir()),
     ]
     # As the FlexTool window: UTF-8 output (a redirected stdout on Windows is otherwise the locale code page,
     # and a non-Latin name in a print could stop the run), unbuffered.

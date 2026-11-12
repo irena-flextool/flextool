@@ -902,6 +902,16 @@ _GUROBI_JSON_INFO = re.compile(rb'"SolutionInfo"\s*:\s*(\{[^{}]*\})')
 _GUROBI_JSON_VAR = re.compile(rb'"VarName"\s*:\s*"([^"]*)"\s*,\s*"X"\s*:\s*([^,}\s]+)')
 #: Console lines of a solve stopped by its time limit (Gurobi / COPT / Xpress).
 _GUROBI_TIME_LIMIT = re.compile(r"^\s*Time limit reached\s*$", re.MULTILINE)
+#: Console lines of a Gurobi solve stopped by another limit or an interrupt (the ``.sol`` text has no status).
+_GUROBI_OTHER_STOP = re.compile(
+    r"^\s*(Solution limit|Node limit|Iteration limit|Work limit|Memory limit|Interrupt request|Solve interrupted)"
+    r"\b", re.MULTILINE | re.IGNORECASE,
+)
+_GUROBI_STOP_STATUS = {
+    "solution limit": "SOLUTION_LIMIT", "node limit": "NODE_LIMIT", "iteration limit": "ITERATION_LIMIT",
+    "work limit": "WORK_LIMIT", "memory limit": "MEM_LIMIT", "interrupt request": "INTERRUPTED",
+    "solve interrupted": "INTERRUPTED",
+}
 _GUROBI_GAP = re.compile(r"^Best objective [^,]*, best bound [^,]*, gap ([-+\d.eE]+)%", re.MULTILINE)
 _COPT_TIME_LIMIT = re.compile(r"status\s*:\s*stopped\s*\(time limit", re.IGNORECASE)
 _COPT_GAP = re.compile(r"^Best gap\s*:\s*([-+\d.eE]+)%", re.MULTILINE)
@@ -967,7 +977,8 @@ def _parse_gurobi_sol(path: Path, stdout: str = "") -> _ParsedSolution:
     else the ``.sol`` text format (values only).
 
     With the text format the status comes from the console output: a primal
-    with ``Time limit reached`` in *stdout* is ``TIME_LIMIT``, otherwise
+    with ``Time limit reached`` in *stdout* is ``TIME_LIMIT``, one with another
+    limit or an interrupt (``Node limit reached``, ...) carries that status, otherwise
     ``OPTIMAL`` (the text format has no status; with console logging off a
     time-limited solve cannot be told apart, which is why FlexTool asks for JSON).
     """
@@ -979,6 +990,11 @@ def _parse_gurobi_sol(path: Path, stdout: str = "") -> _ParsedSolution:
     status, objective, primal = _parse_sol_text(path)
     if primal and _GUROBI_TIME_LIMIT.search(stdout):
         return _ParsedSolution("TIME_LIMIT", objective, primal, None, _percent(_GUROBI_GAP.search(stdout)))
+    if primal:
+        stop = _GUROBI_OTHER_STOP.search(stdout)
+        if stop is not None:
+            # Another limit or an interrupt: not optimal, rejected by name.
+            return _ParsedSolution(_GUROBI_STOP_STATUS[stop.group(1).lower()], objective, primal, None)
     return _ParsedSolution(status, objective, primal, None)
 
 
@@ -1028,6 +1044,34 @@ def _parse_copt_sol(path: Path, stdout: str = "") -> _ParsedSolution:
     return _ParsedSolution(status, objective, primal, None)
 
 
+#: CPLEX ``solutionStatusString`` phrases, checked in order (``CPXgetstatstring``).  A limit or an abort is
+#: never "optimal": with a solution, only a time limit is kept (the D2 rule of
+#: :mod:`flextool.engine.solve._acceptance`); the other limits are rejected by name.  An unrecognised
+#: string stays ``OTHER`` (rejected, naming the solver status).
+_CPLEX_STATUS_PHRASES: tuple[tuple[str, str], ...] = (
+    ("non-optimal", "OTHER"),
+    ("nonoptimal", "OTHER"),
+    ("time limit", "TIME_LIMIT"),          # also "deterministic time limit exceeded"
+    ("node limit", "NODE_LIMIT"),
+    ("solution limit", "SOLUTION_LIMIT"),
+    ("iteration limit", "ITERATION_LIMIT"),
+    ("memory limit", "MEM_LIMIT"),
+    ("abort", "INTERRUPTED"),
+    ("infeasible or unbounded", "INF_OR_UNBD"),
+    ("optimal", "OPTIMAL"),                # "optimal", "integer optimal solution", "integer optimal, tolerance"
+    ("infeasible", "INFEASIBLE"),
+    ("unbounded", "UNBOUNDED"),
+)
+
+
+def _cplex_status(status_str: str) -> str:
+    """The status of a CPLEX ``solutionStatusString`` (lower case), ``OTHER`` when unrecognised or empty."""
+    for phrase, status in _CPLEX_STATUS_PHRASES:
+        if phrase in status_str:
+            return status
+    return "OTHER"
+
+
 def _parse_cplex_sol(path: Path, stdout: str = "") -> _ParsedSolution:
     """Parse CPLEX XML ``.sol`` via :mod:`xml.etree.ElementTree`; the gap of a
     time-limited MIP comes from the console (``gap = ..., X%``)."""
@@ -1045,6 +1089,7 @@ def _parse_cplex_sol(path: Path, stdout: str = "") -> _ParsedSolution:
         root = children[0]
     objective: float | None = None
     status = "OTHER"
+    status_str = ""
     header = root.find("header")
     if header is not None:
         obj_str = header.get("objectiveValue")
@@ -1053,15 +1098,8 @@ def _parse_cplex_sol(path: Path, stdout: str = "") -> _ParsedSolution:
                 objective = float(obj_str)
             except ValueError:
                 pass
-        status_str = (header.get("solutionStatusString") or "").lower()
-        if "optimal" in status_str:
-            status = "OPTIMAL"
-        elif "infeasible" in status_str:
-            status = "INFEASIBLE"
-        elif "unbounded" in status_str:
-            status = "UNBOUNDED"
-        elif "time" in status_str:
-            status = "TIME_LIMIT"
+        status_str = (header.get("solutionStatusString") or "").strip().lower()
+        status = _cplex_status(status_str)
     primal: dict[str, float] = {}
     vars_el = root.find("variables")
     if vars_el is not None:
@@ -1086,7 +1124,8 @@ def _parse_cplex_sol(path: Path, stdout: str = "") -> _ParsedSolution:
                 dual[name] = float(dual_str)
             except ValueError:
                 continue
-    if status == "OTHER" and primal:
+    if status == "OTHER" and primal and not status_str:
+        # A file without a status string: the values are all there is to go on.
         status = "OPTIMAL"
     gaps = _CPLEX_GAP.findall(stdout) if status == "TIME_LIMIT" else []
     gap = None

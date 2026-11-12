@@ -13,8 +13,11 @@ A run reads ``highs.opt``, ``gurobi.opt``, ``cplex.opt``, ``xpress.opt`` and ``c
 5. ``solver_config/`` in the current folder;
 6. none: FlexTool's packaged defaults (``flextool/solver_config/<solver>.opt.template``), with one warning.
 
-Tiers 3-5 count only a folder that holds at least one ``<solver>.opt``.  An explicit or environment folder is
-taken as given; a solver whose file is missing there uses its packaged default.
+Tiers 3-5 count only a folder that holds at least one ``<solver>.opt``.  They skip ``<current folder>/solver_config``
+when every ``.opt`` in it is an unedited FlexTool template (this or an earlier shipped version): that is the copy
+FlexTool 4.3 and older left in the folder a run started from, not a choice of options.  The run then takes the
+next tier and warns, naming the skipped folder.  An explicit or environment folder is taken as given; a solver
+whose file is missing there uses its packaged default.
 
 :func:`snapshot_solver_option_files` reads the chosen files once at run start, writes the copy
 ``<work_folder>/solve_data/solver_config/`` as the record of what the run used, and returns the texts every
@@ -25,6 +28,7 @@ This module imports nothing from the engine, so the CLI, the GUI, project packag
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from dataclasses import dataclass, field
@@ -56,6 +60,43 @@ REASON_DEFAULTS = "FlexTool defaults"
 #: The GUI project folders an input database can sit in: ``<workspace>/projects/<P>/<folder>/<db>``.
 _PROJECT_DB_FOLDERS = ("input_sources", "intermediate")
 
+#: sha256 (of the text with CRLF read as LF) of every shipped version of ``flextool/solver_config/<solver>.opt.template``
+#: up to 4.4.0, from the git history (``git log --all -- 'flextool*/solver_config/<solver>.opt.template'``).  The
+#: current template is also recognised at run time, so a later template edit needs no entry here; the test
+#: ``test_shipped_template_hashes_cover_git_history`` checks the list against the history.
+SHIPPED_TEMPLATE_SHA256: Mapping[str, frozenset[str]] = {
+    "highs": frozenset({
+        "2151672a9aad61f534bdda16033e1848a678ab293896c5993a28dcf9c2956bed",
+        "ae7ba9b2e0194773b2a02db935c8663724187744e010497d59153e37fefecea6",
+        "cf28ea5eccb931bcdf41c98e0df62f280d3e2a6991f981b62b8221b8c8a5f3a1",
+        "e52d4fb08ffba66357b164cb55ba97e9175f3674742b7ab5039f62f94f18cb03",
+    }),
+    "gurobi": frozenset({
+        "04353fb0e11360d9bc4adeaeb30318f082e1379d8ba44b4f44f2a953c9a90dcb",
+        "245ffff3fcf99e0d79eb03fd8a95b73c9433c59f92f08d08f5f27f8ab723cc6a",
+        "7911b914b4c8f1dc4eb335be410251111c12d762dcecb18d4ac19cb2a912c690",
+        "9d6548f8e598f688106e8dfe452fceb3dd11d73d15df4dffeb9e0ccdcee28c09",
+    }),
+    "cplex": frozenset({
+        "4154578f6822e2dab71db1a797a9bb87e99ae6445124949b142603303e336999",
+        "59629b91d5aadc35ea3f17a6ae62c5c67fc5641a1022d2a3381bf78550c8205e",
+        "a90f70f4ea8c7daf201f0678584ff7b2d7225236972f43a0aa114e3a95d1ec33",
+        "deea8744ce329573e540129d74cbf85cc86d7a09569d309a3badf16c2334d436",
+    }),
+    "xpress": frozenset({
+        "049e374d011e7b592581c14e47cfe809941fd69f2e17ec438ce28a4b3c8ce228",
+        "c12c35af12b782fa811c3ad8f2f71362c4c1776ec857f8d82b2cb2af5d2a3413",
+        "da4d04664f020fc5b3b0501f3a7e63fdeb6a3e32bc4f6cfc270667de366827c2",
+        "fa3929c9f1428595390d6673559a13c2c5dc33ccb1e4456950331a1e1de31a6e",
+    }),
+    "copt": frozenset({
+        "38ce93bb6bde7fdcf707324df888533f0a375c9fce24bbf9e1554e28e3ce527f",
+        "666de1c91d1f64a6bad0006c2bb4b3535d84589f010d8b27a744a9f0be3f3d16",
+        "bc876c81c0b5fc89c26aef2fff370e37bb78d9e2edd2c0f50afa2f773a52e276",
+        "d3f27615d136a9185ba2cbf097a60112d6418db27d89b1701e894818d0ad2bbc",
+    }),
+}
+
 
 @dataclass(frozen=True)
 class SolverConfigSource:
@@ -64,13 +105,20 @@ class SolverConfigSource:
     dir: Path | None
     reason: str
     tried: tuple[Path, ...] = ()
+    #: Folders passed over because they hold only unedited FlexTool templates (see :func:`is_template_copy`).
+    skipped: tuple[Path, ...] = ()
 
     def describe(self) -> str:
         """``<dir> (<reason>)`` for the run header and log; the folders tried when none was found."""
+        skipped = (
+            f"; skipped {', '.join(str(p) for p in self.skipped)}: unedited FlexTool templates" if self.skipped else ""
+        )
         if self.dir is not None:
-            return f"{self.dir} ({self.reason})"
+            return f"{self.dir} ({self.reason}{skipped})"
         if self.tried:
-            return f"{REASON_DEFAULTS} (no solver_config folder in: {', '.join(str(p) for p in self.tried)})"
+            return f"{REASON_DEFAULTS} (no solver_config folder in: {', '.join(str(p) for p in self.tried)}{skipped})"
+        if skipped:
+            return f"{REASON_DEFAULTS} ({skipped[2:]})"
         return REASON_DEFAULTS
 
 
@@ -97,6 +145,40 @@ def _has_option_file(folder: Path) -> bool:
         return any((folder / f"{name}.opt").is_file() for name in SOLVER_NAMES)
     except OSError:
         return False
+
+
+def _normalised_sha256(data: bytes) -> str:
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+
+
+def _template_hashes(solver: str) -> frozenset[str]:
+    """The shipped versions of *solver*'s template, plus the installed one."""
+    known = SHIPPED_TEMPLATE_SHA256.get(solver, frozenset())
+    current = _template_path(solver)
+    if current is None:
+        return known
+    try:
+        return known | {_normalised_sha256(current.read_bytes())}
+    except OSError:
+        return known
+
+
+def is_template_copy(folder: Path) -> bool:
+    """Whether *folder* holds at least one ``<solver>.opt`` and each one is byte for byte (CRLF read as LF) a
+    shipped FlexTool template: the copy an earlier FlexTool left, not files someone edited."""
+    found = False
+    for solver in SOLVER_NAMES:
+        path = folder / f"{solver}.opt"
+        try:
+            if not path.is_file():
+                continue
+            digest = _normalised_sha256(path.read_bytes())
+        except OSError:
+            return False
+        if digest not in _template_hashes(solver):
+            return False
+        found = True
+    return found
 
 
 def _database_candidates(input_db_url: str | os.PathLike | None) -> list[tuple[Path, str]]:
@@ -147,15 +229,28 @@ def resolve_solver_config_source(
         except OSError:
             anchor = Path(project_folder_file).parent.parent
         candidates.append((anchor / SOLVER_CONFIG_FOLDER, REASON_TOOLBOX))
-    candidates.append((Path(cwd if cwd is not None else Path.cwd()) / SOLVER_CONFIG_FOLDER, REASON_CWD))
+    cwd_folder = Path(cwd if cwd is not None else Path.cwd()) / SOLVER_CONFIG_FOLDER
+    candidates.append((cwd_folder, REASON_CWD))
     tried: list[Path] = []
+    skipped: list[Path] = []
     for folder, reason in candidates:
-        if folder in tried:
+        if folder in tried or folder in skipped:
             continue
         if _has_option_file(folder):
-            return SolverConfigSource(folder, reason)
+            if _same_folder(folder, cwd_folder) and is_template_copy(folder):
+                # FlexTool 4.3 and older copied the templates into the folder a run started from.
+                skipped.append(folder)
+                continue
+            return SolverConfigSource(folder, reason, skipped=tuple(skipped))
         tried.append(folder)
-    return SolverConfigSource(None, REASON_DEFAULTS, tuple(tried))
+    return SolverConfigSource(None, REASON_DEFAULTS, tuple(tried), tuple(skipped))
+
+
+def _same_folder(a: Path, b: Path) -> bool:
+    try:
+        return a.resolve() == b.resolve()
+    except OSError:
+        return a == b
 
 
 def workspace_solver_config_dir(environ: Mapping[str, str] | None = None, cwd: str | os.PathLike | None = None) -> Path:
@@ -233,7 +328,8 @@ def snapshot_solver_option_files(
     """Read the run's option files once and write them to ``<work_folder>/solve_data/solver_config/``.
 
     Every run writes the snapshot afresh (an older one is replaced).  Logs the source (``Solver config:``), one
-    warning when no folder was found, one line for the solvers that use the packaged default in a chosen
+    warning when no folder was found (or one per folder skipped as an unedited template copy, which also names the
+    folder used), one line for the solvers that use the packaged default in a chosen
     folder, and one warning when a ``<work_folder>/solver_config/`` from an earlier version differs from what
     the run uses (it is no longer read).  A snapshot that cannot be written gives a warning; the run goes on with
     the texts read.
@@ -241,12 +337,20 @@ def snapshot_solver_option_files(
     log = logger or _logger
     files = read_solver_option_files(source, names)
     log.info("Solver config: %s", source.describe())
-    if source.dir is None:
+    for folder in source.skipped:
         log.warning(
-            "No solver_config folder found (tried %s); every solver uses FlexTool's default options. Use "
-            "--solver-config-dir (or FLEXTOOL_SOLVER_CONFIG_DIR) to choose the folder.",
-            ", ".join(str(p) for p in source.tried) or "none",
+            "Not using %s: its option files are unedited FlexTool templates, as FlexTool 4.3 and older left in "
+            "the folder a run started from; this run uses %s. To use that folder, pass --solver-config-dir %s "
+            "(or set FLEXTOOL_SOLVER_CONFIG_DIR).",
+            folder, "FlexTool's default options" if source.dir is None else f"{source.dir} ({source.reason})", folder,
         )
+    if source.dir is None:
+        if not source.skipped:  # else the skipped-folder warning above says the defaults are used
+            log.warning(
+                "No solver_config folder found (tried %s); every solver uses FlexTool's default options. Use "
+                "--solver-config-dir (or FLEXTOOL_SOLVER_CONFIG_DIR) to choose the folder.",
+                ", ".join(str(p) for p in source.tried) or "none",
+            )
     elif not source.dir.is_dir():
         log.warning(
             "Solver config folder %s (%s) does not exist; every solver uses FlexTool's default options.",
@@ -287,6 +391,8 @@ def _warn_stale_work_folder_copy(
     try:
         if source.dir is not None and old.resolve() == source.dir.resolve():
             return
+        if any(old.resolve() == p.resolve() for p in source.skipped):
+            return  # already named by the skipped-folder warning
     except OSError:
         return
     differing = []
@@ -313,6 +419,7 @@ __all__ = [
     "SolverConfigSource",
     "SolverOptionFiles",
     "input_db_filesystem_path",
+    "is_template_copy",
     "read_solver_option_files",
     "resolve_solver_config_source",
     "snapshot_solver_option_files",

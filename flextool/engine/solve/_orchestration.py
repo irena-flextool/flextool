@@ -5004,6 +5004,8 @@ def run_chain_from_db(
         solver_config_source = resolve_solver_config_source(
             explicit=solver_config_dir, run_options=run_options, input_db_url=db_url,
         )
+    from flextool.engine.solve._solver_dispatch import reset_run_warnings
+    reset_run_warnings()
     solver_option_files = snapshot_solver_option_files(solver_config_source, work_folder, logger)
     solver_config_dir_resolved = (
         solver_option_files.snapshot_dir or solver_config_source.dir

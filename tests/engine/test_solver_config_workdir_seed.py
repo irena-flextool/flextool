@@ -9,7 +9,10 @@ those rules by hand (design ``specs/gurobi_options_fix_design.md`` §2.2 / §3 t
 """
 from __future__ import annotations
 
+import hashlib
 import logging
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -23,7 +26,9 @@ from flextool._solver_config_source import (
     REASON_ENV,
     REASON_FLAG,
     REASON_TOOLBOX,
+    SHIPPED_TEMPLATE_SHA256,
     SOLVER_NAMES,
+    is_template_copy,
     resolve_solver_config_source,
     snapshot_solver_option_files,
 )
@@ -170,3 +175,119 @@ def test_the_source_folder_itself_is_not_a_stale_copy(layout, caplog) -> None:
     with caplog.at_level(logging.WARNING):
         snapshot_solver_option_files(source, ws, _LOGGER)
     assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+#: ``flextool/solver_config/gurobi.opt.template`` as shipped in 4.3.0 (``git show v4.3.0:...``), the file 4.3
+#: copied into the folder a run started from.
+_GUROBI_TEMPLATE_4_3 = (
+    "# Gurobi baseline parameter file (FlexTool default).\n"
+    "#\n"
+    "# Format: Gurobi .prm \u2014 one \"<ParamName> <value>\" per line.\n"
+    "# Lines starting with \"#\" are comments.  This file is consumed via\n"
+    "#     gurobi_cl ReadParams=<this-file> ResultFile=<sol> <mps>\n"
+    "# by FlexTool's commercial-solver subprocess driver\n"
+    "# (flextool/engine/solve/_subprocess_solve.py).\n"
+    "#\n"
+    "# Any value set here is overridden line-by-line by the scenario's\n"
+    "# ``solver_options`` Map (and by the translated convenience knobs\n"
+    "# ``solver_time_limit`` / ``solver_mip_gap`` / ``solver_threads``).\n"
+    "#\n"
+    "# Reference: https://docs.gurobi.com/projects/optimizer/en/current/reference/parameters.html\n"
+    "#\n"
+    "# Conservative defaults \u2014 edit to suit your model.\n"
+    "Threads 1\n"
+    "MIPGap 0.002\n"
+    "LogToConsole 1\n"
+)
+
+
+def _plant_4_3_copy(folder: Path) -> Path:
+    """What 4.3 left in ``<folder>/solver_config``: the 4.3 gurobi template (written with Windows line ends) and
+    the current highs template."""
+    planted = folder / "solver_config"
+    planted.mkdir(parents=True, exist_ok=True)
+    (planted / "gurobi.opt").write_bytes(_GUROBI_TEMPLATE_4_3.replace("\n", "\r\n").encode("utf-8"))
+    (planted / "highs.opt").write_text(_template("highs"), encoding="utf-8")
+    return planted
+
+
+def test_the_4_3_gurobi_template_is_a_known_shipped_version() -> None:
+    """The embedded 4.3 text is the file whose hash ``git show v4.3.0:...`` gives (checked by hand once)."""
+    digest = hashlib.sha256(_GUROBI_TEMPLATE_4_3.encode("utf-8")).hexdigest()
+    assert digest == "7911b914b4c8f1dc4eb335be410251111c12d762dcecb18d4ac19cb2a912c690"
+    assert digest in SHIPPED_TEMPLATE_SHA256["gurobi"]
+
+
+def test_a_template_copy_in_the_current_folder_is_skipped_for_the_next_tier(layout, caplog) -> None:
+    """Review M1: 4.3 planted the templates in ``runs/solver_config``; the Toolbox project folder holds the
+    user's ``gurobi.opt`` (Threads 7).  The run takes the user's file and warns, naming the planted folder."""
+    runs = layout["tmp"] / "runs"
+    planted = _plant_4_3_copy(runs)
+    assert is_template_copy(planted)
+    folder_file = layout["ws"] / "templates" / "project_folder.txt"
+    source = _resolve(input_db_url="mysql://host/db", project_folder_file=folder_file, cwd=runs)
+    assert (source.dir, source.reason, source.skipped) == (layout["ws"] / "solver_config", REASON_TOOLBOX, ())
+
+    # Without the Toolbox folder the planted copy is the only candidate: skipped, the defaults are used.
+    source = _resolve(input_db_url=f"sqlite:///{layout['tmp'] / 'models' / 'uc.sqlite'}", cwd=runs)
+    assert source.dir is None and source.skipped == (planted,)
+    with caplog.at_level(logging.WARNING):
+        files = snapshot_solver_option_files(source, runs, _LOGGER)
+    assert files.text("gurobi") == _template("gurobi")
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, warnings
+    assert warnings[0].startswith(f"Not using {planted}: ") and "FlexTool's default options" in warnings[0]
+    assert "unedited FlexTool templates" in source.describe()
+
+
+def test_a_template_copy_next_to_the_database_run_from_there_is_skipped(layout, caplog) -> None:
+    """Run from the database's own folder: the planted copy is also the tier-3 folder; it is still skipped."""
+    models = layout["tmp"] / "models"
+    planted = _plant_4_3_copy(models)
+    db = models / "uc.sqlite"
+    db.write_bytes(b"")
+    folder_file = layout["ws"] / "templates" / "project_folder.txt"
+    source = _resolve(input_db_url=f"sqlite:///{db}", project_folder_file=folder_file, cwd=models)
+    assert (source.dir, source.reason, source.skipped) == (layout["ws"] / "solver_config", REASON_TOOLBOX, (planted,))
+    with caplog.at_level(logging.WARNING):
+        files = snapshot_solver_option_files(source, models, _LOGGER)
+    assert files.text("gurobi") == "Threads 7\n"
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1 and str(layout["ws"] / "solver_config") in warnings[0], warnings
+
+
+def test_an_edited_file_keeps_the_current_folder(layout) -> None:
+    """One edited file is a choice of options: the folder is used (only a pure template copy is skipped)."""
+    runs = layout["tmp"] / "runs"
+    planted = _plant_4_3_copy(runs)
+    (planted / "highs.opt").write_text(_template("highs") + "threads = 4\n", encoding="utf-8")
+    assert not is_template_copy(planted)
+    source = _resolve(input_db_url="mysql://host/db", cwd=runs)
+    assert (source.dir, source.reason, source.skipped) == (planted, REASON_CWD, ())
+
+
+def test_shipped_template_hashes_cover_git_history() -> None:
+    """Every version of ``flextool/solver_config/<solver>.opt.template`` in the git history is in
+    :data:`SHIPPED_TEMPLATE_SHA256` (skipped outside a git checkout)."""
+    repo = Path(__file__).resolve().parents[2]
+    if shutil.which("git") is None or not (repo / ".git").exists():
+        pytest.skip("not a git checkout")
+    for solver in SOLVER_NAMES:
+        commits = subprocess.run(
+            ["git", "log", "--all", "--format=%H", "--", f"flextool*/solver_config/{solver}.opt.template"],
+            cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout.split()
+        assert commits, solver
+        seen: set[str] = set()
+        for commit in commits:
+            tree = subprocess.run(
+                ["git", "ls-tree", "-r", commit], cwd=repo, capture_output=True, text=True, check=True,
+            ).stdout.splitlines()
+            for line in tree:
+                meta, path = line.split("\t", 1)
+                if path.endswith(f"solver_config/{solver}.opt.template"):
+                    seen.add(meta.split()[2])
+        for blob in seen:
+            data = subprocess.run(["git", "cat-file", "-p", blob], cwd=repo, capture_output=True, check=True).stdout
+            digest = hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+            assert digest in SHIPPED_TEMPLATE_SHA256[solver], (solver, blob)

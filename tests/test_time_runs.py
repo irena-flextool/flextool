@@ -80,12 +80,15 @@ def test_one_example_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_db_runs_from_a_copy_with_the_gui_threads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """``--db``: the run gets a copy (the file is unchanged), ``--threads 1`` and the GUI's UTF-8 environment."""
+    """``--db``: the run gets a copy (the file is unchanged), ``--threads 1``, the workspace's
+    ``--solver-config-dir`` and the GUI's UTF-8 environment."""
     import hashlib
     import subprocess
 
     from flextool.cli import cmd_time_runs
 
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
     db_folder = tmp_path / "my #project"  # '#' would break an unencoded file: URI
     url = cmd_time_runs._build_sqlite(cmd_time_runs._resolve_source("templates_examples"), db_folder)
     db = Path(url.removeprefix("sqlite:///"))
@@ -104,6 +107,8 @@ def test_db_runs_from_a_copy_with_the_gui_threads(tmp_path: Path, monkeypatch: p
     run_url = cmd[cmd.index("flextool.cli.cmd_run_flextool") + 1]
     assert run_url.startswith("sqlite:///") and Path(run_url.removeprefix("sqlite:///")) != db
     assert cmd[cmd.index("--threads") + 1] == "1"
+    # As the window: the workspace's option folder (here the current folder's), whatever the database's folder.
+    assert cmd[cmd.index("--solver-config-dir") + 1] == str(tmp_path / "solver_config")
     assert env["PYTHONIOENCODING"] == "utf-8" and env["FLEXTOOL_PHASE_TIMING"] == "1"
     assert "[1/1] coal (" in buf.getvalue()
 

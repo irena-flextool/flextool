@@ -187,10 +187,14 @@ def test_generic_id_parsers() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write_fake_gurobi(tmp_path: Path, sol_lines: list[str], stdout: str = "") -> Path:
+def _write_fake_gurobi(tmp_path: Path, sol_lines: list[str], stdout: str = "", *, solve_mps: bool = False) -> Path:
     """Executable stub mimicking ``gurobi_cl``: read ``ResultFile=<path>``
     from argv, write *sol_lines* there (Gurobi ResultFile format), print
-    *stdout*, record its argv in ``<tmp_path>/argv.json``, exit 0."""
+    *stdout*, record its argv in ``<tmp_path>/argv.json``, exit 0.
+
+    With *solve_mps* it instead solves the model file (the last argument) with
+    highspy and writes a Gurobi JSON result (status 2, objective, the non-zero
+    values), so a whole FlexTool run can go through it."""
     body = textwrap.dedent(
         """\
         #!{py}
@@ -200,19 +204,38 @@ def _write_fake_gurobi(tmp_path: Path, sol_lines: list[str], stdout: str = "") -
             if a.startswith("ResultFile="):
                 result = a.split("=", 1)[1]
         assert result is not None, "fake gurobi_cl: no ResultFile= in argv"
-        with open({argv_log!r}, "w") as fh:
-            json.dump(sys.argv[1:], fh)
+        with open({argv_log!r}, "a") as fh:
+            fh.write(json.dumps(sys.argv[1:]) + "\\n")
+        payload = {payload!r}
+        if {solve_mps!r}:
+            import highspy
+            h = highspy.Highs()
+            h.setOptionValue("output_flag", False)
+            h.readModel(sys.argv[-1])
+            h.run()
+            assert h.getModelStatus() == highspy.HighsModelStatus.kOptimal
+            names = h.allVariableNames()
+            values = h.getSolution().col_value
+            payload = json.dumps({{
+                "SolutionInfo": {{"Status": 2, "ObjVal": h.getInfo().objective_function_value, "SolCount": 1}},
+                "Vars": [{{"VarName": n, "X": v}} for n, v in zip(names, values) if v != 0.0],
+            }})
         with open(result, "w") as fh:
-            fh.write({payload!r})
+            fh.write(payload)
         sys.stdout.write({stdout!r})
         sys.exit(0)
         """
     ).format(py=sys.executable, payload="\n".join(sol_lines) + "\n", stdout=stdout,
-             argv_log=str(tmp_path / "argv.json"))
+             argv_log=str(tmp_path / "argv.json"), solve_mps=solve_mps)
     stub = tmp_path / "fake_gurobi_cl"
     stub.write_text(body)
     stub.chmod(stub.stat().st_mode | stat.S_IEXEC | stat.S_IRWXU)
     return stub
+
+
+def _argv_of_calls(tmp_path: Path) -> list[list[str]]:
+    """The argv of each call of the stub, in order."""
+    return [json.loads(line) for line in (tmp_path / "argv.json").read_text().splitlines()]
 
 
 def test_commercial_path_maps_generic_primal_by_index(
@@ -516,6 +539,99 @@ def test_gurobi_json_result_gives_status_and_gap_with_logging_off(tmp_path, monk
     assert not classify_acceptance(sol, ranges_post=None, solve_name="unit").accepted
 
 
+_GUROBI_JSON_FIXTURES = Path(__file__).parent / "fixtures" / "gurobi_json"
+
+
+def _knapsack_value(i: int) -> int:
+    """Item values of ``time_limited_mip.json`` (``fixtures/gurobi_json/make_fixtures.py``)."""
+    return 100 + (i * 7919) % 901
+
+
+def _knapsack_weight(i: int, k: int) -> int:
+    return 50 + ((i + 1) * (k + 3) * 104729) % 951
+
+
+def test_gurobi_json_files_written_by_gurobi_parse() -> None:
+    """Result files written by gurobipy 13.0.2 (``Model.write("<x>.json")``, the format of ``gurobi_cl
+    ResultFile=<x>.json``), generated once by ``fixtures/gurobi_json/make_fixtures.py`` and committed.
+
+    * optimal MIP: min -5 x - 4 y, 6 x + 4 y <= 24, x + 2 y <= 6, integer: x = 4, y = 0 (the only non-zero, so
+      the only ``Vars`` entry), objective -20, gap 0;
+    * time-limited 1500-item, 40-row binary knapsack: status 9, the incumbent's objective is the sum of the
+      chosen items' (negated) values, each row holds, and the gap is (ObjVal - ObjBound) / |ObjVal|;
+    * infeasible LP (x + y >= 3, x + y <= 1): status 3 and no ``Vars``, so no solution.
+    """
+    optimal = sps._parse_gurobi_json(_GUROBI_JSON_FIXTURES / "optimal_mip.json")
+    assert optimal is not None
+    assert (optimal.status, optimal.objective, optimal.primal, optimal.mip_gap) == (
+        "OPTIMAL", -20.0, {"C0000001": 4.0}, 0.0,
+    )
+
+    limited = sps._parse_gurobi_json(_GUROBI_JSON_FIXTURES / "time_limited_mip.json")
+    assert limited is not None and limited.status == "TIME_LIMIT"
+    chosen = [int(name[1:]) - 1 for name, x in limited.primal.items() if x == 1.0]
+    assert len(chosen) == len(limited.primal) > 0           # binaries: every listed value is 1
+    assert limited.objective == pytest.approx(-sum(_knapsack_value(i) for i in chosen))
+    for k in range(40):
+        capacity = sum(_knapsack_weight(i, k) for i in range(1500)) // 2
+        assert sum(_knapsack_weight(i, k) for i in chosen) <= capacity
+    info = json.loads((_GUROBI_JSON_FIXTURES / "time_limited_mip.json").read_text())["SolutionInfo"]
+    assert limited.mip_gap == pytest.approx((info["ObjVal"] - info["ObjBound"]) / abs(info["ObjVal"]))
+    assert 0.0 < limited.mip_gap < 0.01
+
+    infeasible = sps._parse_gurobi_json(_GUROBI_JSON_FIXTURES / "infeasible_lp.json")
+    assert infeasible is not None
+    assert (infeasible.status, infeasible.objective, infeasible.primal, infeasible.mip_gap) == (
+        "INFEASIBLE", None, None, None,
+    )
+
+
+def test_gurobi_text_result_with_another_limit_is_not_optimal(tmp_path, monkeypatch) -> None:
+    """A text result file with ``Node limit reached`` on the console is ``NODE_LIMIT``: rejected, by name."""
+    _gurobi(_write_fake_gurobi(tmp_path, _SOL_20, stdout="Node limit reached\nBest objective 2.0e+01\n"),
+            monkeypatch)
+    sol = _solve_commercial_subprocess(
+        _mip_lp(["A", "B", "C"]), "gurobi", options=None, solve_name="unit", logger=None, work_folder=None,
+    )
+    assert (sol.shim_status, sol.optimal) == ("NODE_LIMIT", False)
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="unit")
+    assert not acc.accepted and "NODE_LIMIT" in acc.message
+
+
+@pytest.mark.parametrize("status_string, expected", [
+    ("integer optimal solution", "OPTIMAL"),
+    ("integer optimal, tolerance", "OPTIMAL"),
+    ("time limit exceeded, integer feasible", "TIME_LIMIT"),
+    ("aborted, integer feasible", "INTERRUPTED"),
+    ("node limit exceeded, integer feasible", "NODE_LIMIT"),
+    ("solution limit exceeded", "SOLUTION_LIMIT"),
+    ("integer infeasible or unbounded", "INF_OR_UNBD"),
+    ("something new", "OTHER"),
+    ("", "OPTIMAL"),     # no status string at all: the values are all there is
+])
+def test_cplex_status_string_with_a_solution(status_string, expected, tmp_path) -> None:
+    """Review L3: a CPLEX file with values is "optimal" only when its status string says so (or has none)."""
+    path = tmp_path / "x.sol"
+    path.write_text(
+        '<?xml version="1.0"?>\n<CPLEXSolution version="1.2">\n'
+        f' <header objectiveValue="20" solutionStatusString="{status_string}"/>\n'
+        ' <variables><variable name="C0000001" index="0" value="10"/></variables>\n'
+        '</CPLEXSolution>\n'
+    )
+    parsed = sps._parse_cplex_sol(path)
+    assert (parsed.status, parsed.primal) == (expected, {"C0000001": 10.0})
+
+
+def test_cplex_aborted_mip_is_rejected_naming_the_status() -> None:
+    """The status of an aborted CPLEX MIP with an incumbent stops the run (it used to be read as optimal)."""
+    from types import SimpleNamespace
+
+    sol = SimpleNamespace(optimal=False, shim_status=sps._cplex_status("aborted, integer feasible"),
+                          shim_mip_gap=None, _vars=_mip_lp(["A"])._vars)
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="unit")
+    assert not acc.accepted and "interrupted" in acc.message
+
+
 def test_gurobi_unknown_parameter_is_a_warning_naming_its_layer(tmp_path, monkeypatch, caplog) -> None:
     _gurobi(_write_fake_gurobi(tmp_path, _SOL_20, stdout="Unknown parameter: 'MIPGapp' (ignored)\n"), monkeypatch)
     with caplog.at_level(logging.WARNING):
@@ -549,7 +665,7 @@ def test_flags_reach_gurobi_and_set_the_watchdog(tmp_path, monkeypatch) -> None:
         run_options=RunOptions.from_cli(build_parser().parse_args(flags), environ={}),
         solver_config_dir=tmp_path / "cfg",
     )
-    argv = json.loads((tmp_path / "argv.json").read_text())
+    (argv,) = _argv_of_calls(tmp_path)
     assert argv[:-2] == ["Threads=0", "MIPGap=0.001", "TimeLimit=60.0"]
     assert timeouts == [720.0]
 

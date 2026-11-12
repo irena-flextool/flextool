@@ -31,7 +31,7 @@ import polars as pl
 import pytest
 
 import polar_high.engine as phe
-from polar_high import Param, Problem
+from polar_high import Param, Problem, Sum
 
 from flextool.engine.solve import _subprocess_solve as sps
 from flextool.engine.solve._subprocess_solve import (
@@ -291,3 +291,70 @@ def test_reserve_capacity_margin_scenario_matches_in_process(
                                    rtol=1e-7, atol=1e-6, err_msg=name)
     assert sol.obj == pytest.approx(ref.obj, rel=1e-9)
 
+
+
+# ---------------------------------------------------------------------------
+# A solve stopped by its time limit (item 230 review L2)
+# ---------------------------------------------------------------------------
+
+
+def _small_knapsack(integer: bool) -> Problem:
+    """min -5 x - 4 y   s.t.   6 x + 4 y <= 24,   x + 2 y <= 6,   0 <= x, y <= 10 (integer when *integer*)."""
+    p = Problem()
+    idx = pl.DataFrame({"item": ["x", "y"]})
+    v = p.add_var("v", ("item",), idx, lower=0.0, upper=10.0, integer=integer)
+    one = pl.DataFrame({"r": [0]})
+    for name, coef, rhs in (("c1", (6.0, 4.0), 24.0), ("c2", (1.0, 2.0), 6.0)):
+        weights = Param(("item",), pl.DataFrame({"item": ["x", "y"], "value": list(coef)}), name=f"w_{name}")
+        p.add_cstr(name, over=one, sense="<=", lhs_terms={"a": Sum(v * weights, over=("item",))},
+                   rhs_terms={"d": Param(("r",), pl.DataFrame({"r": [0], "value": [rhs]}))})
+    cost = Param(("item",), pl.DataFrame({"item": ["x", "y"], "value": [-5.0, -4.0]}), name="cost")
+    p.set_objective(Sum(v * cost, over=("item",)), sense="min")
+    return p
+
+
+def test_save_memory_time_limit_status_mip_kept_lp_rejected(tmp_path: Path, monkeypatch) -> None:
+    """``--save-memory``: a HiGHS solve stopped by its time limit is read as ``TIME_LIMIT`` from the solution
+    file (``Model status / Time limit reached`` with a ``Feasible`` primal), then judged by the D2 rule.
+
+    MIP: the child is replaced by one that loads FlexTool's MPS in highspy, gives HiGHS the incumbent
+    x = y = 1 (feasible: 6 + 4 = 10 <= 24, 1 + 2 = 3 <= 6) and a time limit of 0 s, so HiGHS stops at once and
+    writes that incumbent: values [1, 1], objective -5 - 4 = -9.  It is kept with a time-limit warning.
+    LP: the real child with ``time_limit = 0`` stops at its start point x = y = 0 (objective 0), feasible,
+    status ``TIME_LIMIT``; an LP at its time limit is rejected.
+    """
+    import highspy
+
+    from flextool.engine.solve._acceptance import classify_acceptance
+
+    def fake_child(cmd, *args, **kwargs):
+        mps, sol_path = cmd[cmd.index("--mps") + 1], cmd[cmd.index("--solution") + 1]
+        h = highspy.Highs()
+        h.setOptionValue("output_flag", False)
+        h.readModel(mps)
+        h.setOptionValue("time_limit", 0.0)
+        incumbent = highspy.HighsSolution()
+        incumbent.col_value = [1.0, 1.0]
+        h.setSolution(incumbent)
+        h.run()
+        assert h.getModelStatus() == highspy.HighsModelStatus.kTimeLimit
+        h.writeSolution(sol_path, 0)
+        return subprocess.CompletedProcess(cmd, 1)   # the child exits 1 for any non-optimal status
+
+    real_run = sps.subprocess.run
+    monkeypatch.setattr(sps.subprocess, "run", fake_child)
+    mip = _solve_highs_subprocess(_small_knapsack(True), {}, solve_name="s", logger=None,
+                                  work_folder=tmp_path / "mip")
+    monkeypatch.setattr(sps.subprocess, "run", real_run)
+    assert (mip.optimal, mip.shim_status) == (False, "TIME_LIMIT")
+    np.testing.assert_allclose(mip.col_value, [1.0, 1.0])
+    assert mip.obj == pytest.approx(-9.0)
+    kept = classify_acceptance(mip, ranges_post=None, solve_name="s")
+    assert kept.accepted and kept.time_limited and kept.near_optimal
+
+    lp = _solve_highs_subprocess(_small_knapsack(False), {"time_limit": 0.0}, solve_name="s", logger=None,
+                                 work_folder=tmp_path / "lp")
+    assert (lp.optimal, lp.shim_status) == (False, "TIME_LIMIT")
+    np.testing.assert_allclose(lp.col_value, [0.0, 0.0])
+    rejected = classify_acceptance(lp, ranges_post=None, solve_name="s")
+    assert not rejected.accepted and "linear problem" in rejected.message

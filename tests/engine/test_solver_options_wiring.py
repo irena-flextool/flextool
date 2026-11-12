@@ -560,3 +560,43 @@ def test_option_files_are_read_once_per_run(gurobi_db, tmp_path, monkeypatch) ->
     assert reads.count(cfg / "gurobi.opt") == 1 and reads.count(cfg / "highs.opt") == 1, reads
     snapshot = tmp_path / "w" / "solve_data" / "solver_config"
     assert not [r for r in reads if r.parent == snapshot], reads
+
+
+def test_cli_flags_reach_a_fake_gurobi_cl_through_the_whole_run(gurobi_db, tmp_path, monkeypatch, caplog) -> None:
+    """Review L6, end to end through ``run_chain_from_db`` and the real subprocess path: a fake ``gurobi_cl``
+    (it solves the MPS with highspy and writes a Gurobi JSON result) records its argv.
+
+    ``--solver-config-dir cfg`` holds ``Threads 5`` / ``MIPGap 0.002``; ``--solver-mip-gap 0.001`` replaces the
+    file's gap in place and ``--solver-time-limit 60`` is added after it, so every call passes
+    ``Threads=5 MIPGap=0.001 TimeLimit=60.0`` before ``ResultFile=`` and the model.  The log names the folder
+    and why, and the run's snapshot holds the file as read."""
+    import logging
+
+    from flextool.cli.cmd_run_flextool import build_parser
+    from flextool.engine import run_chain_from_db
+    from flextool.engine.solve import _subprocess_solve
+    from flextool.run_options import RunOptions
+    from tests.engine.test_subprocess_gurobi_name_recovery import _argv_of_calls, _write_fake_gurobi
+
+    monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "gurobi.opt").write_text("Threads 5\nMIPGap 0.002\n")
+    stub_dir = tmp_path / "stub"
+    stub_dir.mkdir()
+    stub = _write_fake_gurobi(stub_dir, [], solve_mps=True)
+    monkeypatch.setattr(_subprocess_solve, "_find_solver_binary", lambda name: stub)
+    run_options = RunOptions.from_cli(build_parser().parse_args([
+        gurobi_db, "--solver-config-dir", str(cfg), "--solver-mip-gap", "0.001", "--solver-time-limit", "60",
+    ]), environ={})
+    work = tmp_path / "w"
+    with caplog.at_level(logging.INFO):
+        run_chain_from_db(input_db_url=gurobi_db, scenario_name="custom", work_folder=work,
+                          run_options=run_options)
+    calls = _argv_of_calls(stub_dir)
+    assert calls
+    for argv in calls:
+        assert argv[:3] == ["Threads=5", "MIPGap=0.001", "TimeLimit=60.0"], argv
+        assert argv[3].startswith("ResultFile=") and len(argv) == 5, argv
+    assert f"Solver config: {cfg} (--solver-config-dir)" in [r.getMessage() for r in caplog.records]
+    assert (work / "solve_data" / "solver_config" / "gurobi.opt").read_text() == "Threads 5\nMIPGap 0.002\n"

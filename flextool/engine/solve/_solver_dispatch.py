@@ -347,8 +347,16 @@ _HIGHS_ONLY_OPTIONS = (
 _WATCHDOG_FACTOR = 2.0
 _WATCHDOG_GRACE_S = 600.0
 
+#: Warnings given once per run (cleared by :func:`reset_run_warnings` at the start of each run).
 _warned_dropped_options: set[tuple[str, str, str]] = set()
 _warned_highs_only: set[tuple[str, ...]] = set()
+
+
+def reset_run_warnings() -> None:
+    """Forget the once-per-run option warnings; ``run_chain_from_db`` calls it at the start of every run, so a
+    second run in the same process (GUI, tests) warns again."""
+    _warned_dropped_options.clear()
+    _warned_highs_only.clear()
 
 
 class CommercialOption(NamedTuple):
@@ -421,7 +429,7 @@ def resolve_commercial_options(
     merge rule.  *opt_text* is the option file's text as the run read it at its
     start; when given, *opt_file* only names the file in messages (else the file
     is read).  File-writing parameters (:data:`_FILE_WRITING_OPTIONS`) are
-    dropped with one warning per name and layer.
+    dropped with one warning per run for each name and kind of layer.
     """
     from flextool.engine.solve._subprocess_solve import (
         _format_native_opt_value,
@@ -459,7 +467,9 @@ def resolve_commercial_options(
     for option in entries:
         key = commercial_option_key(solver, option.name)
         if key in file_writing:
-            warn_key = (solver, key, option.layer)
+            # One warning per run for each name and kind of layer (the option file, a solve's solver_mip_gap /
+            # solver_arguments, the flags), not one per solve or roll: it names the first layer that set it.
+            warn_key = (solver, key, option.layer.split(" of solve ", 1)[0])
             if warn_key not in _warned_dropped_options:
                 _warned_dropped_options.add(warn_key)
                 (logger or logging.getLogger(__name__)).warning(

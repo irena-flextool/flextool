@@ -84,6 +84,7 @@ from flextool.engine.solve._solver_dispatch import (  # noqa: E402
     _operator_native_overrides,
     commercial_time_limit,
     commercial_watchdog_seconds,
+    reset_run_warnings,
     resolve_commercial_options,
 )
 from flextool.engine.solve._subprocess_solve import _SCRIPTS, _write_commercial_opt_file  # noqa: E402
@@ -172,6 +173,24 @@ def test_result_file_in_solver_arguments_is_dropped_with_a_warning(tmp_path: Pat
     assert params == ["Threads=0", "Presolve=2"]
     warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
     assert len(warnings) == 1 and "ResultFile" in warnings[0] and "solver_arguments" in warnings[0]
+
+
+def test_result_file_warning_is_once_per_run_not_per_solve(tmp_path: Path, caplog) -> None:
+    """Review L7: the same ``ResultFile`` in the ``solver_arguments`` of two solves (or two rolls) warns once in a
+    run, naming the first; the next run warns again."""
+    reset_run_warnings()
+    cfg = SolverConfig(name="gurobi", options={"ResultFile": "mine.sol"})
+    with caplog.at_level("WARNING"):
+        for solve in ("dispatch_roll_1", "dispatch_roll_2", "invest"):
+            resolve_commercial_options("gurobi", opt_file=None, solver_config=cfg, run_options=_options([]),
+                                       solve_name=solve)
+        first_run = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        reset_run_warnings()
+        resolve_commercial_options("gurobi", opt_file=None, solver_config=cfg, run_options=_options([]),
+                                   solve_name="invest")
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert len(first_run) == 1 and "solver_arguments of solve dispatch_roll_1" in first_run[0]
+    assert len(warnings) == 2 and "solver_arguments of solve invest" in warnings[1]
 
 
 # ---------------------------------------------------------------------------
