@@ -74,9 +74,16 @@ Each line says what changes for a model that ran before and what to do; the deta
   thread controls (Xpress `BARTHREADS`, COPT `BarThreads`, ...) are not changed.
 - **At its time limit a MIP with a solution keeps it, with a warning; an LP or a solve without a solution stops the
   run**, for every solver. A commercial solve stopped by another limit, or not certified optimal, now stops the run.
-- **Solver option files come from one `solver_config` folder per run** (`--solver-config-dir`, next to the
-  database, the workspace, ...), not from the folder FlexTool starts in. Check the `Solver config:` line of the run
-  log and move your `.opt` files there.
+- **Solver option files come from the run's `solver_config` folders, file by file** (`--solver-config-dir`, next to
+  the database, the project, the workspace, ...), not from the folder FlexTool starts in. A GUI project can have its
+  own `solver_config/`: its runs take each solver's option file from the project, else the workspace, else
+  FlexTool's default. Check the `Solver config:` line of the run log, which names the folder of each file, and move
+  your `.opt` files there.
+- **An imported project now runs with the solver options it was shipped with.** Import unpacks them into the
+  project's `solver_config/`, where its runs use them ahead of the workspace's (before: `imported_solver_config/`,
+  which no run read). A project imported by an earlier 4.4 development version has that folder renamed to
+  `solver_config/` the first time the FlexTool window opens it (a log line says so), so its results may change;
+  delete a file there to use the workspace's again.
 - **Other commercial-solver fixes that can change results:** CPLEX now gets `solver_mip_gap`; one value per solver
   parameter, whatever its case; Xpress refuses a MIP (it returned the LP relaxation); Gurobi file-writing parameters
   are not passed on.
@@ -343,14 +350,16 @@ Each line says what changes for a model that ran before and what to do; the deta
   **Manage projects… → Export… / Import…** in the FlexTool window, or `flextool-project export|import|verify` in
   the terminal. A package holds the input sources (external input files copied in under their own source numbers,
   so shipped and re-run results pair up), `settings.yaml` without the machine-specific settings, `plot_settings.yaml`,
-  the workspace's solver `.opt` files and the result runs picked in a checkbox list (with sizes; a run whose input
+  the solver option files the project's runs use (only the five solver files, no unedited templates) and the result
+  runs picked in a checkbox list (with sizes; a run whose input
   changed after the run is warned about). Plots, CSV/Excel outputs, `results.sqlite` and scratch folders are left
   out. `manifest.json` records the FlexTool and library versions, each database's data version and frozen marker
   (frozen databases stay frozen), and the SHA-256, size and modification time of each file. Import checks every
   checksum before writing, refuses paths outside the project, keeps the files' modification times (so imported
   results are not flagged as made from a changed input), suggests `<Name>_2` when the name is taken (exit code 3
   in the terminal), refuses a database newer than this FlexTool, migrates older ones on open (asking first for a
-  frozen one), and unpacks the shipped solver options to `imported_solver_config/` with a note on how to use them.
+  frozen one), and unpacks the shipped solver options to the project's `solver_config/`, where its runs use them
+  ahead of the workspace's.
   The viewer's axis ranges file is cut to the shipped runs; run records have this computer's folder paths, user
   name and host name replaced and run logs stay home (on by default; `--keep-run-records` / untick to keep them);
   a run still being written is refused (`--results all` leaves it out); a `.sqlite` input that may be in the middle
@@ -359,6 +368,14 @@ Each line says what changes for a model that ran before and what to do; the deta
   existing package file is replaced only after asking (`--force` in the terminal); errors are one message, no
   traceback; a stopped import's hidden `.<name>.partial` folder is not listed as a project; import names inputs
   left out of the package; `verify` prints one `pip install` line pinning FlexTool, polar-high, highspy and polars.
+- **A project's own solver options, file by file.** Put a `<solver>.opt` in `projects/<P>/solver_config/` and the
+  project's runs (FlexTool window, calibrator, terminal or Toolbox runs on the project's database) use it; a solver
+  without a file there uses the workspace's, else FlexTool's default. `--solver-config-dir` can be repeated, and
+  `FLEXTOOL_SOLVER_CONFIG_DIR` takes several folders separated by `:` (on Windows `;`), highest first; only the
+  folders given are read. With `FLEXTOOL_SOLVER_CONFIG_DIR` set for the FlexTool window, the project's folder still
+  comes first. A shipped option file with an option that names a path or a server is kept as `<solver>.opt.review`,
+  never read by a run, until you check it and rename it; an unedited FlexTool template in a project folder is
+  skipped, so it never hides the workspace's file.
 
 #### Plots, timings and the parameter catalogue
 

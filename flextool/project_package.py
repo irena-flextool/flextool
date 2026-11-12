@@ -72,8 +72,8 @@ PLOT_SETTINGS_FILE = "plot_settings.yaml"
 INPUT_DIR = "input_sources"
 RESULTS_DIR = "output_parquet"
 SOLVER_CONFIG_DIR = "solver_config"
-#: Where FlexTool 4.3 import put the shipped solver option files inside the project (not read by a run); the
-#: FlexTool window renames it to ``solver_config/`` (:func:`adopt_imported_solver_config`).
+#: Where an earlier 4.4 development build's import put the shipped solver option files inside the project (not read
+#: by a run); the FlexTool window renames it to ``solver_config/`` (:func:`adopt_imported_solver_config`).
 IMPORTED_SOLVER_CONFIG_DIR = "imported_solver_config"
 #: The suffix of a shipped option file kept back for the user to check (:func:`settle_shipped_solver_config`).
 HELD_SUFFIX = ".review"
@@ -1170,7 +1170,7 @@ def solver_config_activation_hint(project_path: Path, workspace_dirs: list[Path]
 
 
 def adopt_imported_solver_config(project_path: str | Path) -> list[str]:
-    """Rename a FlexTool 4.3 import's ``imported_solver_config/`` to ``solver_config/`` (its runs then use the
+    """Rename an earlier import's ``imported_solver_config/`` to ``solver_config/`` (its runs then use the
     shipped files), screened as at import (:func:`settle_shipped_solver_config`; unedited templates stay, runs
     skip them).  Only when ``solver_config/`` does not exist.  Returns the lines to log: what was done, one per
     held file; when both folders exist, one line saying ``imported_solver_config/`` is not read; nothing when

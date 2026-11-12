@@ -127,14 +127,19 @@ The contract:
    solver: `<solver>.opt`; then `solve.solver_mip_gap` < `solve.solver_arguments` < operator layer); the registry
    supplies only the operator layer (`_operator_highs_overrides`; `_solver_dispatch._operator_native_overrides`
    maps `--solver-time-limit` / `--solver-mip-gap` to the native names of `_PARAM_MAP`).
-   The option files come from one folder per run, `flextool/_solver_config_source.py` (engine-free; not
+   The option files come from one ladder of folders per run, read FILE BY FILE (each solver's file from the first
+   folder that has it, else the packaged template), `flextool/_solver_config_source.py` (engine-free; not
    `flextool/solver_config.py`, which would shadow the template data folder):
-   `resolve_solver_config_source` — explicit argument > `--solver-config-dir` > `FLEXTOOL_SOLVER_CONFIG_DIR` >
-   the bounded database layout (next to the database; `<workspace>` of a `projects/<P>/input_sources/` database)
-   > the Toolbox project folder > cwd > packaged templates. `snapshot_solver_option_files` reads them once at run
+   `resolve_solver_config_source` builds the ladder from the first tier that applies — explicit argument >
+   `--solver-config-dir` (repeatable) > `FLEXTOOL_SOLVER_CONFIG_DIR` (`os.pathsep` list), a closed ladder >
+   the bounded database layout (next to the database, alone; else `[<P>/solver_config, <workspace>/solver_config]`
+   for a `projects/<P>/input_sources/` database) > the Toolbox project folder > cwd > packaged templates. A GUI
+   project's folder never gives an unedited template (it would hide the workspace's file). Project import screens
+   shipped files with the engine-free `flextool/_solver_option_rules.py` (the database's path/server rules) and
+   holds a flagged one back as `<solver>.opt.review`. `snapshot_solver_option_files` reads them once at run
    start into `PathConfig.solver_option_files` (every solve reads its layer from there, never from disk) and
-   writes the record `<work_folder>/solve_data/solver_config/`. The GUI and the calibrator pass the folder
-   explicitly.
+   writes the record `<work_folder>/solve_data/solver_config/`. The GUI and the calibrator pass the ladder
+   explicitly (`gui_solver_config_dirs`: the project's folder when it exists, then the workspace's).
 7. The run header prints `RunOptions.summary_lines()` — each option set by a flag or an environment variable,
    with its source — and the thread budget (`Threads:`), with polars' and HiGHS' thread counts.
 
