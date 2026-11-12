@@ -188,8 +188,14 @@ THINKING = "thinking…"
 TOOL_WAITING = "· {name} waits for another tool call to finish"
 PRIVACY_NONE = "Sent with every request: no privacy setting (this service has none per request)."
 PRIVACY_ACCOUNT = "Set in your provider account (FlexTool cannot set these):"
+#: What /privacy says of the context block's model facts (sent with each question that has a scenario).
+PRIVACY_FACTS = ("With each question about a scenario (--scenario) the assistant is also sent its model facts: the "
+                 "names of its solves and periods, its time steps and the state of its latest run, with that run's "
+                 "error message.")
 CONTEXT_LINE = ("Context: {window} tokens ({source}); tool results up to {chars} characters; earlier results "
                 "shortened every {every}.")
+#: The longest /context waits for a tool call to finish before it shows the block without the model facts.
+SHOW_CONTEXT_LOCK_WAIT = 5.0
 CONTEXT_NOT_YET = "Context: not known yet (FlexTool checks it before the first question)."
 #: Where the context size of :data:`CONTEXT_LINE` came from (``Budget.window_source``).
 WINDOW_SOURCES: dict[str, str] = {
@@ -1211,9 +1217,18 @@ class Chat:
             self.term.say(PRIVACY_ACCOUNT)
             for text in choice.preset.account_knobs:
                 self.term.say(f"  - {text}")
+        self.term.say(PRIVACY_FACTS)
 
     def show_context(self) -> None:
-        block = prompt.context_block(self.ctx.snapshot(), self.ctx.redact)
+        from flextool.assistant.model_facts import with_facts
+
+        snapshot = self.ctx.snapshot()
+        if self.ctx.lock.acquire(timeout=SHOW_CONTEXT_LOCK_WAIT):     # a tool call still running: shown without facts
+            try:
+                snapshot = with_facts(self.ctx, snapshot, self.link.level if self.link is not None else None)
+            finally:
+                self.ctx.lock.release()
+        block = prompt.context_block(snapshot, self.ctx.redact)
         self.term.say(block)
         b = self.budget
         if self.link is None or b is None:

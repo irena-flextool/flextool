@@ -50,25 +50,46 @@ def _startup_options(ctx: AssistantContext, note: str, *, gui: str = "not runnin
     return out
 
 
+def _model_facts(ctx: AssistantContext, snapshot) -> str | None:
+    """The model facts of *snapshot*'s scenario as text (already redacted), ``None`` without them: the
+    snapshot's own (the chat filled them in when the question was sent), else computed here, in this process."""
+    from flextool.assistant import model_facts
+
+    facts = snapshot.scenario_facts if snapshot is not None else None
+    if facts is None:
+        facts = model_facts.facts_for(ctx, snapshot, None)
+    return None if facts is None else Rendered(model_facts.render(facts, ctx.redact, header=False))
+
+
 def get_gui_context(ctx: AssistantContext, args: dict) -> dict:
     """In the FlexTool window: the snapshot taken when the question was sent.  For an agent (the connection
     server, ``--call``): what the window publishes in its runtime context file, else the startup options.  In the
-    terminal: the startup options."""
-    from flextool.assistant.context import snapshot_payload
+    terminal: the startup options.  Each answer carries ``model_facts``: the model facts of the scenario it names
+    (:mod:`flextool.assistant.model_facts`; ``None`` without a scenario), computed in this process."""
+    from flextool.assistant.context import ContextSnapshot, snapshot_payload
 
     if ctx.front_end == "gui":
-        return snapshot_payload(ctx.snapshot(), gui_running="running", redact=ctx.redact)
+        snapshot = ctx.snapshot()
+        return {**snapshot_payload(snapshot, gui_running="running", redact=ctx.redact),
+                "model_facts": _model_facts(ctx, snapshot)}
+    defaults = ContextSnapshot(project=ctx.project_name, input_source=ctx.default_source,
+                               scenario=ctx.default_scenario, front_end=ctx.front_end)
     if ctx.front_end == "agent":
         from flextool.assistant.runtime_context import read_runtime_context
 
         context, running = read_runtime_context(ctx.project_path)
         if context is None and running == "running":
             # A live window whose file went stale: busy (or hung), not closed (review G18 critique m4).
-            return _startup_options(ctx, WINDOW_BUSY, gui="running")
+            return {**_startup_options(ctx, WINDOW_BUSY, gui="running"),
+                    "model_facts": _model_facts(ctx, defaults)}
         if context is None or running != "running":
-            return _startup_options(ctx, WINDOW_CLOSED)
-        return {**context, "front_end": ctx.front_end, "note": FROM_WINDOW}
-    return _startup_options(ctx, NOT_SHARED)
+            return {**_startup_options(ctx, WINDOW_CLOSED), "model_facts": _model_facts(ctx, defaults)}
+        source, scenario = context.get("input_source"), context.get("scenario")
+        shown = ContextSnapshot(project=ctx.project_name, input_source=source if isinstance(source, str) else None,
+                                scenario=scenario if isinstance(scenario, str) else None, front_end="agent")
+        return {**context, "front_end": ctx.front_end, "note": FROM_WINDOW,
+                "model_facts": _model_facts(ctx, shown)}
+    return {**_startup_options(ctx, NOT_SHARED), "model_facts": _model_facts(ctx, defaults)}
 
 
 def _shipped(value):

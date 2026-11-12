@@ -141,15 +141,34 @@ AGENT_DATA_SENTENCE = (
 )
 
 
-def instructions(project_name: str, redact: Callable[[str], str] | None = None) -> str:
+#: What the connection asks of an agent whose level lists get_gui_context (the model facts are in its result).
+GUI_CONTEXT_FIRST = (
+    "Call get_gui_context first: its model_facts give the scenario's solves, time step lengths, periods and "
+    "latest run, so you need not guess them."
+)
+#: The *tier* of :func:`instructions` for a connection without a level (``--tier`` not given): every tool.
+NO_LEVEL = "none"
+
+
+def instructions(project_name: str, redact: Callable[[str], str] | None = None, tier: str | None = None) -> str:
     """The instructions the connection server sends when an AI agent connects to the project *project_name*: the
     preamble, the data sentence, the rules of layer 1 and layers 2 and 3.  The project's folder name is a name from
-    the user's computer: quoted, one line, redacted (*redact*) and cut, as the tool messages quote names."""
+    the user's computer: quoted, one line, redacted (*redact*) and cut, as the tool messages quote names.
+
+    *tier* is the connection's level (internal or user-facing name, :data:`NO_LEVEL` for a connection without
+    one): when that level lists ``get_gui_context``, :data:`GUI_CONTEXT_FIRST` follows the data sentence.
+    ``None`` (the default) leaves it out."""
     from flextool.assistant.errors import quoted
 
     name = quoted(project_name, redact if redact is not None else (lambda s: s))
-    return "\n\n".join((MCP_PREAMBLE.format(name=name), AGENT_DATA_SENTENCE, RULES, LAYER_ORIENTATION,
-                          LAYER_DOCUMENTS))
+    parts = [MCP_PREAMBLE.format(name=name), AGENT_DATA_SENTENCE]
+    if tier is not None:
+        from flextool.assistant import registry
+
+        level = None if tier == NO_LEVEL else level_name(tier)
+        if any(t.name == "get_gui_context" for t in registry.tools_for_tier(level)):
+            parts.append(GUI_CONTEXT_FIRST)
+    return "\n\n".join((*parts, RULES, LAYER_ORIENTATION, LAYER_DOCUMENTS))
 
 
 # --- the context block --------------------------------------------------------------------------------------------
@@ -160,7 +179,9 @@ FRONT_END_LABELS: dict[str, str] = {"terminal": "terminal", "gui": "FlexTool win
 _CONTEXT_BLOCK = re.compile(re.escape(CONTEXT_START) + r".*?" + re.escape(CONTEXT_END), re.DOTALL)
 
 
-def _name(value: str | None, redact: Callable[[str], str] | None) -> str:
+def _name(value: str | None, redact: Callable[[str], str] | None, limit: int | None = None) -> str:
+    """*value* as the block shows a name: one line, nothing invisible, never the block's end marker, redacted and
+    then cut to *limit* characters (default :data:`~flextool.assistant.caps.NAME_MAX`)."""
     from flextool.assistant.caps import NAME_MAX, cap_text, clean
 
     if not value:
@@ -169,7 +190,7 @@ def _name(value: str | None, redact: Callable[[str], str] | None) -> str:
     text = text.replace(CONTEXT_END, "(end of context)")
     if redact is not None:
         text = redact(text)
-    return cap_text(text, NAME_MAX)
+    return cap_text(text, NAME_MAX if limit is None else limit)
 
 
 NONE = "none"
@@ -236,9 +257,10 @@ def _gui_lines(gui: GuiState, redact: Callable[[str], str] | None) -> list[str]:
 
 def context_block(snapshot: ContextSnapshot, redact: Callable[[str], str] | None = None) -> str:
     """The context block put at the start of a user message: the project, the input source and scenario the
-    tools use by default, in the FlexTool window also its selections and the result viewer (P2 §7), and the front
-    end.  Names are on one line, length-capped and redacted (*redact*); non-ASCII is kept.  The snapshot's time
-    is never in it, so the block changes only when what it shows changes."""
+    tools use by default, in the FlexTool window also its selections and the result viewer (P2 §7), the front
+    end, and the scenario's model facts when the snapshot has them (:mod:`flextool.assistant.model_facts`; without
+    them the block is as before).  Names are on one line, length-capped and redacted (*redact*); non-ASCII is kept.
+    The snapshot's time is never in it, so the block changes only when what it shows changes."""
     lines = [
         CONTEXT_START,
         f"Project: {_name(snapshot.project, redact)}",
@@ -247,7 +269,12 @@ def context_block(snapshot: ContextSnapshot, redact: Callable[[str], str] | None
     ]
     if snapshot.gui is not None:
         lines += _gui_lines(snapshot.gui, redact)
-    lines += [f"Front end: {FRONT_END_LABELS[snapshot.front_end]}", CONTEXT_END]
+    lines.append(f"Front end: {FRONT_END_LABELS[snapshot.front_end]}")
+    if snapshot.scenario_facts is not None:
+        from flextool.assistant.model_facts import render
+
+        lines.append(render(snapshot.scenario_facts, redact))
+    lines.append(CONTEXT_END)
     return "\n".join(lines)
 
 

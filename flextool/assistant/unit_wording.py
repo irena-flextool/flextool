@@ -35,7 +35,7 @@ STORED_VALUES = "stored_values"
 
 UNITS_NOTE = ("Each node's unit_of_measure (default MWh) sets the units of its values: amounts in that unit, flows "
               "in that unit per hour (MW for MWh), prices per that unit. CUR is the model currency; emissions are in "
-              "tonnes of CO2. Time steps are in hours and lifetimes in years.")
+              "tonnes of CO2. Lifetimes are in years.")
 STORED_VALUES_NOTE = ("These are the values stored in the input data. When FlexTool runs it may add defaults, "
                       "derive other values or rescale some (for example inflow with an inflow_method); the "
                       "results show what the model used.")

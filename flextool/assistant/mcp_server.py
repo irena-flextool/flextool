@@ -154,7 +154,7 @@ def build_server(ctx, *, tier: str | None = None):
         ])
 
     return _new_server(
-        prompt.instructions(ctx.project_name, ctx.redact),
+        prompt.instructions(ctx.project_name, ctx.redact, tier=tier if tier is not None else prompt.NO_LEVEL),
         on_list_tools=_list_tools, on_call_tool=_call_tool,
         on_list_resources=_list_resources, on_read_resource=_read_resource,
         on_list_prompts=_list_prompts, on_get_prompt=_get_prompt,

@@ -144,7 +144,7 @@ from flextool.assistant.usage import add_usage, ledger_key
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from flextool.assistant.context import AssistantContext
+    from flextool.assistant.context import AssistantContext, ContextSnapshot
     from flextool.assistant.probes import ModelFacts
     from flextool.assistant.providers import Preset
     from flextool.assistant.store import Conversation, Store
@@ -738,6 +738,11 @@ class Session:
         self._attach(backend, preset, tier, facts, route, budget)
         self._resume()
 
+    @property
+    def last_context_block(self) -> str | None:
+        """The latest context block the conversation carries (redacted, as it was sent), or ``None``."""
+        return self._last_block
+
     # --- the model and its instructions ---------------------------------------------------------------------------
     def _attach(self, backend: Backend, preset: Preset, tier: str, facts: ModelFacts | None,
                 route: Route | None, budget: budget_module.Budget | None) -> None:
@@ -890,8 +895,29 @@ class Session:
         while self.messages and self.messages[-1].role == "user" and self.messages[-1].kind in CONTROL_KINDS:
             self.messages.pop()
 
-    def _append_user(self, text: str, turn: int) -> None:
-        block = prompt.context_block(self.ctx.snapshot(), self.ctx.redact)
+    def _snapshot_with_facts(self, cancel: threading.Event) -> ContextSnapshot:
+        """The question's snapshot with the model facts of its scenario, read under the tool lock (they share the
+        input-data cache with the tools) and fixed for the whole question.  Without a scenario the lock is not
+        taken; a question stopped while another call holds the lock goes on without facts (it is not sent)."""
+        from flextool.assistant.model_facts import with_facts
+
+        snapshot = self.ctx.snapshot()
+        if not snapshot.scenario:
+            return snapshot
+        while not self.ctx.lock.acquire(timeout=LOCK_POLL):
+            if cancel.is_set():
+                return snapshot
+        try:
+            return with_facts(self.ctx, snapshot, self.tier)
+        finally:
+            self.ctx.lock.release()
+
+    def _append_user(self, text: str, turn: int, cancel: threading.Event) -> None:
+        snapshot = self._snapshot_with_facts(cancel)
+        if self.ctx.gui_snapshot is not None:
+            # The window's snapshot gets the facts too, so its get_gui_context answers with the same facts.
+            self.ctx.gui_snapshot = snapshot
+        block = prompt.context_block(snapshot, self.ctx.redact)
         if block != self._last_block:
             text = f"{block}\n\n{text}"
             self._last_block = block
@@ -1339,7 +1365,7 @@ class Session:
         self._turn_no = turn
         if not unanswered and turn > 1 and (turn - 1) % self.compaction_every == 0:
             self._compact(keep_after=turn - 1 - self.keep_recent_turns)
-        self._append_user(user_text, turn)
+        self._append_user(user_text, turn, cancel)
         if self.budget is not None and self.budget.free_tier and not self._free_notice_shown:
             self._free_notice_shown = True
             text = SESSION_MESSAGES["free_plan"].format(rounds=self.caps.max_rounds)

@@ -73,6 +73,9 @@ ESTIMATE_OVERHEAD = 4
 FIT_SHARE = 0.95
 #: The margin and the text history that :func:`fit_caps` keeps free.
 FIT_MARGIN_SHARE = 0.10
+#: The room :func:`fit_caps` and :func:`fitting_calls` keep for the context block: its model facts (at most
+#: ``model_facts.FACTS_TOKENS_MAX``, 200 tokens) and the block's other lines (about 60 tokens with a few names).
+CONTEXT_RESERVE_TOKENS = 260
 HISTORY_TOKENS_MAX = 4_000
 HISTORY_SHARE = 0.15
 #: Characters per token of result JSON at its densest, as the estimate counts it (P3 §4.3).
@@ -214,9 +217,14 @@ class LevelBudget:
 #: standard 9 850, advanced 9 950 (the worst front end's prefix before it plus the schema plus 50); 2026-11-12
 #: owner-approved answer rules (plain words, "More detail:", alternatives, rounding, no guessing, inactive entity
 #: first, demand as a positive number): standard 10 050, advanced 10 150 (worst front end 9 992 and 10 091, plus
-#: about 55), basic stays 5 000 (4 987 at the GUI; the dropped time-step sentence pays for its additions).  This changes
-#: nothing at runtime for windows of 32 768 tokens or more (the prefix budget only plans the results that fit a
-#: smaller window, ``fit_caps`` / ``fitting_calls``).
+#: about 55), basic stays 5 000 (4 987 at the GUI; the dropped time-step sentence pays for its additions); 2026-11-12
+#: model facts in the context block (up to 200 tokens, owner: basic may plan above 5 000 for them, they save
+#: reasoning): the prefix budgets stay, and ``fit_caps`` / ``fitting_calls`` keep CONTEXT_RESERVE_TOKENS (260) free
+#: for the block — at 20 000 tokens basic has 4 calls a part (was 5), at 24 000 caps of 2 161 characters (was
+#: 2 226), at 30 000 of 3 411 (was 3 476); at 16 384 tokens a part's three 2 000-character float-heavy results with
+#: the facts overshoot 95 % of the window by up to 340 tokens (80 before them), which the pre-send fit absorbs by
+#: shortening a result.  This changes nothing at runtime for windows of 32 768 tokens or more (the prefix budget only
+#: plans the results that fit a smaller window, ``fit_caps`` / ``fitting_calls``).
 #: The history and the continuations are the owner's of 2026-11-08 (P3 §4.7).  Budgets count steps and calls:
 #: basic 3 steps, 6 calls a part, 3 calls a step (batching 2026-11-08; was 3 calls a part).
 LEVEL_BUDGETS: dict[str, LevelBudget] = {
@@ -275,10 +283,11 @@ def _smaller(a: caps_module.Caps, b: caps_module.Caps) -> caps_module.Caps:
 
 
 def fit_caps(window: int, level: LevelBudget, max_output_tokens: int, keep_recent_turns: int) -> caps_module.Caps:
-    """The result caps that let a question's planned results fit a small window (P3 §4.3)."""
+    """The result caps that let a question's planned results fit a small window (P3 §4.3), with room for the
+    context block (:data:`CONTEXT_RESERVE_TOKENS`)."""
     small = caps_module.preset("small")
     available = (window - level.prefix_tokens - max_output_tokens - FIT_MARGIN_SHARE * window
-                 - min(HISTORY_TOKENS_MAX, HISTORY_SHARE * window))
+                 - min(HISTORY_TOKENS_MAX, HISTORY_SHARE * window) - CONTEXT_RESERVE_TOKENS)
     per_call = available / (keep_recent_turns + 1) / level.planned_calls
     max_chars = int(round(min(max(per_call * RESULT_CHARS_PER_TOKEN, MIN_RESULT_CHARS), small.max_chars), 6))
     share = max_chars / small.max_chars
@@ -290,10 +299,11 @@ def fit_caps(window: int, level: LevelBudget, max_output_tokens: int, keep_recen
 def fitting_calls(window: int, level: LevelBudget, max_output_tokens: int, keep_recent_turns: int,
                   max_chars: int) -> int:
     """The tool calls of one part whose results, each at *max_chars* and as dense as result JSON gets
-    (:data:`RESULT_CHARS_PER_TOKEN`), fit 95 % of *window* with the prefix, the answer and the text history: at least
-    a step's calls, at most the level's calls a part (batching 2026-11-08)."""
+    (:data:`RESULT_CHARS_PER_TOKEN`), fit 95 % of *window* with the prefix, the answer, the text history and the
+    context block (:data:`CONTEXT_RESERVE_TOKENS`): at least a step's calls, at most the level's calls a part
+    (batching 2026-11-08)."""
     room = (FIT_SHARE * window - level.prefix_tokens - max_output_tokens
-            - min(HISTORY_TOKENS_MAX, HISTORY_SHARE * window))
+            - min(HISTORY_TOKENS_MAX, HISTORY_SHARE * window) - CONTEXT_RESERVE_TOKENS)
     n = math.floor(round(room / (keep_recent_turns + 1) / (max_chars / RESULT_CHARS_PER_TOKEN), 6))
     return max(level.max_calls_per_round, min(level.max_calls_per_turn, n))
 
