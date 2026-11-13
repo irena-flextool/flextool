@@ -685,6 +685,11 @@ Each line says what changes for a model that ran before and what to do; the deta
   the results.** The solve made the investment, but `v_invest` / `v_divest` had no row for that period, so
   `unit_capacity__d` (and the connection / node tables) had no row there and its investment cost was left out of
   the cost tables and the summary (the solve itself was right). The results of such solves now have these rows.
+- **A later solve could report 0 for an investment an earlier solve made.** When a solve realized the investment
+  of a period it did not dispatch and a later solve dispatched that period while investing in another, the results
+  took the later solve's 0: no invested capacity in `unit_capacity__d` (and the connection / node tables), no
+  investment cost and no capacity-margin shortfall for that period. The investment results of a period now come
+  from the solve that realizes its investment.
 
 #### Time resolution
 
