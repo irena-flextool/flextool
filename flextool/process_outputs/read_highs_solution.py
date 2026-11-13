@@ -196,7 +196,11 @@ class VariableSpec(NamedTuple):
     # rows (see the registry note on those specs).  ``"invest_branches"``
     # is ``"invest"`` plus the forecast branch periods of the realized-
     # invest periods (``vq_capacity_margin``: one slack per forecast branch
-    # period of a fan, which no dispatch axis holds).  Ignored for
+    # period of a fan, which no dispatch axis holds).  ``"invest_dual"``
+    # (the investment duals, item 266) is ``"invest"`` on a deterministic
+    # solve and ``"dispatch"`` on a stochastic fan solve: a fan's invest
+    # columns sit on its forecast branch periods (recourse), which the
+    # fan's period labels would replace by 0 rows.  Ignored for
     # ``has_time`` and ``has_period=False`` variables.
     period_source: str = "dispatch"
 
@@ -268,7 +272,7 @@ def _invest_dual(
         value_scale=_INV_SCALE_THE_OBJECTIVE,
         output_name=f"v_dual_{output_suffix}",
         derived_from=derived_from,
-        period_source="invest",
+        period_source="invest_dual",
     )
 
 
@@ -860,6 +864,10 @@ def extract_variable(
         canonical_d = _load_canonical_d_order(
             solve_name, flex_data=flex_data,
         )
+        if period_source == "invest_dual":
+            # The investment duals: the investment axis, except on a stochastic fan solve, which keeps the
+            # dispatch axis (its forecast branch reduced costs; no 0 rows at the fan's period labels).
+            period_source = "dispatch" if _fan_labels(flex_data) else "invest"
         if period_source in ("invest", "invest_branches"):
             # Investment-axis variables (``v_invest`` / ``v_divest``): a
             # roll that realizes DISPATCH but NO investment (the dispatch
@@ -1383,7 +1391,8 @@ def write_v_dual_invest_by_class(
         scale_the_objective=scale_the_objective,
     )
     # The investment axis, as ``v_invest`` itself (item 266): the realizing solve's reduced cost of a period it
-    # does not dispatch gets its row, and a dispatch-only solve writes none.
+    # does not dispatch gets its row, and a dispatch-only solve writes none.  A stochastic fan solve keeps the
+    # dispatch axis (``invest_dual``): its reduced costs are on the forecast branch periods.
     duals = extract_variable(
         h, "v_invest", ("entity",),
         solve_name=solve_name, has_time=False, source="col_dual",
@@ -1391,7 +1400,7 @@ def write_v_dual_invest_by_class(
         realized_periods_csv=realized_periods_csv,
         flex_data=flex_data,
         provider=provider,
-        period_source="invest",
+        period_source="invest_dual",
     )
 
     classes = {

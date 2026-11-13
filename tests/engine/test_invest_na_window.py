@@ -298,3 +298,53 @@ def test_registry_has_four_invest_families() -> None:
     for name in ("non_anticipativity_invest_p", "non_anticipativity_invest_n",
                  "non_anticipativity_divest_p", "non_anticipativity_divest_n"):
         assert name in CONSTRAINT_FAMILIES
+
+
+# ---------------------------------------------------------------------------
+# Investment marginals of a recourse fan (item 266 review F1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.solver
+def test_recourse_fan_invest_marginals_stay_on_forecast_branches(tmp_path, monkeypatch) -> None:
+    """Under ``stochastic_invest_method = recourse`` the fan's ``v_invest`` columns are on the forecast branch
+    periods, so its reduced costs are read on the dispatch axis, not the investment axis with the fan's period
+    labels (item 266 read the investment duals on the investment axis; on a fan that put 0 rows at the labels
+    p2035 / p2040, dropped the p2040_low reduced cost and wrote a ``unit_invest_marginal__d`` of -0 rows with an
+    empty solve label).  1050 is the p2040_low reduced cost the parquet held before item 266."""
+    from pathlib import Path
+
+    from flextool.engine import run_chain_from_db
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+    from flextool.process_outputs.write_outputs import write_outputs
+    from flextool.update_flextool.db_migration import migrate_database
+    from tests.db_utils import json_to_db
+
+    repo = Path(__file__).resolve().parents[2]
+    db_url = json_to_db(repo / "tests" / "fixtures" / "stoch_two_period_hedge.json", tmp_path / "db.sqlite")
+    migrate_database(db_url)
+    monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
+    monkeypatch.chdir(tmp_path)
+    wf = tmp_path / "w"
+    steps = run_chain_from_db(db_url, "hedge_na_window", work_folder=wf, csv_dump=True, keep_solutions=True)
+    last = next(reversed(steps.values()))
+    last.flex_data_provider.snapshot_processed_inputs(wf)
+    write_outputs(
+        scenario_name="hedge_na_window", output_location=str(wf), subdir="out",
+        output_config_path=str(repo / "flextool" / "schemas" / "default_plots.yaml"),
+        write_methods=["csv"], fallback_output_location=str(wf), raw_output_dir=str(wf / "output_raw"),
+        solution=last.solution, solve_name=last.solve_name,
+        solve_steps=[(s.solve_name, s.flex_data, s.effective_solution) for s in steps.values()],
+        flex_data_provider=FlexDataProvider(),
+    )
+
+    duals = pl.read_parquet(wf / "output_raw" / f"v_dual_invest_unit__{SOLVE}.parquet")
+    by_period = dict(zip(duals["period"], duals["base"]))
+    assert by_period["p2040_low"] == pytest.approx(1050.0, rel=1e-6), duals
+    # No 0-filled rows at the fan's period labels.
+    assert not {"p2035", "p2040"} & set(by_period), duals
+    # Nothing is invested, and no marginal table of -0 rows with an empty solve label is written.
+    csv_dir = wf / "output_csv" / "out"
+    capacity = pl.read_csv(csv_dir / "unit_capacity__d.csv").filter(pl.col("unit") == "base")
+    assert capacity["invested"].null_count() == capacity.height, capacity
+    assert not (csv_dir / "unit_invest_marginal__d.csv").exists()

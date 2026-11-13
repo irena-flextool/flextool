@@ -160,11 +160,12 @@ _V_REALIZING_SOLVE = frozenset({
 def _keep_realizing_solve_rows(obj: pd.DataFrame, d_realize_invest: pd.MultiIndex) -> pd.DataFrame:
     """The rows of the solves that realize the investment of their period, for a period some solve realizes.
 
-    A solve writes a ``v_invest`` / ``v_divest`` / ``vq_capacity_margin`` row (and an investment dual row) for every
-    period on its dispatch axis, also a 0 row for a period whose investment an earlier solve realized (``realized_invest_periods`` of that
-    solve, outside its ``realized_periods``).  The ``keep='last'`` dedup that follows would let that later 0 row win, so the rows of
-    a period realized by some solve are cut to the realizing solves' rows first (their last one still wins).  A
-    period no solve realizes keeps all its rows (as before).  ``d_realize_invest`` is still solve-indexed here.
+    A solve writes a ``v_invest`` / ``v_divest`` / ``vq_capacity_margin`` row (and an investment dual row) for
+    every period on its dispatch axis, also a 0 row for a period whose investment an earlier solve realized
+    (``realized_invest_periods`` of that solve, outside its ``realized_periods``).  The ``keep='last'`` dedup that
+    follows would let that later 0 row win, so the rows of a period realized by some solve are cut to the
+    realizing solves' rows first (their last one still wins).  A period no solve realizes keeps all its rows (as
+    before).  ``d_realize_invest`` is still solve-indexed here.
     """
     if obj.empty or len(d_realize_invest) == 0:
         return obj
