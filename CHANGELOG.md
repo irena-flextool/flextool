@@ -78,6 +78,13 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **Other commercial-solver fixes that can change results:** CPLEX now gets `solver_mip_gap`; one value per solver
   parameter, whatever its case; Xpress refuses a MIP (it returned the LP relaxation); Gurobi file-writing parameters
   are not passed on.
+- **A solve that FlexTool splits or adds now runs on the solver you chose.** Since 4.0, when a solve on Gurobi,
+  CPLEX, Xpress or COPT was split into one solve per period (a 2-D map in `invest_periods`, `realized_periods`,
+  `realized_invest_periods`, `fix_storage_periods` or `period_timeset`), the split solves ran on HiGHS, without
+  `solver_mip_gap` and with the `solver_arguments` names HiGHS also knows; since 4.1, the realization solve FlexTool
+  adds to a stochastic solve (`<solve>__realized_dispatch`) ran on HiGHS too. The run did not say so. Results of such runs could have come from HiGHS;
+  rerun them. Now every such solve runs on the original solve's solver, with its `solver_arguments`,
+  `solver_mip_gap`, option file and this computer's solver wrapper.
 - **The memory-saving solve (`--save-memory`, or warm start off) could put values on the wrong variables**; results
   of such runs can change. FlexTool now needs polar-high 3.12.4 or newer (installed with FlexTool).
 - **Fixes that change results:** a user constraint without capacity terms got a right-hand side of 0 when another

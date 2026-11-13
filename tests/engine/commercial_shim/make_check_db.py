@@ -17,6 +17,9 @@ with these scenarios for each solver ``<s>`` in gurobi, cplex, xpress, copt (sol
   each solver but COPT, a ``solver_arguments`` parameter that would make the solver write at
   ``<folder>/path_option_<s>`` (item 236: the precommand is never run, and a path from the input database is
   refused before the solver starts);
+* ``split_<s>``: the LP over the periods ``p2020`` and ``p2025`` with ``realized_periods`` a 2-D map, so FlexTool
+  splits the solve into ``y2020_2day_dispatch_p2020`` and ``y2020_2day_dispatch_p2025``; with ``solver_mip_gap``
+  0.2 and ``solver_arguments`` time limit 800 (each copy must keep the solver and all of its settings);
 
 plus ``unknown_gurobi`` (``solver_arguments`` ``NoSuchParameter`` 1, not a Gurobi parameter: refused unless this
 computer allows unlisted names) and ``iterlimit_xpress`` (``LPITERLIMIT``
@@ -69,6 +72,15 @@ def _arguments(pairs: list[list]) -> dict:
     return {"index_type": "str", "index_name": "x", "data": pairs}
 
 
+def _period_map(pairs: list[list]) -> dict:
+    return {"type": "map", "index_type": "str", "index_name": "period", "data": pairs}
+
+
+#: The periods of ``split_<s>`` and the names of the solves FlexTool makes of ``y2020_2day_dispatch`` for them.
+SPLIT_PERIODS = ("p2020", "p2025")
+SPLIT_SOLVES = tuple(f"{SOLVE}_{p}" for p in SPLIT_PERIODS)
+
+
 def build(folder: Path) -> str:
     """Write ``<folder>/item230_check.sqlite``; return its ``sqlite:///`` URL."""
     if str(REPO) not in sys.path:
@@ -96,6 +108,15 @@ def build(folder: Path) -> str:
             paths.append(["solve", SOLVE, "solver_arguments",
                           _arguments([[ARG_PATH[s], str(path_option_target(folder, s))]])])
         data = lps._overlay(data, name=f"paths_{s}", base=LP_BASE, values=paths)
+        data = lps._overlay(data, name=f"split_{s}", base=LP_BASE, values=[
+            ["solve", SOLVE, "solver", s],
+            ["solve", SOLVE, "solver_mip_gap", 0.2],
+            ["solve", SOLVE, "solver_arguments", _arguments([[ARG_TIME[s], 800]])],
+            ["solve", SOLVE, "period_timeset", _period_map([[p, "2day"] for p in SPLIT_PERIODS])],
+            ["solve", SOLVE, "years_represented", _period_map([[p, 5.0] for p in SPLIT_PERIODS])],
+            ["solve", SOLVE, "realized_periods",
+             _period_map([[p, _period_map([[p, "yes"]])] for p in SPLIT_PERIODS])],
+        ])
     data = lps._overlay(data, name="unknown_gurobi", base=LP_BASE, values=[
         ["solve", SOLVE, "solver", "gurobi"],
         ["solve", SOLVE, "solver_arguments", _arguments([["NoSuchParameter", 1]])]])
