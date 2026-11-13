@@ -181,6 +181,9 @@ class TabularReader:
         # Periods of the model (solve_period sheet), used to complete sparse
         # period maps.  Set by the caller before the period sheets are read.
         self.model_periods: list = []
+        # Every key of a period-indexed map written, in order of first
+        # appearance (for model.periods_available, see write_to_input_db).
+        self.period_keys_seen: Dict[Any, None] = {}
 
     # ==================== Specification Methods ====================
 
@@ -653,6 +656,9 @@ class TabularReader:
                             order = {p: i for i, p in enumerate(sheet_periods)}
                             indexes = sorted(present, key=lambda p: order.get(p, len(order)))
                             values = [present[p] for p in indexes]
+                if df_col.index.name == 'period':
+                    for p in indexes:
+                        self.period_keys_seen.setdefault(p, None)
                 map_obj = Map(indexes=indexes, values=values, index_name=df_col.index.name)
                 value, type_ = to_database(map_obj)
                 self._write_parameter_value(db_map, col_name, value, type_, 'a map',

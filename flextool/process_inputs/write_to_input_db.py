@@ -155,6 +155,73 @@ def _report_unread_sheets(tabular_reader, input_path) -> None:
         wb.close()
 
 
+_MODEL_ENTITY = "from_template"  # the model entity the specification import creates
+
+
+def _add_periods_available(db, tabular_reader) -> None:
+    """List the map periods that no solve uses in ``model.periods_available``.
+
+    3.x workbooks often carry period data beyond the periods of their solves
+    (e.g. '_p' sheets to 2050 with solves to 2030).  The old engine ignored
+    such keys; the current one stops on a period key that is not a period of
+    the model unless ``model.periods_available`` lists it.  Every key of a
+    period-indexed map the import wrote that is neither a solve period
+    (``period_timeset``), already available, nor a time step is added, in the
+    order first seen in the workbook.
+    """
+    from spinedb_api import Array
+
+    solve_periods = set()
+    for pv in db.find_parameter_values(entity_class_name="solve",
+                                       parameter_definition_name="period_timeset"):
+        parsed = from_database(pv["value"], pv["type"])
+        solve_periods.update(getattr(parsed, "indexes", []))
+    timesteps = set()
+    for pv in db.find_parameter_values(entity_class_name="timeline",
+                                       parameter_definition_name="timestep_duration"):
+        parsed = from_database(pv["value"], pv["type"])
+        timesteps.update(getattr(parsed, "indexes", []))
+
+    model_values = list(db.find_parameter_values(entity_class_name="model"))
+    model_names = list(dict.fromkeys(pv["entity_byname"] for pv in model_values))
+    if not model_names:
+        model_names = [tuple(e["entity_byname"]) for e in db.find_entities(entity_class_name="model")]
+    model = model_names[0] if model_names else (_MODEL_ENTITY,)
+
+    existing_pv = None
+    for pv in model_values:
+        if pv["entity_byname"] == model and pv["parameter_definition_name"] == "periods_available":
+            existing_pv = pv
+            break
+    available = []
+    if existing_pv is not None:
+        available = list(from_database(existing_pv["value"], existing_pv["type"]).values)
+
+    added = [p for p in tabular_reader.period_keys_seen
+             if p not in solve_periods and p not in available and p not in timesteps]
+    if not added:
+        return
+
+    if existing_pv is not None:
+        alternative = existing_pv["alternative_name"]
+    else:
+        alternatives = [pv["alternative_name"] for pv in model_values if pv["entity_byname"] == model]
+        alternative = "Base" if not alternatives or "Base" in alternatives else alternatives[0]
+    if not db.find_alternatives(name=alternative):
+        db.add_alternative(name=alternative)
+    if not db.find_entities(entity_class_name="model", entity_byname=model):
+        db.add_entity(entity_class_name="model", entity_byname=model)
+    value, type_ = to_database(Array(available + added, index_name="period"))
+    if existing_pv is not None:
+        db.update_item("parameter_value", id=existing_pv["id"], value=value, type=type_)
+    else:
+        db.add_parameter_value(entity_class_name="model", entity_byname=model,
+                               parameter_definition_name="periods_available",
+                               alternative_name=alternative, value=value, type=type_)
+    print(f"\nPeriods with data but in no solve, added to model.periods_available "
+          f"({'/'.join(model)}, alternative '{alternative}'): {', '.join(map(str, added))}")
+
+
 def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_type='excel',
                                migration_follows: bool = False):
     """Write tabular data to FlexTool input database, reading one sheet/file at a time.
@@ -333,6 +400,8 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
         # if present (pre-v25 Excels); modern files set it via the spec.
         if input_type == 'excel':
             _import_legacy_timeset_timeline(db, input_path)
+
+        _add_periods_available(db, tabular_reader)
 
         # Commit the changes
         try:

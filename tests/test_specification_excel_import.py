@@ -294,3 +294,37 @@ def test_unknown_column_is_reported(tmp_path, capsys):
     assert reader.error_count >= 1    # its values have no parameter to land in
     assert "All data processed successfully!" not in text
     assert "Import finished with" in text
+
+
+def test_no_periods_available_when_solves_cover_the_data(imported):
+    for _, v in imported.values():
+        assert not any(k[0] == "model" and k[2] == "periods_available" for k in v)
+
+
+def test_period_data_beyond_the_solves(tmp_path, capsys):
+    """Period data for periods no solve uses lands in model.periods_available."""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    _write_column_sheet(wb, "solve_period", _current_columns("solve_period"),
+                        _SOLVE_PERIOD_ROWS[:2])  # solve s1: p1, p2
+    _write_column_sheet(wb, "solve_sequence", _current_columns("solve_sequence"),
+                        _SOLVE_SEQUENCE_ROWS)
+    _write_column_sheet(wb, "node_c", _current_columns("node_c"), _NODE_C_ROWS[:1])
+    _write_column_sheet(wb, "node_p", _current_columns("node_p"),
+                        [dict(alternative="Base", node="n1", period=p, fixed_cost=7)
+                         for p in ("p1", "p3")])
+    _write_column_sheet(wb, "unit_c", _current_columns("unit_c"), _UNIT_C_ROWS)
+    _write_column_sheet(wb, "unit_p", _current_columns("unit_p"),
+                        [dict(alternative="Base", unit="u1", period=p, invest_cost=800)
+                         for p in ("p1", "p2", "p3", "p4")])
+    xlsx = tmp_path / "beyond.xlsx"
+    wb.save(xlsx)
+    db = tmp_path / "beyond.sqlite"
+    reader = _import(xlsx, db)
+    assert reader.error_count == 0
+    v = _values(db)
+    # node_p is read before unit_p: p3 first seen there, then p4.
+    available = v[("model", "from_template", "periods_available", "Base")]
+    assert isinstance(available, Array)
+    assert list(available.values) == ["p3", "p4"]
+    assert "added to model.periods_available" in capsys.readouterr().out
