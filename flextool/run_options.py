@@ -395,6 +395,11 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         _test("FLEXTOOL_WRITE_SOLVER_HANDOFF_GOLDEN", "1 rewrites the solver hand-off golden record"),
         _test("FLEXTOOL_TEST_RSS_BUDGET_MB", "RSS budget of the input-derivation memory test (1500)"),
         _test("FLEXTOOL_TEST_KEYRING_LOG", "set by the root conftest: the file the session's keyring violations go to"),
+        _test("FLEXTOOL_TEST_SANDBOX", "set by the root conftest: the session's temp folder that HOME, XDG_* and "
+              "APPDATA/LOCALAPPDATA point into"),
+        _test("FLEXTOOL_TEST_REAL_HOME", "set by the root conftest: the real home folder, which no test may write under"),
+        _test("FLEXTOOL_TEST_REAL_USER_DIRS", "set by the root conftest: the real FlexTool user folders, which no test "
+              "may reach"),
         _test("FLEXTOOL_SHIM_RECORD", "set by the commercial_shim tests: the file each solver shim appends its "
               "call record to"),
     )
