@@ -730,4 +730,6 @@ __all__ = [
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    from flextool.cli._console import run_tool
+
+    run_tool(main)

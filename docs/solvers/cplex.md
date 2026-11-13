@@ -79,8 +79,14 @@ discoverable.
 Write the parameter names of the interactive optimizer's `set` command, in
 full and with spaces (`mip tolerances mipgap`). A dotted name
 (`mip.tolerances.mipgap`, the Python-API spelling) is read as the spaced
-one; an abbreviation (`mip tol mipg`) is passed as written and does not
-replace the full name from another layer.
+one. An abbreviation (`mip tol mipg`) is refused from `solver_arguments`,
+with the full name in the message, also where your computer allows names
+that are not in FlexTool's list; in `cplex.opt` it gives a warning, is
+passed as written and does not replace the full name from another layer.
+A group name with a value (`mip tolerances 0.01`, `simplex 1`) is refused
+from every source, `cplex.opt` included: the interactive optimizer would ask
+which parameter of the group is meant and read the next line as the answer. See
+[What the database may set](index.md#what-the-database-may-set).
 
 ```text
 solver_arguments:
@@ -112,6 +118,13 @@ The error messages below are what FlexTool surfaces as `FlexToolUserError`.
   kept with a warning; an LP, or a MIP without a solution, stops the run. See
   [Time limit](index.md#time-limit).
 
+## Licence holders and other programs in front of CPLEX
+
+FlexTool 3 ran a solve's `solver_precommand` in front of CPLEX. FlexTool 4 never runs a command stored in a
+database; set the program on your computer as the CPLEX solver wrapper instead (`FLEXTOOL_SOLVER_WRAPPER_CPLEX`, or
+Solver options → On this computer in the FlexTool window). See
+[FlexTool 3 precommand users](index.md#flextool-3-precommand-users).
+
 ## How to set it in FlexTool
 
 On the `solve` entity:
@@ -120,8 +133,8 @@ On the `solve` entity:
 solve_advanced.solver         = "cplex"
 solve_advanced.solver_mip_gap = 0.01
 solve_advanced.solver_arguments:
-  lpmethod   = 4
-  preind     = 1
+  lpmethod                = 4
+  preprocessing presolve  = 1
 ```
 ```bash
 flextool <input_db_url> --solver-time-limit 60 --solver-mip-gap 0.001

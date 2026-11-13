@@ -60,7 +60,8 @@ def _install_scripted_solve(monkeypatch, signals):
     def fake_write_calib_alt(url, scenario, adders):
         return None
 
-    def fake_run_solve(url, scenario, *, work_dir, out_root, cache_dir, threads=None, solver_config_dir=None):
+    def fake_run_solve(url, scenario, *, work_dir, out_root, cache_dir, threads=None, solver_config_dir=None,
+                       workspace_solver_config_dir=None):
         state["i"] += 1
         return SimpleNamespace(
             assess_dir=Path(out_root) / f"iter_{state['i']}",
@@ -235,3 +236,40 @@ def test_run_calibration_streams_progress_banners(tmp_path, monkeypatch, capsys)
     assert "MWh unserved" in out
     # Final status line reflecting the stop reason.
     assert "finished: budget_exhausted" in out
+
+
+@pytest.mark.parametrize("debug", [False, True])
+def test_calibration_clears_only_its_own_result_folder(tmp_path, monkeypatch, debug):
+    """The window passes the project folder as the output root: other scenarios' results there must survive."""
+    project = tmp_path / "project"
+    parquet = project / "output_parquet"
+    (parquet / "high_1").mkdir(parents=True)
+    (parquet / "high_1" / "x.parquet").write_bytes(b"other scenario")
+    (parquet / "_axis_bounds.json").write_text("{}")
+    (parquet / "base").mkdir()
+    (parquet / "base" / "stale.parquet").write_bytes(b"before the calibration")
+
+    state = _install_scripted_solve(monkeypatch, [
+        {"residual": {"west": 100.0}, "curtailment": {"west": 0.0}},
+        {"residual": {"west": 0.0}, "curtailment": {"west": 0.0}},
+    ])
+
+    def solve_writing_results(url, scenario, *, work_dir, out_root, cache_dir, threads=None,
+                              solver_config_dir=None, workspace_solver_config_dir=None):
+        state["i"] += 1
+        folder = Path(out_root) / "output_parquet" / scenario
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"iter_{state['i']}.parquet").write_bytes(b"result")
+        return SimpleNamespace(assess_dir=folder, returncode=0, started_at=0.0)
+
+    monkeypatch.setattr(loop_mod, "run_solve", solve_writing_results)
+    config = _config(tmp_path, iterations=1, tightness=0.1)
+    config.out_root = project
+    config.debug = debug
+    run_calibration("db.sqlite", "base", config)
+
+    assert (parquet / "high_1" / "x.parquet").read_bytes() == b"other scenario"
+    assert (parquet / "_axis_bounds.json").is_file()
+    assert sorted(p.name for p in (parquet / "base").iterdir()) == ["iter_1.parquet"]
+    if debug:
+        assert sorted(p.name for p in (project / "out_iter_0" / "base").iterdir()) == ["iter_0.parquet"]

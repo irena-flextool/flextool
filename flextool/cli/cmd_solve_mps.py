@@ -18,6 +18,32 @@ from pathlib import Path
 from flextool.cli._console import run_tool
 
 
+def apply_option_pairs(h: object, path: Path, ok) -> str | None:
+    """Set the HiGHS options of the JSON file *path* (``[[name, value text], ...]``) on *h* in order; ``None`` when
+    all were taken, else what was refused (the first option HiGHS rejects stops the rest).
+
+    The same outcome as ``readOptions`` on the ``key=value`` file of the same pairs, which this replaces for
+    FlexTool's ``--save-memory`` solve (item 240 B4): name and value are trimmed as that reader does, and an
+    empty value is refused as that reader refuses it (``setOptionValue`` would take an empty text option).
+    *ok(status, what)* treats ``kWarning`` as taken, as for the other HiGHS calls here.
+    """
+    try:
+        pairs = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return f"it cannot be read ({exc})"
+    if not isinstance(pairs, list) or not all(
+        isinstance(p, list) and len(p) == 2 and all(isinstance(x, str) for x in p) for p in pairs
+    ):
+        return "it is not a list of [name, value] pairs"
+    for raw_name, raw_value in pairs:
+        name, value = raw_name.strip(), raw_value.strip()
+        if not value:
+            return f"option {name!r} has no value"
+        if not ok(h.setOptionValue(name, value), f"setOptionValue({name})"):
+            return f"option {name!r} = {value!r}"
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Solve an MPS file with HiGHS in a subprocess.",
@@ -43,14 +69,20 @@ def main(argv: list[str] | None = None) -> int:
         "--mip-gap", type=Path, default=None,
         help="Optional output text file with HiGHS' relative MIP gap (info.mip_gap; inf for an LP)",
     )
-    parser.add_argument(
+    options = parser.add_mutually_exclusive_group()
+    options.add_argument(
         "--options", type=Path, default=None,
         help="Optional HiGHS options file (key=value per line)",
+    )
+    options.add_argument(
+        "--options-json", type=Path, default=None,
+        help="Optional HiGHS options as a JSON list of [name, value text] pairs, applied in order "
+             "(what FlexTool's --save-memory solve passes)",
     )
     parser.add_argument(
         "--threads", type=int, default=None, metavar="N",
         help="Thread budget of the parent run; read before polars starts (flextool/_thread_budget.py).  "
-             "HiGHS' own threads come from --options",
+             "HiGHS' own threads come from --options / --options-json",
     )
     args = parser.parse_args(argv)
 
@@ -74,16 +106,20 @@ def main(argv: list[str] | None = None) -> int:
     h = highspy.Highs()
 
     # Apply options BEFORE readModel so presolve / solver / scaling
-    # decisions take effect on the read.  HiGHS' own .opt file format
-    # is ``key=value`` per line; we use that as the IPC mechanism so
-    # FlexTool doesn't need to keep its option-dict translation aligned
-    # with this CLI separately.
+    # decisions take effect on the read.  FlexTool passes the options as
+    # (name, value text) pairs (``--options-json``), set one by one; a HiGHS
+    # option file (``--options``, ``key=value`` per line) is read by HiGHS.
     if args.options is not None:
         if not _ok(h.readOptions(str(args.options)), "readOptions"):
             print(
                 f"ERROR: HiGHS rejected options file {args.options}",
                 file=sys.stderr,
             )
+            return 2
+    if args.options_json is not None:
+        problem = apply_option_pairs(h, args.options_json, _ok)
+        if problem is not None:
+            print(f"ERROR: HiGHS rejected options file {args.options_json}: {problem}", file=sys.stderr)
             return 2
 
     if not _ok(h.readModel(str(args.mps)), "readModel"):

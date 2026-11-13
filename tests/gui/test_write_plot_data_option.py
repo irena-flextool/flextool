@@ -33,8 +33,8 @@ def test_write_plot_data_round_trips_and_reaches_the_run(tmp_path: Path):
     assert loaded.comparison_plot_settings.write_plot_data
 
     cmd = _run_cmd(tmp_path, loaded)
-    assert cmd[1:3] == ["-m", "flextool.cli.cmd_run_flextool"]
-    assert build_parser().parse_args(cmd[3:]).write_plot_data is True
+    assert cmd[1:4] == ["-P", "-m", "flextool.cli.cmd_run_flextool"]
+    assert build_parser().parse_args(cmd[4:]).write_plot_data is True
 
 
 @pytest.mark.gui

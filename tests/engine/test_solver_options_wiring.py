@@ -584,14 +584,18 @@ def test_option_files_are_read_once_per_run(gurobi_db, tmp_path, monkeypatch) ->
     (cfg / "gurobi.opt").write_text("Threads 3\n")
     (cfg / "highs.opt").write_text("threads=1\n")
     reads: list[Path] = []
-    real_read_text = Path.read_text
+    real_read_text, real_read_bytes = Path.read_text, Path.read_bytes
 
-    def counting_read_text(self, *args, **kwargs):
-        if self.suffix == ".opt":
-            reads.append(Path(self))
-        return real_read_text(self, *args, **kwargs)
+    def counting(real):
+        def read(self, *args, **kwargs):
+            if self.suffix == ".opt":
+                reads.append(Path(self))
+            return real(self, *args, **kwargs)
+        return read
 
-    monkeypatch.setattr(Path, "read_text", counting_read_text)
+    # The run reads a file's bytes (its text, and its hash for this computer's trust, review b2b3 M1).
+    monkeypatch.setattr(Path, "read_text", counting(real_read_text))
+    monkeypatch.setattr(Path, "read_bytes", counting(real_read_bytes))
     passed: list[dict] = []
 
     def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None,
@@ -661,7 +665,7 @@ def test_the_cli_resolves_the_option_folder_from_its_own_arguments(gurobi_db, tm
     import sys
 
     import flextool.engine
-    from flextool._solver_config_source import REASON_DB_FOLDER, REASON_TOOLBOX
+    from flextool._solver_config_source import REASON_DB_FOLDER, REASON_TOOLBOX, UNTRUSTED_SHORT
     from flextool.cli import cmd_run_flextool
 
     monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
@@ -699,5 +703,7 @@ def test_the_cli_resolves_the_option_folder_from_its_own_arguments(gurobi_db, tm
     assert excinfo.value.code == 1
     source = got["solver_config_source"]
     assert (source.dir, source.reason) == expected
+    # Item 240 B3: neither folder is in a workspace this computer set up, so the header says so.
+    assert source.trusted is False
     header = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("Solver config:")]
-    assert header == [f"Solver config: {expected[0]} ({expected[1]})"], header
+    assert header == [f"Solver config: {expected[0]} ({expected[1]}; {UNTRUSTED_SHORT})"], header

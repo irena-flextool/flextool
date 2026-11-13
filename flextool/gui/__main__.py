@@ -43,6 +43,10 @@ def _configure_logging(log_dir: Path) -> None:
         format="%(asctime)s %(name)s %(levelname)s: %(message)s",
         handlers=handlers,
     )
+    # Control characters from names in the input data are shown as \xNN, not sent to the terminal.
+    from flextool._safe_text import make_printable
+    for handler in handlers:
+        make_printable(handler)
 
 
 def _install_exception_logging() -> None:

@@ -25,6 +25,8 @@ from pathlib import Path
 
 from flextool._solver_config_source import solver_config_dir_flags, split_solver_config_dirs
 
+from flextool._child_python import SAFE_PATH_FLAG
+
 RP_MODULE = "flextool.representative_periods.preprocess"
 CALIBRATE_MODULE = "flextool.calibrate"
 
@@ -90,6 +92,7 @@ def build_rp_command(
     """
     argv: list[str] = [
         python_exe,
+        SAFE_PATH_FLAG,
         "-m",
         RP_MODULE,
         db_url,
@@ -130,6 +133,7 @@ def build_calibrate_command(
     final_write_methods: list[str] | None = None,
     threads: int | None = None,
     solver_config_dir: str | Path | Sequence[str | Path] | None = None,
+    workspace_solver_config_dir: str | Path | Sequence[str | Path] | None = None,
 ) -> list[str]:
     """Build the argv for the calibrate CLI.
 
@@ -149,13 +153,19 @@ def build_calibrate_command(
 
     ``threads`` (the Execution jobs window's "Threads per run") is emitted as
     ``--threads N`` when given; the calibrator passes it to each solve.
-    ``solver_config_dir`` (the project's and the workspace's solver option
-    folders, highest first) is emitted as ``--solver-config-dir PATH`` once per
-    folder; the calibrator passes them to each solve, so its solves use the
-    same option files as a GUI run.
+    ``solver_config_dir`` (folders the user named: ``FLEXTOOL_SOLVER_CONFIG_DIR``,
+    highest first) is emitted as ``--solver-config-dir PATH`` once per folder;
+    ``workspace_solver_config_dir`` (the folders the FlexTool window found: the
+    project's, then the workspace's, highest first) as
+    ``--workspace-solver-config-dir PATH`` once per folder, whose files are
+    trusted only when this computer set up their project or workspace (item 240
+    B3; :func:`flextool._solver_config_source.gui_solver_config_ladder` splits
+    the window's ladder into the two).  The calibrator passes them to each
+    solve, so its solves use the same option files as a GUI run.
     """
     argv: list[str] = [
         python_exe,
+        SAFE_PATH_FLAG,
         "-m",
         CALIBRATE_MODULE,
         db_url,
@@ -185,6 +195,8 @@ def build_calibrate_command(
         argv.append("--debug")
     if threads is not None:
         argv += ["--threads", str(max(1, int(threads)))]
+    for folder in split_solver_config_dirs(workspace_solver_config_dir):
+        argv += ["--workspace-solver-config-dir", str(folder)]
     argv += solver_config_dir_flags(split_solver_config_dirs(solver_config_dir))
     return argv
 

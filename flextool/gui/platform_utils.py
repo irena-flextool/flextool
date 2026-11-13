@@ -10,6 +10,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from flextool._child_python import python_module_argv
+
 if TYPE_CHECKING:
     import tkinter as tk
 
@@ -115,13 +117,15 @@ def spine_toolbox_available() -> bool:
 def spine_db_editor_argv(db_urls: str | Sequence[str]) -> list[str]:
     """argv that opens *db_urls* (one URL or several, each a tab) in the
     Spine DB editor of the current environment
-    (``<sys.executable> -m spinetoolbox.spine_db_editor.main <url>...``).
+    (``<sys.executable> -P -m spinetoolbox.spine_db_editor.main -- <url>...``).
 
     The single source for every FlexTool launcher of the editor (GUI and
-    CLI), so they cannot drift back to a PATH lookup.
+    CLI), so they cannot drift back to a PATH lookup.  ``-P`` keeps the
+    current folder off ``sys.path`` (:mod:`flextool._child_python`); ``--``
+    ends the options, so no URL is read as one.
     """
     urls = [db_urls] if isinstance(db_urls, str) else list(db_urls)
-    return [sys.executable, "-m", SPINE_DB_EDITOR_MODULE, *urls]
+    return python_module_argv(SPINE_DB_EDITOR_MODULE, "--", *urls)
 
 
 def open_spine_db_editor(db_urls: str | Sequence[str]) -> subprocess.Popen | None:

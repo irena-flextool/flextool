@@ -1162,9 +1162,11 @@ class SolveConfig:
                 + ". This is a FlexTool bug; please report it.")
 
     def solves_in_run(self) -> list[str]:
-        """The solves the model runs, in order: ``model.solves`` and the solves they contain (transitively).
-        ``None``-safe for a model without ``model.solves`` (every solve: ``create_assumptive_parts`` picks one
-        later)."""
+        """The solves the model runs, in order: ``model.solves`` and the solves they contain (transitively; a
+        ``contains_solves`` entry may be one name or a list).  After :meth:`_split_2d_period_maps` a split solve
+        appears as its ``<solve>_<outer>`` solves.  For a model without ``model.solves``, every database solve
+        (``create_assumptive_parts`` picks the sole one later).  The realization solves FlexTool adds later are not
+        listed: they take their parent's solver settings (:meth:`derive_realization_solve`)."""
         if not self.model_solve:
             return list(getattr(self, "database_solves", []))
         out: list[str] = []
@@ -1174,7 +1176,8 @@ class SolveConfig:
             if s in out:
                 continue
             out.append(s)
-            stack.extend(self.contains_solves.get(s, []))
+            children = self.contains_solves.get(s) or []
+            stack.extend([children] if isinstance(children, str) else children)
         return out
 
     def _split_2d_period_maps(self) -> None:
@@ -1363,6 +1366,11 @@ class SolveConfig:
         # Using this map (not a ``__realized_dispatch`` name-parse) keeps
         # the sibling identification robust.
         self.realized_dispatch_parent[sibling] = parent
+
+    def database_solve_names(self) -> dict[str, str]:
+        """Solve -> the database solve it was made from by a 2-D period map (``<solve>_<period>`` -> ``<solve>``),
+        for messages that should name what the user wrote."""
+        return {solve: parent for solve, (parent, _outer) in self.map2d_duplicate_of.items()}
 
     def derive_realization_solve(self, parent: str, sibling: str) -> None:
         """Give the realization solve *sibling* of *parent* its per-solve settings (:meth:`derive_solve`): every

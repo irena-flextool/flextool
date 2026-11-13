@@ -19,12 +19,74 @@ swallows the resulting ``SystemExit``:
   shell exit-code semantics (re-raises the original ``SystemExit`` / exits with
   the entry point's return value).
 
-Use it at a Tool's ``__main__`` boundary::
+While ``entry`` runs, what it writes to ``sys.stdout`` / ``sys.stderr`` and what
+the root logger's handlers write is shown with its control characters escaped
+(:func:`flextool._safe_text.printable`), so that a name from the input data
+cannot act on the terminal or the Toolbox console as a command.
+
+Use it at a Tool's ``__main__`` boundary, and as the console script
+(``cli``)::
+
+    def cli():
+        run_tool(main)
 
     if __name__ == "__main__":
-        run_tool(main)
+        cli()
 """
+import logging
 import sys
+from contextlib import contextmanager
+
+from flextool._safe_text import PrintableFormatter, PrintableText
+
+
+class _PrintableStream:
+    """Pass-through text stream that writes :func:`flextool._safe_text.printable` text to *inner*."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self._printable = PrintableText()
+
+    @property
+    def inner(self):
+        return self._inner
+
+    def write(self, text: str) -> int:
+        self._inner.write(self._printable(text) if text else text)
+        return len(text)
+
+    def writelines(self, lines) -> None:
+        for line in lines:
+            self.write(line)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+@contextmanager
+def printable_console():
+    """Escape control characters in console output while the block runs (nested use is a no-op)."""
+    if isinstance(sys.stdout, _PrintableStream) or isinstance(sys.stderr, _PrintableStream):
+        yield
+        return
+    old_out, old_err = sys.stdout, sys.stderr
+    root = logging.getLogger()
+    old_formatters = [(h, h.formatter) for h in root.handlers if not isinstance(h.formatter, PrintableFormatter)]
+    if old_out is not None:
+        sys.stdout = _PrintableStream(old_out)
+    if old_err is not None:
+        sys.stderr = _PrintableStream(old_err)
+    for handler, formatter in old_formatters:
+        handler.setFormatter(PrintableFormatter(formatter))
+    try:
+        yield
+    finally:
+        for handler, formatter in old_formatters:
+            handler.setFormatter(formatter)
+        if isinstance(sys.stdout, _PrintableStream):
+            sys.stdout = old_out
+        if isinstance(sys.stderr, _PrintableStream):
+            sys.stderr = old_err
 
 
 def run_tool(entry):
@@ -33,7 +95,8 @@ def run_tool(entry):
     See the module docstring for the rationale.
     """
     try:
-        rc = entry()
+        with printable_console():
+            rc = entry()
     except SystemExit as exc:
         if not sys.flags.interactive:
             raise  # standalone CLI: let the original exit code propagate

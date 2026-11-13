@@ -53,6 +53,9 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **Excel sheet names and layout changed:** long names keep their `__d` / `__dt` suffix, several shipped sheets are
   renamed, a `unit of measure` header row or a unit block is added, and dispatch data has a `period` column. Update
   Power Query and scripts (CSV names do not change).
+- **The FlexTool window names a scenario's Excel workbook after its result folder,**
+  `output_excel/output_<scenario>_<source number>.xlsx` (before, `output_<scenario>.xlsx`). Update scripts that open
+  it; the command line and Spine Toolbox keep `output_<scenario>.xlsx`.
 - **Smaller output changes:** a storage node's `entity_annuity_d_p` is per MWh (was per MW; values unchanged),
   *no_reserve* groups no longer have an empty reserve-shortfall column, and only groups whose `co2_method` caps
   emissions are listed as CO2-limited.
@@ -131,27 +134,118 @@ Each line says what changes for a model that ran before and what to do; the deta
   quote, `;`, `#` or `=`; names are letters, digits, `_` and `.` (CPLEX: words separated by single spaces). The
   error names the solve and parameter, or the option file and line. Numbers (`-1`, `1e-4`, `inf`), single words
   and paths without spaces still pass; a value with a space, such as a file path, or ending in a backslash is now
-  refused: use a path without spaces.
+  refused: use a path without spaces. An empty value is refused too, for every solver; for Gurobi, CPLEX, Xpress
+  and COPT also an option-file line with a name but no value (before, the line was skipped or read wrongly); for
+  CPLEX this includes a word where the parameter takes a number (`mip tolerances mipgap` without its value) and a
+  group of parameters with a value (`mip tolerances 0.01`). An empty HiGHS value from `solver_arguments` or a
+  flag, which `--save-memory` already refused when the solve started, now stops every run before its first solve.
 - **Solver options in the input database take no file paths or server settings.** Since 4.0, a database's
   `solver_arguments` could make the solver, HiGHS included, write over or read files anywhere on your computer (for
   example HiGHS `solution_file` / `log_file`, Gurobi `LogFile` / `InputFile`, CPLEX `workdir`, Xpress
   `TUNEROUTPUTPATH`), or send the model to another computer. An option there that names a file or folder now takes
-  only a plain file name, written in the solve's work folder (`<work folder>/solve_data/subprocess/`); a full path,
-  and a Gurobi Compute Server, Cloud, WLS, token-server or licence option, is refused with a message naming the
-  option, its value and the solve. Move such options to `solver_config/<solver>.opt`: the option files, flags and
+  only a plain file name, written in the solve's work folder (`<work folder>/solve_data/subprocess/`), and not the
+  name of a file that a solver reads by itself from that folder (`gurobi.env`, a licence file such as `*.lic`,
+  COPT's `license.dat` / `license.key` / `client.ini`, Xpress's `xpauth.xpr` / `nethasp.ini`); a full path,
+  a Gurobi Compute Server, Cloud, WLS, token-server or licence option, an Xpress remote-solving control
+  (`COMPUTE...`), and a `/`, `\` or `:` in a text parameter that names no file (CPLEX `cpumask`), is refused with a message naming the option, its value and the solve. Move such options to `solver_config/<solver>.opt`: the option files, flags and
   environment variables keep full paths and server options. Names are matched as the solver reads them (Gurobi
-  ignores `_`, Xpress an `XPRS_` prefix, CPLEX takes abbreviations); the full list is in the solver docs. Gurobi's
+  ignores `_`, Xpress an `XPRS_` prefix, CPLEX reads `.` as a space); the full list is in the solver docs. Gurobi's
   `ResultFile` is FlexTool's own and is ignored, with a warning, wherever it is set. FlexTool's results are in
   `output_parquet/<scenario>/` as before; a commercial solver's log is saved as
   `<work folder>/solve_data/subprocess/<solve>.log`; HiGHS' log is in the run's log,
   `output_parquet/<scenario>/_run.log` (with `flextool-run` or the FlexTool window).
+- **Solver parameter names in the input database must be the solver's own.** FlexTool now has a list of every
+  parameter of HiGHS 1.15.1, Gurobi 13.0.2, CPLEX 22.1.2, Xpress 46.01 and COPT 8.0.4, and a solve's
+  `solver_arguments` may name only those. Any other name, in a solve the model runs, is refused before the first
+  solve of the run, with a message that suggests the closest name: a misspelling (`MIPGapp`, which the solver ignored or refused before), a
+  HiGHS name in another case (`Presolve`), a CPLEX abbreviation (write `mip tolerances mipgap`, not
+  `mip tol mipgap`), or a parameter of a newer solver version. HiGHS names that your installed HiGHS knows as a
+  number or a switch are taken too. The remote-solving and licence parameters are refused whatever their type,
+  and so are Gurobi's `JobID` / `Dummy` and CPLEX's `defaults`. FlexTool 3's `solver`, `parallel` and `presolve`
+  (moved into `solver_arguments` by the database migration, for every solve) are left out of a solve that uses
+  Gurobi, CPLEX, Xpress or COPT, with one warning per run. To use a parameter that is not in the list, put it in
+  `solver_config/<solver>.opt` (an unknown name there gives a warning and is passed on), or allow such names from
+  databases on your computer with `FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS=1` or
+  `"allow_unlisted_parameters": true` in `solver_settings.json` in FlexTool's user settings folder; no database,
+  project or command-line flag can switch this on. Even with it on, such a name takes only a number, a switch or a
+  plain file name, a server-like name (also CPLEX `distmip ...`) is refused, and so is a CPLEX abbreviation of a
+  listed name (`d c` for `distmip config`). See "What the database may set" in the solver docs.
+- **Solver option files that FlexTool finds by itself get the database's rules, unless your computer set up their
+  workspace.** A run looks for `solver_config/` next to the input database, in the workspace of a project
+  database, in the Spine Toolbox project folder or in the folder it starts in, and the FlexTool window uses its
+  workspace's. Such a folder may have come with a workspace, model or Toolbox project from someone else, so its
+  `.opt` files now get the same limits as the database's `solver_arguments` (only plain file names, placed in the
+  work folder; no server or licence settings; only listed parameter names), unless the folder is in a workspace
+  this computer set up. FlexTool remembers those workspaces in `solver_settings.json` in its user settings folder,
+  outside the workspace: `flextool-update` and the FlexTool window add their workspace when they create its
+  `solver_config/`, or find nothing there but FlexTool's own default files. A workspace whose option files were
+  already edited is not added by itself, so **if you edited `solver_config/*.opt` and use file paths, server
+  settings or parameters that are not in FlexTool's list there, your runs now stop with a message** naming the file,
+  the line and what to do: tick "Trust this workspace's solver option files" in the FlexTool window (Solver
+  options → On this computer), or pass the folder with `--solver-config-dir` or `FLEXTOOL_SOLVER_CONFIG_DIR`, which
+  are trusted as before (also the way for CI and servers). Option files with plain settings (threads, gaps, time
+  limits) work as before. The run's `Solver config:` line and the run record say whether the folder was trusted.
+  The same holds for a GUI project's own `solver_config/`, judged file by file: an untrusted project file used over
+  a trusted workspace's file gets the database's rules. FlexTool notes a project it creates, or opens with no
+  edited option file and nothing received waiting for review; an imported project's shipped files stay untrusted
+  until you tick "Trust this project's solver option files" (Solver options → On this computer). A terminal user
+  can run `flextool-trust-workspace <folder>` in a terminal, which shows the edited option files and asks (piped
+  input is refused, and control characters in the files are shown as escapes); it trusts the files as shown, and
+  nothing when one changed before the answer. The trust is for the folder as it was then, not for its path: a
+  folder put at the same path later (for example a copy from someone else unpacked where yours was) is not
+  trusted, and an option file changed afterwards is trusted only when your own account wrote it and no other
+  account can change it; otherwise trust the folder again. **Moving, restoring or copying a trusted workspace to
+  another path or computer asks for the trust again**, and so can a network drive mounted again. Spine
+  Toolbox projects are code: open one only from people you trust.
+- **`FLEXTOOL_USER_HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` must be full paths:** a relative one is ignored with
+  a warning, and the platform's user folder is used. A full path is used wherever FlexTool starts; a solver settings
+  file that lies inside a folder judged for trust makes that folder's trust unreadable, with a message.
+- **The solver settings file must be UTF-8 text and, on Linux and macOS, yours and writable by you only**
+  (`solver_settings.json` in FlexTool's user settings folder, which FlexTool writes so): a file another account owns
+  or can write is not read, as a solver wrapper named there runs as you. The message says how to fix it
+  (`chmod 600`).
 - **`solver_precommand` is not run, and a value now gives a warning.** FlexTool 3 ran it in front of CPLEX (for
   example to reserve a floating licence); FlexTool 4 does not run commands stored in a database, for safety: a
   database from someone else could otherwise run any program on your computer. The parameter is kept only so that
   older databases still read; the warning comes once per solve. To hold a floating licence, use your solver's own
-  licence server setup; a solver wrapper set on your computer is planned for a later release.
+  licence server setup, or set the program as a solver wrapper on your computer (see New features).
+- **Security: FlexTool runs only its own installed code.** The Python processes FlexTool starts (runs, representative
+  periods, calibration, conversions, comparisons, the database editor, updates) no longer look for Python code in
+  the folder they start from, so a project folder from someone else cannot replace part of FlexTool. "Build
+  representative periods" and "Calibrate investments" now run from the workspace folder like the other jobs.
+  Importing a project package refuses one that holds programs or scripts (`.py`, `.exe`, `.dll`, `.bat`, `.sh`
+  and the like) or files outside `input_sources/`, `output_parquet/`, `solver_config/` (`.opt` files),
+  `settings.yaml` and `plot_settings.yaml`; an export leaves such files out of `input_sources/` and the result
+  runs, with a note. Solver option files travel only in the package's top-level `solver_config/`: a package with
+  a `solver_config` or `imported_solver_config` folder anywhere else (for example next to an input database, in
+  any spelling of the name) is refused, because FlexTool reads such a folder by itself; an export leaves such a
+  folder inside the project out, with a note.
+- **Scenario names must be usable as folder names.** A scenario name names its result folders, so a run (FlexTool
+  window, `flextool-run`, Spine Toolbox, calibration, comparison) now stops with a message, before writing
+  anything, when the name is empty, is `.` or `..`, holds `/`, `\` or a control character (a line break, a tab, an
+  escape character), starts with `-` or with a drive letter and `:` (`C:x`), or is a name Windows reserves for
+  devices (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`, also with an extension). On Windows also
+  `< > : " | ? *` and a trailing dot or space are refused, as Windows does not allow them in file names. Rename
+  such a scenario in the input database. Letters of any language, spaces and other punctuation work as before, and
+  the result folders keep their names. FlexTool now also checks that every folder it empties or removes for a
+  run is that run's own folder.
+- **An imported project's input sources stay inside the project.** Importing a package leaves out the input
+  sources that its settings point at files outside the project folder, and says which ones; add such a file
+  again in the FlexTool window if you need it.
 
 ### New features
+
+- **A solver wrapper set on your computer** starts in front of Gurobi, CPLEX, Xpress or COPT, for example to hold
+  a floating licence or to lower the solver's priority: FlexTool window Solver options → On this computer, or
+  `FLEXTOOL_SOLVER_WRAPPER_<SOLVER>` (the program's full path, or a JSON list with its arguments). It is never
+  taken from a database, a project or the command line. FlexTool runs it without a shell, followed by the solver
+  program's full path and the solver's arguments. The run log names the wrapper program and the number of its
+  arguments, not the arguments (the AI assistant can send the run log out); the run record on your computer keeps
+  them in full and an exported project leaves them out. A `.bat` / `.cmd`, a PowerShell or Windows Script Host
+  script and the command interpreters themselves are refused, on Windows also `wsl.exe`, `bash.exe` and similar
+  programs that read their arguments as a command line (use a program, or `python` with a script). FlexTool 3 users of `solver_precommand`: set its program here once (see
+  "FlexTool 3 precommand users" in the solver docs). The solver program itself is now looked for only in the
+  absolute folders of `PATH`, never in the current folder.
 
 #### Units of measure and result files
 
@@ -388,12 +482,15 @@ Each line says what changes for a model that ran before and what to do; the deta
   results are not flagged as made from a changed input), suggests `<Name>_2` when the name is taken (exit code 3
   in the terminal), refuses a database newer than this FlexTool, migrates older ones on open (asking first for a
   frozen one), and unpacks the shipped solver options to the project's `solver_config/`, where its runs use them
-  ahead of the workspace's (delete a file there to use the workspace's). Export leaves out an option file with a
+  ahead of the workspace's (delete a file there to use the workspace's), with the input database's rules until you
+  trust the project's solver option files. Export leaves out an option file with a
   line that names a file or folder by its path or connects the solver to another computer (a server, cloud or
   licence service, or its password) or sets a CPLEX name starting with `set` (a run refuses it), and names those
   lines; a server option's value is shown as `<hidden>`. A project imported by a 4.4 development build has its
   shipped options in `imported_solver_config/`, which no run reads: the first time the FlexTool window opens it,
   the files are checked as at import and the folder is renamed to `solver_config/` (a log line says so).
+  Import holds back exactly what the project's runs would refuse (the input database's rules, which an imported
+  project's option files get until you trust them).
   The viewer's axis ranges file is cut to the shipped runs; run records have this computer's folder paths, user
   name and host name replaced and run logs stay home (on by default; `--keep-run-records` / untick to keep them);
   a run still being written is refused (`--results all` leaves it out); a `.sqlite` input that may be in the middle
@@ -407,8 +504,9 @@ Each line says what changes for a model that ran before and what to do; the deta
   without a file there uses the workspace's, else FlexTool's default. `--solver-config-dir` can be repeated, and
   `FLEXTOOL_SOLVER_CONFIG_DIR` takes several folders separated by `:` (on Windows `;`), highest first; only the
   folders given are read. With `FLEXTOOL_SOLVER_CONFIG_DIR` set for the FlexTool window, the project's folder still
-  comes first. A shipped option file with an option that names a path or a server, or a CPLEX name starting with
-  `set`, is kept as `<solver>.opt.review`, never read by a run, until you check it and rename it; an unedited
+  comes first. A shipped option file with a line the input database's rules refuse (a path, a server, a parameter
+  name not in FlexTool's list, a CPLEX name starting with `set`) is kept as `<solver>.opt.review`, never read by a
+  run; to use it, check it, rename it and trust the project's solver option files; an unedited
   FlexTool template in a project folder is skipped, so it never hides the workspace's file.
 
 #### Plots, timings and the parameter catalogue
@@ -645,12 +743,21 @@ Each line says what changes for a model that ran before and what to do; the deta
   Xpress or COPT, or address another Gurobi or HiGHS option. Every option of every solver is now checked before the
   solve; a refused one stops the run with a message naming the solve and parameter, or the option file and line,
   and the option. The solver's command script and arguments are checked again just before it starts.
+- **An empty solver option value is refused** (since 4.0). For CPLEX, an empty value in `solver_arguments`, or an
+  option-file line without its value, made the CPLEX console take the next command as the value; Gurobi and Xpress
+  dropped the option while the log showed it as passed, and an option-file line of one word was skipped without a
+  word. HiGHS took an empty value in the normal solve but stopped at it with `--save-memory`. Such an option now
+  stops the run with a message naming the solve and parameter, or the file and line.
+- **Solvers get their parameters directly.** The commercial solvers' arguments and command scripts, and the
+  `--save-memory` HiGHS solve, are now built from the merged parameter list itself rather than from the
+  `<solve>.opt` file written and read back; `<solve>.opt` stays next to the model as the record (and HiGHS' child
+  takes `<solve>.options.json`). What each solver receives is unchanged.
 - **A database could point a solver at any file or at another computer** (since 4.0). A `solver_arguments` entry
   such as `log_file`, `write_model_file`, `read_basis_file`, Gurobi `InputFile` / `ComputeServer` / `CloudAccessID`,
   CPLEX `workdir` or Xpress `TUNEROUTPUTPATH` could read or write a file anywhere the user may, or send the model
   and credentials to another machine. Options from the input database are now trusted less than those of the
   user's own computer: a file option there takes a plain file name, placed in the solve's work folder, and a server
-  option is refused, with a message naming the option, its value and the solve and saying to set it in
+  option (Gurobi) or remote-solving control (Xpress `COMPUTE...`) is refused, with a message naming the option, its value and the solve and saying to set it in
   `solver_config/<solver>.opt` instead. The option files, flags and environment variables keep full paths and server
   options. Option names are compared as each solver reads them (Gurobi without case or `_`, Xpress without an
   `XPRS_` prefix, CPLEX abbreviations of its file options), so another spelling does not get past the check.
@@ -953,6 +1060,21 @@ Each line says what changes for a model that ran before and what to do; the deta
 
 #### Outputs and plots
 
+- **Names in Excel workbooks stay text.** A name that starts with `=` (an entity, scenario or alternative, a
+  description) is written to the result workbooks, the comparison and dispatch workbooks and the input export as
+  text, never as a formula or a link; the input export now reads such a name back unchanged (before, it came back
+  empty). The CSV files keep the names exactly as they are; `docs/results.md` says how to open a CSV file from
+  someone else safely in a spreadsheet program.
+- **Plot file names stay in the plot folder.** A `/` or `\` in a plot name from the plot settings, or in a node,
+  group or scenario name of a dispatch plot, becomes `_` in the file name (on Windows also `< > : " | ? *`).
+- **Control characters in names are shown, not acted on.** A name from the input data with an escape character or
+  another control character is shown with that character as `\x1b` (and so on), and with a character that reverses
+  the direction of text as `\u202e` (and so on), instead of reaching the terminal as a command or reordering the
+  line. This holds in `flextool-run`'s console output and `_run.log`, in a model run's own console output, in
+  `flextool-write-outputs`, `flextool-scenario-results`, `flextool-execute-workflow`, the calibration and
+  representative-period command lines, in the Spine Toolbox console for the FlexTool, *Process outputs* and
+  *scenario comparison* tools, and in the FlexTool window's logs. Other command-line tools (for example
+  `flextool-time-runs` and the database tools) print such characters as they are.
 - **VRE curtailment, VRE potential and flow-group energies per period are scaled to
   a full year.** `unit_curtailment__outputNode__d`, `unit_outputNode_VRE_potential__d` and the `cumulative_flow` of
   `group_flow__d` were sums over the sampled time steps (the flow group's also without the timestep weights); they
@@ -1028,6 +1150,21 @@ Each line says what changes for a model that ran before and what to do; the deta
 
 #### Databases and the FlexTool window
 
+- **Fixed: deleting a scenario's results in the FlexTool window removed the wrong Excel workbooks.** It removed
+  every workbook whose name contained the result folder's name (deleting `base_1` also removed `base_10`'s) and
+  kept the scenario's own one, and the window showed an Excel export where there was none. The workbook is now named
+  after the result folder, `output_<scenario>_<source number>.xlsx` (before, `output_<scenario>.xlsx`, which every
+  source of the scenario overwrote), and the window matches it by its exact name. A workbook with the old name is
+  deleted with the last result folder of its scenario, since until then it may hold another folder's results. The
+  command line and Spine Toolbox name it `output_<scenario>.xlsx` as before.
+- **Fixed: Calibrate investments in the FlexTool window deleted the results of every scenario in the project.**
+  Each calibration round emptied the project's whole `output_parquet` folder, so the result files of the other
+  scenarios were lost (the run records too; their CSV, Excel and plot files stayed). A calibration now clears only
+  the result folder of the scenario it calibrates. The same held for `python -m flextool.calibrate` with
+  `--output-location` set to a folder that held other results; with `--debug` the earlier rounds are now kept in
+  `out_iter_<k>/<scenario>/`. Present since 4.0.0. In a project from before result folders got the source
+  number, `output_parquet/<scenario>/` can be the results of one input source; calibrating a scenario of the same
+  name from another source is now refused with a message (before, it deleted those results).
 - **The model run refuses an input database that is not at the current FlexTool version.**
   Before, only databases below version 25 were refused, so an unmigrated database ran old data under the new
   version's semantics without a word. `flextool-run` (and `run_flextool.py`, `python -m

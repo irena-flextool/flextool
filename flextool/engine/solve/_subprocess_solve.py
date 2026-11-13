@@ -72,10 +72,11 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping, NamedTuple
+from typing import TYPE_CHECKING, Any, Mapping, NamedTuple, Sequence
 
 import numpy as np
 
+from flextool._child_python import child_env, python_module_argv
 from flextool._solver_option_rules import native_opt_lines as _native_opt_lines
 
 if TYPE_CHECKING:
@@ -132,7 +133,7 @@ def _touch_marker(path: Path, logger: logging.Logger | None) -> None:
 def _run_cold_probe(
     *,
     mps_path: Path,
-    opts_path: Path,
+    options_json: Path,
     probe_sol: Path,
     probe_stats: Path,
     logger: logging.Logger | None,
@@ -141,7 +142,7 @@ def _run_cold_probe(
     """Spawn a throwaway COLD child solve purely to measure its wall time.
 
     Used by the first-transfer A/B gate (see :data:`_WARM_AB_MARGIN`).
-    The child runs with the SAME ``--mps`` / ``--options`` but a throwaway
+    The child runs with the SAME ``--mps`` / ``--options-json`` but a throwaway
     ``--solution`` and ``--stats`` and NO ``--warm-basis`` — a pure cold
     reference solve.  Its solution is discarded; only ``run_time`` matters.
 
@@ -151,15 +152,15 @@ def _run_cold_probe(
     """
     try:
         probe_cmd = [
-            sys.executable, "-m", "flextool.cli.cmd_solve_mps",
+            *python_module_argv("flextool.cli.cmd_solve_mps"),
             "--mps", str(mps_path),
             "--solution", str(probe_sol),
-            "--options", str(opts_path),
+            "--options-json", str(options_json),
             "--stats", str(probe_stats),
         ]
         if threads is not None:
             probe_cmd += ["--threads", str(threads)]
-        subprocess.run(probe_cmd)
+        subprocess.run(probe_cmd, env=child_env())
         if not probe_stats.exists():
             return None
         pstats = json.loads(probe_stats.read_text())
@@ -183,6 +184,23 @@ def _format_opt_value(v: object) -> str:
     if isinstance(v, bool):
         return "true" if v else "false"
     return str(v)
+
+
+def _highs_option_pairs(options: Mapping[str, Any] | None) -> list[tuple[str, str]]:
+    """The ``--save-memory`` HiGHS options as ``(name, value text)`` pairs in order (:func:`_format_opt_value`)."""
+    return [(str(k), _format_opt_value(v)) for k, v in (options or {}).items()]
+
+
+def _write_highs_option_files(pairs: list[tuple[str, str]], opts_path: Path, json_path: Path) -> None:
+    """Write the HiGHS option *pairs* for the ``--save-memory`` child: ``<solve>.options.json`` (``[[name, text],
+    ...]``, what the child applies, ``--options-json``) and ``<solve>.opt`` (``key=value`` lines: the record, and
+    ``--options`` for a replay by hand)."""
+    lines = [f"{k}={v}" for k, v in pairs]
+    _check_command_lines("highs", "option-file line", lines, len(pairs))
+    with open(opts_path, "w") as f:
+        for line in lines:
+            f.write(f"{line}\n")
+    json_path.write_text(json.dumps([[k, v] for k, v in pairs]), encoding="utf-8")
 
 
 def _read_objective_from_sol(sol_path: Path) -> float:
@@ -675,16 +693,30 @@ _POSIX_INSTALL_DIRS: dict[str, list[str]] = {
 def _find_solver_binary(solver_name: str) -> Path | None:
     """Return the absolute path to the solver's CLI binary, or ``None``.
 
-    Lookup order: ``$PATH`` via :func:`shutil.which`, then a small set
-    of conventional POSIX install dirs.  Returns ``None`` on miss; the
-    caller raises a user-actionable error.
+    Lookup order: the folders of ``$PATH``, then a small set of conventional POSIX install dirs.  Only absolute
+    ``PATH`` folders are searched, and on Windows only ``<name>.exe`` and never the current folder (which
+    :func:`shutil.which` searches first there): a run's current folder is the workspace, and a received workspace
+    must not bring its own ``gurobi_cl.exe`` (item 240 B2; the path also goes into a solver wrapper's arguments,
+    so it must not depend on the current folder).  Returns ``None`` on miss; the caller raises a user-actionable
+    error.
     """
     bin_name = _BINARY_NAMES.get(solver_name)
     if bin_name is None:
         return None
-    found = shutil.which(bin_name)
-    if found is not None:
-        return Path(found)
+    windows = os.name == "nt"
+    file_name = f"{bin_name}.exe" if windows else bin_name
+    try:
+        cwd = os.path.normcase(os.path.realpath(os.getcwd()))
+    except OSError:
+        cwd = None
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        if not folder or not os.path.isabs(folder):
+            continue  # an empty or relative entry is the current folder, or depends on it
+        if windows and cwd is not None and os.path.normcase(os.path.realpath(folder)) == cwd:
+            continue
+        candidate = Path(folder) / file_name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return Path(os.path.abspath(candidate))
     if os.name == "posix":
         for d in _POSIX_INSTALL_DIRS.get(solver_name, []):
             candidate = Path(d) / bin_name
@@ -693,22 +725,52 @@ def _find_solver_binary(solver_name: str) -> Path | None:
     return None
 
 
+#: The parameters handed to a commercial solver: ``(native name, value text)`` pairs in final order
+#: (:func:`commercial_params`).
+CommercialParams = tuple[tuple[str, str], ...]
+
+
+def commercial_params(options: "Mapping[str, Any] | Sequence[tuple[str, Any]] | None") -> CommercialParams:
+    """The resolved commercial *options* (name -> value, final order; or such pairs) as :data:`CommercialParams`:
+    each value formatted by :func:`_format_native_opt_value`, ``None`` values left out."""
+    pairs = options.items() if isinstance(options, Mapping) else (options or ())
+    return tuple((str(name), _format_native_opt_value(value)) for name, value in pairs if value is not None)
+
+
+def _check_params(solver: str, params: CommercialParams) -> None:
+    """Last check of the pairs a script builder emits (item 240 B4): each is one parameter with one value, so it
+    becomes exactly one argument or script line.  The options were checked when they were read
+    (``_solver_dispatch.validate_solver_option``), so a failure here is an internal error; the solver is not
+    started."""
+    from flextool.engine.solve._solver_dispatch import FlexToolUserError
+
+    for name, value in params:
+        words = name.split(" ") if solver == "cplex" else [name]
+        if value and not any(ch.isspace() for ch in value) and all(w and not any(ch.isspace() for ch in w)
+                                                                    for w in words):
+            continue
+        raise FlexToolUserError(
+            f"FlexTool did not start {solver}: the parameter {name[:80]!r} = {value[:80]!r} is not one name and one "
+            "value. This is an internal check on the solver options; please report it with the solve's solver "
+            "options."
+        )
+
+
 def _gurobi_script(
-    binary: Path, mps_path: Path, sol_path: Path, opt_path: Path | None,
+    binary: Path, mps_path: Path, sol_path: Path, params: CommercialParams = (),
 ) -> tuple[list[str], str | None]:
     """``gurobi_cl [<Name>=<value> ...] ResultFile=<sol> <mps>``.
 
-    When *opt_path* is given, each parameter of our merged baseline+overlay
-    file becomes one ``<Name>=<value>`` argument before the model file —
+    Each of *params* (:func:`commercial_params`) becomes one ``<Name>=<value>`` argument before the model file —
     the only way ``gurobi_cl`` takes parameters on its command line.  (It
     has no parameter-file argument: ``ReadParams=<file>`` is reported as
     ``Unknown parameter: 'ReadParams' (ignored)`` and the solve then runs
-    at Gurobi's defaults.)  The merged file stays next to the MPS as the
-    record of what was passed.
+    at Gurobi's defaults.)  The same pairs are written next to the MPS as the
+    record of what was passed (:func:`_write_commercial_opt_file`).
     """
+    _check_params("gurobi", params)
     argv: list[str] = [str(binary)]
-    params = _parse_native_opt_file(opt_path) if opt_path is not None else {}
-    for name, value in params.items():
+    for name, value in params:
         argv.append(f"{name}={value}")
     argv.append(f"ResultFile={sol_path}")
     argv.append(str(mps_path))
@@ -717,18 +779,15 @@ def _gurobi_script(
 
 
 def _cplex_script(
-    binary: Path, mps_path: Path, sol_path: Path, opt_path: Path | None,
+    binary: Path, mps_path: Path, sol_path: Path, params: CommercialParams = (),
 ) -> tuple[list[str], str]:
     """CPLEX interactive optimizer: pipe commands on stdin.
 
-    When *opt_path* is given, each non-comment line is translated to
-    ``set <name> <value>`` and emitted *before* the ``read``/``optimize``
+    Each of *params* becomes ``set <name> <value>``, emitted *before* the ``read``/``optimize``
     pair so parameter values are in effect when the model loads.
     """
-    pre: list[str] = []
-    if opt_path is not None:
-        for name, value in _parse_native_opt_file(opt_path).items():
-            pre.append(f"set {name} {value}")
+    _check_params("cplex", params)
+    pre = [f"set {name} {value}" for name, value in params]
     fixed = [
         f"read {mps_path}",
         "optimize",
@@ -739,18 +798,15 @@ def _cplex_script(
 
 
 def _xpress_script(
-    binary: Path, mps_path: Path, sol_path: Path, opt_path: Path | None,
+    binary: Path, mps_path: Path, sol_path: Path, params: CommercialParams = (),
 ) -> tuple[list[str], str]:
     """Xpress optimizer console script via stdin.
 
-    When *opt_path* is given, each non-comment line is translated to
-    ``setControl <NAME> <value>`` and emitted *before* ``readprob``/
+    Each of *params* becomes ``setControl <NAME> <value>``, emitted *before* ``readprob``/
     ``lpoptimize`` so controls are in effect for the solve.
     """
-    pre: list[str] = []
-    if opt_path is not None:
-        for name, value in _parse_native_opt_file(opt_path).items():
-            pre.append(f"setControl {name} {value}")
+    _check_params("xpress", params)
+    pre = [f"setControl {name} {value}" for name, value in params]
     fixed = [
         f"readprob {mps_path}",
         "lpoptimize",
@@ -768,17 +824,14 @@ def _xpress_script(
 
 
 def _copt_script(
-    binary: Path, mps_path: Path, sol_path: Path, opt_path: Path | None,
+    binary: Path, mps_path: Path, sol_path: Path, params: CommercialParams = (),
 ) -> tuple[list[str], str]:
     """COPT's ``copt_cmd`` script via stdin.
 
-    When *opt_path* is given, each non-comment line is translated to
-    ``set <ParamName> <value>`` and emitted *before* ``read``/``optimize``.
+    Each of *params* becomes ``set <ParamName> <value>``, emitted *before* ``read``/``optimize``.
     """
-    pre: list[str] = []
-    if opt_path is not None:
-        for name, value in _parse_native_opt_file(opt_path).items():
-            pre.append(f"set {name} {value}")
+    _check_params("copt", params)
+    pre = [f"set {name} {value}" for name, value in params]
     fixed = [
         f"read {mps_path}",
         "optimize",
@@ -837,10 +890,11 @@ _SCRIPTS = {
 # parameter syntax — see the comment header in each template.
 # ``_solver_dispatch.resolve_commercial_options`` merges it with the solve's
 # ``solver_mip_gap`` / ``solver_arguments`` and the operator's flags into one
-# ordered parameter set; :func:`_write_commercial_opt_file` writes that set
-# next to the MPS (the record of what was passed) and the per-solver script
-# turns each line into the CLI's form (Gurobi: one ``Name=value`` argv token
-# per parameter; CPLEX/Xpress/COPT: inline set/setControl commands on stdin).
+# ordered parameter set; :func:`commercial_params` turns it into ``(name,
+# value)`` pairs, which the per-solver script turns into the CLI's form
+# (Gurobi: one ``Name=value`` argv token per parameter; CPLEX/Xpress/COPT:
+# inline set/setControl commands on stdin), and :func:`_write_commercial_opt_file`
+# writes next to the MPS as the record of what was passed (nothing reads it back).
 
 
 def _parse_native_opt_file(path: Path) -> dict[str, str]:
@@ -906,20 +960,18 @@ _WHOLE_NUMBER_TEXT = re.compile(r"^\s*-?\d{1,15}\.0+\s*$")
 
 
 def _write_commercial_opt_file(
-    options: Mapping[str, Any] | None,
+    options: "Mapping[str, Any] | Sequence[tuple[str, Any]] | None",
     out_path: Path,
 ) -> Path | None:
-    """Write the resolved commercial *options* (name -> value, final order) to *out_path*.
+    """Write the resolved commercial *options* (name -> value, final order; or :data:`CommercialParams`) to
+    *out_path*.
 
     One ``<name> <value>`` line per parameter, the layout of the baseline
-    files; the per-solver script builder reads it back.  Returns ``None``
-    when there is nothing to pass (the CLI then gets no parameters).
+    files: the record of what was passed (``<solve>.opt`` next to the MPS; the
+    script builders take the pairs themselves).  Returns ``None`` when there is
+    nothing to pass (no file is written).
     """
-    lines = [
-        f"{name} {_format_native_opt_value(value)}\n"
-        for name, value in (options or {}).items()
-        if value is not None
-    ]
+    lines = [f"{name} {value}\n" for name, value in commercial_params(options)]
     if not lines:
         return None
     out_path.write_text("".join(lines))
@@ -1890,6 +1942,7 @@ def _solve_highs_subprocess(
     mps_path = out_dir / f"{safe_name}.mps"
     sol_path = out_dir / f"{safe_name}.sol"
     opts_path = out_dir / f"{safe_name}.opt"
+    options_json = out_dir / f"{safe_name}.options.json"
     gap_path = out_dir / f"{safe_name}.mipgap"
 
     # Warm-start basis-cache slots (populated only with warm start on;
@@ -1907,12 +1960,7 @@ def _solve_highs_subprocess(
     warm_run_time: float | None = None
 
     try:
-        opts = options or {}
-        opt_lines = [f"{k}={_format_opt_value(v)}" for k, v in opts.items()]
-        _check_command_lines("highs", "option-file line", opt_lines, len(opts))
-        with open(opts_path, "w") as f:
-            for line in opt_lines:
-                f.write(f"{line}\n")
+        _write_highs_option_files(_highs_option_pairs(options), opts_path, options_json)
 
         if logger is not None:
             logger.info(
@@ -1938,13 +1986,13 @@ def _solve_highs_subprocess(
         problem.write_mps(str(mps_path), release=True, emit_names=False)
 
         cmd = [
-            sys.executable, "-m", "flextool.cli.cmd_solve_mps",
+            *python_module_argv("flextool.cli.cmd_solve_mps"),
             "--mps", str(mps_path),
             "--solution", str(sol_path),
-            "--options", str(opts_path),
+            "--options-json", str(options_json),
             "--mip-gap", str(gap_path),
             # The run's thread budget sizes the child's polars pool (read before polars is imported); the
-            # child's HiGHS threads come from the options file.
+            # child's HiGHS threads come from the options.
             "--threads", str(child_threads),
         ]
 
@@ -2006,7 +2054,7 @@ def _solve_highs_subprocess(
                             )
                             warm_cold_time = _run_cold_probe(
                                 mps_path=mps_path,
-                                opts_path=opts_path,
+                                options_json=options_json,
                                 probe_sol=warm_probe_sol,
                                 probe_stats=warm_probe_stats,
                                 logger=logger,
@@ -2044,7 +2092,7 @@ def _solve_highs_subprocess(
         # The work folder persists across runs and same-named solves: a gap file left by an earlier one must
         # not be named as this solve's gap when the child writes none (its write is best-effort).
         gap_path.unlink(missing_ok=True)
-        cp = subprocess.run(cmd)
+        cp = subprocess.run(cmd, env=child_env())
         optimal = cp.returncode == 0
 
         # --- Warm-start publish + measurement ---------------------------
@@ -2201,7 +2249,7 @@ def _solve_highs_subprocess(
         return sol
     finally:
         if cleanup:
-            paths = [mps_path, sol_path, opts_path, gap_path]
+            paths = [mps_path, sol_path, opts_path, options_json, gap_path]
             # The warm-start stats sidecar and A/B probe throwaways live
             # inside ``out_dir`` — sweep them too so the ``rmdir`` below
             # succeeds.  The cache itself (``warm_cached`` / ``warm_tmp_bas``)
@@ -2290,6 +2338,11 @@ def _solve_commercial_subprocess(
     """
     from polar_high import Solution
 
+    from flextool import run_record
+    from flextool.engine.solve._solver_dispatch import FlexToolUserError, local_solver_wrapper
+
+    # This computer's solver wrapper (item 240 B2), checked before anything is written; again just before start.
+    wrapper = local_solver_wrapper(solver_name)
     binary = _find_solver_binary(solver_name)
     if binary is None:
         raise RuntimeError(
@@ -2298,6 +2351,7 @@ def _solve_commercial_subprocess(
             f"or in the conventional install directories. Install the "
             f"solver and ensure its 'bin' directory is on $PATH."
         )
+    via = f" (started through the solver wrapper {wrapper.program})" if wrapper is not None else ""
 
     cleanup = work_folder is None
     if work_folder is not None:
@@ -2352,13 +2406,13 @@ def _solve_commercial_subprocess(
         # HiGHS path.
         problem.write_mps(str(mps_path), release=True, emit_names=False)
 
-        # Write the resolved parameters to ``<solve>.opt`` for the
-        # per-solver CLI to ingest.  ``None`` when there are none — the
-        # per-solver script builders then skip the opt-file slot entirely.
-        opt_arg = _write_commercial_opt_file(options, opt_path)
+        # The resolved parameters as (name, value) pairs: the script builder emits one argument or line per
+        # pair, and ``<solve>.opt`` records them next to the MPS (not written when there are none).
+        params = commercial_params(options)
+        _write_commercial_opt_file(params, opt_path)
 
         argv, stdin_text = _SCRIPTS[solver_name](
-            binary, Path(mps_path.name), Path(sol_path.name), opt_arg,
+            binary, Path(mps_path.name), Path(sol_path.name), params,
         )
         if stdin_text is not None:
             # The command script piped to the console (CPLEX / Xpress / COPT), next to the MPS: replay it by hand
@@ -2376,18 +2430,32 @@ def _solve_commercial_subprocess(
         echo = opts.value("solver_log_level") != "silent"
         log_path = None if cleanup else out_dir / f"{safe_name}.log"
         display = _DISPLAY_NAMES.get(solver_name, solver_name)
+        running = f"Running {display} ({binary})"
+        if wrapper is not None:
+            # The files may have changed since the run's start: check the wrapper again (cheap), then start the
+            # solver's program behind it.  The line still starts with ``Running <Solver>`` (the window's greying).
+            wrapper = local_solver_wrapper(solver_name)
+            if wrapper is None:
+                raise FlexToolUserError(
+                    f"The solver wrapper of {display} was removed during the run (solve {solve_name!r}); start the "
+                    "run again.")
+            argv = [*wrapper.argv, *argv]
+            running += f" through the solver wrapper {wrapper.shown()} (from {wrapper.source})"
+            run_record.active().note_solver_wrapper(solver_name, wrapper.record())
         if echo:
-            print(f"Running {display} ({binary})", flush=True)
+            print(running, flush=True)
+        elif logger is not None:
+            logger.info("%s", running)
         run = _run_solver_process(
             argv, stdin_text=stdin_text, cwd=out_dir, watchdog=watchdog, echo=echo,
-            log_path=log_path, logger=logger, label=f"{display} ({binary})",
+            log_path=log_path, logger=logger, label=f"{display} ({binary}){via}",
         )
         log_ref = _solver_log_reference(run, echoed=echo, log_path=log_path)
         if run.timed_out:
             from flextool.engine.solve._solver_dispatch import _WATCHDOG_FACTOR, _WATCHDOG_GRACE_S
 
             raise RuntimeError(
-                f"{solver_name!r} did not stop at its own time limit of "
+                f"{solver_name!r}{via} did not stop at its own time limit of "
                 f"{time_limit:g} s for solve {solve_name!r}: FlexTool stopped it "
                 f"after {watchdog:g} s ({_WATCHDOG_FACTOR:g} x the limit + {_WATCHDOG_GRACE_S:g} s). {log_ref}"
             )
@@ -2399,7 +2467,7 @@ def _solve_commercial_subprocess(
 
         if run.returncode != 0:
             msg = (
-                f"{solver_name!r} CLI for solve {solve_name!r} exited with "
+                f"{solver_name!r} CLI for solve {solve_name!r}{via} exited with "
                 f"returncode={run.returncode}. {log_ref}"
             )
             # MPS+sol preserved when work_folder was given; otherwise
@@ -2422,11 +2490,11 @@ def _solve_commercial_subprocess(
                 )
             if _looks_like_license_error(stdout, stderr):
                 raise RuntimeError(
-                    f"{solver_name!r} CLI for solve {solve_name!r} returned "
+                    f"{solver_name!r} CLI for solve {solve_name!r}{via} returned "
                     f"no usable solution and its output reports a licence error. {log_ref}"
                 )
             raise RuntimeError(
-                f"{solver_name!r} CLI produced no solution file we could "
+                f"{solver_name!r} CLI{via} produced no solution file we could "
                 f"parse at {sol_path} for solve {solve_name!r}. {log_ref}"
             )
 

@@ -2,7 +2,8 @@
 
 A GUI run sends a solver flag only for a setting the user changed, so it solves like a terminal run of the same
 database: the default settings send no solver flag apart from ``--threads`` (the Execution jobs window's
-"Threads per run") and ``--solver-config-dir`` (the workspace's option files).  The GUI has no MIP-gap setting.  A settings.yaml of an earlier GUI held the old defaults
+"Threads per run") and ``--workspace-solver-config-dir`` (the workspace's option files; ``--solver-config-dir``
+when the user set ``FLEXTOOL_SOLVER_CONFIG_DIR``).  The GUI has no MIP-gap setting.  A settings.yaml of an earlier GUI held the old defaults
 (presolve ``choose``, MIP gap 0.001 sent with every run); loading it updates them once.
 
 No Tk: the manager constructor only stores ``project_path`` / ``settings`` and reads package-bundled plot
@@ -42,33 +43,44 @@ def _registry_flags_in(cmd: list[str]) -> set[str]:
 
 
 def _run_options(cmd: list[str]) -> RunOptions:
-    assert cmd[1:3] == ["-m", "flextool.cli.cmd_run_flextool"]
-    return RunOptions.from_cli(build_parser().parse_args(cmd[3:]), environ={})
+    assert cmd[1:4] == ["-P", "-m", "flextool.cli.cmd_run_flextool"]
+    return RunOptions.from_cli(build_parser().parse_args(cmd[4:]), environ={})
 
 
-def test_default_settings_send_only_the_thread_count(tmp_path: Path):
+def test_default_settings_send_only_the_thread_count(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
     cmd = _cmd_for(tmp_path)
-    assert _registry_flags_in(cmd) == {"--threads", "--solver-config-dir"}
+    assert _registry_flags_in(cmd) == {"--threads", "--workspace-solver-config-dir"}
     options = _run_options(cmd)
-    assert {k for k, r in options.resolved.items() if r.source == "cli"} == {"threads", "solver_config_dir"}
+    assert {k for k, r in options.resolved.items() if r.source == "cli"} == {"threads", "workspace_solver_config_dir"}
 
 
 def test_the_workspace_option_folder_is_sent_explicitly(tmp_path: Path, monkeypatch):
-    """A GUI run names the workspace's ``solver_config`` (the GUI's current folder), or the folder of
-    ``FLEXTOOL_SOLVER_CONFIG_DIR`` when that is set, so the run never looks for it near an external database."""
+    """A GUI run names the workspace's ``solver_config`` (the GUI's current folder) as the workspace's folder
+    (trusted only when this computer set the workspace up; item 240 B3), or the folder of
+    ``FLEXTOOL_SOLVER_CONFIG_DIR`` as the user's own choice when that is set, so the run never looks for it near
+    an external database."""
     workspace = tmp_path / "ws"
     workspace.mkdir()
     monkeypatch.chdir(workspace)
     monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
-    assert _run_options(_cmd_for(tmp_path)).value("solver_config_dir") == (str(workspace / "solver_config"),)
+    options = _run_options(_cmd_for(tmp_path))
+    assert options.value("workspace_solver_config_dir") == (str(workspace / "solver_config"),)
+    assert options.value("solver_config_dir") is None
     monkeypatch.setenv("FLEXTOOL_SOLVER_CONFIG_DIR", str(tmp_path / "chosen"))
-    assert _run_options(_cmd_for(tmp_path)).value("solver_config_dir") == (str(tmp_path / "chosen"),)
+    options = _run_options(_cmd_for(tmp_path))
+    assert options.value("solver_config_dir") == (str(tmp_path / "chosen"),)
+    assert options.value("workspace_solver_config_dir") is None
 
 
 def test_the_project_option_folder_comes_first(tmp_path: Path, monkeypatch):
-    """A project with its own ``solver_config`` gets it ahead of the workspace's, one flag per folder;
-    ``FLEXTOOL_SOLVER_CONFIG_DIR`` replaces only the workspace's folder (several, separated by os.pathsep)."""
+    """A project with its own ``solver_config`` gets it ahead of the workspace's, one flag per folder, both as
+    folders the window found (trusted only when this computer set them up; item 240 B3);
+    ``FLEXTOOL_SOLVER_CONFIG_DIR`` replaces only the workspace's folder (several, separated by os.pathsep, the
+    user's own choice) and the run puts the found project folder above them."""
     import os
+
+    from flextool._solver_config_source import resolve_solver_config_source
 
     workspace = tmp_path / "ws"
     project = workspace / "projects" / "P"
@@ -78,13 +90,17 @@ def test_the_project_option_folder_comes_first(tmp_path: Path, monkeypatch):
     mgr = ExecutionManager(project_path=project, settings=ProjectSettings())
     job = ExecutionJob(job_id=0, scenario_name="scen", output_subdir="scen", input_db_url="sqlite:///input.sqlite")
     cmd = mgr._build_run_command(job, tmp_path / "work")
-    assert _run_options(cmd).value("solver_config_dir") == (
+    assert _run_options(cmd).value("workspace_solver_config_dir") == (
         str(project / "solver_config"), str(workspace / "solver_config"))
     monkeypatch.setenv("FLEXTOOL_SOLVER_CONFIG_DIR", os.pathsep.join([str(tmp_path / "a"), str(tmp_path / "b")]))
     cmd = mgr._build_run_command(job, tmp_path / "work")
-    assert cmd.count("--solver-config-dir") == 3
-    assert _run_options(cmd).value("solver_config_dir") == (
-        str(project / "solver_config"), str(tmp_path / "a"), str(tmp_path / "b"))
+    assert cmd.count("--solver-config-dir") == 2 and cmd.count("--workspace-solver-config-dir") == 1
+    options = _run_options(cmd)
+    assert options.value("workspace_solver_config_dir") == (str(project / "solver_config"),)
+    assert options.value("solver_config_dir") == (str(tmp_path / "a"), str(tmp_path / "b"))
+    ladder = resolve_solver_config_source(run_options=options)
+    assert [folder for folder, _reason in ladder.layers] == [
+        project / "solver_config", tmp_path / "a", tmp_path / "b"]
 
 
 @pytest.mark.parametrize(
@@ -100,11 +116,12 @@ def test_the_project_option_folder_comes_first(tmp_path: Path, monkeypatch):
         ("solver_time_limit", 600, "solver_time_limit", 600.0),
     ],
 )
-def test_a_changed_setting_sends_exactly_its_flag(tmp_path: Path, field, value, key, expected):
+def test_a_changed_setting_sends_exactly_its_flag(tmp_path: Path, field, value, key, expected, monkeypatch):
     """Each changed setting reaches the run as the same option a terminal user would set by hand."""
+    monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
     cmd = _cmd_for(tmp_path, ProjectSettings(**{field: value}))
     gui = _run_options(cmd)
-    assert {k for k, r in gui.resolved.items() if r.source == "cli"} == {"threads", "solver_config_dir", key}
+    assert {k for k, r in gui.resolved.items() if r.source == "cli"} == {"threads", "workspace_solver_config_dir", key}
     by_hand = RunOptions.from_cli(
         build_parser().parse_args(["in.sqlite", OPTIONS[key].flag, str(value), "--threads", "1"]), environ={},
     )
@@ -137,8 +154,8 @@ def test_calibration_sends_threads_per_run(tmp_path: Path):
         damping_first=1.0, damping_remaining=0.5, stall_fraction=0.05, warm_start_cache_dir=None, work_dir=None,
         output_location=None, debug=False, threads=3, solver_config_dir="/ws/solver_config",
     )
-    assert argv[1:3] == ["-m", "flextool.calibrate"]
-    parsed = calibrate_parser().parse_args(argv[3:])
+    assert argv[1:4] == ["-P", "-m", "flextool.calibrate"]
+    parsed = calibrate_parser().parse_args(argv[4:])
     assert parsed.threads == 3 and parsed.solver_config_dir == [Path("/ws/solver_config")]
 
 
@@ -148,10 +165,16 @@ def test_calibrator_solves_get_the_option_folder(tmp_path: Path):
 
     argv = solve_argv("in.sqlite", "scen", work_dir=tmp_path / "w", out_root=tmp_path / "o", cache_dir=tmp_path / "c",
                       solver_config_dir=Path("/ws/solver_config"))
-    assert argv[1:3] == ["-m", "flextool_run_supervisor"]
-    options = RunOptions.from_cli(build_parser().parse_args(argv[3:]), environ={})
+    assert argv[1:4] == ["-P", "-m", "flextool_run_supervisor"]
+    options = RunOptions.from_cli(build_parser().parse_args(argv[4:]), environ={})
     assert (options.value("solver_config_dir"), options.source("solver_config_dir")) == (
         (str(Path("/ws/solver_config")),), "cli")
+    # The FlexTool window's found folders are passed on as found (item 240 B3).
+    argv = solve_argv("in.sqlite", "scen", work_dir=tmp_path / "w", out_root=tmp_path / "o", cache_dir=tmp_path / "c",
+                      workspace_solver_config_dir=Path("/ws/solver_config"))
+    options = RunOptions.from_cli(build_parser().parse_args(argv[4:]), environ={})
+    assert options.value("solver_config_dir") is None
+    assert options.value("workspace_solver_config_dir") == (str(Path("/ws/solver_config")),)
 
 
 def test_the_gui_never_sends_a_mip_gap(tmp_path: Path):
@@ -179,8 +202,9 @@ def _load_counting(project: Path) -> tuple[ProjectSettings, int]:
     return settings, len(calls)
 
 
-def test_old_default_settings_are_updated_once(tmp_path: Path):
+def test_old_default_settings_are_updated_once(tmp_path: Path, monkeypatch):
     """An earlier GUI's defaults become "Default" once; after the save, a reload neither resets nor notifies."""
+    monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
     project = tmp_path / "proj"
     _write_settings(project, {"presolve": "choose", "scaling": "full",
                               "solver_mip_gap_set": True, "solver_mip_gap": 0.001})
@@ -188,7 +212,7 @@ def test_old_default_settings_are_updated_once(tmp_path: Path):
     settings, notices = _load_counting(project)
     assert (settings.presolve, settings.scaling) == (None, None)
     assert notices == 1
-    assert _registry_flags_in(_cmd_for(tmp_path, settings)) == {"--threads", "--solver-config-dir"}
+    assert _registry_flags_in(_cmd_for(tmp_path, settings)) == {"--threads", "--workspace-solver-config-dir"}
 
     save_project_settings(project, settings)
     stored = _read_settings(project)

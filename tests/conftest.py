@@ -44,23 +44,28 @@ import importlib.util
 import json
 import shutil
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
-# No test touches the real user folders of FlexTool or the system keyring: this process (each xdist worker too)
-# keeps FlexTool's user files under its own temp folder, and so does every process a test starts (it inherits
-# the variables).  Set before any flextool import; ``tests/user_dirs_guard.py`` explains, and the session check
-# in ``pytest_sessionfinish`` fails a run that changed the real folders anyway.
+# No test touches the real user folders of FlexTool, the real home's config folders or the system keyring: this
+# process (each xdist worker too) keeps FlexTool's user files under its own temp folder, HOME, XDG_* and
+# APPDATA/LOCALAPPDATA point into a temp folder of the session, and so do they for every process a test starts (it
+# inherits the variables); a flextool.user_dirs call that would still give a real folder raises.  Set before any
+# flextool import; ``tests/user_dirs_guard.py`` explains, and the session check in ``pytest_sessionfinish`` fails a
+# run that changed the real folders anyway.
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 import user_dirs_guard  # noqa: E402
 
 _REAL_USER_DIRS = user_dirs_guard.real_user_dirs()
-_TEST_USER_HOME = user_dirs_guard.redirect()
+_TEST_USER_HOME, _TEST_SANDBOX = user_dirs_guard.redirect()
+_REDIRECTED_ENV = user_dirs_guard.redirected_environment()
 # The first process of the session keeps the keyring log; the xdist workers inherit its path.
 _KEYRING_LOG_DIR = user_dirs_guard.keyring_log_dir()
 user_dirs_guard.forbid_system_keyring(_KEYRING_LOG_DIR)
+user_dirs_guard.forbid_real_user_dirs()
 user_dirs_guard.patch_subprocess_env()
 
 TEST_DIR = Path(__file__).parent
@@ -175,13 +180,16 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     if touched:
         shown = "\n  ".join(touched[:40]) + ("\n  ..." if len(touched) > 40 else "")
         sys.stderr.write(
-            "\nERROR: the tests reached the system keyring or wrote to the default keyring (a test that needs a "
-            f"keyring installs a fake one, tests/assistant/conftest.py fake_keyring):\n  {shown}\n")
+            "\nERROR: the tests reached the system keyring, wrote to the default keyring, or asked flextool.user_dirs "
+            "for a real user folder (a test that needs a keyring installs a fake one, tests/assistant/conftest.py "
+            f"fake_keyring; user files go under FLEXTOOL_USER_HOME):\n  {shown}\n")
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
     user_dirs_guard.remove(_TEST_USER_HOME)
+    if _TEST_SANDBOX is not None:
+        user_dirs_guard.remove(_TEST_SANDBOX)
     if _KEYRING_LOG_DIR is not None:
         user_dirs_guard.remove(_KEYRING_LOG_DIR)
 
@@ -1047,6 +1055,21 @@ def scenario_workdir(_scenario_run_factory):
         return _scenario_run_factory(scenario_name, db_fixture).work_folder
 
     return factory
+
+
+@pytest.fixture(autouse=True)
+def _user_folders_stay_redirected() -> Iterator[None]:
+    """A test leaves ``FLEXTOOL_USER_HOME``, ``HOME``, ``XDG_*`` and ``APPDATA``/``LOCALAPPDATA`` as
+    ``tests/user_dirs_guard.py`` set them (``monkeypatch`` undoes its changes before this check): one changed for
+    good would send the later tests of this process, and the processes they start, to another folder.  A changed
+    variable is put back and the test fails."""
+    yield
+    changed = {name: os.environ.get(name, "") for name, value in _REDIRECTED_ENV.items()
+               if os.environ.get(name, "") != value}
+    if changed:
+        for name in changed:
+            os.environ[name] = _REDIRECTED_ENV[name]
+        pytest.fail(f"the test left the redirected user-folder variables changed: {changed}")
 
 
 @pytest.fixture(autouse=True)

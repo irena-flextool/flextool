@@ -258,6 +258,12 @@ def _format_list_sheet(worksheet, columns: list[str], widths: dict[str, int]) ->
     worksheet.freeze_panes(1, 0)
 
 
+#: ``pd.ExcelWriter(..., engine="xlsxwriter", engine_kwargs=XLSX_TEXT_OPTIONS)``: every string is written as text.
+#: xlsxwriter would otherwise turn a string that starts with ``=`` into a formula and a URL-like one into a link,
+#: and names from the input data (entities, scenarios, alternatives) are row and column labels.
+XLSX_TEXT_OPTIONS = {"options": {"strings_to_formulas": False, "strings_to_urls": False}}
+
+
 def write_excel_with_metadata(excel_path, sheets, ctx=None) -> None:
     """Write ``sheets``, a list of ``(sheet_name, raw_output_key, df)``, to the workbook ``excel_path``.
 
@@ -281,7 +287,7 @@ def write_excel_with_metadata(excel_path, sheets, ctx=None) -> None:
         meta_rows.extend(_metadata_rows(sheet_name, raw_key, df, ctx))
         units_rows.append(units_sheet_row(sheet_name, raw_key, df, measures))
 
-    with pd.ExcelWriter(excel_path, engine="xlsxwriter") as writer:
+    with pd.ExcelWriter(excel_path, engine="xlsxwriter", engine_kwargs=XLSX_TEXT_OPTIONS) as writer:
         pd.DataFrame(units_rows, columns=UNITS_SHEET_COLUMNS).to_excel(
             writer, sheet_name=UNITS_SHEET, index=False)
         _format_list_sheet(writer.sheets[UNITS_SHEET], UNITS_SHEET_COLUMNS, _UNITS_WIDTHS)

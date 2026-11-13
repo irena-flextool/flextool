@@ -13,9 +13,10 @@ What a package holds:
   the first ``<solver>.opt`` of the project's ``solver_config`` folder, then the workspace's, leaving out unedited
   FlexTool templates; a file with an option that names a path or another computer is left out and named,
   :func:`screen_export_solver_config`).  Import unpacks them into ``solver_config/`` of the new project,
-  where its runs use them ahead of the workspace's files, file by file; a file with an option that names a path
-  or another computer is kept as ``<solver>.opt.review`` (never read by a run) until the user checks it, and the
-  workspace's own files never change;
+  where its runs use them ahead of the workspace's files, file by file.  The imported project is not one this
+  computer set up (item 240 B3), so its runs give those files the input database's rules until the user trusts
+  the project's solver option files; a file with a line those rules refuse is kept as ``<solver>.opt.review``
+  (never read by a run) until the user checks it, and the workspace's own files never change;
 * the result runs the caller picks (``output_parquet/<run>/``, with ``output_parquet/_axis_bounds.json`` cut to
   those runs).  By default each run record (``_run_status.json``) has this computer's folder paths, user name and
   host name replaced by placeholders and the run log (``_run.log``) is left out (``scrub_run_records=False`` ships
@@ -99,6 +100,22 @@ RUN_LOG_NAME = "_run.log"
 AXIS_BOUNDS_NAME = "_axis_bounds.json"
 #: Run states that mean the run may still be writing its folder (``flextool.run_record.effective_state``).
 ACTIVE_RUN_STATES = ("running", "unknown")
+#: The top-level entries a package may hold under ``<Name>/`` (what :func:`export_project` writes); import refuses a
+#: package with anything else.
+PACKAGE_TOP_LEVEL = (INPUT_DIR, RESULTS_DIR, SOLVER_CONFIG_DIR, SETTINGS_FILE, PLOT_SETTINGS_FILE)
+#: File types import refuses anywhere in a package: programs and scripts that Python, the operating system or a
+#: double click would run, none of which a FlexTool project holds.  A project folder opened in FlexTool must not
+#: carry code (a ``flextool/__init__.py`` there could replace FlexTool's own).
+EXECUTABLE_SUFFIXES = frozenset({
+    ".py", ".pyc", ".pyo", ".pyw", ".pyz", ".pyzw", ".pth", ".so", ".pyd", ".dll", ".dylib", ".exe", ".com",
+    ".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".msi", ".msp", ".scr",
+    ".cpl", ".lnk", ".url", ".desktop", ".sh", ".command", ".app", ".jar", ".reg", ".hta",
+})
+#: Folder names a solver option folder goes by (compared without case: Windows and macOS file systems ignore it).  A
+#: package holds solver options only in its top-level ``solver_config/``, which import unpacks to
+#: ``imported_solver_config/``, never read by itself.  A folder of such a name deeper in a project (next to an
+#: input database in ``input_sources/``) is one FlexTool looks in for option files, so a package must not plant one.
+_SOLVER_CONFIG_FOLDER_KEYS = frozenset({SOLVER_CONFIG_DIR.casefold(), IMPORTED_SOLVER_CONFIG_DIR.casefold()})
 #: The largest modification time a package may record: the end of year 9999, in ns.
 _MAX_MTIME_NS = 253_402_300_799 * 10**9
 #: Free space kept on the disk on top of the unpacked size of a package.
@@ -308,11 +325,12 @@ def settle_shipped_solver_config(
 ) -> tuple[dict[str, list[str]], list[str]]:
     """Screen the solver option files of a shipped project's ``solver_config/`` *folder* (another person's files).
 
-    A ``<solver>.opt`` with an option that names a file or folder outside the solve's work folder, that connects
-    the solver to another computer, or a CPLEX name that starts with ``set`` (a line FlexTool would refuse or hold
-    back: :func:`flextool._solver_option_rules.screen_solver_option_file`), is
-    renamed to ``<solver>.opt.review`` (its modification time kept): no run reads it until the user has checked
-    it and renamed it back.  An existing ``<solver>.opt.review`` is replaced with *replace_held* (a package that
+    The project is not one this computer set up, so its runs give these files the input database's rules (item
+    240 B3).  A ``<solver>.opt`` with a line those rules refuse (a file or folder outside the solve's work folder,
+    a server or licence setting, a parameter name not in FlexTool's list, a CPLEX name that starts with ``set``:
+    :func:`flextool.engine.solve._solver_dispatch.untrusted_option_file_problems`, the same check as such a run)
+    is renamed to ``<solver>.opt.review`` (its modification time kept): no run reads it until the user has checked
+    it, renamed it back and trusted the project's solver option files.  An existing ``<solver>.opt.review`` is replaced with *replace_held* (a package that
     ships one: that file is never read), else the screen raises :class:`FileExistsError`.  With *drop_templates*
     an unedited FlexTool template is removed (runs never take one from a project folder).  Every file is read and
     screened before anything is renamed; when a rename fails, the files already held are renamed back and the
@@ -320,7 +338,7 @@ def settle_shipped_solver_config(
     held files, [file names of the removed templates]})``.
     """
     from flextool._solver_config_source import SOLVER_NAMES, is_unedited_template
-    from flextool._solver_option_rules import screen_solver_option_file
+    from flextool.engine.solve._solver_dispatch import untrusted_option_file_problems
 
     held: dict[str, list[str]] = {}
     templates: list[Path] = []
@@ -332,7 +350,7 @@ def settle_shipped_solver_config(
         if is_unedited_template(solver, data):
             templates.append(path)
             continue
-        problems = screen_solver_option_file(solver, data.decode("utf-8", errors="replace"))
+        problems = untrusted_option_file_problems(solver, data.decode("utf-8", errors="replace"))
         if problems:
             held[path.name] = problems
     done: list[tuple[Path, Path]] = []
@@ -394,10 +412,19 @@ def withheld_file_line(name: str, path: Path, problems: list[str]) -> str:
             "Remove those lines to ship the file; the receiver's runs use their own options for this solver.")
 
 
+#: How the FlexTool window's setting that trusts a project's option files is named in messages (item 240 B3).
+TRUST_PROJECT_SETTING = ("\"Trust this project's solver option files\" (Solver options, On this computer, with "
+                         "the project open)")
+
+
 def held_file_line(name: str, problems: list[str]) -> str:
-    """What a held shipped option file waits for (the import report and the first-open log line)."""
-    return (f"Solver options {name}: kept as {SOLVER_CONFIG_DIR}/{name}{HELD_SUFFIX} and not used, because "
-            f"{'; '.join(problems)}. Check it, then rename it to {name} to use it.")
+    """What a held shipped option file waits for (the import report and the first-open log line).  The rule is
+    the one a run applies (item 240 B3): an imported project's option files get the input database's rules until
+    the user trusts them, so renaming the file back alone does not make the refused lines pass."""
+    return (f"Solver options {name}: kept as {SOLVER_CONFIG_DIR}/{name}{HELD_SUFFIX} and not used, because this "
+            "project's solver option files get the input database's rules until you trust them, and those refuse "
+            f"{'; '.join(problems)}. To use the file as it is, read it, rename it to {name} and tick "
+            f"{TRUST_PROJECT_SETTING}.")
 
 
 def default_package_name(project: str, today: datetime | None = None) -> str:
@@ -649,7 +676,8 @@ def scrub_run_status(status: object, project_dir: Path) -> object:
 
     The project folder becomes ``<project>``, the home folder ``~``, other absolute folders ``<path>/`` (the file
     name stays), the host and user name ``<host>`` / ``<user>``, and ``host`` / ``user`` fields ``None``.  The times
-    and the verdict, which the GUI and the assistant read, are kept.
+    and the verdict, which the GUI and the assistant read, are kept.  A solver wrapper's arguments (item 240 B2:
+    they may name a licence queue or carry a token) are replaced by their count; its program stays, scrubbed.
     """
     pairs = _path_replacements(project_dir)
     words = []
@@ -685,7 +713,14 @@ def scrub_run_status(status: object, project_dir: Path) -> object:
             return text(value)
         return value
 
-    return walk(status)
+    scrubbed = walk(status)
+    wrappers = scrubbed.get("solver_wrappers") if isinstance(scrubbed, dict) else None
+    if isinstance(wrappers, dict):
+        for solver, entry in list(wrappers.items()):
+            argv = entry.get("argv") if isinstance(entry, dict) else None
+            if isinstance(argv, list):
+                wrappers[solver] = {**entry, "argv": argv[:1], "arguments_left_out": len(argv[1:])}
+    return scrubbed
 
 
 def pip_line(manifest: Manifest) -> str | None:
@@ -885,6 +920,16 @@ def _export(
     inputs = _files_under(project_dir / INPUT_DIR)
     taken = {p.relative_to(project_dir / INPUT_DIR).as_posix().lower() for p in inputs}
     for path in inputs:
+        if path.suffix.lower() in EXECUTABLE_SUFFIXES:
+            # Import refuses a package holding one (_content_problem): leave it out.
+            warnings.append(f"{path.name} is a program or script: it is not in the package.")
+            continue
+        rel_input = f"{INPUT_DIR}/{path.relative_to(project_dir / INPUT_DIR).as_posix()}"
+        if _in_nested_solver_config(rel_input):
+            # Import refuses it too: solver options travel only in the package's own solver_config/.
+            warnings.append(f"{rel_input} is in a solver option folder inside the project: it is not in the "
+                            f"package (the package carries the workspace's {SOLVER_CONFIG_DIR}/ files).")
+            continue
         entries.append(_Entry(f"{INPUT_DIR}/{path.relative_to(project_dir / INPUT_DIR).as_posix()}", path))
         if path.with_name("~$" + path.name).exists():
             warnings.append(f"{path.name} is open in Excel: the package holds its last saved version.")
@@ -926,6 +971,12 @@ def _export(
         for run in runs:
             for path in _files_under(base / run):
                 arcname = f"{RESULTS_DIR}/{path.relative_to(base).as_posix()}"
+                if path.suffix.lower() in EXECUTABLE_SUFFIXES:
+                    warnings.append(f"{arcname} is a program or script: it is not in the package.")
+                    continue
+                if _in_nested_solver_config(arcname):
+                    warnings.append(f"{arcname} is in a solver option folder: it is not in the package.")
+                    continue
                 if scrub_run_records and path.parent == base / run and path.name == RUN_LOG_NAME:
                     continue
                 if scrub_run_records and path.parent == base / run and path.name == RUN_STATUS_NAME:
@@ -1072,6 +1123,35 @@ def _dest_rel(rel: str) -> str:
     return rel
 
 
+def _in_nested_solver_config(rel: str) -> bool:
+    """Whether the project file *rel* (relative POSIX path) lies in a solver option folder other than the top-level
+    ``solver_config/`` (any folder named ``solver_config`` or ``imported_solver_config``, in any case)."""
+    folders = rel.split("/")[:-1]
+    return any(
+        name.casefold() in _SOLVER_CONFIG_FOLDER_KEYS and not (depth == 0 and name == SOLVER_CONFIG_DIR)
+        for depth, name in enumerate(folders)
+    )
+
+
+def _content_problem(rel: str) -> str | None:
+    """Why the project file *rel* (relative POSIX path under ``<Name>/``) is not one a package may hold: outside the
+    entries of :data:`PACKAGE_TOP_LEVEL`, a program or script (:data:`EXECUTABLE_SUFFIXES`), a solver option
+    file that is not ``solver_config/<name>.opt``, or a file in a solver option folder elsewhere
+    (:func:`_in_nested_solver_config`)."""
+    parts = rel.split("/")
+    top = parts[0]
+    if _in_nested_solver_config(rel):
+        return (f"'{rel}': a package may carry solver options only in its top-level {SOLVER_CONFIG_DIR}/ folder "
+                "(spelled in lower case).")
+    if top not in PACKAGE_TOP_LEVEL or (top in (SETTINGS_FILE, PLOT_SETTINGS_FILE)) != (len(parts) == 1):
+        return (f"'{rel}' is not part of a FlexTool project (a package holds only {', '.join(PACKAGE_TOP_LEVEL)}).")
+    if PurePosixPath(parts[-1]).suffix.lower() in EXECUTABLE_SUFFIXES:
+        return f"'{rel}' is a program or script, which a FlexTool project never holds."
+    if top == SOLVER_CONFIG_DIR and (len(parts) != 2 or not parts[1].lower().endswith(".opt")):
+        return f"'{rel}': the solver_config folder of a package holds only .opt files."
+    return None
+
+
 def _facts_problem(arcname: str, facts: object) -> str | None:
     """Why the manifest entry *facts* of *arcname* is not a valid ``{"sha256", "bytes", "mtime_ns"}``."""
     if not isinstance(facts, dict) or not isinstance(facts.get("sha256"), str):
@@ -1114,6 +1194,9 @@ def _check_members(zf: zipfile.ZipFile, manifest: Manifest) -> list[str]:
         reason = _portability_problem(listed[len(prefix):])
         if reason is not None:
             problems.append(f"Member {reason}.")
+        reason = _content_problem(listed[len(prefix):])
+        if reason is not None:
+            problems.append(reason)
         reason = _facts_problem(listed, facts)
         if reason is not None:
             problems.append(reason)
@@ -1233,11 +1316,18 @@ def invalid_name_reason(name: str) -> str | None:
 
 
 def solver_config_activation_hint(project_path: Path, workspace_dirs: list[Path]) -> str:
-    """Where the shipped solver options of an imported project are and how its runs use them."""
+    """Where the shipped solver options of an imported project are and how its runs use them: ahead of the
+    workspace's, with the input database's rules until the user trusts the project's files (item 240 B3).  It
+    never sends the files to a trusted place without saying that they would be trusted there."""
     workspace = ", ".join(str(folder) for folder in workspace_dirs)
     return (f"The shipped solver options are in {project_path / SOLVER_CONFIG_DIR}. Runs of this project use "
-            f"them ahead of the workspace's ({workspace}), file by file; delete a file there to use the "
-            "workspace's.")
+            f"them ahead of the workspace's ({workspace}), file by file, with the input database's rules (a file "
+            "option takes only a plain file name; no server or licence settings; only parameter names in "
+            f"FlexTool's list) until you trust them: read them, then tick {TRUST_PROJECT_SETTING} (or run "
+            f"flextool-trust-workspace {project_path} in a terminal). Delete a file there to use the workspace's. "
+            "A file copied into the workspace's solver_config, or into a folder named by --solver-config-dir or "
+            "FLEXTOOL_SOLVER_CONFIG_DIR, is trusted there (a copy you make is your own edit): its file paths and "
+            "server settings reach the solver, so read it first.")
 
 
 def adopt_imported_solver_config(project_path: str | Path) -> list[str]:
@@ -1267,6 +1357,10 @@ def adopt_imported_solver_config(project_path: str | Path) -> list[str]:
         held, _dropped = settle_shipped_solver_config(imported, drop_templates=False, replace_held=False)
     except OSError as exc:
         return [f"Project {name}: cannot check the solver option files in {imported} ({exc}); " + keep]
+    from flextool._solver_config_source import forget_trusted_folder
+
+    # The received files must not inherit a trust noted for this path (item 240 B3).
+    forget_trusted_folder(project_path)
     try:
         _rename_with_retry(imported, own)
     except OSError as exc:
@@ -1287,7 +1381,8 @@ def adopt_imported_solver_config(project_path: str | Path) -> list[str]:
 
     active = [f"{s}.opt" for s in SOLVER_NAMES if used(s)]
     if active:
-        what = f"now use its solver option files ({', '.join(active)}) ahead of the workspace's."
+        what = (f"now use its solver option files ({', '.join(active)}) ahead of the workspace's, with the input "
+                f"database's rules until you trust them ({TRUST_PROJECT_SETTING}).")
     else:
         what = "keep using the workspace's solver options (it holds no edited option file that a run uses)."
     lines = [f"Project {name}: renamed {IMPORTED_SOLVER_CONFIG_DIR}/ to {SOLVER_CONFIG_DIR}/. This project's runs "
@@ -1401,14 +1496,23 @@ def _import(
                     os.utime(dest, ns=(mtime_ns, mtime_ns))
             for sub in _PROJECT_SUBDIRS:
                 (partial / sub).mkdir(exist_ok=True)
+            dropped_refs = _drop_outside_refs(partial)
             held, dropped = settle_shipped_solver_config(partial / SOLVER_CONFIG_DIR, drop_templates=True)
             if name_taken(projects_dir, target_name):
                 raise NameClashError(target_name, suggest_name(projects_dir, target_name))
+            # A project deleted earlier from this path may still be on this computer's trusted list: the received
+            # project must not inherit it (item 240 B3).
+            from flextool._solver_config_source import forget_trusted_folder
+            forget_trusted_folder(final)
             _rename_with_retry(partial, final)
         except BaseException:
             shutil.rmtree(partial, ignore_errors=True)
             raise
 
+    if dropped_refs:
+        warnings.append(
+            "The package's settings named input files outside the project folder; FlexTool left them out: "
+            + ", ".join(dropped_refs) + ". Add such a file again in the FlexTool window if you need it.")
     report = ImportReport(target_name, final, manifest, warnings, solver_config_held=held,
                           solver_config_defaults=dropped)
     from flextool._solver_config_source import (
@@ -1436,6 +1540,64 @@ def _import(
         if held or any(state != "same" for _name, state in report.solver_config):
             report.solver_config_hint = solver_config_activation_hint(final, workspace)
     return report
+
+
+def _ref_outside(project_dir: Path, rel: object) -> bool:
+    """Whether the settings path *rel* (relative to the project folder) is absolute, empty-but-set or leaves
+    *project_dir*."""
+    if not isinstance(rel, str) or not rel:
+        return True
+    if PurePosixPath(rel.replace("\\", "/")).is_absolute() or re.match(r"^[A-Za-z]:", rel):
+        return True
+    root = project_dir.resolve()
+    return not (root / rel).resolve().is_relative_to(root)
+
+
+def _drop_outside_refs(project_dir: Path) -> list[str]:
+    """Remove from the unpacked ``settings.yaml`` the input sources that point outside the project folder; return
+    their names.
+
+    A package made by :func:`export_project` has no ``external_refs`` (they name files on the sender's computer),
+    but a package made by hand could point a source at any file on this computer, which a run would then migrate
+    and the assistant read.  Dropped: every ``external_refs`` entry whose path leaves the project, and the path
+    (not the name or number) of every ``source_registry`` record outside the project.
+    """
+    path = project_dir / SETTINGS_FILE
+    if not path.is_file():
+        return []
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise PackageError(f"The project settings ({SETTINGS_FILE}) in the package cannot be read: {exc}") from exc
+    if not isinstance(data, dict):
+        return []
+    dropped: list[str] = []
+    refs = data.get("external_refs")
+    if isinstance(refs, dict):
+        kept = {k: v for k, v in refs.items() if not _ref_outside(project_dir, v)}
+        dropped.extend(str(k) for k in refs if k not in kept)
+        data["external_refs"] = kept
+    elif refs is not None:
+        data["external_refs"] = {}
+        dropped.append("external_refs")
+    registry = data.get("source_registry")
+    if isinstance(registry, dict):
+        for record in registry.values():
+            if isinstance(record, dict) and record.get("path") and _ref_outside(project_dir, record["path"]):
+                record["path"] = ""
+                name = str(record.get("name") or "")
+                if name and name not in dropped:
+                    dropped.append(name)
+    if not dropped:
+        return []
+    gone = set(dropped) - {p.name for p in _files_under(project_dir / INPUT_DIR)}
+    if isinstance(data.get("checked_input_sources"), list):
+        # A dropped source is no longer offered; one of the same name in input_sources/ stays checked.
+        data["checked_input_sources"] = [c for c in data["checked_input_sources"] if c not in gone]
+    mtime_ns = path.stat().st_mtime_ns
+    path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    os.utime(path, ns=(mtime_ns, mtime_ns))
+    return dropped
 
 
 def _short_diff(mine: Path, shipped: Path, limit: int = 40) -> list[str]:

@@ -5,6 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
+from flextool.safe_names import safe_file_component
 from flextool.plot_outputs.format_helpers import _get_value_formatter
 from flextool.plot_outputs.legend_helpers import (
     estimate_legend_width, _format_legend_labels, _should_show_legend,
@@ -190,7 +191,7 @@ def _make_file_batches(effective_plots, max_subplots_per_file, output_filepath, 
             base, ext = os.path.splitext(output_filepath)
             fp = f'{base}_{file_idx:02d}{ext}'
         else:
-            fp = f'{plot_dir}/{plot_name}_{file_idx:02d}.png'
+            fp = f'{plot_dir}/{safe_file_component(plot_name)}_{file_idx:02d}.png'
         batches.append((batch, fp))
     return batches
 

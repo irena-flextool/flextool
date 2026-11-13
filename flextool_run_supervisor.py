@@ -17,8 +17,11 @@ has the terminal, before the child starts; ``_owner`` classifies exits with the 
 The engine's command line passes through unchanged (``--threads`` too: the child reads it from its own command
 line), plus ``--run-launcher flextool-run`` when it names no launcher.  The child's environment is this
 process's, plus three variables that describe the pipe (``FLEXTOOL_RUN_LOG_OWNER=1``, ``PYTHONIOENCODING=utf-8``,
-``PYTHONUNBUFFERED=1``); ``os.environ`` itself is not changed for them.  ``FLEXTOOL_RUN_STOP_FILE`` is left out
-of it.
+``PYTHONUNBUFFERED=1``) and ``PYTHONSAFEPATH=1``; ``os.environ`` itself is not changed for them.
+``FLEXTOOL_RUN_STOP_FILE`` is left out of it.  The child runs with ``python -P`` (and ``PYTHONSAFEPATH``), so the
+folder ``flextool-run`` is started from is not on its ``sys.path``: a project folder holding a ``flextool/`` folder
+cannot replace the installed FlexTool.  The console and ``_run.log`` get the child's lines with control characters
+(terminal escape sequences) shown as ``\\xNN`` (``flextool/_safe_text.py``, loaded by path).
 
 Stop file.  When ``FLEXTOOL_RUN_STOP_FILE`` names a file (the GUI sets it for an auxiliary job's process, and this
 process inherits it), its appearance asks for a stop: before the child starts, nothing starts (exit 1, no run
@@ -47,6 +50,10 @@ from typing import IO, Callable, Mapping, Sequence
 
 #: The engine module the supervisor runs.
 ENGINE_MODULE = "flextool.cli.cmd_run_flextool"
+#: The interpreter flag of the engine child: the current folder stays off ``sys.path``, so a ``flextool/`` folder in
+#: the folder ``flextool-run`` is started from is never imported instead of FlexTool (``flextool/_child_python.py``,
+#: which this stdlib-only module cannot import).
+SAFE_PATH_FLAG = "-P"
 #: The launcher label this supervisor records (``--run-launcher``) and writes in the log.
 LAUNCHER = "flextool-run"
 #: After SIGTERM / SIGHUP, the child gets this many seconds to end before it is killed.
@@ -58,6 +65,7 @@ STOP_FILE_CHECK_TICKS = 5
 
 _PRIVATE_NAME = "flextool_run_supervisor"
 _owner_module: ModuleType | None = None
+_safe_text_module: ModuleType | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +113,14 @@ def load_owner() -> ModuleType:
     return _owner_module
 
 
+def load_safe_text() -> ModuleType:
+    """``flextool/_safe_text.py`` (control characters shown as ``\\xNN``), loaded once by path."""
+    global _safe_text_module
+    if _safe_text_module is None:
+        _safe_text_module = _load_file(f"{_PRIVATE_NAME}._safe_text", _flextool_dir() / "_safe_text.py")
+    return _safe_text_module
+
+
 def load_env_check() -> ModuleType:
     """``flextool/env_check.py``, loaded by path (the same module object ``_owner`` classifies exits with)."""
     return load_owner()._load_env_check()
@@ -127,15 +143,21 @@ def with_launcher(argv: Sequence[str], launcher: str = LAUNCHER) -> list[str]:
     return [*args, "--run-launcher", launcher]
 
 
+def engine_command() -> list[str]:
+    """The engine child's interpreter and module: ``[sys.executable, "-P", "-m", ENGINE_MODULE]``."""
+    return [sys.executable, SAFE_PATH_FLAG, "-m", ENGINE_MODULE]
+
+
 def child_environment(environ: Mapping[str, str] | None = None) -> dict[str, str]:
-    """A copy of *environ* (default ``os.environ``) plus the pipe owner's three variables, without the stop file's
-    variable (it is this process's, not the engine's)."""
+    """A copy of *environ* (default ``os.environ``) plus the pipe owner's three variables and ``PYTHONSAFEPATH=1``,
+    without the stop file's variable (it is this process's, not the engine's)."""
     owner = load_owner()
     env = dict(os.environ if environ is None else environ)
     env.pop(owner.RUN_STOP_FILE_ENV, None)
     env[owner.RUN_LOG_OWNER_ENV] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONSAFEPATH"] = "1"
     return env
 
 
@@ -183,12 +205,18 @@ class _Echo:
 
 
 def _relay(pipe: IO[bytes], owner, echo: _Echo) -> None:
-    """Read the child's output to its end: every line to the owner, the visible ones to the console."""
+    """Read the child's output to its end: every line to the owner, the visible ones to the console.
+
+    A control character inside a line (an escape sequence from a name in the input data) is shown as ``\\xNN``
+    in both: the line end itself is kept.
+    """
+    printable = load_safe_text().printable
     for raw in iter(pipe.readline, b""):
         text = raw.decode("utf-8", errors="replace")
         body = text.rstrip("\r\n")
-        if owner.feed(body):
-            echo.write(text)
+        safe = printable(body)
+        if owner.feed(safe):
+            echo.write(safe + text[len(body):] if safe != body else text)
     pipe.close()
 
 
@@ -329,7 +357,7 @@ def run_supervised(
 ) -> int:
     """Run the engine with *argv* as this process's child and own its output; return the status to exit with.
 
-    *child_cmd* replaces ``[sys.executable, "-m", "flextool.cli.cmd_run_flextool"]`` (tests run a stub engine);
+    *child_cmd* replaces ``[sys.executable, "-P", "-m", "flextool.cli.cmd_run_flextool"]`` (tests run a stub engine);
     *stdout* replaces ``sys.stdout`` as the echo target.  The result is the child's exit code (negative: the
     signal that ended it, POSIX), or the stop signal when this process had to kill the child after one.
     """
@@ -339,7 +367,7 @@ def run_supervised(
     if stop_file is not None and owner_mod.read_stop_reason(stop_file) is not None:
         print(f"{LAUNCHER}: stopped before the engine started", file=sys.stderr, flush=True)
         return 1
-    cmd = [*(child_cmd if child_cmd is not None else [sys.executable, "-m", ENGINE_MODULE]), *with_launcher(argv)]
+    cmd = [*(child_cmd if child_cmd is not None else engine_command()), *with_launcher(argv)]
     owner = owner_mod.RunLogOwner(launcher=LAUNCHER, preamble=[f"# {LAUNCHER}: {_command_text(cmd)}"])
     popen_kwargs: dict = {"stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "env": child_environment()}
     if not windows:

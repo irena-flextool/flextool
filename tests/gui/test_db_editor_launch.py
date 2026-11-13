@@ -83,10 +83,10 @@ def toolbox_missing(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_argv_is_current_interpreter_module() -> None:
     assert platform_utils.spine_db_editor_argv("sqlite:///a.sqlite") == [
-        sys.executable, "-m", MODULE, "sqlite:///a.sqlite"]
+        sys.executable, "-P", "-m", MODULE, "--", "sqlite:///a.sqlite"]
     assert platform_utils.spine_db_editor_argv(
         ["sqlite:///a.sqlite", "sqlite:///b.sqlite"]) == [
-        sys.executable, "-m", MODULE, "sqlite:///a.sqlite",
+        sys.executable, "-P", "-m", MODULE, "--", "sqlite:///a.sqlite",
         "sqlite:///b.sqlite"]
 
 
@@ -103,7 +103,7 @@ def test_manager_launches_without_editor_on_path(
         proc = mgr.open_database("sqlite:///input.sqlite", "input.sqlite")
         assert proc is not None, "launch refused although spinetoolbox imports"
         assert [p.argv for p in popen_calls] == [
-            [sys.executable, "-m", MODULE, "sqlite:///input.sqlite"]]
+            [sys.executable, "-P", "-m", MODULE, "--", "sqlite:///input.sqlite"]]
         # Process tracking and launch-log capture are kept.
         assert mgr.is_editor_running("input.sqlite")
         assert popen_calls[0].kwargs.get("stderr") == subprocess.STDOUT
@@ -118,7 +118,7 @@ def test_manager_opens_several_urls_in_one_editor(
     try:
         urls = ["sqlite:///a.sqlite", "sqlite:///b.sqlite"]
         assert mgr.open_database(urls, "pair") is not None
-        assert popen_calls[0].argv == [sys.executable, "-m", MODULE, *urls]
+        assert popen_calls[0].argv == [sys.executable, "-P", "-m", MODULE, "--", *urls]
     finally:
         mgr.cleanup()
 
@@ -137,7 +137,7 @@ def test_platform_utils_launcher_matches(
         toolbox_stub_no_path, popen_calls) -> None:
     assert platform_utils.open_spine_db_editor("sqlite:///a.sqlite") is not None
     assert popen_calls[0].argv == [
-        sys.executable, "-m", MODULE, "sqlite:///a.sqlite"]
+        sys.executable, "-P", "-m", MODULE, "--", "sqlite:///a.sqlite"]
 
 
 def test_platform_utils_launcher_refuses_without_toolbox(

@@ -341,6 +341,12 @@ def _solve_highs_options(
         solver_workspace,
     )
 
+    solver_config = state.solve.solver_config_for(complete_solve_name)
+    # A solve on a commercial solver has its solver_arguments in that solver's names, checked against that
+    # solver's list (resolve_commercial_options); they are not HiGHS options (item 240 B1).
+    solver_arguments = (
+        state.solve.solver_settings.arguments.get(complete_solve_name, {}) if solver_config.name == "highs" else {}
+    )
     files = state.paths.solver_option_files
     highs_opt_text = files.text("highs") if files is not None else None
     if files is not None:
@@ -351,16 +357,16 @@ def _solve_highs_options(
         highs_opt_path = None
     return _resolve_effective_highs_options(
         highs_opt_text=highs_opt_text,
-        solver_arguments_map=state.solve.solver_settings.arguments.get(
-            complete_solve_name, {}
-        ),
+        solver_arguments_map=solver_arguments,
         highs_opt_path=highs_opt_path,
         cli_overrides=_operator_highs_overrides(state.run_options),
         baseline=baseline,
-        solver_config=state.solve.solver_config_for(complete_solve_name),
+        solver_config=solver_config,
         solve_name=complete_solve_name,
         # A plain file name the database gives a HiGHS file option lands in the solve's work folder.
         workspace=solver_workspace(state.paths.work_folder),
+        # A highs.opt found outside a workspace this computer set up gets the database's rules (item 240 B3).
+        highs_opt_untrusted=files.untrusted_note("highs") if files is not None and highs_opt_text is not None else None,
     )
 
 
@@ -4167,7 +4173,7 @@ def _drive_cascade(
                         resolve_commercial_options,
                     )
                     if _active_solver_cfg.name in _NATIVE_NAMES:
-                        _opt_text, _opt_label = commercial_opt_file_layer(
+                        _opt_text, _opt_label, _opt_untrusted = commercial_opt_file_layer(
                             _active_solver_cfg.name,
                             solver_option_files=state.paths.solver_option_files,
                             solver_config_dir=state.paths.solver_config_dir,
@@ -4177,6 +4183,7 @@ def _drive_cascade(
                             _active_solver_cfg.name,
                             opt_file=_opt_label,
                             opt_text=_opt_text,
+                            opt_untrusted=_opt_untrusted,
                             solver_config=_active_solver_cfg,
                             run_options=run_options,
                             solve_name=complete_solve_name,
@@ -5134,8 +5141,18 @@ def run_chain_from_db(
 
         sc = SolveConfig.load_from_db_url(db_url, scenario_name, logger=logger)
         # Item 236 A3: a solve's solver_precommand is never run; say so once per solve in this run.
-        from flextool.engine.solve._solver_dispatch import warn_solver_precommands
+        from flextool.engine.solve._solver_dispatch import (
+            check_run_solver_options,
+            check_run_solver_wrappers,
+            warn_solver_precommands,
+        )
         warn_solver_precommands(sc.solver_settings.precommand, logger)
+        # Item 240 B1: the solver_arguments of every solve the run runs, under its solver, before the first solve
+        # (a solve the model does not run is not checked: its options never reach a solver; review b1 F7).
+        _run_solves = sc.solves_in_run()
+        check_run_solver_options(sc.solver_settings, logger, solves=_run_solves, shown_as=sc.database_solve_names())
+        # Item 240 B2: this computer's wrapper of every commercial solver the run uses.
+        check_run_solver_wrappers(sc.solver_settings, solves=_run_solves)
         _memrec.checkpoint("solve_config_loaded", logger,
                            user_label="SolveConfig loaded (from DB)")
         tc = TimelineConfig.load_from_db_url(db_url, scenario_name, logger=logger)

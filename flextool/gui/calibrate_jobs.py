@@ -51,18 +51,18 @@ All subprocess work happens off the Tk thread. ``append_stdout`` and
 from __future__ import annotations
 
 import logging
-import os
 import queue
 import re
 import shutil
 import subprocess
 import tempfile
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from flextool._solver_config_source import gui_solver_config_dirs
+from flextool._child_python import child_env
+from flextool._solver_config_source import gui_solver_config_ladder
 from flextool.gui.calibrate_commands import (
     build_calibrate_command,
     build_rp_command,
@@ -144,6 +144,10 @@ class CalibJobSpec:
     warm_start_cache_dir: str | None = None
     work_dir: str | None = None
     output_location: str | None = None
+    # The input source of the scenario (``ScenarioInfo.source_number``); ``None`` when not known.  The calibration
+    # writes ``output_parquet/<scenario>/``, which a project may hold as another source's results (item 240 review
+    # b1 F3: :func:`_refuse_other_sources_folder`).
+    source_number: int | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -151,6 +155,21 @@ class CalibJobSpec:
 # --------------------------------------------------------------------------- #
 
 _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def solver_config_kwargs(project_path: str | Path | None) -> dict[str, list[Path]]:
+    """The solver option folders of a calibration the FlexTool window starts for the project at *project_path*,
+    as :func:`~flextool.gui.calibrate_commands.build_calibrate_command` takes them: the same ladder as the window's
+    runs (:func:`flextool._solver_config_source.gui_solver_config_ladder`), ``workspace_solver_config_dir`` for the
+    folders the window found (the project's ``solver_config``, the workspace's; trusted only when this computer
+    set them up, item 240 B3) and ``solver_config_dir`` for those of ``FLEXTOOL_SOLVER_CONFIG_DIR``."""
+    found, named = gui_solver_config_ladder(project_path)
+    out: dict[str, list[Path]] = {}
+    if found:
+        out["workspace_solver_config_dir"] = found
+    if named:
+        out["solver_config_dir"] = named
+    return out
 
 
 def _safe_name(scenario: str) -> str:
@@ -298,7 +317,7 @@ def _run_aux_subprocess(
     try:
         stop_dir = Path(tempfile.mkdtemp(prefix="flextool-stop-"))
         stop_file = stop_dir / "stop"
-        env = {**os.environ, "PYTHONUNBUFFERED": "1", RUN_STOP_FILE_ENV: str(stop_file)}
+        env = child_env(PYTHONUNBUFFERED="1", **{RUN_STOP_FILE_ENV: str(stop_file)})
         proc = subprocess.Popen(
             argv,
             stdout=subprocess.PIPE,
@@ -356,6 +375,59 @@ def _run_aux_subprocess(
 # Public entry points
 # --------------------------------------------------------------------------- #
 
+def _refuse_unsafe_name(mgr: ExecutionManager, kind: str, scenario: str) -> bool:
+    """Whether *scenario* cannot be a folder name or a command argument (``flextool.safe_names``); if so, an
+    already-failed job in the execution window says why, and nothing is started."""
+    from flextool.safe_names import UnsafeNameError, check_output_name, describe_name
+
+    try:
+        check_output_name(scenario, "scenario name")
+    except UnsafeNameError as exc:
+        job = mgr.add_auxiliary_job(JobType.OUTPUT_ACTION, f"{kind}: {describe_name(scenario)}",
+                                    f"{kind.lower()}:refused")
+        mgr.append_stdout(job.job_id, str(exc))
+        mgr.finish_job(job.job_id, False)
+        return True
+    return False
+
+
+def _refuse_other_sources_folder(
+    mgr: ExecutionManager, project_path: Path, spec: "CalibJobSpec", bare_output_owners: "Mapping[str, int]",
+) -> bool:
+    """Whether the calibration of *spec* would clear another input source's results; if so, an already-failed
+    job in the execution window says why, and nothing is started.
+
+    The calibration writes, and clears before each iteration, ``<project>/output_parquet/<scenario>/``.  In the
+    window that bare folder can be the regular result folder of one source (``bare_output_owners``, from projects
+    made before result folders got the source number), so calibrating the same scenario name from another source
+    (or from a source the window cannot name) would delete those results and leave a run record of the other
+    database there (item 240 review b1 F3)."""
+    owner = bare_output_owners.get(spec.scenario)
+    folder = project_path / "output_parquet" / spec.scenario
+    if owner is None or owner == spec.source_number or not folder.exists():
+        return False
+    from flextool.safe_names import describe_name
+
+    job = mgr.add_auxiliary_job(JobType.OUTPUT_ACTION, f"Calibrate: {describe_name(spec.scenario)}",
+                                "calibrate:refused")
+    mgr.append_stdout(
+        job.job_id,
+        f"Not calibrating {describe_name(spec.scenario)}: the calibration writes and clears the result folder "
+        f"{folder}, which holds the results of {spec.scenario!r} from input source {owner}"
+        + ("" if spec.source_number is None else f", not from source {spec.source_number}")
+        + ". Rename or delete that folder (or the scenario in one of the sources) first, or calibrate the scenario "
+        "from the command line with its own --output-location.",
+    )
+    mgr.finish_job(job.job_id, False)
+    return True
+
+
+def _workspace_cwd() -> str:
+    """The folder the RP and calibration processes run in: the workspace the GUI was started from, like the
+    other jobs (never the project folder, which may come from someone else)."""
+    return str(Path.cwd())
+
+
 def launch_rp_jobs(
     mgr: ExecutionManager,
     *,
@@ -371,8 +443,10 @@ def launch_rp_jobs(
     :class:`_SerialRunner` to wait on it deterministically).
     """
     run = runner if runner is not None else _RP_RUNNER
-    cwd = str(project_path)
+    cwd = _workspace_cwd()
     for spec in jobs:
+        if _refuse_unsafe_name(mgr, "RP", spec.scenario):
+            continue
         argv = build_rp_command(
             python_exe,
             spec.db_url,
@@ -414,17 +488,26 @@ def launch_calibration_jobs(
     project_path: Path,
     jobs: Sequence[CalibJobSpec],
     runner: _SerialRunner | None = None,
+    bare_output_owners: "Mapping[str, int] | None" = None,
 ) -> None:
     """Enqueue one serialized calibration aux job per scenario.
 
     Returns immediately; calibrations run strictly one at a time on the
     calibration runner. Per-scenario directories are derived (and created)
     under ``project_path`` unless the spec overrides them. The optional
-    ``runner`` override exists for tests.
+    ``runner`` override exists for tests.  *bare_output_owners* is the
+    project's ``ProjectSettings.bare_output_owners``: a scenario whose bare
+    result folder another source owns is refused
+    (:func:`_refuse_other_sources_folder`).
     """
     run = runner if runner is not None else _CALIBRATE_RUNNER
-    cwd = str(project_path)
+    cwd = _workspace_cwd()
     for spec in jobs:
+        if _refuse_unsafe_name(mgr, "Calibrate", spec.scenario):
+            continue
+        if spec.output_location is None and _refuse_other_sources_folder(
+                mgr, project_path, spec, bare_output_owners or {}):
+            continue
         warm_start, work_dir, output_location = _calib_dirs(
             project_path, spec.scenario
         )
@@ -444,7 +527,7 @@ def launch_calibration_jobs(
             debug=spec.debug,
             final_write_methods=spec.final_write_methods,
             threads=mgr.execution_limits.max_cores_per_job,
-            solver_config_dir=gui_solver_config_dirs(project_path),
+            **solver_config_kwargs(project_path),
         )
         display_name = f"Calibrate: {spec.scenario}"
         action_key = f"calibrate:{spec.scenario}"

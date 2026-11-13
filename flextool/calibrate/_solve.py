@@ -32,7 +32,6 @@ This module does not judge success: it returns the raw
 from __future__ import annotations
 
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +39,7 @@ from typing import Sequence
 
 from flextool._solver_config_source import split_solver_config_dirs
 from flextool.run_options import Resolved, RunOptions
+from flextool._child_python import child_env, python_module_argv
 
 # Repo root = <root>/flextool/calibrate/_solve.py → parents[2].
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -74,6 +74,7 @@ def run_solve(
     threads: int | None = None,
     launcher: str = "calibrator",
     solver_config_dir: Path | Sequence[Path] | None = None,
+    workspace_solver_config_dir: Path | Sequence[Path] | None = None,
 ) -> SolveRun:
     """Run one calibrator solve and return its raw :class:`SolveRun`.
 
@@ -104,13 +105,17 @@ def run_solve(
         Folder, or folders highest first, of the solver option files (``--solver-config-dir`` once per folder);
         ``None`` sends no flag (the child resolves the folders itself: ``FLEXTOOL_SOLVER_CONFIG_DIR``, else from
         the input database's location).
+    workspace_solver_config_dir:
+        The folders the FlexTool window found, highest first (``--workspace-solver-config-dir`` once per folder:
+        each trusted only when this computer set its workspace or project up); ``None`` sends no flag.
 
     The solve runs under the ``flextool-run`` supervisor, which writes the run's ``_run.log``; its output still
-    comes back here in ``stdout``.  No environment is passed: the child inherits this process's.
+    comes back here in ``stdout``.  The child inherits this process's environment, plus ``PYTHONSAFEPATH=1``
+    (:mod:`flextool._child_python`).
     """
     argv = solve_argv(
         url, scenario, work_dir=work_dir, out_root=out_root, cache_dir=cache_dir, threads=threads, launcher=launcher,
-        solver_config_dir=solver_config_dir,
+        solver_config_dir=solver_config_dir, workspace_solver_config_dir=workspace_solver_config_dir,
     )
     assess_dir = Path(out_root) / "output_parquet" / scenario
 
@@ -118,6 +123,7 @@ def run_solve(
     proc = subprocess.run(
         argv,
         cwd=str(_REPO_ROOT),
+        env=child_env(),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -141,6 +147,7 @@ def solve_argv(
     threads: int | None = None,
     launcher: str = "calibrator",
     solver_config_dir: Path | Sequence[Path] | None = None,
+    workspace_solver_config_dir: Path | Sequence[Path] | None = None,
 ) -> list[str]:
     """The command line of one calibrator iteration (parameters as :func:`run_solve`).
 
@@ -157,11 +164,12 @@ def solve_argv(
     folders = split_solver_config_dirs(solver_config_dir)
     if folders:
         chosen["solver_config_dir"] = Resolved(tuple(str(folder) for folder in folders), "cli")
+    found = split_solver_config_dirs(workspace_solver_config_dir)
+    if found:
+        chosen["workspace_solver_config_dir"] = Resolved(tuple(str(folder) for folder in found), "cli")
     warm = RunOptions(resolved=chosen)
     return [
-        sys.executable,
-        "-m",
-        "flextool_run_supervisor",
+        *python_module_argv("flextool_run_supervisor"),
         url_norm,
         "--scenario-name",
         scenario,

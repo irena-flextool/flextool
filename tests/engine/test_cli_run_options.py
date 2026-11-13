@@ -11,6 +11,7 @@ import sys
 import pytest
 
 import flextool.engine
+from flextool._solver_config_source import UNTRUSTED_SHORT
 from flextool.cli import cmd_run_flextool
 from flextool.engine.solve._orchestration import _operator_highs_overrides
 
@@ -133,7 +134,8 @@ def test_solver_config_folder_is_resolved_once_and_shown_in_the_header(clean_env
     source = seen["kwargs"]["solver_config_source"]
     assert (source.dir, source.reason) == (tmp_path / "solver_config", "next to the input database")
     line = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("Solver config:"))
-    assert line.endswith(f"{tmp_path / 'solver_config'} (next to the input database)")
+    # Found on its own, outside a workspace this computer set up: its files get the database's rules (item 240 B3).
+    assert line.endswith(f"{tmp_path / 'solver_config'} (next to the input database; {UNTRUSTED_SHORT})")
     chosen = tmp_path / "chosen"
     seen = _run_main(monkeypatch, tmp_path, "--solver-config-dir", str(chosen))
     source = seen["kwargs"]["solver_config_source"]

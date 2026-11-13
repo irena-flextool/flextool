@@ -8,6 +8,8 @@ import tkinter.font as tkfont
 from tkinter import ttk
 from typing import Callable
 
+from flextool._safe_text import printable
+
 
 class OutputLogWindow(tk.Toplevel):
     """Non-modal window that displays the command and live stdout of a subprocess.
@@ -98,7 +100,7 @@ class OutputLogWindow(tk.Toplevel):
         if not self.winfo_exists():
             return
         at_bottom = self._text.yview()[1] >= 0.99
-        self._text.insert("end", line + "\n")
+        self._text.insert("end", printable(line, keep_newlines=True) + "\n")
         if at_bottom:
             self._text.see("end")
 

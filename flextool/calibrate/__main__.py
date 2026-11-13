@@ -7,5 +7,6 @@ launched as a module.
 from __future__ import annotations
 
 from flextool.calibrate._cli import main
+from flextool.cli._console import run_tool
 
-raise SystemExit(main())
+run_tool(main)

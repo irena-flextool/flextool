@@ -196,6 +196,17 @@ the toolbar's **+ From file…** button to add the specifications from
 FlexTool repository (and update with `git pull` / `update_flextool.py`), while the new
 project file lives wherever you put it.
 
+## Toolbox projects are code
+
+A Spine Toolbox project runs the tool scripts and command lines its specifications carry
+(the FlexTool tools include scripts from the project's folders), so a project can do
+anything you can do on your computer. FlexTool therefore treats a Toolbox project like a
+program: whatever it passes to FlexTool (`--solver-config-dir`, for example, whose option
+files are trusted) is taken as your own choice. Open a Toolbox project only from people you
+trust, as you would run their program. What FlexTool does guard against is data that comes
+with a project, such as an input database or a `solver_config/` folder that a run finds on
+its own: see [Which option folders are trusted](solvers/index.md#which-option-folders-are-trusted).
+
 ## Limitations
 
 - The shipped workflow is tuned for the **Spine database editor**. One can use the 

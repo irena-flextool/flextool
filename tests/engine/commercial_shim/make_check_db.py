@@ -21,7 +21,8 @@ with these scenarios for each solver ``<s>`` in gurobi, cplex, xpress, copt (sol
   splits the solve into ``y2020_2day_dispatch_p2020`` and ``y2020_2day_dispatch_p2025``; with ``solver_mip_gap``
   0.2 and ``solver_arguments`` time limit 800 (each copy must keep the solver and all of its settings);
 
-plus ``unknown_gurobi`` (``solver_arguments`` ``NoSuchParameter`` 1) and ``iterlimit_xpress`` (``LPITERLIMIT``
+plus ``unknown_gurobi`` (``solver_arguments`` ``NoSuchParameter`` 1, not a Gurobi parameter: refused unless this
+computer allows unlisted names) and ``iterlimit_xpress`` (``LPITERLIMIT``
 1, ``PRESOLVE`` 0).  The scenarios ``coal`` and ``coal_min_load_MIP_wind`` themselves solve with HiGHS.
 """
 from __future__ import annotations

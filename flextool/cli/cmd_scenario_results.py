@@ -231,6 +231,14 @@ def main() -> None:
 
     # Build scenario-to-folder mapping from either --parquet-base-dir or db_url
     alternatives = args.alternatives
+    # Each name is a result folder name and goes into plot and workbook file names.
+    from flextool.safe_names import UnsafeNameError, check_output_name
+    try:
+        for name in alternatives or []:
+            check_output_name(name, "scenario name")
+    except UnsafeNameError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
     pre_built_folders: dict[str, str] | None = None
     parquet_subdir = args.parquet_subdir
 
@@ -286,5 +294,10 @@ def main() -> None:
     )
 
 
-if __name__ == '__main__':
+def cli():
+    """Console script: :func:`main` through :func:`flextool.cli._console.run_tool` (control characters escaped)."""
     run_tool(main)
+
+
+if __name__ == '__main__':
+    cli()

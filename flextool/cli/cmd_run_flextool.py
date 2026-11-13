@@ -38,6 +38,7 @@ try:
 except (AttributeError, ValueError, OSError):
     # stderr may be unavailable (e.g. detached / redirected to a closed fd).
     pass
+from flextool._safe_text import make_printable
 from flextool._mem_sampler import start_mem_sampler
 from flextool.process_outputs.write_outputs import resolve_output_settings, write_outputs
 from flextool import run_record
@@ -617,7 +618,23 @@ def build_parser() -> argparse.ArgumentParser:
              'warning.  The run copies the files it used to <work folder>/'
              'solve_data/solver_config/.  Environment variable: '
              'FLEXTOOL_SOLVER_CONFIG_DIR (several folders separated by '
-             '\':\', on Windows \';\'); the flag wins.',
+             '\':\', on Windows \';\'); the flag wins.  The files of a '
+             'folder named here are trusted (file paths, server settings); '
+             'the files of a folder found on its own are trusted only in a '
+             'workspace or project this computer set up (flextool-update, '
+             'the FlexTool window).',
+    )
+    parser.add_argument(
+        '--workspace-solver-config-dir', metavar='PATH', default=None,
+        action='append',
+        help='A solver option folder the launcher found (the FlexTool window '
+             'passes its project\'s solver_config/ when it has one, then its '
+             'workspace\'s); repeat for several, highest first.  Read file '
+             'by file like --solver-config-dir, but the files of each folder '
+             'are trusted only when its workspace or project is one this '
+             'computer set up; otherwise they get the input database\'s '
+             'rules.  Given with --solver-config-dir (or '
+             'FLEXTOOL_SOLVER_CONFIG_DIR), these folders come first.',
     )
     parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
     parser.add_argument('--write-methods', type=str, nargs='+', default=None,
@@ -920,7 +937,8 @@ def main():
             '%(levelname)s:%(filename)s:%(lineno)d:%(message)s'
             if DEBUG else '%(message)s'
         ),
-        handlers=[logging.StreamHandler(sys.stdout)]
+        # Control characters from names in the input data are shown as \xNN, not sent to the terminal.
+        handlers=[make_printable(logging.StreamHandler(sys.stdout))]
     )
     if not DEBUG:
         # Silence routine "wrote …" / "Wrote N output variables" INFO
@@ -1014,6 +1032,16 @@ def main():
     # write_outputs applies) so the run record, write_outputs, timings.csv
     # and the output-info DB all name the same folder.
     output_subdir = args.output_subdir or scenario_name
+    # The scenario name and the output folder name become folder names (output_parquet/<subdir>/, ...): refuse a
+    # name that is not one plain folder name before anything is written or cleaned up.
+    from flextool.safe_names import UnsafeNameError, check_output_name
+    try:
+        check_output_name(scenario_name, "scenario name")
+        if args.output_subdir:
+            check_output_name(args.output_subdir, "--output-subdir name")
+    except UnsafeNameError as exc:
+        logging.error("%s", exc)
+        sys.exit(1)
     output_location, write_methods = resolve_output_settings(
         write_methods=args.write_methods,
         output_location=args.output_location,

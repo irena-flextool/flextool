@@ -221,6 +221,14 @@ OPTIONS: dict[str, OptionSpec] = {
                  "project folder and the current folder",
         ),
         _spec(
+            key="workspace_solver_config_dir", flag="--workspace-solver-config-dir", env=None, db=None,
+            parse=_path_list, default=None, audience="user",
+            help="solver option folders the launcher found, highest first (the FlexTool window passes its "
+                 "project's solver_config, then its workspace's; repeat the flag for several); the files of each "
+                 "are trusted only when its workspace or project is one this computer set up; above the "
+                 "--solver-config-dir folders when both are given",
+        ),
+        _spec(
             key="scaling", flag="--scaling", env="FLEXTOOL_SCALING", db="solve.scaling",
             parse=_choice("off", "solver_only", "basic", "full"), default="full", audience="user",
             help="autoscaler strategy (off / solver_only / basic / full)",
@@ -311,6 +319,13 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         _user("POLARS_FORCE_PKG", "force one polars build; also skips FlexTool's processor check"),
         _user("FLEXTOOL_RUN_LOG_MAX_BYTES", "bytes of a run's _run.log kept from its end (4 MiB, at most 256 MiB); "
               "the first 64 KiB are kept too"),
+        _user("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", "1 takes solver parameter names that are not in "
+              "FlexTool's lists from input databases (default off; also solver_settings.json in the user config "
+              "folder)"),
+        *(_user(name, f"the program (and its arguments, as a JSON list) that starts in front of {label}'s "
+                "program; empty or [] means none (also solver_settings.json)")
+          for name, label in (("FLEXTOOL_SOLVER_WRAPPER_GUROBI", "Gurobi"), ("FLEXTOOL_SOLVER_WRAPPER_CPLEX", "CPLEX"),
+                              ("FLEXTOOL_SOLVER_WRAPPER_XPRESS", "Xpress"), ("FLEXTOOL_SOLVER_WRAPPER_COPT", "COPT"))),
         _user("FLEXTOOL_MIGRATION_LOCK_TIMEOUT", "Windows: seconds a migration waits for the lock of another "
               "migration of the same database (600); not read on Linux or macOS"),
         _user("POLARS_MAX_THREADS", "polars thread pool size, in place of FlexTool's limit of 8 but at most the "
@@ -377,8 +392,14 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         _dev("_RJEM_MALLOC_CONF", "jemalloc settings of polars' allocator; FlexTool sets page decay"),
         # --- test suite -----------------------------------------------------------------------------------
         _test("FLEXTOOL_NATIVE_PARITY_SWEEP", "run the slow parity sweep over every fixture"),
+        _test("FLEXTOOL_WRITE_SOLVER_HANDOFF_GOLDEN", "1 rewrites the solver hand-off golden record"),
         _test("FLEXTOOL_TEST_RSS_BUDGET_MB", "RSS budget of the input-derivation memory test (1500)"),
         _test("FLEXTOOL_TEST_KEYRING_LOG", "set by the root conftest: the file the session's keyring violations go to"),
+        _test("FLEXTOOL_TEST_SANDBOX", "set by the root conftest: the session's temp folder that HOME, XDG_* and "
+              "APPDATA/LOCALAPPDATA point into"),
+        _test("FLEXTOOL_TEST_REAL_HOME", "set by the root conftest: the real home folder, which no test may write under"),
+        _test("FLEXTOOL_TEST_REAL_USER_DIRS", "set by the root conftest: the real FlexTool user folders, which no test "
+              "may reach"),
         _test("FLEXTOOL_SHIM_RECORD", "set by the commercial_shim tests: the file each solver shim appends its "
               "call record to"),
     )

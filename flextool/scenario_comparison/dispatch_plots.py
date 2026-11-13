@@ -18,7 +18,9 @@ from flextool.scenario_comparison.dispatch_data import (
 from flextool.plot_outputs.format_helpers import unique_series_names
 from flextool.plot_outputs.plot_lines import draw_stacked_area
 from flextool.plot_outputs.unit_labels import dispatch_ylabel
+from flextool.process_outputs._excel_writer import XLSX_TEXT_OPTIONS
 from flextool.process_outputs._sheet_names import excel_sheet_name
+from flextool.safe_names import safe_file_component
 
 logger = logging.getLogger(__name__)
 
@@ -723,7 +725,7 @@ def create_dispatch_plots(
                             [df_dispatch, zeros], axis=1,
                         )
                     df_dispatch = df_dispatch[ng_columns[ng]]
-                output_path = plot_dir / f"dispatch_nodeGroup_{ng}_{scenario}.png"
+                output_path = plot_dir / safe_file_component(f"dispatch_nodeGroup_{ng}_{scenario}.png")
                 plot_dispatch_area(
                     df_dispatch, inflow, output_path,
                     title=f"{ng} - {scenario}",
@@ -772,7 +774,7 @@ def create_dispatch_plots(
                 node_colors = _auto_assign_node_colors_with_existing(
                     df_node.columns, colors,
                 )
-                output_path = plot_dir / f"dispatch_node_{node}_{scenario}.png"
+                output_path = plot_dir / safe_file_component(f"dispatch_node_{node}_{scenario}.png")
                 plot_dispatch_area(
                     df_node, inflow_node, output_path,
                     title=f"{node} - {scenario}",
@@ -793,7 +795,8 @@ def create_dispatch_plots(
     if write_xlsx and excel_data:
         excel_path = plot_dir / "dispatch_data.xlsx"
         used_sheet_names: set[str] = set()
-        with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
+        # Strings as text: a name starting with '=' is not made a formula (XLSX_TEXT_OPTIONS).
+        with pd.ExcelWriter(excel_path, engine='xlsxwriter', engine_kwargs=XLSX_TEXT_OPTIONS) as writer:
             for name, df in excel_data.items():
                 # At most 31 characters and distinct without regard to case (two long node names could collide).
                 sheet_name = excel_sheet_name(name, used_sheet_names)

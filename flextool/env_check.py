@@ -49,6 +49,21 @@ import sys
 # (HiGHS#2964, 1.14.0).
 HIGHSPY_OWN_CPP_RUNTIME = (1, 15)
 
+# The Python children started here (the probe, the pip steps) keep the current folder off sys.path, so a
+# folder named like a package in the workspace is never imported instead of it.  Spelled here, not imported from
+# ``flextool._child_python``: this module is stdlib-only and is loaded without importing the flextool package.
+_SAFE_PATH_FLAG = "-P"
+
+
+def _safe_path_env() -> dict[str, str]:
+    """This process's environment with ``PYTHONSAFEPATH=1`` (see ``flextool._child_python.child_env``)."""
+    return {**os.environ, "PYTHONSAFEPATH": "1"}
+
+
+def _pip_env() -> dict[str, str]:
+    """This process's environment without ``PYTHONSAFEPATH``, for pip (see ``flextool._child_python.pip_env``)."""
+    return {k: v for k, v in os.environ.items() if k != "PYTHONSAFEPATH"}
+
 # Probe program: import each native extension in turn and print a *flushed*
 # marker after each one survives.  On a native crash the already-flushed
 # markers remain in the captured pipe, so the last marker tells us how far
@@ -236,10 +251,11 @@ def probe_solver_stack(python: str | None = None, timeout: float = 120.0) -> Sta
     py = python or sys.executable
     try:
         completed = subprocess.run(
-            [py, "-c", _PROBE_CODE],
+            [py, _SAFE_PATH_FLAG, "-c", _PROBE_CODE],
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=_safe_path_env(),
         )
     except subprocess.TimeoutExpired:
         return StackProbe(TIMEOUT, None)
@@ -633,7 +649,7 @@ def polars_compat_steps(python: str | None = None) -> list[list[str]] | None:
       install ``polars[rtcompat]`` within flextool's requirement.
     """
     py = python or sys.executable
-    pip = [py, "-m", "pip"]
+    pip = [py, _SAFE_PATH_FLAG, "-m", "pip"]
     if _dist_version("polars-lts-cpu") is not None:
         return [
             pip + ["uninstall", "-y", "polars-lts-cpu", "polars"],
@@ -678,7 +694,7 @@ def highspy_upgrade_steps(python: str | None = None) -> list[list[str]] | None:
     if not installed or installed >= HIGHSPY_OWN_CPP_RUNTIME:
         return None
     py = python or sys.executable
-    return [[py, "-m", "pip", "install", f"highspy{_flextool_requirement_spec('highspy', _HIGHSPY_SPEC_FALLBACK)}"]]
+    return [[py, _SAFE_PATH_FLAG, "-m", "pip", "install", f"highspy{_flextool_requirement_spec('highspy', _HIGHSPY_SPEC_FALLBACK)}"]]
 
 
 def _banner(message: str) -> str:
@@ -903,7 +919,7 @@ def _run_steps(steps: list[list[str]], run) -> int | str:
     for step in steps:
         _stderr("$ " + format_command(step))
         try:
-            returncode = run(step).returncode
+            returncode = run(step, env=_pip_env()).returncode
         except OSError as exc:
             returncode = f"not started ({exc})"
         if returncode != 0:
@@ -967,8 +983,8 @@ def compat_install_dialog(message: str, steps: list[list[str]], run=subprocess.r
             return "declined"
         outcome: dict = {}
 
-        def _run_quietly(argv):
-            done = run(argv, capture_output=True, text=True, **_no_console_window())
+        def _run_quietly(argv, **kwargs):
+            done = run(argv, capture_output=True, text=True, **kwargs, **_no_console_window())
             outcome["output"] = (getattr(done, "stdout", "") or "") + (getattr(done, "stderr", "") or "")
             return done
 

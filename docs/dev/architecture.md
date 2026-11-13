@@ -131,15 +131,69 @@ The contract:
    folder that has it, else the packaged template), `flextool/_solver_config_source.py` (engine-free; not
    `flextool/solver_config.py`, which would shadow the template data folder):
    `resolve_solver_config_source` builds the ladder from the first tier that applies — explicit argument >
-   `--solver-config-dir` (repeatable) > `FLEXTOOL_SOLVER_CONFIG_DIR` (`os.pathsep` list), a closed ladder >
+   `--workspace-solver-config-dir` (repeatable, found by a launcher) above `--solver-config-dir` (repeatable) >
+   `FLEXTOOL_SOLVER_CONFIG_DIR` (`os.pathsep` list), a closed ladder >
    the bounded database layout (next to the database, alone; else `[<P>/solver_config, <workspace>/solver_config]`
    for a `projects/<P>/input_sources/` database) > the Toolbox project folder > cwd > packaged templates. A GUI
    project's folder never gives an unedited template (it would hide the workspace's file). Project import screens
-   shipped files with the engine-free `flextool/_solver_option_rules.py` (the database's path/server rules) and
-   holds a flagged one back as `<solver>.opt.review`. `snapshot_solver_option_files` reads them once at run
+   shipped files with the run's own rule for an untrusted file (`_solver_dispatch.untrusted_option_file_problems`:
+   `validate_solver_option` + `check_database_solver_option` per line) and holds a refused one back as
+   `<solver>.opt.review`; export's privacy screen is the engine-free `flextool/_solver_option_rules.py`. `snapshot_solver_option_files` reads them once at run
    start into `PathConfig.solver_option_files` (every solve reads its layer from there, never from disk) and
    writes the record `<work_folder>/solve_data/solver_config/`. The GUI and the calibrator pass the ladder
-   explicitly (`gui_solver_config_dirs`: the project's folder when it exists, then the workspace's).
+   explicitly (`gui_solver_config_flags`: the project's folder when it exists, then the workspace's, as
+   `--workspace-solver-config-dir`; the folders of `FLEXTOOL_SOLVER_CONFIG_DIR` as `--solver-config-dir`, below
+   the project's).
+   Trust follows the source: the database layers (`solver_arguments`, `solver_mip_gap`) take only names in
+   `engine/solve/solver_catalogue/<solver>.json` (`_solver_catalogue`, written by `tools/solver_catalogue.py` with
+   a reviewed class per name: `plain` / `file` / `local_only` / `flextool`), checked for every solve before the
+   first (`check_run_solver_options`) and again per solve (`check_database_solver_option`). HiGHS names the
+   installed highspy knows as bool / int / double pass too. The per-user switch for unlisted names
+   (`flextool/_local_solver_settings.py`: `FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS`, else
+   `user_config_dir()/solver_settings.json`) is never read from a database, project, workspace or flag. Option
+   files and flags warn on an unlisted name and pass it.
+   Trust is judged per folder of the ladder, so per file: a folder the run found by itself (tiers 2-4, and the
+   GUI's `--workspace-solver-config-dir` folders) is trusted only when its parent (the workspace, or the project
+   for `projects/<P>/solver_config`) is in `trusted_workspaces` of that settings file
+   (`SolverConfigSource.layer_note`); otherwise `SolverOptionFiles.untrusted_note(solver)`, from the folder that
+   gave that solver's file, is handed to `resolve_commercial_options` / `_resolve_effective_highs_options` and
+   each file line goes through `check_database_solver_option(untrusted=...)`. A file that is byte for byte a
+   shipped template is trusted wherever it lies. Only `ensure_runtime_files` (when it creates `solver_config/` or
+   finds only unedited templates, `holds_only_flextool_defaults`), the GUI's project create / open
+   (`note_project_set_up_here`: only with nothing received waiting, `awaits_review`) and the GUI's explicit "trust
+   this workspace / project" add to the list; project import, the first-open rename of `imported_solver_config/`
+   and project deletion take the path off (`forget_trusted_folder`); nothing inside a workspace
+   (`templates/project_folder.txt` included) is a trust anchor. An entry is bound to the folder trusted
+   (`folder_identity`: device + inode + birth time, Windows volume serial + file ID + creation time, `st_ctime`
+   before Python 3.12; ext4 reuses a deleted folder's inode at once, so the birth time is needed, and a stored one
+   must be matched) and to its `.opt` hashes (`TrustedFolder`): a
+   replaced folder is untrusted (`trust_status`), and a changed file is covered only when `only_you_can_change`
+   (POSIX owner, not group/other-writable unless the user's private group; on Windows a plain file, as owner and
+   ACL are not read) — `read_solver_option_files` keeps that per-file verdict in `SolverOptionFiles.file_notes`.
+   FlexTool's own file is told by content (`is_unedited_template`), never by the origin text. Text entries of 4.4
+   development builds are bound on first read; relative entries are refused; a relative `FLEXTOOL_USER_HOME` /
+   `XDG_CONFIG_HOME` is ignored (`user_dirs`; never depends on the start folder), and a settings file inside the
+   folder judged (`_check_settings_outside`) makes its trust unreadable. The settings file is refused on read when
+   not UTF-8 or (POSIX) another account owns or can write it (`_settings_file_problem`). `flextool-trust-workspace`
+   (`cli/cmd_trust_workspace.py`) is the terminal route: a typed, answered command, not a run flag (D4: a Toolbox
+   project carries tool command lines, and anything that can start the command unasked can already run code); it
+   refuses a stdin that is not a terminal and has no `--yes`, escapes what it shows (`_safe_text.printable`), and
+   trusts exactly the bytes it showed (`show_folder` → `apply_settings(workspace_shown=)`, `ShownFilesChanged`),
+   as does the window's box with the files as the dialog found them.
+   Spine Toolbox projects are code and are trusted as such.
+   `--solver-config-dir` / `FLEXTOOL_SOLVER_CONFIG_DIR` stay trusted.
+   A commercial solver may run behind this computer's solver wrapper (`_local_solver_settings.solver_wrapper`:
+   `FLEXTOOL_SOLVER_WRAPPER_GUROBI` and its CPLEX, XPRESS, COPT twins, else `wrappers` in the same file;
+   `check_wrapper` holds the rules), checked for every solver of the run before the first solve
+   (`check_run_solver_wrappers`) and again before each start;
+   `_solve_commercial_subprocess` prepends it to the solver's argv (no shell; the solver path is absolute,
+   `_find_solver_binary` skips relative and, on Windows, current-folder `PATH` entries), logs the `Running ...
+   through the solver wrapper` line with the program and its argument count only (D7 revised, review b2b3 L3: the
+   AI assistant sends run logs out) and notes `solver_wrappers` in full in the run record (export keeps only the
+   program and the count).
+   The settings file (written 0600) is written only by the GUI's Solver options → On this computer,
+   `flextool-trust-workspace` and `ensure_runtime_files`;
+   no assistant tool, database value, project file or flag writes or sets it.
 7. The run header prints `RunOptions.summary_lines()` — each option set by a flag or an environment variable,
    with its source — and the thread budget (`Threads:`), with polars' and HiGHS' thread counts.
 
@@ -1001,6 +1055,17 @@ strategy that disables warm-start and round-trips each sub-solve through
 an on-disk MPS file, trading ~5-10 GB peak RSS for slower per-solve
 build time. The orchestrator emits a one-time warning when it disables
 warm-start because of this flag.
+
+**Solver hand-off.** A subprocess solve gets its merged options as a list of
+`(name, value text)` pairs, never through a file it reads back: a commercial
+script builder (`_subprocess_solve._SCRIPTS`) takes `commercial_params(options)`
+and emits one argument or script line per pair; the `--save-memory` HiGHS
+child (`cmd_solve_mps --options-json`) sets each pair with `setOptionValue`,
+refusing an empty value as HiGHS' option-file reader does. `<solve>.opt` next
+to the MPS is the record only. `tests/engine/test_solver_handoff_golden.py`
+pins argv, scripts and HiGHS' resulting options for a corpus (golden made
+before the hand-off was changed) and compares seeded random option lists with
+the old write-and-read-back chain.
 
 **Memory: polars allocator.** polars links jemalloc statically, and its
 own decay settings in 1.x (`dirty_decay_ms:500,muzzy_decay_ms:-1`) leave

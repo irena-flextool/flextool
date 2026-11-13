@@ -3,20 +3,21 @@
 from __future__ import annotations
 
 import logging
-import os
 import subprocess
 import sys
 import threading
 from pathlib import Path
 from typing import Callable, TYPE_CHECKING
 
+from flextool._child_python import SAFE_PATH_FLAG, child_env
 from flextool.gui.cli_format import format_cmd_for_log
 from flextool.gui.config_parser import parse_plot_configs
 from flextool.gui.data_models import PlotSettings, ProjectSettings
 from flextool.gui.platform_utils import open_file_in_default_app
 from flextool.gui.project_utils import get_projects_dir
 from flextool.gui.scenario_key import resolve_subdir_for_read
-from flextool.gui.scenario_lists import folder_results_usable
+from flextool.gui.scenario_lists import folder_results_usable, scenario_workbooks
+from flextool.safe_names import output_name_problem
 
 if TYPE_CHECKING:
     from flextool.gui.execution_manager import ExecutionManager
@@ -151,14 +152,12 @@ class OutputActionManager:
         pngs = sorted(directory.rglob("*.png"))
         return pngs[0] if pngs else None
 
-    def find_scenario_excel(self, scenario_name: str) -> Path | None:
-        excel_dir = self.project_path / "output_excel"
-        if not excel_dir.is_dir():
-            return None
-        for f in sorted(excel_dir.iterdir()):
-            if f.suffix.lower() == ".xlsx" and scenario_name in f.stem:
-                return f
-        return None
+    def find_scenario_excel(self, source_number: int, scenario_name: str) -> Path | None:
+        """The workbook of the scenario's result folder (:func:`scenario_workbooks`), or None."""
+        owners = self.settings.bare_output_owners
+        subdir = resolve_subdir_for_read(owners, source_number, scenario_name)
+        found = scenario_workbooks(self.project_path, subdir, scenario_name, owners)
+        return found[0] if found else None
 
     def find_comparison_excel(self) -> Path | None:
         if not self.project_path.is_dir():
@@ -206,7 +205,7 @@ class OutputActionManager:
         parquet_dir = self.project_path / "output_parquet" / subdir
 
         cmd: list[str] = [
-            sys.executable, "-m", "flextool.cli.cmd_write_outputs",
+            sys.executable, SAFE_PATH_FLAG, "-m", "flextool.cli.cmd_write_outputs",
             "--scenario-name", scenario_name,
             "--read-parquet-dir", str(parquet_dir),
             "--output-location", str(self.project_path),
@@ -252,11 +251,12 @@ class OutputActionManager:
                 resolve_subdir_for_read(settings.bare_output_owners, sn, name)
                 for sn, name in scenario_ids
             )
-            if folder_results_usable(parquet_base / subdir)
+            # A folder name that is not a plain name (flextool.safe_names) is never passed to the command.
+            if output_name_problem(subdir) is None and folder_results_usable(parquet_base / subdir)
         ]
 
         cmd: list[str] = [
-            sys.executable, "-m", "flextool.cli.cmd_scenario_results",
+            sys.executable, SAFE_PATH_FLAG, "-m", "flextool.cli.cmd_scenario_results",
             "--parquet-base-dir", str(parquet_base),
             "--alternatives", *subdirs,
             "--plot-dir", str(plot_dir),
@@ -364,7 +364,7 @@ class OutputActionManager:
             self._execution_mgr.append_stdout(job.job_id, "")
 
         try:
-            env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+            env = child_env(PYTHONUNBUFFERED="1")
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,

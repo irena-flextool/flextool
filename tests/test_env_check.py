@@ -156,7 +156,7 @@ def _fake_cpu(monkeypatch, status, missing_default=(), missing_compat=()):
 def test_polars_heal_adds_compat_runtime_pinned_to_installed_version(monkeypatch):
     _fake_dists(monkeypatch, polars="1.40.1", polars_runtime_32="1.40.1")
     assert env_check.polars_compat_steps(python="/some/python") == [
-        ["/some/python", "-m", "pip", "install", "polars[rtcompat]==1.40.1"],
+        ["/some/python", "-P", "-m", "pip", "install", "polars[rtcompat]==1.40.1"],
     ]
 
 
@@ -165,7 +165,7 @@ def test_polars_heal_follows_an_upgraded_polars(monkeypatch):
     _fake_dists(monkeypatch, polars="2.1.0", polars_runtime_32="2.1.0", polars_runtime_compat="1.40.1")
     assert env_check.compat_runtime_ready() is False
     assert env_check.polars_compat_steps(python="/p") == [
-        ["/p", "-m", "pip", "install", "polars[rtcompat]==2.1.0"],
+        ["/p", "-P", "-m", "pip", "install", "polars[rtcompat]==2.1.0"],
     ]
 
 
@@ -190,10 +190,10 @@ def test_polars_heal_replaces_retired_lts_cpu_within_flextool_floor(monkeypatch)
     assert len(core) == 1
     _fake_dists(monkeypatch, polars_lts_cpu="1.33.1", polars_runtime_32="1.40.1")
     uninstall, install = env_check.polars_compat_steps(python="/p")
-    assert uninstall == ["/p", "-m", "pip", "uninstall", "-y", "polars-lts-cpu", "polars"]
-    assert install[:4] == ["/p", "-m", "pip", "install"]
-    assert install[4].startswith("polars[rtcompat]")
-    assert _requirement_parts(install[4][len("polars[rtcompat]"):]) == _requirement_parts(core[0][len("polars"):])
+    assert uninstall == ["/p", "-P", "-m", "pip", "uninstall", "-y", "polars-lts-cpu", "polars"]
+    assert install[:5] == ["/p", "-P", "-m", "pip", "install"]
+    assert install[5].startswith("polars[rtcompat]")
+    assert _requirement_parts(install[5][len("polars[rtcompat]"):]) == _requirement_parts(core[0][len("polars"):])
 
 
 def test_compat_extra_matches_core_polars_requirement():
@@ -221,7 +221,7 @@ def test_highspy_older_than_its_own_cpp_runtime_is_upgraded_within_flextool_requ
     _fake_dists(monkeypatch, highspy=old)
     monkeypatch.setattr(env_check, "_flextool_requirement_spec", lambda name, fallback: _flextool_highspy_spec())
     (step,) = env_check.highspy_upgrade_steps(python="/some/python")
-    assert step == ["/some/python", "-m", "pip", "install", "highspy" + _flextool_highspy_spec()]
+    assert step == ["/some/python", "-P", "-m", "pip", "install", "highspy" + _flextool_highspy_spec()]
 
 
 @pytest.mark.parametrize("current", ["1.15.0", "1.15.1", "1.16.0", None])
@@ -517,10 +517,23 @@ class _Ran:
         self.returncode = returncode
 
     def __call__(self, argv, *args, **kwargs):
-        if list(argv[1:3]) != ["-m", "pip"]:
+        if list(argv[1:4]) != ["-P", "-m", "pip"]:
             return _REAL_RUN(argv, *args, **kwargs)
         self.calls.append(list(argv))
         return subprocess.CompletedProcess(argv, self.returncode)
+
+
+def test_pip_does_not_inherit_the_safe_path_variable(monkeypatch):
+    """A FlexTool child carries PYTHONSAFEPATH=1; pip must not (it runs setup scripts that import from their folder)."""
+    monkeypatch.setenv("PYTHONSAFEPATH", "1")
+    envs = []
+
+    def run(argv, **kwargs):
+        envs.append(kwargs.get("env"))
+        return subprocess.CompletedProcess(argv, 0)
+
+    assert env_check._run_steps([_COMPAT_STEP], run) == 0
+    assert envs[0] is not None and "PYTHONSAFEPATH" not in envs[0] and envs[0]["PATH"] == os.environ["PATH"]
 
 
 def _no_polars_imported(monkeypatch):
@@ -536,7 +549,7 @@ def _needs_compat(monkeypatch, missing=("avx2", "fma")):
     return _fake_cpu(monkeypatch, env_check.CPU_NEEDS_COMPAT, list(missing))
 
 
-_COMPAT_STEP = [sys.executable, "-m", "pip", "install", "polars[rtcompat]==1.40.1"]
+_COMPAT_STEP = [sys.executable, "-P", "-m", "pip", "install", "polars[rtcompat]==1.40.1"]
 
 
 class _Stream:
@@ -738,7 +751,7 @@ builtins.open = fake_open
 _run = subprocess.run
 
 def fake_run(argv, *args, **kwargs):
-    if list(argv[1:3]) == ["-m", "pip"]:
+    if list(argv[1:4]) == ["-P", "-m", "pip"]:
         record["pip"].append(list(argv))
         return subprocess.CompletedProcess(argv, 0, "", "")
     return _run(argv, *args, **kwargs)
@@ -802,7 +815,7 @@ def test_gui_launch_asks_before_polars_is_imported(tmp_path, mode, reply):
         assert "Not installed" in record["exit"]
         assert record["loaded_after"] == []
     else:
-        assert record["pip"] == [[sys.executable, "-m", "pip", "install", f"polars[rtcompat]=={env_check._dist_version('polars')}"]]
+        assert record["pip"] == [[sys.executable, "-P", "-m", "pip", "install", f"polars[rtcompat]=={env_check._dist_version('polars')}"]]
         assert record["exit"] is None
         assert "polars" in record["loaded_after"]  # the GUI went on importing after the install
 
@@ -966,7 +979,7 @@ def test_update_heals_non_avx2_cpu_before_probing(monkeypatch, capsys):
     ran = _Ran()
 
     def run(argv, *a, **k):
-        if list(argv[1:3]) == ["-m", "pip"]:
+        if list(argv[1:4]) == ["-P", "-m", "pip"]:
             order.append("pip")
         return ran(argv, *a, **k)
 
@@ -977,7 +990,7 @@ def test_update_heals_non_avx2_cpu_before_probing(monkeypatch, capsys):
     monkeypatch.setattr(self_update.subprocess, "run", run)
     monkeypatch.setattr(env_check, "probe_solver_stack", probe)
     self_update._ensure_compatible_solver_stack()
-    assert ran.calls == [[sys.executable, "-m", "pip", "install", "polars[rtcompat]==2.1.0"]]
+    assert ran.calls == [[sys.executable, "-P", "-m", "pip", "install", "polars[rtcompat]==2.1.0"]]
     assert order[0] == "pip" and "probe" in order
 
 
@@ -1007,7 +1020,7 @@ def test_update_heals_polars_crash_with_compat_runtime(monkeypatch):
     monkeypatch.setattr(self_update.subprocess, "run", ran)
     monkeypatch.setattr(env_check, "probe_solver_stack", lambda *a, **k: next(probes))
     self_update._ensure_compatible_solver_stack()
-    assert ran.calls == [[sys.executable, "-m", "pip", "install", "polars[rtcompat]==1.40.1"]]
+    assert ran.calls == [[sys.executable, "-P", "-m", "pip", "install", "polars[rtcompat]==1.40.1"]]
 
 
 # ── fingerprint + installed-build introspection ───────────────────

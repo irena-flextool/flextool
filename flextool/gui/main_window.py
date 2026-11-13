@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from flextool import run_record
+from flextool._child_python import SAFE_PATH_FLAG, child_env, pip_env
 from flextool._resources import package_data_path
 from flextool.gui.project_utils import (
     get_projects_dir,
@@ -1964,10 +1965,14 @@ class MainWindow(tk.Tk):
         project_path = projects_dir / name
         # A project imported by an earlier 4.4 build has its shipped solver options in imported_solver_config/,
         # which no run reads: rename it to solver_config/ (screened) before any job of the project is built.
+        from flextool._solver_config_source import note_project_set_up_here
         from flextool.project_package import adopt_imported_solver_config
         for line in adopt_imported_solver_config(project_path):
             logger.info(line)
             print(line, flush=True)
+        # Item 240 B3: a project whose solver_config/ holds nothing but FlexTool's defaults, with no received file
+        # waiting for review, is noted as set up here, so option files put there later are trusted.
+        note_project_set_up_here(project_path)
         solver_defaults_reset = False
 
         def _on_solver_defaults_reset() -> None:
@@ -3930,7 +3935,7 @@ class MainWindow(tk.Tk):
         # Build the appropriate subprocess command
         if info.format == ExcelFormat.SELF_DESCRIBING:
             cmd = [
-                sys.executable, "-m",
+                sys.executable, SAFE_PATH_FLAG, "-m",
                 "flextool.cli.cmd_read_self_describing_tabular_input",
                 str(xlsx_path),
                 target_db_url,
@@ -3938,7 +3943,7 @@ class MainWindow(tk.Tk):
             ]
         elif info.format == ExcelFormat.SPECIFICATION:
             cmd = [
-                sys.executable, "-m",
+                sys.executable, SAFE_PATH_FLAG, "-m",
                 "flextool.cli.cmd_read_tabular_input",
                 target_db_url,
                 "--tabular-file-path",
@@ -3957,7 +3962,7 @@ class MainWindow(tk.Tk):
                 work_sqlite.unlink(missing_ok=True)
                 return
             cmd = [
-                sys.executable, "-m",
+                sys.executable, SAFE_PATH_FLAG, "-m",
                 "flextool.cli.cmd_read_old_flextool",
                 str(xlsx_path),
                 target_db_url,
@@ -4044,7 +4049,7 @@ class MainWindow(tk.Tk):
         elif info.format == ExcelFormat.SELF_DESCRIBING:
             template = package_data_path("schemas/pre_v26/flextool_template_v25.json")
             import_cmd = [
-                sys.executable, "-m",
+                sys.executable, SAFE_PATH_FLAG, "-m",
                 "flextool.cli.cmd_read_self_describing_tabular_input",
                 str(xlsx_path), tmp_db_url, "--keep-entities",
             ]
@@ -4052,14 +4057,14 @@ class MainWindow(tk.Tk):
             # SPECIFICATION format
             template = package_data_path("schemas/pre_v26/flextool_template_v25.json")
             import_cmd = [
-                sys.executable, "-m",
+                sys.executable, SAFE_PATH_FLAG, "-m",
                 "flextool.cli.cmd_read_tabular_input",
                 tmp_db_url, "--tabular-file-path", str(xlsx_path),
                 "--migration-follows",
             ]
 
         export_cmd = [
-            sys.executable, "-m",
+            sys.executable, SAFE_PATH_FLAG, "-m",
             "flextool.cli.cmd_export_to_tabular",
             tmp_db_url,
             str(xlsx_path),
@@ -4100,7 +4105,7 @@ class MainWindow(tk.Tk):
             import shutil as _shutil
             success = False
             try:
-                env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+                env = child_env(PYTHONUNBUFFERED="1")
 
                 # Step 1: import old Excel into temp sqlite
                 proc = subprocess.Popen(
@@ -4193,7 +4198,7 @@ class MainWindow(tk.Tk):
 
         db_url = f"sqlite:///{sqlite_path}"
         cmd = [
-            sys.executable, "-m",
+            sys.executable, SAFE_PATH_FLAG, "-m",
             "flextool.cli.cmd_export_to_tabular",
             db_url,
             str(target_xlsx),
@@ -4278,7 +4283,7 @@ class MainWindow(tk.Tk):
         def _worker() -> None:
             success = False
             try:
-                env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+                env = child_env(PYTHONUNBUFFERED="1")
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, bufsize=1, cwd=str(flextool_root), env=env,
@@ -4412,7 +4417,10 @@ class MainWindow(tk.Tk):
             success = True
             collected: list[str] = []
             try:
-                env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+                # pip / git steps: the pip steps carry -P themselves; no PYTHONSAFEPATH here (removed if this
+                # process has it), because pip runs the setup scripts of packages it builds, and those may need
+                # their own folder on sys.path.
+                env = pip_env(PYTHONUNBUFFERED="1")
                 for step in steps:
                     mgr.append_stdout(job.job_id, "$ " + " ".join(step))
                     proc = subprocess.Popen(
@@ -4538,7 +4546,7 @@ class MainWindow(tk.Tk):
             # Current version — import directly against the current schema
             template = package_data_path("schemas/spinedb_schema.json")
             cmd = [
-                sys.executable, "-m",
+                sys.executable, SAFE_PATH_FLAG, "-m",
                 "flextool.cli.cmd_read_self_describing_tabular_input",
                 str(xlsx_path), target_db_url, "--keep-entities",
             ]
@@ -4547,7 +4555,7 @@ class MainWindow(tk.Tk):
             # the Excel's version, import, then migrate to current.
             template = package_data_path("schemas/pre_v26/flextool_template_v25.json")
             cmd = [
-                sys.executable, "-m",
+                sys.executable, SAFE_PATH_FLAG, "-m",
                 "flextool.cli.cmd_read_self_describing_tabular_input",
                 str(xlsx_path), target_db_url, "--keep-entities",
             ]
@@ -4555,7 +4563,7 @@ class MainWindow(tk.Tk):
         else:
             template = package_data_path("schemas/pre_v26/flextool_template_v25.json")
             cmd = [
-                sys.executable, "-m",
+                sys.executable, SAFE_PATH_FLAG, "-m",
                 "flextool.cli.cmd_read_tabular_input",
                 target_db_url, "--tabular-file-path", str(xlsx_path),
                 "--migration-follows",
@@ -4593,7 +4601,7 @@ class MainWindow(tk.Tk):
         def _worker() -> None:
             success = False
             try:
-                env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+                env = child_env(PYTHONUNBUFFERED="1")
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, bufsize=1, cwd=str(flextool_root), env=env,
@@ -5301,6 +5309,24 @@ class MainWindow(tk.Tk):
             if not result:
                 return
 
+        # A scenario name becomes its result folder names and a command argument: one that cannot be a plain
+        # folder name does not run (flextool.safe_names).
+        from flextool.safe_names import describe_name, output_name_problem
+        unsafe = [(s, output_name_problem(s.name)) for s in checked]
+        unsafe = [(s, why) for s, why in unsafe if why is not None]
+        if unsafe:
+            messagebox.showwarning(
+                "Scenario names that cannot be used",
+                "These scenarios will not run, because their names cannot be used as folder names. "
+                "Rename them in the input data:\n\n"
+                + "\n".join(f"  {describe_name(s.name)} {why}" for s, why in unsafe),
+                parent=self,
+            )
+            refused = {id(s) for s, _why in unsafe}
+            checked = [s for s in checked if id(s) not in refused]
+            if not checked:
+                return
+
         # Filter out scenarios already in the execution queue (pending or running)
         self._ensure_execution_mgr()
         assert self.execution_mgr is not None
@@ -5637,7 +5663,8 @@ class MainWindow(tk.Tk):
                 )
             return "sqlite:///" + str(source_path)
 
-        # The dialog reads only ``name`` and ``is_xlsx`` off each scenario, and
+        # The dialog reads only ``name``, ``is_xlsx`` and ``source_number`` (the
+        # calibration's check of the bare result folder) off each scenario, and
         # ``resolve_db_url`` reads ``source_name``; wrap each ScenarioInfo so it
         # exposes exactly those.
         scenarios = [
@@ -5645,6 +5672,7 @@ class MainWindow(tk.Tk):
                 name=info.name,
                 is_xlsx=_is_xlsx(info.source_name),
                 source_name=info.source_name,
+                source_number=info.source_number,
             )
             for info in checked
         ]
@@ -5926,7 +5954,9 @@ class MainWindow(tk.Tk):
         """Open the modal Solver options dialog.
 
         Builds a ``tk.Toplevel`` parented to the main window with four
-        controls (Log level, Time limit, Scaling, Presolve).  Each control is bound to a *dialog-local* Tk var
+        controls (Log level, Time limit, Scaling, Presolve), and a button
+        to this computer's solver settings
+        (:mod:`flextool.gui.dialogs.local_solver_settings_dialog`).  Each control is bound to a *dialog-local* Tk var
         seeded from the corresponding main-window var so Cancel can
         discard pending edits without touching the persisted settings.
         OK copies the dialog-local values back into the main-window
@@ -6069,6 +6099,29 @@ class MainWindow(tk.Tk):
             "  • off      — disable presolve entirely (much slower but\n"
             "                useful for memory or numerical diagnostics).\n"
             "  • choose   — let HiGHS decide per problem."
+        ))
+        row += 1
+
+        # This computer's solver settings (never the project's): solver wrapper, unlisted parameter names, trust
+        # of this workspace's option files (item 240 B1-B3).
+        ttk.Label(body, text="On this computer:").grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
+        from flextool.gui.dialogs.local_solver_settings_dialog import open_local_solver_settings
+        def _open_project() -> Path | None:
+            name = getattr(self, "current_project", None)
+            return get_projects_dir() / name if name else None
+
+        local_btn = ttk.Button(body, text="On this computer…",
+                               command=lambda: open_local_solver_settings(dlg, project=_open_project()))
+        local_btn.grid(row=row, column=1, sticky="w", pady=4)
+        _attach_tip(local_btn, (
+            "Settings of this computer, not saved in the project:\n"
+            "  • a solver wrapper for Gurobi, CPLEX, Xpress or COPT\n"
+            "    (a program that starts in front of the solver,\n"
+            "    for example to hold a floating licence);\n"
+            "  • whether input databases may name solver parameters\n"
+            "    that are not in FlexTool's list;\n"
+            "  • whether this workspace's and this project's solver\n"
+            "    option files are trusted (file paths, server settings)."
         ))
         row += 1
 

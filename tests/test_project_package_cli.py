@@ -287,10 +287,16 @@ def test_cli_export_results_and_solver_hint(workspace: dict, capsys: pytest.Capt
     assert report.solver_config == [("highs.opt", "different")]
     assert "-mip_rel_gap = 0.05" in report.solver_config_diffs["highs.opt"]
     assert "+mip_rel_gap = 0.01" in "\n".join(pp.describe_import(report))
-    assert report.solver_config_hint == (
+    hint = report.solver_config_hint
+    assert hint.startswith(
         f"The shipped solver options are in {workspace['projects'] / 'Other' / 'solver_config'}. Runs of this project "
-        f"use them ahead of the workspace's ({workspace['config']}), file by file; delete a file there to use the "
-        "workspace's.")
+        f"use them ahead of the workspace's ({workspace['config']}), file by file, with the input database's rules")
+    # Review b2b3 M2: the hint never sends the files to a trusted place without saying they are trusted there.
+    assert "until you trust them" in hint and "Trust this project's solver option files" in hint
+    assert "its file paths and server settings reach the solver, so read it first." in hint
+    assert "is trusted there (a copy you make is your own edit)" in hint
+    # The terminal route of the same trust (review b2b3 L6), for users without the FlexTool window.
+    assert f"flextool-trust-workspace {workspace['projects'] / 'Other'}" in hint
 
 
 def _status_in(zip_path: Path, run: str) -> dict:
@@ -439,6 +445,85 @@ def test_disk_space_external_left_out_and_partial_hidden(workspace: dict, monkey
     assert project_utils.list_projects() == ["Proj", "Recv"]
 
 
+@pytest.mark.parametrize(("member", "message"), [
+    ("Proj/flextool/__init__.py", "not part of a FlexTool project"),
+    ("Proj/input_sources/flextool/__init__.py", "program or script"),
+    ("Proj/output_parquet/A_1/run.pth", "program or script"),
+    ("Proj/input_sources/setup.BAT", "program or script"),
+    ("Proj/solver_config/highs.sh", "program or script"),
+    ("Proj/solver_config/sub/highs.opt", "holds only .opt files"),
+    ("Proj/solver_config/cplex.opt.review", "holds only .opt files"),
+    ("Proj/notes.txt", "not part of a FlexTool project"),
+    # G3: solver option folders FlexTool would read by itself (next to an input database), in any case.
+    ("Proj/input_sources/solver_config/gurobi.opt", "only in its top-level solver_config/"),
+    ("Proj/input_sources/Solver_Config/gurobi.opt", "only in its top-level solver_config/"),
+    ("Proj/input_sources/sub/SOLVER_CONFIG/highs.opt", "only in its top-level solver_config/"),
+    ("Proj/input_sources/imported_solver_config/cplex.opt", "only in its top-level solver_config/"),
+    ("Proj/output_parquet/A_1/solver_config/xpress.opt", "only in its top-level solver_config/"),
+    ("Proj/Solver_Config/gurobi.opt", "only in its top-level solver_config/"),
+    ("Proj/imported_solver_config/gurobi.opt", "only in its top-level solver_config/"),
+])
+def test_code_and_unknown_files_in_a_package_are_refused(tmp_path: Path, member: str, message: str) -> None:
+    """A package holds only what export writes; code never unpacks into the project (it could replace FlexTool)."""
+    bad = tmp_path / "bad.flextool.zip"
+    _handmade(bad, {"Proj/settings.yaml": b"{}\n", member: b"open('marker', 'w')\n"})
+    projects = tmp_path / "projects"
+    with pytest.raises(pp.PackageError, match=message):
+        pp.import_project(bad, projects)
+    assert not projects.exists() or not any(projects.iterdir())
+    assert not pp.verify_package(bad).ok
+
+
+def test_export_leaves_out_programs_and_the_package_imports(workspace: dict) -> None:
+    (workspace["project"] / "input_sources" / "helper.py").write_text("print('hi')\n")
+    out, manifest = _export(workspace, ["A_1"])
+    assert not any(name.endswith("helper.py") for name in manifest.files)
+    assert any("helper.py is a program or script" in w for w in manifest.export_warnings)
+    report = pp.import_project(out, workspace["projects"], "Recv")
+    assert not (report.project_path / "input_sources" / "helper.py").exists()
+
+
+def test_export_leaves_out_a_solver_option_folder_inside_the_project(workspace: dict) -> None:
+    """A user's own solver_config/ next to a project database stays on their computer (import would refuse it);
+    the package still carries the workspace's solver_config/ files and imports them into the project's
+    solver_config/."""
+    nested = workspace["project"] / "input_sources" / "solver_config"
+    nested.mkdir()
+    (nested / "gurobi.opt").write_text("Threads 2\n")
+    out, manifest = _export(workspace, ["A_1"])
+    assert not any("input_sources/solver_config" in name for name in manifest.files)
+    assert any("input_sources/solver_config/gurobi.opt is in a solver option folder" in w
+               for w in manifest.export_warnings)
+    assert "solver_config/highs.opt" in {name.split("/", 1)[1] for name in manifest.files}
+    report = pp.import_project(out, workspace["projects"], "Recv")
+    assert not (report.project_path / "input_sources" / "solver_config").exists()
+    assert (report.project_path / "solver_config" / "highs.opt").is_file()
+
+
+def test_import_drops_input_files_outside_the_project(tmp_path: Path) -> None:
+    """A hand-made package cannot point an input source at a file elsewhere on this computer."""
+    settings = {
+        "input_source_numbers": {"model.sqlite": 1, "far.sqlite": 2, "abs.sqlite": 3, "inside.sqlite": 4},
+        "source_registry": {"1": {"name": "model.sqlite", "path": "input_sources/model.sqlite"},
+                            "2": {"name": "far.sqlite", "path": "../../secret/far.sqlite"},
+                            "3": {"name": "abs.sqlite", "path": "/etc/abs.sqlite"}},
+        "external_refs": {"far.sqlite": "../../secret/far.sqlite", "abs.sqlite": "/etc/abs.sqlite",
+                          "inside.sqlite": "input_sources/inside.sqlite"},
+        "checked_input_sources": ["model.sqlite", "far.sqlite", "abs.sqlite"],
+    }
+    package = tmp_path / "refs.flextool.zip"
+    _handmade(package, {"Proj/settings.yaml": yaml.dump(settings).encode(),
+                        "Proj/input_sources/model.sqlite": b"x", "Proj/input_sources/inside.sqlite": b"y"})
+    report = pp.import_project(package, tmp_path / "projects")
+    shipped = yaml.safe_load((report.project_path / "settings.yaml").read_text())
+    assert shipped["external_refs"] == {"inside.sqlite": "input_sources/inside.sqlite"}
+    assert shipped["source_registry"]["1"]["path"] == "input_sources/model.sqlite"
+    assert shipped["source_registry"]["2"] == {"name": "far.sqlite", "path": ""}
+    assert shipped["source_registry"]["3"] == {"name": "abs.sqlite", "path": ""}
+    assert shipped["checked_input_sources"] == ["model.sqlite"]
+    assert shipped["input_source_numbers"] == settings["input_source_numbers"]
+    (warning,) = [w for w in report.warnings if "outside the project folder" in w]
+    assert "far.sqlite" in warning and "abs.sqlite" in warning and "inside.sqlite" not in warning
 # --- Item 231: the project's own solver_config, file by file ------------------------------------------------------
 
 
@@ -491,9 +576,9 @@ def test_import_activates_clean_files_and_holds_back_path_options(workspace: dic
     (own / "gurobi.opt").write_text("Threads 2\n")
     out = workspace["root"] / "out" / "held.flextool.zip"
     pp.export_project(workspace["project"], out, [], solver_config_dir=[own, workspace["config"]])
-    # A package made elsewhere (an export leaves such a file out): a path option, an inert .review beside it.
+    # A package made elsewhere (an export leaves such a file out): a path option.  A shipped .review file is
+    # refused (the solver_config folder of a package holds only .opt files).
     _add_member(out, "Proj/solver_config/cplex.opt", b"logfile /tmp/x\n")
-    _add_member(out, "Proj/solver_config/cplex.opt.review", b"threads 1\n")
     _add_member(out, "Proj/solver_config/xpress.opt", _template_text("xpress").encode("utf-8"))
     report = pp.import_project(out, workspace["projects"], "Held", solver_config_dir=workspace["config"])
     target = workspace["projects"] / "Held" / "solver_config"
@@ -507,7 +592,9 @@ def test_import_activates_clean_files_and_holds_back_path_options(workspace: dic
     assert report.solver_config_defaults == ["xpress.opt"]
     text = "\n".join(pp.describe_import(report))
     assert "cplex.opt: kept as solver_config/cplex.opt.review and not used" in text
-    assert "rename it to cplex.opt to use it" in text
+    # One rule with the run (item 240 B3): renaming the file back is not enough, the project must be trusted.
+    assert "get the input database's rules until you trust them" in text
+    assert "rename it to cplex.opt and tick \"Trust this project's solver option files\"" in text
 
 
 def test_first_open_renames_a_development_build_import(tmp_path: Path) -> None:
@@ -521,7 +608,8 @@ def test_first_open_renames_a_development_build_import(tmp_path: Path) -> None:
     assert not imported.exists() and (own / "highs.opt").read_text() == "mip_rel_gap = 0.03\n"
     assert not (own / "gurobi.opt").exists() and (own / "gurobi.opt.review").is_file()
     assert lines[0] == ("Project Old: renamed imported_solver_config/ to solver_config/. This project's runs now "
-                        "use its solver option files (highs.opt) ahead of the workspace's.")
+                        "use its solver option files (highs.opt) ahead of the workspace's, with the input "
+                        f"database's rules until you trust them ({pp.TRUST_PROJECT_SETTING}).")
     assert len(lines) == 2 and "gurobi.opt.review" in lines[1] and "line 2: ComputeServer" in lines[1]
     assert pp.adopt_imported_solver_config(project) == []
     # Both folders: nothing is touched, one line says which one runs read.
@@ -558,7 +646,8 @@ def test_first_open_holds_before_renaming_and_names_only_used_files(tmp_path: Pa
                                                        "xpress.opt"]
     # xpress.opt is an unedited template, which runs skip: not named as used.
     assert lines[0] == ("Project Old: renamed imported_solver_config/ to solver_config/. This project's runs now "
-                        "use its solver option files (highs.opt) ahead of the workspace's.")
+                        "use its solver option files (highs.opt) ahead of the workspace's, with the input "
+                        f"database's rules until you trust them ({pp.TRUST_PROJECT_SETTING}).")
     assert len(lines) == 3
 
 
@@ -685,3 +774,53 @@ def test_scrub_keeps_the_text_after_a_path(workspace: dict) -> None:
         "a": "from <path>/proj, wrote and/or copied",
         "b": "error in <path>/python3.11 module foo/bar.py line 3",
         "c": "read <path>\\run.log, wrote and/or copied"}
+
+
+# --- Item 240 B3 with item 231: an imported project's option files are not trusted -----------------------------
+
+
+def test_import_screens_with_the_runs_rules_and_never_inherits_trust(
+    workspace: dict, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The import holds back exactly what a run of the (untrusted) imported project refuses: a parameter name
+    that is not in FlexTool's list too, not only paths and servers.  A clean file is used, with the database's
+    rules; a path left on this computer's trusted list by a project deleted earlier is taken off first."""
+    from flextool import _local_solver_settings as local
+    from flextool._solver_config_source import resolve_solver_config_source
+    from flextool.run_options import Resolved, RunOptions
+
+    monkeypatch.setenv("FLEXTOOL_USER_HOME", str(workspace["root"] / "user_home"))
+    monkeypatch.delenv("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", raising=False)
+    own = workspace["project"] / "solver_config"
+    own.mkdir()
+    (own / "gurobi.opt").write_text("Threads 2\n")
+    out = workspace["root"] / "out" / "trust.flextool.zip"
+    pp.export_project(workspace["project"], out, [], solver_config_dir=[own, workspace["config"]])
+    _add_member(out, "Proj/solver_config/copt.opt", b"Threads 1\nTimeLimt 60\n")       # misspelt: not listed
+    target = workspace["projects"] / "Recv"
+    local.add_trusted_workspace(target)                   # a project of that name, trusted here, since deleted
+    report = pp.import_project(out, workspace["projects"], "Recv", solver_config_dir=workspace["config"])
+    assert not local.is_trusted_workspace(target)
+    assert list(report.solver_config_held) == ["copt.opt"]
+    (problem,) = report.solver_config_held["copt.opt"]
+    assert problem.startswith("line 2: TimeLimt 60: it is not in FlexTool's list of COPT parameters")
+    assert (target / "solver_config" / "gurobi.opt").is_file()
+    options = RunOptions(resolved={"workspace_solver_config_dir": Resolved(
+        (str(target / "solver_config"), str(workspace["config"])), "cli")})
+    source = resolve_solver_config_source(run_options=options)
+    assert source.trusted is False and "Trust this project's solver option files" in source.trust_note
+
+
+def test_first_open_takes_the_project_off_the_trusted_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Renaming a 4.4 development build's imported_solver_config/ never hands the received files a trust noted
+    for the project's path."""
+    from flextool import _local_solver_settings as local
+
+    monkeypatch.setenv("FLEXTOOL_USER_HOME", str(tmp_path / "user_home"))
+    project = tmp_path / "projects" / "Old"
+    (project / "imported_solver_config").mkdir(parents=True)
+    (project / "imported_solver_config" / "gurobi.opt").write_text("Threads 2\n")
+    local.add_trusted_workspace(project)
+    pp.adopt_imported_solver_config(project)
+    assert (project / "solver_config" / "gurobi.opt").is_file()
+    assert not local.is_trusted_workspace(project)

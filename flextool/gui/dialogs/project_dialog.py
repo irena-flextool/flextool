@@ -296,6 +296,9 @@ class ProjectDialog(tk.Toplevel):
         resolved = project_path.resolve()
         try:
             shutil.rmtree(project_path)
+            # A project made or imported later at this path must not inherit this one's trust (item 240 B3).
+            from flextool._solver_config_source import forget_trusted_folder
+            forget_trusted_folder(resolved)
         except OSError as exc:
             logger.warning("Failed to delete project %r", name, exc_info=True)
             messagebox.showerror(

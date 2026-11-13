@@ -57,7 +57,9 @@ class FlexToolRunner:
         from flextool._resources import package_data_path
         from flextool._solver_config_source import read_solver_option_files, resolve_solver_config_source
         _pkg_dir = package_data_path("")
-        # A ladder of several folders is read file by file here: its top folder alone would lose the lower ones.
+        # Read the files here: a ladder of several folders is read file by file (its top folder alone would lose
+        # the lower ones), and a folder found outside a workspace or project this computer set up keeps the
+        # database's rules (item 240 B3; ``run_chain_from_db`` hands its own files to the solves).
         solver_option_files = None
         if solver_config_dir is None:
             source = resolve_solver_config_source(run_options=run_options, input_db_url=input_db_url)

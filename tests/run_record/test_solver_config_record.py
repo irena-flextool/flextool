@@ -35,10 +35,11 @@ def test_record_names_the_folder_the_files_and_their_hashes(tmp_path: Path) -> N
     assert rec["files"]["highs.opt"] == {
         "source": str(cfg / "highs.opt"),
         "reason": "--solver-config-dir",
+        "trusted": True,
         "sha256": hashlib.sha256(_HIGHS).hexdigest(),
         "default": False,
     }
-    assert rec["layers"] == [{"dir": str(cfg), "reason": "--solver-config-dir"}]
+    assert rec["layers"] == [{"dir": str(cfg), "reason": "--solver-config-dir", "trusted": True}]
     # Not in the folder: the packaged template, which is FlexTool's unedited default.
     assert rec["files"]["gurobi.opt"]["source"] == "FlexTool default"
     assert rec["files"]["gurobi.opt"]["reason"] == "FlexTool default"
@@ -104,8 +105,8 @@ def test_record_names_the_folder_of_each_file_across_the_ladder(tmp_path: Path) 
     source = SolverConfigSource(upper, REASON_FLAG, lower=((lower, REASON_FLAG),))
     rec = snapshot_solver_option_files(source, tmp_path / "work").record()
     assert rec["dir"] == str(upper.resolve())
-    assert rec["layers"] == [{"dir": str(upper.resolve()), "reason": REASON_FLAG},
-                             {"dir": str(lower.resolve()), "reason": REASON_FLAG}]
+    assert rec["layers"] == [{"dir": str(upper.resolve()), "reason": REASON_FLAG, "trusted": True},
+                             {"dir": str(lower.resolve()), "reason": REASON_FLAG, "trusted": True}]
     assert rec["files"]["highs.opt"]["source"] == str((upper / "highs.opt").resolve())
     assert rec["files"]["highs.opt"]["sha256"] == hashlib.sha256(_HIGHS).hexdigest()
     assert rec["files"]["gurobi.opt"]["source"] == str((lower / "gurobi.opt").resolve())
