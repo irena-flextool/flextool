@@ -36,11 +36,11 @@ def _template(solver: str) -> str:
 def ws(tmp_path: Path) -> dict:
     root = tmp_path / "ws"
     (root / "templates").mkdir(parents=True)
-    (root / "templates" / "project_folder.txt").write_text("projects\n")
+    (root / "templates" / "project_folder.txt").write_text("projects\n", encoding="utf-8")
     cfg = root / "solver_config"
     cfg.mkdir()
-    (cfg / "highs.opt").write_text("mip_rel_gap = 0.02\n")
-    (cfg / "gurobi.opt").write_text("Threads 4\n")
+    (cfg / "highs.opt").write_text("mip_rel_gap = 0.02\n", encoding="utf-8")
+    (cfg / "gurobi.opt").write_text("Threads 4\n", encoding="utf-8")
     (cfg / "cplex.opt").write_text(_template("cplex"), encoding="utf-8")  # not the Windows ANSI code page
     project = root / "projects" / "P"
     (project / "input_sources").mkdir(parents=True)
@@ -72,7 +72,7 @@ def _terminal_source(ws: dict):
 def test_case_a_project_file_then_workspace_then_default(ws: dict) -> None:
     own = ws["project"] / "solver_config"
     own.mkdir()
-    (own / "gurobi.opt").write_text("Threads 2\n")
+    (own / "gurobi.opt").write_text("Threads 2\n", encoding="utf-8")
     expected = {"highs": "mip_rel_gap = 0.02\n", "gurobi": "Threads 2\n", "cplex": _template("cplex"),
                 "xpress": _DEFAULT, "copt": _DEFAULT}
     gui = _gui_source(ws["project"], cwd=ws["root"])
@@ -123,13 +123,13 @@ def test_case_c_explicit_ladder_is_closed(ws: dict, tmp_path: Path, caplog: pyte
     a, b = tmp_path / "a", tmp_path / "b"
     a.mkdir()
     b.mkdir()
-    (a / "highs.opt").write_text("threads=1\n")
-    (b / "highs.opt").write_text("threads=2\n")
-    (b / "cplex.opt").write_text("threads 3\n")
+    (a / "highs.opt").write_text("threads=1\n", encoding="utf-8")
+    (b / "highs.opt").write_text("threads=2\n", encoding="utf-8")
+    (b / "cplex.opt").write_text("threads 3\n", encoding="utf-8")
     (ws["elsewhere"] / "solver_config").mkdir()
-    (ws["elsewhere"] / "solver_config" / "gurobi.opt").write_text("Threads 9\n")
+    (ws["elsewhere"] / "solver_config" / "gurobi.opt").write_text("Threads 9\n", encoding="utf-8")
     (ws["project"] / "solver_config").mkdir()
-    (ws["project"] / "solver_config" / "gurobi.opt").write_text("Threads 8\n")
+    (ws["project"] / "solver_config" / "gurobi.opt").write_text("Threads 8\n", encoding="utf-8")
     env = {"FLEXTOOL_SOLVER_CONFIG_DIR": os.pathsep.join([str(a), str(b)])}
     source = resolve_solver_config_source(environ=env, input_db_url=f"sqlite:///{ws['db']}", cwd=ws["elsewhere"])
     assert _texts(source) == {"highs": "threads=1\n", "cplex": "threads 3\n", "gurobi": _DEFAULT,
@@ -157,7 +157,7 @@ def test_one_folder_is_never_split(tmp_path: Path) -> None:
     odd = tmp_path / f"x{os.pathsep}y"
     assert split_solver_config_dirs(str(odd)) == [odd]
     odd.mkdir()
-    (odd / "highs.opt").write_text("threads=3\n")
+    (odd / "highs.opt").write_text("threads=3\n", encoding="utf-8")
     source = resolve_solver_config_source(explicit=str(odd), environ={}, cwd=tmp_path)
     assert read_solver_option_files(source).texts["highs"] == "threads=3\n"
 
@@ -171,12 +171,12 @@ def test_projects_folder_name_case_is_ignored_where_the_system_ignores_it(
 
     root = tmp_path / "ws"
     (root / "solver_config").mkdir(parents=True)
-    (root / "solver_config" / "highs.opt").write_text("mip_rel_gap = 0.02\n")
+    (root / "solver_config" / "highs.opt").write_text("mip_rel_gap = 0.02\n", encoding="utf-8")
     project = root / "Projects" / "P"
     (project / "Input_Sources").mkdir(parents=True)
     (project / "solver_config").mkdir()
     (project / "solver_config" / "gurobi.opt").write_text(_template("gurobi"), encoding="utf-8")
-    (project / "solver_config" / "copt.opt").write_text("Threads 1\n")
+    (project / "solver_config" / "copt.opt").write_text("Threads 1\n", encoding="utf-8")
     db = project / "Input_Sources" / "db.sqlite"
     db.write_bytes(b"")
     elsewhere = tmp_path / "elsewhere"

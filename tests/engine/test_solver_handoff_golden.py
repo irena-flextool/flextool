@@ -39,7 +39,7 @@ _FLAGS = ["--solver-mip-gap", "0.001", "--solver-time-limit", "1800"]
 
 
 def _template(solver: str) -> str:
-    return (_TEMPLATES / f"{solver}.opt.template").read_text()
+    return (_TEMPLATES / f"{solver}.opt.template").read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +155,7 @@ def _commercial_case(solver: str, opt_text: str | None, cfg: dict, flags: list[s
             work_folder=work, option_layers={o.name: o.layer for o in resolved}, run_options=run_options,
         )
     record_file = work / "solve_data" / "subprocess" / "invest.opt"
-    seen["opt"] = record_file.read_text() if record_file.is_file() else None
+    seen["opt"] = record_file.read_text(encoding="utf-8") if record_file.is_file() else None
     return seen
 
 
@@ -166,7 +166,7 @@ def _options_dump(highs) -> list[str]:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "options.txt"
         highs.writeOptions(str(path))
-        return [line for line in path.read_text().splitlines() if line and not line.startswith("#")]
+        return [line for line in path.read_text(encoding="utf-8").splitlines() if line and not line.startswith("#")]
 
 
 def _highs_case(options: dict, work: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
@@ -199,7 +199,7 @@ def _highs_case(options: dict, work: Path, monkeypatch: pytest.MonkeyPatch) -> d
             _tiny_problem(), dict(options), solve_name="invest", logger=None, work_folder=work,
             run_options=_run_options([]),
         )
-    seen["opt"] = (work / "solve_data" / "subprocess" / "invest.opt").read_text()
+    seen["opt"] = (work / "solve_data" / "subprocess" / "invest.opt").read_text(encoding="utf-8")
     return seen
 
 
@@ -229,9 +229,9 @@ def test_solver_handoff_matches_the_golden_record(tmp_path: Path, monkeypatch: p
     monkeypatch.chdir(tmp_path)  # HiGHS opens a log_file as soon as it is set
     cases = _all_cases(tmp_path, monkeypatch)
     if os.environ.get("FLEXTOOL_WRITE_SOLVER_HANDOFF_GOLDEN") == "1":
-        GOLDEN.write_text(json.dumps(cases, indent=1, sort_keys=True) + "\n")
+        GOLDEN.write_text(json.dumps(cases, indent=1, sort_keys=True) + "\n", encoding="utf-8")
         pytest.skip(f"wrote {GOLDEN}")
-    golden = json.loads(GOLDEN.read_text())
+    golden = json.loads(GOLDEN.read_text(encoding="utf-8"))
     assert sorted(cases) == sorted(golden)
     for case in golden:
         assert cases[case] == golden[case], case
@@ -241,7 +241,7 @@ def test_golden_record_pins_the_known_cases() -> None:
     """Hand-checked entries of the golden record (so a regenerated file cannot silently drift): the Gurobi
     template's argv, the CPLEX stack's mip gap line, and the two HiGHS cases where reading the option file and
     setting each option differ (an empty value is refused by the child)."""
-    golden = json.loads(GOLDEN.read_text())
+    golden = json.loads(GOLDEN.read_text(encoding="utf-8"))
     assert golden["gurobi_template"]["argv"] == [
         "bin", "Threads=1", "MIPGap=0.002", "LogToConsole=1", "ResultFile=invest.json", "invest.mps"]
     assert golden["gurobi_template"]["stdin"] is None

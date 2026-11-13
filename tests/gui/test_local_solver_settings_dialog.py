@@ -29,7 +29,7 @@ def root(tmp_path, monkeypatch):
         monkeypatch.delenv(name, raising=False)
     workspace = tmp_path / "ws"
     (workspace / "solver_config").mkdir(parents=True)
-    (workspace / "solver_config" / "gurobi.opt").write_text("NodefileDir /scratch/nodes\n")
+    (workspace / "solver_config" / "gurobi.opt").write_text("NodefileDir /scratch/nodes\n", encoding="utf-8")
     monkeypatch.chdir(workspace)
     try:
         r = tk.Tk()
@@ -53,7 +53,7 @@ def _widgets(widget):
 def _program(tmp_path: Path) -> Path:
     path = tmp_path / "bin" / "lic_hold"
     path.parent.mkdir()
-    path.write_text("#!/bin/sh\nexec \"$@\"\n")
+    path.write_text("#!/bin/sh\nexec \"$@\"\n", encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
     return path
 
@@ -81,7 +81,7 @@ def test_ok_writes_this_computers_settings_file_and_not_the_project(root, tmp_pa
     dialog.trust_var.set(True)
     dialog.ok()
     assert dialog.saved
-    data = json.loads(local.settings_path().read_text())
+    data = json.loads(local.settings_path().read_text(encoding="utf-8"))
     assert data["wrappers"] == {"cplex": [str(program), "--queue", "opt name"]}
     assert data["allow_unlisted_parameters"] is True
     assert local.trusted_workspaces() == (local.workspace_key(Path.cwd()),)
@@ -93,7 +93,7 @@ def test_ok_writes_this_computers_settings_file_and_not_the_project(root, tmp_pa
     dialog.program_vars["cplex"].set("")
     dialog.trust_var.set(False)
     dialog.ok()
-    data = json.loads(local.settings_path().read_text())
+    data = json.loads(local.settings_path().read_text(encoding="utf-8"))
     assert data["wrappers"] == {} and data["trusted_workspaces"] == []
 
 
@@ -101,7 +101,7 @@ def test_a_refused_wrapper_is_shown_and_nothing_is_written(root, tmp_path, monke
     shown = []
     monkeypatch.setattr(lsd.messagebox, "showerror", lambda title, message, **kw: shown.append(message))
     bat = tmp_path / "hold.bat"
-    bat.write_text("@echo off\n")
+    bat.write_text("@echo off\n", encoding="utf-8")
     dialog = _open_from_solver_options(root)
     dialog.program_vars["gurobi"].set(str(bat))
     dialog.trust_var.set(True)
@@ -120,7 +120,7 @@ def test_a_wrapper_set_by_the_environment_is_shown_read_only(root, tmp_path, mon
     assert "set by FLEXTOOL_SOLVER_WRAPPER_XPRESS" in [
         str(w.cget("text")) for w in _widgets(dialog) if isinstance(w, ttk.Label)]
     dialog.ok()
-    assert "xpress" not in json.loads(local.settings_path().read_text()).get("wrappers", {})
+    assert "xpress" not in json.loads(local.settings_path().read_text(encoding="utf-8")).get("wrappers", {})
 
 
 def test_the_open_projects_box_trusts_its_solver_config_only_when_ticked(root, tmp_path) -> None:
@@ -129,7 +129,7 @@ def test_the_open_projects_box_trusts_its_solver_config_only_when_ticked(root, t
     workspace = Path.cwd()
     project = workspace / "projects" / "P"
     (project / "solver_config").mkdir(parents=True)
-    (project / "solver_config" / "cplex.opt").write_text("workdir /scratch/cplex\n")
+    (project / "solver_config" / "cplex.opt").write_text("workdir /scratch/cplex\n", encoding="utf-8")
     root.current_project = "P"
     dialog = _open_from_solver_options(root)
     assert dialog.project == project and dialog.project_trust_var is not None
@@ -156,17 +156,17 @@ def test_ok_keeps_the_entries_it_does_not_show(root, tmp_path) -> None:
     other.mkdir()
     stored = [".", str(other)]
     local.settings_path().parent.mkdir(parents=True)
-    local.settings_path().write_text(json.dumps({"format": 1, "trusted_workspaces": stored}))
+    local.settings_path().write_text(json.dumps({"format": 1, "trusted_workspaces": stored}), encoding="utf-8")
     dialog = _open_from_solver_options(root)
     assert not dialog.trust_var.get()
     texts = " ".join(str(w.cget("text")) for w in _widgets(dialog) if isinstance(w, ttk.Label))
     assert "cannot read its list of trusted folders" in texts and "not a full folder path" in texts
     dialog.ok()
-    assert json.loads(local.settings_path().read_text())["trusted_workspaces"] == stored
+    assert json.loads(local.settings_path().read_text(encoding="utf-8"))["trusted_workspaces"] == stored
     dialog = _open_from_solver_options(root)
     dialog.trust_var.set(True)
     dialog.ok()
-    kept = json.loads(local.settings_path().read_text())["trusted_workspaces"]
+    kept = json.loads(local.settings_path().read_text(encoding="utf-8"))["trusted_workspaces"]
     assert kept[:2] == stored and kept[2]["path"] == local.workspace_key(Path.cwd())
 
 
@@ -179,7 +179,7 @@ def test_the_tick_trusts_the_files_as_the_dialog_found_them(root, tmp_path, monk
     gurobi = Path.cwd() / "solver_config" / "gurobi.opt"
     dialog = _open_from_solver_options(root)
     dialog.trust_var.set(True)
-    gurobi.write_text("ResultFile /home/u/.bashrc\n")
+    gurobi.write_text("ResultFile /home/u/.bashrc\n", encoding="utf-8")
     dialog.ok()
     assert not dialog.saved and dialog.winfo_exists()
     assert len(shown) == 1 and "changed since they were shown (gurobi.opt)" in shown[0]

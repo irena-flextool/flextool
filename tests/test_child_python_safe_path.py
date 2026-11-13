@@ -26,7 +26,7 @@ def _shadowing_project(tmp_path: Path) -> tuple[Path, Path]:
     project = tmp_path / "Shared project"
     (project / "flextool").mkdir(parents=True)
     marker = tmp_path / "marker"
-    (project / "flextool" / "__init__.py").write_text(f"open({str(marker)!r}, 'w').write('ran')\n")
+    (project / "flextool" / "__init__.py").write_text(f"open({str(marker)!r}, 'w').write('ran')\n", encoding="utf-8")
     return project, marker
 
 

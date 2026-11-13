@@ -185,7 +185,7 @@ def test_polars_heal_replaces_retired_lts_cpu_within_flextool_floor(monkeypatch)
     # within flextool's own polars requirement.
     import tomllib
 
-    pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
+    pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8"))
     core = [d for d in pyproject["project"]["dependencies"] if d.startswith("polars")]
     assert len(core) == 1
     _fake_dists(monkeypatch, polars_lts_cpu="1.33.1", polars_runtime_32="1.40.1")
@@ -199,7 +199,7 @@ def test_polars_heal_replaces_retired_lts_cpu_within_flextool_floor(monkeypatch)
 def test_compat_extra_matches_core_polars_requirement():
     import tomllib
 
-    pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
+    pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8"))
     core = [d for d in pyproject["project"]["dependencies"] if d.startswith("polars")][0]
     (compat,) = pyproject["project"]["optional-dependencies"]["compat"]
     assert compat.startswith("polars[rtcompat]")

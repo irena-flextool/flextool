@@ -245,7 +245,7 @@ def test_calibration_clears_only_its_own_result_folder(tmp_path, monkeypatch, de
     parquet = project / "output_parquet"
     (parquet / "high_1").mkdir(parents=True)
     (parquet / "high_1" / "x.parquet").write_bytes(b"other scenario")
-    (parquet / "_axis_bounds.json").write_text("{}")
+    (parquet / "_axis_bounds.json").write_text("{}", encoding="utf-8")
     (parquet / "base").mkdir()
     (parquet / "base" / "stale.parquet").write_bytes(b"before the calibration")
 

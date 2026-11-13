@@ -196,9 +196,9 @@ def _tamper_no_primal(lines: list[str]) -> list[str]:
 ])
 def test_tampered_sol_raises(tmp_path: Path, tamper) -> None:
     sol_path = _child_sol(tmp_path)
-    lines = sol_path.read_text().splitlines()
+    lines = sol_path.read_text(encoding="utf-8").splitlines()
     assert "C0000002 5" in lines and "C0000003 2" in lines, lines
-    sol_path.write_text("\n".join(tamper(lines)) + "\n")
+    sol_path.write_text("\n".join(tamper(lines)) + "\n", encoding="utf-8")
     with pytest.raises(SubprocessSolutionMismatch):
         _parse_highs_sol(sol_path, 3, 1, require_primal=True)
 
@@ -211,8 +211,8 @@ def test_tampered_sol_stops_the_subprocess_solve(tmp_path: Path, monkeypatch) ->
     def run_then_drop_a_column(cmd, *args, **kwargs):
         cp = real_run(cmd, *args, **kwargs)
         sol_path = Path(cmd[cmd.index("--solution") + 1])
-        lines = sol_path.read_text().splitlines()
-        sol_path.write_text("\n".join(_tamper_missing_column_and_count(lines)) + "\n")
+        lines = sol_path.read_text(encoding="utf-8").splitlines()
+        sol_path.write_text("\n".join(_tamper_missing_column_and_count(lines)) + "\n", encoding="utf-8")
         return cp
 
     monkeypatch.setattr(sps.subprocess, "run", run_then_drop_a_column)
@@ -381,7 +381,7 @@ def test_save_memory_time_limit_names_the_gap_the_child_wrote(tmp_path: Path, mo
             h.run()
             h.writeSolution(sol_path, 0)
             if gap_text is not None:
-                Path(cmd[cmd.index("--mip-gap") + 1]).write_text(gap_text)
+                Path(cmd[cmd.index("--mip-gap") + 1]).write_text(gap_text, encoding="utf-8")
             return subprocess.CompletedProcess(cmd, 1)
         return run
 
@@ -419,7 +419,7 @@ def test_child_writes_the_mip_gap(tmp_path: Path, integer: bool, gap: float) -> 
     cp = subprocess.run([sys.executable, "-m", "flextool.cli.cmd_solve_mps", "--mps", str(mps),
                          "--solution", str(sol), "--mip-gap", str(gap_file)], capture_output=True)
     assert cp.returncode == 0, cp.stderr
-    assert float(gap_file.read_text()) == gap
+    assert float(gap_file.read_text(encoding="utf-8")) == gap
 
 
 def _knapsack60(*, integer: bool = True) -> Problem:
@@ -491,5 +491,5 @@ def test_save_memory_child_lp_at_its_iteration_limit_is_rejected(tmp_path: Path)
 ])
 def test_highs_sol_status_lines(line: str, primal: str, expected, tmp_path: Path) -> None:
     sol = tmp_path / "s.sol"
-    sol.write_text(f"Model status\n{line}\n\n# Primal solution values\n{primal}\n")
+    sol.write_text(f"Model status\n{line}\n\n# Primal solution values\n{primal}\n", encoding="utf-8")
     assert sps._highs_sol_status(sol) == expected

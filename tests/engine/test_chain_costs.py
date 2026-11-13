@@ -421,7 +421,7 @@ def test_unrealized_look_ahead_of_the_last_solve(tmp_path_factory) -> None:
 def _summary_totals(csv_dir: Path) -> dict[str, float]:
     """``{"full": …, "realized": …}``: the calculated totals (M CUR) of ``summary_solve.csv``."""
     out: dict[str, float] = {}
-    for line in (csv_dir / "summary_solve.csv").read_text().splitlines():
+    for line in (csv_dir / "summary_solve.csv").read_text(encoding="utf-8").splitlines():
         if line.startswith('"Total cost (calculated) full horizon'):
             out["full"] = float(line.split(",")[1])
         elif line.startswith('"Total cost (calculated) realized periods'):
@@ -541,10 +541,10 @@ STOCH_RD_VALUES = [["model", "flextool", "inflation_rate", b64(0.04, "float")],
 
 
 def _stoch_variant(tmp_path_factory, name: str, mutate) -> Path:
-    data = json.loads(STOCH_RD_JSON.read_text())
+    data = json.loads(STOCH_RD_JSON.read_text(encoding="utf-8"))
     mutate(data)
     out = tmp_path_factory.mktemp(f"{name}_json") / f"{name}.json"
-    out.write_text(json.dumps(data))
+    out.write_text(json.dumps(data), encoding="utf-8")
     return out
 
 

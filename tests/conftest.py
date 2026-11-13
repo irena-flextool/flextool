@@ -420,7 +420,7 @@ def lh2_trade_invest_retuned_db_url(tmp_path_factory: pytest.TempPathFactory) ->
     from flextool.update_flextool.db_migration import migrate_database
 
     spec = json.loads(
-        (FIXTURES_DIR / "lh2_three_region_trade_invest.json").read_text()
+        (FIXTURES_DIR / "lh2_three_region_trade_invest.json").read_text(encoding="utf-8")
     )
     alt = "lh2_three_region_trade_invest"
 
@@ -434,7 +434,7 @@ def lh2_trade_invest_retuned_db_url(tmp_path_factory: pytest.TempPathFactory) ->
     ]
     root = tmp_path_factory.mktemp("db_lh2tir")
     json_path = root / "lh2_trade_invest_retuned.json"
-    json_path.write_text(json.dumps(spec))
+    json_path.write_text(json.dumps(spec), encoding="utf-8")
     url = json_to_db(json_path, root / "lh2_trade_invest_retuned.sqlite")
     migrate_database(url)
     return url
@@ -465,7 +465,7 @@ def lh2_master_build_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
     from flextool.update_flextool.db_migration import migrate_database
 
     spec = json.loads(
-        (FIXTURES_DIR / "lh2_three_region_trade_invest.json").read_text()
+        (FIXTURES_DIR / "lh2_three_region_trade_invest.json").read_text(encoding="utf-8")
     )
     alt = "lh2_three_region_trade_invest"
 
@@ -488,7 +488,7 @@ def lh2_master_build_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
     ]
     root = tmp_path_factory.mktemp("db_lh2mb")
     json_path = root / "lh2_master_build.json"
-    json_path.write_text(json.dumps(spec))
+    json_path.write_text(json.dumps(spec), encoding="utf-8")
     db_path = root / "lh2_master_build.sqlite"
     url = json_to_db(json_path, db_path)
     migrate_database(url)
@@ -520,7 +520,7 @@ def lh2_master_hourly_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
     from flextool.update_flextool.db_migration import migrate_database
 
     spec = json.loads(
-        (FIXTURES_DIR / "lh2_three_region_trade_invest.json").read_text()
+        (FIXTURES_DIR / "lh2_three_region_trade_invest.json").read_text(encoding="utf-8")
     )
     alt = "lh2_three_region_trade_invest"
 
@@ -573,7 +573,7 @@ def lh2_master_hourly_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
 
     root = tmp_path_factory.mktemp("db_lh2mh")
     json_path = root / "lh2_master_hourly.json"
-    json_path.write_text(json.dumps(spec))
+    json_path.write_text(json.dumps(spec), encoding="utf-8")
     db_path = root / "lh2_master_hourly.sqlite"
     url = json_to_db(json_path, db_path)
     migrate_database(url)

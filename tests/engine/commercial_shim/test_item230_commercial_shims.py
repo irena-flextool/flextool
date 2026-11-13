@@ -125,8 +125,7 @@ def shim(solver: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         f"#!{sys.executable}\n"
         "import runpy, sys\n"
         f"sys.argv[0] = {str(SHIMS / SHIM[solver])!r}\n"
-        f"runpy.run_path({str(SHIMS / SHIM[solver])!r}, run_name='__main__')\n"
-    )
+        f"runpy.run_path({str(SHIMS / SHIM[solver])!r}, run_name='__main__')\n", encoding="utf-8")
     launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     record = tmp_path / "shim_record.jsonl"
@@ -145,14 +144,14 @@ def _calls(record: Path) -> list[dict]:
     """The shim's record, one dict per call of the solver program."""
     if not record.is_file():
         return []
-    return [json.loads(line) for line in record.read_text().splitlines()]
+    return [json.loads(line) for line in record.read_text(encoding="utf-8").splitlines()]
 
 
 def _cfg(tmp_path: Path, solver: str, text: str) -> Path:
     """A solver-config folder holding *text* as ``<solver>.opt``."""
     cfg = tmp_path / "cfg"
     cfg.mkdir(exist_ok=True)
-    (cfg / f"{solver}.opt").write_text(text)
+    (cfg / f"{solver}.opt").write_text(text, encoding="utf-8")
     return cfg
 
 
@@ -360,11 +359,11 @@ def test_the_realization_solve_flextool_adds_runs_on_the_parents_solver(solver, 
     from tests.db_utils import json_to_db
 
     check_db = _check_db_module()
-    data = json.loads((check_db.REPO / "tests" / "fixtures" / "separate_dispatch_noinvest.json").read_text())
+    data = json.loads((check_db.REPO / "tests" / "fixtures" / "separate_dispatch_noinvest.json").read_text(encoding="utf-8"))
     data = check_db._lp_snapshot()._overlay(data, name="on_solver", base="separate_dispatch_noinvest", values=[
         ["solve", "stoch_rd", "solver", solver], ["solve", "stoch_rd", "solver_mip_gap", 0.2]])
     json_path = tmp_path / "rd.json"
-    json_path.write_text(json.dumps(data))
+    json_path.write_text(json.dumps(data), encoding="utf-8")
     url = json_to_db(json_path, tmp_path / "rd.sqlite")
     migrate_database(url)
     steps = run_chain_from_db(input_db_url=url, scenario_name="on_solver", work_folder=tmp_path / "w",
@@ -540,7 +539,7 @@ def test_mip_at_its_time_limit_keeps_the_solution(solver, shim, tmp_path) -> Non
     assert call["params"] == {THREADS[solver]: 2, TIME[solver]: limit}, call
     if solver == "xpress":
         assert "setControl MAXTIME -1\n" in call["stdin"], call["stdin"]
-        record = (tmp_path / "w" / "solve_data" / "subprocess" / "market_split.opt").read_text()
+        record = (tmp_path / "w" / "solve_data" / "subprocess" / "market_split.opt").read_text(encoding="utf-8")
         assert "MAXTIME -1\n" in record.splitlines(keepends=True), record
     assert call["is_mip"] and call["mip_gap"] is not None and call["mip_gap"] > 0.0, (
         f"{solver} closed the market split gap within 1 s; the model is no longer hard enough: {call}"
@@ -599,7 +598,7 @@ def test_xpress_mip_stopped_before_an_integer_solution_stops_the_run(solver, shi
     (call,) = _calls(shim)
     assert call["is_mip"] and call["mip_gap"] is None and "\nmipoptimize\n" in call["stdin"], call
     slx = tmp_path / "w" / "solve_data" / "subprocess" / "market_split.sol"
-    assert len(slx.read_text().splitlines()) > 2, "the SLX file no longer holds the relaxation; the test is moot"
+    assert len(slx.read_text(encoding="utf-8").splitlines()) > 2, "the SLX file no longer holds the relaxation; the test is moot"
 
 
 @pytest.mark.parametrize("solver", ["xpress"], indirect=True)
@@ -616,7 +615,7 @@ def test_xpress_mip_time_limit_is_a_hard_maxtime_in_the_whole_run(solver, shim, 
     printed = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("Solver args")]
     assert printed and all(ln == "Solver args (xpress): THREADS=1, MAXTIME=-60" for ln in printed), printed
     records = list((tmp_path / "w").rglob("solve_data/subprocess/*.opt"))
-    assert records and all(r.read_text() == "THREADS 1\nMAXTIME -60\n" for r in records), records
+    assert records and all(r.read_text(encoding="utf-8") == "THREADS 1\nMAXTIME -60\n" for r in records), records
 
 
 @pytest.mark.parametrize("solver", ["xpress"], indirect=True)
@@ -734,7 +733,7 @@ def test_run_from_another_folder_uses_the_named_folder(solver, shim, db, tmp_pat
 
     elsewhere = tmp_path / "elsewhere"
     (elsewhere / "solver_config").mkdir(parents=True)
-    (elsewhere / "solver_config" / f"{solver}.opt").write_text(f"{THREADS[solver]} 7\n")
+    (elsewhere / "solver_config" / f"{solver}.opt").write_text(f"{THREADS[solver]} 7\n", encoding="utf-8")
     monkeypatch.chdir(elsewhere)
     cfg = _cfg(tmp_path, solver, f"{THREADS[solver]} 3\n")
     with caplog.at_level(logging.INFO):
@@ -767,13 +766,13 @@ def _recording_wrapper(tmp_path: Path) -> tuple[Path, Path]:
         f'for a in "$0" "$@"; do printf "%s\\n" "$a"; done >> "{record}"\n'
         f'echo >> "{record}"\n'
         'if [ "$1" = "--queue" ]; then shift 2; fi\n'
-        'exec "$@"\n')
+        'exec "$@"\n', encoding="utf-8")
     wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
     return wrapper, record
 
 
 def _wrapped_calls(record: Path) -> list[list[str]]:
-    return [block.splitlines() for block in record.read_text().split("\n\n") if block.strip()]
+    return [block.splitlines() for block in record.read_text(encoding="utf-8").split("\n\n") if block.strip()]
 
 
 def test_a_wrapper_starts_in_front_of_the_solver(solver, shim, db, highs_objective, tmp_path, monkeypatch,
@@ -834,7 +833,7 @@ def test_an_unusable_wrapper_stops_the_run_before_the_model_is_written(solver, s
     from flextool.engine.solve._solver_dispatch import FlexToolUserError
 
     bat = tmp_path / "hold.bat"
-    bat.write_text("@echo off\n")
+    bat.write_text("@echo off\n", encoding="utf-8")
     monkeypatch.setenv("FLEXTOOL_SOLVER_WRAPPER_CPLEX", str(bat))
     with pytest.raises(FlexToolUserError, match="FLEXTOOL_SOLVER_WRAPPER_CPLEX: hold.bat is a script"):
         _run(db, "lp_cplex", tmp_path / "w", _cfg(tmp_path, solver, "threads 2\n"))

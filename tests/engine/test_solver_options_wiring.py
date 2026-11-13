@@ -72,7 +72,7 @@ def _norm(value):
 
 def test_resolver_layer_order(tmp_path) -> None:
     opt = tmp_path / "highs.opt"
-    opt.write_text("mip_rel_gap=0.002\nthreads=1\n")
+    opt.write_text("mip_rel_gap=0.002\nthreads=1\n", encoding="utf-8")
     base = {"solver": "simplex"}
     full = _resolve_effective_highs_options(
         solver_arguments_map={"mip_rel_gap": 0.01}, highs_opt_path=opt, cli_overrides={"threads": 2},
@@ -110,19 +110,19 @@ def options_db(tmp_path_factory) -> tuple[str, Path]:
     from flextool.update_flextool.db_migration import migrate_database
     from tests.db_utils import json_to_db
 
-    data = json.loads((FIXTURES / "tests.json").read_text())
+    data = json.loads((FIXTURES / "tests.json").read_text(encoding="utf-8"))
     data = _lp_snapshot()._overlay(
         data, name="custom", base=["init", "west", "coal"],
         values=[["solve", SOLVE, "solver_arguments",
                  {"index_type": "str", "index_name": "x", "data": [["presolve", "off"]]}],
                 ["solve", SOLVE, "solver_mip_gap", 0.05]])
     work = tmp_path_factory.mktemp("solver_options_db")
-    (work / "f.json").write_text(json.dumps(data))
+    (work / "f.json").write_text(json.dumps(data), encoding="utf-8")
     url = json_to_db(work / "f.json", work / "f.sqlite")
     migrate_database(url)
     cfg = work / "solver_config"
     cfg.mkdir()
-    (cfg / "highs.opt").write_text(HIGHS_OPT)
+    (cfg / "highs.opt").write_text(HIGHS_OPT, encoding="utf-8")
     return url, cfg
 
 
@@ -138,7 +138,7 @@ def _opt_file_options(work: Path) -> dict:
     files = sorted((work / "solve_data" / "subprocess").glob("*.opt"))
     assert files, f"no subprocess .opt file under {work}"
     out: dict = {}
-    for line in files[-1].read_text().splitlines():
+    for line in files[-1].read_text(encoding="utf-8").splitlines():
         if "=" in line and not line.strip().startswith("#"):
             k, _, v = line.partition("=")
             out[k.strip()] = v.strip()
@@ -293,11 +293,11 @@ def test_solver_precommand_is_never_run(tmp_path, monkeypatch) -> None:
     from tests.db_utils import json_to_db
 
     marker = tmp_path / "precommand_ran"
-    data = json.loads((FIXTURES / "tests.json").read_text())
+    data = json.loads((FIXTURES / "tests.json").read_text(encoding="utf-8"))
     data = _lp_snapshot()._overlay(
         data, name="custom", base=["init", "west", "coal"],
         values=[["solve", SOLVE, "solver_precommand", f"touch {marker}"]])
-    (tmp_path / "f.json").write_text(json.dumps(data))
+    (tmp_path / "f.json").write_text(json.dumps(data), encoding="utf-8")
     url = json_to_db(tmp_path / "f.json", tmp_path / "f.sqlite")
     migrate_database(url)
 
@@ -349,19 +349,19 @@ def benders_db(tmp_path_factory) -> tuple[str, Path]:
     from flextool.update_flextool.db_migration import migrate_database
     from tests.db_utils import json_to_db
 
-    data = json.loads((FIXTURES / "lh2_three_region_trade_invest.json").read_text())
+    data = json.loads((FIXTURES / "lh2_three_region_trade_invest.json").read_text(encoding="utf-8"))
     data = _lp_snapshot()._overlay(
         data, name="custom", base="lh2_three_region_trade_invest",
         values=[["solve", "lh2_trade_invest", "solver_arguments",
                  {"index_type": "str", "index_name": "x",
                   "data": [["primal_feasibility_tolerance", 1e-9]]}]])
     work = tmp_path_factory.mktemp("benders_options_db")
-    (work / "f.json").write_text(json.dumps(data))
+    (work / "f.json").write_text(json.dumps(data), encoding="utf-8")
     url = json_to_db(work / "f.json", work / "f.sqlite")
     migrate_database(url)
     cfg = work / "solver_config"
     cfg.mkdir()
-    (cfg / "highs.opt").write_text("dual_feasibility_tolerance=1e-8\n")
+    (cfg / "highs.opt").write_text("dual_feasibility_tolerance=1e-8\n", encoding="utf-8")
     return url, cfg
 
 
@@ -448,9 +448,9 @@ def test_benders_converges_with_threads_and_parallel_regions(tmp_path, monkeypat
     cfg.mkdir()
     if how == "cli":
         monkeypatch.setenv("FLEXTOOL_HIGHS_THREADS", "2")
-        (cfg / "highs.opt").write_text("parallel=off\n")
+        (cfg / "highs.opt").write_text("parallel=off\n", encoding="utf-8")
     else:
-        (cfg / "highs.opt").write_text("threads=2\nparallel=on\n")
+        (cfg / "highs.opt").write_text("threads=2\nparallel=on\n", encoding="utf-8")
     url = json_to_db(FIXTURES / "lh2_three_region_trade_invest.json", tmp_path / "f.sqlite")
     migrate_database(url)
     seen: list[dict] = []
@@ -572,11 +572,11 @@ def gurobi_db(tmp_path_factory) -> str:
     from flextool.update_flextool.db_migration import migrate_database
     from tests.db_utils import json_to_db
 
-    data = json.loads((FIXTURES / "tests.json").read_text())
+    data = json.loads((FIXTURES / "tests.json").read_text(encoding="utf-8"))
     data = _lp_snapshot()._overlay(data, name="custom", base=["init", "west", "coal"],
                                    values=[["solve", SOLVE, "solver", "gurobi"]])
     work = tmp_path_factory.mktemp("gurobi_db")
-    (work / "f.json").write_text(json.dumps(data))
+    (work / "f.json").write_text(json.dumps(data), encoding="utf-8")
     url = json_to_db(work / "f.json", work / "f.sqlite")
     migrate_database(url)
     return url
@@ -595,17 +595,17 @@ def test_second_run_in_a_process_uses_its_own_solver_config(gurobi_db, tmp_path,
     monkeypatch.delenv("FLEXTOOL_THREADS", raising=False)
     first = tmp_path / "first_config"
     first.mkdir()
-    (first / "gurobi.opt").write_text("Threads 11\n")
+    (first / "gurobi.opt").write_text("Threads 11\n", encoding="utf-8")
     cwd = tmp_path / "project"
     (cwd / "solver_config").mkdir(parents=True)
-    (cwd / "solver_config" / "gurobi.opt").write_text("Threads 22\n")
+    (cwd / "solver_config" / "gurobi.opt").write_text("Threads 22\n", encoding="utf-8")
     monkeypatch.chdir(cwd)
     built: list[str] = []
 
     def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None,
                    run_options=None):
         opt = _subprocess_solve._write_commercial_opt_file(options, Path(work_folder) / f"{solve_name}.gurobi.opt")
-        built.append(opt.read_text() if opt is not None else "")
+        built.append(opt.read_text(encoding="utf-8") if opt is not None else "")
         return problem.solve(keep_solver=True)
 
     monkeypatch.setattr(_subprocess_solve, "_solve_commercial_subprocess", commercial)
@@ -613,7 +613,7 @@ def test_second_run_in_a_process_uses_its_own_solver_config(gurobi_db, tmp_path,
                       solver_config_dir=first)
     assert "FLEXTOOL_SOLVER_CONFIG_DIR" not in os.environ
     run_chain_from_db(input_db_url=gurobi_db, scenario_name="custom", work_folder=tmp_path / "w2")
-    assert (tmp_path / "w2" / "solve_data" / "solver_config" / "gurobi.opt").read_text() == "Threads 22\n"
+    assert (tmp_path / "w2" / "solve_data" / "solver_config" / "gurobi.opt").read_text(encoding="utf-8") == "Threads 22\n"
     assert len(built) == 2 and "11" in built[0] and "22" in built[1], built
 
 
@@ -627,7 +627,7 @@ def test_cli_gap_reaches_the_commercial_solver_and_its_args_line(gurobi_db, tmp_
 
     cfg = tmp_path / "cfg"
     cfg.mkdir()
-    (cfg / "gurobi.opt").write_text("Threads 0\nMIPGap 0.002\n")
+    (cfg / "gurobi.opt").write_text("Threads 0\nMIPGap 0.002\n", encoding="utf-8")
     passed: list[dict] = []
 
     def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None,
@@ -657,8 +657,8 @@ def test_option_files_are_read_once_per_run(gurobi_db, tmp_path, monkeypatch) ->
     monkeypatch.delenv("FLEXTOOL_THREADS", raising=False)
     cfg = tmp_path / "cfg"
     cfg.mkdir()
-    (cfg / "gurobi.opt").write_text("Threads 3\n")
-    (cfg / "highs.opt").write_text("threads=1\n")
+    (cfg / "gurobi.opt").write_text("Threads 3\n", encoding="utf-8")
+    (cfg / "highs.opt").write_text("threads=1\n", encoding="utf-8")
     reads: list[Path] = []
     real_read_text, real_read_bytes = Path.read_text, Path.read_bytes
 
@@ -676,7 +676,7 @@ def test_option_files_are_read_once_per_run(gurobi_db, tmp_path, monkeypatch) ->
 
     def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None,
                    run_options=None):
-        (cfg / "gurobi.opt").write_text("Threads 9\n")
+        (cfg / "gurobi.opt").write_text("Threads 9\n", encoding="utf-8")
         passed.append(dict(options))
         return problem.solve(keep_solver=True)
 
@@ -709,7 +709,7 @@ def test_cli_flags_reach_a_fake_gurobi_cl_through_the_whole_run(gurobi_db, tmp_p
     monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
     cfg = tmp_path / "cfg"
     cfg.mkdir()
-    (cfg / "gurobi.opt").write_text("Threads 5\nMIPGap 0.002\n")
+    (cfg / "gurobi.opt").write_text("Threads 5\nMIPGap 0.002\n", encoding="utf-8")
     stub_dir = tmp_path / "stub"
     stub_dir.mkdir()
     stub = _write_fake_gurobi(stub_dir, [], solve_mps=True)
@@ -727,7 +727,7 @@ def test_cli_flags_reach_a_fake_gurobi_cl_through_the_whole_run(gurobi_db, tmp_p
         assert argv[:3] == ["Threads=5", "MIPGap=0.001", "TimeLimit=60"], argv
         assert argv[3].startswith("ResultFile=") and len(argv) == 5, argv
     assert f"Solver config: {cfg} (--solver-config-dir)" in [r.getMessage() for r in caplog.records]
-    assert (work / "solve_data" / "solver_config" / "gurobi.opt").read_text() == "Threads 5\nMIPGap 0.002\n"
+    assert (work / "solve_data" / "solver_config" / "gurobi.opt").read_text(encoding="utf-8") == "Threads 5\nMIPGap 0.002\n"
 
 
 @pytest.mark.parametrize("next_to_db", [False, True])
@@ -747,16 +747,16 @@ def test_the_cli_resolves_the_option_folder_from_its_own_arguments(gurobi_db, tm
     monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
     tb = tmp_path / "tb"
     (tb / "templates").mkdir(parents=True)
-    (tb / "templates" / "project_folder.txt").write_text("")
+    (tb / "templates" / "project_folder.txt").write_text("", encoding="utf-8")
     (tb / "solver_config").mkdir()
-    (tb / "solver_config" / "gurobi.opt").write_text("Threads 4\n")
+    (tb / "solver_config" / "gurobi.opt").write_text("Threads 4\n", encoding="utf-8")
     models = tmp_path / "models"
     models.mkdir()
     db = models / "f.sqlite"
     shutil.copyfile(gurobi_db.removeprefix("sqlite:///"), db)
     if next_to_db:
         (models / "solver_config").mkdir()
-        (models / "solver_config" / "gurobi.opt").write_text("Threads 6\n")
+        (models / "solver_config" / "gurobi.opt").write_text("Threads 6\n", encoding="utf-8")
         expected = (models / "solver_config", REASON_DB_FOLDER)
     else:
         expected = (tb / "solver_config", REASON_TOOLBOX)

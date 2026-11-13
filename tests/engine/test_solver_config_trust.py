@@ -70,9 +70,9 @@ def _options(**flags: str) -> RunOptions:
 def _received_workspace(root: Path, gurobi_text: str = EDITED_GUROBI) -> Path:
     """A workspace that came from elsewhere: FlexTool's workspace marker and an edited ``gurobi.opt``."""
     (root / "templates").mkdir(parents=True)
-    (root / "templates" / "project_folder.txt").write_text("")
+    (root / "templates" / "project_folder.txt").write_text("", encoding="utf-8")
     (root / "solver_config").mkdir()
-    (root / "solver_config" / "gurobi.opt").write_text(gurobi_text)
+    (root / "solver_config" / "gurobi.opt").write_text(gurobi_text, encoding="utf-8")
     return root
 
 
@@ -95,7 +95,7 @@ def test_a_received_workspace_with_edited_files_is_not_trusted(tmp_path, monkeyp
     ws = _received_workspace(tmp_path / "received")
     monkeypatch.chdir(ws)
     ensure_runtime_files()
-    assert (ws / "solver_config" / "gurobi.opt").read_text() == EDITED_GUROBI  # never overwritten
+    assert (ws / "solver_config" / "gurobi.opt").read_text(encoding="utf-8") == EDITED_GUROBI  # never overwritten
     assert settings.trusted_workspaces() == ()
     source = resolve_solver_config_source(run_options=_options(), cwd=ws)
     assert (source.dir, source.reason, source.trusted) == (ws / "solver_config", REASON_CWD, False)
@@ -122,7 +122,7 @@ def test_the_marker_cannot_be_forged_by_files_inside_the_workspace(tmp_path, mon
     forged = json.dumps({"format": 1, "trusted_workspaces": [str(ws), settings.workspace_key(ws)]})
     for place in (ws, ws / "config", ws / "solver_config"):
         place.mkdir(exist_ok=True)
-        (place / "solver_settings.json").write_text(forged)
+        (place / "solver_settings.json").write_text(forged, encoding="utf-8")
     monkeypatch.chdir(ws)
     ensure_runtime_files()
     assert settings.trusted_workspaces() == ()
@@ -146,7 +146,7 @@ def test_a_workspace_set_up_here_is_listed_once_and_trusted(tmp_path, monkeypatc
     ensure_runtime_files()
     ensure_runtime_files()
     assert settings.trusted_workspaces() == (settings.workspace_key(ws),)
-    (ws / "solver_config" / "gurobi.opt").write_text(EDITED_GUROBI)
+    (ws / "solver_config" / "gurobi.opt").write_text(EDITED_GUROBI, encoding="utf-8")
     source = resolve_solver_config_source(run_options=_options(), cwd=ws)
     assert (source.dir, source.trusted, source.trust_note) == (ws / "solver_config", True, None)
     text, origin, note = _gurobi_file_layer(source)
@@ -165,7 +165,7 @@ def test_a_workspace_holding_only_flextool_defaults_is_listed(tmp_path, monkeypa
     own = tmp_path / "own"
     (own / "solver_config").mkdir(parents=True)
     (own / "solver_config" / "highs.opt").write_bytes(template)
-    (own / "solver_config" / "notes.txt").write_text("not an option file")
+    (own / "solver_config" / "notes.txt").write_text("not an option file", encoding="utf-8")
     linked = tmp_path / "linked"
     (linked / "solver_config").mkdir(parents=True)
     (linked / "solver_config" / "highs.opt").symlink_to(own / "solver_config" / "highs.opt")
@@ -201,7 +201,7 @@ def test_named_folders_stay_trusted_and_a_listed_folder_matches_through_a_symlin
 def test_a_damaged_settings_file_leaves_the_folder_untrusted_and_says_so(tmp_path, user_home) -> None:
     ws = _received_workspace(tmp_path / "ws")
     (user_home / "config").mkdir(parents=True)
-    settings.settings_path().write_text("{not json")
+    settings.settings_path().write_text("{not json", encoding="utf-8")
     source = resolve_solver_config_source(run_options=_options(), cwd=ws)
     assert source.trusted is False
     assert "is not valid JSON" in source.trust_note
@@ -285,10 +285,10 @@ def _gui_workspace_with_project(root: Path) -> tuple[Path, Path]:
     """A workspace this computer set up (listed) whose ``gurobi.opt`` names a path and whose ``highs.opt`` sets a
     log file outside the work folder, and a project with its own ``gurobi.opt`` (a path too)."""
     ws = _received_workspace(root / "ws", gurobi_text=EDITED_GUROBI)
-    (ws / "solver_config" / "highs.opt").write_text("log_file=/var/log/flextool/highs.log\n")
+    (ws / "solver_config" / "highs.opt").write_text("log_file=/var/log/flextool/highs.log\n", encoding="utf-8")
     project = ws / "projects" / "P"
     (project / "solver_config").mkdir(parents=True)
-    (project / "solver_config" / "gurobi.opt").write_text(PROJECT_GUROBI)
+    (project / "solver_config" / "gurobi.opt").write_text(PROJECT_GUROBI, encoding="utf-8")
     settings.add_trusted_workspace(ws)
     return ws, project
 
@@ -354,7 +354,7 @@ def test_named_folders_stay_trusted_below_an_untrusted_found_project_folder(tmp_
     ws, project = _gui_workspace_with_project(tmp_path)
     chosen = tmp_path / "chosen"
     chosen.mkdir()
-    (chosen / "cplex.opt").write_text("workdir /scratch/cplex\n")
+    (chosen / "cplex.opt").write_text("workdir /scratch/cplex\n", encoding="utf-8")
     found, named = gui_solver_config_ladder(project, environ={"FLEXTOOL_SOLVER_CONFIG_DIR": str(chosen)}, cwd=ws)
     assert (found, named) == ([project / "solver_config"], [chosen])
     options = RunOptions(resolved={"workspace_solver_config_dir": Resolved(tuple(map(str, found)), "cli"),
@@ -384,7 +384,7 @@ def test_a_relative_folder_named_like_the_default_stays_untrusted(tmp_path, monk
     monkeypatch.chdir(tmp_path)
     folder = Path("FlexTool default x") / "solver_config"
     folder.mkdir(parents=True)
-    (folder / "gurobi.opt").write_text(EDITED_GUROBI)
+    (folder / "gurobi.opt").write_text(EDITED_GUROBI, encoding="utf-8")
     source = resolve_solver_config_source(run_options=_options(workspace_solver_config_dir=str(folder)), cwd=tmp_path)
     files = read_solver_option_files(source)
     assert files.untrusted_note("gurobi") is not None
@@ -408,9 +408,9 @@ def test_a_project_is_noted_only_when_nothing_received_waits_in_it(tmp_path) -> 
     for project in (fresh, edited, held, old):
         project.mkdir(parents=True)
     (edited / "solver_config").mkdir()
-    (edited / "solver_config" / "gurobi.opt").write_text(PROJECT_GUROBI)
+    (edited / "solver_config" / "gurobi.opt").write_text(PROJECT_GUROBI, encoding="utf-8")
     (held / "solver_config").mkdir()
-    (held / "solver_config" / "gurobi.opt.review").write_text(PROJECT_GUROBI)
+    (held / "solver_config" / "gurobi.opt.review").write_text(PROJECT_GUROBI, encoding="utf-8")
     (old / "imported_solver_config").mkdir()
     assert [note_project_set_up_here(p) for p in (fresh, edited, held, old)] == [True, False, False, False]
     assert note_project_set_up_here(fresh) is False  # already listed
@@ -430,7 +430,7 @@ def test_creating_and_renaming_a_project_keep_its_trust_with_it(tmp_path, monkey
     # A folder left at a new project's path with received option files is not noted.
     leftover = tmp_path / "projects" / "Left" / "solver_config"
     leftover.mkdir(parents=True)
-    (leftover / "gurobi.opt").write_text(PROJECT_GUROBI)
+    (leftover / "gurobi.opt").write_text(PROJECT_GUROBI, encoding="utf-8")
     assert not settings.is_trusted_workspace(create_project("Left"))
 
 
@@ -478,7 +478,7 @@ def test_a_later_edit_is_trusted_only_when_no_other_account_can_change_the_file(
     ws, path = _trusted_workspace_file(tmp_path / "ws")
     path.chmod(0o646)
     assert _gurobi_note(ws) is None  # as it was when trusted
-    path.write_text("Threads 4\nNodefileDir /srv/other\n")
+    path.write_text("Threads 4\nNodefileDir /srv/other\n", encoding="utf-8")
     path.chmod(0o644)
     assert _gurobi_note(ws) is None  # the user's own edit
     path.chmod(0o646)
@@ -496,9 +496,9 @@ def test_a_text_entry_of_a_development_build_is_bound_to_the_folder_now_there(tm
     path with its current files; a folder put there afterwards is then not trusted."""
     ws = _received_workspace(tmp_path / "ws")
     (user_home / "config").mkdir(parents=True, exist_ok=True)
-    settings.settings_path().write_text(json.dumps({"format": 1, "trusted_workspaces": [str(ws)]}))
+    settings.settings_path().write_text(json.dumps({"format": 1, "trusted_workspaces": [str(ws)]}), encoding="utf-8")
     assert settings.is_trusted_workspace(ws)
-    (entry,) = json.loads(settings.settings_path().read_text())["trusted_workspaces"]
+    (entry,) = json.loads(settings.settings_path().read_text(encoding="utf-8"))["trusted_workspaces"]
     assert entry["path"] == settings.workspace_key(ws)
     assert entry["files"] == {"gurobi.opt": settings._sha256(EDITED_GUROBI.encode())}
     assert entry["id"] == list(settings.folder_identity(ws))
@@ -522,7 +522,7 @@ def test_a_relative_list_entry_is_refused(tmp_path, user_home, monkeypatch, entr
     ws = _received_workspace(tmp_path / "ws")
     monkeypatch.chdir(ws)
     (user_home / "config").mkdir(parents=True, exist_ok=True)
-    settings.settings_path().write_text(json.dumps({"format": 1, "trusted_workspaces": [entry]}))
+    settings.settings_path().write_text(json.dumps({"format": 1, "trusted_workspaces": [entry]}), encoding="utf-8")
     with pytest.raises(settings.LocalSolverSettingsError, match="not a full folder path"):
         settings.is_trusted_workspace(ws)
     source = resolve_solver_config_source(run_options=_options(), cwd=ws)
@@ -556,7 +556,7 @@ def test_a_relative_user_home_is_ignored(tmp_path, tmp_path_factory, monkeypatch
     monkeypatch.setenv("FLEXTOOL_USER_HOME", str(ws / "carried"))
     assert settings.settings_path() == ws / "carried" / "config" / "solver_settings.json"
     settings.settings_path().parent.mkdir(parents=True)
-    settings.settings_path().write_text(json.dumps({"format": 1, "trusted_workspaces": [str(ws)]}))
+    settings.settings_path().write_text(json.dumps({"format": 1, "trusted_workspaces": [str(ws)]}), encoding="utf-8")
     db = ws / "model.sqlite"
     db.write_bytes(b"")
     found = resolve_solver_config_source(run_options=_options(), input_db_url=f"sqlite:///{db}", cwd=tmp_path)
@@ -609,7 +609,7 @@ def test_a_settings_file_another_account_could_change_is_not_read(user_home, mon
     another account, is refused with a message saying how to fix it."""
     (user_home / "config").mkdir(parents=True, exist_ok=True)
     path = settings.settings_path()
-    path.write_text('{"format": 1, "allow_unlisted_parameters": true}')
+    path.write_text('{"format": 1, "allow_unlisted_parameters": true}', encoding="utf-8")
     path.chmod(0o600)
     assert settings.allow_unlisted_parameters({}).value is True
     path.chmod(0o666)
@@ -693,7 +693,7 @@ def test_the_trust_command_trusts_only_the_content_it_showed(tmp_path, monkeypat
     ws = _received_workspace(tmp_path / "ws")
 
     def change_then_yes(prompt: str) -> str:
-        (ws / "solver_config" / "gurobi.opt").write_text("ResultFile /home/u/.bashrc\n")
+        (ws / "solver_config" / "gurobi.opt").write_text("ResultFile /home/u/.bashrc\n", encoding="utf-8")
         return "y"
 
     monkeypatch.setattr("builtins.input", change_then_yes)

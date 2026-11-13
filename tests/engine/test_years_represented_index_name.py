@@ -36,7 +36,7 @@ def _stochastic(index: str | None):
         return lps._overlay(data, name="years_ix", base="recourse", values=[
             ["solve", "stoch_2p_inv", "years_represented",
              scm.pmap([("p2035", 5.0), ("p2040", 3.0)], **({} if index is None else {"index_name": index}))]])
-    return patch(json.loads(STOCH_INVEST_JSON.read_text()))
+    return patch(json.loads(STOCH_INVEST_JSON.read_text(encoding="utf-8")))
 
 
 def _rolling(index: str | None):
@@ -44,7 +44,7 @@ def _rolling(index: str | None):
     rolls of 48 h every 36 h (two rolls per period)."""
     lps = scm.lp_snapshot()
     years = [("p2020", 2.0), ("p2025", 3.0), ("p2030", 4.0), ("p2035", 5.0)]
-    return lps._overlay(json.loads(TESTS_JSON.read_text()), name="years_ix", base="fullYear_roll", values=[
+    return lps._overlay(json.loads(TESTS_JSON.read_text(encoding="utf-8")), name="years_ix", base="fullYear_roll", values=[
         ["solve", "dispatch_fullYear_roll", "years_represented",
          scm.pmap(years, **({} if index is None else {"index_name": index}))],
         ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", 48.0],

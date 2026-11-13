@@ -111,7 +111,7 @@ def _label_texts(widget: tk.Misc) -> list[str]:
 
 def test_export_dialog_names_a_left_out_option_file(root: tk.Tk, workspace: dict) -> None:  # noqa: F811
     """An option file with a server line is named, with the line, before and after the export."""
-    (workspace["config"] / "gurobi.opt").write_text("ComputeServer srv.example:61000\n")
+    (workspace["config"] / "gurobi.opt").write_text("ComputeServer srv.example:61000\n", encoding="utf-8")
     out_dir: Path = workspace["root"] / "out"
     dlg = ExportDialog(root, workspace["project"], solver_config_dir=workspace["config"], target_dir=out_dir)
     try:

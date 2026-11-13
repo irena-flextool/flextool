@@ -357,8 +357,7 @@ def test_solver_options_passthrough(
         "# test baseline\n"
         "Threads 1\n"
         "MIPGap 0.002\n"
-        "LogToConsole 1\n"
-    )
+        "LogToConsole 1\n", encoding="utf-8")
     monkeypatch.setenv("FLEXTOOL_SOLVER_CONFIG_DIR", str(config_dir))
     # This test is about the option file and database layers: no thread budget, so the file's thread count
     # stands (the suite's FLEXTOOL_THREADS=1 would replace it, item 232).
@@ -398,7 +397,7 @@ def test_solver_options_passthrough(
             sol_path.write_text(json.dumps({
                 "SolutionInfo": {"Status": 2, "ObjVal": 1.0, "SolCount": 1},
                 "Vars": [{"VarName": "C0000001", "X": 1.0}],
-            }))
+            }), encoding="utf-8")
 
         from flextool.engine.solve._subprocess_solve import _SolverRun
 

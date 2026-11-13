@@ -66,7 +66,7 @@ def _warnings(caplog) -> list[str]:
 def _settings_file(tmp_path: Path, text: str) -> Path:
     path = tmp_path / "user" / "config" / "solver_settings.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     return path
 
 
@@ -281,7 +281,7 @@ def test_flextool3_highs_settings_are_left_out_of_a_commercial_solve(caplog) -> 
 
 def test_flextool3_highs_names_are_the_migrations() -> None:
     """The names the v56 migration folds FlexTool 3's highs_method / highs_parallel / highs_presolve into."""
-    source = (REPO / "flextool" / "update_flextool" / "db_migration.py").read_text()
+    source = (REPO / "flextool" / "update_flextool" / "db_migration.py").read_text(encoding="utf-8")
     assert set(re.findall(r'highs_key="(\w+)"', source)) == _solver_dispatch._FLEXTOOL3_HIGHS_OPTIONS
 
 
@@ -381,7 +381,7 @@ def test_shipped_databases_set_only_listed_names() -> None:
                *(REPO / "flextool" / "schemas" / "canonical_databases").glob("*.json")]
     assert sources
     for path in sources:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         values = data.get("parameter_values", []) if isinstance(data, dict) else []
         solvers = {v[1]: v[3] for v in values if v[0] == "solve" and v[2] == "solver" and isinstance(v[3], str)}
         for v in values:
@@ -426,7 +426,7 @@ def two_solve_db(tmp_path_factory) -> str:
         spec.loader.exec_module(sys.modules[name])
     lps = sys.modules[name]
     bad = ["solve", _OTHER_SOLVE, "solver_arguments", {"index_type": "str", "index_name": "x", "data": [["MIPGap", 0.01]]}]
-    data = json.loads((REPO / "tests" / "fixtures" / "tests.json").read_text())
+    data = json.loads((REPO / "tests" / "fixtures" / "tests.json").read_text(encoding="utf-8"))
     base = ["init", "west", "coal"]
     data = lps._overlay(data, name="second_refused", base=base, values=[
         ["model", "flexTool", "solves", {"type": "array", "value_type": "str", "data": [_CHECK_SOLVE, _OTHER_SOLVE]}],
@@ -434,7 +434,7 @@ def two_solve_db(tmp_path_factory) -> str:
     data = lps._overlay(data, name="unused_refused", base=base, values=[bad])
     folder = tmp_path_factory.mktemp("upfront_check")
     json_path = folder / "db.json"
-    json_path.write_text(json.dumps(data))
+    json_path.write_text(json.dumps(data), encoding="utf-8")
     url = json_to_db(json_path, folder / "db.sqlite")
     migrate_database(url)
     return url

@@ -100,7 +100,7 @@ def _options(flags: list[str], environ: dict | None = None) -> RunOptions:
 def _passed(solver: str, tmp_path: Path, opt_text: str, cfg: SolverConfig, flags: list[str]):
     """The argv parameters (Gurobi) or the stdin script (the others) the CLI would get."""
     opt_file = tmp_path / f"{solver}.opt"
-    opt_file.write_text(opt_text)
+    opt_file.write_text(opt_text, encoding="utf-8")
     resolved = resolve_commercial_options(solver, opt_file=opt_file, solver_config=cfg, run_options=_options(flags))
     merged = commercial_params({o.name: o.value for o in resolved})
     argv, stdin = _SCRIPTS[solver](Path("bin"), tmp_path / "m.mps", tmp_path / "m.sol", merged)
@@ -239,7 +239,7 @@ def test_thread_budget_from_the_environment_replaces_xpress_all_cores(tmp_path: 
     line's position; the line names the environment variable."""
     reset_run_warnings()
     opt_file = tmp_path / "xpress.opt"
-    opt_file.write_text("THREADS -1\nMIPRELSTOP 0.002\n")
+    opt_file.write_text("THREADS -1\nMIPRELSTOP 0.002\n", encoding="utf-8")
     resolved = resolve_commercial_options("xpress", opt_file=opt_file, solver_config=SolverConfig(name="xpress"),
                                           run_options=_options([], {"FLEXTOOL_THREADS": "2"}))
     assert [(o.name, o.value) for o in resolved] == [("THREADS", "2"), ("MIPRELSTOP", "0.002")]
@@ -314,7 +314,7 @@ def test_thread_override_line_is_once_per_run_and_without_advice_when_raising(tm
     opt_file = tmp_path / "gurobi.opt"
 
     def resolve(text: str, threads: str, solve: str) -> list[tuple[str, str]]:
-        opt_file.write_text(text)
+        opt_file.write_text(text, encoding="utf-8")
         resolved = resolve_commercial_options("gurobi", opt_file=opt_file, solver_config=None,
                                               run_options=_options(["--threads", threads]), solve_name=solve)
         return [(o.name, o.value) for o in resolved]
@@ -415,7 +415,7 @@ def test_copt_lp_time_limit_is_read_with_and_without_a_solution_file(tmp_path: P
     missing = _parse_copt_sol(tmp_path / "none.sol", _COPT_LP_TIMEOUT_LOG)
     assert (missing.status, missing.primal, missing.objective) == ("TIME_LIMIT", None, None)
     sol = tmp_path / "lp.sol"
-    sol.write_text("# Objective value 1094.39775\nC0000001  1\nC0000002  0\n")
+    sol.write_text("# Objective value 1094.39775\nC0000001  1\nC0000002  0\n", encoding="utf-8")
     written = _parse_copt_sol(sol, _COPT_LP_TIMEOUT_LOG)
     assert written.status == "TIME_LIMIT" and written.primal == {"C0000001": 1.0, "C0000002": 0.0}
     assert _parse_copt_sol(sol, "Status: Optimal  Objective: 1.0943977500e+03\n").status == "OPTIMAL"
@@ -454,7 +454,7 @@ def test_copt_status_with_a_solution_comes_from_its_log(log, status, gap, tmp_pa
     from flextool.engine.solve._subprocess_solve import _parse_copt_sol
 
     sol = tmp_path / "mip.sol"
-    sol.write_text("# Objective value 1\nC0000001  1\nC0000002  0\n")
+    sol.write_text("# Objective value 1\nC0000001  1\nC0000002  0\n", encoding="utf-8")
     parsed = _parse_copt_sol(sol, log)
     assert (parsed.status, parsed.primal, parsed.mip_gap) == (status, {"C0000001": 1.0, "C0000002": 0.0}, gap)
 
@@ -471,7 +471,7 @@ def test_copt_mip_at_a_node_limit_keeps_its_solution_naming_it(tmp_path: Path) -
     from flextool.engine.solve._subprocess_solve import _parse_copt_sol
 
     sol_file = tmp_path / "mip.sol"
-    sol_file.write_text("# Objective value 1\nC0000001  1\n")
+    sol_file.write_text("# Objective value 1\nC0000001  1\n", encoding="utf-8")
     parsed = _parse_copt_sol(sol_file, _COPT_MIP_NODE_LIMIT_LOG)
     assert (parsed.status, parsed.mip_gap) == ("NODE_LIMIT", 1.0)
     mip_vars = {"u": SimpleNamespace(integer=True, frame=pl.DataFrame({"col_id": [0]}))}
@@ -515,7 +515,7 @@ def test_a_work_folder_with_a_space_reaches_the_solver_as_bare_file_names(solver
 
     record = tmp_path / "record.json"
     stub = tmp_path / "solver_stub"
-    stub.write_text(_RECORDING_SOLVER.format(py=sys.executable, record=str(record)))
+    stub.write_text(_RECORDING_SOLVER.format(py=sys.executable, record=str(record)), encoding="utf-8")
     stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setattr(sps, "_find_solver_binary", lambda name: stub)
     pb = _cost_lp(["coal fired", "gas"])
@@ -523,7 +523,7 @@ def test_a_work_folder_with_a_space_reaches_the_solver_as_bare_file_names(solver
     with pytest.raises(RuntimeError, match="no solution file"):
         sps._solve_commercial_subprocess(pb, solver, {"Threads" if solver != "xpress" else "THREADS": 1},
                                          solve_name="y2020 dispatch", logger=None, work_folder=work)
-    got = json.loads(record.read_text())
+    got = json.loads(record.read_text(encoding="utf-8"))
     out_dir = work / "solve_data" / "subprocess"
     assert Path(got["cwd"]) == out_dir
     assert (out_dir / "y2020_dispatch.mps").is_file()
@@ -536,7 +536,7 @@ def test_a_work_folder_with_a_space_reaches_the_solver_as_bare_file_names(solver
         lines = got["stdin"].splitlines()
         assert f"{read} y2020_dispatch.mps" in lines and write in lines, lines
         # Review F7: the script is kept next to the MPS for a replay by hand.
-        assert (out_dir / "y2020_dispatch.script").read_text() == got["stdin"]
+        assert (out_dir / "y2020_dispatch.script").read_text(encoding="utf-8") == got["stdin"]
     assert "my runs" not in json.dumps(got["argv"]) + got["stdin"]
 
 
@@ -655,7 +655,7 @@ def test_a_highs_whole_number_option_from_the_database_runs_in_the_save_memory_c
     )
     sol = solve_via_subprocess(_cost_lp(["a", "b"]), "highs", options, solve_name="s", work_folder=tmp_path / "work")
     assert sol.optimal
-    opt_lines = (tmp_path / "work" / "solve_data" / "subprocess" / "s.opt").read_text().splitlines()
+    opt_lines = (tmp_path / "work" / "solve_data" / "subprocess" / "s.opt").read_text(encoding="utf-8").splitlines()
     assert "simplex_iteration_limit=100000" in opt_lines and "mip_detect_symmetry=true" in opt_lines
 
 
@@ -687,14 +687,14 @@ def test_a_solver_that_exits_0_without_a_result_never_gets_an_earlier_runs_file(
     from tests.engine.test_subprocess_gurobi_name_recovery import _cost_lp
 
     stub = tmp_path / "solver_stub"
-    stub.write_text(_SILENT_SOLVER.format(py=sys.executable))
+    stub.write_text(_SILENT_SOLVER.format(py=sys.executable), encoding="utf-8")
     stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setattr(sps, "_find_solver_binary", lambda name: stub)
     work = tmp_path / "work"
     out_dir = work / "solve_data" / "subprocess"
     out_dir.mkdir(parents=True)
     for name, text in _STALE_RESULTS[solver].items():
-        (out_dir / name).write_text(text)
+        (out_dir / name).write_text(text, encoding="utf-8")
     with pytest.raises(RuntimeError, match="produced no solution file we could parse"):
         sps._solve_commercial_subprocess(_cost_lp(["a", "b"]), solver, None, solve_name="probe", logger=None,
                                          work_folder=work)
@@ -752,7 +752,7 @@ def test_xpress_mip_time_limit_is_a_hard_maxtime(is_mip, flags, cfg_limit, opt_t
     -<limit>``, a hard limit (a positive MAXTIME stops a MIP only once it has a solution); the watchdog takes the
     absolute value."""
     opt_file = tmp_path / "xpress.opt"
-    opt_file.write_text(opt_text)
+    opt_file.write_text(opt_text, encoding="utf-8")
     resolved = resolve_commercial_options("xpress", opt_file=opt_file, run_options=_options(flags), is_mip=is_mip,
                                           solver_config=SolverConfig(name="xpress", time_limit=cfg_limit))
     assert [o.value for o in resolved if o.name == "MAXTIME"] == [expected]
@@ -842,8 +842,8 @@ def test_xpress_mip_status_comes_from_the_log_not_the_print_solution(log, status
     the print solution says ``Optimal solution found``.  Only ``*** Search completed ***`` is OPTIMAL."""
     from flextool.engine.solve._subprocess_solve import _parse_xpress_sol
 
-    (tmp_path / "s.sol.slx").write_text(_XPRESS_SLX)
-    (tmp_path / "s.sol.prt").write_text(_XPRESS_PRT)
+    (tmp_path / "s.sol.slx").write_text(_XPRESS_SLX, encoding="utf-8")
+    (tmp_path / "s.sol.prt").write_text(_XPRESS_PRT, encoding="utf-8")
     parsed = _parse_xpress_sol(tmp_path / "s.sol", log, is_mip=True)
     assert (parsed.status, parsed.primal) == (status, {"C0000001": 1.0, "C0000002": 0.75})
     assert parsed.objective == pytest.approx(objective, rel=1e-15)
@@ -864,8 +864,8 @@ def test_xpress_mip_without_an_integer_solution_never_reads_the_lp_relaxation(lo
     solution says ``Optimal solution found``): there is no solution, so the run stops with the log's reason."""
     from flextool.engine.solve._subprocess_solve import _NO_SOLUTION_REASONS, _parse_xpress_sol
 
-    (tmp_path / "s.sol.slx").write_text(_XPRESS_SLX)
-    (tmp_path / "s.sol.prt").write_text(_XPRESS_PRT)
+    (tmp_path / "s.sol.slx").write_text(_XPRESS_SLX, encoding="utf-8")
+    (tmp_path / "s.sol.prt").write_text(_XPRESS_PRT, encoding="utf-8")
     parsed = _parse_xpress_sol(tmp_path / "s.sol", log, is_mip=True)
     assert (parsed.status, parsed.primal, parsed.objective) == (status, None, None)
     assert status in _NO_SOLUTION_REASONS
@@ -875,8 +875,8 @@ def test_xpress_lp_parse_is_unchanged_by_the_mip_reading(tmp_path: Path) -> None
     """An LP keeps the print-solution reading: a MIP log line in its output changes nothing."""
     from flextool.engine.solve._subprocess_solve import _parse_xpress_sol
 
-    (tmp_path / "s.sol.slx").write_text(_XPRESS_SLX)
-    (tmp_path / "s.sol.prt").write_text(_XPRESS_PRT)
+    (tmp_path / "s.sol.slx").write_text(_XPRESS_SLX, encoding="utf-8")
+    (tmp_path / "s.sol.prt").write_text(_XPRESS_PRT, encoding="utf-8")
     parsed = _parse_xpress_sol(tmp_path / "s.sol", _XPRESS_NODE_LIMIT_NO_SOLUTION_LOG.replace("MAXNODE", "X"))
     assert (parsed.status, parsed.objective) == ("OPTIMAL", 23.0)
 
@@ -888,10 +888,10 @@ _XPRESS_NO_INCUMBENT_STUB = """\
 import sys
 from pathlib import Path
 script = sys.stdin.read()
-Path("stdin.txt").write_text(script)
+Path("stdin.txt").write_text(script, encoding="utf-8")
 sol = next(line.split()[1] for line in script.splitlines() if line.startswith("writeslxsol"))
-Path(sol).write_text({slx!r})
-Path(sol + ".prt").write_text({prt!r})
+Path(sol).write_text({slx!r}, encoding="utf-8")
+Path(sol + ".prt").write_text({prt!r}, encoding="utf-8")
 print({log!r})
 """
 
@@ -907,12 +907,12 @@ def test_an_xpress_mip_runs_mipoptimize_and_stops_without_an_integer_solution(tm
 
     stub = tmp_path / "optimizer"
     stub.write_text(_XPRESS_NO_INCUMBENT_STUB.format(py=sys.executable, slx=_XPRESS_SLX, prt=_XPRESS_PRT,
-                                                     log=_XPRESS_NODE_LIMIT_NO_SOLUTION_LOG))
+                                                     log=_XPRESS_NODE_LIMIT_NO_SOLUTION_LOG), encoding="utf-8")
     stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setattr(sps, "_find_solver_binary", lambda name: stub)
     work = tmp_path / "work"
     with pytest.raises(RuntimeError, match="stopped at its node limit before finding a solution"):
         sps._solve_commercial_subprocess(_mip_lp(["a", "b"]), "xpress", None, solve_name="probe", logger=None,
                                          work_folder=work)
-    script = (work / "solve_data" / "subprocess" / "stdin.txt").read_text().splitlines()
+    script = (work / "solve_data" / "subprocess" / "stdin.txt").read_text(encoding="utf-8").splitlines()
     assert "mipoptimize" in script and "lpoptimize" not in script

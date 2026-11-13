@@ -58,7 +58,7 @@ def _nsd(mode: str) -> dict:
 
 
 def _separate_dispatch(mode: str) -> dict:
-    data = json.loads(SEPARATE_DISPATCH_JSON.read_text())
+    data = json.loads(SEPARATE_DISPATCH_JSON.read_text(encoding="utf-8"))
     if mode == "hand":
         return scm.rename_solve(data, "stoch_rd", "stoch_rd_p2035")
     lps = scm.lp_snapshot()

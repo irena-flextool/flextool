@@ -55,10 +55,10 @@ def _run(folder: Path, value: float, db_mtime_ns: int, state: str = "succeeded",
         "state": state, "verdict": "optimal", "process": {"host": "builder-host", "pid": 4242},
         "argv": ["/opt/work/flextool3__toolbox/cmd_run_flextool.py", "http://127.0.0.1:48767"],
         "input": {"db_mtime": _iso(db_mtime_ns), "db_path": str(project / "input_sources" / "model.sqlite")},
-        "output": {"location": str(project), "parquet_dir": str(folder)}, **extra}))
-    (folder / "_run.log").write_text(f"solving in {project}\n")
+        "output": {"location": str(project), "parquet_dir": str(folder)}, **extra}), encoding="utf-8")
+    (folder / "_run.log").write_text(f"solving in {project}\n", encoding="utf-8")
     (folder / "plot_plans").mkdir()
-    (folder / "plot_plans" / "plan.json").write_text("{}")
+    (folder / "plot_plans" / "plan.json").write_text("{}", encoding="utf-8")
 
 
 @pytest.fixture()
@@ -84,18 +84,18 @@ def workspace(tmp_path: Path, db_template: Path) -> dict:
         "scenario_order": ["A", "B"],
         **MACHINE_SETTINGS,
     }
-    (project / "settings.yaml").write_text(yaml.dump(settings, sort_keys=False))
-    (project / "plot_settings.yaml").write_text("colors: {}\n")
+    (project / "settings.yaml").write_text(yaml.dump(settings, sort_keys=False), encoding="utf-8")
+    (project / "plot_settings.yaml").write_text("colors: {}\n", encoding="utf-8")
     (project / "results.sqlite").write_bytes(b"x")
-    (project / "output_csv" / "A_1" / "flow.csv").write_text("a,b\n")
-    (project / "work" / "scratch.txt").write_text("scratch")
+    (project / "output_csv" / "A_1" / "flow.csv").write_text("a,b\n", encoding="utf-8")
+    (project / "work" / "scratch.txt").write_text("scratch", encoding="utf-8")
     _run(project / "output_parquet" / "A_1", 1.0, T_OLD)
     _run(project / "output_parquet" / "B_2", 3.0, T_OLD)
     (project / "output_parquet" / "_axis_bounds.json").write_text(json.dumps({
-        "unit_flow_dt": {"chunks": {"<untitled>": {"A_1": [0.0, 2.0], "B_2": [0.0, 6.0]}}}}))
+        "unit_flow_dt": {"chunks": {"<untitled>": {"A_1": [0.0, 2.0], "B_2": [0.0, 6.0]}}}}), encoding="utf-8")
     config = tmp_path / "solver_config"
     config.mkdir()
-    (config / "highs.opt").write_text("mip_rel_gap = 0.01\n")
+    (config / "highs.opt").write_text("mip_rel_gap = 0.01\n", encoding="utf-8")
     for path in project.rglob("*"):
         if path.is_file() and path.name != "settings.yaml":
             os.utime(path, ns=(T_OLD, T_OLD))
@@ -151,8 +151,8 @@ def test_round_trip_keeps_files_times_numbers_and_frozen(workspace: dict) -> Non
         assert pp._hash_file(copy / rel) == facts["sha256"], rel
     assert fz.read_frozen(copy / "input_sources" / "ext.sqlite").label == "Reference 1.0"
 
-    original = yaml.safe_load((project / "settings.yaml").read_text())
-    shipped = yaml.safe_load((copy / "settings.yaml").read_text())
+    original = yaml.safe_load((project / "settings.yaml").read_text(encoding="utf-8"))
+    shipped = yaml.safe_load((copy / "settings.yaml").read_text(encoding="utf-8"))
     for key in pp.DROPPED_SETTINGS:
         assert key not in shipped
         original.pop(key)
@@ -165,7 +165,7 @@ def test_round_trip_keeps_files_times_numbers_and_frozen(workspace: dict) -> Non
 
     sources = InputSourceManager(copy, load_project_settings(copy)).refresh()
     assert {s.name: s.number for s in sources if not s.retired} == {"model.sqlite": 1, "ext.sqlite": 2}
-    assert (workspace["config"] / "highs.opt").read_text() == "mip_rel_gap = 0.01\n"
+    assert (workspace["config"] / "highs.opt").read_text(encoding="utf-8") == "mip_rel_gap = 0.01\n"
     assert report.solver_config == [("highs.opt", "same")]
     assert not (copy / "imported_solver_config").exists()
 
@@ -282,7 +282,7 @@ def test_cli_export_results_and_solver_hint(workspace: dict, capsys: pytest.Capt
     assert "changed after the run" in capsys.readouterr().out
     manifest = pp.read_manifest(out)
     assert manifest.results == ["B_2"] and manifest.external_not_included == ["ext.sqlite"]
-    (workspace["config"] / "highs.opt").write_text("mip_rel_gap = 0.05\n")   # the receiver's own options
+    (workspace["config"] / "highs.opt").write_text("mip_rel_gap = 0.05\n", encoding="utf-8")   # the receiver's own options
     report = pp.import_project(out, workspace["projects"], "Other", solver_config_dir=workspace["config"])
     assert report.solver_config == [("highs.opt", "different")]
     assert "-mip_rel_gap = 0.05" in report.solver_config_diffs["highs.opt"]
@@ -411,7 +411,7 @@ def test_export_refuses_unportable_name_and_existing_file(workspace: dict, capsy
     assert "Use --force" in capsys.readouterr().err
     assert cli.main([*args, "--force"]) == cli.EXIT_OK
     blocker = workspace["root"] / "a_file"
-    blocker.write_text("x")
+    blocker.write_text("x", encoding="utf-8")
     assert cli.main(["export", str(workspace["project"]), "-o", str(blocker / "p.flextool.zip")]) == cli.EXIT_PROBLEM
     assert "Unable to write the package" in capsys.readouterr().err      # an OSError, said without a traceback
     (workspace["project"] / "input_sources" / "aux.xlsx").write_bytes(b"x")
@@ -435,7 +435,7 @@ def test_disk_space_external_left_out_and_partial_hidden(workspace: dict, monkey
     monkeypatch.undo()
     report = pp.import_project(out, projects, "Recv")
     assert any("ext.sqlite was not in the package" in w for w in report.warnings)
-    shipped = yaml.safe_load((report.project_path / "settings.yaml").read_text())
+    shipped = yaml.safe_load((report.project_path / "settings.yaml").read_text(encoding="utf-8"))
     assert shipped["source_registry"]["2"] == {"name": "ext.sqlite", "path": ""}   # the sender's layout is gone
 
     from flextool.gui import project_utils
@@ -475,7 +475,7 @@ def test_code_and_unknown_files_in_a_package_are_refused(tmp_path: Path, member:
 
 
 def test_export_leaves_out_programs_and_the_package_imports(workspace: dict) -> None:
-    (workspace["project"] / "input_sources" / "helper.py").write_text("print('hi')\n")
+    (workspace["project"] / "input_sources" / "helper.py").write_text("print('hi')\n", encoding="utf-8")
     out, manifest = _export(workspace, ["A_1"])
     assert not any(name.endswith("helper.py") for name in manifest.files)
     assert any("helper.py is a program or script" in w for w in manifest.export_warnings)
@@ -489,7 +489,7 @@ def test_export_leaves_out_a_solver_option_folder_inside_the_project(workspace: 
     solver_config/."""
     nested = workspace["project"] / "input_sources" / "solver_config"
     nested.mkdir()
-    (nested / "gurobi.opt").write_text("Threads 2\n")
+    (nested / "gurobi.opt").write_text("Threads 2\n", encoding="utf-8")
     out, manifest = _export(workspace, ["A_1"])
     assert not any("input_sources/solver_config" in name for name in manifest.files)
     assert any("input_sources/solver_config/gurobi.opt is in a solver option folder" in w
@@ -515,7 +515,7 @@ def test_import_drops_input_files_outside_the_project(tmp_path: Path) -> None:
     _handmade(package, {"Proj/settings.yaml": yaml.dump(settings).encode(),
                         "Proj/input_sources/model.sqlite": b"x", "Proj/input_sources/inside.sqlite": b"y"})
     report = pp.import_project(package, tmp_path / "projects")
-    shipped = yaml.safe_load((report.project_path / "settings.yaml").read_text())
+    shipped = yaml.safe_load((report.project_path / "settings.yaml").read_text(encoding="utf-8"))
     assert shipped["external_refs"] == {"inside.sqlite": "input_sources/inside.sqlite"}
     assert shipped["source_registry"]["1"]["path"] == "input_sources/model.sqlite"
     assert shipped["source_registry"]["2"] == {"name": "far.sqlite", "path": ""}
@@ -557,10 +557,10 @@ def test_export_ships_the_files_the_project_runs_use(workspace: dict, monkeypatc
     monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
     own = workspace["project"] / "solver_config"
     own.mkdir()
-    (own / "gurobi.opt").write_text("Threads 2\n")
-    (workspace["config"] / "gurobi.opt").write_text("Threads 4\n")
+    (own / "gurobi.opt").write_text("Threads 2\n", encoding="utf-8")
+    (workspace["config"] / "gurobi.opt").write_text("Threads 4\n", encoding="utf-8")
     (workspace["config"] / "cplex.opt").write_text(_template_text("cplex"), encoding="utf-8")
-    (workspace["config"] / "notes.opt").write_text("not a solver file\n")
+    (workspace["config"] / "notes.opt").write_text("not a solver file\n", encoding="utf-8")
     out = workspace["root"] / "out" / "eff.flextool.zip"
     manifest = pp.export_project(workspace["project"], out, [])
     assert sorted(manifest.solver_config) == ["gurobi.opt", "highs.opt"]
@@ -573,7 +573,7 @@ def test_export_ships_the_files_the_project_runs_use(workspace: dict, monkeypatc
 def test_import_activates_clean_files_and_holds_back_path_options(workspace: dict) -> None:
     own = workspace["project"] / "solver_config"
     own.mkdir()
-    (own / "gurobi.opt").write_text("Threads 2\n")
+    (own / "gurobi.opt").write_text("Threads 2\n", encoding="utf-8")
     out = workspace["root"] / "out" / "held.flextool.zip"
     pp.export_project(workspace["project"], out, [], solver_config_dir=[own, workspace["config"]])
     # A package made elsewhere (an export leaves such a file out): a path option.  A shipped .review file is
@@ -582,9 +582,9 @@ def test_import_activates_clean_files_and_holds_back_path_options(workspace: dic
     _add_member(out, "Proj/solver_config/xpress.opt", _template_text("xpress").encode("utf-8"))
     report = pp.import_project(out, workspace["projects"], "Held", solver_config_dir=workspace["config"])
     target = workspace["projects"] / "Held" / "solver_config"
-    assert (target / "gurobi.opt").read_text() == "Threads 2\n"
+    assert (target / "gurobi.opt").read_text(encoding="utf-8") == "Threads 2\n"
     assert not (target / "cplex.opt").exists()
-    assert (target / "cplex.opt.review").read_text() == "logfile /tmp/x\n"
+    assert (target / "cplex.opt.review").read_text(encoding="utf-8") == "logfile /tmp/x\n"
     assert not (target / "xpress.opt").exists()            # an unedited template is not unpacked
     assert not (workspace["projects"] / "Held" / "imported_solver_config").exists()
     assert list(report.solver_config_held) == ["cplex.opt"]
@@ -601,11 +601,11 @@ def test_first_open_renames_a_development_build_import(tmp_path: Path) -> None:
     project = tmp_path / "projects" / "Old"
     imported = project / "imported_solver_config"
     imported.mkdir(parents=True)
-    (imported / "highs.opt").write_text("mip_rel_gap = 0.03\n")
-    (imported / "gurobi.opt").write_text("Threads 2\nComputeServer srv.example\n")
+    (imported / "highs.opt").write_text("mip_rel_gap = 0.03\n", encoding="utf-8")
+    (imported / "gurobi.opt").write_text("Threads 2\nComputeServer srv.example\n", encoding="utf-8")
     lines = pp.adopt_imported_solver_config(project)
     own = project / "solver_config"
-    assert not imported.exists() and (own / "highs.opt").read_text() == "mip_rel_gap = 0.03\n"
+    assert not imported.exists() and (own / "highs.opt").read_text(encoding="utf-8") == "mip_rel_gap = 0.03\n"
     assert not (own / "gurobi.opt").exists() and (own / "gurobi.opt.review").is_file()
     assert lines[0] == ("Project Old: renamed imported_solver_config/ to solver_config/. This project's runs now "
                         "use its solver option files (highs.opt) ahead of the workspace's, with the input "
@@ -614,7 +614,7 @@ def test_first_open_renames_a_development_build_import(tmp_path: Path) -> None:
     assert pp.adopt_imported_solver_config(project) == []
     # Both folders: nothing is touched, one line says which one runs read.
     imported.mkdir()
-    (imported / "copt.opt").write_text("Threads 1\n")
+    (imported / "copt.opt").write_text("Threads 1\n", encoding="utf-8")
     assert pp.adopt_imported_solver_config(project) == [
         "Project Old: imported_solver_config/ is not read; this project's runs use solver_config/ (move any file "
         "you need from it and delete imported_solver_config/)."]
@@ -626,9 +626,9 @@ def _old_import(tmp_path: Path) -> tuple[Path, Path]:
     project = tmp_path / "projects" / "Old"
     imported = project / "imported_solver_config"
     imported.mkdir(parents=True)
-    (imported / "highs.opt").write_text("mip_rel_gap = 0.03\n")
-    (imported / "gurobi.opt").write_text("ComputeServer evil:61000\n")
-    (imported / "cplex.opt").write_text("logfile /home/u/.bashrc\n")
+    (imported / "highs.opt").write_text("mip_rel_gap = 0.03\n", encoding="utf-8")
+    (imported / "gurobi.opt").write_text("ComputeServer evil:61000\n", encoding="utf-8")
+    (imported / "cplex.opt").write_text("logfile /home/u/.bashrc\n", encoding="utf-8")
     (imported / "xpress.opt").write_text(_template_text("xpress"), encoding="utf-8")
     return project, imported
 
@@ -674,11 +674,11 @@ def test_first_open_changes_nothing_when_a_file_cannot_be_held(
 
 def test_first_open_changes_nothing_when_a_review_file_exists(tmp_path: Path) -> None:
     project, imported = _old_import(tmp_path)
-    (imported / "gurobi.opt.review").write_text("Threads 1\n")
+    (imported / "gurobi.opt.review").write_text("Threads 1\n", encoding="utf-8")
     lines = pp.adopt_imported_solver_config(project)
     assert not (project / "solver_config").exists()
-    assert (imported / "gurobi.opt").read_text() == "ComputeServer evil:61000\n"
-    assert (imported / "gurobi.opt.review").read_text() == "Threads 1\n"
+    assert (imported / "gurobi.opt").read_text(encoding="utf-8") == "ComputeServer evil:61000\n"
+    assert (imported / "gurobi.opt.review").read_text(encoding="utf-8") == "Threads 1\n"
     assert (imported / "cplex.opt").is_file() and not (imported / "cplex.opt.review").exists()
     assert len(lines) == 1 and "gurobi.opt.review exists already" in lines[0]
 
@@ -720,8 +720,8 @@ def test_export_leaves_out_a_file_with_server_or_path_lines(
     lines, before (``always_included``) and after the export (CLI warning)."""
     own = workspace["project"] / "solver_config"
     own.mkdir()
-    (own / "gurobi.opt").write_text("Threads 2\nWLSSecret s3cr3t\n")
-    (own / "cplex.opt").write_text("threads 2\n")
+    (own / "gurobi.opt").write_text("Threads 2\nWLSSecret s3cr3t\n", encoding="utf-8")
+    (own / "cplex.opt").write_text("threads 2\n", encoding="utf-8")
     folders = [own, workspace["config"]]
     fixed = pp.always_included(workspace["project"], folders)
     assert sorted(fixed["solver_config_files"]) == ["cplex.opt", "highs.opt"]
@@ -746,7 +746,7 @@ def test_import_names_the_workspace_default(workspace: dict, tmp_path: Path) -> 
     """A workspace that holds only the seeded template uses FlexTool's default: said so, not "has none"."""
     own = workspace["project"] / "solver_config"
     own.mkdir()
-    (own / "gurobi.opt").write_text("Threads 2\n")
+    (own / "gurobi.opt").write_text("Threads 2\n", encoding="utf-8")
     out = workspace["root"] / "out" / "default.flextool.zip"
     pp.export_project(workspace["project"], out, [], solver_config_dir=[own])
     receiver = tmp_path / "receiver"
@@ -816,7 +816,7 @@ def test_import_screens_with_the_runs_rules_and_never_inherits_trust(
     monkeypatch.delenv("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", raising=False)
     own = workspace["project"] / "solver_config"
     own.mkdir()
-    (own / "gurobi.opt").write_text("Threads 2\n")
+    (own / "gurobi.opt").write_text("Threads 2\n", encoding="utf-8")
     out = workspace["root"] / "out" / "trust.flextool.zip"
     pp.export_project(workspace["project"], out, [], solver_config_dir=[own, workspace["config"]])
     _add_member(out, "Proj/solver_config/copt.opt", b"Threads 1\nTimeLimt 60\n")       # misspelt: not listed
@@ -842,7 +842,7 @@ def test_first_open_takes_the_project_off_the_trusted_list(tmp_path: Path, monke
     monkeypatch.setenv("FLEXTOOL_USER_HOME", str(tmp_path / "user_home"))
     project = tmp_path / "projects" / "Old"
     (project / "imported_solver_config").mkdir(parents=True)
-    (project / "imported_solver_config" / "gurobi.opt").write_text("Threads 2\n")
+    (project / "imported_solver_config" / "gurobi.opt").write_text("Threads 2\n", encoding="utf-8")
     local.add_trusted_workspace(project)
     pp.adopt_imported_solver_config(project)
     assert (project / "solver_config" / "gurobi.opt").is_file()

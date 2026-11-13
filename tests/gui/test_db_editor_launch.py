@@ -58,7 +58,7 @@ def toolbox_stub_no_path(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     ``spine-db-editor`` at all — the non-activated-venv situation."""
     pkg = tmp_path / "site" / "spinetoolbox"
     pkg.mkdir(parents=True)
-    (pkg / "__init__.py").write_text("")
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
     for name in list(sys.modules):
         if name == "spinetoolbox" or name.startswith("spinetoolbox."):
             monkeypatch.delitem(sys.modules, name)

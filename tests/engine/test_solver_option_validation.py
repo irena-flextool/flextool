@@ -450,7 +450,7 @@ def test_shipped_default_options_give_the_same_script(solver, expected, tmp_path
     import flextool
 
     template = Path(flextool.__file__).parent / "solver_config" / f"{solver}.opt.template"
-    options = _resolve(solver, opt_text=template.read_text())
+    options = _resolve(solver, opt_text=template.read_text(encoding="utf-8"))
     merged = commercial_params({o.name: o.value for o in options})
     argv, stdin = _SCRIPTS[solver](Path("bin"), Path("m.mps"), Path("m.sol"), merged)
     assert (argv if solver == "gurobi" else stdin) == expected
@@ -831,7 +831,7 @@ def paths_db(tmp_path_factory) -> tuple[str, Path]:
     from flextool.update_flextool.db_migration import migrate_database
 
     folder = tmp_path_factory.mktemp("item236_paths")
-    data = json.loads((TESTS_DIR / "fixtures" / "tests.json").read_text())
+    data = json.loads((TESTS_DIR / "fixtures" / "tests.json").read_text(encoding="utf-8"))
     precommand = f"{sys.executable} -c \"open(r'{folder / 'precommand_ran'}', 'w').close()\""
     for alt, log_file, model_file in (
         ("item236_paths", str(folder / "log_file_target.log"), str(folder / "model_target.mps")),
@@ -850,7 +850,7 @@ def paths_db(tmp_path_factory) -> tuple[str, Path]:
         for a, before in zip(chain, chain[1:] + [None]):
             data["scenario_alternatives"].append([alt, a, before])
     json_path = folder / "paths.json"
-    json_path.write_text(json.dumps(data))
+    json_path.write_text(json.dumps(data), encoding="utf-8")
     url = json_to_db(json_path, folder / "paths.sqlite")
     migrate_database(url)
     return url, folder

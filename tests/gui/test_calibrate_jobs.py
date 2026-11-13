@@ -97,7 +97,7 @@ def test_a_bare_result_folder_of_another_source_is_not_cleared(tmp_path: Path, m
                         lambda *a, **k: _fake_argv("import sys; print('calibrating'); sys.exit(0)"))
     results = tmp_path / "output_parquet" / "base"
     results.mkdir(parents=True)
-    (results / "unit__dt.parquet").write_text("source 1")
+    (results / "unit__dt.parquet").write_text("source 1", encoding="utf-8")
     mgr = _make_manager(tmp_path)
     runner = _SerialRunner("test")
     launch_calibration_jobs(
@@ -109,7 +109,7 @@ def test_a_bare_result_folder_of_another_source_is_not_cleared(tmp_path: Path, m
     assert job.status == JobStatus.FAILED
     assert any("from input source 1, not from source 2" in line and str(results) in line for line in job.stdout_lines)
     assert not [j for j in mgr.get_jobs() if j.action_key == "calibrate:base"]
-    assert (results / "unit__dt.parquet").read_text() == "source 1"
+    assert (results / "unit__dt.parquet").read_text(encoding="utf-8") == "source 1"
 
     launch_calibration_jobs(
         mgr, python_exe=sys.executable, project_path=tmp_path, runner=runner, bare_output_owners={"base": 1},
@@ -258,7 +258,7 @@ def test_calibration_jobs_are_serialized(tmp_path: Path, monkeypatch) -> None:
     )
     runner.wait(timeout=60)
 
-    events = marker.read_text().split()
+    events = marker.read_text(encoding="utf-8").split()
     assert events == ["ENTER", "EXIT"] * 3, events
     # Sanity: all three jobs exist and succeeded.
     for name in ("a", "b", "c"):

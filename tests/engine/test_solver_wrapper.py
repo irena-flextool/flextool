@@ -44,7 +44,7 @@ def user_home(tmp_path, monkeypatch) -> Path:
 def _program(folder: Path, name: str, executable: bool = True) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / name
-    path.write_text("#!/bin/sh\nexec \"$@\"\n")
+    path.write_text("#!/bin/sh\nexec \"$@\"\n", encoding="utf-8")
     if executable:
         path.chmod(path.stat().st_mode | stat.S_IXUSR)
     return path
@@ -163,7 +163,7 @@ def test_a_wrapper_in_the_project_or_current_folder_is_never_read(tmp_path, monk
     ws = tmp_path / "ws"
     for place in (ws, ws / "solver_config", ws / "config"):
         place.mkdir(parents=True, exist_ok=True)
-        (place / "solver_settings.json").write_text(planted)
+        (place / "solver_settings.json").write_text(planted, encoding="utf-8")
     monkeypatch.chdir(ws)
     assert solver_wrapper("gurobi") is None
 
@@ -216,7 +216,7 @@ def test_a_solve_runs_through_the_wrapper(tmp_path, monkeypatch, capsys) -> None
     monkeypatch.setattr(run_record, "active", lambda: recorder)
     sol = _solve(tmp_path, monkeypatch, stub, options={"Threads": 2})
     assert sol.obj == 7.5
-    argv = json.loads(record.read_text())["argv"]
+    argv = json.loads(record.read_text(encoding="utf-8"))["argv"]
     assert argv[:4] == [str(wrapper), "--queue", "opt", str(stub)]
     assert argv[4] == "Threads=2" and argv[5].startswith("ResultFile=") and argv[6].endswith(".mps")
     out = capsys.readouterr().out
@@ -253,8 +253,8 @@ def test_the_watchdog_stops_the_wrapper_the_solver_and_its_child(tmp_path, monke
     assert time.monotonic() - t0 < 15.0
     assert f"(started through the solver wrapper {wrapper})" in str(err.value)
     assert "PARTIAL-LOG" in capsys.readouterr().out
-    wrapper_pid = json.loads(record.read_text())["pid"]
-    solver_pid, child_pid = (int(x) for x in pids.read_text().split())
+    wrapper_pid = json.loads(record.read_text(encoding="utf-8"))["pid"]
+    solver_pid, child_pid = (int(x) for x in pids.read_text(encoding="utf-8").split())
     assert _wait_gone(wrapper_pid) and _wait_gone(solver_pid) and _wait_gone(child_pid)
 
 

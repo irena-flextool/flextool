@@ -90,7 +90,7 @@ def build(folder: Path) -> str:
 
     lps = _lp_snapshot()
     folder = Path(folder)
-    data = json.loads((REPO / "tests" / "fixtures" / "tests.json").read_text())
+    data = json.loads((REPO / "tests" / "fixtures" / "tests.json").read_text(encoding="utf-8"))
     for s in SOLVERS:
         data = lps._overlay(data, name=f"lp_{s}", base=LP_BASE, values=[["solve", SOLVE, "solver", s]])
         data = lps._overlay(data, name=f"mip_{s}", base="coal_min_load_MIP_wind",
@@ -125,7 +125,7 @@ def build(folder: Path) -> str:
         ["solve", SOLVE, "solver_arguments", _arguments([["LPITERLIMIT", 1], ["PRESOLVE", 0]])]])
     folder.mkdir(parents=True, exist_ok=True)
     json_path = folder / "item230_check.json"
-    json_path.write_text(json.dumps(data))
+    json_path.write_text(json.dumps(data), encoding="utf-8")
     url = json_to_db(json_path, folder / "item230_check.sqlite")
     json_path.unlink()
     migrate_database(url)

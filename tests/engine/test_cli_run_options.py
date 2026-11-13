@@ -125,10 +125,10 @@ def test_solver_config_folder_is_resolved_once_and_shown_in_the_header(clean_env
     """No ``--solver-config-dir``: the ``solver_config`` next to the input database wins over the current folder;
     the header names it with its reason and the engine gets the same resolved source.  The flag then wins."""
     (tmp_path / "solver_config").mkdir()
-    (tmp_path / "solver_config" / "highs.opt").write_text("threads=1\n")
+    (tmp_path / "solver_config" / "highs.opt").write_text("threads=1\n", encoding="utf-8")
     cwd = tmp_path / "elsewhere"
     (cwd / "solver_config").mkdir(parents=True)
-    (cwd / "solver_config" / "highs.opt").write_text("threads=2\n")
+    (cwd / "solver_config" / "highs.opt").write_text("threads=2\n", encoding="utf-8")
     monkeypatch.chdir(cwd)
     seen = _run_main(monkeypatch, tmp_path)
     source = seen["kwargs"]["solver_config_source"]
@@ -148,9 +148,9 @@ def test_header_names_each_file_of_a_several_folder_ladder(clean_env, monkeypatc
     upper, lower = tmp_path / "upper", tmp_path / "lower"
     upper.mkdir()
     lower.mkdir()
-    (upper / "gurobi.opt").write_text("Threads 2\n")
-    (lower / "gurobi.opt").write_text("Threads 4\n")
-    (lower / "highs.opt").write_text("threads=1\n")
+    (upper / "gurobi.opt").write_text("Threads 2\n", encoding="utf-8")
+    (lower / "gurobi.opt").write_text("Threads 4\n", encoding="utf-8")
+    (lower / "highs.opt").write_text("threads=1\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     seen = _run_main(monkeypatch, tmp_path, "--solver-config-dir", str(upper), "--solver-config-dir", str(lower))
     source = seen["kwargs"]["solver_config_source"]

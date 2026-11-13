@@ -228,14 +228,14 @@ def _write_fake_gurobi(tmp_path: Path, sol_lines: list[str], stdout: str = "", *
     ).format(py=sys.executable, payload="\n".join(sol_lines) + "\n", stdout=stdout,
              argv_log=str(tmp_path / "argv.json"), solve_mps=solve_mps)
     stub = tmp_path / "fake_gurobi_cl"
-    stub.write_text(body)
+    stub.write_text(body, encoding="utf-8")
     stub.chmod(stub.stat().st_mode | stat.S_IEXEC | stat.S_IRWXU)
     return stub
 
 
 def _argv_of_calls(tmp_path: Path) -> list[list[str]]:
     """The argv of each call of the stub, in order."""
-    return [json.loads(line) for line in (tmp_path / "argv.json").read_text().splitlines()]
+    return [json.loads(line) for line in (tmp_path / "argv.json").read_text(encoding="utf-8").splitlines()]
 
 
 def test_commercial_path_maps_generic_primal_by_index(
@@ -303,7 +303,7 @@ def test_commercial_path_no_real_names_in_mps(
         pb, "gurobi", options=None, solve_name="keep",
         logger=None, work_folder=work,
     )
-    mps_text = (work / "solve_data" / "subprocess" / "keep.mps").read_text()
+    mps_text = (work / "solve_data" / "subprocess" / "keep.mps").read_text(encoding="utf-8")
     assert "coal fired" not in mps_text
     assert "coal" not in mps_text          # no real entity token at all
     assert "C0000001" in mps_text          # generic names present
@@ -417,8 +417,7 @@ def _make_solver_shim(solver: str, tmp_path: Path) -> Path | None:
         return None
     stub = tmp_path / f"{solver}_cli"
     stub.write_text(
-        "#!" + sys.executable + "\n" + textwrap.dedent(_SHIM_BODY[solver])
-    )
+        "#!" + sys.executable + "\n" + textwrap.dedent(_SHIM_BODY[solver]), encoding="utf-8")
     stub.chmod(stub.stat().st_mode | stat.S_IEXEC | stat.S_IRWXU)
     return stub
 
@@ -574,7 +573,7 @@ def test_gurobi_json_files_written_by_gurobi_parse() -> None:
     for k in range(40):
         capacity = sum(_knapsack_weight(i, k) for i in range(1500)) // 2
         assert sum(_knapsack_weight(i, k) for i in chosen) <= capacity
-    info = json.loads((_GUROBI_JSON_FIXTURES / "time_limited_mip.json").read_text())["SolutionInfo"]
+    info = json.loads((_GUROBI_JSON_FIXTURES / "time_limited_mip.json").read_text(encoding="utf-8"))["SolutionInfo"]
     assert limited.mip_gap == pytest.approx((info["ObjVal"] - info["ObjBound"]) / abs(info["ObjVal"]))
     assert 0.0 < limited.mip_gap < 0.01
 
@@ -662,8 +661,7 @@ def _cplex_file(tmp_path: Path, status_string: str, status_value: str | None) ->
         '<?xml version="1.0"?>\n<CPLEXSolution version="1.2">\n'
         f' <header objectiveValue="20"{value} solutionStatusString="{status_string}"/>\n'
         ' <variables><variable name="C0000001" index="0" value="10"/></variables>\n'
-        '</CPLEXSolution>\n'
-    )
+        '</CPLEXSolution>\n', encoding="utf-8")
     return path
 
 
@@ -735,8 +733,7 @@ def test_cplex_status_string_with_a_solution(status_string, expected, tmp_path) 
         '<?xml version="1.0"?>\n<CPLEXSolution version="1.2">\n'
         f' <header objectiveValue="20" solutionStatusString="{status_string}"/>\n'
         ' <variables><variable name="C0000001" index="0" value="10"/></variables>\n'
-        '</CPLEXSolution>\n'
-    )
+        '</CPLEXSolution>\n', encoding="utf-8")
     parsed = sps._parse_cplex_sol(path)
     assert (parsed.status, parsed.primal) == (expected, {"C0000001": 10.0})
 
@@ -769,7 +766,7 @@ def test_flags_reach_gurobi_and_set_the_watchdog(tmp_path, monkeypatch) -> None:
     2 x 60 + 600 = 720 s."""
     _gurobi(_write_fake_gurobi(tmp_path, _SOL_20), monkeypatch)
     (tmp_path / "cfg").mkdir()
-    (tmp_path / "cfg" / "gurobi.opt").write_text("Threads 0\nMIPGap 0.002\n")
+    (tmp_path / "cfg" / "gurobi.opt").write_text("Threads 0\nMIPGap 0.002\n", encoding="utf-8")
     timeouts: list = []
     real_run = sps._run_solver_process
 

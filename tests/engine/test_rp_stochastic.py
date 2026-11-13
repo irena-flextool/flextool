@@ -506,7 +506,7 @@ def _lh2_run(tmp_path_factory, values: list, *, drop: tuple = (), patch=None) ->
     from flextool.update_flextool.db_migration import migrate_database
     from tests.db_utils import json_to_db
 
-    data = json.loads(RP_JSON.read_text())
+    data = json.loads(RP_JSON.read_text(encoding="utf-8"))
     data["parameter_values"] = [v for v in data["parameter_values"]
                                 if not (v[0] == "solve" and v[1] == LH2_SOLVE and v[2] in drop)]
     base = "lh2_three_region_rp_invest"
@@ -515,7 +515,7 @@ def _lh2_run(tmp_path_factory, values: list, *, drop: tuple = (), patch=None) ->
         base = data["scenarios"][-1][0]
     data = L._overlay(data, name="custom", base=base, values=values)
     work = tmp_path_factory.mktemp("rp_stoch_lh2")
-    (work / "f.json").write_text(json.dumps(data))
+    (work / "f.json").write_text(json.dumps(data), encoding="utf-8")
     url = json_to_db(work / "f.json", work / "f.sqlite")
     migrate_database(url)
     steps = run_chain_from_db(url, "custom", work_folder=work / "w", keep_solutions=True)

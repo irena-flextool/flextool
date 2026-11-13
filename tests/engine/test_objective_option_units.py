@@ -119,12 +119,12 @@ def _db(tmp_path_factory, name: str, arguments: list[list]) -> str:
     from flextool.update_flextool.db_migration import migrate_database
     from tests.db_utils import json_to_db
 
-    data = json.loads((FIXTURES / "tests.json").read_text())
+    data = json.loads((FIXTURES / "tests.json").read_text(encoding="utf-8"))
     data = _lp_snapshot()._overlay(
         data, name="custom", base=["init", "west", "coal"],
         values=[["solve", SOLVE, "solver_arguments", {"index_type": "str", "index_name": "x", "data": arguments}]])
     work = tmp_path_factory.mktemp(name)
-    (work / "f.json").write_text(json.dumps(data))
+    (work / "f.json").write_text(json.dumps(data), encoding="utf-8")
     url = json_to_db(work / "f.json", work / "f.sqlite")
     migrate_database(url)
     return url
@@ -148,7 +148,7 @@ def _run(url: str, work: Path, highs_opt: str = ""):
 
     cfg = work.parent / f"{work.name}_solver_config"
     cfg.mkdir(parents=True)
-    (cfg / "highs.opt").write_text(highs_opt)
+    (cfg / "highs.opt").write_text(highs_opt, encoding="utf-8")
     return run_chain_from_db(input_db_url=url, scenario_name="custom", work_folder=work, keep_solutions=True,
                              solver_config_dir=cfg)
 
@@ -164,7 +164,7 @@ def _handle_options(highs, keys) -> dict:
 def _opt_file(work: Path) -> dict[str, str]:
     files = sorted((work / "solve_data" / "subprocess").glob("*.opt"))
     assert files, f"no subprocess .opt file under {work}"
-    return dict(line.split("=", 1) for line in files[-1].read_text().splitlines() if "=" in line)
+    return dict(line.split("=", 1) for line in files[-1].read_text(encoding="utf-8").splitlines() if "=" in line)
 
 
 def _args_line(out: str) -> str:
@@ -243,13 +243,13 @@ def test_benders_refuses_an_objective_bound_naming_option_and_layer(tmp_path) ->
     from flextool.update_flextool.db_migration import migrate_database
     from tests.db_utils import json_to_db
 
-    data = json.loads((FIXTURES / "lh2_three_region_trade_invest.json").read_text())
+    data = json.loads((FIXTURES / "lh2_three_region_trade_invest.json").read_text(encoding="utf-8"))
     data = _lp_snapshot()._overlay(
         data, name="custom", base="lh2_three_region_trade_invest",
         values=[["solve", "lh2_trade_invest", "solver_arguments",
                  {"index_type": "str", "index_name": "x",
                   "data": [["objective_bound", 4.5e9], ["mip_abs_gap", 1e5]]}]])
-    (tmp_path / "f.json").write_text(json.dumps(data))
+    (tmp_path / "f.json").write_text(json.dumps(data), encoding="utf-8")
     url = json_to_db(tmp_path / "f.json", tmp_path / "f.sqlite")
     migrate_database(url)
     with pytest.raises(FlexToolConfigError) as err:

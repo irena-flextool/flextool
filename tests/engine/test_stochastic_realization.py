@@ -46,10 +46,10 @@ def _enc(value) -> list:
 
 
 def _variant(src: Path, tmp: Path, name: str, mutate) -> Path:
-    data = json.loads(src.read_text())
+    data = json.loads(src.read_text(encoding="utf-8"))
     mutate(data)
     out = tmp / f"{name}.json"
-    out.write_text(json.dumps(data))
+    out.write_text(json.dumps(data), encoding="utf-8")
     return out
 
 
@@ -811,7 +811,7 @@ def _flowgroup_path(invest_method: str):
     lps = sys.modules[name]
     base = ["init", "base", "stoch", "ws", "na_window", "divest"] + (
         ["invest_none"] if invest_method == "none" else [])
-    data = lps._overlay(json.loads(HEDGE.read_text()), name="flowgroup_path", base=base,
+    data = lps._overlay(json.loads(HEDGE.read_text(encoding="utf-8")), name="flowgroup_path", base=base,
                         entities=[["flowGroup", "base_flow"],
                                   ["flowGroup__unit__node", ["base_flow", "base", "elec"]]],
                         values=[["flowGroup", "base_flow", "min_cumulative_flow", 1.0]])
@@ -846,7 +846,7 @@ def test_branch_paths_hold_the_period_label(tmp_path_factory, invest_method: str
     here-and-now investment: every investment-total row holds that investment."""
     tmp = tmp_path_factory.mktemp(f"label_paths_{invest_method}")
     path = tmp / "flowgroup_path.json"
-    path.write_text(json.dumps(_flowgroup_path(invest_method)))
+    path.write_text(json.dumps(_flowgroup_path(invest_method)), encoding="utf-8")
     steps, mps = _run(path, tmp, scenario="flowgroup_path", capture_mps=True)
     (solve,) = list(steps)
     assert steps[solve].solution.optimal

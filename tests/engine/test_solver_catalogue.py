@@ -38,7 +38,7 @@ def _generator():
 
 
 def _shipped(solver: str) -> dict:
-    return json.loads((REPO / "flextool" / _solver_catalogue.CATALOGUE_FOLDER / f"{solver}.json").read_text())
+    return json.loads((REPO / "flextool" / _solver_catalogue.CATALOGUE_FOLDER / f"{solver}.json").read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize("solver", SOLVERS)
@@ -113,7 +113,7 @@ def test_flextools_own_names_and_the_shipped_templates_are_plain() -> None:
         for name in names.values():
             assert _solver_catalogue.load(solver).entry(name).cls == "plain", (solver, name)
     for solver in SOLVERS:
-        text = (Path(flextool.__file__).parent / "solver_config" / f"{solver}.opt.template").read_text()
+        text = (Path(flextool.__file__).parent / "solver_config" / f"{solver}.opt.template").read_text(encoding="utf-8")
         lines = _highs_opt_lines(text) if solver == "highs" else _native_opt_lines(text)
         assert lines, solver
         for _lineno, name, _value in lines:
@@ -163,7 +163,7 @@ def test_regeneration_keeps_every_name_and_records_the_versions() -> None:
 
 
 def test_catalogue_is_package_data_and_a_missing_file_stops(monkeypatch, tmp_path) -> None:
-    globs = tomllib.loads((REPO / "pyproject.toml").read_text())["tool"]["setuptools"]["package-data"]["flextool"]
+    globs = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["setuptools"]["package-data"]["flextool"]
     assert f"{_solver_catalogue.CATALOGUE_FOLDER}/*.json" in globs
     import flextool._resources as resources
 
@@ -180,7 +180,7 @@ def test_catalogue_is_package_data_and_a_missing_file_stops(monkeypatch, tmp_pat
 def test_docs_list_the_file_parameters_and_versions_of_the_catalogue() -> None:
     """``docs/solvers/index.md`` "What the database may set": the table of file and folder parameters is the
     catalogue's text-valued file entries, and the versions table names each catalogue's versions."""
-    text = (REPO / "docs" / "solvers" / "index.md").read_text()
+    text = (REPO / "docs" / "solvers" / "index.md").read_text(encoding="utf-8")
     section = text.split("#### What the database may set", 1)[1].split("\n#### ", 1)[0]
     table = section.split("| Solver | File and folder parameters |", 1)[1].split("\n\n", 1)[0]
     labels = {v: k for k, v in _solver_catalogue.SOLVER_LABEL.items()}
@@ -204,7 +204,7 @@ def test_solver_arguments_examples_in_the_docs_are_listed_names() -> None:
     found = 0
     for page in sorted((REPO / "docs" / "solvers").glob("*.md")):
         solver = "gurobi" if page.stem == "index" else page.stem
-        for block in page.read_text().split("solver_arguments:\n")[1:]:
+        for block in page.read_text(encoding="utf-8").split("solver_arguments:\n")[1:]:
             for line in block.split("```", 1)[0].splitlines():
                 if "=" in line:
                     name = line.split("=", 1)[0].strip()

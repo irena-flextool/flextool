@@ -47,13 +47,13 @@ def layout(tmp_path: Path) -> dict[str, Path]:
     and a current folder ``other/`` with its own ``solver_config/gurobi.opt`` (Threads 1)."""
     ws = tmp_path / "ws"
     (ws / "solver_config").mkdir(parents=True)
-    (ws / "solver_config" / "gurobi.opt").write_text("Threads 7\n")
+    (ws / "solver_config" / "gurobi.opt").write_text("Threads 7\n", encoding="utf-8")
     db = ws / "projects" / "P" / "input_sources" / "db.sqlite"
     db.parent.mkdir(parents=True)
     db.write_bytes(b"")
     other = tmp_path / "other"
     (other / "solver_config").mkdir(parents=True)
-    (other / "solver_config" / "gurobi.opt").write_text("Threads 1\n")
+    (other / "solver_config" / "gurobi.opt").write_text("Threads 1\n", encoding="utf-8")
     empty = tmp_path / "empty"
     empty.mkdir()
     return {"ws": ws, "db": db, "other": other, "empty": empty, "tmp": tmp_path}
@@ -98,7 +98,7 @@ def test_the_database_search_does_not_climb_past_the_layout(layout) -> None:
     """A stray ``solver_config`` two levels above a database that is not in a GUI project is not used."""
     stray = layout["tmp"] / "top"
     (stray / "solver_config").mkdir(parents=True)
-    (stray / "solver_config" / "gurobi.opt").write_text("Threads 5\n")
+    (stray / "solver_config" / "gurobi.opt").write_text("Threads 5\n", encoding="utf-8")
     db = stray / "a" / "input_sources" / "db.sqlite"   # input_sources/, but no projects/ above it
     db.parent.mkdir(parents=True)
     db.write_bytes(b"")
@@ -130,7 +130,7 @@ def test_snapshot_is_written_afresh_every_run(layout) -> None:
     first = snapshot_solver_option_files(source, work, _LOGGER)
     assert first.snapshot_dir == work / "solve_data" / "solver_config"
     assert (first.snapshot_dir / "gurobi.opt").read_text(encoding="utf-8") == "Threads 7\n"
-    (layout["ws"] / "solver_config" / "gurobi.opt").write_text("Threads 9\n")
+    (layout["ws"] / "solver_config" / "gurobi.opt").write_text("Threads 9\n", encoding="utf-8")
     second = snapshot_solver_option_files(source, work, _LOGGER)
     assert (second.snapshot_dir / "gurobi.opt").read_text(encoding="utf-8") == "Threads 9\n"
     assert second.text("gurobi") == "Threads 9\n"
@@ -157,7 +157,7 @@ def test_no_folder_found_uses_the_defaults_without_planting_a_copy(layout, caplo
 def test_an_old_work_folder_copy_is_ignored_with_a_warning(layout, caplog) -> None:
     work = layout["tmp"] / "work"
     (work / "solver_config").mkdir(parents=True)
-    (work / "solver_config" / "gurobi.opt").write_text("Threads 3\n")
+    (work / "solver_config" / "gurobi.opt").write_text("Threads 3\n", encoding="utf-8")
     source = _resolve(input_db_url=f"sqlite:///{layout['db']}", cwd=layout["other"])
     with caplog.at_level(logging.WARNING):
         files = snapshot_solver_option_files(source, work, _LOGGER)
@@ -279,7 +279,7 @@ def _seed_workspace(ws: Path) -> Path:
         (ws / "solver_config" / f"{solver}.opt").write_bytes(
             Path(package_data_path(f"solver_config/{solver}.opt.template")).read_bytes())
     (ws / "templates").mkdir()
-    (ws / "templates" / "project_folder.txt").write_text("# FlexTool output project folder\n")
+    (ws / "templates" / "project_folder.txt").write_text("# FlexTool output project folder\n", encoding="utf-8")
     (ws / "input_data.sqlite").write_bytes(b"")
     return ws / "solver_config"
 
