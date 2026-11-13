@@ -472,6 +472,8 @@ def test_spawn_helper_fix_storage_guard_raises():
         sc.solve_modes = {PARENT: "single_solve"}
         sc.dispatch_realization_method = {PARENT: "separate_dispatch"}
         sc.realized_periods = {PARENT: realized}
+        sc.timesets_used_by_solves = {PARENT: [("p2035", "ts35"), ("p2040", "ts40")]}
+        sc.solve_period_years_represented = {PARENT: [("p2035", 5.0), ("p2040", 5.0)]}
         sc.fix_storage_periods = {PARENT: fix_storage}
         # W4c — spawn records the sibling -> parent map on this dict.
         sc.realized_dispatch_parent = {}

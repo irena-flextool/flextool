@@ -77,7 +77,7 @@ from flextool.engine.preprocess.emit._pdt_lookup import (
     _anchor_fan_members,
     _check_pbt_branch_coverage,
     _check_pre_reveal_reads_have_forecast,
-    _check_roll_forecast_covers_lookahead,
+    _check_forecast_covers_horizon,
     _check_ungrouped_reads_have_realized_branch,
     read_fan_for_d,
     ts_tiers,
@@ -619,7 +619,7 @@ def _profile_stochastic_lf(workdir: Path | None,
     ts_for_d = _read_pairs(sd / "first_timesteps.csv", "period", "step",
                              provider=provider)
     # The fan start of each branch period (``branch_time_start``; empty without
-    # a fan), and the roll look-ahead periods that read it first (``ts_tiers``).
+    # a fan); every period from the fan onwards reads it first (``ts_tiers``).
     fan_for_d = read_fan_for_d(sd, provider=provider)
 
     # Stochastic UNION gate per profile.
@@ -659,8 +659,8 @@ def _profile_stochastic_lf(workdir: Path | None,
     # Before the reveal, a period reads the forecast made when the solve or roll starts, and it must cover it.
     _check_pre_reveal_reads_have_forecast(pbt_dict, 1, frozenset(stoch_active), tb_for_d, ts_for_d, pe_for_d,
                                           fan_for_d, sd, provider=provider, kind="profile")
-    # In a roll of a rolling solve the roll's own forecast must cover the roll's look-ahead periods.
-    _check_roll_forecast_covers_lookahead(pbt_dict, 1, frozenset(stoch_active), tb_for_d, ts_for_d, pe_for_d,
+    # The forecast made at the fan start must cover every later period of the solve or roll (item 255).
+    _check_forecast_covers_horizon(pbt_dict, 1, frozenset(stoch_active), tb_for_d, ts_for_d, pe_for_d,
                                           fan_for_d, sd, provider=provider, kind="profile")
 
     # Each fold reads, per value cell, the first analysis-time tier with a

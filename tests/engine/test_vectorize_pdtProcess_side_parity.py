@@ -40,6 +40,7 @@ from flextool.engine.preprocess.emit._pdt_params import (
     derive_pdtProcess_sink,
     derive_pdtProcess_source,
 )
+from tests.engine._fan_fold_fixture import FAN_CASES
 
 
 def _provider_from_workdir(workdir: Path):
@@ -347,11 +348,12 @@ def test_vectorized_pdtProcess_side_branch_period_inherits_anchor_pd(
 
 
 @pytest.mark.parametrize("side_col", ["source", "sink"])
-@pytest.mark.parametrize("case", ["single", "rolling_lookahead", "rolling_uncovered"])
+@pytest.mark.parametrize("case", FAN_CASES)
 def test_vectorized_pdtProcess_side_fan_start_fallback(side_col, case, tmp_path):
-    """Item 228: a non-empty ``fan_for_d`` (``branch_time_start``) -- each fold cell reads the forecast at its
-    period's own first step, else at the fan start (a roll's look-ahead period: the fan start only; a cell it
-    does not cover that a later forecast does is an input error in both twins) -- byte-identical in both twins,
+    """Items 228 / 255: a non-empty ``fan_for_d`` (``branch_time_start``) -- each fold cell reads the forecast at
+    the fan start (``read_first`` = ``fan``, as every solve writes it; a cell it does not cover that a later
+    forecast does is an input error in both twins), or at its period's own first step first in a frame that says
+    ``own`` -- byte-identical in both twins,
     values hand-derived in
     :mod:`tests.engine._fan_fold_fixture`."""
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
@@ -375,7 +377,7 @@ def test_vectorized_pdtProcess_side_fan_start_fallback(side_col, case, tmp_path)
         "process": ["X", "Y"], side_col: ["nA", "nA"], "param": ["cap", "cap"]}))
 
     inp, sdd = tmp_path / "input", tmp_path / "solve_data"
-    if case == "rolling_uncovered":
+    if case == "uncovered":
         for derive in (_legacy_side, _vec_side):
             with pytest.raises(FlexToolConfigError, match=uncovered_error("unit or connection 'Y' (nA)", "cap")):
                 derive(inp, sdd, side_col=side_col, provider=provider)

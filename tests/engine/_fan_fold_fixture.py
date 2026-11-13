@@ -6,8 +6,11 @@ the fan start ``s1`` on every one of them, so the ``d2`` copies have two analysi
 fan ``s1``).  The anchors carry a realized branch ``r`` (the parent-period fold), and ``d2_b`` lists ``b`` twice
 (the S3 duplicate-row multiplicity: both twins add it once per occurrence).
 
-Entities: ``X`` is stochastic (in an ``include_stochastics`` group), ``Y`` is not.  Values (hand-derived from the
-rule "own first step, else the fan start, per value cell"):
+Entities: ``X`` is stochastic (in an ``include_stochastics`` group), ``Y`` is not.
+
+Own-first variant (``own_first``: ``read_first`` = ``own``, the own step first).  No solve writes such a frame since
+item 255 (every solve reads the fan's forecast first), but the readers still honour it; the twins must agree on it.
+Values (hand-derived from the rule "own first step, else the fan start, per value cell"):
 
 * ``X`` (branch 1, own tier ``s2`` where authored, else fan ``s1``):
   ``d1_b/t1`` 1, ``d1_c/t1`` 10, ``d2_b/t3`` 2·300 = 600 (own, ``b`` twice), ``d2_b/t4`` 2·4 = 8 (fan),
@@ -15,19 +18,19 @@ rule "own first step, else the fan start, per value cell"):
 * ``Y`` (branch 2 over the anchor's ``r``): ``d2_*/t3`` 5 (fan; ``s2`` authors only ``t4``),
   ``d2_*/t4`` 60 (own); ``d1_*/t1`` no fold value.
 
-Rolling look-ahead variant (``rolling=True``: ``read_first`` = ``fan``, a roll of a rolling solve reads the fan
-start ``s1`` -- the roll's own analysis time -- and never a forecast made later, at the look-ahead period's own
-first step ``s2``).  It reads :data:`PBT_ROWS_ROLLING`: :data:`PBT_ROWS` plus ``Y``'s ``s1`` value at ``t4``, so the
-roll's forecast covers its whole horizon:
+Fan-first variant (``fan_first``: ``read_first`` = ``fan``, as every solve and roll writes it: the fan start ``s1``
+-- the solve's analysis time -- and never a forecast made later, at the later period's own first step ``s2``).  It
+reads :data:`PBT_ROWS_ROLLING`: :data:`PBT_ROWS` plus ``Y``'s ``s1`` value at ``t4``, so the fan's forecast covers the
+whole horizon:
 
 * ``X``: ``d1_*`` unchanged (own step = fan start); ``d2_b/t3`` 2·3 = 6 (fan, ``b`` twice), ``d2_b/t4`` 2·4 = 8,
   ``d2_c/t3`` 30, ``d2_c/t4`` 40 (all fan; the ``s2`` values 300 / 3000 are not read).
 * ``Y``: ``d2_*/t3`` 5 (fan), ``d2_*/t4`` 6 (fan; the ``s2`` value 60 is not read).
 
-Uncovered rolling variant (``rolling=True`` over :data:`PBT_ROWS`): ``s1`` authors no ``t4`` for ``Y`` but ``s2``
-does, so ``Y`` at ``d2_b/t4`` and ``d2_c/t4`` would read the later forecast -- an input error naming ``Y``, the
-parameter, roll :data:`ROLL`, step ``t4`` of periods ``d2_b`` / ``d2_c`` and the analysis times ``s1`` / ``s2``
-(:func:`uncovered_error`).  ``X`` is covered (``s1`` authors ``t3`` and ``t4``) and is not named.
+Uncovered variant (``uncovered``: ``read_first`` = ``fan`` over :data:`PBT_ROWS`): ``s1`` authors no ``t4`` for ``Y``
+but ``s2`` does, so ``Y`` at ``d2_b/t4`` and ``d2_c/t4`` would read the later forecast -- an input error naming
+``Y``, the parameter, solve :data:`ROLL`, step ``t4`` of periods ``d2_b`` / ``d2_c`` and the analysis times ``s1`` /
+``s2`` (:func:`uncovered_error`).  ``X`` is covered (``s1`` authors ``t3`` and ``t4``) and is not named.
 """
 from __future__ import annotations
 
@@ -43,10 +46,10 @@ PBT_ROWS: list[tuple[str, str, str, str, float]] = [
     ("Y", "r", "s1", "t3", 5.0), ("Y", "r", "s2", "t4", 60.0),
 ]
 
-# The rolling variant: the roll's fan-start forecast ``s1`` also covers ``Y`` at ``t4``.
+# The fan-first variant: the fan-start forecast ``s1`` also covers ``Y`` at ``t4``.
 PBT_ROWS_ROLLING: list[tuple[str, str, str, str, float]] = [*PBT_ROWS, ("Y", "r", "s1", "t4", 6.0)]
 
-# The roll (``solve_data/solve_current``) of the rolling variants.
+# The solve (``solve_data/solve_current``, a roll) of the fan-first variants.
 ROLL = "sol_roll_1"
 
 # (entity, period, time) -> the fold value; a cell not listed has no fold value.
@@ -66,26 +69,27 @@ EXPECTED_FOLD_ROLLING: dict[tuple[str, str, str], float] = {
     ("Y", "d2_c", "t3"): 5.0, ("Y", "d2_c", "t4"): 6.0,
 }
 
-# The parity cases: a single solve, a roll whose forecast covers its horizon, and one whose forecast does not.
-FAN_CASES = ["single", "rolling_lookahead", "rolling_uncovered"]
+# The parity cases: an own-first frame, a fan-first frame whose forecast covers the horizon, and one whose
+# forecast does not.
+FAN_CASES = ["own_first", "fan_first", "uncovered"]
 
 
 def fan_case(case: str) -> "tuple[bool, list[tuple[str, str, str, str, float]]]":
-    """``(rolling, pbt rows)`` of a :data:`FAN_CASES` case."""
-    return {"single": (False, PBT_ROWS), "rolling_lookahead": (True, PBT_ROWS_ROLLING),
-            "rolling_uncovered": (True, PBT_ROWS)}[case]
+    """``(fan first, pbt rows)`` of a :data:`FAN_CASES` case."""
+    return {"own_first": (False, PBT_ROWS), "fan_first": (True, PBT_ROWS_ROLLING),
+            "uncovered": (True, PBT_ROWS)}[case]
 
 
 def uncovered_error(subject: str, param: str) -> str:
-    """The ``pytest.raises(match=...)`` pattern of the uncovered rolling variant for entity *subject* (as the
-    message names it, e.g. ``node 'Y'``) and parameter *param*."""
-    return (re.escape(f"{subject}, parameter '{param}': roll '{ROLL}' of a rolling solve starts at time step "
+    """The ``pytest.raises(match=...)`` pattern of the uncovered variant for entity *subject* (as the message
+    names it, e.g. ``node 'Y'``) and parameter *param*."""
+    return (re.escape(f"{subject}, parameter '{param}': solve '{ROLL}' branches into its forecasts at time step "
                       "'s1'") + r".*" + re.escape("no value at time step 't4' (periods 'd2_b', 'd2_c')")
             + r".*" + re.escape("made later, at 's2'"))
 
 
 def expected_fold(rolling: bool) -> dict[tuple[str, str, str], float]:
-    """The hand-derived fold values: single solve (own first) or a roll's look-ahead (fan first)."""
+    """The hand-derived fold values: an own-first frame or a fan-first one."""
     return EXPECTED_FOLD_ROLLING if rolling else EXPECTED_FOLD
 
 
@@ -94,9 +98,9 @@ STEPS: list[tuple[str, str]] = [("d1_b", "t1"), ("d1_c", "t1"), ("d2_b", "t3"), 
 
 
 def put_fan_scaffold(put, *, rolling: bool = False) -> None:
-    """Register the fan's period / branch / step frames through ``put(parent, stem, frame)``; *rolling* marks
-    every ``branch_time_start`` row ``read_first`` = ``fan`` and names the roll :data:`ROLL` (a roll of a
-    rolling solve)."""
+    """Register the fan's period / branch / step frames through ``put(parent, stem, frame)``; *rolling* (fan
+    first) marks every ``branch_time_start`` row ``read_first`` = ``fan`` and names the solve :data:`ROLL`;
+    without it the rows say ``own``."""
     put("solve_data", "first_timesteps", pl.DataFrame({
         "period": ["d1_b", "d1_c", "d2_b", "d2_c"], "step": ["s1", "s1", "s2", "s2"]}))
     put("solve_data", "branch_time_start", pl.DataFrame({

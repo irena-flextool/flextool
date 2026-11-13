@@ -467,10 +467,9 @@ def test_within_solve_output_state_change_of_a_first_period_fan(tmp_path_factory
         period_timeset={"p1": "ts1", "p2": "ts2"}, fan=("p1", "t0001"), K=K, D=D, with_work=True,
         s={"existing": 1.0, "storage_binding_method": "bind_within_solve", "storage_start_end_method": "fix_nothing",
            "penalty_down": 100.0, "penalty_up": 1000.0},
-        profile={"high": {"t0001": _series(["t0001", "t0002"], [1.0, 0.0], K, D),
-                          "t0003": _series(["t0003", "t0004"], [-1.0, 0.0], K, D)},
-                 "low": {"t0001": _series(["t0001", "t0002"], [0.0, 1.0], K, D),
-                         "t0003": _series(["t0003", "t0004"], [0.0, -1.0], K, D)}})
+        # One forecast per branch, made at the fan's analysis time t0001 and covering p1 and p2 (item 255).
+        profile={"high": {"t0001": _series(["t0001", "t0002", "t0003", "t0004"], [1.0, 0.0, -1.0, 0.0], K, D)},
+                 "low": {"t0001": _series(["t0001", "t0002", "t0003", "t0004"], [0.0, 1.0, 0.0, -1.0], K, D)}})
     step = steps["sol"]
     state = _values(step, "v_state")
     assert [state[("s", "p1_high", t)] for t in ("t0001", "t0002")] == pytest.approx([1.0, 1.0], abs=TOL)

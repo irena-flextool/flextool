@@ -77,14 +77,14 @@ def _parent_solveconfig_stub() -> SolveConfig:
     reads/writes, with a single parent solve ``P`` populated."""
     sc = object.__new__(SolveConfig)
     sc.model_solve = {"m": ["P"]}
-    sc.timesets_used_by_solves = {"P": ["ts1"]}
-    sc.solve_period_years_represented = {"P": {"p2035": 1.0}}
+    sc.timesets_used_by_solves = {"P": [("p2035", "ts1")]}
+    sc.solve_period_years_represented = {"P": [("p2035", 1.0)]}
     sc.periods_available = {"P": ["p2035"]}
     sc.delay_durations = {}
     sc.hole_multipliers = {}
     sc.rolling_times = {}
     sc.solve_modes = {"P": "single_solve"}
-    sc.realized_periods = {"P": ["p2035"]}
+    sc.realized_periods = {"P": [("p2035", "p2035")]}
     sc.realized_dispatch_parent = {}
     return sc
 
@@ -123,3 +123,98 @@ def test_spawn_sibling_config_is_consistent_with_parent():
         sc.solve_period_years_represented[sib]
         == sc.solve_period_years_represented["P"]
     )
+
+
+class _CapturingReader:
+    """The reader half of the spawn: records each ``register_derived_solve`` call with its ``replace`` values."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, dict]] = []
+
+    def entities(self, _cls):
+        import polars as pl
+        return pl.DataFrame({"name": ["P"]})
+
+    def register_derived_solve(self, parent, sibling, *, drop=(), replace=None):
+        self.calls.append((parent, sibling, dict(replace or {})))
+
+
+def _lookahead_parent(mode: str = "single_solve", realized=(("p2035", "p2035"),)) -> SolveConfig:
+    """A ``separate_dispatch`` parent ``P`` over p2035 (realized) and a look-ahead p2040 (not realized)."""
+    sc = object.__new__(SolveConfig)
+    sc.model_solve = {"m": ["P"]}
+    sc.contains_solves = {}
+    sc.timesets_used_by_solves = {"P": [("p2035", "ts35"), ("p2040", "ts40")]}
+    sc.solve_period_years_represented = {"P": [("p2035", 5.0), ("p2040", 10.0)]}
+    sc.solve_modes = {"P": mode}
+    sc.realized_periods = {"P": list(realized)}
+    sc.dispatch_realization_method = {"P": "separate_dispatch"}
+    sc.fix_storage_periods = {}
+    sc.realized_dispatch_parent = {}
+    return sc
+
+
+def test_single_solve_realization_has_the_realized_periods_only_in_both_halves():
+    """Item 255: the realization solve of a single solve dispatches its realized periods only, not the
+    look-ahead.  Both halves agree: the SolveConfig dicts and the reader's ``period_timeset`` /
+    ``years_represented`` rows (``replace=``) hold p2035 and not p2040."""
+    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+
+    sc = _lookahead_parent()
+    reader = _CapturingReader()
+    _spawn_realized_dispatch_siblings(sc, reader, logger=None)
+    sib = "P__realized_dispatch"
+    assert sc.realized_dispatch_parent == {sib: "P"}
+    assert sc.timesets_used_by_solves[sib] == [("p2035", "ts35")]
+    assert sc.solve_period_years_represented[sib] == [("p2035", 5.0)]
+    assert sc.timesets_used_by_solves["P"] == [("p2035", "ts35"), ("p2040", "ts40")]
+    [(parent, sibling, replace)] = reader.calls
+    assert (parent, sibling) == ("P", sib)
+    assert set(replace) == {"period_timeset", "years_represented"}
+    assert list(replace["period_timeset"].indexes) == ["p2035"]
+    assert list(replace["period_timeset"].values) == ["ts35"]
+    assert replace["period_timeset"].index_name == "period"
+    assert list(replace["years_represented"].indexes) == ["p2035"]
+    assert list(replace["years_represented"].values) == [5.0]
+
+
+def test_rolling_realization_keeps_the_parent_periods():
+    """A rolling parent's realization rolls are trimmed to each roll's jump at run time (``_run_model`` OC1), so
+    both halves copy the parent's periods unchanged."""
+    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+
+    sc = _lookahead_parent("rolling_window")
+    sc.roll_counter = {"P": 0}
+    reader = _CapturingReader()
+    _spawn_realized_dispatch_siblings(sc, reader, logger=None)
+    sib = "P__realized_dispatch"
+    assert sc.timesets_used_by_solves[sib] == sc.timesets_used_by_solves["P"]
+    assert sc.solve_period_years_represented[sib] == sc.solve_period_years_represented["P"]
+    assert reader.calls == [("P", sib, {})]
+
+
+def test_separate_dispatch_without_realized_periods_adds_no_realization_solve():
+    """A ``separate_dispatch`` solve that realizes no period (an invest-only solve) has nothing to dispatch: no
+    realization solve is added (owner decision, item 255 critique M2)."""
+    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+
+    sc = _lookahead_parent(realized=())
+    reader = _CapturingReader()
+    _spawn_realized_dispatch_siblings(sc, reader, logger=None)
+    assert sc.realized_dispatch_parent == {}
+    assert reader.calls == []
+    assert sc.model_solve == {"m": ["P"]}
+
+
+def test_realized_periods_with_a_gap_are_an_error():
+    """A period the parent does not realize between two it realizes: the realization solve (realized periods
+    only) would run its storage from one straight into the next -- a configuration error naming the gap."""
+    import pytest
+
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    sc = _lookahead_parent()
+    sc.timesets_used_by_solves["P"] = [("p2035", "ts35"), ("p2040", "ts40"), ("p2045", "ts45")]
+    sc.realized_periods["P"] = [("p2035", "p2035"), ("p2045", "p2045")]
+    with pytest.raises(FlexToolConfigError, match=r"Solve 'P' realizes periods 'p2035', 'p2045' but not 'p2040'"):
+        sc.realization_window("P")

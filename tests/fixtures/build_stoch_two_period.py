@@ -116,14 +116,16 @@ def build() -> dict:
     profile_base = _map(
         [(t, 0.6) for t in P1_STEPS] + [(t, 0.5) for t in P2_STEPS]
     )
+    # One forecast per branch, made at the fan's analysis time t0001, covering both periods: the solve
+    # decides at t0001 and reads no forecast made later (item 255).
     profile_stoch = _map([
         ("high", _nested([
-            ("t0001", _nested([(t, 0.6) for t in P1_STEPS])),
-            ("t0004", _nested([(t, 0.5) for t in P2_STEPS])),
+            ("t0001", _nested([(t, 0.6) for t in P1_STEPS]
+                              + [(t, 0.5) for t in P2_STEPS])),
         ])),
         ("low", _nested([
-            ("t0001", _nested([(t, 0.2) for t in P1_STEPS])),
-            ("t0004", _nested([(t, 0.1) for t in P2_STEPS])),
+            ("t0001", _nested([(t, 0.2) for t in P1_STEPS]
+                              + [(t, 0.1) for t in P2_STEPS])),
         ])),
     ])
     inflow = _map(

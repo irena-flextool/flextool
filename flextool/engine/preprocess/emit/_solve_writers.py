@@ -800,20 +800,19 @@ def project_branch_time_start_rows(
     return [(d, step) for d, step in parent_rows if (d, d) in period_branch]
 
 
-def derive_branch_time_start(rows: list[tuple[str, str]], *, fan_first: bool = False) -> pl.DataFrame:
+def derive_branch_time_start(rows: list[tuple[str, str]]) -> pl.DataFrame:
     """Build the ``branch_time_start`` frame (period, step, read_first); header-only without a fan.
 
-    ``read_first`` is ``fan`` in a roll of a rolling solve (*fan_first*: the roll's look-ahead periods read the
-    roll's fan-start forecast before one authored at their own first step, a later roll's analysis time) and
-    ``own`` otherwise; see ``_pdt_lookup`` "Which forecast a branch period reads".
+    ``read_first`` is ``fan`` on every row: a period from the fan onwards reads the forecast made at the fan's
+    analysis time first, in a single solve and in a roll of a rolling solve alike (item 255); see ``_pdt_lookup``
+    "Which forecast a branch period reads".
     """
-    read_first = "fan" if fan_first else "own"
-    return _to_utf8_frame(("period", "step", "read_first"), [(d, step, read_first) for d, step in rows])
+    return _to_utf8_frame(("period", "step", "read_first"), [(d, step, "fan") for d, step in rows])
 
 
-def emit_branch_time_start(rows: list[tuple[str, str]], *, provider, fan_first: bool = False) -> None:
+def emit_branch_time_start(rows: list[tuple[str, str]], *, provider) -> None:
     """Emit ``solve_data/branch_time_start`` to the Provider."""
-    _emit(provider, "solve_data/branch_time_start.csv", derive_branch_time_start(rows, fan_first=fan_first))
+    _emit(provider, "solve_data/branch_time_start.csv", derive_branch_time_start(rows))
 
 
 # ---------------------------------------------------------------------------

@@ -35,6 +35,7 @@ from flextool.engine.preprocess.emit._period_params import (
     derive_pdtProfile,
     derive_pdtProfile_vectorized,
 )
+from tests.engine._fan_fold_fixture import FAN_CASES
 
 _KEY_COLS = ["profile", "period", "time"]
 
@@ -364,11 +365,12 @@ def test_vectorized_pdtProfile_synthetic_fold_and_cascade(tmp_path):
     print(f"\n[pdtProfile parity] synthetic fold+UNION: Tier {tier}")
 
 
-@pytest.mark.parametrize("case", ["single", "rolling_lookahead", "rolling_uncovered"])
+@pytest.mark.parametrize("case", FAN_CASES)
 def test_vectorized_pdtProfile_fan_start_fallback(case, tmp_path):
-    """Item 228: a non-empty ``fan_for_d`` (``branch_time_start``) -- each fold cell reads the forecast at its
-    period's own first step, else at the fan start (a roll's look-ahead period: the fan start only; a cell it
-    does not cover that a later forecast does is an input error in both twins) -- byte-identical in both twins,
+    """Items 228 / 255: a non-empty ``fan_for_d`` (``branch_time_start``) -- each fold cell reads the forecast at
+    the fan start (``read_first`` = ``fan``, as every solve writes it; a cell it does not cover that a later
+    forecast does is an input error in both twins), or at its period's own first step first in a frame that says
+    ``own`` -- byte-identical in both twins,
     values hand-derived in
     :mod:`tests.engine._fan_fold_fixture` (profile ``X`` is stochastic through its process ``px``)."""
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
@@ -390,7 +392,7 @@ def test_vectorized_pdtProfile_fan_start_fallback(case, tmp_path):
         "process": ["px", "py"], "profile": ["X", "Y"], "method": ["upper_limit", "upper_limit"]}))
 
     inp, sdd = tmp_path / "input", tmp_path / "solve_data"
-    if case == "rolling_uncovered":
+    if case == "uncovered":
         for derive in (derive_pdtProfile, derive_pdtProfile_vectorized):
             with pytest.raises(FlexToolConfigError, match=uncovered_error("profile 'Y'", "profile")):
                 derive(inp, sdd, provider=provider)

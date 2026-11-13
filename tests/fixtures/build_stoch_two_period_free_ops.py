@@ -169,14 +169,14 @@ def build() -> dict:
     profile_base = _map([(t, 0.10) for t in STEPS])
 
     # Branch-varying wind profile (stoch alternative).  Keyed
-    # branch -> period-first-step -> per-step share of the 100 MW cap.
-    # t0-branching, so BOTH periods are per-branch — declare shares for
-    # every period's first step.  ``up`` = surplus early / deficit late;
+    # branch -> analysis time -> per-step share of the 100 MW cap.
+    # t0-branching, so BOTH periods are per-branch.  ``up`` = surplus early / deficit late;
     # ``low`` = the mirror; ``mid`` = flat (byte-parity trunk).
     def _branch_profile(early: float, late: float) -> dict:
+        # One forecast per branch, made at the fan's analysis time t0001 and covering both periods: the
+        # solve decides at t0001 and reads no forecast made later (item 255).
         return _nested([
-            ("t0001", _nested([(t, early) for t in P1_STEPS])),
-            ("t0004", _nested([(t, late) for t in P2_STEPS])),
+            ("t0001", _nested([(t, early) for t in P1_STEPS] + [(t, late) for t in P2_STEPS])),
         ])
 
     profile_stoch = _map([

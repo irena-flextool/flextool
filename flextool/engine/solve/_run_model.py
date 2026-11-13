@@ -862,12 +862,19 @@ def native_run_model(state, solver) -> int:
             or parent not in period__branch_lists
         ):
             continue
-        solve_branch__time_branch_lists[sibling] = (
-            project_realized_branch_time_branch_rows(
+        # Cut to the sibling's own periods: a single solve's realization solve
+        # dispatches its realized periods only, a realization roll its jump
+        # (item 255).  The NA-tied online / reserve pins need no cut: the
+        # model pins only the sibling's declared cells (online_fix_eq,
+        # reserve_fix_eq).
+        _sibling_periods = set(active_time_lists.get(sibling, {}))
+        solve_branch__time_branch_lists[sibling] = [
+            row for row in project_realized_branch_time_branch_rows(
                 solve_branch__time_branch_lists[parent],
                 period__branch_lists[parent],
             )
-        )
+            if row[0] in _sibling_periods
+        ]
 
     # The fan start of each solve (``solve_data/branch_time_start``): a branch
     # period whose own first step authors no stochastic-time value for a cell
@@ -882,8 +889,12 @@ def native_run_model(state, solver) -> int:
     for sibling, parent in realized_dispatch_parent.items():
         if sibling not in branch_time_start_lists or parent not in branch_time_start_lists:
             continue
-        branch_time_start_lists[sibling] = solve_writers.project_branch_time_start_rows(
-            branch_time_start_lists[parent], period__branch_lists[parent])
+        _sibling_periods = set(active_time_lists.get(sibling, {}))
+        branch_time_start_lists[sibling] = [
+            row for row in solve_writers.project_branch_time_start_rows(
+                branch_time_start_lists[parent], period__branch_lists[parent])
+            if row[0] in _sibling_periods
+        ]
 
     for solve in active_time_lists.keys():
         for period in active_time_lists[solve]:
@@ -1387,14 +1398,13 @@ def native_run_model(state, solver) -> int:
             state.solve.stochastic_branches,
             provider=sub_solve_provider,
         )
-        # A roll of a rolling solve (its realization sibling mirrors the
-        # parent's mode) reads its own fan-start forecast before a later
-        # roll's (``_pdt_lookup`` "Which forecast a branch period reads").
+        # Every period from the fan onwards reads the forecast made at the
+        # fan's analysis time, in a single solve and in a roll alike, never a
+        # forecast made later (``_pdt_lookup`` "Which forecast a branch
+        # period reads").
         solve_writers.emit_branch_time_start(
             branch_time_start_lists.get(solve, []),
             provider=sub_solve_provider,
-            fan_first=state.solve.solve_modes.get(
-                complete_solve[solve], "single_solve") == "rolling_window",
         )
         solve_writers.emit_first_and_last_periods(
             active_time_lists[solve],

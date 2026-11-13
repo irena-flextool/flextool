@@ -66,8 +66,15 @@ Each line says what changes for a model that ran before and what to do; the deta
   upgrade marks such databases and the run names the nodes; check their results.
 - **Forecasts given at the fan's analysis time are read in later branch periods** (before, they read 0 there, so a
   wind unit could not run). Results of multi-period stochastic models with such forecasts change.
-- **A roll of a rolling stochastic solve reads only its own forecast**, never a later roll's; a look-ahead time step
-  that only a later forecast covers is an error. Extend each roll-start forecast to the end of the roll's horizon.
+- **A stochastic solve or roll reads only the forecast made at its fan**, never a later one (a later roll's, or the
+  forecast meant for the next solve of a chain); a later time step that only a later forecast covers is an error.
+  Give each fan's forecast to the end of the solve's or roll's horizon. Before, a single solve's later periods read
+  the forecast given at their own first step.
+- **The realization dispatch of a single stochastic solve dispatches only its realized periods**, not the
+  look-ahead: the storage it hands to the next solve follows the storage node's end rules at the end of the realized
+  periods (as at the end of a roll's jump), not the realized data of the look-ahead. Results of stochastic single
+  solves with look-ahead change; rerun them. A `separate_dispatch` solve without `realized_periods` gets no
+  realization dispatch.
 - **Stochastic values before the forecasts branch out come from the forecast made at the solve's or roll's
   start.** Every period before the reveal now reads the realized branch's forecast made at the start. Before, a
   period read the forecast given at its own first step, which is information the solve does not have yet; where
@@ -1004,16 +1011,22 @@ Each line says what changes for a model that ran before and what to do; the deta
   `analysis_time` / `time` map) given only at the fan's analysis time read 0 in the forecast branch periods after
   the fan's period, in the realization dispatch of those periods and, for entities outside every
   `include_stochastics` group, in the realized-branch read: a wind profile was 0 there and the unit did not run.
-  In a single solve each value now comes from the forecast authored at the branch period's own first step, else from
-  the one authored at the fan's analysis time (per time step); a period before the reveal never reads the latter
-  (it reads the realized branch's forecast made at the solve's or roll's start, see "Input checks").
-  A roll of a rolling solve decides at its fan's analysis time, so every period of the roll after its fan's
-  period (look-ahead periods and the later committed periods of a multi-period jump) reads the forecast given
-  at the roll's own fan analysis time, even where a later roll's forecast is given at that period's first step
-  (before, such a look-ahead period read the later roll's forecast); a time step that forecast does not cover
-  but a later one does is an input error (see "Input checks"). A single (non-rolling) solve still lets a
-  forecast at a later period's own first step override. The realization dispatch reads its branch the same
-  way.
+  A single solve and a roll of a rolling solve decide at their fan's analysis time, so every period after the
+  fan's period (look-ahead periods and the later committed periods) now reads the forecast given at the fan's
+  analysis time, even where a later forecast (a later roll's, or the next solve's) is given at that period's first
+  step (before, a single solve read that later forecast, and a roll's look-ahead period too); a time step the fan's
+  forecast does not cover but a later one does is an input error (see "Input checks"). A period before the reveal
+  reads the realized branch's forecast made at the solve's or roll's start (see "Input checks"). The realization
+  dispatch reads its branch the same way.
+- **No information from the future in the realization of a single stochastic solve (results change).** Its
+  realization dispatch (`<solve>__realized_dispatch`) ran over the solve's whole horizon with the realized data,
+  look-ahead included, so the storage it left at the end of the realized periods, and handed to the next solve,
+  was decided knowing the realized data of the look-ahead. It now dispatches the realized periods only, as each
+  realization roll of a rolling solve dispatches its jump only; the storage at their end follows the node's end
+  rules. Realized periods with a period between them that is not realized are an error. A realization solve you
+  configure yourself keeps its periods, with a warning when it holds a period the stochastic solve does not
+  realize. A `separate_dispatch` solve without `realized_periods` (an invest-only solve) gets no realization
+  dispatch (before, it got one that dispatched the horizon and reported nothing).
 - **Two or more solves with a `realized: yes` branch run again** (4.2.0 to 4.3.0). A run of two or more solves in
   which a stochastic solve designates a `realized: yes` branch stopped with "periods ['p2030_rlz'] have no year
   from the start of the run". The realized branch copy of a period is no period of the run: its operations are
@@ -1056,11 +1069,11 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **A stochastic inflow or reservation that gives a value to only some of a fan's forecast branches is an
   error,** as for the other stochastic-time parameters (it read 0 in the branches left out). The check also covers
   values given at the fan's analysis time that later periods read.
-- **A roll's forecast must cover the roll's whole horizon.** In a rolling stochastic solve, a look-ahead period
-  whose time step has no value in the forecast given at the roll's start, but has one in a forecast given later (at
-  the period's own first step, a later roll's analysis time), is an error naming the entity, the parameter, the roll
-  and the uncovered time steps, raised before the roll is solved. Extend the forecasts at each roll start to the end
-  of the roll's horizon. Single solves keep reading the forecast at a period's own first step.
+- **A fan's forecast must cover the whole horizon of its solve or roll.** In a single or rolling stochastic solve,
+  a period after the fan's period whose time step has no value in the forecast given at the fan's analysis time, but
+  has one in a forecast given later (at the period's own first step: a later roll's or the next solve's analysis
+  time), is an error naming the entity, the parameter, the solve or roll and the uncovered time steps, raised before
+  it is solved. Give the forecasts at each fan's analysis time to the end of the horizon.
 - **A `co2_max_period` or `co2_max_total` on a group whose `co2_method` has no such cap is reported.** The
   value is ignored (for example `co2_max_period` with `co2_method` *price*); the run now warns, naming the group,
   the alternative and its method. Before, such a group with `co2_max_period` was also listed as CO2-limited in

@@ -221,17 +221,18 @@ def build() -> dict:
     )
     # Branch-varying wind profile (stoch alternative).  Keyed
     # branch → period-first-step → per-step share of the 100 MW wind cap.
-    # p2035 (t0001) is SHARED (0.8 in BOTH branches; read by the ws
-    # fan-at-p2035 scenarios).  p2040 (t0004): high 0.0 (residual 120), low
-    # 0.6 (residual 60).
+    # One forecast per branch, made at the ws fan's analysis time t0001 and
+    # covering both periods (the solve reads no forecast made later, item
+    # 255).  p2035 is SHARED (0.8 in BOTH branches); p2040: high 0.0
+    # (residual 120), low 0.6 (residual 60).
     profile_stoch = _map([
         ("high", _nested([
-            ("t0001", _nested([(t, 0.80) for t in P1_STEPS])),
-            ("t0004", _nested([(t, 0.0) for t in P2_STEPS])),
+            ("t0001", _nested([(t, 0.80) for t in P1_STEPS]
+                              + [(t, 0.0) for t in P2_STEPS])),
         ])),
         ("low", _nested([
-            ("t0001", _nested([(t, 0.80) for t in P1_STEPS])),
-            ("t0004", _nested([(t, 0.60) for t in P2_STEPS])),
+            ("t0001", _nested([(t, 0.80) for t in P1_STEPS]
+                              + [(t, 0.60) for t in P2_STEPS])),
         ])),
     ])
     # Mid-horizon reveal (rp alternative): before the reveal p2035 reads the

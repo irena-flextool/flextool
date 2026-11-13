@@ -2010,6 +2010,14 @@ def _spawn_realized_dispatch_siblings(
     eligible: list[tuple[str, str]] = []
     for p in sorted(top_level):
         if solve_cfg.dispatch_realization_method_for(p) == "separate_dispatch":
+            if not (getattr(solve_cfg, "realized_periods", None) or {}).get(p):
+                # Nothing to realize (an invest-only solve): no realization solve.
+                if logger is not None:
+                    logger.info(
+                        "solve '%s' has dispatch_realization_method = separate_dispatch but no "
+                        "realized_periods: no realization solve is added (it would dispatch nothing)", p,
+                    )
+                continue
             eligible.append((p, "dispatch_realization_method='separate_dispatch'"))
             continue
         configured = _realization.configured_realization_solve(solve_cfg, p)
@@ -2020,6 +2028,11 @@ def _spawn_realized_dispatch_siblings(
                     "registered author-declared realization solve '%s' for "
                     "stochastic solve '%s'", configured, p,
                 )
+            _line = _realization.lookahead_in_configured_realization(solve_cfg, configured, p)
+            if _line is not None:
+                if logger is not None:
+                    logger.warning(_line)
+                print(f"Warning: {_line}", flush=True)
             # A realization solve takes its parent's detail levels (it pins
             # the parent's units online and reserves): name an authored
             # value that is overridden.
@@ -2105,8 +2118,11 @@ def _spawn_realized_dispatch_siblings(
                 f"'{sibling}' already exists in the database."
             )
         from flextool.engine.input._spinedb_reader import SpineDbReader
+        # A single solve's realization solve reads its realized periods only
+        # (the SolveConfig half: ``derive_realization_solve``).
         cascade_db_reader.register_derived_solve(
-            parent, sibling, drop=SpineDbReader.REALIZATION_SOLVE_DROPPED_PARAMS)
+            parent, sibling, drop=SpineDbReader.REALIZATION_SOLVE_DROPPED_PARAMS,
+            replace=solve_cfg.realization_reader_values(parent))
         solve_cfg.spawn_realized_dispatch_sibling(parent, sibling)
         if cascade_solve_cfg is not None and cascade_solve_cfg is not solve_cfg:
             cascade_solve_cfg.derive_realization_solve(parent, sibling)

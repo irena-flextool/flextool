@@ -32,7 +32,7 @@ from flextool.engine.preprocess.emit._pdt_lookup import (
     _anchor_fan_members,
     _check_pbt_branch_coverage,
     _check_pre_reveal_reads_have_forecast,
-    _check_roll_forecast_covers_lookahead,
+    _check_forecast_covers_horizon,
     _check_ungrouped_reads_have_realized_branch,
     fold_over_tiers,
     inherit_pd_branch_periods,
@@ -170,7 +170,7 @@ def _check_stochastic_inflow(pbt_inflow: dict[tuple[str, str, str, str], float],
     A node outside every ``include_stochastics`` group reads the realized branch's inflow on a fan's branch
     periods, so a forecasts-only fan cannot serve it; a node must author every active forecast of a fan, or
     none; before the reveal a period reads the forecast made when the solve or roll starts, which must cover it;
-    and in a roll of a rolling solve the roll's own forecast must cover the roll's look-ahead periods.
+    and the forecast made at the fan start must cover every later period of the solve or roll (item 255).
     Shared by :func:`derive_pdtNodeInflow` and :func:`derive_pdtNodeInflow_vectorized`; *steps* is the reader's
     ``(period, time)`` grid when it is not ``steps_in_use`` (the capacity margin's peak demand).
     """
@@ -184,7 +184,7 @@ def _check_stochastic_inflow(pbt_inflow: dict[tuple[str, str, str, str], float],
     _check_pbt_branch_coverage(keyed, 1, anchor_members, tb_for_d, ts_for_d, fan_for_d, kind="node")
     _check_pre_reveal_reads_have_forecast(keyed, 1, stoch_node, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
                                           solve_data_dir, provider=provider, kind="node", steps=steps)
-    _check_roll_forecast_covers_lookahead(keyed, 1, stoch_node, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
+    _check_forecast_covers_horizon(keyed, 1, stoch_node, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
                                           solve_data_dir, provider=provider, kind="node")
 
 
@@ -198,8 +198,8 @@ def _check_profile_roll_coverage(pbt_profile: dict[tuple[str, str, str, str], fl
                                  solve_data_dir: Path,
                                  *, provider: "object | None" = None) -> None:
     """Before the reveal, a period reads the forecast of a profile made when the solve or roll starts, which must
-    cover it (:func:`_check_pre_reveal_reads_have_forecast`); in a roll of a rolling solve, the roll's own
-    forecast must cover the roll's look-ahead periods (:func:`_check_roll_forecast_covers_lookahead`).  Shared by
+    cover it (:func:`_check_pre_reveal_reads_have_forecast`); the forecast made at the fan start must cover every
+    later period of the solve or roll (:func:`_check_forecast_covers_horizon`).  Shared by
     :func:`derive_pdtProfile` and :func:`derive_pdtProfile_vectorized`."""
     if not pbt_profile:
         return
@@ -207,7 +207,7 @@ def _check_profile_roll_coverage(pbt_profile: dict[tuple[str, str, str, str], fl
     keyed = {(p, "profile", tb, ts, t): v for (p, tb, ts, t), v in pbt_profile.items() if p in read}
     _check_pre_reveal_reads_have_forecast(keyed, 1, stoch_profile, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
                                           solve_data_dir, provider=provider, kind="profile")
-    _check_roll_forecast_covers_lookahead(keyed, 1, stoch_profile, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
+    _check_forecast_covers_horizon(keyed, 1, stoch_profile, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
                                           solve_data_dir, provider=provider, kind="profile")
 
 

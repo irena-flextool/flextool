@@ -251,14 +251,16 @@ def _config(**over):
         model_solve={"m": ["p"]}, contains_solves={}, solve_modes={"p": "single_solve"}, rolling_times={},
         stochastic_branches={"p": [["d1", "rlz", "t0001", "yes", 0.0], ["d1", "a", "t0001", "no", 1.0]]},
         realized_periods=defaultdict(list, {"p": [("d1", "d1")]}),
-        timesets_used_by_solves={"p": [("d1", "ts")]}, stochastic_invest_method={},
+        timesets_used_by_solves={"p": [("d1", "ts")]}, solve_period_years_represented={},
+        stochastic_invest_method={},
         dispatch_realization_method={}, fix_storage_periods={}, realized_dispatch_parent={},
         reduce_unit_detail_method={}, reduce_system_detail_method={},
     )
     for k, v in over.items():
         setattr(cfg, k, v)
     for name in ("dispatch_realization_method_for", "stochastic_invest_method_for", "register_realization_solve",
-                 "spawn_realized_dispatch_sibling", "reduce_detail_overridden", "_reduce_detail_for",
+                 "spawn_realized_dispatch_sibling", "realization_reader_values", "realization_window",
+                 "reduce_detail_overridden", "_reduce_detail_for",
                  "reduce_unit_detail_for", "reduce_system_detail_for"):
         setattr(cfg, name, getattr(SolveConfig, name).__get__(cfg))
     return cfg
@@ -275,6 +277,21 @@ def test_configured_realization_solve_is_registered_not_spawned() -> None:
     assert cfg.realized_dispatch_parent == {"q": "p"}
     assert reader.registered == []
     assert cfg.model_solve["m"] == ["p", "q"]
+
+
+def test_configured_solve_with_a_lookahead_period_warns(capsys) -> None:
+    """An author-declared realization solve of a single solve that also holds a period the stochastic solve does
+    not realize dispatches it with the realized data, information the stochastic solve did not have: registered as
+    authored, with a warning naming the period (item 255)."""
+    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+    cfg = _config(model_solve={"m": ["p", "q"]}, solve_modes={"p": "single_solve", "q": "single_solve"})
+    cfg.timesets_used_by_solves["q"] = [("d1", "ts"), ("d2", "ts")]
+    cfg.realized_periods["q"] = [("d1", "d1")]
+    _spawn_realized_dispatch_siblings(cfg, _Reader(), logger=None)
+    assert cfg.realized_dispatch_parent == {"q": "p"}
+    out = capsys.readouterr().out
+    assert ("Warning: Realization solve 'q' of solve 'p' also dispatches 'd2', which 'p' does not realize: it "
+            "dispatches that period with the realized data, information 'p' did not have when it decided.") in out
 
 
 def test_configured_solve_missing_the_fan_period_is_not_registered() -> None:

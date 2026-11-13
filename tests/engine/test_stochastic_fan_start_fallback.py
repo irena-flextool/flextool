@@ -2,14 +2,13 @@
 
 A forecast is authored as a ``(branch, analysis_time, time)`` map.  A solve
 fans once, at its first stochastic step (``solve_data/branch_time_start``).
-Every fold reads, per value cell, the forecast authored at the branch
-period's own first step, else the forecast authored at the fan start, so a
-model that authors its forecasts only at the fan's analysis time reads them
-in every later period too (before: 0 there).  In a roll of a rolling solve
-a look-ahead period reads the roll's fan-start forecast only: a cell that
+Every period from the fan onwards reads, per value cell, the forecast
+authored at the fan start, so a model that authors its forecasts only at
+the fan's analysis time reads them in every later period too (before: 0
+there).  A solve or a roll decides at its fan's analysis time: a cell that
 forecast does not cover, where a forecast made later (at the period's own
-first step) has a value, is an input error -- the roll's forecast must
-cover its whole horizon.  A pre-reveal trunk period never reads the fan
+first step) has a value, is an input error -- the fan's forecast must cover
+the whole horizon (item 228 for rolls, item 255 for single solves too).  A pre-reveal trunk period never reads the fan
 start: every period before the reveal reads the forecast made at the solve's
 or roll's start under the realized branch, which must cover it; a
 forecasts-only fan has no series for those periods, so a stochastic value
@@ -193,7 +192,7 @@ def test_later_branch_period_reads_fan_start_forecast(tmp_path_factory) -> None:
     assert sum(_period(inflow, "p2_low")) == pytest.approx(-0.26)
     flows = s.solution.value("v_flow").with_columns(pl.col("d").cast(pl.Utf8))
     assert flows.filter(pl.col("d") == "p2_high")["value"].sum() > 0.0
-    assert _bts(s) == {d: ("t0001", "own") for d in ("p1", "p1_high", "p1_low", "p2", "p2_high", "p2_low")}
+    assert _bts(s) == {d: ("t0001", "fan") for d in ("p1", "p1_high", "p1_low", "p2", "p2_high", "p2_low")}
 
 
 # ── 2: a later fan; the pre-reveal trunk never reads the fan start ─────
@@ -212,24 +211,42 @@ def test_mid_horizon_fan_reads_its_own_start(tmp_path_factory) -> None:
         assert _period(cells, "p3_low") == pytest.approx([0.045, 0.05, 0.055, 0.06])
     bts = _bts(s)
     assert "p1" not in bts
-    assert set(bts.values()) == {("t0005", "own")}
+    assert set(bts.values()) == {("t0005", "fan")}
 
 
-# ── 3: single solve — a forecast authored at the period's own first step wins ──
-def test_own_first_step_overrides_fan_start(tmp_path_factory) -> None:
-    """Single (non-rolling) solve.  Data at t0001 (0.1·i) plus a constant 0.9 at analysis time t0005 for
-    t0005..t0008 in every branch: p2 reads 0.9 in every forecast (no double count with the fan start); the
-    rolling look-ahead rule (test 4) does not apply, ``read_first`` is ``own``."""
+# ── 3: single solve — the fan's forecast wins over a later one (item 255) ──
+def test_single_solve_ignores_a_later_forecast_the_fan_forecast_covers(tmp_path_factory) -> None:
+    """Single (non-rolling) solve, fan p1/t0001.  Data at t0001 (0.1·i, covering t0001..t0008) plus a constant
+    0.9 at analysis time t0005 for t0005..t0008 in every branch.  The solve decides at t0001 and must not see the
+    forecast made at t0005, so p2 reads the t0001 forecast: high 0.5..0.8, low (×0.5) 0.25..0.40 (before item
+    255: 0.9, the later forecast); ``read_first`` is ``fan``."""
     n = 8
     per = {b: {"t0001": {t: v * _FACTOR[b] for t, v in _series(n).items()},
                "t0005": {t: 0.9 for t in _steps(n)[4:]}} for b in ("high", "low")}
     steps = _run(tmp_path_factory, n_periods=2, fans=_two_forecasts("p1", "t0001"), profile=_stochastic(per))
     s = steps["sol"]
     for cells in (_cells(s, "pdtProfile"), _profile_value(s)):
-        assert _period(cells, "p2_high") == pytest.approx([0.9] * 4)
-        assert _period(cells, "p2_low") == pytest.approx([0.9] * 4)
+        assert _period(cells, "p2_high") == pytest.approx([0.5, 0.6, 0.7, 0.8])
+        assert _period(cells, "p2_low") == pytest.approx([0.25, 0.30, 0.35, 0.40])
         assert _period(cells, "p1_low") == pytest.approx([0.05, 0.10, 0.15, 0.20])
-    assert {r for _s, r in _bts(s).values()} == {"own"}
+    assert {r for _s, r in _bts(s).values()} == {"fan"}
+
+
+def test_single_solve_later_forecast_not_covered_by_the_fan_forecast_is_an_error(tmp_path_factory) -> None:
+    """Single solve, fan p1/t0001: the t0001 forecast covers only p1 (t0001..t0004) and the series for p2 is given
+    at t0005 only, a forecast made after the solve decides.  An input error naming the profile, the solve, p2's
+    four steps in both forecast copies and the two analysis times (before item 255: p2 read the t0005 series)."""
+    per = {b: {"t0001": {t: v * _FACTOR[b] for t, v in _series(4).items()},
+               "t0005": {t: 0.9 for t in _steps(8)[4:]}} for b in ("high", "low")}
+    with pytest.raises(FlexToolConfigError) as err:
+        _run(tmp_path_factory, n_periods=2, fans=_two_forecasts("p1", "t0001"), profile=_stochastic(per))
+    assert str(err.value) == (
+        "profile 'prof', parameter 'profile': solve 'sol' branches into its forecasts at time step 't0001' and "
+        "reads the forecasts made then over its whole horizon, but those forecasts have no value at time steps "
+        "'t0005', 't0006', 't0007', 't0008' (periods 'p2_high', 'p2_low').  Only the forecasts made later, at "
+        "'t0005', have values there, and a solve (or a roll of a rolling solve) must not use a forecast made "
+        "after it branches.  Give the forecasts that start at 't0001' values for the whole horizon, look-ahead "
+        "included.  Check which alternative of the scenario gives this value.")
 
 
 # ── 4: rolling — a roll reads only its own fan-start forecast ──────────
@@ -243,7 +260,7 @@ def test_rolling_lookahead_reads_roll_fan_start(tmp_path_factory, monkeypatch) -
     the forecast made at t0009, so p3 reads roll 1's t0001 forecast first.  Hand derivation: the t0001 series
     is 0.1·i at step t000i, so at t0009..t0012 (i = 9..12) branch high (×1) reads 0.9, 1.0, 1.1, 1.2 and
     branch low (×0.5) 0.45, 0.50, 0.55, 0.60 -- not the t0009 series (0.09..0.12 / 0.045..0.06) that the
-    single-solve rule (own first step first) would read.
+    rule before item 228 (own first step first) would read.
 
     The recorder is set with ``raising=False`` and the values are checked before the recorded rows, so on code
     without ``emit_branch_time_start`` the test fails on the values (p2 read 0), not on the patch."""
@@ -256,9 +273,9 @@ def test_rolling_lookahead_reads_roll_fan_start(tmp_path_factory, monkeypatch) -
     emitted: list[list[tuple[str, str]]] = []
     real_emit = getattr(_solve_writers, "emit_branch_time_start", None)
 
-    def _record(rows, *, provider, fan_first=False):
-        emitted.append((list(rows), fan_first))
-        real_emit(rows, provider=provider, fan_first=fan_first)
+    def _record(rows, *, provider):
+        emitted.append(list(rows))
+        real_emit(rows, provider=provider)
 
     monkeypatch.setattr(_solve_writers, "emit_branch_time_start", _record, raising=False)
     steps = _run(tmp_path_factory, n_periods=3, fans=fans, profile=_stochastic(per), rolling=(8.0, 12.0))
@@ -273,8 +290,7 @@ def test_rolling_lookahead_reads_roll_fan_start(tmp_path_factory, monkeypatch) -
     # Roll 1's look-ahead p3 reads roll 1's fan-start (t0001) forecast, not roll 2's t0009 one.
     assert _period(c1, "p3_high") == pytest.approx([0.9, 1.0, 1.1, 1.2])
     assert _period(c1, "p3_low") == pytest.approx([0.45, 0.50, 0.55, 0.60])
-    assert [(sorted({step for _d, step in rows}), ff) for rows, ff in emitted] == [(["t0001"], True),
-                                                                                (["t0009"], True)]
+    assert [sorted({step for _d, step in rows}) for rows in emitted] == [["t0001"], ["t0009"]]
 
 
 # ── 4b: rolling — a roll's forecast must cover its look-ahead ──────────
@@ -291,12 +307,12 @@ def test_rolling_lookahead_not_covered_by_roll_forecast_is_an_error(tmp_path_fac
     with pytest.raises(FlexToolConfigError) as err:
         _run(tmp_path_factory, n_periods=3, fans=fans, profile=_stochastic(per), rolling=(8.0, 12.0))
     assert str(err.value) == (
-        "profile 'prof', parameter 'profile': roll 'sol_roll_0' of a rolling solve starts at time step 't0001' "
-        "and reads the forecasts made then over its whole horizon, but those forecasts have no value at time "
-        "steps 't0009', 't0010', 't0011', 't0012' (periods 'p3_high', 'p3_low').  Only the forecasts made "
-        "later, at 't0009', have values there, and a roll must not use a forecast made after it starts.  Give "
-        "the forecasts that start at 't0001' values for the whole horizon of the roll, look-ahead included.  "
-        "Check which alternative of the scenario gives this value.")
+        "profile 'prof', parameter 'profile': solve 'sol_roll_0' branches into its forecasts at time step "
+        "'t0001' and reads the forecasts made then over its whole horizon, but those forecasts have no value at "
+        "time steps 't0009', 't0010', 't0011', 't0012' (periods 'p3_high', 'p3_low').  Only the forecasts made "
+        "later, at 't0009', have values there, and a solve (or a roll of a rolling solve) must not use a "
+        "forecast made after it branches.  Give the forecasts that start at 't0001' values for the whole "
+        "horizon, look-ahead included.  Check which alternative of the scenario gives this value.")
 
 
 # ── 4c: a later forecast cohort that no solve or roll fans out at (item 229) ──
@@ -315,9 +331,8 @@ _ROLL_0_P2_ERROR = (
         None,
         [*_two_forecasts("p1", "t0001"), ("p2", "x", "t0005", "no", 0.5), ("p2", "mid", "t0005", "no", 0.5)],
         "Solve 'sol' " + _LATER_COHORT_HEAD + "'mid', 'x'). FlexTool would ignore them. The branches opened "
-        "at 'p1' continue through every later period, and a forecast series given at a later period's first "
-        "time step is read without these rows. Remove these rows, or put the later fan in a separate solve. "
-        "Check stochastic_branches.",
+        "at 'p1' continue through every later period and read the forecasts made at 'p1''s analysis time "
+        "there. Remove these rows, or put the later fan in a separate solve. Check stochastic_branches.",
         id="single"),
     pytest.param(
         (8.0, 12.0),
@@ -353,9 +368,9 @@ def test_later_cohort_at_another_rolls_fan_point_not_its_start(tmp_path_factory,
     emitted: list = []
     real_emit = _solve_writers.emit_branch_time_start
 
-    def _record(rows, *, provider, fan_first=False):
+    def _record(rows, *, provider):
         emitted.append(sorted({step for _d, step in rows}))
-        real_emit(rows, provider=provider, fan_first=fan_first)
+        real_emit(rows, provider=provider)
 
     monkeypatch.setattr(_solve_writers, "emit_branch_time_start", _record)
     steps = _run(tmp_path_factory, n_periods=3, fans=fans, rolling=(6.0, 12.0))
@@ -431,7 +446,7 @@ def test_realized_branch_read_in_later_periods(tmp_path_factory) -> None:
     for cells in (_cells(sibling, "pdtProfile"), _profile_value(sibling)):
         assert _period(cells, "p2") == pytest.approx(real)
         assert _period(cells, "p1") == pytest.approx([0.08, 0.16, 0.24, 0.32])
-    assert _bts(sibling) == {"p1": ("t0001", "own"), "p2": ("t0001", "own")}
+    assert _bts(sibling) == {"p1": ("t0001", "fan"), "p2": ("t0001", "fan")}
 
 
 # ── 6: ungrouped stochastic inflow in a forecasts-only fan ─────────────
@@ -449,8 +464,8 @@ def test_ungrouped_stochastic_inflow_without_realized_is_an_error(tmp_path_facto
 # ── coverage checks (own ∪ fan; inflow and reservation) ────────────────
 def _fan_provider(pbt_name: str, pbt: pl.DataFrame, extra: "dict[str, pl.DataFrame]",
                   *, rolling: bool = False) -> FlexDataProvider:
-    """A synthetic solve: fan p1/t1 into high/low, continuation p2 (first step t5); *rolling*: the solve is
-    roll ``sol_roll_1`` of a rolling solve (``read_first`` = ``fan``)."""
+    """A synthetic solve ``sol``: fan p1/t1 into high/low, continuation p2 (first step t5), ``read_first`` =
+    ``fan`` as every solve writes it; *rolling*: the solve is roll ``sol_roll_1`` of a rolling solve."""
     provider = FlexDataProvider()
 
     def put(key: str, df: pl.DataFrame) -> None:
@@ -466,9 +481,8 @@ def _fan_provider(pbt_name: str, pbt: pl.DataFrame, extra: "dict[str, pl.DataFra
         "branch": ["p1", "p1_high", "p1_low", "p2", "p2_high", "p2_low"]}))
     put("solve_data/branch_time_start", pl.DataFrame({
         "period": ["p1", "p1_high", "p1_low", "p2", "p2_high", "p2_low"], "step": ["t1"] * 6,
-        "read_first": ["fan" if rolling else "own"] * 6}))
-    if rolling:
-        put("solve_data/solve_current", pl.DataFrame({"solve": ["sol_roll_1"]}))
+        "read_first": ["fan"] * 6}))
+    put("solve_data/solve_current", pl.DataFrame({"solve": ["sol_roll_1" if rolling else "sol"]}))
     put("solve_data/steps_in_use", pl.DataFrame({
         "period": ["p1_high", "p1_low", "p2_high", "p2_low"], "time": ["t1", "t1", "t5", "t5"]}))
     for k, v in extra.items():
@@ -545,28 +559,21 @@ _LATER_ONLY = dict(branches=["high", "low", "high", "low"], values=[1.0, 0.5, 3.
                    time_starts=["t1", "t1", "t5", "t5"], times=["t1", "t1", "t5", "t5"])
 
 
-def test_reservation_roll_forecast_must_cover_lookahead(tmp_path) -> None:
-    """A roll of a rolling solve: p2's step t5 has a value only in the forecast made at t5, later than the
-    roll's start t1, so the roll may not read it -- an input error, worded for the user (hand-written)."""
-    provider = _reserve_provider(**_LATER_ONLY, rolling=True)
+@pytest.mark.parametrize(("rolling", "solve"), [(True, "sol_roll_1"), (False, "sol")])
+def test_reservation_forecast_must_cover_the_horizon(tmp_path, rolling, solve) -> None:
+    """A roll of a rolling solve, and a single solve alike (item 255): p2's step t5 has a value only in the
+    forecast made at t5, later than the fan start t1, so the solve may not read it -- an input error, worded for
+    the user (hand-written)."""
+    provider = _reserve_provider(**_LATER_ONLY, rolling=rolling)
     with pytest.raises(FlexToolConfigError) as err:
         derive_pdtReserve_upDown_group(tmp_path / "input", tmp_path / "solve_data", provider=provider)
     assert str(err.value) == (
-        "reserve 'r' (up) of group 'g', parameter 'reservation': roll 'sol_roll_1' of a rolling solve starts at "
+        f"reserve 'r' (up) of group 'g', parameter 'reservation': solve '{solve}' branches into its forecasts at "
         "time step 't1' and reads the forecasts made then over its whole horizon, but those forecasts have no "
         "value at time step 't5' (periods 'p2_high', 'p2_low').  Only the forecasts made later, at 't5', have "
-        "values there, and a roll must not use a forecast made after it starts.  Give the forecasts that start "
-        "at 't1' values for the whole horizon of the roll, look-ahead included.  Check which alternative of the "
-        "scenario gives this value.")
-
-
-def test_reservation_single_solve_keeps_own_step_fallback(tmp_path) -> None:
-    """The same data in a single solve is fine: p2 reads its own first step's forecast, 3.0 / 1.5."""
-    df = derive_pdtReserve_upDown_group(tmp_path / "input", tmp_path / "solve_data",
-                                        provider=_reserve_provider(**_LATER_ONLY))
-    got = {(r[4], r[5]): float(r[6]) for r in df.iter_rows()}
-    assert got[("p2_high", "t5")] == 3.0
-    assert got[("p2_low", "t5")] == 1.5
+        "values there, and a solve (or a roll of a rolling solve) must not use a forecast made after it "
+        "branches.  Give the forecasts that start at 't1' values for the whole horizon, look-ahead included.  "
+        "Check which alternative of the scenario gives this value.")
 
 
 def test_reservation_roll_forecast_covering_lookahead_is_read(tmp_path) -> None:
@@ -581,8 +588,9 @@ def test_reservation_roll_forecast_covering_lookahead_is_read(tmp_path) -> None:
 
 
 def test_ts_tiers_order() -> None:
-    """Own first step first, then the fan start; a roll's look-ahead period (``fan_first``) the other way
-    round; the fan's own period (own step = fan start) and a period label read one tier."""
+    """The fan start first for a period with ``read_first`` = ``fan`` (``fan_first``: every period a solve
+    writes since item 255); a frame that says ``own`` (or a plain dict) the other way round; the fan's own
+    period (own step = fan start) and a period label read one tier."""
     ts_for_d = {"p1_b": ["t1"], "p2_b": ["t5"], "p2": []}
     fan = {"p1_b": ["t1"], "p2_b": ["t1"], "p2": ["t1"]}
     assert ts_tiers("p2_b", ts_for_d, fan) == [["t5"], ["t1"]]
@@ -616,10 +624,9 @@ def test_branch_time_start_rows() -> None:
     assert rows == [(d, "t0005") for d in ("p2", "p2_high", "p2_low", "p3", "p3_high", "p3_low")]
     assert branch_time_start_rows(pb, None) == []
     assert project_branch_time_start_rows(rows, pb) == [("p2", "t0005"), ("p3", "t0005")]
-    frame = derive_branch_time_start(rows[:1], fan_first=True)
+    frame = derive_branch_time_start(rows[:1])
     assert frame.columns == ["period", "step", "read_first"]
     assert frame.rows() == [("p2", "t0005", "fan")]
-    assert derive_branch_time_start(rows[:1]).rows() == [("p2", "t0005", "own")]
 
 
 # ── 7: before the reveal (item 250) ────────────────────────────────────
@@ -807,7 +814,7 @@ def _pre_reveal_reserve_provider(times: list[str]) -> FlexDataProvider:
     provider.put("solve_data/period__branch", pl.DataFrame({
         "period": ["p1", "p2", "p2", "p2"], "branch": ["p1", "p2", "p2_high", "p2_low"]}))
     provider.put("solve_data/branch_time_start", pl.DataFrame({
-        "period": ["p2", "p2_high", "p2_low"], "step": ["t3"] * 3, "read_first": ["own"] * 3}))
+        "period": ["p2", "p2_high", "p2_low"], "step": ["t3"] * 3, "read_first": ["fan"] * 3}))
     provider.put("solve_data/steps_in_use", pl.DataFrame({
         "period": ["p1", "p1", "p2_high", "p2_low"], "time": ["t1", "t2", "t3", "t3"]}))
     provider.put("solve_data/reserve__upDown__group",

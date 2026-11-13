@@ -496,10 +496,9 @@ class StochasticSolver:
                 who = f"Solve {s!r}"
                 hint = (
                     f"The branches opened at {trig_period!r} continue through "
-                    "every later period, and a forecast series given at a "
-                    "later period's first time step is read without these "
-                    "rows. Remove these rows, or put the later fan in a "
-                    "separate solve."
+                    "every later period and read the forecasts made at "
+                    f"{trig_period!r}'s analysis time there. Remove these "
+                    "rows, or put the later fan in a separate solve."
                 )
             items = "; ".join(
                 f"period {p!r} at analysis_time {t!r} (forecast branches "
