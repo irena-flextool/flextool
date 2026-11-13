@@ -776,6 +776,29 @@ def test_scrub_keeps_the_text_after_a_path(workspace: dict) -> None:
         "c": "read <path>\\run.log, wrote and/or copied"}
 
 
+@pytest.mark.parametrize("value, scrubbed", [
+    # A folder list joined with either system's separator: each folder is removed on its own, never merged.
+    ("/srv/a/solver_config;/opt/b/solver_config", "<path>/solver_config;<path>/solver_config"),
+    ("/srv/a/solver_config:/opt/b/solver_config", "<path>/solver_config:<path>/solver_config"),
+    ("C:\\a\\solver_config;D:\\My Data\\b\\solver_config", "<path>\\solver_config;<path>\\solver_config"),
+    ("C:/Users/x y/ws/solver_config;D:\\b\\solver_config", "<path>/solver_config;<path>\\solver_config"),
+    # Network shares and long-path prefixes.
+    ("\\\\server\\share\\cfg\\solver_config", "<path>\\solver_config"),
+    ("//server/share/solver_config", "<path>/solver_config"),
+    ("\\\\?\\C:\\long\\solver_config", "<path>\\solver_config"),
+    ("\\\\?\\UNC\\server\\share\\solver_config", "<path>\\solver_config"),
+    # A file URL's folders go; a web address and a lone double backslash in prose stay.
+    ("sqlite:////home/u/in.sqlite", "sqlite://<path>/in.sqlite"),
+    ("file:///home/u/x", "file://<path>/x"),
+    ("https://example.org/a b/c", "https://example.org/a b/c"),
+    ("a \\\\ b", "a \\\\ b"),
+])
+def test_scrub_removes_every_path_form_of_either_system(workspace: dict, value: str, scrubbed: str) -> None:
+    """The scrub reads the paths of both systems on every system: a run record made on Windows, shipped from
+    Linux (or the reverse), keeps none of its folders."""
+    assert pp.scrub_run_status({"v": value}, workspace["project"]) == {"v": scrubbed}
+
+
 # --- Item 240 B3 with item 231: an imported project's option files are not trusted -----------------------------
 
 

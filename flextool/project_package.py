@@ -663,10 +663,18 @@ def _path_replacements(project_dir: Path) -> list[tuple[str, str]]:
 #: and holds no comma, semicolon, bracket or ``=``, and the word before it does not end at a comma or semicolon.  So
 #: text after a path is kept (``from /home/u/proj, wrote and/or copied``, ``in /usr/lib/python3.11 module
 #: foo/bar.py``).  A folder name with two or more spaces is kept, with what follows it; the folders above it are
-#: removed.
-_DIR_WORD = r"[^\s/\\\"'<>|:*?]+"
+#: removed.  A folder name ends at ``;`` as it does at ``:``: each is the separator of a folder list (Windows
+#: and POSIX), so the folders of a joined value are removed one by one, never merged into one.
+_DIR_WORD = r"[^\s/\\\"'<>|:;*?]+"
 _DIR_NAME = rf"{_DIR_WORD}(?:(?<![,;]) [^\s/\\\"'<>|:*?,;()=]+(?=[/\\]))?"
-_ABS_DIR = re.compile(rf"(?<![\w./~>\\-])(?:(?:/{_DIR_NAME})+/|[A-Za-z]:[\\/](?:{_DIR_NAME}[\\/])*)")
+_ABS_DIR = re.compile(
+    rf"(?<![\w./~>\\-])(?:(?:/{_DIR_NAME})+/|[A-Za-z]:[\\/](?:{_DIR_NAME}[\\/])*)"
+    # A network share (``\\server\share\``, ``//server/share/``) or a long-path prefix (``\\?\C:\``,
+    # ``\\?\UNC\server\``); a URL's ``://`` is not one.
+    rf"|(?<![\w.:/~>\\-])[\\/]{{2}}(?:[?.][\\/][A-Za-z]:[\\/](?:{_DIR_NAME}[\\/])*"
+    rf"|(?:[?.][\\/])?(?:{_DIR_NAME}[\\/])+)"
+    # The folders of a file URL (``sqlite:////home/u/x.sqlite``, ``file:///home/u/x``); a web address has none.
+    rf"|(?<=://)/?(?:/{_DIR_NAME})+/")
 #: Keys of a run record that name this computer or its user.
 _PERSONAL_KEYS = frozenset({"host", "hostname", "user", "username"})
 
