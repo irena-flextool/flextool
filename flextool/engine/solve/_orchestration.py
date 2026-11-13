@@ -380,7 +380,7 @@ def _solve_highs_options(
         highs_opt_path = state.paths.solver_config_dir / "highs.opt"
     else:
         highs_opt_path = None
-    return _resolve_effective_highs_options(
+    options = _resolve_effective_highs_options(
         highs_opt_text=highs_opt_text,
         solver_arguments_map=solver_arguments,
         highs_opt_path=highs_opt_path,
@@ -393,6 +393,10 @@ def _solve_highs_options(
         # A highs.opt found outside a workspace this computer set up gets the database's rules (item 240 B3).
         highs_opt_untrusted=files.untrusted_note("highs") if files is not None and highs_opt_text is not None else None,
     )
+    # Every HiGHS path (in-process cold and warm, --save-memory, Benders) takes its options from here: refuse an
+    # objective-valued option the installed polar-high cannot scale here, not in a later echo or option-file write.
+    _objective_options.require_supported("highs", options, solve_name=complete_solve_name)
+    return options
 
 
 def _highs_option_layers(

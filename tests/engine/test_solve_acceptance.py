@@ -551,8 +551,8 @@ def test_time_limited_lp_stops_the_run(source: str) -> None:
 def _highs_time_limit_diag(**mip_gap: float) -> types.SimpleNamespace:
     """kTimeLimit diagnostics with a feasible incumbent, with ``mip_gap`` set to the given value or absent.
 
-    Built from a dict so it works both with a polar-high whose ``SolveDiagnostics`` has the ``mip_gap`` field
-    and with the released 3.12.4 that has not."""
+    Built from a dict, so ``mip_gap`` can be left out: a diagnostics object without it (the warning then points
+    to the log)."""
     d = dataclasses.asdict(_diag(status_name="kTimeLimit", primal_feasible=True))
     d.pop("mip_gap", None)
     d.update(mip_gap)

@@ -649,7 +649,7 @@ def classify_acceptance(
 
     # A solve stopped by a limit or at an objective target or bound: the D2 rule, every limit.
     if status in _LIMIT_MODEL_STATUSES:
-        # ``SolveDiagnostics.mip_gap`` is newer than polar-high 3.12.4; without it the warning points to the log.
+        # ``SolveDiagnostics.mip_gap`` (polar-high >= 3.13.0); a diagnostics object without it points to the log.
         return _limit_verdict(
             sol, solve_name,
             status=status, native=status, solver="highs",

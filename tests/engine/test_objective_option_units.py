@@ -190,6 +190,24 @@ def test_in_process_highs_gets_the_scaled_values(options_db, factor, tmp_path, m
     assert f"mip_abs_gap={0.5 * factor:.12g} (500000 in unscaled currency)" in line, line
 
 
+@pytest.mark.parametrize("save_memory", [False, True])
+def test_an_older_polar_high_refuses_without_the_solver_args_echo(options_db, save_memory, tmp_path,
+                                                                  monkeypatch) -> None:
+    """The refusal sits where the solve's HiGHS options are resolved, not in the ``Solver args`` echo: with the
+    echo stubbed out, an in-process (and a --save-memory) HiGHS solve that sets objective_bound / mip_abs_gap
+    still stops before HiGHS gets a currency value unchanged."""
+    from flextool.engine.solve import _orchestration
+
+    monkeypatch.setattr(_objective_options, "_api", lambda: None)
+    monkeypatch.setattr(_orchestration, "_highs_echo_translations", lambda *a, **k: {})
+    if save_memory:
+        monkeypatch.setenv("FLEXTOOL_SAVE_MEMORY", "1")
+    else:
+        monkeypatch.delenv("FLEXTOOL_SAVE_MEMORY", raising=False)
+    with pytest.raises(FlexToolConfigError, match=r"objective_bound, mip_abs_gap.*polar-high 3\.14\.0"):
+        _run(options_db, tmp_path / "w")
+
+
 @needs_mapping
 def test_in_process_highs_follows_the_autoscale_objective_factor(options_db, tmp_path, monkeypatch) -> None:
     """Autoscale on: whatever N Layer 3 picks, HiGHS gets 1e15 × 1e-6 × 2**N."""

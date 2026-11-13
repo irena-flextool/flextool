@@ -131,6 +131,21 @@ def _unsupported_error(solver: str, names: list[str], solve_name: str | None) ->
     )
 
 
+def require_supported(solver: str, options: Mapping | Iterable | None, *, solve_name: str | None = None) -> None:
+    """Raise :class:`FlexToolConfigError` when *options* sets an objective-valued
+    option of *solver* and the installed polar-high cannot map it.
+
+    Called where a solve's HiGHS options are resolved
+    (``_orchestration._solve_highs_options``), so the refusal holds on every
+    in-process path, whatever prints or echoes follow; the option-file paths
+    also meet it in :func:`translate_for_solver`."""
+    if supported():
+        return
+    names = objective_valued(solver, options)
+    if names:
+        raise _unsupported_error(solver, names, solve_name)
+
+
 def translate_for_solver(
     problem: "Problem",
     solver: str,
@@ -158,12 +173,10 @@ def translate_for_solver(
     an objective-valued option is set and the installed polar-high cannot
     map it.
     """
-    names = objective_valued(solver, options)
-    if not names:
+    if not objective_valued(solver, options):
         return options, []
+    require_supported(solver, options, solve_name=solve_name)
     api = _api()
-    if api is None:
-        raise _unsupported_error(solver, names, solve_name)
     n_options = options if (solver == "highs" and isinstance(options, Mapping) and not factor_from_problem) else None
     transform = problem.objective_transform(solver, io, n_options)
     return api.translate_objective_options(solver, options, transform)
@@ -196,8 +209,7 @@ def check_benders_options(
     names = objective_valued("highs", options)
     if not names:
         return
-    if not supported():
-        raise _unsupported_error("highs", names, solve_name)
+    require_supported("highs", options, solve_name=solve_name)
     levels = [n for n in names if objective_option_kind("highs", n) == "value"]
     if not levels:
         return
@@ -223,6 +235,7 @@ __all__ = [
     "echo_values",
     "objective_option_kind",
     "objective_valued",
+    "require_supported",
     "set_objective_scale",
     "supported",
     "translate_for_solver",

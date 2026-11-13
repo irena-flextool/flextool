@@ -37,6 +37,8 @@ import polars as pl
 import pytest
 from polar_high import Param, Problem, Sum
 
+from flextool.engine.solve import _objective_options
+
 SHIMS = Path(__file__).resolve().parent / "shims"
 SOLVE = "y2020_2day_dispatch"
 SOLVERS = ("gurobi", "cplex", "xpress", "copt")
@@ -267,6 +269,10 @@ def test_tiny_mip_with_the_gap_flag(solver, shim, db, highs_objective, tmp_path,
 ABS_GAP = {"gurobi": "MIPGapAbs", "cplex": "mip tolerances absmipgap", "xpress": "MIPABSSTOP", "copt": "AbsGap"}
 
 
+@pytest.mark.skipif(
+    not _objective_options.supported(),
+    reason="the installed polar-high has no objective-option mapping (needs 3.14.0)",
+)
 def test_objective_valued_options_reach_the_solver_scaled(solver, shim, db, tmp_path, capsys) -> None:
     """Item 246b: objective targets and absolute gaps are written in unscaled currency.  The solver works on the
     cost × scale_the_objective (1e-6 here; a commercial solver has no objective factor of its own, and this model

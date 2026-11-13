@@ -2,7 +2,7 @@
 
 Input databases move to data version 79. The FlexTool window, the Spine Toolbox workflow and `flextool-run
 --migrate` migrate them; upgrading prints a notice for each behaviour change that affects the database. FlexTool now
-needs polar-high 3.12.4 or newer (installed with FlexTool).
+needs polar-high 3.13.0 or newer (installed with FlexTool).
 
 ### Behaviour changes — read before upgrading
 
@@ -92,8 +92,8 @@ Each line says what changes for a model that ran before and what to do; the deta
   `BestBdStop`, `Cutoff`, `MIPGapAbs`; CPLEX cutoffs, objective stops and absolute gaps; Xpress `MIPABSCUTOFF`,
   `MIPADDCUTOFF`, `MIPABSSTOP`; COPT `AbsGap`. Before, the solver compared the value with its scaled objective
   (`scale_the_objective`, default 1e-6, times the autoscaler's HiGHS factor), so with the defaults a value acted
-  roughly as million currency. Multiply an existing value by 1 000 000 (more if you changed
-  `scale_the_objective`). A Benders solve refuses an objective target or bound.
+  roughly as million currency. Divide an existing value by the solve's `scale_the_objective` (with the default
+  1e-6: multiply it by 1 000 000), and a HiGHS value also by 2^`user_objective_scale`. A Benders solve refuses an objective target or bound.
 - **Solver option files come from the run's `solver_config` folders, file by file** (`--solver-config-dir`, next to
   the database, the project, the workspace, ...), not from the folder FlexTool starts in. A GUI project can have its
   own `solver_config/`: its runs take each solver's option file from the project, else the workspace, else
@@ -136,7 +136,7 @@ Each line says what changes for a model that ran before and what to do; the deta
   cheap (every 4.x release). Investment results of such models change. A map whose index has another name (for
   example `year`) now stops a model with investments: name the index `period`, or leave it without a name.
 - **The memory-saving solve (`--save-memory`, or warm start off) could put values on the wrong variables**; results
-  of such runs can change. FlexTool now needs polar-high 3.12.4 or newer (installed with FlexTool).
+  of such runs can change. FlexTool now needs polar-high 3.13.0 or newer (installed with FlexTool).
 - **Fixes that change results:** a user constraint without capacity terms got a right-hand side of 0 when another
   constraint had one (since 4.0); the reported fuel, CO2 and cost of a unit with a profile and an input were too
   low; the reported reserve penalty could be doubled; the period node-group indicators and VRE share are now ratios
@@ -829,9 +829,7 @@ Each line says what changes for a model that ran before and what to do; the deta
   keeps it once, as the solve's message. A `--save-memory` solve stopped by a limit before it found a solution is
   recorded as stopped at a limit (before, as not certified).
 - **HiGHS's time-limit warning names the MIP gap** with `--save-memory`, as the commercial solvers' does; before,
-  it pointed to the solver log. An in-process HiGHS solve names it too once a polar-high release newer than 3.12.4
-  is installed (one whose `SolveDiagnostics` has `mip_gap`); with 3.12.4 it still points to the solver log. A gap
-  below 0.01 % is printed with significant digits instead of as `0.0000%`.
+  it pointed to the solver log. An in-process HiGHS solve names it too. A gap below 0.01 % is printed with significant digits instead of as `0.0000%`.
 - **A `--save-memory` HiGHS solve that is killed stops the run with an error naming the cause** (item 247). A solve
   process stopped by a signal, such as SIGKILL from the out-of-memory killer, went on to read its solution file and
   failed with a raw "file not found", or read the solution an earlier run of the same solve had left in the work
