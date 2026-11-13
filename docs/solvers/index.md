@@ -185,18 +185,26 @@ solver starts:
 - a script that Windows runs through a command interpreter (`.bat`, `.cmd`,
   `.ps1`, `.vbs`, `.js`, ...) and a command interpreter itself (`cmd.exe`,
   `powershell`, `pwsh`, `wscript`, `cscript`) are refused on every system:
-  they would read the solver's path and arguments as a command line. Use a
-  program, or `python` with a script as above;
+  they would read the solver's path and arguments as a command line. On
+  Windows also `wsl.exe` and `bash.exe` (and `sh`, `zsh`, `mshta`,
+  `rundll32`, `regsvr32`, `forfiles`, `conhost`, `msiexec`), which join
+  their arguments into a command line or run what they name. Use a program,
+  or `python` with a script as above. On Linux and macOS a shell script
+  works, with the script as the program or as the shell's first argument,
+  when it starts the solver with `exec "$@"` (never `sh -c` with the
+  arguments pasted into a command text);
 - at most 32 items, each at most 4096 characters.
 
 The run's log has the line
-`Running CPLEX (/opt/.../cplex) through the solver wrapper ["/usr/local/bin/lic_hold", "--queue", "opt"] (from environment variable FLEXTOOL_SOLVER_WRAPPER_CPLEX)`
-(with `--solver-log-level silent` it goes to the log only), and the run
-record (`_run_status.json`) has `solver_wrappers` with the items in full. A
-failure message says the solve was started through the wrapper, since the
-wrapper may be the cause. **Keep passwords and tokens out of the wrapper's
-items:** the run log can be shown to the AI assistant's provider; let the
-wrapper read secrets itself. A project package leaves the run log out and
+`Running CPLEX (/opt/.../cplex) through the solver wrapper /usr/local/bin/lic_hold with 2 arguments (from environment variable FLEXTOOL_SOLVER_WRAPPER_CPLEX)`
+(with `--solver-log-level silent` it goes to the log only): the program and
+the number of its arguments, never the arguments, because the AI assistant
+can send the run log to its provider. The run record (`_run_status.json`,
+on this computer) has `solver_wrappers` with the items in full. A failure
+message says the solve was started through the wrapper, since the wrapper
+may be the cause. **Keep passwords and tokens out of the wrapper's items
+anyway:** the run record sits in the project's result folder, which may be
+synced or shared; let the wrapper read secrets itself. A project package leaves the run log out and
 keeps only the wrapper's program in the run record, with the number of its
 arguments. The solver program is found in the absolute folders of `PATH`
 (and, on Linux and macOS, the usual install folders), never in the current
@@ -364,7 +372,8 @@ rules in the project's runs until you trust the project's solver option
 files, and is checked by them when it is imported: a file with a line they
 refuse is kept as `<solver>.opt.review`, which no run reads. To use it as it
 is, read it, rename it to `<solver>.opt` and tick "Trust this project's solver
-option files" (Solver options → On this computer, with the project open).
+option files" (Solver options → On this computer, with the project open), or
+run `flextool-trust-workspace <project folder>` in a terminal.
 Exporting a project applies the same rules to the option files it would
 ship: a file with such a parameter is left out of the package, and the export
 names its lines (a server password or a folder of your computer should not be
@@ -624,6 +633,55 @@ A workspace gets on the list:
   never listed by being opened;
 - when you tick "Trust this workspace's solver option files" in the FlexTool
   window (Solver options → On this computer), after reading the files.
+
+You can also trust a folder from a terminal: `flextool-trust-workspace
+<folder>` (the workspace, or a GUI project's folder) shows the option files of
+its `solver_config/` that differ from FlexTool's defaults, line by line, and
+asks before it lists the folder; `--remove` takes it off the list, `--list`
+shows the list. It is a command you type and answer, not a flag of a run: a
+Spine Toolbox project carries command lines for its tools, so a run flag could
+come with a project from someone else, while anything that could start this
+command unasked can already run any program as you.
+
+The trust is for the folder as it was when it was listed, not for its path:
+
+- a different folder put at the same path later (the trusted one deleted or
+  moved away, and a copy from someone else unpacked or copied there) is not
+  trusted; the message says the folder was replaced. FlexTool tells the
+  folders apart by their identity: on Linux and macOS the device, the inode
+  number and the time the folder was made; on Windows the volume serial
+  number, the file ID and the creation time;
+- an option file that changed since, or appeared since, is trusted when your
+  own account wrote it and no other account can change it: on Linux and macOS
+  you own it, no other account can write it, and its group can write it only
+  when the group is your own private group (the one named after you, with no
+  other members). Otherwise (another owner, writable by others, a link) it gets
+  the database's rules, with a message naming it, until you trust the folder
+  again (the box, or `flextool-trust-workspace`). On Windows FlexTool does not
+  read files' owners and access lists: a file in a folder that is still the
+  one you trusted counts as your own edit, as Windows gives a new file its
+  writer as owner and, in your own folders, lets no other ordinary account
+  write. A drive that gives files no ID (FAT, some network drives) gets no such
+  pass: there any change asks to be trusted again;
+- so editing your own files never asks again, but files you unpack or copy
+  into a trusted folder yourself are your edits too, and so are changes that a
+  sync tool (OneDrive, Dropbox, a network share) or `git pull` writes with
+  your account. Do not trust a folder that other people can change through such
+  a tool; name it with `--solver-config-dir` for the runs that should use it.
+
+Entries in `trusted_workspaces` must be full folder paths: an entry such as `.`
+or `~/flextool` makes the list unreadable (nothing is trusted, and the message
+says why). Entries written by FlexTool 4.4 development versions (plain folder
+names) are bound to the folder at that path, with its files as they are, the
+first time FlexTool reads them. `FLEXTOOL_USER_HOME` or `XDG_CONFIG_HOME`
+naming a relative folder, or one inside the current folder, is ignored with a
+warning (the platform's folder is used): a workspace could otherwise carry its
+own list.
+
+**Spine Toolbox projects are code.** A Toolbox project runs the tool scripts
+and command lines it carries, so it can do anything you can, solver options
+included: open a Toolbox project, or a launcher script that comes with a
+workspace, only from people you trust, as you would a program.
 
 A GUI project (for its own `projects/<project>/solver_config/`) gets on the
 list when the FlexTool window creates it, when the window opens it while its

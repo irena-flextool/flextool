@@ -164,7 +164,12 @@ Each line says what changes for a model that ran before and what to do; the deta
   The same holds for a GUI project's own `solver_config/`, judged file by file: an untrusted project file used over
   a trusted workspace's file gets the database's rules. FlexTool notes a project it creates, or opens with no
   edited option file and nothing received waiting for review; an imported project's shipped files stay untrusted
-  until you tick "Trust this project's solver option files" (Solver options → On this computer).
+  until you tick "Trust this project's solver option files" (Solver options → On this computer). A terminal user
+  can run `flextool-trust-workspace <folder>`, which shows the edited option files and asks. The trust is for
+  the folder as it was then, not for its path: a folder put at the same path later (for example a copy from
+  someone else unpacked where yours was) is not trusted, and an option file changed afterwards is trusted only
+  when your own account wrote it and no other account can change it; otherwise trust the folder again. Spine
+  Toolbox projects are code: open one only from people you trust.
 - **`solver_precommand` is not run, and a value now gives a warning.** FlexTool 3 ran it in front of CPLEX (for
   example to reserve a floating licence); FlexTool 4 does not run commands stored in a database, for safety: a
   database from someone else could otherwise run any program on your computer. The parameter is kept only so that
@@ -200,9 +205,11 @@ Each line says what changes for a model that ran before and what to do; the deta
   a floating licence or to lower the solver's priority: FlexTool window Solver options → On this computer, or
   `FLEXTOOL_SOLVER_WRAPPER_<SOLVER>` (the program's full path, or a JSON list with its arguments). It is never
   taken from a database, a project or the command line. FlexTool runs it without a shell, followed by the solver
-  program's full path and the solver's arguments; the run log says so and the run record keeps it. A `.bat` /
-  `.cmd`, a PowerShell or Windows Script Host script and the command interpreters themselves are refused (use a
-  program, or `python` with a script). FlexTool 3 users of `solver_precommand`: set its program here once (see
+  program's full path and the solver's arguments. The run log names the wrapper program and the number of its
+  arguments, not the arguments (the AI assistant can send the run log out); the run record on your computer keeps
+  them in full and an exported project leaves them out. A `.bat` / `.cmd`, a PowerShell or Windows Script Host
+  script and the command interpreters themselves are refused, on Windows also `wsl.exe`, `bash.exe` and similar
+  programs that read their arguments as a command line (use a program, or `python` with a script). FlexTool 3 users of `solver_precommand`: set its program here once (see
   "FlexTool 3 precommand users" in the solver docs). The solver program itself is now looked for only in the
   absolute folders of `PATH`, never in the current folder.
 

@@ -163,7 +163,18 @@ The contract:
    (`note_project_set_up_here`: only with nothing received waiting, `awaits_review`) and the GUI's explicit "trust
    this workspace / project" add to the list; project import, the first-open rename of `imported_solver_config/`
    and project deletion take the path off (`forget_trusted_folder`); nothing inside a workspace
-   (`templates/project_folder.txt` included) is a trust anchor.
+   (`templates/project_folder.txt` included) is a trust anchor. An entry is bound to the folder trusted
+   (`folder_identity`: device + inode + birth time, Windows volume serial + file ID + creation time; ext4 reuses a
+   deleted folder's inode at once, so the birth time is needed) and to its `.opt` hashes (`TrustedFolder`): a
+   replaced folder is untrusted (`trust_status`), and a changed file is covered only when `only_you_can_change`
+   (POSIX owner, not group/other-writable unless the user's private group; on Windows a plain file, as owner and
+   ACL are not read) — `read_solver_option_files` keeps that per-file verdict in `SolverOptionFiles.file_notes`.
+   FlexTool's own file is told by content (`is_unedited_template`), never by the origin text. Text entries of 4.4
+   development builds are bound on first read; relative entries are refused; a relative or in-workspace
+   `FLEXTOOL_USER_HOME` / `XDG_CONFIG_HOME` is ignored (`user_dirs`). `flextool-trust-workspace`
+   (`cli/cmd_trust_workspace.py`) is the terminal route: a typed, answered command, not a run flag (D4: a Toolbox
+   project carries tool command lines, and anything that can start the command unasked can already run code).
+   Spine Toolbox projects are code and are trusted as such.
    `--solver-config-dir` / `FLEXTOOL_SOLVER_CONFIG_DIR` stay trusted.
    A commercial solver may run behind this computer's solver wrapper (`_local_solver_settings.solver_wrapper`:
    `FLEXTOOL_SOLVER_WRAPPER_GUROBI` and its CPLEX, XPRESS, COPT twins, else `wrappers` in the same file;
@@ -171,8 +182,11 @@ The contract:
    (`check_run_solver_wrappers`) and again before each start;
    `_solve_commercial_subprocess` prepends it to the solver's argv (no shell; the solver path is absolute,
    `_find_solver_binary` skips relative and, on Windows, current-folder `PATH` entries), logs the `Running ...
-   through the solver wrapper` line and notes `solver_wrappers` in the run record (export keeps only the program).
-   The settings file is written only by the GUI's Solver options → On this computer and `ensure_runtime_files`;
+   through the solver wrapper` line with the program and its argument count only (D7 revised, review b2b3 L3: the
+   AI assistant sends run logs out) and notes `solver_wrappers` in full in the run record (export keeps only the
+   program and the count).
+   The settings file (written 0600) is written only by the GUI's Solver options → On this computer,
+   `flextool-trust-workspace` and `ensure_runtime_files`;
    no assistant tool, database value, project file or flag writes or sets it.
 7. The run header prints `RunOptions.summary_lines()` — each option set by a flag or an environment variable,
    with its source — and the thread budget (`Threads:`), with polars' and HiGHS' thread counts.
