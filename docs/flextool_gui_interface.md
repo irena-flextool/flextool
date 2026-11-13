@@ -154,6 +154,14 @@ The **Png settings** dialog has separate sections for **scenario** and **scenari
 
 The dialog is purely a configuration step; rendering happens via the Status cell of the relevant Outputs row (or automatically through Auto-gen).
 
+### Solver options → On this computer
+
+The **Solver options…** dialog sets the log level, the time limit, the scaling and HiGHS' presolve of the project's runs (saved in the project's `settings.yaml`). Its **On this computer…** button opens the solver settings of this computer, which are saved in `solver_settings.json` in FlexTool's user settings folder and never travel with a project, a workspace or a database:
+
+- **Solver wrapper** of Gurobi, CPLEX, Xpress and COPT: the full path of a program that starts in front of the solver (for example to hold a floating licence), and its arguments, one per line. OK checks each program and shows what is wrong (a missing file, a relative path, a `.bat` / `.cmd` or PowerShell script). A wrapper set by `FLEXTOOL_SOLVER_WRAPPER_<SOLVER>` is shown greyed out: the variable wins. See [Running a solver through a wrapper](solvers/index.md#running-a-solver-through-a-wrapper).
+- **Allow solver parameter names that are not in FlexTool's list from input databases** (off by default; greyed out when `FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS` is set). See [What the database may set](solvers/index.md#what-the-database-may-set).
+- **Trust this workspace's solver option files**: the files of the workspace's `solver_config/` may then name files anywhere and solver servers. The dialog lists the files that differ from FlexTool's defaults; read them first if the workspace came from someone else. FlexTool ticks this by itself for a workspace whose `solver_config/` it created. See [Which option folders are trusted](solvers/index.md#which-option-folders-are-trusted).
+
 ## Execution jobs
 
 The **Execution jobs** window is a separate `Toplevel` dedicated to queue management. It coexists with the main window — actions in the main window keep working while the jobs window is open.

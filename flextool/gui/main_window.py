@@ -5942,7 +5942,9 @@ class MainWindow(tk.Tk):
         """Open the modal Solver options dialog.
 
         Builds a ``tk.Toplevel`` parented to the main window with four
-        controls (Log level, Time limit, Scaling, Presolve).  Each control is bound to a *dialog-local* Tk var
+        controls (Log level, Time limit, Scaling, Presolve), and a button
+        to this computer's solver settings
+        (:mod:`flextool.gui.dialogs.local_solver_settings_dialog`).  Each control is bound to a *dialog-local* Tk var
         seeded from the corresponding main-window var so Cancel can
         discard pending edits without touching the persisted settings.
         OK copies the dialog-local values back into the main-window
@@ -6085,6 +6087,24 @@ class MainWindow(tk.Tk):
             "  • off      — disable presolve entirely (much slower but\n"
             "                useful for memory or numerical diagnostics).\n"
             "  • choose   — let HiGHS decide per problem."
+        ))
+        row += 1
+
+        # This computer's solver settings (never the project's): solver wrapper, unlisted parameter names, trust
+        # of this workspace's option files (item 240 B1-B3).
+        ttk.Label(body, text="On this computer:").grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
+        from flextool.gui.dialogs.local_solver_settings_dialog import open_local_solver_settings
+        local_btn = ttk.Button(body, text="On this computer…", command=lambda: open_local_solver_settings(dlg))
+        local_btn.grid(row=row, column=1, sticky="w", pady=4)
+        _attach_tip(local_btn, (
+            "Settings of this computer, not saved in the project:\n"
+            "  • a solver wrapper for Gurobi, CPLEX, Xpress or COPT\n"
+            "    (a program that starts in front of the solver,\n"
+            "    for example to hold a floating licence);\n"
+            "  • whether input databases may name solver parameters\n"
+            "    that are not in FlexTool's list;\n"
+            "  • whether this workspace's solver option files are\n"
+            "    trusted (file paths, server settings)."
         ))
         row += 1
 

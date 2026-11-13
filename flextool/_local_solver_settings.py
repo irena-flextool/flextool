@@ -219,26 +219,56 @@ def add_trusted_workspace(folder: str | os.PathLike, path: Path | None = None) -
     return added
 
 
+def _without_workspace(data: dict, folder: str | os.PathLike) -> list[str]:
+    key = workspace_key(folder)
+    current = data.get(TRUSTED_WORKSPACES_KEY, [])
+    kept = []
+    for item in current if isinstance(current, list) else []:
+        if not isinstance(item, str) or not item or item == key:
+            continue
+        try:
+            if os.path.samefile(item, folder):
+                continue
+        except OSError:
+            pass
+        kept.append(item)
+    return kept
+
+
 def remove_trusted_workspace(folder: str | os.PathLike, path: Path | None = None) -> None:
     """Take *folder* off the list of workspaces this computer set up."""
-    key = workspace_key(folder)
 
     def change(data: dict) -> None:
-        current = data.get(TRUSTED_WORKSPACES_KEY, [])
-        current = current if isinstance(current, list) else []
-        kept = []
-        for item in current:
-            if not isinstance(item, str) or item == key:
-                continue
-            try:
-                if os.path.samefile(item, folder):
-                    continue
-            except OSError:
-                pass
-            kept.append(item)
-        data[TRUSTED_WORKSPACES_KEY] = kept
+        data[TRUSTED_WORKSPACES_KEY] = _without_workspace(data, folder)
 
     update_settings_file(change, path)
+
+
+def apply_settings(
+    data: dict,
+    *,
+    wrappers: Mapping[str, list[str] | tuple[str, ...]] | None = None,
+    allow_unlisted: bool | None = None,
+    workspace: str | os.PathLike | None = None,
+    trust_workspace: bool | None = None,
+) -> None:
+    """Set several settings in *data* (the file's content, for :func:`update_settings_file`) at once: each wrapper
+    of *wrappers* (an empty list removes it; check them with :func:`check_wrapper` first), the unlisted-names
+    switch, and whether *workspace* is on the list (``None``: unchanged)."""
+    if wrappers:
+        current = data.get(WRAPPERS_KEY)
+        current = dict(current) if isinstance(current, dict) else {}
+        for solver, argv in wrappers.items():
+            if argv:
+                current[solver] = list(argv)
+            else:
+                current.pop(solver, None)
+        data[WRAPPERS_KEY] = current
+    if allow_unlisted is not None:
+        data["allow_unlisted_parameters"] = bool(allow_unlisted)
+    if workspace is not None and trust_workspace is not None:
+        kept = _without_workspace(data, workspace)
+        data[TRUSTED_WORKSPACES_KEY] = [*kept, workspace_key(workspace)] if trust_workspace else kept
 
 
 # --- solver wrapper (B2) -----------------------------------------------------------------------------------------
