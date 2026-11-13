@@ -122,8 +122,8 @@ Each line says what changes for a model that ran before and what to do; the deta
   `output_parquet/<scenario>/_run.log` (with `flextool-run` or the FlexTool window).
 - **Solver parameter names in the input database must be the solver's own.** FlexTool now has a list of every
   parameter of HiGHS 1.15.1, Gurobi 13.0.2, CPLEX 22.1.2, Xpress 46.01 and COPT 8.0.4, and a solve's
-  `solver_arguments` may name only those. Any other name is refused before the first solve of the run, with a
-  message that suggests the closest name: a misspelling (`MIPGapp`, which the solver ignored or refused before), a
+  `solver_arguments` may name only those. Any other name, in a solve the model runs, is refused before the first
+  solve of the run, with a message that suggests the closest name: a misspelling (`MIPGapp`, which the solver ignored or refused before), a
   HiGHS name in another case (`Presolve`), a CPLEX abbreviation (write `mip tolerances mipgap`, not
   `mip tol mipgap`), or a parameter of a newer solver version. HiGHS names that your installed HiGHS knows as a
   number or a switch are taken too. The remote-solving and licence parameters are refused whatever their type,

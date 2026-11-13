@@ -1154,6 +1154,30 @@ class SolveConfig:
             if settings is not None and parent in settings:
                 settings[new] = settings[parent]
 
+    def solves_in_run(self) -> list[str]:
+        """The solves the run runs, in order: ``model.solves`` and, recursively, the ``contains_solves`` of each
+        (2-D period maps already split into ``<solve>_<period>``).  The realization solves FlexTool adds later
+        take their parent's solver settings."""
+        found: list[str] = []
+
+        def visit(solve: str) -> None:
+            if solve in found:
+                return
+            found.append(solve)
+            children = self.contains_solves.get(solve) or []
+            for child in [children] if isinstance(children, str) else children:
+                visit(child)
+
+        for solves in self.model_solve.values():
+            for solve in solves:
+                visit(solve)
+        return found
+
+    def database_solve_names(self) -> dict[str, str]:
+        """Solve -> the database solve it was made from by a 2-D period map (``<solve>_<period>`` -> ``<solve>``),
+        for messages that should name what the user wrote."""
+        return {solve: parent for solve, (parent, _outer) in self.map2d_duplicate_of.items()}
+
     def solver_config_for(self, solve_name: str) -> SolverConfig:
         """The solver configuration *solve_name* runs with (HiGHS defaults when the solve sets none).
 

@@ -23,7 +23,7 @@ import logging
 import math
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping, NamedTuple
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, NamedTuple
 
 from flextool.engine.input._solve_config import SolverConfig
 from flextool.engine.solve import _solver_catalogue
@@ -643,22 +643,36 @@ def warn_unlisted_trusted_option(
     )
 
 
-def check_run_solver_options(solver_settings: Any, logger: logging.Logger | None = None) -> None:
-    """Check every solve's ``solver_arguments`` under the solver it uses, before the run's first solve (item 240
-    B1), so that a refused option stops the run in seconds, not after hours of earlier solves.
+def check_run_solver_options(
+        solver_settings: Any, logger: logging.Logger | None = None, *,
+        solves: "Iterable[str] | None" = None, shown_as: Mapping[str, str] | None = None) -> None:
+    """Check the ``solver_arguments`` of the run's solves under the solver each uses, before the run's first solve
+    (item 240 B1), so that a refused option stops the run in seconds, not after hours of earlier solves.
 
     *solver_settings* is :class:`flextool.engine.input._solve_config.SolverSettings` (``solvers``: solve ->
-    solver, HiGHS when absent; ``arguments``: solve -> the database map).  The same checks as each solve's own
+    solver, HiGHS when absent; ``arguments``: solve -> the database map).  *solves*: the solves the run runs
+    (:meth:`~flextool.engine.input._solve_config.SolveConfig.solves_in_run`); ``None`` checks every solve of
+    *solver_settings*.  A solve the model does not run is not checked: its options never reach a solver, so they
+    must not stop the run (review b1 F7).  *shown_as*: the database solve a solve was made from (a 2-D period
+    map's ``<solve>_<period>``), named in the message and checked once.  The same checks as each solve's own
     (:func:`resolve_commercial_options`, :func:`_resolve_effective_highs_options`), which stay for rolls,
     duplicated solves and direct callers."""
     from flextool.engine.solve._subprocess_solve import _format_native_opt_value
 
     solvers = getattr(solver_settings, "solvers", None) or {}
-    for solve, arguments in (getattr(solver_settings, "arguments", None) or {}).items():
+    all_arguments = getattr(solver_settings, "arguments", None) or {}
+    names = list(all_arguments) if solves is None else [s for s in dict.fromkeys(solves) if s in all_arguments]
+    checked: set[str] = set()
+    for solve in names:
+        arguments = all_arguments[solve]
         solver = solvers.get(solve) or "highs"
         if solver not in _solver_catalogue.SOLVERS:
             continue
-        where = f"solver_arguments of solve {solve}"
+        shown = (shown_as or {}).get(solve, solve)
+        if shown in checked:
+            continue
+        checked.add(shown)
+        where = f"solver_arguments of solve {shown}"
         for name, value in (arguments or {}).items():
             if value is None or drop_flextool3_highs_option(solver, name, value, where, logger):
                 continue
@@ -1027,11 +1041,13 @@ def local_solver_wrapper(solver: str):
         raise FlexToolUserError(f"{exc} No solve was started.") from exc
 
 
-def check_run_solver_wrappers(solver_settings: Any) -> None:
+def check_run_solver_wrappers(solver_settings: Any, *, solves: "Iterable[str] | None" = None) -> None:
     """Check this computer's wrapper of every commercial solver the run's solves use, before the first solve, so
-    an unusable wrapper stops the run before any model is written (item 240 B2)."""
+    an unusable wrapper stops the run before any model is written (item 240 B2).  *solves*: the solves the run
+    runs (``None``: every solve of *solver_settings*), as in :func:`check_run_solver_options`."""
     solvers = getattr(solver_settings, "solvers", None) or {}
-    for solver in sorted({name for name in solvers.values() if name}):
+    used = solvers if solves is None else {s: solvers[s] for s in solves if s in solvers}
+    for solver in sorted({name for name in used.values() if name}):
         local_solver_wrapper(solver)
 
 

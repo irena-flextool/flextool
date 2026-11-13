@@ -332,8 +332,10 @@ parameters; from the database:
   is still passed.
 
 The error names the parameter, its value and the solve. FlexTool checks the
-`solver_arguments` of every solve of the scenario before the first solve
-starts, so the run stops in seconds, not after hours of earlier solves. Put a
+`solver_arguments` of every solve the model runs (`model.solves` and the
+solves they contain) before the first solve starts, so the run stops in
+seconds, not after hours of earlier solves. A solve that the model does not
+run is not checked: its options never reach a solver. Put a
 file path, a server parameter or a parameter that is not in the list in the
 solver's option file, `solver_config/<solver>.opt` (or that file in a folder
 given with `--solver-config-dir`), which keeps them.

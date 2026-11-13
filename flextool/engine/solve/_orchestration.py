@@ -5135,10 +5135,12 @@ def run_chain_from_db(
             warn_solver_precommands,
         )
         warn_solver_precommands(sc.solver_settings.precommand, logger)
-        # Item 240 B1: every solve's solver_arguments, under its solver, before the first solve.
-        check_run_solver_options(sc.solver_settings, logger)
+        # Item 240 B1: the solver_arguments of every solve the run runs, under its solver, before the first solve
+        # (a solve the model does not run is not checked: its options never reach a solver; review b1 F7).
+        _run_solves = sc.solves_in_run()
+        check_run_solver_options(sc.solver_settings, logger, solves=_run_solves, shown_as=sc.database_solve_names())
         # Item 240 B2: this computer's wrapper of every commercial solver the run uses.
-        check_run_solver_wrappers(sc.solver_settings)
+        check_run_solver_wrappers(sc.solver_settings, solves=_run_solves)
         _memrec.checkpoint("solve_config_loaded", logger,
                            user_label="SolveConfig loaded (from DB)")
         tc = TimelineConfig.load_from_db_url(db_url, scenario_name, logger=logger)

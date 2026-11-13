@@ -304,6 +304,72 @@ def test_every_solve_is_checked_before_the_first(caplog) -> None:
     settings.arguments["highs_solve"] = {"MIPGap": "0.01"}  # a solve without a solver parameter is HiGHS
     with pytest.raises(FlexToolUserError, match="highs option 'MIPGap'"):
         check_run_solver_options(settings)
+    # Review b1 F7: only the solves the run runs; a 2-D period map's copies are named (and checked) as theirs.
+    check_run_solver_options(settings, solves=["invest", "dispatch"])
+    settings.solvers.update({"highs_solve_p1": "highs", "highs_solve_p2": "highs"})
+    settings.arguments.update({"highs_solve_p1": {"MIPGap": "1"}, "highs_solve_p2": {"MIPGap": "1"}})
+    with pytest.raises(FlexToolUserError, match="from solver_arguments of solve highs_solve: "):
+        check_run_solver_options(settings, solves=["invest", "highs_solve_p1", "highs_solve_p2"],
+                                 shown_as={"highs_solve_p1": "highs_solve", "highs_solve_p2": "highs_solve"})
+
+
+def test_highs_options_of_a_commercial_solve_leave_out_its_arguments() -> None:
+    """Review b1 F8 (question 3): the HiGHS option set of a Gurobi solve (the warm-LP key, the echo line, Benders)
+    does not read its ``solver_arguments``: ``MIPGap`` is not handed to the HiGHS resolver, so it is neither in
+    the result nor refused as an unlisted HiGHS name."""
+    from flextool.engine.input._solve_config import SolverSettings
+    from flextool.engine.solve._orchestration import _solve_highs_options
+
+    gurobi = SolverConfig(name="gurobi", options={"MIPGap": "0.01"})
+    solve = SimpleNamespace(
+        solver_config_for=lambda name: gurobi,
+        solver_settings=SolverSettings(solvers={"invest": "gurobi"}, precommand={},
+                                       arguments={"invest": {"MIPGap": "0.01"}}),
+    )
+    state = SimpleNamespace(solve=solve, run_options=_NO_FLAGS, paths=SimpleNamespace(
+        solver_option_files=None, solver_config_dir=None, work_folder=None))
+    options = _solve_highs_options(state, "invest", baseline=None)
+    assert not {k for k in options if k.casefold() == "mipgap"}, options
+
+
+def test_ft3_highs_settings_of_a_migrated_database_are_left_out_of_a_gurobi_solve(tmp_path, caplog) -> None:
+    """Review b1 F8 (critique P4): FlexTool 3's ``highs_method`` / ``highs_parallel`` / ``highs_presolve`` on a
+    Gurobi solve, folded into ``solver_arguments`` (as ``solver`` / ``parallel`` / ``presolve``) by the v56
+    migration's own steps: the run's upfront check passes with one warning per name, and the solve's Gurobi
+    options leave the three out.  No fixture is older than v56 (they are re-exported at the current version), so
+    the FlexTool 3 rows are planted in a current database and the v56 steps are run on it."""
+    from spinedb_api import DatabaseMapping, import_data
+    from spinedb_api.filters.scenario_filter import apply_scenario_filter_to_subqueries
+
+    from flextool.engine.input._solve_config import SolveConfig
+    from flextool.update_flextool import db_migration
+    from tests.db_utils import json_to_db
+
+    url = json_to_db(REPO / "tests" / "fixtures" / "stochastics.json", tmp_path / "ft3.sqlite")
+    solve, scenario, alternative = "1week_rolling", "1_week_rolling_wind", "1week_rolling"
+    with DatabaseMapping(url) as db:
+        _count, errors = import_data(db, parameter_definitions=[
+            ("solve", "highs_method"), ("solve", "highs_parallel"), ("solve", "highs_presolve")], parameter_values=[
+            ("solve", solve, "solver", "gurobi", alternative),
+            ("solve", solve, "highs_method", "simplex", alternative),
+            ("solve", solve, "highs_parallel", "on", alternative),
+            ("solve", solve, "highs_presolve", "on", alternative),
+        ])
+        assert not errors, errors
+        db.commit_session("FlexTool 3 HiGHS settings on a Gurobi solve")
+        for step in ("method", "parallel", "presolve"):
+            getattr(db_migration, f"_migrate_v56_fold_highs_{step}_into_solver_arguments")(db)
+            getattr(db_migration, f"_migrate_v56_remove_highs_{step}")(db)
+    with DatabaseMapping(url) as db:
+        apply_scenario_filter_to_subqueries(db, scenario)
+        sc = SolveConfig.load_from_db(db, logging.getLogger("test.ft3"))
+    assert sc.solver_settings.arguments[solve] == {"solver": "simplex", "parallel": "on", "presolve": "on"}
+    with caplog.at_level(logging.WARNING):
+        check_run_solver_options(sc.solver_settings, solves=sc.solves_in_run())
+        assert _db("gurobi", sc.solver_settings.arguments[solve], solve=solve) == {}
+    left_out = [w for w in _warnings(caplog) if w.startswith("Not passing")]
+    assert sorted(w.split("=", 1)[0] for w in left_out) == [
+        "Not passing parallel", "Not passing presolve", "Not passing solver"], left_out
 
 
 def test_shipped_databases_set_only_listed_names() -> None:
@@ -328,3 +394,64 @@ def _map_of(value) -> dict:
 
     raw = json.loads(base64.b64decode(value[0])) if isinstance(value, list) else value
     return {str(k): str(x) for k, x in raw.get("data", [])}
+
+
+# ---------------------------------------------------------------------------
+# The upfront check in a run (design test 9; review b1 F7 / F8)
+# ---------------------------------------------------------------------------
+
+_CHECK_SOLVE = "y2020_2day_dispatch"
+_OTHER_SOLVE = "y2020_fullYear_dispatch"
+
+
+@pytest.fixture(scope="module")
+def two_solve_db(tmp_path_factory) -> str:
+    """``tests/fixtures/tests.json`` with two scenarios on the ``coal`` LP chain (``init``, ``west``, ``coal``):
+
+    * ``second_refused``: ``model.solves`` = [``y2020_2day_dispatch`` on Gurobi, ``y2020_fullYear_dispatch``],
+      the second with ``solver_arguments`` ``MIPGap`` (not a HiGHS name);
+    * ``unused_refused``: the model runs ``y2020_2day_dispatch`` only; ``y2020_fullYear_dispatch``, which it does
+      not run, has the same ``MIPGap``."""
+    import importlib.util
+    import sys
+
+    from flextool.update_flextool.db_migration import migrate_database
+    from tests.db_utils import json_to_db
+
+    name = "_lp_snapshot_for_tests"  # the fixture overlay helpers, loaded as make_check_db.py loads them
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, REPO / "tools" / "lp_snapshot.py")
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
+    lps = sys.modules[name]
+    bad = ["solve", _OTHER_SOLVE, "solver_arguments", {"index_type": "str", "index_name": "x", "data": [["MIPGap", 0.01]]}]
+    data = json.loads((REPO / "tests" / "fixtures" / "tests.json").read_text())
+    base = ["init", "west", "coal"]
+    data = lps._overlay(data, name="second_refused", base=base, values=[
+        ["model", "flexTool", "solves", {"type": "array", "value_type": "str", "data": [_CHECK_SOLVE, _OTHER_SOLVE]}],
+        ["solve", _CHECK_SOLVE, "solver", "gurobi"], bad])
+    data = lps._overlay(data, name="unused_refused", base=base, values=[bad])
+    folder = tmp_path_factory.mktemp("upfront_check")
+    json_path = folder / "db.json"
+    json_path.write_text(json.dumps(data))
+    url = json_to_db(json_path, folder / "db.sqlite")
+    migrate_database(url)
+    return url
+
+
+def test_a_refused_option_of_a_later_solve_stops_the_run_before_the_first_solve(two_solve_db, tmp_path) -> None:
+    """Design test 9: the second solve's ``MIPGap`` is refused before the first (Gurobi) solve writes its model."""
+    from flextool.engine import run_chain_from_db
+
+    with pytest.raises(FlexToolUserError, match=f"highs option 'MIPGap'.*solver_arguments of solve {_OTHER_SOLVE}"):
+        run_chain_from_db(input_db_url=two_solve_db, scenario_name="second_refused", work_folder=tmp_path / "w")
+    assert not list((tmp_path / "w").rglob("*.mps"))
+
+
+def test_an_option_of_a_solve_the_model_does_not_run_does_not_stop_it(two_solve_db, tmp_path) -> None:
+    """Review b1 F7: ``y2020_fullYear_dispatch`` is not in ``model.solves``, so its options never reach a solver and
+    are not checked; the run solves ``y2020_2day_dispatch``."""
+    from flextool.engine import run_chain_from_db
+
+    steps = run_chain_from_db(input_db_url=two_solve_db, scenario_name="unused_refused", work_folder=tmp_path / "w")
+    assert list(steps) == [_CHECK_SOLVE] and steps[_CHECK_SOLVE].optimal
