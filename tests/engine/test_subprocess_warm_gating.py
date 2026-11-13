@@ -279,7 +279,7 @@ def test_preexisting_nowarm_never_injects(tmp_path: Path, monkeypatch) -> None:
     cache_dir = work / "basis_cache"
     cache_dir.mkdir(parents=True)
     (cache_dir / f"{fp5}.bas").write_bytes(ref_bas)
-    (cache_dir / f"{fp5}.nowarm").write_text("")
+    (cache_dir / f"{fp5}.nowarm").write_text("", encoding="utf-8")
 
     spy.reset()
     p = _build_problem(seed=5)
@@ -341,7 +341,9 @@ def test_a_killed_first_transfer_run_records_no_verdict(tmp_path: Path, monkeypa
     basis_before = (cache_dir / f"{fp1}.bas").read_bytes()
 
     spy = _kill_matching(monkeypatch, _has_warm)
-    with pytest.raises(RuntimeError, match="SIGKILL"):
+    # Exit -9 is named by this system's signal table: "SIGKILL" on POSIX, "signal 9" on Windows (which has no
+    # POSIX signals; a real Windows kill is a positive exit code, item 247).
+    with pytest.raises(RuntimeError, match=r"stopped by (SIGKILL|signal 9)\b"):
         solve_via_subprocess(_build_problem(seed=1), "highs", _opts(), solve_name="s", work_folder=work)
     assert [_has_warm(c) for c in spy.calls] == [False, True], "expected the cold probe, then the warm run"
     assert not (cache_dir / f"{fp1}.abtested").exists()
@@ -362,7 +364,7 @@ def test_a_killed_cold_probe_records_no_verdict(tmp_path: Path, monkeypatch, ret
     work.mkdir()
     fp1, cache_dir = _first_solve_publishes_a_basis(work)
     stale_probe_stats = work / "solve_data" / "subprocess" / "s.probe.stats.json"
-    stale_probe_stats.write_text('{"run_time": 1.0}')
+    stale_probe_stats.write_text('{"run_time": 1.0}', encoding="utf-8")
 
     real_run = _subp.subprocess.run
     _kill_matching(monkeypatch, lambda argv: not _has_warm(argv), returncode)
