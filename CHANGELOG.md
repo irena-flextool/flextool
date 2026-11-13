@@ -68,6 +68,12 @@ Each line says what changes for a model that ran before and what to do; the deta
   wind unit could not run). Results of multi-period stochastic models with such forecasts change.
 - **A roll of a rolling stochastic solve reads only its own forecast**, never a later roll's; a look-ahead time step
   that only a later forecast covers is an error. Extend each roll-start forecast to the end of the roll's horizon.
+- **Stochastic values before the forecasts branch out must come from the forecast made at the solve's start.** A
+  period before the reveal read 0 (or the default) for a stochastic-time value wherever no forecast was given at its
+  own first step, for example a roll that starts inside a period or a period between the start and a later fan
+  (the earlier GMPL model refused such inputs). The run now stops with an error naming the entity, the parameter,
+  the period, the time steps and the solve or roll. Give forecasts at each solve or roll start, or align the rolls
+  with the forecast times; rerun such models.
 - **`--solver-time-limit` and `--solver-mip-gap` now reach Gurobi, CPLEX, Xpress and COPT** and win over the
   database and option file; the environment variables are now `FLEXTOOL_SOLVER_TIME_LIMIT` / `_MIP_GAP` (the
   `FLEXTOOL_HIGHS_*` names still work for HiGHS only). Commercial runs with these flags can give other results.
@@ -903,7 +909,8 @@ Each line says what changes for a model that ran before and what to do; the deta
   the fan's period, in the realization dispatch of those periods and, for entities outside every
   `include_stochastics` group, in the realized-branch read: a wind profile was 0 there and the unit did not run.
   In a single solve each value now comes from the forecast authored at the branch period's own first step, else from
-  the one authored at the fan's analysis time (per time step); a period before the reveal never reads the latter.
+  the one authored at the fan's analysis time (per time step); a period before the reveal never reads the latter
+  (it reads the forecast made at the solve's or roll's start, see "Input checks").
   A roll of a rolling solve decides at its fan's analysis time, so every period of the roll after its fan's
   period (look-ahead periods and the later committed periods of a multi-period jump) reads the forecast given
   at the roll's own fan analysis time, even where a later roll's forecast is given at that period's first step
@@ -914,6 +921,18 @@ Each line says what changes for a model that ran before and what to do; the deta
 
 #### Input checks
 
+- **Before the forecasts branch out, a stochastic-time value must come from the forecast made at the solve's or
+  roll's start.** A period before the reveal reads only the forecast given at its own first time step in the solve
+  or roll. Where none was given there (a roll starting inside a period, a period between the start and a later fan,
+  a forecast that did not cover the period), the profile, inflow, availability, price, reserve or other
+  stochastic-time value read 0 (or the default) without a message; the earlier GMPL model stopped such runs, and
+  the check was lost in the Python port. It is now a configuration error raised before the LP is built: a period
+  that holds the solve's or roll's start needs the forecast made at the start for every time step it reads, and a
+  later period before the reveal with a stochastic-time value is an error too, because it would read a forecast
+  made after the solve or roll starts. The message names the entity, the parameter, the solve or roll, the period
+  and the time steps. Give forecasts at each solve or roll start that cover the steps before the fan, let the
+  forecasts branch out earlier, or align the rolls with the forecast times (`rolling_solve_jump`). Such models ran
+  with zeros before: rerun them.
 - **A forecast fan declared later in a solve that already fans out is an error.** A solve or a roll fans out once,
   at its first reveal; forecast branches declared at a later period (or, in a roll, at a later time step where no
   roll fans out) were ignored without a message. The run now stops before solving, naming the solve or roll, the

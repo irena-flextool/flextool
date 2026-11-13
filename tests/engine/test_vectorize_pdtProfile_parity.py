@@ -298,6 +298,10 @@ def test_vectorized_pdtProfile_synthetic_fold_and_cascade(tmp_path):
     # first_timesteps: (period, time_start) → ts_for_d.
     put("solve_data", "first_timesteps", pl.DataFrame({
         "period": ["d1", "dchild"], "time_start": ["s1", "s1"]}))
+    # Every period is a fan period whose fan start is its own first step (its tiers stay [own]); without
+    # these rows each period would lie before the reveal, where only the solve's start is read (item 250).
+    put("solve_data", "branch_time_start", pl.DataFrame({
+        "period": ["d1", "dchild"], "step": ["s1", "s1"], "read_first": ["own", "own"]}))
     # solve_branch__time_branch: (period, branch) → tb_for_d. d1 has 2
     # branches; parents pA/pB each have b1; dchild has NONE (forces the
     # stoch fall-through for solarA).

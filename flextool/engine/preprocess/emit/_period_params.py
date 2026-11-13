@@ -31,6 +31,7 @@ from flextool.engine.preprocess.emit._base_steps import read_new_step_base_steps
 from flextool.engine.preprocess.emit._pdt_lookup import (
     _anchor_fan_members,
     _check_pbt_branch_coverage,
+    _check_pre_reveal_reads_have_forecast,
     _check_roll_forecast_covers_lookahead,
     _check_ungrouped_reads_have_realized_branch,
     fold_over_tiers,
@@ -162,13 +163,16 @@ def _check_stochastic_inflow(pbt_inflow: dict[tuple[str, str, str, str], float],
                              ts_for_d: dict[str, list[str]],
                              fan_for_d: dict[str, list[str]],
                              pe_for_d: dict[str, list[str]],
-                             *, provider: "object | None" = None) -> None:
+                             *, provider: "object | None" = None,
+                             steps: "list[tuple[str, str]] | None" = None) -> None:
     """The input checks of the other stochastic-time readers, for a node's stochastic ``inflow``.
 
     A node outside every ``include_stochastics`` group reads the realized branch's inflow on a fan's branch
     periods, so a forecasts-only fan cannot serve it; a node must author every active forecast of a fan, or
-    none; and in a roll of a rolling solve the roll's own forecast must cover the roll's look-ahead periods.
-    Shared by :func:`derive_pdtNodeInflow` and :func:`derive_pdtNodeInflow_vectorized`.
+    none; before the reveal a period reads the forecast made when the solve or roll starts, which must cover it;
+    and in a roll of a rolling solve the roll's own forecast must cover the roll's look-ahead periods.
+    Shared by :func:`derive_pdtNodeInflow` and :func:`derive_pdtNodeInflow_vectorized`; *steps* is the reader's
+    ``(period, time)`` grid when it is not ``steps_in_use`` (the capacity margin's peak demand).
     """
     eligible = set(eligible_nodes)
     keyed = {(n, "inflow", tb, ts, t): v for (n, tb, ts, t), v in pbt_inflow.items() if n in eligible}
@@ -178,6 +182,8 @@ def _check_stochastic_inflow(pbt_inflow: dict[tuple[str, str, str, str], float],
     _check_ungrouped_reads_have_realized_branch(keyed, 1, stoch_node, anchor_members, tb_for_d, ts_for_d,
                                                 fan_for_d=fan_for_d, kind="node")
     _check_pbt_branch_coverage(keyed, 1, anchor_members, tb_for_d, ts_for_d, fan_for_d, kind="node")
+    _check_pre_reveal_reads_have_forecast(keyed, 1, stoch_node, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
+                                          solve_data_dir, provider=provider, kind="node", steps=steps)
     _check_roll_forecast_covers_lookahead(keyed, 1, stoch_node, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
                                           solve_data_dir, provider=provider, kind="node")
 
@@ -191,13 +197,16 @@ def _check_profile_roll_coverage(pbt_profile: dict[tuple[str, str, str, str], fl
                                  fan_for_d: dict[str, list[str]],
                                  solve_data_dir: Path,
                                  *, provider: "object | None" = None) -> None:
-    """In a roll of a rolling solve, the roll's own forecast of a profile must cover the roll's look-ahead
-    periods (:func:`_check_roll_forecast_covers_lookahead`).  Shared by :func:`derive_pdtProfile` and
-    :func:`derive_pdtProfile_vectorized`."""
-    if not getattr(fan_for_d, "fan_first", None):
+    """Before the reveal, a period reads the forecast of a profile made when the solve or roll starts, which must
+    cover it (:func:`_check_pre_reveal_reads_have_forecast`); in a roll of a rolling solve, the roll's own
+    forecast must cover the roll's look-ahead periods (:func:`_check_roll_forecast_covers_lookahead`).  Shared by
+    :func:`derive_pdtProfile` and :func:`derive_pdtProfile_vectorized`."""
+    if not pbt_profile:
         return
     read = set(profiles)
     keyed = {(p, "profile", tb, ts, t): v for (p, tb, ts, t), v in pbt_profile.items() if p in read}
+    _check_pre_reveal_reads_have_forecast(keyed, 1, stoch_profile, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
+                                          solve_data_dir, provider=provider, kind="profile")
     _check_roll_forecast_covers_lookahead(keyed, 1, stoch_profile, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
                                           solve_data_dir, provider=provider, kind="profile")
 
@@ -571,7 +580,7 @@ def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
     ]
     fan_for_d = read_fan_for_d(solve_data_dir, provider=provider)
     _check_stochastic_inflow(pbt_inflow, stoch_node, eligible_nodes, solve_data_dir,
-                             tb_for_d, ts_for_d, fan_for_d, pe_for_d, provider=provider)
+                             tb_for_d, ts_for_d, fan_for_d, pe_for_d, provider=provider, steps=steps)
 
     # --- Step 2: grid + fold (branches 1 & 2), pdtProfile-shaped ----------
     key_cols = ["node"]

@@ -57,6 +57,7 @@ from flextool.engine.preprocess._reserve_methods import demanded_reserves
 from flextool.engine.preprocess.emit._pdt_lookup import (
     _anchor_fan_members,
     _check_pbt_branch_coverage,
+    _check_pre_reveal_reads_have_forecast,
     _check_roll_forecast_covers_lookahead,
     _check_ungrouped_reads_have_realized_branch,
     fold_over_tiers,
@@ -380,6 +381,9 @@ def derive_pdtReserve_upDown_group(
     )
     _check_pbt_branch_coverage(pbt_in_use, 3, anchor_members, tb_for_d, ts_for_d, fan_for_d, kind="reserve")
     # In a roll of a rolling solve the roll's own forecast must cover the roll's look-ahead periods.
+    # Before the reveal, a period reads the forecast made when the solve or roll starts, and it must cover it.
+    _check_pre_reveal_reads_have_forecast(pbt_in_use, 3, groups_stoch, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
+                                          solve_data_dir, provider=provider, member_pos=2, kind="reserve")
     _check_roll_forecast_covers_lookahead(pbt_in_use, 3, groups_stoch, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
                                           solve_data_dir, provider=provider, member_pos=2, kind="reserve")
 

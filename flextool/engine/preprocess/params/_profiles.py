@@ -76,6 +76,7 @@ from flextool.engine.preprocess.params._branch import inherit_active_branch_peri
 from flextool.engine.preprocess.emit._pdt_lookup import (
     _anchor_fan_members,
     _check_pbt_branch_coverage,
+    _check_pre_reveal_reads_have_forecast,
     _check_roll_forecast_covers_lookahead,
     _check_ungrouped_reads_have_realized_branch,
     read_fan_for_d,
@@ -655,6 +656,9 @@ def _profile_stochastic_lf(workdir: Path | None,
     if stoch_active:
         _check_pbt_branch_coverage({k: v for k, v in pbt_dict.items() if k[0] in stoch_active}, 1, anchor_members,
                                    tb_for_d, ts_for_d, fan_for_d, kind="profile")
+    # Before the reveal, a period reads the forecast made when the solve or roll starts, and it must cover it.
+    _check_pre_reveal_reads_have_forecast(pbt_dict, 1, frozenset(stoch_active), tb_for_d, ts_for_d, pe_for_d,
+                                          fan_for_d, sd, provider=provider, kind="profile")
     # In a roll of a rolling solve the roll's own forecast must cover the roll's look-ahead periods.
     _check_roll_forecast_covers_lookahead(pbt_dict, 1, frozenset(stoch_active), tb_for_d, ts_for_d, pe_for_d,
                                           fan_for_d, sd, provider=provider, kind="profile")
