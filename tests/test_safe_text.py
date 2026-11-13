@@ -70,7 +70,8 @@ def test_flextool_run_relays_them_shown(tmp_path) -> None:
     echo = io.StringIO()
     code = f"print({NAME!r} + ' warning', flush=True)"
     assert supervisor.run_supervised([], child_cmd=[sys.executable, "-c", code], stdout=echo) == 0
-    assert echo.getvalue() == printable(NAME) + " warning\n"
+    # The child's line end is relayed as it is: "\r\n" on Windows.
+    assert echo.getvalue().replace("\r\n", "\n") == printable(NAME) + " warning\n"
 
 
 def test_the_window_job_log_shows_them(tmp_path) -> None:
