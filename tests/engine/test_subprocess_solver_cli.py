@@ -641,6 +641,24 @@ def test_a_highs_solve_name_is_one_file_token_inside_the_work_folder(tmp_path: P
     assert mps.is_file()
 
 
+def test_a_highs_whole_number_option_from_the_database_runs_in_the_save_memory_child(tmp_path: Path) -> None:
+    """An integer option and a switch from ``solver_arguments`` arrive as float text (``"100000.0"``, ``"1.0"``);
+    the resolved options pass the ``--save-memory`` child's HiGHS (before, it refused them and exited with an
+    error)."""
+    from flextool.engine.solve._solver_dispatch import _resolve_effective_highs_options
+    from flextool.engine.solve._subprocess_solve import solve_via_subprocess
+    from tests.engine.test_subprocess_gurobi_name_recovery import _cost_lp
+
+    options = _resolve_effective_highs_options(
+        solver_arguments_map={"simplex_iteration_limit": "100000.0", "mip_detect_symmetry": "1.0"},
+        highs_opt_path=None, cli_overrides=None, solve_name="s",
+    )
+    sol = solve_via_subprocess(_cost_lp(["a", "b"]), "highs", options, solve_name="s", work_folder=tmp_path / "work")
+    assert sol.optimal
+    opt_lines = (tmp_path / "work" / "solve_data" / "subprocess" / "s.opt").read_text().splitlines()
+    assert "simplex_iteration_limit=100000" in opt_lines and "mip_detect_symmetry=true" in opt_lines
+
+
 _SILENT_SOLVER = """\
 #!{py}
 import sys

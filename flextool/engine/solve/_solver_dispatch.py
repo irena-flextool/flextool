@@ -773,6 +773,89 @@ def _in_workspace(key: object, value: Any, workspace: Path | None) -> Any:
     return value
 
 
+def _declared_option_type(solver: str, name: object) -> str | None:
+    """The type FlexTool's list of *solver*'s parameters gives *name* (HiGHS: else the installed HiGHS's type),
+    or ``None`` when neither knows it."""
+    entry = _solver_catalogue.load(solver).entry(name)
+    if entry is not None:
+        return entry.type
+    if solver == "highs":
+        return highs_live_type(catalogue_key("highs", name))
+    return None
+
+
+def _as_number(value: object) -> int | float | None:
+    """*value* as a number: an ``int`` / ``float`` as it is, a text that reads as one (an integer text as an
+    ``int``, so a large one keeps every digit); ``None`` for a boolean, a word or anything else."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            return int(text)
+        except ValueError:
+            pass
+        try:
+            return float(text)
+        except ValueError:
+            return None
+    return None
+
+
+def _not_whole_number(solver: str, name: object, value: object, where: str) -> FlexToolUserError:
+    return FlexToolUserError(
+        f"{_solver_catalogue.SOLVER_LABEL[solver]} option {_short(str(name))} takes a whole number, and {where} "
+        f"gives it {_short(str(value))}. Correct the value there and run again."
+    )
+
+
+def typed_highs_option_value(name: object, value: Any, where: str) -> Any:
+    """*value* in the type HiGHS declares for option *name*, for ``setOptionValue`` (in-process) and the
+    ``--save-memory`` child's option files alike.
+
+    The input database stores every number as a float and ``solver_arguments`` arrive as its text (``3.0``),
+    which HiGHS refuses for an integer option (``3.0``) and for a switch (``1.0``).  An integer option gets a
+    whole number as an integer (``3.0`` -> ``3``); a switch gets 1 / 0 as true / false.  A text value stays text
+    (``"3.0"`` -> ``"3"``, ``"1.0"`` -> ``"true"``; an integer text such as ``"3"`` unchanged), a number becomes an
+    ``int`` / ``bool``.  A number that is not whole (an integer option) or not 0 or 1 (a switch) is a
+    :class:`FlexToolUserError` naming the option and *where*.  Anything else (a word, a ``double`` or text option,
+    an option neither FlexTool's list nor the installed HiGHS knows) is passed as it is, for HiGHS to judge.
+    """
+    kind = _declared_option_type("highs", name)
+    if kind not in ("int", "bool"):
+        return value
+    number = _as_number(value)
+    if number is None or (isinstance(value, str) and isinstance(number, int) and (kind == "int" or number in (0, 1))):
+        return value  # a word for HiGHS to judge, or an integer text HiGHS reads as it is
+    if kind == "int":
+        if not isinstance(number, int):
+            if not (math.isfinite(number) and number.is_integer()):
+                raise _not_whole_number("highs", name, value, where)
+            number = int(number)
+        return str(number) if isinstance(value, str) else number
+    if number in (0, 1):
+        if isinstance(value, str):
+            return "true" if number == 1 else "false"
+        return number == 1
+    raise FlexToolUserError(
+        f"HiGHS option {_short(str(name))} is a switch (true / false, or 1 / 0), and {where} gives it "
+        f"{_short(str(value))}. Correct the value there and run again."
+    )
+
+
+def _refuse_fractional_integer_option(solver: str, option: "CommercialOption") -> None:
+    """Refuse a commercial option whose value is a number that is not whole where *solver*'s list says the
+    parameter is an integer (a whole number written ``3.0`` is already passed as ``3`` by
+    :func:`flextool.engine.solve._subprocess_solve._format_native_opt_value`)."""
+    if _declared_option_type(solver, option.name) != "int":
+        return
+    number = _as_number(option.value)
+    if isinstance(number, float) and not (math.isfinite(number) and number.is_integer()):
+        raise _not_whole_number(solver, option.name, option.value, option.layer)
+
+
 def _resolve_effective_highs_options(
     *,
     solver_arguments_map: Mapping[str, Any] | None,
@@ -868,9 +951,9 @@ def _resolve_effective_highs_options(
     if highs_opt_text is None and highs_opt_path is not None and highs_opt_path.is_file():
         highs_opt_text = highs_opt_path.read_text(encoding="utf-8")
     of_solve = f" of solve {solve_name}" if solve_name else ""
-    file_options: dict[str, str] = {}
+    file_options: dict[str, Any] = {}
+    file_label = str(highs_opt_path) if highs_opt_path is not None else "highs.opt"
     if highs_opt_text is not None:
-        file_label = str(highs_opt_path) if highs_opt_path is not None else "highs.opt"
         for lineno, key, val in _highs_opt_lines(highs_opt_text):
             if key not in _HIGHS_OPT_IGNORED_KEYS:  # dropped below, never passed on
                 validate_solver_option("highs", key, val, f"{file_label}, line {lineno}")
@@ -883,6 +966,13 @@ def _resolve_effective_highs_options(
     file_options = _drop_solution_file_options(file_options, highs_opt_path)
     if highs_opt_untrusted is not None:
         file_options = {key: _in_workspace(key, value, workspace) for key, value in file_options.items()}
+    if file_options:
+        # The line a value comes from (the last one of a repeated name, which is the one kept).
+        file_lines = {key: lineno for lineno, key, _val in _highs_opt_lines(highs_opt_text or "")}
+        file_options = {
+            key: typed_highs_option_value(key, val, f"{file_label}, line {file_lines.get(key)}")
+            for key, val in file_options.items()
+        }
     options.update(file_options)
     if solver_config is not None:
         knobs = _PARAM_MAP["highs"]
@@ -891,17 +981,18 @@ def _resolve_effective_highs_options(
             if value is not None:
                 validate_solver_option("highs", knobs[knob], value, f"solver_mip_gap{of_solve}")
                 check_database_solver_option("highs", knobs[knob], value, f"solver_mip_gap{of_solve}")
-                options[knobs[knob]] = value
+                options[knobs[knob]] = typed_highs_option_value(knobs[knob], value, f"solver_mip_gap{of_solve}")
     if solver_arguments_map:
         for key, value in solver_arguments_map.items():
             validate_solver_option("highs", key, value, f"solver_arguments{of_solve}")
             check_database_solver_option("highs", key, value, f"solver_arguments{of_solve}")
+            value = typed_highs_option_value(key, value, f"solver_arguments{of_solve}")
             options[str(key)] = _in_workspace(key, value, workspace)
     if cli_overrides:
         for key, value in cli_overrides.items():
             validate_solver_option("highs", key, value, "the run's flags or environment variables")
             warn_unlisted_trusted_option("highs", key, "the run's flags or environment variables")
-            options[str(key)] = value
+            options[str(key)] = typed_highs_option_value(key, value, "the run's flags or environment variables")
     return options
 
 
@@ -1181,6 +1272,8 @@ def resolve_commercial_options(
             replaced_threads = option
     operator = _operator_native_overrides(solver, run_options)
     entries += operator
+    for option in entries:
+        _refuse_fractional_integer_option(solver, option)
     budget = next((o for o in operator if commercial_option_key(solver, o.name) == thread_key), None)
     if budget is not None and replaced_threads is not None:
         _note_thread_override(solver, replaced_threads, budget)

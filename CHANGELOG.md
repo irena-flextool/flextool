@@ -843,6 +843,14 @@ Each line says what changes for a model that ran before and what to do; the deta
   leaves the verdict to the next solve on every OS. A solve name with `\` or other characters a file name cannot
   safely hold is turned into one file-name token, as for the commercial solvers, so its files stay in the work
   folder on Windows.
+- **A whole-number HiGHS option in a solve's `solver_arguments` now reaches HiGHS.** The input database stores
+  every number as a decimal (`3.0`), and HiGHS refuses that for a whole-number option such as
+  `user_objective_scale` or `simplex_iteration_limit`, and `1.0` for a true/false switch: an in-process solve
+  dropped the option with a warning, a `--save-memory` solve stopped with an error. FlexTool now gives each HiGHS
+  option the type HiGHS declares for it, in-process and with `--save-memory`, from every source (`highs.opt`,
+  `solver_arguments`, the flags). A value that is not a whole number for such an option (`2.5`), or not 0 or 1 for a
+  switch, stops the run before the solve with an error naming the option and where it was set; the same holds for
+  a whole-number parameter of Gurobi, CPLEX, Xpress and COPT (which already got `3.0` as `3`).
 - **A solver that writes no solution no longer gets the previous run's solution.** The work folder
   (`solve_data/subprocess`) keeps each solve's result file between runs. A commercial solver that ended without
   writing one (CPLEX "No solution exists" for an infeasible model, COPT without a solution, a crash or a solver

@@ -91,7 +91,8 @@ def test_misspelt_name_is_refused_with_the_closest_name() -> None:
     ("highs", "mip_rel_gap"),
 ])
 def test_spellings_the_solver_reads_as_a_listed_name_pass(solver, name) -> None:
-    assert list(_db(solver, {name: "0.01"}).values()) == ["0.01"]
+    value = "5" if solver == "xpress" else "0.01"  # MAXTIME is an integer control
+    assert list(_db(solver, {name: value}).values()) == [value]
 
 
 def test_cplex_abbreviation_is_refused_with_its_full_name() -> None:

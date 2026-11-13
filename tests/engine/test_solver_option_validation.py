@@ -334,7 +334,7 @@ def test_database_plain_file_name_is_accepted_into_the_workspace(solver: str, tm
     # A number or a switch in an option whose name says file / dir (Gurobi NodefileStart, BranchDir) passes.
     numeric = {"highs": "write_solution_to_file", "gurobi": "NodefileStart", "cplex": "mip strategy file",
                "xpress": "TUNERMETHODFILE", "copt": "LogFile"}[solver]
-    assert list(_resolve_db(solver, {numeric: "0.5"}).values()) == ["0.5"]
+    assert list(_resolve_db(solver, {numeric: "1"}).values()) == ["1"]
 
 
 _GUROBI_SERVER = ["ComputeServer", "CSManager", "CSAPIAccessID", "CSAPISecret", "CSGroup", "CSPriority", "CSRouter",
@@ -964,3 +964,49 @@ def test_the_thread_budget_goes_through_the_checks_of_the_runs_own_options(monke
     monkeypatch.setitem(_PARAM_MAP, "gurobi", {**_PARAM_MAP["gurobi"], "threads": "Threads;quit"})
     with pytest.raises(FlexToolUserError, match="environment variable FLEXTOOL_THREADS: the name contains"):
         resolve_commercial_options("gurobi", opt_file=None, solver_config=None, run_options=budget)
+
+
+# ---------------------------------------------------------------------------
+# Option values in the solver's declared type (the database stores every number as a float)
+# ---------------------------------------------------------------------------
+
+
+def test_highs_whole_numbers_and_switches_from_the_database_reach_highs_in_its_types() -> None:
+    """``solver_arguments`` arrive as the text of a float (``"3.0"``), which HiGHS refuses for an integer
+    option and a switch.  They reach HiGHS as ``"3"`` / ``"true"``, and the installed HiGHS takes every value."""
+    import highspy
+
+    got = _resolve_db("highs", {"simplex_iteration_limit": "100000.0", "user_objective_scale": "-2.0",
+                                "mip_detect_symmetry": "0.0", "mip_rel_gap": "0.01"})
+    assert got == {"simplex_iteration_limit": "100000", "user_objective_scale": "-2",
+                   "mip_detect_symmetry": "false", "mip_rel_gap": "0.01"}
+    h = highspy.Highs()
+    h.silent()
+    assert all(h.setOptionValue(k, v) == highspy.HighsStatus.kOk for k, v in got.items())
+    # The knob layer (numbers) and an option-file line get the same treatment; an integer text is kept as it is.
+    knobs = _resolve_effective_highs_options(
+        solver_arguments_map=None, highs_opt_path=Path("cfg/highs.opt"), highs_opt_text="threads=2.0\nrandom_seed=7\n",
+        cli_overrides=None, solver_config=SolverConfig(name="highs", threads=3.0),
+    )
+    assert knobs == {"threads": 3, "random_seed": "7"}
+
+
+@pytest.mark.parametrize("name, value, words", [
+    ("simplex_iteration_limit", "2.5", "takes a whole number"),
+    ("mip_detect_symmetry", "2.0", "is a switch"),
+])
+def test_highs_value_outside_the_option_type_is_refused_naming_it(name: str, value: str, words: str) -> None:
+    with pytest.raises(FlexToolUserError) as err:
+        _resolve_db("highs", {name: value})
+    assert f"HiGHS option {name!r} {words}" in str(err.value)
+    assert f"solver_arguments of solve invest gives it {value!r}" in str(err.value)
+
+
+@pytest.mark.parametrize("solver, name", [("gurobi", "Method"), ("xpress", "THREADS"), ("copt", "Threads")])
+def test_commercial_integer_parameter_whole_float_passes_and_a_fraction_is_refused(solver: str, name: str) -> None:
+    """A whole number written as a float reaches a commercial solver without its ``.0`` (an integer parameter
+    may refuse ``1.0``, the Xpress library does); a fraction is refused before the solve, naming the option."""
+    assert list(_resolve_db(solver, {name: "2.0"}).values()) == ["2"]
+    with pytest.raises(FlexToolUserError, match=rf"option {name!r} takes a whole number, and solver_arguments "
+                                                rf"of solve invest gives it '2.5'"):
+        _resolve_db(solver, {name: "2.5"})
