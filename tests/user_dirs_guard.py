@@ -102,20 +102,26 @@ def forbidden_roots() -> tuple[Path, ...]:
     return (*real_user_dirs(), *(home / name for name in _REAL_HOME_CONFIG_DIRS))
 
 
-def is_real_user_path(path: Path) -> bool:
-    """*path* lies under one of :func:`forbidden_roots` (both compared as full, resolved paths)."""
+def _full(path: Path | str) -> Path:
     try:
-        full = Path(os.path.abspath(path)).resolve()
+        return Path(os.path.abspath(path)).resolve()
     except (OSError, RuntimeError):
-        full = Path(os.path.abspath(path))
-    for root in forbidden_roots():
-        try:
-            root = Path(os.path.abspath(root)).resolve()
-        except (OSError, RuntimeError):
-            root = Path(os.path.abspath(root))
-        if full == root or full.is_relative_to(root):
-            return True
-    return False
+        return Path(os.path.abspath(path))
+
+
+def is_real_user_path(path: Path) -> bool:
+    """*path* lies under one of :func:`forbidden_roots` (both compared as full, resolved paths), and not in the
+    system temp folder.
+
+    On Windows the temp folder is ``<home>\\AppData\\Local\\Temp``, under the real home's AppData folder: pytest's
+    ``tmp_path`` and the session sandbox live there, so a path in the temp folder is never a real user folder
+    (unless the temp folder itself lies in a real FlexTool folder)."""
+    full = _full(path)
+    real_dirs = tuple(_full(root) for root in real_user_dirs())
+    temp = _full(tempfile.gettempdir())
+    if full.is_relative_to(temp) and not any(temp.is_relative_to(root) for root in real_dirs):
+        return False
+    return any(full == root or full.is_relative_to(root) for root in (_full(r) for r in forbidden_roots()))
 
 
 def redirect() -> tuple[Path, Path | None]:

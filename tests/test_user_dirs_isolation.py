@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -86,6 +87,21 @@ def test_a_user_dirs_call_that_gives_a_real_folder_raises_and_is_recorded(tmp_pa
     assert "gave the real user folder" in log.read_text(encoding="utf-8")
     monkeypatch.setenv(USER_HOME_ENV, str(tmp_path / "own"))
     assert user_dirs.user_config_dir() == tmp_path / "own" / "config"
+
+
+def test_a_temp_folder_under_the_real_appdata_is_not_a_real_user_folder(tmp_path: Path, monkeypatch):
+    """Windows keeps the temp folder (pytest's ``tmp_path``) in ``<home>\\AppData\\Local\\Temp``: a path there is
+    the test's own, while the real AppData folders around it stay forbidden."""
+    home = tmp_path / "real_home"
+    temp = home / "AppData" / "Local" / "Temp"
+    temp.mkdir(parents=True)
+    monkeypatch.setenv(user_dirs_guard.REAL_HOME_ENV, str(home))
+    monkeypatch.setenv(user_dirs_guard.REAL_DIRS_ENV, str(home / "AppData" / "Local" / "flextool"))
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    assert not user_dirs_guard.is_real_user_path(temp / "pytest-0" / "user_home" / "cache")
+    assert user_dirs_guard.is_real_user_path(home / "AppData" / "Local" / "flextool" / "Cache")
+    assert user_dirs_guard.is_real_user_path(home / "AppData" / "Roaming" / "flextool")
+    assert user_dirs_guard.is_real_user_path(home / ".config" / "flextool")
 
 
 def test_the_session_check_sees_added_changed_and_removed_files(tmp_path: Path):
