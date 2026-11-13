@@ -43,6 +43,7 @@ from flextool.scenario_comparison.dispatch_mappings import (
 )
 from flextool.scenario_comparison.dispatch_plots import _build_dispatch_figure
 from flextool.plot_outputs.unit_labels import dispatch_ylabel
+from flextool.sqlite_url import sqlite_url_string
 
 if TYPE_CHECKING:
     from flextool.gui.data_models import PlotSettings
@@ -4402,7 +4403,7 @@ class ResultViewer(tk.Toplevel):
             )
             return
 
-        db_url = f"sqlite:///{db_path}"
+        db_url = sqlite_url_string(db_path)
         fig = build_network_figure(db_url)
         if fig is None:
             self._plot_canvas.show_message(

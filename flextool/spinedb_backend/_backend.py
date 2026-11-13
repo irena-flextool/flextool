@@ -54,6 +54,7 @@ from flextool.spinedb_backend._axis_enums import (
     cast_against_contract,
     load_axis_contract,
 )
+from flextool.sqlite_url import sqlite_url_string
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +144,7 @@ class SpineDBBackend:
     ) -> None:
         url = str(db_url)
         if "://" not in url:
-            url = f"sqlite:///{url}"
+            url = sqlite_url_string(url)
         self._db_url = url
         self._scenario_name = scenario_name
         self._db: Any | None = None
@@ -171,10 +172,10 @@ class SpineDBBackend:
         re-enter without closing prematurely.
         """
         import spinedb_api as api  # late import: keeps cold-import cheap
-        from spinedb_api import DatabaseMapping
+        from flextool.update_flextool.db_handle import database_mapping
 
         self._api = api
-        db = DatabaseMapping(self._db_url)
+        db = database_mapping(self._db_url)
         # Enter the mapping's context so ``self._session`` is created.
         # Required by ``scenario_filter_from_dict`` (which calls
         # ``db.query()`` while building the filter's subqueries) and by

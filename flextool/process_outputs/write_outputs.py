@@ -76,6 +76,7 @@ from flextool.process_outputs.union_realized_slice import (
     union_sets,
 )
 from flextool.process_outputs.write_spinedb import write_spinedb
+from flextool.sqlite_url import sqlite_url_string
 
 
 def _parse_rename_entry(entry) -> tuple[str, bool]:
@@ -1412,7 +1413,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
     # Write to SpineDB results database
     if 'spinedb' in write_methods:
         db_url = results_db_url or (
-            'sqlite:///' + os.path.join(output_location or '.', 'results.sqlite')
+            sqlite_url_string(os.path.join(output_location or '.', 'results.sqlite'))
         )
         if read_parquet_dir:
             # Replay path: ``s`` / ``par`` are UNDEFINED here (assigned only

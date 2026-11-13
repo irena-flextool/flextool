@@ -11,6 +11,7 @@ import logging
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_handle import open_database_mapping
 from flextool._resources import package_data_path
+from flextool.sqlite_url import sqlite_url_string
 
 
 def _pre_v26_template(name: str) -> str:
@@ -109,7 +110,7 @@ def migrate_database(
     if database_path.startswith('sqlite://') or database_path.startswith('http://'):
         mapping_name = database_path
     elif os.path.exists(database_path) and database_path.endswith(".sqlite"):
-        mapping_name = 'sqlite:///' + database_path
+        mapping_name = sqlite_url_string(database_path)
     else:
         logging.critical("No sqlite file at " + database_path)
         exit(-1)
@@ -5041,7 +5042,7 @@ def migrate_repository_database(database_path: str) -> None:
     (only upgraded user databases print behaviour-change notices).
     """
     migrate_database(database_path)
-    url = database_path if "://" in database_path else "sqlite:///" + database_path
+    url = database_path if "://" in database_path else sqlite_url_string(database_path)
     with open_database_mapping(url) as db:
         if remove_behaviour_change_markers(db):
             db.commit_session("Removed behaviour-change markers (repository database)")

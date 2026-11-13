@@ -23,6 +23,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from flextool._file_lock import FileLockError, exclusive_file_lock
+from flextool.sqlite_url import sqlite_url_string
 
 #: The suffix of the lock file next to the database.
 LOCK_SUFFIX = ".migrate.lock"
@@ -153,5 +154,5 @@ def _migrate_locked(path: Path) -> int | None:
         print(f"  Upgrading the SpineDB schema of the input database: {path}", flush=True)
     else:
         print(f"  Migrating the input database from version {version} to {FLEXTOOL_DB_VERSION}: {path}", flush=True)
-    migrate_database(f"sqlite:///{path}")
+    migrate_database(sqlite_url_string(path))
     return version

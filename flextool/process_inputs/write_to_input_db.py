@@ -3,6 +3,7 @@ from spinedb_api import from_database, to_database, SpineDBAPIError, Asterisk
 from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api.exception import NothingToCommit
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
+from flextool.sqlite_url import sqlite_url_string
 
 flextool_db_version = FLEXTOOL_DB_VERSION
 
@@ -117,7 +118,7 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
     if target_db_url.startswith('sqlite://') or target_db_url.startswith('http://'):
         db_url = target_db_url
     elif os.path.exists(target_db_url) and target_db_url.endswith(".sqlite"):
-        db_url = 'sqlite:///' + target_db_url
+        db_url = sqlite_url_string(target_db_url)
     else:
         print("No sqlite file at " + target_db_url)
         exit(-1)

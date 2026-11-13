@@ -9,6 +9,8 @@ from typing import Any
 import numpy as np
 from spinedb_api import DatabaseMapping, from_database
 
+from flextool.update_flextool.db_handle import database_mapping
+
 
 @dataclass
 class DatabaseContents:
@@ -78,7 +80,7 @@ def read_database(db_url: str) -> DatabaseContents:
         A fully populated :class:`DatabaseContents` instance.
     """
     dc = DatabaseContents()
-    db = DatabaseMapping(db_url, create=False)
+    db = database_mapping(db_url, create=False)
     try:
         db.fetch_all()
         _read_entity_classes(db, dc)

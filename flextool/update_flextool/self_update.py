@@ -15,6 +15,7 @@ from flextool._resources import package_data_path
 from flextool.update_flextool.db_migration import migrate_database
 from flextool.update_flextool.initialize_database import initialize_database
 from flextool.update_flextool import canonical_databases
+from flextool.sqlite_url import sqlite_url_string
 
 
 def _reinstall_if_needed():
@@ -191,7 +192,7 @@ def _sync_settings_param_defs(json_template, sqlite_path):
         }
         if not payload:
             return
-        with open_database_mapping('sqlite:///' + sqlite_path, create=False) as db:
+        with open_database_mapping(sqlite_url_string(sqlite_path), create=False) as db:
             (num, _log) = import_data(db, unparse_value=keep_serialized_unparse, **payload)
             if num:
                 db.commit_session(
@@ -378,7 +379,7 @@ def ensure_runtime_files(verbose: bool = False, *, warn: bool = False) -> None:
             ("templates/input_data_template.sqlite", "templates/empty_input_template.xlsx"),
         ):
             if os.path.exists(sqlite_rel) and not os.path.exists(xlsx_rel):
-                export_to_excel(f"sqlite:///{sqlite_rel}", xlsx_rel)
+                export_to_excel(sqlite_url_string(sqlite_rel), xlsx_rel)
         if not os.path.exists("example_input.xlsx") and os.path.exists("templates/example_input_template.xlsx"):
             shutil.copy("templates/example_input_template.xlsx", "example_input.xlsx")
     except Exception as exc:
@@ -500,7 +501,7 @@ def update_flextool(skip_git):
         if not os.path.exists(sqlite_rel):
             continue
         try:
-            export_to_excel(f"sqlite:///{sqlite_rel}", xlsx_rel)
+            export_to_excel(sqlite_url_string(sqlite_rel), xlsx_rel)
         except Exception as exc:
             print(f"Warning: failed to generate {xlsx_rel}: {exc}")
 
@@ -547,7 +548,7 @@ def update_flextool(skip_git):
     #get template JSON. This can be the master or old template if conflicting migrations in between
     with open (result_template_path) as json_file:
         template = json.load(json_file)
-    with open_database_mapping('sqlite:///' + 'results.sqlite', create = False, upgrade = True) as db:
+    with open_database_mapping(sqlite_url_string('results.sqlite'), create = False, upgrade = True) as db:
         #these update the old descriptions, but wont remove them or change names (the new name is created, but old stays)
         (num,log) = import_data(db, parameter_definitions = template["parameter_definitions"])
         try:
@@ -560,7 +561,7 @@ def initialize_result_database(filename,json_path):
 
     with open (json_path) as json_file:
         template = json.load(json_file)
-    with open_database_mapping('sqlite:///' + filename, create = True) as db:
+    with open_database_mapping(sqlite_url_string(filename), create = True) as db:
         (num,log) = import_data(db,**template)
         print("Result database initialized")
         db.commit_session("Result database initialized")

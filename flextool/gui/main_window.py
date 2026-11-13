@@ -68,6 +68,7 @@ from flextool.gui.platform_utils import (
     open_folder,
 )
 from flextool.gui.db_editor_integration import DbEditorManager
+from flextool.sqlite_url import sqlite_url_string
 
 
 logger = logging.getLogger(__name__)
@@ -3547,7 +3548,7 @@ class MainWindow(tk.Tk):
             if self.db_editor_mgr.is_editor_running(source_name):
                 self._flash_input_source_open(source_name)
                 return
-            db_url = f"sqlite:///{filepath}"
+            db_url = sqlite_url_string(filepath)
             proc = self.db_editor_mgr.open_database(db_url, source_name)
             if proc is None:
                 # Spine Toolbox not installed in this environment: point at
@@ -3832,7 +3833,7 @@ class MainWindow(tk.Tk):
         work_dir.mkdir(parents=True, exist_ok=True)
         work_sqlite = work_dir / f"{stem}.convert.sqlite"
         work_sqlite.unlink(missing_ok=True)  # clear any leftover from a crash
-        target_db_url = f"sqlite:///{work_sqlite}"
+        target_db_url = sqlite_url_string(work_sqlite)
 
         # Detect Excel format / version and initialize DB with the right template
         from flextool.process_inputs import (
@@ -4034,7 +4035,7 @@ class MainWindow(tk.Tk):
         import tempfile
         tmp_dir = Path(tempfile.mkdtemp(prefix="flextool_update_"))
         tmp_sqlite = tmp_dir / "temp_import.sqlite"
-        tmp_db_url = f"sqlite:///{tmp_sqlite}"
+        tmp_db_url = sqlite_url_string(tmp_sqlite)
 
         # Choose template and build import command (same logic as _convert)
         if info.format == ExcelFormat.SELF_DESCRIBING and (
@@ -4196,7 +4197,7 @@ class MainWindow(tk.Tk):
         if not answer:
             return
 
-        db_url = f"sqlite:///{sqlite_path}"
+        db_url = sqlite_url_string(sqlite_path)
         cmd = [
             sys.executable, SAFE_PATH_FLAG, "-m",
             "flextool.cli.cmd_export_to_tabular",
@@ -4525,7 +4526,7 @@ class MainWindow(tk.Tk):
         project_path = get_projects_dir() / self.current_project
         stem = Path(source_name).stem
         db_path = project_path / "intermediate" / f"{stem}.sqlite"
-        target_db_url = f"sqlite:///{db_path}"
+        target_db_url = sqlite_url_string(db_path)
 
         if db_path.exists():
             _unlink_sqlite(db_path)
@@ -5658,10 +5659,10 @@ class MainWindow(tk.Tk):
             source_path = mgr._resolve_source_path(scenario.source_name)
             if scenario.is_xlsx:
                 stem = Path(scenario.source_name).stem
-                return "sqlite:///" + str(
+                return sqlite_url_string(
                     project_path / "intermediate" / f"{stem}.sqlite"
                 )
-            return "sqlite:///" + str(source_path)
+            return sqlite_url_string(source_path)
 
         # The dialog reads only ``name``, ``is_xlsx`` and ``source_number`` (the
         # calibration's check of the bare result folder) off each scenario, and
@@ -6540,7 +6541,7 @@ class MainWindow(tk.Tk):
                 "results.sqlite is already open in the Spine DB Editor.",
             )
             return
-        db_url = f"sqlite:///{results_db}"
+        db_url = sqlite_url_string(results_db)
         proc = self.db_editor_mgr.open_database(db_url, source_name)
         if proc is None:
             # Spine Toolbox not installed here: inform the user, point at

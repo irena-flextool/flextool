@@ -71,6 +71,7 @@ from flextool.engine.preprocess.params._per_solve_sets import derive_per_solve_a
 from flextool.engine.input._solve_config import SolveConfig
 from flextool.engine.input._spinedb_reader import SpineDbReader
 from flextool.engine.input._timeline import TimelineConfig
+from flextool.sqlite_url import sqlite_url_string
 
 # Per-node absolute shed tolerance (MWh).  Nodes whose residual unserved
 # energy is at/below this are treated as non-shedding and get NO increment,
@@ -81,7 +82,7 @@ _SHED_TOL_MWH = 1e-6
 def _normalise_url(url: str) -> str:
     """Promote a bare filesystem path to a ``sqlite:///`` URL; pass through
     anything already carrying a ``"://"`` scheme."""
-    return url if "://" in url else f"sqlite:///{url}"
+    return url if "://" in url else sqlite_url_string(url)
 
 
 def _invest_solves(sc: "SolveConfig") -> list[str]:

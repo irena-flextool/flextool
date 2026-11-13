@@ -27,6 +27,7 @@ from flextool.update_flextool.db_handle import open_database_mapping
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_migration import migrate_database
 from flextool.update_flextool.initialize_database import initialize_database
+from flextool.sqlite_url import sqlite_url_string
 
 logger = logging.getLogger(__name__)
 
@@ -262,7 +263,7 @@ def create_flextool_db_from_matpower(
     initialize_database(template_json, db_path)
     migrate_database(db_path)
 
-    url = f"sqlite:///{db_path}"
+    url = sqlite_url_string(db_path)
 
     # Step 2: Add MATPOWER data
     with open_database_mapping(url) as db:

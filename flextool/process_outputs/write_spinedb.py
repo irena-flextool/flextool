@@ -43,14 +43,15 @@ import re
 from typing import Any
 
 import pandas as pd
-from spinedb_api import DatabaseMapping, import_data
-from flextool.update_flextool.db_handle import open_database_mapping
+from spinedb_api import import_data
+from flextool.update_flextool.db_handle import database_mapping, open_database_mapping
 from flextool._file_lock import lock_exclusive as _lock_exclusive, unlock as _unlock
 from spinedb_api.parameter_value import Map
 
 from flextool import units_of_measure as uom
 from flextool.process_outputs._output_meta import FACTOR, result_key_summary
 from flextool.process_outputs.solve_order import period_solve_labels
+from flextool.sqlite_url import sqlite_url_string
 
 logger = logging.getLogger(__name__)
 
@@ -421,7 +422,7 @@ def _top_up_schema_if_stale(db_url: str) -> None:
             # FRESH mapping under the lock (do NOT reuse the gate mapping — its
             # cache is stale after another process's commit).  Re-read the
             # have-sets: another process may already have topped up.
-            db = DatabaseMapping(db_url)
+            db = database_mapping(db_url)
             try:
                 have_classes = {c["name"]
                                 for c in db.get_entity_class_items()}
@@ -507,7 +508,7 @@ def _ensure_results_db_atomic(db_url: str, path: str) -> None:
                 return
             tmp_path = os.path.join(
                 target_dir, f".results-{uuid.uuid4().hex}.sqlite.tmp")
-            tmp_url = "sqlite:///" + tmp_path
+            tmp_url = sqlite_url_string(tmp_path)
             try:
                 _import_schema(tmp_url)
                 # Still absent (we hold the lock, so it cannot appear now) —
@@ -623,7 +624,7 @@ def _import_schema(db_url: str) -> None:
     with open(_SCHEMA_PATH, encoding="utf-8") as fh:
         schema = json.load(fh)
     _apply_derived_descriptions(schema)
-    db = DatabaseMapping(db_url, create=True)
+    db = database_mapping(db_url, create=True)
     try:
         count, errors = import_data(db, **schema)
         if errors:

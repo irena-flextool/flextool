@@ -40,6 +40,7 @@ from typing import Sequence
 from flextool._solver_config_source import split_solver_config_dirs
 from flextool.run_options import Resolved, RunOptions
 from flextool._child_python import child_env, python_module_argv
+from flextool.sqlite_url import sqlite_url_string
 
 # Repo root = <root>/flextool/calibrate/_solve.py → parents[2].
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -154,7 +155,7 @@ def solve_argv(
     ``python -m flextool_run_supervisor`` followed by ``cmd_run_flextool`` arguments: the supervisor passes them
     to the engine unchanged and owns the run's ``_run.log``.
     """
-    url_norm = url if "://" in url else f"sqlite:///{url}"
+    url_norm = url if "://" in url else sqlite_url_string(url)
     chosen = {
         "warm_start": Resolved(True, "cli"),
         "basis_cache_dir": Resolved(str(cache_dir), "cli"),

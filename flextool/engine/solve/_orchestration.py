@@ -102,6 +102,7 @@ from flextool.engine.autoscale import (
     unscale_solution as _autoscale_unscale_solution,
     write_report as _autoscale_write_report,
 )
+from flextool.sqlite_url import sqlite_url_string
 
 
 def _wrap_log_prose(text: str, width: int = 100, indent: str = "  ") -> str:
@@ -5109,7 +5110,7 @@ def run_chain_from_db(
 
     db_url = str(input_db_url)
     if "://" not in db_url:
-        db_url = f"sqlite:///{db_url}"
+        db_url = sqlite_url_string(db_url)
 
     # Behaviour-change notices fire only for an upgraded database's markers; each entity once per run.
     from flextool.engine import _behaviour_changes

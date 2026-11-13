@@ -52,6 +52,7 @@ from spinedb_api.filters.tools import name_from_dict
 from spinedb_api import to_database, DateTime
 from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api.exception import NothingToCommit
+from flextool.sqlite_url import sqlite_url_string
 
 # Start the memory sampler as the first statement after imports.  The
 # few hundred ms of import-cascade RSS that precede this point are not
@@ -876,7 +877,7 @@ def main():
     def _as_db_url(value):
         if value is None:
             return None
-        return value if "://" in value else f"sqlite:///{value}"
+        return value if "://" in value else sqlite_url_string(value)
 
     args.input_db_url = _as_db_url(args.input_db_url)
     args.output_db_url = _as_db_url(args.output_db_url)

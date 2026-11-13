@@ -34,6 +34,7 @@ from flextool.run_record import (
     results_usable,
     write_stop_request,
 )
+from flextool.sqlite_url import sqlite_url_string
 
 logger = logging.getLogger(__name__)
 
@@ -786,13 +787,12 @@ class ExecutionManager:
                 if is_xlsx:
                     xlsx_path = source_path
                     stem = Path(scenario.source_name).stem
-                    input_db_url = (
-                        "sqlite:///"
-                        + str(self.project_path / "intermediate" / f"{stem}.sqlite")
+                    input_db_url = sqlite_url_string(
+                        self.project_path / "intermediate" / f"{stem}.sqlite"
                     )
                 else:
                     xlsx_path = None
-                    input_db_url = "sqlite:///" + str(source_path)
+                    input_db_url = sqlite_url_string(source_path)
 
                 prev_owners = dict(self.settings.bare_output_owners)
                 output_subdir = choose_output_subdir_for_write(
@@ -1031,7 +1031,7 @@ class ExecutionManager:
             )
         if not has_pending:
             return
-        db_url = "sqlite:///" + str(self.project_path / "results.sqlite")
+        db_url = sqlite_url_string(self.project_path / "results.sqlite")
         try:
             from flextool.process_outputs.write_spinedb import ensure_results_db
             ensure_results_db(db_url)

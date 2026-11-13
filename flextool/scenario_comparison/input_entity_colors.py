@@ -36,7 +36,9 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from spinedb_api import DatabaseMapping, from_database
+from spinedb_api import from_database
+
+from flextool.update_flextool.db_handle import database_mapping
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +92,7 @@ def fetch_entities_by_class(db_url: str) -> dict[str, list[str]]:
     flow_group_names: set[str] = set()
     node_group_names: set[str] = set()
 
-    db = DatabaseMapping(db_url, create=False)
+    db = database_mapping(db_url, create=False)
     try:
         for item in db.get_entity_items():
             cls = item["entity_class_name"]
@@ -175,7 +177,7 @@ def fetch_flow_aggregator_flowgroups(db_url: str) -> set[str]:
     """
     result: set[str] = set()
     try:
-        db = DatabaseMapping(db_url, create=False)
+        db = database_mapping(db_url, create=False)
     except Exception as exc:  # un-openable / missing DB
         logger.warning("Cannot open %s for flow_aggregator read: %s", db_url, exc)
         return result

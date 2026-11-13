@@ -34,6 +34,7 @@ from flextool.spinedb_backend._axis_enums import (
     cast_against_contract,
     load_axis_contract,
 )
+from flextool.sqlite_url import sqlite_url_string
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -132,7 +133,7 @@ class SpineDbReader:
     ):
         url = str(db_url)
         if "://" not in url:
-            url = f"sqlite:///{url}"
+            url = sqlite_url_string(url)
         self._db_url = url
         self._scenario = scenario
         # Phase 2 cast-on-emit: when ``axis_enums`` is supplied, every

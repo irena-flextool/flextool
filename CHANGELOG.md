@@ -1350,6 +1350,10 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **The Spine Toolbox tool specifications** listed files that no longer exist (`bin/highs.opt` of the FlexTool
   tool, old modules of *Process outputs* and *scenario comparison*). Toolbox skipped them without a word; they
   are removed.
+- **Databases in a folder whose name holds `%` or `#` open with the next spinedb-api (0.36.8).** That version
+  decodes `%xx` in a database address once more, so a project folder such as `100%25 RE` or `G #2` was not found
+  (input sources, results, the AI assistant). FlexTool now hands spinedb-api the file path as it is; addresses in
+  messages and run records are unchanged.
 
 #### FlexTool 2 import
 

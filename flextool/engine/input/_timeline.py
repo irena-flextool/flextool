@@ -80,6 +80,7 @@ from flextool.engine.preprocess._provider_io import (
     _provider_key,
 )
 from flextool.timeline_pieces import aggregate_timeline_pieces, group_step_solves, timeline_pieces_of_group
+from flextool.sqlite_url import sqlite_url_string
 
 if TYPE_CHECKING:
     from spinedb_api import DatabaseMapping
@@ -248,7 +249,7 @@ class TimelineConfig:
             logger = logging.getLogger(f"flextool.engine.timeline[{scenario}]")
         url = str(db_url)
         if "://" not in url:
-            url = f"sqlite:///{url}"
+            url = sqlite_url_string(url)
         with open_database_mapping(url) as db:
             apply_scenario_filter_to_subqueries(db, scenario)
             # Pre-warm caches — see SolveConfig.load_from_db_url for

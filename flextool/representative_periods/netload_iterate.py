@@ -90,6 +90,7 @@ from flextool.representative_periods.preprocess import (
 from flextool.representative_periods.scenario_stack import (
     add_alternative_to_scenario,
 )
+from flextool.sqlite_url import sqlite_url_string
 
 # Required-output gates for the fail-closed solve assessment, per pass.
 _INVEST_REQUIRED = ("unit_capacity_ed_p", "node_slack_up_d_e")
@@ -215,7 +216,7 @@ class NetloadIterResult:
 
 def _normalise_url(url: str) -> str:
     """Accept either a bare filesystem path or a full SQLAlchemy URL."""
-    return url if "://" in url else f"sqlite:///{url}"
+    return url if "://" in url else sqlite_url_string(url)
 
 
 def _guard_no_timed_energy_margin(url: str, scenario: str) -> None:

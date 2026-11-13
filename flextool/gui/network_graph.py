@@ -34,7 +34,9 @@ def build_network_figure(db_url: str) -> Figure | None:
         return None
 
     try:
-        db = api.DatabaseMapping(db_url)
+        from flextool.update_flextool.db_handle import database_mapping
+
+        db = database_mapping(db_url)
     except Exception:
         logger.exception("Failed to open database: %s", db_url)
         return None

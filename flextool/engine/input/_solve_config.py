@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 import spinedb_api as api
 
 from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.sqlite_url import sqlite_url_string
 
 #: The values of ``solve.reduce_unit_detail_method`` / ``solve.reduce_system_detail_method`` the engine accepts:
 #: the v79 value lists ``reduce_unit_detail_methods`` / ``reduce_system_detail_methods`` (pinned against the schema
@@ -929,7 +930,7 @@ class SolveConfig:
             logger = logging.getLogger(f"flextool.engine.solve_config[{scenario}]")
         url = str(db_url)
         if "://" not in url:
-            url = f"sqlite:///{url}"
+            url = sqlite_url_string(url)
         with open_database_mapping(url) as db:
             apply_scenario_filter_to_subqueries(db, scenario)
             # Pre-warm the entity + parameter_value caches so the

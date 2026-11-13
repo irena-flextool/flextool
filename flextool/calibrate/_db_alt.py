@@ -39,6 +39,7 @@ from spinedb_api import import_data
 from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api.exception import NothingToCommit
 from spinedb_api.parameter_value import Map
+from flextool.sqlite_url import sqlite_url_string
 
 # Suffix appended to a scenario name to form its calibration alternative.
 _CALIB_ALT_SUFFIX = "_adeq_calib"
@@ -82,7 +83,7 @@ def _normalise_url(url: str) -> str:
     A bare path (no ``"://"`` scheme) is promoted to a ``sqlite:///`` URL;
     anything already carrying a scheme is passed through verbatim.
     """
-    return url if "://" in url else f"sqlite:///{url}"
+    return url if "://" in url else sqlite_url_string(url)
 
 
 def write_calib_alt(

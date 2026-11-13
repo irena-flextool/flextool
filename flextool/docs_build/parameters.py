@@ -23,10 +23,10 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import quote
 
 from flextool.assistant.inputs._schema import bracket, ranks_in_words, shipped_schema
 from flextool.assistant.inputs._units import parameter_unit
+from flextool.sqlite_url import read_only_sqlite_url_string, to_sqlalchemy_url
 
 PAGE_TITLE = "Parameter catalogue"
 
@@ -350,7 +350,7 @@ class DatabaseUsage:
 
 def _read_only_url(path: Path) -> str:
     """The SQLite URL that opens *path* read-only (an SQLite URI: the file is never created or written)."""
-    return f"sqlite:///file:{quote(path.as_posix(), safe='/:')}?mode=ro&uri=true"
+    return read_only_sqlite_url_string(path)
 
 
 def input_db_url(value: str) -> str:
@@ -385,7 +385,7 @@ def database_usage(url: str, scenario: str | None = None) -> DatabaseUsage:
     shown = url
     url = input_db_url(url)
     try:
-        db = DatabaseMapping(url, create=False, upgrade=False)
+        db = DatabaseMapping(to_sqlalchemy_url(url), create=False, upgrade=False)
     except Exception as exc:  # noqa: BLE001 — SpineDBAPIError, or SQLAlchemy errors of a damaged file
         text = str(exc).strip().splitlines()
         raise CatalogueInputError(f"cannot open {shown}: {text[0] if text else type(exc).__name__}") from None

@@ -52,6 +52,7 @@ from pathlib import Path
 from flextool._child_python import child_env, python_module_argv
 from flextool._resources import package_data_path
 from flextool._solver_config_source import gui_solver_config_ladder, solver_config_dir_flags
+from flextool.sqlite_url import sqlite_url_string
 
 #: "Threads per run" default of the FlexTool window (``gui/data_models.py``, ``max_cores_per_job``).
 GUI_DEFAULT_THREADS = 1
@@ -180,7 +181,7 @@ def _build_sqlite(json_path: Path, folder: Path) -> str:
     target = folder / f"{json_path.stem}.sqlite"
     with contextlib.redirect_stdout(io.StringIO()):
         initialize_database(str(json_path), str(target))
-    return f"sqlite:///{target}"
+    return sqlite_url_string(target)
 
 
 def phase_seconds(rows: list[dict[str, str]], wall_s: float) -> dict[str, float | None]:
@@ -428,7 +429,7 @@ def collect_runs(args: argparse.Namespace, build_folder: Path) -> list[Run]:
         path = path.resolve()
         db_scenarios(path)  # a clear message for a file that is not a FlexTool database, before copying
         copy = _copy_db(path, build_folder, index)
-        sources.append((path.name, f"sqlite:///{copy}", db_scenarios(copy)))
+        sources.append((path.name, sqlite_url_string(copy), db_scenarios(copy)))
     json_paths = ([_resolve_source(s) for s in args.source] if args.source
                   else ([] if args.db else canonical_sources()))
     for json_path in json_paths:

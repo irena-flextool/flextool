@@ -14,6 +14,7 @@ from typing import Callable
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_migration import MigrationCancelled
+from flextool.sqlite_url import sqlite_url_string
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ def needs_flextool_migration(db_path: Path) -> bool | None:
     """
     from flextool.update_flextool.frozen import schema_outdated_ro
 
-    db_url = f"sqlite:///{db_path}"
+    db_url = sqlite_url_string(db_path)
     current = _read_flextool_version(db_url)
     if current is None:
         return None
@@ -199,7 +200,7 @@ def _upgrade_locked(
 
     was_upgraded = False
     failed = False
-    db_url = f"sqlite:///{db_path}"
+    db_url = sqlite_url_string(db_path)
 
     # Probe the schema read-only first so a database that is already current
     # is never copied.  An out-of-date schema makes this raise.

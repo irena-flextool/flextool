@@ -8,6 +8,7 @@ from pathlib import Path
 
 from flextool.gui.data_models import InputSourceInfo, ProjectSettings, ScenarioInfo
 from flextool.gui.settings_io import save_project_settings
+from flextool.sqlite_url import sqlite_url_string
 
 logger = logging.getLogger(__name__)
 
@@ -256,7 +257,7 @@ class InputSourceManager:
             logger.warning("spinedb_api is not installed -- cannot read sqlite scenarios")
             return None
 
-        db_url = f"sqlite:///{filepath}"
+        db_url = sqlite_url_string(filepath)
         try:
             with open_database_mapping(db_url) as db_map:
                 # Try scenarios first
@@ -645,7 +646,7 @@ class InputSourceManager:
                     internal_to_migrate.append((name, path))
                 continue
             if needs is True:
-                current_version = _read_flextool_version(f"sqlite:///{path}")
+                current_version = _read_flextool_version(sqlite_url_string(path))
                 if current_version is None:
                     planning_messages.append(
                         f"{name}: external file's FlexTool version "
