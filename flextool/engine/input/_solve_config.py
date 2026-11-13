@@ -1196,6 +1196,9 @@ class SolveConfig:
           entry when none);
         * ``shared_operation_periods``: likewise, keeping unset (``None``) apart from the empty list (no ties);
         * ``years_represented``: the whole map, as before (``_run_model`` keeps a solve's own periods);
+        * ``stochastic_branches``: the rows of the periods it realizes (:meth:`_split_fan_rows`), as the solve written
+          by hand has them.  A row that no split solve keeps raises :class:`FlexToolConfigError`: it would be
+          silently ignored;
         * ``map2d_duplicate_of`` / ``map2d_period_parents`` record the split, and the solves replace ``s`` in
           ``model_solve``, in its place.
 
@@ -1226,6 +1229,12 @@ class SolveConfig:
                 )
             new_names: list[str] = []
             parent_timesets = list(self.timesets_used_by_solves.get(parent, []))
+            # The forecast fans (``stochastic_branches`` rows) of the database solve, the rows some split solve
+            # keeps, and the periods of the split solves (for the message on the rows none keeps).
+            fan_rows = list(self.stochastic_branches.get(parent) or [])
+            kept_rows: set[int] = set()
+            has_period: set[str] = set()
+            timeline_order = list(dict.fromkeys(str(entry[0]) for entry in parent_timesets))
             for outer in outers:
                 new = parent + "_" + outer
                 periods = list(dict.fromkeys(p for entries in by_par.values() for p in entries.get(outer, [])))
@@ -1250,16 +1259,81 @@ class SolveConfig:
                         if entry[0] == p and entry not in timesets:
                             timesets.append(entry)
                 overrides["timesets_used_by_solves"] = timesets
+                if fan_rows:
+                    kept = self._split_fan_rows(fan_rows, overrides, periods, timeline_order,
+                                                stand_for_fix_storage="fix_storage_periods" in by_par)
+                    overrides["stochastic_branches"] = [copy.deepcopy(fan_rows[i]) for i in kept]
+                    kept_rows.update(kept)
+                    has_period.update(periods)
                 self.derive_solve(parent, new, overrides=overrides)
                 self.map2d_duplicate_of[new] = (parent, str(outer))
                 for par in by_par:
                     self.map2d_period_parents[par].add(parent)
                 new_names.append(new)
+            if fan_rows and len(kept_rows) < len(fan_rows):
+                raise FlexToolConfigError(self._unused_fan_rows_message(
+                    parent, [fan_rows[i] for i in range(len(fan_rows)) if i not in kept_rows], has_period,
+                    new_names))
             # The split solves replace their solve in its place in model.solves (the later solves run after them).
             for model, solves in list(self.model_solve.items()):
                 if parent in solves:
                     at = solves.index(parent)
                     self.model_solve[model] = solves[:at] + new_names + solves[at + 1:]
+
+    @staticmethod
+    def _split_fan_rows(fan_rows: list, overrides: dict[str, Any], periods: list[str], timeline_order: list[str],
+                        *, stand_for_fix_storage: bool) -> list[int]:
+        """The indexes of the ``stochastic_branches`` rows ``(period, branch, analysis_time, realized, weight)`` of
+        a database solve that one of its split solves keeps, as the solve written by hand has them (one fan per
+        solve; a second fan in its horizon stops the run, item 229).  The split solve's periods are *periods*; its
+        period lists are in *overrides* (``(row, period)`` tuples, or ``NO_ENTRY``).
+
+        The split solve stands for the periods it realizes: ``realized_periods`` and ``realized_invest_periods``,
+        and ``fix_storage_periods`` only when that is a 2-D map (*stand_for_fix_storage*; a 1-D list is kept over
+        all periods of every split solve, so it would add the look-ahead periods).  With none of them, all of its
+        periods.  It keeps
+
+        1. the rows of the periods it stands for, when there are any;
+        2. else the rows of its first period (in the database solve's ``period_timeset`` order) that has rows: a fan
+           in its look-ahead, as in a solve written by hand whose first period is deterministic;
+        3. else every row: then none of them reveals in the solve, and the run stops with the message that says so
+           (``_stochastic.py``, with the advice for a 2-D map row).
+        """
+        fields = ["realized_periods", "realized_invest_periods"] + (["fix_storage_periods"] if stand_for_fix_storage
+                                                                     else [])
+        stand_for = {str(t[1]) for name in fields
+                     for t in (overrides.get(name) if overrides.get(name) not in (None, NO_ENTRY) else [])}
+        own = {str(p) for p in periods}
+        stand_for = stand_for or own
+        by_period: dict[str, list[int]] = {}
+        for i, row in enumerate(fan_rows):
+            by_period.setdefault(str(row[0]), []).append(i)
+        kept = [i for p in sorted(stand_for & set(by_period)) for i in by_period[p]]
+        if kept:
+            return sorted(kept)
+        order = [p for p in timeline_order if p in own] + [str(p) for p in periods if str(p) not in timeline_order]
+        for p in order:
+            if p in by_period:
+                return by_period[p]
+        return list(range(len(fan_rows)))
+
+    @staticmethod
+    def _unused_fan_rows_message(parent: str, rows: list, has_period: set[str], new_names: list[str]) -> str:
+        """The error on ``stochastic_branches`` rows of a split database solve that none of its split solves
+        keeps (:meth:`_split_fan_rows`): they would be silently ignored."""
+        by_period: dict[str, list[str]] = {}
+        for row in rows:
+            by_period.setdefault(str(row[0]), []).append(f"{row[1]} at {row[2]}")
+        parts = []
+        for period, branches in by_period.items():
+            why = ("is a period of these solves, but each of them takes the forecasts of the periods it realizes "
+                   "(realized_periods, realized_invest_periods) or, when it has none there, of its first period "
+                   "with forecasts" if period in has_period else "is a period of none of these solves")
+            parts.append(f"period '{period}' ({', '.join(branches)}) {why}")
+        periods = ", ".join(by_period)
+        return (f"solve '{parent}': the stochastic_branches rows of period(s) {periods} are used by none of the "
+                f"solves its 2-D period maps make ({', '.join(new_names)}): " + "; ".join(parts) + ". Remove "
+                f"these rows, or add {periods} to the row of the 2-D maps whose solve realizes it.")
 
     def _check_split_realized_periods(self) -> None:
         """Raise when two split solves of one solve realize the same period (``realized_periods`` /
@@ -1307,7 +1381,8 @@ class SolveConfig:
         solve's, as parsed Spine values for ``SpineDbReader.register_derived_solve(replace=...)`` (``None`` = no
         value): the period lists as arrays, ``period_timeset`` and ``years_represented`` (its own periods only;
         the run start of a later solve is its own first period, as before) as maps with the index name
-        ``period``.  Every other parameter is its database solve's."""
+        ``period``, and ``stochastic_branches`` with its own rows (:meth:`_split_fan_rows`).  Every other parameter is
+        its database solve's."""
         def as_array(tuples: "list | None") -> "api.Array | None":
             return api.Array([str(t[1]) for t in tuples], value_type=str) if tuples else None
 
@@ -1325,6 +1400,8 @@ class SolveConfig:
                  if str(p) in own]
         out["years_represented"] = (api.Map([p for p, _ in years], [y for _, y in years], index_name="period")
                                     if years else None)
+        if copy_name in self.stochastic_branches:
+            out["stochastic_branches"] = _fan_rows_to_map(self.stochastic_branches[copy_name])
         return out
 
     def spawn_realized_dispatch_sibling(
@@ -1670,6 +1747,25 @@ class SolveConfig:
             name = entity["name"]
             result[name] = present[name] if name in present else None
         return result
+
+
+def _fan_rows_to_map(rows: list) -> "api.Map | None":
+    """The ``stochastic_branches`` value of the rows ``(period, branch, analysis_time, realized, weight)``: a map
+    period -> branch -> analysis_time -> realized -> weight, each level in the order of its first row."""
+    if not rows:
+        return None
+    tree: dict = {}
+    for period, branch, analysis_time, realized, weight in rows:
+        tree.setdefault(str(period), {}).setdefault(str(branch), {}).setdefault(str(analysis_time), {})[
+            str(realized)] = weight
+    names = ("period", "branch", "analysis_time", "realized")
+
+    def build(level: dict, depth: int) -> "api.Map":
+        keys = list(level)
+        values = [level[k] if depth == len(names) - 1 else build(level[k], depth + 1) for k in keys]
+        return api.Map(keys, values, index_name=names[depth])
+
+    return build(tree, 0)
 
 
 def register_solve_copies(solve_cfg, db_reader) -> None:

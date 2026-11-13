@@ -23,6 +23,12 @@ independent hand calculations (oracles, from the docs):
   over both periods: 100 MW * 802.425872 EUR/MW + 100 MW * 4 steps * 10 EUR/MWh * 21 900 = 87 680 242.59 EUR.
   Before the fix the split stopped with an IndexError.
 * model B (forecasts high / low with weights 1 / 3 in both periods): 6 570 000 EUR and 7 227 000 EUR.
+* model B with look-ahead (st_p1 over p1 + p2, fan at p1; st_p2 fan at p2; 4380 h per step, gen 10 EUR/MWh,
+  demand 100 MW, wind 100 MW at CF high 0.4 / low 0.2 in p1 and 0.1 in p2): per hour p1 0.25 * 600 + 0.75 * 800 =
+  750 EUR, p2 0.25 * 600 + 0.75 * 900 = 825 EUR; st_p1 (2 * 750 + 2 * 825) * 4380 = 13 797 000 EUR, st_p2
+  2 * 825 * 4380 = 7 227 000 EUR.  Before the fix st_p1 had both fans and stopped ("fans out only once").
+* model A ladder with rows ``first`` / ``second``: 43 840 121.29 EUR and 43 800 000 EUR (the capacity of
+  inv_first carried).  Before the fix inv_second lost it and re-invested.
 * ``separate_dispatch_noinvest.json`` (one period) split by a 2-D ``realized_periods``: 6 570 000 EUR and the
   realization solve's 4 380 000 EUR (the hand calculation of ``test_separate_dispatch_noinvest_capacity.py``).
 * model A with ``inflation_rate`` 0.05: see ``test_years_represented_counts_from_the_split_solves_first_period``.
@@ -87,6 +93,11 @@ CASES = [
     pytest.param(lambda mode: scm.model_a_ladder(mode, ONE_ROW), {"inv_p1": 87_680_242.59}, id="one-row"),
     pytest.param(lambda mode: scm.model_b(mode), {"st_p1": 6_570_000.0, "st_p2": 7_227_000.0},
                  id="stochastic_branches"),
+    pytest.param(lambda mode: scm.model_b(mode, look_ahead=True), {"st_p1": 13_797_000.0, "st_p2": 7_227_000.0},
+                 id="stochastic_branches-look-ahead"),
+    pytest.param(lambda mode: scm.model_a_ladder(mode, {par: {"first": ["p1"], "second": ["p2"]}
+                                                        for par in scm.SPLIT_PARAMS}),
+                 {"inv_first": 43_840_121.29, "inv_second": 43_800_000.0}, id="row-names"),
     pytest.param(_separate_dispatch,
                  {"stoch_rd_p2035": 6_570_000.0, "stoch_rd_p2035__realized_dispatch": 4_380_000.0},
                  id="separate_dispatch"),
@@ -113,6 +124,40 @@ def test_outer_index_name_does_not_matter(tmp_path_factory, outer_index):
                             tmp_path_factory.mktemp("named"))
     default, _ = scm.run_spec(scm.model_a_ladder("split", PER_PERIOD), tmp_path_factory.mktemp("default"))
     assert not scm.lp_differences(named, default)
+
+
+def test_row_names_give_the_lp_of_period_names(tmp_path_factory):
+    """Rows ``first`` / ``second`` (item 256) and, with look-ahead forecasts, ``y1`` / ``y2`` (items 256 + 257, as
+    in a year-by-year chain) build the LPs of the period-named rows."""
+    named, named_steps = scm.run_spec(scm.model_a_ladder("split", {par: {"first": ["p1"], "second": ["p2"]}
+                                                                   for par in scm.SPLIT_PARAMS}),
+                                      tmp_path_factory.mktemp("named"))
+    periods, _ = scm.run_spec(scm.model_a_ladder("split", PER_PERIOD), tmp_path_factory.mktemp("periods"))
+    assert list(named_steps) == ["inv_first", "inv_second"]
+    assert not scm.lp_differences(_renamed(named, {"inv_first": "inv_p1", "inv_second": "inv_p2"}), periods)
+
+    years, year_steps = scm.run_spec(scm.model_b("split", look_ahead=True, rows=("y1", "y2")),
+                                     tmp_path_factory.mktemp("years"))
+    stoch, _ = scm.run_spec(scm.model_b("split", look_ahead=True), tmp_path_factory.mktemp("stoch"))
+    assert list(year_steps) == ["st_y1", "st_y2"]
+    assert not scm.lp_differences(_renamed(years, {"st_y1": "st_p1", "st_y2": "st_p2"}), stoch)
+    assert year_steps["st_y1"].obj == pytest.approx(13_797_000.0, rel=1e-9)
+    assert year_steps["st_y2"].obj == pytest.approx(7_227_000.0, rel=1e-9)
+
+
+def _renamed(built: list, names: dict[str, str]) -> list:
+    return [(names.get(solve, solve), mps, offset) for solve, mps, offset in built]
+
+
+def test_a_1d_fix_storage_periods_does_not_give_a_split_solve_the_next_fan(tmp_path_factory):
+    """A 1-D ``fix_storage_periods`` [p1, p2] is kept over every period of each split solve, so it must not make
+    st_p1 stand for its look-ahead period p2 too: st_p1 keeps the p1 fan only (else item 229's "fans out only
+    once" stops the run).  The objectives are those of the look-ahead case (model B has no storage)."""
+    spec = scm.model_b("split", look_ahead=True, solve_rows=[["fix_storage_periods", scm.array(list(scm.PERIODS))]])
+    _, steps = scm.run_spec(spec, tmp_path_factory.mktemp("fix"))
+    assert list(steps) == ["st_p1", "st_p2"]
+    assert steps["st_p1"].obj == pytest.approx(13_797_000.0, rel=1e-9)
+    assert steps["st_p2"].obj == pytest.approx(7_227_000.0, rel=1e-9)
 
 
 def _nested(rows: tuple[str, str]) -> dict:
@@ -278,6 +323,32 @@ def test_forecasts_of_no_period_of_a_split_solve_stop_the_run(tmp_path_factory):
                   "'st_p2' has only the period(s) p2", "at its first time step: p2/t03",
                   "leave stochastic_branches out of the solve for p2")
         assert [part in str(err.value) for part in advice] == [mode == "split"] * len(advice), str(err.value)
+
+
+def _fan_periods(sc, solve: str) -> list[str]:
+    return list(dict.fromkeys(str(row[0]) for row in sc.stochastic_branches.get(solve, [])))
+
+
+def test_each_split_solve_keeps_the_fans_of_the_periods_it_realizes(tmp_path):
+    """Look-ahead: st_p1 (p1, p2) realizes p1 and keeps the p1 fan; st_p2 keeps the p2 fan.  A split solve that
+    realizes a period without a fan takes the fan of its first period that has one (a deterministic first year
+    with a stochastic look-ahead, decision 250 D1)."""
+    sc = _config(scm.model_b("split", look_ahead=True), tmp_path / "both")
+    assert (_fan_periods(sc, "st_p1"), _fan_periods(sc, "st_p2")) == (["p1"], ["p2"])
+    sc = _config(scm.model_b("split", look_ahead=True, fan_periods=("p2",)), tmp_path / "later")
+    assert (_fan_periods(sc, "st_p1"), _fan_periods(sc, "st_p2")) == (["p2"], ["p2"])
+
+
+def test_a_fan_no_split_solve_uses_is_an_error(tmp_path):
+    """Forecasts at p1 and p2, but the 2-D map has the row of p1 only: no split solve has p2, and its fan would be
+    silently ignored (before, the run went on without it)."""
+    spec = scm.model_b("split")
+    for row in spec["parameter_values"]:
+        if row[:3] == ["solve", "st", "realized_periods"]:
+            row[3] = scm.two_d({"p1": ["p1"]})
+    _raises(spec, tmp_path, "solve 'st': the stochastic_branches rows of period(s) p2 are used by none of the "
+            "solves its 2-D period maps make (st_p1)", "period 'p2' (high at t03, low at t03) is a period of none",
+            "Remove these rows, or add p2 to the row of the 2-D maps")
 
 
 # ---------------------------------------------------------------------------

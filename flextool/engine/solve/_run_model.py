@@ -677,8 +677,10 @@ def native_run_model(state, solver) -> int:
                         (period__timeset[0], 1)
                     )
                     history_period_names.add(period__timeset[0])
+        # The period of each ``(key, period)`` tuple: the key is the row name of a solve split by a 2-D period
+        # map (any name), so reading it lost the history of a split solve whose rows are not period names.
         period_dict_names = {
-            t[0] for t in (
+            t[1] for t in (
                 state.solve.realized_periods.get(solve, [])
                 + state.solve.invest_periods.get(solve, [])
                 + state.solve.fix_storage_periods.get(solve, [])

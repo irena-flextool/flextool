@@ -135,6 +135,10 @@ Each line says what changes for a model that ran before and what to do; the deta
   a start in a period of each split solve, or write the solves by hand and leave `stochastic_branches` out of the
   solve that has none of their periods. A 2-D `period_timeset` is now an error too: give `period_timeset` all the
   periods and split the solve with a 2-D period list.
+- **Forecasts that no split solve uses now stop the run.** In a solve split by 2-D period maps, each split solve
+  now takes only the `stochastic_branches` rows of the periods it realizes (see "Solving" below). A row in a period
+  that no split solve has, or that no split solve takes, was silently ignored before; it is now an error naming the
+  solve, the period and the branches. Remove the rows, or add the period to a row of the 2-D maps.
 - **`years_represented` without an index name now counts for investments.** A map left with Spine's default index
   name gave investments one year per period, while operations counted all the years, so investments were too
   cheap (every 4.x release). Investment results of such models change. A map whose index has another name (for
@@ -758,6 +762,16 @@ Each line says what changes for a model that ran before and what to do; the deta
   errors, for set-ups that gave wrong results or crashed: a split solve whose name is already a solve of the
   database (before, the two were silently mixed), a 2-D map on a solve that is only contained in another solve,
   and a 2-D map in `shared_invest_periods`.
+- **A solve split by 2-D period maps whose rows are not period names keeps its capacity.** With rows such as
+  *y2030* / *y2040*, the second and later split solves lost the existing and the invested capacity of the earlier
+  ones and invested again (and their run history, which sets the discounting, had no earlier period). They now
+  carry the capacity as with rows named after the periods.
+- **A split stochastic solve that looks ahead runs.** With 2-D period maps that look ahead (such as
+  {y2030: [p2030, p2040], y2040: [p2040]}) and forecasts in several periods, every split solve got every period's
+  `stochastic_branches` rows and the run stopped with "fans out only once". Each split solve now takes the rows of
+  the periods it realizes, or, when none of them has a fan, the rows of its first period with a fan (a fan in its
+  look-ahead), as the solves written by hand would. The recipe for a year-by-year chain of stochastic investment
+  solves is in the stochastics how-to ("Investing year by year under uncertainty").
 - **Solver options can no longer add commands to a solver run** (since 4.0). A `solver_arguments` entry or an
   option-file line with a line break, `;`, a quote or a space could add a command to the script piped to CPLEX,
   Xpress or COPT, or address another Gurobi or HiGHS option. Every option of every solver is now checked before the

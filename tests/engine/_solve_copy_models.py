@@ -217,24 +217,35 @@ def objective_coefficient(mps: Path, column: str) -> float:
     return lp_snapshot().parse_mps(mps).obj[column] / OBJECTIVE_SCALE
 
 
-def model_b(mode: str, *, fan_periods: tuple[str, ...] = ("p1", "p2")) -> dict:
+def model_b(mode: str, *, fan_periods: tuple[str, ...] = ("p1", "p2"), look_ahead: bool = False,
+            rows: tuple[str, str] = ("p1", "p2"), solve_rows: list | None = None) -> dict:
     """Model B: dispatch only, forecasts ``high`` (weight 1) / ``low`` (weight 3) of the wind profile declared at
-    the first step of each period in *fan_periods* (p1/t01, p2/t03).  *mode*: ``split`` (one solve ``st`` whose
-    ``realized_periods`` is the 2-D map ``{p1: [p1], p2: [p2]}``) or ``hand`` (``st_p1`` and ``st_p2`` written
-    out, each with the solve's whole ``stochastic_branches`` and ``years_represented``)."""
-    solves = ["st"] if mode == "split" else [f"st_{p}" for p in PERIODS]
+    the first step of each period in *fan_periods* (p1/t01, p2/t03).  The forecast authored at t01 covers all four
+    steps, with the t03 forecast's values at t03 / t04 (high 0.4, low 0.1), so whichever forecast a p2 step reads,
+    it reads the same values.  *mode*: ``split`` (one solve ``st`` whose ``realized_periods`` is the 2-D map
+    ``{rows[0]: [p1], rows[1]: [p2]}``) or ``hand`` (``st_<row>`` written out, each with ``years_represented`` of
+    both periods).  With *look_ahead* the first solve also covers p2 (2-D ``invest_periods`` {p1: [p1, p2],
+    p2: [p2]}, ``realized_invest_periods`` as ``realized_periods``), and a hand-written solve carries only the
+    ``stochastic_branches`` rows of the period it realizes; without, each carries the solve's whole
+    ``stochastic_branches``.  *solve_rows* (``[parameter, packed value]``) go on every solve."""
+    first, second = rows
+    row_of = {"p1": first, "p2": second}
+    solves = ["st"] if mode == "split" else [f"st_{row_of[p]}" for p in PERIODS]
     spec = _base_spec(solves, [])
     spec["entities"] += [["unit", "wind", None], ["group", "sg", None], ["profile", "wp", None],
                          ["group__unit", ["sg", "wind"], None], ["unit__outputNode", ["wind", "elec"], None],
                          ["unit__node__profile", ["wind", "elec", "wp"], None]]
     spec["entity_alternatives"].append(["unit", ["wind"], "init", True])
     first_step = {"p1": "t01", "p2": "t03"}
-    branches = pmap([(p, nested([("high", nested([(first_step[p], nested([("no", 1.0)]))])),
+
+    def fans(periods) -> dict:
+        return pmap([(p, nested([("high", nested([(first_step[p], nested([("no", 1.0)]))])),
                                  ("low", nested([(first_step[p], nested([("no", 3.0)]))]))]))
-                     for p in fan_periods])
-    profile = pmap([("high", nested([("t01", nested([(t, 0.4) for t in STEPS[:2]])),
+                     for p in periods])
+
+    profile = pmap([("high", nested([("t01", nested([(t, 0.4) for t in STEPS])),
                                      ("t03", nested([(t, 0.4) for t in STEPS[2:]]))])),
-                    ("low", nested([("t01", nested([(t, 0.2) for t in STEPS[:2]])),
+                    ("low", nested([("t01", nested([(t, v) for t, v in zip(STEPS, (0.2, 0.2, 0.1, 0.1))])),
                                     ("t03", nested([(t, 0.1) for t in STEPS[2:]]))]))])
     pv = spec["parameter_values"]
     pv += [
@@ -245,20 +256,33 @@ def model_b(mode: str, *, fan_periods: tuple[str, ...] = ("p1", "p2")) -> dict:
         ["profile", "wp", "profile", pack(profile, "map"), "init"],
         ["group", "sg", "include_stochastics", pack("yes", "str"), "init"],
     ]
+    realized = {row_of[p]: [p] for p in PERIODS}
+    invest = {first: list(PERIODS), second: ["p2"]}
 
-    def rows(solve: str, periods: list[str], realized) -> list:
-        return [["solve", solve, "solve_mode", pack("single_solve", "str"), "init"],
-                ["solve", solve, "period_timeset", pack(pmap([(p, PERIODS[p]) for p in periods]), "map"), "init"],
-                ["solve", solve, "years_represented",
-                 pack(pmap([(p, 1.0) for p in PERIODS], index_name="period"), "map"), "init"],
-                ["solve", solve, "stochastic_branches", pack(branches, "map"), "init"],
-                ["solve", solve, "realized_periods", realized, "init"]]
+    def solve_values(solve: str, periods: list[str], fan, values: dict) -> list:
+        out = [["solve", solve, "solve_mode", pack("single_solve", "str"), "init"],
+               ["solve", solve, "period_timeset", pack(pmap([(p, PERIODS[p]) for p in periods]), "map"), "init"],
+               ["solve", solve, "years_represented",
+                pack(pmap([(p, 1.0) for p in PERIODS], index_name="period"), "map"), "init"]]
+        if fan["data"]:
+            out.append(["solve", solve, "stochastic_branches", pack(fan, "map"), "init"])
+        out += [["solve", solve, par, value, "init"] for par, value in values.items()]
+        return out + [["solve", solve, par, value, "init"] for par, value in (solve_rows or [])]
 
     if mode == "split":
-        pv += rows("st", list(PERIODS), two_d({p: [p] for p in PERIODS}))
+        values = {"realized_periods": two_d(realized)}
+        if look_ahead:
+            values.update(invest_periods=two_d(invest), realized_invest_periods=two_d(realized))
+        pv += solve_values("st", list(PERIODS), fans(fan_periods), values)
     else:
         for p in PERIODS:
-            pv += rows(f"st_{p}", [p], array([p]))
+            row = row_of[p]
+            values = {"realized_periods": array([p])}
+            if look_ahead:
+                values.update(invest_periods=array(invest[row]), realized_invest_periods=array([p]))
+            own = invest[row] if look_ahead else [p]
+            fan = fans([q for q in fan_periods if q == p]) if look_ahead else fans(fan_periods)
+            pv += solve_values(f"st_{row}", own, fan, values)
     return spec
 
 

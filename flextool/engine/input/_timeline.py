@@ -740,10 +740,9 @@ class TimelineConfig:
             )
             # Ordered de-dup (first occurrence) — a set here would make
             # the seeded row order vary with PYTHONHASHSEED.
+            # The period of each ``(key, period)`` tuple (the key of a split solve is its 2-D map row name).
             all_periods = list(
-                dict.fromkeys(
-                    item for tup in all_periods_tuples for item in tup
-                )
+                dict.fromkeys(tup[1] for tup in all_periods_tuples)
             )
             # Membership check OUTSIDE the loop: the first append below
             # inserts the solve key into the defaultdict, so an in-loop

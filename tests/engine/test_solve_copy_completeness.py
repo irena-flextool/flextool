@@ -165,6 +165,18 @@ def _reader_values(reader, solve: str) -> dict:
             for e, value in rows if e == eid}
 
 
+def _map_rows(value, names=("period", "branch", "analysis_time", "realized")) -> list[tuple]:
+    """The rows of a nested map *value*, checking that its levels have the index names *names*."""
+    assert value.index_name == names[0]
+    out = []
+    for key, inner in zip(value.indexes, value.values):
+        if len(names) == 1:
+            out.append((str(key), inner))
+        else:
+            out += [(str(key), *row) for row in _map_rows(inner, names[1:])]
+    return out
+
+
 def _periods(value) -> list[str]:
     return [str(v) for v in value.values]
 
@@ -181,7 +193,8 @@ def test_a_split_solve_has_every_parameter_of_its_database_solve(tmp_path, trigg
     sc, tc, reader = _load(_spec(trigger), tmp_path)
     assert sc.model_solve["flextool"] == ["inv_p1", "inv_p2"]
     own_fields = {"invest_periods", "realized_periods", "realized_invest_periods", "fix_storage_periods",
-                  "non_anticipativity_periods", "non_anticipativity_invest_periods", "timesets_used_by_solves"}
+                  "non_anticipativity_periods", "non_anticipativity_invest_periods", "timesets_used_by_solves",
+                  "stochastic_branches"}
     for p in scm.PERIODS:
         new = f"inv_{p}"
         assert sc.map2d_duplicate_of[new] == ("inv", p)
@@ -197,10 +210,13 @@ def test_a_split_solve_has_every_parameter_of_its_database_solve(tmp_path, trigg
         assert sc.timesets_used_by_solves[new] == [(p, scm.PERIODS[p])]
         assert sc.non_anticipativity_invest_periods.get(new) == ([("p1", "p1")] if p == "p1" else None)
         assert sc.non_anticipativity_periods[new] == ([] if p == "p1" else [("p2", "p2")])
+        # Each split solve keeps the forecast fan of the period it realizes (item 257).
+        assert sc.stochastic_branches[new] == [row for row in sc.stochastic_branches["inv"] if row[0] == p]
+        assert len(sc.stochastic_branches[new]) == 2
 
         parent_rows, rows = _reader_values(reader, "inv"), _reader_values(reader, new)
         replaced = {*PERIOD_LISTS, "period_timeset", "years_represented", "shared_invest_periods",
-                    "shared_operation_periods"}
+                    "shared_operation_periods", "stochastic_branches"}
         # The trigger's 2-D row is gone from the database solve; inv_p2 has no shared_invest_periods (cut empty).
         expected = (set(parent_rows) | set(_split_params(trigger))) - ({"shared_invest_periods"} if p == "p2"
                                                                        else set())
@@ -215,6 +231,8 @@ def test_a_split_solve_has_every_parameter_of_its_database_solve(tmp_path, trigg
         for par, expected in (("period_timeset", scm.PERIODS[p]), ("years_represented", 5.0)):
             assert rows[par].index_name == "period", par
             assert list(map(str, rows[par].indexes)) == [p] and list(rows[par].values) == [expected], par
+        assert _map_rows(rows["stochastic_branches"]) == [
+            (p, branch, t, "no", w) for branch, w in (("high", 1.0), ("low", 3.0)) for t in [scm.STEPS[2 * (p == "p2")]]]
     # The database solve's own 2-D rows are gone from the reader; its other rows stay.
     assert not set(_split_params(trigger)) & set(_reader_values(reader, "inv"))
 
