@@ -52,7 +52,6 @@ from flextool.engine.input._solve_config import (  # noqa: E402
 )
 from flextool.engine.solve._solver_dispatch import (  # noqa: E402
     FlexToolUserError,
-    build_solver_options,
     run_one_solve,
 )
 from flextool.update_flextool.db_migration import migrate_database  # noqa: E402
@@ -306,11 +305,8 @@ def test_unknown_solver_name_error() -> None:
     """A bogus solver name reaches the dispatch and surfaces as a
     ``FlexToolUserError``.
 
-    ``build_solver_options`` already enforces this earlier for
-    convenience-knob users — verified in
-    ``test_solver_config.py::test_build_solver_options_unknown_solver_raises``.
-    Here we cover the raw-dispatch path: even with no options set,
-    an unknown name must not produce a raw stack trace.
+    Even with no options set, an unknown name must not produce a raw
+    stack trace.
     """
     cfg = SolverConfig(name="bogus_solver_name")
     pb = _make_minimal_problem()
@@ -337,8 +333,9 @@ def test_solver_options_passthrough(
 
     1. reads ``solver_config/<solver>.opt`` baseline defaults,
     2. overlays the scenario's raw ``solver_options`` on top,
-    3. honours the translated convenience knobs from
-       :func:`build_solver_options` (raw entries still win), and
+    3. honours the solve's convenience knobs, translated by
+       :func:`resolve_commercial_options` (``solver_arguments`` entries
+       still win), and
     4. feeds the merged opt file to the CLI via the per-solver
        mechanism (Gurobi: one ``Name=value`` argv token per parameter,
        before ``ResultFile=`` and the model file; ``gurobi_cl`` has no
@@ -368,7 +365,7 @@ def test_solver_options_passthrough(
     monkeypatch.delenv("FLEXTOOL_THREADS", raising=False)
 
     # Scenario overrides: bump Threads to 4 and forward a non-baseline
-    # knob.  ``build_solver_options`` will merge in ``MIPGap=0.005``
+    # knob.  ``resolve_commercial_options`` will merge in ``MIPGap=0.005``
     # (the convenience-knob translation for mip_gap=0.005) which the
     # raw options dict should *not* override (Threads is the only
     # collision here).
@@ -455,56 +452,6 @@ def test_solver_options_passthrough(
     # New scenario-only key reaches Gurobi too.
     assert merged.get("Presolve") == "2", (
         f"scenario Presolve=2 should reach Gurobi; merged={merged!r}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Test 6 — convenience knob translation table across all five solvers.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "solver_name, time_native, gap_native, threads_native",
-    [
-        ("highs",  "time_limit", "mip_rel_gap",          "threads"),
-        ("gurobi", "TimeLimit",  "MIPGap",                "Threads"),
-        ("cplex",  "timelimit",  "mip tolerances mipgap", "threads"),
-        ("xpress", "MAXTIME",    "MIPRELSTOP",            "THREADS"),
-        ("copt",   "TimeLimit",  "RelGap",                "Threads"),
-    ],
-)
-def test_convenience_param_translation(
-    solver_name: str, time_native: str, gap_native: str, threads_native: str,
-) -> None:
-    """``time_limit`` / ``mip_gap`` / ``threads`` translate to each
-    solver's native parameter names.  Verifies the canonical
-    :data:`_PARAM_MAP` from spec lines 109-136.
-    """
-    cfg = SolverConfig(
-        name=solver_name, time_limit=60.0, mip_gap=0.01, threads=4,
-    )
-    opts = build_solver_options(cfg)
-    assert opts == {
-        time_native: 60.0,
-        gap_native: 0.01,
-        threads_native: 4,
-    }, f"unexpected option dict for {solver_name}: {opts}"
-
-
-def test_convenience_param_translation_raw_wins() -> None:
-    """When a raw ``solver_options`` entry collides with a translated
-    convenience knob, the raw value wins.  Spec §"raw options take
-    precedence".
-    """
-    cfg = SolverConfig(
-        name="gurobi",
-        time_limit=60.0,
-        options={"TimeLimit": 999.0},
-    )
-    opts = build_solver_options(cfg)
-    assert opts["TimeLimit"] == 999.0, (
-        f"raw solver_options.TimeLimit should win over convenience knob; "
-        f"got {opts['TimeLimit']!r}"
     )
 
 

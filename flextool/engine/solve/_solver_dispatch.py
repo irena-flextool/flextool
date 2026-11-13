@@ -2,8 +2,9 @@
 
 This module owns:
 
-* :func:`build_solver_options` — translate :class:`SolverConfig` into
-  the option dict polar-high's ``solve()`` consumes (Phase 2).
+* :func:`resolve_commercial_options` — the parameters a commercial solve
+  passes to its solver: the option file, the solve's ``solver_mip_gap`` and
+  ``solver_arguments`` and the operator flags, under native names.
 * :func:`run_one_solve` — dispatch a single :class:`polar_high.Problem`
   to either ``Problem.solve()`` (in-process HiGHS, default — preserves
   streaming + ``Solution.highs``) or
@@ -936,73 +937,6 @@ _PARAM_MAP: dict[str, dict[str, str]] = {
 }
 
 
-def build_solver_options(solver_config: SolverConfig) -> dict[str, Any]:
-    """Translate a :class:`SolverConfig` into the raw options dict that
-    polar-high's ``solve()`` consumes.
-
-    The database layers only (no option file, no operator flags, exact key
-    match).  FlexTool's own commercial solves use
-    :func:`resolve_commercial_options`, the full stack.
-
-    1. The three convenience knobs (``time_limit`` / ``mip_gap`` /
-       ``threads``), when set on *solver_config*, are translated to the
-       chosen solver's native parameter name via :data:`_PARAM_MAP`.
-       ``None`` values are skipped (no override).
-    2. The raw ``solver_config.options`` dict is merged on top of the
-       translated knobs — **raw options win** on key collisions.  The
-       user knows what they're doing; if they hand-write
-       ``solver_arguments = {"TimeLimit": 30}`` and also set
-       ``solver_time_limit = 60``, the raw value (30) wins.
-
-    Parameters
-    ----------
-    solver_config
-        Solve-level config built by
-        :meth:`flextool.engine.input._solve_config.SolveConfig.load_from_db`.
-
-    Returns
-    -------
-    dict[str, Any]
-        Option dict ready to ``**unpack`` into
-        :func:`polar_high.solvers.solve`.  Empty dict when no
-        convenience knobs are set and ``options`` is empty.
-
-    Raises
-    ------
-    ValueError
-        If ``solver_config.name`` is not in :data:`_PARAM_MAP` AND at
-        least one convenience knob is set.  Raw-options-only with an
-        unknown solver passes through silently so users can plug a
-        future solver via ``solver_arguments`` before
-        :data:`_PARAM_MAP` is updated.
-    """
-    has_convenience_knob = (
-        solver_config.time_limit is not None
-        or solver_config.mip_gap is not None
-        or solver_config.threads is not None
-    )
-    mapping = _PARAM_MAP.get(solver_config.name)
-    if mapping is None and has_convenience_knob:
-        available = ", ".join(sorted(_PARAM_MAP.keys()))
-        raise ValueError(
-            f"unknown solver {solver_config.name!r}, expected one of: "
-            f"{available}"
-        )
-
-    opts: dict[str, Any] = {}
-    if mapping is not None:
-        if solver_config.time_limit is not None:
-            opts[mapping["time_limit"]] = solver_config.time_limit
-        if solver_config.mip_gap is not None:
-            opts[mapping["mip_gap"]] = solver_config.mip_gap
-        if solver_config.threads is not None:
-            opts[mapping["threads"]] = solver_config.threads
-
-    # Raw options take precedence — see docstring.
-    opts.update(solver_config.options)
-    return opts
-
-
 # ---------------------------------------------------------------------------
 # Commercial option stack (item 230)
 # ---------------------------------------------------------------------------
@@ -1765,7 +1699,6 @@ __all__ = [
     "resolve_commercial_options",
     "_parse_highs_opt_file",
     "_resolve_effective_highs_options",
-    "build_solver_options",
     "check_database_solver_option",
     "untrusted_option_file_problems",
     "check_run_solver_options",

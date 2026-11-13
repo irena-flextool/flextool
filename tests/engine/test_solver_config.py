@@ -4,8 +4,8 @@ Phase 2 of the polar-high multi-solver handoff (see
 ``specs/flextool-multi-solver-handoff.md``) wires the seven new
 ``solver_*`` parameters introduced by the v52 schema migration into
 :class:`flextool.engine.input._solve_config.SolverConfig` and provides
-the per-solver option-translation helper
-:func:`flextool.engine.solve._solver_dispatch.build_solver_options`.
+the solve's convenience knobs into the commercial option stack,
+:func:`flextool.engine.solve._solver_dispatch.resolve_commercial_options`.
 
 These tests cover:
 
@@ -15,9 +15,8 @@ These tests cover:
 * Explicit-HiGHS round-trip parity.
 * ``solver_options`` Map parameter unpacking.
 * Convenience knob round-trip (time_limit / mip_gap / threads).
-* Per-solver option-name translation (table-driven across all 5
-  solvers + raw-takes-precedence collision case).
-* Unknown-solver error contains the supported list.
+* Per-solver option-name translation (table-driven across the 4
+  commercial solvers + solver_arguments-take-precedence collision case).
 
 Fixtures
 --------
@@ -50,9 +49,9 @@ from flextool.engine.input._solve_config import (  # noqa: E402
     SolverConfig,
 )
 from flextool.engine.solve._solver_dispatch import (  # noqa: E402
-    _PARAM_MAP,
-    build_solver_options,
+    resolve_commercial_options,
 )
+from flextool.run_options import RunOptions  # noqa: E402
 from flextool.update_flextool.db_migration import migrate_database  # noqa: E402
 
 FIXTURE = TESTS_DIR / "fixtures" / "stochastics.json"
@@ -234,81 +233,43 @@ def test_solve_config_load_idempotent(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# build_solver_options translation tests
+# The solve's convenience knobs in the commercial option stack
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "solver_name, expected_keys",
+    "solver_name, time_native, time_value, gap_native, threads_native",
     [
-        ("highs",  {"time_limit": "time_limit",   "mip_gap": "mip_rel_gap",            "threads": "threads"}),
-        ("gurobi", {"time_limit": "TimeLimit",    "mip_gap": "MIPGap",                  "threads": "Threads"}),
-        ("cplex",  {"time_limit": "timelimit",    "mip_gap": "mip tolerances mipgap",   "threads": "threads"}),
-        ("xpress", {"time_limit": "MAXTIME",      "mip_gap": "MIPRELSTOP",              "threads": "THREADS"}),
-        ("copt",   {"time_limit": "TimeLimit",    "mip_gap": "RelGap",                  "threads": "Threads"}),
+        ("gurobi", "TimeLimit", "59.5", "MIPGap", "Threads"),
+        ("cplex", "timelimit", "59.5", "mip tolerances mipgap", "threads"),
+        # MAXTIME is an integer control: rounded up to whole seconds.
+        ("xpress", "MAXTIME", "60", "MIPRELSTOP", "THREADS"),
+        ("copt", "TimeLimit", "59.5", "RelGap", "Threads"),
     ],
 )
-def test_build_solver_options_translation_per_solver(
-    solver_name: str, expected_keys: dict[str, str]
+def test_convenience_knobs_reach_each_commercial_solver_under_native_names(
+    solver_name: str, time_native: str, time_value: str, gap_native: str, threads_native: str,
 ):
-    """Convenience knobs land under each solver's native parameter name."""
-    cfg = SolverConfig(
-        name=solver_name,
-        time_limit=42.0,
-        mip_gap=0.005,
-        threads=8,
+    """The solve's ``time_limit`` / ``mip_gap`` / ``threads`` (the ``solver_mip_gap`` layer) are passed under
+    each solver's native parameter name, in that order, when no other layer sets them."""
+    cfg = SolverConfig(name=solver_name, time_limit=59.5, mip_gap=0.01, threads=4)
+    resolved = resolve_commercial_options(
+        solver_name, opt_file=None, solver_config=cfg, run_options=RunOptions.from_env({}),
     )
-    opts = build_solver_options(cfg)
-    assert opts == {
-        expected_keys["time_limit"]: 42.0,
-        expected_keys["mip_gap"]: 0.005,
-        expected_keys["threads"]: 8,
-    }
+    assert [(o.name, o.value) for o in resolved] == [
+        (time_native, time_value), (gap_native, "0.01"), (threads_native, "4"),
+    ]
+    assert {o.layer for o in resolved} == {"solver_mip_gap"}
 
 
-def test_build_solver_options_raw_overrides_translation():
-    """Raw solver_options entries override the translated convenience knobs."""
-    cfg = SolverConfig(
-        name="gurobi",
-        time_limit=60.0,
-        # User hand-wrote a Gurobi-native option whose key collides with
-        # the translation of solver_time_limit -> "TimeLimit".  Raw wins.
-        options={"TimeLimit": 5.0, "my_raw_key": "raw_value"},
+def test_solver_arguments_beat_the_time_limit_knob_case_insensitively():
+    """A ``solver_arguments`` entry for the same Gurobi parameter, in another spelling, wins over the
+    ``time_limit`` knob: one ``TimeLimit`` entry is passed, with the solver_arguments value and spelling."""
+    cfg = SolverConfig(name="gurobi", time_limit=60.0, options={"timelimit": 999})
+    resolved = resolve_commercial_options(
+        "gurobi", opt_file=None, solver_config=cfg, run_options=RunOptions.from_env({}),
     )
-    opts = build_solver_options(cfg)
-    assert opts["TimeLimit"] == 5.0  # raw wins, not the translated 60.0
-    assert opts["my_raw_key"] == "raw_value"
-
-
-def test_build_solver_options_empty_when_nothing_set():
-    """No convenience knobs and no raw options → empty dict."""
-    cfg = SolverConfig(name="highs")
-    assert build_solver_options(cfg) == {}
-
-
-def test_build_solver_options_raw_only_unknown_solver_ok():
-    """An unknown solver with raw-options-only does NOT raise.
-
-    Users may want to plumb a future solver via ``solver_options``
-    before _PARAM_MAP is updated; we keep that escape hatch open.
-    The convenience knobs are the only thing that needs translation.
-    """
-    cfg = SolverConfig(name="mosek", options={"MSK_DPAR_MIO_MAX_TIME": 30})
-    opts = build_solver_options(cfg)
-    assert opts == {"MSK_DPAR_MIO_MAX_TIME": 30}
-
-
-def test_build_solver_options_unknown_solver_raises():
-    """Unknown solver + any convenience knob → ValueError listing solvers."""
-    cfg = SolverConfig(name="bogus", time_limit=10.0)
-    with pytest.raises(ValueError) as ei:
-        build_solver_options(cfg)
-    msg = str(ei.value)
-    assert "bogus" in msg
-    # All five supported solvers must appear in the error so users see
-    # the menu inline.
-    for solver in _PARAM_MAP:
-        assert solver in msg
+    assert [(o.name, o.value, o.layer) for o in resolved] == [("timelimit", "999", "solver_arguments")]
 
 
 def test_a_copy_of_a_solve_keeps_its_solver_configuration(tmp_path: Path):

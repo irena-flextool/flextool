@@ -207,7 +207,7 @@ class SolverConfig:
     time_limit
         Wall-clock seconds; ``None`` means no limit.  Translated to
         each solver's native parameter name by
-        :func:`flextool.engine.solve._solver_dispatch.build_solver_options`.
+        :func:`flextool.engine.solve._solver_dispatch.resolve_commercial_options`.
     mip_gap
         Relative MIP gap; ``None`` means solver default.
     threads
