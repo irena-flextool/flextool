@@ -510,6 +510,8 @@ class SolveConfig:
         # ``{database solve: {parameter: {outer key: [period, ...]}}}`` of the 2-D period maps read by
         # :meth:`periods_to_tuples`, split by :meth:`_split_2d_period_maps` once every parameter is read.
         self._split_records: dict[str, dict[str, dict[str, list]]] = {}
+        # The ``solve`` entities of the database (load_from_db): a split solve's name must not be one of them.
+        self.database_solves: list[str] = []
         # Slice G (Axis B) — operational non-anticipativity window.
         # TRI-STATE per solve, distinct from the period dicts above:
         #   absent key / None -> unset -> legacy realized u fix window;
@@ -864,6 +866,7 @@ class SolveConfig:
         # period map is only recorded (``_split_records``) and split by ``_split_2d_period_maps`` after all of
         # them, so each solve it stands for gets every parameter of its database solve, whatever the order of
         # the reads.
+        obj.database_solves = list(solves_temp)
         obj.roll_counter = obj.make_roll_counter()
         obj.timesets_used_by_solves = obj.get_period_timesets(db=db)
         for par, field_name in SPLIT_PERIOD_PARAMS.items():
@@ -898,6 +901,7 @@ class SolveConfig:
         obj._split_2d_period_maps()
         # After every period dict, so the 2D-map duplicate solves exist.
         obj._check_realized_invest_periods()
+        obj._check_split_realized_periods()
         obj.check_derived_solves()
 
         return obj
@@ -1157,6 +1161,22 @@ class SolveConfig:
                 "A solve made from another one has lost its parent's settings: " + "; ".join(problems)
                 + ". This is a FlexTool bug; please report it.")
 
+    def solves_in_run(self) -> list[str]:
+        """The solves the model runs, in order: ``model.solves`` and the solves they contain (transitively).
+        ``None``-safe for a model without ``model.solves`` (every solve: ``create_assumptive_parts`` picks one
+        later)."""
+        if not self.model_solve:
+            return list(getattr(self, "database_solves", []))
+        out: list[str] = []
+        stack = [s for solves in self.model_solve.values() for s in solves]
+        while stack:
+            s = stack.pop(0)
+            if s in out:
+                continue
+            out.append(s)
+            stack.extend(self.contains_solves.get(s, []))
+        return out
+
     def _split_2d_period_maps(self) -> None:
         """Make the solves that the 2-D period maps read by :meth:`periods_to_tuples` stand for.
 
@@ -1174,10 +1194,34 @@ class SolveConfig:
         * ``shared_operation_periods``: likewise, keeping unset (``None``) apart from the empty list (no ties);
         * ``years_represented``: the whole map, as before (``_run_model`` keeps a solve's own periods);
         * ``map2d_duplicate_of`` / ``map2d_period_parents`` record the split, and the solves replace ``s`` in
-          ``model_solve``.
+          ``model_solve``, in its place.
+
+        Only the solves the model runs are split (:meth:`solves_in_run`; a 2-D map on another solve adds no
+        solves).  Raises :class:`FlexToolConfigError` when the split solve is not in ``model.solves`` (only a
+        contained one) and when a split solve's name is already a ``solve`` of the database
+        (:meth:`_check_split_realized_periods` checks the realized periods afterwards).
         """
+        in_run = set(self.solves_in_run())
+        top_level = {s for solves in self.model_solve.values() for s in solves}
+        database_solves = set(getattr(self, "database_solves", []))
         for parent, by_par in self._split_records.items():
+            if parent not in in_run:
+                continue
+            maps = ", ".join(sorted(by_par))
+            if self.model_solve and parent not in top_level:
+                raise FlexToolConfigError(
+                    f"solve '{parent}': {maps} is a 2-D map, which splits a solve of model.solves into one solve "
+                    f"per row, but '{parent}' is only contained in another solve (contains_solves). Give the "
+                    "contained solve 1-D period lists, or split the solve that contains it."
+                )
             outers = list(dict.fromkeys(o for entries in by_par.values() for o in entries))
+            taken = sorted(parent + "_" + o for o in outers if parent + "_" + o in database_solves)
+            if taken:
+                raise FlexToolConfigError(
+                    f"solve '{parent}': its 2-D map ({maps}) makes the solve(s) {taken}, but the database has a "
+                    "solve of that name already. Rename that solve, or change the first column of the 2-D map."
+                )
+            new_names: list[str] = []
             parent_timesets = list(self.timesets_used_by_solves.get(parent, []))
             for outer in outers:
                 new = parent + "_" + outer
@@ -1207,12 +1251,32 @@ class SolveConfig:
                 self.map2d_duplicate_of[new] = (parent, str(outer))
                 for par in by_par:
                     self.map2d_period_parents[par].add(parent)
-                for model, solves in list(self.model_solve.items()):
-                    if parent in solves:
-                        solves.remove(parent)
-                    if new not in solves:
-                        solves.append(new)
-                    self.model_solve[model] = solves
+                new_names.append(new)
+            # The split solves replace their solve in its place in model.solves (the later solves run after them).
+            for model, solves in list(self.model_solve.items()):
+                if parent in solves:
+                    at = solves.index(parent)
+                    self.model_solve[model] = solves[:at] + new_names + solves[at + 1:]
+
+    def _check_split_realized_periods(self) -> None:
+        """Raise when two split solves of one solve realize the same period (``realized_periods`` /
+        ``realized_invest_periods``): the later one's results would overwrite the earlier ones (decision D3).  Run
+        after :meth:`_check_realized_invest_periods`, whose messages are more specific."""
+        by_parent: dict[str, list[str]] = {}
+        for new, (parent, _outer) in self.map2d_duplicate_of.items():
+            by_parent.setdefault(parent, []).append(new)
+        for parent, new_names in by_parent.items():
+            for field_name in ("realized_periods", "realized_invest_periods"):
+                seen: dict[str, str] = {}
+                for new in new_names:
+                    for period in dict.fromkeys(str(t[1]) for t in getattr(self, field_name).get(new, [])):
+                        if period in seen:
+                            raise FlexToolConfigError(
+                                f"solve '{parent}': the split solves '{seen[period]}' and '{new}' both realize "
+                                f"period '{period}' ({field_name}). Each period can be realized by one solve only: "
+                                f"make {field_name} a 2-D map with the period in one row, or remove the overlap."
+                            )
+                        seen[period] = new
 
     def copy_reader_values(self, copy_name: str) -> dict[str, Any]:
         """The ``solve`` parameter values a solve of a 2-D period map (*copy_name*) has instead of its database
@@ -1585,8 +1649,8 @@ def register_solve_copies(solve_cfg, db_reader) -> None:
 
     Each gets every ``solve`` parameter value of its database solve, with its own period lists, timesets and
     ``years_represented`` instead (``SolveConfig.copy_reader_values``: arrays of periods, maps with the index
-    name ``period``); the database solve's 2-D rows are removed from the reader (it does not run, and its maps
-    would sit next to the split solves' arrays in one frame).  A no-op without 2-D period maps."""
+    name ``period``); the 2-D rows of every solve are removed from the reader (a split solve does not run, nor does
+    a solve outside the run, and the maps would sit next to the period arrays of other solves in one frame).  A no-op without 2-D period maps."""
     copies = getattr(solve_cfg, "map2d_duplicate_of", None) or {}
     split_params: dict[str, set] = {}
     for copy_name, (parent, _outer) in copies.items():
@@ -1595,6 +1659,9 @@ def register_solve_copies(solve_cfg, db_reader) -> None:
     for par, parents in getattr(solve_cfg, "map2d_period_parents", {}).items():
         for parent in parents:
             split_params.setdefault(parent, set()).add(par)
+    # A 2-D map on a solve the model does not run is not split; its rows go too (no solve of the run reads them).
+    for parent, by_par in getattr(solve_cfg, "_split_records", {}).items():
+        split_params.setdefault(parent, set()).update(by_par)
     for parent, params in split_params.items():
         db_reader.remove_solve_values(parent, sorted(params))
 

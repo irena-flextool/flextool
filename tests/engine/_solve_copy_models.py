@@ -59,10 +59,12 @@ def array(values) -> list:
     return pack({"value_type": "str", "data": list(values)}, "array")
 
 
-def two_d(entries: dict[str, list[str]], **kw) -> list:
-    """A 2-D period map ``{outer key: [period, ...]}`` (inner value "yes")."""
-    return pack(pmap([(outer, nested([(p, "yes") for p in inner])) for outer, inner in entries.items()], **kw),
-                "map")
+def two_d(entries: dict[str, list[str]], inner_index: str | None = None, **kw) -> list:
+    """A 2-D period map ``{outer key: [period, ...]}`` (inner value "yes"; *kw* for the outer map, *inner_index*
+    the inner maps' index name)."""
+    ik = {} if inner_index is None else {"index_name": inner_index}
+    return pack(pmap([(outer, nested([(p, "yes") for p in inner], **ik)) for outer, inner in entries.items()],
+                     **kw), "map")
 
 
 def _base_spec(solves: list[str], alternatives: list[str]) -> dict:
@@ -280,13 +282,15 @@ def rename_solve(data: dict, old: str, new: str) -> dict:
 
 
 def model_a_ladder(mode: str, ladder: dict[str, dict[str, list[str]]], *, lists: dict[str, list[str]] | None = None,
-                   unit_rows: list | None = None, years_index: str | None = None) -> dict:
+                   unit_rows: list | None = None, years_index: str | None = None,
+                   outer_index: str | None = None) -> dict:
     """Model A with any 2-D period maps.  *ladder*: ``{parameter: {outer key: [period, ...]}}`` of the 2-D
     parameters; *lists*: the 1-D period lists of the solve (``{parameter: [period, ...]}``).  ``split`` writes one
     solve ``inv`` with these values (``period_timeset`` over both periods); ``hand`` writes the solves the docs say
     the maps stand for, ``inv_<outer>`` in the order of the outer keys: each 2-D parameter its inner list, each 1-D
     list its periods that the solve has, ``period_timeset`` and ``years_represented`` (5 years per period) of its
-    periods.  *unit_rows* (``[parameter, packed value]``) go on the unit ``gen``."""
+    periods.  *unit_rows* (``[parameter, packed value]``) go on the unit ``gen``; *outer_index* names the outer
+    level of the 2-D maps (``None`` = Spine's default ``x``)."""
     lists = dict(lists or {})
     outers = list(dict.fromkeys(o for entries in ladder.values() for o in entries))
     solves = ["inv"] if mode == "split" else [f"inv_{o}" for o in outers]
@@ -305,7 +309,8 @@ def model_a_ladder(mode: str, ladder: dict[str, dict[str, list[str]]], *, lists:
         return out + [["solve", solve, par, value, "init"] for par, value in values.items()]
 
     if mode == "split":
-        values = {par: two_d(entries) for par, entries in ladder.items()}
+        ok = {} if outer_index is None else {"index_name": outer_index, "inner_index": "period"}
+        values = {par: two_d(entries, **ok) for par, entries in ladder.items()}
         values.update({par: array(periods) for par, periods in lists.items()})
         pv += rows("inv", list(PERIODS), values)
     else:

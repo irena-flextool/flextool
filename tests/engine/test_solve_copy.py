@@ -19,6 +19,9 @@ independent hand calculations (oracles, from the docs):
   served by the penalty: 100 MW * 2 h * 10 000 EUR/MWh * 21 900 + 100 MW * 2 h * 10 EUR/MWh * 21 900 + 100 MW *
   401.212936 EUR/MW = 43 843 840 121.29 EUR; inv_p2 43 800 000 EUR.  Before the fix the split refused the lead
   time.
+* model A with one row of the 2-D maps holding both periods (``ONE_ROW``): one split solve, the single solve
+  over both periods: 100 MW * 802.425872 EUR/MW + 100 MW * 4 steps * 10 EUR/MWh * 21 900 = 87 680 242.59 EUR.
+  Before the fix the split stopped with an IndexError.
 * model B (forecasts high / low with weights 1 / 3 in both periods): 6 570 000 EUR and 7 227 000 EUR.
 * ``separate_dispatch_noinvest.json`` (one period) split by a 2-D ``realized_periods``: 6 570 000 EUR and the
   realization solve's 4 380 000 EUR (the hand calculation of ``test_separate_dispatch_noinvest_capacity.py``).
@@ -63,6 +66,14 @@ def _lead_time(mode: str) -> dict:
     return scm.model_a_ladder(mode, LOOK_AHEAD, unit_rows=[["construction_lead_time", scm.pack(5.0, "float")]])
 
 
+#: One row of the 2-D maps with both periods: one split solve inv_p1 over both periods (before: IndexError).
+ONE_ROW = {"invest_periods": {"p1": ["p1", "p2"]}, "realized_invest_periods": {"p1": ["p1", "p2"]},
+           "realized_periods": {"p1": ["p1", "p2"]}}
+
+#: Model A's per-period ladder as written by model_a("split").
+PER_PERIOD = {par: {p: [p] for p in scm.PERIODS} for par in scm.SPLIT_PARAMS}
+
+
 def _scenario(data: dict) -> str:
     return data["scenarios"][0][0]
 
@@ -72,6 +83,7 @@ CASES = [
                  id="invest-ladder"),
     pytest.param(_nsd, {"inv_p1": 43_840_121.29, "inv_p2": 43_800_000.0}, id="new_stepduration"),
     pytest.param(_lead_time, {"inv_p1": 43_843_840_121.29, "inv_p2": 43_800_000.0}, id="construction_lead_time"),
+    pytest.param(lambda mode: scm.model_a_ladder(mode, ONE_ROW), {"inv_p1": 87_680_242.59}, id="one-row"),
     pytest.param(lambda mode: scm.model_b(mode), {"st_p1": 6_570_000.0, "st_p2": 7_227_000.0},
                  id="stochastic_branches"),
     pytest.param(_separate_dispatch,
@@ -89,3 +101,110 @@ def test_split_solve_builds_the_hand_written_lp(tmp_path_factory, build, objecti
     assert not scm.lp_differences(split, hand)
     for solve, obj in objectives.items():
         assert split_steps[solve].obj == pytest.approx(obj, rel=1e-9), solve
+
+
+@pytest.mark.parametrize("outer_index", ["solve", "1"])
+def test_outer_index_name_does_not_matter(tmp_path_factory, outer_index):
+    """The outer level of a 2-D period map can have any index name (the docs: the first column tells the solve).
+    Before, a name other than Spine's default ``x`` gave the split solves no investment (the reader tested for an
+    ``x`` column).  The split solves are reader solves with period arrays now."""
+    named, _ = scm.run_spec(scm.model_a_ladder("split", PER_PERIOD, outer_index=outer_index),
+                            tmp_path_factory.mktemp("named"))
+    default, _ = scm.run_spec(scm.model_a_ladder("split", PER_PERIOD), tmp_path_factory.mktemp("default"))
+    assert not scm.lp_differences(named, default)
+
+
+# ---------------------------------------------------------------------------
+# What a 2-D map splits, and what it refuses (SolveConfig level, no solve)
+# ---------------------------------------------------------------------------
+
+
+def _config(spec: dict, folder):
+    from flextool.engine.input._solve_config import SolveConfig
+
+    return SolveConfig.load_from_db_url(scm.build_db(scm.write_spec(spec, folder), folder), "base")
+
+
+def _with_solves(spec: dict, solves: list[str], extra: list | None = None) -> dict:
+    """*spec* with the solves *solves* in model.solves, extra solve entities and *extra* parameter rows."""
+    for name in solves:
+        if ["solve", name, None] not in spec["entities"]:
+            spec["entities"].append(["solve", name, None])
+    for row in spec["parameter_values"]:
+        if (row[0], row[2]) == ("model", "solves"):
+            row[3] = scm.array(solves)
+    spec["parameter_values"] += extra or []
+    return spec
+
+
+def _dispatch_rows(name: str) -> list:
+    return [["solve", name, "period_timeset", scm.pack(scm.pmap([("p1", "ts_a")]), "map"), "init"],
+            ["solve", name, "realized_periods", scm.array(["p1"]), "init"]]
+
+
+def test_split_solves_take_the_place_of_their_solve(tmp_path):
+    """The split solves run where their solve was in model.solves, so a later solve still runs after them
+    (before they were appended at the end)."""
+    spec = _with_solves(scm.model_a("split"), ["inv", "after"], _dispatch_rows("after"))
+    assert _config(spec, tmp_path).model_solve["flextool"] == ["inv_p1", "inv_p2", "after"]
+
+
+def test_a_solve_the_model_does_not_run_is_not_split(tmp_path):
+    """A 2-D map on a solve outside the model adds no solves (before its split solves were added to
+    model.solves and ran)."""
+    spec = _with_solves(scm.model_a("split"), ["after"], _dispatch_rows("after"))
+    sc = _config(spec, tmp_path)
+    assert sc.model_solve["flextool"] == ["after"]
+    assert sc.map2d_duplicate_of == {}
+
+
+def _raises(spec: dict, folder, *parts: str) -> None:
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    with pytest.raises(FlexToolConfigError) as err:
+        _config(spec, folder)
+    for part in parts:
+        assert part in str(err.value), str(err.value)
+
+
+def test_a_contained_solve_cannot_be_split(tmp_path):
+    spec = _with_solves(scm.model_a("split"), ["top"], _dispatch_rows("top") + [
+        ["solve", "top", "contains_solves", scm.array(["inv"]), "init"]])
+    _raises(spec, tmp_path, "solve 'inv'", "only contained in another solve")
+
+
+def test_a_split_solve_name_that_is_a_solve_is_an_error(tmp_path):
+    spec = scm.model_a("split")
+    spec["entities"].append(["solve", "inv_p2", None])
+    _raises(spec, tmp_path, "solve 'inv'", "['inv_p2']", "has a solve of that name already")
+
+
+def test_two_split_solves_realizing_one_period_is_an_error(tmp_path):
+    """A 1-D realized_periods [p1, p2] next to an overlapping invest ladder: inv_p1 (p1, p2) and inv_p2 (p2) would
+    both realize p2 (decision D3: an error, not last-wins)."""
+    spec = scm.model_a_ladder("split", {"invest_periods": LOOK_AHEAD["invest_periods"],
+                                        "realized_invest_periods": LOOK_AHEAD["realized_invest_periods"]},
+                              lists={"realized_periods": ["p1", "p2"]})
+    _raises(spec, tmp_path, "'inv_p1' and 'inv_p2' both realize period 'p2' (realized_periods)")
+
+
+def test_a_2d_period_timeset_is_an_error(tmp_path):
+    """Decision D4: period_timeset takes one timeset per period (before a 2-D one read the map's diagonal)."""
+    spec = scm.model_a("single")
+    for row in spec["parameter_values"]:
+        if row[:3] == ["solve", "inv", "period_timeset"]:
+            row[3] = scm.pack(scm.pmap([(p, scm.nested([(p, ts)])) for p, ts in scm.PERIODS.items()]), "map")
+    _raises(spec, tmp_path, "solve 'inv': period_timeset is a 2-D map")
+
+
+def test_forecasts_of_no_period_of_a_split_solve_stop_the_run(tmp_path_factory):
+    """Decision D2: forecasts declared at p1 only; the split solve st_p2 has the solve's stochastic_branches but
+    none of their periods, so it stops the run as the hand-written st_p2 does, and the message names the 2-D map
+    entry and its solve."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    for mode in ("split", "hand"):
+        with pytest.raises(FlexToolConfigError) as err:
+            scm.run_spec(scm.model_b(mode, fan_periods=("p1",)), tmp_path_factory.mktemp(mode))
+        assert "none reveal at a reachable step" in str(err.value) and "'st_p2'" in str(err.value)
+        assert ("the 2-D period map entry 'p2' of solve 'st'" in str(err.value)) == (mode == "split")

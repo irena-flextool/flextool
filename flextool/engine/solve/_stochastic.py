@@ -587,6 +587,15 @@ class StochasticSolver:
                         f"start_step values against solve {solve!r}'s "
                         "timeline."
                     )
+                    split_of = getattr(getattr(self.state, "solve", None), "map2d_duplicate_of", {}).get(
+                        complete_solves[solve])
+                    if split_of is not None:
+                        message += (
+                            f" Solve {complete_solves[solve]!r} is the 2-D period map entry {split_of[1]!r} of "
+                            f"solve {split_of[0]!r} and has all of its stochastic_branches, but none of their "
+                            "periods is in this split solve: give the forecasts a period of each split solve, or "
+                            "write the solves without forecasts by hand."
+                        )
                     self.logger.error(message)
                     raise FlexToolConfigError(message)
             else:

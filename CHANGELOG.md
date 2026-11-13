@@ -598,6 +598,15 @@ Each line says what changes for a model that ran before and what to do; the deta
   stops a split solve (4.1.0 to 4.3.0): it works as in solves written by hand (a decision whose capacity would
   come online after the split solve's last period is not offered, with a warning). The realization solve FlexTool
   adds to a stochastic solve now also has its solve's `scaling` (before it always used *full*; 4.1.0 to 4.3.0).
+- **Other fixes to solves split by a 2-D period map** (every 4.x release): the first column of the map may have any
+  index name (before, a name other than the default `x` silently gave the split solves no investments); a row
+  with more periods than the map has rows no longer crashes; the split solves run where their solve was in
+  `model.solves` (before they ran after the solves listed after it); a 2-D map on a solve that the model does not
+  run no longer adds solves to the run. New errors: a split solve whose name is already a solve of the database
+  (before the two were silently mixed), two split solves that realize the same period (`realized_periods` /
+  `realized_invest_periods`), a 2-D map on a solve that is only contained in another solve, and a 2-D map in
+  `shared_invest_periods`. A split solve with forecasts in none of its periods stops the run as the same solve
+  written by hand does, and the message names the 2-D map entry.
 - **Solver options can no longer add commands to a solver run** (since 4.0). A `solver_arguments` entry or an
   option-file line with a line break, `;`, a quote or a space could add a command to the script piped to CPLEX,
   Xpress or COPT, or address another Gurobi or HiGHS option. Every option of every solver is now checked before the
