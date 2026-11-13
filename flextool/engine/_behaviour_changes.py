@@ -219,6 +219,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "once; it is now summed like a deterministic inflow, so it grows by the number of time steps "
                      "each new step combines, also where it is constant within the step."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "solve_step_series_combined"),
+            since="4.4.0",
+            published="13.11.2026",
         ),
         BehaviourChange(
             id="energy_margin_adder_per_original_step",
@@ -229,6 +231,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "demand (results change). To keep the old demand, divide the value by the number of time "
                      "steps a solve step combines."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "energy_margin_adder_per_original_step"),
+            since="4.4.0",
+            published="13.11.2026",
         ),
         BehaviourChange(
             id="capacity_margin_counts_by_flow",
@@ -241,6 +245,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "shortfall and its penalty are now reported (slack__capacity_margin__d, the costs) instead of "
                      "0, so the total cost includes the penalty; capacity_margin__d explains each solve's margin."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "capacity_margin_counts_by_flow"),
+            since="4.4.0",
+            published="13.11.2026",
         ),
         BehaviourChange(
             id="discount_rate_zero_is_zero",
@@ -250,6 +256,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "discount_rate is now an input error, and an investing or retiring entity with a cost "
                      "needs a lifetime (before: 20 years)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "discount_rate_zero_is_zero"),
+            since="4.4.0",
+            published="13.11.2026",
         ),
         BehaviourChange(
             id="invest_without_cost_offered",
@@ -262,6 +270,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "invest_method (the other methods do not use invest_max_period), or use not_allowed. With "
                      "neither invest_cost nor fixed_cost the invested amount is arbitrary."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "invest_without_cost_offered"),
+            since="4.4.0",
+            published="13.11.2026",
         ),
         BehaviourChange(
             id="stochastic_storage_paths_tied",
@@ -279,6 +289,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "bind_within_solve, or on bind_forward_only without a fixed start; such a "
                      "bind_forward_only node changes only when a fan opens in the solve's first period."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "stochastic_storage_paths_tied"),
+            since="4.4.0",
+            published="13.11.2026",
         ),
         BehaviourChange(
             id="chained_solve_discount_from_run_start",
@@ -298,6 +310,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "decisions can still change through absolute MIP gaps, objective targets or bounds and "
                      "terms without a discount factor (results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "chained_solve_discount_from_run_start"),
+            since="4.4.0",
+            published="13.11.2026",
         ),
         BehaviourChange(
             id="gui_solver_defaults",

@@ -1,8 +1,8 @@
-## Unreleased (4.4.0) — capacity margin, units of measure, start-up inputs, period-total constraints, FT2 import and many fixes (schema v79)
+## Release 4.4.0 (13.11.2026) — capacity margin, units of measure, start-up inputs, period-total constraints, FT2 import, stochastic input checks (no future information), per-project solver options, solver limits kept with warnings, Xpress MIPs, objective options in model units and many fixes (schema v79)
 
 Input databases move to data version 79. The FlexTool window, the Spine Toolbox workflow and `flextool-run
 --migrate` migrate them; upgrading prints a notice for each behaviour change that affects the database. FlexTool now
-needs polar-high 3.13.0 or newer (installed with FlexTool).
+needs polar-high 3.14.0 or newer (installed with FlexTool).
 
 ### Behaviour changes — read before upgrading
 
@@ -30,7 +30,9 @@ Each line says what changes for a model that ran before and what to do; the deta
   `lifetime`, `ramp_cost`, a minimum above its maximum, `existing` as a time series, a used timeline without
   `timestep_duration`, a time series with no time step on a timeline, a timeset block that starts off its timeline,
   a CO2 method without its value, a `realized_invest_periods` outside `invest_periods`, partial or ungrouped
-  stochastic inflow / reservation, a forecast fan declared after a solve's first one, a time-only
+  stochastic inflow / reservation, a forecast fan declared after a solve's first one, a `realized: yes` row that
+  switches the realized branch between rolls, a contained single solve that would run under one name with
+  different periods, a time-only
   `energy_margin_adder`, capacity-margin groups across Benders regions or with a *balance_within_period* node (see
   "Input checks" and the entries below). Each error names what to fix.
 - **New warnings name data that ran silently:** nodes with nothing to balance them, untied zero
@@ -64,12 +66,12 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **Storage in stochastic solves follows each path.** *bind_within_solve* closes the cycle on every forecast branch
   (before: only the one listed last), and forecasts opening in the solve's first period start from one level. The
   upgrade marks such databases and the run names the nodes; check their results.
-- **Forecasts given at the fan's analysis time are read in later branch periods** (before, they read 0 there, so a
-  wind unit could not run). Results of multi-period stochastic models with such forecasts change.
-- **A stochastic solve or roll reads only the forecast made at its fan**, never a later one (a later roll's, or the
-  forecast meant for the next solve of a chain); a later time step that only a later forecast covers is an error.
-  Give each fan's forecast to the end of the solve's or roll's horizon. Before, a single solve's later periods read
-  the forecast given at their own first step.
+- **After the fan, a stochastic solve or roll reads only the forecast made at its fan**, never a later one (a later
+  roll's, or the forecast meant for the next solve of a chain). Before, a forecast given at the fan's analysis time
+  read 0 in the later branch periods (so a wind unit could not run there), and a single solve's later periods read
+  the forecast given at their own first step. A later time step that only a later forecast covers is now an error:
+  give each fan's forecast to the end of the solve's or roll's horizon. Results of multi-period stochastic models
+  change.
 - **The realization dispatch of a single stochastic solve dispatches only its realized periods**, not the
   look-ahead: the storage it hands to the next solve follows the storage node's end rules at the end of the realized
   periods (as at the end of a roll's jump), not the realized data of the look-ahead. Results of stochastic single
@@ -110,7 +112,9 @@ Each line says what changes for a model that ran before and what to do; the deta
   own `solver_config/`: its runs take each solver's option file from the project, else the workspace, else
   FlexTool's default. Check the `Solver config:` line of the run log, which names the folder of each file, and move
   your `.opt` files there.
-- **Other commercial-solver fixes that can change results:** CPLEX now gets `solver_mip_gap`; one value per solver
+- **Other solver-option fixes that can change results:** a whole-number HiGHS option from the database (stored as
+  `3.0`) now reaches HiGHS (before, it was dropped with a warning; a non-whole value now stops the run); CPLEX now
+  gets `solver_mip_gap`; one value per solver
   parameter, whatever its case; Xpress solves a MIP with `mipoptimize` (it returned the LP relaxation); Gurobi
   file-writing parameters are not passed on. A CPLEX option name starting with `set` (FlexTool adds it) is refused with a message naming
   it, from every source (CPLEX refused the `set set ...` line before); a UTF-8 byte order mark at the start of an
@@ -167,14 +171,16 @@ Each line says what changes for a model that ran before and what to do; the deta
   and the operations in the map order, also in a single solve; both now follow the map order. The reported costs were already discounted from the
   start of the run. Rerun such models; the upgrade marks the databases this can affect.
 - **The memory-saving solve (`--save-memory`, or warm start off) could put values on the wrong variables**; results
-  of such runs can change. FlexTool now needs polar-high 3.13.0 or newer (installed with FlexTool).
+  of such runs can change.
 - **Fixes that change results:** a user constraint without capacity terms got a right-hand side of 0 when another
   constraint had one (since 4.0); the reported fuel, CO2 and cost of a unit with a profile and an input were too
   low; the reported reserve penalty could be doubled; the period node-group indicators and VRE share are now ratios
   of the period energies; the `summary_solve.csv` slack lines and the period reserve averages use the time-step
   weights; without `realized_invest_periods` a solve realizes only the `realized_periods` that are also
   `invest_periods`; `invest_period_total` could retire and `retire_period_total` invest; a `virtual_unitsize` ≤ 0
-  is now ignored. Details below.
+  is now ignored; the invested capacity, investment cost and investment marginals of a period now come from the
+  solve that realizes its investment (in some solve chains and stochastic solves they were missing or a later
+  solve's 0). Details below.
 - **Security: solver options are checked before a solve.** Since 4.0, a database's `solver_arguments` (or an
   option file from another person's project) could add commands to a CPLEX, Xpress or COPT run. FlexTool now
   refuses, for every solver including HiGHS, an option name or value with a line break, control character, space,
@@ -902,9 +908,7 @@ Each line says what changes for a model that ran before and what to do; the deta
   `scale_the_objective` and autoscale factor. The `Solver args` line shows both values, the solver's first:
   `mip_abs_gap=0.5 (500000 in unscaled currency)`. Relative gaps are unchanged. A Benders solve with an objective
   target or bound (`objective_target` / `objective_bound`) is refused before it starts, naming the option and where
-  it was set: such a value has no meaning for the master or a region; absolute gaps are passed, scaled. Needs
-  polar-high 3.14.0; with an older polar-high a solve that sets one of these options is refused, and every other
-  solve runs as before.
+  it was set: such a value has no meaning for the master or a region; absolute gaps are passed, scaled.
 - **The existing fixed cost constant is scaled with the rest of the objective.** With
   `include_existing_fixed_cost` (used by tests), the constant was added unscaled, so the objective mixed scaled and
   unscaled currency; and an objective read from a `--save-memory` or commercial solve, or after autoscaling, left the
@@ -919,7 +923,7 @@ Each line says what changes for a model that ran before and what to do; the deta
   recorded as stopped at a limit (before, as not certified).
 - **HiGHS's time-limit warning names the MIP gap** with `--save-memory`, as the commercial solvers' does; before,
   it pointed to the solver log. An in-process HiGHS solve names it too. A gap below 0.01 % is printed with significant digits instead of as `0.0000%`.
-- **A `--save-memory` HiGHS solve that is killed stops the run with an error naming the cause** (item 247). A solve
+- **A `--save-memory` HiGHS solve that is killed stops the run with an error naming the cause.** A solve
   process stopped by a signal, such as SIGKILL from the out-of-memory killer, went on to read its solution file and
   failed with a raw "file not found", or read the solution an earlier run of the same solve had left in the work
   folder. Now the error names the signal (a Windows status code in hex) and the folder that keeps the model file.
@@ -1029,7 +1033,7 @@ Each line says what changes for a model that ran before and what to do; the deta
   as a 1224.5 MW reserve shortfall. An entity name with a space (`Battery Farm`) could also be misread in the
   file, which could change the model, for example force a unit to 0. Both are fixed: the file now uses generic
   names, every value is read back to its own variable, and a solution that does not match the model stops the run
-  with an error. Needs polar-high 3.12.4. The first `--save-memory` run after the upgrade does not reuse a
+  with an error. The first `--save-memory` run after the upgrade does not reuse a
   warm-start basis saved by an earlier version.
 - **A crash on macOS could be reported as "killed".** The run record, `flextool-run` and the solver-stack check
   (`python -m flextool.env_check`) read a signal number with Linux's numbering, so on macOS a bus error (SIGBUS,
@@ -1205,11 +1209,6 @@ Each line says what changes for a model that ran before and what to do; the deta
   keys are neither periods nor time steps and do not look like time steps (*p2050*, *p_none*) gets this error too
   (before: the entity silently got the parameter's default); keys that look like time steps (*t0099*, *T0001*, a
   date-time stamp) get the time-series error below.
-- **The period-only reader never spreads a period key it does not know over every period.**
-  A key that is no period of the solve, such as a period of another scenario or one only in
-  `model.periods_available`, gives no value in this solve. Normal runs already read it this way, so their
-  results do not change; with the axis vocabulary switched on (a development option) the value of such a key
-  was used as a default for every period of the entity.
 - **A spare timeline without `timestep_duration` stopped the run.** Only the timelines a
   solve uses (through the timesets of its `period_timeset`, or the timeset a solve without one takes by default)
   need durations now; a used timeline without them, or with a step of 0 hours or less or no number, stops the run
@@ -1250,7 +1249,7 @@ Each line says what changes for a model that ran before and what to do; the deta
   without `index_name` on its outer level (its inner level with or without `index_name` *time*), which was taken
   for a stochastic map (those have three levels), and a map with `index_name` *period* on its outer level but none
   on its inner level, whose time steps were not read. Either way the profile was 0 in every time step without a
-  word. Both now read as the same map with `index_name` *period* and *time* (item 223), when the outer keys are
+  word. Both now read as the same map with `index_name` *period* and *time*, when the outer keys are
   periods (the stochastic branch periods take their anchor period's curve), in single, rolling and stochastic
   solves. Unnamed outer keys that are time steps, both periods and time steps, or no period, and unnamed inner keys
   that are periods, stop the run with an error naming the profile and the alternative; a period missing from the

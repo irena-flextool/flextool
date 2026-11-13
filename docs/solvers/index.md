@@ -803,9 +803,7 @@ compares the value with its own objective (each roll's cost, not the whole
 horizon's); in a stochastic solve, with the expected cost over the branches.
 A Benders solve refuses an objective target or bound, naming the option and
 where it was set: a whole-model level has no meaning for the master or a
-region. Its absolute gaps are passed, scaled for each part. These options
-need polar-high 3.14.0 or newer; with an older polar-high a solve that sets
-one of them is refused.
+region. Its absolute gaps are passed, scaled for each part.
 
 FlexTool reads how a solve ended from the solver's result file (HiGHS, Gurobi's
 JSON result, CPLEX) or from its console log (COPT, Xpress; Gurobi when it
