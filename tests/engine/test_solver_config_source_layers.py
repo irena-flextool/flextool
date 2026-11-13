@@ -41,7 +41,7 @@ def ws(tmp_path: Path) -> dict:
     cfg.mkdir()
     (cfg / "highs.opt").write_text("mip_rel_gap = 0.02\n")
     (cfg / "gurobi.opt").write_text("Threads 4\n")
-    (cfg / "cplex.opt").write_text(_template("cplex"))
+    (cfg / "cplex.opt").write_text(_template("cplex"), encoding="utf-8")  # not the Windows ANSI code page
     project = root / "projects" / "P"
     (project / "input_sources").mkdir(parents=True)
     db = project / "input_sources" / "db.sqlite"
@@ -90,7 +90,7 @@ def test_case_a_project_file_then_workspace_then_default(ws: dict) -> None:
 def test_case_a_variant_project_template_does_not_hide_the_workspace(ws: dict) -> None:
     own = ws["project"] / "solver_config"
     own.mkdir()
-    (own / "gurobi.opt").write_text(_template("gurobi"))
+    (own / "gurobi.opt").write_text(_template("gurobi"), encoding="utf-8")
     for source in (_gui_source(ws["project"], cwd=ws["root"]), _terminal_source(ws)):
         texts = _texts(source)
         assert texts["gurobi"] == "Threads 4\n"
@@ -175,7 +175,7 @@ def test_projects_folder_name_case_is_ignored_where_the_system_ignores_it(
     project = root / "Projects" / "P"
     (project / "Input_Sources").mkdir(parents=True)
     (project / "solver_config").mkdir()
-    (project / "solver_config" / "gurobi.opt").write_text(_template("gurobi"))
+    (project / "solver_config" / "gurobi.opt").write_text(_template("gurobi"), encoding="utf-8")
     (project / "solver_config" / "copt.opt").write_text("Threads 1\n")
     db = project / "Input_Sources" / "db.sqlite"
     db.write_bytes(b"")
@@ -185,8 +185,9 @@ def test_projects_folder_name_case_is_ignored_where_the_system_ignores_it(
     def terminal():
         return resolve_solver_config_source(environ={}, input_db_url=f"sqlite:///{db}", cwd=elsewhere)
 
-    assert not source_module.is_project_solver_config(project / "solver_config")
-    assert terminal().layers == ()
+    if sys.platform != "win32":  # Windows itself compares file names ignoring case
+        assert not source_module.is_project_solver_config(project / "solver_config")
+        assert terminal().layers == ()
     monkeypatch.setattr(source_module, "_normcase", str.lower)
     assert source_module.is_project_solver_config(project / "solver_config")
     assert [(folder.resolve(), reason) for folder, reason in terminal().layers] == [
