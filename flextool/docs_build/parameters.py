@@ -26,7 +26,7 @@ from pathlib import Path
 
 from flextool.assistant.inputs._schema import bracket, ranks_in_words, shipped_schema
 from flextool.assistant.inputs._units import parameter_unit
-from flextool.sqlite_url import read_only_sqlite_url_string
+from flextool.sqlite_url import read_only_sqlite_url_string, sqlite_file_path
 
 PAGE_TITLE = "Parameter catalogue"
 
@@ -360,15 +360,12 @@ def input_db_url(value: str) -> str:
     if "://" not in value:
         path = Path(value).expanduser().resolve()
     elif value.startswith("sqlite:"):
-        from sqlalchemy.engine.url import make_url
-
-        try:
-            database = make_url(value).database
-        except Exception:  # noqa: BLE001 — sqlalchemy's ArgumentError for a malformed URL
-            raise CatalogueInputError(f"cannot parse the database URL {value!r}") from None
-        if not database or database.startswith("file:"):
-            return value
-        path = Path(database).expanduser().resolve()
+        # The file of the URL without its query, also of a '#' folder that a Toolbox filter query was put in
+        # front of, and of a read-only ``file:`` URI (SQLAlchemy's URL parser cuts the path at '?' / '#').
+        file = sqlite_file_path(value)
+        if file is None:
+            raise CatalogueInputError(f"cannot parse the database URL {value!r}")
+        path = file.expanduser().resolve()
     else:
         return value
     if not path.is_file():
