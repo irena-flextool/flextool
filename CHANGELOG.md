@@ -487,6 +487,11 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **Without `realized_invest_periods`, a solve realized the investments of every `realized_periods` period
   (#319).** It now realizes the `realized_periods` that are also `invest_periods`, so a dispatch-only period of an
   investment solve is no longer reported as an investment period.
+- **`years_represented` without an index name now counts for investments.** Before, a map left with the Spine
+  default index name (`x`) gave investments one year per period, while operations counted the full years, so
+  investments were too cheap by up to the years represented (every 4.x release, 4.0.0 to 4.3.0). Investment results
+  of such models change; maps with the index name `period` are not affected. A map whose index has another name is
+  now an error asking for `period` (or no name).
 
 #### Time resolution
 

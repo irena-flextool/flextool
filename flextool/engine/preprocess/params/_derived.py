@@ -81,6 +81,7 @@ from flextool.engine.input._param_shapes import (
     parameter_has_values,
     promote_param_to_dt,
     resolve_param_shape,
+    solve_years_represented,
 )
 from flextool.engine.preprocess.params._existing import (
     DIVEST_NOT_ALLOWED as _DIVEST_NOT_ALLOWED,
@@ -972,8 +973,8 @@ def p_inflation_op_from_source(
     # ``_roll_<N>`` suffix).
     yr = None
     if active_solve is not None:
-        yr_raw = _try_param(source, "solve", "years_represented")
-        if yr_raw is not None and "period" in yr_raw.columns:
+        yr_raw = solve_years_represented(source)
+        if yr_raw is not None:
             candidate_names = [active_solve]
             import re
             parent = re.sub(r"_roll_\d+$", "", active_solve)
@@ -3606,9 +3607,8 @@ def _p_years_d_lf(source: "InputSource",
                 pl.col("value").cast(pl.Float64).alias("yr"),
             )
     # 3 — cumulative-sum from years_represented.
-    yrp = _try_param(source, "solve", "years_represented")
-    if (yrp is not None and "period" in yrp.columns
-            and active_solve is not None):
+    yrp = solve_years_represented(source)
+    if yrp is not None and active_solve is not None:
         sub = yrp.filter(pl.col("name") == active_solve)
         if sub.height > 0:
             # Map iteration order — the SpineDbReader returns rows in DB
@@ -4261,7 +4261,7 @@ def p_inflation_op_multi_year_from_source(source: "InputSource",
         return None
     # Multi-year-per-period guard: if ``years_represented`` Map has
     # multiple (period, year) rows for any period, defer.
-    yr = _try_param(source, "solve", "years_represented")
+    yr = solve_years_represented(source)
     if yr is not None:
         yr_sub = yr.filter(pl.col("name") == active_solve)
         if yr_sub.height > 0:
@@ -8526,9 +8526,9 @@ def _years_for_period_from_source(source: "InputSource",
                 if canon:
                     return canon
 
-    yr_p = _try_param(source, "solve", "years_represented")
+    yr_p = solve_years_represented(source)
     out: dict[str, list[tuple[str, float]]] = {}
-    if active_solve is None or yr_p is None or "period" not in yr_p.columns:
+    if active_solve is None or yr_p is None:
         # Default fallback — one year per period, width 1, integer-indexed.
         for i, d in enumerate(period_set):
             out[d] = [(str(int(i)), 1.0)]
@@ -9020,8 +9020,8 @@ def _p_discount_years_from_source(source: "InputSource",
     out: dict[str, float] = {}
     if active_solve is None:
         return out
-    yrp = _try_param(source, "solve", "years_represented")
-    if yrp is None or "period" not in yrp.columns:
+    yrp = solve_years_represented(source)
+    if yrp is None:
         return out
     sub = yrp.filter(pl.col("name") == active_solve)
     if sub.height == 0:
