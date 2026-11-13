@@ -309,3 +309,26 @@ def test_build_solver_options_unknown_solver_raises():
     # the menu inline.
     for solver in _PARAM_MAP:
         assert solver in msg
+
+
+def test_a_copy_of_a_solve_keeps_its_solver_configuration(tmp_path: Path):
+    """``duplicate_solve`` (2-D period maps, nested sub-solves) and ``copy_solver_settings`` (the realization
+    solve FlexTool adds) give the new solve the parent's solver, ``solver_arguments`` and ``solver_mip_gap``.
+    Before item 240's fix the copy had the solver name but no configuration, so it ran on HiGHS;
+    ``solver_config_for`` now raises on such a mismatch instead."""
+    url = _make_migrated_db(tmp_path)
+    _inject_param_values(url, [
+        ("solve", SOLVE_NAME, "solver", "gurobi"),
+        ("solve", SOLVE_NAME, "solver_mip_gap", 0.2),
+        ("solve", SOLVE_NAME, "solver_arguments", Map(["TimeLimit"], ["800"])),
+    ])
+    sc = _load_solve_config(url)
+    expected = SolverConfig(name="gurobi", options={"TimeLimit": "800"}, mip_gap=0.2)
+    sc.duplicate_solve(SOLVE_NAME, f"{SOLVE_NAME}_p1")
+    sc.copy_solver_settings(SOLVE_NAME, f"{SOLVE_NAME}__realized_dispatch")
+    for copy_name in (f"{SOLVE_NAME}_p1", f"{SOLVE_NAME}__realized_dispatch"):
+        assert sc.solver_config_for(copy_name) == expected
+        assert sc.solver_settings.arguments[copy_name] == {"TimeLimit": "800"}
+    del sc.solver_configs[f"{SOLVE_NAME}_p1"]
+    with pytest.raises(RuntimeError, match="its solver is 'gurobi', but its solver configuration says 'highs'"):
+        sc.solver_config_for(f"{SOLVE_NAME}_p1")

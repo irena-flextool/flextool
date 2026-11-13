@@ -995,6 +995,10 @@ class SolveConfig:
                 # ``solver_settings.precommand`` is not copied: it is never run, only named once per database
                 # solve in a warning (``_solver_dispatch.warn_solver_precommands``).
                 self.solver_settings.arguments,
+                # The solver, its solver_arguments and solver_mip_gap as the solve runs them: without it a copy of
+                # a commercial solve (2-D period maps, nested sub-solves) ran on HiGHS.  This computer's wrapper
+                # and option files follow the solver name.
+                self.solver_configs,
                 self.contains_solves,
                 self.rolling_times,
                 self.realized_periods,
@@ -1057,14 +1061,19 @@ class SolveConfig:
         :meth:`dispatch_realization_method_for` yields ``within_solve`` →
         the run()-site guard no-ops → no re-spawn).
 
-        NOT copied — ``scaling`` / ``solver_configs`` / ``use_row_scaling``
-        / ``scale_the_objective``: the cascade
-        ``run()`` closure in ``_orchestration._drive_cascade`` resolves
-        those from the SEPARATE cascade ``state.solve`` (NOT this
-        ``runner.state.solve``, which is the config this method mutates),
-        so copies here would be dead.  The sibling therefore runs under
-        the DEFAULT solver / scaling / decomposition config — correct for
-        a monolithic deterministic dispatch.
+        The solver settings (:meth:`copy_solver_settings`) are copied here
+        and, by ``_orchestration._spawn_realized_dispatch_siblings``, into
+        the SEPARATE cascade ``state.solve`` the ``run()`` closure of
+        ``_orchestration._drive_cascade`` reads them from: the sibling runs
+        on its parent's solver.
+
+        NOT copied — ``scaling`` / ``use_row_scaling`` /
+        ``scale_the_objective``: the ``run()`` closure resolves those from
+        the cascade ``state.solve`` (NOT this ``runner.state.solve``, which
+        is the config this method mutates), so copies here would be dead.
+        The sibling therefore runs under the DEFAULT scaling /
+        decomposition config — correct for a monolithic deterministic
+        dispatch.
 
         Note on multi-period storage: dropping ``fix_storage_periods`` is
         correct even when the realized window spans MULTIPLE periods.
@@ -1127,6 +1136,39 @@ class SolveConfig:
         # Using this map (not a ``__realized_dispatch`` name-parse) keeps
         # the sibling identification robust.
         self.realized_dispatch_parent[sibling] = parent
+        self.copy_solver_settings(parent, sibling)
+
+    def copy_solver_settings(self, parent: str, new: str) -> None:
+        """Give the solve *new* the solver of *parent* with all of its settings: ``solver_configs`` (the solver,
+        its ``solver_arguments``, ``solver_mip_gap``) and ``solver_settings.solvers`` / ``.arguments`` (the
+        names the run's upfront checks read).  This computer's wrapper and option files follow the solver name.
+        ``solver_settings.precommand`` is not copied: it is never run, only named once per database solve."""
+        # ``getattr``: like the scaffolding copy of :meth:`spawn_realized_dispatch_sibling`, a partly built config
+        # (a test's) may lack some of these.
+        solver_settings = getattr(self, "solver_settings", None)
+        for settings in (
+            getattr(self, "solver_configs", None),
+            getattr(solver_settings, "solvers", None),
+            getattr(solver_settings, "arguments", None),
+        ):
+            if settings is not None and parent in settings:
+                settings[new] = settings[parent]
+
+    def solver_config_for(self, solve_name: str) -> SolverConfig:
+        """The solver configuration *solve_name* runs with (HiGHS defaults when the solve sets none).
+
+        Raises when ``solver_configs`` and ``solver_settings.solvers`` name different solvers: a solve made from
+        another one (a 2-D period map, a realization solve) that lost its solver configuration would otherwise
+        run on HiGHS without a word, as before item 240."""
+        config = self.solver_configs.get(solve_name, SolverConfig())
+        named = self.solver_settings.solvers.get(solve_name, "highs")
+        if named != config.name:
+            raise RuntimeError(
+                f"Solve {solve_name!r}: its solver is {named!r}, but its solver configuration says "
+                f"{config.name!r}. This is a FlexTool bug (a solve made from another one lost its solver "
+                "settings); please report it."
+            )
+        return config
 
     def register_realization_solve(self, realization_solve: str, parent: str) -> None:
         """Register the author-declared *realization_solve* as the realization solve of *parent*.

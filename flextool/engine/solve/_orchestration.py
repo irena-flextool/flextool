@@ -336,7 +336,6 @@ def _solve_highs_options(
     ``<solver_config_dir>/highs.opt``, or has no highs.opt layer when that is
     None.
     """
-    from flextool.engine.input._solve_config import SolverConfig
     from flextool.engine.solve._solver_dispatch import (
         _resolve_effective_highs_options,
         solver_workspace,
@@ -358,9 +357,7 @@ def _solve_highs_options(
         highs_opt_path=highs_opt_path,
         cli_overrides=_operator_highs_overrides(state.run_options),
         baseline=baseline,
-        solver_config=state.solve.solver_configs.get(
-            complete_solve_name, SolverConfig()
-        ),
+        solver_config=state.solve.solver_config_for(complete_solve_name),
         solve_name=complete_solve_name,
         # A plain file name the database gives a HiGHS file option lands in the solve's work folder.
         workspace=solver_workspace(state.paths.work_folder),
@@ -1825,7 +1822,7 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
 
 
 def _spawn_realized_dispatch_siblings(
-    solve_cfg, cascade_db_reader, logger, timeline_cfg=None,
+    solve_cfg, cascade_db_reader, logger, timeline_cfg=None, cascade_solve_cfg=None,
 ) -> None:
     """Register the realization solve of every stochastic top-level solve
     that needs one (``solve._realization``).
@@ -1899,7 +1896,11 @@ def _spawn_realized_dispatch_siblings(
        fixed-capacity, monolithic single_solve.
 
     *solve_cfg* MUST be ``runner.state.solve`` — the config
-    ``native_run_model`` actually drives.  (The run()-site guard reads the
+    ``native_run_model`` actually drives.  *cascade_solve_cfg* is the outer
+    cascade ``state.solve``, where the ``run()`` closure looks up each
+    solve's solver: the sibling gets its parent's solver and solver
+    settings there too (``SolveConfig.copy_solver_settings``), so a sibling
+    of a Gurobi solve runs on Gurobi, not on HiGHS.  (The run()-site guard reads the
     SEPARATE outer cascade ``state.solve``, where the sibling is never
     injected, so it correctly no-ops for the sibling, which authors no
     ``dispatch_realization_method`` — no infinite re-spawn.)
@@ -2044,6 +2045,8 @@ def _spawn_realized_dispatch_siblings(
             )
         cascade_db_reader.register_derived_solve(parent, sibling)
         solve_cfg.spawn_realized_dispatch_sibling(parent, sibling)
+        if cascade_solve_cfg is not None and cascade_solve_cfg is not solve_cfg:
+            cascade_solve_cfg.copy_solver_settings(parent, sibling)
         # The sibling reuses the parent's timesets, which a solve-level
         # new_stepduration has re-pointed to the aggregated timeline: it must
         # run at the same step (aggregated data, step lengths), not on the
@@ -2549,7 +2552,7 @@ def _drive_cascade(
     # No-op (and byte-parity) when no solve authors separate_dispatch.
     _spawn_realized_dispatch_siblings(
         runner.state.solve, cascade_db_reader, _drive_logger,
-        timeline_cfg=runner.state.timeline,
+        timeline_cfg=runner.state.timeline, cascade_solve_cfg=state.solve,
     )
 
     class _PolarHighCascadeSolver(SolverRunner):
@@ -3400,12 +3403,7 @@ def _drive_cascade(
             # active solve picks a commercial solver we disable warm
             # reuse for this iteration, log a one-time warning, and
             # cold-rebuild + dispatch through ``run_one_solve``.
-            from flextool.engine.input._solve_config import (
-                SolverConfig as _SolverConfig,
-            )
-            _active_solver_cfg = state.solve.solver_configs.get(
-                complete_solve_name, _SolverConfig()
-            )
+            _active_solver_cfg = state.solve.solver_config_for(complete_solve_name)
             run_record.active().note_solver(_active_solver_cfg.name)
             _warm_disabled_by_solver = (
                 warm and _active_solver_cfg.name != "highs"
