@@ -883,11 +883,14 @@ def extract_variable(
             if no_invest:
                 canonical_d = []
             elif labels:
-                # A period label of a stochastic fan has no dispatch, so it is not on the dispatch axis, but it
-                # is where the solve realizes its here-and-now investment (stochastic_invest_method = none; no
-                # column under recourse, so a 0 row): add the realized-invest labels.
+                # A stochastic fan solve: every realized-invest period gets its row, also one that is not on
+                # the solve's dispatch axis.  A period label of the fan has no dispatch but is where the solve
+                # realizes its here-and-now investment (stochastic_invest_method = none; no column under
+                # recourse, so a 0 row); with a realized branch the realization dispatch solve holds the
+                # dispatch of every period, so the stochastic solve has no dispatch axis and its pre-reveal
+                # (real-named) investment period had no row (item 258).
                 base = list(canonical_d or [])
-                canonical_d = base + [p for p in realized_invest if p in labels and p not in base]
+                canonical_d = base + [p for p in realized_invest if p not in base]
             if period_source == "invest_branches" and realized_invest:
                 # The forecast branch periods b ≠ d of the realized-invest periods d (period_branch_full): a
                 # fan's planning slack has one value per forecast, and no dispatch axis holds them.  The output

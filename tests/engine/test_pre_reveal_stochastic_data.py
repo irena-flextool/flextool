@@ -20,12 +20,14 @@ low, weights 1 : 3, DEFAULT ``stochastic_invest_method = none``):
   configuration error, with its message.
 * ``midhorizon_realized`` (realized branch ``real``) runs: p2035 reads
   real@t0001 = 0.6 (wind 60), base covers the residual 60 and the
-  here-and-now invest is 60.
+  here-and-now invest is 60 -- also in the stochastic solve's ``v_invest``
+  output and the processed capacity / investment-cost outputs (item 258).
 """
 from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from pathlib import Path
 from types import SimpleNamespace
 
 import polars as pl
@@ -136,12 +138,48 @@ def test_pre_reveal_period_reads_plain_or_realized_data(midhorizon_run):
     assert pre.height == 3
     assert pre[_wind_col(pre)].to_list() == pytest.approx([EXPECTED_PRE_REVEAL_WIND] * 3)
     assert pre[_base_col(pre)].to_list() == pytest.approx([EXPECTED_PRE_REVEAL_BASE_DISPATCH] * 3)
-    if scenario == "midhorizon":
-        # With a realized branch the stochastic solve's v_invest output has no p2035 row (the same before
-        # item 250; reported separately), so the invest is checked on the forecasts-only run.
-        inv = v_invest.filter(pl.col("period") == PRE_REVEAL_PERIOD)
-        assert inv.height == 1, inv
-        assert inv["base"].to_list()[0] == pytest.approx(EXPECTED_PRE_REVEAL_INVEST)
+    # Item 258: with a realized branch the realization dispatch solve holds the dispatch of every period, so the
+    # stochastic solve has no dispatch axis; its here-and-now investment at p2035 still has its row.
+    assert v_invest["period"].to_list() == [PRE_REVEAL_PERIOD, "p2040"], v_invest
+    assert v_invest["base"].to_list() == pytest.approx([EXPECTED_PRE_REVEAL_INVEST, 0.0])
+
+
+# The here-and-now investment of 60 MW at p2035, at invest_cost 1 CUR/kW (1000 CUR/MW), lifetime 1 year and
+# discount_rate 0.05: annuity 0.05 / (1 - 1.05**-1) = 1.05, so 60 * 1000 * 1.05 = 63 000 CUR = 0.063 M CUR a year.
+EXPECTED_PRE_REVEAL_ANNUALIZED_INVEST_MCUR = 0.063
+
+
+@pytest.mark.solver
+def test_realized_branch_reports_the_pre_reveal_investment(
+        stoch_two_period_midhorizon_nreal0_db_url, tmp_path, monkeypatch):
+    """Item 258: with a realized branch the processed outputs show the p2035 investment (before: no invested
+    capacity and no investment cost, as the stochastic solve's ``v_invest`` had no p2035 row)."""
+    from flextool.engine import run_chain_from_db
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+    from flextool.process_outputs.write_outputs import write_outputs
+
+    monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
+    monkeypatch.chdir(tmp_path)
+    wf = tmp_path / "w"
+    steps = run_chain_from_db(stoch_two_period_midhorizon_nreal0_db_url, "midhorizon_realized",
+                              work_folder=wf, csv_dump=True, keep_solutions=True)
+    last = next(reversed(steps.values()))
+    last.flex_data_provider.snapshot_processed_inputs(wf)
+    write_outputs(
+        scenario_name="midhorizon_realized", output_location=str(wf), subdir="out",
+        output_config_path=str(Path(__file__).resolve().parents[2] / "flextool" / "schemas" / "default_plots.yaml"),
+        write_methods=["csv"], fallback_output_location=str(wf), raw_output_dir=str(wf / "output_raw"),
+        solution=last.solution, solve_name=last.solve_name,
+        solve_steps=[(s.solve_name, s.flex_data, s.effective_solution) for s in steps.values()],
+        flex_data_provider=FlexDataProvider(),
+    )
+    csv_dir = wf / "output_csv" / "out"
+    capacity = pl.read_csv(csv_dir / "unit_capacity__d.csv").filter(
+        (pl.col("unit") == "base") & (pl.col("period") == PRE_REVEAL_PERIOD))
+    assert capacity["invested"].to_list() == pytest.approx([EXPECTED_PRE_REVEAL_INVEST])
+    costs = pl.read_csv(csv_dir / "annualized_costs__d.csv").filter(pl.col("period") == PRE_REVEAL_PERIOD)
+    assert costs["unit investment & retirement"].to_list() == pytest.approx(
+        [EXPECTED_PRE_REVEAL_ANNUALIZED_INVEST_MCUR])
 
 
 @pytest.mark.solver

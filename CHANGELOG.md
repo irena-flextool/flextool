@@ -1037,6 +1037,11 @@ Each line says what changes for a model that ran before and what to do; the deta
   from the start of the run". FlexTool's internal copy of the realized branch is no longer treated as a period of
   its own: its operations are reported by the realization solve, discounted at the year of the real period. Investment and operating costs of
   every solve of such a chain are discounted from the start of the run.
+- **The investment before a mid-horizon fan was missing from the results when the fan has a `realized: yes`
+  branch.** The solve made the investment, but `v_invest` had no row for the period before the reveal, so
+  `unit_capacity__d` (and the connection / node tables) showed no invested capacity there and the investment cost
+  was left out of the cost tables and the summary (the total capacity was right). Runs without a realized branch
+  were not affected.
 
 #### Input checks
 
