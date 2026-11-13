@@ -6,14 +6,17 @@ Architecture notes
 * Every downstream module reads ``state.solve.<dict>`` keys produced
   here; the keys must match the canonical names (including the
   ``np.str_`` leak through Spine ``Map.indexes``, the stringified-
-  float ``rolling_times`` entries, and the lockstep mutation in
-  :meth:`SolveConfig.duplicate_solve`).
+  float ``rolling_times`` entries).
 * The factory uses :class:`spinedb_api.DatabaseMapping` directly.
 * Reads ``solve``, ``model``, ``unit`` parameter classes only.
-  Loading order matters (``make_roll_counter`` →
-  ``get_period_timesets`` → 4× ``periods_to_tuples`` →
-  ``non_anticipativity_periods_to_tristate``) because each may call
-  :meth:`duplicate_solve`, which mutates 21 sibling dicts in lockstep.
+  Every per-solve parameter is read under the database solve names; a
+  2-D period map is split into solves of their own afterwards
+  (:meth:`SolveConfig._split_2d_period_maps`).  A solve made from another
+  one (a 2-D period map, a nested solve renamed for its period, the
+  realization solve) gets every per-solve field of its parent through one
+  step, :meth:`SolveConfig.derive_solve` (registry
+  :data:`PER_SOLVE_FIELDS`), overriding or dropping only what its path
+  lists.
 * The DB schema is assumed to be v50+.  v50 moved
   ``new_stepduration`` from ``timeset`` to ``solve``;
   ``update_flextool/db_migration.py`` handles upgrades for older DBs
@@ -27,6 +30,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 import spinedb_api as api
@@ -222,6 +226,149 @@ class SolverConfig:
 
 
 # ---------------------------------------------------------------------------
+# Solves made from another solve: the per-solve field registry
+# ---------------------------------------------------------------------------
+
+
+class _NoEntry:
+    """The type of :data:`NO_ENTRY`."""
+
+    def __repr__(self) -> str:
+        return "NO_ENTRY"
+
+
+#: In the ``overrides`` of :meth:`SolveConfig.derive_solve`: the new solve gets no entry in that field.
+NO_ENTRY = _NoEntry()
+
+#: Every :class:`SolveConfig` attribute keyed by solve name.  :meth:`SolveConfig.derive_solve` gives a solve made
+#: from another one (a solve of a 2-D period map, a nested solve renamed for its period, the realization solve) a
+#: deep copy of the parent's entry in each of them, unless the path overrides or drops the field.  A field added
+#: later is copied by default; an attribute keyed by solve name that is in none of the three lists below stops
+#: the run (``_check_field_registry``).  Dotted names reach into the solver dataclasses.
+PER_SOLVE_FIELDS: tuple[str, ...] = (
+    "solve_modes",
+    "roll_counter",
+    "rolling_times",
+    "contains_solves",
+    "timesets_used_by_solves",
+    "invest_periods",
+    "realized_periods",
+    "realized_invest_periods",
+    "fix_storage_periods",
+    "non_anticipativity_periods",
+    "non_anticipativity_invest_periods",
+    "solve_period_years_represented",
+    "stochastic_branches",
+    "stochastic_invest_method",
+    "dispatch_realization_method",
+    "hole_multipliers",
+    "decomposition",
+    "benders_max_iter",
+    "benders_tolerance",
+    "benders_in_out_weight",
+    "scaling",
+    "reduce_unit_detail_method",
+    "reduce_system_detail_method",
+    "use_row_scaling",
+    "scale_the_objective",
+    "solver_configs",
+    "solver_settings.solvers",
+    "solver_settings.arguments",
+    "highs.presolve",
+    "highs.method",
+    "highs.parallel",
+)
+
+#: Attributes keyed by solve name that a solve made from another one does not get, with the reason.
+NOT_COPIED_FIELDS: dict[str, str] = {
+    "solver_settings.precommand": "never run (item 236); FlexTool names it once per database solve in a warning",
+}
+
+#: Dict attributes that are not keyed by solve name, with what they are keyed by.
+OTHER_DICT_FIELDS: dict[str, str] = {
+    "model_solve": "model",
+    "periods_available": "model",
+    "delay_durations": "unit",
+    "map2d_period_parents": "period parameter (the solves split by a 2-D map of it)",
+    "map2d_duplicate_of": "solve of a 2-D period map (set per copy: its database solve and outer key)",
+    "realized_dispatch_parent": "realization solve (set per copy: its parent)",
+    "derived_solves": "solve made from another solve (its parent and the fields it does not copy)",
+    "_split_records": "database solve with a 2-D period map (read, not yet split)",
+}
+
+#: The period parameters a 2-D map splits into solves of their own, with their :class:`SolveConfig` field.
+SPLIT_PERIOD_PARAMS: dict[str, str] = {
+    "invest_periods": "invest_periods",
+    "realized_periods": "realized_periods",
+    "realized_invest_periods": "realized_invest_periods",
+    "fix_storage_periods": "fix_storage_periods",
+}
+
+#: The fields the engine-automatic realization solve ``<solve>__realized_dispatch`` does not take from its parent:
+#: it is a deterministic, fixed-capacity, monolithic dispatch (no investment, no forecasts, no decomposition, no
+#: contained solves, no realization solve of its own).  The reader half is
+#: ``SpineDbReader.REALIZATION_SOLVE_DROPPED_PARAMS`` (in schema names).
+REALIZATION_SOLVE_DROPS: frozenset[str] = frozenset((
+    "invest_periods",
+    "realized_invest_periods",
+    "fix_storage_periods",
+    "stochastic_branches",
+    "stochastic_invest_method",
+    "non_anticipativity_periods",
+    "non_anticipativity_invest_periods",
+    "decomposition",
+    "benders_max_iter",
+    "benders_tolerance",
+    "benders_in_out_weight",
+    "contains_solves",
+    "dispatch_realization_method",
+))
+
+
+def _per_solve_field(cfg: object, name: str) -> "dict | None":
+    """The dict of field *name* (dotted: through a dataclass) of *cfg*; ``None`` when *cfg* lacks it (a test's
+    partly built config)."""
+    obj = cfg
+    for part in name.split("."):
+        obj = getattr(obj, part, None)
+        if obj is None:
+            return None
+    return obj if isinstance(obj, dict) else None
+
+
+_ABSENT = object()
+
+
+def _entry_of(values: dict, key: str) -> Any:
+    """The entry of *key* in *values*; a missing key of a ``defaultdict`` is its empty default (a read through
+    ``[]`` creates it), of a plain dict a marker of its own (the tri-state ``non_anticipativity_periods`` keeps
+    unset apart from empty)."""
+    if key in values:
+        return values[key]
+    factory = getattr(values, "default_factory", None)
+    return factory() if factory is not None else _ABSENT
+
+
+def _check_field_registry(cfg: object) -> None:
+    """Raise when *cfg* has a dict attribute (also inside its solver dataclasses) that is in none of
+    :data:`PER_SOLVE_FIELDS`, :data:`NOT_COPIED_FIELDS` and :data:`OTHER_DICT_FIELDS`: a per-solve field that a
+    solve made from another one would silently lose."""
+    known = set(PER_SOLVE_FIELDS) | set(NOT_COPIED_FIELDS) | set(OTHER_DICT_FIELDS)
+    found: list[str] = []
+    for attr, value in vars(cfg).items():
+        if isinstance(value, dict):
+            found.append(attr)
+        elif attr in ("highs", "solver_settings") and value is not None:
+            found += [f"{attr}.{sub}" for sub, inner in vars(value).items() if isinstance(inner, dict)]
+    unknown = sorted(set(found) - known)
+    if unknown:
+        raise RuntimeError(
+            f"SolveConfig attribute(s) {unknown} are not classified in _solve_config.PER_SOLVE_FIELDS / "
+            "NOT_COPIED_FIELDS / OTHER_DICT_FIELDS, so a solve made from another one could lose them. This is a "
+            "FlexTool bug; please report it.")
+
+
+# ---------------------------------------------------------------------------
 # SolveConfig — main container
 # ---------------------------------------------------------------------------
 
@@ -357,6 +504,14 @@ class SolveConfig:
         # ``{<solve>_<outer>: (solve, outer)}`` of those duplicates, so an
         # error can name the database solve and its 2D-map entry.
         self.map2d_duplicate_of: dict[str, tuple[str, str]] = {}
+        # ``{solve: (parent, fields)}`` of every solve made from another one (:meth:`derive_solve`): its parent
+        # and the fields it does not copy from it (overridden or dropped); read by :meth:`check_derived_solves`.
+        self.derived_solves: dict[str, tuple[str, frozenset[str]]] = {}
+        # ``{database solve: {parameter: {outer key: [period, ...]}}}`` of the 2-D period maps read by
+        # :meth:`periods_to_tuples`, split by :meth:`_split_2d_period_maps` once every parameter is read.
+        self._split_records: dict[str, dict[str, dict[str, list]]] = {}
+        # The ``solve`` entities of the database (load_from_db): a split solve's name must not be one of them.
+        self.database_solves: list[str] = []
         # Slice G (Axis B) — operational non-anticipativity window.
         # TRI-STATE per solve, distinct from the period dicts above:
         #   absent key / None -> unset -> legacy realized u fix window;
@@ -412,17 +567,14 @@ class SolveConfig:
     ) -> "SolveConfig":
         """Read all solve-level parameters from *db* into a SolveConfig.
 
-        Loading order is preserved exactly — see the four-step block at
-        the bottom of this method.
-
         1. Basic params (model, solvers, rolling_times, …)
         2. ``make_roll_counter`` (needs ``solve_modes``).
         3. ``get_period_timesets`` (needs ``model_solve`` +
-           ``contains_solves``; may call ``duplicate_solve``).
-        4. Four ``periods_to_tuples`` calls
-           (``invest_periods``, ``realized_periods``,
-           ``realized_invest_periods``, ``fix_storage_periods``;
-           may call ``duplicate_solve`` for 2D-Map values).
+           ``contains_solves``).
+        4. The period lists (``periods_to_tuples``; a 2-D map is only
+           recorded), the shared periods.
+        5. ``_split_2d_period_maps``: the solves of every 2-D period map,
+           each with every per-solve parameter of its database solve.
         """
         model = get_single_entities(db=db, entity_class_name="model")
         model_solve: defaultdict = params_to_dict(
@@ -551,9 +703,9 @@ class SolveConfig:
         # capacity-proxy emitter.  The autoscaler's Layer 2 + Layer
         # 3 (driven by --scaling) are unaffected.
         use_row_scaling: dict = {}
-        scale_the_objective: dict = params_to_dict(
-            db=db, cl="solve", par="scale_the_objective", mode=DictMode.DICT
-        )
+        # ``scale_the_objective`` is not a schema parameter (the objective scale is fixed); the per-solve dict
+        # stays empty, like ``use_row_scaling``.
+        scale_the_objective: dict = {}
 
         # v60/v62 per-solve decomposition scheme + Benders knobs.  Only
         # solves that explicitly author the parameter appear in each
@@ -710,24 +862,15 @@ class SolveConfig:
             reduce_system_detail_method=reduce_system_detail_method,
         )
 
-        # Computed fields — loading order MUST be preserved exactly.
-        # ``duplicate_solve`` mutates 21 sibling dicts in lockstep, so
-        # any reordering desyncs them and downstream reads silently
-        # produce empty/zero results.
+        # Computed fields.  Every per-solve parameter is read under the database solve names first; a 2-D
+        # period map is only recorded (``_split_records``) and split by ``_split_2d_period_maps`` after all of
+        # them, so each solve it stands for gets every parameter of its database solve, whatever the order of
+        # the reads.
+        obj.database_solves = list(solves_temp)
         obj.roll_counter = obj.make_roll_counter()
         obj.timesets_used_by_solves = obj.get_period_timesets(db=db)
-        obj.invest_periods = obj.periods_to_tuples(
-            db=db, cl="solve", par="invest_periods"
-        )
-        obj.realized_periods = obj.periods_to_tuples(
-            db=db, cl="solve", par="realized_periods"
-        )
-        obj.realized_invest_periods = obj.periods_to_tuples(
-            db=db, cl="solve", par="realized_invest_periods"
-        )
-        obj.fix_storage_periods = obj.periods_to_tuples(
-            db=db, cl="solve", par="fix_storage_periods"
-        )
+        for par, field_name in SPLIT_PERIOD_PARAMS.items():
+            setattr(obj, field_name, obj.periods_to_tuples(db=db, cl="solve", par=par, split=True))
         period_method: dict = params_to_dict(
             db=db, cl="constraint", par="constraint_period_method", mode=DictMode.DICT
         )
@@ -743,11 +886,7 @@ class SolveConfig:
             name for name, value in period_method.items()
             if value == "period_total" and name not in disabled and name in with_sense
         )
-        # Slice G — tri-state operational non-anticipativity window
-        # (read AFTER the four period dicts so any duplicate_solve they
-        # triggered has already registered the new solve names; the
-        # value for those duplicated solves is carried by
-        # ``duplicate_solve``'s dup_map_list).
+        # Slice G — tri-state operational non-anticipativity window.
         obj.non_anticipativity_periods = (
             obj.non_anticipativity_periods_to_tristate(
                 db=db, cl="solve", par="shared_operation_periods"
@@ -755,14 +894,15 @@ class SolveConfig:
         )
         # Invest-NA window (v72) — plain periods_to_tuples: unset == [] ==
         # no tie, so a defaultdict(list) is byte-parity-safe (no tri-state
-        # needed).  Read AFTER the period dicts so duplicate_solve has
-        # registered any duplicated solve names; the value for those is
-        # carried by duplicate_solve's dup_map_list.
+        # needed).
         obj.non_anticipativity_invest_periods = obj.periods_to_tuples(
             db=db, cl="solve", par="shared_invest_periods"
         )
+        obj._split_2d_period_maps()
         # After every period dict, so the 2D-map duplicate solves exist.
         obj._check_realized_invest_periods()
+        obj._check_split_realized_periods()
+        obj.check_derived_solves()
 
         return obj
 
@@ -911,11 +1051,10 @@ class SolveConfig:
         return roll_counter_map
 
     def get_period_timesets(self, db: "DatabaseMapping") -> defaultdict:
-        """Read ``period_timeset`` parameters for every active solve.
+        """Read ``period_timeset`` (period -> timeset) for every solve of the model.
 
-        May call :meth:`duplicate_solve` when a solve carries a
-        2D-Map-shaped ``period_timeset`` parameter (one input solve fans
-        out into one solve per outer-Map key).
+        A 2-D ``period_timeset`` is refused: a solve is split into solves of their own by a 2-D map of the
+        period parameters (:data:`SPLIT_PERIOD_PARAMS`), and each of those keeps the timesets of its periods.
         """
         entities = db.find_entities(entity_class_name="solve")
         params = db.find_parameter_values(
@@ -940,140 +1079,267 @@ class SolveConfig:
                 param_value = api.from_database(param["value"], param["type"])
                 for i, _row in enumerate(param_value.indexes):
                     if isinstance(param_value.values[i], api.Map):
-                        new_name = (
-                            param["entity_name"] + "_" + param_value.indexes[i]
+                        raise FlexToolConfigError(
+                            f"solve '{param['entity_name']}': period_timeset is a 2-D map. It takes one timeset "
+                            "per period (a 1-D map period -> timeset). To split the solve into one solve per "
+                            "period group, give period_timeset all of its periods and make invest_periods, "
+                            "realized_invest_periods, realized_periods or fix_storage_periods a 2-D map."
                         )
-                        self.duplicate_solve(param["entity_name"], new_name)
-                        timesets_used_by_solves[new_name].append(
-                            (
-                                param_value.values[i].indexes[i],
-                                param_value.values[i].values[i],
-                            )
+                    timesets_used_by_solves[param["entity_name"]].append(
+                        (
+                            param_value.indexes[i],
+                            param_value.values[i],
                         )
-                    else:
-                        timesets_used_by_solves[param["entity_name"]].append(
-                            (
-                                param_value.indexes[i],
-                                param_value.values[i],
-                            )
-                        )
+                    )
         return timesets_used_by_solves
 
-    def duplicate_solve(
+    def derive_solve(
         self,
-        old_solve: str,
-        new_name: str,
-        update_model_solves: bool = True,
+        parent: str,
+        new: str,
+        *,
+        overrides: "dict[str, Any] | None" = None,
+        drops: "frozenset[str] | set[str]" = frozenset(),
     ) -> None:
-        """Duplicate every solve-level dict entry from *old_solve* under
-        *new_name*.
+        """Make the solve *new* from the solve *parent*: a deep copy of the parent's entry in every
+        :data:`PER_SOLVE_FIELDS` field, except the fields in *overrides* (``{field: value}``;
+        :data:`NO_ENTRY` = no entry) and in *drops* (no entry).  A field the parent has no entry in gives the new
+        solve none either.
 
-        Mutates the sibling dicts of ``dup_map_list`` (and ``model_solve``
-        when *update_model_solves* is set) so downstream readers can address
-        the duplicated solve transparently.  One of them —
-        ``non_anticipativity_periods`` — is a plain tri-state dict, not a
-        defaultdict; the ``if old_solve in dup_map.keys()`` guard copies
-        it the same way (an unset parent solve simply has no key to
-        copy, which is the correct unset default for the new name).
-
-        ``update_model_solves=False`` is used by the rolling builder
-        (Γ.8.C) where roll-named sub-solves should NOT replace their
-        parent in ``model_solve``.
+        The one copy step of every path that makes a solve from another one: a solve of a 2-D period map
+        (:meth:`_split_2d_period_maps`), a nested solve renamed for its period
+        (``RecursiveSolveBuilder.define_solve_recursive``) and the realization solve
+        (:meth:`derive_realization_solve`).  ``model_solve`` is the caller's.  Raises ``RuntimeError`` (a FlexTool
+        bug) when the config has a dict attribute that is not classified (``_check_field_registry``), and
+        ``ValueError`` when *overrides* / *drops* name a field that is not per-solve.  Works on a test's partly
+        built config (fields it lacks are skipped).
         """
-        if (
-            new_name not in self.model_solve.values()
-            and new_name not in self.contains_solves.values()
-        ):
-            dup_map_list = [
-                self.solve_modes,
-                self.roll_counter,
-                self.highs.presolve,
-                self.highs.method,
-                self.highs.parallel,
-                self.solve_period_years_represented,
-                self.solver_settings.solvers,
-                # ``solver_settings.precommand`` is not copied: it is never run, only named once per database
-                # solve in a warning (``_solver_dispatch.warn_solver_precommands``).
-                self.solver_settings.arguments,
-                # The solver, its solver_arguments and solver_mip_gap as the solve runs them: without it a copy of
-                # a commercial solve (2-D period maps, nested sub-solves) ran on HiGHS.  This computer's wrapper
-                # and option files follow the solver name.
-                self.solver_configs,
-                self.contains_solves,
-                self.rolling_times,
-                self.realized_periods,
-                self.realized_invest_periods,
-                self.invest_periods,
-                self.fix_storage_periods,
-                self.non_anticipativity_periods,
-                self.non_anticipativity_invest_periods,
-                self.decomposition,
-                self.benders_max_iter,
-                self.benders_tolerance,
-                self.benders_in_out_weight,
-                self.scaling,
-                self.reduce_unit_detail_method,
-                self.reduce_system_detail_method,
-            ]
-            for dup_map in dup_map_list:
-                if old_solve in dup_map.keys():
-                    dup_map[new_name] = dup_map[old_solve]
-            if update_model_solves:
-                for model, solves in list(self.model_solve.items()):
-                    if old_solve in solves:
-                        solves.remove(old_solve)
-                    if new_name not in solves:
-                        solves.append(new_name)
-                    self.model_solve[model] = solves
+        overrides = dict(overrides or {})
+        drops = frozenset(drops)
+        unknown = sorted((set(overrides) | drops) - set(PER_SOLVE_FIELDS))
+        if unknown:
+            raise ValueError(f"derive_solve: {unknown} are not per-solve fields")
+        _check_field_registry(self)
+        for name in PER_SOLVE_FIELDS:
+            values = _per_solve_field(self, name)
+            if values is None:
+                continue
+            if name in overrides:
+                if overrides[name] is NO_ENTRY:
+                    values.pop(new, None)
+                else:
+                    values[new] = overrides[name]
+            elif name in drops or parent not in values:
+                values.pop(new, None)
+            else:
+                values[new] = copy.deepcopy(values[parent])
+        derived = getattr(self, "derived_solves", None)
+        if derived is not None:
+            derived[new] = (parent, frozenset(overrides) | drops)
+
+    def check_derived_solves(self, names: "Iterable[str] | None" = None) -> None:
+        """Raise when a solve made from another one (:attr:`derived_solves`; only *names* when given) differs from
+        its parent in a :data:`PER_SOLVE_FIELDS` field other than the fields its path overrides or drops: a lost
+        parameter is a FlexTool bug, never a silent default.  Run right after the solves are made (later passes,
+        such as the defaults of ``TimelineConfig.create_assumptive_parts``, may change a solve on its own).  A
+        missing key of a ``defaultdict`` field counts as its empty default."""
+        _check_field_registry(self)
+        derived = getattr(self, "derived_solves", {})
+        problems: list[str] = []
+        for new in (list(derived) if names is None else [n for n in names if n in derived]):
+            parent, own = derived[new]
+            for name in PER_SOLVE_FIELDS:
+                if name in own:
+                    continue
+                values = _per_solve_field(self, name)
+                if values is None:
+                    continue
+                if _entry_of(values, new) != _entry_of(values, parent):
+                    problems.append(f"'{new}' (from '{parent}'): {name}")
+        if problems:
+            raise RuntimeError(
+                "A solve made from another one has lost its parent's settings: " + "; ".join(problems)
+                + ". This is a FlexTool bug; please report it.")
+
+    def solves_in_run(self) -> list[str]:
+        """The solves the model runs, in order: ``model.solves`` and the solves they contain (transitively; a
+        ``contains_solves`` entry may be one name or a list).  After :meth:`_split_2d_period_maps` a split solve
+        appears as its ``<solve>_<outer>`` solves.  For a model without ``model.solves``, every database solve
+        (``create_assumptive_parts`` picks the sole one later).  The realization solves FlexTool adds later are not
+        listed: they take their parent's solver settings (:meth:`derive_realization_solve`)."""
+        if not self.model_solve:
+            return list(getattr(self, "database_solves", []))
+        out: list[str] = []
+        stack = [s for solves in self.model_solve.values() for s in solves]
+        while stack:
+            s = stack.pop(0)
+            if s in out:
+                continue
+            out.append(s)
+            children = self.contains_solves.get(s) or []
+            stack.extend([children] if isinstance(children, str) else children)
+        return out
+
+    def _split_2d_period_maps(self) -> None:
+        """Make the solves that the 2-D period maps read by :meth:`periods_to_tuples` stand for.
+
+        A database solve ``s`` whose ``invest_periods`` / ``realized_periods`` / ``realized_invest_periods`` /
+        ``fix_storage_periods`` is a 2-D map ``{outer: [period, ...]}`` runs as one solve ``s_<outer>`` per
+        outer key (the docs: "the model will generate these solves, with the periods given").  Each is
+        :meth:`derive_solve` of ``s`` (every per-solve parameter of ``s``) with:
+
+        * each 2-D parameter: the solve's inner list, as ``(outer, period)`` tuples (no entry when the map has no
+          such outer key);
+        * the solve's periods: the inner lists of all its 2-D parameters;
+        * ``timesets_used_by_solves``: the database solve's entries of those periods;
+        * each 1-D period list of ``s`` (and ``shared_invest_periods``): its periods that the solve has (no
+          entry when none);
+        * ``shared_operation_periods``: likewise, keeping unset (``None``) apart from the empty list (no ties);
+        * ``years_represented``: the whole map, as before (``_run_model`` keeps a solve's own periods);
+        * ``map2d_duplicate_of`` / ``map2d_period_parents`` record the split, and the solves replace ``s`` in
+          ``model_solve``, in its place.
+
+        Only the solves the model runs are split (:meth:`solves_in_run`; a 2-D map on another solve adds no
+        solves).  Raises :class:`FlexToolConfigError` when the split solve is not in ``model.solves`` (only a
+        contained one) and when a split solve's name is already a ``solve`` of the database
+        (:meth:`_check_split_realized_periods` checks the realized periods afterwards).
+        """
+        in_run = set(self.solves_in_run())
+        top_level = {s for solves in self.model_solve.values() for s in solves}
+        database_solves = set(getattr(self, "database_solves", []))
+        for parent, by_par in self._split_records.items():
+            if parent not in in_run:
+                continue
+            maps = ", ".join(sorted(by_par))
+            if self.model_solve and parent not in top_level:
+                raise FlexToolConfigError(
+                    f"solve '{parent}': {maps} is a 2-D map, which splits a solve of model.solves into one solve "
+                    f"per row, but '{parent}' is only contained in another solve (contains_solves). Give the "
+                    "contained solve 1-D period lists, or split the solve that contains it."
+                )
+            outers = list(dict.fromkeys(o for entries in by_par.values() for o in entries))
+            taken = sorted(parent + "_" + o for o in outers if parent + "_" + o in database_solves)
+            if taken:
+                raise FlexToolConfigError(
+                    f"solve '{parent}': its 2-D map ({maps}) makes the solve(s) {taken}, but the database has a "
+                    "solve of that name already. Rename that solve, or change the first column of the 2-D map."
+                )
+            new_names: list[str] = []
+            parent_timesets = list(self.timesets_used_by_solves.get(parent, []))
+            for outer in outers:
+                new = parent + "_" + outer
+                periods = list(dict.fromkeys(p for entries in by_par.values() for p in entries.get(outer, [])))
+                own = set(periods)
+                overrides: dict[str, Any] = {}
+                for par, field_name in SPLIT_PERIOD_PARAMS.items():
+                    if par in by_par:
+                        inner = by_par[par].get(outer, [])
+                        overrides[field_name] = [(outer, p) for p in inner] if inner else NO_ENTRY
+                    elif parent in getattr(self, field_name):
+                        kept = [t for t in getattr(self, field_name)[parent] if t[1] in own]
+                        overrides[field_name] = kept if kept else NO_ENTRY
+                if parent in self.non_anticipativity_invest_periods:
+                    kept = [t for t in self.non_anticipativity_invest_periods[parent] if t[1] in own]
+                    overrides["non_anticipativity_invest_periods"] = kept if kept else NO_ENTRY
+                na = self.non_anticipativity_periods.get(parent)
+                if na is not None:
+                    overrides["non_anticipativity_periods"] = [t for t in na if t[1] in own]
+                timesets: list = []
+                for p in periods:
+                    for entry in parent_timesets:
+                        if entry[0] == p and entry not in timesets:
+                            timesets.append(entry)
+                overrides["timesets_used_by_solves"] = timesets
+                self.derive_solve(parent, new, overrides=overrides)
+                self.map2d_duplicate_of[new] = (parent, str(outer))
+                for par in by_par:
+                    self.map2d_period_parents[par].add(parent)
+                new_names.append(new)
+            # The split solves replace their solve in its place in model.solves (the later solves run after them).
+            for model, solves in list(self.model_solve.items()):
+                if parent in solves:
+                    at = solves.index(parent)
+                    self.model_solve[model] = solves[:at] + new_names + solves[at + 1:]
+
+    def _check_split_realized_periods(self) -> None:
+        """Raise when two split solves of one solve realize the same period (``realized_periods`` /
+        ``realized_invest_periods``): the later one's results would overwrite the earlier ones (decision D3).  Run
+        after :meth:`_check_realized_invest_periods`, whose messages are more specific."""
+        by_parent: dict[str, list[str]] = {}
+        for new, (parent, _outer) in self.map2d_duplicate_of.items():
+            by_parent.setdefault(parent, []).append(new)
+        for parent, new_names in by_parent.items():
+            for field_name in ("realized_periods", "realized_invest_periods"):
+                realized = {new: list(dict.fromkeys(str(t[1]) for t in getattr(self, field_name).get(new, [])))
+                            for new in new_names}
+                seen: dict[str, str] = {}
+                for new in new_names:
+                    for period in realized[new]:
+                        if period in seen:
+                            raise FlexToolConfigError(
+                                self._split_overlap_message(parent, field_name, seen[period], new, period, realized))
+                        seen[period] = new
+
+    def _split_overlap_message(self, parent: str, field_name: str, first: str, second: str, period: str,
+                               realized: dict[str, list[str]]) -> str:
+        """The D3 error: what overlaps, where it comes from, and the values that would run."""
+        row = {new: self.map2d_duplicate_of[new][1] for new in realized}
+        head = (f"solve '{parent}': the split solves '{first}' and '{second}' both realize period '{period}' "
+                f"({field_name}), and each period can be realized by one solve only.")
+        if parent in self.map2d_period_parents.get(field_name, set()):
+            return (f"{head} {field_name} is a 2-D map whose rows '{row[first]}' and '{row[second]}' both list "
+                    f"'{period}': remove '{period}' from one of the two rows.")
+        # A 1-D list: each split solve realizes the periods of the list that it has.  Suggest the 2-D map that gives
+        # each period to the last split solve that has it (the one that looks least far ahead).
+        last: dict[str, str] = {}
+        for new, periods in realized.items():
+            for p in periods:
+                last[p] = new
+        rows = {row[new]: [p for p, owner in last.items() if owner == new] for new in realized}
+        listed = "; ".join(f"'{new}' realizes {', '.join(periods)}" for new, periods in realized.items())
+        suggestion = "{" + ", ".join(f"{r}: [{', '.join(ps)}]" for r, ps in rows.items() if ps) + "}"
+        return (f"{head} {field_name} of '{parent}' is a 1-D list, and each split solve realizes the periods of the "
+                f"list that its row of the 2-D maps has ({listed}). Make {field_name} a 2-D map with the same "
+                f"first column and each period in one row only, for example {suggestion}.")
+
+    def copy_reader_values(self, copy_name: str) -> dict[str, Any]:
+        """The ``solve`` parameter values a solve of a 2-D period map (*copy_name*) has instead of its database
+        solve's, as parsed Spine values for ``SpineDbReader.register_derived_solve(replace=...)`` (``None`` = no
+        value): the period lists as arrays, ``period_timeset`` and ``years_represented`` (its own periods only;
+        the run start of a later solve is its own first period, as before) as maps with the index name
+        ``period``.  Every other parameter is its database solve's."""
+        def as_array(tuples: "list | None") -> "api.Array | None":
+            return api.Array([str(t[1]) for t in tuples], value_type=str) if tuples else None
+
+        out: dict[str, Any] = {par: as_array(getattr(self, field_name).get(copy_name))
+                               for par, field_name in SPLIT_PERIOD_PARAMS.items()}
+        out["shared_invest_periods"] = as_array(self.non_anticipativity_invest_periods.get(copy_name))
+        na = self.non_anticipativity_periods.get(copy_name)
+        out["shared_operation_periods"] = (None if na is None
+                                           else api.Array([str(t[1]) for t in na], value_type=str))
+        timesets = self.timesets_used_by_solves.get(copy_name, [])
+        out["period_timeset"] = (api.Map([str(p) for p, _ in timesets], [str(ts) for _, ts in timesets],
+                                         index_name="period") if timesets else None)
+        own = {str(p) for p, _ in timesets}
+        years = [(str(p), float(y)) for p, y in self.solve_period_years_represented.get(copy_name, [])
+                 if str(p) in own]
+        out["years_represented"] = (api.Map([p for p, _ in years], [y for _, y in years], index_name="period")
+                                    if years else None)
+        return out
 
     def spawn_realized_dispatch_sibling(
         self, parent: str, sibling: str,
     ) -> None:
         """W4b — positionally insert *sibling* right after *parent* in
-        ``model_solve`` and populate the per-solve config dicts that make
-        it a deterministic, fixed-capacity, monolithic dispatch over the
-        parent's REALIZED window.
+        ``model_solve`` and make it the deterministic, fixed-capacity,
+        monolithic dispatch over the parent's REALIZED window
+        (:meth:`derive_realization_solve`).
 
         The sibling is the engine-automatic counterpart of W8.1's
         author-declared ``*_realized_dispatch`` solve: it consumes the
         parent's committed capacity through the normal invest→dispatch
         handoff (hence the insert IMMEDIATELY after the parent, not an
         append) and last-wins hands it the realized window it then owns.
-
-        COPY from the parent (timeline / period scaffolding):
-        ``timesets_used_by_solves``, ``solve_period_years_represented``,
-        ``periods_available``, ``delay_durations``, ``hole_multipliers``,
-        ``rolling_times`` (empty for a single_solve).
-
-        SET: ``solve_modes[sibling] = "single_solve"`` and
-        ``realized_periods[sibling] = realized_periods[parent]`` (the
-        realized window the sibling OWNS after last-wins).
-
-        DROP (no key created — the ``defaultdict(list)`` / plain-dict
-        defaults then make the sibling investment-free, deterministic and
-        monolithic): ``invest_periods``, ``realized_invest_periods``,
-        ``fix_storage_periods``, ``stochastic_branches``,
-        ``non_anticipativity_periods``,
-        ``non_anticipativity_invest_periods``, ``decomposition``,
-        ``benders_max_iter`` / ``benders_tolerance`` /
-        ``benders_in_out_weight``, ``stochastic_invest_method``,
-        ``contains_solves``, and ``dispatch_realization_method`` (absent →
-        :meth:`dispatch_realization_method_for` yields ``within_solve`` →
-        the run()-site guard no-ops → no re-spawn).
-
-        The solver settings (:meth:`copy_solver_settings`) are copied here
-        and, by ``_orchestration._spawn_realized_dispatch_siblings``, into
-        the SEPARATE cascade ``state.solve`` the ``run()`` closure of
-        ``_orchestration._drive_cascade`` reads them from: the sibling runs
-        on its parent's solver.
-
-        NOT copied — ``scaling`` / ``use_row_scaling`` /
-        ``scale_the_objective``: the ``run()`` closure resolves those from
-        the cascade ``state.solve`` (NOT this ``runner.state.solve``, which
-        is the config this method mutates), so copies here would be dead.
-        The sibling therefore runs under the DEFAULT scaling /
-        decomposition config — correct for a monolithic deterministic
-        dispatch.
 
         Note on multi-period storage: dropping ``fix_storage_periods`` is
         correct even when the realized window spans MULTIPLE periods.
@@ -1086,97 +1352,46 @@ class SolveConfig:
         trajectory over its realized periods is a correct free
         deterministic optimisation, not a re-floated gap.
         """
-        # ►► DUAL-DEFINITION INVARIANT (fracture guard): the dicts copied/set
-        # below are the DERIVED-dict half of the sibling config; the RAW Spine
-        # half is ``SpineDbReader._REALIZED_DISPATCH_SIBLING_PARAMS``.  The four
-        # DEFINING facts must agree across both halves (period_timeset↔
-        # timesets_used_by_solves, years_represented↔solve_period_years_represented,
-        # solve_mode↔solve_modes, realized_periods↔realized_periods).  Feature map:
-        # ``_orchestration._spawn_realized_dispatch_siblings``; alignment pinned by
-        # ``tests/engine/test_realized_dispatch_coherence.py``.
+        # ►► The reader half of the sibling config is ``SpineDbReader.REALIZATION_SOLVE_DROPPED_PARAMS``
+        # (feature map: ``_orchestration._spawn_realized_dispatch_siblings``; pinned by
+        # ``tests/engine/test_realized_dispatch_coherence.py``).
         # Positional insert right after the parent (NOT append + remove).
         for _model, solves in self.model_solve.items():
             if parent in solves and sibling not in solves:
                 solves.insert(solves.index(parent) + 1, sibling)
-        # COPY the timeline / period scaffolding.
-        for dict_name in (
-            "timesets_used_by_solves",
-            "solve_period_years_represented",
-            "periods_available",
-            "delay_durations",
-            "hole_multipliers",
-            "rolling_times",
-        ):
-            d = getattr(self, dict_name, None)
-            if d is not None and parent in d:
-                d[sibling] = copy.deepcopy(d[parent])
-        # SET the two defining knobs.  The sibling MIRRORS the parent's
-        # solve_mode: a single_solve parent → single_solve monolithic
-        # dispatch; a rolling_window parent → a rolling dispatch whose rolls
-        # interleave with the parent's (OC1 rolling separate_dispatch).  The
-        # ``rolling_times`` were already deep-copied from the parent above, so
-        # the rolling sibling tiles the SAME roll boundaries as the parent.
-        _parent_mode = self.solve_modes.get(parent, "single_solve")
-        self.solve_modes[sibling] = (
-            "rolling_window" if _parent_mode == "rolling_window"
-            else "single_solve"
-        )
-        # A rolling sibling needs a roll_counter entry (make_roll_counter ran
-        # at config load, BEFORE this config-time spawn, so it is absent).
-        if self.solve_modes[sibling] == "rolling_window":
-            if getattr(self, "roll_counter", None) is None:
-                self.roll_counter = self.make_roll_counter()
-            self.roll_counter.setdefault(sibling, 0)
-        self.realized_periods[sibling] = copy.deepcopy(
-            self.realized_periods.get(parent, [])
-        )
+        SolveConfig.derive_realization_solve(self, parent, sibling)
         # W4c — record the explicit sibling -> parent mapping so the
         # native-run post-pass can project each stochastic parameter onto
         # the parent's realized branch (see ``_run_model`` step 3.6).
         # Using this map (not a ``__realized_dispatch`` name-parse) keeps
         # the sibling identification robust.
         self.realized_dispatch_parent[sibling] = parent
-        self.copy_solver_settings(parent, sibling)
-
-    def copy_solver_settings(self, parent: str, new: str) -> None:
-        """Give the solve *new* the solver of *parent* with all of its settings: ``solver_configs`` (the solver,
-        its ``solver_arguments``, ``solver_mip_gap``) and ``solver_settings.solvers`` / ``.arguments`` (the
-        names the run's upfront checks read).  This computer's wrapper and option files follow the solver name.
-        ``solver_settings.precommand`` is not copied: it is never run, only named once per database solve."""
-        # ``getattr``: like the scaffolding copy of :meth:`spawn_realized_dispatch_sibling`, a partly built config
-        # (a test's) may lack some of these.
-        solver_settings = getattr(self, "solver_settings", None)
-        for settings in (
-            getattr(self, "solver_configs", None),
-            getattr(solver_settings, "solvers", None),
-            getattr(solver_settings, "arguments", None),
-        ):
-            if settings is not None and parent in settings:
-                settings[new] = settings[parent]
-
-    def solves_in_run(self) -> list[str]:
-        """The solves the run runs, in order: ``model.solves`` and, recursively, the ``contains_solves`` of each
-        (2-D period maps already split into ``<solve>_<period>``).  The realization solves FlexTool adds later
-        take their parent's solver settings."""
-        found: list[str] = []
-
-        def visit(solve: str) -> None:
-            if solve in found:
-                return
-            found.append(solve)
-            children = self.contains_solves.get(solve) or []
-            for child in [children] if isinstance(children, str) else children:
-                visit(child)
-
-        for solves in self.model_solve.values():
-            for solve in solves:
-                visit(solve)
-        return found
 
     def database_solve_names(self) -> dict[str, str]:
         """Solve -> the database solve it was made from by a 2-D period map (``<solve>_<period>`` -> ``<solve>``),
         for messages that should name what the user wrote."""
         return {solve: parent for solve, (parent, _outer) in self.map2d_duplicate_of.items()}
+
+    def derive_realization_solve(self, parent: str, sibling: str) -> None:
+        """Give the realization solve *sibling* of *parent* its per-solve settings (:meth:`derive_solve`): every
+        field of the parent except :data:`REALIZATION_SOLVE_DROPS`, with ``solve_modes`` set to the parent's mode
+        (``rolling_window`` or ``single_solve``) and ``realized_periods`` to the parent's realized window.
+
+        Applied to the driving ``runner.state.solve`` (:meth:`spawn_realized_dispatch_sibling`) and to the outer
+        cascade ``state.solve``, where the ``run()`` closure reads each solve's solver and scaling
+        (``_orchestration._spawn_realized_dispatch_siblings``): the sibling runs on its parent's solver,
+        ``solver_arguments``, ``solver_mip_gap`` and ``scaling``."""
+        parent_mode = self.solve_modes.get(parent, "single_solve")
+        mode = "rolling_window" if parent_mode == "rolling_window" else "single_solve"
+        overrides: dict[str, Any] = {
+            "solve_modes": mode,
+            "realized_periods": copy.deepcopy(self.realized_periods.get(parent, [])),
+        }
+        # A rolling sibling needs a roll_counter entry (make_roll_counter ran at config load).
+        roll_counter = getattr(self, "roll_counter", None)
+        if mode == "rolling_window" and roll_counter is not None:
+            overrides["roll_counter"] = roll_counter.get(parent, 0)
+        SolveConfig.derive_solve(self, parent, sibling, overrides=overrides, drops=REALIZATION_SOLVE_DROPS)
 
     def solver_config_for(self, solve_name: str) -> SolverConfig:
         """The solver configuration *solve_name* runs with (HiGHS defaults when the solve sets none).
@@ -1361,18 +1576,15 @@ class SolveConfig:
         db: "DatabaseMapping",
         cl: str,
         par: str,
+        *,
+        split: bool = False,
     ) -> defaultdict:
-        """Read period-shaped solve parameters as ``[(p_from, p_in), …]``.
+        """Read a period-list solve parameter as ``{solve: [(p, p), ...]}`` (an Array of periods, in order).
 
-        For 1D Array values (e.g. ``realized_periods=["p2020","p2025"]``)
-        each element ``p`` becomes ``(p, p)``.
-
-        For 2D Map values (e.g. ``invest_periods`` under the
-        ``invest_twoYears4Times_5weeks`` scenario where one solve ladders
-        an "invest in p2020 covers p2020+p2025" pattern) the outer Map
-        triggers :meth:`duplicate_solve` and per-(outer, inner) tuples
-        flow into the new solve's entry.  Inner shape is required to be
-        Map-of-scalars; mixed 1D/2D with the same name raises.
+        With *split* (the :data:`SPLIT_PERIOD_PARAMS`), a 2-D map ``{outer: {period: ...}}`` is recorded in
+        ``_split_records`` (``{outer: [period, ...]}``; the inner values do not matter) for
+        :meth:`_split_2d_period_maps`, which runs after every parameter is read; the database solve gets no
+        entry of its own.  Without it a map is refused.
         """
         entities = db.find_entities(entity_class_name=cl)
         params = db.find_parameter_values(
@@ -1385,74 +1597,24 @@ class SolveConfig:
                 if param["entity_name"] != entity["name"]:
                     continue
                 param_value = api.from_database(param["value"], param["type"])
-                for i, row in enumerate(param_value.values):
-                    if isinstance(param_value.values[i], api.Map):
-                        # 2D Map: outer index → inner Map of (p, "yes")-ish.
-                        for j, _row2 in enumerate(row.values):
-                            if isinstance(param_value.values[j], api.Map):
-                                new_name = (
-                                    param["entity_name"]
-                                    + "_"
-                                    + param_value.indexes[i]
-                                )
-                                self.duplicate_solve(
-                                    param["entity_name"], new_name
-                                )
-                                self.map2d_period_parents[par].add(
-                                    param["entity_name"]
-                                )
-                                self.map2d_duplicate_of[new_name] = (
-                                    param["entity_name"],
-                                    str(param_value.indexes[i]),
-                                )
-                                result_dict[new_name].append(
-                                    (
-                                        param_value.indexes[i],
-                                        param_value.values[i].indexes[j],
-                                    )
-                                )
-                                # Re-shape ``timesets_used_by_solves`` for
-                                # the duplicated solve: keep only entries
-                                # whose period matches the inner index.
-                                new_period_timeset_list = []
-                                for solve, period__timeset_list in list(
-                                    self.timesets_used_by_solves.items()
-                                ):
-                                    if solve != param["entity_name"]:
-                                        continue
-                                    for period__timeset in period__timeset_list:
-                                        if (
-                                            period__timeset[0]
-                                            == param_value.values[i].indexes[j]
-                                        ):
-                                            new_period_timeset_list.append(
-                                                period__timeset
-                                            )
-                                if (
-                                    new_name
-                                    not in self.timesets_used_by_solves.keys()
-                                ):
-                                    self.timesets_used_by_solves[new_name] = (
-                                        new_period_timeset_list
-                                    )
-                                else:
-                                    for item in new_period_timeset_list:
-                                        if (
-                                            item
-                                            not in self.timesets_used_by_solves[
-                                                new_name
-                                            ]
-                                        ):
-                                            self.timesets_used_by_solves[
-                                                new_name
-                                            ].append(item)
-                            else:
-                                raise FlexToolConfigError(
-                                    "periods_to_tuple function handles only "
-                                    f"arrays or 2d maps: {entity}, {param}"
-                                )
-                    else:
+                if not isinstance(param_value, api.Map):
+                    for row in param_value.values:
                         result_dict[param["entity_name"]].append((row, row))
+                    continue
+                if not split:
+                    raise FlexToolConfigError(
+                        f"solve '{param['entity_name']}': {par} is a map; it takes an array of periods."
+                    )
+                entries: dict = {}
+                for outer, inner in zip(param_value.indexes, param_value.values):
+                    if not isinstance(inner, api.Map):
+                        raise FlexToolConfigError(
+                            f"solve '{param['entity_name']}': {par} mixes a 2-D map with plain values (entry "
+                            f"'{outer}'). It takes an array of periods, or a 2-D map whose first column names "
+                            "the solve and whose second column lists its periods."
+                        )
+                    entries[outer] = list(inner.indexes)
+                self._split_records.setdefault(param["entity_name"], {})[par] = entries
         return result_dict
 
     def non_anticipativity_periods_to_tristate(
@@ -1475,17 +1637,10 @@ class SolveConfig:
 
         The tuple shape ``[(p, p), ...]`` matches
         :meth:`periods_to_tuples` so the emit site can treat both readers
-        the same.  Only real ``solve`` entities are enumerated here.
-        Solve-time duplicated sub-solves (rolling / laddered dispatch,
-        created after config load) inherit their value via
-        ``duplicate_solve``'s ``dup_map_list`` (which lists this dict).
-        Note: solves fanned at *config-load* time from a 2D-Map
-        ``period_timeset`` / ``invest_periods`` do NOT inherit an explicit
-        window here — this reader runs after those fans and enumerates only
-        the original solve entities, so such children resolve to the legacy
-        default (consistent with the sibling period dicts, which also do not
-        propagate to config-load-fanned children). Explicit windows on
-        2D-Map-laddered solves are therefore not supported in v1.
+        the same.  Only real ``solve`` entities are enumerated here; a solve
+        made from another one gets its value through :meth:`derive_solve`
+        (the solves of a 2-D period map: the periods they have, an unset
+        value staying unset and an empty list empty).
 
         A malformed value that is not an Array (e.g. a stray scalar) is
         treated as unset (legacy window), never as the behaviour-changing
@@ -1517,6 +1672,29 @@ class SolveConfig:
         return result
 
 
+def register_solve_copies(solve_cfg, db_reader) -> None:
+    """Register the solves of every 2-D period map (``SolveConfig.map2d_duplicate_of``) as ``solve`` entities of
+    *db_reader*, so the reader-side lookups by the active solve's name find them like a solve written by hand.
+
+    Each gets every ``solve`` parameter value of its database solve, with its own period lists, timesets and
+    ``years_represented`` instead (``SolveConfig.copy_reader_values``: arrays of periods, maps with the index
+    name ``period``); the 2-D rows of every solve are removed from the reader (a split solve does not run, nor does
+    a solve outside the run, and the maps would sit next to the period arrays of other solves in one frame).  A no-op without 2-D period maps."""
+    copies = getattr(solve_cfg, "map2d_duplicate_of", None) or {}
+    split_params: dict[str, set] = {}
+    for copy_name, (parent, _outer) in copies.items():
+        db_reader.register_derived_solve(parent, copy_name, replace=solve_cfg.copy_reader_values(copy_name))
+        split_params.setdefault(parent, set())
+    for par, parents in getattr(solve_cfg, "map2d_period_parents", {}).items():
+        for parent in parents:
+            split_params.setdefault(parent, set()).add(par)
+    # A 2-D map on a solve the model does not run is not split; its rows go too (no solve of the run reads them).
+    for parent, by_par in getattr(solve_cfg, "_split_records", {}).items():
+        split_params.setdefault(parent, set()).update(by_par)
+    for parent, params in split_params.items():
+        db_reader.remove_solve_values(parent, sorted(params))
+
+
 __all__ = [
     "DictMode",
     "HiGHSConfig",
@@ -1525,4 +1703,5 @@ __all__ = [
     "SolveConfig",
     "get_single_entities",
     "params_to_dict",
+    "register_solve_copies",
 ]

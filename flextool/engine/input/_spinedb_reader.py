@@ -369,89 +369,78 @@ class SpineDbReader:
         return f"SpineDbReader(db_url={self._db_url!r}, scenario={self._scenario!r})"
 
     # ------------------------------------------------------------------
-    # W4b — engine-automatic realized-dispatch sibling registration
+    # Solves FlexTool makes from another solve (the realization solve, the solves of a 2-D period map)
 
-    #: Solve-class parameters cloned verbatim from the parent onto a
-    #: registered ``*__realized_dispatch`` sibling.  Deliberately an
-    #: ALLOW-LIST (not copy-all-minus-drop): it carries exactly the four
-    #: parameters that define a deterministic dispatch over the realized
-    #: window — the SAME set an author hand-declares for a dispatch solve
-    #: (cf. W8.1's ``stoch_rd_realized_dispatch``, which authors only
-    #: these four).  ``invest_periods`` / ``realized_invest_periods`` /
-    #: ``stochastic_branches`` / ``fix_storage_periods`` / decomposition /
-    #: benders knobs are intentionally NOT copied so the sibling cannot
-    #: invest, branch, or decompose — it is a pure fixed-capacity dispatch.
+    #: The ``solve`` parameters the engine-automatic realization solve ``<solve>__realized_dispatch`` does NOT take
+    #: from its parent (:func:`_orchestration._spawn_realized_dispatch_siblings`): it is a deterministic,
+    #: fixed-capacity, monolithic dispatch over the parent's realized window, so it cannot invest, branch,
+    #: decompose, contain solves or spawn a realization solve of its own.  Every other parameter row of the parent
+    #: is copied (the realized window ``realized_periods``, the timesets, ``years_represented``, ``solve_mode``,
+    #: ``new_stepduration``, the solver, ``scaling``, ...).
     #:
-    #: ►► DUAL-DEFINITION INVARIANT (fracture guard): these RAW Spine params
-    #: are the reader-side half of the sibling config; the DERIVED-dict half
-    #: lives in ``SolveConfig.spawn_realized_dispatch_sibling`` (the same
-    #: facts in SolveConfig vocabulary — period_timeset↔timesets_used_by_solves,
-    #: years_represented↔solve_period_years_represented, solve_mode↔solve_modes,
-    #: realized_periods↔realized_periods).  Keep the two aligned; the feature
-    #: map lives at ``_orchestration._spawn_realized_dispatch_siblings`` and
-    #: the alignment is pinned by
-    #: ``tests/engine/test_realized_dispatch_coherence.py``.
-    _REALIZED_DISPATCH_SIBLING_PARAMS = (
-        "period_timeset",
-        "realized_periods",
-        "years_represented",
-        "solve_mode",
-        # The sibling runs on the parent's timesets, so it must also run at the
-        # parent's solve-level step (TimelineConfig.new_step_durations half:
-        # ``_orchestration._spawn_realized_dispatch_siblings``).
-        "new_stepduration",
+    #: The SolveConfig half of the same rule is ``_solve_config.REALIZATION_SOLVE_DROPS`` (in SolveConfig field
+    #: names); the two are pinned against each other by ``tests/engine/test_realized_dispatch_coherence.py``.
+    REALIZATION_SOLVE_DROPPED_PARAMS: tuple[str, ...] = (
+        "invest_periods",
+        "realized_invest_periods",
+        "fix_storage_periods",
+        "stochastic_branches",
+        "stochastic_invest_method",
+        "shared_operation_periods",
+        "shared_invest_periods",
+        "decomposition",
+        "benders_max_iter",
+        "benders_tolerance",
+        "benders_in_out_weight",
+        "contains_solves",
+        "dispatch_realization_method",
+        # Never run (item 236); SolveConfig does not copy it either.
+        "solver_precommand",
     )
 
     def register_derived_solve(
-        self, parent_name: str, sibling_name: str,
+        self,
+        parent_name: str,
+        new_name: str,
+        *,
+        drop: Iterable[str] = (),
+        replace: "dict[str, Any] | None" = None,
     ) -> None:
-        """In-memory register a derived ``solve`` entity *sibling_name*
-        cloned from *parent_name* so the per-solve override chain treats
-        it as a REAL Spine solve (:func:`_solve_in_spine` → ``True``), not
-        a synthetic ``<base>_<anchor>`` sub-solve.
+        """Register *new_name* as a ``solve`` entity whose parameter values are those of *parent_name*.
 
-        Taking the full override path is what keeps the sibling's LP
-        complete: the synthetic fallback returns ``None`` for every
-        solve-keyed helper, so entity-level structure the realized
-        dispatch must carry (reserves, storage binding, …) would be
-        silently dropped.
+        A solve FlexTool makes from another one (the realization solve, a solve of a 2-D period map) must be a
+        real solve for the per-solve override chain (:func:`_solve_in_spine` -> ``True``): the reader-side
+        lookups filter by the active solve's name, and a name that is not a ``solve`` entity reads nothing (the
+        synthetic ``<base>_<anchor>`` fallback covers only the period lists).
 
-        Mechanism — the THREE caches every ``solve`` consumer of this
-        reader touches:
-
-        * ``_entities_by_class[solve_cls]`` — append ``(new_eid,
-          sibling_name, None)`` so :meth:`entities` (``"solve"``) lists
-          it;
-        * ``_entity_by_id[new_eid]`` — map the FRESH id back to
-          ``(solve_cls, sibling_name)`` so value-join / unroll paths
-          resolve the sibling's OWN name.  (Reusing the parent eid for
-          the sibling's rows would map them back to the parent name, so
-          ``_solve_periods(sibling)`` reads empty and the loader silently
-          reverts to the synthetic path — critique fix #1.)
-        * ``_param_rows[(solve_cls, pdef_id)]`` — for each parameter in
-          :data:`_REALIZED_DISPATCH_SIBLING_PARAMS`, append ``(new_eid,
-          <deepcopy of the parent's parsed value>)`` keyed on the FRESH
-          id.
-
-        A fresh deterministic id (``max(_entity_by_id) + 1``) is minted.
-        Idempotent: a second call for an already-registered sibling is a
-        no-op.  Raises :class:`FlexToolConfigError` when the ``solve``
-        class or *parent_name* is absent.
-
-        There is no entity-by-name map or ``model__solve`` relationship
-        cache in this reader (verified: the only ``solve`` consumers are
-        :meth:`entities` via ``_solve_in_spine`` / the synthetic resolver,
-        plus the ``_param_rows`` reads), so these three caches suffice.
+        Every ``solve`` parameter row of the parent is deep-copied under a fresh entity id, except the
+        parameters in *drop* (no row) and in *replace* (``{parameter: parsed value}``; ``None`` = no row).
+        The caches touched: ``_entities_by_class[solve_cls]`` (so :meth:`entities` lists it),
+        ``_entity_by_id`` (the fresh id maps back to *new_name*, so value-join / unroll paths name it) and
+        ``_param_rows``.  Idempotent: a second call for a registered name is a no-op.  Raises
+        :class:`FlexToolConfigError` when the ``solve`` class, *parent_name* or a parameter of *drop* /
+        *replace* is absent.
         """
         solve_cls = self._class_name_to_id.get("solve")
         if solve_cls is None:
             raise FlexToolConfigError(
                 "register_derived_solve: no 'solve' entity class in the DB."
             )
+        replace = dict(replace or {})
+        drop = set(drop)
+        pdef_ids: dict[str, int] = {}
+        for (cls_id, name), pdef in self._pdef_by_class_name.items():
+            if cls_id == solve_cls:
+                pdef_ids[name] = pdef["id"]
+        unknown = sorted((drop | set(replace)) - set(pdef_ids))
+        if unknown:
+            raise FlexToolConfigError(
+                f"register_derived_solve: no 'solve' parameter {unknown} in the DB."
+            )
         ents = self._entities_by_class.get(solve_cls, [])
         parent_eid: int | None = None
         for eid, name, _elems in ents:
-            if name == sibling_name:
+            if name == new_name:
                 return  # already registered — idempotent no-op
             if name == parent_name:
                 parent_eid = eid
@@ -462,25 +451,41 @@ class SpineDbReader:
             )
         # Fresh, deterministic entity id (never collides with an existing).
         new_eid = max(self._entity_by_id) + 1
-        self._entities_by_class[solve_cls].append(
-            (new_eid, sibling_name, None)
-        )
-        self._entity_by_id[new_eid] = (solve_cls, sibling_name)
-        # Clone the dispatch-defining parameter rows under the FRESH id.
-        for pname in self._REALIZED_DISPATCH_SIBLING_PARAMS:
+        self._entities_by_class[solve_cls].append((new_eid, new_name, None))
+        self._entity_by_id[new_eid] = (solve_cls, new_name)
+        for pname, pdef_id in pdef_ids.items():
+            if pname in drop:
+                continue
+            key = (solve_cls, pdef_id)
+            if pname in replace:
+                if replace[pname] is not None:
+                    self._param_rows.setdefault(key, []).append((new_eid, replace[pname]))
+                continue
+            for eid, val in self._param_rows.get(key, []):
+                if eid == parent_eid:
+                    self._param_rows[key].append((new_eid, copy.deepcopy(val)))
+                    break
+
+    def remove_solve_values(self, solve_name: str, parameters: Iterable[str]) -> None:
+        """Remove the values of *parameters* of the ``solve`` entity *solve_name* from the reader.
+
+        Used for a solve whose 2-D period maps FlexTool has split into solves of their own: the solve itself
+        does not run, and its 2-D rows would put a map next to the split solves' period arrays in one
+        parameter frame."""
+        solve_cls = self._class_name_to_id.get("solve")
+        if solve_cls is None:
+            return
+        eids = {eid for eid, name, _elems in self._entities_by_class.get(solve_cls, []) if name == solve_name}
+        for pname in parameters:
             pdef = self._pdef_by_class_name.get((solve_cls, pname))
             if pdef is None:
                 continue
             key = (solve_cls, pdef["id"])
-            rows = self._param_rows.get(key)
-            if not rows:
-                continue
-            for eid, val in rows:
-                if eid == parent_eid:
-                    self._param_rows[key].append(
-                        (new_eid, copy.deepcopy(val))
-                    )
-                    break
+            rows = [r for r in self._param_rows.get(key, []) if r[0] not in eids]
+            if rows:
+                self._param_rows[key] = rows
+            else:
+                self._param_rows.pop(key, None)
 
     # ------------------------------------------------------------------
     # Entity columns: ``[name]`` for 0-dim classes; one column per dim

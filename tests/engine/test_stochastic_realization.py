@@ -240,7 +240,7 @@ class _Reader:
     def entities(self, _cls):
         return pl.DataFrame({"name": ["p"]})
 
-    def register_derived_solve(self, parent, sibling):
+    def register_derived_solve(self, parent, sibling, **_kw):
         self.registered.append((parent, sibling))
 
 

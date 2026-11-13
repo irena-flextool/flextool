@@ -1,4 +1,4 @@
-"""Unit tests for SolveConfig — solve duplication and period mapping."""
+"""Unit tests for SolveConfig — solves made from another solve, and period mapping."""
 from __future__ import annotations
 
 import logging
@@ -11,7 +11,7 @@ from flextool.engine.input._solve_config import SolverSettings, SolveConfig
 
 @dataclass
 class _HiGHS:
-    """Minimal stand-in matching the fields duplicate_solve accesses."""
+    """Minimal stand-in matching the fields derive_solve accesses."""
     presolve: dict
     method: dict
     parallel: dict
@@ -38,8 +38,8 @@ def _make_solve_config(**overrides) -> SolveConfig:
     return SolveConfig(**defaults)
 
 
-class TestDuplicateSolve:
-    """duplicate_solve must propagate period maps to the new name."""
+class TestDeriveSolve:
+    """derive_solve (a solve made from another one) copies the per-solve fields to the new name."""
 
     def test_realized_periods_propagated(self) -> None:
         """When a solve is duplicated, realized_periods must have the new key."""
@@ -48,7 +48,7 @@ class TestDuplicateSolve:
             "dispatch": [("p2020", "p2020")],
         })
 
-        sc.duplicate_solve("dispatch", "dispatch_p2020")
+        sc.derive_solve("dispatch", "dispatch_p2020")
 
         assert "dispatch_p2020" in sc.realized_periods
         assert sc.realized_periods["dispatch_p2020"] == [("p2020", "p2020")]
@@ -61,7 +61,7 @@ class TestDuplicateSolve:
             "invest": [("p2020", "p2020")],
         })
 
-        sc.duplicate_solve("invest", "invest_p2020")
+        sc.derive_solve("invest", "invest_p2020")
 
         assert "invest_p2020" in sc.realized_invest_periods
         assert sc.realized_invest_periods["invest_p2020"] == [("p2020", "p2020")]
@@ -72,7 +72,7 @@ class TestDuplicateSolve:
             "invest": [("p2020", "p2020"), ("p2030", "p2030")],
         })
 
-        sc.duplicate_solve("invest", "invest_p2020")
+        sc.derive_solve("invest", "invest_p2020")
 
         assert "invest_p2020" in sc.invest_periods
         assert len(sc.invest_periods["invest_p2020"]) == 2
@@ -83,7 +83,7 @@ class TestDuplicateSolve:
             "dispatch": [("p2020", "p2020")],
         })
 
-        sc.duplicate_solve("dispatch", "dispatch_p2020")
+        sc.derive_solve("dispatch", "dispatch_p2020")
 
         assert "dispatch_p2020" in sc.fix_storage_periods
 
@@ -91,25 +91,25 @@ class TestDuplicateSolve:
         """Sanity check: solve_modes (already in dup_map_list) still works."""
         sc = _make_solve_config()
 
-        sc.duplicate_solve("dispatch", "dispatch_p2020")
+        sc.derive_solve("dispatch", "dispatch_p2020")
 
         assert sc.solve_modes.get("dispatch_p2020") == "single_solve"
 
     def test_empty_periods_no_error(self) -> None:
-        """duplicate_solve should not fail if period maps have no entry for the solve."""
+        """derive_solve does not fail when the period maps have no entry for the solve."""
         sc = _make_solve_config()
         # realized_periods is empty — no entry for "dispatch"
 
-        sc.duplicate_solve("dispatch", "dispatch_p2020")
+        sc.derive_solve("dispatch", "dispatch_p2020")
 
         # Should just not add anything, no error
         assert "dispatch_p2020" not in sc.realized_periods
 
     def test_scaling_propagated(self) -> None:
-        """duplicate_solve carries the per-solve ``scaling`` mode over."""
+        """derive_solve carries the per-solve ``scaling`` mode over."""
         sc = _make_solve_config(scaling={"dispatch": "basic"})
 
-        sc.duplicate_solve("dispatch", "dispatch_p2020")
+        sc.derive_solve("dispatch", "dispatch_p2020")
 
         assert sc.scaling.get("dispatch_p2020") == "basic"
 
