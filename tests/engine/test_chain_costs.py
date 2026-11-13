@@ -15,7 +15,8 @@ start of operation c(d)::
     lump_invest[d] = A · Σ_{d' ≥ c(d)} F_inv(d')        lump_fixed[d] = 100 · 1000 · Σ_{d' ≥ c(d)} F_ops(d')
 
 The chain ``invest_solveSequence_5weeks`` (y2020 … y2035: each solve holds its own period and the next one) gets
-these values in every solve, while each solve's own factors restart at its first period.
+these values in every solve, and each solve's own factors (the objective's) are those of its periods: every solve
+discounts from the start of the run (item 242).
 """
 from __future__ import annotations
 
@@ -82,16 +83,16 @@ def _assert_run_factors(fd) -> None:
 def test_chain_reports_from_the_start_of_the_run(tmp_path_factory) -> None:
     """Every solve of the chain gets the factors of all four run periods from the start of the run, and the
     lumps of its decisions over the operating window up to the end of the run (p2035), not only over its own two
-    periods; the solve's own factors (the objective's) are unchanged and restart at its first period."""
+    periods; the solve's own factors (the objective's) are the run factors of its periods: every solve discounts
+    from the start of the run (item 242; before, they restarted at the solve's first period)."""
     steps = _steps(tmp_path_factory, "chain_run_fields", [], CHAIN)
     assert list(steps) == ["y2020_5week", "y2025_5week", "y2030_5week", "y2035_5week"]
     for k, (name, step) in enumerate(steps.items()):
         fd = step.flex_data
         own = PERIODS[k:k + 2]
         _assert_run_factors(fd)
-        # The objective's factors: discounted from the solve's own first period.
-        assert _d(fd.p_inflation_op) == pytest.approx({d: F_OPS[PERIODS[i]] for i, d in enumerate(own)},
-                                                       rel=1e-12), name
+        # The objective's factors: discounted from the start of the run, as the reported costs.
+        assert _d(fd.p_inflation_op) == pytest.approx({d: F_OPS[d] for d in own}, rel=1e-12), name
         assert _window(fd.edd_operating_window, "d_invest") == {d: _later(d) for d in own}, name
         assert _ed(fd.ed_annuity) == pytest.approx({d: ANNUITY for d in own}, rel=1e-12), name
         assert _ed(fd.ed_entity_annual_discounted_run) == pytest.approx(
@@ -646,10 +647,11 @@ def test_chain_of_realized_fans_reports_from_the_run_start(tmp_path_factory) -> 
     r = 0.1, offsets ops 0.5 / inv 0 (the defaults)::
 
         F_inv(d) = Σ_{y=0,1} 1.1^-(Y_d + y)         F_inv = {p2030: 1.909091, p2040: 1.577761}
-        F_ops(d) = Σ_{y=0,1} 1.1^-(Y_d + y + 0.5)   F_ops = {p2030: 1.820247, p2040: 1.504337}
+        F_ops(d) = Σ_{y=0,1} 1.1^-(Y_d + y + 0.5)   F_ops = {p2030: 1.820247, p2040: 1.504336}
 
     Both investments and operations of s40 are discounted from the start of the run (Y = 2), not from the
-    start of s40.  Wind: annuity A = 1000 · 1000 · 0.05 / (1 − 1.05^−30) = 65 051.44 CUR/MW/yr, fixed cost
+    start of s40, in the reported costs and in s40's own objective (item 242): its p_inflation_op of p2040 is
+    1.1^-2.5 + 1.1^-3.5 = 1.504336.  Wind: annuity A = 1000 · 1000 · 0.05 / (1 − 1.05^−30) = 65 051.44 CUR/MW/yr, fixed cost
     10 000 CUR/MW/yr, reinvest_automatic (operates to the end of the run).  The builds: the low forecast must
     cover the demand of 100 MW (penalty 1e4): 100 / 0.3 = 333.33 MW in p2030, 100 / 0.25 = 400 MW in p2040, so
     66.67 MW more.  Discounted: p2030 333.33 · A · (F_inv(p2030) + F_inv(p2040)), p2040 66.67 · A · F_inv(p2040);
@@ -662,6 +664,9 @@ def test_chain_of_realized_fans_reports_from_the_run_start(tmp_path_factory) -> 
     work = tmp_path_factory.mktemp("realized_fan_chain_w")
     steps = run_chain_from_db(url, scen, work_folder=work, keep_solutions=True)
     assert list(steps) == ["s30", "s30__realized_dispatch", "s40", "s40__realized_dispatch"]
+    s40_ops = _d(steps["s40"].flex_data.p_inflation_op)
+    assert s40_ops["p2040"] == pytest.approx(1.1 ** -2.5 + 1.1 ** -3.5, rel=1e-12)
+    assert s40_ops["p2040"] == pytest.approx(1.504336, rel=1e-6)
     last = next(reversed(list(steps.values())))
     write_outputs(scenario_name=scen, output_location=str(work), subdir=scen, write_methods=["csv"],
                   flex_data=last.flex_data, solution=last.solution, solve_name=last.solve_name,

@@ -31,7 +31,8 @@ independent hand calculations (oracles, from the docs):
   inv_first carried).  Before the fix inv_second lost it and re-invested.
 * ``separate_dispatch_noinvest.json`` (one period) split by a 2-D ``realized_periods``: 6 570 000 EUR and the
   realization solve's 4 380 000 EUR (the hand calculation of ``test_separate_dispatch_noinvest_capacity.py``).
-* model A with ``inflation_rate`` 0.05: see ``test_years_represented_counts_from_the_split_solves_first_period``.
+* model A with ``inflation_rate`` 0.05: see ``test_years_represented_counts_from_the_model_start`` and the tests
+  after it (item 242: every solve discounts from the start of the run).
 """
 from __future__ import annotations
 
@@ -196,25 +197,117 @@ def test_a_solve_contained_in_a_split_solve_gets_the_period_whatever_the_row_nam
     assert named_steps["disp_p2"].obj == pytest.approx(43_800_000.0, rel=1e-9)
 
 
-def test_years_represented_counts_from_the_split_solves_first_period(tmp_path_factory):
-    """Decision D1: a split solve counts ``years_represented`` from its own first period, so with
-    ``inflation_rate`` 0.05 it is the hand-written solve that carries only its own period (with inflation 0 every
-    discount base gives the same LP, so only this case pins the rule).  The coefficients are the independent hand
-    calculation from the docs (``advanced_concepts.md``: investments discounted at the start of each year,
-    operations at mid-year): annuity A = 1000 * 0.05 / (1 - 1.05**-20) = 80.2425872 EUR/MW/a; investment
-    A * sum_{y=0..4} 1.05**-y = 364.778830 EUR/MW in both solves; operations 10 EUR/MWh * 4380 h *
-    sum_{y=0..4} 1.05**-(y + 0.5) = 194 314.032 EUR per MW and step.  Counted from the run start, p2 would get
-    285.813758 EUR/MW."""
-    inflation = [["model", "flextool", "inflation_rate", scm.pack(0.05, "float")]]
-    split, _ = scm.run_spec(scm.model_a("split", model_rows=inflation), tmp_path_factory.mktemp("split"))
-    hand, _ = scm.run_spec(scm.model_a("hand", model_rows=inflation, years_own_periods=True),
-                           tmp_path_factory.mktemp("hand"))
+#: ``inflation_rate`` 0.05 on the model.
+INFLATION = [["model", "flextool", "inflation_rate", scm.pack(0.05, "float")]]
+
+# Hand calculation (``advanced_concepts.md``: every solve discounts from the start of the run, investments at the
+# start of each year, operations at mid-year; 4380 h per step and year; offsets inv 0 / ops 0.5):
+# annuity A = 1000 * 0.05 / (1 - 1.05**-20) = 80.2425872 EUR/MW/a; F_inv(p1) = sum_{y=0..4} 1.05**-y = 4.54595050,
+# F_inv(p2) = sum_{y=5..9} 1.05**-y = 3.56187117; F_ops(p1) = sum_{y=0..4} 1.05**-(y + 0.5) = 4.43639343,
+# F_ops(p2) = sum_{y=5..9} 1.05**-(y + 0.5) = 3.47603034.
+INV_P1 = 364.778830          # A * F_inv(p1)
+INV_P2 = 285.813758          # A * F_inv(p2)
+INV_P1_WINDOW = 650.592588   # A * (F_inv(p1) + F_inv(p2)): a p1 decision of a solve over p1 and p2
+OPS_P1 = 194_314.032         # 10 EUR/MWh * 4380 h * F_ops(p1), per MW and step
+OPS_P2 = 152_250.129         # 10 EUR/MWh * 4380 h * F_ops(p2)
+
+
+def _coefficients(mps, wanted: dict[str, float]) -> None:
+    for column, value in wanted.items():
+        assert scm.objective_coefficient(mps, column) == pytest.approx(value, rel=1e-8), column
+
+
+def _with_inflation(spec: dict) -> dict:
+    spec["parameter_values"] += [[*row, "init"] for row in INFLATION]
+    return spec
+
+
+def test_years_represented_counts_from_the_model_start(tmp_path_factory):
+    """Item 242 (owner: discount investments and operations from the model start, as a single solve does): the
+    split solves, the hand-written solves with only their own period in ``years_represented`` and the
+    hand-written solves with the whole map build the same LPs.  inv_p2 discounts both its investment and its
+    operations from the start of the run: 285.813758 EUR/MW and 152 250.129 EUR per MW and step.  Before, the
+    split and own-map solves gave 364.778830 / 194 314.032 (both from the solve's start) and the whole-map solves
+    285.813758 / 194 314.032 (investments from the run start, operations from the solve's start)."""
+    split, _ = scm.run_spec(scm.model_a("split", model_rows=INFLATION), tmp_path_factory.mktemp("split"))
+    own, _ = scm.run_spec(scm.model_a("hand", model_rows=INFLATION, years_own_periods=True),
+                          tmp_path_factory.mktemp("own"))
+    whole, _ = scm.run_spec(scm.model_a("hand", model_rows=INFLATION), tmp_path_factory.mktemp("whole"))
+    assert not scm.lp_differences(split, own)
+    assert not scm.lp_differences(split, whole)
+    assert [solve for solve, _, _ in split] == ["inv_p1", "inv_p2"]
+    _coefficients(split[0][1], {"v_invest_p[gen,p1]": INV_P1, "v_flow[gen,gen,elec,p1,t01]": OPS_P1})
+    _coefficients(split[1][1], {"v_invest_p[gen,p2]": INV_P2, "v_flow[gen,gen,elec,p2,t03]": OPS_P2})
+
+
+def test_a_look_ahead_split_counts_from_the_model_start(tmp_path_factory):
+    """The look-ahead ladder (inv_p1 over p1 + p2, inv_p2 over p2) with inflation 0.05: inv_p1 starts the run
+    (its p1 decision is paid over p1 and p2: 650.592588 EUR/MW, a p2 decision 285.813758 EUR/MW, operations in p2
+    152 250.129); inv_p2 has the same p2 coefficients.  Before, inv_p2 had 364.778830 / 194 314.032.  The split
+    builds the hand-written LPs."""
+    split, _ = scm.run_spec(_with_inflation(scm.model_a_ladder("split", LOOK_AHEAD)), tmp_path_factory.mktemp("s"))
+    hand, _ = scm.run_spec(_with_inflation(scm.model_a_ladder("hand", LOOK_AHEAD)), tmp_path_factory.mktemp("h"))
     assert not scm.lp_differences(split, hand)
-    for (solve, mps, _offset), (period, step) in zip(split, (("p1", "t01"), ("p2", "t03"))):
-        assert solve == f"inv_{period}"
-        assert scm.objective_coefficient(mps, f"v_invest_p[gen,{period}]") == pytest.approx(364.778830, rel=1e-8)
-        assert scm.objective_coefficient(mps, f"v_flow[gen,gen,elec,{period},{step}]") == pytest.approx(
-            194_314.032, rel=1e-8)
+    assert [solve for solve, _, _ in split] == ["inv_p1", "inv_p2"]
+    _coefficients(split[0][1], {"v_invest_p[gen,p1]": INV_P1_WINDOW, "v_invest_p[gen,p2]": INV_P2,
+                                "v_flow[gen,gen,elec,p1,t01]": OPS_P1, "v_flow[gen,gen,elec,p2,t03]": OPS_P2})
+    _coefficients(split[1][1], {"v_invest_p[gen,p2]": INV_P2, "v_flow[gen,gen,elec,p2,t03]": OPS_P2})
+
+
+def test_a_nested_split_counts_from_the_model_start(tmp_path_factory):
+    """The split ladder containing the dispatch solve ``disp`` (:func:`_nested`), with inflation 0.05: the split
+    solve inv_p2 discounts from the start of the run (285.813758 / 152 250.129; before 364.778830 / 194 314.032).
+    The contained ``disp_p1`` / ``disp_p2`` are sub-solves of ``disp``, which starts the run, so their operations
+    were already discounted from the run start and stay 194 314.032 / 152 250.129."""
+    built, steps = scm.run_spec(_with_inflation(_nested(("p1", "p2"))), tmp_path_factory.mktemp("nested"))
+    assert list(steps) == ["inv_p1", "disp_p1", "inv_p2", "disp_p2"] and len(built) == 4
+    mps = {solve: path for solve, (_, path, _) in zip(steps, built)}  # build order is the solve order
+    _coefficients(mps["inv_p1"], {"v_invest_p[gen,p1]": INV_P1, "v_flow[gen,gen,elec,p1,t01]": OPS_P1})
+    _coefficients(mps["inv_p2"], {"v_invest_p[gen,p2]": INV_P2, "v_flow[gen,gen,elec,p2,t03]": OPS_P2})
+    _coefficients(mps["disp_p1"], {"v_flow[gen,gen,elec,p1,t01]": OPS_P1})
+    _coefficients(mps["disp_p2"], {"v_flow[gen,gen,elec,p2,t03]": OPS_P2})
+
+
+def _invest_then_rolling() -> dict:
+    """Model A: the hand-written inv_p1 (whole ``years_represented`` map), then the rolling dispatch ``roll_p2``
+    over p2 (1 h windows and jumps, its own map {p2: 5}) on the capacity inv_p1 built."""
+    spec = scm.model_a("hand", model_rows=INFLATION)
+    spec["parameter_values"] = [r for r in spec["parameter_values"]
+                                if not (r[0] == "solve" and r[1] == "inv_p2")]
+    spec["entities"] = [e for e in spec["entities"] if e != ["solve", "inv_p2", None]] + [["solve", "roll_p2", None]]
+    for row in spec["parameter_values"]:
+        if (row[0], row[2]) == ("model", "solves"):
+            row[3] = scm.array(["inv_p1", "roll_p2"])
+    spec["parameter_values"] += [
+        ["solve", "roll_p2", "solve_mode", scm.pack("rolling_window", "str"), "init"],
+        ["solve", "roll_p2", "rolling_solve_horizon", scm.pack(1.0, "float"), "init"],
+        ["solve", "roll_p2", "rolling_solve_jump", scm.pack(1.0, "float"), "init"],
+        ["solve", "roll_p2", "period_timeset", scm.pack(scm.pmap([("p2", "ts_b")]), "map"), "init"],
+        ["solve", "roll_p2", "realized_periods", scm.array(["p2"]), "init"],
+        ["solve", "roll_p2", "years_represented", scm.pack(scm.pmap([("p2", 5.0)]), "map"), "init"]]
+    return spec
+
+
+def test_rolls_of_a_later_solve_count_from_the_model_start(tmp_path_factory):
+    """The rolls of a rolling solve that starts after the run start (a synthetic sub-solve each, discounted by
+    the per-solve seeds of ``emit/_period_calc``): every roll of roll_p2 discounts its operations from the start
+    of the run, 152 250.129 EUR per MW and step (before: 194 314.032, from the start of roll_p2)."""
+    built, steps = scm.run_spec(_invest_then_rolling(), tmp_path_factory.mktemp("roll"))
+    rolls = [(solve, path) for solve, path, _ in built if solve != "inv_p1"]
+    assert len(rolls) == 2, [solve for solve, _, _ in built]
+    for (solve, path), step in zip(rolls, ("t03", "t04")):
+        _coefficients(path, {f"v_flow[gen,gen,elec,p2,{step}]": OPS_P2})
+
+
+def test_fractional_years_represented_count_the_fraction(tmp_path_factory):
+    """Item 259: one solve over p1 (2.5 years) and p2 (5 years) with inflation 0.05.  p2 starts 2.5 years after
+    the run start, so (hand calculation, as above) its investment is A * 1.05**-2.5 * F_inv(p1) = 322.891326 EUR/MW
+    and its operations 10 * 4380 * 1.05**-2.5 * F_ops(p1) = 172 000.978 EUR per MW and step.  Before, the half
+    year of p1 counted as a whole year: p2 started at year 3 (315.109668 / 167 855.767)."""
+    built, _ = scm.run_spec(scm.model_a("single", years=(2.5, 5.0), model_rows=INFLATION),
+                            tmp_path_factory.mktemp("frac"))
+    ((solve, mps, _),) = built
+    _coefficients(mps, {"v_invest_p[gen,p2]": 322.891326, "v_flow[gen,gen,elec,p2,t03]": 172_000.978})
 
 
 # ---------------------------------------------------------------------------

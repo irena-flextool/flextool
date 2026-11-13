@@ -6567,6 +6567,54 @@ def _v79_stochastic_storage_paths(db) -> None:
         _v77_set_marker(db, "stochastic_storage_paths_tied", json.dumps({"since": 79, "solves": solves}))
 
 
+#: v79: the solve parameters that split a solve when given as a 2-D map.
+_V79_SPLIT_PERIOD_PARAMETERS = ("invest_periods", "realized_invest_periods", "realized_periods", "fix_storage_periods")
+
+
+def _v79_discount_from_run_start(db) -> None:
+    """Every solve discounts its investments and its operations from the start of the run (part of v79).
+
+    No value is rewritten.  Behaviour-change marker ``chained_solve_discount_from_run_start``
+    (``{"since": 79, "solves": [...]}``) only on a database with an ``inflation_rate`` value other than 0 (with 0
+    every discount base gives the same results) and a solve whose results can change:
+
+    * the solves of a ``model.solves`` list of two or more solves (a later solve starts after the run start),
+    * a solve with ``contains_solves`` (its contained solves run after it, also from a later period),
+    * a solve with a 2-D period map (``invest_periods`` / ``realized_invest_periods`` / ``realized_periods`` /
+      ``fix_storage_periods``: it splits into solves that start later),
+    * a solve with a fractional ``years_represented`` (it counted as a whole year for the later periods).
+
+    The marker is broader than the change: a run whose solves all start at the run start with whole years keeps
+    its results, and the migration does not read which alternatives a scenario combines.  Idempotent: a rerun
+    finds the marker written.
+    """
+    if not (db.get_item("entity_class", name="solve") and db.get_item("entity_class", name="model")):
+        return
+    if not any(v != 0.0 for pv in db.find_parameter_values(entity_class_name="model",
+                                                           parameter_definition_name="inflation_rate")
+               for v in _v79_numbers(from_database(pv["value"], pv["type"]))):
+        return
+    solves: set[str] = set()
+    for pv in db.find_parameter_values(entity_class_name="model", parameter_definition_name="solves"):
+        value = from_database(pv["value"], pv["type"])
+        names = [str(n) for n in getattr(value, "values", [])] if value is not None else []
+        if len(names) >= 2:
+            solves.update(names)
+    for pv in db.find_parameter_values(entity_class_name="solve", parameter_definition_name="contains_solves"):
+        if from_database(pv["value"], pv["type"]) is not None:
+            solves.add(pv["entity_byname"][0])
+    for name in _V79_SPLIT_PERIOD_PARAMETERS:
+        for pv in db.find_parameter_values(entity_class_name="solve", parameter_definition_name=name):
+            value = from_database(pv["value"], pv["type"])
+            if isinstance(value, Map) and any(isinstance(v, Map) for v in value.values):
+                solves.add(pv["entity_byname"][0])
+    for pv in db.find_parameter_values(entity_class_name="solve", parameter_definition_name="years_represented"):
+        if any(v != int(v) for v in _v79_numbers(from_database(pv["value"], pv["type"]))):
+            solves.add(pv["entity_byname"][0])
+    if solves:
+        _v77_set_marker(db, "chained_solve_discount_from_run_start", json.dumps({"since": 79, "solves": sorted(solves)}))
+
+
 def _migrate_v79_schema_batch(db) -> None:
     """All schema changes of database version 79 (v78 -> v79), in one step.
 
@@ -6599,6 +6647,8 @@ def _migrate_v79_schema_batch(db) -> None:
         ``stochastic_storage_paths_tied`` (:func:`_v79_stochastic_storage_paths`).
     14. ``solve.solver_precommand`` is never run: its and the ``solver_arguments`` descriptions
         (:func:`_v79_solver_precommand_descriptions`).
+    15. Every solve discounts from the start of the run: the behaviour-change marker
+        ``chained_solve_discount_from_run_start`` (:func:`_v79_discount_from_run_start`).
 
     No value is rewritten.  Each part is idempotent, so a rerun of the step changes nothing.
     """
@@ -6616,12 +6666,14 @@ def _migrate_v79_schema_batch(db) -> None:
     _v79_rp_stochastic_descriptions(db)
     _v79_stochastic_storage_paths(db)
     _v79_solver_precommand_descriptions(db)
+    _v79_discount_from_run_start(db)
     _commit_step(db, "v79: constraint_online_coeff, ramp_cost, reduce_*_detail_method, time-varying group "
                      "limits, time series combined over a solve's new_stepduration step, capacity margin by "
                      "entity class and share_of_peak, constraint_period_method, discount_rate 0 is 0 %, "
                      "startup_input_method and startup_energy, investment offered without invest_cost, "
                      "node.unit_of_measure, representative periods in stochastic and rolling solves, storage "
-                     "along each stochastic path, solver_precommand not run")
+                     "along each stochastic path, solver_precommand not run, every solve discounted from the run "
+                     "start")
 
 
 def _v79_adder_has_value(value) -> bool:

@@ -123,7 +123,8 @@ Each line says what changes for a model that ran before and what to do; the deta
   *separate_dispatch* solve had no realization solve) and `shared_operation_periods` / `shared_invest_periods`. A
   1-D `realized_periods`, `realized_invest_periods` or `fix_storage_periods` next to the 2-D map was read as the
   row's name. Now a split solve has every parameter of its solve; a 1-D period list keeps the split solve's own
-  periods, and `years_represented` counts from the split solve's first period, as before. A solve listed after the
+  periods, and `years_represented` its own periods (discounted from the start of the run, see the entry on
+  discounting below). A solve listed after the
   split solve in `model.solves` now runs after the split solves (before, it ran before them). Results of such
   models change: rerun them.
 - **Two set-ups of split solves now stop the run, and the message says what to change.** A 1-D `realized_periods`
@@ -143,6 +144,18 @@ Each line says what changes for a model that ran before and what to do; the deta
   name gave investments one year per period, while operations counted all the years, so investments were too
   cheap (every 4.x release). Investment results of such models change. A map whose index has another name (for
   example `year`) now stops a model with investments: name the index `period`, or leave it without a name.
+- **Runs of several solves with an `inflation_rate` other than 0: every solve now discounts its investments and
+  its operations from the start of the run,** as one solve over the same periods does (also split, rolling and
+  nested solves that start after the run start). Before, a later solve discounted its operations, and when its
+  `years_represented` held only its own periods also its investments, from its own start. Where only the
+  investments were discounted from the run start (hand-written solves with the whole `years_represented` map), the
+  balance between investment and operating costs was wrong and decisions change. Otherwise the whole objective of
+  a later solve is scaled by one factor: decisions change only through absolute MIP gaps, objective targets or
+  bounds and terms without a discount factor, but the printed objective, the investment duals (`invest_marginal`)
+  and the cumulative CO2 cap price of later solves are now on the run's discount base. A fractional
+  `years_represented` (e.g. 2.5) now counts as its fraction for the periods after it (before: a whole year, so the
+  next period started at year 3), also in a single solve. The reported costs were already discounted from the
+  start of the run. Rerun such models; the upgrade marks the databases this can affect.
 - **The memory-saving solve (`--save-memory`, or warm start off) could put values on the wrong variables**; results
   of such runs can change. FlexTool now needs polar-high 3.13.0 or newer (installed with FlexTool).
 - **Fixes that change results:** a user constraint without capacity terms got a right-hand side of 0 when another

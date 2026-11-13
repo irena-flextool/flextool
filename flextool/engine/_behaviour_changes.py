@@ -150,8 +150,9 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "cover its operating years in the whole run and are reported once, in the period it starts "
                      "operating, by the solve that realizes that period (before: in the decision period, over "
                      "the deciding solve's periods); the fixed cost of capacity carried from an earlier solve or "
-                     "retired is no longer charged again as existing capacity.  The printed objectives stay "
-                     "discounted from each solve's start (results change)."),
+                     "retired is no longer charged again as existing capacity.  The printed objectives stayed "
+                     "discounted from each solve's start until chained_solve_discount_from_run_start (results "
+                     "change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "chained_solve_costs_from_run_start"),
             since="4.2.0",
             published="7.11.2026",
@@ -278,6 +279,22 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "bind_within_solve, or on bind_forward_only without a fixed start; such a "
                      "bind_forward_only node changes only when a fan opens in the solve's first period."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "stochastic_storage_paths_tied"),
+        ),
+        BehaviourChange(
+            id="chained_solve_discount_from_run_start",
+            summary=("With an inflation_rate other than 0, every solve now discounts its investments and its "
+                     "operations from the start of the run, as one solve over the same periods does. Before, a "
+                     "later solve of a run of several solves (also a split solve of a 2-D period map, a rolling "
+                     "or nested solve starting after the run start) discounted its operations, and when its "
+                     "years_represented held only its own periods also its investments, from its own start; and "
+                     "a fractional years_represented counted as a whole year in the discounting of the periods "
+                     "after it. Where only the investments were discounted from the run start (hand-written "
+                     "solves with the whole years_represented map), the balance between investment and "
+                     "operating costs was wrong and decisions change; otherwise the objectives, investment "
+                     "duals and CO2 cap prices of later solves are now on the run's discount base, and "
+                     "decisions can still change through absolute MIP gaps, objective targets or bounds and "
+                     "terms without a discount factor (results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "chained_solve_discount_from_run_start"),
         ),
         BehaviourChange(
             id="gui_solver_defaults",

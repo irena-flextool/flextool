@@ -1380,7 +1380,8 @@ class SolveConfig:
         """The ``solve`` parameter values a solve of a 2-D period map (*copy_name*) has instead of its database
         solve's, as parsed Spine values for ``SpineDbReader.register_derived_solve(replace=...)`` (``None`` = no
         value): the period lists as arrays, ``period_timeset`` and ``years_represented`` (its own periods only;
-        the run start of a later solve is its own first period, as before) as maps with the index name
+        like every solve it discounts from the start of the run, the years before it coming from the run's
+        period history) as maps with the index name
         ``period``, and ``stochastic_branches`` with its own rows (:meth:`_split_fan_rows`).  Every other parameter is
         its database solve's."""
         def as_array(tuples: "list | None") -> "api.Array | None":
