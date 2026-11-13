@@ -4853,7 +4853,7 @@ def run_chain_from_db(
     work_folder: Path | str | None = None,
     *,
     flextool_dir: Path | str | None = None,
-    solver_config_dir: Path | str | None = None,
+    solver_config_dir: Path | str | Sequence[Path | str] | None = None,
     logger: logging.Logger | None = None,
     warm: bool = True,
     keep_solutions: bool = False,
@@ -4890,10 +4890,11 @@ def run_chain_from_db(
         tempdir.
     flextool_dir : Path, optional
         Override the installed flextool package directory.
-    solver_config_dir : Path, optional
-        The folder of the solver option files (``highs.opt``, ``gurobi.opt``,
-        ...); wins over ``--solver-config-dir`` / ``FLEXTOOL_SOLVER_CONFIG_DIR``
-        and the database-layout search
+    solver_config_dir : Path or list of Path, optional
+        The folder (or folders, highest first, read file by file) of the
+        solver option files (``highs.opt``, ``gurobi.opt``, ...); wins over
+        ``--solver-config-dir`` / ``FLEXTOOL_SOLVER_CONFIG_DIR`` and the
+        database-layout search
         (:func:`flextool._solver_config_source.resolve_solver_config_source`).
     logger : logging.Logger, optional
         Logger to use.  ``None`` constructs one named after the scenario.
@@ -5000,10 +5001,10 @@ def run_chain_from_db(
         Path(flextool_dir) if flextool_dir is not None
         else package_data_path("")
     )
-    # The solver option files: one folder per run (explicit argument >
-    # --solver-config-dir > FLEXTOOL_SOLVER_CONFIG_DIR > the database layout >
-    # the Toolbox project folder > the current folder > FlexTool's defaults),
-    # read ONCE here and kept on ``state.paths.solver_option_files``, so every
+    # The solver option files: one ladder of folders per run, read file by file
+    # (explicit argument > --solver-config-dir > FLEXTOOL_SOLVER_CONFIG_DIR >
+    # the database layout > the Toolbox project folder > the current folder >
+    # FlexTool's defaults), read ONCE here and kept on ``state.paths.solver_option_files``, so every
     # roll and solve uses the files as they were at run start.  The copy under
     # ``solve_data/solver_config/`` is the record of what the run used; it is
     # written afresh every run and never read back.

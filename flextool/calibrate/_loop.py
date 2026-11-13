@@ -106,12 +106,14 @@ class CalibConfig:
                               CLI, not the loop itself.
     ``threads``             — thread budget of each solve (``--threads``);
                               ``None`` sends no flag.
-    ``solver_config_dir``   — folder of the solver option files of each
-                              solve (``--solver-config-dir``); ``None``
-                              sends no flag.
-    ``workspace_solver_config_dir`` — the same for the FlexTool window's
-                              workspace folder (``--workspace-solver-config-dir``:
-                              trusted only when this computer set it up).
+    ``solver_config_dir``   — folders of the solver option files of each
+                              solve, highest first (``--solver-config-dir``
+                              once per folder); ``None`` sends no flag.
+    ``workspace_solver_config_dir`` — the folders the FlexTool window found
+                              (its project's, then its workspace's), highest
+                              first (``--workspace-solver-config-dir`` once
+                              per folder: each trusted only when this
+                              computer set it up); ``None`` sends no flag.
     """
 
     iterations: int
@@ -128,8 +130,8 @@ class CalibConfig:
     stall_fraction: float = 0.05
     final_write_methods: tuple[str, ...] = ("csv",)
     threads: int | None = None
-    solver_config_dir: Path | None = None
-    workspace_solver_config_dir: Path | None = None
+    solver_config_dir: Path | tuple[Path, ...] | None = None
+    workspace_solver_config_dir: Path | tuple[Path, ...] | None = None
 
 
 @dataclass

@@ -603,30 +603,38 @@ def build_parser() -> argparse.ArgumentParser:
              'FLEXTOOL_BASIS_CACHE_DIR; the flag wins.',
     )
     parser.add_argument(
-        '--solver-config-dir', metavar='PATH', default=None,
-        help='Folder of the solver option files (highs.opt, gurobi.opt, '
-             'cplex.opt, xpress.opt, copt.opt).  Unset: solver_config/ next '
-             'to the input database, then in the workspace of a GUI project '
-             'database (<workspace>/projects/<project>/input_sources/), then '
-             'in the Spine Toolbox project folder (--project-folder-file), '
-             'then in the current folder; when none has an option file, '
-             'FlexTool\'s defaults are used with a warning.  A solver whose '
-             'file is missing in the folder uses FlexTool\'s default.  The run '
-             'copies the files it used to <work folder>/solve_data/'
-             'solver_config/.  Environment variable: '
-             'FLEXTOOL_SOLVER_CONFIG_DIR; the flag wins.  The files of a '
+        '--solver-config-dir', metavar='PATH', default=None, action='append',
+        help='A folder of the solver option files (highs.opt, gurobi.opt, '
+             'cplex.opt, xpress.opt, copt.opt).  Repeat the flag for '
+             'several folders, highest first: each solver\'s file comes '
+             'from the first folder that has it, else FlexTool\'s default '
+             '(only the folders given are read).  Unset: solver_config/ '
+             'next to the input database; else, for a GUI project database '
+             '(<workspace>/projects/<project>/input_sources/), the '
+             'project\'s solver_config/, then the workspace\'s, file by '
+             'file; else the Spine Toolbox project folder '
+             '(--project-folder-file), then the current folder; when none '
+             'has an option file, FlexTool\'s defaults are used with a '
+             'warning.  The run copies the files it used to <work folder>/'
+             'solve_data/solver_config/.  Environment variable: '
+             'FLEXTOOL_SOLVER_CONFIG_DIR (several folders separated by '
+             '\':\', on Windows \';\'); the flag wins.  The files of a '
              'folder named here are trusted (file paths, server settings); '
              'the files of a folder found on its own are trusted only in a '
-             'workspace this computer set up (flextool-update).',
+             'workspace or project this computer set up (flextool-update, '
+             'the FlexTool window).',
     )
     parser.add_argument(
         '--workspace-solver-config-dir', metavar='PATH', default=None,
-        help='The solver option folder of the workspace the run was started '
-             'from, as the FlexTool window passes it: used like '
-             '--solver-config-dir, but its files are trusted only when the '
-             'workspace is one this computer set up; otherwise they get the '
-             'input database\'s rules.  --solver-config-dir and '
-             'FLEXTOOL_SOLVER_CONFIG_DIR win over it.',
+        action='append',
+        help='A solver option folder the launcher found (the FlexTool window '
+             'passes its project\'s solver_config/ when it has one, then its '
+             'workspace\'s); repeat for several, highest first.  Read file '
+             'by file like --solver-config-dir, but the files of each folder '
+             'are trusted only when its workspace or project is one this '
+             'computer set up; otherwise they get the input database\'s '
+             'rules.  Given with --solver-config-dir (or '
+             'FLEXTOOL_SOLVER_CONFIG_DIR), these folders come first.',
     )
     parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
     parser.add_argument('--write-methods', type=str, nargs='+', default=None,
@@ -709,10 +717,13 @@ def build_parser() -> argparse.ArgumentParser:
                              'processing and the solver.  FlexTool\'s own '
                              'processing (polars) uses at most N and at most 8 '
                              '(POLARS_MAX_THREADS can set another limit below '
-                             'N); HiGHS gets threads=N (its parallel simplex '
-                             'stays off) and a Benders solve runs at most N '
-                             'region solves at once.  Default: the available '
-                             'cores, with HiGHS and Benders as before.  When '
+                             'N); the solver gets N threads (HiGHS threads=N '
+                             'with its parallel simplex off; Gurobi, CPLEX, '
+                             'Xpress and COPT their thread count, over the '
+                             'option file and solver_arguments) and a Benders '
+                             'solve runs at most N region solves at once.  '
+                             'Default: the available cores, with the solvers\' '
+                             'own thread settings and Benders as before.  When '
                              'several runs execute in parallel, give each about '
                              'cores / runs.  Environment variable: '
                              'FLEXTOOL_THREADS; the flag wins.')

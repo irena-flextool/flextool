@@ -1230,7 +1230,7 @@ class CalibrateDialog(tk.Toplevel):
                 debug=s.calib_keep_artifacts,
                 final_write_methods=final_write_methods_from_settings(s),
                 threads=self._threads_per_run(),
-                **solver_config_kwargs(),
+                **solver_config_kwargs(self._project_path),
             )
             lines.append(command_to_display_string(argv))
         return "\n".join(lines)

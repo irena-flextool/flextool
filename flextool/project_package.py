@@ -9,9 +9,13 @@ What a package holds:
 
 * always: ``input_sources/`` (with the external input files copied in, under the same source numbers, unless the
   caller says not to), ``settings.yaml`` without the machine-specific settings (:data:`DROPPED_SETTINGS`),
-  ``plot_settings.yaml``, and the ``.opt`` files of the workspace's ``solver_config`` folder (as
-  ``solver_config/``; import puts them in ``imported_solver_config/`` of the project and never changes the
-  workspace's own files);
+  ``plot_settings.yaml``, and the solver option files the project's runs use (``solver_config/``: per solver
+  the first ``<solver>.opt`` of the project's ``solver_config`` folder, then the workspace's, leaving out unedited
+  FlexTool templates; a file with an option that names a path or another computer is left out and named,
+  :func:`screen_export_solver_config`).  Import unpacks them into ``solver_config/`` of the new project,
+  where its runs use them ahead of the workspace's files, file by file; a file with an option that names a path
+  or another computer is kept as ``<solver>.opt.review`` (never read by a run) until the user checks it, and the
+  workspace's own files never change;
 * the result runs the caller picks (``output_parquet/<run>/``, with ``output_parquet/_axis_bounds.json`` cut to
   those runs).  By default each run record (``_run_status.json``) has this computer's folder paths, user name and
   host name replaced by placeholders and the run log (``_run.log``) is left out (``scrub_run_records=False`` ships
@@ -69,8 +73,11 @@ PLOT_SETTINGS_FILE = "plot_settings.yaml"
 INPUT_DIR = "input_sources"
 RESULTS_DIR = "output_parquet"
 SOLVER_CONFIG_DIR = "solver_config"
-#: Where import puts the shipped solver option files inside the project.
+#: Where an earlier 4.4 development build's import put the shipped solver option files inside the project (not read
+#: by a run); the FlexTool window renames it to ``solver_config/`` (:func:`adopt_imported_solver_config`).
 IMPORTED_SOLVER_CONFIG_DIR = "imported_solver_config"
+#: The suffix of a shipped option file kept back for the user to check (:func:`settle_shipped_solver_config`).
+HELD_SUFFIX = ".review"
 
 #: ``settings.yaml`` keys that belong to one machine: left out of a package.
 DROPPED_SETTINGS = ("execution_limits", "max_workers", "scenario_resource_history", "external_refs")
@@ -236,12 +243,17 @@ class ImportReport:
     project_path: Path
     manifest: Manifest
     warnings: list[str] = field(default_factory=list)
-    #: ``(file name, "same" | "different" | "not in workspace")`` per shipped ``.opt`` file.
+    #: ``(file name, "same" | "different" | "not in workspace")`` per shipped ``.opt`` file, compared with the file
+    #: of that solver the workspace's runs use.
     solver_config: list[tuple[str, str]] = field(default_factory=list)
-    #: How to make the shipped solver options active ("" when the package has none).
+    #: Where the shipped solver options are and how they are used ("" when they all equal the workspace's).
     solver_config_hint: str = ""
     #: A short unified diff (workspace -> shipped) per ``.opt`` file that differs.
     solver_config_diffs: dict[str, list[str]] = field(default_factory=dict)
+    #: The problems of each shipped file kept as ``<solver>.opt.review`` (not used until the user renames it).
+    solver_config_held: dict[str, list[str]] = field(default_factory=dict)
+    #: Shipped files that were unedited FlexTool templates: not unpacked (they equal the defaults).
+    solver_config_defaults: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -267,13 +279,141 @@ CHECKSUM_NOTE = ("The checksums detect files damaged on the way, not deliberate 
 # Helpers
 
 
-def default_solver_config_dir() -> Path:
-    """The folder of the solver option files a GUI run uses: ``$FLEXTOOL_SOLVER_CONFIG_DIR``, else
-    ``<workspace>/solver_config`` (the current folder, where FlexTool and the GUI run).  The GUI passes the same
-    folder to its runs as ``--solver-config-dir``, so an exported project ships the files its runs use."""
-    from flextool._solver_config_source import workspace_solver_config_dir
+def project_solver_config_dirs(project_dir: str | Path, solver_config_dir: object = None) -> list[Path]:
+    """The ladder of solver option folders a GUI run of *project_dir* uses: ``<project>/solver_config`` (when
+    there), then ``$FLEXTOOL_SOLVER_CONFIG_DIR``'s folders, else ``<workspace>/solver_config`` (the current folder,
+    where FlexTool and the GUI run).  The GUI passes the same folders to its runs as ``--solver-config-dir``, so an
+    exported project ships the files its runs use.  *solver_config_dir* (one folder or a list, highest first)
+    replaces the ladder, as the run flag does."""
+    from flextool._solver_config_source import gui_solver_config_dirs, split_solver_config_dirs
 
-    return workspace_solver_config_dir()
+    given = split_solver_config_dirs(solver_config_dir)  # type: ignore[arg-type]
+    return given if given else gui_solver_config_dirs(project_dir)
+
+
+def effective_solver_config_files(folders: list[Path]) -> dict[str, Path]:
+    """``{"<solver>.opt": file}`` of the option files a run with the ladder *folders* reads, per solver the first
+    folder's file (see :mod:`flextool._solver_config_source`), leaving out an unedited FlexTool template (the
+    options FlexTool shipped, not a choice made for the project).  Only the five solver files: no other ``.opt`` is read."""
+    from flextool._solver_config_source import (
+        REASON_ARGUMENT,
+        SOLVER_NAMES,
+        SolverConfigSource,
+        is_unedited_template,
+    )
+
+    if not folders:
+        return {}
+    source = SolverConfigSource(folders[0], REASON_ARGUMENT, lower=tuple((f, REASON_ARGUMENT) for f in folders[1:]))
+    out: dict[str, Path] = {}
+    for solver in SOLVER_NAMES:
+        found = source.file_for(solver)
+        if found is None:
+            continue
+        try:
+            if is_unedited_template(solver, found[0].read_bytes()):
+                continue
+        except OSError:
+            continue
+        out[f"{solver}.opt"] = found[0]
+    return out
+
+
+def settle_shipped_solver_config(
+    folder: Path, *, drop_templates: bool, replace_held: bool = True,
+) -> tuple[dict[str, list[str]], list[str]]:
+    """Screen the solver option files of a shipped project's ``solver_config/`` *folder* (another person's files).
+
+    A ``<solver>.opt`` with an option that names a file or folder outside the solve's work folder, that connects
+    the solver to another computer, or a CPLEX name that starts with ``set`` (a line FlexTool would refuse or hold
+    back: :func:`flextool._solver_option_rules.screen_solver_option_file`), is
+    renamed to ``<solver>.opt.review`` (its modification time kept): no run reads it until the user has checked
+    it and renamed it back.  An existing ``<solver>.opt.review`` is replaced with *replace_held* (a package that
+    ships one: that file is never read), else the screen raises :class:`FileExistsError`.  With *drop_templates*
+    an unedited FlexTool template is removed (runs never take one from a project folder).  Every file is read and
+    screened before anything is renamed; when a rename fails, the files already held are renamed back and the
+    error is raised, so a caller never takes a half-screened folder.  Returns ``({file name: problems} of the
+    held files, [file names of the removed templates]})``.
+    """
+    from flextool._solver_config_source import SOLVER_NAMES, is_unedited_template
+    from flextool._solver_option_rules import screen_solver_option_file
+
+    held: dict[str, list[str]] = {}
+    templates: list[Path] = []
+    for solver in SOLVER_NAMES:
+        path = folder / f"{solver}.opt"
+        if not path.is_file():
+            continue
+        data = path.read_bytes()
+        if is_unedited_template(solver, data):
+            templates.append(path)
+            continue
+        problems = screen_solver_option_file(solver, data.decode("utf-8", errors="replace"))
+        if problems:
+            held[path.name] = problems
+    done: list[tuple[Path, Path]] = []
+    try:
+        for file_name in held:
+            path = folder / file_name
+            target = path.with_name(file_name + HELD_SUFFIX)
+            if os.path.lexists(target):
+                if not replace_held:
+                    raise FileExistsError(f"{target} exists already: move it away, then open the project again")
+                target.unlink()
+            _rename_with_retry(path, target)
+            done.append((path, target))
+    except BaseException:
+        for path, target in reversed(done):
+            try:
+                target.rename(path)
+            except OSError:  # it stays held: never read by a run
+                logger.warning("Could not rename %s back to %s", target, path)
+        raise
+    dropped: list[str] = []
+    if drop_templates:
+        for path in templates:
+            path.unlink()
+            dropped.append(path.name)
+    return held, dropped
+
+
+def screen_export_solver_config(
+    files: dict[str, Path],
+) -> tuple[dict[str, Path], dict[str, tuple[Path, list[str]]]]:
+    """Split the option files an export would ship (``{"<solver>.opt": file}``) into the ones it ships and the
+    ones it leaves out: ``(shipped, {file name: (file, problems)})``.  A file is left out when the screen of a
+    shipped file (:func:`flextool._solver_option_rules.screen_solver_option_file`) finds a line in it: a server,
+    cloud or licence setting (a password, perhaps) or a folder of this computer should not leave unseen, and a
+    CPLEX name starting with ``set`` would fail the receiver's run; the receiver would hold such a file back
+    anyway.  An unreadable file is shipped, so the export reports it."""
+    from flextool._solver_option_rules import screen_solver_option_file
+
+    shipped: dict[str, Path] = {}
+    withheld: dict[str, tuple[Path, list[str]]] = {}
+    for file_name, path in files.items():
+        try:
+            text = path.read_bytes().decode("utf-8", errors="replace")
+        except OSError:
+            shipped[file_name] = path
+            continue
+        problems = screen_solver_option_file(file_name.removesuffix(".opt"), text)
+        if problems:
+            withheld[file_name] = (path, problems)
+        else:
+            shipped[file_name] = path
+    return shipped, withheld
+
+
+def withheld_file_line(name: str, path: Path, problems: list[str]) -> str:
+    """What an export says about an option file it left out of the package."""
+    return (f"Solver options {name} (from {path.parent}) left out of the package, because {'; '.join(problems)}. "
+            "Remove those lines to ship the file; the receiver's runs use their own options for this solver.")
+
+
+def held_file_line(name: str, problems: list[str]) -> str:
+    """What a held shipped option file waits for (the import report and the first-open log line)."""
+    return (f"Solver options {name}: kept as {SOLVER_CONFIG_DIR}/{name}{HELD_SUFFIX} and not used, because "
+            f"{'; '.join(problems)}. Check it, then rename it to {name} to use it.")
 
 
 def default_package_name(project: str, today: datetime | None = None) -> str:
@@ -506,8 +646,16 @@ def _path_replacements(project_dir: Path) -> list[tuple[str, str]]:
     return sorted(pairs, key=lambda pair: -len(pair[0]))
 
 
-#: An absolute folder part of a path (POSIX or Windows) that is not the project or the home folder.
-_ABS_DIR = re.compile(r"(?<![\w.:/~>\\-])(?:(?:/[^\s/\\\"'<>|:*?]+)+/|[A-Za-z]:[\\/](?:[^\s\\/\"'<>|:*?]+[\\/])*)")
+#: An absolute folder part of a path (POSIX or Windows) that is not the project or the home folder.  A path may
+#: follow ``:`` or ``;`` (the second folder of a ``FLEXTOOL_SOLVER_CONFIG_DIR`` value); a URL's ``://`` is not one.
+#: A folder name may hold one space (``D:\My Data\``): the word after the space ends at the next ``/`` or ``\``
+#: and holds no comma, semicolon, bracket or ``=``, and the word before it does not end at a comma or semicolon.  So
+#: text after a path is kept (``from /home/u/proj, wrote and/or copied``, ``in /usr/lib/python3.11 module
+#: foo/bar.py``).  A folder name with two or more spaces is kept, with what follows it; the folders above it are
+#: removed.
+_DIR_WORD = r"[^\s/\\\"'<>|:*?]+"
+_DIR_NAME = rf"{_DIR_WORD}(?:(?<![,;]) [^\s/\\\"'<>|:*?,;()=]+(?=[/\\]))?"
+_ABS_DIR = re.compile(rf"(?<![\w./~>\\-])(?:(?:/{_DIR_NAME})+/|[A-Za-z]:[\\/](?:{_DIR_NAME}[\\/])*)")
 #: Keys of a run record that name this computer or its user.
 _PERSONAL_KEYS = frozenset({"host", "hostname", "user", "username"})
 
@@ -574,9 +722,12 @@ def pip_line(manifest: Manifest) -> str | None:
     return "pip install " + " ".join(pins)
 
 
-def always_included(project_dir: str | Path, solver_config_dir: Path | None = None) -> dict:
+def always_included(project_dir: str | Path, solver_config_dir: object = None) -> dict:
     """What every package of *project_dir* holds: ``{"inputs": [(name, bytes)], "external": [(name, path,
-    exists)], "settings": bool, "plot_settings": bool, "solver_config": [names], "solver_config_dir": Path}``."""
+    exists)], "settings": bool, "plot_settings": bool, "solver_config_files": {name: path},
+    "solver_config_dirs": [folders], "solver_config_withheld": {name: (path, problems)}}`` (the option files of
+    :func:`effective_solver_config_files` for the ladder of :func:`project_solver_config_dirs`, split by
+    :func:`screen_export_solver_config`)."""
     project_dir = Path(project_dir)
     settings = _load_settings(project_dir)
     inputs = [(p.relative_to(project_dir / INPUT_DIR).as_posix(), p.stat().st_size)
@@ -585,12 +736,12 @@ def always_included(project_dir: str | Path, solver_config_dir: Path | None = No
     for name, rel in (settings.get("external_refs") or {}).items():
         path = (project_dir / rel).resolve()
         external.append((name, path, path.is_file()))
-    config_dir = solver_config_dir or default_solver_config_dir()
-    opts = sorted(p.name for p in config_dir.glob("*.opt") if p.is_file()) if config_dir.is_dir() else []
+    folders = project_solver_config_dirs(project_dir, solver_config_dir)
+    shipped, withheld = screen_export_solver_config(effective_solver_config_files(folders))
     return {
         "inputs": inputs, "external": external, "settings": (project_dir / SETTINGS_FILE).is_file(),
-        "plot_settings": (project_dir / PLOT_SETTINGS_FILE).is_file(), "solver_config": opts,
-        "solver_config_dir": config_dir,
+        "plot_settings": (project_dir / PLOT_SETTINGS_FILE).is_file(),
+        "solver_config_files": shipped, "solver_config_dirs": folders, "solver_config_withheld": withheld,
     }
 
 
@@ -699,7 +850,7 @@ def export_project(
     runs: list[str] | None = None,
     include_external: bool = True,
     *,
-    solver_config_dir: str | Path | None = None,
+    solver_config_dir: object = None,
     progress: Callable[[int, int], None] | None = None,
     overwrite: bool = False,
     scrub_run_records: bool = True,
@@ -708,8 +859,8 @@ def export_project(
 
     *runs* are the result runs (folder names under ``output_parquet``) to include: ``None`` or ``[]`` includes
     none; a run that is still being written is refused.  *include_external* copies the external input files into
-    ``input_sources/`` of the package (same source numbers).  *solver_config_dir* defaults to
-    :func:`default_solver_config_dir`.  *progress(done_bytes, total_bytes)* is called while the files are written.
+    ``input_sources/`` of the package (same source numbers).  *solver_config_dir* (one folder or a list,
+    highest first) defaults to the project's ladder, :func:`project_solver_config_dirs`.  *progress(done_bytes, total_bytes)* is called while the files are written.
     The zip is written next to *zip_path* and renamed into place when complete; an existing *zip_path* raises
     :class:`PackageExistsError` unless *overwrite*.  *scrub_run_records* (the default) replaces this computer's
     paths, user name and host name in each run's ``_run_status.json`` and leaves ``_run.log`` out.  Every failure
@@ -730,7 +881,7 @@ def _export(
     zip_path: Path,
     runs: list[str] | None,
     include_external: bool,
-    solver_config_dir: str | Path | None,
+    solver_config_dir: object,
     progress: Callable[[int, int], None] | None,
     overwrite: bool,
     scrub_run_records: bool,
@@ -794,10 +945,11 @@ def _export(
     if (project_dir / PLOT_SETTINGS_FILE).is_file():
         entries.append(_Entry(PLOT_SETTINGS_FILE, project_dir / PLOT_SETTINGS_FILE))
 
-    config_dir = Path(solver_config_dir) if solver_config_dir is not None else default_solver_config_dir()
-    opts = sorted(p for p in config_dir.glob("*.opt") if p.is_file()) if config_dir.is_dir() else []
-    for path in opts:
-        entries.append(_Entry(f"{SOLVER_CONFIG_DIR}/{path.name}", path))
+    opts, withheld = screen_export_solver_config(
+        effective_solver_config_files(project_solver_config_dirs(project_dir, solver_config_dir)))
+    warnings.extend(withheld_file_line(opt_name, path, problems) for opt_name, (path, problems) in withheld.items())
+    for opt_name, path in opts.items():
+        entries.append(_Entry(f"{SOLVER_CONFIG_DIR}/{opt_name}", path))
 
     if runs:
         base = project_dir / RESULTS_DIR
@@ -837,7 +989,7 @@ def _export(
         project=name, created=datetime.now().astimezone().isoformat(timespec="seconds"),
         python=platform.python_version(), platform=sys.platform, results=runs,
         stale_runs=[r for r in runs if available[r].stale], dropped_settings=list(DROPPED_SETTINGS),
-        bundled_external=bundled, external_not_included=not_included, solver_config=[p.name for p in opts],
+        bundled_external=bundled, external_not_included=not_included, solver_config=list(opts),
         run_records_scrubbed=scrub_run_records, export_warnings=warnings, **versions,
     )
 
@@ -955,9 +1107,8 @@ def _unsafe(name: str) -> bool:
 
 
 def _dest_rel(rel: str) -> str:
-    """Where the member *rel* (relative to ``<Name>/``) is unpacked in the project."""
-    if rel.startswith(SOLVER_CONFIG_DIR + "/"):
-        return IMPORTED_SOLVER_CONFIG_DIR + rel[len(SOLVER_CONFIG_DIR):]
+    """Where the member *rel* (relative to ``<Name>/``) is unpacked in the project: at the same place (the
+    shipped solver options too: ``solver_config/``)."""
     return rel
 
 
@@ -1153,12 +1304,68 @@ def invalid_name_reason(name: str) -> str | None:
     return None
 
 
-def solver_config_activation_hint(project_path: Path, workspace_dir: Path) -> str:
-    """How to make the shipped solver options of an imported project the ones a run uses."""
+def solver_config_activation_hint(project_path: Path, workspace_dirs: list[Path]) -> str:
+    """Where the shipped solver options of an imported project are and how its runs use them."""
+    workspace = ", ".join(str(folder) for folder in workspace_dirs)
+    return (f"The shipped solver options are in {project_path / SOLVER_CONFIG_DIR}. Runs of this project use "
+            f"them ahead of the workspace's ({workspace}), file by file; delete a file there to use the "
+            "workspace's.")
+
+
+def adopt_imported_solver_config(project_path: str | Path) -> list[str]:
+    """Rename an earlier import's ``imported_solver_config/`` to ``solver_config/`` (its runs then use the
+    shipped files), screened first as at import (:func:`settle_shipped_solver_config`, in
+    ``imported_solver_config/``, which no run reads; unedited templates stay, runs skip them).  Only when
+    ``solver_config/`` does not exist.  Returns the lines to log: what was done, one per held file; when both
+    folders exist, one line saying ``imported_solver_config/`` is not read; nothing when there is no
+    ``imported_solver_config/``.  When a file cannot be read or held, or the folder cannot be renamed, nothing is
+    changed (the files held so far are renamed back) and one line says the project's runs keep using the
+    workspace's solver options.
+    """
+    from flextool._solver_config_source import SOLVER_NAMES, is_unedited_template
+
+    project_path = Path(project_path)
     imported = project_path / IMPORTED_SOLVER_CONFIG_DIR
-    return (f"The solver options shipped with the project are in {imported}. FlexTool runs use the .opt files "
-            f"of {workspace_dir}. To run with the shipped options, copy {IMPORTED_SOLVER_CONFIG_DIR}/*.opt to "
-            f"{workspace_dir}, or set FLEXTOOL_SOLVER_CONFIG_DIR={imported} before starting FlexTool.")
+    own = project_path / SOLVER_CONFIG_DIR
+    name = project_path.name
+    if not imported.is_dir():
+        return []
+    if own.exists():
+        return [f"Project {name}: {IMPORTED_SOLVER_CONFIG_DIR}/ is not read; this project's runs use "
+                f"{SOLVER_CONFIG_DIR}/ (move any file you need from it and delete {IMPORTED_SOLVER_CONFIG_DIR}/)."]
+    keep = (f"{IMPORTED_SOLVER_CONFIG_DIR}/ is left as it is and this project's runs keep using the workspace's "
+            "solver options.")
+    try:
+        held, _dropped = settle_shipped_solver_config(imported, drop_templates=False, replace_held=False)
+    except OSError as exc:
+        return [f"Project {name}: cannot check the solver option files in {imported} ({exc}); " + keep]
+    try:
+        _rename_with_retry(imported, own)
+    except OSError as exc:
+        for file_name in held:
+            try:
+                (imported / (file_name + HELD_SUFFIX)).rename(imported / file_name)
+            except OSError:  # it stays held: never read by a run
+                logger.warning("Could not rename %s back in %s", file_name + HELD_SUFFIX, imported)
+        return [f"Project {name}: cannot rename {IMPORTED_SOLVER_CONFIG_DIR}/ to {SOLVER_CONFIG_DIR}/ ({exc}); "
+                + keep]
+
+    def used(solver: str) -> bool:
+        path = own / f"{solver}.opt"
+        try:
+            return path.is_file() and not is_unedited_template(solver, path.read_bytes())
+        except OSError:
+            return False
+
+    active = [f"{s}.opt" for s in SOLVER_NAMES if used(s)]
+    if active:
+        what = f"now use its solver option files ({', '.join(active)}) ahead of the workspace's."
+    else:
+        what = "keep using the workspace's solver options (it holds no edited option file that a run uses)."
+    lines = [f"Project {name}: renamed {IMPORTED_SOLVER_CONFIG_DIR}/ to {SOLVER_CONFIG_DIR}/. This project's runs "
+             + what]
+    lines.extend(f"Project {name}: " + held_file_line(file_name, problems) for file_name, problems in held.items())
+    return lines
 
 
 def import_project(
@@ -1166,15 +1373,17 @@ def import_project(
     projects_dir: str | Path,
     name: str | None = None,
     *,
-    solver_config_dir: str | Path | None = None,
+    solver_config_dir: object = None,
 ) -> ImportReport:
     """Unpack the package *zip_path* as project *name* (default: the manifest's name) in *projects_dir*.
 
     Raises :class:`NameClashError` when the name is taken (case-insensitively) and :class:`PackageError` when a
     member name is unsafe, a checksum does not match or a database is newer than this FlexTool; nothing is written
     then.  A disk without room for the unpacked files, a folder that cannot be written and the like are a
-    :class:`PackageError` too; the half-written folder is removed.  *solver_config_dir* (default
-    :func:`default_solver_config_dir`) is only compared with the shipped ``.opt`` files, never written.
+    :class:`PackageError` too; the half-written folder is removed.  The shipped solver option files go to
+    ``solver_config/`` of the project, screened (:func:`settle_shipped_solver_config`).  *solver_config_dir* (the
+    workspace's folders, highest first; default ``$FLEXTOOL_SOLVER_CONFIG_DIR``, else ``./solver_config``) is
+    only compared with them, never written.
     """
     projects_dir = Path(projects_dir)
     try:
@@ -1208,7 +1417,7 @@ def _rename_with_retry(src: Path, dst: Path) -> None:
 
 
 def _import(
-    zip_path: str | Path, projects_dir: Path, name: str | None, solver_config_dir: str | Path | None,
+    zip_path: str | Path, projects_dir: Path, name: str | None, solver_config_dir: object,
 ) -> ImportReport:
     if (message := _unfinished_message(zip_path)) is not None:
         raise PackageError(message)
@@ -1265,6 +1474,7 @@ def _import(
             for sub in _PROJECT_SUBDIRS:
                 (partial / sub).mkdir(exist_ok=True)
             dropped_refs = _drop_outside_refs(partial)
+            held, dropped = settle_shipped_solver_config(partial / SOLVER_CONFIG_DIR, drop_templates=True)
             if name_taken(projects_dir, target_name):
                 raise NameClashError(target_name, suggest_name(projects_dir, target_name))
             _rename_with_retry(partial, final)
@@ -1276,21 +1486,31 @@ def _import(
         warnings.append(
             "The package's settings named input files outside the project folder; FlexTool left them out: "
             + ", ".join(dropped_refs) + ". Add such a file again in the FlexTool window if you need it.")
-    report = ImportReport(target_name, final, manifest, warnings)
-    shipped = sorted((final / IMPORTED_SOLVER_CONFIG_DIR).glob("*.opt"))
+    report = ImportReport(target_name, final, manifest, warnings, solver_config_held=held,
+                          solver_config_defaults=dropped)
+    from flextool._solver_config_source import (
+        SOLVER_NAMES,
+        split_solver_config_dirs,
+        workspace_solver_config_dirs,
+    )
+
+    own = final / SOLVER_CONFIG_DIR
+    shipped = [(f"{s}.opt", own / f"{s}.opt") for s in SOLVER_NAMES if (own / f"{s}.opt").is_file()]
+    shipped += [(file_name, own / (file_name + HELD_SUFFIX)) for file_name in held]
     if shipped:
-        workspace = Path(solver_config_dir) if solver_config_dir is not None else default_solver_config_dir()
-        for path in shipped:
-            mine = workspace / path.name
-            if not mine.is_file():
+        workspace = split_solver_config_dirs(solver_config_dir) or workspace_solver_config_dirs()  # type: ignore[arg-type]
+        theirs = effective_solver_config_files(workspace)
+        for file_name, path in sorted(shipped):
+            mine = theirs.get(file_name)
+            if mine is None:
                 state = "not in workspace"
             elif _hash_file(mine) == _hash_file(path):
                 state = "same"
             else:
                 state = "different"
-                report.solver_config_diffs[path.name] = _short_diff(mine, path)
-            report.solver_config.append((path.name, state))
-        if any(state != "same" for _name, state in report.solver_config):
+                report.solver_config_diffs[file_name] = _short_diff(mine, path)
+            report.solver_config.append((file_name, state))
+        if held or any(state != "same" for _name, state in report.solver_config):
             report.solver_config_hint = solver_config_activation_hint(final, workspace)
     return report
 
@@ -1381,7 +1601,12 @@ def describe_import(report: ImportReport) -> list[str]:
             lines.append(f"Solver options {name}: different from this workspace's."
                          + ("\n" + "\n".join(diff) if diff else ""))
         else:
-            lines.append(f"Solver options {name}: this workspace has none.")
+            lines.append(f"Solver options {name}: this workspace uses FlexTool's default.")
+    for name, problems in report.solver_config_held.items():
+        lines.append(held_file_line(name, problems))
+    for name in report.solver_config_defaults:
+        lines.append(f"Solver options {name}: an unedited FlexTool template, not unpacked (runs use the "
+                     "workspace's file or FlexTool's default).")
     if report.solver_config_hint:
         lines.append(report.solver_config_hint)
     return lines

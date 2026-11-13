@@ -54,16 +54,34 @@ solve):
 |------------------------|--------------------------|-------------------------------------------------|
 | `--solver-time-limit`  | `solver_time_limit`      | Seconds per solve, on every solver (HiGHS `time_limit`, Gurobi `TimeLimit`, CPLEX `timelimit`, Xpress `MAXTIME`, COPT `TimeLimit`); unset means no limit. See [Time limit](#time-limit). |
 | `--solver-mip-gap`     |                          | Relative MIP gap of every solve, on every solver (HiGHS `mip_rel_gap`, Gurobi `MIPGap`, CPLEX `mip tolerances mipgap`, Xpress `MIPRELSTOP`, COPT `RelGap`); wins over the solve's `solver_mip_gap` |
-| `--solver-config-dir`  |                          | The folder of the solver option files; see [Where the option files come from](#where-the-option-files-come-from) |
+| `--solver-config-dir`  |                          | A folder of the solver option files; repeat for several, highest first (file by file); see [Where the option files come from](#where-the-option-files-come-from) |
+| `--threads`            |                          | Threads of the run (the FlexTool window sends its Threads per run); sets every solver's thread count (HiGHS `threads` unless `--highs-threads` is given, Gurobi `Threads`, CPLEX `threads`, Xpress `THREADS`, COPT `Threads`). See below |
 | `--highs-threads`      | `solver_threads`         | HiGHS only: integer thread count (default 1); `>1` enables HiGHS parallel mode |
 | `--solver-log-level`   | `solver_log_level`       | `silent` hides the log of every solver; `normal` (default) shows it; `verbose` is HiGHS only |
 
 `--presolve`, `--highs-threads`, `--user-bound-scale` and
 `--solver-log-level verbose` are HiGHS options. When one of them is given and a solve runs on a commercial
 solver, the run warns once: set the solver's own parameter in the solve's
-`solver_arguments` or in its option file instead. Commercial solvers take
-their thread count from their option file (for example `Threads` in
-`gurobi.opt`); `--threads` does not change it.
+`solver_arguments` or in its option file instead.
+
+`--threads` (and `FLEXTOOL_THREADS`; the FlexTool window always sends its
+Threads per run, default 1) sets the thread count of every solver: HiGHS
+`threads`, Gurobi `Threads`, CPLEX `threads`, Xpress `THREADS`, COPT
+`Threads`. It replaces the value of the option file and of
+`solver_arguments`, even a value meaning all cores (`0`; Xpress and COPT
+`0` or negative). FlexTool splits the computer's cores between the runs it executes in
+parallel, so the run's thread budget wins. The run prints one line when it
+replaces a different value, for example `gurobi uses Threads 1, the run's
+thread budget (flag --threads), instead of Threads 0 (all cores) in
+<folder>/gurobi.opt.` For more solver threads raise `--threads` (Threads per
+run in the FlexTool window), or `FLEXTOOL_THREADS` when the budget came from
+it. Without `--threads` and `FLEXTOOL_THREADS` (a terminal
+or Spine Toolbox run that gives neither) the option file and
+`solver_arguments` keep the thread count. Per-algorithm thread controls
+(Xpress `BARTHREADS` / `MIPTHREADS` / `CONCURRENTTHREADS`, COPT `BarThreads` /
+`SimplexThreads` / `CrossoverThreads` / `MipTasks`, Gurobi `ConcurrentJobs`)
+are not changed: a value set there is used as given, even when it is larger
+than the run's threads.
 
 The environment variables `FLEXTOOL_SOLVER_TIME_LIMIT` and
 `FLEXTOOL_SOLVER_MIP_GAP` are the twins of the two flags (the flag wins). The
@@ -337,8 +355,21 @@ solves they contain) before the first solve starts, so the run stops in
 seconds, not after hours of earlier solves. A solve that the model does not
 run is not checked: its options never reach a solver. Put a
 file path, a server parameter or a parameter that is not in the list in the
-solver's option file, `solver_config/<solver>.opt` (or that file in a folder
-given with `--solver-config-dir`), which keeps them.
+solver's option file, `solver_config/<solver>.opt` in the project's or the
+workspace's `solver_config` (or a folder given with `--solver-config-dir`),
+which keeps them when the folder is trusted (see
+[Which option folders are trusted](#which-option-folders-are-trusted)). An
+option file that came in a project package from someone else is checked by
+the same rules when it is imported: a file with such a parameter is kept as
+`<solver>.opt.review`, which no run reads, until you have checked it and
+renamed it to `<solver>.opt`.
+Exporting a project applies the same rules to the option files it would
+ship: a file with such a parameter is left out of the package, and the export
+names its lines (a server password or a folder of your computer should not be
+sent unseen). A CPLEX parameter name in `cplex.opt` is written without the
+leading `set` (FlexTool adds it), and a name that starts with `set` is refused
+from every source. A UTF-8 byte order mark at the start of an option file is
+ignored.
 The checks against extra commands (no line breaks, spaces, quotes, `;`, `#`,
 `=` or a backslash at the end) apply to every source. So does the rule that
 every parameter has a value: an empty value is refused for every solver
@@ -433,10 +464,11 @@ the solver via the per-solver mechanism:
 
 1. The run's flags: `--solver-time-limit` and `--solver-mip-gap` (or
    `FLEXTOOL_SOLVER_TIME_LIMIT` / `FLEXTOOL_SOLVER_MIP_GAP`; the GUI's time
-   limit is sent as the flag). HiGHS also takes `--highs-threads`,
-   `--presolve`, `--solver-log-level` and `--threads` here (a commercial
-   solver's log is hidden by `--solver-log-level silent` too, but that is not
-   one of its parameters).
+   limit is sent as the flag), and the run's `--threads` (or
+   `FLEXTOOL_THREADS`; the GUI's Threads per run is sent as the flag) as the
+   solver's thread count. HiGHS also takes `--highs-threads`, `--presolve` and
+   `--solver-log-level` here (a commercial solver's log is hidden by
+   `--solver-log-level silent` too, but that is not one of its parameters).
 2. Raw `solver_arguments` entries on the solve.
 3. Translated convenience knobs (`solver_mip_gap`).
 4. The baseline file `<solver>.opt`.
@@ -472,37 +504,61 @@ solver started.
 
 ### Where the option files come from
 
-A run takes all its `<solver>.opt` files from one `solver_config` folder, the
-first of:
+A run reads each solver's file (`highs.opt`, `gurobi.opt`, `cplex.opt`,
+`xpress.opt`, `copt.opt`) **file by file** from an ordered list of
+`solver_config` folders, the *ladder*: each solver's file comes from the first
+folder of the ladder that has it, and a solver that no folder has uses
+FlexTool's default (the shipped template). The ladder is the first of:
 
-1. `--solver-config-dir PATH`;
-2. the `FLEXTOOL_SOLVER_CONFIG_DIR` environment variable (the FlexTool window
-   passes it on as `--solver-config-dir` when it is set);
-3. `--workspace-solver-config-dir PATH`: the FlexTool window (and the
-   calibration it starts) always sends its workspace's `solver_config` this
-   way when `FLEXTOOL_SOLVER_CONFIG_DIR` is not set;
-4. `solver_config/` next to the input database, then, for a database in a GUI
-   project (`<workspace>/projects/<project>/input_sources/`), the workspace's
-   `solver_config/`. The search goes no further up, so a `solver_config`
-   folder somewhere above an unrelated database is never picked up;
-5. for a Spine Toolbox run with `--project-folder-file`, the `solver_config/`
+1. the folders you give or the FlexTool window gives, and only these:
+   `--solver-config-dir PATH` (repeat the flag for several folders, highest
+   first) or the `FLEXTOOL_SOLVER_CONFIG_DIR` environment variable (several
+   folders separated by `:`, on Windows `;`, as in `PATH`), and the folders a
+   launcher found, `--workspace-solver-config-dir PATH` (repeatable, above the
+   others). Nothing from the database's folders or the current folder is
+   added. The FlexTool window (and the calibration it starts) always sends the
+   project's `solver_config/` (when the project has that folder), then the
+   workspace's `solver_config/`, as `--workspace-solver-config-dir`; when
+   `FLEXTOOL_SOLVER_CONFIG_DIR` is set for the window, its folders replace the
+   workspace's folder (passed on as `--solver-config-dir`) and the project's
+   stays on top;
+2. the input database's folders:
+   - `solver_config/` next to the input database, alone;
+   - for a database in a GUI project
+     (`<workspace>/projects/<project>/input_sources/`), the project's
+     `solver_config/`, then the workspace's: the same files as a run of the
+     project from the FlexTool window.
+
+   The search goes no further up, so a `solver_config` folder somewhere above
+   an unrelated database is never picked up;
+3. for a Spine Toolbox run with `--project-folder-file`, the `solver_config/`
    of that Toolbox project;
-6. `solver_config/` in the current folder;
-7. none found: FlexTool's defaults (the shipped templates), with a warning
+4. `solver_config/` in the current folder;
+5. none found: FlexTool's defaults (the shipped templates), with a warning
    that lists the folders tried.
 
-Tiers 4 to 6 count a folder only when it holds at least one `<solver>.opt`.
-They skip `solver_config/` in the current folder when every `.opt` in it is an
-unedited FlexTool template (of this or an earlier version) and the current
-folder is not a FlexTool folder: FlexTool 4.3 and older left such a copy in
-the folder a run was started from. The run then takes the next tier and
-warns, naming the skipped folder; to use your own option files, pass
+So a project's runs take each solver's options from the project's
+`solver_config/`, else the workspace's, else FlexTool's default. To give a
+project its own Gurobi options, for example, put just a `gurobi.opt` in
+`<workspace>/projects/<project>/solver_config/`: its runs still use the
+workspace's `highs.opt`. Delete the project's file to use the workspace's
+again.
+
+A project's `solver_config/` never gives an unedited FlexTool template (of
+this or an earlier version): that file holds the options FlexTool shipped then
+rather than a choice made for the project, and
+the workspace's file of that solver is used instead (the header names the
+skipped file). Tiers 2 to 4 count only when one of their folders holds a
+`<solver>.opt`. They skip `solver_config/` in the current folder when every
+`.opt` in it is an unedited FlexTool template and the current folder is not a
+FlexTool folder: FlexTool 4.3 and older left such a copy in the folder a run
+was started from. The run then takes the next tier and warns, naming the
+skipped folder; to use your own option files, pass
 `--solver-config-dir <the folder with your files>`, and delete the skipped
 folder to stop the warning. The FlexTool folder itself (the workspace, which
 holds `templates/project_folder.txt`) is never skipped: its `solver_config/`
 is the folder the FlexTool window uses, and a run from there uses it without
 a warning, edited or not.
-In the chosen folder, a solver whose file is missing uses its shipped default.
 A Spine Toolbox run (whose Data Store is the workspace's `input_data.sqlite`)
 therefore uses the workspace's `solver_config`, even though Toolbox runs the
 tool in a temporary folder.
@@ -513,27 +569,44 @@ The run header and the log say which folder was used and why, for example:
 Solver config:  /home/me/flextool/solver_config (next to the input database)
 ```
 
+With several folders they name the folder of each file, then the solvers that
+use FlexTool's defaults:
+
+```text
+Solver config:  /home/me/flextool/projects/P/solver_config (project of the FlexTool window): gurobi.opt; /home/me/flextool/solver_config (workspace of the FlexTool window): highs.opt; FlexTool defaults: cplex.opt, xpress.opt, copt.opt
+```
+
+A folder of the ladder that does not exist gives a warning; its solvers use
+the next folder or FlexTool's default.
+
 #### Which option folders are trusted
 
 The files of a folder you name (`--solver-config-dir`,
 `FLEXTOOL_SOLVER_CONFIG_DIR`) and FlexTool's shipped defaults are trusted:
 they may use full file paths, server and licence settings, and parameter
 names that are not in FlexTool's list (with a warning). A folder that a run
-finds by itself (tiers 3 to 6) may have come from someone else, inside a
-workspace, a model folder or a Spine Toolbox project that was shared or
-unzipped. Its files are trusted only when the folder it is in is a workspace
-this computer set up; otherwise every line gets the input database's rules
-(see "What the database may set"): a file option takes only a plain file
-name, placed in the solve's work folder; no server or licence settings; only
-parameter names in FlexTool's list. A refused line stops the run with a
-message that names the file, the line, and how to trust the folder. The
-`Solver config:` line says `not a workspace this computer set up` for such a
-folder, and the run record's `solver_config.trusted` is `false`.
+finds by itself (the FlexTool window's `--workspace-solver-config-dir`
+folders, and tiers 2 to 4) may have come from someone else, inside a
+workspace, a project, a model folder or a Spine Toolbox project that was
+shared or unzipped. Its files are trusted only when the folder it is in (the
+workspace; for `projects/<project>/solver_config`, the project) is one this
+computer set up; otherwise every line gets the input database's rules (see
+"What the database may set"): a file option takes only a plain file name,
+placed in the solve's work folder; no server or licence settings; only
+parameter names in FlexTool's list. Trust is judged per folder, so file by
+file: when a project's untrusted `gurobi.opt` is used over a trusted
+workspace's, the project's file gets the database's rules, and the
+workspace's `highs.opt` keeps its trust. A file that is byte for byte one of
+FlexTool's shipped templates is trusted wherever it lies. A refused line stops
+the run with a message that names the file, the line, and how to trust the
+folder. The `Solver config:` line says `not a workspace this computer set up`
+for such a folder, and the run record's `solver_config.layers[].trusted` and
+`solver_config.files[].trusted` are `false`.
 
 | Where the folder comes from | Trusted |
 |---|---|
 | `--solver-config-dir`, `FLEXTOOL_SOLVER_CONFIG_DIR` | always |
-| `--workspace-solver-config-dir` (the FlexTool window), next to the database, the database's workspace, the Toolbox project, the current folder | when its workspace is on this computer's list |
+| `--workspace-solver-config-dir` (the FlexTool window), next to the database, the database's project or workspace, the Toolbox project, the current folder | when its workspace (or project) is on this computer's list |
 | FlexTool's shipped defaults | always |
 
 This computer's list is `trusted_workspaces` in `solver_settings.json` in
@@ -566,7 +639,7 @@ afresh every run and never read back. Up to FlexTool 4.3 runs read a copy in
 `<work folder>/solver_config/`; such a folder is no longer read as the work
 folder's copy (the run warns and names it when it differs from the files the
 run uses). When the work folder is also the current folder, the folder is
-tier 5: it is used when you have edited a file in it (or it is the FlexTool
+tier 4: it is used when you have edited a file in it (or it is the FlexTool
 folder), and skipped, with a warning, while it holds only the templates 4.3
 copied there. To run with the files of a particular folder, pass
 `--solver-config-dir <folder>`.

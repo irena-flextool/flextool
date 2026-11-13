@@ -27,8 +27,11 @@ non-``kOptimal`` solve is safe to accept:
 * a solve stopped by its **time limit** (every solver: HiGHS ``kTimeLimit``,
   a commercial or ``--save-memory`` result file's ``TIME_LIMIT``) → for a
   MIP with a feasible solution, accept with a warning (the solution is not
-  proven optimal; the gap is named when the solver reported it); for an LP,
-  or with no solution, reject.
+  proven optimal; the gap is named when the solver reported it: a commercial
+  solver's result file or console output, the ``--save-memory`` HiGHS
+  child's gap file, or in-process HiGHS's ``SolveDiagnostics.mip_gap`` when
+  the installed polar-high has that field); for an LP, or with no solution,
+  reject.
 
 The predicate is conjunctive and derives its primal-feasibility limits
 from the solver's own ``primal_feasibility_tolerance`` (the option value
@@ -53,6 +56,7 @@ All policy and thresholds live here; polar-high only supplies the facts
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -294,8 +298,9 @@ def _time_limit_verdict(
             scaling_hint=_scaling_hint_for_reject(ranges_post),
             model_status="kTimeLimit",
         )
+    # HiGHS reports ``inf`` (or ``NaN``) when it has no gap to give; that reads as "no gap" here.
     gap_text = (
-        f" (relative MIP gap {gap:.4%})" if gap is not None
+        f" (relative MIP gap {_format_gap(gap)})" if gap is not None and math.isfinite(gap)
         else " (the remaining gap is in the solver log above)"
     )
     return Acceptance(
@@ -310,6 +315,14 @@ def _time_limit_verdict(
         model_status="kTimeLimit",
         time_limited=True,
     )
+
+
+def _format_gap(gap: float) -> str:
+    """A relative MIP gap as a percentage: four decimals (``0.2286%``), or three significant digits below 0.01 %
+    (``3.2e-05%``) so a small nonzero gap does not print as ``0.0000%`` next to "not proven optimal"."""
+    if 0.0 < abs(gap) < 1e-4:
+        return f"{gap * 100:.3g}%"
+    return f"{gap:.4%}"
 
 
 def _scaling_hint_for_reject(
@@ -477,7 +490,10 @@ def classify_acceptance(
 
     # A MIP stopped by its time limit with a feasible incumbent: the D2 rule.
     if status == "kTimeLimit" and diag.primal_feasible:
-        return _time_limit_verdict(sol, solve_name, gap=None, ranges_post=ranges_post)
+        # ``SolveDiagnostics.mip_gap`` is newer than polar-high 3.12.4; without it the warning points to the log.
+        return _time_limit_verdict(
+            sol, solve_name, gap=getattr(diag, "mip_gap", None), ranges_post=ranges_post,
+        )
 
     # A named failure status is never acceptable — report the precise cause.
     if status in _FAILURE_MESSAGES:

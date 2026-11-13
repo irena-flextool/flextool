@@ -272,15 +272,18 @@ def _stack_file(solver: str) -> str:
     return f"{GAP[solver]} 0.3\n{TIME[solver]} 900\n{THREADS[solver]} 1\n"
 
 
-@pytest.mark.parametrize(("scenario", "flags", "gap", "time_limit"), [
+@pytest.mark.parametrize(("scenario", "flags", "gap", "time_limit", "threads"), [
     # solver_arguments beat solver_mip_gap and the file; the time-limit flag beats solver_arguments.
-    ("stack", ("--solver-time-limit", "700"), 0.1, 700),
+    ("stack", ("--solver-time-limit", "700"), 0.1, 700, 1),
     # The gap flag beats solver_arguments; the arguments' time limit beats the file's.
-    ("stack", ("--solver-mip-gap", "0.05"), 0.05, 800),
+    ("stack", ("--solver-mip-gap", "0.05"), 0.05, 800, 1),
     # solver_mip_gap beats the file; the file's time limit stays.
-    ("smg", (), 0.2, 900),
+    ("smg", (), 0.2, 900, 1),
+    # The run's thread budget replaces the file's thread count (item 232).
+    ("stack", ("--threads", "3"), 0.1, 800, 3),
 ])
-def test_option_stack_as_the_solver_got_it(solver, shim, db, tmp_path, scenario, flags, gap, time_limit) -> None:
+def test_option_stack_as_the_solver_got_it(solver, shim, db, tmp_path, scenario, flags, gap, time_limit,
+                                           threads) -> None:
     cfg = _cfg(tmp_path, solver, _stack_file(solver))
     steps = _run(db, f"{scenario}_{solver}", tmp_path / "w", cfg, *flags)
     assert steps[SOLVE].optimal
@@ -291,7 +294,7 @@ def test_option_stack_as_the_solver_got_it(solver, shim, db, tmp_path, scenario,
         got = call["params"]
         assert got[GAP[solver]] == pytest.approx(gap), got
         assert got[TIME[solver]] == pytest.approx(time_limit), got
-        assert got[THREADS[solver]] == 1, got
+        assert got[THREADS[solver]] == threads, got
         assert len(got) == 3, got
 
 

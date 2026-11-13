@@ -25,6 +25,8 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Mapping, NamedTuple
 
+from flextool._solver_option_rules import cplex_set_word_problem
+from flextool._solver_option_rules import highs_opt_lines as _highs_opt_lines
 from flextool.engine.input._solve_config import SolverConfig
 from flextool.engine.solve import _solver_catalogue
 from flextool.engine.solve._solver_catalogue import (
@@ -73,20 +75,6 @@ def _parse_highs_opt_file(path: Path | None) -> dict[str, str]:
     if path is None or not path.is_file():
         return {}
     return _parse_highs_opt_text(path.read_text(encoding="utf-8"))
-
-
-def _highs_opt_lines(text: str) -> list[tuple[int, str, str]]:
-    """``(line number, key, value)`` of every option line of a ``highs.opt`` text, in file order."""
-    out: list[tuple[int, str, str]] = []
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if "=" not in stripped:
-            continue
-        key, _, val = stripped.partition("=")
-        out.append((lineno, key.strip(), val.strip()))
-    return out
 
 
 def _parse_highs_opt_text(text: str) -> dict[str, str]:
@@ -220,6 +208,8 @@ def validate_solver_option(solver: str, name: object, value: object, where: str)
             problem = "the name's words are not separated by single spaces, each starting with a letter"
     elif isinstance(value, str) and not value.strip():
         problem = "the value is empty or missing"
+    elif (set_word := cplex_set_word_problem(solver, name_text)) is not None:
+        problem = f"the name {set_word}"
     elif len(value_text) > _OPTION_VALUE_MAX:
         problem = f"the value is longer than {_OPTION_VALUE_MAX} characters"
     elif _OPTION_VALUE.fullmatch(value_text) is None:
@@ -360,6 +350,13 @@ def is_path_option(solver: str, name: object) -> bool:
     if solver != "cplex" or not key:
         return False
     words = key.split(" ")
+    if words[0] == "set" and len(words) > 1:
+        # ``set lo /tmp/x``: FlexTool writes ``set <name> <value>`` itself; judge the name the user meant
+        # (:func:`flextool._solver_option_rules.cplex_set_word_problem` refuses the line from every source).
+        words = words[1:]
+        key = " ".join(words)
+        if key in listed or any(word in key for word in _PATH_NAME_WORDS):
+            return True
     if words[0] in _CPLEX_PATH_FIRST_WORDS:
         return True
     return any(
@@ -979,7 +976,10 @@ def build_solver_options(solver_config: SolverConfig) -> dict[str, Any]:
 #   2. the solve's ``solver_mip_gap`` (translated through :data:`_PARAM_MAP`);
 #   3. the solve's ``solver_arguments`` (raw native names);
 #   4. the operator layer: ``--solver-time-limit`` / ``--solver-mip-gap``, else
-#      ``FLEXTOOL_SOLVER_TIME_LIMIT`` / ``FLEXTOOL_SOLVER_MIP_GAP``.
+#      ``FLEXTOOL_SOLVER_TIME_LIMIT`` / ``FLEXTOOL_SOLVER_MIP_GAP``, and the thread
+#      budget (``--threads`` / ``FLEXTOOL_THREADS``; item 232): it replaces the
+#      solver's thread count, also a value meaning all cores, with one printed
+#      line per run (:func:`_note_thread_override`).
 # Names are compared as the solver reads them (:func:`commercial_option_key`:
 # without case; CPLEX ``.`` read as a space; Gurobi without ``_``; Xpress
 # without an ``XPRS_`` prefix), so ``MIPGap`` in the file and ``mip_gap`` in
@@ -1013,6 +1013,7 @@ _WATCHDOG_GRACE_S = 600.0
 _warned_dropped_options: set[tuple[str, str, str]] = set()
 _warned_highs_only: set[tuple[str, ...]] = set()
 _warned_precommands: set[str] = set()
+_warned_thread_overrides: set[tuple[str, str, str]] = set()
 
 
 def reset_run_warnings() -> None:
@@ -1024,6 +1025,7 @@ def reset_run_warnings() -> None:
     _warned_unlisted_allowed.clear()
     _warned_unlisted_trusted.clear()
     _warned_flextool3_options.clear()
+    _warned_thread_overrides.clear()
 
 
 def local_solver_wrapper(solver: str):
@@ -1095,18 +1097,23 @@ def _operator_native_overrides(
     solver: str, run_options: "RunOptions | None",
 ) -> list[CommercialOption]:
     """The operator layer of a commercial solve: the time limit and the MIP gap
-    given by flag or by ``FLEXTOOL_SOLVER_*``, under *solver*'s native names.
+    given by flag or by ``FLEXTOOL_SOLVER_*``, and the run's thread budget, under
+    *solver*'s native names.
 
-    The HiGHS-only ``FLEXTOOL_HIGHS_TIME_LIMIT`` / ``FLEXTOOL_HIGHS_MIP_GAP``
-    do not apply, and threads stay with the option file (``--threads`` is the
-    run's FlexTool budget only).  A registry default adds nothing.
+    threads: the run's budget (``--threads`` / ``FLEXTOOL_THREADS``) replaces the
+    solver's thread count; without them the option file and ``solver_arguments``
+    keep it (as for HiGHS).  The HiGHS-only ``FLEXTOOL_HIGHS_TIME_LIMIT`` /
+    ``FLEXTOOL_HIGHS_MIP_GAP`` / ``--highs-threads`` do not apply.  A registry
+    default (and an unset budget, which is the available cores) adds nothing.
     """
     from flextool.run_options import OPTIONS, RunOptions
 
     opts = run_options if run_options is not None else RunOptions.from_env()
     names = _PARAM_MAP[solver]
     out: list[CommercialOption] = []
-    for knob, key in (("time_limit", "solver_time_limit"), ("mip_gap", "solver_mip_gap")):
+    for knob, key in (
+        ("time_limit", "solver_time_limit"), ("mip_gap", "solver_mip_gap"), ("threads", "threads"),
+    ):
         resolved = opts.resolved.get(key)
         if resolved is None or resolved.source not in ("cli", "env") or resolved.value is None:
             continue
@@ -1163,8 +1170,8 @@ def resolve_commercial_options(
     if opt_text is None and opt_file is not None:
         opt_text = _read_native_opt_text(Path(opt_file))
     file_options: dict[str, str] = {}
+    file_label = str(opt_file) if opt_file is not None else f"{solver}.opt"
     if opt_text is not None:
-        file_label = str(opt_file) if opt_file is not None else f"{solver}.opt"
         for lineno, name, value in _native_opt_lines(opt_text):
             if commercial_option_key(solver, name) not in own:  # dropped below, never passed on
                 where = f"{file_label}, line {lineno}"
@@ -1174,7 +1181,7 @@ def resolve_commercial_options(
                 else:
                     check_database_solver_option(solver, name, value, where, untrusted=opt_untrusted)
         file_options = _parse_native_opt_text(opt_text)
-    entries += [CommercialOption(k, v, str(opt_file)) for k, v in file_options.items()]
+    entries += [CommercialOption(k, v, file_label) for k, v in file_options.items()]
     n_file_entries = len(entries)
     if solver_config is not None:
         names = _PARAM_MAP[solver]
@@ -1197,7 +1204,16 @@ def resolve_commercial_options(
         validate_solver_option(solver, option.name, option.value, option.layer)
         check_database_solver_option(solver, option.name, option.value, option.layer)
     n_checked = len(entries)
-    entries += _operator_native_overrides(solver, run_options)
+    thread_key = commercial_option_key(solver, _PARAM_MAP[solver]["threads"])
+    replaced_threads = None  # the lower layers' winning thread count, which the run's budget replaces
+    for option in entries:
+        if commercial_option_key(solver, option.name) == thread_key:
+            replaced_threads = option
+    operator = _operator_native_overrides(solver, run_options)
+    entries += operator
+    budget = next((o for o in operator if commercial_option_key(solver, o.name) == thread_key), None)
+    if budget is not None and replaced_threads is not None:
+        _note_thread_override(solver, replaced_threads, budget)
 
     merged: dict[str, CommercialOption] = {}
     for position, option in enumerate(entries):
@@ -1218,6 +1234,46 @@ def resolve_commercial_options(
             validate_solver_option(solver, option.name, option.value, option.layer)
         merged[key] = option._replace(name=key) if solver == "cplex" else option
     return list(merged.values())
+
+
+def _thread_number(value: str) -> float | None:
+    try:
+        number = float(value)
+    except ValueError:
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _note_thread_override(solver: str, old: CommercialOption, new: CommercialOption) -> None:
+    """One printed line per run when the run's thread budget *new* replaces a different thread count *old*
+    of the option file or the input database (item 232).
+
+    Printed, not logged: it sits just before the solve's printed ``Solver args`` line, where ``logger.info``
+    does not reach the console.  Once per solver, kind of layer and old value, so rolls and repeated solves
+    print it once.  The advice to raise ``--threads`` (``FLEXTOOL_THREADS`` when the budget came from it) is
+    added only when the budget lowers the thread count (an "all cores" value: Gurobi / CPLEX ``0``, Xpress / COPT ``<= 0``, or a larger number).
+    """
+    old_number, new_number = _thread_number(old.value), _thread_number(new.value)
+    if old_number is not None and old_number == new_number:
+        return
+    warn_key = (solver, old.layer.split(" of solve ", 1)[0], old.value)
+    if warn_key in _warned_thread_overrides:
+        return
+    _warned_thread_overrides.add(warn_key)
+    all_cores = old_number is not None and (old_number == 0 or (solver in ("xpress", "copt") and old_number < 0))
+    lowers = all_cores or (old_number is not None and new_number is not None and old_number > new_number)
+    if not lowers:
+        tail = ""
+    elif new.layer.startswith("environment variable "):
+        env_name = new.layer.removeprefix("environment variable ")
+        tail = f" For more solver threads raise {env_name} (or give --threads)."
+    else:
+        tail = " For more solver threads raise --threads (Threads per run in the FlexTool window)."
+    print(
+        f"{solver} uses {new.name} {new.value}, the run's thread budget ({new.layer}), instead of {old.name} "
+        f"{old.value}{' (all cores)' if all_cores else ''} in {old.layer}.{tail}",
+        flush=True,
+    )
 
 
 def commercial_opt_file_layer(

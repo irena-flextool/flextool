@@ -65,12 +65,42 @@ def test_the_workspace_option_folder_is_sent_explicitly(tmp_path: Path, monkeypa
     monkeypatch.chdir(workspace)
     monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
     options = _run_options(_cmd_for(tmp_path))
-    assert options.value("workspace_solver_config_dir") == str(workspace / "solver_config")
+    assert options.value("workspace_solver_config_dir") == (str(workspace / "solver_config"),)
     assert options.value("solver_config_dir") is None
     monkeypatch.setenv("FLEXTOOL_SOLVER_CONFIG_DIR", str(tmp_path / "chosen"))
     options = _run_options(_cmd_for(tmp_path))
-    assert options.value("solver_config_dir") == str(tmp_path / "chosen")
+    assert options.value("solver_config_dir") == (str(tmp_path / "chosen"),)
     assert options.value("workspace_solver_config_dir") is None
+
+
+def test_the_project_option_folder_comes_first(tmp_path: Path, monkeypatch):
+    """A project with its own ``solver_config`` gets it ahead of the workspace's, one flag per folder, both as
+    folders the window found (trusted only when this computer set them up; item 240 B3);
+    ``FLEXTOOL_SOLVER_CONFIG_DIR`` replaces only the workspace's folder (several, separated by os.pathsep, the
+    user's own choice) and the run puts the found project folder above them."""
+    import os
+
+    from flextool._solver_config_source import resolve_solver_config_source
+
+    workspace = tmp_path / "ws"
+    project = workspace / "projects" / "P"
+    (project / "solver_config").mkdir(parents=True)
+    monkeypatch.chdir(workspace)
+    monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
+    mgr = ExecutionManager(project_path=project, settings=ProjectSettings())
+    job = ExecutionJob(job_id=0, scenario_name="scen", output_subdir="scen", input_db_url="sqlite:///input.sqlite")
+    cmd = mgr._build_run_command(job, tmp_path / "work")
+    assert _run_options(cmd).value("workspace_solver_config_dir") == (
+        str(project / "solver_config"), str(workspace / "solver_config"))
+    monkeypatch.setenv("FLEXTOOL_SOLVER_CONFIG_DIR", os.pathsep.join([str(tmp_path / "a"), str(tmp_path / "b")]))
+    cmd = mgr._build_run_command(job, tmp_path / "work")
+    assert cmd.count("--solver-config-dir") == 2 and cmd.count("--workspace-solver-config-dir") == 1
+    options = _run_options(cmd)
+    assert options.value("workspace_solver_config_dir") == (str(project / "solver_config"),)
+    assert options.value("solver_config_dir") == (str(tmp_path / "a"), str(tmp_path / "b"))
+    ladder = resolve_solver_config_source(run_options=options)
+    assert [folder for folder, _reason in ladder.layers] == [
+        project / "solver_config", tmp_path / "a", tmp_path / "b"]
 
 
 @pytest.mark.parametrize(
@@ -126,7 +156,7 @@ def test_calibration_sends_threads_per_run(tmp_path: Path):
     )
     assert argv[1:4] == ["-P", "-m", "flextool.calibrate"]
     parsed = calibrate_parser().parse_args(argv[4:])
-    assert parsed.threads == 3 and parsed.solver_config_dir == Path("/ws/solver_config")
+    assert parsed.threads == 3 and parsed.solver_config_dir == [Path("/ws/solver_config")]
 
 
 def test_calibrator_solves_get_the_option_folder(tmp_path: Path):
@@ -138,13 +168,13 @@ def test_calibrator_solves_get_the_option_folder(tmp_path: Path):
     assert argv[1:4] == ["-P", "-m", "flextool_run_supervisor"]
     options = RunOptions.from_cli(build_parser().parse_args(argv[4:]), environ={})
     assert (options.value("solver_config_dir"), options.source("solver_config_dir")) == (
-        str(Path("/ws/solver_config")), "cli")
-    # The FlexTool window's workspace folder is passed on as the workspace's (item 240 B3).
+        (str(Path("/ws/solver_config")),), "cli")
+    # The FlexTool window's found folders are passed on as found (item 240 B3).
     argv = solve_argv("in.sqlite", "scen", work_dir=tmp_path / "w", out_root=tmp_path / "o", cache_dir=tmp_path / "c",
                       workspace_solver_config_dir=Path("/ws/solver_config"))
     options = RunOptions.from_cli(build_parser().parse_args(argv[4:]), environ={})
     assert options.value("solver_config_dir") is None
-    assert options.value("workspace_solver_config_dir") == str(Path("/ws/solver_config"))
+    assert options.value("workspace_solver_config_dir") == (str(Path("/ws/solver_config")),)
 
 
 def test_the_gui_never_sends_a_mip_gap(tmp_path: Path):

@@ -140,8 +140,9 @@ flextool <input_db_url> --solver-time-limit 60 --solver-mip-gap 0.001
 `solver_mip_gap` (0.005) and any `MIPGap` in `solver_arguments` or
 `gurobi.opt`. Without the flags, `solver_mip_gap` gives `MIPGap=0.005`, and a
 `MIPGap` (or `mipgap`: names match without regard to case) in
-`solver_arguments` wins over it. The thread count comes from `Threads` in
-`gurobi.opt` (`--threads` and `--highs-threads` do not change it). The run
+`solver_arguments` wins over it. `--threads` (Threads per run in the
+FlexTool window) sets `Threads`; without it, `Threads` in `gurobi.opt` or
+`solver_arguments` applies. `--highs-threads` does not change it. The run
 prints what Gurobi receives, for example:
 
 ```text

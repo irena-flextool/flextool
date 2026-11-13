@@ -57,13 +57,14 @@ class FlexToolRunner:
         from flextool._resources import package_data_path
         from flextool._solver_config_source import read_solver_option_files, resolve_solver_config_source
         _pkg_dir = package_data_path("")
+        # Read the files here: a ladder of several folders is read file by file (its top folder alone would lose
+        # the lower ones), and a folder found outside a workspace or project this computer set up keeps the
+        # database's rules (item 240 B3; ``run_chain_from_db`` hands its own files to the solves).
         solver_option_files = None
         if solver_config_dir is None:
-            # Read the files here, so a folder found outside a workspace this computer set up keeps the
-            # database's rules (item 240 B3; ``run_chain_from_db`` hands its own files to the solves).
-            _source = resolve_solver_config_source(run_options=run_options, input_db_url=input_db_url)
-            solver_config_dir = _source.dir
-            solver_option_files = read_solver_option_files(_source)
+            source = resolve_solver_config_source(run_options=run_options, input_db_url=input_db_url)
+            solver_config_dir = source.dir
+            solver_option_files = read_solver_option_files(source)
         paths = PathConfig(
             flextool_dir=Path(flextool_dir) if flextool_dir is not None else _pkg_dir,
             solver_config_dir=Path(solver_config_dir) if solver_config_dir is not None else None,

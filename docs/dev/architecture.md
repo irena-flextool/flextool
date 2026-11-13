@@ -127,14 +127,22 @@ The contract:
    solver: `<solver>.opt`; then `solve.solver_mip_gap` < `solve.solver_arguments` < operator layer); the registry
    supplies only the operator layer (`_operator_highs_overrides`; `_solver_dispatch._operator_native_overrides`
    maps `--solver-time-limit` / `--solver-mip-gap` to the native names of `_PARAM_MAP`).
-   The option files come from one folder per run, `flextool/_solver_config_source.py` (engine-free; not
+   The option files come from one ladder of folders per run, read FILE BY FILE (each solver's file from the first
+   folder that has it, else the packaged template), `flextool/_solver_config_source.py` (engine-free; not
    `flextool/solver_config.py`, which would shadow the template data folder):
-   `resolve_solver_config_source` — explicit argument > `--solver-config-dir` > `FLEXTOOL_SOLVER_CONFIG_DIR` >
-   the bounded database layout (next to the database; `<workspace>` of a `projects/<P>/input_sources/` database)
-   > the Toolbox project folder > cwd > packaged templates. `snapshot_solver_option_files` reads them once at run
+   `resolve_solver_config_source` builds the ladder from the first tier that applies — explicit argument >
+   `--workspace-solver-config-dir` (repeatable, found by a launcher) above `--solver-config-dir` (repeatable) >
+   `FLEXTOOL_SOLVER_CONFIG_DIR` (`os.pathsep` list), a closed ladder >
+   the bounded database layout (next to the database, alone; else `[<P>/solver_config, <workspace>/solver_config]`
+   for a `projects/<P>/input_sources/` database) > the Toolbox project folder > cwd > packaged templates. A GUI
+   project's folder never gives an unedited template (it would hide the workspace's file). Project import screens
+   shipped files with the engine-free `flextool/_solver_option_rules.py` (the database's path/server rules) and
+   holds a flagged one back as `<solver>.opt.review`. `snapshot_solver_option_files` reads them once at run
    start into `PathConfig.solver_option_files` (every solve reads its layer from there, never from disk) and
-   writes the record `<work_folder>/solve_data/solver_config/`. The GUI and the calibrator pass the folder
-   explicitly.
+   writes the record `<work_folder>/solve_data/solver_config/`. The GUI and the calibrator pass the ladder
+   explicitly (`gui_solver_config_flags`: the project's folder when it exists, then the workspace's, as
+   `--workspace-solver-config-dir`; the folders of `FLEXTOOL_SOLVER_CONFIG_DIR` as `--solver-config-dir`, below
+   the project's).
    Trust follows the source: the database layers (`solver_arguments`, `solver_mip_gap`) take only names in
    `engine/solve/solver_catalogue/<solver>.json` (`_solver_catalogue`, written by `tools/solver_catalogue.py` with
    a reviewed class per name: `plain` / `file` / `local_only` / `flextool`), checked for every solve before the
@@ -143,13 +151,16 @@ The contract:
    (`flextool/_local_solver_settings.py`: `FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS`, else
    `user_config_dir()/solver_settings.json`) is never read from a database, project, workspace or flag. Option
    files and flags warn on an unlisted name and pass it.
-   An option folder the run found by itself (tiers 3-5, and the GUI's `--workspace-solver-config-dir`) is trusted
-   only when its parent is in `trusted_workspaces` of that settings file (`SolverConfigSource.trusted`); otherwise
-   `SolverOptionFiles.untrusted_note()` is handed to `resolve_commercial_options` / `_resolve_effective_highs_options`
-   and each file line goes through `check_database_solver_option(untrusted=...)`. Only `ensure_runtime_files`
-   (when it creates `solver_config/` or finds only unedited templates, `holds_only_flextool_defaults`) and the
-   GUI's explicit "trust this workspace" add to the list; nothing inside a workspace (`templates/project_folder.txt`
-   included) is a trust anchor. `--solver-config-dir` / `FLEXTOOL_SOLVER_CONFIG_DIR` stay trusted.
+   Trust is judged per folder of the ladder, so per file: a folder the run found by itself (tiers 2-4, and the
+   GUI's `--workspace-solver-config-dir` folders) is trusted only when its parent (the workspace, or the project
+   for `projects/<P>/solver_config`) is in `trusted_workspaces` of that settings file
+   (`SolverConfigSource.layer_note`); otherwise `SolverOptionFiles.untrusted_note(solver)`, from the folder that
+   gave that solver's file, is handed to `resolve_commercial_options` / `_resolve_effective_highs_options` and
+   each file line goes through `check_database_solver_option(untrusted=...)`. A file that is byte for byte a
+   shipped template is trusted wherever it lies. Only `ensure_runtime_files` (when it creates `solver_config/` or
+   finds only unedited templates, `holds_only_flextool_defaults`) and the GUI's explicit "trust this workspace"
+   add to the list; nothing inside a workspace (`templates/project_folder.txt` included) is a trust anchor.
+   `--solver-config-dir` / `FLEXTOOL_SOLVER_CONFIG_DIR` stay trusted.
    A commercial solver may run behind this computer's solver wrapper (`_local_solver_settings.solver_wrapper`:
    `FLEXTOOL_SOLVER_WRAPPER_GUROBI` and its CPLEX, XPRESS, COPT twins, else `wrappers` in the same file;
    `check_wrapper` holds the rules), checked for every solver of the run before the first solve

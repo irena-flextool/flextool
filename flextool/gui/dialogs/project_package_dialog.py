@@ -83,7 +83,7 @@ class ExportDialog(tk.Toplevel):
         project_dir: Path,
         *,
         jobs_running: Callable[[], bool] | None = None,
-        solver_config_dir: Path | None = None,
+        solver_config_dir: Path | list[Path] | None = None,
         target_dir: Path | None = None,
     ) -> None:
         super().__init__(parent)
@@ -134,14 +134,21 @@ class ExportDialog(tk.Toplevel):
         ]
         if self._fixed["plot_settings"]:
             lines.append("plot_settings.yaml")
-        opts = self._fixed["solver_config"]
-        config_dir = self._fixed["solver_config_dir"]
-        lines.append(f"Solver options from {config_dir}: {', '.join(opts)}" if opts
-                     else f"Solver options: no .opt files in {config_dir}")
+        opts = self._fixed["solver_config_files"]
+        if opts:
+            lines.append("Solver options (the files this project's runs use): "
+                         + ", ".join(f"{name} from {path.parent}" for name, path in opts.items()))
+        else:
+            lines.append("Solver options: none (this project's runs use FlexTool's defaults; looked in "
+                         + ", ".join(str(folder) for folder in self._fixed["solver_config_dirs"]) + ")")
+        withheld = [pp.withheld_file_line(name, path, problems)
+                    for name, (path, problems) in self._fixed["solver_config_withheld"].items()]
         lines.append("With each result run: its run record (_run_status.json), which can show this computer's "
                      "folder paths, user name and host name, and its run log (_run.log)")
         for line in lines:
             ttk.Label(fixed, text=line, foreground=GREY_FG, wraplength=wrap, justify="left").pack(anchor="w")
+        for line in withheld:
+            ttk.Label(fixed, text=line, foreground=WARNING_FG, wraplength=wrap, justify="left").pack(anchor="w")
         ttk.Checkbutton(
             fixed, text="Remove this computer's folder paths, user name and host name from the run records, and "
                         "leave the run logs out", variable=self._scrub_var).pack(anchor="w", pady=(4, 0))
@@ -236,8 +243,7 @@ class ExportDialog(tk.Toplevel):
             path = self._project_dir / name
             if path.is_file():
                 total += path.stat().st_size
-        config_dir = self._fixed["solver_config_dir"]
-        total += sum((config_dir / name).stat().st_size for name in self._fixed["solver_config"])
+        total += sum(path.stat().st_size for path in self._fixed["solver_config_files"].values())
         runs = self.selected_runs()
         total += sum(self._runs[name].bytes for name in runs)
         bounds = pp.axis_bounds_for_runs(self._project_dir, runs)
@@ -355,7 +361,7 @@ class ImportDialog(tk.Toplevel):
         projects_dir: Path,
         *,
         zip_path: Path | None = None,
-        solver_config_dir: Path | None = None,
+        solver_config_dir: Path | list[Path] | None = None,
     ) -> None:
         super().__init__(parent)
         self._projects_dir = Path(projects_dir)
@@ -453,7 +459,8 @@ class ImportDialog(tk.Toplevel):
         lines.append("Result runs: " + (", ".join(manifest.results) if manifest.results else "none"))
         if manifest.solver_config:
             lines.append("Solver options: " + ", ".join(manifest.solver_config)
-                         + f" (unpacked to {pp.IMPORTED_SOLVER_CONFIG_DIR}/)")
+                         + f" (unpacked to {pp.SOLVER_CONFIG_DIR}/ of the project; its runs use them ahead of "
+                         "the workspace's)")
         self.summary_label.configure(text="\n".join(lines))
         self._blocking, warnings = pp.version_messages(manifest)
         self.warning_label.configure(text="\n".join(self._blocking + warnings),

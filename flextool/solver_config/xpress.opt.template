@@ -21,6 +21,7 @@
 # Reference: https://www.fico.com/fico-xpress-optimization/docs/dms2024-01/solver/optimizer/HTML/chapter6.html
 #
 # Conservative defaults — edit to suit your model.
+# Replaced by the run's --threads (Threads per run in the FlexTool window) when it is given.
 THREADS 1
 MIPRELSTOP 0.002
 OUTPUTLOG 1

@@ -106,6 +106,8 @@ def _jsonable(value: Any) -> Any:
         return value
     if isinstance(value, float):
         return value if math.isfinite(value) else None
+    if isinstance(value, (tuple, list)):  # several folders of --solver-config-dir
+        return [_jsonable(item) for item in value]
     return str(value)
 
 

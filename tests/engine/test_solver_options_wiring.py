@@ -514,6 +514,9 @@ def test_second_run_in_a_process_uses_its_own_solver_config(gurobi_db, tmp_path,
     from flextool.engine.solve import _subprocess_solve
 
     monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
+    # This test is about the option file and database layers: no thread budget, so the file's thread count
+    # stands (the suite's FLEXTOOL_THREADS=1 would replace it, item 232).
+    monkeypatch.delenv("FLEXTOOL_THREADS", raising=False)
     first = tmp_path / "first_config"
     first.mkdir()
     (first / "gurobi.opt").write_text("Threads 11\n")
@@ -573,6 +576,9 @@ def test_option_files_are_read_once_per_run(gurobi_db, tmp_path, monkeypatch) ->
     from flextool.engine import run_chain_from_db
     from flextool.engine.solve import _subprocess_solve
 
+    # This test is about the option file and database layers: no thread budget, so the file's thread count
+    # stands (the suite's FLEXTOOL_THREADS=1 would replace it, item 232).
+    monkeypatch.delenv("FLEXTOOL_THREADS", raising=False)
     cfg = tmp_path / "cfg"
     cfg.mkdir()
     (cfg / "gurobi.opt").write_text("Threads 3\n")

@@ -62,7 +62,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from flextool._child_python import child_env
-from flextool._solver_config_source import workspace_solver_config_flag
+from flextool._solver_config_source import gui_solver_config_ladder
 from flextool.gui.calibrate_commands import (
     build_calibrate_command,
     build_rp_command,
@@ -157,14 +157,19 @@ class CalibJobSpec:
 _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
-def solver_config_kwargs() -> dict[str, str]:
-    """The solver option folder of a calibration the FlexTool window starts, as
-    :func:`~flextool.gui.calibrate_commands.build_calibrate_command` takes it: ``solver_config_dir`` when the user
-    set ``FLEXTOOL_SOLVER_CONFIG_DIR``, else ``workspace_solver_config_dir`` (the workspace's ``solver_config``,
-    trusted only when this computer set the workspace up; item 240 B3)."""
-    flag, folder = workspace_solver_config_flag()
-    key = "solver_config_dir" if flag == "--solver-config-dir" else "workspace_solver_config_dir"
-    return {key: str(folder)}
+def solver_config_kwargs(project_path: str | Path | None) -> dict[str, list[Path]]:
+    """The solver option folders of a calibration the FlexTool window starts for the project at *project_path*,
+    as :func:`~flextool.gui.calibrate_commands.build_calibrate_command` takes them: the same ladder as the window's
+    runs (:func:`flextool._solver_config_source.gui_solver_config_ladder`), ``workspace_solver_config_dir`` for the
+    folders the window found (the project's ``solver_config``, the workspace's; trusted only when this computer
+    set them up, item 240 B3) and ``solver_config_dir`` for those of ``FLEXTOOL_SOLVER_CONFIG_DIR``."""
+    found, named = gui_solver_config_ladder(project_path)
+    out: dict[str, list[Path]] = {}
+    if found:
+        out["workspace_solver_config_dir"] = found
+    if named:
+        out["solver_config_dir"] = named
+    return out
 
 
 def _safe_name(scenario: str) -> str:
@@ -522,7 +527,7 @@ def launch_calibration_jobs(
             debug=spec.debug,
             final_write_methods=spec.final_write_methods,
             threads=mgr.execution_limits.max_cores_per_job,
-            **solver_config_kwargs(),
+            **solver_config_kwargs(project_path),
         )
         display_name = f"Calibrate: {spec.scenario}"
         action_key = f"calibrate:{spec.scenario}"

@@ -429,6 +429,82 @@ class StochasticSolver:
             self.logger.error(message)
             raise FlexToolConfigError(message)
 
+    def _check_unfanned_cohorts(
+        self,
+        unfanned: dict[str, tuple[str, str, bool, list]],
+        solves: list[str],
+        branch_start_time_lists: dict[str, Any],
+        complete_solves: dict[str, str],
+    ) -> None:
+        """Raise when a fanned sub-solve declares a later forecast cohort
+        that no sub-solve of its complete solve fans out at.
+
+        A solve or roll fans out only once, at its first reveal; a later
+        cohort ``(period, start_step)`` with forecast branches would be
+        dropped silently.  A later cohort is legitimate when it is the fan
+        point (``branch_start_time_lists``) of any sub-solve ``x`` with
+        ``complete_solves[x] == complete_solves[s]`` — e.g. the roll that
+        starts there reads it through its own fan.
+
+        Args:
+            unfanned: ``{solve: (trig_period, trig_step,
+                is_rolling_sub_solve, [(period, step, forecasts), ...])}``
+                — the later forecast cohorts reachable in each fanned
+                sub-solve, in timeline order.
+            solves: All sub-solves, in order (the first offender raises).
+            branch_start_time_lists: ``{solve: (period, step) | None}``.
+            complete_solves: ``{solve: complete_solve_name}``.
+
+        Raises:
+            FlexToolConfigError: For the first sub-solve with such a cohort,
+                naming the solve (roll), its fan point and every cohort.
+        """
+        triggers: defaultdict[str, set] = defaultdict(set)
+        for x in solves:
+            if branch_start_time_lists.get(x) is not None:
+                triggers[complete_solves[x]].add(tuple(branch_start_time_lists[x]))
+        for s in solves:
+            if s not in unfanned:
+                continue
+            trig_period, trig_step, is_rolling, candidates = unfanned[s]
+            c = complete_solves[s]
+            remaining = [
+                (p, t, f) for (p, t, f) in candidates if (p, t) not in triggers[c]
+            ]
+            if not remaining:
+                continue
+            if is_rolling:
+                who = f"Roll {s!r} of rolling solve {c!r}"
+                hint = (
+                    "Each roll fans out at the first reveal in its horizon, "
+                    "and no roll fans out at these. Remove these rows, or make "
+                    "a roll start there (rolling_solve_jump)."
+                )
+            else:
+                who = f"Solve {s!r}"
+                hint = (
+                    f"The branches opened at {trig_period!r} continue through "
+                    "every later period, and a forecast series given at a "
+                    "later period's first time step is read without these "
+                    "rows. Remove these rows, or put the later fan in a "
+                    "separate solve."
+                )
+            items = "; ".join(
+                f"period {p!r} at analysis_time {t!r} (forecast branches "
+                + ", ".join(repr(b) for b in f)
+                + ")"
+                for (p, t, f) in remaining
+            )
+            message = (
+                f"{who} opens its stochastic fan at period {trig_period!r} "
+                f"(analysis_time {trig_step!r}). A solve or roll fans out only "
+                f"once, but the stochastic_branches of solve {c!r} also "
+                f"declare forecast branches later in its horizon: {items}. "
+                f"FlexTool would ignore them. {hint} Check stochastic_branches."
+            )
+            self.logger.error(message)
+            raise FlexToolConfigError(message)
+
     def create_stochastic_periods(
         self,
         stochastic_branches: dict[str, Any],
@@ -501,13 +577,26 @@ class StochasticSolver:
                 with nonzero weight), or when a single (non-rolling) solve
                 declares ``stochastic_branches`` none of which reveal at a
                 reachable step of its active time (silently-ignored
-                branches).
+                branches); and, after every sub-solve is processed, when a
+                fanned sub-solve declares forecast branches at a later
+                reachable cohort (a later period, or a later step of the fan
+                period) that is not the fan point of any sub-solve of the
+                same complete solve (a solve or roll fans out only once).
         """
         period__branch_lists: defaultdict[str, list] = defaultdict(list)
         solve_branch__time_branch_lists: defaultdict[str, list] = defaultdict(list)
         jump_lists: dict[str, Any] = dict()
         branch_start_time_lists: defaultdict[str, Any] = defaultdict()
         fan_label_time_lists: dict[str, FanLabelTimes] = dict()
+        # Later forecast cohorts reachable in each fanned sub-solve; checked
+        # after the loop, once every sub-solve's fan point is known.
+        unfanned: dict[str, tuple[str, str, bool, list]] = dict()
+        # Per complete solve: the stochastic_branches rows grouped by cohort
+        # (period, start_step), and the sorted forecast branches of each
+        # cohort reached so far.  Built once per complete solve, so a roll
+        # walks only its own horizon, not every roll's rows.
+        cohort_rows: dict[str, dict[tuple[str, str], list]] = dict()
+        cohort_forecasts: dict[str, dict[tuple[str, str], list[str]]] = dict()
 
         for solve in solves:
             new_realized_time_list: dict = dict()
@@ -539,6 +628,9 @@ class StochasticSolver:
             # in the roll where it triggers — a clean cross-roll pre-pass is
             # infeasible, since a mid-horizon reveal is a PERIOD boundary, not
             # a roll boundary, so it can't be told from a garbage step here).
+            # The later forecast cohorts in this solve's horizon are checked
+            # after the loop (``_check_unfanned_cohorts``): one that no
+            # sub-solve of the same complete solve fans out at is an error.
             # Checks: (i) the trigger step must be its period's FIRST step
             # (reveals are period-granular boundaries); (ii) the cohort
             # {rows sharing that (period, start_step)} must carry ≤1
@@ -643,8 +735,58 @@ class StochasticSolver:
                             f"Stochastic branching period {period_k!r}",
                         )
 
+                # Later forecast cohorts in this solve's horizon (collected
+                # from the pre-stochastic list; checked after the loop).
+                order = list(active_time_list)
+                trig_index = order.index(trig_period)
+                trig_steps = [e.timestep for e in active_time_list[trig_period]]
+                trig_step_index = trig_steps.index(trig_step)
+                complete = complete_solves[solve]
+                if complete not in cohort_rows:
+                    rows_by_cohort: defaultdict[tuple[str, str], list] = (
+                        defaultdict(list)
+                    )
+                    for row in info:
+                        rows_by_cohort[(row[0], row[2])].append(row)
+                    cohort_rows[complete] = dict(rows_by_cohort)
+                    cohort_forecasts[complete] = dict()
+                rows_by_cohort_c = cohort_rows[complete]
+                forecasts_by_cohort = cohort_forecasts[complete]
+                candidates = []
+                for period_c in order[trig_index:]:
+                    steps_c = [e.timestep for e in active_time_list[period_c]]
+                    for idx_c, step_c in enumerate(steps_c):
+                        cohort = (period_c, step_c)
+                        if cohort not in rows_by_cohort_c:
+                            continue
+                        if period_c == trig_period and idx_c <= trig_step_index:
+                            continue
+                        forecasts = forecasts_by_cohort.get(cohort)
+                        if forecasts is None:
+                            forecasts = sorted(
+                                {
+                                    r[1]
+                                    for r in rows_by_cohort_c[cohort]
+                                    if r[3] != "yes"
+                                    and float(r[4]) != 0.0
+                                    and r[1] != period_c
+                                }
+                            )
+                            forecasts_by_cohort[cohort] = forecasts
+                        if forecasts:
+                            candidates.append((period_c, step_c, forecasts))
+                if candidates:
+                    unfanned[solve] = (
+                        trig_period,
+                        trig_step,
+                        is_rolling_sub_solve,
+                        candidates,
+                    )
+
             # Walk periods — at the first branch trigger, fan out into
-            # branches; subsequent periods continue the same branches.
+            # branches; subsequent periods continue the same branches (a
+            # solve fans out only once: a later forecast cohort that no
+            # sub-solve fans out at is rejected by _check_unfanned_cohorts).
             # NB: the reference implementation's continuation block
             # (flextoolrunner.py:1745-1752) was dead code — it never
             # wrote active/realized/fix-storage time for continuation
@@ -860,6 +1002,10 @@ class StochasticSolver:
                 period__branch_lists[solve],
                 solve_branch__time_branch_lists[solve],
             )
+
+        self._check_unfanned_cohorts(
+            unfanned, solves, branch_start_time_lists, complete_solves
+        )
 
         return (
             period__branch_lists,

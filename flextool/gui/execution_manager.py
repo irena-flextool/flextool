@@ -1504,17 +1504,19 @@ class ExecutionManager:
             cmd.append("--write-plot-data")
 
         # "Threads per run" (Execution jobs window): FlexTool's data processing and the solver of this run.
-        # ``--threads`` gives HiGHS ``threads=N`` with its parallel simplex left off.
+        # ``--threads`` gives HiGHS ``threads=N`` (parallel simplex off) and replaces a commercial solver's
+        # thread count.
         cmd.extend(["--threads", str(max(1, int(self.execution_limits.max_cores_per_job)))])
 
-        # The solver option files of the workspace, given explicitly so a run never depends on where its input
-        # database is (an external source database may sit in another tree).  Project export / import use the
-        # same folder.  ``FLEXTOOL_SOLVER_CONFIG_DIR`` (the user's choice) goes as --solver-config-dir; else
-        # ``<workspace>/solver_config`` goes as --workspace-solver-config-dir, whose files are trusted only when
-        # this computer set the workspace up (item 240 B3).
-        from flextool._solver_config_source import workspace_solver_config_flag
-        _sc_flag, _sc_dir = workspace_solver_config_flag()
-        cmd.extend([_sc_flag, str(_sc_dir)])
+        # The solver option folders, file by file: the project's ``solver_config`` (when it has one), then the
+        # workspace's (``FLEXTOOL_SOLVER_CONFIG_DIR`` when set, else ``<workspace>/solver_config``); given
+        # explicitly, one flag per folder, so a run never depends on where its input database is (an external
+        # source database may sit in another tree).  Project export uses the same folders.  The folders the window
+        # found go as --workspace-solver-config-dir, whose files are trusted only when this computer set up their
+        # project or workspace; those of ``FLEXTOOL_SOLVER_CONFIG_DIR`` (the user's choice) as --solver-config-dir
+        # (item 240 B3).
+        from flextool._solver_config_source import gui_solver_config_flags
+        cmd.extend(gui_solver_config_flags(self.project_path))
 
         # "Debug" radio group in the main window: Off / Basic / Full.
         # Basic → --debug=basic only (verbose checkpoints, no tracemalloc).

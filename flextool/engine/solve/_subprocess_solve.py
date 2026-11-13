@@ -77,6 +77,7 @@ from typing import TYPE_CHECKING, Any, Mapping, NamedTuple, Sequence
 import numpy as np
 
 from flextool._child_python import child_env, python_module_argv
+from flextool._solver_option_rules import native_opt_lines as _native_opt_lines
 
 if TYPE_CHECKING:
     from polar_high import Problem, Solution
@@ -545,6 +546,16 @@ def _highs_sol_status(sol_path: Path) -> str:
     return "OTHER"
 
 
+def _read_highs_mip_gap(gap_path: Path) -> float | None:
+    """The relative MIP gap the HiGHS child wrote (``--mip-gap``), else ``None`` when the file is missing or
+    unreadable.  A non-finite value (an LP, or no incumbent) is returned as is; the acceptance check treats it
+    as "no gap"."""
+    try:
+        return float(gap_path.read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
 class _SolHighsShim:
     """Duck-typed stand-in for ``highspy.Highs`` for the cold-path writers.
 
@@ -906,30 +917,17 @@ def _parse_native_opt_file(path: Path) -> dict[str, str]:
 
 
 def _read_native_opt_text(path: Path) -> str | None:
-    """The text of a native ``.opt`` file; ``None`` when it is missing or unreadable."""
+    """The text of a native ``.opt`` file, read as UTF-8 without a leading BOM (as the run's solver_config
+    folders are read); ``None`` when it is missing, unreadable or not UTF-8 text (with a warning)."""
     if not path.is_file():
         return None
     try:
-        return path.read_text()
+        return path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as exc:
+        logging.getLogger(__name__).warning("Not reading %s: it is not UTF-8 text (%s).", path, exc)
+        return None
     except OSError:
         return None
-
-
-def _native_opt_lines(text: str) -> list[tuple[int, str, str]]:
-    """``(line number, name, value)`` of every parameter line of a native ``.opt`` text, in file order (rules of
-    :func:`_parse_native_opt_file`).  A line of one word is a name without a value: its value is ``""``, which
-    ``_solver_dispatch.validate_solver_option`` refuses (before, the line was skipped without a word)."""
-    out: list[tuple[int, str, str]] = []
-    for lineno, raw in enumerate(text.splitlines(), start=1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if " " not in line and "\t" not in line:
-            out.append((lineno, line, ""))
-            continue
-        name, value = line.rsplit(maxsplit=1)
-        out.append((lineno, name.strip(), value.strip()))
-    return out
 
 
 def _parse_native_opt_text(text: str) -> dict[str, str]:
@@ -1945,6 +1943,7 @@ def _solve_highs_subprocess(
     sol_path = out_dir / f"{safe_name}.sol"
     opts_path = out_dir / f"{safe_name}.opt"
     options_json = out_dir / f"{safe_name}.options.json"
+    gap_path = out_dir / f"{safe_name}.mipgap"
 
     # Warm-start basis-cache slots (populated only with warm start on;
     # declared here so the ``finally`` cleanup can reference them safely).
@@ -1991,6 +1990,7 @@ def _solve_highs_subprocess(
             "--mps", str(mps_path),
             "--solution", str(sol_path),
             "--options-json", str(options_json),
+            "--mip-gap", str(gap_path),
             # The run's thread budget sizes the child's polars pool (read before polars is imported); the
             # child's HiGHS threads come from the options.
             "--threads", str(child_threads),
@@ -2089,6 +2089,9 @@ def _solve_highs_subprocess(
             logger.info(
                 "save_memory: spawning subprocess HiGHS for %r", solve_name,
             )
+        # The work folder persists across runs and same-named solves: a gap file left by an earlier one must
+        # not be named as this solve's gap when the child writes none (its write is best-effort).
+        gap_path.unlink(missing_ok=True)
         cp = subprocess.run(cmd, env=child_env())
         optimal = cp.returncode == 0
 
@@ -2241,10 +2244,12 @@ def _solve_highs_subprocess(
         # limit with a feasible primal is ``TIME_LIMIT``).  The acceptance
         # check records it as the solve's model status.
         sol.shim_status = "OPTIMAL" if optimal else _highs_sol_status(sol_path)
+        # The gap HiGHS stopped at, named in the time-limit warning.
+        sol.shim_mip_gap = _read_highs_mip_gap(gap_path) if sol.shim_status == "TIME_LIMIT" else None
         return sol
     finally:
         if cleanup:
-            paths = [mps_path, sol_path, opts_path, options_json]
+            paths = [mps_path, sol_path, opts_path, options_json, gap_path]
             # The warm-start stats sidecar and A/B probe throwaways live
             # inside ``out_dir`` — sweep them too so the ``rmdir`` below
             # succeeds.  The cache itself (``warm_cached`` / ``warm_tmp_bas``)
