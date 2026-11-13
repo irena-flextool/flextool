@@ -4,11 +4,14 @@
 folder ``<it>/cache``.  The test suite sets it for every test and for every process a test starts, so no test
 reads or writes the real user folders.
 
-A folder named by ``FLEXTOOL_USER_HOME``, ``XDG_CONFIG_HOME`` or ``XDG_CACHE_HOME`` that is not a full path, or that
-lies inside the current folder (a workspace), is ignored with a warning (review b2b3 L2): the solver settings file
-(:mod:`flextool._local_solver_settings`) holds which workspaces this computer trusts, so it must never be a file
-that a received workspace carries.  platformdirs would take a relative ``XDG_CONFIG_HOME`` as it is, against the
-XDG specification.  The platform's own folder is used instead.
+A folder named by ``FLEXTOOL_USER_HOME``, ``XDG_CONFIG_HOME`` or ``XDG_CACHE_HOME`` that is not a full path is
+ignored with a warning, and the platform's own folder is used (review b2b3 L2): a relative folder would be looked up
+in whatever folder FlexTool starts in, and platformdirs would take a relative ``XDG_CONFIG_HOME`` as it is, against
+the XDG specification.  A full path is used wherever FlexTool starts (item 240 final review M1): an earlier rule that
+also ignored a folder inside the current folder made the settings, the assistant's store and the cache depend on the
+start folder (a start from ``~`` or ``/`` ignored every such variable).  That the solver settings file, which holds
+the folders this computer trusts, never lies inside a folder judged for trust is checked for each such folder
+(:func:`flextool._local_solver_settings.trust_status`), which is the check that matters there.
 
 Only the standard library is imported at module level (``platformdirs`` inside the functions).
 """
@@ -27,22 +30,14 @@ _warned: set[tuple[str, str]] = set()
 
 def _usable(name: str, value: str) -> Path | None:
     """*value* of the environment variable *name* as a folder, or ``None`` (with one warning) when it is not a full
-    path or lies inside the current folder."""
+    path.  Never depends on the current folder."""
     path = Path(value)
-    problem = None
-    if not path.is_absolute():
-        problem = "is not a full path"
-    else:
-        try:
-            if path.resolve().is_relative_to(Path.cwd().resolve()):
-                problem = f"lies inside the current folder {Path.cwd()}, a workspace that could carry its own settings"
-        except (OSError, RuntimeError):
-            pass
-    if problem is None:
+    if path.is_absolute():
         return path
     if (name, value) not in _warned:
         _warned.add((name, value))
-        _logger.warning("Ignoring %s=%s: it %s. FlexTool uses the platform's user folder instead.", name, value, problem)
+        _logger.warning("Ignoring %s=%s: it is not a full path. FlexTool uses the platform's user folder instead.",
+                        name, value)
     return None
 
 

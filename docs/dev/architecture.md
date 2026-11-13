@@ -164,16 +164,22 @@ The contract:
    this workspace / project" add to the list; project import, the first-open rename of `imported_solver_config/`
    and project deletion take the path off (`forget_trusted_folder`); nothing inside a workspace
    (`templates/project_folder.txt` included) is a trust anchor. An entry is bound to the folder trusted
-   (`folder_identity`: device + inode + birth time, Windows volume serial + file ID + creation time; ext4 reuses a
-   deleted folder's inode at once, so the birth time is needed) and to its `.opt` hashes (`TrustedFolder`): a
+   (`folder_identity`: device + inode + birth time, Windows volume serial + file ID + creation time, `st_ctime`
+   before Python 3.12; ext4 reuses a deleted folder's inode at once, so the birth time is needed, and a stored one
+   must be matched) and to its `.opt` hashes (`TrustedFolder`): a
    replaced folder is untrusted (`trust_status`), and a changed file is covered only when `only_you_can_change`
    (POSIX owner, not group/other-writable unless the user's private group; on Windows a plain file, as owner and
    ACL are not read) — `read_solver_option_files` keeps that per-file verdict in `SolverOptionFiles.file_notes`.
    FlexTool's own file is told by content (`is_unedited_template`), never by the origin text. Text entries of 4.4
-   development builds are bound on first read; relative entries are refused; a relative or in-workspace
-   `FLEXTOOL_USER_HOME` / `XDG_CONFIG_HOME` is ignored (`user_dirs`). `flextool-trust-workspace`
+   development builds are bound on first read; relative entries are refused; a relative `FLEXTOOL_USER_HOME` /
+   `XDG_CONFIG_HOME` is ignored (`user_dirs`; never depends on the start folder), and a settings file inside the
+   folder judged (`_check_settings_outside`) makes its trust unreadable. The settings file is refused on read when
+   not UTF-8 or (POSIX) another account owns or can write it (`_settings_file_problem`). `flextool-trust-workspace`
    (`cli/cmd_trust_workspace.py`) is the terminal route: a typed, answered command, not a run flag (D4: a Toolbox
-   project carries tool command lines, and anything that can start the command unasked can already run code).
+   project carries tool command lines, and anything that can start the command unasked can already run code); it
+   refuses a stdin that is not a terminal and has no `--yes`, escapes what it shows (`_safe_text.printable`), and
+   trusts exactly the bytes it showed (`show_folder` → `apply_settings(workspace_shown=)`, `ShownFilesChanged`),
+   as does the window's box with the files as the dialog found them.
    Spine Toolbox projects are code and are trusted as such.
    `--solver-config-dir` / `FLEXTOOL_SOLVER_CONFIG_DIR` stay trusted.
    A commercial solver may run behind this computer's solver wrapper (`_local_solver_settings.solver_wrapper`:

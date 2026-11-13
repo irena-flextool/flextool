@@ -638,10 +638,17 @@ You can also trust a folder from a terminal: `flextool-trust-workspace
 <folder>` (the workspace, or a GUI project's folder) shows the option files of
 its `solver_config/` that differ from FlexTool's defaults, line by line, and
 asks before it lists the folder; `--remove` takes it off the list, `--list`
-shows the list. It is a command you type and answer, not a flag of a run: a
-Spine Toolbox project carries command lines for its tools, so a run flag could
-come with a project from someone else, while anything that could start this
-command unasked can already run any program as you.
+shows the list (and also takes off a folder that no longer exists). It is a
+command you type and answer in a terminal, not a flag of a run: a Spine Toolbox
+project carries command lines for its tools, so a run flag could come with a
+project from someone else, while anything that could start this command unasked
+can already run any program as you. It therefore refuses piped input (`echo y
+| ...`) and has no `--yes`. Control and bidirectional characters in the files
+(an escape sequence that would erase a line from the screen) are shown as
+escapes such as `\x1b`, and the line is marked. What you answer for is what
+you saw: if a file changes between showing and your answer, nothing is
+trusted and the command says which file changed. The window's box does the
+same with the files as the dialog found them when it opened.
 
 The trust is for the folder as it was when it was listed, not for its path:
 
@@ -649,8 +656,12 @@ The trust is for the folder as it was when it was listed, not for its path:
   moved away, and a copy from someone else unpacked or copied there) is not
   trusted; the message says the folder was replaced. FlexTool tells the
   folders apart by their identity: on Linux and macOS the device, the inode
-  number and the time the folder was made; on Windows the volume serial
-  number, the file ID and the creation time;
+  number and the time the folder was made (where the file system records it:
+  ext4, btrfs, XFS, APFS; not NFS or SMB shares); on Windows the volume serial
+  number, the file ID and the creation time. Moving, restoring or copying the
+  folder to another path or computer therefore asks for the trust again, and so
+  can a network drive or a macOS external volume mounted again (its device
+  number can change);
 - an option file that changed since, or appeared since, is trusted when your
   own account wrote it and no other account can change it: on Linux and macOS
   you own it, no other account can write it, and its group can write it only
@@ -659,10 +670,14 @@ The trust is for the folder as it was when it was listed, not for its path:
   the database's rules, with a message naming it, until you trust the folder
   again (the box, or `flextool-trust-workspace`). On Windows FlexTool does not
   read files' owners and access lists: a file in a folder that is still the
-  one you trusted counts as your own edit, as Windows gives a new file its
-  writer as owner and, in your own folders, lets no other ordinary account
-  write. A drive that gives files no ID (FAT, some network drives) gets no such
-  pass: there any change asks to be trusted again;
+  one you trusted counts as your own edit. Inside your user profile folders
+  (`C:\Users\<you>`) Windows lets no other ordinary account write, but a
+  folder made elsewhere, such as `C:\flextool`, lets every account that signs
+  in to the computer change its files: on a shared computer, keep trusted
+  workspaces in your profile. A drive that gives files no ID (some network
+  drives) gets no such pass: there any change asks to be trusted again;
+- on a network drive every change counts as yours: a share mounted for your
+  account shows every file as your own, also the ones a colleague changed;
 - so editing your own files never asks again, but files you unpack or copy
   into a trusted folder yourself are your edits too, and so are changes that a
   sync tool (OneDrive, Dropbox, a network share) or `git pull` writes with
@@ -674,9 +689,14 @@ or `~/flextool` makes the list unreadable (nothing is trusted, and the message
 says why). Entries written by FlexTool 4.4 development versions (plain folder
 names) are bound to the folder at that path, with its files as they are, the
 first time FlexTool reads them. `FLEXTOOL_USER_HOME` or `XDG_CONFIG_HOME`
-naming a relative folder, or one inside the current folder, is ignored with a
-warning (the platform's folder is used): a workspace could otherwise carry its
-own list.
+naming a relative folder is ignored with a warning (the platform's folder is
+used); a full path is used wherever FlexTool starts. A settings file that lies
+inside a folder judged for trust makes that folder's trust unreadable, with a
+message: a workspace could otherwise carry its own list. The settings file
+must be UTF-8 text, and on Linux and macOS owned by you and writable by you
+only (FlexTool writes it so): a solver wrapper named in it runs as you, so a
+file that another account owns or can write is not read, and the message says
+how to fix it.
 
 **Spine Toolbox projects are code.** A Toolbox project runs the tool scripts
 and command lines it carries, so it can do anything you can, solver options

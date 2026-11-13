@@ -182,6 +182,9 @@ class LocalSolverSettingsDialog(tk.Toplevel):
         ttk.Separator(body, orient="horizontal").grid(row=row, column=0, columnspan=3, sticky="ew", pady=8)
         row += 1
         trusted, self.workspace_trust_note = _trust_state(self.workspace)
+        # What the tick trusts: the files as this dialog found them (item 240 final review L5).
+        self._workspace_shown = local.show_folder(self.workspace)
+        self._project_shown: local.ShownFolder | None = None
         self._workspace_trusted_at_open = bool(trusted)  # unknown (None): the box writes nothing unless ticked
         self.trust_var = tk.BooleanVar(master=self, value=bool(trusted))
         ttk.Checkbutton(
@@ -203,6 +206,7 @@ class LocalSolverSettingsDialog(tk.Toplevel):
         row += 1
         if self.project is not None:
             project_trusted, self.project_trust_note = _trust_state(self.project)
+            self._project_shown = local.show_folder(self.project)
             self._project_trusted_at_open = bool(project_trusted)
             self.project_trust_var = tk.BooleanVar(master=self, value=bool(project_trusted))
             ttk.Checkbutton(
@@ -273,7 +277,17 @@ class LocalSolverSettingsDialog(tk.Toplevel):
             local.update_settings_file(
                 lambda data: local.apply_settings(data, wrappers=entered, allow_unlisted=allow,
                                                   workspace=self.workspace, trust_workspace=trust,
-                                                  project=self.project, trust_project=trust_project))
+                                                  project=self.project, trust_project=trust_project,
+                                                  workspace_shown=self._workspace_shown,
+                                                  project_shown=self._project_shown))
+        except local.ShownFilesChanged as exc:
+            # Nothing was written.  The next OK trusts the files as they are now, after the user has looked again.
+            self._workspace_shown = local.show_folder(self.workspace)
+            if self.project is not None:
+                self._project_shown = local.show_folder(self.project)
+            messagebox.showerror("Solver settings on this computer",
+                                 f"{exc}\nNothing was saved. Read the files again, then press OK.", parent=self)
+            return
         except local.LocalSolverSettingsError as exc:
             messagebox.showerror("Solver settings on this computer", str(exc), parent=self)
             return

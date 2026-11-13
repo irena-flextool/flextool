@@ -105,14 +105,29 @@ def settings_path() -> Path:
 
 def read_settings_file(path: Path | None = None) -> dict:
     """The settings file's content (``{}`` when there is none); raises :class:`LocalSolverSettingsError` when it
-    is not a FlexTool solver settings file of a format this FlexTool reads."""
+    is not a FlexTool solver settings file of a format this FlexTool reads, is not UTF-8 text (a byte-order mark is
+    read), or (Linux and macOS) another account could have changed it (:func:`_settings_file_problem`)."""
     path = settings_path() if path is None else path
     try:
-        text = path.read_text(encoding="utf-8")
+        with open(path, "rb") as handle:
+            st = os.fstat(handle.fileno())
+            raw = handle.read()
     except FileNotFoundError:
         return {}
     except OSError as exc:
         raise LocalSolverSettingsError(f"FlexTool cannot read its solver settings file {path} ({exc}).") from exc
+    why = _settings_file_problem(st)
+    if why is not None:
+        raise LocalSolverSettingsError(
+            f"FlexTool's solver settings file {path} could have been changed by another account ({why}), and a "
+            "solver wrapper named there runs as you; FlexTool does not read it. Make it yours and writable by you "
+            f"only (chmod 600 {path}), or delete it and set the settings again.")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise LocalSolverSettingsError(
+            f"FlexTool's solver settings file {path} is not UTF-8 text ({exc}; an editor may have saved it as "
+            "UTF-16). Save it as UTF-8, or delete it.") from exc
     try:
         data = json.loads(text)
     except ValueError as exc:
@@ -126,6 +141,18 @@ def read_settings_file(path: Path | None = None) -> dict:
             f"FlexTool's solver settings file {path} has format {fmt!r}, written by a newer FlexTool; this "
             f"FlexTool reads format {FORMAT}. Update FlexTool, or delete the file.")
     return data
+
+
+def _settings_file_problem(st: os.stat_result, *, windows: bool | None = None) -> str | None:
+    """``None`` when the settings file of ``os.fstat`` result *st* could be changed only by this account, else why
+    not (item 240 final review L7): a wrapper named in it runs a program as the user, so whoever can write it can
+    run programs as the user.  Linux and macOS: the rules of :func:`only_you_can_change` (owned by this account,
+    not writable by others, group-writable only for the account's private group).  FlexTool writes the file
+    readable and writable by its owner only.  Windows: not checked (see :func:`only_you_can_change`)."""
+    windows = os.name == "nt" if windows is None else windows
+    if windows:
+        return None
+    return only_you_can_change(st, windows=False)
 
 
 def allow_unlisted_parameters(environ: Mapping[str, str] | None = None) -> AllowUnlisted:
@@ -214,8 +241,13 @@ def folder_identity(folder: str | os.PathLike) -> Identity | None:
     macOS, the volume serial number and the file ID on Windows (NTFS and ReFS give one).  The birth time is there
     because a file system can give a deleted folder's inode number to the next folder made (Linux ext4 does so at
     once), so device and inode alone do not tell a folder deleted and made again at the same path; ``None`` when
-    the system does not give it.  ``None`` as a whole when the folder cannot be read or its file system gives no
-    file ID (``st_ino`` 0: FAT, some network drives)."""
+    the system does not give it (Linux file systems without one, such as NFS, CIFS and older ext; Windows gives the
+    creation time on every Python version).  ``None`` as a whole when the folder cannot be read or its file system
+    gives no file ID (``st_ino`` 0: some network drives).
+
+    The device number of a network drive (NFS, CIFS / SMB) or of a removable or network volume on macOS can change
+    when it is mounted again, so a folder there asks to be trusted again after a remount: the check fails closed
+    (item 240 final review L3)."""
     try:
         st = os.stat(folder)
     except OSError:
@@ -226,14 +258,17 @@ def folder_identity(folder: str | os.PathLike) -> Identity | None:
 
 
 def _birth_ns(folder: str | os.PathLike, st: os.stat_result) -> int | None:
-    """When *folder* was made, in ns: ``st_birthtime`` (Windows, macOS), else Linux ``statx``; ``None`` when not
-    given."""
+    """When *folder* was made, in ns: ``st_birthtime`` (macOS; Windows from Python 3.12), ``st_ctime`` on Windows
+    before Python 3.12 (the creation time there, the same value), else Linux ``statx``; ``None`` when not given."""
     ns = getattr(st, "st_birthtime_ns", None)
     if ns is not None:
         return int(ns)
     seconds = getattr(st, "st_birthtime", None)
     if seconds is not None:
         return int(seconds * 1_000_000_000)
+    if os.name == "nt":
+        # Python 3.11 has no st_birthtime on Windows; its st_ctime is the creation time (item 240 final review L2).
+        return int(st.st_ctime_ns)
     if not sys.platform.startswith("linux"):
         return None
     try:
@@ -257,13 +292,15 @@ def _birth_ns(folder: str | os.PathLike, st: os.stat_result) -> int | None:
 
 
 def same_identity(stored: Identity | None, current: Identity | None) -> bool:
-    """Whether the folder of identity *current* is the one trusted with *stored* (a birth time counts when both
-    have one)."""
+    """Whether the folder of identity *current* is the one trusted with *stored*.  A stored birth time must be
+    matched: a folder that gives none now (a different Python or system call, a blocked ``statx``) is not taken as
+    the trusted one (item 240 final review L2: on ext4 a new folder can get the deleted one's inode at once).  An
+    entry stored without a birth time is matched on device and inode."""
     if stored is None or current is None:
         return stored is None
     if stored[:2] != current[:2]:
         return False
-    return stored[2] is None or current[2] is None or stored[2] == current[2]
+    return stored[2] is None or stored[2] == current[2]
 
 
 def is_link_like(path: str | os.PathLike) -> bool:
@@ -287,20 +324,28 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
 
 
-def option_file_hashes(folder: str | os.PathLike) -> dict[str, str]:
-    """``{"<solver>.opt": sha256}`` of the option files in ``<folder>/solver_config`` (plain files only; a link is
-    left out, so it is never trusted by its hash)."""
+def read_option_files(folder: str | os.PathLike) -> dict[str, bytes]:
+    """``{"<solver>.opt": content}`` of the option files in ``<folder>/solver_config`` that a trust binds (plain
+    files only; a link is left out, so it is never trusted by its hash; a file that cannot be read is left out)."""
     config = Path(folder) / "solver_config"
-    out: dict[str, str] = {}
+    out: dict[str, bytes] = {}
     try:
         entries = sorted(config.iterdir()) if config.is_dir() and not is_link_like(config) else []
-        for entry in entries:
+    except OSError:
+        return out
+    for entry in entries:
+        try:
             if not entry.name.casefold().endswith(".opt") or is_link_like(entry) or not entry.is_file():
                 continue
-            out[entry.name] = _sha256(entry.read_bytes())
-    except OSError:
-        pass
+            out[entry.name] = entry.read_bytes()
+        except OSError:
+            continue
     return out
+
+
+def option_file_hashes(folder: str | os.PathLike) -> dict[str, str]:
+    """``{"<solver>.opt": sha256}`` of the option files in ``<folder>/solver_config`` (:func:`read_option_files`)."""
+    return {name: _sha256(data) for name, data in read_option_files(folder).items()}
 
 
 def only_you_can_change(st: os.stat_result | None, *, windows: bool | None = None) -> str | None:
@@ -312,11 +357,15 @@ def only_you_can_change(st: os.stat_result | None, *, windows: bool | None = Non
     group unless the group is this account's own private group (the group named after the account, with no other
     members: the default on many Linux systems, whose ``umask`` 002 makes new files group-writable).
 
-    Windows: a plain file (no link or reparse point).  Windows gives a new file the account that writes it as its
-    owner and, in a user's own folders, an access list that lets no other ordinary account write; reading the
-    owner and the access list needs the Win32 security interface, which FlexTool does not use.  The folder's
-    identity (volume serial number and file ID) is still checked, so a replaced folder is not trusted; a folder
-    whose file system gives no file ID gets no such pass (:class:`FolderTrust`)."""
+    Windows: a plain file (no link or reparse point); the owner and the access list are not read (that needs the
+    Win32 security interface, which FlexTool does not use).  Inside the user's profile folders Windows lets no other
+    ordinary account write, but a folder made elsewhere (``C:\\flextool``) inherits an access list that lets every
+    signed-in account change its files: on a shared computer another account's change passes there (item 240 final
+    review L4).  The folder's identity (volume serial number and file ID) is still checked, so a replaced folder is
+    not trusted; a folder whose file system gives no file ID gets no such pass (:class:`FolderTrust`).
+
+    Network drives: a share mounted for this account (CIFS ``uid=``, a Windows share) shows every file as the
+    account's own, so a change another person makes there counts as the user's (item 240 final review L3)."""
     if st is None:
         return "FlexTool cannot read it"
     windows = os.name == "nt" if windows is None else windows
@@ -365,6 +414,41 @@ class TrustedFolder:
 def _bound(folder: str | os.PathLike) -> TrustedFolder:
     """The entry that trusts *folder* as it is now."""
     return TrustedFolder(workspace_key(folder), folder_identity(folder), option_file_hashes(folder))
+
+
+@dataclass(frozen=True)
+class ShownFolder:
+    """A folder's option files as they were shown to the user (item 240 final review L5): *entry* trusts exactly
+    that content, and *contents* is what was shown (the bytes the hashes are of)."""
+
+    entry: TrustedFolder
+    contents: Mapping[str, bytes]
+
+
+def show_folder(folder: str | os.PathLike) -> ShownFolder:
+    """*folder*'s identity and option files, read once: show the user *contents*, then trust with
+    ``apply_settings(..., workspace_shown=...)``, which writes only when the folder still holds that content."""
+    identity = folder_identity(folder)
+    contents = read_option_files(folder)
+    entry = TrustedFolder(workspace_key(folder), identity, {name: _sha256(data) for name, data in contents.items()})
+    return ShownFolder(entry, contents)
+
+
+class ShownFilesChanged(LocalSolverSettingsError):
+    """The folder's option files (or the folder) changed between showing them and the user's answer."""
+
+
+def _check_as_shown(folder: str | os.PathLike, shown: TrustedFolder) -> None:
+    now = _bound(folder)
+    if now.path != shown.path or now.identity != shown.identity:
+        raise ShownFilesChanged(f"The folder {folder} was replaced since its option files were shown; nothing was "
+                                "trusted. Look at its files again.")
+    old, new = dict(shown.files or {}), dict(now.files or {})
+    if old != new:
+        names = sorted(n for n in old.keys() | new.keys() if old.get(n) != new.get(n))
+        raise ShownFilesChanged(
+            f"The option files of {folder} changed since they were shown ({', '.join(names)}); nothing was trusted. "
+            "Look at them again.")
 
 
 def _parse_entry(item: object, path: Path) -> TrustedFolder:
@@ -512,8 +596,8 @@ def trust_status(folder: str | os.PathLike, path: Path | None = None) -> FolderT
 
         path = settings_path()
         if config_dir_overridden():
-            # A folder named by FLEXTOOL_USER_HOME or XDG_CONFIG_HOME inside the current folder is ignored
-            # already (flextool.user_dirs); this covers the folder judged here (review b2b3 L2).
+            # A folder named by FLEXTOOL_USER_HOME or XDG_CONFIG_HOME inside the folder judged here (the current
+            # folder too) would let a copy of it carry its own list (review b2b3 L2, item 240 final review M1).
             _check_settings_outside(folder, path)
     key = workspace_key(folder)
     entry = next((e for e in trusted_entries(path) if _matches(e.path, folder, key)), None)
@@ -631,10 +715,16 @@ def apply_settings(
     trust_workspace: bool | None = None,
     project: str | os.PathLike | None = None,
     trust_project: bool | None = None,
+    workspace_shown: ShownFolder | None = None,
+    project_shown: ShownFolder | None = None,
 ) -> None:
     """Set several settings in *data* (the file's content, for :func:`update_settings_file`) at once: each wrapper
     of *wrappers* (an empty list removes it; check them with :func:`check_wrapper` first), the unlisted-names
-    switch, and whether *workspace* and the GUI *project* are on the list (``None``: unchanged)."""
+    switch, and whether *workspace* and the GUI *project* are on the list (``None``: unchanged).
+
+    A folder ticked with its *workspace_shown* / *project_shown* (:func:`show_folder`, taken when its files were
+    shown) is trusted with exactly that content: :class:`ShownFilesChanged` when the folder or a file changed since,
+    and nothing is written.  Without it, the folder is trusted as it is now."""
     if wrappers:
         current = data.get(WRAPPERS_KEY)
         current = dict(current) if isinstance(current, dict) else {}
@@ -646,11 +736,16 @@ def apply_settings(
         data[WRAPPERS_KEY] = current
     if allow_unlisted is not None:
         data["allow_unlisted_parameters"] = bool(allow_unlisted)
-    for folder, trust in ((workspace, trust_workspace), (project, trust_project)):
+    for folder, trust, shown in ((workspace, trust_workspace, workspace_shown), (project, trust_project, project_shown)):
         if folder is not None and trust is not None:
-            # Ticked: trusted as it is now (the user has read its files); unticked: off the list.  Every other
-            # entry is kept as stored (review b2b3 L7).
-            _put_entry(data, folder, _bound(folder) if trust else None)
+            # Ticked: trusted with the content shown (or as it is now); unticked: off the list.  Every other entry
+            # is kept as stored (review b2b3 L7).
+            entry = None
+            if trust:
+                if shown is not None:
+                    _check_as_shown(folder, shown.entry)
+                entry = shown.entry if shown is not None else _bound(folder)
+            _put_entry(data, folder, entry)
 
 
 # --- solver wrapper (B2) -----------------------------------------------------------------------------------------

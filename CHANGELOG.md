@@ -165,11 +165,21 @@ Each line says what changes for a model that ran before and what to do; the deta
   a trusted workspace's file gets the database's rules. FlexTool notes a project it creates, or opens with no
   edited option file and nothing received waiting for review; an imported project's shipped files stay untrusted
   until you tick "Trust this project's solver option files" (Solver options → On this computer). A terminal user
-  can run `flextool-trust-workspace <folder>`, which shows the edited option files and asks. The trust is for
-  the folder as it was then, not for its path: a folder put at the same path later (for example a copy from
-  someone else unpacked where yours was) is not trusted, and an option file changed afterwards is trusted only
-  when your own account wrote it and no other account can change it; otherwise trust the folder again. Spine
+  can run `flextool-trust-workspace <folder>` in a terminal, which shows the edited option files and asks (piped
+  input is refused, and control characters in the files are shown as escapes); it trusts the files as shown, and
+  nothing when one changed before the answer. The trust is for the folder as it was then, not for its path: a
+  folder put at the same path later (for example a copy from someone else unpacked where yours was) is not
+  trusted, and an option file changed afterwards is trusted only when your own account wrote it and no other
+  account can change it; otherwise trust the folder again. **Moving, restoring or copying a trusted workspace to
+  another path or computer asks for the trust again**, and so can a network drive mounted again. Spine
   Toolbox projects are code: open one only from people you trust.
+- **`FLEXTOOL_USER_HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` must be full paths:** a relative one is ignored with
+  a warning, and the platform's user folder is used. A full path is used wherever FlexTool starts; a solver settings
+  file that lies inside a folder judged for trust makes that folder's trust unreadable, with a message.
+- **The solver settings file must be UTF-8 text and, on Linux and macOS, yours and writable by you only**
+  (`solver_settings.json` in FlexTool's user settings folder, which FlexTool writes so): a file another account owns
+  or can write is not read, as a solver wrapper named there runs as you. The message says how to fix it
+  (`chmod 600`).
 - **`solver_precommand` is not run, and a value now gives a warning.** FlexTool 3 ran it in front of CPLEX (for
   example to reserve a floating licence); FlexTool 4 does not run commands stored in a database, for safety: a
   database from someone else could otherwise run any program on your computer. The parameter is kept only so that

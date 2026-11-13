@@ -168,3 +168,22 @@ def test_ok_keeps_the_entries_it_does_not_show(root, tmp_path) -> None:
     dialog.ok()
     kept = json.loads(local.settings_path().read_text())["trusted_workspaces"]
     assert kept[:2] == stored and kept[2]["path"] == local.workspace_key(Path.cwd())
+
+
+def test_the_tick_trusts_the_files_as_the_dialog_found_them(root, tmp_path, monkeypatch) -> None:
+    """Item 240 final review L5: a file changed while the dialog is open (by a sync tool, another program) is not
+    trusted unseen: OK shows why and saves nothing; the next OK, after the user has looked again, trusts the files
+    as they are then."""
+    shown = []
+    monkeypatch.setattr(lsd.messagebox, "showerror", lambda title, message, **kw: shown.append(message))
+    gurobi = Path.cwd() / "solver_config" / "gurobi.opt"
+    dialog = _open_from_solver_options(root)
+    dialog.trust_var.set(True)
+    gurobi.write_text("ResultFile /home/u/.bashrc\n")
+    dialog.ok()
+    assert not dialog.saved and dialog.winfo_exists()
+    assert len(shown) == 1 and "changed since they were shown (gurobi.opt)" in shown[0]
+    assert not local.is_trusted_workspace(Path.cwd())
+    dialog.ok()
+    assert dialog.saved and local.is_trusted_workspace(Path.cwd())
+    assert local.trust_status(Path.cwd()).entry.files == {"gurobi.opt": local._sha256(gurobi.read_bytes())}

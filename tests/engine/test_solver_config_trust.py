@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -39,6 +41,11 @@ from flextool.engine.solve._solver_dispatch import (
 from flextool.run_options import Resolved, RunOptions
 
 posix_only = pytest.mark.skipif(os.name == "nt", reason="inodes and file modes as on Linux and macOS")
+#: platformdirs reads XDG_CONFIG_HOME, and Path.home() follows HOME, on Linux only: on macOS and Windows the
+#: platform's fallback folder these tests check is another one (on Windows the real AppData folder, which the
+#: suite's guard refuses).
+linux_only = pytest.mark.skipif(not sys.platform.startswith("linux"),
+                                reason="the fallback folder comes from XDG_CONFIG_HOME / HOME on Linux only")
 
 #: A Gurobi option file with a full path (``NodefileDir``: a file parameter), as someone else's workspace may hold.
 EDITED_GUROBI = "Threads 2\nNodefileDir /srv/elsewhere/nodes\n"
@@ -46,8 +53,8 @@ EDITED_GUROBI = "Threads 2\nNodefileDir /srv/elsewhere/nodes\n"
 
 @pytest.fixture(autouse=True)
 def user_home(tmp_path_factory, monkeypatch) -> Path:
-    """This test's own user config folder (so the list of trusted workspaces starts empty), outside the test's
-    folder: a ``FLEXTOOL_USER_HOME`` inside the current folder is ignored (review b2b3 L2)."""
+    """This test's own user config folder (so the list of trusted workspaces starts empty), outside the folders
+    the tests judge for trust (a settings file inside such a folder makes its trust unreadable)."""
     home = tmp_path_factory.mktemp("user_home")
     monkeypatch.setenv("FLEXTOOL_USER_HOME", str(home))
     monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
@@ -120,12 +127,12 @@ def test_the_marker_cannot_be_forged_by_files_inside_the_workspace(tmp_path, mon
     ensure_runtime_files()
     assert settings.trusted_workspaces() == ()
     assert resolve_solver_config_source(run_options=_options(), cwd=ws).trusted is False
-    # FLEXTOOL_USER_HOME naming the workspace (the current folder) is ignored with a warning, so the forged list
-    # is not read even then (review b2b3 L2); the platform's folder (here XDG_CONFIG_HOME) is used instead.
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    # FLEXTOOL_USER_HOME naming the workspace (the current folder) is used, but the forged list in it lies inside
+    # the folder judged, so that folder's trust is unreadable (item 240 final review M1, review b2b3 L2).
     monkeypatch.setenv("FLEXTOOL_USER_HOME", str(ws))
-    assert settings.settings_path() == tmp_path / "xdg" / "flextool" / "solver_settings.json"
-    assert resolve_solver_config_source(run_options=_options(), cwd=ws).trusted is False
+    assert settings.settings_path() == ws / "config" / "solver_settings.json"
+    found = resolve_solver_config_source(run_options=_options(), cwd=ws)
+    assert found.trusted is False and "lies inside" in found.trust_note
 
 
 def test_a_workspace_set_up_here_is_listed_once_and_trusted(tmp_path, monkeypatch) -> None:
@@ -522,10 +529,11 @@ def test_a_relative_list_entry_is_refused(tmp_path, user_home, monkeypatch, entr
     assert source.trusted is False and "Write full folder paths" in source.trust_note
 
 
-def test_a_relative_or_workspace_user_home_is_ignored(tmp_path, tmp_path_factory, monkeypatch, caplog) -> None:
-    """L2: a relative FLEXTOOL_USER_HOME (or XDG_CONFIG_HOME), or one inside the current folder, is ignored with
-    a warning; the platform's folder is used.  One that names a folder inside a database's folder judged for
-    trust (not the current folder) makes that folder's trust unreadable."""
+@linux_only
+def test_a_relative_user_home_is_ignored(tmp_path, tmp_path_factory, monkeypatch, caplog) -> None:
+    """L2: a relative FLEXTOOL_USER_HOME (or XDG_CONFIG_HOME) is ignored with a warning; the platform's folder is
+    used.  One that names a folder inside a database's folder judged for trust (not the current folder) makes that
+    folder's trust unreadable."""
     from flextool import user_dirs
 
     # Every fallback lands in this test's folders, never in the real user folders.
@@ -533,11 +541,10 @@ def test_a_relative_or_workspace_user_home_is_ignored(tmp_path, tmp_path_factory
     xdg = tmp_path_factory.mktemp("xdg")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
     monkeypatch.chdir(tmp_path)
-    for value in ("user_home", str(tmp_path / "inside")):
-        monkeypatch.setenv("FLEXTOOL_USER_HOME", value)
-        with caplog.at_level("WARNING", logger="flextool.user_dirs"):
-            assert user_dirs.user_config_dir() == xdg / "flextool"
-        assert f"Ignoring FLEXTOOL_USER_HOME={value}" in caplog.text
+    monkeypatch.setenv("FLEXTOOL_USER_HOME", "user_home")
+    with caplog.at_level("WARNING", logger="flextool.user_dirs"):
+        assert user_dirs.user_config_dir() == xdg / "flextool"
+    assert "Ignoring FLEXTOOL_USER_HOME=user_home" in caplog.text
     monkeypatch.setenv("XDG_CONFIG_HOME", "xdg")
     monkeypatch.setenv("FLEXTOOL_USER_HOME", "")
     assert user_dirs.user_config_dir() == Path.home() / ".config" / "flextool"
@@ -556,6 +563,73 @@ def test_a_relative_or_workspace_user_home_is_ignored(tmp_path, tmp_path_factory
     assert found.trusted is False and "lies inside" in found.trust_note
 
 
+def test_a_full_user_home_is_used_wherever_flextool_starts(tmp_path_factory, monkeypatch) -> None:
+    """Item 240 final review M1: the user folder does not depend on the start folder.  A FLEXTOOL_USER_HOME below
+    the current folder (a start from its parent, from the root folder) is used, not swapped for the real user
+    folder."""
+    from flextool import user_dirs
+
+    home = tmp_path_factory.mktemp("start") / "flextool-home"
+    home.mkdir()
+    monkeypatch.setenv("FLEXTOOL_USER_HOME", str(home))
+    for start in (home.parent, Path(home.anchor), home):
+        monkeypatch.chdir(start)
+        assert user_dirs.user_config_dir() == home / "config"
+        assert user_dirs.user_cache_dir() == home / "cache"
+        assert settings.settings_path() == home / "config" / "solver_settings.json"
+
+
+@linux_only
+def test_a_full_xdg_config_home_is_used_from_the_root_folder(tmp_path_factory, monkeypatch) -> None:
+    """M1: a start from ``/`` (a container's WORKDIR, a service) uses XDG_CONFIG_HOME as given."""
+    from flextool import user_dirs
+
+    xdg = tmp_path_factory.mktemp("xdg_from_root")
+    monkeypatch.delenv("FLEXTOOL_USER_HOME")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    monkeypatch.chdir("/")
+    assert user_dirs.user_config_dir() == xdg / "flextool"
+
+
+def test_the_settings_file_must_be_utf8_text(user_home) -> None:
+    """L1: a settings file in another encoding (UTF-16, as a Windows editor may save it) gives FlexTool's message,
+    not a UnicodeDecodeError; a UTF-8 file with a byte-order mark is read."""
+    (user_home / "config").mkdir(parents=True, exist_ok=True)
+    path = settings.settings_path()
+    path.write_bytes('{"format": 1, "allow_unlisted_parameters": true}'.encode("utf-16"))
+    with pytest.raises(settings.LocalSolverSettingsError, match="is not UTF-8 text"):
+        settings.trusted_entries()
+    path.write_bytes('{"format": 1, "allow_unlisted_parameters": true}'.encode("utf-8-sig"))
+    assert settings.allow_unlisted_parameters({}).value is True
+
+
+@posix_only
+def test_a_settings_file_another_account_could_change_is_not_read(user_home, monkeypatch) -> None:
+    """L7: a wrapper in the settings file runs as the user, so a file writable by every account, or owned by
+    another account, is refused with a message saying how to fix it."""
+    (user_home / "config").mkdir(parents=True, exist_ok=True)
+    path = settings.settings_path()
+    path.write_text('{"format": 1, "allow_unlisted_parameters": true}')
+    path.chmod(0o600)
+    assert settings.allow_unlisted_parameters({}).value is True
+    path.chmod(0o666)
+    with pytest.raises(settings.LocalSolverSettingsError, match="every account can write it.*chmod 600"):
+        settings.read_settings_file()
+    path.chmod(0o600)
+    monkeypatch.setattr(os, "geteuid", lambda: os.stat(path).st_uid + 1)
+    with pytest.raises(settings.LocalSolverSettingsError, match="another account owns it"):
+        settings.read_settings_file()
+
+
+def test_a_stored_birth_time_must_be_matched() -> None:
+    """L2: an entry stored with a birth time is not matched by a folder that gives none now (fails closed); an
+    entry stored without one is matched on device and inode."""
+    assert settings.same_identity((1, 2, 3), (1, 2, 3))
+    assert not settings.same_identity((1, 2, 3), (1, 2, None))
+    assert not settings.same_identity((1, 2, 3), (1, 2, 4))
+    assert settings.same_identity((1, 2, None), (1, 2, 4))
+
+
 def test_a_windows_junction_counts_as_a_link(tmp_path, monkeypatch) -> None:
     """L5: a ``solver_config`` that is a Windows junction (or other reparse point) is never FlexTool's own folder,
     so the workspace it is in is not listed by being opened."""
@@ -571,8 +645,10 @@ def test_a_windows_junction_counts_as_a_link(tmp_path, monkeypatch) -> None:
 def test_the_trust_command_shows_the_files_and_asks(tmp_path, monkeypatch, capsys) -> None:
     """L6: ``flextool-trust-workspace <folder>`` prints the edited option files with their lines and trusts the
     folder only on "y"; ``--remove`` takes it off."""
+    from flextool.cli import cmd_trust_workspace
     from flextool.cli.cmd_trust_workspace import EXIT_OK, EXIT_REFUSED, main
 
+    monkeypatch.setattr(cmd_trust_workspace, "_stdin_is_terminal", lambda: True)
     ws = _received_workspace(tmp_path / "ws")
     monkeypatch.setattr("builtins.input", lambda prompt: "n")
     assert main([str(ws)]) == EXIT_REFUSED
@@ -584,3 +660,73 @@ def test_the_trust_command_shows_the_files_and_asks(tmp_path, monkeypatch, capsy
     assert settings.is_trusted_workspace(ws) and _gurobi_note(ws) is None
     assert main(["--remove", str(ws)]) == EXIT_OK
     assert not settings.is_trusted_workspace(ws)
+
+
+def _trust_command(monkeypatch):
+    from flextool.cli import cmd_trust_workspace
+
+    monkeypatch.setattr(cmd_trust_workspace, "_stdin_is_terminal", lambda: True)
+    return cmd_trust_workspace
+
+
+def test_the_trust_command_shows_control_characters_as_escapes(tmp_path, monkeypatch, capsys) -> None:
+    """M2: a received file whose comment line moves the cursor up and erases the line before it (ESC[1A ESC[2K),
+    or reorders it (U+202E), cannot hide a line: the characters are shown as escapes and the line is marked; the
+    folder name is escaped too."""
+    cli = _trust_command(monkeypatch)
+    ws = _received_workspace(tmp_path / "ws\u202ex", gurobi_text=(
+        "ResultFile /home/u/.bashrc\n# \x1b[1A\x1b[2K\nThreads 2 \u202e1 sdaerhT\n"))
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    assert cli.main([str(ws)]) == cli.EXIT_REFUSED
+    out = capsys.readouterr().out
+    assert "\x1b" not in out and "\u202e" not in out
+    assert "   1  ResultFile /home/u/.bashrc\n" in out
+    assert "   2  # \\x1b[1A\\x1b[2K  (holds control characters" in out
+    assert "   3  Threads 2 \\u202e1 sdaerhT  (holds control characters" in out
+    assert "ws\\u202ex" in out
+
+
+def test_the_trust_command_trusts_only_the_content_it_showed(tmp_path, monkeypatch, capsys) -> None:
+    """L5: a file changed between showing and the answer is not trusted unseen: nothing is written, and the
+    command names the file.  Asked again, it shows and trusts the new content."""
+    cli = _trust_command(monkeypatch)
+    ws = _received_workspace(tmp_path / "ws")
+
+    def change_then_yes(prompt: str) -> str:
+        (ws / "solver_config" / "gurobi.opt").write_text("ResultFile /home/u/.bashrc\n")
+        return "y"
+
+    monkeypatch.setattr("builtins.input", change_then_yes)
+    assert cli.main([str(ws)]) == cli.EXIT_REFUSED
+    err = capsys.readouterr().err
+    assert "changed since they were shown (gurobi.opt)" in err and "nothing was trusted" in err
+    assert not settings.is_trusted_workspace(ws)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    assert cli.main([str(ws)]) == cli.EXIT_OK
+    assert "ResultFile /home/u/.bashrc" in capsys.readouterr().out
+    assert settings.trust_status(ws).entry.files == {"gurobi.opt": settings._sha256(b"ResultFile /home/u/.bashrc\n")}
+
+
+def test_the_trust_command_refuses_piped_input(tmp_path) -> None:
+    """L6: ``echo y | flextool-trust-workspace <folder>`` trusts nothing (the input is not a terminal)."""
+    ws = _received_workspace(tmp_path / "ws")
+    done = subprocess.run([sys.executable, "-m", "flextool.cli.cmd_trust_workspace", str(ws)], input="y\n",
+                          capture_output=True, text=True, encoding="utf-8", timeout=120)
+    assert done.returncode == 1, done.stderr
+    assert "its input is not a terminal" in done.stderr and "Run it in a terminal" in done.stderr
+    assert not settings.is_trusted_workspace(ws)
+
+
+def test_the_trust_command_removes_the_entry_of_a_folder_that_is_gone(tmp_path, monkeypatch) -> None:
+    """L6: ``--remove`` takes a deleted folder's stale entry off the list."""
+    import shutil
+
+    cli = _trust_command(monkeypatch)
+    ws = _received_workspace(tmp_path / "ws")
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    assert cli.main([str(ws)]) == cli.EXIT_OK
+    key = settings.workspace_key(ws)
+    shutil.rmtree(ws)
+    assert settings.trusted_workspaces() == (key,)
+    assert cli.main(["--remove", str(ws)]) == cli.EXIT_OK
+    assert settings.trusted_workspaces() == ()
