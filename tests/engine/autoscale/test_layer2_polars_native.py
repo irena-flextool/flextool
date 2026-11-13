@@ -718,3 +718,53 @@ def test_array_classifiers_match_per_column_callables(register_test_families, mo
     type_idx, types = with_arrays[3]
     for cid, (ct, _mp) in holder["eff"].items():
         assert types[type_idx[cid]] == ct
+
+
+def test_collect_term_agg_log_sum_is_exact_and_order_free(register_test_families):
+    """Item 253: the collect path's per-type ``log_sum`` is the correctly
+    rounded sum of the log2 values (``math.fsum``), so it has the same bits
+    whatever order the (thread-scheduled) streaming engine hands rows over."""
+    add_var, _ = register_test_families
+    add_var("v_test_fsum_p", VarFamily(QuantityType.POWER))
+    add_var("v_test_fsum_e", VarFamily(QuantityType.ENERGY))
+
+    pb = Problem()
+    pb.add_var("v_test_fsum_p", "i", pl.DataFrame({"i": list(range(500))}),
+               lower=0.0, upper=1.0)
+    pb.add_var("v_test_fsum_e", "i", pl.DataFrame({"i": list(range(500))}),
+               lower=0.0, upper=1.0)
+    from flextool.engine.autoscale._layer2 import (
+        _build_col_id_classification, _collect_term_agg,
+    )
+    cls_df = _build_col_id_classification(pb)
+    cls = cls_df.lazy()
+
+    # Magnitudes spread over many decades: a plain running sum of their
+    # log2 depends on the order.
+    rng = np.random.default_rng(253)
+    col_id = cls_df["col_id"].to_numpy()
+    coef = 2.0 ** rng.uniform(-40.0, 40.0, col_id.size) * rng.choice([-1.0, 1.0], col_id.size)
+    by_type = {}
+    for cid, c in zip(col_id.tolist(), coef.tolist()):
+        tid = int(cls_df.filter(pl.col("col_id") == cid)["column_type_id"][0])
+        by_type.setdefault(tid, []).append(math.log2(abs(c)))
+
+    results = []
+    for seed in range(4):
+        perm = np.random.default_rng(seed).permutation(col_id.size)
+        term = pl.LazyFrame({"col_id": col_id[perm], "coef": coef[perm]})
+        agg = _collect_term_agg(term, classification_lazy=cls, rhs_t_id=None)
+        assert agg is not None
+        results.append(agg.sort("eff_t"))
+    for agg in results[1:]:
+        assert agg.equals(results[0])
+    agg = results[0]
+    assert sorted(agg["eff_t"].to_list()) == sorted(by_type)
+    for tid, s, n, lmin, lmax in agg.select(
+        "eff_t", "log_sum", "n", "log_min", "log_max"
+    ).iter_rows():
+        vals = by_type[tid]
+        assert n == len(vals)
+        assert s == pytest.approx(math.fsum(vals), rel=0, abs=1e-12)
+        assert lmin == pytest.approx(min(vals), rel=1e-15)
+        assert lmax == pytest.approx(max(vals), rel=1e-15)
