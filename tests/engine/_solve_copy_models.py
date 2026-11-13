@@ -307,19 +307,22 @@ def rename_solve(data: dict, old: str, new: str) -> dict:
 
 def model_a_ladder(mode: str, ladder: dict[str, dict[str, list[str]]], *, lists: dict[str, list[str]] | None = None,
                    unit_rows: list | None = None, years_index: str | None = None,
-                   outer_index: str | None = None) -> dict:
+                   outer_index: str | None = None, contains: list[str] | None = None) -> dict:
     """Model A with any 2-D period maps.  *ladder*: ``{parameter: {outer key: [period, ...]}}`` of the 2-D
     parameters; *lists*: the 1-D period lists of the solve (``{parameter: [period, ...]}``).  ``split`` writes one
     solve ``inv`` with these values (``period_timeset`` over both periods); ``hand`` writes the solves the docs say
     the maps stand for, ``inv_<outer>`` in the order of the outer keys: each 2-D parameter its inner list, each 1-D
     list its periods that the solve has, ``period_timeset`` and ``years_represented`` (5 years per period) of its
     periods.  *unit_rows* (``[parameter, packed value]``) go on the unit ``gen``; *outer_index* names the outer
-    level of the 2-D maps (``None`` = Spine's default ``x``)."""
+    level of the 2-D maps (``None`` = Spine's default ``x``).  *contains*: the ``contains_solves`` of ``inv`` (split)
+    or of every ``inv_<outer>`` (hand); each named solve is a dispatch solve over both periods (``realized_periods``
+    [p1, p2], 5 years per period), as ``invest_5weeks`` contains its storage solve in the shipped example."""
     lists = dict(lists or {})
     outers = list(dict.fromkeys(o for entries in ladder.values() for o in entries))
     solves = ["inv"] if mode == "split" else [f"inv_{o}" for o in outers]
     spec = model_a("single")
-    spec["entities"] = [e for e in spec["entities"] if e[0] != "solve"] + [["solve", s, None] for s in solves]
+    spec["entities"] = [e for e in spec["entities"] if e[0] != "solve"] + [["solve", s, None]
+                                                                           for s in solves + list(contains or [])]
     pv = [r for r in spec["parameter_values"] if r[0] != "solve" and (r[0], r[2]) != ("model", "solves")]
     pv.append(["model", "flextool", "solves", array(solves), "init"])
     pv += [["unit", "gen", par, value, "init"] for par, value in (unit_rows or [])]
@@ -330,8 +333,16 @@ def model_a_ladder(mode: str, ladder: dict[str, dict[str, list[str]]], *, lists:
                ["solve", solve, "period_timeset", pack(pmap([(p, PERIODS[p]) for p in periods]), "map"), "init"],
                ["solve", solve, "years_represented", pack(pmap([(p, 5.0) for p in periods], **yk), "map"),
                 "init"]]
+        if contains:
+            out.append(["solve", solve, "contains_solves", array(contains), "init"])
         return out + [["solve", solve, par, value, "init"] for par, value in values.items()]
 
+    for solve in contains or []:
+        pv += [["solve", solve, "solve_mode", pack("single_solve", "str"), "init"],
+               ["solve", solve, "period_timeset", pack(pmap(list(PERIODS.items())), "map"), "init"],
+               ["solve", solve, "realized_periods", array(list(PERIODS)), "init"],
+               ["solve", solve, "years_represented", pack(pmap([(p, 5.0) for p in PERIODS], **yk), "map"),
+                "init"]]
     if mode == "split":
         ok = {} if outer_index is None else {"index_name": outer_index, "inner_index": "period"}
         values = {par: two_d(entries, **ok) for par, entries in ladder.items()}

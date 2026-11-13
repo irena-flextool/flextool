@@ -31,6 +31,12 @@ independent hand calculations (oracles, from the docs):
   inv_first carried).  Before the fix inv_second lost it and re-invested.
 * ``separate_dispatch_noinvest.json`` (one period) split by a 2-D ``realized_periods``: 6 570 000 EUR and the
   realization solve's 4 380 000 EUR (the hand calculation of ``test_separate_dispatch_noinvest_capacity.py``).
+* model A's look-ahead ladder (``LOOK_AHEAD``) containing a dispatch solve ``disp`` over both periods (item
+  243): inv_p1 (over p1 + p2) invests 100 MW in p1 and pays 100 MW * 80.2425872 EUR/MW/a * 10 years + 100 MW *
+  4 steps * 10 EUR/MWh * 21 900 = 87 680 242.59 EUR (the ``one-row`` value); disp_p1, inv_p2 and disp_p2 run one
+  period on the existing 100 MW: 43 800 000 EUR each.  disp_p1 = 43.8 M (not 87.6 M) pins that the contained
+  solve runs only the period its containing solve realizes.  Before the fix the hand-written ladder ran
+  ``disp`` (not ``disp_p1``) under inv_p1 and the examples' hand-written ladder stopped with a KeyError.
 * model A with ``inflation_rate`` 0.05: see ``test_years_represented_counts_from_the_model_start`` and the tests
   after it (item 242: every solve discounts from the start of the run).
 """
@@ -82,6 +88,21 @@ ONE_ROW = {"invest_periods": {"p1": ["p1", "p2"]}, "realized_invest_periods": {"
 PER_PERIOD = {par: {p: [p] for p in scm.PERIODS} for par in scm.SPLIT_PARAMS}
 
 
+def _nested(rows: tuple[str, str]) -> dict:
+    """Model A's per-period invest ladder (rows *rows* for p1 / p2) containing the dispatch solve ``disp``
+    (``realized_periods`` [p1, p2]), as ``invest_5weeks`` contains its storage solve in the shipped example."""
+    first, second = rows
+    return scm.model_a_ladder("split", {par: {first: ["p1"], second: ["p2"]}
+                                        for par in ("invest_periods", "realized_invest_periods")},
+                              contains=["disp"])
+
+
+def _nested_look_ahead(mode: str) -> dict:
+    """The look-ahead ladder (``LOOK_AHEAD``) whose solves contain the dispatch solve ``disp`` over both periods:
+    split, or the hand-written inv_p1 (over p1 + p2, realizing p1) and inv_p2 (item 243)."""
+    return scm.model_a_ladder(mode, LOOK_AHEAD, contains=["disp"])
+
+
 def _scenario(data: dict) -> str:
     return data["scenarios"][0][0]
 
@@ -102,6 +123,10 @@ CASES = [
     pytest.param(_separate_dispatch,
                  {"stoch_rd_p2035": 6_570_000.0, "stoch_rd_p2035__realized_dispatch": 4_380_000.0},
                  id="separate_dispatch"),
+    # Item 243: before, the hand-written inv_p1 stood for both periods it looks ahead to, so ``disp`` kept its
+    # name under it (steps inv_p1, disp, inv_p2, disp_p2) and the hand-written examples' ladder stopped.
+    pytest.param(_nested_look_ahead, {"inv_p1": 87_680_242.59, "disp_p1": 43_800_000.0, "inv_p2": 43_800_000.0,
+                                      "disp_p2": 43_800_000.0}, id="nested-look-ahead"),
 ]
 
 
@@ -159,23 +184,6 @@ def test_a_1d_fix_storage_periods_does_not_give_a_split_solve_the_next_fan(tmp_p
     assert list(steps) == ["st_p1", "st_p2"]
     assert steps["st_p1"].obj == pytest.approx(13_797_000.0, rel=1e-9)
     assert steps["st_p2"].obj == pytest.approx(7_227_000.0, rel=1e-9)
-
-
-def _nested(rows: tuple[str, str]) -> dict:
-    """Model A's per-period invest ladder (rows *rows* for p1 / p2) containing the dispatch solve ``disp``
-    (``realized_periods`` [p1, p2]), as ``invest_5weeks`` contains its storage solve in the shipped example."""
-    first, second = rows
-    spec = scm.model_a_ladder("split", {par: {first: ["p1"], second: ["p2"]}
-                                        for par in ("invest_periods", "realized_invest_periods")})
-    spec["entities"].append(["solve", "disp", None])
-    spec["parameter_values"] += [
-        ["solve", "inv", "contains_solves", scm.array(["disp"]), "init"],
-        ["solve", "disp", "solve_mode", scm.pack("single_solve", "str"), "init"],
-        ["solve", "disp", "period_timeset", scm.pack(scm.pmap(list(scm.PERIODS.items())), "map"), "init"],
-        ["solve", "disp", "realized_periods", scm.array(list(scm.PERIODS)), "init"],
-        ["solve", "disp", "years_represented", scm.pack(scm.pmap([(p, 5.0) for p in scm.PERIODS]), "map"),
-         "init"]]
-    return spec
 
 
 def test_a_solve_contained_in_a_split_solve_gets_the_period_whatever_the_row_name(tmp_path_factory):
@@ -266,6 +274,34 @@ def test_a_nested_split_counts_from_the_model_start(tmp_path_factory):
     _coefficients(mps["inv_p2"], {"v_invest_p[gen,p2]": INV_P2, "v_flow[gen,gen,elec,p2,t03]": OPS_P2})
     _coefficients(mps["disp_p1"], {"v_flow[gen,gen,elec,p1,t01]": OPS_P1})
     _coefficients(mps["disp_p2"], {"v_flow[gen,gen,elec,p2,t03]": OPS_P2})
+
+
+def test_a_nested_look_ahead_ladder_written_by_hand_is_the_split_one_with_inflation(tmp_path_factory):
+    """Item 243 with inflation 0.05: the hand-written look-ahead ladder containing ``disp`` builds the split
+    ladder's LPs, solve by solve, because every solve discounts from the start of the run (item 242).  Before
+    item 242 the hand-written inv_p2 discounted its operations from its own start (and before item 243 it did not
+    run)."""
+    split, split_steps = scm.run_spec(_with_inflation(_nested_look_ahead("split")), tmp_path_factory.mktemp("s"))
+    hand, hand_steps = scm.run_spec(_with_inflation(_nested_look_ahead("hand")), tmp_path_factory.mktemp("h"))
+    assert list(split_steps) == list(hand_steps) == ["inv_p1", "disp_p1", "inv_p2", "disp_p2"]
+    assert not scm.lp_differences(split, hand)
+
+
+def test_a_single_solve_in_rolls_realizing_different_periods_is_an_error(tmp_path):
+    """A rolling solve over p1 and p2 (2 h windows and jumps: one roll per period) contains the single solve
+    ``disp`` over both periods: ``disp`` keeps its name in every roll, so the p2 roll's run would replace the p1
+    roll's (the item 243 mechanism).  The run stops and names the rolls' periods."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    spec = scm.model_a_ladder("hand", {"realized_periods": {"r": ["p1", "p2"]}}, contains=["disp"])
+    pv = [r for r in spec["parameter_values"] if (r[0], r[1], r[2]) != ("solve", "inv_r", "solve_mode")]
+    pv += [["solve", "inv_r", "solve_mode", scm.pack("rolling_window", "str"), "init"],
+           ["solve", "inv_r", "rolling_solve_horizon", scm.pack(2.0, "float"), "init"],
+           ["solve", "inv_r", "rolling_solve_jump", scm.pack(2.0, "float"), "init"]]
+    spec["parameter_values"] = pv
+    with pytest.raises(FlexToolConfigError, match=r"'disp' is contained in the rolling solve 'inv_r', whose rolls "
+                                                  r"realize different periods \(p1 and p2\)"):
+        scm.run_spec(spec, tmp_path)
 
 
 def _invest_then_rolling() -> dict:

@@ -785,6 +785,20 @@ Each line says what changes for a model that ran before and what to do; the deta
   the periods it realizes, or, when none of them has a fan, the rows of its first period with a fan (a fan in its
   look-ahead), as the solves written by hand would. The recipe for a year-by-year chain of stochastic investment
   solves is in the stochastics how-to ("Investing year by year under uncertainty").
+- **A hand-written investment ladder that looks ahead and contains a storage or dispatch solve now runs.**
+  With investment solves written by hand whose `invest_periods` look one period ahead (as the 2-D map example
+  {p2020: [p2020, p2025], ...}) and that each contain the same lower solve, the lower solve kept its name under the
+  first ones, ran the last one's periods, and the run stopped with `KeyError` in the solve below it. A containing
+  solve now stands for the periods it realizes (`realized_invest_periods`, `realized_periods`,
+  `fix_storage_periods`), not for its look-ahead, whether written by hand or generated from a 2-D map: the
+  contained solve runs as `<solve>_<period>` and the hand-written ladder gives the same results as the 2-D map.
+- **A contained `single_solve` that would run under one name with different periods now stops the run.** When a
+  single solve shares more than one period with each of its containing solves (two solves that realize several
+  periods each, the rolls of a rolling solve, or a solve renamed to `<solve>_<period>`, which keeps all periods of
+  its base solve, so a third-level single solve below such copies is not renamed per period), its runs wrote one
+  set of results and the last run's replaced the others'. FlexTool now stops with an error naming the containing
+  solves and their periods; make the contained solve a `rolling_window` solve, or let each containing solve realize
+  one period.
 - **Solver options can no longer add commands to a solver run** (since 4.0). A `solver_arguments` entry or an
   option-file line with a line break, `;`, a quote or a space could add a command to the script piped to CPLEX,
   Xpress or COPT, or address another Gurobi or HiGHS option. Every option of every solver is now checked before the
