@@ -839,7 +839,10 @@ Each line says what changes for a model that ran before and what to do; the deta
   A process that ends with exit code 1 and no solution file (an error inside it, or on Windows `taskkill` or the
   Task Manager) gets the error "ended without writing a solution". Such a stopped solve no longer records a
   warm-start verdict (`--warm-start`): before, a killed first warm solve was recorded as "warm start helps" for
-  good; a killed cold timing solve now leaves the verdict to the next solve.
+  good. A cold timing solve that is killed, stopped (on Windows with exit code 1), crashes or cannot start now
+  leaves the verdict to the next solve on every OS. A solve name with `\` or other characters a file name cannot
+  safely hold is turned into one file-name token, as for the commercial solvers, so its files stay in the work
+  folder on Windows.
 - **A solver that writes no solution no longer gets the previous run's solution.** The work folder
   (`solve_data/subprocess`) keeps each solve's result file between runs. A commercial solver that ended without
   writing one (CPLEX "No solution exists" for an infeasible model, COPT without a solution, a crash or a solver

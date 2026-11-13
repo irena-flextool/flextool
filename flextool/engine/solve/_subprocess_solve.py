@@ -150,10 +150,12 @@ def _run_cold_probe(
 
     Returns ``(run_time, ended)``: the cold ``run_time`` in seconds, or
     ``None`` when the probe could not run or produced no usable time; and
-    whether the probe child ran to its end (exit code 0 or 1).  A probe
-    stopped by a signal or crashed (any other exit code) is not a
-    measurement: the caller records no verdict, so the family is probed
-    again.  The probe's own files are removed first, so an earlier run's
+    whether the probe child ran to its end.  A probe that could not be
+    started (including a stale result file that cannot be removed), was
+    stopped by a signal, ended with any exit code other than 0 or 1, or
+    ended with exit code 1 without writing its stats (an exception in the
+    child, or a Windows ``taskkill /F``) is not a measurement: the caller
+    records no verdict, so the family is probed again.  The probe's own files are removed first, so an earlier run's
     stats in the persistent work folder are never read as this probe's.
     Fully defensive — never raises.
     """
@@ -177,6 +179,16 @@ def _run_cold_probe(
                 )
             return None, False
         if not probe_stats.exists():
+            # ``cmd_solve_mps`` writes the stats at the end of every normal run (exit 0 or 1).  Exit 1 without
+            # them is an uncaught exception in the child or, on Windows, a ``taskkill /F`` / Task Manager
+            # stop: not a measurement, so no verdict.
+            if cp.returncode == 1:
+                if logger is not None:
+                    logger.warning(
+                        "save_memory: the cold A/B probe ended without writing its stats "
+                        "(it crashed or was stopped; exit code 1)"
+                    )
+                return None, False
             return None, True
         pstats = json.loads(probe_stats.read_text())
         rt = pstats.get("run_time")
@@ -185,8 +197,8 @@ def _run_cold_probe(
         return float(rt), True
     except Exception as exc:  # noqa: BLE001 - probe is measurement-only
         if logger is not None:
-            logger.debug("save_memory: cold A/B probe failed (%s)", exc)
-        return None, True
+            logger.warning("save_memory: the cold A/B probe could not run (%s)", exc)
+        return None, False
 
 
 def _remove_old_results(paths: Iterable[Path | None]) -> None:
@@ -222,8 +234,10 @@ def _describe_child_exit(returncode: int) -> str:
         hint = " (often the out-of-memory killer)" if name == "SIGKILL" else ""
         return f"was stopped by {name}{hint}"
     if returncode > 0xFFFF:
-        # A Windows status such as 0xC0000005 (access violation) or 0xC0000409 (abort).
-        return f"failed with exit code 0x{returncode:08X}"
+        # A Windows status such as 0xC0000005 (access violation) or 0xC0000409 (abort).  Windows has no
+        # out-of-memory killer: a child out of memory ends with 0xC0000017 (STATUS_NO_MEMORY) or exit 1.
+        hint = " (out of memory)" if returncode == 0xC0000017 else ""
+        return f"failed with exit code 0x{returncode:08X}{hint}"
     return f"failed with exit code {returncode}"
 
 
@@ -2039,7 +2053,8 @@ def _solve_highs_subprocess(
     else:
         out_dir = Path(tempfile.mkdtemp(prefix="flextool_subprocess_"))
 
-    safe_name = solve_name.replace("/", "_").replace(" ", "_") or "solve"
+    # One file-name token strictly inside ``out_dir`` (no ``/``, ``\\`` or ``..`` escapes), as the commercial path.
+    safe_name = re.sub(r"[^\w.\-]", "_", solve_name) or "solve"
     mps_path = out_dir / f"{safe_name}.mps"
     sol_path = out_dir / f"{safe_name}.sol"
     opts_path = out_dir / f"{safe_name}.opt"
@@ -2207,7 +2222,8 @@ def _solve_highs_subprocess(
             failure = _describe_child_exit(cp.returncode)
         elif not sol_path.is_file():
             failure = (
-                f"ended without writing a solution (it crashed or was stopped; exit code {cp.returncode})"
+                f"ended without writing a solution (it crashed, for example out of memory, or was stopped; "
+                f"exit code {cp.returncode})"
             )
         else:
             failure = None

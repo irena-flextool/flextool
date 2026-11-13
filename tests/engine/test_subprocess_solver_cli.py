@@ -549,6 +549,7 @@ def test_a_work_folder_with_a_space_reaches_the_solver_as_bare_file_names(solver
     (-9, "was stopped by SIGKILL (often the out-of-memory killer)"),
     (-15, "was stopped by SIGTERM"),
     (0xC0000409, "failed with exit code 0xC0000409"),
+    (0xC0000017, "failed with exit code 0xC0000017 (out of memory)"),
     (7, "failed with exit code 7"),
 ])
 def test_a_child_exit_is_described_by_its_signal_or_code(returncode: int, expected: str) -> None:
@@ -622,6 +623,22 @@ def test_a_highs_child_ending_with_exit_1_and_no_solution_is_an_error(tmp_path: 
     assert not isinstance(err.value, FileNotFoundError)
     assert "exit code 1" in str(err.value)
     assert not stale.exists()
+
+
+def test_a_highs_solve_name_is_one_file_token_inside_the_work_folder(tmp_path: Path, monkeypatch) -> None:
+    """Review N1: the ``--save-memory`` HiGHS path cleans a solve name into one file-name token, as the commercial
+    path does, so ``\\``, ``/`` or ``..`` cannot put (or delete) its files outside ``solve_data/subprocess``."""
+    from flextool.engine.solve._subprocess_solve import solve_via_subprocess
+    from tests.engine.test_subprocess_gurobi_name_recovery import _cost_lp
+
+    work = tmp_path / "work"
+    calls = _fake_child(monkeypatch, 1)
+    with pytest.raises(RuntimeError, match="ended without writing a solution"):
+        solve_via_subprocess(_cost_lp(["a", "b"]), "highs", None, solve_name="..\\up/y 1", work_folder=work)
+    sub = work / "solve_data" / "subprocess"
+    mps = Path(calls[0][calls[0].index("--mps") + 1])
+    assert mps == sub / ".._up_y_1.mps"
+    assert mps.is_file()
 
 
 _SILENT_SOLVER = """\
