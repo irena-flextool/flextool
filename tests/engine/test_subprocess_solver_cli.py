@@ -718,6 +718,47 @@ def test_xpress_script_solves_a_mip_with_mipoptimize_and_an_lp_with_lpoptimize(t
     assert mip == lp.replace("lpoptimize", "mipoptimize")
 
 
+@pytest.mark.parametrize("controls, appended", [
+    ((("MIPLOG", "0"),), ["setControl MIPLOG 1"]),
+    ((("OUTPUTLOG", "0"),), ["setControl OUTPUTLOG 1"]),
+    ((("outputlog", "3"), ("MIPLOG", "0")), ["setControl OUTPUTLOG 1", "setControl MIPLOG 1"]),
+    ((("MIPLOG", "0"), ("MIPLOG", "3")), []),   # the last value wins in Xpress, and it logs
+    ((("MIPLOG", "-5"), ("OUTPUTLOG", "1")), []),
+    ((), []),   # Xpress' defaults log
+])
+def test_xpress_mip_script_sets_back_the_log_flextool_reads(controls, appended) -> None:
+    """R2: on a MIP, a user's ``OUTPUTLOG`` other than 1 or ``MIPLOG 0`` would hide the lines FlexTool reads how
+    the search ended from; ``setControl <NAME> 1`` follows the user's controls.  An LP's script is unchanged."""
+    from flextool.engine.solve._subprocess_solve import _xpress_script
+
+    args = (Path("optimizer"), Path("s.mps"), Path("s.sol"), (("THREADS", "1"), *controls))
+    _, mip = _xpress_script(*args, is_mip=True)
+    _, lp = _xpress_script(*args)
+    user = ["setControl THREADS 1", *(f"setControl {n} {v}" for n, v in controls)]
+    assert mip.splitlines()[: len(user) + len(appended) + 1] == [*user, *appended, "readprob s.mps"]
+    assert lp.splitlines()[: len(user) + 1] == [*user, "readprob s.mps"]
+
+
+@pytest.mark.parametrize("is_mip, flags, cfg_limit, opt_text, expected", [
+    (True, ["--solver-time-limit", "59.5"], None, "", "-60"),   # rounded up, then negated: never -59
+    (False, ["--solver-time-limit", "59.5"], None, "", "60"),
+    (True, [], 30.2, "", "-31"),   # the solve's own time limit too
+    (True, [], None, "MAXTIME 100\n", "100"),   # written by the user: passed as written
+    (True, [], None, "MAXTIME -100\n", "-100"),
+    (True, ["--solver-time-limit", "45"], None, "MAXTIME 100\n", "-45"),
+])
+def test_xpress_mip_time_limit_is_a_hard_maxtime(is_mip, flags, cfg_limit, opt_text, expected, tmp_path) -> None:
+    """R3: FlexTool's own time limit (the flag, the solve's ``time_limit``) on an Xpress MIP is ``MAXTIME
+    -<limit>``, a hard limit (a positive MAXTIME stops a MIP only once it has a solution); the watchdog takes the
+    absolute value."""
+    opt_file = tmp_path / "xpress.opt"
+    opt_file.write_text(opt_text)
+    resolved = resolve_commercial_options("xpress", opt_file=opt_file, run_options=_options(flags), is_mip=is_mip,
+                                          solver_config=SolverConfig(name="xpress", time_limit=cfg_limit))
+    assert [o.value for o in resolved if o.name == "MAXTIME"] == [expected]
+    assert commercial_time_limit("xpress", resolved) == abs(float(expected))
+
+
 #: The ends of Xpress MIP logs (the ``xpress`` 9.8.1 package's library log, which the console prints): the
 #: market split MIP stopped by ``MAXTIME 1`` / ``MAXNODE 5`` / ``MAXMIPSOL 1``, stopped by ``MAXNODE 1`` with
 #: heuristics and cuts off (no integer solution), a small MIP solved, an infeasible MIP.
@@ -764,6 +805,21 @@ The problem is infeasible due to row R1
 Problem is integer infeasible
   Number of solutions found / nodes   :         0 /         0
 """
+#: An unbounded MIP (xpress 9.8.1 library, mipstatus 7): the search "completes", heuristics may count
+#: solutions and print a final objective (review R1), or not.
+_XPRESS_UNBOUNDED_LOG = """\
+ *** Search completed ***
+Problem is unbounded
+Final MIP objective                   : -1.000000000000000e+06
+Final MIP bound                       : -1.000000000000000e+06
+  Number of solutions found / nodes   :         2 /         0
+"""
+_XPRESS_UNBOUNDED_NO_SOLUTION_LOG = """\
+The problem is unbounded due to column C1
+ *** Search completed ***
+Problem is unbounded
+  Number of solutions found / nodes   :         0 /         0
+"""
 #: An SLX file and the print solution as Xpress writes them; after a search stopped by a limit the print
 #: solution still says ``Optimal solution found``.
 _XPRESS_SLX = "NAME          noname\n  C C0000001                   1\n  C C0000002                0.75\nENDATA\n"
@@ -796,6 +852,8 @@ def test_xpress_mip_status_comes_from_the_log_not_the_print_solution(log, status
 
 @pytest.mark.parametrize("log, status", [
     (_XPRESS_INFEASIBLE_LOG, "INFEASIBLE"),
+    (_XPRESS_UNBOUNDED_LOG, "UNBOUNDED"),   # R1: not OPTIMAL from "Search completed", the heuristic point unused
+    (_XPRESS_UNBOUNDED_NO_SOLUTION_LOG, "UNBOUNDED"),
     (_XPRESS_NODE_LIMIT_NO_SOLUTION_LOG, "NODE_LIMIT"),
     (_XPRESS_NODE_LIMIT_NO_SOLUTION_LOG.replace("MAXNODE limit", "MAXTIME limit"), "TIME_LIMIT"),
     (" *** Search completed ***\n", "NO_INTEGER_SOLUTION"),   # no solution count, no final objective

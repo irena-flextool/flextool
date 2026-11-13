@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import mmap
 import os
 import queue
@@ -886,6 +887,36 @@ def _cplex_script(
     return [str(binary)], _join_script("cplex", pre, fixed)
 
 
+#: Xpress controls a MIP's log needs, and the values that hide it: FlexTool reads how a MIP search ended from
+#: the log (:func:`_xpress_mip_status`).  ``OUTPUTLOG`` other than 1 (0 no output, 2 / 3 only warnings and
+#: errors) and ``MIPLOG 0`` leave out the ``*** Search completed ***``, ``Final MIP objective`` and ``Number of
+#: solutions found`` lines (xpress 9.8.1 library); every other ``MIPLOG`` (1, 2, 3, a negative value) prints them.
+_XPRESS_MIP_LOG_CONTROLS = (("OUTPUTLOG", lambda v: v != 1.0), ("MIPLOG", lambda v: v == 0.0))
+
+
+def xpress_mip_log_overrides(params: CommercialParams) -> list[tuple[str, str, str]]:
+    """The Xpress controls a MIP solve sets back to 1 after *params*, as ``(name, "1", the value it replaces)``:
+    ``OUTPUTLOG`` when *params*' last one is not 1, ``MIPLOG`` when it is 0 (see
+    :data:`_XPRESS_MIP_LOG_CONTROLS`).  A control *params* does not set keeps Xpress' default, which logs."""
+    from flextool.engine.solve._solver_catalogue import commercial_option_key
+
+    last: dict[str, str] = {}
+    for name, value in params:
+        last[commercial_option_key("xpress", name)] = value
+    out: list[tuple[str, str, str]] = []
+    for name, hides in _XPRESS_MIP_LOG_CONTROLS:
+        value = last.get(name.casefold())
+        if value is None:
+            continue
+        try:
+            number = float(value)
+        except ValueError:
+            number = math.nan
+        if math.isnan(number) or hides(number):
+            out.append((name, "1", value))
+    return out
+
+
 def _xpress_script(
     binary: Path, mps_path: Path, sol_path: Path, params: CommercialParams = (), *, is_mip: bool = False,
 ) -> tuple[list[str], str]:
@@ -893,10 +924,14 @@ def _xpress_script(
 
     Each of *params* becomes ``setControl <NAME> <value>``, emitted *before* ``readprob``/
     ``lpoptimize`` so controls are in effect for the solve.  A MIP (*is_mip*) is solved by ``mipoptimize``:
-    ``lpoptimize`` would solve only its LP relaxation.  An LP keeps ``lpoptimize``.
+    ``lpoptimize`` would solve only its LP relaxation.  An LP keeps ``lpoptimize``.  A MIP whose *params* would
+    hide the log FlexTool reads gets ``setControl OUTPUTLOG 1`` / ``setControl MIPLOG 1`` after them
+    (:func:`xpress_mip_log_overrides`).
     """
     _check_params("xpress", params)
     pre = [f"setControl {name} {value}" for name, value in params]
+    if is_mip:
+        pre += [f"setControl {name} {value}" for name, value, _ in xpress_mip_log_overrides(params)]
     fixed = [
         f"readprob {mps_path}",
         "mipoptimize" if is_mip else "lpoptimize",
@@ -1132,6 +1167,9 @@ _XPRESS_MIP_STOP_STATUS = {"MAXTIME": "TIME_LIMIT", "MAXNODE": "NODE_LIMIT", "MA
 _XPRESS_SEARCH_COMPLETED = re.compile(r"^\s*\*\*\* Search completed \*\*\*", re.MULTILINE)
 _XPRESS_SEARCH_UNFINISHED = re.compile(r"^\s*\*\*\* Search unfinished \*\*\*", re.MULTILINE)
 _XPRESS_INTEGER_INFEASIBLE = re.compile(r"^\s*Problem is integer infeasible\b", re.MULTILINE)
+#: ``Problem is unbounded`` after ``*** Search completed ***`` (mipstatus 7); the log may still count heuristic
+#: solutions and print a ``Final MIP objective``.
+_XPRESS_UNBOUNDED = re.compile(r"^\s*Problem is unbounded\b", re.MULTILINE)
 #: ``  Number of solutions found / nodes   :        11 /      4693``: the integer solutions of the search.
 _XPRESS_MIP_SOLUTIONS = re.compile(r"^\s*Number of solutions found / nodes\s*:\s*(\d+)\s*/", re.MULTILINE)
 #: ``Final MIP objective                   : 2.300000000000000e+01`` (written only when a solution exists) and
@@ -1545,12 +1583,14 @@ def _last_float(pattern: "re.Pattern[str]", text: str) -> float | None:
 def _xpress_mip_status(stdout: str) -> str:
     """How an Xpress MIP search ended, from its log (library-verified wording, see :data:`_XPRESS_MIP_STOP`).
 
-    ``Problem is integer infeasible`` → ``INFEASIBLE``; a ``STOPPING - <limit> limit reached`` line → that
-    limit's status; ``*** Search completed ***`` → ``OPTIMAL``; any other ``*** Search unfinished ***`` →
+    ``Problem is integer infeasible`` → ``INFEASIBLE``; ``Problem is unbounded`` → ``UNBOUNDED`` (the log also
+    says ``*** Search completed ***``); a ``STOPPING - <limit> limit reached`` line → that limit's status; ``*** Search completed ***`` → ``OPTIMAL``; any other ``*** Search unfinished ***`` →
     ``UNFINISHED``; a log with none of these → ``OTHER``.
     """
     if _XPRESS_INTEGER_INFEASIBLE.search(stdout):
         return "INFEASIBLE"
+    if _XPRESS_UNBOUNDED.search(stdout):
+        return "UNBOUNDED"
     stops = _XPRESS_MIP_STOP.findall(stdout)
     if stops:
         return _XPRESS_MIP_STOP_STATUS[stops[-1]]
@@ -1574,7 +1614,7 @@ def _xpress_mip_result(stdout: str, primal: dict[str, float], prt_objective: flo
     final_objective = _last_float(_XPRESS_FINAL_OBJECTIVE, stdout)
     counts = _XPRESS_MIP_SOLUTIONS.findall(stdout)
     has_solution = (int(counts[-1]) > 0) if counts else final_objective is not None
-    if status == "INFEASIBLE" or not has_solution or not primal:
+    if status in ("INFEASIBLE", "UNBOUNDED") or not has_solution or not primal:
         if status in ("OPTIMAL", "OTHER"):
             status = "NO_INTEGER_SOLUTION"
         return _ParsedSolution(status, None, None, None)
@@ -1651,7 +1691,10 @@ _NO_SOLUTION_REASONS = {
     "MEM_LIMIT": "stopped at its memory limit before finding a solution",
     "INTERRUPTED": "was interrupted before finding a solution",
     "UNFINISHED": "stopped unfinished before finding a solution",
-    "NO_INTEGER_SOLUTION": "found no integer solution (its log shows none)",
+    "NO_INTEGER_SOLUTION": (
+        "found no integer solution (its log shows none; FlexTool reads how a MIP search ended from the Xpress log, "
+        "which needs the controls OUTPUTLOG 1 and MIPLOG other than 0)"
+    ),
 }
 
 
@@ -2661,6 +2704,10 @@ def _solve_commercial_subprocess(
         # pair, and ``<solve>.opt`` records them next to the MPS (not written when there are none).
         params = commercial_params(options)
         _write_commercial_opt_file(params, opt_path)
+        if solver_name == "xpress" and is_mip:
+            from flextool.engine.solve._solver_dispatch import note_xpress_mip_log_overrides
+
+            note_xpress_mip_log_overrides(xpress_mip_log_overrides(params), option_layers)
 
         argv, stdin_text = _SCRIPTS[solver_name](
             binary, Path(mps_path.name), Path(sol_path.name), params, is_mip=is_mip,

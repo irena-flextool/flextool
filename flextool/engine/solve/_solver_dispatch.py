@@ -24,7 +24,7 @@ import logging
 import math
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Mapping, NamedTuple
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, NamedTuple, Sequence
 
 from flextool._solver_option_rules import cplex_set_word_problem
 from flextool._solver_option_rules import highs_opt_lines as _highs_opt_lines
@@ -1075,6 +1075,8 @@ _warned_dropped_options: set[tuple[str, str, str]] = set()
 _warned_highs_only: set[tuple[str, ...]] = set()
 _warned_precommands: set[str] = set()
 _warned_thread_overrides: set[tuple[str, str, str]] = set()
+#: (control, value) pairs of an Xpress MIP log control already reported as set back to 1 in this run.
+_warned_xpress_mip_log: set[tuple[str, str]] = set()
 
 
 def reset_run_warnings() -> None:
@@ -1087,6 +1089,7 @@ def reset_run_warnings() -> None:
     _warned_unlisted_trusted.clear()
     _warned_flextool3_options.clear()
     _warned_thread_overrides.clear()
+    _warned_xpress_mip_log.clear()
 
 
 def local_solver_wrapper(solver: str):
@@ -1144,18 +1147,23 @@ class CommercialOption(NamedTuple):
     layer: str
 
 
-def _native_value(solver: str, knob: str, value: object) -> str:
+def _native_value(solver: str, knob: str, value: object, *, is_mip: bool = False) -> str:
     """Text of a convenience-knob value for *solver*: Xpress ``MAXTIME`` is an
-    integer control, so a time limit is rounded up to whole seconds."""
+    integer control, so a time limit is rounded up to whole seconds.  On a MIP
+    (*is_mip*) it is then negated: a positive ``MAXTIME`` stops a MIP only once it
+    has an integer solution, a negative one is a hard limit of its absolute value
+    (:func:`commercial_time_limit`), and FlexTool's time limit is a hard limit.
+    ``-ceil(t)``, not ``ceil(-t)``: 59.5 s gives ``-60``, never ``-59``."""
     from flextool.engine.solve._subprocess_solve import _format_native_opt_value
 
     if solver == "xpress" and knob == "time_limit":
-        return str(int(math.ceil(float(value))))
+        seconds = int(math.ceil(float(value)))
+        return str(-seconds if is_mip else seconds)
     return _format_native_opt_value(value)
 
 
 def _operator_native_overrides(
-    solver: str, run_options: "RunOptions | None",
+    solver: str, run_options: "RunOptions | None", *, is_mip: bool = False,
 ) -> list[CommercialOption]:
     """The operator layer of a commercial solve: the time limit and the MIP gap
     given by flag or by ``FLEXTOOL_SOLVER_*``, and the run's thread budget, under
@@ -1163,7 +1171,8 @@ def _operator_native_overrides(
 
     threads: the run's budget (``--threads`` / ``FLEXTOOL_THREADS``) replaces the
     solver's thread count; without them the option file and ``solver_arguments``
-    keep it (as for HiGHS).  The HiGHS-only ``FLEXTOOL_HIGHS_TIME_LIMIT`` /
+    keep it (as for HiGHS).  *is_mip*: an Xpress time limit becomes a hard
+    ``MAXTIME -<limit>`` (:func:`_native_value`).  The HiGHS-only ``FLEXTOOL_HIGHS_TIME_LIMIT`` /
     ``FLEXTOOL_HIGHS_MIP_GAP`` / ``--highs-threads`` do not apply.  A registry
     default (and an unset budget, which is the available cores) adds nothing.
     """
@@ -1180,7 +1189,7 @@ def _operator_native_overrides(
             continue
         spec = OPTIONS[key]
         layer = f"flag {spec.flag}" if resolved.source == "cli" else f"environment variable {spec.env}"
-        out.append(CommercialOption(names[knob], _native_value(solver, knob, resolved.value), layer))
+        out.append(CommercialOption(names[knob], _native_value(solver, knob, resolved.value, is_mip=is_mip), layer))
     return out
 
 
@@ -1194,6 +1203,7 @@ def resolve_commercial_options(
     logger: logging.Logger | None = None,
     opt_text: str | None = None,
     opt_untrusted: str | None = None,
+    is_mip: bool = False,
 ) -> list[CommercialOption]:
     """The parameters a commercial solve passes to *solver*, in final order.
 
@@ -1216,7 +1226,11 @@ def resolve_commercial_options(
     per run for each name and kind of layer.  *opt_untrusted* (``None``: the
     option file is trusted) says why the option file gets the database's rules
     instead (item 240 B3, a folder found outside a workspace this computer set
-    up): each of its lines is then checked like ``solver_arguments``.
+    up): each of its lines is then checked like ``solver_arguments``.  *is_mip*
+    (the problem has an integer column): FlexTool's own Xpress time limit (the
+    solve's ``time_limit`` and the time-limit flag) is passed as a hard
+    ``MAXTIME -<limit>`` (:func:`_native_value`); a ``MAXTIME`` written in the
+    option file or ``solver_arguments`` is passed as written.
     """
     from flextool.engine.solve._subprocess_solve import (
         _format_native_opt_value,
@@ -1248,7 +1262,8 @@ def resolve_commercial_options(
         names = _PARAM_MAP[solver]
         entries += [
             CommercialOption(
-                names[knob], _native_value(solver, knob, getattr(solver_config, knob)), f"solver_mip_gap{of_solve}"
+                names[knob], _native_value(solver, knob, getattr(solver_config, knob), is_mip=is_mip),
+                f"solver_mip_gap{of_solve}",
             )
             for knob in ("time_limit", "mip_gap", "threads")
             if getattr(solver_config, knob) is not None
@@ -1270,7 +1285,7 @@ def resolve_commercial_options(
     for option in entries:
         if commercial_option_key(solver, option.name) == thread_key:
             replaced_threads = option
-    operator = _operator_native_overrides(solver, run_options)
+    operator = _operator_native_overrides(solver, run_options, is_mip=is_mip)
     entries += operator
     for option in entries:
         _refuse_fractional_integer_option(solver, option)
@@ -1300,6 +1315,26 @@ def resolve_commercial_options(
             warn_unlisted_trusted_option(solver, option.name, option.layer, logger)
         merged[key] = option._replace(name=key) if solver == "cplex" else option
     return list(merged.values())
+
+
+def note_xpress_mip_log_overrides(
+    overrides: Sequence[tuple[str, str, str]], option_layers: Mapping[str, str] | None,
+) -> None:
+    """One printed line per run for each Xpress log control a MIP solve sets back to 1
+    (:func:`flextool.engine.solve._subprocess_solve.xpress_mip_log_overrides`): FlexTool reads how a MIP search
+    ended from the log.  Printed, as :func:`_note_thread_override`, next to the solve's ``Solver args`` line."""
+    layers = {commercial_option_key("xpress", k): v for k, v in (option_layers or {}).items()}
+    for name, value, old in overrides:
+        if (name, old) in _warned_xpress_mip_log:
+            continue
+        _warned_xpress_mip_log.add((name, old))
+        where = layers.get(name.casefold())
+        print(
+            f"xpress uses {name} {value} on a MIP instead of {name} {old}"
+            f"{f' in {where}' if where else ''}: FlexTool reads how a MIP search ended from the Xpress log, "
+            f"which {name} {old} would leave out.",
+            flush=True,
+        )
 
 
 def _thread_number(value: str) -> float | None:
@@ -1630,6 +1665,7 @@ def run_one_solve(
             run_options=run_options,
             solve_name=solve_name,
             logger=logger,
+            is_mip=problem_is_mip(getattr(problem, "_vars", None)),
         )
     warn_highs_only_options(solver_config.name, run_options, logger)
     options = {o.name: o.value for o in commercial_options}

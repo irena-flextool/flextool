@@ -535,7 +535,13 @@ def test_mip_at_its_time_limit_keeps_the_solution(solver, shim, tmp_path) -> Non
     kwargs = dict(solve_name="market_split", work_folder=tmp_path / "w", run_options=opts, solver_config_dir=cfg)
     sol = run_one_solve(_market_split(), SolverConfig(name=solver), **kwargs)
     (call,) = _calls(shim)
-    assert call["params"] == {THREADS[solver]: 2, TIME[solver]: 1.0}, call
+    # Xpress: FlexTool's time limit on a MIP is a hard MAXTIME -1 (R3); the .opt record says the same.
+    limit = -1.0 if solver == "xpress" else 1.0
+    assert call["params"] == {THREADS[solver]: 2, TIME[solver]: limit}, call
+    if solver == "xpress":
+        assert "setControl MAXTIME -1\n" in call["stdin"], call["stdin"]
+        record = (tmp_path / "w" / "solve_data" / "subprocess" / "market_split.opt").read_text()
+        assert "MAXTIME -1\n" in record.splitlines(keepends=True), record
     assert call["is_mip"] and call["mip_gap"] is not None and call["mip_gap"] > 0.0, (
         f"{solver} closed the market split gap within 1 s; the model is no longer hard enough: {call}"
     )
@@ -594,6 +600,74 @@ def test_xpress_mip_stopped_before_an_integer_solution_stops_the_run(solver, shi
     assert call["is_mip"] and call["mip_gap"] is None and "\nmipoptimize\n" in call["stdin"], call
     slx = tmp_path / "w" / "solve_data" / "subprocess" / "market_split.sol"
     assert len(slx.read_text().splitlines()) > 2, "the SLX file no longer holds the relaxation; the test is moot"
+
+
+@pytest.mark.parametrize("solver", ["xpress"], indirect=True)
+def test_xpress_mip_time_limit_is_a_hard_maxtime_in_the_whole_run(solver, shim, db, tmp_path, capsys) -> None:
+    """R3: ``--solver-time-limit 59.5`` on the ``coal_min_load_MIP_wind`` MIP reaches Xpress as ``MAXTIME -60``
+    (rounded up, then negated: a positive MAXTIME stops a MIP only once it has a solution).  The ``Solver args``
+    line, the ``.opt`` record and the script piped to the solver agree."""
+    cfg = _cfg(tmp_path, solver, "THREADS 1\n")
+    steps = _run(db, f"mip_{solver}", tmp_path / "w", cfg, "--solver-time-limit", "59.5")
+    assert steps[SOLVE].optimal
+    calls = _calls(shim)
+    assert calls and all(c["is_mip"] and c["params"] == {"THREADS": 1, "MAXTIME": -60} for c in calls), calls
+    assert all("setControl MAXTIME -60\n" in c["stdin"] for c in calls), calls
+    printed = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("Solver args")]
+    assert printed and all(ln == "Solver args (xpress): THREADS=1, MAXTIME=-60" for ln in printed), printed
+    records = list((tmp_path / "w").rglob("solve_data/subprocess/*.opt"))
+    assert records and all(r.read_text() == "THREADS 1\nMAXTIME -60\n" for r in records), records
+
+
+@pytest.mark.parametrize("solver", ["xpress"], indirect=True)
+@pytest.mark.parametrize("control", ["MIPLOG", "OUTPUTLOG"])
+def test_xpress_mip_with_its_log_turned_off_still_solves(solver, shim, tmp_path, capsys, control) -> None:
+    """R2: ``MIPLOG 0`` or ``OUTPUTLOG 0`` in ``solver_arguments`` would hide the log lines FlexTool reads how a
+    MIP search ended from, and an optimal solve stopped the run as "found no integer solution".  FlexTool sets
+    the control back to 1 after the user's controls on a MIP and says so; the small MIP solves, objective 20 of
+    ``_cost_lp``."""
+    from flextool.engine.input._solve_config import SolverConfig
+    from flextool.engine.solve._solver_dispatch import reset_run_warnings, run_one_solve
+    from tests.engine.test_subprocess_gurobi_name_recovery import _mip_lp
+
+    reset_run_warnings()
+    cfg = _cfg(tmp_path, solver, "THREADS 1\n")
+    sol = run_one_solve(_mip_lp(["a", "b", "c"]), SolverConfig(name=solver, options={control: 0}), solve_name="s",
+                        work_folder=tmp_path / "w", run_options=_run_options("unused.sqlite"), solver_config_dir=cfg)
+    assert sol.optimal and sol.obj == pytest.approx(20.0)
+    (call,) = _calls(shim)
+    assert call["is_mip"] and call["params"] == {"THREADS": 1, control: 1}, call
+    lines = call["stdin"].splitlines()
+    assert lines[:3] == ["setControl THREADS 1", f"setControl {control} 0", f"setControl {control} 1"], lines
+    out = capsys.readouterr().out
+    assert f"xpress uses {control} 1 on a MIP instead of {control} 0 in solver_arguments of solve s" in out, out
+
+
+def _unbounded_mip() -> Problem:
+    """``min -x - y`` with ``x`` integer, ``x - y <= 3.5`` and both unbounded above: an unbounded MIP."""
+    pb = Problem()
+    over = pl.DataFrame({"i": ["a"]})
+    x = pb.add_var("x", ("i",), over, lower=0.0, integer=True)
+    y = pb.add_var("y", ("i",), over, lower=0.0)
+    pb.add_cstr("cap", over=over, sense="<=", lhs_terms={"x": x, "y": -1.0 * y},
+                rhs_terms={"r": Param(("i",), pl.DataFrame({"i": ["a"], "value": [3.5]}), name="r")})
+    pb.set_objective(Sum(-1.0 * x, over="i") + Sum(-1.0 * y, over="i"))
+    return pb
+
+
+@pytest.mark.parametrize("solver", ["xpress"], indirect=True)
+def test_an_unbounded_xpress_mip_stops_the_run(solver, shim, tmp_path) -> None:
+    """R1: an unbounded MIP logs ``*** Search completed ***`` and then ``Problem is unbounded`` (mipstatus 7); the
+    run stops with "is unbounded", never as a solved MIP or "found no integer solution"."""
+    from flextool.engine.input._solve_config import SolverConfig
+    from flextool.engine.solve._solver_dispatch import FlexToolUserError, run_one_solve
+
+    cfg = _cfg(tmp_path, solver, "THREADS 1\n")
+    with pytest.raises(FlexToolUserError, match="is unbounded"):
+        run_one_solve(_unbounded_mip(), SolverConfig(name=solver), solve_name="s", work_folder=tmp_path / "w",
+                      run_options=_run_options("unused.sqlite"), solver_config_dir=cfg)
+    (call,) = _calls(shim)
+    assert call["is_mip"] and call["status"] == 7, call   # 7: MIP unbounded
 
 
 def _infeasible_mip() -> Problem:

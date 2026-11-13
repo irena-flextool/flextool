@@ -4253,6 +4253,7 @@ def _drive_cascade(
                     from flextool.engine.solve._solver_dispatch import (
                         _PARAM_MAP as _NATIVE_NAMES,
                         commercial_opt_file_layer,
+                        problem_is_mip,
                         resolve_commercial_options,
                     )
                     if _active_solver_cfg.name in _NATIVE_NAMES:
@@ -4271,6 +4272,7 @@ def _drive_cascade(
                             run_options=run_options,
                             solve_name=complete_solve_name,
                             logger=state.logger,
+                            is_mip=problem_is_mip(getattr(pb, "_vars", None)),
                         )
                         # The values in unscaled currency become the solver's
                         # values when the option file is written
