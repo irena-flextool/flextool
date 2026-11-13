@@ -111,8 +111,8 @@ Each line says what changes for a model that ran before and what to do; the deta
   FlexTool's default. Check the `Solver config:` line of the run log, which names the folder of each file, and move
   your `.opt` files there.
 - **Other commercial-solver fixes that can change results:** CPLEX now gets `solver_mip_gap`; one value per solver
-  parameter, whatever its case; Xpress refuses a MIP (it returned the LP relaxation); Gurobi file-writing parameters
-  are not passed on. A CPLEX option name starting with `set` (FlexTool adds it) is refused with a message naming
+  parameter, whatever its case; Xpress solves a MIP with `mipoptimize` (it returned the LP relaxation); Gurobi
+  file-writing parameters are not passed on. A CPLEX option name starting with `set` (FlexTool adds it) is refused with a message naming
   it, from every source (CPLEX refused the `set set ...` line before); a UTF-8 byte order mark at the start of an
   option file is ignored (before, it made the first option's name invalid).
 - **A solve that FlexTool splits or adds now runs on the solver you chose.** Since 4.0, when a solve on Gurobi,
@@ -944,8 +944,13 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **An unknown Gurobi parameter is reported.** Gurobi ignores a misspelt name with a message; FlexTool now repeats
   it as a warning naming where it was set. Gurobi's `ResultFile` is not passed on, with a warning: FlexTool names
   its own result file and reads the solution from it.
-- **Xpress returned the LP relaxation of a MIP.** FlexTool's Xpress driver solves linear problems only; a solve
-  with integer variables now stops with a message instead of reporting the relaxation as the solution.
+- **Xpress returned the LP relaxation of a MIP.** FlexTool's Xpress script ran `lpoptimize` for every solve. A solve
+  with integer variables now runs `mipoptimize`, and its status comes from the Xpress log, not from the print
+  solution (which says "Optimal solution found" after a search stopped by a limit): a MIP stopped by `MAXTIME`,
+  `MAXNODE` or `MAXMIPSOL` with an integer solution keeps it with a warning naming the limit and the gap; an
+  integer-infeasible MIP, or one that ends without an integer solution, stops the run and never uses the LP
+  relaxation. The log texts were checked with the `xpress` Python package, not yet with a licensed `optimizer`
+  console.
 - **The `Solver args` line of a commercial solve showed HiGHS options**; it is now
   `Solver args (<solver>): ...` with what the solver receives, under its own names.
 - **The log of a commercial solver is shown as the solver writes it.** Gurobi, CPLEX, Xpress and COPT printed

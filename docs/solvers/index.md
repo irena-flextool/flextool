@@ -748,7 +748,7 @@ solve's `solver_arguments`: a node, leaf, solution-count, work or iteration
 limit (HiGHS `mip_max_nodes`, `mip_max_leaves`, `mip_max_stall_nodes`,
 `mip_max_improving_sols`, `simplex_iteration_limit`, ...; Gurobi `NodeLimit`,
 `SolutionLimit`, `WorkLimit`, `IterationLimit`; CPLEX `mip limits nodes`,
-`mip limits solutions`; COPT `NodeLimit`), and for an objective target you
+`mip limits solutions`; Xpress `MAXNODE`, `MAXMIPSOL`; COPT `NodeLimit`), and for an objective target you
 set (HiGHS `objective_target`, Gurobi `BestObjStop` and `BestBdStop`; HiGHS
 `objective_bound` works differently, see below). When a solve stops at one
 of them:
@@ -905,6 +905,8 @@ per-solver page for the licence setup.
   on a Gurobi solve, Gurobi sees `TimeLimit = 60`; without the flag it sees
   `30`. A `solver_arguments` entry wins over `solver_mip_gap` and over the
   option file.
-- **Xpress and integer variables.** FlexTool's Xpress driver solves linear
-  problems only; a solve with integer variables (integer investments, unit
-  online variables) stops with a message. Use another solver for such solves.
+- **Xpress and integer variables.** FlexTool runs `mipoptimize` for a solve
+  with integer variables (integer investments, unit online variables) and
+  `lpoptimize` for an LP. A MIP's status comes from the Xpress log; a MIP that
+  ends without an integer solution stops the run (it never uses the LP
+  relaxation). See [Xpress](xpress.md).
