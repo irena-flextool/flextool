@@ -17,7 +17,10 @@ or output count is missing adds one to ``not_reported``.  ``rejected_attempts`` 
 before any output.  ``cost`` is summed only from values the provider reported (OpenRouter's credits) and stays
 ``null`` otherwise.  No conversation content is written here; the ledger survives the conversation expiry,
 including expiry 0.  Every update is a read-modify-replace under the file's lock; a failing update is a warning on
-stderr, never a failed answer.  A ledger that is not JSON, or not of the form above, is moved aside
+stderr, never a failed answer.  A count whose update could not be made (the lock stayed taken, or the file system
+refused the read or the replace for a moment, as Windows does while another process or a virus scanner has the file
+open) is not dropped: it is kept in this process and added with the next update of the same ledger, or at the
+latest when the process exits (:func:`flush_pending`).  A ledger that is not JSON, or not of the form above, is moved aside
 (``usage.json.damaged-<time>-<hex>``, kept 30 days) once two reads in a row agree; the counts of the known form are
 carried into the new ledger.  The days follow the months' rules; a day whose key is not a date is not of the known
 form either.
@@ -26,8 +29,12 @@ from __future__ import annotations
 
 import json
 import math
+import atexit
+import os
 import re
 import sys
+import threading
+from collections.abc import Callable
 from collections.abc import Iterable, Mapping
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -195,6 +202,59 @@ def _prune_days(days: dict[str, Any], now: datetime | None) -> None:
         del days[day]
 
 
+#: Seconds the exit flush waits for the ledger's lock (an update during the run waits :data:`_files.LOCK_TIMEOUT`).
+EXIT_LOCK_TIMEOUT = 10.0
+
+
+class _Change:
+    """One count waiting to be written: the request's provider, model and moment, and what it adds."""
+
+    __slots__ = ("provider_key", "label", "model", "now", "apply")
+
+    def __init__(self, provider_key: str, label: str, model: str, now: datetime,
+                 apply: Callable[[dict[str, Any]], None]) -> None:
+        self.provider_key, self.label, self.model, self.now, self.apply = provider_key, label, model, now, apply
+
+
+# Counts this process could not write yet, per ledger file (normcase path): written with the next update of that
+# ledger, or by :func:`flush_pending` at exit.  Paid usage is never dropped for a lock or a file that was busy.
+_PENDING: dict[str, tuple[Path, list[_Change]]] = {}
+_PENDING_GUARD = threading.Lock()
+
+
+def _key(path: Path) -> str:
+    return os.path.normcase(str(path))
+
+
+def pending_count(path: Path | None = None) -> int:
+    """How many counts wait to be written (to the ledger *path*, or to any ledger)."""
+    with _PENDING_GUARD:
+        if path is not None:
+            entry = _PENDING.get(_key(path))
+            return len(entry[1]) if entry else 0
+        return sum(len(changes) for _, changes in _PENDING.values())
+
+
+def flush_pending(timeout: float = EXIT_LOCK_TIMEOUT) -> int:
+    """Write every waiting count (waiting up to *timeout* seconds for each ledger's lock); returns how many still
+    wait.  Runs at exit; a ledger whose folder is gone (its user config was removed) is not written again."""
+    with _PENDING_GUARD:
+        paths = [path for path, _ in _PENDING.values()]
+    for path in paths:
+        if not path.parent.is_dir():
+            with _PENDING_GUARD:
+                dropped = _PENDING.pop(_key(path), (path, []))[1]
+            if dropped:
+                print(f"Warning: {len(dropped)} usage count(s) were not written: the folder of {path.name} is gone.",
+                      file=sys.stderr)
+            continue
+        Ledger(path.parent)._update(None, timeout=timeout)
+    return pending_count()
+
+
+atexit.register(flush_pending)
+
+
 class Ledger:
     """The usage ledger in *config_root* (default: the user config folder)."""
 
@@ -217,9 +277,18 @@ class Ledger:
         print(f"Warning: {problem}. It was kept as {aside.name}; the new usage record carries the counts that "
               "could be read.", file=sys.stderr)
 
-    def _update(self, provider_key: str, label: str, model: str, now: datetime | None, change) -> bool:
+    def _update(self, change: _Change | None, *, timeout: float = _files.LOCK_TIMEOUT) -> bool:
+        """Write *change* together with every count of this ledger that waits from an earlier update: ``True`` when
+        all were written.  A busy lock or file (``LockTimeout``, ``OSError``) keeps them all waiting; a ledger of a
+        newer format, or an unexpected error, drops them with a warning (retrying cannot help)."""
+        key = _key(self.path)
+        with _PENDING_GUARD:
+            waiting = list(_PENDING.get(key, (self.path, []))[1])
+        batch = [*waiting, *([change] if change is not None else [])]
+        if not batch:
+            return True
         try:
-            with _files.locked(self.path):
+            with _files.locked(self.path, timeout=timeout):
                 try:
                     data = _files.read_json(self.path) or {"format": _files.FORMAT, "months": {}}
                 except _files.UnreadableFile as exc:
@@ -232,33 +301,60 @@ class Ledger:
                     self._set_aside(f"{self.path.name} is not a usage record of the known form")
                     data = salvaged
                 days = data.setdefault("days", {})
-                for periods, period in ((data.setdefault("months", {}), _month(now)), (days, _day(now))):
-                    provider = periods.setdefault(period, {}).setdefault(provider_key, {"label": label, "models": {}})
-                    provider["label"] = label
-                    counts = provider.setdefault("models", {}).setdefault(model or "(no model)", empty_counts())
-                    change(counts)
-                _prune_days(days, now)
+                for item in batch:
+                    for periods, period in ((data.setdefault("months", {}), _month(item.now)),
+                                            (days, _day(item.now))):
+                        provider = periods.setdefault(period, {}).setdefault(item.provider_key,
+                                                                             {"label": item.label, "models": {}})
+                        provider["label"] = item.label
+                        item.apply(provider.setdefault("models", {}).setdefault(item.model or "(no model)",
+                                                                                empty_counts()))
+                _prune_days(days, max(item.now for item in batch))
                 # Read and checked just now under the lock (a damaged file was set aside): not parsed again.
                 _files.write_json_atomic(self.path, data, format_checked=True)
+            self._settle(key, waiting, keep=None)
             return True
-        except (OSError, _files.LockTimeout, _files.NewerFormat) as exc:
+        except (OSError, _files.LockTimeout) as exc:
+            # Nothing was written (the replace is the last step): every count of the batch waits for the next try.
+            self._settle(key, [], keep=change)
+            print(f"Warning: the usage record could not be updated just now: {exc} The count is kept and added "
+                  "with the next update.", file=sys.stderr)
+            return False
+        except _files.NewerFormat as exc:
+            self._settle(key, waiting, keep=None)
             print(f"Warning: the usage record could not be updated: {exc}", file=sys.stderr)
             return False
         except Exception as exc:        # noqa: BLE001  (the ledger never fails an answer: module docstring)
+            self._settle(key, waiting, keep=None)
             print(f"Warning: the usage record could not be updated: {type(exc).__name__}: {exc}", file=sys.stderr)
             return False
+
+    def _settle(self, key: str, done: list[_Change], *, keep: _Change | None) -> None:
+        """Take the counts *done* (written, or dropped) off the waiting list and add *keep* to it.  Counts another
+        thread queued meanwhile stay."""
+        with _PENDING_GUARD:
+            path, changes = _PENDING.get(key, (self.path, []))
+            ids = {id(item) for item in done}
+            changes = [item for item in changes if id(item) not in ids]
+            if keep is not None:
+                changes.append(keep)
+            if changes:
+                _PENDING[key] = (path, changes)
+            else:
+                _PENDING.pop(key, None)
 
     def record(self, provider_key: str, label: str, model: str, usage: Usage | None, *,
                now: datetime | None = None) -> bool:
         """Count one request that reached the model (also a stopped or failed one, with its partial usage)."""
-        return self._update(provider_key, label, model, now, lambda counts: add_usage(counts, usage))
+        return self._update(_Change(provider_key, label, model, now or _files.utc_now(),
+                                    lambda counts: add_usage(counts, usage)))
 
     def record_rejected(self, provider_key: str, label: str, model: str, attempts: int = 1, *,
                         now: datetime | None = None) -> bool:
         """Count rate-limit or busy answers that came before any output."""
         def change(counts: dict[str, Any]) -> None:
             counts["rejected_attempts"] = counts.get("rejected_attempts", 0) + attempts
-        return self._update(provider_key, label, model, now, change)
+        return self._update(_Change(provider_key, label, model, now or _files.utc_now(), change))
 
 
 # --- what the front ends show ----------------------------------------------------------------------------------
