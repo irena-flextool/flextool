@@ -362,9 +362,15 @@ def input_db_url(value: str) -> str:
     elif value.startswith("sqlite:"):
         # The file of the URL without its query, also of a '#' folder that a Toolbox filter query was put in
         # front of, and of a read-only ``file:`` URI (SQLAlchemy's URL parser cuts the path at '?' / '#').
-        file = sqlite_file_path(value)
+        # An in-memory database (``sqlite://``, ``sqlite:///``) and a ``file:`` URL that SQLite does not read as a
+        # URI (no ``uri=true``) are used as they are.
+        if value[len("sqlite:"):].partition("?")[0] in ("//", "///"):
+            return value
+        file = sqlite_file_path(value) if value.startswith("sqlite://") else None
         if file is None:
             raise CatalogueInputError(f"cannot parse the database URL {value!r}")
+        if file.as_posix().startswith("file:"):
+            return value
         path = file.expanduser().resolve()
     else:
         return value

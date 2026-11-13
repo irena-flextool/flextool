@@ -168,6 +168,32 @@ def test_a_missing_input_db_is_an_error_and_is_not_created(form, tmp_path, capsy
     assert not missing.exists() and not (tmp_path / "c.xlsx").exists()
 
 
+@pytest.mark.parametrize("value", [
+    "sqlite://", "sqlite:///", "sqlite://?cache=shared",
+    "sqlite:///file:/no/such/x.sqlite", "sqlite:///file:/no/such/x.sqlite?mode=ro",
+])
+def test_an_in_memory_or_non_uri_file_url_is_used_as_it_is(value) -> None:
+    """An in-memory database and a ``file:`` URL without ``uri=true`` (SQLite reads it as a plain name) are not
+    files to check; they pass through unchanged (item 264)."""
+    from flextool.docs_build.parameters import input_db_url
+
+    assert input_db_url(value) == value
+
+
+def test_a_filter_url_and_a_read_only_uri_open_their_file(tmp_path) -> None:
+    """A '#' folder that a Toolbox filter query was put in front of, and a read-only SQLite URI, name their file."""
+    from flextool.docs_build.parameters import input_db_url
+    from flextool.sqlite_url import read_only_sqlite_url_string
+
+    folder = tmp_path / "G #2 a b"
+    folder.mkdir()
+    db = folder / "t.sqlite"
+    db.write_bytes(b"")
+    expected = read_only_sqlite_url_string(db.resolve())
+    assert input_db_url(f"sqlite:///{tmp_path}/G ?spinedbfilter=x#2 a b/t.sqlite") == expected
+    assert input_db_url(expected) == expected
+
+
 def test_every_class_has_a_plain_description() -> None:
     from flextool.assistant.inputs._schema import shipped_schema
     from flextool.docs_build.parameters import class_description
