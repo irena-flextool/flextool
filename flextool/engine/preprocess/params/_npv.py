@@ -1738,10 +1738,14 @@ def apply_run_cost_fields(flex_data: object,
         flex_data.ed_annuity = _ed_param(vintages.join(ann, on=["e", "d"], how="left")
                                             .select("e", "d", value=pl.col("coef").fill_null(0.0)))
     # The lifetime fixed cost covers every entity over the period history (as its per-solve twin); without run
-    # years only the vintages are walked (for their operating window).
+    # years only the vintages are walked (for their operating window).  The history periods are those of the run
+    # (:func:`run_years`): the branch copy of a realized designation (``<period>_<branch>``) is no period of the
+    # run -- no decision is made at it and its operations are reported by the realization solve, at the year of
+    # its real period.
     fc_pairs = inv if years is None else pl.concat([
         _utf8_ed(_all_entities_lf(source), ("e",)).select("e").unique().join(
-            pl.DataFrame({"d": [str(d) for d in period_with_history]}, schema={"d": pl.Utf8}), how="cross"),
+            pl.DataFrame({"d": [str(d) for d in period_with_history if str(d) in yr]}, schema={"d": pl.Utf8}),
+            how="cross"),
         inv]).unique().sort("e", "d")
     if fc_pairs.height > 0:
         fc_lf = _anchor_lf(fc_pairs)

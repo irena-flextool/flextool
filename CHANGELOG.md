@@ -973,6 +973,11 @@ Each line says what changes for a model that ran before and what to do; the deta
   but a later one does is an input error (see "Input checks"). A single (non-rolling) solve still lets a
   forecast at a later period's own first step override. The realization dispatch reads its branch the same
   way.
+- **Two or more solves with a `realized: yes` branch run again** (4.2.0 to 4.3.0). A run of two or more solves in
+  which a stochastic solve designates a `realized: yes` branch stopped with "periods ['p2030_rlz'] have no year
+  from the start of the run". The realized branch copy of a period is no period of the run: its operations are
+  reported by the realization solve, discounted at the year of the real period. Investment and operating costs of
+  every solve of such a chain are discounted from the start of the run.
 
 #### Input checks
 
