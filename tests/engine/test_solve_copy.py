@@ -171,6 +171,22 @@ def test_row_names_give_the_lp_of_period_names(tmp_path_factory):
     assert year_steps["st_y2"].obj == pytest.approx(7_227_000.0, rel=1e-9)
 
 
+def test_year_rows_with_a_realized_branch_run_the_documented_chain(tmp_path_factory):
+    """The one-solve form of the year-by-year recipe (stochastics.md "Investing year by year", step 5): rows y1 / y2
+    of the 2-D ``realized_periods``, a fan per year with a ``realized: yes`` branch ``real``.  Each split solve
+    fans out and is followed by its realization dispatch (review 256/257).  Hand values (dispatch only, 100 MW
+    demand, 100 MW wind, gen 10 EUR/MWh, one year represented, no discounting): the stochastic solves as without
+    the realized branch (st_y1: 0.25·60 + 0.75·80 = 75 MW of gen, ·10·8760 = 6 570 000; st_y2: 0.25·60 + 0.75·90
+    = 82.5 MW, 7 227 000); the realizations read real = 0.3 in p1 (gen 70 MW, 6 132 000) and real = 0.5 in p2
+    (gen 50 MW, 4 380 000)."""
+    _, steps = scm.run_spec(scm.model_b("split", rows=("y1", "y2"), real_branch={"p1": 0.3, "p2": 0.5}),
+                            tmp_path_factory.mktemp("recipe"))
+    assert list(steps) == ["st_y1", "st_y1__realized_dispatch", "st_y2", "st_y2__realized_dispatch"]
+    objectives = {name: step.obj for name, step in steps.items()}
+    assert objectives == pytest.approx({"st_y1": 6_570_000.0, "st_y1__realized_dispatch": 6_132_000.0,
+                                        "st_y2": 7_227_000.0, "st_y2__realized_dispatch": 4_380_000.0}, rel=1e-9)
+
+
 def _renamed(built: list, names: dict[str, str]) -> list:
     return [(names.get(solve, solve), mps, offset) for solve, mps, offset in built]
 
@@ -302,6 +318,57 @@ def test_a_single_solve_in_rolls_realizing_different_periods_is_an_error(tmp_pat
     with pytest.raises(FlexToolConfigError, match=r"'disp' is contained in the rolling solve 'inv_r', whose rolls "
                                                   r"realize different periods \(p1 and p2\)"):
         scm.run_spec(spec, tmp_path)
+
+
+def _kept_name_guard(renamed_from: dict[str, str] | None = None):
+    """A bare :class:`RecursiveSolveBuilder` with only the state :meth:`_check_kept_name` reads."""
+    import logging
+
+    from flextool.engine.solve._recursive_solve import RecursiveSolveBuilder
+
+    builder = object.__new__(RecursiveSolveBuilder)
+    builder._kept_name_scopes = {}
+    builder._renamed_from = dict(renamed_from or {})
+    builder.logger = logging.getLogger("test_kept_name_guard")
+    return builder
+
+
+def test_a_single_solve_in_two_solves_realizing_different_periods_is_an_error():
+    """Item 243, the two-parent case: ``disp`` is contained in ``inv_a`` (realizing p1, p2) and in ``inv_b``
+    (realizing p3, p4) and shares more than one period with each, so it keeps its name in both and the second run
+    would replace the first one's results.  The message lists each parent's periods and the remedy."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    guard = _kept_name_guard()
+    guard._check_kept_name("disp", "inv_a", {"p1", "p2"}, {"p1", "p2"})
+    guard._check_kept_name("disp", "inv_a", {"p1", "p2"}, {"p1", "p2"})  # the same scope again: no error
+    with pytest.raises(FlexToolConfigError) as err:
+        guard._check_kept_name("disp", "inv_b", {"p3", "p4"}, {"p3", "p4"})
+    assert str(err.value) == (
+        "Solve 'disp' is contained in 'inv_a' (realizing p1, p2) and in 'inv_b' (realizing p3, p4). 'disp' shares "
+        "more than one of these periods with each of them, so it keeps its name in both and the runs would replace "
+        "each other's results. Let each containing solve realize one period that 'disp' has (it then runs as "
+        "'disp_<period>'), or contain a different solve in each.")
+
+
+def test_a_single_solve_below_a_copy_renamed_for_one_period_is_an_error():
+    """Item 243, the third-level case: ``mid_p1`` and ``mid_p2`` are the copies of ``mid`` for one period each, but
+    each keeps all periods of ``mid`` (p1, p2, p3), so the single solve ``disp`` below them keeps its name under
+    both.  The message says the copies stand for the base solve's periods and gives the rolling_window remedy
+    (letting the copy realize one period would not help: it already does)."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    guard = _kept_name_guard({"mid_p1": "mid", "mid_p2": "mid"})
+    guard._check_kept_name("disp", "mid_p1", {"p1", "p2", "p3"}, {"p1", "p2"})
+    with pytest.raises(FlexToolConfigError) as err:
+        guard._check_kept_name("disp", "mid_p2", {"p1", "p2", "p3"}, {"p2", "p3"})
+    assert str(err.value) == (
+        "Solve 'disp' is contained in 'mid_p1' (standing for p1, p2, p3) and in 'mid_p2' (standing for p1, p2, "
+        "p3). 'disp' shares more than one of these periods with each of them, so it keeps its name in both and the "
+        "runs would replace each other's results. 'mid_p1' is the copy of 'mid' for one period, but it keeps all "
+        "periods of 'mid'. 'mid_p2' is the copy of 'mid' for one period, but it keeps all periods of 'mid'. A "
+        "single solve contained in such a copy is not renamed per period: make 'disp' a rolling_window solve (its "
+        "rolls get their own names), or contain it directly in the solves that realize one period each.")
 
 
 def _invest_then_rolling() -> dict:
@@ -477,7 +544,25 @@ def test_a_fan_no_split_solve_uses_is_an_error(tmp_path):
             row[3] = scm.two_d({"p1": ["p1"]})
     _raises(spec, tmp_path, "solve 'st': the stochastic_branches rows of period(s) p2 are used by none of the "
             "solves its 2-D period maps make (st_p1)", "period 'p2' (high at t03, low at t03) is a period of none",
-            "Remove these rows, or add p2 to the row of the 2-D maps")
+            "add 'p2' to the 2-D maps, in the row whose solve should realize it (realized_periods or "
+            "realized_invest_periods). Or remove these rows.")
+
+
+def test_a_fan_of_a_look_ahead_period_no_split_solve_realizes_is_an_error(tmp_path):
+    """Forecasts at p1 and p2 and one row (p1) of the 2-D maps over p1 and p2 that realizes p1 only: st_p1 keeps the
+    p1 fan, p2 is in its look-ahead but realized by no split solve, so its fan rows are unused.  The advice names
+    the realized lists of a row (review 256/257)."""
+    spec = scm.model_b("split", look_ahead=True)
+    for row in spec["parameter_values"]:
+        if row[:2] == ["solve", "st"] and row[2] in ("realized_periods", "realized_invest_periods"):
+            row[3] = scm.two_d({"p1": ["p1"]})
+        if row[:3] == ["solve", "st", "invest_periods"]:
+            row[3] = scm.two_d({"p1": ["p1", "p2"]})
+    _raises(spec, tmp_path, "solve 'st': the stochastic_branches rows of period(s) p2 are used by none of the "
+            "solves its 2-D period maps make (st_p1)", "period 'p2' (high at t03, low at t03) is a period of these "
+            "solves, but each of them takes the forecasts of the periods it realizes", "add 'p2' to "
+            "realized_periods (or realized_invest_periods) in the row of the 2-D maps whose solve should realize "
+            "it. Or remove these rows.")
 
 
 # ---------------------------------------------------------------------------

@@ -218,7 +218,8 @@ def objective_coefficient(mps: Path, column: str) -> float:
 
 
 def model_b(mode: str, *, fan_periods: tuple[str, ...] = ("p1", "p2"), look_ahead: bool = False,
-            rows: tuple[str, str] = ("p1", "p2"), solve_rows: list | None = None) -> dict:
+            rows: tuple[str, str] = ("p1", "p2"), solve_rows: list | None = None,
+            real_branch: "dict[str, float] | None" = None) -> dict:
     """Model B: dispatch only, forecasts ``high`` (weight 1) / ``low`` (weight 3) of the wind profile declared at
     the first step of each period in *fan_periods* (p1/t01, p2/t03).  The forecast authored at t01 covers all four
     steps, with the t03 forecast's values at t03 / t04 (high 0.4, low 0.1), so whichever forecast a p2 step reads,
@@ -227,7 +228,9 @@ def model_b(mode: str, *, fan_periods: tuple[str, ...] = ("p1", "p2"), look_ahea
     both periods).  With *look_ahead* the first solve also covers p2 (2-D ``invest_periods`` {p1: [p1, p2],
     p2: [p2]}, ``realized_invest_periods`` as ``realized_periods``), and a hand-written solve carries only the
     ``stochastic_branches`` rows of the period it realizes; without, each carries the solve's whole
-    ``stochastic_branches``.  *solve_rows* (``[parameter, packed value]``) go on every solve."""
+    ``stochastic_branches``.  *solve_rows* (``[parameter, packed value]``) go on every solve.  *real_branch*
+    ({period: value}) adds a ``realized: yes`` branch ``real`` (weight 0) at each fan, whose forecast made at the
+    period's first step is that constant value from there on."""
     first, second = rows
     row_of = {"p1": first, "p2": second}
     solves = ["st"] if mode == "split" else [f"st_{row_of[p]}" for p in PERIODS]
@@ -240,13 +243,20 @@ def model_b(mode: str, *, fan_periods: tuple[str, ...] = ("p1", "p2"), look_ahea
 
     def fans(periods) -> dict:
         return pmap([(p, nested([("high", nested([(first_step[p], nested([("no", 1.0)]))])),
-                                 ("low", nested([(first_step[p], nested([("no", 3.0)]))]))]))
+                                 ("low", nested([(first_step[p], nested([("no", 3.0)]))]))]
+                                + ([("real", nested([(first_step[p], nested([("yes", 0.0)]))]))] if real_branch
+                                   else [])))
                      for p in periods])
 
-    profile = pmap([("high", nested([("t01", nested([(t, 0.4) for t in STEPS])),
-                                     ("t03", nested([(t, 0.4) for t in STEPS[2:]]))])),
-                    ("low", nested([("t01", nested([(t, v) for t, v in zip(STEPS, (0.2, 0.2, 0.1, 0.1))])),
-                                    ("t03", nested([(t, 0.1) for t in STEPS[2:]]))]))])
+    branch_series = [("high", nested([("t01", nested([(t, 0.4) for t in STEPS])),
+                                      ("t03", nested([(t, 0.4) for t in STEPS[2:]]))])),
+                     ("low", nested([("t01", nested([(t, v) for t, v in zip(STEPS, (0.2, 0.2, 0.1, 0.1))])),
+                                     ("t03", nested([(t, 0.1) for t in STEPS[2:]]))]))]
+    if real_branch:
+        start_index = {"p1": 0, "p2": 2}
+        branch_series.append(("real", nested([(first_step[p], nested([(t, v) for t in STEPS[start_index[p]:]]))
+                                              for p, v in real_branch.items()])))
+    profile = pmap(branch_series)
     pv = spec["parameter_values"]
     pv += [
         ["unit", "gen", "existing", pack(200.0, "float"), "init"],

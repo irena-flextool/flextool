@@ -750,15 +750,19 @@ class RecursiveSolveBuilder:
         if first_parent == parent:
             message = (
                 f"Solve '{name}' is contained in the rolling solve '{parent}', whose rolls realize different "
-                f"periods ({fmt(first_scope)} and {fmt(scope_set)}). '{name}' shares more than one period "
-                f"({fmt(first_periods)}) with '{parent}', so it keeps its name in every roll and the runs would "
+                f"periods ({fmt(first_scope)} and {fmt(scope_set)}). '{parent}' realizes {fmt(first_periods)} and "
+                f"'{name}' has more than one of them, so it keeps its name in every roll and the runs would "
                 f"replace each other's results. Make '{name}' a rolling_window solve, or let '{parent}' realize "
                 f"one period."
             )
         else:
+            def role(solve: str) -> str:
+                # A copy renamed for one period keeps all periods of its base solve: it stands for them.
+                return "standing for" if solve in self._renamed_from else "realizing"
+
             message = (
-                f"Solve '{name}' is contained in '{first_parent}' (realizing {fmt(first_periods)}) and in "
-                f"'{parent}' (realizing {fmt(parent_periods)}). '{name}' shares more than one of these periods "
+                f"Solve '{name}' is contained in '{first_parent}' ({role(first_parent)} {fmt(first_periods)}) and "
+                f"in '{parent}' ({role(parent)} {fmt(parent_periods)}). '{name}' shares more than one of these periods "
                 f"with each of them, so it keeps its name in both and the runs would replace each other's "
                 f"results."
             )

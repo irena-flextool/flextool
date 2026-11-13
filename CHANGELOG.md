@@ -146,7 +146,8 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **Forecasts that no split solve uses now stop the run.** In a solve split by 2-D period maps, each split solve
   now takes only the `stochastic_branches` rows of the periods it realizes (see "Solving" below). A row in a period
   that no split solve has, or that no split solve takes, was silently ignored before; it is now an error naming the
-  solve, the period and the branches. Remove the rows, or add the period to a row of the 2-D maps.
+  solve, the period and the branches. Remove the rows, or add the period to the realized periods
+  (`realized_periods` or `realized_invest_periods`) of the row of the 2-D maps whose solve should realize it.
 - **`years_represented` without an index name now counts for investments.** A map left with Spine's default index
   name gave investments one year per period, while operations counted all the years, so investments were too
   cheap (every 4.x release). Investment results of such models change. A map whose index has another name (for
@@ -807,7 +808,9 @@ Each line says what changes for a model that ran before and what to do; the deta
   its base solve, so a third-level single solve below such copies is not renamed per period), its runs wrote one
   set of results and the last run's replaced the others'. FlexTool now stops with an error naming the containing
   solves and their periods; make the contained solve a `rolling_window` solve, or let each containing solve realize
-  one period.
+  one period. Below a solve renamed to `<solve>_<period>` that second remedy does not help (the copy already
+  realizes one period): make the third-level solve a `rolling_window` solve, or contain it directly in solves that
+  realize one period each.
 - **Solver options can no longer add commands to a solver run** (since 4.0). A `solver_arguments` entry or an
   option-file line with a line break, `;`, a quote or a space could add a command to the script piped to CPLEX,
   Xpress or COPT, or address another Gurobi or HiGHS option. Every option of every solver is now checked before the
@@ -860,7 +863,7 @@ Each line says what changes for a model that ran before and what to do; the deta
   it may not be the optimum.
 - **Objective-valued solver options are scaled to the objective the solver sees.** A target, bound, cutoff or
   absolute gap (HiGHS `objective_target`, `objective_bound`, `mip_abs_gap`, and each commercial solver's
-  equivalents, listed in [Time and other limits](docs/solvers/index.md#time-and-other-limits)) is written in unscaled
+  equivalents, listed in [Time and other limits](solvers/index.md#time-and-other-limits)) is written in unscaled
   currency; FlexTool and polar-high multiply it by `scale_the_objective` and HiGHS's `user_objective_scale` (set by
   the autoscaler or by you) before the solver gets it, in-process, with `--save-memory` and in the commercial
   solvers' option files. Before, the value reached the solver unchanged, so it meant a different amount for every
@@ -1031,8 +1034,8 @@ Each line says what changes for a model that ran before and what to do; the deta
   dispatch (before, it got one that dispatched the horizon and reported nothing).
 - **Two or more solves with a `realized: yes` branch run again** (4.2.0 to 4.3.0). A run of two or more solves in
   which a stochastic solve designates a `realized: yes` branch stopped with "periods ['p2030_rlz'] have no year
-  from the start of the run". The realized branch copy of a period is no period of the run: its operations are
-  reported by the realization solve, discounted at the year of the real period. Investment and operating costs of
+  from the start of the run". FlexTool's internal copy of the realized branch is no longer treated as a period of
+  its own: its operations are reported by the realization solve, discounted at the year of the real period. Investment and operating costs of
   every solve of such a chain are discounted from the start of the run.
 
 #### Input checks
@@ -1049,7 +1052,8 @@ Each line says what changes for a model that ran before and what to do; the deta
   A forecast given earlier or later is not used instead. A fan without a realized branch no longer lends its first
   forecast in sorted order to the periods before it: stochastic-time data there is a configuration error ("designate
   a realized branch, which provides the shared data, or give the parameter a value without forecasts"). Each message
-  names the entity, the parameter, the solve or roll, the period and the time steps. Give the realized branch
+  names the entity, the parameter, the solve or roll, the period and the time steps, and the forecasts made at
+  other times that do have values there. Give the realized branch
   forecasts at each solve or roll start that cover the steps before the fan, or align the rolls with the forecast
   times (`rolling_solve_jump`). Such models ran with zeros, later forecasts or another forecast's data before:
   rerun them.

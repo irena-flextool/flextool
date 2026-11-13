@@ -651,11 +651,16 @@ def _fans_f(realized="real") -> list[tuple]:
             *_two_forecasts("p4", "t0013", realized=realized)]
 
 
-def _start_not_covered(subject: str, param: str, solve: str, start: str, steps: str, period: str) -> str:
+def _start_not_covered(subject: str, param: str, solve: str, start: str, steps: str, period: str,
+                       others: str = "") -> str:
+    """*others*: the analysis times of the realized branch's other forecasts that do cover *steps* (item 250
+    review: the message names them)."""
+    note = (f"  The forecasts made at analysis_time {others} have values there, but a solve or roll reads only the "
+            "forecast made at its start.") if others else ""
     return (f"{subject}, parameter '{param}': solve '{solve}' starts at time step '{start}', and before its "
             "forecasts branch out every period reads the forecast made then (analysis_time "
             f"'{start}', branch 'real').  That forecast has no value at time steps {steps} (period '{period}'), "
-            "and FlexTool does not use a forecast made later nor the default value instead.  Give forecasts with "
+            f"and FlexTool does not use a forecast made later nor the default value instead.{note}  Give forecasts with "
             f"analysis_time '{start}' that cover these time steps, or align the solve or roll starts with the "
             "forecast times (in a rolling solve, rolling_solve_jump).  Check which alternative of the scenario "
             "gives this value.")
@@ -693,7 +698,7 @@ def test_roll_start_without_forecast_is_an_error(tmp_path_factory, case) -> None
     with pytest.raises(FlexToolConfigError) as err:
         _run(tmp_path_factory, n_periods=4, fans=fans, **{"profile": _constant_forecasts(16, per), **kwargs},
              rolling=(6.0, 10.0))
-    roll = ("sol_roll_1", "t0007", _F_STEPS, "p2")
+    roll = ("sol_roll_1", "t0007", _F_STEPS, "p2", "'t0001', 't0009', 't0013'")
     expected = {
         "grouped": _start_not_covered("profile 'prof'", "profile", *roll),
         "ungrouped": _start_not_covered("profile 'prof'", "profile", *roll),
@@ -757,7 +762,8 @@ def test_rolling_lookahead_fan_two_periods_ahead_runs(tmp_path_factory) -> None:
 
 def test_later_period_not_covered_by_the_start_forecast_is_an_error(tmp_path_factory) -> None:
     """Case H with real@t0001 given only for p1 (t0001-t0004): p2 is not covered by the forecast made at the start,
-    and the forecast made at t0005 is not read instead: an error naming steps t0005-t0008 of p2."""
+    and the forecast made at t0005 is not read instead: an error naming steps t0005-t0008 of p2 and the forecasts
+    made at t0005 and t0009 that do cover them."""
     per = {"real": {"t0001": {t: 5.0 for t in _steps(4)}, "t0005": {t: 7.0 for t in _steps(12)},
                     "t0009": {t: 6.0 for t in _steps(12)}},
            "high": {"t0009": {t: 2.0 for t in _steps(12)}}, "low": {"t0009": {t: 4.0 for t in _steps(12)}}}
@@ -765,7 +771,7 @@ def test_later_period_not_covered_by_the_start_forecast_is_an_error(tmp_path_fac
         _run(tmp_path_factory, n_periods=3, fans=_two_forecasts("p3", "t0009", realized="real"),
              profile=_stochastic(per))
     assert str(err.value) == _start_not_covered("profile 'prof'", "profile", "sol", "t0001",
-                                                "'t0005', 't0006', 't0007', 't0008'", "p2")
+                                                "'t0005', 't0006', 't0007', 't0008'", "p2", "'t0005', 't0009'")
 
 
 @pytest.mark.parametrize("bound", ["high", "low"])

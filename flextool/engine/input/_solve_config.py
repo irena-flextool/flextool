@@ -1327,14 +1327,19 @@ class SolveConfig:
             by_period.setdefault(str(row[0]), []).append(f"{row[1]} at {row[2]}")
         parts = []
         for period, branches in by_period.items():
-            why = ("is a period of these solves, but each of them takes the forecasts of the periods it realizes "
-                   "(realized_periods, realized_invest_periods) or, when it has none there, of its first period "
-                   "with forecasts" if period in has_period else "is a period of none of these solves")
+            if period in has_period:
+                why = ("is a period of these solves, but each of them takes the forecasts of the periods it realizes "
+                       "(realized_periods, realized_invest_periods) or, when it has none there, of its first period "
+                       f"with forecasts: add '{period}' to realized_periods (or realized_invest_periods) in the row of "
+                       f"the 2-D maps whose solve should realize it")
+            else:
+                why = (f"is a period of none of these solves: add '{period}' to the 2-D maps, in the row whose solve "
+                       "should realize it (realized_periods or realized_invest_periods)")
             parts.append(f"period '{period}' ({', '.join(branches)}) {why}")
         periods = ", ".join(by_period)
         return (f"solve '{parent}': the stochastic_branches rows of period(s) {periods} are used by none of the "
-                f"solves its 2-D period maps make ({', '.join(new_names)}): " + "; ".join(parts) + ". Remove "
-                f"these rows, or add {periods} to the row of the 2-D maps whose solve realizes it.")
+                f"solves its 2-D period maps make ({', '.join(new_names)}): " + "; ".join(parts) + ". Or remove "
+                "these rows.")
 
     def _check_split_realized_periods(self) -> None:
         """Raise when two split solves of one solve realize the same period (``realized_periods`` /

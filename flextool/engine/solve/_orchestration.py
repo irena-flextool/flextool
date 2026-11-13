@@ -2035,10 +2035,9 @@ def _spawn_realized_dispatch_siblings(
                 print(f"Warning: {_line}", flush=True)
             # A realization solve takes its parent's detail levels (it pins
             # the parent's units online and reserves): name an authored
-            # value that is overridden.
+            # value that is overridden. Printed only (solve-site console
+            # convention): the logger writes to the console too.
             for _line in solve_cfg.reduce_detail_overridden(configured):
-                if logger is not None:
-                    logger.warning(_line)
                 print(f"Warning: {_line}", flush=True)
             continue
         if not _realization.designation_reaches_committed_window(solve_cfg, p):

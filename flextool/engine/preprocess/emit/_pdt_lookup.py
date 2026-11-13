@@ -795,12 +795,31 @@ def _check_pre_reveal_reads_have_forecast(
     if len(steps_shown) > _UNCOVERED_SHOWN:
         shown += f" and {len(steps_shown) - _UNCOVERED_SHOWN} more"
     period_names = ", ".join(f"'{d}'" for d in periods)
+    # Name the forecasts made at other times that do have values there (often the one the user meant, e.g. the
+    # forecast made at a later period's first step): they are not read, since a solve or roll reads only the
+    # forecast made at its start.
+    read = {tb for d in periods for tb in read_branches[(prefix, d)]}
+    uncovered_steps = set(steps_shown)
+    others = sorted({
+        key[n_ent + 2] for key in pbt
+        if key[:n_ent + 1] == prefix and key[n_ent + 1] in read and key[n_ent + 3] in uncovered_steps
+        and key[n_ent + 2] != start
+    })
+    others_note = ""
+    if others:
+        other_names = ", ".join(f"'{ts}'" for ts in others)
+        others_note = (
+            f"  The forecast{'s' if len(others) > 1 else ''} made at analysis_time "
+            f"{other_names} {'have' if len(others) > 1 else 'has'} values there, but a "
+            "solve or roll reads only the forecast made at its start."
+        )
     raise FlexToolConfigError(
         f"{_subject(kind, ent)}, parameter '{param}': {solve_name} starts at time step '{start}', and before its "
         f"forecasts branch out every period reads the forecast made then (analysis_time '{start}', branch "
         f"{branches}).  That forecast has no value at time step{'s' if len(steps_shown) > 1 else ''} {shown} "
         f"(period{'s' if len(periods) > 1 else ''} {period_names}), and FlexTool does not use a forecast made "
-        f"later nor the default value instead.  Give forecasts with analysis_time '{start}' that cover these time "
+        f"later nor the default value instead.{others_note}  Give forecasts with analysis_time '{start}' that cover "
+        "these time "
         "steps, or align the solve or roll starts with the forecast times (in a rolling solve, "
         "rolling_solve_jump).  Check which alternative of the scenario gives this value."
     )
