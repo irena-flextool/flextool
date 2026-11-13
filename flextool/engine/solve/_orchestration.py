@@ -5129,10 +5129,16 @@ def run_chain_from_db(
 
         sc = SolveConfig.load_from_db_url(db_url, scenario_name, logger=logger)
         # Item 236 A3: a solve's solver_precommand is never run; say so once per solve in this run.
-        from flextool.engine.solve._solver_dispatch import check_run_solver_options, warn_solver_precommands
+        from flextool.engine.solve._solver_dispatch import (
+            check_run_solver_options,
+            check_run_solver_wrappers,
+            warn_solver_precommands,
+        )
         warn_solver_precommands(sc.solver_settings.precommand, logger)
         # Item 240 B1: every solve's solver_arguments, under its solver, before the first solve.
         check_run_solver_options(sc.solver_settings, logger)
+        # Item 240 B2: this computer's wrapper of every commercial solver the run uses.
+        check_run_solver_wrappers(sc.solver_settings)
         _memrec.checkpoint("solve_config_loaded", logger,
                            user_label="SolveConfig loaded (from DB)")
         tc = TimelineConfig.load_from_db_url(db_url, scenario_name, logger=logger)

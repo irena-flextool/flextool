@@ -305,6 +305,10 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         _user("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", "1 takes solver parameter names that are not in "
               "FlexTool's lists from input databases (default off; also solver_settings.json in the user config "
               "folder)"),
+        *(_user(name, f"the program (and its arguments, as a JSON list) that starts in front of {label}'s "
+                "program; empty or [] means none (also solver_settings.json)")
+          for name, label in (("FLEXTOOL_SOLVER_WRAPPER_GUROBI", "Gurobi"), ("FLEXTOOL_SOLVER_WRAPPER_CPLEX", "CPLEX"),
+                              ("FLEXTOOL_SOLVER_WRAPPER_XPRESS", "Xpress"), ("FLEXTOOL_SOLVER_WRAPPER_COPT", "COPT"))),
         _user("FLEXTOOL_MIGRATION_LOCK_TIMEOUT", "Windows: seconds a migration waits for the lock of another "
               "migration of the same database (600); not read on Linux or macOS"),
         _user("POLARS_MAX_THREADS", "polars thread pool size, in place of FlexTool's limit of 8 but at most the "

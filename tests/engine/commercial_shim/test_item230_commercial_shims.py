@@ -130,7 +130,8 @@ def shim(solver: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     record = tmp_path / "shim_record.jsonl"
     monkeypatch.setenv("FLEXTOOL_SHIM_RECORD", str(record))
     for name in ("FLEXTOOL_SOLVER_CONFIG_DIR", "FLEXTOOL_SOLVER_TIME_LIMIT", "FLEXTOOL_SOLVER_MIP_GAP",
-                 "FLEXTOOL_HIGHS_TIME_LIMIT", "FLEXTOOL_HIGHS_MIP_GAP"):
+                 "FLEXTOOL_HIGHS_TIME_LIMIT", "FLEXTOOL_HIGHS_MIP_GAP", "FLEXTOOL_SOLVER_WRAPPER_GUROBI",
+                 "FLEXTOOL_SOLVER_WRAPPER_CPLEX", "FLEXTOOL_SOLVER_WRAPPER_XPRESS", "FLEXTOOL_SOLVER_WRAPPER_COPT"):
         monkeypatch.delenv(name, raising=False)
     from flextool.engine.solve._subprocess_solve import _find_solver_binary
 
@@ -515,3 +516,99 @@ def test_run_from_another_folder_uses_the_named_folder(solver, shim, db, tmp_pat
     calls = _calls(shim)
     assert calls and all(c["params"] == {THREADS[solver]: 3} for c in calls), calls
     assert f"Solver config: {cfg} (--solver-config-dir)" in [r.getMessage() for r in caplog.records]
+
+
+# ---------------------------------------------------------------------------
+# Item 240 B2: the solver wrapper of this computer
+# ---------------------------------------------------------------------------
+
+
+#: Each solver's wrapper variable.
+WRAPPER_ENV = {"gurobi": "FLEXTOOL_SOLVER_WRAPPER_GUROBI", "cplex": "FLEXTOOL_SOLVER_WRAPPER_CPLEX",
+               "xpress": "FLEXTOOL_SOLVER_WRAPPER_XPRESS", "copt": "FLEXTOOL_SOLVER_WRAPPER_COPT"}
+
+
+def _recording_wrapper(tmp_path: Path) -> tuple[Path, Path]:
+    """``/bin/sh`` wrapper: appends its argv (one item per line, then an empty line) to a file, takes its own
+    ``--queue NAME``, then ``exec "$@"`` (the solver keeps its stdin, its output and its exit code)."""
+    record = tmp_path / "wrapper_argv.txt"
+    wrapper = tmp_path / "wrap bin" / "lic_hold"
+    wrapper.parent.mkdir()
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        f'for a in "$0" "$@"; do printf "%s\\n" "$a"; done >> "{record}"\n'
+        f'echo >> "{record}"\n'
+        'if [ "$1" = "--queue" ]; then shift 2; fi\n'
+        'exec "$@"\n')
+    wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
+    return wrapper, record
+
+
+def _wrapped_calls(record: Path) -> list[list[str]]:
+    return [block.splitlines() for block in record.read_text().split("\n\n") if block.strip()]
+
+
+def test_a_wrapper_starts_in_front_of_the_solver(solver, shim, db, highs_objective, tmp_path, monkeypatch,
+                                                 capsys) -> None:
+    """``FLEXTOOL_SOLVER_WRAPPER_<SOLVER>`` = ``[<wrapper>, "--queue", "opt"]``: the wrapper gets its items, then
+    the solver program's absolute path and its arguments; it ``exec``\ s the shim, which still gets the parameters
+    (CPLEX, Xpress and COPT through stdin) and solves to HiGHS' objective.  The ``Running`` line names the
+    wrapper."""
+    wrapper, record = _recording_wrapper(tmp_path)
+    monkeypatch.setenv(WRAPPER_ENV[solver], json.dumps([str(wrapper), "--queue", "opt"]))
+    cfg = _cfg(tmp_path, solver, f"{THREADS[solver]} 2\n")
+    steps = _run(db, f"lp_{solver}", tmp_path / "w", cfg)
+    assert steps[SOLVE].optimal
+    assert steps[SOLVE].obj == pytest.approx(highs_objective["lp"], rel=1e-6)
+    calls = _calls(shim)
+    assert calls and all(c["params"] == {THREADS[solver]: 2} for c in calls), calls
+    launcher = tmp_path / "bin" / BINARY[solver]
+    wrapped = _wrapped_calls(record)
+    assert len(wrapped) == len(calls)
+    for argv in wrapped:
+        # "$0" is the wrapper as started; "--queue opt" are its own; then the absolute solver path.
+        assert argv[:4] == [str(wrapper), "--queue", "opt", str(launcher)], argv
+    out = capsys.readouterr().out
+    marker = (f"Running {sps_display(solver)} ({launcher}) through the solver wrapper "
+              f"{json.dumps([str(wrapper), '--queue', 'opt'])} (from environment variable {WRAPPER_ENV[solver]})")
+    assert marker in out.splitlines(), out[-3000:]
+    assert BANNER[solver] in out.split(marker, 1)[1]
+
+
+def sps_display(solver: str) -> str:
+    from flextool.engine.solve._subprocess_solve import _DISPLAY_NAMES
+
+    return _DISPLAY_NAMES[solver]
+
+
+@pytest.mark.parametrize("solver", ["copt"], indirect=True)
+def test_only_the_local_wrapper_runs_never_the_database_precommand(solver, shim, db, tmp_path, monkeypatch,
+                                                                    caplog) -> None:
+    """``paths_copt`` has a ``solver_precommand`` (it would create a marker file): with a local wrapper set, the
+    wrapper runs and the precommand does not, with the warning that names the solve and the wrapper setting."""
+    check_db = _check_db_module()
+    marker = check_db.precommand_marker(Path(db.removeprefix("sqlite:///")).parent, solver)
+    wrapper, record = _recording_wrapper(tmp_path)
+    monkeypatch.setenv("FLEXTOOL_SOLVER_WRAPPER_COPT", str(wrapper))
+    with caplog.at_level(logging.WARNING):
+        steps = _run(db, "paths_copt", tmp_path / "w", _cfg(tmp_path, solver, "Threads 2\n"))
+    assert steps[SOLVE].optimal
+    assert not marker.exists(), "solver_precommand was run"
+    assert _wrapped_calls(record) and _calls(shim)
+    warned = [r.getMessage() for r in caplog.records if r.getMessage().startswith("solver_precommand")]
+    assert len(warned) == 1 and f"solve {SOLVE}" in warned[0] and "FLEXTOOL_SOLVER_WRAPPER_<SOLVER>" in warned[0]
+
+
+@pytest.mark.parametrize("solver", ["cplex"], indirect=True)
+def test_an_unusable_wrapper_stops_the_run_before_the_model_is_written(solver, shim, db, tmp_path, monkeypatch) -> None:
+    """A wrapper that is a ``.bat`` (refused on every system) stops the run before its first solve: no model file,
+    the solver program never starts, and the message names the variable."""
+    from flextool.engine.solve._solver_dispatch import FlexToolUserError
+
+    bat = tmp_path / "hold.bat"
+    bat.write_text("@echo off\n")
+    monkeypatch.setenv("FLEXTOOL_SOLVER_WRAPPER_CPLEX", str(bat))
+    with pytest.raises(FlexToolUserError, match="FLEXTOOL_SOLVER_WRAPPER_CPLEX: hold.bat is a script"):
+        _run(db, "lp_cplex", tmp_path / "w", _cfg(tmp_path, solver, "threads 2\n"))
+    assert _calls(shim) == []
+    assert not list((tmp_path / "w").rglob("*.mps"))

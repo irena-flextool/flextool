@@ -146,7 +146,7 @@ Each line says what changes for a model that ran before and what to do; the deta
   example to reserve a floating licence); FlexTool 4 does not run commands stored in a database, for safety: a
   database from someone else could otherwise run any program on your computer. The parameter is kept only so that
   older databases still read; the warning comes once per solve. To hold a floating licence, use your solver's own
-  licence server setup; a solver wrapper set on your computer is planned for a later release.
+  licence server setup, or set the program as a solver wrapper on your computer (see New features).
 - **Security: FlexTool runs only its own installed code.** The Python processes FlexTool starts (runs, representative
   periods, calibration, conversions, comparisons, the database editor, updates) no longer look for Python code in
   the folder they start from, so a project folder from someone else cannot replace part of FlexTool. "Build
@@ -172,6 +172,16 @@ Each line says what changes for a model that ran before and what to do; the deta
   again in the FlexTool window if you need it.
 
 ### New features
+
+- **A solver wrapper set on your computer** starts in front of Gurobi, CPLEX, Xpress or COPT, for example to hold
+  a floating licence or to lower the solver's priority: FlexTool window Solver options → On this computer, or
+  `FLEXTOOL_SOLVER_WRAPPER_<SOLVER>` (the program's full path, or a JSON list with its arguments). It is never
+  taken from a database, a project or the command line. FlexTool runs it without a shell, followed by the solver
+  program's full path and the solver's arguments; the run log says so and the run record keeps it. A `.bat` /
+  `.cmd`, a PowerShell or Windows Script Host script and the command interpreters themselves are refused (use a
+  program, or `python` with a script). FlexTool 3 users of `solver_precommand`: set its program here once (see
+  "FlexTool 3 precommand users" in the solver docs). The solver program itself is now looked for only in the
+  absolute folders of `PATH`, never in the current folder.
 
 #### Units of measure and result files
 

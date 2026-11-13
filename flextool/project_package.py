@@ -517,7 +517,8 @@ def scrub_run_status(status: object, project_dir: Path) -> object:
 
     The project folder becomes ``<project>``, the home folder ``~``, other absolute folders ``<path>/`` (the file
     name stays), the host and user name ``<host>`` / ``<user>``, and ``host`` / ``user`` fields ``None``.  The times
-    and the verdict, which the GUI and the assistant read, are kept.
+    and the verdict, which the GUI and the assistant read, are kept.  A solver wrapper's arguments (item 240 B2:
+    they may name a licence queue or carry a token) are replaced by their count; its program stays, scrubbed.
     """
     pairs = _path_replacements(project_dir)
     words = []
@@ -553,7 +554,14 @@ def scrub_run_status(status: object, project_dir: Path) -> object:
             return text(value)
         return value
 
-    return walk(status)
+    scrubbed = walk(status)
+    wrappers = scrubbed.get("solver_wrappers") if isinstance(scrubbed, dict) else None
+    if isinstance(wrappers, dict):
+        for solver, entry in list(wrappers.items()):
+            argv = entry.get("argv") if isinstance(entry, dict) else None
+            if isinstance(argv, list):
+                wrappers[solver] = {**entry, "argv": argv[:1], "arguments_left_out": len(argv[1:])}
+    return scrubbed
 
 
 def pip_line(manifest: Manifest) -> str | None:

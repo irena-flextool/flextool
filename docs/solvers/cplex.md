@@ -114,6 +114,13 @@ The error messages below are what FlexTool surfaces as `FlexToolUserError`.
   kept with a warning; an LP, or a MIP without a solution, stops the run. See
   [Time limit](index.md#time-limit).
 
+## Licence holders and other programs in front of CPLEX
+
+FlexTool 3 ran a solve's `solver_precommand` in front of CPLEX. FlexTool 4 never runs a command stored in a
+database; set the program on your computer as the CPLEX solver wrapper instead (`FLEXTOOL_SOLVER_WRAPPER_CPLEX`, or
+Solver options → On this computer in the FlexTool window). See
+[FlexTool 3 precommand users](index.md#flextool-3-precommand-users).
+
 ## How to set it in FlexTool
 
 On the `solve` entity:

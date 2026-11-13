@@ -97,8 +97,114 @@ before, with a warning once per solve and run that the command is not run.
 To hold a floating licence, use your solver's own licence server setup (for
 example a Gurobi token server set in `gurobi.lic`, or the licence server in
 the licence file of CPLEX, Xpress or COPT); the solver then checks a licence
-out and back in for the solve by itself. A solver wrapper set on this
-computer (never in a database) is planned for a later release.
+out and back in for the solve by itself. For anything else that ran in front
+of the solver, set a solver wrapper on this computer (never in a database):
+see [Running a solver through a wrapper](#running-a-solver-through-a-wrapper)
+and [FlexTool 3 precommand users](#flextool-3-precommand-users).
+
+### Running a solver through a wrapper
+
+A solver wrapper is a program that FlexTool starts in front of Gurobi's,
+CPLEX's, Xpress's or COPT's program, for example to hold a floating licence
+for the solve, to queue the solve, or to lower the solver's priority
+(`nice`). It is set per solver on this computer only, never in a database, a
+project, a workspace or on the command line (a Spine Toolbox project from
+someone else carries command lines), in one of two ways (the first wins):
+
+- the environment variable `FLEXTOOL_SOLVER_WRAPPER_GUROBI`,
+  `FLEXTOOL_SOLVER_WRAPPER_CPLEX`, `FLEXTOOL_SOLVER_WRAPPER_XPRESS` or
+  `FLEXTOOL_SOLVER_WRAPPER_COPT`: a JSON list of the program's full path and
+  its arguments, or just the program's full path (never split at spaces).
+  Empty or `[]` means no wrapper, also over the settings file (for CI);
+
+  ```bash
+  export FLEXTOOL_SOLVER_WRAPPER_GUROBI='["/usr/bin/nice", "-n", "10"]'
+  ```
+
+- `wrappers` in `solver_settings.json` in FlexTool's user settings folder
+  (the FlexTool window writes it: Solver options → On this computer):
+
+  ```json
+  {"format": 1, "wrappers": {"cplex": ["/usr/local/bin/lic_hold", "--queue", "opt"]}}
+  ```
+
+FlexTool then runs, without a shell, the wrapper's items followed by the
+solver's own command: the solver program's full path and its arguments.
+
+```text
+/usr/local/bin/lic_hold --queue opt /opt/ibm/cplex/bin/x86-64_linux/cplex
+```
+
+The wrapper must start its remaining arguments as a command, pass its
+standard input and output through (CPLEX, Xpress and COPT get their commands
+on standard input), and return the solver's exit code. A shell script that
+ends in `exec "$@"` does; on Windows, and anywhere, a Python script does:
+
+```python
+# lic_hold.py: run with the full path of python as the wrapper program
+import subprocess, sys
+
+# ... reserve the licence here ...
+code = subprocess.run(sys.argv[1:]).returncode  # stdin, stdout and stderr pass through
+# ... release it here ...
+sys.exit(code)
+```
+
+```json
+{"format": 1, "wrappers": {"cplex": ["C:\\Python312\\python.exe", "C:\\tools\\lic_hold.py"]}}
+```
+
+The rules, checked before the first solve of a run and again just before the
+solver starts:
+
+- the first item is the wrapper program's full path (FlexTool never looks for
+  it on `PATH` or in the current folder), to an existing file, symbolic links
+  followed; executable on Linux and macOS, a `.exe` on Windows;
+- a script that Windows runs through a command interpreter (`.bat`, `.cmd`,
+  `.ps1`, `.vbs`, `.js`, ...) and a command interpreter itself (`cmd.exe`,
+  `powershell`, `pwsh`, `wscript`, `cscript`) are refused on every system:
+  they would read the solver's path and arguments as a command line. Use a
+  program, or `python` with a script as above;
+- at most 32 items, each at most 4096 characters.
+
+The run's log has the line
+`Running CPLEX (/opt/.../cplex) through the solver wrapper ["/usr/local/bin/lic_hold", "--queue", "opt"] (from environment variable FLEXTOOL_SOLVER_WRAPPER_CPLEX)`
+(with `--solver-log-level silent` it goes to the log only), and the run
+record (`_run_status.json`) has `solver_wrappers` with the items in full. A
+failure message says the solve was started through the wrapper, since the
+wrapper may be the cause. **Keep passwords and tokens out of the wrapper's
+items:** the run log can be shown to the AI assistant's provider; let the
+wrapper read secrets itself. A project package leaves the run log out and
+keeps only the wrapper's program in the run record, with the number of its
+arguments. The solver program is found in the absolute folders of `PATH`
+(and, on Linux and macOS, the usual install folders), never in the current
+folder. HiGHS runs inside FlexTool and has no wrapper; to lower its priority,
+start FlexTool itself under `nice`. Watchdog, Ctrl-C and the stop of the
+solver's processes work through the wrapper: FlexTool stops the wrapper and
+everything it started.
+
+### FlexTool 3 precommand users
+
+FlexTool 3 ran a solve's `solver_precommand` in front of CPLEX. FlexTool 4
+does not run it (see [Solver precommand is not run](#solver-precommand-is-not-run));
+set the same program once per computer as the CPLEX wrapper instead:
+
+1. Find the program's full path (FlexTool 3 found it on `PATH`): `which
+   lic_hold` on Linux and macOS, `where lic_hold` on Windows.
+2. Set it: in the FlexTool window, Solver options → On this computer, CPLEX
+   program; or `FLEXTOOL_SOLVER_WRAPPER_CPLEX=/full/path/lic_hold`. If the
+   precommand had arguments, give them one per line in the window, or as a
+   JSON list in the variable: `["/full/path/lic_hold", "--queue", "opt"]`.
+3. Check what the program does with its arguments. FlexTool 3 gave it
+   `cplex -c "read ..." ...`; FlexTool 4 gives it the full path of the CPLEX
+   program alone and sends CPLEX's commands on standard input. A program that
+   only runs `"$@"` (or `subprocess.run(sys.argv[1:])`) works unchanged; one
+   that read the CPLEX arguments must be changed. A `.bat` or `.cmd` must
+   become a program, for example the Python script above.
+4. Run once and look for the `Running CPLEX (...) through the solver wrapper`
+   line. The database's `solver_precommand` can stay (it is never run, and
+   gives a warning per solve); clear it to stop the warning. The same works
+   for Gurobi, Xpress and COPT with their own variables.
 
 ## The parameters in detail
 

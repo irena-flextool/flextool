@@ -150,6 +150,14 @@ The contract:
    (when it creates `solver_config/` or finds only unedited templates, `holds_only_flextool_defaults`) and the
    GUI's explicit "trust this workspace" add to the list; nothing inside a workspace (`templates/project_folder.txt`
    included) is a trust anchor. `--solver-config-dir` / `FLEXTOOL_SOLVER_CONFIG_DIR` stay trusted.
+   A commercial solver may run behind this computer's solver wrapper (`_local_solver_settings.solver_wrapper`:
+   `FLEXTOOL_SOLVER_WRAPPER_<SOLVER>`, else `wrappers` in the same file; `check_wrapper` holds the rules), checked
+   for every solver of the run before the first solve (`check_run_solver_wrappers`) and again before each start;
+   `_solve_commercial_subprocess` prepends it to the solver's argv (no shell; the solver path is absolute,
+   `_find_solver_binary` skips relative and, on Windows, current-folder `PATH` entries), logs the `Running ...
+   through the solver wrapper` line and notes `solver_wrappers` in the run record (export keeps only the program).
+   The settings file is written only by the GUI's Solver options → On this computer and `ensure_runtime_files`;
+   no assistant tool, database value, project file or flag writes or sets it.
 7. The run header prints `RunOptions.summary_lines()` — each option set by a flag or an environment variable,
    with its source — and the thread budget (`Threads:`), with polars' and HiGHS' thread counts.
 

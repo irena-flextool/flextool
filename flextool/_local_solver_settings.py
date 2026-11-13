@@ -1,4 +1,4 @@
-"""Solver settings of this computer, never of a project or database (item 240 B1, B3).
+"""Solver settings of this computer, never of a project or database (item 240 B1, B2, B3).
 
 ``<user config folder>/solver_settings.json`` (:func:`flextool.user_dirs.user_config_dir`, ``"format": 1``) holds:
 
@@ -14,6 +14,10 @@
   there or finds nothing in it but FlexTool's own default files; the FlexTool window's "Trust this workspace"
   setting lists it on the user's word.  The list is outside every workspace, so a file that came with a
   workspace cannot put it there.
+- ``wrappers`` (``{"cplex": ["/usr/local/bin/lic_hold", "--queue", "opt"], ...}``): a program that starts in
+  front of a commercial solver's program (B2), for example to hold a floating licence or to lower the solver's
+  priority.  ``FLEXTOOL_SOLVER_WRAPPER_<SOLVER>`` wins over the file: a JSON list, or one program path (never
+  split); empty or ``[]`` means no wrapper.  :func:`check_wrapper` holds the rules.
 
 Not in the database, a project folder, ``settings.yaml`` or ``projects.yaml``: those travel with a project or a
 workspace.  No command-line flag either: a Spine Toolbox project carries tool command lines and can come from
@@ -34,6 +38,24 @@ ALLOW_UNLISTED_ENV = "FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS"
 SETTINGS_FILE_NAME = "solver_settings.json"
 FORMAT = 1
 TRUSTED_WORKSPACES_KEY = "trusted_workspaces"
+WRAPPERS_KEY = "wrappers"
+#: The solvers whose program can run through a wrapper (HiGHS runs inside FlexTool).
+WRAPPER_SOLVERS: tuple[str, ...] = ("gurobi", "cplex", "xpress", "copt")
+#: The environment variable of each solver's wrapper.
+WRAPPER_ENV: dict[str, str] = {
+    "gurobi": "FLEXTOOL_SOLVER_WRAPPER_GUROBI",
+    "cplex": "FLEXTOOL_SOLVER_WRAPPER_CPLEX",
+    "xpress": "FLEXTOOL_SOLVER_WRAPPER_XPRESS",
+    "copt": "FLEXTOOL_SOLVER_WRAPPER_COPT",
+}
+MAX_WRAPPER_ITEMS = 32
+MAX_WRAPPER_ITEM_CHARS = 4096
+#: Files Windows runs through a command interpreter (cmd.exe, PowerShell, Windows Script Host), which would read
+#: the solver's path and arguments that FlexTool appends as a command line of its own.
+_SCRIPT_SUFFIXES = frozenset({".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh"})
+#: Command interpreters: given FlexTool's arguments, ``cmd /c``, ``powershell -Command``, ``pwsh -c`` and
+#: ``wscript`` / ``cscript`` read them as a command line or a script, not as the program to run.
+_COMMAND_INTERPRETERS = frozenset({"cmd", "powershell", "powershell_ise", "pwsh", "wscript", "cscript"})
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _FALSE = frozenset({"0", "false", "no", "off"})
 
@@ -215,5 +237,158 @@ def remove_trusted_workspace(folder: str | os.PathLike, path: Path | None = None
                 pass
             kept.append(item)
         data[TRUSTED_WORKSPACES_KEY] = kept
+
+    update_settings_file(change, path)
+
+
+# --- solver wrapper (B2) -----------------------------------------------------------------------------------------
+
+
+def wrapper_env_name(solver: str) -> str:
+    """``FLEXTOOL_SOLVER_WRAPPER_<SOLVER>``."""
+    return WRAPPER_ENV[solver]
+
+
+@dataclass(frozen=True)
+class SolverWrapper:
+    """The wrapper of one solver: the program and its arguments, and where it was set."""
+
+    solver: str
+    argv: tuple[str, ...]
+    source: str  # ``environment variable FLEXTOOL_SOLVER_WRAPPER_X`` or the settings file's path
+
+    @property
+    def program(self) -> str:
+        return self.argv[0]
+
+    def shown(self) -> str:
+        """The argument list as JSON, as the log line shows it."""
+        return json.dumps(list(self.argv), ensure_ascii=False)
+
+    def record(self) -> dict[str, object]:
+        return {"argv": list(self.argv), "source": self.source}
+
+
+def check_wrapper(argv: object, *, source: str, windows: bool | None = None) -> tuple[str, ...]:
+    """The wrapper *argv* (from *source*) as a tuple, or :class:`LocalSolverSettingsError` saying what is wrong.
+
+    A list of 1 to :data:`MAX_WRAPPER_ITEMS` texts of at most :data:`MAX_WRAPPER_ITEM_CHARS` characters without
+    NUL.  The first is the program: a full path (FlexTool never searches ``PATH`` for it) of an existing file,
+    symbolic links followed; on Windows (*windows*, default: this computer) a program (``.exe``), elsewhere an
+    executable file.  Refused whatever the system, by the given and by the resolved name: a script that Windows
+    runs through a command interpreter (``.bat``, ``.cmd``, ``.ps1``, ``.vbs``, ``.js``, ...) and a command
+    interpreter itself (``cmd``, ``powershell``, ``pwsh``, ``wscript``, ``cscript``), because they read the
+    arguments FlexTool appends (the solver's path and arguments) as a command line.  The wrapper runs without a
+    shell: the arguments reach it as they are.
+    """
+    windows = os.name == "nt" if windows is None else windows
+    head = f"The solver wrapper from {source}"
+    if (
+        not isinstance(argv, (list, tuple)) or not argv or len(argv) > MAX_WRAPPER_ITEMS
+        or not all(isinstance(item, str) for item in argv)
+    ):
+        raise LocalSolverSettingsError(
+            f"{head} must be a list of 1 to {MAX_WRAPPER_ITEMS} texts: the wrapper program's full path, then its "
+            f"arguments, for example [\"/usr/bin/nice\", \"-n\", \"10\"].")
+    for item in argv:
+        if "\x00" in item or len(item) > MAX_WRAPPER_ITEM_CHARS:
+            raise LocalSolverSettingsError(
+                f"{head}: an item holds a NUL character or is longer than {MAX_WRAPPER_ITEM_CHARS} characters.")
+    program = argv[0]
+    path = Path(program)
+    if not program.strip() or not path.is_absolute():
+        raise LocalSolverSettingsError(
+            f"{head}: {program!r} is not a full path. Give the wrapper program's full path (FlexTool does not look "
+            "for it on PATH or in the current folder).")
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise LocalSolverSettingsError(f"{head}: the program {program} does not exist.") from None
+    if not resolved.is_file():
+        raise LocalSolverSettingsError(f"{head}: {program} is not a file.")
+    for name in dict.fromkeys((path.name, resolved.name)):
+        stem, suffix = os.path.splitext(name.casefold())
+        if suffix in _SCRIPT_SUFFIXES:
+            raise LocalSolverSettingsError(
+                f"{head}: {name} is a script that Windows runs through a command interpreter, which would read the "
+                "solver's path and arguments that FlexTool adds as a command line. Use a program instead: on "
+                "Windows python.exe (full path) with your Python script as its first argument.")
+        if stem in _COMMAND_INTERPRETERS:
+            raise LocalSolverSettingsError(
+                f"{head}: {name} is a command interpreter, which would read the solver's path and arguments that "
+                "FlexTool adds as a command line or a script. Use a program that starts its arguments as a "
+                "command, for example python (full path) with your Python script as its first argument.")
+    if windows:
+        if path.suffix.casefold() != ".exe" or resolved.suffix.casefold() != ".exe":
+            raise LocalSolverSettingsError(f"{head}: on Windows the wrapper must be a program (.exe): {program}.")
+    elif not os.access(resolved, os.X_OK):
+        raise LocalSolverSettingsError(f"{head}: {program} is not executable (chmod +x).")
+    return tuple(argv)
+
+
+def solver_wrapper(solver: str, environ: Mapping[str, str] | None = None) -> SolverWrapper | None:
+    """The wrapper of *solver* on this computer, checked (:func:`check_wrapper`), or ``None``.
+
+    ``FLEXTOOL_SOLVER_WRAPPER_<SOLVER>`` first: a JSON list (starting with ``[``), else one program path, never
+    split; set but empty, or ``[]``, means no wrapper (also over the file).  Else ``wrappers`` in the settings
+    file.  Never read from a database, a project, a workspace or a flag.  Raises
+    :class:`LocalSolverSettingsError` for a value that cannot be used, naming where it was set."""
+    env = os.environ if environ is None else environ
+    name = wrapper_env_name(solver)
+    raw = env.get(name)
+    if raw is not None:
+        text = raw.strip()
+        source = f"environment variable {name}"
+        if not text:
+            return None
+        if text.startswith("["):
+            try:
+                value = json.loads(text)
+            except ValueError as exc:
+                raise LocalSolverSettingsError(
+                    f"{name} is not a valid JSON list ({exc}). Write it as [\"/full/path/program\", \"argument\", "
+                    "...], or give only the program's full path.") from exc
+        else:
+            value = [text]
+    else:
+        path = settings_path()
+        source = str(path)
+        wrappers = read_settings_file(path).get(WRAPPERS_KEY, {})
+        if not isinstance(wrappers, dict):
+            raise LocalSolverSettingsError(
+                f"FlexTool's solver settings file {path}: {WRAPPERS_KEY} is not an object of solver: list.")
+        value = wrappers.get(solver)
+        if value is None:
+            return None
+    if value == []:
+        return None
+    return SolverWrapper(solver, check_wrapper(value, source=source), source)
+
+
+def set_solver_wrapper(solver: str, argv: list[str] | tuple[str, ...] | None, path: Path | None = None) -> None:
+    """Write the wrapper of *solver* to the settings file (``None`` or empty: remove it), after
+    :func:`check_wrapper`."""
+    if solver not in WRAPPER_SOLVERS:
+        raise ValueError(f"no solver wrapper for {solver!r}")
+    path = settings_path() if path is None else path
+    value = list(check_wrapper(list(argv), source=str(path))) if argv else None
+
+    def change(data: dict) -> None:
+        wrappers = data.get(WRAPPERS_KEY)
+        wrappers = dict(wrappers) if isinstance(wrappers, dict) else {}
+        if value is None:
+            wrappers.pop(solver, None)
+        else:
+            wrappers[solver] = value
+        data[WRAPPERS_KEY] = wrappers
+
+    update_settings_file(change, path)
+
+
+def set_allow_unlisted_parameters(value: bool, path: Path | None = None) -> None:
+    """Write ``allow_unlisted_parameters`` to the settings file."""
+
+    def change(data: dict) -> None:
+        data["allow_unlisted_parameters"] = bool(value)
 
     update_settings_file(change, path)

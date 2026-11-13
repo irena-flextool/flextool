@@ -943,6 +943,29 @@ def reset_run_warnings() -> None:
     _warned_flextool3_options.clear()
 
 
+def local_solver_wrapper(solver: str):
+    """This computer's wrapper of the commercial *solver*
+    (:func:`flextool._local_solver_settings.solver_wrapper`: ``FLEXTOOL_SOLVER_WRAPPER_<SOLVER>``, else
+    ``solver_settings.json``), checked, or ``None``; a wrapper that cannot be used is a :class:`FlexToolUserError`
+    naming where it was set (item 240 B2).  HiGHS has none: it runs inside FlexTool."""
+    from flextool._local_solver_settings import WRAPPER_SOLVERS, LocalSolverSettingsError, solver_wrapper
+
+    if solver not in WRAPPER_SOLVERS:
+        return None
+    try:
+        return solver_wrapper(solver)
+    except LocalSolverSettingsError as exc:
+        raise FlexToolUserError(f"{exc} No solve was started.") from exc
+
+
+def check_run_solver_wrappers(solver_settings: Any) -> None:
+    """Check this computer's wrapper of every commercial solver the run's solves use, before the first solve, so
+    an unusable wrapper stops the run before any model is written (item 240 B2)."""
+    solvers = getattr(solver_settings, "solvers", None) or {}
+    for solver in sorted({name for name in solvers.values() if name}):
+        local_solver_wrapper(solver)
+
+
 def warn_solver_precommands(precommands: Mapping[str, Any] | None, logger: logging.Logger | None = None) -> None:
     """One warning per run for each solve whose ``solver_precommand`` has a value: it is not run (item 236 A3).
 
@@ -958,8 +981,9 @@ def warn_solver_precommands(precommands: Mapping[str, Any] | None, logger: loggi
         (logger or logging.getLogger(__name__)).warning(
             "solver_precommand of solve %s (%s) is not run: FlexTool does not run commands stored in a database, "
             "for safety (a database from someone else could otherwise run any program on this computer). To hold "
-            "a floating licence, use your solver's own licence server setup; a solver wrapper set on this "
-            "computer is planned. See docs/solvers/index.md.",
+            "a floating licence, use your solver's own licence server setup, or set the program as a solver "
+            "wrapper on this computer instead: FlexTool window Solver options, On this computer, or "
+            "FLEXTOOL_SOLVER_WRAPPER_<SOLVER> (see 'Running a solver through a wrapper' in docs/solvers/index.md).",
             solve, _short(text),
         )
 

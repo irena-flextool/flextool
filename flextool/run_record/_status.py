@@ -361,6 +361,7 @@ class RunRecorder:
             "versions": _versions(),
             "solver": None,
             "solver_config": None,
+            "solver_wrappers": None,
             "input": {
                 "db_url": db_url,
                 "db_path": str(db_path.resolve()) if db_path is not None else None,
@@ -566,6 +567,19 @@ class RunRecorder:
         of each file)."""
         with self._lock:
             self._status["solver_config"] = dict(record)
+            self._write()
+
+    @_flushing
+    def note_solver_wrapper(self, solver: str, record: Mapping[str, Any]) -> None:
+        """The solver wrapper a commercial solve started through (item 240 B2): ``solver_wrappers[solver]`` =
+        ``{"argv": [...], "source": ...}``, set at the solver's first wrapped solve of the run."""
+        with self._lock:
+            wrappers = self._status.get("solver_wrappers")
+            wrappers = dict(wrappers) if isinstance(wrappers, dict) else {}
+            if solver in wrappers:
+                return
+            wrappers[str(solver)] = dict(record)
+            self._status["solver_wrappers"] = wrappers
             self._write()
 
     @_flushing

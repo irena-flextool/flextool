@@ -682,16 +682,30 @@ _POSIX_INSTALL_DIRS: dict[str, list[str]] = {
 def _find_solver_binary(solver_name: str) -> Path | None:
     """Return the absolute path to the solver's CLI binary, or ``None``.
 
-    Lookup order: ``$PATH`` via :func:`shutil.which`, then a small set
-    of conventional POSIX install dirs.  Returns ``None`` on miss; the
-    caller raises a user-actionable error.
+    Lookup order: the folders of ``$PATH``, then a small set of conventional POSIX install dirs.  Only absolute
+    ``PATH`` folders are searched, and on Windows only ``<name>.exe`` and never the current folder (which
+    :func:`shutil.which` searches first there): a run's current folder is the workspace, and a received workspace
+    must not bring its own ``gurobi_cl.exe`` (item 240 B2; the path also goes into a solver wrapper's arguments,
+    so it must not depend on the current folder).  Returns ``None`` on miss; the caller raises a user-actionable
+    error.
     """
     bin_name = _BINARY_NAMES.get(solver_name)
     if bin_name is None:
         return None
-    found = shutil.which(bin_name)
-    if found is not None:
-        return Path(found)
+    windows = os.name == "nt"
+    file_name = f"{bin_name}.exe" if windows else bin_name
+    try:
+        cwd = os.path.normcase(os.path.realpath(os.getcwd()))
+    except OSError:
+        cwd = None
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        if not folder or not os.path.isabs(folder):
+            continue  # an empty or relative entry is the current folder, or depends on it
+        if windows and cwd is not None and os.path.normcase(os.path.realpath(folder)) == cwd:
+            continue
+        candidate = Path(folder) / file_name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return Path(os.path.abspath(candidate))
     if os.name == "posix":
         for d in _POSIX_INSTALL_DIRS.get(solver_name, []):
             candidate = Path(d) / bin_name
@@ -2319,6 +2333,11 @@ def _solve_commercial_subprocess(
     """
     from polar_high import Solution
 
+    from flextool import run_record
+    from flextool.engine.solve._solver_dispatch import FlexToolUserError, local_solver_wrapper
+
+    # This computer's solver wrapper (item 240 B2), checked before anything is written; again just before start.
+    wrapper = local_solver_wrapper(solver_name)
     binary = _find_solver_binary(solver_name)
     if binary is None:
         raise RuntimeError(
@@ -2327,6 +2346,7 @@ def _solve_commercial_subprocess(
             f"or in the conventional install directories. Install the "
             f"solver and ensure its 'bin' directory is on $PATH."
         )
+    via = f" (started through the solver wrapper {wrapper.program})" if wrapper is not None else ""
 
     cleanup = work_folder is None
     if work_folder is not None:
@@ -2405,18 +2425,32 @@ def _solve_commercial_subprocess(
         echo = opts.value("solver_log_level") != "silent"
         log_path = None if cleanup else out_dir / f"{safe_name}.log"
         display = _DISPLAY_NAMES.get(solver_name, solver_name)
+        running = f"Running {display} ({binary})"
+        if wrapper is not None:
+            # The files may have changed since the run's start: check the wrapper again (cheap), then start the
+            # solver's program behind it.  The line still starts with ``Running <Solver>`` (the window's greying).
+            wrapper = local_solver_wrapper(solver_name)
+            if wrapper is None:
+                raise FlexToolUserError(
+                    f"The solver wrapper of {display} was removed during the run (solve {solve_name!r}); start the "
+                    "run again.")
+            argv = [*wrapper.argv, *argv]
+            running += f" through the solver wrapper {wrapper.shown()} (from {wrapper.source})"
+            run_record.active().note_solver_wrapper(solver_name, wrapper.record())
         if echo:
-            print(f"Running {display} ({binary})", flush=True)
+            print(running, flush=True)
+        elif logger is not None:
+            logger.info("%s", running)
         run = _run_solver_process(
             argv, stdin_text=stdin_text, cwd=out_dir, watchdog=watchdog, echo=echo,
-            log_path=log_path, logger=logger, label=f"{display} ({binary})",
+            log_path=log_path, logger=logger, label=f"{display} ({binary}){via}",
         )
         log_ref = _solver_log_reference(run, echoed=echo, log_path=log_path)
         if run.timed_out:
             from flextool.engine.solve._solver_dispatch import _WATCHDOG_FACTOR, _WATCHDOG_GRACE_S
 
             raise RuntimeError(
-                f"{solver_name!r} did not stop at its own time limit of "
+                f"{solver_name!r}{via} did not stop at its own time limit of "
                 f"{time_limit:g} s for solve {solve_name!r}: FlexTool stopped it "
                 f"after {watchdog:g} s ({_WATCHDOG_FACTOR:g} x the limit + {_WATCHDOG_GRACE_S:g} s). {log_ref}"
             )
@@ -2428,7 +2462,7 @@ def _solve_commercial_subprocess(
 
         if run.returncode != 0:
             msg = (
-                f"{solver_name!r} CLI for solve {solve_name!r} exited with "
+                f"{solver_name!r} CLI for solve {solve_name!r}{via} exited with "
                 f"returncode={run.returncode}. {log_ref}"
             )
             # MPS+sol preserved when work_folder was given; otherwise
@@ -2451,11 +2485,11 @@ def _solve_commercial_subprocess(
                 )
             if _looks_like_license_error(stdout, stderr):
                 raise RuntimeError(
-                    f"{solver_name!r} CLI for solve {solve_name!r} returned "
+                    f"{solver_name!r} CLI for solve {solve_name!r}{via} returned "
                     f"no usable solution and its output reports a licence error. {log_ref}"
                 )
             raise RuntimeError(
-                f"{solver_name!r} CLI produced no solution file we could "
+                f"{solver_name!r} CLI{via} produced no solution file we could "
                 f"parse at {sol_path} for solve {solve_name!r}. {log_ref}"
             )
 
