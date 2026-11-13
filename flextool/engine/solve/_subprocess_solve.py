@@ -265,7 +265,7 @@ def _write_highs_option_files(pairs: list[tuple[str, str]], opts_path: Path, jso
     ``--options`` for a replay by hand)."""
     lines = [f"{k}={v}" for k, v in pairs]
     _check_command_lines("highs", "option-file line", lines, len(pairs))
-    with open(opts_path, "w") as f:
+    with open(opts_path, "w", encoding="utf-8") as f:
         for line in lines:
             f.write(f"{line}\n")
     json_path.write_text(json.dumps([[k, v] for k, v in pairs]), encoding="utf-8")
@@ -1100,7 +1100,7 @@ def _write_commercial_opt_file(
     lines = [f"{name} {value}\n" for name, value in commercial_params(options)]
     if not lines:
         return None
-    out_path.write_text("".join(lines))
+    out_path.write_text("".join(lines), encoding="utf-8")
     return out_path
 
 
