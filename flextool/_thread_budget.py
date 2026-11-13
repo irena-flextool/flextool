@@ -280,6 +280,16 @@ def polars_pool() -> tuple[int | None, PolarsSource]:
     return applied.polars, applied.polars_source
 
 
+def _caller_value(run_options: "RunOptions", key: str) -> object | None:
+    """*key*'s value when a flag or the environment gave it, else ``None``.
+
+    A :class:`~flextool.run_options.RunOptions` built from a partial mapping (a launcher's chosen flags, a test)
+    may lack *key*; that is the same as the option not being given.
+    """
+    r = run_options.resolved.get(key)
+    return r.value if r is not None and r.source in ("cli", "env") else None
+
+
 def highs_thread_options(run_options: "RunOptions") -> tuple[dict[str, object], str | None]:
     """The HiGHS ``threads`` / ``parallel`` options of a run, and a warning to show once (or ``None``).
 
@@ -292,8 +302,7 @@ def highs_thread_options(run_options: "RunOptions") -> tuple[dict[str, object], 
 
     Only flag- and environment-sourced values count; registry defaults add nothing.
     """
-    r = run_options.get("highs_threads")
-    highs = r.value if r.source in ("cli", "env") else None
+    highs = _caller_value(run_options, "highs_threads")
     solver = solver_budget(run_options)
     budget = solver[0] if solver is not None else None
     warning = None
@@ -327,8 +336,8 @@ def solver_budget(run_options: "RunOptions | None") -> tuple[int, BudgetSource] 
         from flextool.run_options import RunOptions
 
         run_options = RunOptions.from_env()
-    r = run_options.get("threads")
-    if r.source in ("cli", "env") and r.value is not None:
+    r = run_options.resolved.get("threads")
+    if r is not None and r.source in ("cli", "env") and r.value is not None:
         return int(r.value), r.source
     if is_toolbox_run():
         return TOOLBOX_DEFAULT_THREADS, "toolbox"

@@ -288,6 +288,17 @@ def test_terminal_run_keeps_the_solvers_thread_settings(monkeypatch):
     assert sd._operator_native_overrides("gurobi", _opts()) == []
 
 
+def test_options_without_thread_entries_are_unset(toolbox_argv):
+    # A launcher or test builds RunOptions from only the flags it chose; a missing entry is "not given".
+    from flextool.engine.solve import _solver_dispatch as sd
+
+    partial = RunOptions(resolved={})
+    assert tb.solver_budget(partial) == (1, "toolbox")
+    assert tb.highs_thread_options(partial) == ({"threads": 1}, None)
+    (override,) = sd._operator_native_overrides("gurobi", partial)
+    assert (override.value, override.layer) == ("1", sd.TOOLBOX_THREADS_LAYER)
+
+
 def test_toolbox_run_sizes_polars_to_one_thread():
     # The Basic Console's way: ``python -c``, sys.argv set to the file, then flextool imported.
     assert _probe([_TOOLBOX_FILE, "sqlite:///in.sqlite"]) == (1, "None")
