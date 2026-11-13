@@ -882,13 +882,16 @@ def extract_variable(
             labels = _fan_labels(flex_data) if realized_invest and period_source == "invest" else set()
             if no_invest:
                 canonical_d = []
-            elif labels:
-                # A stochastic fan solve: every realized-invest period gets its row, also one that is not on
-                # the solve's dispatch axis.  A period label of the fan has no dispatch but is where the solve
+            elif labels or (realized_invest and canonical_d is not None):
+                # Every realized-invest period gets its row, also one that is not on the solve's dispatch axis.
+                # A stochastic fan solve: a period label of the fan has no dispatch but is where the solve
                 # realizes its here-and-now investment (stochastic_invest_method = none; no column under
                 # recourse, so a 0 row); with a realized branch the realization dispatch solve holds the
                 # dispatch of every period, so the stochastic solve has no dispatch axis and its pre-reveal
-                # (real-named) investment period had no row (item 258).
+                # (real-named) investment period had no row (item 258).  Any other solve: its realized-invest
+                # periods need not all be realized-dispatch periods (realized_invest_periods not within
+                # realized_periods); those had no row either.  A non-fan solve with NO dispatch axis keeps the
+                # solution-order fallback (None) -- the invest-only steps of a cascade rely on it.
                 base = list(canonical_d or [])
                 canonical_d = base + [p for p in realized_invest if p not in base]
             if period_source == "invest_branches" and realized_invest:

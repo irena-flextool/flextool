@@ -681,6 +681,10 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **Without `realized_invest_periods`, a solve realized the investments of every `realized_periods` period
   (#319).** It now realizes the `realized_periods` that are also `invest_periods`, so a dispatch-only period of an
   investment solve is no longer reported as an investment period.
+- **The investment of a period that is in `realized_invest_periods` but not in `realized_periods` was missing from
+  the results.** The solve made the investment, but `v_invest` / `v_divest` had no row for that period, so
+  `unit_capacity__d` (and the connection / node tables) had no row there and its investment cost was left out of
+  the cost tables and the summary (the solve itself was right). The results of such solves now have these rows.
 
 #### Time resolution
 
