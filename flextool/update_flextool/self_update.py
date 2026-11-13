@@ -296,9 +296,9 @@ def _list_workspace(solver_config_is_own: bool, *, warn: bool = False) -> None:
         "this computer: runs that find these files on their own give them the input database's rules (no file "
         "paths outside the work folder, no server settings, only listed parameter names). If you made them, or "
         "have read them and trust them, tick \"Trust this workspace's solver option files\" in the FlexTool "
-        "window (Solver options, On this computer), or pass the folder with --solver-config-dir (or "
-        "FLEXTOOL_SOLVER_CONFIG_DIR).",
-        workspace / "solver_config",
+        "window (Solver options, On this computer), run flextool-trust-workspace %s, or pass the folder with "
+        "--solver-config-dir (or FLEXTOOL_SOLVER_CONFIG_DIR).",
+        workspace / "solver_config", workspace,
     )
 
 

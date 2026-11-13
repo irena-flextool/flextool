@@ -621,8 +621,8 @@ def test_a_wrapper_starts_in_front_of_the_solver(solver, shim, db, highs_objecti
         # "$0" is the wrapper as started; "--queue opt" are its own; then the absolute solver path.
         assert argv[:4] == [str(wrapper), "--queue", "opt", str(launcher)], argv
     out = capsys.readouterr().out
-    marker = (f"Running {sps_display(solver)} ({launcher}) through the solver wrapper "
-              f"{json.dumps([str(wrapper), '--queue', 'opt'])} (from environment variable {WRAPPER_ENV[solver]})")
+    marker = (f"Running {sps_display(solver)} ({launcher}) through the solver wrapper {wrapper} with 2 arguments "
+              f"(from environment variable {WRAPPER_ENV[solver]})")
     assert marker in out.splitlines(), out[-3000:]
     assert BANNER[solver] in out.split(marker, 1)[1]
 

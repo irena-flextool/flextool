@@ -584,14 +584,18 @@ def test_option_files_are_read_once_per_run(gurobi_db, tmp_path, monkeypatch) ->
     (cfg / "gurobi.opt").write_text("Threads 3\n")
     (cfg / "highs.opt").write_text("threads=1\n")
     reads: list[Path] = []
-    real_read_text = Path.read_text
+    real_read_text, real_read_bytes = Path.read_text, Path.read_bytes
 
-    def counting_read_text(self, *args, **kwargs):
-        if self.suffix == ".opt":
-            reads.append(Path(self))
-        return real_read_text(self, *args, **kwargs)
+    def counting(real):
+        def read(self, *args, **kwargs):
+            if self.suffix == ".opt":
+                reads.append(Path(self))
+            return real(self, *args, **kwargs)
+        return read
 
-    monkeypatch.setattr(Path, "read_text", counting_read_text)
+    # The run reads a file's bytes (its text, and its hash for this computer's trust, review b2b3 M1).
+    monkeypatch.setattr(Path, "read_text", counting(real_read_text))
+    monkeypatch.setattr(Path, "read_bytes", counting(real_read_bytes))
     passed: list[dict] = []
 
     def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None,

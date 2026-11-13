@@ -62,7 +62,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
@@ -168,6 +168,13 @@ class SolverConfigSource:
     trust_note: str | None = None
     #: Per folder of *lower*, why it is not trusted (``None``: trusted); missing entries are trusted.
     lower_notes: tuple[str | None, ...] = ()
+    #: Per folder of :attr:`layers`, whether its trust comes from this computer's list (``True``: each of its files
+    #: is checked against the list's entry, review b2b3 M1) rather than from the user naming it; missing: named.
+    listed: tuple[bool, ...] = ()
+
+    def layer_listed(self, index: int) -> bool:
+        """Whether the folder at *index* of :attr:`layers` is trusted through this computer's list."""
+        return index < len(self.listed) and self.listed[index]
 
     def layer_note(self, index: int) -> str | None:
         """Why the folder at *index* of :attr:`layers` is not trusted (``None``: trusted)."""
@@ -380,13 +387,16 @@ def is_template_copy(folder: Path) -> bool:
 def holds_only_flextool_defaults(folder: Path) -> bool:
     """Whether *folder* (a workspace's or a project's ``solver_config``) is missing, or holds no option file but
     unedited FlexTool templates (this or an earlier shipped version): the state in which FlexTool lists the folder
-    it is in as set up by this computer (item 240 B3).
+    it is in as set up by this computer (item 240 B3).  A Windows junction or other reparse point counts as a
+    symbolic link (review b2b3 L5).
 
     Every file whose name ends in ``.opt`` (any case) counts; other files are ignored, since no run reads them.  A
     symbolic link (the folder or a file in it) is the user's own arrangement, whose target may change later: it is
     never taken as FlexTool's own."""
+    from flextool._local_solver_settings import is_link_like
+
     try:
-        if folder.is_symlink():
+        if is_link_like(folder):
             return False
         if not folder.exists():
             return True
@@ -396,7 +406,7 @@ def holds_only_flextool_defaults(folder: Path) -> bool:
             if not entry.name.casefold().endswith(".opt"):
                 continue
             solver = entry.name[:-4]
-            if solver not in SOLVER_NAMES or entry.is_symlink() or not entry.is_file():
+            if solver not in SOLVER_NAMES or is_link_like(entry) or not entry.is_file():
                 return False
             if not is_unedited_template(solver, entry.read_bytes()):
                 return False
@@ -418,32 +428,46 @@ def _untrusted_short(folder: Path) -> str:
     return UNTRUSTED_SHORT_PROJECT if is_project_solver_config(folder) else UNTRUSTED_SHORT
 
 
-def untrusted_note(folder: Path, reason: str, problem: str | None = None) -> str:
+#: The terminal command that trusts a folder's option files (review b2b3 L6).
+TRUST_COMMAND = "flextool-trust-workspace"
+
+
+def untrusted_note(folder: Path, reason: str, problem: str | None = None, *, changed: str | None = None) -> str:
     """The message part that says why the option files of *folder* (found as *reason*) get the input database's
     rules, and how to trust them (item 240 B3).  A GUI project's folder (``<workspace>/projects/<P>/solver_config``)
-    is trusted through its project, any other through the workspace (the folder it is in)."""
-    damaged = f" ({problem})" if problem else ""
-    head = (
-        f"The option files in {folder} ({reason}) get the input database's rules, because FlexTool found that "
-        f"folder on its own and it is not in a {{owner}} this computer set up{damaged}: a file option takes only a "
-        "plain file name, placed in the solve's work folder; no server or licence settings; only parameter names "
-        "in FlexTool's list. If you made these files, or have read them and trust them, "
-    )
-    if is_project_solver_config(folder):
-        return head.format(owner="project") + (
-            "tick \"Trust this project's solver option files\" in the FlexTool window (Solver options, On this "
-            "computer, with the project open), or pass the folder with --solver-config-dir (or set "
+    is trusted through its project, any other through the workspace (the folder it is in).  *changed*: the folder
+    is trusted, but this file changed since in a way FlexTool cannot take as the user's own edit (review b2b3 M1)."""
+    owner = "project" if is_project_solver_config(folder) else "workspace"
+    rules = (": a file option takes only a plain file name, placed in the solve's work folder; no server or licence "
+             "settings; only parameter names in FlexTool's list.")
+    if changed is not None:
+        head = (f"An option file in {folder} ({reason}) gets the input database's rules, because {changed}{rules} "
+                "If you made the change, or have read the file and trust it, trust the folder again: ")
+    else:
+        damaged = f" ({problem})" if problem else ""
+        head = (f"The option files in {folder} ({reason}) get the input database's rules, because FlexTool found "
+                f"that folder on its own and it is not in a {owner} this computer set up{damaged}{rules} If you "
+                "made these files, or have read them and trust them, ")
+    command = f"run {TRUST_COMMAND} {folder.parent} in a terminal"
+    if owner == "project":
+        return head + (
+            f"tick \"Trust this project's solver option files\" in the FlexTool window (Solver options, On this "
+            f"computer, with the project open), {command}, or pass the folder with --solver-config-dir (or set "
             "FLEXTOOL_SOLVER_CONFIG_DIR). The FlexTool window marks a project as set up by this computer only when "
             "it creates the project, or opens it while its solver_config/ is missing or holds nothing but "
             "FlexTool's own default files and no received option file waits for review, so option files that "
-            "came with a project (a project package, a copied folder) are never trusted on their own."
+            "came with a project (a project package, a copied folder) are never trusted on their own. The trust "
+            "is for that folder: a folder put at its path later is not trusted, and a later change to a file is "
+            "trusted only when your account made it and no other account can change the file."
         )
-    return head.format(owner="workspace") + (
-        "pass the folder with --solver-config-dir (or set FLEXTOOL_SOLVER_CONFIG_DIR), or tick \"Trust this "
-        "workspace's solver option files\" in the FlexTool window (Solver options, On this computer). "
+    return head + (
+        f"pass the folder with --solver-config-dir (or set FLEXTOOL_SOLVER_CONFIG_DIR), {command}, or tick "
+        "\"Trust this workspace's solver option files\" in the FlexTool window (Solver options, On this computer). "
         "flextool-update and the FlexTool window mark a workspace as set up by this computer only when they "
         "create its solver_config/ or find nothing in it but FlexTool's own default files, so a workspace "
-        "received with edited option files is never marked on its own."
+        "received with edited option files is never marked on its own. The trust is for that folder: a folder "
+        "put at its path later is not trusted, and a later change to a file is trusted only when your account "
+        "made it and no other account can change the file."
     )
 
 
@@ -485,10 +509,10 @@ def forget_trusted_folder(folder: str | os.PathLike) -> None:
     files arrive at that path (a project import, the first open's rename of ``imported_solver_config/``) or after
     the folder is deleted, so a later folder at the same path does not inherit the trust.  A settings file that
     cannot be read or written is logged."""
-    from flextool._local_solver_settings import LocalSolverSettingsError, is_trusted_workspace, remove_trusted_workspace
+    from flextool._local_solver_settings import LocalSolverSettingsError, remove_trusted_workspace, trust_status
 
     try:
-        if is_trusted_workspace(folder):
+        if trust_status(folder).entry is not None:  # listed, also when the folder there is not the one trusted
             remove_trusted_workspace(folder)
     except LocalSolverSettingsError as exc:
         _logger.warning("Could not take %s off this computer's trusted folders: %s", folder, exc)
@@ -497,15 +521,15 @@ def forget_trusted_folder(folder: str | os.PathLike) -> None:
 def _folder_trust(folder: Path, reason: str) -> tuple[bool, str | None]:
     """``(trusted, note)`` of a folder found on its own: trusted when the folder it is in (a workspace, or a GUI
     project for a project's ``solver_config``) is listed."""
-    from flextool._local_solver_settings import LocalSolverSettingsError, is_trusted_workspace
+    from flextool._local_solver_settings import LocalSolverSettingsError, trust_status
 
-    problem = None
     try:
-        if is_trusted_workspace(folder.parent):
-            return True, None
+        status = trust_status(folder.parent)
     except LocalSolverSettingsError as exc:
-        problem = str(exc)
-    return False, untrusted_note(folder, reason, problem)
+        return False, untrusted_note(folder, reason, str(exc))
+    if status.trusted:
+        return True, None
+    return False, untrusted_note(folder, reason, status.problem)
 
 
 def _found_ladder(
@@ -513,6 +537,9 @@ def _found_ladder(
 ) -> "SolverConfigSource":
     """The ladder of *layers* ``(folder, reason, named)``, highest first: a folder the user named is trusted, one
     found on its own is judged by :func:`_folder_trust`."""
+    # Absolute, so that what a folder is never depends on the current folder or on the text of its name (review
+    # b2b3 M3).
+    layers = [(Path(os.path.abspath(folder)), reason, named) for folder, reason, named in layers]
     notes: list[str | None] = []
     for folder, reason, named in layers:
         notes.append(None if named else _folder_trust(folder, reason)[1])
@@ -520,6 +547,7 @@ def _found_ladder(
     return SolverConfigSource(
         top, top_reason, tried, skipped, lower=tuple((folder, reason) for folder, reason, _n in rest),
         trusted=notes[0] is None, trust_note=notes[0], lower_notes=tuple(notes[1:]),
+        listed=tuple(not named for _folder, _reason, named in layers),
     )
 
 
@@ -747,13 +775,17 @@ class SolverOptionFiles:
 
     *texts* maps a solver to its file's text; *origins* to where it came from (the file, or the packaged
     template), used in messages.  *snapshot_dir* is the record written under the work folder (``None`` when it
-    could not be written).
+    could not be written).  *defaults* are the solvers that use FlexTool's packaged default; *file_notes* why a
+    file of a folder trusted through this computer's list is not covered by that trust (it changed since in a way
+    FlexTool cannot take as the user's own edit, review b2b3 M1).
     """
 
     source: SolverConfigSource
     snapshot_dir: Path | None = None
     texts: Mapping[str, str] = field(default_factory=dict)
     origins: Mapping[str, str] = field(default_factory=dict)
+    defaults: frozenset[str] = frozenset()
+    file_notes: Mapping[str, str] = field(default_factory=dict)
 
     def text(self, solver: str) -> str | None:
         return self.texts.get(solver)
@@ -769,20 +801,29 @@ class SolverOptionFiles:
         )
 
     def untrusted_note(self, solver: str) -> str | None:
-        """``None`` when *solver*'s file is trusted (from a trusted folder of the ladder, FlexTool's packaged
-        default, or byte for byte a shipped FlexTool template); else why its lines get the input database's rules
-        and how to trust its folder (item 240 B3).  Judged by the folder the file came from, so a trusted
-        workspace's file overridden by an untrusted project's file leaves the project's file untrusted."""
+        """``None`` when *solver*'s file is trusted, else why its lines get the input database's rules and how to
+        trust its folder (item 240 B3).
+
+        FlexTool's own file is told by its content only: the text is byte for byte (CRLF read as LF) a shipped
+        template, this version's or an earlier one (review b2b3 M3: never by the text of its origin or the name of
+        a folder).  Any other file is judged by the folder of the ladder it came from: trusted when the user named
+        that folder, or when this computer's list trusts the folder and covers the file (it is as it was then, or
+        the user's own later edit).  A trusted workspace's file overridden by an untrusted project's file leaves
+        the project's file untrusted.  A file whose folder is not on the ladder is not trusted."""
+        text = self.texts.get(solver)
+        if text is None:
+            return None
+        if is_unedited_template(solver, text.encode("utf-8")):
+            return None
         index = self.layer_index(solver)
         if index is None:
-            return None
+            origin = self.origins.get(solver, f"{solver}.opt")
+            return (f"FlexTool cannot tell which folder {origin} came from, so its lines get the input database's "
+                    "rules. Pass its folder with --solver-config-dir to trust it.")
         note = self.source.layer_note(index)
-        if note is None:
-            return None
-        text = self.texts.get(solver)
-        if text is not None and is_unedited_template(solver, text.encode("utf-8")):
-            return None
-        return note
+        if note is not None:
+            return note
+        return self.file_notes.get(solver)
 
     def origin(self, solver: str) -> str:
         return self.origins.get(solver, f"{solver}.opt")
@@ -807,9 +848,10 @@ class SolverOptionFiles:
                 continue
             digest = _normalised_sha256(text.encode("utf-8"))
             index = self.layer_index(solver)
+            default = solver in self.defaults
             files[f"{solver}.opt"] = {
-                "source": "FlexTool default" if index is None else _absolute(self.origins[solver]),
-                "reason": "FlexTool default" if index is None else layers[index][1],
+                "source": "FlexTool default" if default or index is None else _absolute(self.origins[solver]),
+                "reason": "FlexTool default" if default or index is None else layers[index][1],
                 "trusted": self.untrusted_note(solver) is None,
                 "sha256": digest,
                 "default": digest in _template_hashes(solver),
@@ -839,22 +881,42 @@ def _absolute(path: str | os.PathLike) -> str:
 
 def read_solver_option_files(source: SolverConfigSource, names: tuple[str, ...] = SOLVER_NAMES) -> SolverOptionFiles:
     """Read the option file of each solver in *names* from the first folder of *source*'s ladder that gives it
-    (else its packaged template), once."""
+    (else its packaged template), once.  A file of a folder trusted through this computer's list is checked
+    against the list's entry with the bytes read and the file's ``lstat`` (review b2b3 M1)."""
+    from flextool._local_solver_settings import LocalSolverSettingsError, trust_status
+
     texts: dict[str, str] = {}
     origins: dict[str, str] = {}
+    defaults: set[str] = set()
+    file_notes: dict[str, str] = {}
+    statuses: dict[Path, object] = {}
     for solver in names:
-        for folder, _reason in source.layers:
+        for index, (folder, reason) in enumerate(source.layers):
             if not _layer_gives(folder, solver)[0]:
                 continue
             path = folder / f"{solver}.opt"
             try:
-                texts[solver] = path.read_text(encoding="utf-8")
+                st = os.lstat(path)
+                data = path.read_bytes()
+                # As read_text: universal newlines.
+                texts[solver] = data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
             except UnicodeDecodeError as exc:
                 _logger.warning("Not reading %s: it is not UTF-8 text (%s).", path, exc)
                 continue
             except OSError:
                 continue
             origins[solver] = str(path)
+            if source.layer_listed(index) and source.layer_note(index) is None:
+                if folder not in statuses:
+                    try:
+                        statuses[folder] = trust_status(folder.parent)
+                    except LocalSolverSettingsError as exc:
+                        statuses[folder] = str(exc)
+                status = statuses[folder]
+                problem = status if isinstance(status, str) else status.file_problem(
+                    path.name, _normalised_sha256(data), st)
+                if problem is not None and not is_unedited_template(solver, data):
+                    file_notes[solver] = untrusted_note(folder, reason, changed=problem)
             break
         else:
             template = _template_path(solver)
@@ -865,7 +927,9 @@ def read_solver_option_files(source: SolverConfigSource, names: tuple[str, ...] 
             except OSError:
                 continue
             origins[solver] = f"FlexTool default ({solver}.opt.template)"
-    return SolverOptionFiles(source=source, texts=texts, origins=origins)
+            defaults.add(solver)
+    return SolverOptionFiles(source=source, texts=texts, origins=origins, defaults=frozenset(defaults),
+                             file_notes=file_notes)
 
 
 def snapshot_solver_option_files(
@@ -936,8 +1000,8 @@ def snapshot_solver_option_files(
                 target.unlink()
     except OSError as exc:
         log.warning("Cannot write the solver option snapshot %s (%s); the run continues.", snapshot, exc)
-        return SolverOptionFiles(source=source, snapshot_dir=None, texts=files.texts, origins=files.origins)
-    return SolverOptionFiles(source=source, snapshot_dir=snapshot, texts=files.texts, origins=files.origins)
+        return replace(files, snapshot_dir=None)
+    return replace(files, snapshot_dir=snapshot)
 
 
 def _warn_stale_work_folder_copy(
@@ -978,6 +1042,7 @@ __all__ = [
     "SOLVER_NAMES",
     "SolverConfigSource",
     "SolverOptionFiles",
+    "TRUST_COMMAND",
     "gui_solver_config_dirs",
     "gui_solver_config_flags",
     "gui_solver_config_ladder",

@@ -111,17 +111,16 @@ def rename_project(old_name: str, new_name: str) -> Path:
     old_resolved = old_path.resolve()
     from flextool import _local_solver_settings as local
     try:
-        trusted = local.is_trusted_workspace(old_path)
+        listed = local.trust_status(old_path).entry is not None
     except local.LocalSolverSettingsError:
-        trusted = False
+        listed = False
     old_path.rename(new_path)
-    if trusted:
-        # The project keeps this computer's trust of its solver option files under its new name (item 240 B3);
-        # its old path is taken off the list, so a folder made there later does not inherit it.
-        from flextool._solver_config_source import forget_trusted_folder
-        forget_trusted_folder(old_resolved)
+    if listed:
+        # The project keeps this computer's trust of its solver option files under its new name (item 240 B3),
+        # with the entry's folder identity and file hashes (a rename trusts nothing the old entry did not); its
+        # old path is taken off the list, so a folder made there later does not inherit it.
         try:
-            local.add_trusted_workspace(new_path)
+            local.move_trusted_workspace(old_resolved, new_path)
         except local.LocalSolverSettingsError:
             pass
     _run_project_hook(_assistant_project_renamed, old_resolved, new_path.resolve())

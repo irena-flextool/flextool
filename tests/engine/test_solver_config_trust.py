@@ -14,6 +14,7 @@ refuse (a full path, a server parameter, a name not in FlexTool's list) or pass 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -37,14 +38,17 @@ from flextool.engine.solve._solver_dispatch import (
 )
 from flextool.run_options import Resolved, RunOptions
 
+posix_only = pytest.mark.skipif(os.name == "nt", reason="inodes and file modes as on Linux and macOS")
+
 #: A Gurobi option file with a full path (``NodefileDir``: a file parameter), as someone else's workspace may hold.
 EDITED_GUROBI = "Threads 2\nNodefileDir /srv/elsewhere/nodes\n"
 
 
 @pytest.fixture(autouse=True)
-def user_home(tmp_path, monkeypatch) -> Path:
-    """This test's own user config folder (so the list of trusted workspaces starts empty)."""
-    home = tmp_path / "user_home"
+def user_home(tmp_path_factory, monkeypatch) -> Path:
+    """This test's own user config folder (so the list of trusted workspaces starts empty), outside the test's
+    folder: a ``FLEXTOOL_USER_HOME`` inside the current folder is ignored (review b2b3 L2)."""
+    home = tmp_path_factory.mktemp("user_home")
     monkeypatch.setenv("FLEXTOOL_USER_HOME", str(home))
     monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
     monkeypatch.delenv("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", raising=False)
@@ -116,10 +120,12 @@ def test_the_marker_cannot_be_forged_by_files_inside_the_workspace(tmp_path, mon
     ensure_runtime_files()
     assert settings.trusted_workspaces() == ()
     assert resolve_solver_config_source(run_options=_options(), cwd=ws).trusted is False
-    # Pointing the user config folder at the workspace is the user's own act (an environment variable), shown
-    # here only to pin where the list is read from.
+    # FLEXTOOL_USER_HOME naming the workspace (the current folder) is ignored with a warning, so the forged list
+    # is not read even then (review b2b3 L2); the platform's folder (here XDG_CONFIG_HOME) is used instead.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setenv("FLEXTOOL_USER_HOME", str(ws))
-    assert resolve_solver_config_source(run_options=_options(), cwd=ws).trusted is True
+    assert settings.settings_path() == tmp_path / "xdg" / "flextool" / "solver_settings.json"
+    assert resolve_solver_config_source(run_options=_options(), cwd=ws).trusted is False
 
 
 def test_a_workspace_set_up_here_is_listed_once_and_trusted(tmp_path, monkeypatch) -> None:
@@ -363,14 +369,20 @@ def test_a_shipped_template_in_an_untrusted_folder_is_flextools_own(tmp_path) ->
 
 
 def test_a_relative_folder_named_like_the_default_stays_untrusted(tmp_path, monkeypatch) -> None:
-    """Whether a file is FlexTool's packaged default is decided by its path in the ladder, not by the text of its
-    origin (review b2b3 M3): a folder whose name starts with "FlexTool default" is judged as any other."""
+    """Whether a file is FlexTool's own is decided by its content (a shipped template's hash), never by the text
+    of its origin or a folder's name (review b2b3 M3): a folder whose name starts with "FlexTool default" is
+    judged as any other, and an edited text whose origin claims to be the default is not trusted."""
+    from dataclasses import replace
+
     monkeypatch.chdir(tmp_path)
     folder = Path("FlexTool default x") / "solver_config"
     folder.mkdir(parents=True)
     (folder / "gurobi.opt").write_text(EDITED_GUROBI)
     source = resolve_solver_config_source(run_options=_options(workspace_solver_config_dir=str(folder)), cwd=tmp_path)
-    assert read_solver_option_files(source).untrusted_note("gurobi") is not None
+    files = read_solver_option_files(source)
+    assert files.untrusted_note("gurobi") is not None
+    forged = replace(files, origins={"gurobi": "FlexTool default (gurobi.opt.template)"})
+    assert forged.untrusted_note("gurobi") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -413,3 +425,162 @@ def test_creating_and_renaming_a_project_keep_its_trust_with_it(tmp_path, monkey
     leftover.mkdir(parents=True)
     (leftover / "gurobi.opt").write_text(PROJECT_GUROBI)
     assert not settings.is_trusted_workspace(create_project("Left"))
+
+
+# ---------------------------------------------------------------------------
+# Review b2b3: the trust is for a folder and its files, not for a path
+# ---------------------------------------------------------------------------
+
+
+def _trusted_workspace_file(root: Path) -> tuple[Path, Path]:
+    """A workspace this computer trusted with its edited ``gurobi.opt``; returns it and the file."""
+    ws = _received_workspace(root)
+    settings.add_trusted_workspace(ws)
+    return ws, ws / "solver_config" / "gurobi.opt"
+
+
+def _gurobi_note(ws: Path) -> str | None:
+    return read_solver_option_files(resolve_solver_config_source(run_options=_options(), cwd=ws)).untrusted_note(
+        "gurobi")
+
+
+@posix_only
+def test_a_folder_put_at_a_trusted_path_is_not_trusted(tmp_path) -> None:
+    """M1: the trusted workspace is deleted and a received copy is unpacked at the same path; the copy is another
+    folder (another inode), so its files get the database's rules and the note says the folder was replaced.
+    Trusting it again (the box, the command) binds the new folder."""
+    import shutil
+
+    ws, _file = _trusted_workspace_file(tmp_path / "ws")
+    assert _gurobi_note(ws) is None
+    shutil.rmtree(ws)  # ext4 gives the next folder the same inode number: the birth time tells them apart
+    _received_workspace(ws, gurobi_text="Threads 2\nResultFile /home/u/.bashrc\n")
+    note = _gurobi_note(ws)
+    assert note is not None and "is not the one this computer trusted" in note
+    assert settings.trust_status(ws).problem is not None
+    settings.update_settings_file(lambda data: settings.apply_settings(data, workspace=ws, trust_workspace=True))
+    assert _gurobi_note(ws) is None
+
+
+@posix_only
+def test_a_later_edit_is_trusted_only_when_no_other_account_can_change_the_file(tmp_path) -> None:
+    """M1: a file changed after the folder was trusted stays trusted when this account owns it and no other
+    account can write it (the user's own edit, no new tick); writable by every account it gets the database's
+    rules, naming the file, until the folder is trusted again.  A file unchanged since the tick stays trusted
+    whatever its mode."""
+    ws, path = _trusted_workspace_file(tmp_path / "ws")
+    path.chmod(0o646)
+    assert _gurobi_note(ws) is None  # as it was when trusted
+    path.write_text("Threads 4\nNodefileDir /srv/other\n")
+    path.chmod(0o644)
+    assert _gurobi_note(ws) is None  # the user's own edit
+    path.chmod(0o646)
+    note = _gurobi_note(ws)
+    assert note is not None and "gurobi.opt changed after this computer trusted the folder" in note
+    assert "every account can write it" in note and "flextool-trust-workspace" in note
+    settings.add_trusted_workspace(ws)  # already listed, the same folder: no new binding
+    assert _gurobi_note(ws) is not None
+    settings.update_settings_file(lambda data: settings.apply_settings(data, workspace=ws, trust_workspace=True))
+    assert _gurobi_note(ws) is None
+
+
+def test_a_text_entry_of_a_development_build_is_bound_to_the_folder_now_there(tmp_path, user_home) -> None:
+    """Migration: a plain path entry (4.4 development builds) is bound, on its first read, to the folder at that
+    path with its current files; a folder put there afterwards is then not trusted."""
+    ws = _received_workspace(tmp_path / "ws")
+    (user_home / "config").mkdir(parents=True, exist_ok=True)
+    settings.settings_path().write_text(json.dumps({"format": 1, "trusted_workspaces": [str(ws)]}))
+    assert settings.is_trusted_workspace(ws)
+    (entry,) = json.loads(settings.settings_path().read_text())["trusted_workspaces"]
+    assert entry["path"] == settings.workspace_key(ws)
+    assert entry["files"] == {"gurobi.opt": settings._sha256(EDITED_GUROBI.encode())}
+    assert entry["id"] == list(settings.folder_identity(ws))
+
+
+def test_a_rename_carries_the_entry_without_trusting_a_change(tmp_path) -> None:
+    """A renamed project keeps its entry (identity and hashes), so a change the old entry did not cover is still
+    not covered at the new path."""
+    ws, path = _trusted_workspace_file(tmp_path / "old")
+    new = tmp_path / "new"
+    ws.rename(new)
+    settings.move_trusted_workspace(ws, new)
+    assert settings.trusted_workspaces() == (settings.workspace_key(new),)
+    assert settings.trust_status(new).file_problem("gurobi.opt", settings._sha256(EDITED_GUROBI.encode()), None) is None
+
+
+@pytest.mark.parametrize("entry", [".", "~/flextool", "relative/ws"])
+def test_a_relative_list_entry_is_refused(tmp_path, user_home, monkeypatch, entry) -> None:
+    """L1: "." would trust every folder a run starts from; such an entry makes the list unreadable, with a message
+    asking for full folder paths, so nothing is trusted."""
+    ws = _received_workspace(tmp_path / "ws")
+    monkeypatch.chdir(ws)
+    (user_home / "config").mkdir(parents=True, exist_ok=True)
+    settings.settings_path().write_text(json.dumps({"format": 1, "trusted_workspaces": [entry]}))
+    with pytest.raises(settings.LocalSolverSettingsError, match="not a full folder path"):
+        settings.is_trusted_workspace(ws)
+    source = resolve_solver_config_source(run_options=_options(), cwd=ws)
+    assert source.trusted is False and "Write full folder paths" in source.trust_note
+
+
+def test_a_relative_or_workspace_user_home_is_ignored(tmp_path, tmp_path_factory, monkeypatch, caplog) -> None:
+    """L2: a relative FLEXTOOL_USER_HOME (or XDG_CONFIG_HOME), or one inside the current folder, is ignored with
+    a warning; the platform's folder is used.  One that names a folder inside a database's folder judged for
+    trust (not the current folder) makes that folder's trust unreadable."""
+    from flextool import user_dirs
+
+    # Every fallback lands in this test's folders, never in the real user folders.
+    monkeypatch.setenv("HOME", str(tmp_path_factory.mktemp("home")))
+    xdg = tmp_path_factory.mktemp("xdg")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    monkeypatch.chdir(tmp_path)
+    for value in ("user_home", str(tmp_path / "inside")):
+        monkeypatch.setenv("FLEXTOOL_USER_HOME", value)
+        with caplog.at_level("WARNING", logger="flextool.user_dirs"):
+            assert user_dirs.user_config_dir() == xdg / "flextool"
+        assert f"Ignoring FLEXTOOL_USER_HOME={value}" in caplog.text
+    monkeypatch.setenv("XDG_CONFIG_HOME", "xdg")
+    monkeypatch.setenv("FLEXTOOL_USER_HOME", "")
+    assert user_dirs.user_config_dir() == Path.home() / ".config" / "flextool"
+    assert Path.home() != Path(os.path.expanduser("~" + os.environ.get("USER", "")))
+    # A user home inside a database's folder (not the current folder) is refused for that folder.
+    ws = _received_workspace(tmp_path / "ws")
+    monkeypatch.chdir(tmp_path_factory.mktemp("cwd"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    monkeypatch.setenv("FLEXTOOL_USER_HOME", str(ws / "carried"))
+    assert settings.settings_path() == ws / "carried" / "config" / "solver_settings.json"
+    settings.settings_path().parent.mkdir(parents=True)
+    settings.settings_path().write_text(json.dumps({"format": 1, "trusted_workspaces": [str(ws)]}))
+    db = ws / "model.sqlite"
+    db.write_bytes(b"")
+    found = resolve_solver_config_source(run_options=_options(), input_db_url=f"sqlite:///{db}", cwd=tmp_path)
+    assert found.trusted is False and "lies inside" in found.trust_note
+
+
+def test_a_windows_junction_counts_as_a_link(tmp_path, monkeypatch) -> None:
+    """L5: a ``solver_config`` that is a Windows junction (or other reparse point) is never FlexTool's own folder,
+    so the workspace it is in is not listed by being opened."""
+    from flextool._solver_config_source import holds_only_flextool_defaults
+
+    folder = tmp_path / "ws" / "solver_config"
+    folder.mkdir(parents=True)
+    assert holds_only_flextool_defaults(folder)
+    monkeypatch.setattr(Path, "is_junction", lambda self: self == folder, raising=False)
+    assert settings.is_link_like(folder) and not holds_only_flextool_defaults(folder)
+
+
+def test_the_trust_command_shows_the_files_and_asks(tmp_path, monkeypatch, capsys) -> None:
+    """L6: ``flextool-trust-workspace <folder>`` prints the edited option files with their lines and trusts the
+    folder only on "y"; ``--remove`` takes it off."""
+    from flextool.cli.cmd_trust_workspace import EXIT_OK, EXIT_REFUSED, main
+
+    ws = _received_workspace(tmp_path / "ws")
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    assert main([str(ws)]) == EXIT_REFUSED
+    out = capsys.readouterr().out
+    assert "gurobi.opt" in out and "NodefileDir /srv/elsewhere/nodes" in out
+    assert not settings.is_trusted_workspace(ws)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    assert main([str(ws / "solver_config")]) == EXIT_OK
+    assert settings.is_trusted_workspace(ws) and _gurobi_note(ws) is None
+    assert main(["--remove", str(ws)]) == EXIT_OK
+    assert not settings.is_trusted_workspace(ws)

@@ -89,6 +89,10 @@ def _recording_wrapper(tmp_path: Path) -> tuple[Path, Path]:
     (lambda d: [str(_program(d, "wscript.exe"))], True, "is a command interpreter"),
     (lambda d: [str(_program(d, "cscript.exe"))], True, "is a command interpreter"),
     (lambda d: [str(_program(d, "hold"))], True, "on Windows the wrapper must be a program (.exe)"),
+    # review b2b3 L4: the WSL launcher and Git Bash join FlexTool's arguments into a shell command line.
+    (lambda d: [str(_program(d, "wsl.exe"))], True, "reads its arguments as a command line"),
+    (lambda d: [str(_program(d, "bash.exe"))], True, "reads its arguments as a command line"),
+    (lambda d: [str(_program(d, "rundll32.exe"))], True, "reads its arguments as a command line"),
     (lambda d: [str(_program(d, "hold"))] + ["a"] * 32, False, "a list of 1 to 32 texts"),
     (lambda d: [], False, "a list of 1 to 32 texts"),
     (lambda d: str(_program(d, "hold")), False, "a list of 1 to 32 texts"),
@@ -119,6 +123,9 @@ def test_a_program_with_arguments_passes(tmp_path) -> None:
         str(hold), "--queue", "opt", "")
     exe = _program(tmp_path / "bin", "hold.exe")
     assert check_wrapper([str(exe)], source="SRC", windows=True) == (str(exe),)
+    # On Linux and macOS a shell with a script passes FlexTool's arguments on as "$@" (refused on Windows only).
+    bash = _program(tmp_path / "sh", "bash")
+    assert check_wrapper([str(bash), "/opt/wrap.sh"], source="SRC", windows=False) == (str(bash), "/opt/wrap.sh")
 
 
 # ---------------------------------------------------------------------------
@@ -213,10 +220,12 @@ def test_a_solve_runs_through_the_wrapper(tmp_path, monkeypatch, capsys) -> None
     assert argv[:4] == [str(wrapper), "--queue", "opt", str(stub)]
     assert argv[4] == "Threads=2" and argv[5].startswith("ResultFile=") and argv[6].endswith(".mps")
     out = capsys.readouterr().out
-    marker = (f"Running Gurobi ({stub}) through the solver wrapper "
-              f"{json.dumps([str(wrapper), '--queue', 'opt'])} (from environment variable "
-              "FLEXTOOL_SOLVER_WRAPPER_GUROBI)")
+    # The log shows the program and the number of its arguments, never the arguments (review b2b3 L3: the AI
+    # assistant can send the log out); the record keeps the full list.
+    marker = (f"Running Gurobi ({stub}) through the solver wrapper {wrapper} with 2 arguments (from environment "
+              "variable FLEXTOOL_SOLVER_WRAPPER_GUROBI)")
     assert marker in out.splitlines()
+    assert "--queue" not in out
     assert "GUROBI-LOG-LINE" in out.split(marker, 1)[1]
     assert recorder.wrappers == {"gurobi": {"argv": [str(wrapper), "--queue", "opt"],
                                             "source": "environment variable FLEXTOOL_SOLVER_WRAPPER_GUROBI"}}
