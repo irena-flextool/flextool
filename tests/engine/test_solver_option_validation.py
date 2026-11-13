@@ -161,6 +161,18 @@ def test_cplex_value_that_is_a_name_word_is_refused_from_every_source() -> None:
     assert [o.value for o in options] == ["scratch", "incumbent", "UTF-8", "ffff", "yes", "1e+75", "0.01"]
 
 
+def test_cplex_group_name_is_refused_from_every_source(monkeypatch) -> None:
+    """Review b1 F6: ``set mip tolerances 0.01`` names a group, so the Interactive Optimizer would prompt for the
+    parameter and take the script's next line.  Refused from the option file (not only warned about, D3), from
+    the database and with unlisted names allowed; a parameter of the group passes."""
+    monkeypatch.setenv("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", "1")
+    for kwargs in ({"opt_text": "mip tolerances 0.01\n"}, {"options": {"mip tol": "0.01"}},
+                   {"options": {"simplex": 1}}):
+        with pytest.raises(FlexToolUserError, match="is a group of CPLEX parameters, not a parameter"):
+            _resolve("cplex", **kwargs)
+    assert [o.value for o in _resolve("cplex", opt_text="mip tolerances mipgap 0.01\n")] == ["0.01"]
+
+
 def test_cplex_text_parameters_and_switch_words_match_its_parameters() -> None:
     """Pin the CPLEX value rule to ``Cplex().parameters``: its text parameters are the listed ones (plus the
     Interactive Optimizer's ``logfile``), no parameter word is a switch word, and the name of every parameter of

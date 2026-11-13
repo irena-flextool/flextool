@@ -164,6 +164,27 @@ def _cplex_value_is_a_name_word(name: str, value: str) -> bool:
     )
 
 
+def _cplex_group_members(name: str) -> list[str]:
+    """The listed CPLEX parameters of which *name* names a group: every word of *name* abbreviates the same word
+    of the parameter, which has more words (``mip tolerances`` -> ``mip tolerances mipgap``, ...).  Empty when
+    *name* is a listed parameter or abbreviates one of as many words (then it is a parameter name, checked as
+    such).  The Interactive Optimizer answers ``set <group> <value>`` with a prompt for the parameter, which takes
+    the script's next line, so a group is refused from every source (item 240 review b1 F6)."""
+    catalogue = _solver_catalogue.load("cplex")
+    key = commercial_option_key("cplex", name)
+    if not key or key in catalogue.entries:
+        return []
+    words = key.split(" ")
+    members: list[str] = []
+    for full in catalogue.entries:
+        full_words = full.split(" ")
+        if len(full_words) >= len(words) and all(f.startswith(w) for w, f in zip(words, full_words)):
+            if len(full_words) == len(words):
+                return []
+            members.append(full)
+    return sorted(members)
+
+
 def validate_solver_option(solver: str, name: object, value: object, where: str) -> None:
     """Refuse a solver option whose *name* or *value* could change the solver's command script or arguments.
 
@@ -211,6 +232,13 @@ def validate_solver_option(solver: str, name: object, value: object, where: str)
         problem = (
             f"the value is missing: {_short(name_text + ' ' + value_text)} reads as a parameter name, since every "
             "CPLEX parameter except " + ", ".join(sorted(_CPLEX_TEXT_PARAMETERS)) + " takes a number or a switch word"
+        )
+    elif solver == "cplex" and (members := _cplex_group_members(name_text)):
+        problem = (
+            f"{_short(name_text)} is a group of CPLEX parameters, not a parameter (it holds "
+            + ", ".join(repr(m) for m in members[:3]) + (", ..." if len(members) > 3 else "")
+            + "); the Interactive Optimizer would ask which one and take the script's next line as the answer, "
+            "so name the parameter in full"
         )
     if problem is None:
         return

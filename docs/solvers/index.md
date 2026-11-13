@@ -343,7 +343,9 @@ every parameter has a value: an empty value is refused for every solver
 (HiGHS included), and for Gurobi, CPLEX, Xpress and COPT also an option-file
 line with a name and no value (for CPLEX also a last word that is not a
 number where the parameter takes one, such as `mip tolerances mipgap`
-without its value). The solution-file lines of old `highs.opt` templates are
+without its value, and a group of parameters given a value, such as
+`mip tolerances 0.01`: CPLEX would ask which parameter and read the
+script's next line as the answer). The solution-file lines of old `highs.opt` templates are
 dropped, as before.
 
 #### Allowing a parameter that is not in the list

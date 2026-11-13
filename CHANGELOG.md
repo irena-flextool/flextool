@@ -102,9 +102,9 @@ Each line says what changes for a model that ran before and what to do; the deta
   and paths without spaces still pass; a value with a space, such as a file path, or ending in a backslash is now
   refused: use a path without spaces. An empty value is refused too, for every solver; for Gurobi, CPLEX, Xpress
   and COPT also an option-file line with a name but no value (before, the line was skipped or read wrongly); for
-  CPLEX this includes a word where the parameter takes a number (`mip tolerances mipgap` without its value). An
-  empty HiGHS value from `solver_arguments` or a flag, which `--save-memory` already refused when the solve
-  started, now stops every run before its first solve.
+  CPLEX this includes a word where the parameter takes a number (`mip tolerances mipgap` without its value) and a
+  group of parameters with a value (`mip tolerances 0.01`). An empty HiGHS value from `solver_arguments` or a
+  flag, which `--save-memory` already refused when the solve started, now stops every run before its first solve.
 - **Solver options in the input database take no file paths or server settings.** Since 4.0, a database's
   `solver_arguments` could make the solver, HiGHS included, write over or read files anywhere on your computer (for
   example HiGHS `solution_file` / `log_file`, Gurobi `LogFile` / `InputFile`, CPLEX `workdir`, Xpress

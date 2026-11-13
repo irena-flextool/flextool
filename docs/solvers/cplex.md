@@ -82,7 +82,10 @@ full and with spaces (`mip tolerances mipgap`). A dotted name
 one. An abbreviation (`mip tol mipg`) is refused from `solver_arguments`,
 with the full name in the message, also where your computer allows names
 that are not in FlexTool's list; in `cplex.opt` it gives a warning, is
-passed as written and does not replace the full name from another layer. See
+passed as written and does not replace the full name from another layer.
+A group name with a value (`mip tolerances 0.01`, `simplex 1`) is refused
+from every source, `cplex.opt` included: the interactive optimizer would ask
+which parameter of the group is meant and read the next line as the answer. See
 [What the database may set](index.md#what-the-database-may-set).
 
 ```text
