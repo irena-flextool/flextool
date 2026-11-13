@@ -203,10 +203,20 @@ def _highs_case(options: dict, work: Path, monkeypatch: pytest.MonkeyPatch) -> d
     return seen
 
 
+#: The cases whose database layer names a parameter that is not in FlexTool's list, so they run with this computer
+#: allowing such names: ``cplex_stacked`` sets ``Presolve`` (CPLEX's is ``preprocessing presolve``), and the record
+#: was made before item 240 B1.  Every other case runs with the switch off, so a listed name must reach the solver
+#: unchanged without it, and a new case with an unlisted name fails instead of passing silently.
+_NEEDS_UNLISTED = frozenset({"cplex_stacked"})
+
+
 def _all_cases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, dict]:
     out: dict[str, dict] = {}
     for case, solver, opt_text, cfg, flags in _COMMERCIAL_CORPUS:
-        out[case] = _commercial_case(solver, opt_text, cfg, flags, tmp_path / case, monkeypatch)
+        with monkeypatch.context() as m:
+            if case in _NEEDS_UNLISTED:
+                m.setenv("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", "1")
+            out[case] = _commercial_case(solver, opt_text, cfg, flags, tmp_path / case, m)
     for case, options in _HIGHS_CORPUS:
         out[case] = _highs_case(options, tmp_path / case, monkeypatch)
     return out
@@ -214,9 +224,8 @@ def _all_cases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, dic
 
 def test_solver_handoff_matches_the_golden_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
-    # The record is how options are handed over, made before item 240 B1 refused names that are not in FlexTool's
-    # lists (the corpus has CPLEX ``Presolve``); allowing such names keeps it the same record.
-    monkeypatch.setenv("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", "1")
+    # Names that are not in FlexTool's lists are refused, except in the cases of ``_NEEDS_UNLISTED``.
+    monkeypatch.setenv("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", "0")
     monkeypatch.chdir(tmp_path)  # HiGHS opens a log_file as soon as it is set
     cases = _all_cases(tmp_path, monkeypatch)
     if os.environ.get("FLEXTOOL_WRITE_SOLVER_HANDOFF_GOLDEN") == "1":
