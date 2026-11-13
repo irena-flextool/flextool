@@ -19,6 +19,8 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -248,7 +250,7 @@ def test_highs_solver_arguments_are_checked(args, where) -> None:
 def test_highs_option_file_line_is_named_and_paths_pass_from_solver_config_only(tmp_path: Path) -> None:
     """A full path is taken from ``solver_config/highs.opt`` (trusted) and refused from ``solver_arguments`` (the
     input database); a plain file name from the database is placed in the solve's work folder."""
-    with pytest.raises(FlexToolUserError, match=r"cfg/highs\.opt, line 2"):
+    with pytest.raises(FlexToolUserError, match=re.escape(f"{Path('cfg/highs.opt')}, line 2")):
         _resolve_effective_highs_options(
             solver_arguments_map=None, highs_opt_path=Path("cfg/highs.opt"), cli_overrides=None,
             highs_opt_text="threads=1\npresolve=off # note\n",
@@ -408,7 +410,7 @@ def test_trusted_option_file_still_refuses_injection(solver: str, value: str, wo
     line = f"{name} = {value}" if solver == "highs" else f"{name} {value}"
     with pytest.raises(FlexToolUserError, match=words) as err:
         _resolve_db(solver, {}, opt_text=f"{line}\n")
-    assert "cfg/" in str(err.value) and "line 1" in str(err.value)
+    assert ("cfg/" in str(err.value) or f"cfg{os.sep}" in str(err.value)) and "line 1" in str(err.value)
 
 
 def test_trusted_flags_are_not_checked_as_the_database(monkeypatch) -> None:
