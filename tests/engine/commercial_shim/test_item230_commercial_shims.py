@@ -263,6 +263,32 @@ def test_tiny_mip_with_the_gap_flag(solver, shim, db, highs_objective, tmp_path,
     assert printed and all(ln == f"Solver args ({solver}): {GAP[solver]}=0.0123" for ln in printed), printed
 
 
+#: An absolute MIP gap of each solver (an objective difference), from its manual.
+ABS_GAP = {"gurobi": "MIPGapAbs", "cplex": "mip tolerances absmipgap", "xpress": "MIPABSSTOP", "copt": "AbsGap"}
+
+
+def test_objective_valued_options_reach_the_solver_scaled(solver, shim, db, tmp_path, capsys) -> None:
+    """Item 246b: objective targets and absolute gaps are written in unscaled currency.  The solver works on the
+    cost × scale_the_objective (1e-6 here; a commercial solver has no objective factor of its own, and this model
+    has no objective constant), so an absolute gap of 1e5 reaches it as 1e5 × 1e-6 = 0.1 and Gurobi's
+    BestObjStop -1.5e9 as -1500.  The ``Solver args`` line shows the solver's value and the written one."""
+    text = f"{ABS_GAP[solver]} 1e5\n" + ("BestObjStop -1.5e9\n" if solver == "gurobi" else "")
+    steps = _run(db, f"lp_{solver}", tmp_path / "w", _cfg(tmp_path, solver, text))
+    assert steps[SOLVE].optimal
+    expected = {ABS_GAP[solver]: 0.1, **({"BestObjStop": -1500.0} if solver == "gurobi" else {})}
+    calls = _calls(shim)
+    assert calls, "the solver program was not called"
+    for call in calls:
+        assert not call["unknown"], call
+        assert {k: call["params"].get(k) for k in expected} == pytest.approx(expected, rel=1e-12), call
+    printed = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("Solver args")]
+    assert printed, "no Solver args line"
+    for line in printed:
+        assert f"{ABS_GAP[solver]}=0.1 (100000 in unscaled currency)" in line, line
+        if solver == "gurobi":
+            assert "BestObjStop=-1500 (-1500000000 in unscaled currency)" in line, line
+
+
 # ---------------------------------------------------------------------------
 # The option stack: file < solver_mip_gap < solver_arguments < flag, as the solver got it
 # ---------------------------------------------------------------------------

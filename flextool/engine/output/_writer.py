@@ -485,6 +485,9 @@ def write_outputs_for_solve(
             flex_data=flex_data,
             scale_the_objective=scale_the_objective,
             provider=provider,
+            # The objective constant the solver's own objective leaves out
+            # (absent on a polar-high whose HiGHS handle includes it).
+            obj_offset=float(getattr(sol, "obj_offset", 0.0) or 0.0),
         )
     except Exception as exc:  # noqa: BLE001
         _logger.warning(

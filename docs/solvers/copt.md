@@ -98,6 +98,8 @@ documented as Gurobi's).
 - **Time or node limit reached.** A MIP stopped at its time or node limit
   with a solution is kept with a warning; an LP, or a MIP without a solution,
   stops the run. See [Time and other limits](index.md#time-and-other-limits).
+- **Objective values.** `AbsGap` is written in unscaled currency; FlexTool scales it to the objective COPT sees
+  (see [Time and other limits](index.md#time-and-other-limits)).
 - **`copt_cmd` not on `PATH` (HiGHS-coexistence fallback).** FlexTool
   shows: *"Solver 'copt' returned an error: ..."* with the cause naming
   the missing binary. Add the COPT distribution's `bin` directory to

@@ -256,6 +256,13 @@ def _write_highs_option_files(pairs: list[tuple[str, str]], opts_path: Path, jso
     json_path.write_text(json.dumps([[k, v] for k, v in pairs]), encoding="utf-8")
 
 
+def _set_objective_constant(sol: "Solution", obj_offset: float) -> None:
+    """Record on *sol* the objective constant its ``obj`` includes and its
+    ``highs`` shim's ``getObjectiveValue()`` leaves out (the MPS file has
+    none), as polar-high's own ``Solution.obj_offset`` does."""
+    sol.obj_offset = float(obj_offset)
+
+
 def _read_objective_from_sol(sol_path: Path) -> float:
     """Parse the ``Objective <value>`` line from a HiGHS style=0 sol file.
 
@@ -704,7 +711,8 @@ class _SolHighsShim:
     def getObjectiveValue(self) -> float:
         # Used by ``write_v_obj`` (scaled value, the writer un-scales).
         # Backed by the value we parsed from the ``Objective`` line in
-        # the .sol file.
+        # the .sol file: the MPS objective, without the objective constant
+        # (``Solution.obj_offset``), as a live polar-high HiGHS handle.
         return self._obj
 
     # Silence / status helpers a few code paths invoke defensively.
@@ -1888,7 +1896,11 @@ def solve_via_subprocess(
         or one of ``"gurobi"`` / ``"cplex"`` / ``"xpress"`` / ``"copt"``
         for the commercial CLIs.
     options
-        Effective solver options.  For HiGHS, written as a HiGHS ``.opt``
+        Effective solver options, objective-valued ones (targets, bounds,
+        cutoffs, absolute gaps) in unscaled currency: they are mapped to the
+        solver's value for *problem* before any file is written
+        (:func:`flextool.engine.solve._objective_options.translate_for_solver`).
+        For HiGHS, written as a HiGHS ``.opt``
         file ingested by the subprocess.  For commercial solvers, the
         already-resolved parameter set (name -> value, final order; see
         ``_solver_dispatch.resolve_commercial_options``), written next to
@@ -1921,6 +1933,18 @@ def solve_via_subprocess(
         Downstream writers see a uniform ``sol.highs`` shape regardless
         of which solver actually ran.
     """
+    # Objective targets, bounds, cutoffs and absolute gaps are written in
+    # unscaled currency; the solver reads them against the objective of the
+    # MPS file (``scale_the_objective`` × the cost, without the objective
+    # constant, and for HiGHS × ``2**user_objective_scale`` of these options).
+    # Mapped here, once, before the option file is written; the child and the
+    # CLIs apply the file as it is.
+    if solver_name == "highs" or solver_name in _SCRIPTS:
+        from flextool.engine.solve._objective_options import translate_for_solver
+
+        options, _translated = translate_for_solver(
+            problem, solver_name, "mps", options, solve_name=solve_name,
+        )
     if solver_name == "highs":
         return _solve_highs_subprocess(
             problem, options, solve_name=solve_name, logger=logger,
@@ -2061,6 +2085,9 @@ def _solve_highs_subprocess(
         del canonical
         # Generic, whitespace-safe names in the file (see the docstring);
         # the solution is mapped back by generic-name index below.
+        # The MPS file carries no objective constant (``add_obj_constant``);
+        # the solver's objective leaves it out and the Solution adds it back.
+        obj_offset = float(getattr(problem, "_obj_offset", 0.0) or 0.0)
         problem.write_mps(str(mps_path), release=True, emit_names=False)
 
         cmd = [
@@ -2336,7 +2363,7 @@ def _solve_highs_subprocess(
 
         sol = Solution(
             optimal=optimal,
-            obj=obj,
+            obj=obj + obj_offset,
             col_value=col_value,
             row_dual=row_dual,
             col_dual=col_dual,
@@ -2345,6 +2372,7 @@ def _solve_highs_subprocess(
             vars=dict(problem._vars),
             highs=h,
         )
+        _set_objective_constant(sol, obj_offset)
         # The child exits 0 for kOptimal, 1 otherwise; a non-optimal solve
         # is told apart by the status and primal lines of its solution file
         # (``Solution limit reached`` + ``Feasible``: a MIP stopped at its
@@ -2518,6 +2546,9 @@ def _solve_commercial_subprocess(
         # the real names come from the in-memory Problem.  This makes the
         # commercial path whitespace-agnostic, exactly like the in-process
         # HiGHS path.
+        # The MPS file carries no objective constant (``add_obj_constant``);
+        # the solver's objective leaves it out and the Solution adds it back.
+        obj_offset = float(getattr(problem, "_obj_offset", 0.0) or 0.0)
         problem.write_mps(str(mps_path), release=True, emit_names=False)
 
         # The resolved parameters as (name, value) pairs: the script builder emits one argument or line per
@@ -2686,7 +2717,7 @@ def _solve_commercial_subprocess(
 
         sol = Solution(
             optimal=optimal,
-            obj=obj,
+            obj=obj + obj_offset,
             col_value=col_value,
             row_dual=row_dual,
             col_dual=col_dual,
@@ -2695,6 +2726,7 @@ def _solve_commercial_subprocess(
             vars=dict(problem._vars),
             highs=h,
         )
+        _set_objective_constant(sol, obj_offset)
         # The status parsed from the solution file (OPTIMAL / INFEASIBLE /
         # UNBOUNDED / a limit / OTHER); the acceptance check records it
         # as the solve's model status (no HiGHS diagnostics exist here).

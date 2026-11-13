@@ -1294,7 +1294,10 @@ def _push_unscaled_to_highs(
         # ``unscale_solution``).  Read straight off the handle so the
         # rescue path captures whatever the live HiGHS just reported,
         # including HiGHS's own user_bound_scale unscale.
-        pre_obj = float(h.getObjectiveValue())
+        # Plus the objective constant the handle leaves out (polar-high
+        # >= 3.14.0 keeps it out of HiGHS; ``Solution.obj_offset``, absent
+        # on an older polar-high whose handle includes it).
+        pre_obj = float(h.getObjectiveValue()) + float(getattr(sol, "obj_offset", 0.0) or 0.0)
         # ``setSolution`` also resets the model status to ``kNotset`` and the
         # info counters (infeasibilities, primal-dual objective error) to "not
         # computed".  Keep a snapshot of the solve's diagnostics on the

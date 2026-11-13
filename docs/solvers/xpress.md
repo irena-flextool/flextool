@@ -102,6 +102,8 @@ than code; the keyword set is `license`, `licence`, `oem`, `expired`,
   control names are in the Xpress Optimizer reference manual.
 - **Time limit reached.** An LP stopped at its time limit stops the run. See
   [Time and other limits](index.md#time-and-other-limits).
+- **Objective values.** `MIPABSCUTOFF`, `MIPADDCUTOFF` and `MIPABSSTOP` are written in unscaled currency;
+  FlexTool scales them to the objective Xpress sees (see [Time and other limits](index.md#time-and-other-limits)).
 
 ## How to set it in FlexTool
 

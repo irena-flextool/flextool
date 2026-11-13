@@ -118,6 +118,7 @@ from flextool.engine.model._pdt_join import (
     compute_process_indirect_dt,
 )
 from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.engine.solve import _objective_options
 
 _LOG = logging.getLogger(__name__)
 
@@ -307,6 +308,7 @@ class _Build:
     m: Any
     d: Any
     include_existing_fixed_cost: bool = False
+    scale_the_objective: float = 1.0
     solve_name: str | None = None
 
     # ── feature flags ──
@@ -438,10 +440,15 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     capacity, Σ existing · fixed_cost · inflation_op · pd_branch_weight, to
     the objective as a constant (OBJ. existing_fixed_cost).  It changes the
     objective value, not the solution.  Off by default.
-    ``scale_the_objective``: multiplier on the whole objective (1.0 = none).
+    ``scale_the_objective``: multiplier on the whole objective, constant
+    included (1.0 = none).  Declared to polar-high
+    (``Problem.set_objective_scale``), which then reads objective-valued
+    solver options (targets, bounds, cutoffs, absolute gaps) in unscaled
+    currency.
     ``solve_name``: the solve this LP is for; named in the configuration errors and warnings of the build.
     """
-    b = _Build(m=m, d=d, include_existing_fixed_cost=include_existing_fixed_cost, solve_name=solve_name)
+    b = _Build(m=m, d=d, include_existing_fixed_cost=include_existing_fixed_cost,
+               scale_the_objective=scale_the_objective, solve_name=solve_name)
     # Objective steps return their term (or None); terms are summed in this
     # order.  Constraint steps return None.
     obj = None
@@ -514,6 +521,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     if scale_the_objective != 1.0:
         obj = obj * scale_the_objective
     m.set_objective(obj, sense="min")
+    _objective_options.set_objective_scale(m, scale_the_objective)
     _build_prof("build_flextool:return")
 
 
@@ -5310,6 +5318,7 @@ def _obj_existing_fixed_cost(b: _Build) -> None:
     # Fixed cost of the capacity that exists in each period, currency (fixed_cost in currency/MW/year).
     # A constant: it moves the objective value but not the solution.  Added only with
     # include_existing_fixed_cost; when pd_branch_weight is present, periods without a weight row drop out.
+    # Multiplied by scale_the_objective like every other objective term.
     fc_frame = (
         d.p_entity_all_existing.frame.rename({"value": "exist"})
         .join(d.p_ed_fixed_cost.frame.rename({"value": "fc"}),
@@ -5326,7 +5335,7 @@ def _obj_existing_fixed_cost(b: _Build) -> None:
             contrib=pl.col("exist") * pl.col("fc") * pl.col("infl"))
     fc_const = fc_frame["contrib"].sum()
     if fc_const:
-        b.m.add_obj_constant(float(fc_const))
+        b.m.add_obj_constant(float(fc_const) * b.scale_the_objective)
 
 
 # ---------------------------------------------------------------------------

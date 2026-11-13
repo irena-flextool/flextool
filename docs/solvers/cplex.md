@@ -118,6 +118,9 @@ The error messages below are what FlexTool surfaces as `FlexToolUserError`.
   solution limit with a solution is kept with a warning; an LP, or a MIP
   without a solution, stops the run. See
   [Time and other limits](index.md#time-and-other-limits).
+- **Objective values.** Cutoffs, objective stops and limits, and absolute gaps (`mip tolerances absmipgap`, ...)
+  are written in unscaled currency; FlexTool scales them to the objective CPLEX sees (see
+  [Time and other limits](index.md#time-and-other-limits)).
 
 ## Licence holders and other programs in front of CPLEX
 

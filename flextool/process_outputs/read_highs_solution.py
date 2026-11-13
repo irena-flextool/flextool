@@ -1284,6 +1284,7 @@ def write_v_obj(
     output_dir: Path | str,
     flex_data: "FlexData | None" = None,
     scale_the_objective: float | None = None,
+    obj_offset: float = 0.0,
 ) -> Path:
     """Write ``v_obj__{solve}.parquet`` — objective value for this solve.
 
@@ -1291,7 +1292,11 @@ def write_v_obj(
     ``getObjectiveValue()`` returns the raw (scaled) value; we undo the
     scaling.  ``scale_the_objective`` is per-solve, cascade-threaded
     (item 163: no work-folder CSV fallback); ``None``/non-positive falls
-    back to the legacy ``1e-6`` scalar.
+    back to the legacy ``1e-6`` scalar.  ``obj_offset`` is the objective
+    constant (``Problem.add_obj_constant``, scaled) that the handle's
+    objective leaves out (``Solution.obj_offset``: polar-high >= 3.14.0
+    keeps it out of HiGHS, and an MPS file never carries it); it is added
+    back.  The autoscale-stashed objective already includes it.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1307,7 +1312,7 @@ def write_v_obj(
     # post-Layer-2-substitution / post-user_bound_scale-unscale value.
     raw_obj = getattr(h, "_flextool_unscaled_objective", None)
     if raw_obj is None:
-        raw_obj = float(h.getObjectiveValue())
+        raw_obj = float(h.getObjectiveValue()) + float(obj_offset)
     obj = float(raw_obj) * inv_scale
     df = pd.DataFrame(
         {"objective": [obj]},
@@ -1832,12 +1837,15 @@ def write_all_variables(
     flex_data: "FlexData | None" = None,
     scale_the_objective: float | None = None,
     provider: "object | None" = None,
+    obj_offset: float = 0.0,
 ) -> list[Path]:
     """Iterate :data:`VARIABLE_SPECS` (or a custom list) and write parquets.
 
     Returns the list of paths written, one per variable.  Each variable
     is independent — failure on one is logged and does not abort the
     remaining ones, so one bad variable can't lose the whole run.
+    ``obj_offset``: the objective constant ``h.getObjectiveValue()`` leaves
+    out (``Solution.obj_offset``; see :func:`write_v_obj`).
     """
     specs = specs if specs is not None else VARIABLE_SPECS
     written: list[Path] = []
@@ -1901,6 +1909,7 @@ def write_all_variables(
             h, solve_name=solve_name, output_dir=output_dir,
             flex_data=flex_data,
             scale_the_objective=scale_the_objective,
+            obj_offset=obj_offset,
         )),
         ("v_dual_invest_{unit,connection,node}", lambda: write_v_dual_invest_by_class(
             h, solve_name=solve_name, output_dir=output_dir,

@@ -66,6 +66,10 @@ from flextool.engine.solve._acceptance import (
 from flextool.run_options import RunOptions
 from flextool._thread_budget import highs_thread_options
 from flextool.engine.solve._handoff import SolveHandoff
+from flextool.engine.solve import _objective_options
+from flextool.engine.solve._objective_options import (
+    check_benders_options as _check_benders_objective_options,
+)
 from flextool.engine.preprocess._stochastic_detect import (
     is_genuinely_stochastic as _is_genuinely_stochastic,
 )
@@ -113,6 +117,7 @@ def _format_solver_args_line(
     *,
     prefer_first: "Sequence[str]" = (),
     solver: str | None = None,
+    translated: "Mapping[str, str] | None" = None,
 ) -> str | None:
     """Render the effective solver options as a one-liner.
 
@@ -139,14 +144,31 @@ def _format_solver_args_line(
     A commercial solve passes *solver*: the line then reads
     ``Solver args (<solver>): ...`` and lists the native parameters the
     CLI receives (option file included, since it has no engine baseline).
+
+    *translated* maps an objective-valued option (written in unscaled
+    currency) to its text from :func:`_objective_options.echo_values`: the
+    value the solver gets, then the value the user wrote in parentheses.
     """
     if not effective_options:
         return None
+    translated = translated or {}
     order = [k for k in prefer_first if k in effective_options]
     order += [k for k in effective_options if k not in order]
-    body = ", ".join(f"{k}={effective_options[k]}" for k in order)
+    body = ", ".join(f"{k}={translated.get(k, effective_options[k])}" for k in order)
     label = f"Solver args ({solver})" if solver else "Solver args"
     return f"{label}: {body}"
+
+
+def _highs_echo_translations(
+    problem: "Problem", echoed: "Mapping[str, Any] | None", solve_name: str,
+) -> dict[str, str]:
+    """The ``Solver args`` text of the objective-valued HiGHS options in *echoed* (the user's layers): the value
+    HiGHS compares (``scale_the_objective`` × ``2**user_objective_scale`` of the options applied to *problem*,
+    autoscale Layer 3 included) and the value written.  polar-high itself translates them for the solve."""
+    _, records = _objective_options.translate_for_solver(
+        problem, "highs", "direct", echoed, solve_name=solve_name, factor_from_problem=True,
+    )
+    return _objective_options.echo_values(records)
 
 
 # Legacy ``scale_the_objective`` default — historically the
@@ -371,6 +393,32 @@ def _solve_highs_options(
         # A highs.opt found outside a workspace this computer set up gets the database's rules (item 240 B3).
         highs_opt_untrusted=files.untrusted_note("highs") if files is not None and highs_opt_text is not None else None,
     )
+
+
+def _highs_option_layers(
+    state: "RunnerState", complete_solve_name: str, options: "Mapping[str, Any] | None",
+) -> dict[str, str]:
+    """Where each of the solve's user HiGHS *options* was set, for a message: the solve's
+    ``solver_arguments``, a flag / environment variable, else ``highs.opt`` (the lowest layer; also the
+    layer reported for ``mip_rel_gap`` set by ``solve.solver_mip_gap``)."""
+    solver_arguments = state.solve.solver_settings.arguments.get(complete_solve_name, {}) or {}
+    operator = _operator_highs_overrides(state.run_options)
+    files = state.paths.solver_option_files
+    if files is not None:
+        opt_label = str(files.origin("highs"))
+    elif state.paths.solver_config_dir is not None:
+        opt_label = str(state.paths.solver_config_dir / "highs.opt")
+    else:
+        opt_label = "highs.opt"
+    layers: dict[str, str] = {}
+    for name in options or {}:
+        if name in operator:
+            layers[name] = "command-line flag or environment variable"
+        elif name in solver_arguments:
+            layers[name] = f"solver_arguments of solve {complete_solve_name}"
+        else:
+            layers[name] = opt_label
+    return layers
 
 
 def _autoscale_emit_layer1(
@@ -2891,6 +2939,18 @@ def _drive_cascade(
                     f"{entry['region']} done (obj={entry['obj']:.6g})"
                 )
 
+            # The user layers of the solve's HiGHS options (highs.opt <
+            # solver_mip_gap < solver_arguments < CLI flags).  No engine
+            # baseline: Benders keeps its own validated pins.  A whole-model
+            # objective target / bound is refused here, before any build.
+            _benders_options = _solve_highs_options(
+                state, complete_solve_name, baseline=None,
+            )
+            _check_benders_objective_options(
+                _benders_options,
+                solve_name=base_solve_name,
+                layers=_highs_option_layers(state, complete_solve_name, _benders_options),
+            )
             # Benders master and region solves run on HiGHS (polar-high).
             run_record.active().note_solver("highs")
             result = solve_benders(
@@ -2903,12 +2963,7 @@ def _drive_cascade(
                 in_out_weight=in_out_weight_db,
                 progress_callback=_on_iteration,
                 subsolve_callback=_on_subsolve,
-                # The user layers of the solve's HiGHS options (highs.opt <
-                # solver_mip_gap < solver_arguments < CLI flags).  No engine
-                # baseline: Benders keeps its own validated pins.
-                solver_options=_solve_highs_options(
-                    state, complete_solve_name, baseline=None,
-                ),
+                solver_options=_benders_options,
                 scaling_config=scaling_config,
                 # ``--benders-workers`` / ``FLEXTOOL_BENDERS_WORKERS`` and
                 # ``FLEXTOOL_BENDERS_IN_OUT_WEIGHT``, resolved once for the run.
@@ -3808,6 +3863,9 @@ def _drive_cascade(
                 _eff_touched = _solve_highs_options(state, complete_solve_name, baseline=None)
                 _sa_line = _format_solver_args_line(
                     _eff_touched, prefer_first=list(_solver_args_map or {}),
+                    translated=_highs_echo_translations(
+                        self._warm_problem.problem, _eff_touched, complete_solve_name,
+                    ),
                 )
                 if _sa_line:
                     print(_sa_line, flush=True)
@@ -4195,9 +4253,17 @@ def _drive_cascade(
                             solve_name=complete_solve_name,
                             logger=state.logger,
                         )
+                        # The values in unscaled currency become the solver's
+                        # values when the option file is written
+                        # (``solve_via_subprocess``); the echo shows both.
+                        _, _commercial_translated = _objective_options.translate_for_solver(
+                            pb, _active_solver_cfg.name, "mps", _commercial_opts,
+                            solve_name=complete_solve_name,
+                        )
                         _sa_line = _format_solver_args_line(
                             {o.name: o.value for o in _commercial_opts},
                             solver=_active_solver_cfg.name,
+                            translated=_objective_options.echo_values(_commercial_translated),
                         )
                     else:
                         _sa_line = None
@@ -4205,6 +4271,7 @@ def _drive_cascade(
                     _eff_touched = _solve_highs_options(state, complete_solve_name, baseline=None)
                     _sa_line = _format_solver_args_line(
                         _eff_touched, prefer_first=list(_solver_args_map or {}),
+                        translated=_highs_echo_translations(pb, _eff_touched, complete_solve_name),
                     )
                 if _sa_line:
                     print(_sa_line, flush=True)

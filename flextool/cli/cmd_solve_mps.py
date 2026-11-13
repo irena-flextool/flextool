@@ -199,6 +199,9 @@ def main(argv: list[str] | None = None) -> int:
             stats = {
                 "simplex_iteration_count": int(info.simplex_iteration_count),
                 "model_status": str(model_status),
+                # The MPS objective: the file carries no objective constant
+                # (``Problem.write_mps``); the parent's Solution adds
+                # ``Problem._obj_offset`` back (``_set_objective_constant``).
                 "objective": float(h.getObjectiveValue()),
                 "warm_basis_used": warm_basis_used,
                 "run_time": run_time,

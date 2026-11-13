@@ -459,7 +459,8 @@ def highs_objective_bound_warning(
     if not math.isfinite(bound) or not _is_mip(sol):
         return None
     return (
-        f"Solve {solve_name} is a MIP solved by HiGHS with objective_bound {bound:g}: HiGHS treats the bound as "
+        f"Solve {solve_name} is a MIP solved by HiGHS with objective_bound {bound:g} (unscaled currency): HiGHS "
+        "treats the bound as "
         "a cutoff and reports the best solution within it as optimal, so this solution may not be optimal. "
         "Remove objective_bound for a proven optimum."
     )

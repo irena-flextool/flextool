@@ -119,6 +119,9 @@ the FlexTool log.
   solution or work limit, or at `BestObjStop` / `BestBdStop`, with a solution is
   kept with a warning that gives the gap reached; an LP, or a MIP without a
   solution, stops the run. See [Time and other limits](index.md#time-and-other-limits).
+- **Objective values.** `BestObjStop`, `BestBdStop`, `Cutoff`, `MIPGapAbs` and `PoolGapAbs` are written in
+  unscaled currency; FlexTool scales them to the objective Gurobi sees (see
+  [Time and other limits](index.md#time-and-other-limits)).
 
 ## How to set it in FlexTool
 

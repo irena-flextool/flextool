@@ -776,6 +776,37 @@ optimal: HiGHS treats the bound as a cutoff and reports the best solution
 within it as optimal, so it may not be the optimum. Remove `objective_bound`
 for a proven one.
 
+**Objective values are in unscaled currency.** An option that is an objective
+value — a target, bound or cutoff, or an absolute gap — is written in the
+currency of the model's cost data (not the million currency of the cost
+outputs). The solver works on a
+scaled objective: the cost times the solve's `scale_the_objective` (default
+1e-6) and, for HiGHS, times `2^user_objective_scale` (set by the autoscaler, or
+by you). FlexTool scales these options by the same factors before the solver
+gets them, in every solve path: in-process HiGHS, `--save-memory` and the
+commercial solvers' option files. The `Solver args` line shows the value the
+solver gets and, in parentheses, the value you wrote, for example
+`mip_abs_gap=0.5 (500000 in unscaled currency)`. The options:
+
+| Solver | Objective level (target, bound, cutoff) | Objective difference (absolute gap) |
+|--------|-----------------------------------------|-------------------------------------|
+| HiGHS  | `objective_target`, `objective_bound` | `mip_abs_gap` |
+| Gurobi | `BestObjStop`, `BestBdStop`, `Cutoff` | `MIPGapAbs`, `PoolGapAbs` |
+| CPLEX  | `mip tolerances lowercutoff` / `uppercutoff`, `mip limits lowerobjstop` / `upperobjstop`, `simplex limits lowerobj` / `upperobj` | `mip tolerances absmipgap`, `mip tolerances objdifference`, `mip pool absgap`, `mip polishafter absmipgap`, `barrier limits objrange` |
+| Xpress | `MIPABSCUTOFF` | `MIPADDCUTOFF`, `MIPABSSTOP` |
+| COPT   | (none) | `AbsGap` |
+
+Relative gaps and tolerances (`mip_rel_gap`, `MIPGap`, `--solver-mip-gap`,
+...) have no unit and are passed as written. A value of 1e20 or more, or
+`inf`, means "off" and is passed as written. In a rolling solve each roll
+compares the value with its own objective (each roll's cost, not the whole
+horizon's); in a stochastic solve, with the expected cost over the branches.
+A Benders solve refuses an objective target or bound, naming the option and
+where it was set: a whole-model level has no meaning for the master or a
+region. Its absolute gaps are passed, scaled for each part. These options
+need polar-high 3.14.0 or newer; with an older polar-high a solve that sets
+one of them is refused.
+
 FlexTool reads how a solve ended from the solver's result file (HiGHS, Gurobi's
 JSON result, CPLEX) or from its console log (COPT, Xpress; Gurobi when it
 writes a text result file). With COPT's log turned off (`Logging 0` or

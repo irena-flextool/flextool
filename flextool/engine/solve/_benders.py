@@ -121,6 +121,7 @@ from flextool.engine.autoscale import (
 )
 from flextool.engine.solve._region_filter import HalfFlow, RegionSplit
 from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.engine.solve import _objective_options
 from flextool.engine.preprocess._stochastic_detect import (
     is_genuinely_stochastic as _is_genuinely_stochastic,
 )
@@ -1200,6 +1201,9 @@ class _BendersMaster:
             ),
         )
         m.set_objective(Sum(C * cost_param) + Sum(eta))
+        # The master's objective is in the regions' scaled space: absolute-gap options, written in unscaled
+        # currency, are scaled by the same factor.
+        _objective_options.set_objective_scale(m, self._obj_scale)
         if self._solver_options:
             m.set_solver_options(self._solver_options)
 
@@ -2107,7 +2111,10 @@ def solve_benders(
         While the region pass runs on more than one worker, ``threads`` /
         ``parallel`` reach the master only: the regions stay single-threaded
         so the parallel pass stays deterministic.  A time limit applies to
-        each sub-solve, not to the whole decomposition.  ``None`` = HiGHS
+        each sub-solve, not to the whole decomposition.  An objective target
+        or bound (``objective_target`` / ``objective_bound``) is a
+        :class:`FlexToolConfigError`; an absolute gap (``mip_abs_gap``, in
+        unscaled currency) is scaled for each Problem.  ``None`` = HiGHS
         defaults (tests).
     scaling_config
         The solve's autoscaler config (the run's ``--scaling`` /
@@ -2119,6 +2126,9 @@ def solve_benders(
     -------
     BendersResult
     """
+    # A whole-model objective target / bound is meaningless on the master or a region (the cascade checks it
+    # first, naming the option layers; this guards a direct call).
+    _objective_options.check_benders_options(solver_options, solve_name=None)
     # Slice C Guard 2 (defensive): a caller reaching solve_benders while
     # bypassing _run_benders_solve (the primary guard site) still fails
     # loudly on a stochastic model.  Same shared detector on the master

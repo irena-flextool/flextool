@@ -87,6 +87,13 @@ Each line says what changes for a model that ran before and what to do; the deta
   So does an objective target the user set (HiGHS `objective_target`, Gurobi `BestObjStop`). A memory limit, an
   interrupt, or a solve not certified optimal still stops the run. A HiGHS MIP solved with `objective_bound` gets
   a warning that its "optimal" may not be optimal.
+- **Objective targets, bounds, cutoffs and absolute gaps are in unscaled currency** (the currency of the model's
+  cost data), on every solver: HiGHS `objective_target`, `objective_bound`, `mip_abs_gap`; Gurobi `BestObjStop`,
+  `BestBdStop`, `Cutoff`, `MIPGapAbs`; CPLEX cutoffs, objective stops and absolute gaps; Xpress `MIPABSCUTOFF`,
+  `MIPADDCUTOFF`, `MIPABSSTOP`; COPT `AbsGap`. Before, the solver compared the value with its scaled objective
+  (`scale_the_objective`, default 1e-6, times the autoscaler's HiGHS factor), so with the defaults a value acted
+  roughly as million currency. Multiply an existing value by 1 000 000 (more if you changed
+  `scale_the_objective`). A Benders solve refuses an objective target or bound.
 - **Solver option files come from the run's `solver_config` folders, file by file** (`--solver-config-dir`, next to
   the database, the project, the workspace, ...), not from the folder FlexTool starts in. A GUI project can have its
   own `solver_config/`: its runs take each solver's option file from the project, else the workspace, else
@@ -797,6 +804,22 @@ Each line says what changes for a model that ran before and what to do; the deta
   its solution with a warning, as at a search limit. A HiGHS MIP solved with `objective_bound` (from any option
   layer) gets a warning, once per solve: HiGHS treats the bound as a cutoff and reports the best solution within it as optimal, so
   it may not be the optimum.
+- **Objective-valued solver options are scaled to the objective the solver sees.** A target, bound, cutoff or
+  absolute gap (HiGHS `objective_target`, `objective_bound`, `mip_abs_gap`, and each commercial solver's
+  equivalents, listed in [Time and other limits](docs/solvers/index.md#time-and-other-limits)) is written in unscaled
+  currency; FlexTool and polar-high multiply it by `scale_the_objective` and HiGHS's `user_objective_scale` (set by
+  the autoscaler or by you) before the solver gets it, in-process, with `--save-memory` and in the commercial
+  solvers' option files. Before, the value reached the solver unchanged, so it meant a different amount for every
+  `scale_the_objective` and autoscale factor. The `Solver args` line shows both values, the solver's first:
+  `mip_abs_gap=0.5 (500000 in unscaled currency)`. Relative gaps are unchanged. A Benders solve with an objective
+  target or bound (`objective_target` / `objective_bound`) is refused before it starts, naming the option and where
+  it was set: such a value has no meaning for the master or a region; absolute gaps are passed, scaled. Needs
+  polar-high 3.14.0; with an older polar-high a solve that sets one of these options is refused, and every other
+  solve runs as before.
+- **The existing fixed cost constant is scaled with the rest of the objective.** With
+  `include_existing_fixed_cost` (used by tests), the constant was added unscaled, so the objective mixed scaled and
+  unscaled currency; and an objective read from a `--save-memory` or commercial solve, or after autoscaling, left the
+  constant out. Production runs do not add the constant: their results do not change.
 - **A memory limit, an aborted solve, or a solution the solver does not certify as optimal stops the run**, naming
   the solver's status, even with a solution. Before, a CPLEX, Gurobi or COPT solve stopped at its memory limit or
   aborted was reported optimal. Not certified are, for example, a CPLEX solution "optimal with unscaled

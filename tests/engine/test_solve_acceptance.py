@@ -802,7 +802,8 @@ def test_highs_mip_with_an_objective_bound_warns_that_optimal_may_not_be_optimal
     acc = classify_acceptance(sol, ranges_post=None, solve_name="s")
     assert acc.accepted and acc.model_status == "kOptimal" and not acc.limit_stopped
     assert highs_objective_bound_warning(sol, "s", options) == (
-        "Solve s is a MIP solved by HiGHS with objective_bound -1760: HiGHS treats the bound as a cutoff and "
+        "Solve s is a MIP solved by HiGHS with objective_bound -1760 (unscaled currency): HiGHS treats the bound "
+        "as a cutoff and "
         "reports the best solution within it as optimal, so this solution may not be optimal. Remove "
         "objective_bound for a proven optimum."
     )
