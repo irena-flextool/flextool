@@ -208,6 +208,34 @@ def test_objective_bound_check_sees_every_layer(options_db, tmp_path, monkeypatc
         [logging.WARNING] * len(seen))
 
 
+def test_objective_bound_warning_once_per_rolling_solve(tmp_path_factory, monkeypatch, caplog) -> None:
+    """Item 246 (review R2): every roll of a rolling solve has the same options, so the ``objective_bound``
+    warning names the solve once, not once per roll."""
+    import logging
+
+    from flextool.engine.solve import _orchestration
+    from tests.engine._unit_db import b64, make_db, run
+
+    def recorder(sol, solve_name, solver_options):
+        return f"objective_bound check of {solve_name}"
+
+    monkeypatch.setattr(_orchestration, "highs_objective_bound_warning", recorder)
+    monkeypatch.delenv("FLEXTOOL_SAVE_MEMORY", raising=False)
+    roll = "dispatch_fullYear_roll"
+    pmap = b64({"index_type": "str", "index_name": "period", "data": [["p2020", "5weeks"]]}, "map")
+    values = [["solve", roll, "period_timeset", pmap],
+              ["solve", roll, "realized_periods", b64({"value_type": "str", "data": ["p2020"]}, "array")],
+              ["solve", roll, "rolling_solve_horizon", b64(8.0, "float")],
+              ["solve", roll, "rolling_solve_jump", b64(4.0, "float")]]
+    url, scen = make_db(tmp_path_factory, alt="bound_roll", values=values,
+                        base_chain=["init", "west", "coal", "fullYear", roll])
+    with caplog.at_level(logging.WARNING):
+        steps = run(tmp_path_factory, url, scen)
+    assert sum(1 for name in steps if name.startswith(f"{roll}_roll_")) > 1
+    assert [r.getMessage() for r in caplog.records if r.getMessage().startswith("objective_bound check of")] == [
+        f"objective_bound check of {roll}"]
+
+
 def test_a_kept_limit_stopped_solve_is_logged_as_a_warning(options_db, tmp_path, monkeypatch, caplog) -> None:
     """Item 246: the warning of a solve kept at a limit reaches the run's log as a WARNING (the runner's own
     logger is held at ERROR during the cascade, so it must not go there)."""

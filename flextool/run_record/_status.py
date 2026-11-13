@@ -221,8 +221,15 @@ def options_resolved_record(run_options: "RunOptions") -> dict[str, dict[str, An
     return out
 
 
+# A log record with this attribute set (``extra={IN_SOLVE_RECORD: True}``) is already in its solve's entry
+# (``solves[].message``), so the warning handler does not add it to ``warnings`` a second time.
+IN_SOLVE_RECORD = "flextool_in_solve_record"
+
+
 class _WarningHandler(logging.Handler):
     """Collects WARNING and worse records into the active recorder's ``warnings`` list.
+
+    A record marked :data:`IN_SOLVE_RECORD` is skipped: its solve's entry already holds the message.
 
     It takes no lock of its own (:meth:`handle` skips the handler lock) and never the recorder's: a record is
     queued under the recorder's leaf lock and merged into the status by the next write.  So a thread that logs
@@ -242,6 +249,8 @@ class _WarningHandler(logging.Handler):
         return rv
 
     def emit(self, record: logging.LogRecord) -> None:
+        if getattr(record, IN_SOLVE_RECORD, False):
+            return
         try:
             message = record.getMessage()
         except Exception:  # noqa: BLE001 - a malformed log call must not break the run

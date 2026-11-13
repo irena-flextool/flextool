@@ -748,9 +748,10 @@ solve's `solver_arguments`: a node, leaf, solution-count, work or iteration
 limit (HiGHS `mip_max_nodes`, `mip_max_leaves`, `mip_max_stall_nodes`,
 `mip_max_improving_sols`, `simplex_iteration_limit`, ...; Gurobi `NodeLimit`,
 `SolutionLimit`, `WorkLimit`, `IterationLimit`; CPLEX `mip limits nodes`,
-`mip limits solutions`; COPT `NodeLimit`), and for an objective target or
-bound you set (HiGHS `objective_target` and `objective_bound`, Gurobi
-`BestObjStop` and `BestBdStop`). When a solve stops at one of them:
+`mip limits solutions`; COPT `NodeLimit`), and for an objective target you
+set (HiGHS `objective_target`, Gurobi `BestObjStop` and `BestBdStop`; HiGHS
+`objective_bound` works differently, see below). When a solve stops at one
+of them:
 
 - a MIP with a solution found keeps that solution, with a warning naming the
   solve, the limit, its option and, when the solver reports it, the gap
@@ -770,10 +771,10 @@ certify as optimal, such as CPLEX's "optimal with unscaled infeasibilities" or
 "optimal face unbounded", or Gurobi's "suboptimal".
 
 A HiGHS MIP solved with `objective_bound` set (in `highs.opt` or the solve's
-`solver_arguments`) gets a warning even when HiGHS reports it optimal: HiGHS
-treats the bound as a cutoff and reports the best solution within it as
-optimal, so it may not be the optimum. Remove `objective_bound` for a proven
-one.
+`solver_arguments`) gets a warning, once per solve, even when HiGHS reports it
+optimal: HiGHS treats the bound as a cutoff and reports the best solution
+within it as optimal, so it may not be the optimum. Remove `objective_bound`
+for a proven one.
 
 FlexTool reads how a solve ended from the solver's result file (HiGHS, Gurobi's
 JSON result, CPLEX) or from its console log (COPT, Xpress; Gurobi when it

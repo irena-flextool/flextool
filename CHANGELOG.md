@@ -84,9 +84,9 @@ Each line says what changes for a model that ran before and what to do; the deta
   per-algorithm thread controls (Xpress `BARTHREADS`, COPT `BarThreads`, ...) are not changed.
 - **At a search limit (time, node, solution, work or iteration) a MIP with a solution keeps it, with a warning
   naming the limit, its option and the gap; an LP or a solve without a solution stops the run**, for every solver.
-  So does an objective target or bound the user set (HiGHS `objective_target`, Gurobi `BestObjStop`). A memory
-  limit, an interrupt, or a solve not certified optimal still stops the run. A HiGHS MIP solved with
-  `objective_bound` gets a warning that its "optimal" may not be optimal.
+  So does an objective target the user set (HiGHS `objective_target`, Gurobi `BestObjStop`). A memory limit, an
+  interrupt, or a solve not certified optimal still stops the run. A HiGHS MIP solved with `objective_bound` gets
+  a warning that its "optimal" may not be optimal.
 - **Solver option files come from the run's `solver_config` folders, file by file** (`--solver-config-dir`, next to
   the database, the project, the workspace, ...), not from the folder FlexTool starts in. A GUI project can have its
   own `solver_config/`: its runs take each solver's option file from the project, else the workspace, else
@@ -786,20 +786,25 @@ Each line says what changes for a model that ran before and what to do; the deta
   when the solver reports it), and the run goes on; an LP, or a solve without a solution, stops the run. This is
   the same for every solver (a Benders master or region solve stops the run at its limit, as before). Before,
   HiGHS and CPLEX stopped the run at the limit even with a usable MIP solution, so such runs now finish; Gurobi,
-  COPT and Xpress reported a solve stopped at its time limit as optimal, without a word. A CPLEX, Gurobi or COPT
-  solve stopped by another limit (nodes, iterations, solutions, memory) or aborted was also reported optimal. Now
-  a node, solution, work or iteration limit keeps a MIP solution like the time limit, with a warning naming the
-  limit, its option (e.g. Gurobi `NodeLimit`, HiGHS `mip_max_nodes`) and the gap, and stops an LP; a memory limit
-  or an abort stops the run, naming the solver's status. HiGHS's node, leaf and improving-solution limits (and the
-  same limits of a `--save-memory` solve) were rejected as an "unrecognised status"; they follow the same rule. A
-  MIP stopped at an objective target (HiGHS `objective_target`, Gurobi `BestObjStop` / `BestBdStop`) keeps its
-  solution with a warning too. A HiGHS MIP solved with `objective_bound` (from any option layer) gets a warning:
-  HiGHS treats the bound as a cutoff and reports the best solution within it as optimal, so it may not be. The
-  warning of a solve kept at a limit now reaches the run log (before, it was dropped). A `--save-memory` solve
-  stopped by a limit before it found a solution is recorded as stopped at a limit in the run record (before, as not
-  certified). So does a CPLEX solution "optimal with unscaled
-  infeasibilities" or with an "optimal face unbounded", which is not a certified optimum, and a COPT solve (or a
-  Gurobi one with a text result file) whose log is turned off, since how it ended cannot be read.
+  COPT and Xpress reported a solve stopped at its time limit as optimal, without a word. With
+  `FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0` a MIP stopped at its time limit now stops the run too, as at any other limit.
+- **A solve stopped by another search limit (nodes, solutions, work, iterations) follows the time-limit rule**: a
+  MIP with a solution keeps it, with a warning naming the limit, its option (e.g. Gurobi `NodeLimit`, HiGHS
+  `mip_max_nodes`) and the gap; an LP stops the run. Before, a CPLEX, Gurobi or COPT solve stopped by such a limit
+  was reported optimal, and HiGHS's node, leaf and improving-solution limits (also with `--save-memory`) were
+  rejected as an "unrecognised status".
+- **A MIP stopped at an objective target** (HiGHS `objective_target`, Gurobi `BestObjStop` / `BestBdStop`) keeps
+  its solution with a warning, as at a search limit. A HiGHS MIP solved with `objective_bound` (from any option
+  layer) gets a warning, once per solve: HiGHS treats the bound as a cutoff and reports the best solution within it as optimal, so
+  it may not be the optimum.
+- **A memory limit, an aborted solve, or a solution the solver does not certify as optimal stops the run**, naming
+  the solver's status, even with a solution. Before, a CPLEX, Gurobi or COPT solve stopped at its memory limit or
+  aborted was reported optimal. Not certified are, for example, a CPLEX solution "optimal with unscaled
+  infeasibilities" or with an "optimal face unbounded", and a COPT solve (or a Gurobi one with a text result file)
+  whose log is turned off, since how it ended cannot be read.
+- **The warning of a solve kept at a limit now reaches the run log** (before, it was dropped). The run record
+  keeps it once, as the solve's message. A `--save-memory` solve stopped by a limit before it found a solution is
+  recorded as stopped at a limit (before, as not certified).
 - **HiGHS's time-limit warning names the MIP gap** with `--save-memory`, as the commercial solvers' does; before,
   it pointed to the solver log. An in-process HiGHS solve names it too once a polar-high release newer than 3.12.4
   is installed (one whose `SolveDiagnostics` has `mip_gap`); with 3.12.4 it still points to the solver log. A gap

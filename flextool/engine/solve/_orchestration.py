@@ -4377,19 +4377,31 @@ def _drive_cascade(
                 return 1
             # The two warnings below go to this module's logger: the runner's
             # own (``self.state.logger``) is held at ERROR during the cascade,
-            # so a warning there never reaches the run's output.
+            # so a warning there never reaches the run's output.  The limit
+            # warning is already the solve's message in the run record
+            # (``solve_classified`` above), so it is not added to the
+            # record's warnings again.
             if _acc.limit_stopped:
-                logging.getLogger(__name__).warning(_acc.message)
+                logging.getLogger(__name__).warning(
+                    _acc.message, extra={run_record.IN_SOLVE_RECORD: True},
+                )
             elif _acc.near_optimal:
                 self.state.logger.info(_acc.message)
             if _active_solver_cfg.name == "highs" and _acc.model_status == "kOptimal":
                 # A HiGHS MIP treats ``objective_bound`` as a cutoff and calls
-                # the best solution within it optimal.
-                _bound_warning = highs_objective_bound_warning(
-                    sol, complete_solve_name, highs_options,
+                # the best solution within it optimal.  Every roll of a solve
+                # has the same options, so the warning names the solve once.
+                _bound_solve = re.sub(r"_roll_\d+$", "", complete_solve_name)
+                _bound_warned = self.state.__dict__.setdefault(
+                    "_objective_bound_warned", set(),
                 )
-                if _bound_warning is not None:
-                    logging.getLogger(__name__).warning(_bound_warning)
+                if _bound_solve not in _bound_warned:
+                    _bound_warning = highs_objective_bound_warning(
+                        sol, _bound_solve, highs_options,
+                    )
+                    if _bound_warning is not None:
+                        _bound_warned.add(_bound_solve)
+                        logging.getLogger(__name__).warning(_bound_warning)
             if _acc.above_fixed_ceiling:
                 from flextool.engine import _behaviour_changes
                 _behaviour_changes.notice(
