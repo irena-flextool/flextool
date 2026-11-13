@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import bisect
 import logging
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
@@ -429,6 +430,20 @@ class StochasticSolver:
             self.logger.error(message)
             raise FlexToolConfigError(message)
 
+    @staticmethod
+    def _fan_points(
+        solves: list[str],
+        branch_start_time_lists: dict[str, Any],
+        complete_solves: dict[str, str],
+    ) -> defaultdict[str, set]:
+        """``{complete solve: {(period, step), ...}}`` -- the fan point of
+        every sub-solve (solve or roll) that fans out, per complete solve."""
+        triggers: defaultdict[str, set] = defaultdict(set)
+        for x in solves:
+            if branch_start_time_lists.get(x) is not None:
+                triggers[complete_solves[x]].add(tuple(branch_start_time_lists[x]))
+        return triggers
+
     def _check_unfanned_cohorts(
         self,
         unfanned: dict[str, tuple[str, str, bool, list]],
@@ -459,10 +474,7 @@ class StochasticSolver:
             FlexToolConfigError: For the first sub-solve with such a cohort,
                 naming the solve (roll), its fan point and every cohort.
         """
-        triggers: defaultdict[str, set] = defaultdict(set)
-        for x in solves:
-            if branch_start_time_lists.get(x) is not None:
-                triggers[complete_solves[x]].add(tuple(branch_start_time_lists[x]))
+        triggers = self._fan_points(solves, branch_start_time_lists, complete_solves)
         for s in solves:
             if s not in unfanned:
                 continue
@@ -501,6 +513,116 @@ class StochasticSolver:
                 f"once, but the stochastic_branches of solve {c!r} also "
                 f"declare forecast branches later in its horizon: {items}. "
                 f"FlexTool would ignore them. {hint} Check stochastic_branches."
+            )
+            self.logger.error(message)
+            raise FlexToolConfigError(message)
+
+    def _check_realized_switch(
+        self,
+        unfanned_realized: dict[str, tuple[str, str, bool, list]],
+        solves: list[str],
+        branch_start_time_lists: dict[str, Any],
+        complete_solves: dict[str, str],
+        cohort_rows: dict[str, dict[tuple[str, str], list]],
+    ) -> None:
+        """Raise when the ``realized: yes`` rows of a solve would switch its
+        realization series (one realization series per solve).
+
+        R1: a fanned sub-solve reaches a later *realized-only* cohort (a
+        ``realized: yes`` row and no nonzero-weight forecast) that is not
+        the fan point of any sub-solve of its complete solve -- whatever
+        branch it names, such a row either switches the series or repeats
+        it.  Checked for every sub-solve in ``solves`` order, the first
+        offender raises.
+
+        R2: the fan points of one roll sequence (the sub-solve name without
+        its trailing ``_roll_<N>``) carry ``realized: yes`` rows naming
+        different branches.  A non-rolling sub-solve is a sequence of one
+        fan point and never raises; the per-outer-period copies of a nested
+        inner solve are separate sequences.  Sequences are checked in order
+        of first appearance in ``solves``.  A fan point without a
+        ``realized: yes`` row is not checked.
+
+        Args:
+            unfanned_realized: ``{solve: (trig_period, trig_step,
+                is_rolling_sub_solve, [(period, step, realized), ...])}``
+                -- the later realized-only cohorts reachable in each fanned
+                sub-solve, in timeline order.
+            solves: All sub-solves, in order.
+            branch_start_time_lists: ``{solve: (period, step) | None}``.
+            complete_solves: ``{solve: complete_solve_name}``.
+            cohort_rows: ``{complete solve: {(period, step): rows}}``.
+
+        Raises:
+            FlexToolConfigError: R1 before R2, naming the solve (roll), the
+                period, the analysis time and the branch.
+        """
+        triggers = self._fan_points(solves, branch_start_time_lists, complete_solves)
+        for s in solves:
+            if s not in unfanned_realized:
+                continue
+            trig_period, trig_step, is_rolling, realized_later = unfanned_realized[s]
+            c = complete_solves[s]
+            remaining = [
+                (p, t, r) for (p, t, r) in realized_later if (p, t) not in triggers[c]
+            ]
+            if not remaining:
+                continue
+            who = (
+                f"Roll {s!r} of rolling solve {c!r}" if is_rolling else f"Solve {s!r}"
+            )
+            items = "; ".join(
+                f"period {p!r} at analysis_time {t!r} ("
+                + ("realized branch " if len(r) == 1 else "realized branches ")
+                + ", ".join(repr(b) for b in r)
+                + ")"
+                for (p, t, r) in remaining
+            )
+            message = (
+                f"{who} opens its stochastic fan at period {trig_period!r} "
+                f"(analysis_time {trig_step!r}). The stochastic_branches of solve "
+                f"{c!r} also mark a realized branch later in its horizon, where no "
+                f"solve or roll fans out: {items}. That row would switch the "
+                "realization dispatch to that branch from that period on, or "
+                "only repeat the branch realized before. A solve has one realization "
+                "series: give the realized: yes row only where a solve or roll "
+                "fans out (in a rolling solve, where each roll fans out), always "
+                "with the same branch, and change that branch's series to give "
+                "the realization new data. Remove these rows. Check "
+                "stochastic_branches."
+            )
+            self.logger.error(message)
+            raise FlexToolConfigError(message)
+
+        # Roll sequence -> (complete solve, [(branch, period, step), ...]).
+        sequences: dict[str, tuple[str, list[tuple[str, str, str]]]] = dict()
+        seen: dict[str, set] = dict()
+        for x in solves:
+            fan = branch_start_time_lists.get(x)
+            if fan is None:
+                continue
+            key = re.sub(r"_roll_\d+$", "", x)
+            point = tuple(fan)
+            if point in seen.setdefault(key, set()):
+                continue
+            seen[key].add(point)
+            c = complete_solves[x]
+            marks = sequences.setdefault(key, (c, []))[1]
+            rows = cohort_rows.get(c, {}).get(point, [])
+            for b in sorted({r[1] for r in rows if r[3] == "yes"}):
+                marks.append((b, point[0], point[1]))
+        for c, marks in sequences.values():
+            if len({b for b, _p, _t in marks}) < 2:
+                continue
+            items = "; ".join(
+                f"{b!r} at period {p!r} (analysis_time {t!r})" for b, p, t in marks
+            )
+            message = (
+                f"The stochastic_branches of solve {c!r} mark different realized "
+                f"branches where its rolls fan out: {items}. A solve has one "
+                "realization series: name the same branch in every realized: yes "
+                "row, and give that branch the data of each roll at the roll's "
+                "analysis_time. Check stochastic_branches."
             )
             self.logger.error(message)
             raise FlexToolConfigError(message)
@@ -581,7 +703,12 @@ class StochasticSolver:
                 fanned sub-solve declares forecast branches at a later
                 reachable cohort (a later period, or a later step of the fan
                 period) that is not the fan point of any sub-solve of the
-                same complete solve (a solve or roll fans out only once).
+                same complete solve (a solve or roll fans out only once);
+                then when a fanned sub-solve marks a ``realized: yes`` row
+                at a later reachable cohort without forecasts where no
+                sub-solve fans out, or when the fan points of one roll
+                sequence mark different realized branches (one realization
+                series per solve; ``_check_realized_switch``).
         """
         period__branch_lists: defaultdict[str, list] = defaultdict(list)
         solve_branch__time_branch_lists: defaultdict[str, list] = defaultdict(list)
@@ -591,12 +718,16 @@ class StochasticSolver:
         # Later forecast cohorts reachable in each fanned sub-solve; checked
         # after the loop, once every sub-solve's fan point is known.
         unfanned: dict[str, tuple[str, str, bool, list]] = dict()
+        # Later realized-only cohorts (realized: yes, no forecast) reachable
+        # in each fanned sub-solve; checked after the loop.
+        unfanned_realized: dict[str, tuple[str, str, bool, list]] = dict()
         # Per complete solve: the stochastic_branches rows grouped by cohort
-        # (period, start_step), and the sorted forecast branches of each
-        # cohort reached so far.  Built once per complete solve, so a roll
+        # (period, start_step), and the sorted forecast and realized
+        # branches of each cohort reached so far.  Built once per complete solve, so a roll
         # walks only its own horizon, not every roll's rows.
         cohort_rows: dict[str, dict[tuple[str, str], list]] = dict()
         cohort_forecasts: dict[str, dict[tuple[str, str], list[str]]] = dict()
+        cohort_realized: dict[str, dict[tuple[str, str], list[str]]] = dict()
 
         for solve in solves:
             new_realized_time_list: dict = dict()
@@ -767,9 +898,12 @@ class StochasticSolver:
                         rows_by_cohort[(row[0], row[2])].append(row)
                     cohort_rows[complete] = dict(rows_by_cohort)
                     cohort_forecasts[complete] = dict()
+                    cohort_realized[complete] = dict()
                 rows_by_cohort_c = cohort_rows[complete]
                 forecasts_by_cohort = cohort_forecasts[complete]
+                realized_by_cohort = cohort_realized[complete]
                 candidates = []
+                realized_later = []
                 for period_c in order[trig_index:]:
                     steps_c = [e.timestep for e in active_time_list[period_c]]
                     for idx_c, step_c in enumerate(steps_c):
@@ -792,6 +926,19 @@ class StochasticSolver:
                             forecasts_by_cohort[cohort] = forecasts
                         if forecasts:
                             candidates.append((period_c, step_c, forecasts))
+                            continue
+                        realized = realized_by_cohort.get(cohort)
+                        if realized is None:
+                            realized = sorted(
+                                {
+                                    r[1]
+                                    for r in rows_by_cohort_c[cohort]
+                                    if r[3] == "yes"
+                                }
+                            )
+                            realized_by_cohort[cohort] = realized
+                        if realized:
+                            realized_later.append((period_c, step_c, realized))
                 if candidates:
                     unfanned[solve] = (
                         trig_period,
@@ -799,11 +946,20 @@ class StochasticSolver:
                         is_rolling_sub_solve,
                         candidates,
                     )
+                if realized_later:
+                    unfanned_realized[solve] = (
+                        trig_period,
+                        trig_step,
+                        is_rolling_sub_solve,
+                        realized_later,
+                    )
 
             # Walk periods — at the first branch trigger, fan out into
             # branches; subsequent periods continue the same branches (a
             # solve fans out only once: a later forecast cohort that no
-            # sub-solve fans out at is rejected by _check_unfanned_cohorts).
+            # sub-solve fans out at is rejected by _check_unfanned_cohorts,
+            # and a realized: yes row that would switch the realization
+            # series by _check_realized_switch).
             # NB: the reference implementation's continuation block
             # (flextoolrunner.py:1745-1752) was dead code — it never
             # wrote active/realized/fix-storage time for continuation
@@ -1022,6 +1178,13 @@ class StochasticSolver:
 
         self._check_unfanned_cohorts(
             unfanned, solves, branch_start_time_lists, complete_solves
+        )
+        self._check_realized_switch(
+            unfanned_realized,
+            solves,
+            branch_start_time_lists,
+            complete_solves,
+            cohort_rows,
         )
 
         return (

@@ -905,6 +905,11 @@ Each line says what changes for a model that ran before and what to do; the deta
   at its first reveal; forecast branches declared at a later period (or, in a roll, at a later time step where no
   roll fans out) were ignored without a message. The run now stops before solving, naming the solve or roll, the
   period, the analysis time and the branches. Remove the rows or put the later fan in its own solve or roll.
+- **A `realized: yes` row that switches the realization is an error.** In a rolling solve, a `realized: yes` row
+  where no roll fans out, or one where a roll fans out that names a different branch than at the other rolls' fan
+  points, silently switched the realization dispatch to that branch's series. The run now stops before solving,
+  naming the solve or roll, the period, the analysis time and the branch, as a single solve already did. Mark the
+  same realized branch where each roll fans out and change that branch's series to give the realization new data.
 - **A stochastic node `inflow` outside every `include_stochastics` group needs a realized branch.** In a fan
   without a `realized: yes` branch such a node read an inflow of 0 in every branch period without a message; it is
   now a configuration error naming the node, as for the other stochastic-time parameters. Add the node to an

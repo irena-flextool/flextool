@@ -360,3 +360,48 @@ def test_deterministic_solve_passthrough() -> None:
     assert bstl["s"] is None
     assert labels["s"].labels == frozenset()
     assert solver.state.timeline.stochastic_timesteps["s"] == []
+
+
+# ── one realization series per roll sequence (item 248b) ──────────────
+_NESTED_INFO = [
+    ("p2020", "high", "t0001", "no", "1"),
+    ("p2020", "w2030", "t0001", "yes", "0"),
+    ("p2030", "high", "t0004", "no", "1"),
+    ("p2030", "w2040", "t0004", "yes", "0"),
+]
+
+
+def _run_two(solver, names):
+    """Two sub-solves of complete solve ``inner``: ``names[0]`` over p2020, ``names[1]`` over p2030, each
+    fanning at its own first step with its own realized branch."""
+    a, b = names
+    return solver.create_stochastic_periods(
+        {"inner": _NESTED_INFO},
+        [a, b],
+        {a: "inner", b: "inner"},
+        {a: {"p2020": P1}, b: {"p2030": P2}},
+        {a: {}, b: {}},
+        {a: {"p2020": P1}, b: {"p2030": P2}},
+    )
+
+
+def test_renamed_inner_solves_have_their_own_realization_series() -> None:
+    """A nested single inner solve is copied once per outer period (``inner_p2020``, ``inner_p2030``), all of
+    complete solve ``inner``.  Each copy is its own solve with one fan point, so realized branches w2030 and
+    w2040 at the two copies' fan points are valid (they are not rolls of one sequence)."""
+    out = _run_two(_make_solver(), ("inner_p2020", "inner_p2030"))
+    assert out[6] == {"inner_p2020": ("p2020", "t0001"), "inner_p2030": ("p2030", "t0004")}
+
+
+def test_rolls_of_one_sequence_share_the_realization_series() -> None:
+    """The same rows as two rolls of rolling solve ``inner``: the realized branch changes from w2030 to w2040
+    between the rolls' fan points, an error."""
+    solver = _make_solver()
+    solver.state.solve = SimpleNamespace(solve_modes={"inner": "rolling_window"})
+    with pytest.raises(FlexToolConfigError) as err:
+        _run_two(solver, ("inner_roll_0", "inner_roll_1"))
+    assert str(err.value) == (
+        "The stochastic_branches of solve 'inner' mark different realized branches where its rolls fan out: "
+        "'w2030' at period 'p2020' (analysis_time 't0001'); 'w2040' at period 'p2030' (analysis_time 't0004'). "
+        "A solve has one realization series: name the same branch in every realized: yes row, and give that "
+        "branch the data of each roll at the roll's analysis_time. Check stochastic_branches.")
