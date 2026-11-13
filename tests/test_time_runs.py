@@ -81,7 +81,8 @@ def test_one_example_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_db_runs_from_a_copy_with_the_gui_threads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``--db``: the run gets a copy (the file is unchanged), ``--threads 1``, the workspace's
-    ``--solver-config-dir`` and the GUI's UTF-8 environment."""
+    option folder (``--workspace-solver-config-dir``, judged for trust as the window's) and the GUI's UTF-8
+    environment."""
     import hashlib
     import subprocess
 
@@ -104,7 +105,7 @@ def test_db_runs_from_a_copy_with_the_gui_threads(tmp_path: Path, monkeypatch: p
         main(["--db", str(db), "--scenario", "coal"])
     # No solver_config/ in the current folder: no flag (a missing folder would warn on every run).
     (cmd, _env), = [c for c in calls if "flextool.cli.cmd_run_flextool" in c[0]]
-    assert "--solver-config-dir" not in cmd
+    assert "--solver-config-dir" not in cmd and "--workspace-solver-config-dir" not in cmd
     calls.clear()
     (tmp_path / "solver_config").mkdir()
     with redirect_stdout(io.StringIO()) as buf:
@@ -114,8 +115,10 @@ def test_db_runs_from_a_copy_with_the_gui_threads(tmp_path: Path, monkeypatch: p
     run_url = cmd[cmd.index("flextool.cli.cmd_run_flextool") + 1]
     assert run_url.startswith("sqlite:///") and Path(run_url.removeprefix("sqlite:///")) != db
     assert cmd[cmd.index("--threads") + 1] == "1"
-    # As the window: the workspace's option folder (here the current folder's), whatever the database's folder.
-    assert cmd[cmd.index("--solver-config-dir") + 1] == str(tmp_path / "solver_config")
+    # As the window: the workspace's option folder (here the current folder's), whatever the database's folder,
+    # passed as a found folder (judged for trust), never as the trusted --solver-config-dir.
+    assert cmd[cmd.index("--workspace-solver-config-dir") + 1] == str(tmp_path / "solver_config")
+    assert "--solver-config-dir" not in cmd
     assert env["PYTHONIOENCODING"] == "utf-8" and env["FLEXTOOL_PHASE_TIMING"] == "1"
     assert "[1/1] coal (" in buf.getvalue()
 

@@ -603,7 +603,7 @@ def _wrapped_calls(record: Path) -> list[list[str]]:
 def test_a_wrapper_starts_in_front_of_the_solver(solver, shim, db, highs_objective, tmp_path, monkeypatch,
                                                  capsys) -> None:
     """``FLEXTOOL_SOLVER_WRAPPER_<SOLVER>`` = ``[<wrapper>, "--queue", "opt"]``: the wrapper gets its items, then
-    the solver program's absolute path and its arguments; it ``exec``\ s the shim, which still gets the parameters
+    the solver program's absolute path and its arguments; it ``exec`` s the shim, which still gets the parameters
     (CPLEX, Xpress and COPT through stdin) and solves to HiGHS' objective.  The ``Running`` line names the
     wrapper."""
     wrapper, record = _recording_wrapper(tmp_path)
