@@ -106,6 +106,8 @@ def _jsonable(value: Any) -> Any:
         return value
     if isinstance(value, float):
         return value if math.isfinite(value) else None
+    if isinstance(value, (tuple, list)):  # several folders of --solver-config-dir
+        return [_jsonable(item) for item in value]
     return str(value)
 
 
@@ -121,12 +123,9 @@ def _mtime_iso(path: Path | None) -> str | None:
 
 def db_path_from_url(db_url: str | None) -> Path | None:
     """The file of a ``sqlite:///`` URL or bare path, without a ``?query``; ``None`` for other databases."""
-    if not db_url:
-        return None
-    if "://" in db_url and not db_url.startswith("sqlite:"):
-        return None
-    text = db_url.replace("sqlite:///", "", 1).split("?", 1)[0]
-    return Path(text) if text else None
+    from flextool.sqlite_url import sqlite_file_path
+
+    return sqlite_file_path(db_url)
 
 
 def _versions() -> dict[str, str | None]:
@@ -219,8 +218,15 @@ def options_resolved_record(run_options: "RunOptions") -> dict[str, dict[str, An
     return out
 
 
+# A log record with this attribute set (``extra={IN_SOLVE_RECORD: True}``) is already in its solve's entry
+# (``solves[].message``), so the warning handler does not add it to ``warnings`` a second time.
+IN_SOLVE_RECORD = "flextool_in_solve_record"
+
+
 class _WarningHandler(logging.Handler):
     """Collects WARNING and worse records into the active recorder's ``warnings`` list.
+
+    A record marked :data:`IN_SOLVE_RECORD` is skipped: its solve's entry already holds the message.
 
     It takes no lock of its own (:meth:`handle` skips the handler lock) and never the recorder's: a record is
     queued under the recorder's leaf lock and merged into the status by the next write.  So a thread that logs
@@ -240,6 +246,8 @@ class _WarningHandler(logging.Handler):
         return rv
 
     def emit(self, record: logging.LogRecord) -> None:
+        if getattr(record, IN_SOLVE_RECORD, False):
+            return
         try:
             message = record.getMessage()
         except Exception:  # noqa: BLE001 - a malformed log call must not break the run
@@ -361,6 +369,7 @@ class RunRecorder:
             "versions": _versions(),
             "solver": None,
             "solver_config": None,
+            "solver_wrappers": None,
             "input": {
                 "db_url": db_url,
                 "db_path": str(db_path.resolve()) if db_path is not None else None,
@@ -566,6 +575,19 @@ class RunRecorder:
         of each file)."""
         with self._lock:
             self._status["solver_config"] = dict(record)
+            self._write()
+
+    @_flushing
+    def note_solver_wrapper(self, solver: str, record: Mapping[str, Any]) -> None:
+        """The solver wrapper a commercial solve started through (item 240 B2): ``solver_wrappers[solver]`` =
+        ``{"argv": [...], "source": ...}``, set at the solver's first wrapped solve of the run."""
+        with self._lock:
+            wrappers = self._status.get("solver_wrappers")
+            wrappers = dict(wrappers) if isinstance(wrappers, dict) else {}
+            if solver in wrappers:
+                return
+            wrappers[str(solver)] = dict(record)
+            self._status["solver_wrappers"] = wrappers
             self._write()
 
     @_flushing

@@ -40,8 +40,7 @@ from flextool.engine.solve._solver_dispatch import (
     solver_workspace,
     warn_solver_precommands,
 )
-from flextool.engine.solve import _subprocess_solve
-from flextool.engine.solve._subprocess_solve import _SCRIPTS, _join_script, _write_commercial_opt_file
+from flextool.engine.solve._subprocess_solve import _SCRIPTS, _join_script, commercial_params
 from flextool.run_options import RunOptions
 
 _NO_FLAGS = RunOptions.from_env({})
@@ -105,7 +104,106 @@ def test_option_file_value_ending_in_a_backslash_is_refused(solver) -> None:
     with pytest.raises(FlexToolUserError, match="ends with a backslash") as err:
         _resolve(solver, opt_text="Threads 1\nTUNEROUTPUTPATH C:\\out\\\n")
     assert "cfg/x.opt, line 2" in str(err.value)
-    assert [o.value for o in _resolve(solver, options={"A": "C:\\out\\x"})] == ["C:\\out\\x"]
+    assert [o.value for o in _resolve(solver, opt_text="TUNEROUTPUTPATH C:\\out\\x\n")] == ["C:\\out\\x"]
+
+
+#: A parameter name of each commercial solver, as the database or an option file spells it.
+_GAP_NAME = {"gurobi": "MIPGap", "cplex": "mip tolerances mipgap", "xpress": "MIPRELSTOP", "copt": "RelGap"}
+
+
+@pytest.mark.parametrize("solver", _COMMERCIAL)
+def test_empty_value_is_refused_from_the_database(solver) -> None:
+    """G2: an empty value shifts a CPLEX script line (CPLEX reads the next line as the value) and is dropped by
+    Gurobi and Xpress; it is refused, naming the solve."""
+    with pytest.raises(FlexToolUserError, match="the value is empty or missing") as err:
+        _resolve(solver, options={"Threads": "1", _GAP_NAME[solver]: ""})
+    assert "solver_arguments of solve invest" in str(err.value)
+    # A missing value (None) is still skipped, a switch is still 1 / 0.
+    presolve = {"cplex": "preprocessing presolve", "xpress": "PRESOLVE"}.get(solver, "Presolve")
+    assert [(o.name, o.value) for o in _resolve(solver, options={"Threads": None, presolve: False})] == [
+        (presolve, "0")]
+
+
+def test_highs_empty_value_is_refused_in_process_as_in_the_save_memory_child() -> None:
+    """Item 240 B4: HiGHS' option-file reader refused ``solution_file=`` (the --save-memory child stopped), while
+    the in-process solve took it; an empty HiGHS value is now refused from every source, before any solve."""
+    for where, kwargs in (("solver_arguments of solve invest", {"solver_arguments_map": {"solution_file": ""}}),
+                          ("flags or environment variables", {"cli_overrides": {"log_file": ""}})):
+        with pytest.raises(FlexToolUserError, match="the value is empty or missing") as err:
+            _resolve_effective_highs_options(
+                highs_opt_path=None, solve_name="invest", **{"solver_arguments_map": None, "cli_overrides": None,
+                                                             **kwargs})
+        assert where in str(err.value)
+    with pytest.raises(FlexToolUserError, match=re.escape(f"{Path('cfg/highs.opt')}, line 1")):
+        _resolve_db("highs", {}, opt_text="presolve=\n")
+    # The old templates' solution-file lines are still dropped, not refused.
+    assert _resolve_db("highs", {}, opt_text="solution_file=\nthreads=1\n") == {"threads": "1"}
+
+
+@pytest.mark.parametrize("solver", _COMMERCIAL)
+def test_option_file_line_without_a_value_is_refused_naming_the_line(solver) -> None:
+    """G2: a line of one word was skipped without a word; a CPLEX line of several words without its value read as
+    a shorter parameter name with the last word as its value.  Both are refused, naming the file and line."""
+    for text in ("Threads 1\nThreads\n", f"Threads 1\n{_GAP_NAME[solver]}\n"):
+        with pytest.raises(FlexToolUserError, match="value is missing|value is empty") as err:
+            _resolve(solver, opt_text=text)
+        assert "cfg/x.opt, line 2" in str(err.value)
+
+
+def test_cplex_value_that_is_a_name_word_is_refused_from_every_source() -> None:
+    with pytest.raises(FlexToolUserError, match="'mip tolerances mipgap' reads as a parameter name"):
+        _resolve("cplex", options={"mip tolerances": "mipgap"})
+    with pytest.raises(FlexToolUserError, match="value is missing"):
+        _resolve("cplex", opt_text="mip tol mipgap\n")
+    # Text parameters (also abbreviated) take a word; a switch word, a number and a path pass everywhere.
+    options = _resolve("cplex", options={
+        "workdir": "scratch", "output intsolfileprefix": "incumbent", "read fileencoding": "UTF-8", "cpumask": "ffff",
+        "emphasis numerical": "yes", "timelimit": "1e+75", "mip tolerances mipgap": "0.01",
+    })
+    assert [o.value for o in options] == ["scratch", "incumbent", "UTF-8", "ffff", "yes", "1e+75", "0.01"]
+
+
+def test_cplex_group_name_is_refused_from_every_source(monkeypatch) -> None:
+    """Review b1 F6: ``set mip tolerances 0.01`` names a group, so the Interactive Optimizer would prompt for the
+    parameter and take the script's next line.  Refused from the option file (not only warned about, D3), from
+    the database and with unlisted names allowed; a parameter of the group passes."""
+    monkeypatch.setenv("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", "1")
+    for kwargs in ({"opt_text": "mip tolerances 0.01\n"}, {"options": {"mip tol": "0.01"}},
+                   {"options": {"simplex": 1}}):
+        with pytest.raises(FlexToolUserError, match="is a group of CPLEX parameters, not a parameter"):
+            _resolve("cplex", **kwargs)
+    assert [o.value for o in _resolve("cplex", opt_text="mip tolerances mipgap 0.01\n")] == ["0.01"]
+
+
+def test_cplex_text_parameters_and_switch_words_match_its_parameters() -> None:
+    """Pin the CPLEX value rule to ``Cplex().parameters``: its text parameters are the listed ones (plus the
+    Interactive Optimizer's ``logfile``), no parameter word is a switch word, and the name of every parameter of
+    several words, cut before its last word, refuses that word as its value."""
+    cplex = pytest.importorskip("cplex")
+    from cplex._internal._parameter_classes import Parameter, ParameterGroup
+
+    leaves: dict[str, object] = {}
+
+    def walk(group, path: list[str]) -> None:
+        for attr in (a for a in dir(group) if not a.startswith("_")):
+            child = getattr(group, attr, None)
+            if isinstance(child, Parameter):
+                leaves[" ".join([*path, attr])] = child.default()
+            elif isinstance(child, ParameterGroup):
+                walk(child, [*path, attr])
+
+    model = cplex.Cplex()  # the parameter objects hold only a weak reference to it
+    walk(model.parameters, [])
+    assert len(leaves) > 150
+    # Plus the Interactive Optimizer's own text parameters (IBM's command table, in FlexTool's CPLEX list).
+    assert {n for n, d in leaves.items() if isinstance(d, str)} | {"logfile", "distmip config"} == (
+        _solver_dispatch._CPLEX_TEXT_PARAMETERS)
+    assert not {w for n in leaves for w in n.split(" ")} & _solver_dispatch._CPLEX_SWITCH_WORDS
+    for name in leaves:
+        *head, last = name.split(" ")
+        if head and " ".join(head) not in _solver_dispatch._CPLEX_TEXT_PARAMETERS:
+            assert _solver_dispatch._cplex_value_is_a_name_word(" ".join(head), last), name
+        assert not _solver_dispatch._cplex_value_is_a_name_word(name, "2"), name
 
 
 def test_space_in_a_name_is_refused_except_cplex_single_spaces() -> None:
@@ -121,13 +219,15 @@ def test_space_in_a_name_is_refused_except_cplex_single_spaces() -> None:
 
 
 @pytest.mark.parametrize("solver", _COMMERCIAL)
-def test_legitimate_values_pass(solver: str, tmp_path: Path) -> None:
+def test_legitimate_values_pass(solver: str, tmp_path: Path, monkeypatch) -> None:
     """Negative numbers, scientific notation, infinity and dotted names reach the solver unchanged; each script
-    has one line per parameter plus the fixed commands."""
-    values = {"A": "-1", "B": "1e-4", "C": "inf", "D": "-inf", "E": "1e+20", "F.g": "on", "G": True}
+    has one line per parameter plus the fixed commands.  (The names are made up, so this computer allows unlisted
+    names here; they abbreviate no CPLEX name, which the database may not use even then.)"""
+    monkeypatch.setenv("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", "1")
+    values = {"ZqA": "-1", "ZqB": "1e-4", "ZqC": "inf", "ZqD": "-inf", "ZqE": "1e+20", "ZqF.g": "on", "ZqG": True}
     options = _resolve(solver, options=values)
     assert [o.value for o in options] == ["-1", "1e-4", "inf", "-inf", "1e+20", "on", "1"]
-    merged = _write_commercial_opt_file({o.name: o.value for o in options}, tmp_path / "s.opt")
+    merged = commercial_params({o.name: o.value for o in options})
     argv, stdin = _SCRIPTS[solver](Path("bin"), Path("m.mps"), Path("m.sol"), merged)
     fixed = {"gurobi": 3, "cplex": 4, "xpress": 5, "copt": 4}[solver]
     assert len(argv if stdin is None else stdin.splitlines()) == len(values) + fixed
@@ -213,7 +313,7 @@ def test_database_path_option_is_refused(solver: str, value: str) -> None:
 
 @pytest.mark.parametrize("solver, name", [
     ("highs", "write_basis_file"), ("highs", "mip_improving_solution_file"), ("gurobi", "ResultFile"),
-    ("gurobi", "NodefileDir"), ("cplex", "logfile"), ("cplex", "output.intsolfileprefix"), ("cplex", "write"),
+    ("gurobi", "NodefileDir"), ("cplex", "logfile"), ("cplex", "output.intsolfileprefix"), ("cplex", "workdir"),
     ("xpress", "TUNERMETHODFILE"), ("copt", "LogFile"),
 ])
 def test_every_listed_path_option_is_refused_with_a_path_from_the_database(solver: str, name: str) -> None:
@@ -234,7 +334,7 @@ def test_database_plain_file_name_is_accepted_into_the_workspace(solver: str, tm
     # A number or a switch in an option whose name says file / dir (Gurobi NodefileStart, BranchDir) passes.
     numeric = {"highs": "write_solution_to_file", "gurobi": "NodefileStart", "cplex": "mip strategy file",
                "xpress": "TUNERMETHODFILE", "copt": "LogFile"}[solver]
-    assert list(_resolve_db(solver, {numeric: "0.5"}).values()) == ["0.5"]
+    assert list(_resolve_db(solver, {numeric: "1"}).values()) == ["1"]
 
 
 _GUROBI_SERVER = ["ComputeServer", "CSManager", "CSAPIAccessID", "CSAPISecret", "CSGroup", "CSPriority", "CSRouter",
@@ -244,6 +344,21 @@ _GUROBI_SERVER = ["ComputeServer", "CSManager", "CSAPIAccessID", "CSAPISecret", 
                   "UserName", "WorkerPool", "WorkerPassword"]
 
 
+@pytest.mark.parametrize("solver", ["highs", *_COMMERCIAL])
+@pytest.mark.parametrize("file_name", ["gurobi.env", "Gurobi.ENV", "gurobi.env.", "gurobi.lic", "license.dat",
+                                       "LICENSE.KEY", "client.ini", "xpauth.xpr", "nethasp.ini"])
+def test_database_file_name_a_solver_reads_by_itself_is_refused(solver: str, file_name: str, tmp_path) -> None:
+    """Every solver runs in the same work folder, so a file the database names there must not be one a solver
+    reads from its folder at start (Gurobi's gurobi.env, a licence file, COPT / Xpress client settings)."""
+    with pytest.raises(FlexToolUserError, match="reads by itself") as err:
+        _resolve_db(solver, {_PATH_OPTION[solver]: file_name}, workspace=tmp_path)
+    assert "solver_arguments of solve invest" in str(err.value) and f"solver_config/{solver}.opt" in str(err.value)
+    # Another plain name is taken; the option file is trusted with any name.
+    assert _resolve_db(solver, {_PATH_OPTION[solver]: "gurobi_env.log"}, workspace=tmp_path)
+    line = f"{_PATH_OPTION[solver]} = {file_name}" if solver == "highs" else f"{_PATH_OPTION[solver]} {file_name}"
+    assert list(_resolve_db(solver, {}, opt_text=line + "\n").values()) == [file_name]
+
+
 @pytest.mark.parametrize("name", _GUROBI_SERVER)
 def test_database_gurobi_server_option_is_refused(name: str) -> None:
     with pytest.raises(FlexToolUserError) as err:
@@ -251,6 +366,25 @@ def test_database_gurobi_server_option_is_refused(name: str) -> None:
     message = str(err.value)
     assert f"gurobi option {name!r} (value 'server1')" in message and "another computer" in message
     assert "input database" in message and "solver_config/gurobi.opt" in message
+
+
+@pytest.mark.parametrize("name, value", [
+    ("COMPUTE", "1"), ("XPRS_COMPUTE", "1"), ("compute", "1"), ("COMPUTEEXECSERVICE", "svc1"),
+    ("XPRS_COMPUTEEXECSERVICE", "svc1"), ("ComputeJobPriority", "5"), ("COMPUTELOG", "2"),
+])
+def test_database_xpress_remote_solving_control_is_refused(name: str, value: str) -> None:
+    """G1: Xpress solves remotely through its Insight Compute interface when ``COMPUTE`` is on; none of the
+    ``COMPUTE...`` controls is taken from the input database, in any spelling the library reads."""
+    with pytest.raises(FlexToolUserError) as err:
+        _resolve_db("xpress", {name: value})
+    message = str(err.value)
+    assert f"xpress option {name!r} (value {value!r})" in message and "another computer" in message
+    assert "solver_arguments of solve invest" in message and "solver_config/xpress.opt" in message
+
+
+def test_xpress_remote_solving_controls_stay_allowed_in_the_option_file() -> None:
+    options = _resolve_db("xpress", {}, opt_text="COMPUTE 1\nCOMPUTEEXECSERVICE svc1\n")
+    assert options == {"COMPUTE": "1", "COMPUTEEXECSERVICE": "svc1"}
 
 
 @pytest.mark.parametrize("solver", ["highs", *_COMMERCIAL])
@@ -297,10 +431,11 @@ def test_script_builders_refuse_a_line_break_that_got_through(monkeypatch) -> No
         _join_script("cplex", ["set threads 1\nquit"], ["read m.mps", "optimize", "quit"])
     with pytest.raises(FlexToolUserError, match="backslash"):
         _join_script("xpress", ["setControl THREADS 1\\"], ["readprob m.mps", "lpoptimize", "quit"])
-    monkeypatch.setattr(_subprocess_solve, "_parse_native_opt_file", lambda path: {"Threads": "1\nX=2"})
     for solver in _COMMERCIAL:
-        with pytest.raises(FlexToolUserError, match="line break"):
-            _SCRIPTS[solver](Path("bin"), Path("m.mps"), Path("m.sol"), Path("s.opt"))
+        with pytest.raises(FlexToolUserError, match="not one name and one value"):
+            _SCRIPTS[solver](Path("bin"), Path("m.mps"), Path("m.sol"), (("Threads", "1\nX=2"),))
+        with pytest.raises(FlexToolUserError, match="not one name and one value"):
+            _SCRIPTS[solver](Path("bin"), Path("m.mps"), Path("m.sol"), (("Threads", ""),))
 
 
 @pytest.mark.parametrize("solver, expected", [
@@ -315,8 +450,8 @@ def test_shipped_default_options_give_the_same_script(solver, expected, tmp_path
     import flextool
 
     template = Path(flextool.__file__).parent / "solver_config" / f"{solver}.opt.template"
-    options = _resolve(solver, opt_text=template.read_text())
-    merged = _write_commercial_opt_file({o.name: o.value for o in options}, tmp_path / "s.opt")
+    options = _resolve(solver, opt_text=template.read_text(encoding="utf-8"))
+    merged = commercial_params({o.name: o.value for o in options})
     argv, stdin = _SCRIPTS[solver](Path("bin"), Path("m.mps"), Path("m.sol"), merged)
     assert (argv if solver == "gurobi" else stdin) == expected
 
@@ -358,7 +493,7 @@ def test_trusted_path_reaches_the_solver_and_own_result_file_is_kept(solver, tmp
         solver_config=SolverConfig(name=solver), run_options=_NO_FLAGS, solve_name="invest",
     )
     assert [o.value for o in resolved] == ["2", str(target)]
-    merged = _write_commercial_opt_file({o.name: o.value for o in resolved}, tmp_path / "solve.opt")
+    merged = commercial_params({o.name: o.value for o in resolved})
     sol = tmp_path / "m.sol"
     argv, stdin = _SCRIPTS[solver](Path("bin"), tmp_path / "m.mps", sol, merged)
     sent = " ".join(argv) + (stdin or "")
@@ -379,7 +514,7 @@ def test_gurobi_result_file_is_flextools_own(layer, tmp_path, caplog, _fresh_run
                 solver_config=SolverConfig(name="gurobi", options=options), run_options=_NO_FLAGS, solve_name=solve,
             )
     assert [(o.name, o.value) for o in resolved] == [("Threads", "2")]
-    merged = _write_commercial_opt_file({o.name: o.value for o in resolved}, tmp_path / "solve.opt")
+    merged = commercial_params({o.name: o.value for o in resolved})
     argv, _ = _SCRIPTS["gurobi"](Path("bin"), tmp_path / "m.mps", tmp_path / "m.json", merged)
     assert [a for a in argv if a.casefold().replace("_", "").startswith("resultfile=")] == [
         f"ResultFile={tmp_path / 'm.json'}"]
@@ -398,8 +533,12 @@ def test_copt_parameters_pass(tmp_path) -> None:
     assert [(o.name, o.value) for o in resolved] == [("Threads", "2"), ("RelGap", "0.01"), ("TimeLimit", "60")]
 
 
-def test_cplex_abbreviations_of_a_path_parameter_are_path_options() -> None:
-    """The CPLEX Interactive Optimizer takes any unique abbreviation of each word of a ``set`` command."""
+def test_cplex_abbreviations_of_a_path_parameter_are_path_options(monkeypatch) -> None:
+    """The CPLEX Interactive Optimizer takes any unique abbreviation of each word of a ``set`` command.  From the
+    database an abbreviation is refused naming the full name (item 240 D2); where this computer allows unlisted
+    names, it is still refused (review b1 F1: the switch is for a newer CPLEX's names, not for abbreviations),
+    and so is an abbreviation of a server parameter or a command (``d c`` for ``distmip config``, ``def`` for
+    ``defaults``).  An unlisted name the switch lets through takes no path (it is checked as a file parameter)."""
     for name in ("logfile", "log", "workd", "WorkDir", "output intsolfileprefix", "output.intsol", "o i",
                  "read", "write problem"):
         assert is_path_option("cplex", name), name
@@ -407,9 +546,19 @@ def test_cplex_abbreviations_of_a_path_parameter_are_path_options() -> None:
         assert not is_path_option("cplex", name), name
     # No abbreviations for the others.
     assert not is_path_option("gurobi", "Log") and is_path_option("gurobi", "logfile")
-    with pytest.raises(FlexToolUserError, match="plain file name"):
-        _resolve("cplex", options={"log": "/tmp/cplex.log"})
-    assert [o.value for o in _resolve("cplex", options={"log": "cplex.log"})] == ["cplex.log"]
+    with pytest.raises(FlexToolUserError, match="not a full CPLEX parameter name; write 'logfile'"):
+        _resolve("cplex", options={"log": "cplex.log"})
+    monkeypatch.setenv("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", "1")
+    for name, value, full in (("log", "cplex.log", "write 'logfile'"), ("dist conf", "/srv/vmc.xml", "'distmip config'"),
+                              ("distmip conf", r"\\h\s\vmc.xml", "'distmip config'"),
+                              ("d c", "/srv/vmc.xml", "'distmip config'"), ("def", "1", "'defaults'")):
+        with pytest.raises(FlexToolUserError, match=f"not a full CPLEX parameter name; (it abbreviates )?{full}"):
+            _resolve("cplex", options={name: value})
+    with pytest.raises(FlexToolUserError, match="connects the solver to another computer"):
+        _resolve("cplex", options={"distmip hosts": "1"})
+    with pytest.raises(FlexToolUserError, match="not in FlexTool's list .* plain file name"):
+        _resolve("cplex", options={"zq newer": "/tmp/x"})
+    assert [o.value for o in _resolve("cplex", options={"zq newer": "3"})] == ["3"]
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +602,7 @@ def test_gurobi_spellings_of_one_parameter_merge_as_one(tmp_path) -> None:
         run_options=RunOptions.from_cli(build_parser().parse_args(["x.sqlite", "--solver-mip-gap", "0.05"]),
                                         environ={}),
     )
-    merged = _write_commercial_opt_file({o.name: o.value for o in flagged}, tmp_path / "solve.opt")
+    merged = commercial_params({o.name: o.value for o in flagged})
     argv, _ = _SCRIPTS["gurobi"](Path("bin"), tmp_path / "m.mps", tmp_path / "m.json", merged)
     gaps = [a for a in argv if a.split("=", 1)[0].replace("_", "").casefold() == "mipgap"]
     assert gaps == ["MIPGap=0.05"], argv
@@ -483,8 +632,9 @@ def test_highs_path_options_are_its_file_options() -> None:
     highspy = pytest.importorskip("highspy")
     h = highspy.Highs()
     h.setOptionValue("output_flag", False)
-    for name in _PATH_OPTIONS["highs"]:
+    for name in _solver_dispatch._HIGHS_FILE_NAME_OPTIONS:
         assert h.getOptionType(name) == (highspy.HighsStatus.kOk, highspy.HighsOptionType.kString), name
+    assert len(_solver_dispatch._HIGHS_FILE_NAME_OPTIONS) == 9
 
 
 def test_gurobi_path_options_are_its_parameters() -> None:
@@ -494,7 +644,11 @@ def test_gurobi_path_options_are_its_parameters() -> None:
     by_key = {n.casefold(): d for n, d in param_details.items()}
     for key in _PATH_OPTIONS["gurobi"]:
         assert key in by_key, key
-        assert by_key[key]["values"]["type"] == ("int" if key == "record" else "string"), key
+    # The text ones (the numeric ones, Record and the names with file / dir / path, take a number from anywhere).
+    assert {k for k in _PATH_OPTIONS["gurobi"] if by_key[k]["values"]["type"] == "string"} == {
+        "resultfile", "logfile", "solfiles", "nodefiledir", "inputfile", "concurrentsettings", "multiobjsettings",
+        "tunebasesettings", "tuneignoresettings", "tuneparams"}
+    assert "record" in _PATH_OPTIONS["gurobi"]
 
 
 def test_gurobi_server_options_are_its_parameters() -> None:
@@ -510,6 +664,21 @@ def test_gurobi_server_options_are_its_parameters() -> None:
     for key, name in by_key.items():
         if key.startswith(_solver_dispatch._SERVER_OPTION_PREFIXES["gurobi"]):
             assert _solver_dispatch.is_server_option("gurobi", name), name
+
+
+def test_xpress_server_options_are_its_remote_solving_controls() -> None:
+    """The listed Xpress server options are controls of this xpress, and every control with the ``compute`` prefix
+    is refused from the database."""
+    import warnings
+
+    warnings.simplefilter("ignore")
+    xp = pytest.importorskip("xpress")
+    controls = xp.problem().getControl()
+    assert set(_solver_dispatch._SERVER_OPTIONS["xpress"]) <= set(controls)
+    compute = {k for k in controls if k.startswith("compute")}
+    assert compute == {"compute", "computeexecservice", "computejobpriority", "computelog"}
+    assert all(_solver_dispatch.is_server_option("xpress", k.upper()) for k in compute)
+    assert not _solver_dispatch.is_server_option("xpress", "MAXTIME")
 
 
 def test_listed_names_are_comparison_keys() -> None:
@@ -553,6 +722,10 @@ def test_gurobi_library_reads_names_as_the_key_does() -> None:
         lib.GRBfreeenv(env)
 
 
+#: Xpress's text controls that name a file or folder (its other file / path controls are numbers).
+_XPRESS_TEXT_PATH_CONTROLS = {"tunermethodfile", "tuneroutputpath", "tunersessionname"}
+
+
 def test_xpress_library_reads_names_as_the_key_does() -> None:
     """Pin :func:`commercial_option_key` for Xpress to the library's control lookup (``getcontrolinfo``): case
     and one ``XPRS_`` prefix are ignored; a second prefix or ``XPRS`` without ``_`` is not."""
@@ -569,7 +742,7 @@ def test_xpress_library_reads_names_as_the_key_does() -> None:
         except Exception:  # the package's own error type for an unknown name
             return None
 
-    for key in _PATH_OPTIONS["xpress"]:
+    for key in _XPRESS_TEXT_PATH_CONTROLS:
         for name in (key.upper(), f"XPRS_{key.upper()}", f"xprs_{key}", f"Xprs_{key.title()}"):
             assert control_id(name) == control_id(key.upper()) is not None, name
             assert commercial_option_key("xpress", name) == key, name
@@ -586,7 +759,8 @@ def test_cplex_path_options_are_its_parameters() -> None:
     assert isinstance(c.parameters.workdir.default(), str)
     assert isinstance(c.parameters.output.intsolfileprefix.default(), str)
     # ``logfile`` is an Interactive Optimizer parameter, not in the Python API.
-    assert _PATH_OPTIONS["cplex"] == {"workdir", "output intsolfileprefix", "logfile"}
+    assert _PATH_OPTIONS["cplex"] & _solver_dispatch._CPLEX_TEXT_PARAMETERS == {
+        "workdir", "output intsolfileprefix", "logfile"}
 
 
 def test_xpress_path_options_are_its_controls() -> None:
@@ -595,8 +769,7 @@ def test_xpress_path_options_are_its_controls() -> None:
     warnings.simplefilter("ignore")
     xp = pytest.importorskip("xpress")
     controls = xp.problem().getControl()
-    for key in _PATH_OPTIONS["xpress"]:
-        assert isinstance(controls[key], str), key
+    assert {k for k in _PATH_OPTIONS["xpress"] if isinstance(controls[k], str)} == _XPRESS_TEXT_PATH_CONTROLS
 
 
 def test_copt_has_no_string_parameter() -> None:
@@ -658,7 +831,7 @@ def paths_db(tmp_path_factory) -> tuple[str, Path]:
     from flextool.update_flextool.db_migration import migrate_database
 
     folder = tmp_path_factory.mktemp("item236_paths")
-    data = json.loads((TESTS_DIR / "fixtures" / "tests.json").read_text())
+    data = json.loads((TESTS_DIR / "fixtures" / "tests.json").read_text(encoding="utf-8"))
     precommand = f"{sys.executable} -c \"open(r'{folder / 'precommand_ran'}', 'w').close()\""
     for alt, log_file, model_file in (
         ("item236_paths", str(folder / "log_file_target.log"), str(folder / "model_target.mps")),
@@ -677,7 +850,7 @@ def paths_db(tmp_path_factory) -> tuple[str, Path]:
         for a, before in zip(chain, chain[1:] + [None]):
             data["scenario_alternatives"].append([alt, a, before])
     json_path = folder / "paths.json"
-    json_path.write_text(json.dumps(data))
+    json_path.write_text(json.dumps(data), encoding="utf-8")
     url = json_to_db(json_path, folder / "paths.sqlite")
     migrate_database(url)
     return url, folder
@@ -725,3 +898,115 @@ def test_highs_database_file_names_land_in_the_work_folder(
     precommand = [w for w in _warnings(caplog) if w.startswith("solver_precommand")]
     assert len(precommand) == 1 and f"solve {_E2E_SOLVE}" in precommand[0], precommand
     assert _solver_dispatch._warned_precommands == {_E2E_SOLVE}
+
+
+def test_a_leading_byte_order_mark_is_not_part_of_the_first_name() -> None:
+    """A Windows editor's UTF-8 BOM: the run and the shipped-file screen read the first name without it."""
+    from flextool._solver_option_rules import highs_opt_lines, native_opt_lines, screen_solver_option_file
+
+    assert native_opt_lines("﻿Threads 2\n") == [(1, "Threads", "2")]
+    assert highs_opt_lines("﻿threads = 2\n") == [(1, "threads", "2")]
+    assert [(o.name, o.value) for o in _resolve("gurobi", opt_text="﻿Threads 2\n")] == [("Threads", "2")]
+    assert screen_solver_option_file("gurobi", "﻿ComputeServer srv.example:61000\n")[0].startswith(
+        "line 1: ComputeServer <hidden> connects the solver to another computer")
+
+
+def test_cplex_name_with_a_leading_set_is_refused_from_every_source() -> None:
+    """FlexTool writes ``set <name> <value>`` itself: ``set lo /tmp/x`` would reach CPLEX as ``set set lo ...``.
+    The name the user meant is judged (``lo`` abbreviates ``logfile``, a path option)."""
+    from flextool._solver_option_rules import screen_solver_option_file
+
+    assert is_path_option("cplex", "set lo") and is_path_option("cplex", "set.workdir")
+    assert not is_path_option("cplex", "set threads")
+    assert screen_solver_option_file("cplex", "set lo /tmp/x\n") == [
+        "line 1: set lo /tmp/x names a file or folder outside the solve's work folder"]
+    assert screen_solver_option_file("cplex", "set threads 2\n") == [
+        "line 1: set threads 2 starts with 'set', which FlexTool writes itself (the line would reach CPLEX as "
+        "'set set ...'); write the parameter name without it"]
+    assert screen_solver_option_file("gurobi", "settings 2\n") == []   # only CPLEX
+    with pytest.raises(FlexToolUserError, match="starts with 'set'"):
+        _resolve("cplex", opt_text="set threads 2\n")
+    with pytest.raises(FlexToolUserError, match="solver_arguments of solve invest: the name starts with 'set'"):
+        _resolve("cplex", options={"set threads": "2"})
+    assert [(o.name, o.value) for o in _resolve("cplex", opt_text="threads 2\n")] == [("threads", "2")]
+
+
+# --- Item 232 with item 240 B1: the run's thread budget is an option like any other ---------------------------
+
+
+@pytest.mark.parametrize("solver", _COMMERCIAL)
+def test_the_thread_budget_name_is_a_listed_plain_parameter(solver) -> None:
+    """The commercial thread count that ``--threads`` sets (``_PARAM_MAP``, item 232) is in FlexTool's list of the
+    solver's parameters as a plain parameter, so it passes the database's rules too (``solver_threads``)."""
+    from flextool.engine.solve import _solver_catalogue
+    from flextool.engine.solve._solver_dispatch import _PARAM_MAP, check_database_solver_option
+
+    entry = _solver_catalogue.load(solver).entry(_PARAM_MAP[solver]["threads"])
+    assert entry is not None and entry.cls == "plain"
+    check_database_solver_option(solver, _PARAM_MAP[solver]["threads"], "2", "solver_arguments of solve invest")
+
+
+def test_the_thread_budget_goes_through_the_checks_of_the_runs_own_options(monkeypatch, caplog) -> None:
+    """The operator layer (with the thread budget of item 232) is checked like the run's other trusted sources:
+    the general check refuses a bad value, and a name not in FlexTool's list gets the B1 warning."""
+    from flextool.engine.solve._solver_dispatch import _PARAM_MAP
+
+    reset_run_warnings()
+    budget = RunOptions.from_env({"FLEXTOOL_THREADS": "3"})
+    options = resolve_commercial_options("gurobi", opt_file=None, solver_config=None, run_options=budget)
+    assert [(o.name, o.value, o.layer) for o in options] == [("Threads", "3", "environment variable FLEXTOOL_THREADS")]
+    monkeypatch.setitem(_PARAM_MAP, "gurobi", {**_PARAM_MAP["gurobi"], "threads": "Thread"})
+    with caplog.at_level(logging.WARNING):
+        options = resolve_commercial_options("gurobi", opt_file=None, solver_config=None, run_options=budget)
+    assert [(o.name, o.value) for o in options] == [("Thread", "3")]
+    assert any("environment variable FLEXTOOL_THREADS: gurobi option 'Thread'" in r.getMessage()
+               and "not in FlexTool's list" in r.getMessage() for r in caplog.records)
+    monkeypatch.setitem(_PARAM_MAP, "gurobi", {**_PARAM_MAP["gurobi"], "threads": "Threads;quit"})
+    with pytest.raises(FlexToolUserError, match="environment variable FLEXTOOL_THREADS: the name contains"):
+        resolve_commercial_options("gurobi", opt_file=None, solver_config=None, run_options=budget)
+
+
+# ---------------------------------------------------------------------------
+# Option values in the solver's declared type (the database stores every number as a float)
+# ---------------------------------------------------------------------------
+
+
+def test_highs_whole_numbers_and_switches_from_the_database_reach_highs_in_its_types() -> None:
+    """``solver_arguments`` arrive as the text of a float (``"3.0"``), which HiGHS refuses for an integer
+    option and a switch.  They reach HiGHS as ``"3"`` / ``"true"``, and the installed HiGHS takes every value."""
+    import highspy
+
+    got = _resolve_db("highs", {"simplex_iteration_limit": "100000.0", "user_objective_scale": "-2.0",
+                                "mip_detect_symmetry": "0.0", "mip_rel_gap": "0.01"})
+    assert got == {"simplex_iteration_limit": "100000", "user_objective_scale": "-2",
+                   "mip_detect_symmetry": "false", "mip_rel_gap": "0.01"}
+    h = highspy.Highs()
+    h.silent()
+    assert all(h.setOptionValue(k, v) == highspy.HighsStatus.kOk for k, v in got.items())
+    # The knob layer (numbers) and an option-file line get the same treatment; an integer text is kept as it is.
+    knobs = _resolve_effective_highs_options(
+        solver_arguments_map=None, highs_opt_path=Path("cfg/highs.opt"), highs_opt_text="threads=2.0\nrandom_seed=7\n",
+        cli_overrides=None, solver_config=SolverConfig(name="highs", threads=3.0),
+    )
+    assert knobs == {"threads": 3, "random_seed": "7"}
+
+
+@pytest.mark.parametrize("name, value, words", [
+    ("simplex_iteration_limit", "2.5", "takes a whole number"),
+    ("mip_detect_symmetry", "2.0", "is a switch"),
+])
+def test_highs_value_outside_the_option_type_is_refused_naming_it(name: str, value: str, words: str) -> None:
+    with pytest.raises(FlexToolUserError) as err:
+        _resolve_db("highs", {name: value})
+    assert f"HiGHS option {name!r} {words}" in str(err.value)
+    assert f"solver_arguments of solve invest gives it {value!r}" in str(err.value)
+
+
+@pytest.mark.parametrize("solver, name", [("gurobi", "Method"), ("xpress", "THREADS"), ("copt", "Threads")])
+def test_commercial_integer_parameter_whole_float_passes_and_a_fraction_is_refused(solver: str, name: str) -> None:
+    """A whole number written as a float reaches a commercial solver without its ``.0`` (an integer parameter
+    may refuse ``1.0``, the Xpress library does); a fraction is refused before the solve, naming the option."""
+    assert list(_resolve_db(solver, {name: "2.0"}).values()) == ["2"]
+    with pytest.raises(FlexToolUserError, match=rf"option {name!r} takes a whole number, and solver_arguments "
+                                                rf"of solve invest gives it '2.5'"):
+        _resolve_db(solver, {name: "2.5"})

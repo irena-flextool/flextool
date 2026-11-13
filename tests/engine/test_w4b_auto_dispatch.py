@@ -305,7 +305,7 @@ def test_register_derived_solve_makes_sibling_a_real_spine_solve(tmp_path):
     """``register_derived_solve`` lists the sibling in ``entities('solve')``
     with a FRESH entity id, so ``_solve_in_spine`` is True and
     ``_solve_periods`` reads the cloned realized window — while NOT cloning
-    ``invest_periods`` (the sibling must not invest)."""
+    the dropped ``invest_periods`` (the sibling must not invest)."""
     from flextool.engine.input._spinedb_reader import SpineDbReader
     from flextool.engine.preprocess.params._derived import (
         _solve_in_spine,
@@ -319,7 +319,7 @@ def test_register_derived_solve_makes_sibling_a_real_spine_solve(tmp_path):
     solve_cls = reader._class_name_to_id["solve"]
     before_ids = set(reader._entity_by_id)
 
-    reader.register_derived_solve(PARENT, SIBLING)
+    reader.register_derived_solve(PARENT, SIBLING, drop=SpineDbReader.REALIZATION_SOLVE_DROPPED_PARAMS)
 
     # Fresh id, listed in entities('solve'), _solve_in_spine True.
     new_ids = set(reader._entity_by_id) - before_ids
@@ -336,7 +336,7 @@ def test_register_derived_solve_makes_sibling_a_real_spine_solve(tmp_path):
     assert _solve_periods(reader, SIBLING, "invest_periods") is None
 
     # Idempotent — a second call is a no-op (no duplicate id).
-    reader.register_derived_solve(PARENT, SIBLING)
+    reader.register_derived_solve(PARENT, SIBLING, drop=SpineDbReader.REALIZATION_SOLVE_DROPPED_PARAMS)
     assert set(reader._entity_by_id) - before_ids == {new_eid}
 
 
@@ -462,7 +462,7 @@ def test_spawn_helper_fix_storage_guard_raises():
         def entities(self, _cls):
             return pl.DataFrame({"name": [PARENT]})
 
-        def register_derived_solve(self, parent, sibling):
+        def register_derived_solve(self, parent, sibling, **_kw):
             self.registered.append((parent, sibling))
 
     def _cfg(realized, fix_storage):
@@ -472,6 +472,8 @@ def test_spawn_helper_fix_storage_guard_raises():
         sc.solve_modes = {PARENT: "single_solve"}
         sc.dispatch_realization_method = {PARENT: "separate_dispatch"}
         sc.realized_periods = {PARENT: realized}
+        sc.timesets_used_by_solves = {PARENT: [("p2035", "ts35"), ("p2040", "ts40")]}
+        sc.solve_period_years_represented = {PARENT: [("p2035", 5.0), ("p2040", 5.0)]}
         sc.fix_storage_periods = {PARENT: fix_storage}
         # W4c — spawn records the sibling -> parent map on this dict.
         sc.realized_dispatch_parent = {}

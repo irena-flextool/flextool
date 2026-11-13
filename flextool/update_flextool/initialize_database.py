@@ -1,6 +1,9 @@
 import json
 import argparse
-from spinedb_api import import_data, DatabaseMapping
+from spinedb_api import import_data
+
+from flextool.sqlite_url import sqlite_url
+from flextool.update_flextool.db_handle import database_mapping
 
 from flextool.update_flextool.export_database import keep_serialized_unparse
 
@@ -16,7 +19,7 @@ def initialize_database(json_template, database_name="new_database.sqlite"):
 
     # ``with`` closes only the session; ``close()`` (below) also disposes the engine, whose pooled connection
     # otherwise keeps the file open (Windows then cannot delete or replace it).
-    new_db = DatabaseMapping('sqlite:///' + database_name, create=True)
+    new_db = database_mapping(sqlite_url(database_name), create=True)
     try:
         _initialize(new_db, template, database_name)
     finally:

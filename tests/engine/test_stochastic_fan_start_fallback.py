@@ -2,15 +2,17 @@
 
 A forecast is authored as a ``(branch, analysis_time, time)`` map.  A solve
 fans once, at its first stochastic step (``solve_data/branch_time_start``).
-Every fold reads, per value cell, the forecast authored at the branch
-period's own first step, else the forecast authored at the fan start, so a
-model that authors its forecasts only at the fan's analysis time reads them
-in every later period too (before: 0 there).  In a roll of a rolling solve
-a look-ahead period reads the roll's fan-start forecast only: a cell that
+Every period from the fan onwards reads, per value cell, the forecast
+authored at the fan start, so a model that authors its forecasts only at
+the fan's analysis time reads them in every later period too (before: 0
+there).  A solve or a roll decides at its fan's analysis time: a cell that
 forecast does not cover, where a forecast made later (at the period's own
-first step) has a value, is an input error -- the roll's forecast must
-cover its whole horizon.  A pre-reveal trunk period never reads the fan
-start.
+first step) has a value, is an input error -- the fan's forecast must cover
+the whole horizon (item 228 for rolls, item 255 for single solves too).  A pre-reveal trunk period never reads the fan
+start: every period before the reveal reads the forecast made at the solve's
+or roll's start under the realized branch, which must cover it; a
+forecasts-only fan has no series for those periods, so a stochastic value
+there is an input error (item 250).
 
 Fixture (built from the schema JSON, never a checked-in sqlite): one node
 ``s`` (constant demand 1 per step unless the case sets a stochastic inflow),
@@ -44,7 +46,7 @@ from flextool.engine.preprocess.emit._solve_writers import (
 )
 
 SCHEMA_JSON = Path(flextool.__file__).parent / "schemas" / "spinedb_schema.json"
-_FACTOR = {"high": 1.0, "low": 0.5}
+_FACTOR = {"high": 1.0, "low": 0.5, "real": 0.8}
 _counter = itertools.count()
 
 
@@ -190,43 +192,61 @@ def test_later_branch_period_reads_fan_start_forecast(tmp_path_factory) -> None:
     assert sum(_period(inflow, "p2_low")) == pytest.approx(-0.26)
     flows = s.solution.value("v_flow").with_columns(pl.col("d").cast(pl.Utf8))
     assert flows.filter(pl.col("d") == "p2_high")["value"].sum() > 0.0
-    assert _bts(s) == {d: ("t0001", "own") for d in ("p1", "p1_high", "p1_low", "p2", "p2_high", "p2_low")}
+    assert _bts(s) == {d: ("t0001", "fan") for d in ("p1", "p1_high", "p1_low", "p2", "p2_high", "p2_low")}
 
 
 # ── 2: a later fan; the pre-reveal trunk never reads the fan start ─────
 def test_mid_horizon_fan_reads_its_own_start(tmp_path_factory) -> None:
-    """NP=3, fan p2/t0005; data at t0001 (0.1·i) and at t0005 (0.01·i).  p3_x reads the t0005 series at
-    t0009..t0012 (high 0.09..0.12, low 0.045..0.06); p2_x its own t0005 series; the pre-reveal trunk p1
-    is unchanged (the reference forecast high at its own t0001: 0.1..0.4) and has no fan-start row."""
+    """NP=3, fan p2/t0005 with realized ``real`` (×0.8); data at t0001 (0.1·i) and at t0005 (0.01·i).  p3_x
+    reads the t0005 series at t0009..t0012 (high 0.09..0.12, low 0.045..0.06); p2_x its own t0005 series; the
+    pre-reveal trunk p1 reads the realized branch at the start t0001 (0.08..0.32) and has no fan-start row."""
     n = 12
-    prof = _forecast({"t0001": _series(n), "t0005": _series(n, 0.01, offset=4)})
-    steps = _run(tmp_path_factory, n_periods=3, fans=_two_forecasts("p2", "t0005"), profile=prof)
+    prof = _forecast({"t0001": _series(n), "t0005": _series(n, 0.01, offset=4)}, branches=("high", "low", "real"))
+    steps = _run(tmp_path_factory, n_periods=3, fans=_two_forecasts("p2", "t0005", realized="real"), profile=prof)
     s = steps["sol"]
     for cells in (_cells(s, "pdtProfile"), _profile_value(s)):
-        assert _period(cells, "p1") == pytest.approx([0.1, 0.2, 0.3, 0.4])
+        assert _period(cells, "p1") == pytest.approx([0.08, 0.16, 0.24, 0.32])
         assert _period(cells, "p2_high") == pytest.approx([0.05, 0.06, 0.07, 0.08])
         assert _period(cells, "p3_high") == pytest.approx([0.09, 0.10, 0.11, 0.12])
         assert _period(cells, "p3_low") == pytest.approx([0.045, 0.05, 0.055, 0.06])
     bts = _bts(s)
     assert "p1" not in bts
-    assert set(bts.values()) == {("t0005", "own")}
+    assert set(bts.values()) == {("t0005", "fan")}
 
 
-# ── 3: single solve — a forecast authored at the period's own first step wins ──
-def test_own_first_step_overrides_fan_start(tmp_path_factory) -> None:
-    """Single (non-rolling) solve.  Data at t0001 (0.1·i) plus a constant 0.9 at analysis time t0005 for
-    t0005..t0008 in every branch: p2 reads 0.9 in every forecast (no double count with the fan start); the
-    rolling look-ahead rule (test 4) does not apply, ``read_first`` is ``own``."""
+# ── 3: single solve — the fan's forecast wins over a later one (item 255) ──
+def test_single_solve_ignores_a_later_forecast_the_fan_forecast_covers(tmp_path_factory) -> None:
+    """Single (non-rolling) solve, fan p1/t0001.  Data at t0001 (0.1·i, covering t0001..t0008) plus a constant
+    0.9 at analysis time t0005 for t0005..t0008 in every branch.  The solve decides at t0001 and must not see the
+    forecast made at t0005, so p2 reads the t0001 forecast: high 0.5..0.8, low (×0.5) 0.25..0.40 (before item
+    255: 0.9, the later forecast); ``read_first`` is ``fan``."""
     n = 8
     per = {b: {"t0001": {t: v * _FACTOR[b] for t, v in _series(n).items()},
                "t0005": {t: 0.9 for t in _steps(n)[4:]}} for b in ("high", "low")}
     steps = _run(tmp_path_factory, n_periods=2, fans=_two_forecasts("p1", "t0001"), profile=_stochastic(per))
     s = steps["sol"]
     for cells in (_cells(s, "pdtProfile"), _profile_value(s)):
-        assert _period(cells, "p2_high") == pytest.approx([0.9] * 4)
-        assert _period(cells, "p2_low") == pytest.approx([0.9] * 4)
+        assert _period(cells, "p2_high") == pytest.approx([0.5, 0.6, 0.7, 0.8])
+        assert _period(cells, "p2_low") == pytest.approx([0.25, 0.30, 0.35, 0.40])
         assert _period(cells, "p1_low") == pytest.approx([0.05, 0.10, 0.15, 0.20])
-    assert {r for _s, r in _bts(s).values()} == {"own"}
+    assert {r for _s, r in _bts(s).values()} == {"fan"}
+
+
+def test_single_solve_later_forecast_not_covered_by_the_fan_forecast_is_an_error(tmp_path_factory) -> None:
+    """Single solve, fan p1/t0001: the t0001 forecast covers only p1 (t0001..t0004) and the series for p2 is given
+    at t0005 only, a forecast made after the solve decides.  An input error naming the profile, the solve, p2's
+    four steps in both forecast copies and the two analysis times (before item 255: p2 read the t0005 series)."""
+    per = {b: {"t0001": {t: v * _FACTOR[b] for t, v in _series(4).items()},
+               "t0005": {t: 0.9 for t in _steps(8)[4:]}} for b in ("high", "low")}
+    with pytest.raises(FlexToolConfigError) as err:
+        _run(tmp_path_factory, n_periods=2, fans=_two_forecasts("p1", "t0001"), profile=_stochastic(per))
+    assert str(err.value) == (
+        "profile 'prof', parameter 'profile': solve 'sol' branches into its forecasts at time step 't0001' and "
+        "reads the forecasts made then over its whole horizon, but those forecasts have no value at time steps "
+        "'t0005', 't0006', 't0007', 't0008' (periods 'p2_high', 'p2_low').  Only the forecasts made later, at "
+        "'t0005', have values there, and a solve (or a roll of a rolling solve) must not use a forecast made "
+        "after it branches.  Give the forecasts that start at 't0001' values for the whole horizon, look-ahead "
+        "included.  Check which alternative of the scenario gives this value.")
 
 
 # ── 4: rolling — a roll reads only its own fan-start forecast ──────────
@@ -240,7 +260,7 @@ def test_rolling_lookahead_reads_roll_fan_start(tmp_path_factory, monkeypatch) -
     the forecast made at t0009, so p3 reads roll 1's t0001 forecast first.  Hand derivation: the t0001 series
     is 0.1·i at step t000i, so at t0009..t0012 (i = 9..12) branch high (×1) reads 0.9, 1.0, 1.1, 1.2 and
     branch low (×0.5) 0.45, 0.50, 0.55, 0.60 -- not the t0009 series (0.09..0.12 / 0.045..0.06) that the
-    single-solve rule (own first step first) would read.
+    rule before item 228 (own first step first) would read.
 
     The recorder is set with ``raising=False`` and the values are checked before the recorded rows, so on code
     without ``emit_branch_time_start`` the test fails on the values (p2 read 0), not on the patch."""
@@ -253,9 +273,9 @@ def test_rolling_lookahead_reads_roll_fan_start(tmp_path_factory, monkeypatch) -
     emitted: list[list[tuple[str, str]]] = []
     real_emit = getattr(_solve_writers, "emit_branch_time_start", None)
 
-    def _record(rows, *, provider, fan_first=False):
-        emitted.append((list(rows), fan_first))
-        real_emit(rows, provider=provider, fan_first=fan_first)
+    def _record(rows, *, provider):
+        emitted.append(list(rows))
+        real_emit(rows, provider=provider)
 
     monkeypatch.setattr(_solve_writers, "emit_branch_time_start", _record, raising=False)
     steps = _run(tmp_path_factory, n_periods=3, fans=fans, profile=_stochastic(per), rolling=(8.0, 12.0))
@@ -270,8 +290,7 @@ def test_rolling_lookahead_reads_roll_fan_start(tmp_path_factory, monkeypatch) -
     # Roll 1's look-ahead p3 reads roll 1's fan-start (t0001) forecast, not roll 2's t0009 one.
     assert _period(c1, "p3_high") == pytest.approx([0.9, 1.0, 1.1, 1.2])
     assert _period(c1, "p3_low") == pytest.approx([0.45, 0.50, 0.55, 0.60])
-    assert [(sorted({step for _d, step in rows}), ff) for rows, ff in emitted] == [(["t0001"], True),
-                                                                                (["t0009"], True)]
+    assert [sorted({step for _d, step in rows}) for rows in emitted] == [["t0001"], ["t0009"]]
 
 
 # ── 4b: rolling — a roll's forecast must cover its look-ahead ──────────
@@ -288,12 +307,160 @@ def test_rolling_lookahead_not_covered_by_roll_forecast_is_an_error(tmp_path_fac
     with pytest.raises(FlexToolConfigError) as err:
         _run(tmp_path_factory, n_periods=3, fans=fans, profile=_stochastic(per), rolling=(8.0, 12.0))
     assert str(err.value) == (
-        "profile 'prof', parameter 'profile': roll 'sol_roll_0' of a rolling solve starts at time step 't0001' "
-        "and reads the forecasts made then over its whole horizon, but those forecasts have no value at time "
-        "steps 't0009', 't0010', 't0011', 't0012' (periods 'p3_high', 'p3_low').  Only the forecasts made "
-        "later, at 't0009', have values there, and a roll must not use a forecast made after it starts.  Give "
-        "the forecasts that start at 't0001' values for the whole horizon of the roll, look-ahead included.  "
-        "Check which alternative of the scenario gives this value.")
+        "profile 'prof', parameter 'profile': solve 'sol_roll_0' branches into its forecasts at time step "
+        "'t0001' and reads the forecasts made then over its whole horizon, but those forecasts have no value at "
+        "time steps 't0009', 't0010', 't0011', 't0012' (periods 'p3_high', 'p3_low').  Only the forecasts made "
+        "later, at 't0009', have values there, and a solve (or a roll of a rolling solve) must not use a "
+        "forecast made after it branches.  Give the forecasts that start at 't0001' values for the whole "
+        "horizon, look-ahead included.  Check which alternative of the scenario gives this value.")
+
+
+# ── 4c: a later forecast cohort that no solve or roll fans out at (item 229) ──
+_IGNORED_HEAD = ("Warning: stochastic_branches declares forecasts where no solve or roll fans out, and FlexTool "
+                 "ignores them: solve 'sol', period 'p2' at analysis_time 't0005' (forecast branches ")
+_IGNORED_TAIL = (" A solve or roll fans out once, at its first reveal, and its branches read the forecasts made "
+                 "then through the rest of its horizon. To use these forecasts, make a roll start there "
+                 "(rolling_solve_jump) or put the later fan in a separate solve; otherwise remove these "
+                 "stochastic_branches rows.")
+_ROLL_0_P2_IGNORED = (_IGNORED_HEAD + "'high', 'low'), in the horizon of roll 'sol_roll_0', which fans out at "
+                      "period 'p1' (analysis_time 't0001')." + _IGNORED_TAIL)
+
+
+def _warnings(out: str) -> list[str]:
+    return [line for line in out.splitlines() if line.startswith("Warning: stochastic_branches declares")]
+
+
+def _results(steps) -> dict:
+    """``{solve: (objective, sorted v_flow rows)}`` -- what the ignored cohort must not change."""
+    out = {}
+    for name, step in steps.items():
+        flows = step.solution.value("v_flow")
+        flows = flows.with_columns(pl.col(c).cast(pl.Utf8) for c in flows.columns if c != "value")
+        out[name] = (step.obj, sorted(flows.rows()))
+    return out
+
+
+@pytest.mark.parametrize(("rolling", "fans", "extra", "expected"), [
+    pytest.param(
+        None, _two_forecasts("p1", "t0001"), [("p2", "x", "t0005", "no", 0.5), ("p2", "mid", "t0005", "no", 0.5)],
+        _IGNORED_HEAD + "'mid', 'x'), in the horizon of solve 'sol', which fans out at period 'p1' "
+        "(analysis_time 't0001')." + _IGNORED_TAIL,
+        id="single"),
+    pytest.param(
+        (8.0, 12.0), [*_two_forecasts("p1", "t0001"), *_two_forecasts("p3", "t0009")],
+        _two_forecasts("p2", "t0005"), _ROLL_0_P2_IGNORED, id="rolling"),
+    pytest.param(
+        (6.0, 12.0), [*_two_forecasts("p1", "t0001"), *_two_forecasts("p3", "t0009")],
+        _two_forecasts("p2", "t0005"), _ROLL_0_P2_IGNORED, id="rolling-fan-after-roll-start"),
+])
+def test_later_forecast_cohort_no_solve_fans_at_is_ignored(tmp_path_factory, capfd, rolling, fans, extra,
+                                                           expected) -> None:
+    """A solve or roll fans out once, at its first reveal; forecasts declared where no solve or roll fans out are
+    ignored with ONE warning per run (owner decision 2026-11-13; item 229 made them an error).  Single solve,
+    NP=3: fan p1/t0001 (high/low) and forecasts x, mid declared at p2/t0005.  Rolling 8/12, NP=3: rolls start
+    (and fan) at t0001 and t0009; roll 0's horizon reaches p2/t0005, where no roll fans out.  Rolling 6/12, NP=3:
+    roll 1 starts at t0007 (inside p2) and fans at its first reveal p3/t0009, so roll 0's look-ahead p3/t0009 is
+    a fan point (not named) and only p2/t0005 is.  The run goes through with the results of the same model
+    without the extra rows.  The valid cases -- a later cohort that another roll fans out at -- are test 4 / 4b
+    and the next test."""
+    base = _results(_run(tmp_path_factory, n_periods=3, fans=fans, rolling=rolling))
+    assert _warnings(capfd.readouterr().out) == []
+    got = _results(_run(tmp_path_factory, n_periods=3, fans=[*fans, *extra], rolling=rolling))
+    assert _warnings(capfd.readouterr().out) == [expected]
+    assert list(got) == list(base)
+    for name in base:
+        assert got[name][0] == pytest.approx(base[name][0], rel=1e-12)
+        assert got[name][1] == base[name][1]
+
+
+def test_roll_without_a_forecast_in_its_horizon_is_an_error(tmp_path_factory) -> None:
+    """Every roll of a stochastic rolling solve needs forecasts made at its start, or where it branches later in
+    its horizon (owner 2026-11-13).  Rolling 8/12, NP=3, forecasts at p1/t0001 only: roll 1 (t0009..t0012)
+    reaches no forecast, and would be solved without any (before: silently deterministic).  Stops before
+    solving, naming the roll, its start and horizon."""
+    with pytest.raises(FlexToolConfigError) as err:
+        _run(tmp_path_factory, n_periods=3, fans=_two_forecasts("p1", "t0001"), rolling=(8.0, 12.0))
+    assert str(err.value) == (
+        "Roll 'sol_roll_1' of rolling solve 'sol' starts at period 'p3', time step 't0009', but no forecast of "
+        "stochastic_branches starts in its horizon (period 'p3' 't0009' to period 'p3' 't0012'), so it would be "
+        "solved without forecasts. Every roll of a stochastic rolling solve needs forecasts made at its start (or "
+        "where it branches later in its horizon): add stochastic_branches rows for period 'p3' at analysis_time "
+        "'t0009', or align the rolls with the forecast times (rolling_solve_jump).")
+
+
+def test_later_cohort_at_another_rolls_fan_point_not_its_start(tmp_path_factory, monkeypatch) -> None:
+    """Rolling 6/12, NP=3, cohorts t0001 and t0009 only: roll 0 (t0001..t0012) fans at p1/t0001 and its
+    look-ahead reaches p3/t0009; roll 1 starts at t0007 but fans at p3/t0009 (a later period's first step,
+    not the roll's own start).  The exemption is a roll's fan point, so the run goes through: two rolls, roll 0
+    fanning at t0001 and roll 1 at t0009 (the fan steps recorded per roll, as in test 4)."""
+    fans = [*_two_forecasts("p1", "t0001"), *_two_forecasts("p3", "t0009")]
+    from flextool.engine.preprocess.emit import _solve_writers
+    emitted: list = []
+    real_emit = _solve_writers.emit_branch_time_start
+
+    def _record(rows, *, provider):
+        emitted.append(sorted({step for _d, step in rows}))
+        real_emit(rows, provider=provider)
+
+    monkeypatch.setattr(_solve_writers, "emit_branch_time_start", _record)
+    steps = _run(tmp_path_factory, n_periods=3, fans=fans, rolling=(6.0, 12.0))
+    assert list(steps) == ["sol_roll_0", "sol_roll_1"]
+    assert emitted == [["t0001"], ["t0009"]]
+
+
+
+# ── 4d: one realization series per solve (item 248b) ──────────────────
+def _realized_rolls(realized_at_p3: str) -> list[tuple]:
+    return [*_two_forecasts("p1", "t0001", realized="real"), *_two_forecasts("p3", "t0009", realized=realized_at_p3)]
+
+
+def _not_fanned_error(branch: str) -> str:
+    return (
+        "Roll 'sol_roll_0' of rolling solve 'sol' opens its stochastic fan at period 'p1' (analysis_time 't0001'). "
+        "The stochastic_branches of solve 'sol' also mark a realized branch later in its horizon, where no solve or "
+        f"roll fans out: period 'p2' at analysis_time 't0005' (realized branch '{branch}'). This row switches the "
+        "realization dispatch to its branch from that period on, and it is not allowed even when it names the "
+        "branch already realized. A solve has one realization series: give the realized: yes row only where a "
+        "solve or roll fans out, always with the same branch, and change that branch's series to give the "
+        "realization new data. Remove this row. Check stochastic_branches.")
+
+
+@pytest.mark.parametrize(("fans", "expected"), [
+    pytest.param([*_realized_rolls("real"), ("p2", "alt", "t0005", "yes", 0.0)], _not_fanned_error("alt"),
+                 id="switch-other"),
+    pytest.param([*_realized_rolls("real"), ("p2", "real", "t0005", "yes", 0.0)], _not_fanned_error("real"),
+                 id="same-branch-not-fan"),
+    pytest.param(
+        _realized_rolls("obs"),
+        "The stochastic_branches of solve 'sol' mark different realized branches where its rolls fan out: 'real' "
+        "at period 'p1' (analysis_time 't0001'); 'obs' at period 'p3' (analysis_time 't0009'). A solve has one "
+        "realization series: name the same branch in every realized: yes row, and give that branch the data of "
+        "each roll at the roll's analysis_time. Check stochastic_branches.",
+        id="fan-point-other-branch"),
+    pytest.param([*_realized_rolls("obs"), ("p2", "alt", "t0005", "yes", 0.0)], _not_fanned_error("alt"),
+                 id="r1-before-r2"),
+    pytest.param(
+        [*_realized_rolls("obs"), *_two_forecasts("p2", "t0005")],
+        "The stochastic_branches of solve 'sol' mark different realized branches where its rolls fan out: 'real' "
+        "at period 'p1' (analysis_time 't0001'); 'obs' at period 'p3' (analysis_time 't0009'). A solve has one "
+        "realization series: name the same branch in every realized: yes row, and give that branch the data of "
+        "each roll at the roll's analysis_time. Check stochastic_branches.",
+        id="229-ignored-then-r2"),
+    pytest.param(_realized_rolls("real"), None, id="valid"),
+])
+def test_realized_row_where_no_roll_fans_out_or_switching_branch(tmp_path_factory, fans, expected) -> None:
+    """Rolling 8/12, NP=3: rolls start (and fan) at p1/t0001 and p3/t0009, both with forecasts high/low and
+    realized: yes ``real``.  A realized: yes row at p2/t0005, where no roll fans out, is an error naming roll 0
+    (roll 1 does not reach p2) whatever branch it names: it switches the realization series or only repeats it.
+    Fan points naming different realized branches are an error too (one realization series per solve); R1
+    comes before R2, and a later forecast cohort where no roll fans out (item 229) is only ignored.  The same branch at every roll's fan point is valid (before: the first two switched silently)."""
+    if expected is None:
+        steps = _run(tmp_path_factory, n_periods=3, fans=fans, rolling=(8.0, 12.0))
+        assert {"sol_roll_0", "sol_roll_1"} <= set(steps)
+        return
+    with pytest.raises(FlexToolConfigError) as err:
+        _run(tmp_path_factory, n_periods=3, fans=fans, rolling=(8.0, 12.0))
+    assert str(err.value) == expected
 
 
 # ── 5: realized: yes — the realization sibling and ungrouped users ─────
@@ -314,7 +481,7 @@ def test_realized_branch_read_in_later_periods(tmp_path_factory) -> None:
     for cells in (_cells(sibling, "pdtProfile"), _profile_value(sibling)):
         assert _period(cells, "p2") == pytest.approx(real)
         assert _period(cells, "p1") == pytest.approx([0.08, 0.16, 0.24, 0.32])
-    assert _bts(sibling) == {"p1": ("t0001", "own"), "p2": ("t0001", "own")}
+    assert _bts(sibling) == {"p1": ("t0001", "fan"), "p2": ("t0001", "fan")}
 
 
 # ── 6: ungrouped stochastic inflow in a forecasts-only fan ─────────────
@@ -332,8 +499,8 @@ def test_ungrouped_stochastic_inflow_without_realized_is_an_error(tmp_path_facto
 # ── coverage checks (own ∪ fan; inflow and reservation) ────────────────
 def _fan_provider(pbt_name: str, pbt: pl.DataFrame, extra: "dict[str, pl.DataFrame]",
                   *, rolling: bool = False) -> FlexDataProvider:
-    """A synthetic solve: fan p1/t1 into high/low, continuation p2 (first step t5); *rolling*: the solve is
-    roll ``sol_roll_1`` of a rolling solve (``read_first`` = ``fan``)."""
+    """A synthetic solve ``sol``: fan p1/t1 into high/low, continuation p2 (first step t5), ``read_first`` =
+    ``fan`` as every solve writes it; *rolling*: the solve is roll ``sol_roll_1`` of a rolling solve."""
     provider = FlexDataProvider()
 
     def put(key: str, df: pl.DataFrame) -> None:
@@ -349,9 +516,8 @@ def _fan_provider(pbt_name: str, pbt: pl.DataFrame, extra: "dict[str, pl.DataFra
         "branch": ["p1", "p1_high", "p1_low", "p2", "p2_high", "p2_low"]}))
     put("solve_data/branch_time_start", pl.DataFrame({
         "period": ["p1", "p1_high", "p1_low", "p2", "p2_high", "p2_low"], "step": ["t1"] * 6,
-        "read_first": ["fan" if rolling else "own"] * 6}))
-    if rolling:
-        put("solve_data/solve_current", pl.DataFrame({"solve": ["sol_roll_1"]}))
+        "read_first": ["fan"] * 6}))
+    put("solve_data/solve_current", pl.DataFrame({"solve": ["sol_roll_1" if rolling else "sol"]}))
     put("solve_data/steps_in_use", pl.DataFrame({
         "period": ["p1_high", "p1_low", "p2_high", "p2_low"], "time": ["t1", "t1", "t5", "t5"]}))
     for k, v in extra.items():
@@ -428,28 +594,21 @@ _LATER_ONLY = dict(branches=["high", "low", "high", "low"], values=[1.0, 0.5, 3.
                    time_starts=["t1", "t1", "t5", "t5"], times=["t1", "t1", "t5", "t5"])
 
 
-def test_reservation_roll_forecast_must_cover_lookahead(tmp_path) -> None:
-    """A roll of a rolling solve: p2's step t5 has a value only in the forecast made at t5, later than the
-    roll's start t1, so the roll may not read it -- an input error, worded for the user (hand-written)."""
-    provider = _reserve_provider(**_LATER_ONLY, rolling=True)
+@pytest.mark.parametrize(("rolling", "solve"), [(True, "sol_roll_1"), (False, "sol")])
+def test_reservation_forecast_must_cover_the_horizon(tmp_path, rolling, solve) -> None:
+    """A roll of a rolling solve, and a single solve alike (item 255): p2's step t5 has a value only in the
+    forecast made at t5, later than the fan start t1, so the solve may not read it -- an input error, worded for
+    the user (hand-written)."""
+    provider = _reserve_provider(**_LATER_ONLY, rolling=rolling)
     with pytest.raises(FlexToolConfigError) as err:
         derive_pdtReserve_upDown_group(tmp_path / "input", tmp_path / "solve_data", provider=provider)
     assert str(err.value) == (
-        "reserve 'r' (up) of group 'g', parameter 'reservation': roll 'sol_roll_1' of a rolling solve starts at "
+        f"reserve 'r' (up) of group 'g', parameter 'reservation': solve '{solve}' branches into its forecasts at "
         "time step 't1' and reads the forecasts made then over its whole horizon, but those forecasts have no "
         "value at time step 't5' (periods 'p2_high', 'p2_low').  Only the forecasts made later, at 't5', have "
-        "values there, and a roll must not use a forecast made after it starts.  Give the forecasts that start "
-        "at 't1' values for the whole horizon of the roll, look-ahead included.  Check which alternative of the "
-        "scenario gives this value.")
-
-
-def test_reservation_single_solve_keeps_own_step_fallback(tmp_path) -> None:
-    """The same data in a single solve is fine: p2 reads its own first step's forecast, 3.0 / 1.5."""
-    df = derive_pdtReserve_upDown_group(tmp_path / "input", tmp_path / "solve_data",
-                                        provider=_reserve_provider(**_LATER_ONLY))
-    got = {(r[4], r[5]): float(r[6]) for r in df.iter_rows()}
-    assert got[("p2_high", "t5")] == 3.0
-    assert got[("p2_low", "t5")] == 1.5
+        "values there, and a solve (or a roll of a rolling solve) must not use a forecast made after it "
+        "branches.  Give the forecasts that start at 't1' values for the whole horizon, look-ahead included.  "
+        "Check which alternative of the scenario gives this value.")
 
 
 def test_reservation_roll_forecast_covering_lookahead_is_read(tmp_path) -> None:
@@ -464,8 +623,9 @@ def test_reservation_roll_forecast_covering_lookahead_is_read(tmp_path) -> None:
 
 
 def test_ts_tiers_order() -> None:
-    """Own first step first, then the fan start; a roll's look-ahead period (``fan_first``) the other way
-    round; the fan's own period (own step = fan start) and a period label read one tier."""
+    """The fan start first for a period with ``read_first`` = ``fan`` (``fan_first``: every period a solve
+    writes since item 255); a frame that says ``own`` (or a plain dict) the other way round; the fan's own
+    period (own step = fan start) and a period label read one tier."""
     ts_for_d = {"p1_b": ["t1"], "p2_b": ["t5"], "p2": []}
     fan = {"p1_b": ["t1"], "p2_b": ["t1"], "p2": ["t1"]}
     assert ts_tiers("p2_b", ts_for_d, fan) == [["t5"], ["t1"]]
@@ -474,6 +634,19 @@ def test_ts_tiers_order() -> None:
     assert ts_tiers("p2_b", ts_for_d, rolling) == [["t1"], ["t5"]]
     assert ts_tiers("p1_b", ts_for_d, rolling) == [["t1"]]
     assert ts_tiers("p2", ts_for_d, rolling) == [[]]
+
+
+def test_ts_tiers_before_the_reveal_read_the_start() -> None:
+    """Before the reveal (no fan-start row) every period reads the solve's or roll's start t1: the period that
+    holds it reads its own first step (= t1), a later one [t1], never its own later step; without a known start
+    (a plain dict) the own step."""
+    ts_for_d = {"p1": ["t1"], "p2": ["t5"], "p3_b": ["t9"]}
+    fan = {"p3_b": ["t9"]}
+    starts = FanStarts(fan, start="t1")
+    assert ts_tiers("p1", ts_for_d, starts) == [["t1"]]
+    assert ts_tiers("p2", ts_for_d, starts) == [["t1"]]
+    assert ts_tiers("p3_b", ts_for_d, starts) == [["t9"]]
+    assert ts_tiers("p2", ts_for_d, fan) == [["t5"]]
 
 
 # ── the frame itself ───────────────────────────────────────────────────
@@ -486,7 +659,225 @@ def test_branch_time_start_rows() -> None:
     assert rows == [(d, "t0005") for d in ("p2", "p2_high", "p2_low", "p3", "p3_high", "p3_low")]
     assert branch_time_start_rows(pb, None) == []
     assert project_branch_time_start_rows(rows, pb) == [("p2", "t0005"), ("p3", "t0005")]
-    frame = derive_branch_time_start(rows[:1], fan_first=True)
+    frame = derive_branch_time_start(rows[:1])
     assert frame.columns == ["period", "step", "read_first"]
     assert frame.rows() == [("p2", "t0005", "fan")]
-    assert derive_branch_time_start(rows[:1]).rows() == [("p2", "t0005", "own")]
+
+
+# ── 7: before the reveal (item 250) ────────────────────────────────────
+# Every period before the reveal reads only the forecast made at the solve's or roll's start (its first time step),
+# under the realized branch; never one made later.  A step that forecast does not cover is an input error, and so is
+# a stochastic value in a forecasts-only fan (no realized branch) whose solve or roll has a period before the fan
+# (before: a silent 0, or the first forecast in sorted order).  Constant forecasts: branch -> analysis time -> value
+# at every step t0001..t(4·NP).
+_PRE_F = {"high": {"t0001": 1.0, "t0009": 2.0, "t0013": 9.0},
+          "low": {"t0001": 3.0, "t0009": 4.0, "t0013": 10.0},
+          "real": {"t0001": 5.0, "t0009": 6.0, "t0013": 11.0}}
+
+
+def _constant_forecasts(n_steps: int, per_branch: dict[str, dict[str, float]], sign: float = 1.0) -> api.Map:
+    return _stochastic({b: {at: {t: sign * v for t in _steps(n_steps)} for at, v in ats.items()}
+                        for b, ats in per_branch.items()})
+
+
+def _fans_f(realized="real") -> list[tuple]:
+    """Case F: rolls of jump 6 start at t0001, t0007 (inside p2) and t0013; roll 0 fans at p1, roll 1 at p3."""
+    return [*_two_forecasts("p1", "t0001", realized=realized), *_two_forecasts("p3", "t0009", realized=realized),
+            *_two_forecasts("p4", "t0013", realized=realized)]
+
+
+def _start_not_covered(subject: str, param: str, solve: str, start: str, steps: str, period: str,
+                       others: str = "") -> str:
+    """*others*: the analysis times of the realized branch's other forecasts that do cover *steps* (item 250
+    review: the message names them)."""
+    note = (f"  The forecasts made at analysis_time {others} have values there, but a solve or roll reads only the "
+            "forecast made at its start.") if others else ""
+    return (f"{subject}, parameter '{param}': solve '{solve}' starts at time step '{start}', and before its "
+            "forecasts branch out every period reads the forecast made then (analysis_time "
+            f"'{start}', branch 'real').  That forecast has no value at time steps {steps} (period '{period}'), "
+            f"and FlexTool does not use a forecast made later nor the default value instead.{note}  Give forecasts with "
+            f"analysis_time '{start}' that cover these time steps, or align the solve or roll starts with the "
+            "forecast times (in a rolling solve, rolling_solve_jump).  Check which alternative of the scenario "
+            "gives this value.")
+
+
+def _no_realized_branch(solve: str, period: str, steps: str, start: str) -> str:
+    return ("profile 'prof', parameter 'profile': the value has forecasts, and "
+            f"solve '{solve}' reads it in period '{period}' (time steps {steps}), before its forecasts branch out.  "
+            "No forecast of the solve is marked realized: yes, so there is no series to read before the forecasts "
+            "branch out; FlexTool does not pick one of the forecasts, nor the default value.  Designate a realized "
+            "branch (realized: yes in the solve's stochastic_branches) -- it provides the shared data before the "
+            f"forecasts branch out, at analysis_time '{start}' -- or give 'profile' a value without forecasts.  "
+            "Check which alternative of the scenario gives this value.")
+
+
+_F_STEPS = "'t0007', 't0008'"
+
+
+@pytest.mark.parametrize("case", ["grouped", "ungrouped", "forecasts_only", "inflow", "availability"])
+def test_roll_start_without_forecast_is_an_error(tmp_path_factory, case) -> None:
+    """Case F: roll 1 starts at t0007, inside p2, and fans only at p3; forecasts are given at t0001, t0009 and
+    t0013.  Before its fan, p2 reads the forecast made at t0007, which does not exist: an error naming the roll,
+    the start and the uncovered steps t0007-t0008 of p2 (before: 0.0); the t0001 forecast is not read instead.
+    The bound branch is the realized branch 'real'; a forecasts-only fan has no branch to read p2 through, which
+    is its own error.  With a stochastic inflow too (node grouped), the inflow reader raises first; a stochastic
+    unit availability (plain profile) is read by the process lookup."""
+    kwargs = {"unit_grouped": case != "ungrouped"}
+    if case == "inflow":
+        kwargs.update(inflow=_constant_forecasts(16, _PRE_F, -1.0), node_grouped=True)
+    if case == "availability":
+        kwargs.update(profile=_m({t: 1.0 for t in _steps(16)}, "time"),
+                      extra_values=[("unit", "src", "availability", _constant_forecasts(16, _PRE_F, 0.1))])
+    fans = _fans_f(realized=None if case == "forecasts_only" else "real")
+    per = {b: v for b, v in _PRE_F.items() if case != "forecasts_only" or b != "real"}
+    with pytest.raises(FlexToolConfigError) as err:
+        _run(tmp_path_factory, n_periods=4, fans=fans, **{"profile": _constant_forecasts(16, per), **kwargs},
+             rolling=(6.0, 10.0))
+    roll = ("sol_roll_1", "t0007", _F_STEPS, "p2", "'t0001', 't0009', 't0013'")
+    expected = {
+        "grouped": _start_not_covered("profile 'prof'", "profile", *roll),
+        "ungrouped": _start_not_covered("profile 'prof'", "profile", *roll),
+        "forecasts_only": _no_realized_branch("sol_roll_1", "p2", _F_STEPS, "t0007"),
+        "inflow": _start_not_covered("node 's'", "inflow", *roll),
+        "availability": _start_not_covered("unit or connection 'src'", "availability", *roll),
+    }[case]
+    assert str(err.value) == expected
+
+
+def test_roll_start_forecast_is_read_before_the_fan(tmp_path_factory) -> None:
+    """Case F plus a forecast made at t0007 (20 + the t0001 value): roll 1's p2 and its realization read
+    real@t0007 = 25 at t0007-t0008; roll 1's fan copies read their t0009 forecasts (2, 4) and the realization's
+    p3 reads real@t0009 = 6."""
+    per = {b: {**ats, "t0007": 20.0 + ats["t0001"]} for b, ats in _PRE_F.items()}
+    steps = _run(tmp_path_factory, n_periods=4, fans=_fans_f(), profile=_constant_forecasts(16, per),
+                 rolling=(6.0, 10.0))
+    for name in ("sol_roll_1", "sol__realized_dispatch_roll_1"):
+        cells = _profile_value(steps[name])
+        assert [cells[("p2", t)] for t in ("t0007", "t0008")] == pytest.approx([25.0, 25.0]), name
+    roll = _profile_value(steps["sol_roll_1"])
+    assert _period(roll, "p3_high") == pytest.approx([2.0] * 4)
+    assert _period(roll, "p3_low") == pytest.approx([4.0] * 4)
+    assert _period(_profile_value(steps["sol__realized_dispatch_roll_1"]), "p3") == pytest.approx([6.0] * 4)
+
+
+# Cases H / I: three periods, one fan at p3/t0009 with realized 'real'.  p1 and p2 ("2030", "2035") come before
+# the reveal; p3 ("2040") branches out.  The rolls (jump 4, horizon 12) start at t0001, t0005 and t0009: roll 0's
+# fan opens in its look-ahead, two periods after its start.
+_PRE_H = {"high": {"t0001": 1.0, "t0005": 1.5, "t0009": 2.0}, "low": {"t0001": 3.0, "t0005": 3.5, "t0009": 4.0},
+          "real": {"t0001": 5.0, "t0005": 7.0, "t0009": 6.0}}
+
+
+def test_later_periods_before_the_reveal_read_the_start_forecast(tmp_path_factory) -> None:
+    """Case H, single solve: p1 and p2 both read real@t0001 = 5 (not real@t0005 = 7, a forecast made after the
+    solve starts); p3_high / p3_low read 2 / 4; the realization reads 5 in p1, p2 and real@t0009 = 6 in p3."""
+    steps = _run(tmp_path_factory, n_periods=3, fans=_two_forecasts("p3", "t0009", realized="real"),
+                 profile=_constant_forecasts(12, _PRE_H))
+    for name in ("sol", "sol__realized_dispatch"):
+        cells = _profile_value(steps[name])
+        assert _period(cells, "p1") == pytest.approx([5.0] * 4), name
+        assert _period(cells, "p2") == pytest.approx([5.0] * 4), name
+    sol = _profile_value(steps["sol"])
+    assert _period(sol, "p3_high") == pytest.approx([2.0] * 4)
+    assert _period(sol, "p3_low") == pytest.approx([4.0] * 4)
+    assert _period(_profile_value(steps["sol__realized_dispatch"]), "p3") == pytest.approx([6.0] * 4)
+
+
+def test_rolling_lookahead_fan_two_periods_ahead_runs(tmp_path_factory) -> None:
+    """Case I, rolls of jump 4 / horizon 12: roll 0 reads real@t0001 = 5 in p1 and p2 and fans at p3 (2 / 4);
+    roll 1 starts at t0005 and reads real@t0005 = 7 in p2 (its own start, not the t0001 forecast)."""
+    steps = _run(tmp_path_factory, n_periods=3, fans=_two_forecasts("p3", "t0009", realized="real"),
+                 profile=_constant_forecasts(12, _PRE_H), rolling=(4.0, 12.0))
+    roll0 = _profile_value(steps["sol_roll_0"])
+    assert _period(roll0, "p1") == pytest.approx([5.0] * 4)
+    assert _period(roll0, "p2") == pytest.approx([5.0] * 4)
+    assert _period(roll0, "p3_high") == pytest.approx([2.0] * 4)
+    assert _period(roll0, "p3_low") == pytest.approx([4.0] * 4)
+    assert _period(_profile_value(steps["sol_roll_1"]), "p2") == pytest.approx([7.0] * 4)
+
+
+def test_later_period_not_covered_by_the_start_forecast_is_an_error(tmp_path_factory) -> None:
+    """Case H with real@t0001 given only for p1 (t0001-t0004): p2 is not covered by the forecast made at the start,
+    and the forecast made at t0005 is not read instead: an error naming steps t0005-t0008 of p2 and the forecasts
+    made at t0005 and t0009 that do cover them."""
+    per = {"real": {"t0001": {t: 5.0 for t in _steps(4)}, "t0005": {t: 7.0 for t in _steps(12)},
+                    "t0009": {t: 6.0 for t in _steps(12)}},
+           "high": {"t0009": {t: 2.0 for t in _steps(12)}}, "low": {"t0009": {t: 4.0 for t in _steps(12)}}}
+    with pytest.raises(FlexToolConfigError) as err:
+        _run(tmp_path_factory, n_periods=3, fans=_two_forecasts("p3", "t0009", realized="real"),
+             profile=_stochastic(per))
+    assert str(err.value) == _start_not_covered("profile 'prof'", "profile", "sol", "t0001",
+                                                "'t0005', 't0006', 't0007', 't0008'", "p2", "'t0005', 't0009'")
+
+
+@pytest.mark.parametrize("bound", ["high", "low"])
+def test_forecasts_only_fan_with_stochastic_data_before_it_is_an_error(tmp_path_factory, bound) -> None:
+    """A forecasts-only fan at p2/t0005 and the p1 series given at t0001 under one forecast (before: read under
+    'high', the first forecast in sorted order, and silently 0 under 'low'): no realized branch provides the data
+    before the fan, so it is an error naming p1 and its steps either way."""
+    per = {"high": {"t0005": {t: 2.0 for t in _steps(8)[4:]}}, "low": {"t0005": {t: 4.0 for t in _steps(8)[4:]}}}
+    per[bound]["t0001"] = {t: 7.0 for t in _steps(4)}
+    with pytest.raises(FlexToolConfigError) as err:
+        _run(tmp_path_factory, n_periods=2, fans=_two_forecasts("p2", "t0005"), profile=_stochastic(per))
+    assert str(err.value) == _no_realized_branch("sol", "p1", "'t0001', 't0002', 't0003', 't0004'", "t0001")
+
+
+def test_deterministic_first_period_stochastic_second_runs(tmp_path_factory) -> None:
+    """The first period ("2030") has one series, given at the solve's start under the realized branch; the second
+    ("2040") fans out at t0005 into high / low with real realized.  p1 reads real@t0001 = 7 in the solve and in its
+    realization; p2_high / p2_low read 2 / 4 and the realization's p2 reads real@t0005 = 6."""
+    per = {"real": {"t0001": {t: 7.0 for t in _steps(4)}, "t0005": {t: 6.0 for t in _steps(8)[4:]}},
+           "high": {"t0005": {t: 2.0 for t in _steps(8)[4:]}},
+           "low": {"t0005": {t: 4.0 for t in _steps(8)[4:]}}}
+    steps = _run(tmp_path_factory, n_periods=2, fans=_two_forecasts("p2", "t0005", realized="real"),
+                 profile=_stochastic(per))
+    sol = _profile_value(steps["sol"])
+    assert _period(sol, "p1") == pytest.approx([7.0] * 4)
+    assert _period(sol, "p2_high") == pytest.approx([2.0] * 4)
+    assert _period(sol, "p2_low") == pytest.approx([4.0] * 4)
+    real = _profile_value(steps["sol__realized_dispatch"])
+    assert _period(real, "p1") == pytest.approx([7.0] * 4)
+    assert _period(real, "p2") == pytest.approx([6.0] * 4)
+
+
+def _pre_reveal_reserve_provider(times: list[str]) -> FlexDataProvider:
+    """A single solve with a pre-reveal p1 (t1, t2, bound to the realized branch real) and a fan at p2/t3; the
+    reservation forecast of real made at t1 covers *times*, high / low give 3.0 / 1.5 at t3."""
+    provider = FlexDataProvider()
+    n = len(times)
+    provider.put("solve_data/pbt_reserve__upDown__group", pl.DataFrame({
+        "reserve": ["r"] * (n + 2), "upDown": ["up"] * (n + 2), "group": ["g"] * (n + 2),
+        "param": ["reservation"] * (n + 2), "branch": ["real"] * n + ["high", "low"],
+        "time_start": ["t1"] * n + ["t3", "t3"], "time": [*times, "t3", "t3"], "value": [2.0] * n + [3.0, 1.5]}))
+    provider.put("solve_data/first_timesteps", pl.DataFrame({
+        "period": ["p1", "p2_high", "p2_low"], "step": ["t1", "t3", "t3"]}))
+    provider.put("solve_data/solve_branch__time_branch", pl.DataFrame({
+        "period": ["p1", "p2_high", "p2_low"], "branch": ["real", "high", "low"]}))
+    provider.put("solve_data/period__branch", pl.DataFrame({
+        "period": ["p1", "p2", "p2", "p2"], "branch": ["p1", "p2", "p2_high", "p2_low"]}))
+    provider.put("solve_data/branch_time_start", pl.DataFrame({
+        "period": ["p2", "p2_high", "p2_low"], "step": ["t3"] * 3, "read_first": ["fan"] * 3}))
+    provider.put("solve_data/steps_in_use", pl.DataFrame({
+        "period": ["p1", "p1", "p2_high", "p2_low"], "time": ["t1", "t2", "t3", "t3"]}))
+    provider.put("solve_data/reserve__upDown__group",
+                 pl.DataFrame({"reserve": ["r"], "upDown": ["up"], "group": ["g"]}))
+    provider.put("input/groupIncludeStochastics", pl.DataFrame({"group": ["g"]}))
+    return provider
+
+
+def test_reservation_pre_reveal_start_forecast(tmp_path) -> None:
+    """Before the reveal, p1 reads the reservation forecast made at the solve's start t1 (2.0 at t1 and t2); when
+    that forecast misses t2 it is an error naming the step (before: 0.0 there)."""
+    df = derive_pdtReserve_upDown_group(tmp_path / "input", tmp_path / "solve_data",
+                                        provider=_pre_reveal_reserve_provider(["t1", "t2"]))
+    got = {(r[4], r[5]): float(r[6]) for r in df.iter_rows()}
+    assert (got[("p1", "t1")], got[("p1", "t2")], got[("p2_high", "t3")]) == (2.0, 2.0, 3.0)
+    with pytest.raises(FlexToolConfigError) as err:
+        derive_pdtReserve_upDown_group(tmp_path / "input", tmp_path / "solve_data",
+                                       provider=_pre_reveal_reserve_provider(["t1"]))
+    assert str(err.value) == (
+        "reserve 'r' (up) of group 'g', parameter 'reservation': this solve starts at time step 't1', and before "
+        "its forecasts branch out every period reads the forecast made then (analysis_time 't1', branch 'real').  "
+        "That forecast has no value at time step 't2' (period 'p1'), and FlexTool does not use a forecast made "
+        "later nor the default value instead.  Give forecasts with analysis_time 't1' that cover these time steps, or align the solve or roll "
+        "starts with the forecast times (in a rolling solve, rolling_solve_jump).  Check which alternative of the "
+        "scenario gives this value.")

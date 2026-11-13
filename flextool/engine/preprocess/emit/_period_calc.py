@@ -320,7 +320,43 @@ def emit_period_calculated_params(
         1.0 / (1.0 + p_inflation) if p_inflation != -1.0 else 1.0
     )
 
-    for d in periodAll:
+    # The years from the start of the run (``_npv`` "The discount base of a solve's own factors"), when the
+    # solve's own count does not give them: a roll or nested sub-solve of a solve that starts after the run
+    # start, or fractional years.  None keeps the own count below.
+    from flextool.engine.preprocess.params._npv import notice_discount_from_run_start, year_rows_from_history
+    history: dict[str, float] = {}
+    for d, v in zip(pwh_df["period"].to_list(), pwh_df["value"].to_list()):
+        if d and d not in history:
+            try:
+                history[d] = float(v)
+            except (ValueError, TypeError):
+                continue
+    solve_current = (_read_singles(solve_data_dir / "solve_current.csv", provider=provider) or [None])[0]
+    year_rows = year_rows_from_history(
+        history,
+        {d: [(y, p_years_represented.get((d, y), 1.0)) for y in ys] for d, ys in years_for_period.items()},
+        solve=solve_current)
+    if year_rows is not None:
+        notice_discount_from_run_start(solve_current, p_inflation)
+        in_all = set(periodAll)
+        width_sum: dict[str, float] = {}
+        for d, y, pyr, base in year_rows.iter_rows():
+            if d not in in_all:
+                continue
+            width_sum[d] = width_sum.get(d, 0.0) + pyr
+            until_invest = base + pyr * p_infl_offset_investment
+            until_dispatch = base + pyr * p_infl_offset_operations
+            pyy_invest.append((d, y, until_invest))
+            pyy_dispatch.append((d, y, until_dispatch))
+            inflation_invest[d] = inflation_invest.get(d, 0.0) + pyr * (one_plus_inflation_inv ** until_invest)
+            inflation_ops[d] = inflation_ops.get(d, 0.0) + pyr * (one_plus_inflation_inv ** until_dispatch)
+        # A period whose years sum to 0 is factor 1, as in the own count below and ``_inflation_factors_lf``.
+        for d, total in width_sum.items():
+            if total <= 0:
+                inflation_invest[d] = 1.0
+                inflation_ops[d] = 1.0
+
+    for d in ([] if year_rows is not None else periodAll):
         years_for_d = years_for_period.get(d, ())
         try:
             sorted_d_years = sorted(years_for_d, key=lambda y: float(y))

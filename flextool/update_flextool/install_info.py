@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 from urllib.request import Request, urlopen
 
+from flextool._child_python import SAFE_PATH_FLAG
+
 logger = logging.getLogger(__name__)
 
 
@@ -93,8 +95,8 @@ def install_toolbox_steps() -> tuple[list[list[str]], Path | None]:
     py = sys.executable
     root = git_checkout_root()
     if root is not None:
-        return [[py, "-m", "pip", "install", "-e", ".[toolbox]"]], root
-    return [[py, "-m", "pip", "install", "flextool[toolbox]"]], None
+        return [[py, SAFE_PATH_FLAG, "-m", "pip", "install", "-e", ".[toolbox]"]], root
+    return [[py, SAFE_PATH_FLAG, "-m", "pip", "install", "flextool[toolbox]"]], None
 
 
 def upgrade_steps(include_toolbox: bool) -> tuple[list[list[str]], Path | None]:
@@ -124,10 +126,10 @@ def upgrade_steps(include_toolbox: bool) -> tuple[list[list[str]], Path | None]:
             pull = ["git", "pull", "--ff-only", remote, branch]
         steps = [
             pull,
-            [py, "-m", "pip", "install", "--upgrade", "-e", f".{extra}"],
+            [py, SAFE_PATH_FLAG, "-m", "pip", "install", "--upgrade", "-e", f".{extra}"],
         ]
         return steps, root
-    steps = [[py, "-m", "pip", "install", "--upgrade", f"flextool{extra}"]]
+    steps = [[py, SAFE_PATH_FLAG, "-m", "pip", "install", "--upgrade", f"flextool{extra}"]]
     return steps, None
 
 

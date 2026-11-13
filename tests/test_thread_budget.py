@@ -197,3 +197,110 @@ def test_polars_loaded_first_keeps_its_pool_and_the_environment():
     out = subprocess.run([sys.executable, "-c", code], env=environ, capture_output=True, text=True, timeout=180,
                          check=True)
     assert out.stdout.strip().splitlines()[-1].split() == ["True", "None", "already_loaded", "3"]
+
+
+# ---------------------------------------------------------------------------
+# A Spine Toolbox run: 1 thread for polars and every solver unless --threads / FLEXTOOL_THREADS
+# ---------------------------------------------------------------------------
+
+_TOOLBOX_FILE = "/proj/flextool/cli/cmd_run_flextool.py"
+
+
+@pytest.mark.parametrize(
+    ("argv", "orig_argv", "expected"),
+    [
+        # Toolbox subprocess: ``python cmd_run_flextool.py <args>`` in the specification's folder.
+        (["cmd_run_flextool.py", "sqlite:///in.sqlite"], ["python", "cmd_run_flextool.py", "sqlite:///in.sqlite"],
+         True),
+        # Basic Console: ``python -i -u -c <repl>``, then ``sys.argv = [<full path>, ...]`` and the file exec-ed.
+        ([_TOOLBOX_FILE, "sqlite:///in.sqlite"], ["python", "-i", "-u", "-c", "import spine_repl"], True),
+        (["C:\\proj\\flextool\\cli\\CMD_RUN_FLEXTOOL.py", "x"], ["python.exe", "-i", "-u", "-c", "..."], True),
+        # Jupyter console: ``%run`` in a kernel started with ``-m ipykernel_launcher``.
+        ([_TOOLBOX_FILE, "x"], ["python", "-m", "ipykernel_launcher", "-f", "k.json"], True),
+        # The FlexTool window, flextool-run and the workflow start the engine as ``-m``: sys.argv[0] is the
+        # same file once the module runs, and still not a Toolbox run.
+        ([_TOOLBOX_FILE, "x"], ["python", "-P", "-m", "flextool.cli.cmd_run_flextool", "x"], False),
+        (["-m", "x"], ["python", "-m", "flextool.cli.cmd_run_flextool", "x"], False),
+        (["flextool-run", "x"], [], False),
+        (["/repo/run_flextool.py", "x"], ["python", "/repo/run_flextool.py", "x"], False),
+        (["pytest"], ["python", "-m", "pytest"], False),
+        ([], [], False),
+    ],
+)
+def test_is_toolbox_run(argv, orig_argv, expected):
+    assert tb.is_toolbox_run(argv, orig_argv) is expected
+
+
+def test_toolbox_budget_precedence(monkeypatch):
+    monkeypatch.setattr(tb, "available_cores", lambda: 12)
+    assert tb.resolve_budget(None, {}, toolbox=True) == (1, "toolbox")
+    assert tb.resolve_budget(None, {"FLEXTOOL_THREADS": "5"}, toolbox=True) == (5, "env")
+    assert tb.resolve_budget(3, {"FLEXTOOL_THREADS": "5"}, toolbox=True) == (3, "cli")
+
+
+@pytest.fixture
+def toolbox_argv(monkeypatch):
+    monkeypatch.setattr(sys, "argv", [_TOOLBOX_FILE, "sqlite:///in.sqlite"])
+    monkeypatch.setattr(sys, "orig_argv", ["python", "-i", "-u", "-c", "import spine_repl"], raising=False)
+
+
+def test_toolbox_run_gives_every_solver_one_thread(toolbox_argv, monkeypatch, capsys):
+    from flextool.engine.solve import _benders
+    from flextool.engine.solve import _solver_dispatch as sd
+
+    monkeypatch.setattr(tb, "available_cores", lambda: 12)
+    opts = _opts()
+    assert tb.solver_budget(opts) == (1, "toolbox")
+    assert tb.run_budget(opts) == (1, "toolbox")
+    assert tb.highs_thread_options(opts) == ({"threads": 1}, None)
+    got, warning = tb.highs_thread_options(_opts(highs_threads=4))
+    assert got == {"threads": 1} and "Spine Toolbox" in warning
+    assert tb.header_text(opts).startswith("1 (Spine Toolbox run): ")
+    assert _benders._resolve_benders_workers(4, None, opts) == 1
+
+    (override,) = sd._operator_native_overrides("gurobi", opts)
+    assert (override.name, override.value, override.layer) == ("Threads", "1", sd.TOOLBOX_THREADS_LAYER)
+    monkeypatch.setattr(sd, "_warned_thread_overrides", set())
+    sd._note_thread_override("gurobi", sd.CommercialOption("Threads", "0", "gurobi.opt"), override)
+    line = capsys.readouterr().out
+    assert "the run's thread budget (Spine Toolbox run's default), instead of Threads 0 (all cores)" in line
+    assert "--threads N to the FlexTool tool's arguments in Spine Toolbox" in line
+
+
+def test_toolbox_run_with_threads_or_env_takes_them(toolbox_argv):
+    from flextool.engine.solve import _solver_dispatch as sd
+
+    opts = _opts(threads=3)
+    assert tb.solver_budget(opts) == (3, "cli")
+    assert tb.highs_thread_options(opts) == ({"threads": 3}, None)
+    (override,) = sd._operator_native_overrides("gurobi", opts)
+    assert (override.value, override.layer) == ("3", "flag --threads")
+    env_opts = RunOptions.from_cli(SimpleNamespace(**{s.dest: None for s in OPTIONS.values() if s.flag}),
+                                   environ={"FLEXTOOL_THREADS": "2"})
+    assert tb.solver_budget(env_opts) == (2, "env")
+
+
+def test_terminal_run_keeps_the_solvers_thread_settings(monkeypatch):
+    from flextool.engine.solve import _solver_dispatch as sd
+
+    monkeypatch.setattr(sys, "argv", ["flextool-run", "x"])
+    assert tb.solver_budget(_opts()) is None
+    assert sd._operator_native_overrides("gurobi", _opts()) == []
+
+
+def test_options_without_thread_entries_are_unset(toolbox_argv):
+    # A launcher or test builds RunOptions from only the flags it chose; a missing entry is "not given".
+    from flextool.engine.solve import _solver_dispatch as sd
+
+    partial = RunOptions(resolved={})
+    assert tb.solver_budget(partial) == (1, "toolbox")
+    assert tb.highs_thread_options(partial) == ({"threads": 1}, None)
+    (override,) = sd._operator_native_overrides("gurobi", partial)
+    assert (override.value, override.layer) == ("1", sd.TOOLBOX_THREADS_LAYER)
+
+
+def test_toolbox_run_sizes_polars_to_one_thread():
+    # The Basic Console's way: ``python -c``, sys.argv set to the file, then flextool imported.
+    assert _probe([_TOOLBOX_FILE, "sqlite:///in.sqlite"]) == (1, "None")
+    assert _probe([_TOOLBOX_FILE, "sqlite:///in.sqlite"], FLEXTOOL_THREADS="3") == (3, "None")
+    assert _probe([_TOOLBOX_FILE, "sqlite:///in.sqlite", "--threads", "2"]) == (2, "None")

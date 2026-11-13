@@ -46,10 +46,10 @@ def _enc(value) -> list:
 
 
 def _variant(src: Path, tmp: Path, name: str, mutate) -> Path:
-    data = json.loads(src.read_text())
+    data = json.loads(src.read_text(encoding="utf-8"))
     mutate(data)
     out = tmp / f"{name}.json"
-    out.write_text(json.dumps(data))
+    out.write_text(json.dumps(data), encoding="utf-8")
     return out
 
 
@@ -240,7 +240,7 @@ class _Reader:
     def entities(self, _cls):
         return pl.DataFrame({"name": ["p"]})
 
-    def register_derived_solve(self, parent, sibling):
+    def register_derived_solve(self, parent, sibling, **_kw):
         self.registered.append((parent, sibling))
 
 
@@ -251,14 +251,16 @@ def _config(**over):
         model_solve={"m": ["p"]}, contains_solves={}, solve_modes={"p": "single_solve"}, rolling_times={},
         stochastic_branches={"p": [["d1", "rlz", "t0001", "yes", 0.0], ["d1", "a", "t0001", "no", 1.0]]},
         realized_periods=defaultdict(list, {"p": [("d1", "d1")]}),
-        timesets_used_by_solves={"p": [("d1", "ts")]}, stochastic_invest_method={},
+        timesets_used_by_solves={"p": [("d1", "ts")]}, solve_period_years_represented={},
+        stochastic_invest_method={},
         dispatch_realization_method={}, fix_storage_periods={}, realized_dispatch_parent={},
         reduce_unit_detail_method={}, reduce_system_detail_method={},
     )
     for k, v in over.items():
         setattr(cfg, k, v)
     for name in ("dispatch_realization_method_for", "stochastic_invest_method_for", "register_realization_solve",
-                 "spawn_realized_dispatch_sibling", "reduce_detail_overridden", "_reduce_detail_for",
+                 "spawn_realized_dispatch_sibling", "realization_reader_values", "realization_window",
+                 "reduce_detail_overridden", "_reduce_detail_for",
                  "reduce_unit_detail_for", "reduce_system_detail_for"):
         setattr(cfg, name, getattr(SolveConfig, name).__get__(cfg))
     return cfg
@@ -275,6 +277,21 @@ def test_configured_realization_solve_is_registered_not_spawned() -> None:
     assert cfg.realized_dispatch_parent == {"q": "p"}
     assert reader.registered == []
     assert cfg.model_solve["m"] == ["p", "q"]
+
+
+def test_configured_solve_with_a_lookahead_period_warns(capsys) -> None:
+    """An author-declared realization solve of a single solve that also holds a period the stochastic solve does
+    not realize dispatches it with the realized data, information the stochastic solve did not have: registered as
+    authored, with a warning naming the period (item 255)."""
+    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+    cfg = _config(model_solve={"m": ["p", "q"]}, solve_modes={"p": "single_solve", "q": "single_solve"})
+    cfg.timesets_used_by_solves["q"] = [("d1", "ts"), ("d2", "ts")]
+    cfg.realized_periods["q"] = [("d1", "d1")]
+    _spawn_realized_dispatch_siblings(cfg, _Reader(), logger=None)
+    assert cfg.realized_dispatch_parent == {"q": "p"}
+    out = capsys.readouterr().out
+    assert ("Warning: Realization solve 'q' of solve 'p' also dispatches 'd2', which 'p' does not realize: it "
+            "dispatches that period with the realized data, information 'p' did not have when it decided.") in out
 
 
 def test_configured_solve_missing_the_fan_period_is_not_registered() -> None:
@@ -463,7 +480,9 @@ def test_recourse_shared_investment_ties_forecasts_to_each_other(tmp_path_factor
 def _rolling_hedge(data: dict) -> None:
     """``hedge_storage`` (fan at p2040 = t0004, storage ``resv`` with fix_start) as a rolling solve, horizon 4 h,
     jump 3 h: roll 0 (t0001-t0004) commits t0001-t0003 before the reveal, the fan only in its look-ahead; roll 1
-    (t0004-t0006) opens the fan at its first step."""
+    (t0004-t0006) opens the fan at its first step.  The fan is forecasts-only (high / low, no realized branch), so
+    the wind profile is plain: 0.8 at p2035, 0.0 at p2040 (a forecasts-only fan has no series for roll 0's
+    p2035 before the reveal, so a stochastic value there is an error, item 250)."""
     data["alternatives"].append(["roll", "rolling, fan in the look-ahead"])
     for sa in data["scenario_alternatives"]:
         if sa[0] == "hedge_storage" and sa[1] == "storage" and sa[2] is None:
@@ -472,7 +491,15 @@ def _rolling_hedge(data: dict) -> None:
 
     def enc(value, kind):
         return [base64.b64encode(json.dumps(value).encode()).decode(), kind]
+
+    def nested(pairs):
+        return {"type": "map", "index_type": "str", "data": [[k, v] for k, v in pairs]}
+    forecasts = {"index_type": "str", "data": [["p2040", nested([
+        ("high", nested([("t0004", nested([("no", 1.0)]))])), ("low", nested([("t0004", nested([("no", 3.0)]))]))])]]}
+    profile = {"index_type": "str", "data": [[f"t{i:04d}", 0.8 if i <= 3 else 0.0] for i in range(1, 7)]}
     data["parameter_values"] += [
+        ["solve", "stoch_2p_hedge", "stochastic_branches", enc(forecasts, "map"), "roll"],
+        ["profile", "wprof", "profile", enc(profile, "map"), "roll"],
         ["solve", "stoch_2p_hedge", "solve_mode", enc("rolling_window", "str"), "roll"],
         ["solve", "stoch_2p_hedge", "rolling_solve_horizon", enc(4.0, "float"), "roll"],
         ["solve", "stoch_2p_hedge", "rolling_solve_jump", enc(3.0, "float"), "roll"],
@@ -784,7 +811,7 @@ def _flowgroup_path(invest_method: str):
     lps = sys.modules[name]
     base = ["init", "base", "stoch", "ws", "na_window", "divest"] + (
         ["invest_none"] if invest_method == "none" else [])
-    data = lps._overlay(json.loads(HEDGE.read_text()), name="flowgroup_path", base=base,
+    data = lps._overlay(json.loads(HEDGE.read_text(encoding="utf-8")), name="flowgroup_path", base=base,
                         entities=[["flowGroup", "base_flow"],
                                   ["flowGroup__unit__node", ["base_flow", "base", "elec"]]],
                         values=[["flowGroup", "base_flow", "min_cumulative_flow", 1.0]])
@@ -819,7 +846,7 @@ def test_branch_paths_hold_the_period_label(tmp_path_factory, invest_method: str
     here-and-now investment: every investment-total row holds that investment."""
     tmp = tmp_path_factory.mktemp(f"label_paths_{invest_method}")
     path = tmp / "flowgroup_path.json"
-    path.write_text(json.dumps(_flowgroup_path(invest_method)))
+    path.write_text(json.dumps(_flowgroup_path(invest_method)), encoding="utf-8")
     steps, mps = _run(path, tmp, scenario="flowgroup_path", capture_mps=True)
     (solve,) = list(steps)
     assert steps[solve].solution.optimal

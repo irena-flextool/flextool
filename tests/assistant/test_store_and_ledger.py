@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from flextool.assistant import _files, settings, store as store_module
+from flextool.assistant import _files, settings, store as store_module, usage
 from flextool.assistant.llm_adapter import Message, ToolCall, Usage, not_reported
 from flextool.assistant.store import ConversationLocked, ConversationNotFound, Store
 from flextool.assistant.usage import (Ledger, format_footer, format_token_line, format_totals, format_turn_line, ledger_key,
@@ -657,12 +657,50 @@ def test_two_processes_count_into_one_ledger(root):
     assert (counts["requests"], counts["input_uncached"], counts["output"]) == (80, 800, 80)
 
 
-def test_a_failing_ledger_write_is_a_warning(root, capsys, monkeypatch):
+def test_a_failing_ledger_write_is_a_warning_and_the_count_is_kept(root, capsys, monkeypatch):
+    """A busy lock or a replace Windows refuses (PermissionError while another process or a scanner has the file
+    open) is a warning, never a lost count: PR #369 Windows CI lost 1 of 80 paid requests to a LockTimeout."""
+    real_locked, real_write = _files.locked, _files.write_json_atomic
+
     def busy(*args, **kwargs):
         raise _files.LockTimeout(root / "usage.json")
+
+    def refused(*args, **kwargs):
+        raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+
+    ledger = Ledger(root)
     monkeypatch.setattr(_files, "locked", busy)
-    assert Ledger(root).record("gemini", "Google Gemini", "m", Usage(1, 0, 0, 1)) is False
+    assert ledger.record("gemini", "Google Gemini", "m", Usage(1, 0, 0, 1)) is False
     assert "usage record could not be updated" in capsys.readouterr().err
+    monkeypatch.setattr(_files, "locked", real_locked)
+    monkeypatch.setattr(_files, "write_json_atomic", refused)
+    assert ledger.record("gemini", "Google Gemini", "m", Usage(2, 0, 0, 2)) is False
+    assert usage.pending_count(ledger.path) == 2
+    assert ledger.read()["months"] == {}
+    monkeypatch.setattr(_files, "write_json_atomic", real_write)
+    assert ledger.record("gemini", "Google Gemini", "m", Usage(4, 0, 0, 4)) is True
+    assert usage.pending_count(ledger.path) == 0
+    counts = next(iter(ledger.read()["months"].values()))["gemini"]["models"]["m"]
+    assert (counts["requests"], counts["input_uncached"], counts["output"]) == (3, 7, 7)
+    day = next(iter(ledger.read()["days"].values()))["gemini"]["models"]["m"]
+    assert (day["requests"], day["input_uncached"], day["output"]) == (3, 7, 7)
+
+
+def test_a_count_kept_from_a_busy_lock_is_written_at_exit(root):
+    """Another process holds the lock longer than a writer waits (the starvation Windows CI showed): the count
+    waits in the recording process and its exit writes it once the lock is free."""
+    recorded, out = SPAWN.Event(), SPAWN.Queue()
+    ledger = Ledger(root)
+    with _files.locked(ledger.path):
+        proc = SPAWN.Process(target=store_workers.ledger_once_while_locked, args=(str(root), recorded, out))
+        proc.start()
+        assert recorded.wait(60)
+        assert out.get(timeout=10) == (False, 1)
+        assert ledger.read()["months"] == {}
+    proc.join(60)
+    assert proc.exitcode == 0
+    counts = next(iter(ledger.read()["months"].values()))["gemini"]["models"]["model-a"]
+    assert (counts["requests"], counts["input_uncached"], counts["output"]) == (1, 10, 1)
 
 
 def test_turn_line_wording():

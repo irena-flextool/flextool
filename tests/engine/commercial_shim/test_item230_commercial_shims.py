@@ -37,6 +37,8 @@ import polars as pl
 import pytest
 from polar_high import Param, Problem, Sum
 
+from flextool.engine.solve import _objective_options
+
 SHIMS = Path(__file__).resolve().parent / "shims"
 SOLVE = "y2020_2day_dispatch"
 SOLVERS = ("gurobi", "cplex", "xpress", "copt")
@@ -123,14 +125,14 @@ def shim(solver: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         f"#!{sys.executable}\n"
         "import runpy, sys\n"
         f"sys.argv[0] = {str(SHIMS / SHIM[solver])!r}\n"
-        f"runpy.run_path({str(SHIMS / SHIM[solver])!r}, run_name='__main__')\n"
-    )
+        f"runpy.run_path({str(SHIMS / SHIM[solver])!r}, run_name='__main__')\n", encoding="utf-8")
     launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     record = tmp_path / "shim_record.jsonl"
     monkeypatch.setenv("FLEXTOOL_SHIM_RECORD", str(record))
     for name in ("FLEXTOOL_SOLVER_CONFIG_DIR", "FLEXTOOL_SOLVER_TIME_LIMIT", "FLEXTOOL_SOLVER_MIP_GAP",
-                 "FLEXTOOL_HIGHS_TIME_LIMIT", "FLEXTOOL_HIGHS_MIP_GAP"):
+                 "FLEXTOOL_HIGHS_TIME_LIMIT", "FLEXTOOL_HIGHS_MIP_GAP", "FLEXTOOL_SOLVER_WRAPPER_GUROBI",
+                 "FLEXTOOL_SOLVER_WRAPPER_CPLEX", "FLEXTOOL_SOLVER_WRAPPER_XPRESS", "FLEXTOOL_SOLVER_WRAPPER_COPT"):
         monkeypatch.delenv(name, raising=False)
     from flextool.engine.solve._subprocess_solve import _find_solver_binary
 
@@ -142,14 +144,14 @@ def _calls(record: Path) -> list[dict]:
     """The shim's record, one dict per call of the solver program."""
     if not record.is_file():
         return []
-    return [json.loads(line) for line in record.read_text().splitlines()]
+    return [json.loads(line) for line in record.read_text(encoding="utf-8").splitlines()]
 
 
 def _cfg(tmp_path: Path, solver: str, text: str) -> Path:
     """A solver-config folder holding *text* as ``<solver>.opt``."""
     cfg = tmp_path / "cfg"
     cfg.mkdir(exist_ok=True)
-    (cfg / f"{solver}.opt").write_text(text)
+    (cfg / f"{solver}.opt").write_text(text, encoding="utf-8")
     return cfg
 
 
@@ -223,6 +225,9 @@ def test_tiny_lp(solver, shim, db, highs_objective, tmp_path, capsys) -> None:
     assert steps[SOLVE].obj == pytest.approx(highs_objective["lp"], rel=1e-6)
     calls = _calls(shim)
     assert calls and all(c["params"] == {THREADS[solver]: 2} and not c["unknown"] for c in calls), calls
+    if solver == "xpress":
+        # An LP keeps ``lpoptimize`` (only a MIP gets ``mipoptimize``).
+        assert all("\nlpoptimize\n" in c["stdin"] and "mipoptimize" not in c["stdin"] for c in calls), calls
     out = capsys.readouterr().out
     args_line = f"Solver args ({solver}): {THREADS[solver]}=2"
     assert args_line in out and BANNER[solver] in out.split(args_line, 1)[1], out[-3000:]
@@ -242,24 +247,49 @@ def test_work_folder_with_a_space(solver, shim, db, highs_objective, tmp_path) -
 
 def test_tiny_mip_with_the_gap_flag(solver, shim, db, highs_objective, tmp_path, capsys) -> None:
     """``--solver-mip-gap 0.0123`` on the ``coal_min_load_MIP_wind`` MIP: the solver reports its gap parameter
-    as 0.0123 (read back from the package), and the ``Solver args`` line says the same.  Xpress: FlexTool
-    refuses the MIP before the solver program runs."""
-    from flextool.engine.solve._solver_dispatch import FlexToolUserError
-
+    as 0.0123 (read back from the package), and the ``Solver args`` line says the same.  Xpress solves it with
+    ``mipoptimize`` (``lpoptimize`` would give the LP relaxation)."""
     cfg = _cfg(tmp_path, solver, f"{GAP[solver]} 0.5\n")
-    if solver == "xpress":
-        with pytest.raises(FlexToolUserError, match="integer variables.*solves only linear problems"):
-            _run(db, "mip_xpress", tmp_path / "w", cfg, "--solver-mip-gap", "0.0123")
-        assert _calls(shim) == []
-        return
     steps = _run(db, f"mip_{solver}", tmp_path / "w", cfg, "--solver-mip-gap", "0.0123")
     assert steps[SOLVE].optimal
     # Within the requested gap of HiGHS' (near-)optimum.
     assert steps[SOLVE].obj == pytest.approx(highs_objective["mip"], rel=0.0123 + 1e-3)
     calls = _calls(shim)
     assert calls and all(c["is_mip"] and c["params"] == {GAP[solver]: 0.0123} for c in calls), calls
+    if solver == "xpress":
+        assert all("\nmipoptimize\n" in c["stdin"] and "lpoptimize" not in c["stdin"] for c in calls), calls
     printed = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("Solver args")]
     assert printed and all(ln == f"Solver args ({solver}): {GAP[solver]}=0.0123" for ln in printed), printed
+
+
+#: An absolute MIP gap of each solver (an objective difference), from its manual.
+ABS_GAP = {"gurobi": "MIPGapAbs", "cplex": "mip tolerances absmipgap", "xpress": "MIPABSSTOP", "copt": "AbsGap"}
+
+
+@pytest.mark.skipif(
+    not _objective_options.supported(),
+    reason="the installed polar-high has no objective-option mapping (needs 3.14.0)",
+)
+def test_objective_valued_options_reach_the_solver_scaled(solver, shim, db, tmp_path, capsys) -> None:
+    """Item 246b: objective targets and absolute gaps are written in unscaled currency.  The solver works on the
+    cost × scale_the_objective (1e-6 here; a commercial solver has no objective factor of its own, and this model
+    has no objective constant), so an absolute gap of 1e5 reaches it as 1e5 × 1e-6 = 0.1 and Gurobi's
+    BestObjStop -1.5e9 as -1500.  The ``Solver args`` line shows the solver's value and the written one."""
+    text = f"{ABS_GAP[solver]} 1e5\n" + ("BestObjStop -1.5e9\n" if solver == "gurobi" else "")
+    steps = _run(db, f"lp_{solver}", tmp_path / "w", _cfg(tmp_path, solver, text))
+    assert steps[SOLVE].optimal
+    expected = {ABS_GAP[solver]: 0.1, **({"BestObjStop": -1500.0} if solver == "gurobi" else {})}
+    calls = _calls(shim)
+    assert calls, "the solver program was not called"
+    for call in calls:
+        assert not call["unknown"], call
+        assert {k: call["params"].get(k) for k in expected} == pytest.approx(expected, rel=1e-12), call
+    printed = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("Solver args")]
+    assert printed, "no Solver args line"
+    for line in printed:
+        assert f"{ABS_GAP[solver]}=0.1 (100000 in unscaled currency)" in line, line
+        if solver == "gurobi":
+            assert "BestObjStop=-1500 (-1500000000 in unscaled currency)" in line, line
 
 
 # ---------------------------------------------------------------------------
@@ -271,15 +301,18 @@ def _stack_file(solver: str) -> str:
     return f"{GAP[solver]} 0.3\n{TIME[solver]} 900\n{THREADS[solver]} 1\n"
 
 
-@pytest.mark.parametrize(("scenario", "flags", "gap", "time_limit"), [
+@pytest.mark.parametrize(("scenario", "flags", "gap", "time_limit", "threads"), [
     # solver_arguments beat solver_mip_gap and the file; the time-limit flag beats solver_arguments.
-    ("stack", ("--solver-time-limit", "700"), 0.1, 700),
+    ("stack", ("--solver-time-limit", "700"), 0.1, 700, 1),
     # The gap flag beats solver_arguments; the arguments' time limit beats the file's.
-    ("stack", ("--solver-mip-gap", "0.05"), 0.05, 800),
+    ("stack", ("--solver-mip-gap", "0.05"), 0.05, 800, 1),
     # solver_mip_gap beats the file; the file's time limit stays.
-    ("smg", (), 0.2, 900),
+    ("smg", (), 0.2, 900, 1),
+    # The run's thread budget replaces the file's thread count (item 232).
+    ("stack", ("--threads", "3"), 0.1, 800, 3),
 ])
-def test_option_stack_as_the_solver_got_it(solver, shim, db, tmp_path, scenario, flags, gap, time_limit) -> None:
+def test_option_stack_as_the_solver_got_it(solver, shim, db, tmp_path, scenario, flags, gap, time_limit,
+                                           threads) -> None:
     cfg = _cfg(tmp_path, solver, _stack_file(solver))
     steps = _run(db, f"{scenario}_{solver}", tmp_path / "w", cfg, *flags)
     assert steps[SOLVE].optimal
@@ -290,15 +323,76 @@ def test_option_stack_as_the_solver_got_it(solver, shim, db, tmp_path, scenario,
         got = call["params"]
         assert got[GAP[solver]] == pytest.approx(gap), got
         assert got[TIME[solver]] == pytest.approx(time_limit), got
-        assert got[THREADS[solver]] == 1, got
+        assert got[THREADS[solver]] == threads, got
         assert len(got) == 3, got
 
 
+def test_a_solve_split_by_period_keeps_its_solver_and_settings(solver, shim, db, tmp_path, monkeypatch) -> None:
+    """``split_<s>``: ``realized_periods`` is a 2-D map, so FlexTool splits ``y2020_2day_dispatch`` into one solve
+    per period.  Every one of them runs on the solver of the database solve, through this computer's wrapper,
+    with its ``solver_mip_gap`` (0.2), its ``solver_arguments`` (time limit 800) and the option file (1 thread).
+    Before the fix the split solves lost the solver configuration and ran on HiGHS (and, since the HiGHS list of
+    item 240 B1, stopped at the first split solve, refusing the solver's own parameter name as a HiGHS one)."""
+    split_solves = _check_db_module().SPLIT_SOLVES
+    wrapper, record = _recording_wrapper(tmp_path)
+    monkeypatch.setenv(WRAPPER_ENV[solver], str(wrapper))
+    cfg = _cfg(tmp_path, solver, f"{THREADS[solver]} 1\n")
+    steps = _run(db, f"split_{solver}", tmp_path / "w", cfg)
+    assert list(steps) == list(split_solves)
+    assert all(steps[s].optimal for s in split_solves)
+    calls = _calls(shim)
+    assert len(calls) == len(split_solves), calls
+    for call in calls:
+        assert not call["unknown"], call
+        assert call["params"] == pytest.approx({GAP[solver]: 0.2, TIME[solver]: 800, THREADS[solver]: 1}), call
+    assert len(_wrapped_calls(record)) == len(split_solves)
+
+
+@pytest.mark.parametrize("solver", ["gurobi", "cplex", "copt"], indirect=True)
+def test_the_realization_solve_flextool_adds_runs_on_the_parents_solver(solver, shim, tmp_path) -> None:
+    """``separate_dispatch_noinvest`` (``tests/fixtures/separate_dispatch_noinvest.json``) with ``stoch_rd`` on
+    the solver and ``solver_mip_gap`` 0.2: the realization solve ``stoch_rd__realized_dispatch`` FlexTool adds
+    also runs on that solver with that gap (before the fix it ran on HiGHS).  Its objective is the hand-computed
+    4 380 000 of ``test_separate_dispatch_noinvest_capacity.py``.  Xpress is left out: the model has integers."""
+    from flextool.engine import run_chain_from_db
+    from flextool.update_flextool.db_migration import migrate_database
+    from tests.db_utils import json_to_db
+
+    check_db = _check_db_module()
+    data = json.loads((check_db.REPO / "tests" / "fixtures" / "separate_dispatch_noinvest.json").read_text(encoding="utf-8"))
+    data = check_db._lp_snapshot()._overlay(data, name="on_solver", base="separate_dispatch_noinvest", values=[
+        ["solve", "stoch_rd", "solver", solver], ["solve", "stoch_rd", "solver_mip_gap", 0.2]])
+    json_path = tmp_path / "rd.json"
+    json_path.write_text(json.dumps(data), encoding="utf-8")
+    url = json_to_db(json_path, tmp_path / "rd.sqlite")
+    migrate_database(url)
+    steps = run_chain_from_db(input_db_url=url, scenario_name="on_solver", work_folder=tmp_path / "w",
+                              solver_config_dir=_cfg(tmp_path, solver, f"{THREADS[solver]} 1\n"),
+                              run_options=_run_options(url))
+    assert list(steps) == ["stoch_rd", "stoch_rd__realized_dispatch"]
+    assert steps["stoch_rd__realized_dispatch"].obj == pytest.approx(4_380_000.0, rel=1e-6)
+    calls = _calls(shim)
+    assert len(calls) == 2, calls
+    assert all(c["params"] == pytest.approx({GAP[solver]: 0.2, THREADS[solver]: 1}) for c in calls), calls
+
+
 @pytest.mark.parametrize("solver", ["gurobi"], indirect=True)
-def test_unknown_gurobi_parameter_is_named_with_its_layer(solver, shim, db, tmp_path, caplog) -> None:
-    """Gurobi does not know ``NoSuchParameter`` (in ``solver_arguments``): it solves without it, and FlexTool
+def test_unknown_gurobi_parameter_is_refused_unless_this_computer_allows_it(
+        solver, shim, db, tmp_path, caplog, monkeypatch) -> None:
+    """Item 240 B1: ``NoSuchParameter`` (in ``solver_arguments``) is not in FlexTool's list of Gurobi parameters,
+    so the run stops before the solver program starts, naming it and the solve.  Allowed on this computer
+    (``FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS=1``), it reaches Gurobi, which solves without it, and FlexTool
     warns naming the parameter and the layer.  Gurobi only: FlexTool reads no such message from the others."""
+    from flextool.engine.solve._solver_dispatch import FlexToolUserError
+
     cfg = _cfg(tmp_path, "gurobi", "Threads 2\n")
+    with pytest.raises(FlexToolUserError) as err:
+        _run(db, "unknown_gurobi", tmp_path / "w0", cfg)
+    assert "'NoSuchParameter'" in str(err.value) and f"solver_arguments of solve {SOLVE}" in str(err.value)
+    assert "not in FlexTool's list of Gurobi parameters" in str(err.value)
+    assert _calls(shim) == [], "the solver program was called"
+    assert not list((tmp_path / "w0").rglob("*.mps")), "the run wrote a model before refusing"
+    monkeypatch.setenv("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", "1")
     with caplog.at_level(logging.WARNING):
         steps = _run(db, "unknown_gurobi", tmp_path / "w", cfg)
     assert steps[SOLVE].optimal
@@ -306,6 +400,8 @@ def test_unknown_gurobi_parameter_is_named_with_its_layer(solver, shim, db, tmp_
     assert calls and all(c["unknown"] == ["NoSuchParameter"] for c in calls), calls
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert any("'NoSuchParameter'" in w and f"solver_arguments of solve {SOLVE}" in w for w in warnings), warnings
+    allowed = [w for w in warnings if w.startswith("Passing gurobi option 'NoSuchParameter'")]
+    assert len(allowed) == 1 and "FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS" in allowed[0], warnings
 
 
 #: A parameter that makes the solver read or write at a path, for the option file (each solver's parameter
@@ -427,47 +523,52 @@ def _market_split(m: int = 6, seed: int = 1) -> Problem:
 def test_mip_at_its_time_limit_keeps_the_solution(solver, shim, tmp_path) -> None:
     """``--solver-time-limit 1`` on the market split MIP: the solver stops at 1 s with an incumbent, FlexTool
     reads ``TIME_LIMIT`` and the solver's gap, and the cascade's acceptance step keeps the solution with a
-    warning (D2).  Xpress: FlexTool refuses the MIP before the solver program runs."""
+    warning (D2).  Xpress: the status and the gap come from its log (``STOPPING - MAXTIME limit reached``; the
+    print solution says ``Optimal solution found``)."""
     from flextool.engine.input._solve_config import SolverConfig
     from flextool.engine.solve._acceptance import classify_acceptance
-    from flextool.engine.solve._solver_dispatch import FlexToolUserError, run_one_solve
+    from flextool.engine.solve._solver_dispatch import run_one_solve
 
     cfg = _cfg(tmp_path, solver, f"{THREADS[solver]} 2\n")
     opts = _run_options("unused.sqlite", "--solver-time-limit", "1")
     kwargs = dict(solve_name="market_split", work_folder=tmp_path / "w", run_options=opts, solver_config_dir=cfg)
-    if solver == "xpress":
-        with pytest.raises(FlexToolUserError, match="integer variables"):
-            run_one_solve(_market_split(), SolverConfig(name=solver), **kwargs)
-        assert _calls(shim) == []
-        return
     sol = run_one_solve(_market_split(), SolverConfig(name=solver), **kwargs)
     (call,) = _calls(shim)
-    assert call["params"] == {THREADS[solver]: 2, TIME[solver]: 1.0}, call
+    # Xpress: FlexTool's time limit on a MIP is a hard MAXTIME -1 (R3); the .opt record says the same.
+    limit = -1.0 if solver == "xpress" else 1.0
+    assert call["params"] == {THREADS[solver]: 2, TIME[solver]: limit}, call
+    if solver == "xpress":
+        assert "setControl MAXTIME -1\n" in call["stdin"], call["stdin"]
+        record = (tmp_path / "w" / "solve_data" / "subprocess" / "market_split.opt").read_text(encoding="utf-8")
+        assert "MAXTIME -1\n" in record.splitlines(keepends=True), record
     assert call["is_mip"] and call["mip_gap"] is not None and call["mip_gap"] > 0.0, (
         f"{solver} closed the market split gap within 1 s; the model is no longer hard enough: {call}"
     )
     assert sol.shim_status == "TIME_LIMIT"
     assert sol.shim_mip_gap == pytest.approx(call["mip_gap"], abs=1e-4)
     acc = classify_acceptance(sol, ranges_post=None, solve_name="market_split")
-    assert acc.accepted and acc.time_limited and acc.model_status == "kTimeLimit", acc
+    assert acc.accepted and acc.limit_stopped and acc.model_status == "kTimeLimit", acc
     assert f"(relative MIP gap {call['mip_gap']:.4%})" in acc.message, acc.message
 
 
 #: The native name of the MIP node limit (CPLEX by its interactive path).
-NODES = {"gurobi": "NodeLimit", "cplex": "mip limits nodes", "copt": "NodeLimit"}
+NODES = {"gurobi": "NodeLimit", "cplex": "mip limits nodes", "xpress": "MAXNODE", "copt": "NodeLimit"}
 
 
-def test_mip_at_a_node_limit_is_rejected_by_name(solver, shim, tmp_path) -> None:
-    """Review F1 / D2: a node limit of 5 on the market split MIP stops the solver with an incumbent (found at
-    the root) but no proof; only a time limit keeps such a solution, so the acceptance step rejects it, naming
-    ``NODE_LIMIT`` (Gurobi from its JSON status, CPLEX from the file's status code, COPT from its log).
-    Xpress: no MIP."""
+#: The options a node-limit warning names, by solver.
+NODE_OPTIONS = {"gurobi": "Gurobi NodeLimit", "cplex": "CPLEX mip limits nodes", "xpress": "Xpress MAXNODE",
+                "copt": "COPT NodeLimit"}
+
+
+def test_mip_at_a_node_limit_keeps_the_solution(solver, shim, tmp_path) -> None:
+    """Review F1 / item 246: a node limit of 5 on the market split MIP stops the solver with an incumbent (found
+    at the root) but no proof.  FlexTool reads ``NODE_LIMIT`` (Gurobi from its JSON status, CPLEX from the file's
+    status code, COPT and Xpress from their logs) and the solver's gap, and the acceptance step keeps the
+    solution with a warning naming the node limit, its option and the gap, as for a time limit."""
     from flextool.engine.input._solve_config import SolverConfig
     from flextool.engine.solve._acceptance import classify_acceptance
     from flextool.engine.solve._solver_dispatch import run_one_solve
 
-    if solver == "xpress":
-        pytest.skip("FlexTool's Xpress driver solves only LPs")
     cfg = _cfg(tmp_path, solver, f"{THREADS[solver]} 1\n{NODES[solver]} 5\n")
     sol = run_one_solve(_market_split(), SolverConfig(name=solver), solve_name="market_split",
                         work_folder=tmp_path / "w", run_options=_run_options("unused.sqlite"), solver_config_dir=cfg)
@@ -475,8 +576,149 @@ def test_mip_at_a_node_limit_is_rejected_by_name(solver, shim, tmp_path) -> None
     assert call["params"] == {THREADS[solver]: 1, NODES[solver]: 5}, call
     assert call["is_mip"] and call["mip_gap"] is not None and call["mip_gap"] > 0.0, call
     assert (sol.shim_status, sol.optimal) == ("NODE_LIMIT", False)
+    assert sol.shim_mip_gap == pytest.approx(call["mip_gap"], abs=1e-4)
     acc = classify_acceptance(sol, ranges_post=None, solve_name="market_split")
-    assert not acc.accepted and "(solver status NODE_LIMIT)" in acc.message, acc
+    assert acc.accepted and acc.limit_stopped and acc.model_status == "kSolutionLimit", acc
+    assert "stopped at its node limit" in acc.message and f"({NODE_OPTIONS[solver]}, in" in acc.message, acc.message
+    assert f"(relative MIP gap {call['mip_gap']:.4%})" in acc.message, acc.message
+
+
+@pytest.mark.parametrize("solver", ["xpress"], indirect=True)
+def test_xpress_mip_stopped_before_an_integer_solution_stops_the_run(solver, shim, tmp_path) -> None:
+    """The market split with ``MAXNODE 1`` and heuristics and cuts off: Xpress stops before any integer solution,
+    its SLX file holds the LP relaxation and its print solution says ``Optimal solution found``.  The run stops
+    with the node-limit reason; it never returns the relaxation."""
+    from flextool.engine.input._solve_config import SolverConfig
+    from flextool.engine.solve._solver_dispatch import FlexToolUserError, run_one_solve
+
+    cfg = _cfg(tmp_path, solver, "THREADS 1\nMAXNODE 1\nHEUREMPHASIS 0\nCUTSTRATEGY 0\n")
+    with pytest.raises(FlexToolUserError, match="stopped at its node limit before finding a solution"):
+        run_one_solve(_market_split(), SolverConfig(name=solver), solve_name="market_split",
+                      work_folder=tmp_path / "w", run_options=_run_options("unused.sqlite"), solver_config_dir=cfg)
+    (call,) = _calls(shim)
+    assert call["is_mip"] and call["mip_gap"] is None and "\nmipoptimize\n" in call["stdin"], call
+    slx = tmp_path / "w" / "solve_data" / "subprocess" / "market_split.sol"
+    assert len(slx.read_text(encoding="utf-8").splitlines()) > 2, "the SLX file no longer holds the relaxation; the test is moot"
+
+
+@pytest.mark.parametrize("solver", ["xpress"], indirect=True)
+def test_xpress_mip_time_limit_is_a_hard_maxtime_in_the_whole_run(solver, shim, db, tmp_path, capsys) -> None:
+    """R3: ``--solver-time-limit 59.5`` on the ``coal_min_load_MIP_wind`` MIP reaches Xpress as ``MAXTIME -60``
+    (rounded up, then negated: a positive MAXTIME stops a MIP only once it has a solution).  The ``Solver args``
+    line, the ``.opt`` record and the script piped to the solver agree."""
+    cfg = _cfg(tmp_path, solver, "THREADS 1\n")
+    steps = _run(db, f"mip_{solver}", tmp_path / "w", cfg, "--solver-time-limit", "59.5")
+    assert steps[SOLVE].optimal
+    calls = _calls(shim)
+    assert calls and all(c["is_mip"] and c["params"] == {"THREADS": 1, "MAXTIME": -60} for c in calls), calls
+    assert all("setControl MAXTIME -60\n" in c["stdin"] for c in calls), calls
+    printed = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("Solver args")]
+    assert printed and all(ln == "Solver args (xpress): THREADS=1, MAXTIME=-60" for ln in printed), printed
+    records = list((tmp_path / "w").rglob("solve_data/subprocess/*.opt"))
+    assert records and all(r.read_text(encoding="utf-8") == "THREADS 1\nMAXTIME -60\n" for r in records), records
+
+
+@pytest.mark.parametrize("solver", ["xpress"], indirect=True)
+@pytest.mark.parametrize("control", ["MIPLOG", "OUTPUTLOG"])
+def test_xpress_mip_with_its_log_turned_off_still_solves(solver, shim, tmp_path, capsys, control) -> None:
+    """R2: ``MIPLOG 0`` or ``OUTPUTLOG 0`` in ``solver_arguments`` would hide the log lines FlexTool reads how a
+    MIP search ended from, and an optimal solve stopped the run as "found no integer solution".  FlexTool sets
+    the control back to 1 after the user's controls on a MIP and says so; the small MIP solves, objective 20 of
+    ``_cost_lp``."""
+    from flextool.engine.input._solve_config import SolverConfig
+    from flextool.engine.solve._solver_dispatch import reset_run_warnings, run_one_solve
+    from tests.engine.test_subprocess_gurobi_name_recovery import _mip_lp
+
+    reset_run_warnings()
+    cfg = _cfg(tmp_path, solver, "THREADS 1\n")
+    sol = run_one_solve(_mip_lp(["a", "b", "c"]), SolverConfig(name=solver, options={control: 0}), solve_name="s",
+                        work_folder=tmp_path / "w", run_options=_run_options("unused.sqlite"), solver_config_dir=cfg)
+    assert sol.optimal and sol.obj == pytest.approx(20.0)
+    (call,) = _calls(shim)
+    assert call["is_mip"] and call["params"] == {"THREADS": 1, control: 1}, call
+    lines = call["stdin"].splitlines()
+    assert lines[:3] == ["setControl THREADS 1", f"setControl {control} 0", f"setControl {control} 1"], lines
+    out = capsys.readouterr().out
+    assert f"xpress uses {control} 1 on a MIP instead of {control} 0 in solver_arguments of solve s" in out, out
+
+
+def _unbounded_mip() -> Problem:
+    """``min -x - y`` with ``x`` integer, ``x - y <= 3.5`` and both unbounded above: an unbounded MIP."""
+    pb = Problem()
+    over = pl.DataFrame({"i": ["a"]})
+    x = pb.add_var("x", ("i",), over, lower=0.0, integer=True)
+    y = pb.add_var("y", ("i",), over, lower=0.0)
+    pb.add_cstr("cap", over=over, sense="<=", lhs_terms={"x": x, "y": -1.0 * y},
+                rhs_terms={"r": Param(("i",), pl.DataFrame({"i": ["a"], "value": [3.5]}), name="r")})
+    pb.set_objective(Sum(-1.0 * x, over="i") + Sum(-1.0 * y, over="i"))
+    return pb
+
+
+@pytest.mark.parametrize("solver", ["xpress"], indirect=True)
+def test_an_unbounded_xpress_mip_stops_the_run(solver, shim, tmp_path) -> None:
+    """R1: an unbounded MIP logs ``*** Search completed ***`` and then ``Problem is unbounded`` (mipstatus 7); the
+    run stops with "is unbounded", never as a solved MIP or "found no integer solution"."""
+    from flextool.engine.input._solve_config import SolverConfig
+    from flextool.engine.solve._solver_dispatch import FlexToolUserError, run_one_solve
+
+    cfg = _cfg(tmp_path, solver, "THREADS 1\n")
+    with pytest.raises(FlexToolUserError, match="is unbounded"):
+        run_one_solve(_unbounded_mip(), SolverConfig(name=solver), solve_name="s", work_folder=tmp_path / "w",
+                      run_options=_run_options("unused.sqlite"), solver_config_dir=cfg)
+    (call,) = _calls(shim)
+    assert call["is_mip"] and call["status"] == 7, call   # 7: MIP unbounded
+
+
+def _infeasible_mip() -> Problem:
+    """``min x`` with ``x`` integer in ``[0, 10]`` and ``x == 10.5``: the LP relaxation is feasible, the MIP is
+    not."""
+    pb = Problem()
+    over = pl.DataFrame({"i": ["a"]})
+    x = pb.add_var("x", ("i",), over, lower=0.0, upper=10.0, integer=True)
+    pb.add_cstr("fix", over=over, sense="==", lhs_terms={"x": x},
+                rhs_terms={"r": Param(("i",), pl.DataFrame({"i": ["a"], "value": [10.5]}), name="r")})
+    pb.set_objective(Sum(x, over="i"))
+    return pb
+
+
+@pytest.mark.parametrize("solver", ["xpress"], indirect=True)
+def test_an_infeasible_xpress_mip_stops_the_run(solver, shim, tmp_path) -> None:
+    """An integer-infeasible MIP on Xpress: the log says ``Problem is integer infeasible``, the run stops with "is
+    infeasible" (not the LP relaxation's x = 10.5, not a no-solution-file error)."""
+    from flextool.engine.input._solve_config import SolverConfig
+    from flextool.engine.solve._solver_dispatch import FlexToolUserError, run_one_solve
+
+    cfg = _cfg(tmp_path, solver, "THREADS 1\n")
+    with pytest.raises(FlexToolUserError, match="is infeasible"):
+        run_one_solve(_infeasible_mip(), SolverConfig(name=solver), solve_name="s", work_folder=tmp_path / "w",
+                      run_options=_run_options("unused.sqlite"), solver_config_dir=cfg)
+    (call,) = _calls(shim)
+    assert call["is_mip"] and call["status"] == 5 and "\nmipoptimize\n" in call["stdin"], call   # 5: infeasible
+
+
+def test_an_infeasible_solve_after_a_solved_one_never_returns_the_earlier_result(solver, shim, tmp_path) -> None:
+    """Item 247 class: the work folder persists, so solve ``s`` leaves its result file there.  The next run's
+    ``s`` is infeasible (``x <= 10``, ``x == 15``): CPLEX says ``No solution exists`` and writes no file (exit 0),
+    COPT writes none; the run must stop, never return the earlier run's solution (objective 20).  Gurobi writes
+    a fresh JSON result with the infeasible status: ``is infeasible``."""
+    from flextool.engine.input._solve_config import SolverConfig
+    from flextool.engine.solve._solver_dispatch import FlexToolUserError, run_one_solve
+    from tests.engine.test_subprocess_gurobi_name_recovery import _cost_lp
+
+    cfg = _cfg(tmp_path, solver, f"{THREADS[solver]} 1\n")
+    kwargs = dict(solve_name="s", work_folder=tmp_path / "w", run_options=_run_options("unused.sqlite"),
+                  solver_config_dir=cfg)
+    first = run_one_solve(_cost_lp(["a", "b", "c"]), SolverConfig(name=solver), **kwargs)
+    assert first.optimal and first.obj == pytest.approx(20.0)
+    result = tmp_path / "w" / "solve_data" / "subprocess" / ("s.json" if solver == "gurobi" else "s.sol")
+    if solver != "xpress":
+        assert result.is_file()
+    reason = "produced no solution file" if solver in ("cplex", "xpress") else "is infeasible"
+    with pytest.raises(FlexToolUserError, match=reason):
+        run_one_solve(_cost_lp(["a"]), SolverConfig(name=solver), **kwargs)
+    assert len(_calls(shim)) == 2
+    if solver in ("cplex", "copt"):
+        assert not result.exists(), "the earlier run's result file is still there"
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +733,7 @@ def test_run_from_another_folder_uses_the_named_folder(solver, shim, db, tmp_pat
 
     elsewhere = tmp_path / "elsewhere"
     (elsewhere / "solver_config").mkdir(parents=True)
-    (elsewhere / "solver_config" / f"{solver}.opt").write_text(f"{THREADS[solver]} 7\n")
+    (elsewhere / "solver_config" / f"{solver}.opt").write_text(f"{THREADS[solver]} 7\n", encoding="utf-8")
     monkeypatch.chdir(elsewhere)
     cfg = _cfg(tmp_path, solver, f"{THREADS[solver]} 3\n")
     with caplog.at_level(logging.INFO):
@@ -501,3 +743,99 @@ def test_run_from_another_folder_uses_the_named_folder(solver, shim, db, tmp_pat
     calls = _calls(shim)
     assert calls and all(c["params"] == {THREADS[solver]: 3} for c in calls), calls
     assert f"Solver config: {cfg} (--solver-config-dir)" in [r.getMessage() for r in caplog.records]
+
+
+# ---------------------------------------------------------------------------
+# Item 240 B2: the solver wrapper of this computer
+# ---------------------------------------------------------------------------
+
+
+#: Each solver's wrapper variable.
+WRAPPER_ENV = {"gurobi": "FLEXTOOL_SOLVER_WRAPPER_GUROBI", "cplex": "FLEXTOOL_SOLVER_WRAPPER_CPLEX",
+               "xpress": "FLEXTOOL_SOLVER_WRAPPER_XPRESS", "copt": "FLEXTOOL_SOLVER_WRAPPER_COPT"}
+
+
+def _recording_wrapper(tmp_path: Path) -> tuple[Path, Path]:
+    """``/bin/sh`` wrapper: appends its argv (one item per line, then an empty line) to a file, takes its own
+    ``--queue NAME``, then ``exec "$@"`` (the solver keeps its stdin, its output and its exit code)."""
+    record = tmp_path / "wrapper_argv.txt"
+    wrapper = tmp_path / "wrap bin" / "lic_hold"
+    wrapper.parent.mkdir()
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        f'for a in "$0" "$@"; do printf "%s\\n" "$a"; done >> "{record}"\n'
+        f'echo >> "{record}"\n'
+        'if [ "$1" = "--queue" ]; then shift 2; fi\n'
+        'exec "$@"\n', encoding="utf-8")
+    wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
+    return wrapper, record
+
+
+def _wrapped_calls(record: Path) -> list[list[str]]:
+    return [block.splitlines() for block in record.read_text(encoding="utf-8").split("\n\n") if block.strip()]
+
+
+def test_a_wrapper_starts_in_front_of_the_solver(solver, shim, db, highs_objective, tmp_path, monkeypatch,
+                                                 capsys) -> None:
+    """``FLEXTOOL_SOLVER_WRAPPER_<SOLVER>`` = ``[<wrapper>, "--queue", "opt"]``: the wrapper gets its items, then
+    the solver program's absolute path and its arguments; it ``exec`` s the shim, which still gets the parameters
+    (CPLEX, Xpress and COPT through stdin) and solves to HiGHS' objective.  The ``Running`` line names the
+    wrapper."""
+    wrapper, record = _recording_wrapper(tmp_path)
+    monkeypatch.setenv(WRAPPER_ENV[solver], json.dumps([str(wrapper), "--queue", "opt"]))
+    cfg = _cfg(tmp_path, solver, f"{THREADS[solver]} 2\n")
+    steps = _run(db, f"lp_{solver}", tmp_path / "w", cfg)
+    assert steps[SOLVE].optimal
+    assert steps[SOLVE].obj == pytest.approx(highs_objective["lp"], rel=1e-6)
+    calls = _calls(shim)
+    assert calls and all(c["params"] == {THREADS[solver]: 2} for c in calls), calls
+    launcher = tmp_path / "bin" / BINARY[solver]
+    wrapped = _wrapped_calls(record)
+    assert len(wrapped) == len(calls)
+    for argv in wrapped:
+        # "$0" is the wrapper as started; "--queue opt" are its own; then the absolute solver path.
+        assert argv[:4] == [str(wrapper), "--queue", "opt", str(launcher)], argv
+    out = capsys.readouterr().out
+    marker = (f"Running {sps_display(solver)} ({launcher}) through the solver wrapper {wrapper} with 2 arguments "
+              f"(from environment variable {WRAPPER_ENV[solver]})")
+    assert marker in out.splitlines(), out[-3000:]
+    assert BANNER[solver] in out.split(marker, 1)[1]
+
+
+def sps_display(solver: str) -> str:
+    from flextool.engine.solve._subprocess_solve import _DISPLAY_NAMES
+
+    return _DISPLAY_NAMES[solver]
+
+
+@pytest.mark.parametrize("solver", ["copt"], indirect=True)
+def test_only_the_local_wrapper_runs_never_the_database_precommand(solver, shim, db, tmp_path, monkeypatch,
+                                                                    caplog) -> None:
+    """``paths_copt`` has a ``solver_precommand`` (it would create a marker file): with a local wrapper set, the
+    wrapper runs and the precommand does not, with the warning that names the solve and the wrapper setting."""
+    check_db = _check_db_module()
+    marker = check_db.precommand_marker(Path(db.removeprefix("sqlite:///")).parent, solver)
+    wrapper, record = _recording_wrapper(tmp_path)
+    monkeypatch.setenv("FLEXTOOL_SOLVER_WRAPPER_COPT", str(wrapper))
+    with caplog.at_level(logging.WARNING):
+        steps = _run(db, "paths_copt", tmp_path / "w", _cfg(tmp_path, solver, "Threads 2\n"))
+    assert steps[SOLVE].optimal
+    assert not marker.exists(), "solver_precommand was run"
+    assert _wrapped_calls(record) and _calls(shim)
+    warned = [r.getMessage() for r in caplog.records if r.getMessage().startswith("solver_precommand")]
+    assert len(warned) == 1 and f"solve {SOLVE}" in warned[0] and "FLEXTOOL_SOLVER_WRAPPER_<SOLVER>" in warned[0]
+
+
+@pytest.mark.parametrize("solver", ["cplex"], indirect=True)
+def test_an_unusable_wrapper_stops_the_run_before_the_model_is_written(solver, shim, db, tmp_path, monkeypatch) -> None:
+    """A wrapper that is a ``.bat`` (refused on every system) stops the run before its first solve: no model file,
+    the solver program never starts, and the message names the variable."""
+    from flextool.engine.solve._solver_dispatch import FlexToolUserError
+
+    bat = tmp_path / "hold.bat"
+    bat.write_text("@echo off\n", encoding="utf-8")
+    monkeypatch.setenv("FLEXTOOL_SOLVER_WRAPPER_CPLEX", str(bat))
+    with pytest.raises(FlexToolUserError, match="FLEXTOOL_SOLVER_WRAPPER_CPLEX: hold.bat is a script"):
+        _run(db, "lp_cplex", tmp_path / "w", _cfg(tmp_path, solver, "threads 2\n"))
+    assert _calls(shim) == []
+    assert not list((tmp_path / "w").rglob("*.mps"))

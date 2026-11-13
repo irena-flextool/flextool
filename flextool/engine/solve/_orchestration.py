@@ -59,10 +59,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from flextool import run_record
-from flextool.engine.solve._acceptance import classify_acceptance
+from flextool.engine.solve._acceptance import (
+    classify_acceptance,
+    highs_objective_bound_warning,
+)
 from flextool.run_options import RunOptions
 from flextool._thread_budget import highs_thread_options
 from flextool.engine.solve._handoff import SolveHandoff
+from flextool.engine.solve import _objective_options
+from flextool.engine.solve._objective_options import (
+    check_benders_options as _check_benders_objective_options,
+)
 from flextool.engine.preprocess._stochastic_detect import (
     is_genuinely_stochastic as _is_genuinely_stochastic,
 )
@@ -95,6 +102,7 @@ from flextool.engine.autoscale import (
     unscale_solution as _autoscale_unscale_solution,
     write_report as _autoscale_write_report,
 )
+from flextool.sqlite_url import sqlite_url_string
 
 
 def _wrap_log_prose(text: str, width: int = 100, indent: str = "  ") -> str:
@@ -110,6 +118,7 @@ def _format_solver_args_line(
     *,
     prefer_first: "Sequence[str]" = (),
     solver: str | None = None,
+    translated: "Mapping[str, str] | None" = None,
 ) -> str | None:
     """Render the effective solver options as a one-liner.
 
@@ -136,14 +145,31 @@ def _format_solver_args_line(
     A commercial solve passes *solver*: the line then reads
     ``Solver args (<solver>): ...`` and lists the native parameters the
     CLI receives (option file included, since it has no engine baseline).
+
+    *translated* maps an objective-valued option (written in unscaled
+    currency) to its text from :func:`_objective_options.echo_values`: the
+    value the solver gets, then the value the user wrote in parentheses.
     """
     if not effective_options:
         return None
+    translated = translated or {}
     order = [k for k in prefer_first if k in effective_options]
     order += [k for k in effective_options if k not in order]
-    body = ", ".join(f"{k}={effective_options[k]}" for k in order)
+    body = ", ".join(f"{k}={translated.get(k, effective_options[k])}" for k in order)
     label = f"Solver args ({solver})" if solver else "Solver args"
     return f"{label}: {body}"
+
+
+def _highs_echo_translations(
+    problem: "Problem", echoed: "Mapping[str, Any] | None", solve_name: str,
+) -> dict[str, str]:
+    """The ``Solver args`` text of the objective-valued HiGHS options in *echoed* (the user's layers): the value
+    HiGHS compares (``scale_the_objective`` × ``2**user_objective_scale`` of the options applied to *problem*,
+    autoscale Layer 3 included) and the value written.  polar-high itself translates them for the solve."""
+    _, records = _objective_options.translate_for_solver(
+        problem, "highs", "direct", echoed, solve_name=solve_name, factor_from_problem=True,
+    )
+    return _objective_options.echo_values(records)
 
 
 # Legacy ``scale_the_objective`` default — historically the
@@ -336,12 +362,17 @@ def _solve_highs_options(
     ``<solver_config_dir>/highs.opt``, or has no highs.opt layer when that is
     None.
     """
-    from flextool.engine.input._solve_config import SolverConfig
     from flextool.engine.solve._solver_dispatch import (
         _resolve_effective_highs_options,
         solver_workspace,
     )
 
+    solver_config = state.solve.solver_config_for(complete_solve_name)
+    # A solve on a commercial solver has its solver_arguments in that solver's names, checked against that
+    # solver's list (resolve_commercial_options); they are not HiGHS options (item 240 B1).
+    solver_arguments = (
+        state.solve.solver_settings.arguments.get(complete_solve_name, {}) if solver_config.name == "highs" else {}
+    )
     files = state.paths.solver_option_files
     highs_opt_text = files.text("highs") if files is not None else None
     if files is not None:
@@ -350,21 +381,49 @@ def _solve_highs_options(
         highs_opt_path = state.paths.solver_config_dir / "highs.opt"
     else:
         highs_opt_path = None
-    return _resolve_effective_highs_options(
+    options = _resolve_effective_highs_options(
         highs_opt_text=highs_opt_text,
-        solver_arguments_map=state.solve.solver_settings.arguments.get(
-            complete_solve_name, {}
-        ),
+        solver_arguments_map=solver_arguments,
         highs_opt_path=highs_opt_path,
         cli_overrides=_operator_highs_overrides(state.run_options),
         baseline=baseline,
-        solver_config=state.solve.solver_configs.get(
-            complete_solve_name, SolverConfig()
-        ),
+        solver_config=solver_config,
         solve_name=complete_solve_name,
         # A plain file name the database gives a HiGHS file option lands in the solve's work folder.
         workspace=solver_workspace(state.paths.work_folder),
+        # A highs.opt found outside a workspace this computer set up gets the database's rules (item 240 B3).
+        highs_opt_untrusted=files.untrusted_note("highs") if files is not None and highs_opt_text is not None else None,
     )
+    # Every HiGHS path (in-process cold and warm, --save-memory, Benders) takes its options from here: refuse an
+    # objective-valued option the installed polar-high cannot scale here, not in a later echo or option-file write.
+    _objective_options.require_supported("highs", options, solve_name=complete_solve_name)
+    return options
+
+
+def _highs_option_layers(
+    state: "RunnerState", complete_solve_name: str, options: "Mapping[str, Any] | None",
+) -> dict[str, str]:
+    """Where each of the solve's user HiGHS *options* was set, for a message: the solve's
+    ``solver_arguments``, a flag / environment variable, else ``highs.opt`` (the lowest layer; also the
+    layer reported for ``mip_rel_gap`` set by ``solve.solver_mip_gap``)."""
+    solver_arguments = state.solve.solver_settings.arguments.get(complete_solve_name, {}) or {}
+    operator = _operator_highs_overrides(state.run_options)
+    files = state.paths.solver_option_files
+    if files is not None:
+        opt_label = str(files.origin("highs"))
+    elif state.paths.solver_config_dir is not None:
+        opt_label = str(state.paths.solver_config_dir / "highs.opt")
+    else:
+        opt_label = "highs.opt"
+    layers: dict[str, str] = {}
+    for name in options or {}:
+        if name in operator:
+            layers[name] = "command-line flag or environment variable"
+        elif name in solver_arguments:
+            layers[name] = f"solver_arguments of solve {complete_solve_name}"
+        else:
+            layers[name] = opt_label
+    return layers
 
 
 def _autoscale_emit_layer1(
@@ -1825,7 +1884,7 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
 
 
 def _spawn_realized_dispatch_siblings(
-    solve_cfg, cascade_db_reader, logger, timeline_cfg=None,
+    solve_cfg, cascade_db_reader, logger, timeline_cfg=None, cascade_solve_cfg=None,
 ) -> None:
     """Register the realization solve of every stochastic top-level solve
     that needs one (``solve._realization``).
@@ -1856,19 +1915,19 @@ def _spawn_realized_dispatch_siblings(
       accepts separate_dispatch only for a single top-level single_solve.
     * registration (W4b): THIS function → for each eligible parent, a DUAL
       in-memory registration of the sibling ``<parent>__realized_dispatch``:
-        - ``SpineDbReader.register_derived_solve`` — clones the parent's
-          RAW Spine params (``_REALIZED_DISPATCH_SIBLING_PARAMS``) so the
-          sibling takes the full override path (``_solve_in_spine`` True);
+        - ``SpineDbReader.register_derived_solve`` — clones every RAW Spine
+          param of the parent except
+          ``SpineDbReader.REALIZATION_SOLVE_DROPPED_PARAMS``, so the sibling
+          takes the full override path (``_solve_in_spine`` True);
         - ``SolveConfig.spawn_realized_dispatch_sibling`` — inserts the
-          sibling after the parent in ``model_solve`` and copies the
-          DERIVED SolveConfig scaffolding dicts; records the authoritative
-          ``SolveConfig.realized_dispatch_parent[sibling] = parent``.
-      ►► DUAL-DEFINITION INVARIANT: the reader's raw-param allow-list and
-         the SolveConfig copy/set lists describe the SAME sibling config in
-         two vocabularies (period_timeset↔timesets_used_by_solves,
-         years_represented↔solve_period_years_represented,
-         solve_mode↔solve_modes, realized_periods↔realized_periods). They
-         MUST stay aligned — pinned by
+          sibling after the parent in ``model_solve`` and derives its
+          SolveConfig fields (``derive_realization_solve``: every field
+          except ``_solve_config.REALIZATION_SOLVE_DROPS``); records the
+          authoritative ``SolveConfig.realized_dispatch_parent[sibling] =
+          parent``.
+      ►► DUAL-DEFINITION INVARIANT: the reader's drop list and the
+         SolveConfig drop list describe the SAME sibling config in two
+         vocabularies. They MUST stay aligned — pinned by
          ``tests/engine/test_realized_dispatch_coherence.py``.
     * projection (W4c): ``_run_model`` step 3.6 reads
       ``realized_dispatch_parent`` and projects each stochastic param onto
@@ -1899,7 +1958,11 @@ def _spawn_realized_dispatch_siblings(
        fixed-capacity, monolithic single_solve.
 
     *solve_cfg* MUST be ``runner.state.solve`` — the config
-    ``native_run_model`` actually drives.  (The run()-site guard reads the
+    ``native_run_model`` actually drives.  *cascade_solve_cfg* is the outer
+    cascade ``state.solve``, where the ``run()`` closure looks up each
+    solve's solver: the sibling gets its parent's solver and solver
+    settings and scaling there too (``SolveConfig.derive_realization_solve``), so a sibling
+    of a Gurobi solve runs on Gurobi, not on HiGHS.  (The run()-site guard reads the
     SEPARATE outer cascade ``state.solve``, where the sibling is never
     injected, so it correctly no-ops for the sibling, which authors no
     ``dispatch_realization_method`` — no infinite re-spawn.)
@@ -1948,6 +2011,14 @@ def _spawn_realized_dispatch_siblings(
     eligible: list[tuple[str, str]] = []
     for p in sorted(top_level):
         if solve_cfg.dispatch_realization_method_for(p) == "separate_dispatch":
+            if not (getattr(solve_cfg, "realized_periods", None) or {}).get(p):
+                # Nothing to realize (an invest-only solve): no realization solve.
+                if logger is not None:
+                    logger.info(
+                        "solve '%s' has dispatch_realization_method = separate_dispatch but no "
+                        "realized_periods: no realization solve is added (it would dispatch nothing)", p,
+                    )
+                continue
             eligible.append((p, "dispatch_realization_method='separate_dispatch'"))
             continue
         configured = _realization.configured_realization_solve(solve_cfg, p)
@@ -1958,12 +2029,15 @@ def _spawn_realized_dispatch_siblings(
                     "registered author-declared realization solve '%s' for "
                     "stochastic solve '%s'", configured, p,
                 )
+            _line = _realization.lookahead_in_configured_realization(solve_cfg, configured, p)
+            if _line is not None:
+                # Printed only (solve-site console convention): the logger writes to the console too.
+                print(f"Warning: {_line}", flush=True)
             # A realization solve takes its parent's detail levels (it pins
             # the parent's units online and reserves): name an authored
-            # value that is overridden.
+            # value that is overridden. Printed only (solve-site console
+            # convention): the logger writes to the console too.
             for _line in solve_cfg.reduce_detail_overridden(configured):
-                if logger is not None:
-                    logger.warning(_line)
                 print(f"Warning: {_line}", flush=True)
             continue
         if not _realization.designation_reaches_committed_window(solve_cfg, p):
@@ -2042,13 +2116,20 @@ def _spawn_realized_dispatch_siblings(
                 f"'{sibling}' for solve '{parent}': a 'solve' entity named "
                 f"'{sibling}' already exists in the database."
             )
-        cascade_db_reader.register_derived_solve(parent, sibling)
+        from flextool.engine.input._spinedb_reader import SpineDbReader
+        # A single solve's realization solve reads its realized periods only
+        # (the SolveConfig half: ``derive_realization_solve``).
+        cascade_db_reader.register_derived_solve(
+            parent, sibling, drop=SpineDbReader.REALIZATION_SOLVE_DROPPED_PARAMS,
+            replace=solve_cfg.realization_reader_values(parent))
         solve_cfg.spawn_realized_dispatch_sibling(parent, sibling)
+        if cascade_solve_cfg is not None and cascade_solve_cfg is not solve_cfg:
+            cascade_solve_cfg.derive_realization_solve(parent, sibling)
         # The sibling reuses the parent's timesets, which a solve-level
         # new_stepduration has re-pointed to the aggregated timeline: it must
         # run at the same step (aggregated data, step lengths), not on the
         # aggregated steps with unaggregated data.  The reader half clones the
-        # raw ``new_stepduration`` (``_REALIZED_DISPATCH_SIBLING_PARAMS``).
+        # raw ``new_stepduration`` (it is not in the drop list).
         if timeline_cfg is not None:
             parent_step = timeline_cfg.new_step_durations.get(parent)
             if parent_step is not None:
@@ -2060,6 +2141,12 @@ def _spawn_realized_dispatch_siblings(
                 "registered engine-automatic realization solve '%s' for "
                 "solve '%s' (%s)", sibling, parent, why,
             )
+    if eligible:
+        from flextool.engine.input._solve_config import SolveConfig
+        siblings = [f"{parent}__realized_dispatch" for parent, _why in eligible]
+        SolveConfig.check_derived_solves(solve_cfg, siblings)
+        if cascade_solve_cfg is not None and cascade_solve_cfg is not solve_cfg:
+            SolveConfig.check_derived_solves(cascade_solve_cfg, siblings)
 
 
 def _validate_model_solve(state: RunnerState) -> list[str]:
@@ -2496,6 +2583,9 @@ def _drive_cascade(
             "cascade_spinedb_reader_constructed", _drive_logger,
             user_label="Inputs prepared",
         )
+    # The solves of a 2-D period map are solves of the reader too (before any reader-side lookup).
+    from flextool.engine.input._solve_config import register_solve_copies
+    register_solve_copies(runner.state.solve, cascade_db_reader)
     # One dedupe set for the solve-step aggregation warnings of the run: the CSV frames
     # (TimelineConfig.create_averaged_timeseries, once per complete solve) and the DB-direct readers
     # (load_flextool arms the reader's memo) warn once per run between them.
@@ -2549,7 +2639,7 @@ def _drive_cascade(
     # No-op (and byte-parity) when no solve authors separate_dispatch.
     _spawn_realized_dispatch_siblings(
         runner.state.solve, cascade_db_reader, _drive_logger,
-        timeline_cfg=runner.state.timeline,
+        timeline_cfg=runner.state.timeline, cascade_solve_cfg=state.solve,
     )
 
     class _PolarHighCascadeSolver(SolverRunner):
@@ -2868,6 +2958,18 @@ def _drive_cascade(
                     f"{entry['region']} done (obj={entry['obj']:.6g})"
                 )
 
+            # The user layers of the solve's HiGHS options (highs.opt <
+            # solver_mip_gap < solver_arguments < CLI flags).  No engine
+            # baseline: Benders keeps its own validated pins.  A whole-model
+            # objective target / bound is refused here, before any build.
+            _benders_options = _solve_highs_options(
+                state, complete_solve_name, baseline=None,
+            )
+            _check_benders_objective_options(
+                _benders_options,
+                solve_name=base_solve_name,
+                layers=_highs_option_layers(state, complete_solve_name, _benders_options),
+            )
             # Benders master and region solves run on HiGHS (polar-high).
             run_record.active().note_solver("highs")
             result = solve_benders(
@@ -2880,12 +2982,7 @@ def _drive_cascade(
                 in_out_weight=in_out_weight_db,
                 progress_callback=_on_iteration,
                 subsolve_callback=_on_subsolve,
-                # The user layers of the solve's HiGHS options (highs.opt <
-                # solver_mip_gap < solver_arguments < CLI flags).  No engine
-                # baseline: Benders keeps its own validated pins.
-                solver_options=_solve_highs_options(
-                    state, complete_solve_name, baseline=None,
-                ),
+                solver_options=_benders_options,
                 scaling_config=scaling_config,
                 # ``--benders-workers`` / ``FLEXTOOL_BENDERS_WORKERS`` and
                 # ``FLEXTOOL_BENDERS_IN_OUT_WEIGHT``, resolved once for the run.
@@ -3400,12 +3497,7 @@ def _drive_cascade(
             # active solve picks a commercial solver we disable warm
             # reuse for this iteration, log a one-time warning, and
             # cold-rebuild + dispatch through ``run_one_solve``.
-            from flextool.engine.input._solve_config import (
-                SolverConfig as _SolverConfig,
-            )
-            _active_solver_cfg = state.solve.solver_configs.get(
-                complete_solve_name, _SolverConfig()
-            )
+            _active_solver_cfg = state.solve.solver_config_for(complete_solve_name)
             run_record.active().note_solver(_active_solver_cfg.name)
             _warm_disabled_by_solver = (
                 warm and _active_solver_cfg.name != "highs"
@@ -3790,6 +3882,9 @@ def _drive_cascade(
                 _eff_touched = _solve_highs_options(state, complete_solve_name, baseline=None)
                 _sa_line = _format_solver_args_line(
                     _eff_touched, prefer_first=list(_solver_args_map or {}),
+                    translated=_highs_echo_translations(
+                        self._warm_problem.problem, _eff_touched, complete_solve_name,
+                    ),
                 )
                 if _sa_line:
                     print(_sa_line, flush=True)
@@ -3857,9 +3952,12 @@ def _drive_cascade(
                 # The cache is keyed on the exact name set, so a roll is
                 # warm-started only from the same roll of an earlier run,
                 # never from the previous roll (whose labels differ).
-                # Capture failure is non-fatal (log + continue).
+                # Capture failure is non-fatal (log + continue).  Only an
+                # optimal solve's basis is a seed: a solve stopped by a limit
+                # (kept or rejected by the acceptance check below) is not.
                 if (
                     did_fresh_build
+                    and sol.optimal
                     and fresh_fp
                     and _basis_cache_active(
                         state.solve.decomposition_for(base_solve_name),
@@ -4155,10 +4253,11 @@ def _drive_cascade(
                     from flextool.engine.solve._solver_dispatch import (
                         _PARAM_MAP as _NATIVE_NAMES,
                         commercial_opt_file_layer,
+                        problem_is_mip,
                         resolve_commercial_options,
                     )
                     if _active_solver_cfg.name in _NATIVE_NAMES:
-                        _opt_text, _opt_label = commercial_opt_file_layer(
+                        _opt_text, _opt_label, _opt_untrusted = commercial_opt_file_layer(
                             _active_solver_cfg.name,
                             solver_option_files=state.paths.solver_option_files,
                             solver_config_dir=state.paths.solver_config_dir,
@@ -4168,14 +4267,24 @@ def _drive_cascade(
                             _active_solver_cfg.name,
                             opt_file=_opt_label,
                             opt_text=_opt_text,
+                            opt_untrusted=_opt_untrusted,
                             solver_config=_active_solver_cfg,
                             run_options=run_options,
                             solve_name=complete_solve_name,
                             logger=state.logger,
+                            is_mip=problem_is_mip(getattr(pb, "_vars", None)),
+                        )
+                        # The values in unscaled currency become the solver's
+                        # values when the option file is written
+                        # (``solve_via_subprocess``); the echo shows both.
+                        _, _commercial_translated = _objective_options.translate_for_solver(
+                            pb, _active_solver_cfg.name, "mps", _commercial_opts,
+                            solve_name=complete_solve_name,
                         )
                         _sa_line = _format_solver_args_line(
                             {o.name: o.value for o in _commercial_opts},
                             solver=_active_solver_cfg.name,
+                            translated=_objective_options.echo_values(_commercial_translated),
                         )
                     else:
                         _sa_line = None
@@ -4183,6 +4292,7 @@ def _drive_cascade(
                     _eff_touched = _solve_highs_options(state, complete_solve_name, baseline=None)
                     _sa_line = _format_solver_args_line(
                         _eff_touched, prefer_first=list(_solver_args_map or {}),
+                        translated=_highs_echo_translations(pb, _eff_touched, complete_solve_name),
                     )
                 if _sa_line:
                     print(_sa_line, flush=True)
@@ -4353,10 +4463,33 @@ def _drive_cascade(
                 if _acc.scaling_hint:
                     print(_acc.scaling_hint, flush=True)
                 return 1
-            if _acc.time_limited:
-                self.state.logger.warning(_acc.message)
+            # The two warnings below go to this module's logger: the runner's
+            # own (``self.state.logger``) is held at ERROR during the cascade,
+            # so a warning there never reaches the run's output.  The limit
+            # warning is already the solve's message in the run record
+            # (``solve_classified`` above), so it is not added to the
+            # record's warnings again.
+            if _acc.limit_stopped:
+                logging.getLogger(__name__).warning(
+                    _acc.message, extra={run_record.IN_SOLVE_RECORD: True},
+                )
             elif _acc.near_optimal:
                 self.state.logger.info(_acc.message)
+            if _active_solver_cfg.name == "highs" and _acc.model_status == "kOptimal":
+                # A HiGHS MIP treats ``objective_bound`` as a cutoff and calls
+                # the best solution within it optimal.  Every roll of a solve
+                # has the same options, so the warning names the solve once.
+                _bound_solve = re.sub(r"_roll_\d+$", "", complete_solve_name)
+                _bound_warned = self.state.__dict__.setdefault(
+                    "_objective_bound_warned", set(),
+                )
+                if _bound_solve not in _bound_warned:
+                    _bound_warning = highs_objective_bound_warning(
+                        sol, _bound_solve, highs_options,
+                    )
+                    if _bound_warning is not None:
+                        _bound_warned.add(_bound_solve)
+                        logging.getLogger(__name__).warning(_bound_warning)
             if _acc.above_fixed_ceiling:
                 from flextool.engine import _behaviour_changes
                 _behaviour_changes.notice(
@@ -4848,7 +4981,7 @@ def run_chain_from_db(
     work_folder: Path | str | None = None,
     *,
     flextool_dir: Path | str | None = None,
-    solver_config_dir: Path | str | None = None,
+    solver_config_dir: Path | str | Sequence[Path | str] | None = None,
     logger: logging.Logger | None = None,
     warm: bool = True,
     keep_solutions: bool = False,
@@ -4885,10 +5018,11 @@ def run_chain_from_db(
         tempdir.
     flextool_dir : Path, optional
         Override the installed flextool package directory.
-    solver_config_dir : Path, optional
-        The folder of the solver option files (``highs.opt``, ``gurobi.opt``,
-        ...); wins over ``--solver-config-dir`` / ``FLEXTOOL_SOLVER_CONFIG_DIR``
-        and the database-layout search
+    solver_config_dir : Path or list of Path, optional
+        The folder (or folders, highest first, read file by file) of the
+        solver option files (``highs.opt``, ``gurobi.opt``, ...); wins over
+        ``--solver-config-dir`` / ``FLEXTOOL_SOLVER_CONFIG_DIR`` and the
+        database-layout search
         (:func:`flextool._solver_config_source.resolve_solver_config_source`).
     logger : logging.Logger, optional
         Logger to use.  ``None`` constructs one named after the scenario.
@@ -4976,7 +5110,7 @@ def run_chain_from_db(
 
     db_url = str(input_db_url)
     if "://" not in db_url:
-        db_url = f"sqlite:///{db_url}"
+        db_url = sqlite_url_string(db_url)
 
     # Behaviour-change notices fire only for an upgraded database's markers; each entity once per run.
     from flextool.engine import _behaviour_changes
@@ -4995,10 +5129,10 @@ def run_chain_from_db(
         Path(flextool_dir) if flextool_dir is not None
         else package_data_path("")
     )
-    # The solver option files: one folder per run (explicit argument >
-    # --solver-config-dir > FLEXTOOL_SOLVER_CONFIG_DIR > the database layout >
-    # the Toolbox project folder > the current folder > FlexTool's defaults),
-    # read ONCE here and kept on ``state.paths.solver_option_files``, so every
+    # The solver option files: one ladder of folders per run, read file by file
+    # (explicit argument > --solver-config-dir > FLEXTOOL_SOLVER_CONFIG_DIR >
+    # the database layout > the Toolbox project folder > the current folder >
+    # FlexTool's defaults), read ONCE here and kept on ``state.paths.solver_option_files``, so every
     # roll and solve uses the files as they were at run start.  The copy under
     # ``solve_data/solver_config/`` is the record of what the run used; it is
     # written afresh every run and never read back.
@@ -5124,8 +5258,18 @@ def run_chain_from_db(
 
         sc = SolveConfig.load_from_db_url(db_url, scenario_name, logger=logger)
         # Item 236 A3: a solve's solver_precommand is never run; say so once per solve in this run.
-        from flextool.engine.solve._solver_dispatch import warn_solver_precommands
+        from flextool.engine.solve._solver_dispatch import (
+            check_run_solver_options,
+            check_run_solver_wrappers,
+            warn_solver_precommands,
+        )
         warn_solver_precommands(sc.solver_settings.precommand, logger)
+        # Item 240 B1: the solver_arguments of every solve the run runs, under its solver, before the first solve
+        # (a solve the model does not run is not checked: its options never reach a solver; review b1 F7).
+        _run_solves = sc.solves_in_run()
+        check_run_solver_options(sc.solver_settings, logger, solves=_run_solves, shown_as=sc.database_solve_names())
+        # Item 240 B2: this computer's wrapper of every commercial solver the run uses.
+        check_run_solver_wrappers(sc.solver_settings, solves=_run_solves)
         _memrec.checkpoint("solve_config_loaded", logger,
                            user_label="SolveConfig loaded (from DB)")
         tc = TimelineConfig.load_from_db_url(db_url, scenario_name, logger=logger)

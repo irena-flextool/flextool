@@ -10,7 +10,9 @@ scaling hint.
 
 from __future__ import annotations
 
+import dataclasses
 import math
+import types
 
 import pytest
 
@@ -532,7 +534,7 @@ def test_time_limited_mip_with_a_solution_is_kept_with_a_warning(source: str) ->
     acc = classify_acceptance(
         _time_limited(mip=True, diagnostics=diagnostics, shim_gap=0.010101), ranges_post=None, solve_name="s",
     )
-    assert acc.accepted and acc.time_limited and acc.model_status == "kTimeLimit"
+    assert acc.accepted and acc.limit_stopped and acc.model_status == "kTimeLimit"
     assert "time limit" in acc.message
     if source == "result_file":
         assert "1.0101%" in acc.message
@@ -542,8 +544,60 @@ def test_time_limited_mip_with_a_solution_is_kept_with_a_warning(source: str) ->
 def test_time_limited_lp_stops_the_run(source: str) -> None:
     diagnostics = _diag(status_name="kTimeLimit", primal_feasible=True) if source == "highs" else None
     acc = classify_acceptance(_time_limited(mip=False, diagnostics=diagnostics), ranges_post=None, solve_name="s")
-    assert not acc.accepted and not acc.time_limited and acc.model_status == "kTimeLimit"
+    assert not acc.accepted and not acc.limit_stopped and acc.model_status == "kTimeLimit"
     assert "time limit" in acc.message
+
+
+def _highs_time_limit_diag(**mip_gap: float) -> types.SimpleNamespace:
+    """kTimeLimit diagnostics with a feasible incumbent, with ``mip_gap`` set to the given value or absent.
+
+    Built from a dict, so ``mip_gap`` can be left out: a diagnostics object without it (the warning then points
+    to the log)."""
+    d = dataclasses.asdict(_diag(status_name="kTimeLimit", primal_feasible=True))
+    d.pop("mip_gap", None)
+    d.update(mip_gap)
+    return types.SimpleNamespace(**d)
+
+
+def test_time_limited_highs_mip_names_the_gap() -> None:
+    acc = classify_acceptance(
+        _time_limited(mip=True, diagnostics=_highs_time_limit_diag(mip_gap=0.002286)),
+        ranges_post=None, solve_name="invest_2030",
+    )
+    assert acc.accepted and acc.limit_stopped
+    assert "not proven optimal (relative MIP gap 0.2286%)." in acc.message
+
+
+@pytest.mark.parametrize(("gap", "text"), [
+    (3.2e-7, "3.2e-05%"),     # below 0.01 %: significant digits, not "0.0000%" next to "not proven optimal"
+    (5e-5, "0.005%"),
+    (1e-4, "0.0100%"),        # from 0.01 % up: four decimals
+    (0.0, "0.0000%"),
+])
+def test_time_limited_mip_gap_formatting(gap: float, text: str) -> None:
+    acc = classify_acceptance(_time_limited(mip=True, shim_gap=gap), ranges_post=None, solve_name="s")
+    assert acc.accepted and f"not proven optimal (relative MIP gap {text})." in acc.message
+
+
+@pytest.mark.parametrize("gap", ["absent", math.inf, math.nan])
+def test_time_limited_highs_mip_without_a_gap_points_to_the_log(gap) -> None:
+    diagnostics = _highs_time_limit_diag() if gap == "absent" else _highs_time_limit_diag(mip_gap=gap)
+    acc = classify_acceptance(_time_limited(mip=True, diagnostics=diagnostics), ranges_post=None, solve_name="s")
+    assert acc.accepted and acc.limit_stopped
+    assert "(the remaining gap is in the solver log above)" in acc.message
+
+
+def test_time_limited_highs_mip_reads_the_gap_from_the_pre_unscale_snapshot() -> None:
+    """The Layer-2 unscale resets the live HiGHS info; the gap comes from the snapshot taken before it."""
+    sol = _time_limited(mip=True, diagnostics=_highs_time_limit_diag())   # live handle: no gap
+    sol.pre_unscale_diagnostics = _highs_time_limit_diag(mip_gap=0.002286)
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="s")
+    assert acc.accepted and "relative MIP gap 0.2286%" in acc.message
+
+
+def test_time_limited_result_file_with_a_non_finite_gap_points_to_the_log() -> None:
+    acc = classify_acceptance(_time_limited(mip=True, shim_gap=math.inf), ranges_post=None, solve_name="s")
+    assert acc.accepted and "(the remaining gap is in the solver log above)" in acc.message
 
 
 def test_time_limited_mip_without_a_solution_stops_the_run() -> None:
@@ -552,3 +606,209 @@ def test_time_limited_mip_without_a_solution_stops_the_run() -> None:
         ranges_post=None, solve_name="s",
     )
     assert not acc.accepted and acc.model_status == "kTimeLimit"
+
+
+# --- every search limit and the objective target / bound: the D2 rule extended (item 246) ------------------
+
+
+def _limit_diag(status_name: str, *, primal_feasible: bool, **mip_gap: float) -> types.SimpleNamespace:
+    """HiGHS diagnostics of a solve stopped with *status_name*, with ``mip_gap`` set to the given value or absent
+    (works with and without the ``SolveDiagnostics.mip_gap`` field)."""
+    d = dataclasses.asdict(_diag(status_name=status_name, primal_feasible=primal_feasible))
+    d.pop("mip_gap", None)
+    d.update(mip_gap)
+    return types.SimpleNamespace(**d)
+
+
+def _stopped(*, mip: bool, diagnostics=None, shim_status: str | None = None, shim_solver: str | None = None,
+             shim_gap: float | None = None) -> _StubSolution:
+    sol = _StubSolution(optimal=False, diagnostics=diagnostics)
+    sol._vars = {"x": _Var(integer=False), "u": _Var(integer=mip)}
+    if diagnostics is None:  # a commercial / --save-memory result file
+        sol.shim_status = shim_status
+        sol.shim_mip_gap = shim_gap
+        if shim_solver is not None:
+            sol.shim_solver = shim_solver
+    return sol
+
+
+_HIGHS_NODE_OPTIONS = "HiGHS mip_max_nodes, mip_max_leaves, mip_max_stall_nodes or mip_max_improving_sols"
+_WHERE = "in the solver's option file or the solve's solver_arguments"
+
+
+@pytest.mark.parametrize(("name", "sol", "accepted", "model_status", "message"), [
+    ("A", lambda: _stopped(mip=True, diagnostics=_limit_diag("kSolutionLimit", primal_feasible=True, mip_gap=0.0103)),
+     True, "kSolutionLimit",
+     "Solve invest_2030 stopped at its node or solution limit with a feasible integer solution that is not proven "
+     "optimal (relative MIP gap 1.0300%). FlexTool uses this solution; raise or remove the limit "
+     f"({_HIGHS_NODE_OPTIONS}, {_WHERE}) or the MIP gap for a proven one."),
+    ("B", lambda: _stopped(mip=True, diagnostics=_limit_diag("kSolutionLimit", primal_feasible=False)),
+     False, "kSolutionLimit",
+     "solve for invest_2030 hit the node or solution limit before finding a feasible solution, so there is no "
+     f"solution to use. Raise or remove the limit ({_HIGHS_NODE_OPTIONS}, {_WHERE})"),
+    ("C", lambda: _stopped(mip=False, diagnostics=_limit_diag("kIterationLimit", primal_feasible=True)),
+     False, "kIterationLimit",
+     "solve for invest_2030 hit the iteration limit before proving optimality: it is a linear problem, and a "
+     "linear solve stopped at its iteration limit has no usable solution. Raise or remove the limit (HiGHS "
+     f"simplex_iteration_limit, ipm_iteration_limit or pdlp_iteration_limit, {_WHERE})"),
+    ("D", lambda: _stopped(mip=True, shim_status="NODE_LIMIT", shim_solver="gurobi", shim_gap=3.2e-7),
+     True, "kSolutionLimit",
+     "Solve invest_2030 stopped at its node limit with a feasible integer solution that is not proven optimal "
+     "(relative MIP gap 3.2e-05%). FlexTool uses this solution; raise or remove the limit (Gurobi NodeLimit, "
+     f"{_WHERE}) or the MIP gap for a proven one."),
+    ("E", lambda: _stopped(mip=True, diagnostics=_limit_diag("kObjectiveTarget", primal_feasible=True,
+                                                               mip_gap=0.10799)),
+     True, "kObjectiveTarget",
+     "Solve invest_2030 stopped at its objective target with a feasible integer solution that is not proven "
+     "optimal (relative MIP gap 10.7990%). FlexTool uses this solution; change or remove the objective target "
+     f"(HiGHS objective_target, {_WHERE}) or the MIP gap for a proven one."),
+    ("F", lambda: _stopped(mip=False, diagnostics=_limit_diag("kObjectiveBound", primal_feasible=False)),
+     False, "kObjectiveBound",
+     "solve for invest_2030 stopped at an objective bound before finding a feasible solution, so there is no "
+     f"solution to use. Change or remove the objective bound (HiGHS objective_bound, {_WHERE})"),
+    ("G", lambda: _stopped(mip=True, shim_status="USER_OBJ_LIMIT", shim_solver="gurobi", shim_gap=0.05),
+     True, "kObjectiveTarget",
+     "Solve invest_2030 stopped at its objective limit with a feasible integer solution that is not proven "
+     "optimal (relative MIP gap 5.0000%). FlexTool uses this solution; change or remove the objective limit "
+     f"(Gurobi BestObjStop or BestBdStop, {_WHERE}) or the MIP gap for a proven one."),
+    ("H", lambda: _stopped(mip=True, diagnostics=_limit_diag("kMemoryLimit", primal_feasible=True)),
+     False, "kMemoryLimit", "solve for invest_2030 hit the memory limit before proving optimality"),
+])
+def test_limit_verdict_oracle(name, sol, accepted, model_status, message) -> None:
+    """Oracle cases A-H (hand-written from the rule, critique_246): exact verdict and message."""
+    acc = classify_acceptance(sol(), ranges_post=None, solve_name="invest_2030")
+    assert (acc.accepted, acc.model_status, acc.message) == (accepted, model_status, message), name
+    assert acc.limit_stopped is accepted and acc.near_optimal is accepted
+
+
+def test_time_limited_lp_message_is_unchanged() -> None:
+    """The LP time-limit text stays byte-identical (only the options of the other limits are new)."""
+    acc = classify_acceptance(
+        _stopped(mip=False, diagnostics=_limit_diag("kTimeLimit", primal_feasible=True)),
+        ranges_post=None, solve_name="dispatch",
+    )
+    assert acc.message == (
+        "solve for dispatch hit the time limit before proving optimality: it is a linear problem, and a linear "
+        "solve stopped at its time limit has no usable solution. Raise the time limit (--solver-time-limit, or "
+        "the solver's own time-limit parameter)"
+    )
+
+
+@pytest.mark.parametrize(("solver", "shim_status", "model_status", "options"), [
+    ("gurobi", "NODE_LIMIT", "kSolutionLimit", "Gurobi NodeLimit"),
+    ("cplex", "SOLUTION_LIMIT", "kSolutionLimit", "CPLEX mip limits solutions"),
+    ("gurobi", "WORK_LIMIT", "kTimeLimit", "Gurobi WorkLimit"),
+    ("copt", "NODE_LIMIT", "kSolutionLimit", "COPT NodeLimit"),
+    ("highs", "SOLUTION_LIMIT", "kSolutionLimit", _HIGHS_NODE_OPTIONS),   # the --save-memory child
+])
+def test_result_file_limit_keeps_a_mip_and_stops_an_lp(solver, shim_status, model_status, options) -> None:
+    kept = classify_acceptance(
+        _stopped(mip=True, shim_status=shim_status, shim_solver=solver, shim_gap=0.02),
+        ranges_post=None, solve_name="s",
+    )
+    assert kept.accepted and kept.limit_stopped and kept.model_status == model_status
+    assert f"({options}, {_WHERE})" in kept.message and "(relative MIP gap 2.0000%)" in kept.message
+    rejected = classify_acceptance(
+        _stopped(mip=False, shim_status=shim_status, shim_solver=solver), ranges_post=None, solve_name="s",
+    )
+    assert not rejected.accepted and not rejected.limit_stopped and rejected.model_status == model_status
+    assert "it is a linear problem" in rejected.message and f"({options}, {_WHERE})" in rejected.message
+
+
+def test_result_file_limit_without_a_known_solver_names_the_solvers_own_parameter() -> None:
+    acc = classify_acceptance(_stopped(mip=True, shim_status="NODE_LIMIT"), ranges_post=None, solve_name="s")
+    assert acc.accepted and "raise or remove the limit (the solver's own node limit parameter)" in acc.message
+
+
+def test_save_memory_child_limit_without_a_feasible_primal_is_rejected() -> None:
+    sol = _stopped(mip=True, shim_status="SOLUTION_LIMIT", shim_solver="highs")
+    sol.shim_primal_feasible = False
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="s")
+    assert not acc.accepted and acc.model_status == "kSolutionLimit"
+    assert "before finding a feasible solution" in acc.message
+
+
+@pytest.mark.parametrize("shim_status", ["MEM_LIMIT", "SUBOPTIMAL", "NUMERIC", "INTERRUPTED", "OBJECTIVE_LIMIT"])
+def test_other_stops_still_stop_the_run(shim_status: str) -> None:
+    """A memory limit, an interrupt, Gurobi SUBOPTIMAL / NUMERIC and CPLEX's LP objective-limit abort stay
+    rejected, a MIP included."""
+    acc = classify_acceptance(
+        _stopped(mip=True, shim_status=shim_status, shim_solver="gurobi"), ranges_post=None, solve_name="s",
+    )
+    assert not acc.accepted and not acc.limit_stopped
+
+
+def test_kill_switch_rejects_a_limit_stopped_mip(monkeypatch) -> None:
+    """``FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0`` rejects every status other than optimal, a limit-stopped MIP too."""
+    monkeypatch.setenv("FLEXTOOL_ACCEPT_NEAR_OPTIMAL", "0")
+    for sol in (
+        _stopped(mip=True, diagnostics=_limit_diag("kTimeLimit", primal_feasible=True, mip_gap=0.01)),
+        _stopped(mip=True, shim_status="NODE_LIMIT", shim_solver="gurobi", shim_gap=0.01),
+    ):
+        acc = classify_acceptance(sol, ranges_post=None, solve_name="s")
+        assert not acc.accepted and not acc.limit_stopped
+        assert "near-optimal acceptance is disabled (FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0)" in acc.message
+
+
+def _knapsack(*, integer: bool = True):
+    """60 binaries, 5 rows (``numpy.default_rng(1)``, weights and values in [10, 100), each capacity a third of
+    its row's weight); MIP optimum -1747."""
+    import numpy as np
+    import polars as pl
+    from polar_high import Param, Problem, Sum
+
+    rng = np.random.default_rng(1)
+    w, v = rng.integers(10, 100, (5, 60)), rng.integers(10, 100, 60)
+    items = pl.DataFrame({"item": [f"i{j}" for j in range(60)]})
+    p = Problem()
+    x = p.add_var("x", ("item",), items, lower=0.0, upper=1.0, integer=integer)
+    for i in range(5):
+        weight = Param(("item",), items.with_columns(value=pl.Series(w[i].astype(float))), name=f"w{i}")
+        p.add_cstr(f"c{i}", over=pl.DataFrame({"r": [0]}), sense="<=", lhs_terms={"a": Sum(x * weight, over=("item",))},
+                   rhs_terms={"d": Param(("r",), pl.DataFrame({"r": [0], "value": [float(w[i].sum() / 3)]}))})
+    value = Param(("item",), items.with_columns(value=pl.Series(-v.astype(float))), name="v")
+    p.set_objective(Sum(x * value, over=("item",)), sense="min")
+    return p
+
+
+def test_real_highs_mip_at_its_improving_solution_limit_is_kept() -> None:
+    from flextool.engine.solve._acceptance import _format_gap
+
+    sol = _knapsack().solve(options={"mip_max_improving_sols": 1, "threads": 1, "output_flag": False},
+                            keep_solver=True)
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="s")
+    assert acc.accepted and acc.limit_stopped and acc.model_status == "kSolutionLimit", acc
+    assert "mip_max_improving_sols" in acc.message
+    gap = getattr(sol.solve_diagnostics(), "mip_gap", None)
+    gap_text = (f"(relative MIP gap {_format_gap(gap)})" if gap is not None and math.isfinite(gap)
+                else "(the remaining gap is in the solver log above)")
+    assert gap_text in acc.message
+
+
+def test_real_highs_mip_at_a_node_limit_without_a_solution_is_rejected() -> None:
+    sol = _knapsack().solve(options={"mip_max_nodes": 0, "threads": 1, "output_flag": False}, keep_solver=True)
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="s")
+    assert not acc.accepted and acc.model_status == "kSolutionLimit"
+    assert "before finding a feasible solution" in acc.message
+
+
+def test_highs_mip_with_an_objective_bound_warns_that_optimal_may_not_be_optimal() -> None:
+    """HiGHS treats a MIP's ``objective_bound`` as a cutoff: with -1760 (below the optimum -1747) it reports
+    kOptimal for a worse solution.  The run is told so, from whatever layer set the option."""
+    from flextool.engine.solve._acceptance import highs_objective_bound_warning
+
+    options = {"objective_bound": -1760.0, "threads": 1, "output_flag": False}
+    sol = _knapsack().solve(options=options, keep_solver=True)
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="s")
+    assert acc.accepted and acc.model_status == "kOptimal" and not acc.limit_stopped
+    assert highs_objective_bound_warning(sol, "s", options) == (
+        "Solve s is a MIP solved by HiGHS with objective_bound -1760 (unscaled currency): HiGHS treats the bound "
+        "as a cutoff and "
+        "reports the best solution within it as optimal, so this solution may not be optimal. Remove "
+        "objective_bound for a proven optimum."
+    )
+    assert highs_objective_bound_warning(sol, "s", {"objective_bound": "-1760"}) is not None   # highs.opt text
+    for no_bound in ({}, None, {"objective_bound": math.inf}, {"objective_bound": "inf"}):
+        assert highs_objective_bound_warning(sol, "s", no_bound) is None
+    lp = _stopped(mip=False)
+    assert highs_objective_bound_warning(lp, "s", {"objective_bound": -1760.0}) is None

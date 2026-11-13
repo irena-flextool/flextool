@@ -47,7 +47,7 @@ TOP_LEVEL_MODULES = [
 
 _PREFIXED = re.compile(r"^(FLEXTOOL|POLARS|POLAR_HIGH|MALLOC|_RJEM)_[A-Z0-9_]+$")
 # Read by FlexTool, defined by the operating system / desktop / Python, not by FlexTool.
-_SYSTEM_VARIABLES = frozenset({"PATH", "VIRTUAL_ENV", "GDK_SCALE"})
+_SYSTEM_VARIABLES = frozenset({"PATH", "VIRTUAL_ENV", "GDK_SCALE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"})
 # FLEXTOOL_-prefixed names that are not environment variables.
 _NOT_ENV = frozenset({"FLEXTOOL_DB_VERSION"})
 # The registry itself names every variable; it does not count as a reader.

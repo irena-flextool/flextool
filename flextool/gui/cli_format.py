@@ -17,7 +17,9 @@ def terminal_command(cmd: list[str]) -> list[str]:
     out = list(cmd)
     for i in range(1, len(out) - 1):
         if out[i] == "-m" and out[i + 1] == ENGINE_MODULE:
-            out[i - 1:i + 2] = [RUN_SCRIPT]
+            # The interpreter, its ``-P`` (``flextool._child_python``) and ``-m module`` become ``flextool-run``.
+            start = i - 2 if i >= 2 and out[i - 1] == "-P" else i - 1
+            out[start:i + 2] = [RUN_SCRIPT]
             break
     else:
         return out

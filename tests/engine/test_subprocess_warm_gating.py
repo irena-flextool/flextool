@@ -19,6 +19,7 @@ from pathlib import Path
 
 import numpy as np
 import polars as pl
+import pytest
 
 import polar_high as fp
 from flextool.engine.solve import _subprocess_solve as _subp
@@ -278,7 +279,7 @@ def test_preexisting_nowarm_never_injects(tmp_path: Path, monkeypatch) -> None:
     cache_dir = work / "basis_cache"
     cache_dir.mkdir(parents=True)
     (cache_dir / f"{fp5}.bas").write_bytes(ref_bas)
-    (cache_dir / f"{fp5}.nowarm").write_text("")
+    (cache_dir / f"{fp5}.nowarm").write_text("", encoding="utf-8")
 
     spy.reset()
     p = _build_problem(seed=5)
@@ -299,3 +300,100 @@ def test_preexisting_nowarm_never_injects(tmp_path: Path, monkeypatch) -> None:
     # The capture still refreshes the cached basis on a .nowarm solve.
     assert (cache_dir / f"{fp5}.bas").exists()
     assert not list(cache_dir.glob("*.bas.tmp.*"))
+
+
+def _kill_matching(monkeypatch, killed, returncode: int = -9) -> _RunSpy:
+    """Spy on the child spawns; one whose argv satisfies *killed* is stopped with *returncode* and writes no
+    files (-9: SIGKILL; 1: a Windows ``taskkill /F`` or an exception in the child)."""
+    import subprocess
+
+    real = _subp.subprocess.run
+
+    def run(cmd, *args, **kwargs):
+        if killed(list(cmd)):
+            return subprocess.CompletedProcess(cmd, returncode)
+        return real(cmd, *args, **kwargs)
+
+    spy = _RunSpy(run)
+    monkeypatch.setattr(_subp.subprocess, "run", spy)
+    return spy
+
+
+def _first_solve_publishes_a_basis(work: Path) -> tuple[str, Path]:
+    p1 = _build_problem(seed=1)
+    assert solve_via_subprocess(p1, "highs", _opts(), solve_name="s", work_folder=work).optimal
+    fp1 = p1._last_mps_fingerprint
+    cache_dir = work / "basis_cache"
+    assert (cache_dir / f"{fp1}.bas").exists()
+    return fp1, cache_dir
+
+
+def test_a_killed_first_transfer_run_records_no_verdict(tmp_path: Path, monkeypatch) -> None:
+    """Item 247 / review M1-2: the warm main run of a first transfer is killed (exit -9).  The solve stops with
+    the SIGKILL error before the A/B step: no ``.abtested`` ("trust warm" for good) and no ``.nowarm``, the
+    cached basis is not replaced and no tmp basis is left."""
+
+    monkeypatch.setenv("FLEXTOOL_WARM_START", "1")
+    monkeypatch.setenv("FLEXTOOL_WARM_AB_MARGIN", "inf")
+    work = tmp_path / "work"
+    work.mkdir()
+    fp1, cache_dir = _first_solve_publishes_a_basis(work)
+    basis_before = (cache_dir / f"{fp1}.bas").read_bytes()
+
+    spy = _kill_matching(monkeypatch, _has_warm)
+    # Exit -9 is named by this system's signal table: "SIGKILL" on POSIX, "signal 9" on Windows (which has no
+    # POSIX signals; a real Windows kill is a positive exit code, item 247).
+    with pytest.raises(RuntimeError, match=r"stopped by (SIGKILL|signal 9)\b"):
+        solve_via_subprocess(_build_problem(seed=1), "highs", _opts(), solve_name="s", work_folder=work)
+    assert [_has_warm(c) for c in spy.calls] == [False, True], "expected the cold probe, then the warm run"
+    assert not (cache_dir / f"{fp1}.abtested").exists()
+    assert not (cache_dir / f"{fp1}.nowarm").exists()
+    assert (cache_dir / f"{fp1}.bas").read_bytes() == basis_before
+    assert not list(cache_dir.glob("*.bas.tmp.*"))
+
+
+@pytest.mark.parametrize("returncode", [-9, 1], ids=["sigkill", "exit1_no_stats"])
+def test_a_killed_cold_probe_records_no_verdict(tmp_path: Path, monkeypatch, returncode: int) -> None:
+    """The cold A/B probe is killed (exit -9, or exit 1 without its stats as a Windows ``taskkill /F`` or an
+    exception in the child gives) and the warm main run solves: the solve's answer is kept, but no verdict is
+    recorded, so the next solve of the family probes again.  A stats file an earlier probe left is not read as
+    this probe's time."""
+    monkeypatch.setenv("FLEXTOOL_WARM_START", "1")
+    monkeypatch.setenv("FLEXTOOL_WARM_AB_MARGIN", "inf")
+    work = tmp_path / "work"
+    work.mkdir()
+    fp1, cache_dir = _first_solve_publishes_a_basis(work)
+    stale_probe_stats = work / "solve_data" / "subprocess" / "s.probe.stats.json"
+    stale_probe_stats.write_text('{"run_time": 1.0}', encoding="utf-8")
+
+    real_run = _subp.subprocess.run
+    _kill_matching(monkeypatch, lambda argv: not _has_warm(argv), returncode)
+    sol = solve_via_subprocess(_build_problem(seed=1), "highs", _opts(), solve_name="s", work_folder=work)
+    assert sol.optimal
+    assert not (cache_dir / f"{fp1}.abtested").exists()
+    assert not (cache_dir / f"{fp1}.nowarm").exists()
+    assert not stale_probe_stats.exists()
+
+    # The next solve is again a first transfer: probe + warm run, then the verdict.
+    spy = _RunSpy(real_run)
+    monkeypatch.setattr(_subp.subprocess, "run", spy)
+    assert solve_via_subprocess(_build_problem(seed=1), "highs", _opts(), solve_name="s", work_folder=work).optimal
+    assert sorted(_has_warm(c) for c in spy.calls) == [False, True]
+    assert (cache_dir / f"{fp1}.abtested").exists()
+
+
+def test_a_cold_probe_that_cannot_start_is_not_a_measurement(tmp_path: Path, monkeypatch) -> None:
+    """A probe whose launch fails (or whose stale result file cannot be removed) reports "not ended", so the
+    caller records no "trust warm" verdict."""
+
+    def boom(*_args, **_kwargs):
+        raise OSError("cannot start")
+
+    monkeypatch.setattr(_subp.subprocess, "run", boom)
+    assert _subp._run_cold_probe(
+        mps_path=tmp_path / "s.mps",
+        options_json=tmp_path / "s.options.json",
+        probe_sol=tmp_path / "s.probe.sol",
+        probe_stats=tmp_path / "s.probe.stats.json",
+        logger=None,
+    ) == (None, False)

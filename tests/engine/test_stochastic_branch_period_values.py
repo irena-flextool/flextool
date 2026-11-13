@@ -74,7 +74,7 @@ def scalar(v: float) -> list:
 
 
 def _chain(fixture_json: Path, scenario: str) -> list[str]:
-    rows = [r for r in json.loads(fixture_json.read_text())["scenario_alternatives"] if r[0] == scenario]
+    rows = [r for r in json.loads(fixture_json.read_text(encoding="utf-8"))["scenario_alternatives"] if r[0] == scenario]
     nxt = {a: b for _, a, b in rows}
     alt = next(a for a in nxt if a not in set(nxt.values()))
     chain = []
@@ -94,11 +94,11 @@ def _steps(tmp_path_factory, alt: str, values: list, *, fixture_json: Path = STO
 def _steps_with_entities(tmp_path_factory, alt: str, values: list, entities: list, entity_alts: list, *,
                          fixture_json: Path, scenario: str) -> dict:
     """Like :func:`_steps`, with extra entities (and entity alternatives) written into the fixture JSON."""
-    data = json.loads(fixture_json.read_text())
+    data = json.loads(fixture_json.read_text(encoding="utf-8"))
     data["entities"].extend(entities)
     data["entity_alternatives"].extend(entity_alts)
     path = tmp_path_factory.mktemp(f"{alt}_json") / fixture_json.name
-    path.write_text(json.dumps(data))
+    path.write_text(json.dumps(data), encoding="utf-8")
     return _steps(tmp_path_factory, alt, values, fixture_json=path, scenario=scenario)
 
 
@@ -672,7 +672,7 @@ def test_no_active_pairs_after_failed_stochastic_load(tmp_path_factory, monkeypa
     url, scen = make_db(tmp_path_factory, alt="c6_fail", values=[],
                         base_chain=_chain(STOCHASTICS_JSON, "2_day_stochastic_dispatch"),
                         fixture_json=STOCHASTICS_JSON)
-    with pytest.raises(Exception):
+    with pytest.raises(RuntimeError, match="c6 injected failure"):  # not an earlier, unrelated error
         run(tmp_path_factory, url, scen)
     assert seen.get("pairs") is not None and seen["pairs"].height == len(BRANCH_PERIODS), seen
     assert _branch.active_branch_anchor_pairs() is None

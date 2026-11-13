@@ -51,12 +51,14 @@ def test_parse_shard_rejects_bad_values(bad):
 
 
 def _collect(*args: str) -> list[str]:
-    out = subprocess.run(
+    done = subprocess.run(
         [sys.executable, "-m", "pytest", "tests/calibrate", "--collect-only", "-q", "-n", "0",
          "-p", "no:cacheprovider", "-m", "not nightly_heavy", *args],
-        cwd=REPO, capture_output=True, text=True, check=True,
-    ).stdout
-    return [line for line in out.splitlines() if "::" in line]
+        cwd=REPO, capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    # The child's own report (a collection error, the session's user-folder check) is the failure message.
+    assert done.returncode == 0, f"exit {done.returncode}\n{done.stdout[-3000:]}\n{done.stderr[-3000:]}"
+    return [line for line in done.stdout.splitlines() if "::" in line]
 
 
 def test_the_shard_option_partitions_a_real_marker_filtered_collection():

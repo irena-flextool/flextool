@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
+from flextool.safe_names import safe_file_component
 from flextool.plot_outputs.unit_labels import AxisLabeler
 import pandas as pd
 
@@ -191,6 +192,12 @@ class PlotPlan:
 #  save / load
 # ---------------------------------------------------------------------------
 
+def _plan_prefix(result_key: str, sub_config: str) -> str:
+    """``{result_key}__{sub_config}`` as one file-name part (a ``/`` or ``..`` in a key read from a plot
+    configuration cannot put the plan files outside their folder)."""
+    return safe_file_component(f"{result_key}__{sub_config}")
+
+
 def save_plot_plan(
     plan: PlotPlan, output_dir: Path, result_key: str, sub_config: str,
 ) -> None:
@@ -198,7 +205,7 @@ def save_plot_plan(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    prefix = f"{result_key}__{sub_config}"
+    prefix = _plan_prefix(result_key, sub_config)
 
     # write_lean_parquet handles single-level MultiIndex correctly, so no
     # flattening is needed (the old pandas-metadata approach required it).
@@ -274,7 +281,7 @@ def load_plot_plan(
 ) -> PlotPlan | None:
     """Load a PlotPlan from disk. Returns None if files don't exist."""
     plan_dir = Path(plan_dir)
-    prefix = f"{result_key}__{sub_config}"
+    prefix = _plan_prefix(result_key, sub_config)
 
     json_path = plan_dir / f"{prefix}_plan.json"
     parquet_path = plan_dir / f"{prefix}_plan.parquet"

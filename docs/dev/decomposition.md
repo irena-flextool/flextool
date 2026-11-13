@@ -515,8 +515,9 @@ Engine wiring:
 
 The single-matching-period rename quirk: when a child solve's period
 set intersects its parent's by exactly one period, the child is
-renamed ``solve + "_" + period`` and `duplicate_solve` carbon-copies
-the parent's lockstep dicts under the new name. Preserved verbatim
+renamed ``solve + "_" + period`` and `SolveConfig.derive_solve` gives
+the new name a copy of every per-solve setting of the child
+(`PER_SOLVE_FIELDS`, solver settings included). Preserved verbatim
 from the legacy preprocessor.
 
 ### 4.3 Stochastic branches

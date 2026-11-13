@@ -95,9 +95,11 @@ documented as Gurobi's).
   `copt.lic` or setting `COPT_LICENSE_DIR`.
 - **Licence expired.** Same FlexTool message family with the vendor's
   expiry text. Renew through the Cardinal Operations licence portal.
-- **Time limit reached.** A MIP stopped at its time limit with a solution is
-  kept with a warning; an LP, or a MIP without a solution, stops the run. See
-  [Time limit](index.md#time-limit).
+- **Time or node limit reached.** A MIP stopped at its time or node limit
+  with a solution is kept with a warning; an LP, or a MIP without a solution,
+  stops the run. See [Time and other limits](index.md#time-and-other-limits).
+- **Objective values.** `AbsGap` is written in unscaled currency; FlexTool scales it to the objective COPT sees
+  (see [Time and other limits](index.md#time-and-other-limits)).
 - **`copt_cmd` not on `PATH` (HiGHS-coexistence fallback).** FlexTool
   shows: *"Solver 'copt' returned an error: ..."* with the cause naming
   the missing binary. Add the COPT distribution's `bin` directory to
@@ -122,8 +124,10 @@ flextool <input_db_url> --solver-time-limit 60 --solver-mip-gap 0.001
 `--solver-time-limit` and `--solver-mip-gap` reach COPT as `TimeLimit 60` and
 `RelGap 0.001`, over the solve's `solver_mip_gap`, its `solver_arguments` and
 `copt.opt` (precedence in [Solver selection](index.md)). Parameter names
-match without regard to case. The thread count comes from `Threads` in
-`copt.opt`; `--threads` and `--highs-threads` do not change it. The run
+match without regard to case. `--threads` (Threads per run in the FlexTool window) sets `Threads`;
+without it, `Threads` in `copt.opt` or `solver_arguments` applies. `--highs-threads`
+does not change it. `BarThreads`, `SimplexThreads`, `CrossoverThreads` and
+`MipTasks` are used as given. The run
 prints what COPT receives in a `Solver args (copt):` line before each
 solve.
 

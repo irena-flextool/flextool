@@ -3,7 +3,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flextool"
-version = "4.3.0"
+version = "4.4.0"
 description = "IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems."
 readme = "README.md"
 license = { file = "LICENSE.txt" }
@@ -81,7 +81,12 @@ dependencies = [
     # 3.12.4 writes every column into the MPS file and gives the basis-cache key
     # with generic names — required: on the MPS solve path an older one shifts
     # the solution values after a variable used nowhere.
-    "polar-high>=3.12.4",
+    # 3.13.0 adds SolveDiagnostics.mip_gap (an in-process HiGHS MIP stopped
+    # at a limit names its gap) and gives the same coefficient bits in every
+    # run, whatever the thread count or polars engine.
+    # 3.14.0 maps objective-valued solver options (targets, bounds, cutoffs,
+    # absolute gaps) from unscaled currency to the objective the solver sees.
+    "polar-high>=3.14.0",
     # Autoscale Layer 3 drives HiGHS' power-of-two objective conditioning
     # through the ``user_objective_scale`` option.  HiGHS renamed the older
     # ``user_cost_scale`` to ``user_objective_scale`` after 1.10.0, so older
@@ -208,19 +213,20 @@ flextool-gui = "flextool.gui.__main__:main"
 # ``_run.log``; it never imports ``flextool`` (see ``[tool.setuptools]``).
 flextool-run = "flextool_run_supervisor:main"
 flextool-update = "flextool.cli.cmd_update_flextool:main"
-flextool-write-outputs = "flextool.cli.cmd_write_outputs:main"
+flextool-trust-workspace = "flextool.cli.cmd_trust_workspace:main"
+flextool-write-outputs = "flextool.cli.cmd_write_outputs:cli"
 flextool-migrate-database = "flextool.cli.cmd_migrate_database:main"
 flextool-freeze = "flextool.cli.cmd_freeze_database:main"
 flextool-project = "flextool.cli.cmd_project_package:main"
 flextool-time-runs = "flextool.cli.cmd_time_runs:main"
-flextool-scenario-results = "flextool.cli.cmd_scenario_results:main"
-flextool-execute-workflow = "flextool.cli.cmd_execute_flextool_workflow:main"
+flextool-scenario-results = "flextool.cli.cmd_scenario_results:cli"
+flextool-execute-workflow = "flextool.cli.cmd_execute_flextool_workflow:cli"
 flextool-export-to-tabular = "flextool.cli.cmd_export_to_tabular:main"
 flextool-read-tabular-input = "flextool.cli.cmd_read_tabular_input:main"
 flextool-read-self-describing-tabular-input = "flextool.cli.cmd_read_self_describing_tabular_input:main"
 # Existing entry points retained.
-flextool-read-old = "flextool.cli.cmd_read_old_flextool:main"
-flextool-import-sensitivities = "flextool.cli.cmd_import_sensitivities:main"
+flextool-read-old = "flextool.cli.cmd_read_old_flextool:cli"
+flextool-import-sensitivities = "flextool.cli.cmd_import_sensitivities:cli"
 flextool-read-matpower = "flextool.cli.cmd_read_matpower:main"
 # The read-only tools for AI assistants: ``--mcp`` serves them to an AI agent over
 # stdin/stdout, ``--call`` runs one.  A top-level stdlib module, so it can keep the
@@ -304,6 +310,9 @@ exclude = ["flextool*.__pycache__"]
 #   * solver_config/*.opt.template      — solver options templates (HiGHS + the
 #                                         commercial solvers; seeded into
 #                                         solver_config/<solver>.opt on first run)
+#   * engine/solve/solver_catalogue/*.json — every parameter of each solver and what the
+#                                         input database may do with it (item 240 B1;
+#                                         written by tools/solver_catalogue.py)
 #   * export_to_tabular/*.yaml          — export settings (sheet config etc.)
 #   * process_inputs/*.json             — old-Excel/CSV import spec
 #                                         (import_old_excel_input.json), loaded by
@@ -327,6 +336,7 @@ flextool = [
     "schemas/canonical_databases/*.json",
     "schemas/pre_v26/*.json",
     "solver_config/*.opt.template",
+    "engine/solve/solver_catalogue/*.json",
     "export_to_tabular/*.yaml",
     "process_inputs/*.json",
     "assistant/_docs/md/*.md",

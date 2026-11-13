@@ -13,7 +13,9 @@ from flextool.gui.hover_tooltip import attach_tooltip
 #: Hover text of the "Threads per run" setting.
 THREADS_PER_RUN_TIP = (
     "Used by FlexTool's data processing and by the solver for each run;\n"
-    "runs executed in parallel each use this many."
+    "runs executed in parallel each use this many.\n"
+    "It sets every solver's thread count (HiGHS, Gurobi, CPLEX, Xpress, COPT),\n"
+    "over the value in the solver's option file."
 )
 
 logger = logging.getLogger(__name__)

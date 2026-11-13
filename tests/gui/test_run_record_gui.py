@@ -372,15 +372,15 @@ def test_the_gui_command_names_its_launcher_and_the_spreadsheet(manager, tmp_pat
                        input_db_url="sqlite:///" + str(tmp_path / "intermediate" / "model.sqlite"))
     cmd = manager._build_run_command(job, tmp_path / "work")
 
-    assert cmd[1:3] == ["-m", "flextool.cli.cmd_run_flextool"]
-    parsed = build_parser().parse_args(cmd[3:])
+    assert cmd[1:4] == ["-P", "-m", "flextool.cli.cmd_run_flextool"]
+    parsed = build_parser().parse_args(cmd[4:])
     assert parsed.run_launcher == "gui"
     assert parsed.input_source_file == str(xlsx)
     # What a user copies into a terminal: the same run under flextool-run, which records its own launcher.
     copy = terminal_command(cmd)
     assert copy[0] == "flextool-run"
     assert build_parser().parse_args(copy[1:]).run_launcher == "direct"
-    assert copy[1:] == [tok for tok in cmd[3:] if tok not in ("--run-launcher", "gui")]
+    assert copy[1:] == [tok for tok in cmd[4:] if tok not in ("--run-launcher", "gui")]
 
 
 # ---------------------------------------------------------------------------

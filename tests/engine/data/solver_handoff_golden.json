@@ -1,0 +1,303 @@
+{
+ "copt_flags_only": {
+  "argv": [
+   "bin"
+  ],
+  "opt": "TimeLimit 1800\nRelGap 0.001\n",
+  "stdin": "set TimeLimit 1800\nset RelGap 0.001\nread invest.mps\noptimize\nwrite invest.sol\nquit\n"
+ },
+ "copt_names": {
+  "argv": [
+   "bin"
+  ],
+  "opt": "Threads 1\nRELGAP 0.004\nLogging 1\nPresolve -1\nTimeLimit 60\nLogFile copt.txt\n",
+  "stdin": "set Threads 1\nset RELGAP 0.004\nset Logging 1\nset Presolve -1\nset TimeLimit 60\nset LogFile copt.txt\nread invest.mps\noptimize\nwrite invest.sol\nquit\n"
+ },
+ "copt_nothing": {
+  "argv": [
+   "bin"
+  ],
+  "opt": null,
+  "stdin": "read invest.mps\noptimize\nwrite invest.sol\nquit\n"
+ },
+ "copt_numbers": {
+  "argv": [
+   "bin"
+  ],
+  "opt": "FeasTol 1e-06\nLpMethod 2\nCrossover 0\nHeurLevel 3\nIntTol 1e-7\n",
+  "stdin": "set FeasTol 1e-06\nset LpMethod 2\nset Crossover 0\nset HeurLevel 3\nset IntTol 1e-7\nread invest.mps\noptimize\nwrite invest.sol\nquit\n"
+ },
+ "copt_stacked": {
+  "argv": [
+   "bin"
+  ],
+  "opt": "Threads 4\nRelGap 0.001\nLogging 1\nTimeLimit 1800\nPresolve 2\n",
+  "stdin": "set Threads 4\nset RelGap 0.001\nset Logging 1\nset TimeLimit 1800\nset Presolve 2\nread invest.mps\noptimize\nwrite invest.sol\nquit\n"
+ },
+ "copt_template": {
+  "argv": [
+   "bin"
+  ],
+  "opt": "Threads 1\nRelGap 0.002\nLogging 1\n",
+  "stdin": "set Threads 1\nset RelGap 0.002\nset Logging 1\nread invest.mps\noptimize\nwrite invest.sol\nquit\n"
+ },
+ "cplex_flags_only": {
+  "argv": [
+   "bin"
+  ],
+  "opt": "timelimit 1800\nmip tolerances mipgap 0.001\n",
+  "stdin": "set timelimit 1800\nset mip tolerances mipgap 0.001\nread invest.mps\noptimize\nwrite invest.sol sol\nquit\n"
+ },
+ "cplex_names": {
+  "argv": [
+   "bin"
+  ],
+  "opt": "threads 1\nmip tolerances mipgap 0.01\nmip tolerances absmipgap 0.5\nmip strategy file 3\nemphasis mip 2\npreprocessing presolve yes\nworkdir scratch\n",
+  "stdin": "set threads 1\nset mip tolerances mipgap 0.01\nset mip tolerances absmipgap 0.5\nset mip strategy file 3\nset emphasis mip 2\nset preprocessing presolve yes\nset workdir scratch\nread invest.mps\noptimize\nwrite invest.sol sol\nquit\n"
+ },
+ "cplex_nothing": {
+  "argv": [
+   "bin"
+  ],
+  "opt": null,
+  "stdin": "read invest.mps\noptimize\nwrite invest.sol sol\nquit\n"
+ },
+ "cplex_numbers": {
+  "argv": [
+   "bin"
+  ],
+  "opt": "timelimit 100.5\nmip tolerances mipgap 1e-4\nsimplex tolerances optimality 1e-09\nparallel -1\nemphasis numerical 1\nlpmethod 4\n",
+  "stdin": "set timelimit 100.5\nset mip tolerances mipgap 1e-4\nset simplex tolerances optimality 1e-09\nset parallel -1\nset emphasis numerical 1\nset lpmethod 4\nread invest.mps\noptimize\nwrite invest.sol sol\nquit\n"
+ },
+ "cplex_stacked": {
+  "argv": [
+   "bin"
+  ],
+  "opt": "threads 4\nmip tolerances mipgap 0.001\ntimelimit 1800\npresolve 2\n",
+  "stdin": "set threads 4\nset mip tolerances mipgap 0.001\nset timelimit 1800\nset presolve 2\nread invest.mps\noptimize\nwrite invest.sol sol\nquit\n"
+ },
+ "cplex_template": {
+  "argv": [
+   "bin"
+  ],
+  "opt": "threads 1\nmip tolerances mipgap 0.002\n",
+  "stdin": "set threads 1\nset mip tolerances mipgap 0.002\nread invest.mps\noptimize\nwrite invest.sol sol\nquit\n"
+ },
+ "gurobi_flags_only": {
+  "argv": [
+   "bin",
+   "TimeLimit=1800",
+   "MIPGap=0.001",
+   "ResultFile=invest.json",
+   "invest.mps"
+  ],
+  "opt": "TimeLimit 1800\nMIPGap 0.001\n",
+  "stdin": null
+ },
+ "gurobi_nothing": {
+  "argv": [
+   "bin",
+   "ResultFile=invest.json",
+   "invest.mps"
+  ],
+  "opt": null,
+  "stdin": null
+ },
+ "gurobi_numbers": {
+  "argv": [
+   "bin",
+   "Threads=1",
+   "Method=-3",
+   "Heuristics=0.05",
+   "TimeLimit=inf",
+   "FeasibilityTol=0.0001",
+   "OutputFlag=1",
+   "Quad=0",
+   "IntFeasTol=1e-9",
+   "Cuts=-1",
+   "NodeLimit=1e+20",
+   "ResultFile=invest.json",
+   "invest.mps"
+  ],
+  "opt": "Threads 1\nMethod -3\nHeuristics 0.05\nTimeLimit inf\nFeasibilityTol 0.0001\nOutputFlag 1\nQuad 0\nIntFeasTol 1e-9\nCuts -1\nNodeLimit 1e+20\n",
+  "stdin": null
+ },
+ "gurobi_paths_and_result_file": {
+  "argv": [
+   "bin",
+   "LogFile=C:\\runs\\x.log",
+   "NodefileDir=/srv/nodes",
+   "SolFiles=sols",
+   "Record=1",
+   "ResultFile=invest.json",
+   "invest.mps"
+  ],
+  "opt": "LogFile C:\\runs\\x.log\nNodefileDir /srv/nodes\nSolFiles sols\nRecord 1\n",
+  "stdin": null
+ },
+ "gurobi_spellings": {
+  "argv": [
+   "bin",
+   "Threads=0",
+   "MIPGap=0.001",
+   "Presolve=2",
+   "ResultFile=invest.json",
+   "invest.mps"
+  ],
+  "opt": "Threads 0\nMIPGap 0.001\nPresolve 2\n",
+  "stdin": null
+ },
+ "gurobi_stacked": {
+  "argv": [
+   "bin",
+   "Threads=4",
+   "MIPGap=0.001",
+   "LogToConsole=1",
+   "TimeLimit=1800",
+   "Presolve=2",
+   "ResultFile=invest.json",
+   "invest.mps"
+  ],
+  "opt": "Threads 4\nMIPGap 0.001\nLogToConsole 1\nTimeLimit 1800\nPresolve 2\n",
+  "stdin": null
+ },
+ "gurobi_template": {
+  "argv": [
+   "bin",
+   "Threads=1",
+   "MIPGap=0.002",
+   "LogToConsole=1",
+   "ResultFile=invest.json",
+   "invest.mps"
+  ],
+  "opt": "Threads 1\nMIPGap 0.002\nLogToConsole 1\n",
+  "stdin": null
+ },
+ "highs_empty_log_file": {
+  "accepted": false,
+  "exit_code": 2,
+  "opt": "log_file=\n"
+ },
+ "highs_empty_solution_file": {
+  "accepted": false,
+  "exit_code": 2,
+  "opt": "presolve=off\nsolution_file=\nthreads=1\n"
+ },
+ "highs_minus_inf_time": {
+  "accepted": false,
+  "exit_code": 2,
+  "opt": "time_limit=-inf\n"
+ },
+ "highs_nothing": {
+  "accepted": true,
+  "deviations": [],
+  "opt": ""
+ },
+ "highs_out_of_range": {
+  "accepted": false,
+  "exit_code": 2,
+  "opt": "mip_rel_gap=-1\n"
+ },
+ "highs_paths": {
+  "accepted": true,
+  "deviations": [
+   "log_file = C:\\runs\\x.log",
+   "write_solution_to_file = true",
+   "write_model_file = /srv/m.mps",
+   "solution_file = sol.txt"
+  ],
+  "opt": "log_file=C:\\runs\\x.log\nwrite_model_file=/srv/m.mps\nsolution_file=sol.txt\nwrite_solution_to_file=true\n"
+ },
+ "highs_template": {
+  "accepted": true,
+  "deviations": [
+   "parallel = off",
+   "mip_heuristic_effort = 0.5",
+   "mip_rel_gap = 0.002"
+  ],
+  "opt": "mip_report_level=2\nmip_heuristic_effort=0.5\nmip_detect_symmetry=true\nmip_rel_gap=0.002\nlog_to_console=true\nparallel=off\n"
+ },
+ "highs_text_values": {
+  "accepted": true,
+  "deviations": [
+   "presolve = on",
+   "threads = 2",
+   "dual_feasibility_tolerance = 0.5",
+   "mip_rel_gap = 0.5"
+  ],
+  "opt": "threads=+2\nmip_rel_gap=.5\npresolve=ON\noutput_flag=True\nlog_to_console=1\nmip_detect_symmetry=on\ntime_limit=inf\ndual_feasibility_tolerance=5e-1\n"
+ },
+ "highs_types": {
+  "accepted": true,
+  "deviations": [
+   "presolve = off",
+   "solver = ipm",
+   "parallel = on",
+   "threads = 2",
+   "run_crossover = choose",
+   "time_limit = 3600",
+   "primal_feasibility_tolerance = 1e-09",
+   "random_seed = 7",
+   "output_flag = false",
+   "mip_rel_gap = 0.01"
+  ],
+  "opt": "presolve=off\nsolver=ipm\nparallel=on\nthreads=2\nmip_rel_gap=0.01\ntime_limit=3600.0\noutput_flag=false\nlog_to_console=true\nrandom_seed=7\nprimal_feasibility_tolerance=1e-09\nrun_crossover=choose\n"
+ },
+ "highs_unknown_name": {
+  "accepted": false,
+  "exit_code": 2,
+  "opt": "presolve=off\nPresolve=on\n"
+ },
+ "highs_whole_float_for_int": {
+  "accepted": false,
+  "exit_code": 2,
+  "opt": "threads=1.0\n"
+ },
+ "highs_whole_float_text_for_int": {
+  "accepted": false,
+  "exit_code": 2,
+  "opt": "threads=1.0\n"
+ },
+ "xpress_flags_only": {
+  "argv": [
+   "bin"
+  ],
+  "opt": "MAXTIME 1800\nMIPRELSTOP 0.001\n",
+  "stdin": "setControl MAXTIME 1800\nsetControl MIPRELSTOP 0.001\nreadprob invest.mps\nlpoptimize\nwriteslxsol invest.sol\nwriteprtsol invest.sol\nquit\n"
+ },
+ "xpress_names": {
+  "argv": [
+   "bin"
+  ],
+  "opt": "THREADS 1\nMIPRELSTOP 0.01\nmaxtime 120\nXPRS_PRESOLVE 0\nTUNEROUTPUTPATH tuner\n",
+  "stdin": "setControl THREADS 1\nsetControl MIPRELSTOP 0.01\nsetControl maxtime 120\nsetControl XPRS_PRESOLVE 0\nsetControl TUNEROUTPUTPATH tuner\nreadprob invest.mps\nlpoptimize\nwriteslxsol invest.sol\nwriteprtsol invest.sol\nquit\n"
+ },
+ "xpress_nothing": {
+  "argv": [
+   "bin"
+  ],
+  "opt": null,
+  "stdin": "readprob invest.mps\nlpoptimize\nwriteslxsol invest.sol\nwriteprtsol invest.sol\nquit\n"
+ },
+ "xpress_numbers": {
+  "argv": [
+   "bin"
+  ],
+  "opt": "MIPRELSTOP 0.001\nFEASTOL 1e-9\nDEFAULTALG 4\nOUTPUTLOG 1\nMAXNODE -1\nBARGAPSTOP inf\nMAXTIME 1800\n",
+  "stdin": "setControl MIPRELSTOP 0.001\nsetControl FEASTOL 1e-9\nsetControl DEFAULTALG 4\nsetControl OUTPUTLOG 1\nsetControl MAXNODE -1\nsetControl BARGAPSTOP inf\nsetControl MAXTIME 1800\nreadprob invest.mps\nlpoptimize\nwriteslxsol invest.sol\nwriteprtsol invest.sol\nquit\n"
+ },
+ "xpress_stacked": {
+  "argv": [
+   "bin"
+  ],
+  "opt": "THREADS 4\nMIPRELSTOP 0.001\nOUTPUTLOG 1\nMAXTIME 1800\nPresolve 2\n",
+  "stdin": "setControl THREADS 4\nsetControl MIPRELSTOP 0.001\nsetControl OUTPUTLOG 1\nsetControl MAXTIME 1800\nsetControl Presolve 2\nreadprob invest.mps\nlpoptimize\nwriteslxsol invest.sol\nwriteprtsol invest.sol\nquit\n"
+ },
+ "xpress_template": {
+  "argv": [
+   "bin"
+  ],
+  "opt": "THREADS 1\nMIPRELSTOP 0.002\nOUTPUTLOG 1\n",
+  "stdin": "setControl THREADS 1\nsetControl MIPRELSTOP 0.002\nsetControl OUTPUTLOG 1\nreadprob invest.mps\nlpoptimize\nwriteslxsol invest.sol\nwriteprtsol invest.sol\nquit\n"
+ }
+}

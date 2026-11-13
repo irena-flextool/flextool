@@ -38,6 +38,7 @@ try:
 except (AttributeError, ValueError, OSError):
     # stderr may be unavailable (e.g. detached / redirected to a closed fd).
     pass
+from flextool._safe_text import make_printable
 from flextool._mem_sampler import start_mem_sampler
 from flextool.process_outputs.write_outputs import resolve_output_settings, write_outputs
 from flextool import run_record
@@ -51,6 +52,7 @@ from spinedb_api.filters.tools import name_from_dict
 from spinedb_api import to_database, DateTime
 from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api.exception import NothingToCommit
+from flextool.sqlite_url import sqlite_file_path, sqlite_url_string
 
 # Start the memory sampler as the first statement after imports.  The
 # few hundred ms of import-cascade RSS that precede this point are not
@@ -602,18 +604,38 @@ def build_parser() -> argparse.ArgumentParser:
              'FLEXTOOL_BASIS_CACHE_DIR; the flag wins.',
     )
     parser.add_argument(
-        '--solver-config-dir', metavar='PATH', default=None,
-        help='Folder of the solver option files (highs.opt, gurobi.opt, '
-             'cplex.opt, xpress.opt, copt.opt).  Unset: solver_config/ next '
-             'to the input database, then in the workspace of a GUI project '
-             'database (<workspace>/projects/<project>/input_sources/), then '
-             'in the Spine Toolbox project folder (--project-folder-file), '
-             'then in the current folder; when none has an option file, '
-             'FlexTool\'s defaults are used with a warning.  A solver whose '
-             'file is missing in the folder uses FlexTool\'s default.  The run '
-             'copies the files it used to <work folder>/solve_data/'
-             'solver_config/.  Environment variable: '
-             'FLEXTOOL_SOLVER_CONFIG_DIR; the flag wins.',
+        '--solver-config-dir', metavar='PATH', default=None, action='append',
+        help='A folder of the solver option files (highs.opt, gurobi.opt, '
+             'cplex.opt, xpress.opt, copt.opt).  Repeat the flag for '
+             'several folders, highest first: each solver\'s file comes '
+             'from the first folder that has it, else FlexTool\'s default '
+             '(only the folders given are read).  Unset: solver_config/ '
+             'next to the input database; else, for a GUI project database '
+             '(<workspace>/projects/<project>/input_sources/), the '
+             'project\'s solver_config/, then the workspace\'s, file by '
+             'file; else the Spine Toolbox project folder '
+             '(--project-folder-file), then the current folder; when none '
+             'has an option file, FlexTool\'s defaults are used with a '
+             'warning.  The run copies the files it used to <work folder>/'
+             'solve_data/solver_config/.  Environment variable: '
+             'FLEXTOOL_SOLVER_CONFIG_DIR (several folders separated by '
+             '\':\', on Windows \';\'); the flag wins.  The files of a '
+             'folder named here are trusted (file paths, server settings); '
+             'the files of a folder found on its own are trusted only in a '
+             'workspace or project this computer set up (flextool-update, '
+             'the FlexTool window).',
+    )
+    parser.add_argument(
+        '--workspace-solver-config-dir', metavar='PATH', default=None,
+        action='append',
+        help='A solver option folder the launcher found (the FlexTool window '
+             'passes its project\'s solver_config/ when it has one, then its '
+             'workspace\'s); repeat for several, highest first.  Read file '
+             'by file like --solver-config-dir, but the files of each folder '
+             'are trusted only when its workspace or project is one this '
+             'computer set up; otherwise they get the input database\'s '
+             'rules.  Given with --solver-config-dir (or '
+             'FLEXTOOL_SOLVER_CONFIG_DIR), these folders come first.',
     )
     parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
     parser.add_argument('--write-methods', type=str, nargs='+', default=None,
@@ -696,10 +718,16 @@ def build_parser() -> argparse.ArgumentParser:
                              'processing and the solver.  FlexTool\'s own '
                              'processing (polars) uses at most N and at most 8 '
                              '(POLARS_MAX_THREADS can set another limit below '
-                             'N); HiGHS gets threads=N (its parallel simplex '
-                             'stays off) and a Benders solve runs at most N '
-                             'region solves at once.  Default: the available '
-                             'cores, with HiGHS and Benders as before.  When '
+                             'N); the solver gets N threads (HiGHS threads=N '
+                             'with its parallel simplex off; Gurobi, CPLEX, '
+                             'Xpress and COPT their thread count, over the '
+                             'option file and solver_arguments) and a Benders '
+                             'solve runs at most N region solves at once.  '
+                             'Default: the available cores, with the solvers\' '
+                             'own thread settings and Benders as before; a '
+                             'Spine Toolbox run (this file run as a script) '
+                             'uses 1 thread for all of it, since Toolbox runs '
+                             'its tools in parallel.  When '
                              'several runs execute in parallel, give each about '
                              'cores / runs.  Environment variable: '
                              'FLEXTOOL_THREADS; the flag wins.')
@@ -852,7 +880,7 @@ def main():
     def _as_db_url(value):
         if value is None:
             return None
-        return value if "://" in value else f"sqlite:///{value}"
+        return value if "://" in value else sqlite_url_string(value)
 
     args.input_db_url = _as_db_url(args.input_db_url)
     args.output_db_url = _as_db_url(args.output_db_url)
@@ -913,7 +941,8 @@ def main():
             '%(levelname)s:%(filename)s:%(lineno)d:%(message)s'
             if DEBUG else '%(message)s'
         ),
-        handlers=[logging.StreamHandler(sys.stdout)]
+        # Control characters from names in the input data are shown as \xNN, not sent to the terminal.
+        handlers=[make_printable(logging.StreamHandler(sys.stdout))]
     )
     if not DEBUG:
         # Silence routine "wrote …" / "Wrote N output variables" INFO
@@ -1007,12 +1036,34 @@ def main():
     # write_outputs applies) so the run record, write_outputs, timings.csv
     # and the output-info DB all name the same folder.
     output_subdir = args.output_subdir or scenario_name
-    output_location, write_methods = resolve_output_settings(
-        write_methods=args.write_methods,
-        output_location=args.output_location,
-        settings_db_url=settings_db_url,
-        fallback_output_location=str(output_path),
-    )
+    # The scenario name and the output folder name become folder names (output_parquet/<subdir>/, ...): refuse a
+    # name that is not one plain folder name before anything is written or cleaned up.
+    from flextool.safe_names import UnsafeNameError, check_output_name
+    try:
+        check_output_name(scenario_name, "scenario name")
+        if args.output_subdir:
+            check_output_name(args.output_subdir, "--output-subdir name")
+    except UnsafeNameError as exc:
+        logging.error("%s", exc)
+        sys.exit(1)
+    from flextool.engine.input._solve_state import FlexToolConfigError
+    # The settings warnings are held until the run record has started, so they show once and are in _run.log too
+    # (write_outputs below does not repeat them).
+    settings_warnings: list[tuple] = []
+    try:
+        output_location, write_methods = resolve_output_settings(
+            write_methods=args.write_methods,
+            output_location=args.output_location,
+            settings_db_url=settings_db_url,
+            fallback_output_location=str(output_path),
+            results_db_url=args.results_db_url,
+            warn=lambda *msg: settings_warnings.append(msg),
+        )
+    except FlexToolConfigError as exc:  # a results-database server URL in the settings database
+        for msg in settings_warnings:
+            logging.warning(*msg)
+        logging.error("%s", exc)
+        sys.exit(1)
 
     # The run record (_run_status.json, _run.log) starts here, before the
     # header block, so the header and every later warning are in it.
@@ -1021,6 +1072,8 @@ def main():
         output_location=output_location, output_subdir=output_subdir,
         write_methods=write_methods, work_folder=work_folder,
     )
+    for msg in settings_warnings:
+        logging.warning(*msg)
     _restore_signals = _install_termination_handlers()
     state, exit_code, error = "succeeded", 0, None
     try:
@@ -1219,6 +1272,7 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
                         last_step, "flex_data_provider", None
                     ),
                     results_db_url=args.results_db_url,
+                    settings_warnings=False,  # shown once, after the run record started
                 )
                 if 'parquet' not in write_methods:
                     rec.outputs_not_requested()
@@ -1279,7 +1333,8 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
     # Write scenario information to output database if provided
     if args.output_db_url:
         # Check if database exists
-        db_exists = os.path.exists(args.output_db_url.replace('sqlite:///', ''))
+        output_db_path = sqlite_file_path(args.output_db_url)
+        db_exists = output_db_path is not None and output_db_path.exists()
 
         with open_database_mapping(args.output_db_url, create=not db_exists) as output_db:
             # Create/update scenario class if it doesn't exist

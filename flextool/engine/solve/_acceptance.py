@@ -24,11 +24,19 @@ non-``kOptimal`` solve is safe to accept:
   rows of such an LP) → reject, as infeasible when a row excludes 0.
 * ``kUnknown`` that is primal-feasible with a small primal--dual objective
   gap → accept as *near-optimal* (use the primal solution), else reject.
-* a solve stopped by its **time limit** (every solver: HiGHS ``kTimeLimit``,
-  a commercial or ``--save-memory`` result file's ``TIME_LIMIT``) → for a
-  MIP with a feasible solution, accept with a warning (the solution is not
-  proven optimal; the gap is named when the solver reported it); for an LP,
-  or with no solution, reject.
+* a solve stopped by a **search limit** (time, work, node, leaf, solution-count or iteration limit) or at an
+  **objective target or bound** the user set, on every solver (HiGHS ``kTimeLimit`` / ``kSolutionLimit`` /
+  ``kIterationLimit`` / ``kObjectiveTarget`` / ``kObjectiveBound``; a commercial or ``--save-memory`` result
+  file's ``TIME_LIMIT`` / ``WORK_LIMIT`` / ``NODE_LIMIT`` / ``SOLUTION_LIMIT`` / ``ITERATION_LIMIT`` /
+  ``USER_OBJ_LIMIT`` / ``OBJECTIVE_TARGET`` / ``OBJECTIVE_BOUND``) → without a feasible solution, reject,
+  naming the stop and its option; an LP, reject (an LP iterate at a limit is not a usable optimum, even when
+  primal feasible); a MIP with a feasible solution, accept with a warning naming the stop, its option and the
+  gap (the solution is not proven optimal; the gap is named when the solver reported it: a commercial
+  solver's result file or console output, the ``--save-memory`` HiGHS child's gap file, or in-process
+  HiGHS's ``SolveDiagnostics.mip_gap`` when the installed polar-high has that field).  A memory limit, an
+  interrupt and every other uncertified status stay rejected.
+
+``FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0`` rejects every status other than optimal, a limit-stopped MIP included.
 
 The predicate is conjunctive and derives its primal-feasibility limits
 from the solver's own ``primal_feasibility_tolerance`` (the option value
@@ -53,9 +61,10 @@ All policy and thresholds live here; polar-high only supplies the facts
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Mapping
 
 import numpy as np
 
@@ -145,7 +154,8 @@ def _near_optimal_enabled() -> bool:
     """Whether the conditional near-optimal accept is active.
 
     Set ``FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0`` to restore the legacy
-    hard-fail-on-non-kOptimal behaviour (e.g. for strict test runs).
+    hard-fail-on-non-kOptimal behaviour (e.g. for strict test runs): it
+    rejects an uncertified ``kUnknown`` and a MIP stopped by a limit alike.
     """
     return os.environ.get("FLEXTOOL_ACCEPT_NEAR_OPTIMAL", "1") != "0"
 
@@ -167,6 +177,7 @@ _FAILURE_MESSAGES: dict[str, str] = {
         "two); re-run with presolve off to disambiguate"
     ),
     "kTimeLimit": "hit the time limit before proving optimality",
+    "kSolutionLimit": "hit the node or solution limit before proving optimality",
     "kIterationLimit": "hit the iteration limit before proving optimality",
     "kMemoryLimit": "hit the memory limit before proving optimality",
     "kObjectiveBound": (
@@ -212,8 +223,10 @@ class Acceptance:
                         (accepted only because the ceiling follows the
                         solve's tolerance); the caller prints the
                         behaviour-change notice for it.
-    ``time_limited``  — accepted MIP solution of a solve stopped by its time
-                        limit: the caller logs :attr:`message` as a WARNING.
+    ``limit_stopped`` — accepted MIP solution of a solve stopped by a limit
+                        (time, node, solution, work, iteration) or at an
+                        objective target or bound: the caller logs
+                        :attr:`message` as a WARNING.
     ``model_status``  — the solve's own HiGHS model status name
                         (``kOptimal``, ``kInfeasible``, ...) as the check saw
                         it: from the solve's diagnostics (never the live
@@ -229,7 +242,7 @@ class Acceptance:
     scaling_hint: str | None
     above_fixed_ceiling: bool = False
     model_status: str | None = None
-    time_limited: bool = False
+    limit_stopped: bool = False
 
 
 #: The status a subprocess / commercial solve's parsed solution file reports
@@ -243,6 +256,13 @@ _SHIM_MODEL_STATUS = {
     "TIME_LIMIT": "kTimeLimit",
     "ITERATION_LIMIT": "kIterationLimit",
     "SOLUTION_LIMIT": "kSolutionLimit",
+    "NODE_LIMIT": "kSolutionLimit",        # HiGHS's own node-limit status
+    "WORK_LIMIT": "kTimeLimit",            # Gurobi WorkLimit: a deterministic time limit
+    "USER_OBJ_LIMIT": "kObjectiveTarget",  # Gurobi BestObjStop / BestBdStop
+    "OBJECTIVE_TARGET": "kObjectiveTarget",
+    "OBJECTIVE_BOUND": "kObjectiveBound",
+    "OBJECTIVE_LIMIT": "kObjectiveBound",  # CPLEX 12 / 21 / 22: LP objective-limit aborts
+    "CUTOFF": "kObjectiveBound",           # Gurobi Cutoff: no solution better than the cutoff
     "MEM_LIMIT": "kMemoryLimit",
     "INTERRUPTED": "kInterrupt",
 }
@@ -273,43 +293,187 @@ def _is_mip(sol: "Solution") -> bool:
     return problem_is_mip(getattr(sol, "_vars", None) or getattr(sol, "vars", None))
 
 
-def _time_limit_verdict(
-    sol: "Solution", solve_name: str, *, gap: float | None, ranges_post: "RangeReport | None",
-) -> Acceptance:
-    """The rule for a solve stopped by its time limit *with* a solution (owner decision D2, every solver).
+#: Result-file statuses (``Solution.shim_status``) of a solve stopped by a search limit or at an objective target
+#: or bound the user set: judged by :func:`_limit_verdict`.  ``OBJECTIVE_LIMIT`` (CPLEX's LP-only objective-limit
+#: aborts) and ``CUTOFF`` (Gurobi: no solution information) are not among them: they are rejected by name.
+LIMIT_SHIM_STATUSES = frozenset({
+    "TIME_LIMIT", "WORK_LIMIT", "NODE_LIMIT", "SOLUTION_LIMIT", "ITERATION_LIMIT",
+    "USER_OBJ_LIMIT", "OBJECTIVE_TARGET", "OBJECTIVE_BOUND",
+})
 
-    A MIP keeps the solution with a warning: it is feasible but not proven optimal, which a time limit on a
-    MIP asks for.  An LP stopped at its limit has no usable solution (the iterate is not a feasible optimum),
-    so the run stops.
+#: HiGHS model statuses judged by :func:`_limit_verdict`.
+_LIMIT_MODEL_STATUSES = frozenset({
+    "kTimeLimit", "kSolutionLimit", "kIterationLimit", "kObjectiveTarget", "kObjectiveBound",
+})
+
+#: What stopped the solve, by its native status (a HiGHS model status, or a result-file status of another solver).
+_LIMIT_NOUNS = {
+    "kTimeLimit": "time limit", "TIME_LIMIT": "time limit",
+    "kSolutionLimit": "node or solution limit",
+    "NODE_LIMIT": "node limit", "SOLUTION_LIMIT": "solution limit", "WORK_LIMIT": "work limit",
+    "kIterationLimit": "iteration limit", "ITERATION_LIMIT": "iteration limit",
+    "kObjectiveTarget": "objective target", "OBJECTIVE_TARGET": "objective target",
+    "kObjectiveBound": "objective bound", "OBJECTIVE_BOUND": "objective bound",
+    "USER_OBJ_LIMIT": "objective limit",
+}
+
+#: Stops at a value the user set (not a search effort): "change or remove" it rather than "raise" it.
+_OBJECTIVE_STOPS = frozenset({
+    "kObjectiveTarget", "OBJECTIVE_TARGET", "kObjectiveBound", "OBJECTIVE_BOUND", "USER_OBJ_LIMIT",
+})
+
+#: The solver options behind each stop, by ``(solver, native status)``.  HiGHS has one status for its node,
+#: leaf, stall-node and improving-solution limits, so all four are named.  A stop not listed (an unverified
+#: option, e.g. COPT's iteration limit) names "the solver's own ... parameter".
+_LIMIT_OPTIONS = {
+    ("highs", "kSolutionLimit"): "mip_max_nodes, mip_max_leaves, mip_max_stall_nodes or mip_max_improving_sols",
+    ("highs", "kIterationLimit"): "simplex_iteration_limit, ipm_iteration_limit or pdlp_iteration_limit",
+    ("highs", "kObjectiveTarget"): "objective_target",
+    ("highs", "kObjectiveBound"): "objective_bound",
+    ("gurobi", "NODE_LIMIT"): "NodeLimit",
+    ("gurobi", "SOLUTION_LIMIT"): "SolutionLimit",
+    ("gurobi", "WORK_LIMIT"): "WorkLimit",
+    ("gurobi", "ITERATION_LIMIT"): "IterationLimit or BarIterLimit",
+    ("gurobi", "USER_OBJ_LIMIT"): "BestObjStop or BestBdStop",
+    ("cplex", "NODE_LIMIT"): "mip limits nodes",
+    ("cplex", "SOLUTION_LIMIT"): "mip limits solutions",
+    ("cplex", "ITERATION_LIMIT"): "simplex limits iterations or barrier limits iteration",
+    ("copt", "NODE_LIMIT"): "NodeLimit",
+    ("xpress", "NODE_LIMIT"): "MAXNODE",
+    ("xpress", "SOLUTION_LIMIT"): "MAXMIPSOL",
+}
+
+_SOLVER_DISPLAY_NAMES = {"highs": "HiGHS", "gurobi": "Gurobi", "cplex": "CPLEX", "copt": "COPT", "xpress": "Xpress"}
+
+
+def _remedy(solver: str | None, native: str, noun: str) -> str:
+    """What to change so the next run is not stopped there (lower case; capitalised at a sentence start)."""
+    if noun == "time limit":
+        return "raise the time limit (--solver-time-limit, or the solver's own time-limit parameter)"
+    action = f"change or remove the {noun}" if native in _OBJECTIVE_STOPS else "raise or remove the limit"
+    options = _LIMIT_OPTIONS.get((solver or "", native))
+    if options is None:
+        return f"{action} (the solver's own {noun} parameter)"
+    return (
+        f"{action} ({_SOLVER_DISPLAY_NAMES.get(solver or '', solver)} {options}, in the solver's option file or "
+        "the solve's solver_arguments)"
+    )
+
+
+def _capitalised(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+def _limit_verdict(
+    sol: "Solution",
+    solve_name: str,
+    *,
+    status: str,
+    native: str,
+    solver: str | None,
+    gap: float | None,
+    primal_feasible: bool,
+    ranges_post: "RangeReport | None",
+) -> Acceptance:
+    """The rule for a solve stopped by a search limit or at an objective target or bound (owner decision D2,
+    extended to every limit; every solver).
+
+    *status* is the HiGHS model status recorded for the run, *native* the solver's own status (the same for
+    HiGHS), which names the stop and its option.  Without a feasible solution there is nothing to use.  An LP
+    stopped there has no usable solution either (the iterate is not a feasible optimum).  A MIP keeps its
+    feasible solution with a warning: it is not proven optimal, which a limit on a MIP asks for.
+    ``FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0`` rejects that too.
     """
-    if not _is_mip(sol):
+    noun = _LIMIT_NOUNS.get(native, "limit")
+    remedy = _remedy(solver, native, noun)
+    objective_stop = native in _OBJECTIVE_STOPS
+    if not primal_feasible:
+        stop = f"stopped at an {noun}" if objective_stop else f"hit the {noun}"
         return Acceptance(
             accepted=False,
             near_optimal=False,
             message=(
-                f"solve for {solve_name} {_FAILURE_MESSAGES['kTimeLimit']}: it is a linear problem, and a "
-                "linear solve stopped at its time limit has no usable solution. Raise the time limit "
-                "(--solver-time-limit, or the solver's own time-limit parameter)"
+                f"solve for {solve_name} {stop} before finding a feasible solution, so there is no solution to "
+                f"use. {_capitalised(remedy)}"
             ),
             scaling_hint=_scaling_hint_for_reject(ranges_post),
-            model_status="kTimeLimit",
+            model_status=status,
         )
+    if not _is_mip(sol):
+        stop = (
+            f"stopped at an {noun}, not a proven optimum" if objective_stop
+            else f"hit the {noun} before proving optimality"
+        )
+        return Acceptance(
+            accepted=False,
+            near_optimal=False,
+            message=(
+                f"solve for {solve_name} {stop}: it is a linear problem, and a linear solve stopped at its "
+                f"{noun} has no usable solution. {_capitalised(remedy)}"
+            ),
+            scaling_hint=_scaling_hint_for_reject(ranges_post),
+            model_status=status,
+        )
+    # HiGHS reports ``inf`` (or ``NaN``) when it has no gap to give; that reads as "no gap" here.
     gap_text = (
-        f" (relative MIP gap {gap:.4%})" if gap is not None
+        f" (relative MIP gap {_format_gap(gap)})" if gap is not None and math.isfinite(gap)
         else " (the remaining gap is in the solver log above)"
     )
+    kept = (
+        f"Solve {solve_name} stopped at its {noun} with a feasible integer solution that is not proven "
+        f"optimal{gap_text}"
+    )
+    if not _near_optimal_enabled():
+        return Acceptance(
+            accepted=False,
+            near_optimal=False,
+            message=(
+                f"{kept}, and near-optimal acceptance is disabled (FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0). "
+                f"{_capitalised(remedy)}"
+            ),
+            scaling_hint=None,
+            model_status=status,
+        )
     return Acceptance(
         accepted=True,
         near_optimal=True,
-        message=(
-            f"Solve {solve_name} stopped at its time limit with a feasible integer solution that is not proven "
-            f"optimal{gap_text}. FlexTool uses this solution; raise the time limit (--solver-time-limit, or "
-            "the solver's own time-limit parameter) or the MIP gap for a proven one."
-        ),
+        message=f"{kept}. FlexTool uses this solution; {remedy} or the MIP gap for a proven one.",
         scaling_hint=None,
-        model_status="kTimeLimit",
-        time_limited=True,
+        model_status=status,
+        limit_stopped=True,
     )
+
+
+def highs_objective_bound_warning(
+    sol: "Solution", solve_name: str, solver_options: "Mapping[str, Any] | None",
+) -> str | None:
+    """The warning for a HiGHS MIP solved with a finite ``objective_bound`` (from any option layer), else ``None``.
+
+    HiGHS treats the bound as a cutoff on a MIP: it prunes every solution not better than the bound and then
+    reports the best one it kept as optimal, so its "optimal" may not be the optimum (measured with HiGHS 1.15.1).
+    """
+    if not solver_options or "objective_bound" not in solver_options:
+        return None
+    try:
+        bound = float(solver_options["objective_bound"])
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(bound) or not _is_mip(sol):
+        return None
+    return (
+        f"Solve {solve_name} is a MIP solved by HiGHS with objective_bound {bound:g} (unscaled currency): HiGHS "
+        "treats the bound as "
+        "a cutoff and reports the best solution within it as optimal, so this solution may not be optimal. "
+        "Remove objective_bound for a proven optimum."
+    )
+
+
+def _format_gap(gap: float) -> str:
+    """A relative MIP gap as a percentage: four decimals (``0.2286%``), or three significant digits below 0.01 %
+    (``3.2e-05%``) so a small nonzero gap does not print as ``0.0000%`` next to "not proven optimal"."""
+    if 0.0 < abs(gap) < 1e-4:
+        return f"{gap * 100:.3g}%"
+    return f"{gap:.4%}"
 
 
 def _scaling_hint_for_reject(
@@ -427,10 +591,20 @@ def classify_acceptance(
     # honest "cannot diagnose" message.
     if diag is None:
         shim_status = getattr(sol, "shim_status", None)
-        if shim_status == "TIME_LIMIT":
-            # The result file of a solve stopped by its limit holds its incumbent.
-            return _time_limit_verdict(
-                sol, solve_name, gap=getattr(sol, "shim_mip_gap", None), ranges_post=ranges_post,
+        if shim_status in LIMIT_SHIM_STATUSES:
+            # The result file of a solve stopped by a limit holds its incumbent (a commercial result without one
+            # is refused before this check, ``_subprocess_solve._NO_SOLUTION_REASONS``).  The ``--save-memory``
+            # HiGHS child's status is named as in-process HiGHS names it.
+            solver = getattr(sol, "shim_solver", None)
+            model_status = _SHIM_MODEL_STATUS[shim_status]
+            return _limit_verdict(
+                sol, solve_name,
+                status=model_status,
+                native=model_status if solver == "highs" else shim_status,
+                solver=solver,
+                gap=getattr(sol, "shim_mip_gap", None),
+                primal_feasible=getattr(sol, "shim_primal_feasible", True),
+                ranges_post=ranges_post,
             )
         model_status = _SHIM_MODEL_STATUS.get(shim_status)
         if shim_status in _SHIM_STATUS_REASONS:
@@ -475,9 +649,16 @@ def classify_acceptance(
         if variable_free is not None:
             return variable_free
 
-    # A MIP stopped by its time limit with a feasible incumbent: the D2 rule.
-    if status == "kTimeLimit" and diag.primal_feasible:
-        return _time_limit_verdict(sol, solve_name, gap=None, ranges_post=ranges_post)
+    # A solve stopped by a limit or at an objective target or bound: the D2 rule, every limit.
+    if status in _LIMIT_MODEL_STATUSES:
+        # ``SolveDiagnostics.mip_gap`` (polar-high >= 3.13.0); a diagnostics object without it points to the log.
+        return _limit_verdict(
+            sol, solve_name,
+            status=status, native=status, solver="highs",
+            gap=getattr(diag, "mip_gap", None),
+            primal_feasible=bool(diag.primal_feasible),
+            ranges_post=ranges_post,
+        )
 
     # A named failure status is never acceptable — report the precise cause.
     if status in _FAILURE_MESSAGES:
@@ -595,4 +776,7 @@ def classify_acceptance(
     )
 
 
-__all__ = ["Acceptance", "classify_acceptance", "primal_rel_ceiling"]
+__all__ = [
+    "Acceptance", "LIMIT_SHIM_STATUSES", "classify_acceptance", "highs_objective_bound_warning",
+    "primal_rel_ceiling",
+]

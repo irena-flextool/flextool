@@ -349,6 +349,12 @@ A release is a version tag pushed to GitHub; `publish.yml` builds it and uploads
 5. **polar-high** — the `polar-high>=` pin in `pyproject.toml` must name a version on PyPI; release polar-high
    first when the pin moved past its last release.  The pin is now `>=3.12.2` (the thread budget needs it):
    release polar-high 3.12.2 before FlexTool is pushed, or CI installs fail.
+6. **Solver parameter lists** — after a `highspy` pin bump, or when a newer Gurobi, CPLEX, Xpress or COPT is
+   reported, run `python tools/solver_catalogue.py --write` in a virtual environment with the solver packages
+   (none needs a licence).  It merges the new names into `flextool/engine/solve/solver_catalogue/*.json` (names
+   are never removed) and stops on every name without a reviewed class in `tools/solver_catalogue_review.json`:
+   add each one there (a note for every text parameter and every class other than the name rules'), then write
+   again.  `tests/engine/test_solver_catalogue.py` fails while the installed packages and the lists differ.
 
 A change that alters what an existing model does gets a registry entry (summary, how to silence it) and a marker
 (`metadata` named `flextool_behaviour_change:<id>`) written by the database migration on upgraded databases only;
@@ -357,6 +363,8 @@ the engine calls `_behaviour_changes.notice(...)` with the entities whose result
 ## Solver
 
 FlexTool uses the HiGHS solver, called via the `highspy` Python package (installed automatically via pip).
+The input database may set only the parameters in FlexTool's list of each solver's parameters
+(`flextool/engine/solve/solver_catalogue/`, written by `tools/solver_catalogue.py`; see Releasing, step 6).
 
 ## CI Workflows
 

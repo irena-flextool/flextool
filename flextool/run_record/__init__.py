@@ -49,6 +49,7 @@ from flextool.run_record._owner import (
     write_stop_request,
 )
 from flextool.run_record._status import (
+    IN_SOLVE_RECORD,
     NULL_RECORDER,
     RunRecorder,
     active,
@@ -59,6 +60,7 @@ from flextool.run_record._tee import TeeStream, install_tee
 
 __all__ = [
     "ABANDONED_STATE",
+    "IN_SOLVE_RECORD",
     "LOG_HEAD_BYTES",
     "LOG_TAIL_BYTES_MAX",
     "LOG_VIEW_MAX_BYTES",

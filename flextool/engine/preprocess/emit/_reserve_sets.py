@@ -57,7 +57,8 @@ from flextool.engine.preprocess._reserve_methods import demanded_reserves
 from flextool.engine.preprocess.emit._pdt_lookup import (
     _anchor_fan_members,
     _check_pbt_branch_coverage,
-    _check_roll_forecast_covers_lookahead,
+    _check_pre_reveal_reads_have_forecast,
+    _check_forecast_covers_horizon,
     _check_ungrouped_reads_have_realized_branch,
     fold_over_tiers,
     read_fan_for_d,
@@ -300,7 +301,7 @@ def _resolve_pdtReserve(
     # (per value cell).
     tiers = tiers_by_d.get(d) if tiers_by_d is not None else None
     if tiers is None:
-        tiers = ts_tiers(d, ts_for_d, fan_for_d or {})
+        tiers = ts_tiers(d, ts_for_d, fan_for_d if fan_for_d is not None else {})
     if g_stoch:
         v = fold_over_tiers(pbt, (r, ud, g, param), [tb_for_d.get(d, ())], tiers, t)
         if v is not None:
@@ -379,8 +380,11 @@ def derive_pdtReserve_upDown_group(
         tb_for_d, ts_for_d, member_pos=2, fan_for_d=fan_for_d, kind="reserve",
     )
     _check_pbt_branch_coverage(pbt_in_use, 3, anchor_members, tb_for_d, ts_for_d, fan_for_d, kind="reserve")
-    # In a roll of a rolling solve the roll's own forecast must cover the roll's look-ahead periods.
-    _check_roll_forecast_covers_lookahead(pbt_in_use, 3, groups_stoch, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
+    # The forecast made at the fan start must cover every later period of the solve or roll (item 255).
+    # Before the reveal, a period reads the forecast made when the solve or roll starts, and it must cover it.
+    _check_pre_reveal_reads_have_forecast(pbt_in_use, 3, groups_stoch, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
+                                          solve_data_dir, provider=provider, member_pos=2, kind="reserve")
+    _check_forecast_covers_horizon(pbt_in_use, 3, groups_stoch, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
                                           solve_data_dir, provider=provider, member_pos=2, kind="reserve")
 
     tiers_by_d = {d: ts_tiers(d, ts_for_d, fan_for_d) for d in dict.fromkeys(d for d, _t in dt)}

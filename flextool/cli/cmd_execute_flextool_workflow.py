@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 from flextool.cli._console import run_tool
+from flextool._child_python import child_env, python_module_argv
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 
 
@@ -152,13 +153,13 @@ def main():
         print(f"  Target DB:   {args.input_db_url}")
         print()
 
-        cmd = [sys.executable, '-m', 'flextool.cli.cmd_read_tabular_input', args.input_db_url]
+        cmd = python_module_argv('flextool.cli.cmd_read_tabular_input', args.input_db_url)
         if args.tabular_file_path:
             cmd.extend(['--tabular-file-path', args.tabular_file_path])
         else:
             cmd.extend(['--csv-directory-path', args.csv_directory_path])
 
-        result = subprocess.run(cmd)
+        result = subprocess.run(cmd, env=child_env())
         if result.returncode != 0:
             print("\n" + "="*70)
             print("ERROR: Input preparation failed with return code", result.returncode)
@@ -209,10 +210,10 @@ def main():
         output_config = str(package_data_path("schemas/default_plots.yaml"))
 
     # The flextool-run supervisor runs the engine and writes the run's _run.log.
-    cmd = [sys.executable, '-m', 'flextool_run_supervisor',
-           *run_flextool_args(args, output_config=output_config, output_subdir=output_subdir)]
+    cmd = python_module_argv('flextool_run_supervisor',
+                             *run_flextool_args(args, output_config=output_config, output_subdir=output_subdir))
 
-    result = subprocess.run(cmd)
+    result = subprocess.run(cmd, env=child_env())
     if result.returncode != 0:
         print("\n" + "="*70)
         print("ERROR: Model execution failed with return code", result.returncode)
@@ -234,5 +235,10 @@ def main():
     print(f"{'='*70}\n")
 
 
-if __name__ == '__main__':
+def cli():
+    """Console script: :func:`main` through :func:`flextool.cli._console.run_tool` (control characters escaped)."""
     run_tool(main)
+
+
+if __name__ == '__main__':
+    cli()

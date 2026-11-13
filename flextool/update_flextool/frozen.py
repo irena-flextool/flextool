@@ -24,6 +24,7 @@ from datetime import date
 from pathlib import Path, PurePath
 from typing import Callable
 from urllib.parse import quote
+from flextool.sqlite_url import sqlite_url_string
 
 logger = logging.getLogger(__name__)
 
@@ -149,14 +150,11 @@ def _target_version() -> int:
 
 def sqlite_path_from(database: str | Path) -> Path | None:
     """The file of a plain path or a ``sqlite:///`` URL (its query string dropped); ``None`` for other URLs."""
+    from flextool.sqlite_url import sqlite_file_path
+
     if isinstance(database, Path):
         return database
-    text = str(database)
-    if text.startswith("sqlite:///"):
-        return Path(text[len("sqlite:///"):].split("?", 1)[0])
-    if "://" in text:
-        return None
-    return Path(text)
+    return sqlite_file_path(str(database))
 
 
 #: Seconds a read-only check waits for a writer's lock before it gives up (and refuses).
@@ -416,7 +414,7 @@ def set_frozen_version(db, version: int) -> None:
 def _open(path: Path):
     from flextool.update_flextool.db_handle import open_database_mapping
 
-    return open_database_mapping(f"sqlite:///{Path(path).resolve().as_posix()}", create=False, upgrade=False)
+    return open_database_mapping(sqlite_url_string(Path(path).resolve().as_posix()), create=False, upgrade=False)
 
 
 def freeze(path: str | Path, label: str, *, today: str | None = None) -> FrozenInfo:
@@ -482,7 +480,7 @@ def migrate_copy(
     shutil.copy2(source, destination)
     try:
         migrate_database(
-            "sqlite:///" + destination.resolve().as_posix(), allow_frozen=True, progress_callback=progress_callback, cancel_check=cancel_check
+            sqlite_url_string(destination.resolve().as_posix()), allow_frozen=True, progress_callback=progress_callback, cancel_check=cancel_check
         )
         with _open(destination) as db:
             _replace_rows(db, FROZEN_KEY, None)

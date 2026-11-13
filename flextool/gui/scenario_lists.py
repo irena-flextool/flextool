@@ -8,6 +8,7 @@ from tkinter import ttk
 
 from flextool import run_record
 from flextool.gui.data_models import TIMESTAMP_FORMAT, ExecutedScenarioInfo, ProjectSettings, ScenarioInfo
+from flextool.safe_names import require_strictly_inside, result_workbook_name
 from flextool.gui.scenario_key import (
     format_key,
     parse_key,
@@ -33,6 +34,35 @@ def row_checkable(info: ExecutedScenarioInfo) -> bool:
 def folder_results_usable(folder: Path) -> bool:
     """Whether the results in a run folder may be offered: :func:`row_checkable` read from the folder itself."""
     return run_record.results_usable(run_record.read_status_file(folder, strict=True))
+
+
+def scenario_workbooks(
+    project_path: Path, subdir: str, scenario_name: str, bare_owners: dict[str, int],
+) -> list[Path]:
+    """The Excel workbooks in ``output_excel/`` that hold the results of the result folder *subdir*.
+
+    The workbook is ``output_<subdir>.xlsx`` (:func:`flextool.safe_names.result_workbook_name`), matched by its
+    exact name. Before FlexTool 4.4, the workbook was named after the scenario (``output_<scenario_name>.xlsx``) for
+    every source's folder of that scenario, each run overwriting the last one's. Such an old workbook counts as
+    *subdir*'s only while no other result folder of the scenario is in ``output_parquet/``: otherwise it may hold
+    another folder's results, and is left alone.
+    """
+    excel_dir = project_path / "output_excel"
+    found = [p for p in (excel_dir / result_workbook_name(subdir),) if p.is_file()]
+    if subdir == scenario_name:
+        return found
+    old = excel_dir / result_workbook_name(scenario_name)
+    if not old.is_file():
+        return found
+    parquet_root = project_path / "output_parquet"
+    if (parquet_root / scenario_name).is_dir():
+        return found  # the folder that the old name now names exactly
+    if parquet_root.is_dir():
+        for entry in parquet_root.iterdir():
+            if (entry.name != subdir and entry.is_dir() and not entry.name.startswith("_")
+                    and resolve_source_number(entry.name, bare_owners)[1] == scenario_name):
+                return found
+    return found + [old]
 
 
 def describe_unusable(status: dict | None, state: str | None = None) -> str | None:
@@ -266,13 +296,7 @@ class ExecutedScenarioManager:
             plots_dir = self.project_path / "output_plots" / subdir
             has_plots = plots_dir.is_dir() and any(plots_dir.iterdir())
 
-            excel_dir = self.project_path / "output_excel"
-            has_excel = False
-            if excel_dir.is_dir():
-                for f in excel_dir.iterdir():
-                    if f.suffix.lower() == ".xlsx" and subdir in f.stem:
-                        has_excel = True
-                        break
+            has_excel = bool(scenario_workbooks(self.project_path, subdir, name, self._bare_owners))
 
             csv_dir = self.project_path / "output_csv" / subdir
             has_csvs = csv_dir.is_dir() and any(csv_dir.iterdir())
@@ -330,7 +354,7 @@ class ExecutedScenarioManager:
         """Delete all output files for given scenarios.
 
         Removes ``output_parquet/<subdir>/``, ``output_plots/<subdir>/``,
-        ``output_csv/<subdir>/`` and any matching ``output_excel/*<subdir>*.xlsx``.
+        ``output_csv/<subdir>/`` and the folder's workbook in ``output_excel/`` (:func:`scenario_workbooks`).
         When the deleted folder is the bare-named one owned by the given
         source, the ownership record is released so another source can
         claim the bare name later.
@@ -392,28 +416,31 @@ class ExecutedScenarioManager:
                 )
             was_bare_owner = subdir == name
 
+            # Each folder removed is a scenario's own folder under its output folder (flextool.safe_names).
             parquet_dir = self.project_path / "output_parquet" / subdir
             if parquet_dir.is_dir():
+                require_strictly_inside(parquet_dir, self.project_path / "output_parquet")
                 shutil.rmtree(parquet_dir, ignore_errors=True)
                 logger.info("Deleted %s", parquet_dir)
 
             plots_dir = self.project_path / "output_plots" / subdir
             if plots_dir.is_dir():
+                require_strictly_inside(plots_dir, self.project_path / "output_plots")
                 shutil.rmtree(plots_dir, ignore_errors=True)
                 logger.info("Deleted %s", plots_dir)
 
-            excel_dir = self.project_path / "output_excel"
-            if excel_dir.is_dir():
-                for f in excel_dir.iterdir():
-                    if f.suffix.lower() == ".xlsx" and subdir in f.stem:
-                        try:
-                            f.unlink()
-                            logger.info("Deleted %s", f)
-                        except OSError as exc:
-                            logger.warning("Could not delete %s: %s", f, exc)
+            # After the folder is gone, so that an old scenario-named workbook goes with the last folder of its
+            # scenario (scenario_workbooks).
+            for f in scenario_workbooks(self.project_path, subdir, name, self._bare_owners):
+                try:
+                    f.unlink()
+                    logger.info("Deleted %s", f)
+                except OSError as exc:
+                    logger.warning("Could not delete %s: %s", f, exc)
 
             csv_dir = self.project_path / "output_csv" / subdir
             if csv_dir.is_dir():
+                require_strictly_inside(csv_dir, self.project_path / "output_csv")
                 shutil.rmtree(csv_dir, ignore_errors=True)
                 logger.info("Deleted %s", csv_dir)
 

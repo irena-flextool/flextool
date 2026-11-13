@@ -1,8 +1,8 @@
 from flextool.cli._console import run_tool
+from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.process_outputs.write_outputs import write_outputs
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
-from spinedb_api import DatabaseMapping
-from flextool.update_flextool.db_handle import open_database_mapping
+from flextool.update_flextool.db_handle import database_mapping, open_database_mapping
 from spinedb_api.filters.tools import name_from_dict
 import logging
 import sys
@@ -73,12 +73,20 @@ def main():
                 with open_database_mapping(input_db_url) as db_map_tmp:
                     scenario_names = [name_from_dict(db_map_tmp.get_filter_configs()[0])]
             elif output_locations_db_url:
-                db_map = DatabaseMapping(output_locations_db_url)
+                db_map = database_mapping(output_locations_db_url)
                 filter_configs = db_map.get_filter_configs()
                 if filter_configs:
                     alternative_names = filter_configs[0]['alternatives']
                     scenario_names = alternative_names
                 read_parquet_dir = True
+
+            from flextool.safe_names import UnsafeNameError, check_output_name
+            try:
+                for _name in [*scenario_names, *([args.subdir] if args.subdir else [])]:
+                    check_output_name(_name, "scenario name" if _name in scenario_names else "--subdir name")
+            except UnsafeNameError as exc:
+                logging.error("%s", exc)
+                sys.exit(1)
 
             if not scenario_names:
                 logging.critical("No scenario provided through any of the arguments: scenario-name or output-locations-db-url (or input-db-url by run_flextool.py)")
@@ -121,9 +129,17 @@ def main():
                     write_plot_data=args.write_plot_data,
                     results_db_url=args.results_db_url,
                 )
+        except FlexToolConfigError as exc:  # e.g. a results-database server URL in the settings database
+            logging.error("%s", exc)
+            sys.exit(1)
         finally:
             if db_map is not None:
                 db_map.close()
 
-if __name__ == '__main__':
+def cli():
+    """Console script: :func:`main` through :func:`flextool.cli._console.run_tool` (control characters escaped)."""
     run_tool(main)
+
+
+if __name__ == '__main__':
+    cli()

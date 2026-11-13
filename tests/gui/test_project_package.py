@@ -98,3 +98,30 @@ def test_export_then_import_suggests_free_name(root: tk.Tk, workspace: dict,  # 
     finally:
         if imp.winfo_exists():
             imp.destroy()
+
+
+def _label_texts(widget: tk.Misc) -> list[str]:
+    texts = []
+    for child in widget.winfo_children():
+        if child.winfo_class() == "TLabel":
+            texts.append(str(child.cget("text")))
+        texts.extend(_label_texts(child))
+    return texts
+
+
+def test_export_dialog_names_a_left_out_option_file(root: tk.Tk, workspace: dict) -> None:  # noqa: F811
+    """An option file with a server line is named, with the line, before and after the export."""
+    (workspace["config"] / "gurobi.opt").write_text("ComputeServer srv.example:61000\n", encoding="utf-8")
+    out_dir: Path = workspace["root"] / "out"
+    dlg = ExportDialog(root, workspace["project"], solver_config_dir=workspace["config"], target_dir=out_dir)
+    try:
+        expected = (f"Solver options gurobi.opt (from {workspace['config']}) left out of the package, because "
+                    "line 1: ComputeServer <hidden> connects the solver to another computer")
+        assert any(text.startswith(expected) for text in _label_texts(dlg))
+        assert any("highs.opt from" in text and "gurobi" not in text for text in _label_texts(dlg))
+        dlg.export_button.invoke()
+        _wait(root, lambda: dlg.manifest is not None or "failed" in dlg.status_label.cget("text"))
+        assert dlg.manifest is not None and dlg.manifest.solver_config == ["highs.opt"]
+        assert expected in dlg.status_label.cget("text")
+    finally:
+        dlg.destroy()

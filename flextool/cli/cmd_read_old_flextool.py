@@ -104,5 +104,10 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
+def cli():
+    """Console script: :func:`main` through :func:`flextool.cli._console.run_tool` (control characters escaped)."""
     run_tool(main)
+
+
+if __name__ == "__main__":
+    cli()

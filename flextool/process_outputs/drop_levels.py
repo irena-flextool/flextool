@@ -146,6 +146,41 @@ def _reduce_share_per_period(csoy: pd.Series) -> pd.Series:
     return csoy.groupby(level=0, sort=False).max()
 
 
+# Investment-axis variables (``period_source`` invest / invest_branches in read_highs_solution): a period's value
+# comes from the solve that realizes the investment there (``d_realize_invest``), see ``_keep_realizing_solve_rows``.
+# The investment duals too (item 266): the v_invest reduced costs and the per-period cap / floor duals.
+_V_REALIZING_SOLVE = frozenset({
+    'invest', 'divest', 'q_capacity_margin',
+    'dual_invest_connection', 'dual_invest_node', 'dual_invest_unit',
+    'dual_maxInvest_period', 'dual_maxCumulative', 'dual_maxInvestGroup_period', 'dual_maxInvestGroup_cumulative',
+    'dual_minInvest_period', 'dual_minCumulative', 'dual_minInvestGroup_period', 'dual_minInvestGroup_cumulative',
+})
+
+
+def _keep_realizing_solve_rows(obj: pd.DataFrame, d_realize_invest: pd.MultiIndex) -> pd.DataFrame:
+    """The rows of the solves that realize the investment of their period, for a period some solve realizes.
+
+    A solve writes a ``v_invest`` / ``v_divest`` / ``vq_capacity_margin`` row (and an investment dual row) for
+    every period on its dispatch axis, also a 0 row for a period whose investment an earlier solve realized
+    (``realized_invest_periods`` of that solve, outside its ``realized_periods``).  The ``keep='last'`` dedup that
+    follows would let that later 0 row win, so the rows of a period realized by some solve are cut to the
+    realizing solves' rows first (their last one still wins).  A period no solve realizes keeps all its rows (as
+    before).  ``d_realize_invest`` is still solve-indexed here.
+    """
+    if obj.empty or len(d_realize_invest) == 0:
+        return obj
+
+    def solve_period(idx: pd.MultiIndex) -> pd.MultiIndex:
+        return pd.MultiIndex.from_arrays(
+            [idx.get_level_values('solve').astype(str), idx.get_level_values('period').astype(str)])
+
+    realizing = solve_period(d_realize_invest)
+    rows = solve_period(obj.index)
+    periods = rows.get_level_values(1)
+    keep = ~periods.isin(realizing.get_level_values(1)) | rows.isin(realizing)
+    return obj[keep]
+
+
 def _period_level(idx: pd.Index) -> "pd.Index | None":
     if isinstance(idx, pd.MultiIndex):
         return idx.get_level_values('period') if 'period' in idx.names else None
@@ -238,6 +273,8 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
     _drop_unrealized_forecast_periods(par, s, v)
     for attr in _V_DROP:
         obj = getattr(v, attr)
+        if attr in _V_REALIZING_SOLVE:
+            obj = _keep_realizing_solve_rows(obj, s.d_realize_invest)
         obj = obj.droplevel('solve')
         # For rolling scenarios, keep only last solve's value per (period, time)
         if obj.index.duplicated().any():

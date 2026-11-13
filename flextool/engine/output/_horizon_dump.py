@@ -40,6 +40,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 import polars as pl
 
+from flextool.safe_names import require_strictly_inside
+
 if TYPE_CHECKING:
     from polar_high import Problem, Solution
 
@@ -256,6 +258,8 @@ def assemble_horizon_dump(raw_output_dir: "Path | str", parquet_dir: "Path | str
     """
     out = Path(parquet_dir) / HORIZON_DIR
     if clear_stale and out.is_dir():
+        # Only the run's own horizon/ folder (not a link to another folder).
+        require_strictly_inside(out, parquet_dir)
         shutil.rmtree(out)
     src = Path(raw_output_dir) / HORIZON_DIR
     if not src.is_dir():

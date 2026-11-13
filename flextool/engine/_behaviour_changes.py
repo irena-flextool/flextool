@@ -150,8 +150,9 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "cover its operating years in the whole run and are reported once, in the period it starts "
                      "operating, by the solve that realizes that period (before: in the decision period, over "
                      "the deciding solve's periods); the fixed cost of capacity carried from an earlier solve or "
-                     "retired is no longer charged again as existing capacity.  The printed objectives stay "
-                     "discounted from each solve's start (results change)."),
+                     "retired is no longer charged again as existing capacity.  The printed objectives stayed "
+                     "discounted from each solve's start until chained_solve_discount_from_run_start (results "
+                     "change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "chained_solve_costs_from_run_start"),
             since="4.2.0",
             published="7.11.2026",
@@ -218,6 +219,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "once; it is now summed like a deterministic inflow, so it grows by the number of time steps "
                      "each new step combines, also where it is constant within the step."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "solve_step_series_combined"),
+            since="4.4.0",
+            published="13.11.2026",
         ),
         BehaviourChange(
             id="energy_margin_adder_per_original_step",
@@ -228,6 +231,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "demand (results change). To keep the old demand, divide the value by the number of time "
                      "steps a solve step combines."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "energy_margin_adder_per_original_step"),
+            since="4.4.0",
+            published="13.11.2026",
         ),
         BehaviourChange(
             id="capacity_margin_counts_by_flow",
@@ -240,6 +245,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "shortfall and its penalty are now reported (slack__capacity_margin__d, the costs) instead of "
                      "0, so the total cost includes the penalty; capacity_margin__d explains each solve's margin."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "capacity_margin_counts_by_flow"),
+            since="4.4.0",
+            published="13.11.2026",
         ),
         BehaviourChange(
             id="discount_rate_zero_is_zero",
@@ -249,6 +256,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "discount_rate is now an input error, and an investing or retiring entity with a cost "
                      "needs a lifetime (before: 20 years)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "discount_rate_zero_is_zero"),
+            since="4.4.0",
+            published="13.11.2026",
         ),
         BehaviourChange(
             id="invest_without_cost_offered",
@@ -261,6 +270,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "invest_method (the other methods do not use invest_max_period), or use not_allowed. With "
                      "neither invest_cost nor fixed_cost the invested amount is arbitrary."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "invest_without_cost_offered"),
+            since="4.4.0",
+            published="13.11.2026",
         ),
         BehaviourChange(
             id="stochastic_storage_paths_tied",
@@ -278,6 +289,29 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "bind_within_solve, or on bind_forward_only without a fixed start; such a "
                      "bind_forward_only node changes only when a fan opens in the solve's first period."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "stochastic_storage_paths_tied"),
+            since="4.4.0",
+            published="13.11.2026",
+        ),
+        BehaviourChange(
+            id="chained_solve_discount_from_run_start",
+            summary=("With an inflation_rate other than 0, every solve now discounts its investments and its "
+                     "operations from the start of the run, as one solve over the same periods does. Before, a "
+                     "later solve of a run of several solves (also a split solve of a 2-D period map, a rolling "
+                     "or nested solve starting after the run start) discounted its operations, and when its "
+                     "years_represented held only its own periods also its investments, from its own start; and "
+                     "a fractional years_represented counted as a whole year in the discounting of the periods "
+                     "after it; a years_represented map that listed the periods out of the solve's period order "
+                     "(or an unused period before a used one) discounted the investments in the period order and "
+                     "the operations in the map order, also in a single solve, and now both in the map order. "
+                     "Where only the investments were discounted from the run start (hand-written "
+                     "solves with the whole years_represented map), the balance between investment and "
+                     "operating costs was wrong and decisions change; otherwise the objectives, investment "
+                     "duals and CO2 cap prices of later solves are now on the run's discount base, and "
+                     "decisions can still change through absolute MIP gaps, objective targets or bounds and "
+                     "terms without a discount factor (results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "chained_solve_discount_from_run_start"),
+            since="4.4.0",
+            published="13.11.2026",
         ),
         BehaviourChange(
             id="gui_solver_defaults",

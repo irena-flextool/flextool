@@ -670,12 +670,17 @@ def read_sets(
     # intersect with: its candidates are the forecast-branch copies, whose
     # investment is never realized.  It is intersected with the solve's
     # realized investment periods instead (the period labels of its fans).
+    # A realized investment period need not be a realized dispatch period
+    # (``realized_invest_periods`` not within ``realized_periods``): it is
+    # kept too, else its invested capacity and investment cost have no row.
     # Without either source (FlexData built by hand) nothing is filtered.
     invest_periods_list: list = []
     seen: set = set()
     realized_filter: "set | None" = None
     if len(s.d_realized_period) > 0:
         realized_filter = set(s.d_realized_period.get_level_values("period").tolist())
+        if flex_data.realized_invest_periods is not None:
+            realized_filter |= set(flex_data.realized_invest_periods)
     elif flex_data.realized_invest_periods is not None:
         realized_filter = set(flex_data.realized_invest_periods)
     for src in (flex_data.ed_invest_set, flex_data.ed_divest_set):

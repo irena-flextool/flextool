@@ -35,6 +35,10 @@ def _load(dump_dir: Path | str, *, db_url: str | None, scenario: str | None, for
     provider = FlexDataProvider()
     seed_provider_from_dump(provider, dump_dir)
     reader = SpineDbReader(db_url, scenario=scenario) if db_url is not None else None
+    if reader is not None:
+        # The solves of a 2-D period map are reader solves in the run; give the reload the same view.
+        from flextool.engine.input._solve_config import SolveConfig, register_solve_copies
+        register_solve_copies(SolveConfig.load_from_db_url(db_url, scenario), reader)
     fd = load_flextool(Path(dump_dir), provider=provider, db_reader=reader, _dump_hooks=_DUMP_HOOKS)
     return fd, provider
 

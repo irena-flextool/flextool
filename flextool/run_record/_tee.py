@@ -5,8 +5,10 @@ nobody holding its output pipe, so the engine records its own console output (``
 what goes through ``sys.stdout`` / ``sys.stderr`` is seen: the native solver's lines and a crash dump write to
 file descriptors 1 / 2 directly and are not in such a log.
 
-:class:`TeeStream` passes every write to the wrapped stream unchanged and assembles lines per thread, so lines
-written by two threads at once are never interleaved inside a line.  ``fileno`` / ``isatty`` / ``encoding`` come
+:class:`TeeStream` passes every write to the wrapped stream and assembles lines per thread, so lines written by two
+threads at once are never interleaved inside a line.  Control characters other than the tab and the line feed (an
+escape sequence from a name in the input data) are shown as ``\\xNN`` on the console and in the log
+(:func:`flextool._safe_text.printable`).  ``fileno`` / ``isatty`` / ``encoding`` come
 from the wrapped stream, so code that routes native output by file descriptor (polar-high) behaves as before.
 This module never imports the CLI.
 """
@@ -17,6 +19,7 @@ import sys
 import threading
 from typing import Any, Callable
 
+from flextool._safe_text import PrintableText
 from flextool.run_record._owner import RunLogWriter
 
 _logger = logging.getLogger(__name__)
@@ -31,16 +34,21 @@ class TeeStream:
         self._lock = threading.Lock()
         self._partial: dict[int, list[str]] = {}
         self._broken = False
+        self._printable = PrintableText()
 
     @property
     def inner(self) -> Any:
         return self._inner
 
     def write(self, text: str) -> int:
-        result = self._inner.write(text)
+        size = len(text)
+        if text:
+            text = self._printable(text)
+        self._inner.write(text)
         if text and not self._broken:
             self._copy(text)
-        return result if result is not None else len(text)
+        # The caller's length: a shown control character is longer than the character it stands for.
+        return size
 
     def _copy(self, text: str) -> None:
         ident = threading.get_ident()

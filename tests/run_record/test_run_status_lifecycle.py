@@ -247,6 +247,24 @@ def test_warning_handler_takes_no_recorder_lock(tmp_path):
     assert [w["message"] for w in warnings] == ["from a worker thread"]
 
 
+def test_warning_already_in_its_solve_entry_is_not_repeated(tmp_path):
+    """Item 246 (review R4): a warning marked ``IN_SOLVE_RECORD`` (a solve kept at a limit, whose message is the
+    solve's entry) is not added to ``warnings`` a second time."""
+    from flextool.run_record import IN_SOLVE_RECORD
+
+    rec = _bare_recorder(tmp_path / "base")
+    logger = logging.getLogger("flextool.test.in_solve_record")
+    logger.propagate = False
+    logger.addHandler(rec.warning_handler())
+    try:
+        logger.warning("kept at a limit", extra={IN_SOLVE_RECORD: True})
+        logger.warning("another warning")
+    finally:
+        logger.removeHandler(rec.warning_handler())
+    rec.finish("succeeded", exit_code=0, error=None)
+    assert [w["message"] for w in read_status_file(tmp_path / "base")["warnings"]] == ["another warning"]
+
+
 def test_no_log_call_while_recorder_lock_held(tmp_path, monkeypatch):
     failing, taken_over = _bare_recorder(tmp_path / "a"), _bare_recorder(tmp_path / "b")
     rec = failing

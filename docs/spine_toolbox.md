@@ -39,10 +39,12 @@ Ticking scenarios there decides which ones run when you execute the workflow; To
 execute several in parallel as long as the **FlexTool** item is configured to use work
 directories.
 
-Each FlexTool run uses all available cores for its own data processing (at most 8 threads) unless told
-otherwise, and Toolbox does not pass a thread count. When Toolbox runs several scenarios at once, add
-`--threads N` to the **FlexTool** Tool's command-line arguments, with N about the number of cores divided by
-the number of runs executed at once. N covers FlexTool's data processing and the solver of each run.
+A FlexTool run started from Spine Toolbox uses **1 thread** for its data processing and its solver (HiGHS,
+the thread count of Gurobi, CPLEX, Xpress and COPT over their option file, and one Benders region solve at a
+time): Toolbox can execute several scenarios at once and nothing shares the cores between them. For more threads
+per run, add `--threads N` to the **FlexTool** Tool's command-line arguments (or set `FLEXTOOL_THREADS`), with N
+about the number of cores divided by the number of runs executed at once. The run header's `Threads:` line says
+`1 (Spine Toolbox run)` when the default applies.
 
 ## The shipped workflow
 
@@ -144,6 +146,12 @@ with **each scenario as a Spine *alternative***:
   Whatever else you tick in Output settings (`output-plot` / `output-excel` /
   `output-csv`) Re-create also (re)produces.
 
+To write the results into another database, set `output-results-db-url` in **Output settings** to a `sqlite:` URL
+(`sqlite:///C:/results/all.sqlite`; a mapped network drive or a UNC share, `sqlite://///server/share/all.sqlite`,
+works too). A database server URL is not taken from the settings database: a run that writes the results SpineDB
+stops with a message, and without `output-spinedb` the URL is ignored with a warning. Give a server URL with the
+tool's `--results-db-url` argument instead.
+
 Two caveats apply to the **replay** path only:
 
 - The two inflation / discount-factor parameters are omitted (they need the live
@@ -195,6 +203,17 @@ the toolbar's **+ From file…** button to add the specifications from
 `.spinetoolbox/specifications/` of your FlexTool checkout. The specifications stay in the
 FlexTool repository (and update with `git pull` / `update_flextool.py`), while the new
 project file lives wherever you put it.
+
+## Toolbox projects are code
+
+A Spine Toolbox project runs the tool scripts and command lines its specifications carry
+(the FlexTool tools include scripts from the project's folders), so a project can do
+anything you can do on your computer. FlexTool therefore treats a Toolbox project like a
+program: whatever it passes to FlexTool (`--solver-config-dir`, for example, whose option
+files are trusted) is taken as your own choice. Open a Toolbox project only from people you
+trust, as you would run their program. What FlexTool does guard against is data that comes
+with a project, such as an input database or a `solver_config/` folder that a run finds on
+its own: see [Which option folders are trusted](solvers/index.md#which-option-folders-are-trusted).
 
 ## Limitations
 

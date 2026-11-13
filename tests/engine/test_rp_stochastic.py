@@ -8,7 +8,9 @@ lp_snapshot.py`` helpers); never a checked-in ``.sqlite``.
 Tiny model: storage node ``s`` (``virtual_unitsize`` 1, so v_state is in MWh; existing = C), constant inflow −D;
 unit ``src`` → ``s`` (``virtual_unitsize`` 1, existing K MW) with a ``fixed`` stochastic profile p(t), so the
 step change is c(t) = K·p(t) − D.  ``src`` is in the include_stochastics group ``g`` (``s`` only where said),
-timeline ``tl`` with 1-h steps, forecasts ``high`` / ``low`` (``realized: no``) with weight 0.5 each.
+timeline ``tl`` with 1-h steps, forecasts ``high`` / ``low`` (``realized: no``) with weight 0.5 each.  A fan after
+the trunk period also has ``real`` (``realized: yes``): the trunk reads its series, given at the solve's start
+(a forecasts-only fan has no series before the reveal, item 250).
 """
 from __future__ import annotations
 
@@ -62,13 +64,14 @@ def _rp_weights(weights: dict) -> api.Map:
 def _tiny(tmp_path_factory, *, n_steps: int, timesets: dict, period_timeset: dict, fan: tuple,
           profile: dict, s: dict, K: float, D: float, s_in_group: bool = False,
           inflow: dict | None = None, branch_weights: dict | None = None,
-          with_work: bool = False) -> dict:
+          realized: str | None = None, with_work: bool = False) -> dict:
     """Build, solve and return the steps of the tiny model.
 
     ``timesets`` = {name: (timeset_duration, representative_period_weights or None)}; ``fan`` = (period, start step);
     ``profile`` = {branch: {analysis_time: {step: p}}}; ``s`` = extra parameters of node ``s``; ``inflow`` (same
     nesting as ``profile``) replaces the constant inflow −D of ``s`` by a stochastic one; ``branch_weights``
-    {branch: weight} (default 0.5 each); ``with_work``: return (steps, work folder)."""
+    {branch: weight} (default 0.5 each); ``realized``: the branch of ``profile`` marked realized: yes (weight 0, not
+    a forecast; it gives the data before a mid-horizon fan); ``with_work``: return (steps, work folder)."""
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_handle import open_database_mapping
     from flextool.update_flextool.initialize_database import initialize_database
@@ -85,8 +88,9 @@ def _tiny(tmp_path_factory, *, n_steps: int, timesets: dict, period_timeset: dic
         entities.append(("group__node", ("g", "s")))
     periods = list(period_timeset)
     fan_period, fan_step = fan
-    bw = branch_weights or {b: 0.5 for b in profile}
-    branches = _m({fan_period: _m({b: _m({fan_step: _m({"no": bw[b]}, "realized")}, "analysis_time")
+    bw = branch_weights or {b: 0.5 for b in profile if b != realized}
+    branches = _m({fan_period: _m({b: _m({fan_step: _m({"yes": 0.0} if b == realized else {"no": bw[b]},
+                                                         "realized")}, "analysis_time")
                                    for b in profile}, "branch")}, "period")
     prof = _m({b: _m({at: _m(series, "time") for at, series in windows.items()}, "analysis_time")
                for b, windows in profile.items()}, "branch")
@@ -282,8 +286,10 @@ def test_h3_forward_only_blended_trunk_to_branch_chain(tmp_path_factory):
                   "ts2": ({"t0007": 2.0}, {"t0007": {"t0007": 1.0}})},
         period_timeset={"p1": "ts1", "p2": "ts2"}, fan=("p2", "t0007"), K=K, D=D,
         s={"existing": 3.0, "storage_binding_method": FO_B, "storage_start_end_method": "fix_nothing"},
-        profile={"high": {"t0001": trunk, "t0007": _series(["t0007", "t0008"], [-0.5, -0.5], K, D)},
-                 "low": {"t0001": trunk, "t0007": _series(["t0007", "t0008"], [0.5, 0.5], K, D)}})
+        profile={"high": {"t0007": _series(["t0007", "t0008"], [-0.5, -0.5], K, D)},
+                 "low": {"t0007": _series(["t0007", "t0008"], [0.5, 0.5], K, D)},
+                 "real": {"t0001": trunk, "t0007": _series(["t0007", "t0008"], [0.5, 0.5], K, D)}},
+        realized="real")
     step = steps["sol"]
     inter = _values(step, "v_state_inter")
     assert inter == pytest.approx({("s", "p1", "t0001"): 2.25, ("s", "p1", "t0003"): 3.0,
@@ -327,8 +333,10 @@ def test_h2b_within_solve_blended_every_branch_closes_on_the_trunk_start(tmp_pat
         period_timeset={"p1": "ts1", "p2": "ts2"}, fan=("p2", "t0003"), K=K, D=D,
         s={"existing": 2.0, "storage_binding_method": WS_B, "storage_start_end_method": "fix_nothing",
            "penalty_down": 100.0, "penalty_up": 1000.0},
-        profile={"high": {"t0001": trunk, "t0003": _series(["t0003", "t0004"], [-1.0, 0.0], K, D)},
-                 "low": {"t0001": trunk, "t0003": _series(["t0003", "t0004"], [-1.0, -1.0], K, D)}})
+        profile={"high": {"t0003": _series(["t0003", "t0004"], [-1.0, 0.0], K, D)},
+                 "low": {"t0003": _series(["t0003", "t0004"], [-1.0, -1.0], K, D)},
+                 "real": {"t0001": trunk, "t0003": _series(["t0003", "t0004"], [-1.0, -1.0], K, D)}},
+        realized="real")
     step = steps["sol"]
     inter = _values(step, "v_state_inter")
     assert inter == pytest.approx({("s", "p1", "t0001"): 2.0, ("s", "p2_high", "t0003"): 0.0,
@@ -394,8 +402,10 @@ def _h2(tmp_path_factory, *, K: float, D: float, low: list[float]) -> dict:
         branch_weights={"high": 0.3, "low": 0.7},
         s={"existing": 2.0, "storage_binding_method": "bind_within_solve", "storage_start_end_method": "fix_nothing",
            "penalty_down": 100.0, "penalty_up": 1000.0},
-        profile={"high": {"t0001": trunk, "t0003": _series(["t0003", "t0004"], [-1.0, 0.0], K, D)},
-                 "low": {"t0001": trunk, "t0003": _series(["t0003", "t0004"], low, K, D)}})["sol"]
+        profile={"high": {"t0003": _series(["t0003", "t0004"], [-1.0, 0.0], K, D)},
+                 "low": {"t0003": _series(["t0003", "t0004"], low, K, D)},
+                 "real": {"t0001": trunk, "t0003": _series(["t0003", "t0004"], low, K, D)}},
+        realized="real")["sol"]
 
 
 # op_factor[p2_x, t] = Δt (1 h) · tsw (1) · inflation_op[p2] / period_share[p2] · branch weight: inflation_rate 0 and
@@ -457,10 +467,9 @@ def test_within_solve_output_state_change_of_a_first_period_fan(tmp_path_factory
         period_timeset={"p1": "ts1", "p2": "ts2"}, fan=("p1", "t0001"), K=K, D=D, with_work=True,
         s={"existing": 1.0, "storage_binding_method": "bind_within_solve", "storage_start_end_method": "fix_nothing",
            "penalty_down": 100.0, "penalty_up": 1000.0},
-        profile={"high": {"t0001": _series(["t0001", "t0002"], [1.0, 0.0], K, D),
-                          "t0003": _series(["t0003", "t0004"], [-1.0, 0.0], K, D)},
-                 "low": {"t0001": _series(["t0001", "t0002"], [0.0, 1.0], K, D),
-                         "t0003": _series(["t0003", "t0004"], [0.0, -1.0], K, D)}})
+        # One forecast per branch, made at the fan's analysis time t0001 and covering p1 and p2 (item 255).
+        profile={"high": {"t0001": _series(["t0001", "t0002", "t0003", "t0004"], [1.0, 0.0, -1.0, 0.0], K, D)},
+                 "low": {"t0001": _series(["t0001", "t0002", "t0003", "t0004"], [0.0, 1.0, 0.0, -1.0], K, D)}})
     step = steps["sol"]
     state = _values(step, "v_state")
     assert [state[("s", "p1_high", t)] for t in ("t0001", "t0002")] == pytest.approx([1.0, 1.0], abs=TOL)
@@ -497,7 +506,7 @@ def _lh2_run(tmp_path_factory, values: list, *, drop: tuple = (), patch=None) ->
     from flextool.update_flextool.db_migration import migrate_database
     from tests.db_utils import json_to_db
 
-    data = json.loads(RP_JSON.read_text())
+    data = json.loads(RP_JSON.read_text(encoding="utf-8"))
     data["parameter_values"] = [v for v in data["parameter_values"]
                                 if not (v[0] == "solve" and v[1] == LH2_SOLVE and v[2] in drop)]
     base = "lh2_three_region_rp_invest"
@@ -506,7 +515,7 @@ def _lh2_run(tmp_path_factory, values: list, *, drop: tuple = (), patch=None) ->
         base = data["scenarios"][-1][0]
     data = L._overlay(data, name="custom", base=base, values=values)
     work = tmp_path_factory.mktemp("rp_stoch_lh2")
-    (work / "f.json").write_text(json.dumps(data))
+    (work / "f.json").write_text(json.dumps(data), encoding="utf-8")
     url = json_to_db(work / "f.json", work / "f.sqlite")
     migrate_database(url)
     steps = run_chain_from_db(url, "custom", work_folder=work / "w", keep_solutions=True)

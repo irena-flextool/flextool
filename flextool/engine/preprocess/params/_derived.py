@@ -81,6 +81,7 @@ from flextool.engine.input._param_shapes import (
     parameter_has_values,
     promote_param_to_dt,
     resolve_param_shape,
+    solve_years_represented,
 )
 from flextool.engine.preprocess.params._existing import (
     DIVEST_NOT_ALLOWED as _DIVEST_NOT_ALLOWED,
@@ -972,8 +973,8 @@ def p_inflation_op_from_source(
     # ``_roll_<N>`` suffix).
     yr = None
     if active_solve is not None:
-        yr_raw = _try_param(source, "solve", "years_represented")
-        if yr_raw is not None and "period" in yr_raw.columns:
+        yr_raw = solve_years_represented(source)
+        if yr_raw is not None:
             candidate_names = [active_solve]
             import re
             parent = re.sub(r"_roll_\d+$", "", active_solve)
@@ -2982,9 +2983,8 @@ def _resolve_synthetic_solve(source: "InputSource",
 
     Δ.19 — flextool's orchestrator synthesises per-period sub-solve
     names at runtime by joining a Spine ``solve`` name with one of its
-    ``invest_periods`` anchor keys (see ``_solve_config.py:618-660`` —
-    ``periods_to_tuples`` walks the outer Map and calls
-    ``duplicate_solve(<base>, <base>_<anchor>)``).  These synthetic
+    2-D period map's outer keys (``SolveConfig._split_2d_period_maps``
+    makes ``<base>_<anchor>`` with ``derive_solve(<base>, ...)``).  These synthetic
     names don't exist as rows in Spine; the per-solve override chain
     would otherwise return None for every ``solve``-keyed parameter.
 
@@ -3606,9 +3606,8 @@ def _p_years_d_lf(source: "InputSource",
                 pl.col("value").cast(pl.Float64).alias("yr"),
             )
     # 3 — cumulative-sum from years_represented.
-    yrp = _try_param(source, "solve", "years_represented")
-    if (yrp is not None and "period" in yrp.columns
-            and active_solve is not None):
+    yrp = solve_years_represented(source)
+    if yrp is not None and active_solve is not None:
         sub = yrp.filter(pl.col("name") == active_solve)
         if sub.height > 0:
             # Map iteration order — the SpineDbReader returns rows in DB
@@ -4261,7 +4260,7 @@ def p_inflation_op_multi_year_from_source(source: "InputSource",
         return None
     # Multi-year-per-period guard: if ``years_represented`` Map has
     # multiple (period, year) rows for any period, defer.
-    yr = _try_param(source, "solve", "years_represented")
+    yr = solve_years_represented(source)
     if yr is not None:
         yr_sub = yr.filter(pl.col("name") == active_solve)
         if yr_sub.height > 0:
@@ -8526,9 +8525,9 @@ def _years_for_period_from_source(source: "InputSource",
                 if canon:
                     return canon
 
-    yr_p = _try_param(source, "solve", "years_represented")
+    yr_p = solve_years_represented(source)
     out: dict[str, list[tuple[str, float]]] = {}
-    if active_solve is None or yr_p is None or "period" not in yr_p.columns:
+    if active_solve is None or yr_p is None:
         # Default fallback — one year per period, width 1, integer-indexed.
         for i, d in enumerate(period_set):
             out[d] = [(str(int(i)), 1.0)]
@@ -9020,8 +9019,8 @@ def _p_discount_years_from_source(source: "InputSource",
     out: dict[str, float] = {}
     if active_solve is None:
         return out
-    yrp = _try_param(source, "solve", "years_represented")
-    if yrp is None or "period" not in yrp.columns:
+    yrp = solve_years_represented(source)
+    if yrp is None:
         return out
     sub = yrp.filter(pl.col("name") == active_solve)
     if sub.height == 0:
@@ -9908,9 +9907,10 @@ def apply_synthetic_invest_sets(flex_data: object,
     # Construction lead time: drop the decisions whose capacity would start to operate after the solve or the
     # model horizon (with a warning) before every set below is built from ed_invest_set.
     synth_commission_lf = None
-    # A per-period sub-solve counts one year per period on its own calendar and takes its costs from the
-    # emitted seeds, so the start of operation and the cost window of a construction lead time cannot be
-    # placed in it.
+    # A synthetic sub-solve (a roll, a nested solve renamed for its period; the solves of a 2-D period map are
+    # real solves of the reader and never come here) counts one year per period on its own calendar and takes its
+    # costs from the emitted seeds, so the start of operation and the cost window of a construction lead time
+    # cannot be placed in it.
     from flextool.engine.preprocess.params._existing import (
         _construction_lag_configured as _lag_configured,
         lead_time_decisions as _lead_time_decisions,
@@ -9921,11 +9921,10 @@ def apply_synthetic_invest_sets(flex_data: object,
             longest = lagged.group_by("e").agg(pl.col("L").max()).sort("e")
             entities = ", ".join(f"{e} ({lead:g} years)" for e, lead in longest.iter_rows())
             raise FlexToolConfigError(
-                f"Solve '{base}' gives invest_periods as a map, so it runs one investment sub-solve per period "
-                f"(here '{active_solve}'). Each sub-solve covers only one investment period. Capacity with a "
-                f"construction lead time could never come online inside it. Entities with a lead time: "
-                f"{entities}. Use one investment solve over several periods instead (invest_periods as a list), "
-                "or remove the lead time.")
+                f"Solve '{active_solve}' is a sub-solve of '{base}' (a roll, or a nested solve renamed for its "
+                "period) that invests, and FlexTool cannot place the start of operation of a construction lead "
+                f"time in such a sub-solve. Entities with a lead time: {entities}. Make the investments in a "
+                "single_solve (a solve of its own in model.solves), or remove the lead time.")
     if workdir is not None:
         ed_inv, synth_commission_lf = _offer_invest_set(
             flex_data, source, active_solve,

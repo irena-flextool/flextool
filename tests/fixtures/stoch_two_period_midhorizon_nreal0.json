@@ -7029,10 +7029,30 @@
       "wprof",
       "profile",
       [
-        "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1siaGlnaCIsIHsidHlwZSI6ICJtYXAiLCAiaW5kZXhfdHlwZSI6ICJzdHIiLCAiZGF0YSI6IFtbInQwMDAxIiwgeyJ0eXBlIjogIm1hcCIsICJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sidDAwMDEiLCAwLjZdLCBbInQwMDAyIiwgMC42XSwgWyJ0MDAwMyIsIDAuNl1dfV0sIFsidDAwMDQiLCB7InR5cGUiOiAibWFwIiwgImluZGV4X3R5cGUiOiAic3RyIiwgImRhdGEiOiBbWyJ0MDAwNCIsIDEuMF0sIFsidDAwMDUiLCAxLjBdLCBbInQwMDA2IiwgMS4wXV19XV19XSwgWyJsb3ciLCB7InR5cGUiOiAibWFwIiwgImluZGV4X3R5cGUiOiAic3RyIiwgImRhdGEiOiBbWyJ0MDAwMSIsIHsidHlwZSI6ICJtYXAiLCAiaW5kZXhfdHlwZSI6ICJzdHIiLCAiZGF0YSI6IFtbInQwMDAxIiwgMC42XSwgWyJ0MDAwMiIsIDAuNl0sIFsidDAwMDMiLCAwLjZdXX1dLCBbInQwMDA0IiwgeyJ0eXBlIjogIm1hcCIsICJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sidDAwMDQiLCAwLjhdLCBbInQwMDA1IiwgMC44XSwgWyJ0MDAwNiIsIDAuOF1dfV1dfV1dfQ==",
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1siaGlnaCIsIHsidHlwZSI6ICJtYXAiLCAiaW5kZXhfdHlwZSI6ICJzdHIiLCAiZGF0YSI6IFtbInQwMDA0IiwgeyJ0eXBlIjogIm1hcCIsICJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sidDAwMDQiLCAxLjBdLCBbInQwMDA1IiwgMS4wXSwgWyJ0MDAwNiIsIDEuMF1dfV1dfV0sIFsibG93IiwgeyJ0eXBlIjogIm1hcCIsICJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sidDAwMDQiLCB7InR5cGUiOiAibWFwIiwgImluZGV4X3R5cGUiOiAic3RyIiwgImRhdGEiOiBbWyJ0MDAwNCIsIDAuOF0sIFsidDAwMDUiLCAwLjhdLCBbInQwMDA2IiwgMC44XV19XV19XSwgWyJyZWFsIiwgeyJ0eXBlIjogIm1hcCIsICJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sidDAwMDEiLCB7InR5cGUiOiAibWFwIiwgImluZGV4X3R5cGUiOiAic3RyIiwgImRhdGEiOiBbWyJ0MDAwMSIsIDAuNl0sIFsidDAwMDIiLCAwLjZdLCBbInQwMDAzIiwgMC42XV19XSwgWyJ0MDAwNCIsIHsidHlwZSI6ICJtYXAiLCAiaW5kZXhfdHlwZSI6ICJzdHIiLCAiZGF0YSI6IFtbInQwMDA0IiwgMC45XSwgWyJ0MDAwNSIsIDAuOV0sIFsidDAwMDYiLCAwLjldXX1dXX1dXX0=",
+        "map"
+      ],
+      "realized"
+    ],
+    [
+      "profile",
+      "wprof",
+      "profile",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sidDAwMDEiLCAwLjZdLCBbInQwMDAyIiwgMC42XSwgWyJ0MDAwMyIsIDAuNl0sIFsidDAwMDQiLCAwLjg1XSwgWyJ0MDAwNSIsIDAuODVdLCBbInQwMDA2IiwgMC44NV1dfQ==",
         "map"
       ],
       "stoch"
+    ],
+    [
+      "profile",
+      "wprof",
+      "profile",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1siaGlnaCIsIHsidHlwZSI6ICJtYXAiLCAiaW5kZXhfdHlwZSI6ICJzdHIiLCAiZGF0YSI6IFtbInQwMDAxIiwgeyJ0eXBlIjogIm1hcCIsICJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sidDAwMDEiLCAwLjZdLCBbInQwMDAyIiwgMC42XSwgWyJ0MDAwMyIsIDAuNl1dfV0sIFsidDAwMDQiLCB7InR5cGUiOiAibWFwIiwgImluZGV4X3R5cGUiOiAic3RyIiwgImRhdGEiOiBbWyJ0MDAwNCIsIDEuMF0sIFsidDAwMDUiLCAxLjBdLCBbInQwMDA2IiwgMS4wXV19XV19XSwgWyJsb3ciLCB7InR5cGUiOiAibWFwIiwgImluZGV4X3R5cGUiOiAic3RyIiwgImRhdGEiOiBbWyJ0MDAwMSIsIHsidHlwZSI6ICJtYXAiLCAiaW5kZXhfdHlwZSI6ICJzdHIiLCAiZGF0YSI6IFtbInQwMDAxIiwgMC42XSwgWyJ0MDAwMiIsIDAuNl0sIFsidDAwMDMiLCAwLjZdXX1dLCBbInQwMDA0IiwgeyJ0eXBlIjogIm1hcCIsICJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sidDAwMDQiLCAwLjhdLCBbInQwMDA1IiwgMC44XSwgWyJ0MDAwNiIsIDAuOF1dfV1dfV1dfQ==",
+        "map"
+      ],
+      "stoch_profile"
     ],
     [
       "solve",
@@ -7083,6 +7103,16 @@
         "str"
       ],
       "init"
+    ],
+    [
+      "solve",
+      "stoch_2p_mid",
+      "stochastic_branches",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sicDIwNDAiLCB7InR5cGUiOiAibWFwIiwgImluZGV4X3R5cGUiOiAic3RyIiwgImRhdGEiOiBbWyJoaWdoIiwgeyJ0eXBlIjogIm1hcCIsICJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sidDAwMDQiLCB7InR5cGUiOiAibWFwIiwgImluZGV4X3R5cGUiOiAic3RyIiwgImRhdGEiOiBbWyJubyIsIDEuMF1dfV1dfV0sIFsibG93IiwgeyJ0eXBlIjogIm1hcCIsICJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sidDAwMDQiLCB7InR5cGUiOiAibWFwIiwgImluZGV4X3R5cGUiOiAic3RyIiwgImRhdGEiOiBbWyJubyIsIDMuMF1dfV1dfV0sIFsicmVhbCIsIHsidHlwZSI6ICJtYXAiLCAiaW5kZXhfdHlwZSI6ICJzdHIiLCAiZGF0YSI6IFtbInQwMDA0IiwgeyJ0eXBlIjogIm1hcCIsICJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sieWVzIiwgMC4wXV19XV19XV19XV19",
+        "map"
+      ],
+      "realized"
     ],
     [
       "solve",
@@ -7306,15 +7336,33 @@
       "Model, solve and time structure"
     ],
     [
+      "realized",
+      "Realized branch real + branch-varying wind profile"
+    ],
+    [
       "stoch",
-      "include_stochastics + branch-varying wind + mid-horizon reveal (none invest path)"
+      "include_stochastics + forecasts-only mid-horizon reveal (none invest path), plain wind profile"
+    ],
+    [
+      "stoch_profile",
+      "Branch-varying wind profile without a realized branch (an error before the reveal)"
     ]
   ],
   "scenarios": [
     [
       "midhorizon",
       false,
-      "Mid-horizon reveal at p2040, genuine n_real=0 {high,low} fan, stochastic_invest_method=none (R-NAME witness)"
+      "Mid-horizon reveal at p2040, genuine n_real=0 {high,low} fan, stochastic_invest_method=none, plain wind profile"
+    ],
+    [
+      "midhorizon_realized",
+      false,
+      "midhorizon with a realized branch real and a stochastic wind profile"
+    ],
+    [
+      "midhorizon_stoch_profile",
+      false,
+      "midhorizon with a stochastic wind profile and no realized branch (configuration error)"
     ]
   ],
   "scenario_alternatives": [
@@ -7331,6 +7379,46 @@
     [
       "midhorizon",
       "stoch",
+      null
+    ],
+    [
+      "midhorizon_realized",
+      "init",
+      "base"
+    ],
+    [
+      "midhorizon_realized",
+      "base",
+      "stoch"
+    ],
+    [
+      "midhorizon_realized",
+      "stoch",
+      "realized"
+    ],
+    [
+      "midhorizon_realized",
+      "realized",
+      null
+    ],
+    [
+      "midhorizon_stoch_profile",
+      "init",
+      "base"
+    ],
+    [
+      "midhorizon_stoch_profile",
+      "base",
+      "stoch"
+    ],
+    [
+      "midhorizon_stoch_profile",
+      "stoch",
+      "stoch_profile"
+    ],
+    [
+      "midhorizon_stoch_profile",
+      "stoch_profile",
       null
     ]
   ]

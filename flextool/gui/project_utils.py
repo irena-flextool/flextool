@@ -66,6 +66,10 @@ def create_project(name: str) -> Path:
     # Seed the per-project plot color template from the bundled default so
     # the project owns an editable copy.
     seed_plot_settings(project_path)
+    # This computer created the project: option files put in its solver_config/ later are trusted (item 240 B3;
+    # only when nothing received is there, which a folder of that name left behind could hold).
+    from flextool._solver_config_source import note_project_set_up_here
+    note_project_set_up_here(project_path)
 
     return project_path
 
@@ -105,7 +109,20 @@ def rename_project(old_name: str, new_name: str) -> Path:
         raise FileExistsError(f"Project '{new_name}' already exists.")
 
     old_resolved = old_path.resolve()
+    from flextool import _local_solver_settings as local
+    try:
+        listed = local.trust_status(old_path).entry is not None
+    except local.LocalSolverSettingsError:
+        listed = False
     old_path.rename(new_path)
+    if listed:
+        # The project keeps this computer's trust of its solver option files under its new name (item 240 B3),
+        # with the entry's folder identity and file hashes (a rename trusts nothing the old entry did not); its
+        # old path is taken off the list, so a folder made there later does not inherit it.
+        try:
+            local.move_trusted_workspace(old_resolved, new_path)
+        except local.LocalSolverSettingsError:
+            pass
     _run_project_hook(_assistant_project_renamed, old_resolved, new_path.resolve())
     return new_path
 

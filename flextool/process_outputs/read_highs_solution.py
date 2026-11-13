@@ -196,7 +196,11 @@ class VariableSpec(NamedTuple):
     # rows (see the registry note on those specs).  ``"invest_branches"``
     # is ``"invest"`` plus the forecast branch periods of the realized-
     # invest periods (``vq_capacity_margin``: one slack per forecast branch
-    # period of a fan, which no dispatch axis holds).  Ignored for
+    # period of a fan, which no dispatch axis holds).  ``"invest_dual"``
+    # (the investment duals, item 266) is ``"invest"`` on a deterministic
+    # solve and ``"dispatch"`` on a stochastic fan solve: a fan's invest
+    # columns sit on its forecast branch periods (recourse), which the
+    # fan's period labels would replace by 0 rows.  Ignored for
     # ``has_time`` and ``has_period=False`` variables.
     period_source: str = "dispatch"
 
@@ -255,6 +259,10 @@ def _invest_dual(
     # bracketed entity columns of the two sides are disjoint (process
     # names vs. node names), so ``df.add(fill_value=0.0)`` cleanly
     # unions them into one wide frame at the output boundary.
+    # A per-period cap / floor holds the investment of its period, so its dual is read on the investment axis
+    # as ``v_invest`` is (item 266): the solve that realizes a period's investment writes its row, also for a
+    # period it does not dispatch, and a dispatch-only solve writes none.  ``drop_levels`` then keeps the
+    # realizing solve's row (``_V_REALIZING_SOLVE``).
     return VariableSpec(
         name=mps_name,
         col_names=(col,),
@@ -264,6 +272,7 @@ def _invest_dual(
         value_scale=_INV_SCALE_THE_OBJECTIVE,
         output_name=f"v_dual_{output_suffix}",
         derived_from=derived_from,
+        period_source="invest_dual",
     )
 
 
@@ -855,6 +864,10 @@ def extract_variable(
         canonical_d = _load_canonical_d_order(
             solve_name, flex_data=flex_data,
         )
+        if period_source == "invest_dual":
+            # The investment duals: the investment axis, except on a stochastic fan solve, which keeps the
+            # dispatch axis (its forecast branch reduced costs; no 0 rows at the fan's period labels).
+            period_source = "dispatch" if _fan_labels(flex_data) else "invest"
         if period_source in ("invest", "invest_branches"):
             # Investment-axis variables (``v_invest`` / ``v_divest``): a
             # roll that realizes DISPATCH but NO investment (the dispatch
@@ -882,12 +895,18 @@ def extract_variable(
             labels = _fan_labels(flex_data) if realized_invest and period_source == "invest" else set()
             if no_invest:
                 canonical_d = []
-            elif labels:
-                # A period label of a stochastic fan has no dispatch, so it is not on the dispatch axis, but it
-                # is where the solve realizes its here-and-now investment (stochastic_invest_method = none; no
-                # column under recourse, so a 0 row): add the realized-invest labels.
+            elif labels or (realized_invest and canonical_d is not None):
+                # Every realized-invest period gets its row, also one that is not on the solve's dispatch axis.
+                # A stochastic fan solve: a period label of the fan has no dispatch but is where the solve
+                # realizes its here-and-now investment (stochastic_invest_method = none; no column under
+                # recourse, so a 0 row); with a realized branch the realization dispatch solve holds the
+                # dispatch of every period, so the stochastic solve has no dispatch axis and its pre-reveal
+                # (real-named) investment period had no row (item 258).  Any other solve: its realized-invest
+                # periods need not all be realized-dispatch periods (realized_invest_periods not within
+                # realized_periods); those had no row either.  A non-fan solve with NO dispatch axis keeps the
+                # solution-order fallback (None) -- the invest-only steps of a cascade rely on it.
                 base = list(canonical_d or [])
-                canonical_d = base + [p for p in realized_invest if p in labels and p not in base]
+                canonical_d = base + [p for p in realized_invest if p not in base]
             if period_source == "invest_branches" and realized_invest:
                 # The forecast branch periods b ≠ d of the realized-invest periods d (period_branch_full): a
                 # fan's planning slack has one value per forecast, and no dispatch axis holds them.  The output
@@ -1284,6 +1303,7 @@ def write_v_obj(
     output_dir: Path | str,
     flex_data: "FlexData | None" = None,
     scale_the_objective: float | None = None,
+    obj_offset: float = 0.0,
 ) -> Path:
     """Write ``v_obj__{solve}.parquet`` — objective value for this solve.
 
@@ -1291,7 +1311,11 @@ def write_v_obj(
     ``getObjectiveValue()`` returns the raw (scaled) value; we undo the
     scaling.  ``scale_the_objective`` is per-solve, cascade-threaded
     (item 163: no work-folder CSV fallback); ``None``/non-positive falls
-    back to the legacy ``1e-6`` scalar.
+    back to the legacy ``1e-6`` scalar.  ``obj_offset`` is the objective
+    constant (``Problem.add_obj_constant``, scaled) that the handle's
+    objective leaves out (``Solution.obj_offset``: polar-high >= 3.14.0
+    keeps it out of HiGHS, and an MPS file never carries it); it is added
+    back.  The autoscale-stashed objective already includes it.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1307,7 +1331,7 @@ def write_v_obj(
     # post-Layer-2-substitution / post-user_bound_scale-unscale value.
     raw_obj = getattr(h, "_flextool_unscaled_objective", None)
     if raw_obj is None:
-        raw_obj = float(h.getObjectiveValue())
+        raw_obj = float(h.getObjectiveValue()) + float(obj_offset)
     obj = float(raw_obj) * inv_scale
     df = pd.DataFrame(
         {"objective": [obj]},
@@ -1366,12 +1390,17 @@ def write_v_dual_invest_by_class(
     inv_scale = _resolve_inv_scale_the_objective(
         scale_the_objective=scale_the_objective,
     )
+    # The investment axis, as ``v_invest`` itself (item 266): the realizing solve's reduced cost of a period it
+    # does not dispatch gets its row, and a dispatch-only solve writes none.  A stochastic fan solve keeps the
+    # dispatch axis (``invest_dual``): its reduced costs are on the forecast branch periods.
     duals = extract_variable(
         h, "v_invest", ("entity",),
         solve_name=solve_name, has_time=False, source="col_dual",
         value_scale=inv_scale,
         realized_periods_csv=realized_periods_csv,
         flex_data=flex_data,
+        provider=provider,
+        period_source="invest_dual",
     )
 
     classes = {
@@ -1832,12 +1861,15 @@ def write_all_variables(
     flex_data: "FlexData | None" = None,
     scale_the_objective: float | None = None,
     provider: "object | None" = None,
+    obj_offset: float = 0.0,
 ) -> list[Path]:
     """Iterate :data:`VARIABLE_SPECS` (or a custom list) and write parquets.
 
     Returns the list of paths written, one per variable.  Each variable
     is independent — failure on one is logged and does not abort the
     remaining ones, so one bad variable can't lose the whole run.
+    ``obj_offset``: the objective constant ``h.getObjectiveValue()`` leaves
+    out (``Solution.obj_offset``; see :func:`write_v_obj`).
     """
     specs = specs if specs is not None else VARIABLE_SPECS
     written: list[Path] = []
@@ -1901,6 +1933,7 @@ def write_all_variables(
             h, solve_name=solve_name, output_dir=output_dir,
             flex_data=flex_data,
             scale_the_objective=scale_the_objective,
+            obj_offset=obj_offset,
         )),
         ("v_dual_invest_{unit,connection,node}", lambda: write_v_dual_invest_by_class(
             h, solve_name=solve_name, output_dir=output_dir,

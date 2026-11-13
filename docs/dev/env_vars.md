@@ -24,7 +24,7 @@ For polar-high's own variables (`POLAR_HIGH_WRITE_MPS_PROFILE`, ...), see the
 
 | Variable | Default | Set to | What it does |
 |---|---|---|---|
-| `FLEXTOOL_ACCEPT_NEAR_OPTIMAL` | on | `0` | `0` rejects every HiGHS status other than optimal (the old hard failure), e.g. for strict test runs. On by default: an interior-point solve stopped without crossover (status Unknown) is accepted when the checks below pass. |
+| `FLEXTOOL_ACCEPT_NEAR_OPTIMAL` | on | `0` | `0` rejects every solver status other than optimal (the old hard failure), a MIP stopped by a limit included, e.g. for strict test runs. On by default: an interior-point solve stopped without crossover (status Unknown) is accepted when the checks below pass. |
 | `FLEXTOOL_ACCEPT_PD_GAP` | `1e-2` | positive float | Largest relative primal-dual gap of an accepted near-optimal solve. |
 | `FLEXTOOL_ACCEPT_PRIMAL_REL` | `max(1e-6, 10 × primal_feasibility_tolerance)` | positive float | Largest relative primal infeasibility of an accepted near-optimal solve. Unset, it follows the tolerance the solve ran with; a set value replaces that derived ceiling (tighter or looser). |
 | `FLEXTOOL_ACCEPT_PRIMAL_ABS_MARGIN` | `10` | positive float | Absolute primal infeasibility allowed, as a multiple of HiGHS' primal feasibility tolerance (HiGHS checks feasibility on the scaled LP, so the unscaled slack can exceed it). |

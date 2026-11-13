@@ -23,10 +23,10 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import quote
 
 from flextool.assistant.inputs._schema import bracket, ranks_in_words, shipped_schema
 from flextool.assistant.inputs._units import parameter_unit
+from flextool.sqlite_url import read_only_sqlite_url_string, sqlite_file_path
 
 PAGE_TITLE = "Parameter catalogue"
 
@@ -350,7 +350,7 @@ class DatabaseUsage:
 
 def _read_only_url(path: Path) -> str:
     """The SQLite URL that opens *path* read-only (an SQLite URI: the file is never created or written)."""
-    return f"sqlite:///file:{quote(path.as_posix(), safe='/:')}?mode=ro&uri=true"
+    return read_only_sqlite_url_string(path)
 
 
 def input_db_url(value: str) -> str:
@@ -360,15 +360,18 @@ def input_db_url(value: str) -> str:
     if "://" not in value:
         path = Path(value).expanduser().resolve()
     elif value.startswith("sqlite:"):
-        from sqlalchemy.engine.url import make_url
-
-        try:
-            database = make_url(value).database
-        except Exception:  # noqa: BLE001 — sqlalchemy's ArgumentError for a malformed URL
-            raise CatalogueInputError(f"cannot parse the database URL {value!r}") from None
-        if not database or database.startswith("file:"):
+        # The file of the URL without its query, also of a '#' folder that a Toolbox filter query was put in
+        # front of, and of a read-only ``file:`` URI (SQLAlchemy's URL parser cuts the path at '?' / '#').
+        # An in-memory database (``sqlite://``, ``sqlite:///``) and a ``file:`` URL that SQLite does not read as a
+        # URI (no ``uri=true``) are used as they are.
+        if value[len("sqlite:"):].partition("?")[0] in ("//", "///"):
             return value
-        path = Path(database).expanduser().resolve()
+        file = sqlite_file_path(value) if value.startswith("sqlite://") else None
+        if file is None:
+            raise CatalogueInputError(f"cannot parse the database URL {value!r}")
+        if file.as_posix().startswith("file:"):
+            return value
+        path = file.expanduser().resolve()
     else:
         return value
     if not path.is_file():
@@ -380,12 +383,14 @@ def database_usage(url: str, scenario: str | None = None) -> DatabaseUsage:
     """Which parameters the database at *url* (a file path or a URL, see :func:`input_db_url`) gives a value, how
     many entities and in which alternatives (the alternatives of *scenario* only, when given).  Reads the keys of
     the parameter values, never a value; an SQLite file is opened read-only (no schema upgrade, no migration)."""
-    from spinedb_api import DatabaseMapping, from_database
+    from spinedb_api import from_database
+
+    from flextool.update_flextool.db_handle import database_mapping
 
     shown = url
     url = input_db_url(url)
     try:
-        db = DatabaseMapping(url, create=False, upgrade=False)
+        db = database_mapping(url, create=False, upgrade=False)
     except Exception as exc:  # noqa: BLE001 — SpineDBAPIError, or SQLAlchemy errors of a damaged file
         text = str(exc).strip().splitlines()
         raise CatalogueInputError(f"cannot open {shown}: {text[0] if text else type(exc).__name__}") from None

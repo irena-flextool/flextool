@@ -35,6 +35,7 @@ from flextool.engine.preprocess.emit._period_params import (
     derive_pdtNodeInflow,
     derive_pdtNodeInflow_vectorized,
 )
+from tests.engine._fan_fold_fixture import FAN_CASES
 
 _KEY_COLS = ["node", "period", "time"]
 
@@ -350,6 +351,10 @@ def test_vectorized_pdtNodeInflow_synthetic_branches(tmp_path):
     put("solve_data", "first_timesteps", pl.DataFrame({
         "period": ["d1", "d1", "dchild"],
         "time_start": ["s1", "s2", "s1"]}))
+    # Every period is a fan period whose fan start is its own first step (its tiers stay [own]); without
+    # these rows each period would lie before the reveal, where only the solve's start is read (item 250).
+    put("solve_data", "branch_time_start", pl.DataFrame({
+        "period": ["d1", "dchild"], "step": ["s1", "s1"], "read_first": ["own", "own"]}))
     # solve_branch__time_branch: (period, branch) → tb_for_d.  d1 has b1;
     # dchild has NONE (forces stochN's stoch fall-through); parent pA has b1.
     put("solve_data", "solve_branch__time_branch", pl.DataFrame({
@@ -436,11 +441,12 @@ def test_vectorized_pdtNodeInflow_new_step_base_steps(tmp_path):
     assert _assert_parity(df_legacy, df_vec, "new-step-base-steps") == "A"
 
 
-@pytest.mark.parametrize("case", ["single", "rolling_lookahead", "rolling_uncovered"])
+@pytest.mark.parametrize("case", FAN_CASES)
 def test_vectorized_pdtNodeInflow_fan_start_fallback(case, tmp_path):
-    """Item 228: a non-empty ``fan_for_d`` (``branch_time_start``) -- each fold cell reads the forecast at its
-    period's own first step, else at the fan start (a roll's look-ahead period: the fan start only; a cell it
-    does not cover that a later forecast does is an input error in both twins) -- byte-identical in both twins,
+    """Items 228 / 255: a non-empty ``fan_for_d`` (``branch_time_start``) -- each fold cell reads the forecast at
+    the fan start (``read_first`` = ``fan``, as every solve writes it; a cell it does not cover that a later
+    forecast does is an input error in both twins), or at its period's own first step first in a frame that says
+    ``own`` -- byte-identical in both twins,
     values hand-derived in
     :mod:`tests.engine._fan_fold_fixture` (a cell without a fold value takes branch 3: 0.0 here)."""
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
@@ -460,7 +466,7 @@ def test_vectorized_pdtNodeInflow_fan_start_fallback(case, tmp_path):
     put("input", "group__node", pl.DataFrame({"group": ["g"], "node": ["X"]}))
 
     inp, sdd = tmp_path / "input", tmp_path / "solve_data"
-    if case == "rolling_uncovered":
+    if case == "uncovered":
         for derive in (derive_pdtNodeInflow, derive_pdtNodeInflow_vectorized):
             with pytest.raises(FlexToolConfigError, match=uncovered_error("node 'Y'", "inflow")):
                 derive(inp, sdd, provider=provider)

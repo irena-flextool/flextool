@@ -41,6 +41,7 @@ import numpy as np
 import yaml
 
 from flextool.scenario_comparison.plot_settings_seed import dump_plot_settings
+from flextool.sqlite_url import sqlite_url_string
 
 logger = logging.getLogger(__name__)
 
@@ -1757,7 +1758,7 @@ class PlotSettingsPicker(tk.Toplevel):
                 continue
             for path in sorted(db_dir.glob("*.sqlite")):
                 if path.is_file():
-                    urls.append(f"sqlite:///{path}")
+                    urls.append(sqlite_url_string(path))
         return urls
 
     def _discover_scenario_names(self) -> list[str]:

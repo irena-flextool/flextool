@@ -32,9 +32,9 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 from flextool.assistant.errors import ToolError
+from flextool.sqlite_url import read_only_uri_of_posix
 
 FETCHED = (
     "alternative", "scenario", "scenario_alternative", "entity_class", "entity", "entity_alternative",
@@ -56,16 +56,8 @@ def db_uri(path: Path) -> str:
 
 
 def uri_of_posix(posix: str) -> str:
-    """``sqlite:///file:/a/b%20c.sqlite?mode=ro&uri=true`` of an absolute POSIX-style path; a Windows drive path
-    ``C:/a/b.sqlite`` gets a leading ``/`` (``file:/C:/a/b.sqlite``), the form SQLite reads as an absolute file
-    URI there.  A UNC path ``//server/share/x.sqlite`` gets ``//`` more (``file:////server/share/x.sqlite``): an
-    empty authority (SQLite refuses any other) and the UNC path as the path, which SQLite's Windows VFS opens as
-    ``\\\\server\\share\\x.sqlite``.  Every part is percent-encoded, the server and share names too."""
-    if posix.startswith("//"):
-        posix = "//" + posix
-    elif not posix.startswith("/"):
-        posix = "/" + posix
-    return "sqlite:///file:" + quote(posix, safe="/:") + "?mode=ro&uri=true"
+    """:func:`flextool.sqlite_url.read_only_uri_of_posix`: ``sqlite:///file:/a/b%20c.sqlite?mode=ro&uri=true``."""
+    return read_only_uri_of_posix(posix)
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,13 +405,18 @@ def _release_abandoned_connections() -> None:
 def closed_mapping(path: Path) -> tuple[Any, Any, dict[str, str]]:
     """Open *path* read-only, read ``model.version`` and the behaviour-change markers, fetch :data:`FETCHED` and
     close the mapping.  Returns ``(closed mapping, raw version, markers)``; raises :class:`ToolError`."""
-    from spinedb_api import DatabaseMapping, from_database
+    from spinedb_api import from_database
     from spinedb_api.exception import SpineDBAPIError, SpineDBVersionError
+
+    from flextool.update_flextool.db_handle import database_mapping
 
     name = Path(path).name
     refusal: ToolError | None = None
     try:
-        db = DatabaseMapping(db_uri(path), create=False, upgrade=False, sqlite_timeout=SQLITE_TIMEOUT_S)
+        # Opened as a URL object (spinedb-api 0.36.8 percent-decodes a URL string once more: ``%23`` → ``#``),
+        # with any Spine filter query applied as for a string.
+        db = database_mapping(db_uri(path), create=False, upgrade=False,
+                              sqlite_timeout=SQLITE_TIMEOUT_S)
     except SpineDBVersionError:
         refusal = ToolError("old_spine_format")
     except SpineDBAPIError as exc:

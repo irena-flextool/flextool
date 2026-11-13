@@ -157,6 +157,34 @@ def configured_realization_solve(solve_cfg: Any, parent: str) -> str | None:
     return follower
 
 
+def lookahead_in_configured_realization(solve_cfg: Any, realization_solve: str, parent: str) -> str | None:
+    """The warning for an author-declared *realization_solve* of the single solve *parent* that holds a period
+    outside *parent*'s first to last realized period; ``None`` when it holds none (or *parent* rolls: each
+    realization roll is trimmed to its jump).
+
+    An engine-added realization solve of a single solve dispatches the parent's first to last realized period only
+    (item 255).  An
+    author-declared one keeps the periods its author gave it, so a period beyond the parent's realized window is
+    dispatched with the realized data: information the parent did not have when it decided.
+    """
+    if (getattr(solve_cfg, "solve_modes", None) or {}).get(parent, "single_solve") == "rolling_window":
+        return None
+    # A period the parent does not realize between two it realizes is inside the committed span (an engine-added
+    # realization solve dispatches it too): no warning for it.
+    realized = set(_realized_period_names(solve_cfg, parent))
+    order = list(dict.fromkeys(_period_order(solve_cfg, parent)))
+    positions = [i for i, p in enumerate(order) if p in realized]
+    span = set(order[positions[0]:positions[-1] + 1]) if positions else set()
+    extra = [p for p in dict.fromkeys(_period_order(solve_cfg, realization_solve)) if p not in realized | span]
+    if not extra:
+        return None
+    return (f"Realization solve '{realization_solve}' of solve '{parent}' also dispatches "
+            f"{', '.join(repr(p) for p in extra)}, which '{parent}' does not realize: it dispatches "
+            f"{'that period' if len(extra) == 1 else 'those periods'} with the realized data, information "
+            f"'{parent}' did not have when it decided.  Leave {'it' if len(extra) == 1 else 'them'} out of "
+            f"'{realization_solve}' unless this is intended.")
+
+
 def warn_recourse_designation(solve: str) -> None:
     """Warn that a ``realized: yes`` designation of a recourse-investment solve gets no realization solve.
 

@@ -54,8 +54,10 @@ def test_build_launch_argv_uses_db_editor_module():
     argv = mod._build_launch_argv("sqlite:///x/results.sqlite")
     assert argv == [
         sys.executable,
+        "-P",
         "-m",
         "spinetoolbox.spine_db_editor.main",
+        "--",
         "sqlite:///x/results.sqlite",
     ]
 
@@ -75,8 +77,10 @@ def test_launch_db_editor_builds_detached_argv():
     assert result == "PROC"
     assert captured["argv"] == [
         sys.executable,
+        "-P",
         "-m",
         "spinetoolbox.spine_db_editor.main",
+        "--",
         "sqlite:///p/results.sqlite",
     ]
     # Detached: must request a new session so the GUI outlives the Tool.

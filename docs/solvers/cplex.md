@@ -79,8 +79,14 @@ discoverable.
 Write the parameter names of the interactive optimizer's `set` command, in
 full and with spaces (`mip tolerances mipgap`). A dotted name
 (`mip.tolerances.mipgap`, the Python-API spelling) is read as the spaced
-one; an abbreviation (`mip tol mipg`) is passed as written and does not
-replace the full name from another layer.
+one. An abbreviation (`mip tol mipg`) is refused from `solver_arguments`,
+with the full name in the message, also where your computer allows names
+that are not in FlexTool's list; in `cplex.opt` it gives a warning, is
+passed as written and does not replace the full name from another layer.
+A group name with a value (`mip tolerances 0.01`, `simplex 1`) is refused
+from every source, `cplex.opt` included: the interactive optimizer would ask
+which parameter of the group is meant and read the next line as the answer. See
+[What the database may set](index.md#what-the-database-may-set).
 
 ```text
 solver_arguments:
@@ -108,9 +114,20 @@ The error messages below are what FlexTool surfaces as `FlexToolUserError`.
   reported in the solver output; FlexTool does not check CPLEX's names. The
   names are in the IBM CPLEX parameters reference
   (<https://www.ibm.com/docs/en/icos/22.1.0?topic=cplex-list-parameters>).
-- **Time limit reached.** A MIP stopped at its time limit with a solution is
-  kept with a warning; an LP, or a MIP without a solution, stops the run. See
-  [Time limit](index.md#time-limit).
+- **Time or other limit reached.** A MIP stopped at its time, node or
+  solution limit with a solution is kept with a warning; an LP, or a MIP
+  without a solution, stops the run. See
+  [Time and other limits](index.md#time-and-other-limits).
+- **Objective values.** Cutoffs, objective stops and limits, and absolute gaps (`mip tolerances absmipgap`, ...)
+  are written in unscaled currency; FlexTool scales them to the objective CPLEX sees (see
+  [Time and other limits](index.md#time-and-other-limits)).
+
+## Licence holders and other programs in front of CPLEX
+
+FlexTool 3 ran a solve's `solver_precommand` in front of CPLEX. FlexTool 4 never runs a command stored in a
+database; set the program on your computer as the CPLEX solver wrapper instead (`FLEXTOOL_SOLVER_WRAPPER_CPLEX`, or
+Solver options → On this computer in the FlexTool window). See
+[FlexTool 3 precommand users](index.md#flextool-3-precommand-users).
 
 ## How to set it in FlexTool
 
@@ -120,8 +137,8 @@ On the `solve` entity:
 solve_advanced.solver         = "cplex"
 solve_advanced.solver_mip_gap = 0.01
 solve_advanced.solver_arguments:
-  lpmethod   = 4
-  preind     = 1
+  lpmethod                = 4
+  preprocessing presolve  = 1
 ```
 ```bash
 flextool <input_db_url> --solver-time-limit 60 --solver-mip-gap 0.001
@@ -130,8 +147,9 @@ flextool <input_db_url> --solver-time-limit 60 --solver-mip-gap 0.001
 `--solver-time-limit` and `--solver-mip-gap` reach CPLEX as `timelimit 60` and
 `mip tolerances mipgap 0.001`, over the solve's `solver_mip_gap`, its `solver_arguments` and
 `cplex.opt` (precedence in [Solver selection](index.md)). Parameter names
-match without regard to case (and a dot is read as a space). The thread count comes from `threads` in
-`cplex.opt`; `--threads` and `--highs-threads` do not change it. The run
+match without regard to case (and a dot is read as a space). `--threads` (Threads per run in the FlexTool window) sets `threads`;
+without it, `threads` in `cplex.opt` or `solver_arguments` applies. `--highs-threads`
+does not change it. The run
 prints what CPLEX receives in a `Solver args (cplex):` line before each
 solve.
 

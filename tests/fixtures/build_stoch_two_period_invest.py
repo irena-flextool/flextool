@@ -134,14 +134,16 @@ def build() -> dict:
     )
     # Branch-varying wind profile (stoch alternative): wind supply
     # high 40/40 MW, low 20/10 MW → peaker residual high 60/90, low 80/120.
+    # One forecast per branch, made at the fan's analysis time t0001, covering both periods: the solve
+    # decides at t0001 and reads no forecast made later (item 255).
     profile_stoch = _map([
         ("high", _nested([
-            ("t0001", _nested([(t, 0.40) for t in P1_STEPS])),
-            ("t0004", _nested([(t, 0.40) for t in P2_STEPS])),
+            ("t0001", _nested([(t, 0.40) for t in P1_STEPS]
+                              + [(t, 0.40) for t in P2_STEPS])),
         ])),
         ("low", _nested([
-            ("t0001", _nested([(t, 0.20) for t in P1_STEPS])),
-            ("t0004", _nested([(t, 0.10) for t in P2_STEPS])),
+            ("t0001", _nested([(t, 0.20) for t in P1_STEPS]
+                              + [(t, 0.10) for t in P2_STEPS])),
         ])),
     ])
     # Deterministic demand: 100 MW at p2035 steps, 130 MW at p2040 steps.

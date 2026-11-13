@@ -8,7 +8,7 @@ The result tables are stored as **parquet** (the canonical store) and a configur
 | --- | --- | --- | --- |
 | `output_parquet/<scenario>/*.parquet` | parquet | always (canonical) | one file per result table; read by the GUI, the scenario-comparison tools, and `read_parquet_dir=True` re-runs |
 | `output_csv/<scenario>/*.csv` | CSV | when `output-csv` is enabled | one CSV per parquet, plus `summary_solve.csv` (diagnostic overview), `units.csv` and `datapackage.json` (see [Units in the files](#units-in-the-files)) |
-| `output_excel/output_<scenario>.xlsx` | Excel | when `output-excel` is enabled | one workbook per scenario: the `Units` and `_output_metadata` sheets, then the result sheets in alphabetical order |
+| `output_excel/output_<scenario>.xlsx` | Excel | when `output-excel` is enabled | one workbook per result folder (in the FlexTool window `output_<scenario>_<source number>.xlsx`): the `Units` and `_output_metadata` sheets, then the result sheets in alphabetical order |
 | `output_plots/<scenario>/*.png` (or svg/pdf) | image | when `output-plot` is enabled | driven by the bundled `flextool/schemas/default_plots.yaml` |
 | `<output-location>/results.sqlite` (or `--results-db-url`) | SpineDB | when `output-spinedb` is enabled (`--write-methods spinedb`) | the processed result tables written into a SpineDB using the FlexTool results schema (`flextool/schemas/spinedb_results_schema.json`); one Spine **alternative** per run (named after the scenario) so multiple runs coexist in one file. Time series land as nested Spine `Map` values on the model entity classes (node / unit / connection / group / model). |
 
@@ -19,6 +19,8 @@ In the per-period tables (`…__d`) the `solve` column names the last complete s
 Excel limits a sheet name to 31 characters. The longer table names get short sheet names (for example `unit_curtailment__outputNode__dt` is the sheet `unit_VRE_curtailment__dt` and `process__reserve__upDown__node__dt` is `process__reserve__node__dt`; the full list is `SHEET_NAMES` in `flextool/process_outputs/_sheet_names.py`); a longer name of your own is shortened in front of its `__d` / `__dt` suffix. The CSV and parquet file names keep the table names.
 
 Every result table, with its parquet and CSV file names, its index and column levels, the unit of each column and its name in the results database, is listed in the [Results catalogue](results_catalogue.md), generated from the code. Below, a result is named by its results-database parameter (`class` entity `parameter`) where it is written to the results database, else by its table name.
+
+The Excel workbooks hold names (entities, scenarios, alternatives) as text: a name that starts with `=` stays that text and never becomes a formula or a link. The CSV files hold the names exactly as they are, for the programs that read them. A spreadsheet program that opens a CSV file can take a name that starts with `=`, `+`, `-` or `@` for a formula; open the CSV files of a model from someone else as data (an import that sets the columns to text), or use the Excel workbook.
 
 The CSV / Excel / plot files are **derived** from the parquets, so deleting or regenerating them is safe. `summary_solve.csv` is a diagnostic file aimed at a quick overview of a solve — it lists objective decomposition, period weighting, CO2 total, and any non-zero slack uses.
 
@@ -160,12 +162,14 @@ as one solve over the same periods with the same decisions would report:
   solve reports no operating or penalty costs; the fixed cost of existing capacity is reported in the fan's
   period labels.
 
-The printed objective of each solve, the cumulative CO2 cap price and the investment duals (`invest_marginal`,
-the value of one more MW of capacity) stay discounted from the start of that solve, so `cost_discounted_total` is
-not the sum of the solves' objectives and the investment duals of later solves of a chain are on a later discount
-base. The CO2 price of a period is its dual divided by the discount factor of the solve that realizes the period.
-A CSV-dump reload has no run-level cost data: its reported costs are discounted from the start of each solve and
-its annualized investment, retirement and fixed costs of new and retired capacity are 0 (a warning is printed).
+Every solve also discounts its own objective from the start of the run (as one solve over the same periods
+does), so the printed objective of each solve, the cumulative CO2 cap price and the investment duals
+(`invest_marginal`, the value of one more MW of capacity) of every solve are on the run's discount base. The
+printed objectives still cover each solve's own horizon (its look-ahead periods too), so `cost_discounted_total` is
+not the sum of the solves' objectives. The CO2 price of a period is its dual divided by the discount factor of the
+solve that realizes the period. A CSV-dump reload has no run-level cost data: its reported costs are discounted
+from the start of the run with the solve's own factors over the solve's own periods, and its annualized
+investment, retirement and fixed costs of new and retired capacity are 0 (a warning is printed).
 
 ## Cost by entity
 
@@ -342,9 +346,26 @@ A step whose solve left reserves out has empty cells in these tables. A reserve 
 
 ## Ramps
 
-- `unit__node` entity `ramp_t` parameter — [MW] ramp of the unit input or output flow at each timestep: the change from the previous step (one table per direction: `unit_ramp__inputNode__dt`, `unit_ramp__outputNode__dt`). The ramp at a step with no previous step in the solve (the first step, the first step after a gap in the timeline, the first step of a representative period) is empty; at the first step of a rolling window it is measured from the previous window's last step. `ramp_t` is in MW per time step, while the limits `ramp_speed_up` / `ramp_speed_down` are a share of capacity per minute: a change may be at most `ramp_speed_up` × 60 × (average duration of the two steps in hours) × capacity (see [Units](reference/units.md)), so on hourly steps a `ramp_t` of 30 MW on a 100 MW unit is a speed of 30 / 100 / 60 = 0.005.
+A ramp is how much a unit's flow changed from the previous time step: the flow at this step minus the flow at
+the previous step. It is positive when the flow rose and negative when it fell. FlexTool writes it for every input
+and output of every unit, whether or not the unit has ramp limits.
 
-The "ramp room" envelope on the `node` entity (additional headroom for upward / downward ramps from non-VRE units, VRE units, and connections) is currently not emitted by the new pipeline — it is on the roadmap for re-exposure once the corresponding post-processing is ported.
+| Table (results database: `unit__node` `ramp_t`) | Unit | Sign | Empty when |
+|---|---|---|---|
+| `unit_ramp__outputNode__dt`: each unit output | MW per time step (or the node's unit) | + the output rose, − it fell | the step has no previous step: the first step of a solve, the step after a gap in the timeline, the first step of a representative period, or a period that does not continue the previous one |
+| `unit_ramp__inputNode__dt`: each unit input | MW per time step (or the node's unit) | + the unit took more from the node, − less | as above |
+
+In a rolling solve, the first step of a window is compared with the last realized step of the previous window. No
+column is a sum of the others. Earlier versions also had a node-level "ramp room" table, `node` `ramp_t`, with
+stacked headroom levels. It is no longer produced.
+
+**From MW per step to the ramp speed.** `ramp_speed_up` and `ramp_speed_down` are a share of capacity per minute
+(see [Units](reference/units.md)). To compare, divide the ramp by the capacity of that input or output and by the
+minutes between the two step centres (60 × the average of the two step durations in hours). Example: a 500 MW
+unit on hourly steps has `ramp_t` = −30 MW. That is 30 / 500 / (60 × 1) = 0.001, so it ramped down at 0.1 % of
+its capacity per minute, or 30 / 60 = 0.5 MW per minute. With 3-hour steps the same −30 MW is
+30 / 500 / 180 ≈ 0.00033. The ramp limit also counts the reserve the unit holds in that direction, so a unit can be
+at its limit with a `ramp_t` smaller than its ramp speed allows.
 
 ## DC power flow
 

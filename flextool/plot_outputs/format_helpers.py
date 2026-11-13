@@ -12,6 +12,7 @@ from matplotlib.ticker import Formatter, FuncFormatter
 
 from flextool.lean_parquet import read_lean_parquet
 from flextool.process_outputs._timeline_breaks import BREAK_LEVELS as _BREAK_LEVELS, empty_breaks
+from flextool.safe_names import safe_file_component
 
 
 # ── superscript digits for nice exponent display (single source) ──
@@ -212,10 +213,13 @@ def generate_split_filename(
     - With both: base_name_member_01.extension, base_name_member_02.extension, ...
 
     File index uses leading zeros for numbers < 10 (e.g., _01, _02, ..., _09, _10).
+    The name parts come from plot settings and the input data: a ``/``, ``\\``, ``:`` or control character in
+    them becomes ``_`` (:func:`flextool.safe_names.safe_file_component`; ``:`` only on Windows), so the file stays
+    in *plot_dir*.
     """
-    name = base_name
+    name = safe_file_component(base_name)
     if file_member is not None:
-        name = f'{name}_{file_member}'
+        name = f'{name}_{safe_file_component(file_member)}'
     if not needs_split:
         return f'{plot_dir}/{name}.{extension}'
     else:

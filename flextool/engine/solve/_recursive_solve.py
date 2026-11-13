@@ -21,7 +21,7 @@ Architecture notes
     renamed solves).
   - ``first_of_complete_solve`` / ``last_of_solve`` track per-complete-solve
     boundary names for state initial / terminal constraints downstream.
-  - ``duplicate_solve(...)`` is invoked for the single-matching-period
+  - ``derive_solve(...)`` is invoked for the single-matching-period
     rename path which fans an input solve into ``solve + "_" + period``.
 
 * Lazy import of :class:`StochasticSolver`: ``recursive_solve`` only
@@ -42,11 +42,11 @@ Behavioural quirks
 
 * **Single-matching-period rename**: when a child solve's period set
   intersects its parent's by exactly one period, the child is renamed
-  to ``solve + "_" + period`` and ``duplicate_solve`` carbon-copies the
-  parent's lockstep dicts under the new name.  ``duplicate_solve`` does
-  NOT carbon-copy the period attributes (``invest_periods``,
-  ``realized_periods``, …); the empty-scope fallback at the parent_scope
-  computation site catches this.
+  to ``solve + "_" + period`` and ``derive_solve`` carbon-copies the
+  parent's per-solve dicts under the new name (its period lists included;
+  its active time is its one period).  A renamed solve with none of the
+  scope period lists for its period gets the empty-scope fallback at the
+  parent_scope computation site.
 
 * **Multi-period child** (``len(matching_periods) > 1``) is the
   single-solve-with-multi-period parent case: keep the original solve
@@ -117,6 +117,12 @@ class RecursiveSolveBuilder:
         self._rolling_invest_warned: set[str] = set()
         # Rolling solves already warned about leaving the period_total user constraints out.
         self._period_total_warned: set[str] = set()
+        # A contained single solve that keeps its name (it shares more than one period with its containing solve):
+        # ``{name: (containing solve, the periods that solve stands for, the scope the run got)}`` of its first
+        # run, so a second run of the same name under a different scope stops the run (both would write one name).
+        self._kept_name_scopes: dict[str, tuple[str, frozenset[str], frozenset[str]]] = {}
+        # A solve renamed for one period of its containing solve: ``{renamed name: base solve}``.
+        self._renamed_from: dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # Rolling expansion
@@ -610,10 +616,9 @@ class RecursiveSolveBuilder:
         When *solve* has children (``contains_solves[solve]``) recurse
         into each child with parent scope = union of fix_storage,
         realized, and realized_invest periods of *solve*.  When the
-        scope is empty (because *solve* was renamed via the
-        single-matching-period path and ``duplicate_solve`` did not
-        carbon-copy the period attributes), fall back to *solve*'s own
-        active periods.
+        scope is empty (*solve* has none of those period lists for its
+        active periods, e.g. a renamed single-period solve), fall back to
+        *solve*'s own active periods.
 
         Args:
             solve: Active solve name (may be a renamed copy).
@@ -674,10 +679,9 @@ class RecursiveSolveBuilder:
                 | set(realized_invest_time_list.keys())
             )
 
-            # Fallback: when a solve was renamed (e.g.
-            # ``storage_fullYear_6h_p2020``), its period attributes
-            # aren't copied by ``duplicate_solve``, leaving scope empty.
-            # Use the solve's own active periods as scope in that case.
+            # Fallback: a solve with none of the scope period lists for its
+            # active periods (e.g. a renamed ``storage_fullYear_6h_p2020``)
+            # has an empty scope; use its own active periods instead.
             if not parent_scope_periods:
                 parent_scope_periods = set(full_active_time_list.keys())
 
@@ -703,6 +707,83 @@ class RecursiveSolveBuilder:
             parent_roll_lists=parent_roll_lists,
         )
 
+    def _rename_periods(self, solve: str, *, as_parent: bool) -> set[str]:
+        """The periods of *solve* that the nested rename matches between a contained solve and its parent.
+
+        The period lists hold ``(key, period)`` tuples: ``(period, period)`` for a 1-D list, ``(row, period)`` for
+        a solve split by a 2-D period map (``row`` = the map's first column, any name).  A solve's periods are the
+        periods of its ``invest_periods``, ``fix_storage_periods`` and ``realized_periods``.  A containing solve
+        (*as_parent*) stands for the periods it realizes (``realized_periods``, ``realized_invest_periods``,
+        ``fix_storage_periods``), not for its look-ahead ``invest_periods``; with none of them, all of its
+        periods.  A hand-written solve and a split copy are matched alike, so a solve contained in either runs as
+        ``<solve>_<period>`` when they realize one period.  A contained solve is matched by all of its periods
+        (it can run any of them).
+        """
+        sc = self.state.solve
+        # Indexed (not ``.get``) as before: the period dicts are defaultdicts, and later steps see the entries.
+        all_periods = {str(t[1]) for f in ("invest_periods", "fix_storage_periods", "realized_periods")
+                       for t in getattr(sc, f)[solve]}
+        if as_parent:
+            realized = {str(t[1]) for f in ("realized_periods", "realized_invest_periods", "fix_storage_periods")
+                        for t in getattr(sc, f).get(solve, [])}
+            if realized:
+                return realized
+        return all_periods
+
+    def _check_kept_name(self, name: str, parent: str, parent_periods: set[str],
+                         scope: set[str] | None) -> None:
+        """Stop the run when the contained single solve *name* keeps its name under two different scopes.
+
+        Every run of one name writes the same time lists and results, so the last run would replace the others
+        (a solve contained in two solves that each realize several periods, in several rolls of one rolling
+        solve, or below a solve renamed for one period, which keeps the periods of its base solve).
+        """
+        scope_set = frozenset(scope or ())
+        first = self._kept_name_scopes.setdefault(name, (parent, frozenset(parent_periods), scope_set))
+        first_parent, first_periods, first_scope = first
+        if first_scope == scope_set:
+            return
+
+        def fmt(periods) -> str:
+            return ", ".join(sorted(periods))
+
+        if first_parent == parent:
+            message = (
+                f"Solve '{name}' is contained in the rolling solve '{parent}', whose rolls realize different "
+                f"periods ({fmt(first_scope)} and {fmt(scope_set)}). '{parent}' realizes {fmt(first_periods)} and "
+                f"'{name}' has more than one of them, so it keeps its name in every roll and the runs would "
+                f"replace each other's results. Make '{name}' a rolling_window solve, or let '{parent}' realize "
+                f"one period."
+            )
+        else:
+            def role(solve: str) -> str:
+                # A copy renamed for one period keeps all periods of its base solve: it stands for them.
+                return "standing for" if solve in self._renamed_from else "realizing"
+
+            message = (
+                f"Solve '{name}' is contained in '{first_parent}' ({role(first_parent)} {fmt(first_periods)}) and "
+                f"in '{parent}' ({role(parent)} {fmt(parent_periods)}). '{name}' shares more than one of these periods "
+                f"with each of them, so it keeps its name in both and the runs would replace each other's "
+                f"results."
+            )
+            copies = [(p, self._renamed_from[p]) for p in (first_parent, parent) if p in self._renamed_from]
+            if copies:
+                message += " " + " ".join(
+                    f"'{copy}' is the copy of '{base}' for one period, but it keeps all periods of '{base}'."
+                    for copy, base in copies
+                ) + (
+                    f" A single solve contained in such a copy is not renamed per period: make '{name}' a "
+                    f"rolling_window solve (its rolls get their own names), or contain it directly in the "
+                    f"solves that realize one period each."
+                )
+            else:
+                message += (
+                    f" Let each containing solve realize one period that '{name}' has (it then runs as "
+                    f"'{name}_<period>'), or contain a different solve in each."
+                )
+        self.logger.error(message)
+        raise FlexToolConfigError(message)
+
     # ------------------------------------------------------------------
     # Recursive entry
     # ------------------------------------------------------------------
@@ -722,7 +803,7 @@ class RecursiveSolveBuilder:
         1. Append *solve* to ``state.solve.real_solves`` (deduplicated).
         2. If *solve* has a parent and exactly one period overlaps,
            rename it to ``solve + "_" + period`` via
-           :meth:`SolveConfig.duplicate_solve` and re-shape
+           :meth:`SolveConfig.derive_solve` and re-shape
            ``timesets_used_by_solves`` to keep only entries for that
            period.
         3. Compute the full active-time list via :func:`get_active_time`.
@@ -752,41 +833,28 @@ class RecursiveSolveBuilder:
         # parent dicts.  Multiple-period overlap keeps the original
         # name (single-solve-with-multi-period parent case).
         if parent_info.solve:
-            current_solve_periods = (
-                {t[0] for t in self.state.solve.invest_periods[solve]}
-                | {t[0] for t in self.state.solve.fix_storage_periods[solve]}
-                | {t[0] for t in self.state.solve.realized_periods[solve]}
-            )
-            parent_period = (
-                {t[0] for t in self.state.solve.invest_periods[parent_info.solve]}
-                | {t[0] for t in self.state.solve.fix_storage_periods[parent_info.solve]}
-                | {t[0] for t in self.state.solve.realized_periods[parent_info.solve]}
-            )
+            current_solve_periods = self._rename_periods(solve, as_parent=False)
+            parent_period = self._rename_periods(parent_info.solve, as_parent=True)
             matching_periods = list(current_solve_periods & parent_period)
             if len(matching_periods) == 1:
                 current_solve_period = matching_periods[0]
                 new_name = solve + "_" + str(current_solve_period)
-                self.state.solve.duplicate_solve(
-                    solve, new_name, update_model_solves=False
+                # The renamed solve is the solve itself for that one period: every per-solve field of
+                # ``solve`` (derive_solve), with the timesets of the period (added to the ones of an earlier
+                # rename of the same name).
+                timesets = list(self.state.solve.timesets_used_by_solves.get(new_name, []))
+                for pt in self.state.solve.timesets_used_by_solves.get(solve, []):
+                    if pt[0] == current_solve_period and pt not in timesets:
+                        timesets.append(pt)
+                self.state.solve.derive_solve(
+                    solve, new_name, overrides={"timesets_used_by_solves": timesets},
                 )
-                self.state.solve.solve_period_years_represented[new_name] = (
-                    self.state.solve.solve_period_years_represented[solve]
-                )
-
-                new_period_timeset_list = [
-                    pt
-                    for pt in self.state.solve.timesets_used_by_solves.get(solve, [])
-                    if pt[0] == current_solve_period
-                ]
-                if new_name not in self.state.solve.timesets_used_by_solves:
-                    self.state.solve.timesets_used_by_solves[new_name] = (
-                        new_period_timeset_list
-                    )
-                else:
-                    existing = self.state.solve.timesets_used_by_solves[new_name]
-                    for item in new_period_timeset_list:
-                        if item not in existing:
-                            existing.append(item)
+                self._renamed_from[new_name] = solve
+            elif (len(matching_periods) > 1
+                  and self.state.solve.solve_modes.get(solve, "single_solve") != "rolling_window"):
+                # A single solve that keeps its name runs under that one name each time (a rolling solve's runs
+                # get ``_roll_N`` names).
+                self._check_kept_name(solve, parent_info.solve, parent_period, parent_scope_periods)
             # When multiple periods match (single-solve parent with
             # multiple periods), keep the original solve name and all
             # its timesets — the active time will be filtered by

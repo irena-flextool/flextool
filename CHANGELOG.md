@@ -1,8 +1,8 @@
-## Unreleased (4.4.0) — capacity margin, units of measure, start-up inputs, period-total constraints, FT2 import and many fixes (schema v79)
+## Release 4.4.0 (13.11.2026) — capacity margin, units of measure, start-up inputs, period-total constraints, FT2 import, stochastic input checks (no future information), per-project solver options, solver limits kept with warnings, Xpress MIPs, objective options in model units and many fixes (schema v79)
 
 Input databases move to data version 79. The FlexTool window, the Spine Toolbox workflow and `flextool-run
 --migrate` migrate them; upgrading prints a notice for each behaviour change that affects the database. FlexTool now
-needs polar-high 3.12.4 or newer (installed with FlexTool).
+needs polar-high 3.14.0 or newer (installed with FlexTool).
 
 ### Behaviour changes — read before upgrading
 
@@ -30,11 +30,15 @@ Each line says what changes for a model that ran before and what to do; the deta
   `lifetime`, `ramp_cost`, a minimum above its maximum, `existing` as a time series, a used timeline without
   `timestep_duration`, a time series with no time step on a timeline, a timeset block that starts off its timeline,
   a CO2 method without its value, a `realized_invest_periods` outside `invest_periods`, partial or ungrouped
-  stochastic inflow / reservation, a time-only `energy_margin_adder`, capacity-margin groups across Benders regions
-  or with a *balance_within_period* node (see "Input checks" and the entries below). Each error names what to fix.
+  stochastic inflow / reservation, a roll of a stochastic rolling solve that reaches no forecast, a
+  `realized: yes` row that switches the realized branch between rolls, a contained single solve that would run under one name with
+  different periods, a time-only
+  `energy_margin_adder`, capacity-margin groups across Benders regions or with a *balance_within_period* node (see
+  "Input checks" and the entries below). Each error names what to fix.
 - **New warnings name data that ran silently:** nodes with nothing to balance them, untied zero
   `conversion_flow_coeff` flows, negative `existing`, time-series keys off the timeline, a CO2 cap on a method
-  without one, an `invest_method` on a non-storage node, percent-like values. The model is unchanged; check them.
+  without one, an `invest_method` on a non-storage node, percent-like values, forecasts declared where no solve or
+  roll fans out (ignored). The model is unchanged; check them.
 - **Profile and time maps without `index_name` are read as written.** A profile keyed by periods, or a period × time
   profile with an unnamed level, read 0 before; a node penalty, `availability` or `other_operational_cost` time map
   without `index_name` no longer adds its time steps to the periods. Results of such models change; name the map's
@@ -52,6 +56,9 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **Excel sheet names and layout changed:** long names keep their `__d` / `__dt` suffix, several shipped sheets are
   renamed, a `unit of measure` header row or a unit block is added, and dispatch data has a `period` column. Update
   Power Query and scripts (CSV names do not change).
+- **The FlexTool window names a scenario's Excel workbook after its result folder,**
+  `output_excel/output_<scenario>_<source number>.xlsx` (before, `output_<scenario>.xlsx`). Update scripts that open
+  it; the command line and Spine Toolbox keep `output_<scenario>.xlsx`.
 - **Smaller output changes:** a storage node's `entity_annuity_d_p` is per MWh (was per MW; values unchanged),
   *no_reserve* groups no longer have an empty reserve-shortfall column, and only groups whose `co2_method` caps
   emissions are listed as CO2-limited.
@@ -60,57 +67,250 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **Storage in stochastic solves follows each path.** *bind_within_solve* closes the cycle on every forecast branch
   (before: only the one listed last), and forecasts opening in the solve's first period start from one level. The
   upgrade marks such databases and the run names the nodes; check their results.
-- **Forecasts given at the fan's analysis time are read in later branch periods** (before, they read 0 there, so a
-  wind unit could not run). Results of multi-period stochastic models with such forecasts change.
-- **A roll of a rolling stochastic solve reads only its own forecast**, never a later roll's; a look-ahead time step
-  that only a later forecast covers is an error. Extend each roll-start forecast to the end of the roll's horizon.
+- **After the fan, a stochastic solve or roll reads only the forecast made at its fan**, never a later one (a later
+  roll's, or the forecast meant for the next solve of a chain). Before, a forecast given at the fan's analysis time
+  read 0 in the later branch periods (so a wind unit could not run there), and a single solve's later periods read
+  the forecast given at their own first step. A later time step that only a later forecast covers is now an error:
+  give each fan's forecast to the end of the solve's or roll's horizon. Results of multi-period stochastic models
+  change.
+- **The realization dispatch of a single stochastic solve dispatches only its realized periods**, not the
+  look-ahead: the storage it hands to the next solve follows the storage node's end rules at the end of the realized
+  periods (as at the end of a roll's jump), not the realized data of the look-ahead. Results of stochastic single
+  solves with look-ahead change; rerun them. A `separate_dispatch` solve without `realized_periods` gets no
+  realization dispatch.
+- **Stochastic values before the forecasts branch out come from the forecast made at the solve's or roll's
+  start.** Every period before the reveal now reads the realized branch's forecast made at the start. Before, a
+  period read the forecast given at its own first step, which is information the solve does not have yet; where
+  none was given (a roll that starts inside a period, a period between the start and a later fan), it read 0 or the
+  default without a message (the earlier GMPL model refused such inputs). In a fan without a realized branch, it
+  silently read the first forecast in sorted order. The run now stops with an error naming the entity, the
+  parameter, the period, the time steps and the solve or roll when the start's forecast does not cover a step, or
+  when a fan without a realized branch would have to supply such data. Give the realized branch a forecast at each
+  solve or roll start that covers the periods before the fan, designate a realized branch, or give the parameter a
+  value without forecasts; rerun such models.
 - **`--solver-time-limit` and `--solver-mip-gap` now reach Gurobi, CPLEX, Xpress and COPT** and win over the
   database and option file; the environment variables are now `FLEXTOOL_SOLVER_TIME_LIMIT` / `_MIP_GAP` (the
   `FLEXTOOL_HIGHS_*` names still work for HiGHS only). Commercial runs with these flags can give other results.
-- **At its time limit a MIP with a solution keeps it, with a warning; an LP or a solve without a solution stops the
-  run**, for every solver. A commercial solve stopped by another limit, or not certified optimal, now stops the run.
-- **Solver option files come from one `solver_config` folder per run** (`--solver-config-dir`, next to the
-  database, the workspace, ...), not from the folder FlexTool starts in. Check the `Solver config:` line of the run
-  log and move your `.opt` files there.
-- **Other commercial-solver fixes that can change results:** CPLEX now gets `solver_mip_gap`; one value per solver
-  parameter, whatever its case; Xpress refuses a MIP (it returned the LP relaxation); Gurobi file-writing parameters
-  are not passed on.
+- **`--threads` now sets the thread count of Gurobi, CPLEX, Xpress and COPT too** (the FlexTool window always sends
+  its Threads per run, default 1), over the option file and `solver_arguments`, as for HiGHS, even a value meaning
+  all cores (`0`); the run prints a line when it replaces a value. A GUI run with `Threads 0` in `gurobi.opt` now uses
+  1 thread: raise Threads per run. Without `--threads` and `FLEXTOOL_THREADS` the option file keeps it;
+  per-algorithm thread controls (Xpress `BARTHREADS`, COPT `BarThreads`, ...) are not changed.
+- **A Spine Toolbox run uses 1 thread unless `--threads` or `FLEXTOOL_THREADS` is given** (before: all cores for
+  FlexTool's processing, at most 8, and the solvers' own thread settings): polars, HiGHS, the thread count of
+  Gurobi, CPLEX, Xpress and COPT (over the option file, with the printed line naming "Spine Toolbox run's
+  default") and Benders region solves. Toolbox runs its tools in parallel and nothing shares the cores between
+  them. For more, add `--threads N` to the FlexTool tool's arguments.
+- **At a search limit (time, node, solution, work or iteration) a MIP with a solution keeps it, with a warning
+  naming the limit, its option and the gap; an LP or a solve without a solution stops the run**, for every solver.
+  So does an objective target the user set (HiGHS `objective_target`, Gurobi `BestObjStop`). A memory limit, an
+  interrupt, or a solve not certified optimal still stops the run. A HiGHS MIP solved with `objective_bound` gets
+  a warning that its "optimal" may not be optimal.
+- **Objective targets, bounds, cutoffs and absolute gaps are in unscaled currency** (the currency of the model's
+  cost data), on every solver: HiGHS `objective_target`, `objective_bound`, `mip_abs_gap`; Gurobi `BestObjStop`,
+  `BestBdStop`, `Cutoff`, `MIPGapAbs`; CPLEX cutoffs, objective stops and absolute gaps; Xpress `MIPABSCUTOFF`,
+  `MIPADDCUTOFF`, `MIPABSSTOP`; COPT `AbsGap`. Before, the solver compared the value with its scaled objective
+  (`scale_the_objective`, default 1e-6, times the autoscaler's HiGHS factor), so with the defaults a value acted
+  roughly as million currency. Divide an existing value by the solve's `scale_the_objective` (with the default
+  1e-6: multiply it by 1 000 000), and a HiGHS value also by 2^`user_objective_scale`. A Benders solve refuses an objective target or bound.
+- **Solver option files come from the run's `solver_config` folders, file by file** (`--solver-config-dir`, next to
+  the database, the project, the workspace, ...), not from the folder FlexTool starts in. A GUI project can have its
+  own `solver_config/`: its runs take each solver's option file from the project, else the workspace, else
+  FlexTool's default. Check the `Solver config:` line of the run log, which names the folder of each file, and move
+  your `.opt` files there.
+- **Other solver-option fixes that can change results:** a whole-number HiGHS option from the database (stored as
+  `3.0`) now reaches HiGHS (before, it was dropped with a warning; a non-whole value now stops the run); CPLEX now
+  gets `solver_mip_gap`; one value per solver
+  parameter, whatever its case; Xpress solves a MIP with `mipoptimize` (it returned the LP relaxation); Gurobi
+  file-writing parameters are not passed on. A CPLEX option name starting with `set` (FlexTool adds it) is refused with a message naming
+  it, from every source (CPLEX refused the `set set ...` line before); a UTF-8 byte order mark at the start of an
+  option file is ignored (before, it made the first option's name invalid).
+- **A solve that FlexTool splits or adds now runs on the solver you chose.** Since 4.0, when a solve on Gurobi,
+  CPLEX, Xpress or COPT was split into one solve per period (a 2-D map in `invest_periods`, `realized_periods`,
+  `realized_invest_periods`, `fix_storage_periods` or `period_timeset`), the split solves ran on HiGHS, without
+  `solver_mip_gap` and with the `solver_arguments` names HiGHS also knows; since 4.1, the realization solve FlexTool
+  adds to a stochastic solve (`<solve>__realized_dispatch`) ran on HiGHS too. The run did not say so. Results of such runs could have come from HiGHS;
+  rerun them. Now every such solve runs on the original solve's solver, with its `solver_arguments`,
+  `solver_mip_gap`, option file and this computer's solver wrapper.
+- **A solve split by a 2-D period map now runs as the solves you would write by hand.** A 2-D map in
+  `invest_periods`, `realized_invest_periods`, `realized_periods` or `fix_storage_periods` splits a solve into one
+  solve per row (`<solve>_<row>`). Before, the split solves silently lost parameters of their solve: since 4.0
+  `stochastic_branches` and `stochastic_invest_method` (they ran deterministic) and `new_stepduration` (they ran on
+  the coarser time steps with hourly data, at a fraction of the demand); since 4.1 `dispatch_realization_method` (a
+  *separate_dispatch* solve had no realization solve) and `shared_operation_periods` / `shared_invest_periods`. A
+  1-D `realized_periods`, `realized_invest_periods` or `fix_storage_periods` next to the 2-D map was read as the
+  row's name. Now a split solve has every parameter of its solve; a 1-D period list keeps the split solve's own
+  periods, and `years_represented` its own periods (discounted from the start of the run, see the entry on
+  discounting below). A solve listed after the
+  split solve in `model.solves` now runs after the split solves (before, it ran before them). Results of such
+  models change: rerun them.
+- **Two set-ups of split solves now stop the run, and the message says what to change.** A 1-D `realized_periods`
+  (or `realized_invest_periods`) next to a 2-D `invest_periods` that looks ahead, such as {p2035: [p2035, p2040],
+  p2040: [p2040]}: both split solves would realize p2040, and the later one would overwrite the results of the
+  first. Make `realized_periods` a 2-D map with each period in one row: {p2035: [p2035], p2040: [p2040]}. A
+  stochastic solve split so that one split solve has none of the periods where the forecasts start: that split
+  solve would ignore `stochastic_branches`, so it stops, as the same solve written by hand does. Give the forecasts
+  a start in a period of each split solve, or write the solves by hand and leave `stochastic_branches` out of the
+  solve that has none of their periods. A 2-D `period_timeset` is now an error too: give `period_timeset` all the
+  periods and split the solve with a 2-D period list.
+- **Forecasts that no split solve uses now stop the run.** In a solve split by 2-D period maps, each split solve
+  now takes only the `stochastic_branches` rows of the periods it realizes (see "Solving" below). A row in a period
+  that no split solve has, or that no split solve takes, was silently ignored before; it is now an error naming the
+  solve, the period and the branches. Remove the rows, or add the period to the realized periods
+  (`realized_periods` or `realized_invest_periods`) of the row of the 2-D maps whose solve should realize it.
+- **`years_represented` without an index name now counts for investments.** A map left with Spine's default index
+  name gave investments one year per period, while operations counted all the years, so investments were too
+  cheap (every 4.x release). Investment results of such models change. A map whose index has another name (for
+  example `year`) now stops a model with investments: name the index `period`, or leave it without a name.
+- **Runs of several solves with an `inflation_rate` other than 0: every solve now discounts its investments and
+  its operations from the start of the run,** as one solve over the same periods does (also split, rolling and
+  nested solves that start after the run start). Before, a later solve discounted its operations, and when its
+  `years_represented` held only its own periods also its investments, from its own start. Where only the
+  investments were discounted from the run start (hand-written solves with the whole `years_represented` map), the
+  balance between investment and operating costs was wrong and decisions change. Otherwise the whole objective of
+  a later solve is scaled by one factor: decisions change only through absolute MIP gaps, objective targets or
+  bounds and terms without a discount factor, but the printed objective, the investment duals (`invest_marginal`)
+  and the cumulative CO2 cap price of later solves are now on the run's discount base. A fractional
+  `years_represented` (e.g. 2.5) now counts as its fraction for the periods after it (before: a whole year, so the
+  next period started at year 3), also in a single solve. A `years_represented` map that lists the periods out of
+  the solve's period order (or an unused period before a used one) discounted the investments in the period order
+  and the operations in the map order, also in a single solve; both now follow the map order. The reported costs were already discounted from the
+  start of the run. Rerun such models; the upgrade marks the databases this can affect.
 - **The memory-saving solve (`--save-memory`, or warm start off) could put values on the wrong variables**; results
-  of such runs can change. FlexTool now needs polar-high 3.12.4 or newer (installed with FlexTool).
+  of such runs can change.
 - **Fixes that change results:** a user constraint without capacity terms got a right-hand side of 0 when another
   constraint had one (since 4.0); the reported fuel, CO2 and cost of a unit with a profile and an input were too
   low; the reported reserve penalty could be doubled; the period node-group indicators and VRE share are now ratios
   of the period energies; the `summary_solve.csv` slack lines and the period reserve averages use the time-step
   weights; without `realized_invest_periods` a solve realizes only the `realized_periods` that are also
   `invest_periods`; `invest_period_total` could retire and `retire_period_total` invest; a `virtual_unitsize` ≤ 0
-  is now ignored. Details below.
+  is now ignored; the invested capacity, investment cost and investment marginals of a period now come from the
+  solve that realizes its investment (in some solve chains and stochastic solves they were missing or a later
+  solve's 0). Details below.
 - **Security: solver options are checked before a solve.** Since 4.0, a database's `solver_arguments` (or an
   option file from another person's project) could add commands to a CPLEX, Xpress or COPT run. FlexTool now
   refuses, for every solver including HiGHS, an option name or value with a line break, control character, space,
   quote, `;`, `#` or `=`; names are letters, digits, `_` and `.` (CPLEX: words separated by single spaces). The
   error names the solve and parameter, or the option file and line. Numbers (`-1`, `1e-4`, `inf`), single words
   and paths without spaces still pass; a value with a space, such as a file path, or ending in a backslash is now
-  refused: use a path without spaces.
+  refused: use a path without spaces. An empty value is refused too, for every solver; for Gurobi, CPLEX, Xpress
+  and COPT also an option-file line with a name but no value (before, the line was skipped or read wrongly); for
+  CPLEX this includes a word where the parameter takes a number (`mip tolerances mipgap` without its value) and a
+  group of parameters with a value (`mip tolerances 0.01`). An empty HiGHS value from `solver_arguments` or a
+  flag, which `--save-memory` already refused when the solve started, now stops every run before its first solve.
 - **Solver options in the input database take no file paths or server settings.** Since 4.0, a database's
   `solver_arguments` could make the solver, HiGHS included, write over or read files anywhere on your computer (for
   example HiGHS `solution_file` / `log_file`, Gurobi `LogFile` / `InputFile`, CPLEX `workdir`, Xpress
   `TUNEROUTPUTPATH`), or send the model to another computer. An option there that names a file or folder now takes
-  only a plain file name, written in the solve's work folder (`<work folder>/solve_data/subprocess/`); a full path,
-  and a Gurobi Compute Server, Cloud, WLS, token-server or licence option, is refused with a message naming the
-  option, its value and the solve. Move such options to `solver_config/<solver>.opt`: the option files, flags and
+  only a plain file name, written in the solve's work folder (`<work folder>/solve_data/subprocess/`), and not the
+  name of a file that a solver reads by itself from that folder (`gurobi.env`, a licence file such as `*.lic`,
+  COPT's `license.dat` / `license.key` / `client.ini`, Xpress's `xpauth.xpr` / `nethasp.ini`); a full path,
+  a Gurobi Compute Server, Cloud, WLS, token-server or licence option, an Xpress remote-solving control
+  (`COMPUTE...`), and a `/`, `\` or `:` in a text parameter that names no file (CPLEX `cpumask`), is refused with a message naming the option, its value and the solve. Move such options to `solver_config/<solver>.opt`: the option files, flags and
   environment variables keep full paths and server options. Names are matched as the solver reads them (Gurobi
-  ignores `_`, Xpress an `XPRS_` prefix, CPLEX takes abbreviations); the full list is in the solver docs. Gurobi's
+  ignores `_`, Xpress an `XPRS_` prefix, CPLEX reads `.` as a space); the full list is in the solver docs. Gurobi's
   `ResultFile` is FlexTool's own and is ignored, with a warning, wherever it is set. FlexTool's results are in
   `output_parquet/<scenario>/` as before; a commercial solver's log is saved as
   `<work folder>/solve_data/subprocess/<solve>.log`; HiGHS' log is in the run's log,
   `output_parquet/<scenario>/_run.log` (with `flextool-run` or the FlexTool window).
+- **Solver parameter names in the input database must be the solver's own.** FlexTool now has a list of every
+  parameter of HiGHS 1.15.1, Gurobi 13.0.2, CPLEX 22.1.2, Xpress 46.01 and COPT 8.0.4, and a solve's
+  `solver_arguments` may name only those. Any other name, in a solve the model runs, is refused before the first
+  solve of the run, with a message that suggests the closest name: a misspelling (`MIPGapp`, which the solver ignored or refused before), a
+  HiGHS name in another case (`Presolve`), a CPLEX abbreviation (write `mip tolerances mipgap`, not
+  `mip tol mipgap`), or a parameter of a newer solver version. HiGHS names that your installed HiGHS knows as a
+  number or a switch are taken too. The remote-solving and licence parameters are refused whatever their type,
+  and so are Gurobi's `JobID` / `Dummy` and CPLEX's `defaults`. FlexTool 3's `solver`, `parallel` and `presolve`
+  (moved into `solver_arguments` by the database migration, for every solve) are left out of a solve that uses
+  Gurobi, CPLEX, Xpress or COPT, with one warning per run. To use a parameter that is not in the list, put it in
+  `solver_config/<solver>.opt` (an unknown name there gives a warning and is passed on), or allow such names from
+  databases on your computer with `FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS=1` or
+  `"allow_unlisted_parameters": true` in `solver_settings.json` in FlexTool's user settings folder; no database,
+  project or command-line flag can switch this on. Even with it on, such a name takes only a number, a switch or a
+  plain file name, a server-like name (also CPLEX `distmip ...`) is refused, and so is a CPLEX abbreviation of a
+  listed name (`d c` for `distmip config`). See "What the database may set" in the solver docs.
+- **Solver option files that FlexTool finds by itself get the database's rules, unless your computer set up their
+  workspace.** A run looks for `solver_config/` next to the input database, in the workspace of a project
+  database, in the Spine Toolbox project folder or in the folder it starts in, and the FlexTool window uses its
+  workspace's. Such a folder may have come with a workspace, model or Toolbox project from someone else, so its
+  `.opt` files now get the same limits as the database's `solver_arguments` (only plain file names, placed in the
+  work folder; no server or licence settings; only listed parameter names), unless the folder is in a workspace
+  this computer set up. FlexTool remembers those workspaces in `solver_settings.json` in its user settings folder,
+  outside the workspace: `flextool-update` and the FlexTool window add their workspace when they create its
+  `solver_config/`, or find nothing there but FlexTool's own default files. A workspace whose option files were
+  already edited is not added by itself, so **if you edited `solver_config/*.opt` and use file paths, server
+  settings or parameters that are not in FlexTool's list there, your runs now stop with a message** naming the file,
+  the line and what to do: tick "Trust this workspace's solver option files" in the FlexTool window (Solver
+  options → On this computer), or pass the folder with `--solver-config-dir` or `FLEXTOOL_SOLVER_CONFIG_DIR`, which
+  are trusted as before (also the way for CI and servers). Option files with plain settings (threads, gaps, time
+  limits) work as before. The run's `Solver config:` line and the run record say whether the folder was trusted.
+  The same holds for a GUI project's own `solver_config/`, judged file by file: an untrusted project file used over
+  a trusted workspace's file gets the database's rules. FlexTool notes a project it creates, or opens with no
+  edited option file and nothing received waiting for review; an imported project's shipped files stay untrusted
+  until you tick "Trust this project's solver option files" (Solver options → On this computer). A terminal user
+  can run `flextool-trust-workspace <folder>` in a terminal, which shows the edited option files and asks (piped
+  input is refused, and control characters in the files are shown as escapes); it trusts the files as shown, and
+  nothing when one changed before the answer. The trust is for the folder as it was then, not for its path: a
+  folder put at the same path later (for example a copy from someone else unpacked where yours was) is not
+  trusted, and an option file changed afterwards is trusted only when your own account wrote it and no other
+  account can change it; otherwise trust the folder again. **Moving, restoring or copying a trusted workspace to
+  another path or computer asks for the trust again**, and so can a network drive mounted again. Spine
+  Toolbox projects are code: open one only from people you trust.
+- **`FLEXTOOL_USER_HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` must be full paths:** a relative one is ignored with
+  a warning, and the platform's user folder is used. A full path is used wherever FlexTool starts; a solver settings
+  file that lies inside a folder judged for trust makes that folder's trust unreadable, with a message.
+- **The solver settings file must be UTF-8 text and, on Linux and macOS, yours and writable by you only**
+  (`solver_settings.json` in FlexTool's user settings folder, which FlexTool writes so): a file another account owns
+  or can write is not read, as a solver wrapper named there runs as you. The message says how to fix it
+  (`chmod 600`).
 - **`solver_precommand` is not run, and a value now gives a warning.** FlexTool 3 ran it in front of CPLEX (for
   example to reserve a floating licence); FlexTool 4 does not run commands stored in a database, for safety: a
   database from someone else could otherwise run any program on your computer. The parameter is kept only so that
   older databases still read; the warning comes once per solve. To hold a floating licence, use your solver's own
-  licence server setup; a solver wrapper set on your computer is planned for a later release.
+  licence server setup, or set the program as a solver wrapper on your computer (see New features).
+- **Security: FlexTool runs only its own installed code.** The Python processes FlexTool starts (runs, representative
+  periods, calibration, conversions, comparisons, the database editor, updates) no longer look for Python code in
+  the folder they start from, so a project folder from someone else cannot replace part of FlexTool. "Build
+  representative periods" and "Calibrate investments" now run from the workspace folder like the other jobs.
+  Importing a project package refuses one that holds programs or scripts (`.py`, `.exe`, `.dll`, `.bat`, `.sh`
+  and the like) or files outside `input_sources/`, `output_parquet/`, `solver_config/` (`.opt` files),
+  `settings.yaml` and `plot_settings.yaml`; an export leaves such files out of `input_sources/` and the result
+  runs, with a note. Solver option files travel only in the package's top-level `solver_config/`: a package with
+  a `solver_config` or `imported_solver_config` folder anywhere else (for example next to an input database, in
+  any spelling of the name) is refused, because FlexTool reads such a folder by itself; an export leaves such a
+  folder inside the project out, with a note.
+- **Scenario names must be usable as folder names.** A scenario name names its result folders, so a run (FlexTool
+  window, `flextool-run`, Spine Toolbox, calibration, comparison) now stops with a message, before writing
+  anything, when the name is empty, is `.` or `..`, holds `/`, `\` or a control character (a line break, a tab, an
+  escape character), starts with `-` or with a drive letter and `:` (`C:x`), or is a name Windows reserves for
+  devices (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`, also with an extension). On Windows also
+  `< > : " | ? *` and a trailing dot or space are refused, as Windows does not allow them in file names. Rename
+  such a scenario in the input database. Letters of any language, spaces and other punctuation work as before, and
+  the result folders keep their names. FlexTool now also checks that every folder it empties or removes for a
+  run is that run's own folder.
+- **An imported project's input sources stay inside the project.** Importing a package leaves out the input
+  sources that its settings point at files outside the project folder, and says which ones; add such a file
+  again in the FlexTool window if you need it.
+- **A results database server is used only from the command line.** An `output-results-db-url` in the Output
+  settings database must now be a `sqlite:` URL (a file on any drive, a mapped network drive or a UNC share
+  `\\server\share` too). Another URL there stops a run that writes the results SpineDB (`output-spinedb`), before
+  the solve, with a message; with `output-spinedb` off it is ignored with a warning. A settings database is a file
+  that others may hand over, so it no longer sends results to a server it names. Pass a server URL with
+  `--results-db-url`.
 
 ### New features
+
+- **A solver wrapper set on your computer** starts in front of Gurobi, CPLEX, Xpress or COPT, for example to hold
+  a floating licence or to lower the solver's priority: FlexTool window Solver options → On this computer, or
+  `FLEXTOOL_SOLVER_WRAPPER_<SOLVER>` (the program's full path, or a JSON list with its arguments). It is never
+  taken from a database, a project or the command line. FlexTool runs it without a shell, followed by the solver
+  program's full path and the solver's arguments. The run log names the wrapper program and the number of its
+  arguments, not the arguments (the AI assistant can send the run log out); the run record on your computer keeps
+  them in full and an exported project leaves them out. A `.bat` / `.cmd`, a PowerShell or Windows Script Host
+  script and the command interpreters themselves are refused, on Windows also `wsl.exe`, `bash.exe` and similar
+  programs that read their arguments as a command line (use a program, or `python` with a script). FlexTool 3 users of `solver_precommand`: set its program here once (see
+  "FlexTool 3 precommand users" in the solver docs). The solver program itself is now looked for only in the
+  absolute folders of `PATH`, never in the current folder.
 
 #### Units of measure and result files
 
@@ -338,14 +538,24 @@ Each line says what changes for a model that ran before and what to do; the deta
   **Manage projects… → Export… / Import…** in the FlexTool window, or `flextool-project export|import|verify` in
   the terminal. A package holds the input sources (external input files copied in under their own source numbers,
   so shipped and re-run results pair up), `settings.yaml` without the machine-specific settings, `plot_settings.yaml`,
-  the workspace's solver `.opt` files and the result runs picked in a checkbox list (with sizes; a run whose input
+  the solver option files the project's runs use (only the five solver files, no unedited templates) and the result
+  runs picked in a checkbox list (with sizes; a run whose input
   changed after the run is warned about). Plots, CSV/Excel outputs, `results.sqlite` and scratch folders are left
   out. `manifest.json` records the FlexTool and library versions, each database's data version and frozen marker
   (frozen databases stay frozen), and the SHA-256, size and modification time of each file. Import checks every
   checksum before writing, refuses paths outside the project, keeps the files' modification times (so imported
   results are not flagged as made from a changed input), suggests `<Name>_2` when the name is taken (exit code 3
   in the terminal), refuses a database newer than this FlexTool, migrates older ones on open (asking first for a
-  frozen one), and unpacks the shipped solver options to `imported_solver_config/` with a note on how to use them.
+  frozen one), and unpacks the shipped solver options to the project's `solver_config/`, where its runs use them
+  ahead of the workspace's (delete a file there to use the workspace's), with the input database's rules until you
+  trust the project's solver option files. Export leaves out an option file with a
+  line that names a file or folder by its path or connects the solver to another computer (a server, cloud or
+  licence service, or its password) or sets a CPLEX name starting with `set` (a run refuses it), and names those
+  lines; a server option's value is shown as `<hidden>`. A project imported by a 4.4 development build has its
+  shipped options in `imported_solver_config/`, which no run reads: the first time the FlexTool window opens it,
+  the files are checked as at import and the folder is renamed to `solver_config/` (a log line says so).
+  Import holds back exactly what the project's runs would refuse (the input database's rules, which an imported
+  project's option files get until you trust them).
   The viewer's axis ranges file is cut to the shipped runs; run records have this computer's folder paths, user
   name and host name replaced and run logs stay home (on by default; `--keep-run-records` / untick to keep them);
   a run still being written is refused (`--results all` leaves it out); a `.sqlite` input that may be in the middle
@@ -354,6 +564,15 @@ Each line says what changes for a model that ran before and what to do; the deta
   existing package file is replaced only after asking (`--force` in the terminal); errors are one message, no
   traceback; a stopped import's hidden `.<name>.partial` folder is not listed as a project; import names inputs
   left out of the package; `verify` prints one `pip install` line pinning FlexTool, polar-high, highspy and polars.
+- **A project's own solver options, file by file.** Put a `<solver>.opt` in `projects/<P>/solver_config/` and the
+  project's runs (FlexTool window, calibrator, terminal or Toolbox runs on the project's database) use it; a solver
+  without a file there uses the workspace's, else FlexTool's default. `--solver-config-dir` can be repeated, and
+  `FLEXTOOL_SOLVER_CONFIG_DIR` takes several folders separated by `:` (on Windows `;`), highest first; only the
+  folders given are read. With `FLEXTOOL_SOLVER_CONFIG_DIR` set for the FlexTool window, the project's folder still
+  comes first. A shipped option file with a line the input database's rules refuse (a path, a server, a parameter
+  name not in FlexTool's list, a CPLEX name starting with `set`) is kept as `<solver>.opt.review`, never read by a
+  run; to use it, check it, rename it and trust the project's solver option files; an unedited
+  FlexTool template in a project folder is skipped, so it never hides the workspace's file.
 
 #### Plots, timings and the parameter catalogue
 
@@ -440,6 +659,19 @@ Each line says what changes for a model that ran before and what to do; the deta
 
 ### Fixes
 
+#### Settings, comparison and project files
+
+- **A settings database that is not found is no longer ignored silently**: the run warns that its output settings
+  are not used. A settings database on a network drive (a mapped drive or a UNC share) is read.
+- **`flextool-scenario-results <db_url>` leaves out a scenario name from the Output-info database that cannot name
+  a folder**, with a warning, and compares the others (the `--alternatives` names were already checked).
+- **A plot plan's file name stays in its folder** whatever the plot configuration's result key or sub-configuration
+  holds (`/`, `..`).
+- **A calibration solve resolves a relative database path or output folder against the folder it was started
+  from** (before: the FlexTool source folder for the solve, the start folder for reading its results).
+- **The dead `Open_summary` Spine Toolbox item is dropped** from an old project when FlexTool updates it, and its
+  specification (which named a missing `open_summary.py`) is no longer shipped.
+
 #### Investment and discounting
 
 - **An `invest_method` offers investment and retirement also without `invest_cost` / `salvage_value`.** A unit,
@@ -480,6 +712,19 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **Without `realized_invest_periods`, a solve realized the investments of every `realized_periods` period
   (#319).** It now realizes the `realized_periods` that are also `invest_periods`, so a dispatch-only period of an
   investment solve is no longer reported as an investment period.
+- **The investment of a period that is in `realized_invest_periods` but not in `realized_periods` was missing from
+  the results.** The solve made the investment, but `v_invest` / `v_divest` had no row for that period, so
+  `unit_capacity__d` (and the connection / node tables) had no row there and its investment cost was left out of
+  the cost tables and the summary (the solve itself was right). The results of such solves now have these rows.
+- **A later solve could report 0 for an investment an earlier solve made.** When a solve realized the investment
+  of a period it did not dispatch and a later solve dispatched that period while investing in another, the results
+  took the later solve's 0: no invested capacity in `unit_capacity__d` (and the connection / node tables), no
+  investment cost and no capacity-margin shortfall for that period. The investment results of a period now come
+  from the solve that realizes its investment.
+- **The investment marginals of a period an earlier solve realizes came from a later solve.** In the same chain,
+  `unit_invest_marginal__d` (and the connection / node tables) took the later solve's 0 for that period, also when
+  the earlier solve did not invest there and the marginal was not 0. The marginals (the investment reduced costs and
+  the per-period investment limit duals) now come from the solve that realizes the period's investment.
 
 #### Time resolution
 
@@ -571,17 +816,65 @@ Each line says what changes for a model that ran before and what to do; the deta
 
 #### Solving
 
+- **Solves split by a 2-D period map** (see "Behaviour changes" for what changes in their results): a
+  `construction_lead_time` no longer stops a split solve (4.2.0 to 4.3.0); it works as in solves written by hand (a
+  decision whose capacity would come online after the split solve's last period is not offered, with a warning).
+  The realization solve FlexTool adds to a stochastic solve now has its solve's `scaling` (before, it used the
+  run's scaling setting instead; 4.1.0 to 4.3.0). The first column of the map may have any index name (before, a
+  name other than the default `x` silently gave the split solves no investments); a row with more periods than the
+  map has rows no longer crashes; a 2-D map on a solve that the model does not run no longer adds solves to the
+  run (every 4.x release). A solve contained in a split solve now gets the name of the period that the split solve
+  realizes (`<solve>_<period>`), whatever the row is called; before, with a row not named after its period, the
+  contained solve kept one name in every split solve, so the results of its runs were filed under one name. New
+  errors, for set-ups that gave wrong results or crashed: a split solve whose name is already a solve of the
+  database (before, the two were silently mixed), a 2-D map on a solve that is only contained in another solve,
+  and a 2-D map in `shared_invest_periods`.
+- **A solve split by 2-D period maps whose rows are not period names keeps its capacity.** With rows such as
+  *y2030* / *y2040*, the second and later split solves lost the existing and the invested capacity of the earlier
+  ones and invested again (and their run history, which sets the discounting, had no earlier period). They now
+  carry the capacity as with rows named after the periods.
+- **A split stochastic solve that looks ahead runs.** With 2-D period maps that look ahead (such as
+  {y2030: [p2030, p2040], y2040: [p2040]}) and forecasts in several periods, every split solve got every period's
+  `stochastic_branches` rows and the run stopped with "fans out only once". Each split solve now takes the rows of
+  the periods it realizes, or, when none of them has a fan, the rows of its first period with a fan (a fan in its
+  look-ahead), as the solves written by hand would. The recipe for a year-by-year chain of stochastic investment
+  solves is in the stochastics how-to ("Investing year by year under uncertainty").
+- **A hand-written investment ladder that looks ahead and contains a storage or dispatch solve now runs.**
+  With investment solves written by hand whose `invest_periods` look one period ahead (as the 2-D map example
+  {p2020: [p2020, p2025], ...}) and that each contain the same lower solve, the lower solve kept its name under the
+  first ones, ran the last one's periods, and the run stopped with `KeyError` in the solve below it. A containing
+  solve now stands for the periods it realizes (`realized_invest_periods`, `realized_periods`,
+  `fix_storage_periods`), not for its look-ahead, whether written by hand or generated from a 2-D map: the
+  contained solve runs as `<solve>_<period>` and the hand-written ladder gives the same results as the 2-D map.
+- **A contained `single_solve` that would run under one name with different periods now stops the run.** When a
+  single solve shares more than one period with each of its containing solves (two solves that realize several
+  periods each, the rolls of a rolling solve, or a solve renamed to `<solve>_<period>`, which keeps all periods of
+  its base solve, so a third-level single solve below such copies is not renamed per period), its runs wrote one
+  set of results and the last run's replaced the others'. FlexTool now stops with an error naming the containing
+  solves and their periods; make the contained solve a `rolling_window` solve, or let each containing solve realize
+  one period. Below a solve renamed to `<solve>_<period>` that second remedy does not help (the copy already
+  realizes one period): make the third-level solve a `rolling_window` solve, or contain it directly in solves that
+  realize one period each.
 - **Solver options can no longer add commands to a solver run** (since 4.0). A `solver_arguments` entry or an
   option-file line with a line break, `;`, a quote or a space could add a command to the script piped to CPLEX,
   Xpress or COPT, or address another Gurobi or HiGHS option. Every option of every solver is now checked before the
   solve; a refused one stops the run with a message naming the solve and parameter, or the option file and line,
   and the option. The solver's command script and arguments are checked again just before it starts.
+- **An empty solver option value is refused** (since 4.0). For CPLEX, an empty value in `solver_arguments`, or an
+  option-file line without its value, made the CPLEX console take the next command as the value; Gurobi and Xpress
+  dropped the option while the log showed it as passed, and an option-file line of one word was skipped without a
+  word. HiGHS took an empty value in the normal solve but stopped at it with `--save-memory`. Such an option now
+  stops the run with a message naming the solve and parameter, or the file and line.
+- **Solvers get their parameters directly.** The commercial solvers' arguments and command scripts, and the
+  `--save-memory` HiGHS solve, are now built from the merged parameter list itself rather than from the
+  `<solve>.opt` file written and read back; `<solve>.opt` stays next to the model as the record (and HiGHS' child
+  takes `<solve>.options.json`). What each solver receives is unchanged.
 - **A database could point a solver at any file or at another computer** (since 4.0). A `solver_arguments` entry
   such as `log_file`, `write_model_file`, `read_basis_file`, Gurobi `InputFile` / `ComputeServer` / `CloudAccessID`,
   CPLEX `workdir` or Xpress `TUNEROUTPUTPATH` could read or write a file anywhere the user may, or send the model
   and credentials to another machine. Options from the input database are now trusted less than those of the
   user's own computer: a file option there takes a plain file name, placed in the solve's work folder, and a server
-  option is refused, with a message naming the option, its value and the solve and saying to set it in
+  option (Gurobi) or remote-solving control (Xpress `COMPUTE...`) is refused, with a message naming the option, its value and the solve and saying to set it in
   `solver_config/<solver>.opt` instead. The option files, flags and environment variables keep full paths and server
   options. Option names are compared as each solver reads them (Gurobi without case or `_`, Xpress without an
   `XPRS_` prefix, CPLEX abbreviations of its file options), so another spelling does not get past the check.
@@ -596,16 +889,71 @@ Each line says what changes for a model that ran before and what to do; the deta
   Gurobi; it was not). Results of commercial-solver runs started with these flags can change. Their environment
   variables are now `FLEXTOOL_SOLVER_TIME_LIMIT` and `FLEXTOOL_SOLVER_MIP_GAP`; the old names
   `FLEXTOOL_HIGHS_TIME_LIMIT` and `FLEXTOOL_HIGHS_MIP_GAP` still work, for HiGHS only, so a setting made for HiGHS
-  never limits a commercial solver. Commercial solvers keep their thread count from their option file.
+  never limits a commercial solver. `--threads` sets their thread count (see Behaviour changes).
 - **A solve that stops at its time limit:** a MIP with a solution keeps it, with a warning (with the gap reached
   when the solver reports it), and the run goes on; an LP, or a solve without a solution, stops the run. This is
   the same for every solver (a Benders master or region solve stops the run at its limit, as before). Before,
   HiGHS and CPLEX stopped the run at the limit even with a usable MIP solution, so such runs now finish; Gurobi,
-  COPT and Xpress reported a solve stopped at its time limit as optimal, without a word. A CPLEX, Gurobi or COPT
-  solve stopped by another limit (nodes, iterations, solutions, memory) or aborted was also reported optimal; it
-  now stops the run, naming the solver's status. So does a CPLEX solution "optimal with unscaled
-  infeasibilities" or with an "optimal face unbounded", which is not a certified optimum, and a COPT solve (or a
-  Gurobi one with a text result file) whose log is turned off, since how it ended cannot be read.
+  COPT and Xpress reported a solve stopped at its time limit as optimal, without a word. With
+  `FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0` a MIP stopped at its time limit now stops the run too, as at any other limit.
+- **A solve stopped by another search limit (nodes, solutions, work, iterations) follows the time-limit rule**: a
+  MIP with a solution keeps it, with a warning naming the limit, its option (e.g. Gurobi `NodeLimit`, HiGHS
+  `mip_max_nodes`) and the gap; an LP stops the run. Before, a CPLEX, Gurobi or COPT solve stopped by such a limit
+  was reported optimal, and HiGHS's node, leaf and improving-solution limits (also with `--save-memory`) were
+  rejected as an "unrecognised status".
+- **A MIP stopped at an objective target** (HiGHS `objective_target`, Gurobi `BestObjStop` / `BestBdStop`) keeps
+  its solution with a warning, as at a search limit. A HiGHS MIP solved with `objective_bound` (from any option
+  layer) gets a warning, once per solve: HiGHS treats the bound as a cutoff and reports the best solution within it as optimal, so
+  it may not be the optimum.
+- **Objective-valued solver options are scaled to the objective the solver sees.** A target, bound, cutoff or
+  absolute gap (HiGHS `objective_target`, `objective_bound`, `mip_abs_gap`, and each commercial solver's
+  equivalents, listed in [Time and other limits](solvers/index.md#time-and-other-limits)) is written in unscaled
+  currency; FlexTool and polar-high multiply it by `scale_the_objective` and HiGHS's `user_objective_scale` (set by
+  the autoscaler or by you) before the solver gets it, in-process, with `--save-memory` and in the commercial
+  solvers' option files. Before, the value reached the solver unchanged, so it meant a different amount for every
+  `scale_the_objective` and autoscale factor. The `Solver args` line shows both values, the solver's first:
+  `mip_abs_gap=0.5 (500000 in unscaled currency)`. Relative gaps are unchanged. A Benders solve with an objective
+  target or bound (`objective_target` / `objective_bound`) is refused before it starts, naming the option and where
+  it was set: such a value has no meaning for the master or a region; absolute gaps are passed, scaled.
+- **The existing fixed cost constant is scaled with the rest of the objective.** With
+  `include_existing_fixed_cost` (used by tests), the constant was added unscaled, so the objective mixed scaled and
+  unscaled currency; and an objective read from a `--save-memory` or commercial solve, or after autoscaling, left the
+  constant out. Production runs do not add the constant: their results do not change.
+- **A memory limit, an aborted solve, or a solution the solver does not certify as optimal stops the run**, naming
+  the solver's status, even with a solution. Before, a CPLEX, Gurobi or COPT solve stopped at its memory limit or
+  aborted was reported optimal. Not certified are, for example, a CPLEX solution "optimal with unscaled
+  infeasibilities" or with an "optimal face unbounded", and a COPT solve (or a Gurobi one with a text result file)
+  whose log is turned off, since how it ended cannot be read.
+- **The warning of a solve kept at a limit now reaches the run log** (before, it was dropped). The run record
+  keeps it once, as the solve's message. A `--save-memory` solve stopped by a limit before it found a solution is
+  recorded as stopped at a limit (before, as not certified).
+- **HiGHS's time-limit warning names the MIP gap** with `--save-memory`, as the commercial solvers' does; before,
+  it pointed to the solver log. An in-process HiGHS solve names it too. A gap below 0.01 % is printed with significant digits instead of as `0.0000%`.
+- **A `--save-memory` HiGHS solve that is killed stops the run with an error naming the cause.** A solve
+  process stopped by a signal, such as SIGKILL from the out-of-memory killer, went on to read its solution file and
+  failed with a raw "file not found", or read the solution an earlier run of the same solve had left in the work
+  folder. Now the error names the signal (a Windows status code in hex) and the folder that keeps the model file.
+  A process that ends with exit code 1 and no solution file (an error inside it, or on Windows `taskkill` or the
+  Task Manager) gets the error "ended without writing a solution". Such a stopped solve no longer records a
+  warm-start verdict (`--warm-start`): before, a killed first warm solve was recorded as "warm start helps" for
+  good. A cold timing solve that is killed, stopped (on Windows with exit code 1), crashes or cannot start now
+  leaves the verdict to the next solve on every OS. A solve name with `\` or other characters a file name cannot
+  safely hold is turned into one file-name token, as for the commercial solvers, so its files stay in the work
+  folder on Windows.
+- **A whole-number HiGHS option in a solve's `solver_arguments` now reaches HiGHS.** The input database stores
+  every number as a decimal (`3.0`), and HiGHS refuses that for a whole-number option such as
+  `user_objective_scale` or `simplex_iteration_limit`, and `1.0` for a true/false switch: an in-process solve
+  dropped the option with a warning, a `--save-memory` solve stopped with an error. FlexTool now gives each HiGHS
+  option the type HiGHS declares for it, in-process and with `--save-memory`, from every source (`highs.opt`,
+  `solver_arguments`, the flags). A value that is not a whole number for such an option (`2.5`), or not 0 or 1 for a
+  switch, stops the run before the solve with an error naming the option and where it was set; the same holds for
+  a whole-number parameter of Gurobi, CPLEX, Xpress and COPT (which already got `3.0` as `3`).
+- **A solver that writes no solution no longer gets the previous run's solution.** The work folder
+  (`solve_data/subprocess`) keeps each solve's result file between runs. A commercial solver that ended without
+  writing one (CPLEX "No solution exists" for an infeasible model, COPT without a solution, a crash or a solver
+  wrapper that exits 0) had the earlier run's file of the same solve read as this solve's answer, possibly as
+  optimal. The result files of a solve are now removed just before its solver starts, for HiGHS with
+  `--save-memory` as well.
 - **Solver option files come from one `solver_config` folder chosen per run**, no longer from the folder
   FlexTool is started from: `--solver-config-dir` (new) or `FLEXTOOL_SOLVER_CONFIG_DIR`, else `solver_config/`
   next to the input database or in the workspace of a GUI project database, else the Spine Toolbox project
@@ -634,8 +982,16 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **An unknown Gurobi parameter is reported.** Gurobi ignores a misspelt name with a message; FlexTool now repeats
   it as a warning naming where it was set. Gurobi's `ResultFile` is not passed on, with a warning: FlexTool names
   its own result file and reads the solution from it.
-- **Xpress returned the LP relaxation of a MIP.** FlexTool's Xpress driver solves linear problems only; a solve
-  with integer variables now stops with a message instead of reporting the relaxation as the solution.
+- **Xpress returned the LP relaxation of a MIP.** FlexTool's Xpress script ran `lpoptimize` for every solve. A solve
+  with integer variables now runs `mipoptimize`, and its status comes from the Xpress log, not from the print
+  solution (which says "Optimal solution found" after a search stopped by a limit): a MIP stopped by `MAXTIME`,
+  `MAXNODE` or `MAXMIPSOL` with an integer solution keeps it with a warning naming the limit and the gap; an
+  integer-infeasible or unbounded MIP, or one that ends without an integer solution, stops the run and never uses
+  the LP relaxation. FlexTool reads the log, so on a MIP it sets `OUTPUTLOG 1` (and `MIPLOG 1` over `MIPLOG 0`)
+  after your controls, with a printed line. `--solver-time-limit` on a MIP is now a hard `MAXTIME -<limit>` (a
+  positive `MAXTIME` stops a MIP only once it has a solution); a `MAXTIME` in `xpress.opt` or `solver_arguments`
+  is passed as written. The log texts were checked with the `xpress` Python package, not yet with a licensed
+  `optimizer` console.
 - **The `Solver args` line of a commercial solve showed HiGHS options**; it is now
   `Solver args (<solver>): ...` with what the solver receives, under its own names.
 - **The log of a commercial solver is shown as the solver writes it.** Gurobi, CPLEX, Xpress and COPT printed
@@ -651,7 +1007,8 @@ Each line says what changes for a model that ran before and what to do; the deta
   integer parameter can refuse `4.0`: the Xpress library does.
 - **A COPT solve stopped by a limit, or infeasible,** without a solution was reported as a licence error under
   COPT's size-limited licence, or as a missing solution file; it now names the limit (or the infeasibility).
-  With a solution, a COPT solve stopped by any limit but the time limit is no longer taken as optimal.
+  With a solution, a COPT solve stopped by a limit is no longer taken as optimal: a MIP at its node limit keeps
+  the solution with a warning, as at its time limit; an LP at its iteration limit stops the run.
 - **A CPLEX solve stopped at its time limit without a solution** stopped the run with "no solution file"; it now
   says the solve stopped at its time limit.
 - **A work folder with a space in its name** broke CPLEX, Xpress and COPT runs (FlexTool wrote the file paths
@@ -682,7 +1039,7 @@ Each line says what changes for a model that ran before and what to do; the deta
   as a 1224.5 MW reserve shortfall. An entity name with a space (`Battery Farm`) could also be misread in the
   file, which could change the model, for example force a unit to 0. Both are fixed: the file now uses generic
   names, every value is read back to its own variable, and a solution that does not match the model stops the run
-  with an error. Needs polar-high 3.12.4. The first `--save-memory` run after the upgrade does not reuse a
+  with an error. The first `--save-memory` run after the upgrade does not reuse a
   warm-start basis saved by an earlier version.
 - **A crash on macOS could be reported as "killed".** The run record, `flextool-run` and the solver-stack check
   (`python -m flextool.env_check`) read a signal number with Linux's numbering, so on macOS a bus error (SIGBUS,
@@ -709,18 +1066,69 @@ Each line says what changes for a model that ran before and what to do; the deta
   `analysis_time` / `time` map) given only at the fan's analysis time read 0 in the forecast branch periods after
   the fan's period, in the realization dispatch of those periods and, for entities outside every
   `include_stochastics` group, in the realized-branch read: a wind profile was 0 there and the unit did not run.
-  In a single solve each value now comes from the forecast authored at the branch period's own first step, else from
-  the one authored at the fan's analysis time (per time step); a period before the reveal never reads the latter.
-  A roll of a rolling solve decides at its fan's analysis time, so every period of the roll after its fan's
-  period (look-ahead periods and the later committed periods of a multi-period jump) reads the forecast given
-  at the roll's own fan analysis time, even where a later roll's forecast is given at that period's first step
-  (before, such a look-ahead period read the later roll's forecast); a time step that forecast does not cover
-  but a later one does is an input error (see "Input checks"). A single (non-rolling) solve still lets a
-  forecast at a later period's own first step override. The realization dispatch reads its branch the same
-  way.
+  A single solve and a roll of a rolling solve decide at their fan's analysis time, so every period after the
+  fan's period (look-ahead periods and the later committed periods) now reads the forecast given at the fan's
+  analysis time, even where a later forecast (a later roll's, or the next solve's) is given at that period's first
+  step (before, a single solve read that later forecast, and a roll's look-ahead period too); a time step the fan's
+  forecast does not cover but a later one does is an input error (see "Input checks"). A period before the reveal
+  reads the realized branch's forecast made at the solve's or roll's start (see "Input checks"). The realization
+  dispatch reads its branch the same way.
+- **No information from the future in the realization of a single stochastic solve (results change).** Its
+  realization dispatch (`<solve>__realized_dispatch`) ran over the solve's whole horizon with the realized data,
+  look-ahead included, so the storage it left at the end of the realized periods, and handed to the next solve,
+  was decided knowing the realized data of the look-ahead. It now dispatches the realized periods only, as each
+  realization roll of a rolling solve dispatches its jump only; the storage at their end follows the node's end
+  rules. A period between two realized periods that is not realized is dispatched too but not reported. A
+  realization solve you configure yourself keeps its periods, with a warning when it holds a period after the
+  stochastic solve's last realized period (or before its first). A `separate_dispatch` solve without `realized_periods` (an invest-only solve) gets no realization
+  dispatch (before, it got one that dispatched the horizon and reported nothing).
+- **Two or more solves with a `realized: yes` branch run again** (4.2.0 to 4.3.0). A run of two or more solves in
+  which a stochastic solve designates a `realized: yes` branch stopped with "periods ['p2030_rlz'] have no year
+  from the start of the run". FlexTool's internal copy of the realized branch is no longer treated as a period of
+  its own: its operations are reported by the realization solve, discounted at the year of the real period. Investment and operating costs of
+  every solve of such a chain are discounted from the start of the run.
+- **The investment before a mid-horizon fan was missing from the results when the fan has a `realized: yes`
+  branch.** The solve made the investment, but `v_invest` had no row for the period before the reveal, so
+  `unit_capacity__d` (and the connection / node tables) showed no invested capacity there and the investment cost
+  was left out of the cost tables and the summary (the total capacity was right). Runs without a realized branch
+  were not affected.
 
 #### Input checks
 
+- **Before the forecasts branch out, a stochastic-time value must come from the forecast made at the solve's or
+  roll's start.** Every period before the reveal now reads only the realized branch's forecast made at the solve's
+  or roll's start, so 2030 and 2035 deterministic with 2040 stochastic works, and so does a roll whose fan opens
+  several periods after its start. Before, a period read the forecast given at its own first time step (a forecast
+  made after the start, information the solve does not have yet). Where none was given there (a roll starting
+  inside a period, a period between the start and a later fan, a forecast that did not cover the period), the
+  profile, inflow, availability, price, reserve or other stochastic-time value read 0 (or the default) without a
+  message. The earlier GMPL model stopped such runs, and the check was lost in the Python port. It is now a
+  configuration error raised before the LP is built when the start's forecast misses a time step these periods read.
+  A forecast given earlier or later is not used instead. A fan without a realized branch no longer lends its first
+  forecast in sorted order to the periods before it: stochastic-time data there is a configuration error ("designate
+  a realized branch, which provides the shared data, or give the parameter a value without forecasts"). Each message
+  names the entity, the parameter, the solve or roll, the period and the time steps, and the forecasts made at
+  other times that do have values there. Give the realized branch
+  forecasts at each solve or roll start that cover the steps before the fan, or align the rolls with the forecast
+  times (`rolling_solve_jump`). Such models ran with zeros, later forecasts or another forecast's data before:
+  rerun them.
+- **A forecast fan declared later in a solve that already fans out is ignored with a warning.** A solve or a roll
+  fans out once, at its first reveal; forecast branches declared at a later period (or, in a roll, at a later time
+  step where no roll fans out) were ignored without a message. They are still ignored, and one warning per run now
+  lists them: the solve, the period, the analysis time, the branches and the solves or rolls whose horizon reaches
+  them. Remove the rows, or put the later fan in its own solve or make a roll start there.
+- **A roll of a stochastic rolling solve that reaches no forecast is an error.** Every roll needs a forecast of
+  `stochastic_branches` at its start or where it fans out later in its horizon. A roll whose horizon reached none
+  was solved without forecasts and without a message; the run now stops before solving, naming the roll, its start
+  and its horizon. Add forecasts at the roll's start, or align the rolls with the forecast times
+  (`rolling_solve_jump`).
+- **A `realized: yes` row that switches the realization is an error.** In a rolling solve, a `realized: yes` row
+  where no roll fans out, or one where a roll fans out that names a different branch than at the other rolls' fan
+  points, silently switched the realization dispatch to that branch's series. The run now stops before solving.
+  A row where no roll fans out is named with the roll (or solve), the period, the analysis time and the branch, as
+  a single solve already did. Different branches at the fan points are named with the solve and each fan point's
+  period, analysis time and branch. Mark the
+  same realized branch where each roll fans out and change that branch's series to give the realization new data.
 - **A stochastic node `inflow` outside every `include_stochastics` group needs a realized branch.** In a fan
   without a `realized: yes` branch such a node read an inflow of 0 in every branch period without a message; it is
   now a configuration error naming the node, as for the other stochastic-time parameters. Add the node to an
@@ -728,11 +1136,11 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **A stochastic inflow or reservation that gives a value to only some of a fan's forecast branches is an
   error,** as for the other stochastic-time parameters (it read 0 in the branches left out). The check also covers
   values given at the fan's analysis time that later periods read.
-- **A roll's forecast must cover the roll's whole horizon.** In a rolling stochastic solve, a look-ahead period
-  whose time step has no value in the forecast given at the roll's start, but has one in a forecast given later (at
-  the period's own first step, a later roll's analysis time), is an error naming the entity, the parameter, the roll
-  and the uncovered time steps, raised before the roll is solved. Extend the forecasts at each roll start to the end
-  of the roll's horizon. Single solves keep reading the forecast at a period's own first step.
+- **A fan's forecast must cover the whole horizon of its solve or roll.** In a single or rolling stochastic solve,
+  a period after the fan's period whose time step has no value in the forecast given at the fan's analysis time, but
+  has one in a forecast given later (at the period's own first step: a later roll's or the next solve's analysis
+  time), is an error naming the entity, the parameter, the solve or roll and the uncovered time steps, raised before
+  it is solved. Give the forecasts at each fan's analysis time to the end of the horizon.
 - **A `co2_max_period` or `co2_max_total` on a group whose `co2_method` has no such cap is reported.** The
   value is ignored (for example `co2_max_period` with `co2_method` *price*); the run now warns, naming the group,
   the alternative and its method. Before, such a group with `co2_max_period` was also listed as CO2-limited in
@@ -813,11 +1221,6 @@ Each line says what changes for a model that ran before and what to do; the deta
   keys are neither periods nor time steps and do not look like time steps (*p2050*, *p_none*) gets this error too
   (before: the entity silently got the parameter's default); keys that look like time steps (*t0099*, *T0001*, a
   date-time stamp) get the time-series error below.
-- **The period-only reader never spreads a period key it does not know over every period.**
-  A key that is no period of the solve, such as a period of another scenario or one only in
-  `model.periods_available`, gives no value in this solve. Normal runs already read it this way, so their
-  results do not change; with the axis vocabulary switched on (a development option) the value of such a key
-  was used as a default for every period of the entity.
 - **A spare timeline without `timestep_duration` stopped the run.** Only the timelines a
   solve uses (through the timesets of its `period_timeset`, or the timeset a solve without one takes by default)
   need durations now; a used timeline without them, or with a step of 0 hours or less or no number, stops the run
@@ -858,7 +1261,7 @@ Each line says what changes for a model that ran before and what to do; the deta
   without `index_name` on its outer level (its inner level with or without `index_name` *time*), which was taken
   for a stochastic map (those have three levels), and a map with `index_name` *period* on its outer level but none
   on its inner level, whose time steps were not read. Either way the profile was 0 in every time step without a
-  word. Both now read as the same map with `index_name` *period* and *time* (item 223), when the outer keys are
+  word. Both now read as the same map with `index_name` *period* and *time*, when the outer keys are
   periods (the stochastic branch periods take their anchor period's curve), in single, rolling and stochastic
   solves. Unnamed outer keys that are time steps, both periods and time steps, or no period, and unnamed inner keys
   that are periods, stop the run with an error naming the profile and the alternative; a period missing from the
@@ -876,6 +1279,21 @@ Each line says what changes for a model that ran before and what to do; the deta
 
 #### Outputs and plots
 
+- **Names in Excel workbooks stay text.** A name that starts with `=` (an entity, scenario or alternative, a
+  description) is written to the result workbooks, the comparison and dispatch workbooks and the input export as
+  text, never as a formula or a link; the input export now reads such a name back unchanged (before, it came back
+  empty). The CSV files keep the names exactly as they are; `docs/results.md` says how to open a CSV file from
+  someone else safely in a spreadsheet program.
+- **Plot file names stay in the plot folder.** A `/` or `\` in a plot name from the plot settings, or in a node,
+  group or scenario name of a dispatch plot, becomes `_` in the file name (on Windows also `< > : " | ? *`).
+- **Control characters in names are shown, not acted on.** A name from the input data with an escape character or
+  another control character is shown with that character as `\x1b` (and so on), and with a character that reverses
+  the direction of text as `\u202e` (and so on), instead of reaching the terminal as a command or reordering the
+  line. This holds in `flextool-run`'s console output and `_run.log`, in a model run's own console output, in
+  `flextool-write-outputs`, `flextool-scenario-results`, `flextool-execute-workflow`, the calibration and
+  representative-period command lines, in the Spine Toolbox console for the FlexTool, *Process outputs* and
+  *scenario comparison* tools, and in the FlexTool window's logs. Other command-line tools (for example
+  `flextool-time-runs` and the database tools) print such characters as they are.
 - **VRE curtailment, VRE potential and flow-group energies per period are scaled to
   a full year.** `unit_curtailment__outputNode__d`, `unit_outputNode_VRE_potential__d` and the `cumulative_flow` of
   `group_flow__d` were sums over the sampled time steps (the flow group's also without the timestep weights); they
@@ -951,6 +1369,21 @@ Each line says what changes for a model that ran before and what to do; the deta
 
 #### Databases and the FlexTool window
 
+- **Fixed: deleting a scenario's results in the FlexTool window removed the wrong Excel workbooks.** It removed
+  every workbook whose name contained the result folder's name (deleting `base_1` also removed `base_10`'s) and
+  kept the scenario's own one, and the window showed an Excel export where there was none. The workbook is now named
+  after the result folder, `output_<scenario>_<source number>.xlsx` (before, `output_<scenario>.xlsx`, which every
+  source of the scenario overwrote), and the window matches it by its exact name. A workbook with the old name is
+  deleted with the last result folder of its scenario, since until then it may hold another folder's results. The
+  command line and Spine Toolbox name it `output_<scenario>.xlsx` as before.
+- **Fixed: Calibrate investments in the FlexTool window deleted the results of every scenario in the project.**
+  Each calibration round emptied the project's whole `output_parquet` folder, so the result files of the other
+  scenarios were lost (the run records too; their CSV, Excel and plot files stayed). A calibration now clears only
+  the result folder of the scenario it calibrates. The same held for `python -m flextool.calibrate` with
+  `--output-location` set to a folder that held other results; with `--debug` the earlier rounds are now kept in
+  `out_iter_<k>/<scenario>/`. Present since 4.0.0. In a project from before result folders got the source
+  number, `output_parquet/<scenario>/` can be the results of one input source; calibrating a scenario of the same
+  name from another source is now refused with a message (before, it deleted those results).
 - **The model run refuses an input database that is not at the current FlexTool version.**
   Before, only databases below version 25 were refused, so an unmigrated database ran old data under the new
   version's semantics without a word. `flextool-run` (and `run_flextool.py`, `python -m
@@ -977,6 +1410,15 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **The Spine Toolbox tool specifications** listed files that no longer exist (`bin/highs.opt` of the FlexTool
   tool, old modules of *Process outputs* and *scenario comparison*). Toolbox skipped them without a word; they
   are removed.
+- **Databases in a folder whose name holds `%` or `#` open with the next spinedb-api (0.36.8).** That version
+  decodes `%xx` in a database address once more, so a project folder such as `100%25 RE` or `G #2` was not found
+  (input sources, results, the AI assistant). FlexTool now hands spinedb-api the file path as it is; addresses in
+  messages and run records are unchanged.
+- **A database in a folder whose name holds `#`, run from Spine Toolbox with a scenario filter, was looked for
+  at a cut-off path.** Toolbox puts its filter (`?spinedbfilter=…`) in front of the `#`, and the version check,
+  the solver-option folder, the run record and the settings / output-info database checks cut the address at
+  the `?`, so they read `G ` for the folder `G #2`. They now share one address → file reader that keeps the whole
+  path.
 
 #### FlexTool 2 import
 

@@ -221,7 +221,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--debug",
         action="store_true",
         help=(
-            "Archive each iteration's outputs to out_iter_<k>/ instead of "
+            "Archive each iteration's outputs to out_iter_<k>/<scenario>/ instead of "
             "clearing them between iterations."
         ),
     )
@@ -240,9 +240,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--solver-config-dir",
         type=Path,
         default=None,
+        action="append",
         metavar="PATH",
         help=(
-            "Folder of the solver option files (highs.opt, gurobi.opt, ...) for each solve (passed on as --solver-config-dir). Default: each solve finds the folder itself (FLEXTOOL_SOLVER_CONFIG_DIR, next to the input database, its workspace)."
+            "A folder of the solver option files (highs.opt, gurobi.opt, ...) for each solve (passed on as --solver-config-dir); repeat the flag for several folders, highest first (each solver's file comes from the first folder that has it). Default: each solve finds the folders itself (FLEXTOOL_SOLVER_CONFIG_DIR, next to the input database, its project and workspace)."
+        ),
+    )
+    parser.add_argument(
+        "--workspace-solver-config-dir",
+        type=Path,
+        default=None,
+        action="append",
+        metavar="PATH",
+        help=(
+            "A solver option folder the FlexTool window found (its project's, then its workspace's), passed on to "
+            "each solve as --workspace-solver-config-dir; repeat for several, highest first. Its files are trusted "
+            "only when this computer set its workspace or project up."
         ),
     )
     return parser
@@ -276,7 +289,9 @@ def _config_from_args(args: argparse.Namespace) -> CalibConfig:
         stall_fraction=args.stall_fraction,
         final_write_methods=final_write_methods,
         threads=args.threads if args.threads is not None and args.threads >= 1 else None,
-        solver_config_dir=args.solver_config_dir,
+        solver_config_dir=tuple(args.solver_config_dir) if args.solver_config_dir else None,
+        workspace_solver_config_dir=(
+            tuple(args.workspace_solver_config_dir) if args.workspace_solver_config_dir else None),
     )
 
 
@@ -292,6 +307,13 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = build_parser()
     args = parser.parse_args(argv)
+    # The scenario name becomes folder names (output_parquet/<scenario>/, calibration_reports/<scenario>/).
+    from flextool.safe_names import UnsafeNameError, check_output_name
+    try:
+        check_output_name(args.scenario, "scenario name")
+    except UnsafeNameError as exc:
+        print(f"calibration failed: {exc}", file=sys.stderr)
+        return 1
     config = _config_from_args(args)
 
     try:

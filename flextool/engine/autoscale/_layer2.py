@@ -359,6 +359,15 @@ def _collect_term_agg(
     collect.  Even in the fallback the peak is bounded by *one* term's
     materialised size — orders of magnitude smaller than the original
     code's all-terms-at-once Python-list accumulation.
+
+    Determinism: ``log_sum`` is the correctly rounded sum
+    (:func:`_group_fsums`) of each group's ``log_abs`` values, not a polars
+    ``sum()``: the streaming engine hands rows to the sum in an order that
+    depends on the thread schedule, so a running float sum gave different
+    last bits per run and per ``POLARS_MAX_THREADS`` (item 253).  The plan
+    therefore collects the two narrow columns ``(eff_t, log_abs)`` (12
+    bytes a row) instead of the per-group aggregate; count / min / max are
+    exact in any order and stay in polars.
     """
     if rhs_t_id is None:
         eff_t_expr = pl.col("column_type_id")
@@ -374,27 +383,71 @@ def _collect_term_agg(
         .with_columns(eff_t=eff_t_expr)
         .filter(pl.col("coef") != 0.0)
         .with_columns(log_abs=pl.col("coef").abs().log(2.0))
-        .filter(pl.col("log_abs").is_finite())
-        .group_by("eff_t")
-        .agg(
-            pl.col("log_abs").sum().alias("log_sum"),
-            pl.len().alias("n"),
-            pl.col("log_abs").min().alias("log_min"),
-            pl.col("log_abs").max().alias("log_max"),
-        )
+        .filter(pl.col("log_abs").is_finite() & pl.col("eff_t").is_not_null())
+        .select("eff_t", "log_abs")
     )
     try:
-        agg = plan.collect(engine="streaming")
+        vals = plan.collect(engine="streaming")
     except Exception as exc:  # noqa: BLE001 — polars may raise diverse types
         _logger.debug(
             "Layer 2: streaming engine refused term aggregate (%s); "
             "falling back to in-memory collect for this term.",
             exc,
         )
-        agg = plan.collect()
-    if agg.height == 0:
+        vals = plan.collect()
+    if vals.height == 0:
         return None
-    return agg
+    agg = (
+        vals.group_by("eff_t")
+        .agg(
+            pl.len().alias("n"),
+            pl.col("log_abs").min().alias("log_min"),
+            pl.col("log_abs").max().alias("log_max"),
+        )
+        .sort("eff_t")
+    )
+    eff = vals["eff_t"].to_numpy()
+    logs = vals["log_abs"].to_numpy()
+    del vals
+    sums = _group_fsums(eff, logs, agg["eff_t"].to_numpy(), agg["n"].to_numpy())
+    return agg.with_columns(log_sum=pl.Series(sums, dtype=pl.Float64))
+
+
+# Rows handed to ``math.fsum`` per ``tolist()`` slice: bounds the transient
+# Python-float list of a big group (~32 bytes a value) to a few MB.
+_FSUM_CHUNK = 1 << 18
+
+
+def _group_fsums(
+    keys: np.ndarray,
+    logs: np.ndarray,
+    groups: np.ndarray,
+    counts: np.ndarray,
+) -> np.ndarray:
+    """Per group in ``groups`` (sorted ascending, the distinct ``keys``) the
+    correctly rounded sum (:func:`math.fsum`) of its ``logs``.
+
+    ``fsum`` is exact before its one rounding, so the result depends only on
+    which values a group holds, never on their order — the same bits for
+    any thread count, as polar-high's ``Log2HistogramReducer`` does for the
+    walked terms.  Rows are grouped with one stable argsort (the groups are
+    the few quantity types); each group is fed to a single ``fsum`` through
+    bounded ``tolist()`` slices so a large group never becomes one big list.
+    """
+    if groups.size == 1:
+        ordered = logs
+    else:
+        ordered = logs[np.argsort(keys, kind="stable")]
+    ends = np.cumsum(counts.astype(np.int64))
+    starts = ends - counts
+    out = np.empty(groups.size, dtype=np.float64)
+    for g, (s, e) in enumerate(zip(starts.tolist(), ends.tolist())):
+        out[g] = math.fsum(
+            v
+            for c in range(s, e, _FSUM_CHUNK)
+            for v in ordered[c:min(c + _FSUM_CHUNK, e)].tolist()
+        )
+    return out
 
 
 def _merge_into_accumulator(
@@ -1294,7 +1347,10 @@ def _push_unscaled_to_highs(
         # ``unscale_solution``).  Read straight off the handle so the
         # rescue path captures whatever the live HiGHS just reported,
         # including HiGHS's own user_bound_scale unscale.
-        pre_obj = float(h.getObjectiveValue())
+        # Plus the objective constant the handle leaves out (polar-high
+        # >= 3.14.0 keeps it out of HiGHS; ``Solution.obj_offset``, absent
+        # on an older polar-high whose handle includes it).
+        pre_obj = float(h.getObjectiveValue()) + float(getattr(sol, "obj_offset", 0.0) or 0.0)
         # ``setSolution`` also resets the model status to ``kNotset`` and the
         # info counters (infeasibilities, primal-dual objective error) to "not
         # computed".  Keep a snapshot of the solve's diagnostics on the

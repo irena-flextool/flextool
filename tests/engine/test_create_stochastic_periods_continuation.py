@@ -17,6 +17,7 @@ import logging
 from collections import defaultdict
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from flextool.engine.input._solve_state import ActiveTimeEntry, FlexToolConfigError
@@ -190,7 +191,7 @@ def test_zero_weight_branch_metadata_only() -> None:
 # W1 — triggering-cohort validation (spec §A.1/§A.2/§F-step2/§H.3).
 #
 # The shipped ``1_week_rolling_wind`` fixture fans at EVERY roll, so it never
-# exercises the pre-reveal-roll branch of Fix 1.  These solver-free cases cover
+# exercises a roll without a reveal (an error since 2026-11-13).  These solver-free cases cover
 # it (plus the reject paths) directly.  Rolling vs single is detected
 # structurally via ``state.solve.solve_modes[complete_solve] == "rolling_window"``
 # (not the ``_roll_N`` name suffix); so the state stub here grows a ``solve``
@@ -225,26 +226,26 @@ def _run_one(
     )
 
 
-def test_w1_rolling_pre_reveal_roll_does_not_raise() -> None:
-    """Fix 1: a rolling roll whose sliced window legitimately PRECEDES the
-    first reveal (reveal declared at a later roll's first step, unreachable
-    here) stays a deterministic trunk — no raise, no branching."""
+@pytest.mark.parametrize("name", [str, np.str_], ids=["str", "np.str_"])
+def test_w1_rolling_roll_without_reveal_raises(name) -> None:
+    """A roll of a stochastic rolling solve whose window reaches no reveal (reveal declared at t0010, a later
+    roll's first step) would be solved without forecasts: a configuration error (owner 2026-11-13: there must be
+    a forecast at each roll's start, or where it branches; before: a silent deterministic trunk).  The names
+    print as plain strings also when they arrive as ``np.str_`` (numpy 2 prints ``np.str_('p1')``)."""
     solver = _make_solver_with_modes({"roll_c": "rolling_window"})
-    # Reveal declared at t0010 (a later roll's first step); this roll's window
-    # only reaches t0001..t0003, so no reveal is reachable.
     info = [
-        ("p1", "rlz", "t0010", "yes", "1"),
-        ("p1", "low", "t0010", "no", "3"),
+        (name("p1"), name("rlz"), name("t0010"), "yes", "1"),
+        (name("p1"), name("low"), name("t0010"), "no", "3"),
     ]
-    (pb, sbtb, atl, jumps, fstl, rtl, bstl, labels) = _run_one(
-        solver, info, {"p1": ROLL_WIN},
-        solve="roll_c_roll_0", complete="roll_c",
-    )
-    # Deterministic trunk: self-row only, no fan, no branch start.
-    assert pb["roll_c_roll_0"] == [("p1", "p1")]
-    assert sbtb["roll_c_roll_0"] == []
-    assert bstl["roll_c_roll_0"] is None
-    assert list(atl["roll_c_roll_0"].keys()) == ["p1"]
+    win = [ActiveTimeEntry(timestep=name(e.timestep), index=e.index, duration=e.duration) for e in ROLL_WIN]
+    with pytest.raises(FlexToolConfigError) as err:
+        _run_one(solver, info, {name("p1"): win}, solve=name("roll_c_roll_0"), complete=name("roll_c"))
+    assert str(err.value) == (
+        "Roll 'roll_c_roll_0' of rolling solve 'roll_c' starts at period 'p1', time step 't0001', but no forecast "
+        "of stochastic_branches starts in its horizon (period 'p1' 't0001' to period 'p1' 't0003'), so it would "
+        "be solved without forecasts. Every roll of a stochastic rolling solve needs forecasts made at its start "
+        "(or where it branches later in its horizon): add stochastic_branches rows for period 'p1' at "
+        "analysis_time 't0001', or align the rolls with the forecast times (rolling_solve_jump).")
 
 
 def test_w1_rolling_fan_at_first_passes() -> None:
@@ -360,3 +361,58 @@ def test_deterministic_solve_passthrough() -> None:
     assert bstl["s"] is None
     assert labels["s"].labels == frozenset()
     assert solver.state.timeline.stochastic_timesteps["s"] == []
+
+
+# ── one realization series per roll sequence (item 248b) ──────────────
+_NESTED_INFO = [
+    ("p2020", "high", "t0001", "no", "1"),
+    ("p2020", "w2030", "t0001", "yes", "0"),
+    ("p2030", "high", "t0004", "no", "1"),
+    ("p2030", "w2040", "t0004", "yes", "0"),
+]
+
+
+def _run_two(solver, names):
+    """Two sub-solves of complete solve ``inner``: ``names[0]`` over p2020, ``names[1]`` over p2030, each
+    fanning at its own first step with its own realized branch."""
+    a, b = names
+    return solver.create_stochastic_periods(
+        {"inner": _NESTED_INFO},
+        [a, b],
+        {a: "inner", b: "inner"},
+        {a: {"p2020": P1}, b: {"p2030": P2}},
+        {a: {}, b: {}},
+        {a: {"p2020": P1}, b: {"p2030": P2}},
+    )
+
+
+def test_renamed_inner_solves_have_their_own_realization_series() -> None:
+    """A nested single inner solve is copied once per outer period (``inner_p2020``, ``inner_p2030``), all of
+    complete solve ``inner``.  Each copy is its own solve with one fan point, so realized branches w2030 and
+    w2040 at the two copies' fan points are valid (they are not rolls of one sequence)."""
+    out = _run_two(_make_solver(), ("inner_p2020", "inner_p2030"))
+    assert out[6] == {"inner_p2020": ("p2020", "t0001"), "inner_p2030": ("p2030", "t0004")}
+
+
+def test_rolls_of_one_sequence_share_the_realization_series() -> None:
+    """The same rows as two rolls of rolling solve ``inner``: the realized branch changes from w2030 to w2040
+    between the rolls' fan points, an error."""
+    solver = _make_solver()
+    solver.state.solve = SimpleNamespace(solve_modes={"inner": "rolling_window"})
+    with pytest.raises(FlexToolConfigError) as err:
+        _run_two(solver, ("inner_roll_0", "inner_roll_1"))
+    assert str(err.value) == (
+        "The stochastic_branches of solve 'inner' mark different realized branches where its rolls fan out: "
+        "'w2030' at period 'p2020' (analysis_time 't0001'); 'w2040' at period 'p2030' (analysis_time 't0004'). "
+        "A solve has one realization series: name the same branch in every realized: yes row, and give that "
+        "branch the data of each roll at the roll's analysis_time. Check stochastic_branches.")
+
+
+def test_renamed_rolling_inner_solves_have_their_own_realization_series() -> None:
+    """A nested rolling inner solve renamed per outer period: ``inner_p2020_roll_0`` and
+    ``inner_p2030_roll_0`` are two roll sequences (``inner_p2020``, ``inner_p2030``), so different realized
+    branches at their fan points are valid."""
+    solver = _make_solver()
+    solver.state.solve = SimpleNamespace(solve_modes={"inner": "rolling_window"})
+    out = _run_two(solver, ("inner_p2020_roll_0", "inner_p2030_roll_0"))
+    assert out[6] == {"inner_p2020_roll_0": ("p2020", "t0001"), "inner_p2030_roll_0": ("p2030", "t0004")}

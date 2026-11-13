@@ -44,6 +44,7 @@ from flextool.engine.solve._warm import (  # noqa: F401
     _apply_warm_updates,
     _build_warm_problem,
 )
+from flextool.sqlite_url import sqlite_url_string
 
 
 __all__ = [
@@ -125,7 +126,7 @@ def _resolve_native_scenario(db_path: Path, work: Path) -> str | None:
         return None
 
     try:
-        with open_database_mapping("sqlite:///" + str(db_path)) as db:
+        with open_database_mapping(sqlite_url_string(db_path)) as db:
             scenarios = sorted(s.name for s in db.query(db.scenario_sq).all())
     except Exception:
         return None

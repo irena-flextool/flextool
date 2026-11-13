@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -48,6 +49,59 @@ def test_a_started_process_keeps_user_files_there_and_gets_no_keyring():
     found = json.loads(out.stdout.strip().splitlines()[-1])
     _assert_under_test_home(found, Path(os.environ[USER_HOME_ENV]))
     assert found["keyring"] == "keyring.backends.null"
+
+
+_HOME_IN_CHILD = """
+import json, os
+from pathlib import Path
+print(json.dumps({"home": str(Path.home()), **{v: os.environ.get(v, "") for v in (
+    "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "APPDATA", "LOCALAPPDATA")}}))
+"""
+
+
+def test_home_and_platform_folders_point_into_the_session_sandbox_here_and_in_a_started_process():
+    """A fallback to the platform's folder, or to ``Path.home()``, stays in the session's temp folder."""
+    sandbox = Path(os.environ[user_dirs_guard.SANDBOX_ENV])
+    assert not user_dirs_guard.is_real_user_path(sandbox)
+    out = subprocess.run([sys.executable, "-c", _HOME_IN_CHILD], capture_output=True, text=True, encoding="utf-8",
+                         timeout=120, check=True)
+    for found in ({"home": str(Path.home()), **{v: os.environ[v] for v in (
+            "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "APPDATA", "LOCALAPPDATA")}},
+            json.loads(out.stdout.strip().splitlines()[-1])):
+        for name, value in found.items():
+            assert Path(value).is_relative_to(sandbox), (name, value)
+    assert user_dirs_guard.real_home() != Path.home()
+
+
+def test_a_user_dirs_call_that_gives_a_real_folder_raises_and_is_recorded(tmp_path: Path, monkeypatch):
+    """Windows platformdirs ignores APPDATA: whatever still names a real folder raises before anything is
+    written, and the session check sees it."""
+    from flextool import user_dirs
+
+    log = tmp_path / "violations.log"
+    monkeypatch.setenv(user_dirs_guard.KEYRING_LOG_ENV, str(log))
+    real = user_dirs_guard.real_home() / ".config" / "flextool"
+    monkeypatch.setenv(USER_HOME_ENV, str(real))
+    with pytest.raises(user_dirs_guard.RealUserDirTouched):
+        user_dirs.user_config_dir()
+    assert "gave the real user folder" in log.read_text(encoding="utf-8")
+    monkeypatch.setenv(USER_HOME_ENV, str(tmp_path / "own"))
+    assert user_dirs.user_config_dir() == tmp_path / "own" / "config"
+
+
+def test_a_temp_folder_under_the_real_appdata_is_not_a_real_user_folder(tmp_path: Path, monkeypatch):
+    """Windows keeps the temp folder (pytest's ``tmp_path``) in ``<home>\\AppData\\Local\\Temp``: a path there is
+    the test's own, while the real AppData folders around it stay forbidden."""
+    home = tmp_path / "real_home"
+    temp = home / "AppData" / "Local" / "Temp"
+    temp.mkdir(parents=True)
+    monkeypatch.setenv(user_dirs_guard.REAL_HOME_ENV, str(home))
+    monkeypatch.setenv(user_dirs_guard.REAL_DIRS_ENV, str(home / "AppData" / "Local" / "flextool"))
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    assert not user_dirs_guard.is_real_user_path(temp / "pytest-0" / "user_home" / "cache")
+    assert user_dirs_guard.is_real_user_path(home / "AppData" / "Local" / "flextool" / "Cache")
+    assert user_dirs_guard.is_real_user_path(home / "AppData" / "Roaming" / "flextool")
+    assert user_dirs_guard.is_real_user_path(home / ".config" / "flextool")
 
 
 def test_the_session_check_sees_added_changed_and_removed_files(tmp_path: Path):

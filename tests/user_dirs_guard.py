@@ -13,6 +13,17 @@ also one made by a thread that outlived its test, or after a test undid its monk
 gets the null backend through the environment, also when the test built that environment itself
 (:func:`patch_subprocess_env`).  A recorded call fails the session.
 
+The user folders (:func:`redirect`, :func:`forbid_real_user_dirs`): besides ``FLEXTOOL_USER_HOME``, the process
+that runs the session points ``HOME`` (``USERPROFILE`` on Windows), ``XDG_CONFIG_HOME``, ``XDG_CACHE_HOME``,
+``XDG_DATA_HOME``, ``XDG_STATE_HOME``, ``APPDATA`` and ``LOCALAPPDATA`` into one temp folder of the session, which the
+xdist workers and every process a test starts inherit: a fallback to the platform's folder (platformdirs,
+``Path.home()``) lands there too.  The real home and the real FlexTool folders are kept in
+:data:`REAL_HOME_ENV` / :data:`REAL_DIRS_ENV` for the workers.  Windows platformdirs asks the shell for the
+AppData folders and ignores ``APPDATA``, so in every pytest process :mod:`flextool.user_dirs` is wrapped: a call
+that would give a folder under the real home's config, cache or AppData folders, or under a real FlexTool folder,
+is recorded (the session fails) and raises before anything is written.  The autouse fixture
+:func:`tests.conftest._user_folders_stay_redirected` fails a test that left these variables changed.
+
 The guard: the process that runs the session (the xdist controller, or the only process) takes a
 :func:`snapshot` of the real folders when it starts and :func:`changes` compares it at the end; a file added,
 changed or removed fails the session.  A FlexTool window or terminal used during the run changes them too; the
@@ -24,6 +35,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -44,28 +56,129 @@ Snapshot = dict[str, tuple[int, int]]
 _RUNTIME_FILE = re.compile(r"^[0-9a-f]+\.(\d+)\.json$")
 
 
+#: The real home folder and the real FlexTool user folders, as the first process of the session found them (the
+#: xdist workers and the processes a test starts inherit the redirected ``HOME`` and ``XDG_*``).
+REAL_HOME_ENV = "FLEXTOOL_TEST_REAL_HOME"
+REAL_DIRS_ENV = "FLEXTOOL_TEST_REAL_USER_DIRS"
+#: The session's stand-in home folder (made by the first process of the session, inherited by the others).
+SANDBOX_ENV = "FLEXTOOL_TEST_SANDBOX"
+#: The variables :func:`redirect` points into the sandbox, each with its folder there.
+_SANDBOX_VARIABLES = (("HOME", "home"), ("XDG_CONFIG_HOME", "home/.config"), ("XDG_CACHE_HOME", "home/.cache"),
+                      ("XDG_DATA_HOME", "home/.local/share"), ("XDG_STATE_HOME", "home/.local/state"),
+                      ("APPDATA", "home/AppData/Roaming"), ("LOCALAPPDATA", "home/AppData/Local"),
+                      *((("USERPROFILE", "home"),) if sys.platform == "win32" else ()))
+#: The folders of the real home that no FlexTool user folder of a test may lie under.
+_REAL_HOME_CONFIG_DIRS = (".config", ".cache", ".local", "Library", "AppData")
+
+
+def real_home() -> Path:
+    """The user's real home folder (the first process of the session records it before :func:`redirect`)."""
+    if REAL_HOME_ENV not in os.environ:
+        os.environ[REAL_HOME_ENV] = str(Path.home())
+    return Path(os.environ[REAL_HOME_ENV])
+
+
 def real_user_dirs() -> tuple[Path, ...]:
     """The platform's user config, cache, data and state folders of FlexTool (``platformdirs`` does not read
-    ``FLEXTOOL_USER_HOME``)."""
-    import platformdirs
+    ``FLEXTOOL_USER_HOME``), as the first process of the session found them before :func:`redirect`."""
+    if REAL_DIRS_ENV not in os.environ:
+        import platformdirs
 
-    return tuple(dict.fromkeys(Path(p) for p in (
-        platformdirs.user_config_dir("flextool", appauthor=False),
-        platformdirs.user_config_dir("flextool"),
-        platformdirs.user_cache_dir("flextool", appauthor=False),
-        platformdirs.user_cache_dir("flextool"),
-        platformdirs.user_data_dir("flextool"),
-        platformdirs.user_state_dir("flextool"),
-    )))
+        found = dict.fromkeys(str(Path(p)) for p in (
+            platformdirs.user_config_dir("flextool", appauthor=False),
+            platformdirs.user_config_dir("flextool"),
+            platformdirs.user_cache_dir("flextool", appauthor=False),
+            platformdirs.user_cache_dir("flextool"),
+            platformdirs.user_data_dir("flextool"),
+            platformdirs.user_state_dir("flextool"),
+        ))
+        os.environ[REAL_DIRS_ENV] = os.pathsep.join(found)
+    return tuple(Path(p) for p in os.environ[REAL_DIRS_ENV].split(os.pathsep) if p)
 
 
-def redirect() -> Path:
-    """Point ``FLEXTOOL_USER_HOME`` at a fresh temp folder of this process and the keyring at the null backend;
-    returns the folder."""
+def forbidden_roots() -> tuple[Path, ...]:
+    """The real FlexTool folders and the real home's config, cache, data and AppData folders."""
+    home = real_home()
+    return (*real_user_dirs(), *(home / name for name in _REAL_HOME_CONFIG_DIRS))
+
+
+def _full(path: Path | str) -> Path:
+    try:
+        return Path(os.path.abspath(path)).resolve()
+    except (OSError, RuntimeError):
+        return Path(os.path.abspath(path))
+
+
+def is_real_user_path(path: Path) -> bool:
+    """*path* lies under one of :func:`forbidden_roots` (both compared as full, resolved paths), and not in the
+    system temp folder.
+
+    On Windows the temp folder is ``<home>\\AppData\\Local\\Temp``, under the real home's AppData folder: pytest's
+    ``tmp_path`` and the session sandbox live there, so a path in the temp folder is never a real user folder
+    (unless the temp folder itself lies in a real FlexTool folder)."""
+    full = _full(path)
+    real_dirs = tuple(_full(root) for root in real_user_dirs())
+    temp = _full(tempfile.gettempdir())
+    if full.is_relative_to(temp) and not any(temp.is_relative_to(root) for root in real_dirs):
+        return False
+    return any(full == root or full.is_relative_to(root) for root in (_full(r) for r in forbidden_roots()))
+
+
+def redirect() -> tuple[Path, Path | None]:
+    """Point ``FLEXTOOL_USER_HOME`` at a fresh temp folder of this process, the home and platform folders
+    (:data:`_SANDBOX_VARIABLES`) into the session's sandbox, and the keyring at the null backend.  Records the real
+    home and FlexTool folders first (:func:`real_home`, :func:`real_user_dirs`).  Returns this process's
+    ``FLEXTOOL_USER_HOME`` and the sandbox when this process made it (``None`` when it inherited one)."""
+    real_home()
+    real_user_dirs()
+    made = None
+    sandbox = os.environ.get(SANDBOX_ENV, "")
+    if not sandbox or not Path(sandbox).is_dir():
+        made = Path(tempfile.mkdtemp(prefix="flextool-test-sandbox-"))
+        sandbox = str(made)
+        os.environ[SANDBOX_ENV] = sandbox
+    for variable, folder in _SANDBOX_VARIABLES:
+        path = Path(sandbox, folder)
+        path.mkdir(parents=True, exist_ok=True)
+        os.environ[variable] = str(path)
     home = Path(tempfile.mkdtemp(prefix="flextool-test-user-"))
     os.environ[USER_HOME_ENV] = str(home)
     os.environ[KEYRING_ENV] = NULL_KEYRING
-    return home
+    return home, made
+
+
+def redirected_environment() -> dict[str, str]:
+    """The variables :func:`redirect` set in this process, with their values (for the per-test check)."""
+    names = (USER_HOME_ENV, *(variable for variable, _ in _SANDBOX_VARIABLES))
+    return {name: os.environ.get(name, "") for name in names}
+
+
+class RealUserDirTouched(Exception):
+    """A test reached a real FlexTool user folder, or a config folder of the real home."""
+
+
+def forbid_real_user_dirs() -> None:
+    """Wrap :mod:`flextool.user_dirs` in this process: a call that gives a folder under :func:`forbidden_roots` is
+    recorded (the session fails, :func:`keyring_violations`) and raises, so nothing is written there."""
+    from flextool import user_dirs
+
+    for name in ("user_config_dir", "user_cache_dir", "_platform_dir"):
+        original = getattr(user_dirs, name)
+        if getattr(original, "_user_dirs_guard", False):
+            continue
+
+        def guarded(*args: object, _original=original, _name=name, **kwargs: object) -> Path:
+            path = _original(*args, **kwargs)
+            if is_real_user_path(path):
+                _record(f"flextool.user_dirs.{_name} gave the real user folder {path}")
+                raise RealUserDirTouched(f"flextool.user_dirs.{_name} gave the real user folder {path}; a test "
+                                         "must keep its user files under FLEXTOOL_USER_HOME")
+            return path
+
+        guarded.__name__ = name
+        guarded.__doc__ = original.__doc__
+        guarded._user_dirs_guard = True  # type: ignore[attr-defined]
+        setattr(user_dirs, name, guarded)
 
 
 def remove(home: Path) -> None:

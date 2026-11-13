@@ -5,10 +5,11 @@ the scenarios of the example and how-to databases that come with FlexTool (built
 temporary folder); ``--db PATH --scenario S ...`` runs the scenarios of your own project database instead.
 
 Each run is the command the FlexTool window starts (``python -m flextool.cli.cmd_run_flextool ...``) with the
-same ``--threads`` as the window's default *Threads per run* (1; ``--threads`` sets another), the same solver
-option folder (``--solver-config-dir``: ``$FLEXTOOL_SOLVER_CONFIG_DIR``, else ``solver_config/`` in the current
-folder, the workspace when run from there; passed only when that folder exists, so a run from another folder
-resolves its option files as a terminal run does) and the same UTF-8 output, with plots off unless ``--plots`` says
+same ``--threads`` as the window's default *Threads per run* (1; ``--threads`` sets another), the workspace's
+solver option folders (``--solver-config-dir`` once per folder of ``$FLEXTOOL_SOLVER_CONFIG_DIR``, the user's
+choice; else ``--workspace-solver-config-dir`` with ``solver_config/`` in the current folder, the workspace when run
+from there, trusted only when this computer set that workspace up; only the folders that exist, so a run
+from another folder resolves its option files as a terminal run does) and the same UTF-8 output, with plots off unless ``--plots`` says
 otherwise.  It does not pass the project's active output configurations, so with plots on the default plot set
 is drawn.  A ``--db`` database is copied into the temporary folder first and the runs read the copy.  The time of each phase is read from the run's ``timings.csv``:
 
@@ -48,8 +49,10 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from flextool._child_python import child_env, python_module_argv
 from flextool._resources import package_data_path
-from flextool._solver_config_source import workspace_solver_config_dir
+from flextool._solver_config_source import gui_solver_config_ladder, solver_config_dir_flags
+from flextool.sqlite_url import sqlite_url_string
 
 #: "Threads per run" default of the FlexTool window (``gui/data_models.py``, ``max_cores_per_job``).
 GUI_DEFAULT_THREADS = 1
@@ -178,7 +181,7 @@ def _build_sqlite(json_path: Path, folder: Path) -> str:
     target = folder / f"{json_path.stem}.sqlite"
     with contextlib.redirect_stdout(io.StringIO()):
         initialize_database(str(json_path), str(target))
-    return f"sqlite:///{target}"
+    return sqlite_url_string(target)
 
 
 def phase_seconds(rows: list[dict[str, str]], wall_s: float) -> dict[str, float | None]:
@@ -242,7 +245,7 @@ def run_one(run: Run, folder: Path, threads: int = GUI_DEFAULT_THREADS) -> RunRe
     folder.mkdir(parents=True, exist_ok=True)
     write_methods = ["parquet", "plot"] if run.plots else ["parquet"]
     cmd = [
-        sys.executable, "-m", "flextool.cli.cmd_run_flextool", run.db_url,
+        *python_module_argv("flextool.cli.cmd_run_flextool"), run.db_url,
         "--scenario-name", run.scenario,
         "--work-folder", str(work),
         "--output-location", str(out),
@@ -253,12 +256,14 @@ def run_one(run: Run, folder: Path, threads: int = GUI_DEFAULT_THREADS) -> RunRe
     ]
     # As the FlexTool window: the workspace's option files, wherever the database is.  Only a folder that exists:
     # naming a missing one would warn on every run that it does not exist.
-    solver_config_dir = workspace_solver_config_dir()
-    if solver_config_dir.is_dir():
-        cmd += ["--solver-config-dir", str(solver_config_dir)]
+    found, named = gui_solver_config_ladder(None)
+    for found_folder in found:
+        if found_folder.is_dir():
+            cmd += ["--workspace-solver-config-dir", str(found_folder)]
+    cmd += solver_config_dir_flags([named_folder for named_folder in named if named_folder.is_dir()])
     # As the FlexTool window: UTF-8 output (a redirected stdout on Windows is otherwise the locale code page,
     # and a non-Latin name in a print could stop the run), unbuffered.
-    env = dict(os.environ, FLEXTOOL_PHASE_TIMING="1", PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
+    env = child_env(FLEXTOOL_PHASE_TIMING="1", PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
     log_path = folder / "run.log"
     with open(log_path, "w", encoding="utf-8", errors="replace") as log:
         t0 = time.perf_counter()
@@ -424,7 +429,7 @@ def collect_runs(args: argparse.Namespace, build_folder: Path) -> list[Run]:
         path = path.resolve()
         db_scenarios(path)  # a clear message for a file that is not a FlexTool database, before copying
         copy = _copy_db(path, build_folder, index)
-        sources.append((path.name, f"sqlite:///{copy}", db_scenarios(copy)))
+        sources.append((path.name, sqlite_url_string(copy), db_scenarios(copy)))
     json_paths = ([_resolve_source(s) for s in args.source] if args.source
                   else ([] if args.db else canonical_sources()))
     for json_path in json_paths:

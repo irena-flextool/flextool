@@ -80,6 +80,7 @@ from flextool.engine.preprocess._provider_io import (
     _provider_key,
 )
 from flextool.timeline_pieces import aggregate_timeline_pieces, group_step_solves, timeline_pieces_of_group
+from flextool.sqlite_url import sqlite_url_string
 
 if TYPE_CHECKING:
     from spinedb_api import DatabaseMapping
@@ -248,7 +249,7 @@ class TimelineConfig:
             logger = logging.getLogger(f"flextool.engine.timeline[{scenario}]")
         url = str(db_url)
         if "://" not in url:
-            url = f"sqlite:///{url}"
+            url = sqlite_url_string(url)
         with open_database_mapping(url) as db:
             apply_scenario_filter_to_subqueries(db, scenario)
             # Pre-warm caches — see SolveConfig.load_from_db_url for
@@ -514,6 +515,15 @@ class TimelineConfig:
                 warned.add(key)
             print(text, flush=True)
 
+    def inherit_solve_copies(self, solve_config: "SolveConfig") -> None:
+        """Give each solve of a 2-D period map (``solve_config.map2d_duplicate_of``) the ``new_stepduration`` of
+        its database solve: it runs on that solve's timesets, which ``create_timeline_from_timestep_duration``
+        re-points to the aggregated timeline, so it needs the aggregated data too (the timeline half of
+        ``SolveConfig.derive_solve``).  Called first by :meth:`create_assumptive_parts`; idempotent."""
+        for copy_name, (parent, _outer) in getattr(solve_config, "map2d_duplicate_of", {}).items():
+            if parent in self.new_step_durations:
+                self.new_step_durations[copy_name] = self.new_step_durations[parent]
+
     def create_assumptive_parts(self, solve_config: "SolveConfig") -> None:
         """Fill in missing time-structure parts from assumptions when
         the input data is incomplete.
@@ -537,6 +547,7 @@ class TimelineConfig:
         is a no-op (idempotent).
         """
         logger = logging.getLogger(__name__)
+        self.inherit_solve_copies(solve_config)
 
         # Rule 1: No timeset → synthesise one timeset, SYNTHETIC_TIMESET, from the sole timeline.
         if not self.timesets and len(self.timelines) == 1:
@@ -730,10 +741,9 @@ class TimelineConfig:
             )
             # Ordered de-dup (first occurrence) — a set here would make
             # the seeded row order vary with PYTHONHASHSEED.
+            # The period of each ``(key, period)`` tuple (the key of a split solve is its 2-D map row name).
             all_periods = list(
-                dict.fromkeys(
-                    item for tup in all_periods_tuples for item in tup
-                )
+                dict.fromkeys(tup[1] for tup in all_periods_tuples)
             )
             # Membership check OUTSIDE the loop: the first append below
             # inserts the solve key into the defaultdict, so an in-loop

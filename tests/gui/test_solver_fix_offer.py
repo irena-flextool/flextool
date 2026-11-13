@@ -28,7 +28,7 @@ def test_proactive_offer_installs_compat_runtime(monkeypatch):
     jobs = []
     main_window.MainWindow._offer_solver_fix(_stand_in(jobs), None, True)
     (steps, kw), = jobs
-    assert steps == [[sys.executable, "-m", "pip", "install", "polars[rtcompat]==1.40.1"]]
+    assert steps == [[sys.executable, "-P", "-m", "pip", "install", "polars[rtcompat]==1.40.1"]]
     # The dialog states the reason and the exact command it will run.
     assert "avx2" in asked[0]
     assert env_check.format_command(steps[0]) in asked[0]
@@ -70,7 +70,7 @@ def test_declined_offer_runs_nothing(monkeypatch):
 # A real (hidden) Tk root and progress window, so run under xvfb-run; the
 # message boxes are recorded and pip is a stand-in.
 
-_STEP = [sys.executable, "-m", "pip", "install", "polars[rtcompat]==1.40.1"]
+_STEP = [sys.executable, "-P", "-m", "pip", "install", "polars[rtcompat]==1.40.1"]
 
 
 class _Pip:

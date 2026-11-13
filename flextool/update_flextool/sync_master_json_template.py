@@ -28,6 +28,7 @@ from flextool.update_flextool.db_handle import open_database_mapping
 from flextool.update_flextool.db_migration import migrate_repository_database
 
 from flextool._resources import package_data_path
+from flextool.sqlite_url import sqlite_url_string
 
 SCHEMAS_DIR = package_data_path("schemas")
 SPINEDB_SCHEMA = SCHEMAS_DIR / "spinedb_schema.json"
@@ -38,7 +39,7 @@ def _create_db_from_template(template_path: Path, db_path: Path) -> None:
     with open(template_path, encoding="utf-8") as f:
         template = json.load(f)
 
-    url = f"sqlite:///{db_path}"
+    url = sqlite_url_string(db_path)
     with open_database_mapping(url, create=True) as db:
         for alt in db.find_alternatives():
             try:
@@ -51,7 +52,7 @@ def _create_db_from_template(template_path: Path, db_path: Path) -> None:
 
 def _export_db_to_json(db_path: Path) -> dict:
     """Export a Spine DB to a JSON-serializable dict."""
-    url = f"sqlite:///{db_path}"
+    url = sqlite_url_string(db_path)
     with open_database_mapping(url) as db:
         data = export_data(db)
     # export_data returns tuples; convert to lists for JSON

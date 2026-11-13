@@ -199,6 +199,7 @@ def period_walk_iterator(
         lineage: pl.DataFrame | None = None,
         provider: "object | None" = None,
         commission_lf: pl.LazyFrame | None = None,
+        year_rows: pl.DataFrame | None = None,
         ) -> pl.LazyFrame:
     """Lazy per-(e, d) walk over ``period_in_use``, gated by lifetime.
 
@@ -265,6 +266,10 @@ def period_walk_iterator(
         fixed-cost walks pass it too, so new capacity is paid only over the
         years it operates.  ``None`` (the default, and every walk of a model
         without lead times) leaves ``yr_avail ≡ yr_d``.
+    year_rows
+        Optional ``[d, width, base]`` years of the solve from the start of the run
+        (:func:`._npv.solve_year_rows`), forwarded to the inflation factors of ``factor_side``.  ``None`` (a
+        solve that starts the run with whole-year widths) keeps the solve's own count.
 
     Returns
     -------
@@ -460,7 +465,7 @@ def period_walk_iterator(
     # Inflation factor sum.
     from flextool.engine.preprocess.params._npv import _inflation_factors_lf
     factors_lf = _inflation_factors_lf(
-        source, active_solve, period_universe, provider=provider)
+        source, active_solve, period_universe, provider=provider, year_rows=year_rows)
     if factor_side == "inv":
         factors_lf = factors_lf.select(
             "d", pl.col("inv_factor").alias("factor"))

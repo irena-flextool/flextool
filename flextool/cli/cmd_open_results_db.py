@@ -34,6 +34,7 @@ from pathlib import Path
 from flextool.cli._console import run_tool
 from flextool.cli.cmd_run_flextool import resolve_output_path
 from flextool.gui.platform_utils import spine_db_editor_argv
+from flextool.sqlite_url import sqlite_file_path, sqlite_url_string
 
 
 def resolve_results_db_path(project_folder_file, output_location=None):
@@ -92,7 +93,7 @@ def output_locations_from_db(output_info_db_url):
 
 def _to_sqlite_url(db_path):
     """Build a ``sqlite:///`` URL for an absolute/relative filesystem path."""
-    return f"sqlite:///{Path(db_path).as_posix()}"
+    return sqlite_url_string(Path(db_path).as_posix())
 
 
 def _build_launch_argv(db_urls):
@@ -220,11 +221,7 @@ def main(argv=None):
         value = args.results_db_url
         if "://" in value:
             db_url = value
-            db_path = (
-                Path(value.replace("sqlite:///", "", 1))
-                if value.startswith("sqlite:")
-                else None
-            )
+            db_path = sqlite_file_path(value)
         else:
             db_path = Path(value)
             db_url = _to_sqlite_url(db_path)

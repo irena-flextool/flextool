@@ -49,6 +49,7 @@ from flextool.calibrate._sizing import (
 )
 from flextool.calibrate._solve import run_solve
 from flextool.calibrate._solve_status import assess_solve
+from flextool.safe_names import require_strictly_inside
 
 
 class CalibError(RuntimeError):
@@ -90,7 +91,7 @@ class CalibConfig:
     ``out_root``            — output-location root; results land under
                               ``out_root/output_parquet/<scenario>/``.
     ``debug``               — when True, archive each iteration's outputs to
-                              ``out_root/out_iter_<k>/`` instead of clearing
+                              ``out_root/out_iter_<k>/<scenario>/`` instead of clearing
                               them.
     ``sizing``              — adder placement mode: ``"uniform"`` (default) —
                               a constant per-timestep margin sized ``λ·res/W``;
@@ -105,9 +106,14 @@ class CalibConfig:
                               CLI, not the loop itself.
     ``threads``             — thread budget of each solve (``--threads``);
                               ``None`` sends no flag.
-    ``solver_config_dir``   — folder of the solver option files of each
-                              solve (``--solver-config-dir``); ``None``
-                              sends no flag.
+    ``solver_config_dir``   — folders of the solver option files of each
+                              solve, highest first (``--solver-config-dir``
+                              once per folder); ``None`` sends no flag.
+    ``workspace_solver_config_dir`` — the folders the FlexTool window found
+                              (its project's, then its workspace's), highest
+                              first (``--workspace-solver-config-dir`` once
+                              per folder: each trusted only when this
+                              computer set it up); ``None`` sends no flag.
     """
 
     iterations: int
@@ -124,7 +130,8 @@ class CalibConfig:
     stall_fraction: float = 0.05
     final_write_methods: tuple[str, ...] = ("csv",)
     threads: int | None = None
-    solver_config_dir: Path | None = None
+    solver_config_dir: Path | tuple[Path, ...] | None = None
+    workspace_solver_config_dir: Path | tuple[Path, ...] | None = None
 
 
 @dataclass
@@ -337,22 +344,32 @@ def _accumulate_adder(
         adders[node] = (base if isinstance(base, float) else 0.0) + inc
 
 
-def _prepare_out_root(out_root: Path, iteration: int, debug: bool) -> None:
-    """Clear (or, in debug, archive) the prior ``output_parquet`` tree.
+def _prepare_out_root(out_root: Path, scenario: str, iteration: int, debug: bool) -> None:
+    """Clear (or, in debug, archive) *scenario*'s prior result folder.
 
-    A clean output directory each iteration is what makes P2's freshness
-    check meaningful: a genuinely failed solve skips output writing and so
-    would leave the previous iteration's files in place.  In debug mode the
-    prior tree is preserved under ``out_iter_<k-1>/`` for inspection; a
-    stray tree present before the baseline (k=0) is simply removed.
+    Only ``<out_root>/output_parquet/<scenario>/`` is touched: *out_root* can be
+    a project folder (the window passes it) whose ``output_parquet/`` also holds
+    the results of every other scenario, so the rest of that folder is left as
+    it is.
+
+    A clean result folder each iteration is what makes P2's freshness check
+    meaningful: a genuinely failed solve skips output writing and so would
+    leave the previous iteration's files in place.  In debug mode the prior
+    folder is preserved under ``out_iter_<k-1>/<scenario>/`` for inspection; a
+    stray folder present before the baseline (k=0) is simply removed.
     """
-    prior = Path(out_root) / "output_parquet"
+    parquet_root = Path(out_root) / "output_parquet"
+    prior = parquet_root / scenario
     if not prior.exists():
         return
+    require_strictly_inside(prior, parquet_root)
     if debug and iteration > 0:
-        dest = Path(out_root) / f"out_iter_{iteration - 1}"
+        archive_root = Path(out_root) / f"out_iter_{iteration - 1}"
+        dest = archive_root / scenario
         if dest.exists():
+            require_strictly_inside(dest, archive_root)
             shutil.rmtree(dest)
+        archive_root.mkdir(parents=True, exist_ok=True)
         shutil.move(str(prior), str(dest))
     else:
         shutil.rmtree(prior)
@@ -429,7 +446,7 @@ def run_calibration(
         write_calib_alt(url, scenario, adders)
 
         # 2. Give this iteration a clean output dir (archive in debug mode).
-        _prepare_out_root(config.out_root, k, config.debug)
+        _prepare_out_root(config.out_root, scenario, k, config.debug)
 
         # 3. Solve, then verify fail-closed (always pass started_at).
         run = run_solve(
@@ -440,6 +457,7 @@ def run_calibration(
             cache_dir=config.warm_start_cache_dir,
             threads=config.threads,
             solver_config_dir=config.solver_config_dir,
+            workspace_solver_config_dir=config.workspace_solver_config_dir,
         )
         solve_seconds = time.time() - run.started_at
         iterations_run = k + 1

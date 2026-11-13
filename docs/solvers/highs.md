@@ -83,6 +83,9 @@ commonly useful HiGHS option names are:
 | `threads`         | int    | Thread cap. Equivalent to the `--highs-threads` CLI flag.                    |
 | `solver`          | string | `"simplex"`, `"ipm"`, or `"choose"`. (Note: this is HiGHS's *own* `solver` option — not FlexTool's.) |
 
+`objective_target`, `objective_bound` and `mip_abs_gap` are written in unscaled currency; FlexTool scales them to
+the objective HiGHS sees (see [Time and other limits](index.md#time-and-other-limits)).
+
 ### The former `highs_*` parameters
 
 Three older FlexTool parameters (`highs_presolve`, `highs_method`,

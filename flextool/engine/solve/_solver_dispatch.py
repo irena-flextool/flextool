@@ -2,8 +2,9 @@
 
 This module owns:
 
-* :func:`build_solver_options` — translate :class:`SolverConfig` into
-  the option dict polar-high's ``solve()`` consumes (Phase 2).
+* :func:`resolve_commercial_options` — the parameters a commercial solve
+  passes to its solver: the option file, the solve's ``solver_mip_gap`` and
+  ``solver_arguments`` and the operator flags, under native names.
 * :func:`run_one_solve` — dispatch a single :class:`polar_high.Problem`
   to either ``Problem.solve()`` (in-process HiGHS, default — preserves
   streaming + ``Solution.highs``) or
@@ -23,9 +24,24 @@ import logging
 import math
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping, NamedTuple
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, NamedTuple, Sequence
 
+from flextool._solver_option_rules import cplex_set_word_problem
+from flextool._solver_option_rules import highs_opt_lines as _highs_opt_lines
 from flextool.engine.input._solve_config import SolverConfig
+from flextool.engine.solve import _solver_catalogue
+from flextool.engine.solve._solver_catalogue import (
+    CPLEX_PATH_FIRST_WORDS,
+    PATH_NAME_WORDS,
+    SERVER_PREFIXES,
+    Entry,
+    catalogue_key,
+    commercial_option_key,
+    cplex_full_names,
+    highs_live_type,
+    rule_class,
+    suggest,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -62,20 +78,6 @@ def _parse_highs_opt_file(path: Path | None) -> dict[str, str]:
     return _parse_highs_opt_text(path.read_text(encoding="utf-8"))
 
 
-def _highs_opt_lines(text: str) -> list[tuple[int, str, str]]:
-    """``(line number, key, value)`` of every option line of a ``highs.opt`` text, in file order."""
-    out: list[tuple[int, str, str]] = []
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if "=" not in stripped:
-            continue
-        key, _, val = stripped.partition("=")
-        out.append((lineno, key.strip(), val.strip()))
-    return out
-
-
 def _parse_highs_opt_text(text: str) -> dict[str, str]:
     """The ``key=value`` options of a ``highs.opt`` text (rules of :func:`_parse_highs_opt_file`)."""
     return {key: val for _, key, val in _highs_opt_lines(text)}
@@ -101,6 +103,15 @@ _CPLEX_OPTION_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.]*(?: [A-Za-z][A-Za-z0-9_.
 _OPTION_VALUE = re.compile(r"[A-Za-z0-9_.+\-/\\:]*")
 _OPTION_NAME_MAX = 64
 _OPTION_VALUE_MAX = 255
+#: CPLEX parameters whose value is text, as :func:`commercial_option_key` forms: the string parameters of FlexTool's
+#: CPLEX list (``Cplex().parameters``'s four and the Interactive Optimizer's ``logfile`` and ``distmip config``).
+#: Every other CPLEX parameter takes a number.
+_CPLEX_TEXT_PARAMETERS = frozenset(
+    key for key, entry in _solver_catalogue.load("cplex").entries.items() if entry.type == "string"
+)
+#: Words that may stand for a switch's value (the Interactive Optimizer's yes / no and the like); no CPLEX parameter
+#: name has these words, so such a value cannot be the missing last word of a name.
+_CPLEX_SWITCH_WORDS = frozenset({"yes", "no", "y", "n", "on", "off", "true", "false"})
 
 
 def _describe_character(ch: str) -> str:
@@ -122,12 +133,57 @@ def _short(text: str, limit: int = 80) -> str:
     return shown if len(shown) <= limit else shown[: limit - 3] + "..."
 
 
+def _cplex_value_is_a_name_word(name: str, value: str) -> bool:
+    """Whether the CPLEX line ``<name> <value>`` reads as a parameter name without its value.
+
+    ``mip tolerances mipgap`` (no value) reads as parameter ``mip tolerances`` with the value ``mipgap``, and the
+    Interactive Optimizer then takes the script's next line as the value.  Every CPLEX parameter but
+    :data:`_CPLEX_TEXT_PARAMETERS` takes a number (or a switch word), so a value that could be the last word of a
+    parameter name (a letter, then letters, digits, ``_`` and ``.``) means the value is missing.  A text parameter
+    is recognised also abbreviated, as CPLEX accepts.
+    """
+    if (
+        _OPTION_NAME.fullmatch(value) is None or _is_number(value) or value.casefold() in _CPLEX_SWITCH_WORDS
+    ):
+        return False
+    words = commercial_option_key("cplex", name).split(" ")
+    return not any(
+        len(words) == len(full.split(" ")) and all(f.startswith(w) for w, f in zip(words, full.split(" ")))
+        for full in _CPLEX_TEXT_PARAMETERS
+    )
+
+
+def _cplex_group_members(name: str) -> list[str]:
+    """The listed CPLEX parameters of which *name* names a group: every word of *name* abbreviates the same word
+    of the parameter, which has more words (``mip tolerances`` -> ``mip tolerances mipgap``, ...).  Empty when
+    *name* is a listed parameter or abbreviates one of as many words (then it is a parameter name, checked as
+    such).  The Interactive Optimizer answers ``set <group> <value>`` with a prompt for the parameter, which takes
+    the script's next line, so a group is refused from every source (item 240 review b1 F6)."""
+    catalogue = _solver_catalogue.load("cplex")
+    key = commercial_option_key("cplex", name)
+    if not key or key in catalogue.entries:
+        return []
+    words = key.split(" ")
+    members: list[str] = []
+    for full in catalogue.entries:
+        full_words = full.split(" ")
+        if len(full_words) >= len(words) and all(f.startswith(w) for w, f in zip(words, full_words)):
+            if len(full_words) == len(words):
+                return []
+            members.append(full)
+    return sorted(members)
+
+
 def validate_solver_option(solver: str, name: object, value: object, where: str) -> None:
     """Refuse a solver option whose *name* or *value* could change the solver's command script or arguments.
 
     *where* names the source in the message: the option file and its line, ``solver_arguments of solve X``,
     ``solver_mip_gap of solve X`` or the flag / environment variable.  Raises :class:`FlexToolUserError`.
-    Booleans and ``None`` pass; other numbers are checked as their text.
+    Booleans and ``None`` pass; other numbers are checked as their text.  A text value must not be empty (an
+    option-file line without a value arrives here as an empty value): CPLEX would read the script's next line as
+    the value, Gurobi and Xpress dropped it, and HiGHS' option-file reader (the ``--save-memory`` solve before
+    item 240 B4) refuses it.  A CPLEX value must not be a word where CPLEX expects a number
+    (:func:`_cplex_value_is_a_name_word`).
     """
     if value is None or isinstance(value, bool):
         value_text = ""
@@ -151,6 +207,10 @@ def validate_solver_option(solver: str, name: object, value: object, where: str)
             problem = "the name does not start with a letter"
         else:
             problem = "the name's words are not separated by single spaces, each starting with a letter"
+    elif isinstance(value, str) and not value.strip():
+        problem = "the value is empty or missing"
+    elif (set_word := cplex_set_word_problem(solver, name_text)) is not None:
+        problem = f"the name {set_word}"
     elif len(value_text) > _OPTION_VALUE_MAX:
         problem = f"the value is longer than {_OPTION_VALUE_MAX} characters"
     elif _OPTION_VALUE.fullmatch(value_text) is None:
@@ -159,6 +219,18 @@ def validate_solver_option(solver: str, name: object, value: object, where: str)
     elif value_text.endswith("\\"):
         # A console that reads Tcl (Xpress) joins a line ending in a backslash with the next command.
         problem = "the value ends with a backslash"
+    elif solver == "cplex" and _cplex_value_is_a_name_word(name_text, value_text):
+        problem = (
+            f"the value is missing: {_short(name_text + ' ' + value_text)} reads as a parameter name, since every "
+            "CPLEX parameter except " + ", ".join(sorted(_CPLEX_TEXT_PARAMETERS)) + " takes a number or a switch word"
+        )
+    elif solver == "cplex" and (members := _cplex_group_members(name_text)):
+        problem = (
+            f"{_short(name_text)} is a group of CPLEX parameters, not a parameter (it holds "
+            + ", ".join(repr(m) for m in members[:3]) + (", ..." if len(members) > 3 else "")
+            + "); the Interactive Optimizer would ask which one and take the script's next line as the answer, "
+            "so name the parameter in full"
+        )
     if problem is None:
         return
     name_rule_text = (
@@ -184,76 +256,73 @@ def validate_solver_option(solver: str, name: object, value: object, where: str)
 # (and ``solver_mip_gap``) may not point a solver at a file outside the solve's
 # work folder or at another machine.  An option that names a file, folder or
 # path takes only a plain file name there, which lands in the solve's work
-# folder (:func:`solver_workspace`); a Gurobi server / cloud / licence option is
-# refused.  No option of the five solvers starts another program: FlexTool
+# folder (:func:`solver_workspace`); a Gurobi server / cloud / licence option and
+# an Xpress remote-solving control are refused.  No option of the five solvers starts another program: FlexTool
 # passes options only as ``set`` / ``setControl`` lines or ``Name=value``
 # arguments, so the server options are the only other way out.  Both kinds are
 # refused, never cleaned up; the general check (:func:`validate_solver_option`)
 # applies to every source.
+#
+# Item 240 B1: the database may set only the parameters in FlexTool's list of the
+# solver's parameters (:mod:`._solver_catalogue`), each with its class (``plain``,
+# ``file``, ``local_only``, ``flextool``).  Any other name is refused with the
+# closest listed one, unless this computer allows unlisted names
+# (:mod:`flextool._local_solver_settings`); then the name rules below decide.
+# HiGHS names that the installed HiGHS knows as a number or a switch pass too.
 
 #: Words in an option name that mark a file, folder or path option (``LogFile``, ``workdir``, ``TUNEROUTPUTPATH``).
-_PATH_NAME_WORDS = ("file", "dir", "path")
-
-#: The file, folder and path options of each solver, as :func:`commercial_option_key` forms (HiGHS: lower case).
-#: Many are also found by the name rule above; the list adds the rest and is the set FlexTool places in the
-#: solve's work folder for HiGHS (the in-process HiGHS solve runs in the run's current folder).  A block list: a
-#: parameter a later solver version adds is caught only by the name rule (item 240 has the allow-list).
-_PATH_OPTIONS: dict[str, frozenset[str]] = {
-    # highspy 1.15.1: every string option of ``Highs().writeOptions(<file>)`` whose description is a file
-    # ("Log file", "Read solution file", "Read basis file", "Write model file", "Write solution file", "Write
-    # basis file", "Write presolved model file", "Write IIS model file", "File for reporting improving MIP
-    # solutions").  The other string options (presolve, solver, parallel, run_crossover, ranging, ...) are words.
-    "highs": frozenset({
-        "log_file", "solution_file", "write_model_file", "write_presolved_model_file", "write_iis_model_file",
-        "write_basis_file", "read_basis_file", "read_solution_file", "mip_improving_solution_file",
-    }),
-    # gurobipy 13.0.2 ``_paramdetails.py`` (Gurobi's parameter reference): the parameters whose value is a file
-    # or folder name (ResultFile, LogFile, SolFiles, NodefileDir, InputFile; the .prm / .json file lists
-    # ConcurrentSettings, MultiObjSettings, TuneBaseSettings, TuneIgnoreSettings, TuneParams) and Record (writes
-    # API-call recording files; an integer, so the database may set it: the files land in the work folder).
-    # InputFile and the five setting-file lists are ``gurobi_cl`` parameters, not library ones.
-    "gurobi": frozenset({
-        "resultfile", "logfile", "solfiles", "nodefiledir", "inputfile", "concurrentsettings",
-        "multiobjsettings", "tunebasesettings", "tuneignoresettings", "tuneparams", "record",
-    }),
-    # cplex 22.1.2.0: the string parameters of ``Cplex().parameters`` that name a file or folder (``workdir``,
-    # ``output.intsolfileprefix``; ``read.fileencoding`` is a code page), plus the Interactive Optimizer's own
-    # ``set logfile <file>`` (IBM CPLEX Interactive Optimizer commands reference; not in the Python API).  The
-    # Interactive Optimizer takes any unique abbreviation of each word, so an abbreviation is matched too
-    # (:func:`is_path_option`); a name whose first word is ``read`` / ``write`` is one as well.
-    "cplex": frozenset({"workdir", "output intsolfileprefix", "logfile"}),
-    # xpress 46.01.02: the string controls of ``problem().getControl()`` that name a file or folder
-    # (TUNERMETHODFILE read, TUNEROUTPUTPATH written, TUNERSESSIONNAME the name of the tuner's output under it).
-    # The others are MPS section names, masks and formats.  Compared without case or an ``XPRS_`` prefix.
-    "xpress": frozenset({"tunermethodfile", "tuneroutputpath", "tunersessionname"}),
-    # coptpy 8.0.4 (COPT 8.0.4): every parameter of ``COPT.Param`` is an integer or a float
-    # (``Model.getParamInfo``); ``LogFile`` (the ``copt_cmd`` console's log setting) is listed in case.
-    "copt": frozenset({"logfile"}),
-}
+_PATH_NAME_WORDS = PATH_NAME_WORDS
 #: CPLEX: a name whose first word is one of these is a path option too (``read`` / ``write`` commands).
-_CPLEX_PATH_FIRST_WORDS = frozenset({"read", "write"})
+_CPLEX_PATH_FIRST_WORDS = CPLEX_PATH_FIRST_WORDS
 
-#: Gurobi options that connect to another machine or carry its credentials: Compute Server, Cluster Manager,
-#: Instant Cloud, Web License Service, token server and distributed workers (Gurobi 12 parameter list), as
-#: :func:`commercial_option_key` forms (so ``Compute_Server`` is ``ComputeServer``, as Gurobi reads it).
+
+def _catalogue_keys(solver: str, *classes: str, reason: str | None = None, kind: str | None = None) -> frozenset[str]:
+    entries = _solver_catalogue.load(solver).entries.values()
+    return frozenset(
+        e.key for e in entries
+        if e.cls in classes and (reason is None or e.reason == reason) and (kind is None or e.type == kind)
+    )
+
+
+#: The file, folder and path options of each solver (FlexTool's solver lists, item 240 B1: class ``file``, and
+#: Gurobi's ``ResultFile``), as :func:`commercial_option_key` forms.  The name rule (:data:`_PATH_NAME_WORDS`)
+#: and these lists are the rule for a name that is not listed, when this computer allows such names.
+_PATH_OPTIONS: dict[str, frozenset[str]] = {
+    s: _catalogue_keys(s, "file", "flextool") for s in _solver_catalogue.SOLVERS
+}
+#: HiGHS' options whose value is a file name (``log_file``, ``solution_file``, ...): a plain file name from the
+#: database becomes a path in the solve's work folder (the in-process HiGHS solve runs in the run's current folder).
+_HIGHS_FILE_NAME_OPTIONS = _catalogue_keys("highs", "file", kind="string")
+
+#: Options that connect the solver to another machine or carry its credentials (FlexTool's solver lists: class
+#: ``local_only``, reason ``remote``), as :func:`commercial_option_key` forms.  Gurobi: Compute Server, Cluster
+#: Manager, Instant Cloud, Web License Service, token server and distributed workers.  Xpress: the ``COMPUTE...``
+#: controls of remote solving through the Insight Compute interface.  CPLEX: the Interactive Optimizer's
+#: ``distmip config``.  COPT and HiGHS list none.
 _SERVER_OPTIONS: dict[str, frozenset[str]] = {
-    "gurobi": frozenset({
-        "computeserver", "serverpassword", "servertimeout",
-        "csmanager", "csapiaccessid", "csapisecret", "csappname", "csauthtoken", "csbatchmode", "csclientlog",
-        "csgroup", "csidletimeout", "cspriority", "csqueuetimeout", "csrouter", "cstlsinsecure",
-        "cloudaccessid", "cloudsecretkey", "cloudpool", "cloudhost",
-        "wlsaccessid", "wlssecret", "wlstoken", "wlstokenduration", "wlstokenrefresh", "wlsproxy", "wlsconfig",
-        "licenseid", "username", "tokenserver", "tokenport", "tsport",
-        "workerpool", "workerpassword", "workerport",
-    }),
+    s: keys for s in _solver_catalogue.SOLVERS if (keys := _catalogue_keys(s, "local_only", reason="remote"))
 }
-#: Gurobi: a name with one of these prefixes is a server option too (a later Gurobi version's new ones).
-_SERVER_OPTION_PREFIXES: dict[str, tuple[str, ...]] = {
-    "gurobi": ("computeserver", "server", "cs", "cloud", "wls", "token", "worker"),
-}
+#: A name with one of these prefixes is a server option too (a later solver version's new ones).
+_SERVER_OPTION_PREFIXES: dict[str, tuple[str, ...]] = SERVER_PREFIXES
 
 #: A plain file name: ASCII letters, digits, ``_ . + -``, starting with a letter, digit or ``_``.
 _PLAIN_FILE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+\-]*")
+
+#: Files a solver reads by itself from the folder it runs in, as lower case names.  Every solver runs in the same
+#: work folder (``solve_data/subprocess``), so a file one solve writes there under such a name would set up the
+#: next solve: ``gurobi.env`` (Gurobi's parameter file, read at start), ``license.dat`` / ``license.key`` /
+#: ``client.ini`` (COPT's licence and its floating-licence or cluster client settings, coptpy 8.0.4),
+#: ``xpauth.xpr`` and ``nethasp.ini`` (Xpress's licence file and its network-key settings, xpress 9.8.1).  CPLEX
+#: 22.1.2 and HiGHS read no such file.  A name ending in ``.lic`` (Gurobi's licence file and others) is one too.
+_SOLVER_READS_FILES = frozenset({"gurobi.env", "license.dat", "license.key", "client.ini", "xpauth.xpr", "nethasp.ini"})
+_SOLVER_READS_SUFFIXES = (".lic",)
+
+
+def _solver_reads_file(file_name: str) -> bool:
+    """Whether *file_name* (a plain name) is one a solver reads by itself from its folder; case and trailing dots
+    are ignored, as Windows does."""
+    key = file_name.rstrip(".").casefold()
+    return key in _SOLVER_READS_FILES or key.endswith(_SOLVER_READS_SUFFIXES)
 
 
 def solver_workspace(work_folder: "Path | str | None") -> Path | None:
@@ -282,6 +351,13 @@ def is_path_option(solver: str, name: object) -> bool:
     if solver != "cplex" or not key:
         return False
     words = key.split(" ")
+    if words[0] == "set" and len(words) > 1:
+        # ``set lo /tmp/x``: FlexTool writes ``set <name> <value>`` itself; judge the name the user meant
+        # (:func:`flextool._solver_option_rules.cplex_set_word_problem` refuses the line from every source).
+        words = words[1:]
+        key = " ".join(words)
+        if key in listed or any(word in key for word in _PATH_NAME_WORDS):
+            return True
     if words[0] in _CPLEX_PATH_FIRST_WORDS:
         return True
     return any(
@@ -291,9 +367,14 @@ def is_path_option(solver: str, name: object) -> bool:
 
 
 def is_server_option(solver: str, name: object) -> bool:
-    """Whether *name* is an option of *solver* that connects to another machine or carries its credentials."""
+    """Whether *name* is an option of *solver* that connects to another machine or carries its credentials.
+
+    CPLEX: also a name whose first word abbreviates ``distmip`` (the distributed MIP's machines, a later CPLEX's
+    new ``distmip ...`` parameters), since the Interactive Optimizer accepts any unique abbreviation."""
     key = _option_key(solver, str(name))
-    return key in _SERVER_OPTIONS.get(solver, frozenset()) or key.startswith(_SERVER_OPTION_PREFIXES.get(solver, ()))
+    if key in _SERVER_OPTIONS.get(solver, frozenset()) or key.startswith(_SERVER_OPTION_PREFIXES.get(solver, ())):
+        return True
+    return solver == "cplex" and bool(key) and "distmip".startswith(key.split(" ")[0])
 
 
 def _is_number(text: str) -> bool:
@@ -304,41 +385,334 @@ def _is_number(text: str) -> bool:
     return True
 
 
-def check_database_solver_option(solver: str, name: object, value: object, where: str) -> None:
-    """Refuse an option from the input database (*where*: ``solver_arguments of solve X``) that names a path or
-    another machine.
-
-    A path option (:func:`is_path_option`) takes a number, a boolean or a plain file name: ASCII, no ``/``,
-    ``\\``, ``:`` or ``..``, not starting with ``.``.  A server option (:func:`is_server_option`) is refused.  Run
-    :func:`validate_solver_option` as well; this check adds the database's limits only.  Raises
-    :class:`FlexToolUserError` naming the option, its value and the source.
-    """
-    value_text = "" if value is None or isinstance(value, bool) else str(value)
-    name_text = str(name)
-    instead = (
+def _instead(solver: str) -> str:
+    return (
         f"set it in the run's solver option file instead (solver_config/{solver}.opt, or that file in a folder "
         "given with --solver-config-dir): FlexTool trusts the files and the command line of the computer it runs "
         "on, not the input database."
     )
-    if is_server_option(solver, name_text):
-        raise FlexToolUserError(
-            f"Refusing {solver} option {_short(name_text)} (value {_short(value_text)}) from {where}: it comes "
-            "from the input database, and an option that connects the solver to another computer (a server, "
-            f"cloud or licence service) or carries its credentials is not taken from there. Remove it from the "
-            f"database and {instead}"
+
+
+def _allow_unlisted():
+    """This computer's switch for unlisted names (:func:`flextool._local_solver_settings.allow_unlisted_parameters`);
+    an unreadable setting is a :class:`FlexToolUserError` naming it."""
+    from flextool._local_solver_settings import LocalSolverSettingsError, allow_unlisted_parameters
+
+    try:
+        return allow_unlisted_parameters()
+    except LocalSolverSettingsError as exc:
+        raise FlexToolUserError(str(exc)) from exc
+
+
+def _unlisted_remedy(solver: str) -> str:
+    from flextool._local_solver_settings import ALLOW_UNLISTED_ENV, settings_path
+
+    label = _solver_catalogue.SOLVER_LABEL[solver]
+    return (
+        f"A parameter of a newer {label} can be set in this computer's solver_config/{solver}.opt; or allow names "
+        f"that are not in FlexTool's list from input databases on this computer: set the environment variable "
+        f'{ALLOW_UNLISTED_ENV}=1, or write "allow_unlisted_parameters": true in {settings_path()}.'
+    )
+
+
+def _unlisted_problem(solver: str, name_text: str, *, database: bool = True) -> str:
+    """Why an unlisted *name_text* is refused (*database*) or warned about, with the closest listed name (CPLEX:
+    the full name an abbreviation stands for)."""
+    catalogue = _solver_catalogue.load(solver)
+    if solver == "cplex":
+        full = cplex_full_names(catalogue, name_text)
+        why = ("from the input database FlexTool takes CPLEX names only in full" if database else
+               "FlexTool merges the option layers by full name, so an abbreviation and its full name are two lines")
+        if len(full) == 1:
+            return f"it is not a full CPLEX parameter name; write {full[0]!r} ({why})"
+        if full:
+            return ("it is not a full CPLEX parameter name; it abbreviates "
+                    + ", ".join(repr(f) for f in full[:5]) + f" ({why})")
+    problem = f"it is not in FlexTool's list of {catalogue.label} parameters ({catalogue.versions_text()})"
+    close = suggest(catalogue, name_text)
+    return problem + (f"; did you mean {close!r}?" if close else "")
+
+
+#: Unlisted names that passed because this computer allows them, warned once per run: ``(solver, key)``.
+_warned_unlisted_allowed: set[tuple[str, str]] = set()
+
+
+def _remove(solver: str, untrusted: str | None) -> str:
+    """The end of a refusal: what to do instead (the input database's, or an untrusted option file's)."""
+    if untrusted is None:
+        return f"Remove it from the database and {_instead(solver)}"
+    return untrusted
+
+
+def _database_entry(solver: str, name_text: str, value_text: str, where: str, untrusted: str | None = None) -> Entry:
+    """The catalogue entry of a database option: the listed one; for HiGHS one the installed HiGHS knows as a
+    number or a switch; else, when this computer allows unlisted names, one from the name rules (one warning per
+    run and name).  Otherwise refused (:class:`FlexToolUserError`).  *untrusted*: the option is a line of an
+    option file that gets the database's rules, and this is why (item 240 B3)."""
+    catalogue = _solver_catalogue.load(solver)
+    entry = catalogue.entry(name_text)
+    if entry is not None:
+        return entry
+    key = catalogue_key(solver, name_text)
+    head = f"Refusing {solver} option {_short(name_text)} (value {_short(value_text)}) from {where}: "
+    if solver == "highs":
+        live = highs_live_type(key)
+        if live == "string":
+            raise FlexToolUserError(
+                head + f"it is a text option of the installed HiGHS that is not in FlexTool's list of HiGHS options "
+                f"({catalogue.versions_text()}), so nobody has checked what its value may name. "
+                + _remove(solver, untrusted)
+            )
+        if live in ("bool", "int", "double") and rule_class(solver, key) is None:
+            return Entry(key, key, live, "plain")
+    if solver == "cplex":
+        _refuse_cplex_abbreviation(catalogue, name_text, head, untrusted)
+    allow = _allow_unlisted()
+    if not allow.value:
+        problem = _unlisted_problem(solver, name_text)
+        remedy = _unlisted_remedy(solver) if untrusted is None else untrusted
+        raise FlexToolUserError(head + problem + ("" if problem.endswith("?") else ".") + " " + remedy)
+    if (solver, key) not in _warned_unlisted_allowed:
+        _warned_unlisted_allowed.add((solver, key))
+        logging.getLogger(__name__).warning(
+            "Passing %s option %s from %s although it is not in FlexTool's list of %s parameters (%s): names not "
+            "in the list are allowed from input databases on this computer (%s).",
+            solver, _short(name_text), where, catalogue.label, catalogue.versions_text(), allow.source,
         )
-    if not value_text or not is_path_option(solver, name_text) or _is_number(value_text):
+    if is_server_option(solver, name_text):
+        return Entry(key, name_text, "unknown", "local_only", "remote")
+    # Nobody has checked what an unlisted name's value may name, so it takes the rules of a file parameter: a
+    # number, a switch or a plain file name, never a path or a file a solver reads by itself.
+    return Entry(key, name_text, "unknown", "file")
+
+
+def _refuse_cplex_abbreviation(catalogue: "_solver_catalogue.Catalogue", name_text: str, head: str,
+                               untrusted: str | None) -> None:
+    """Refuse a CPLEX name from the database that abbreviates a listed one (any class: ``d c`` stands for
+    ``distmip config``, ``def`` for ``defaults``), whatever this computer allows: the Interactive Optimizer reads
+    it as that parameter, and the switch for unlisted names is for a newer CPLEX's parameters, not for
+    abbreviations (item 240 B1 decision D2: the database takes full names only)."""
+    full = cplex_full_names(catalogue, name_text, every_class=True)
+    if not full:
+        return
+    named = ", ".join(repr(f) for f in full[:5])
+    usable = [f for f in full if catalogue.entries[f].cls in ("plain", "file")]
+    if len(full) == 1 and usable:
+        problem = f"it is not a full CPLEX parameter name; write {full[0]!r}"
+    else:
+        problem = f"it is not a full CPLEX parameter name; it abbreviates {named}"
+    raise FlexToolUserError(
+        head + problem + " (from the input database FlexTool takes CPLEX names only in full, whatever this "
+        "computer allows for names that are not in its list). "
+        + ("Write the full name in the database, or set the option in this computer's solver_config/cplex.opt."
+           if usable and untrusted is None else _remove("cplex", untrusted))
+    )
+
+
+def check_database_solver_option(
+        solver: str, name: object, value: object, where: str, *, untrusted: str | None = None) -> None:
+    """Refuse an option from the input database (*where*: ``solver_arguments of solve X``) that is not in
+    FlexTool's list of *solver*'s parameters, names a path or reaches another machine.
+
+    *untrusted*: the option is a line of an option file that a run found on its own outside a workspace this
+    computer set up (item 240 B3); it gets the same rules, and the refusal ends with *untrusted* (why, and how to
+    trust the folder) instead of the database's remedy.
+
+    The name must be listed (:func:`_database_entry`; HiGHS: or known to the installed HiGHS as a number or a
+    switch; any solver: or allowed on this computer).  A ``file`` parameter takes a number, a boolean or a plain
+    file name: ASCII, no ``/``, ``\\``, ``:`` or ``..``, not starting with ``.``, and not a file a solver reads by
+    itself.  A ``local_only`` parameter (a server, cloud or licence setting; a text parameter nobody reviewed; a
+    console command) is refused.  Run :func:`validate_solver_option` first; this check adds the database's limits
+    only.  Raises :class:`FlexToolUserError` naming the option, its value and the source.
+    """
+    value_text = "" if value is None or isinstance(value, bool) else str(value)
+    name_text = str(name)
+    entry = _database_entry(solver, name_text, value_text, where, untrusted)
+    head = f"Refusing {solver} option {_short(name_text)} (value {_short(value_text)}) from {where}: "
+    origin = "the input database" if untrusted is None else "an option file that gets the input database's rules"
+    if entry.cls == "local_only":
+        if entry.reason == "remote":
+            raise FlexToolUserError(
+                head + f"it comes from {origin}, and an option that connects the solver to another "
+                "computer (a server, cloud or licence service) or carries its credentials is not taken from there. "
+                + _remove(solver, untrusted)
+            )
+        if entry.reason == "command":
+            raise FlexToolUserError(
+                head + f"it is a command of the {_solver_catalogue.SOLVER_LABEL[solver]} console, not a parameter. "
+                + ("Remove it from the database." if untrusted is None else untrusted)
+            )
+        raise FlexToolUserError(
+            head + "it is a text parameter that FlexTool has not checked for use from "
+            + ("an input database" if untrusted is None else "an option file that gets the input database's rules")
+            + ". "
+            + _remove(solver, untrusted)
+        )
+    if entry.cls == "plain" and entry.type == "string" and any(ch in value_text for ch in "/\\:"):
+        # A text parameter holds no file (code pages, masks, MPS names, format words), but what the solver does
+        # with its value is not checked everywhere (CPLEX ``read fileencoding`` goes to its code-page converter),
+        # so a path cannot reach it from the database (item 240 review b1 F4).
+        raise FlexToolUserError(
+            head + f"it comes from {origin}, where a text parameter takes no '/', '\\' or ':'; none of its "
+            "values needs them. " + (f"For a value with them, {_instead(solver)}" if untrusted is None else untrusted)
+        )
+    if entry.cls not in ("file", "flextool") or not value_text or _is_number(value_text):
         return
     if (
         not value_text.isascii() or _PLAIN_FILE_NAME.fullmatch(value_text) is None or ".." in value_text
     ):
+        kind = ("an option that is not in FlexTool's list (so nobody has checked what its value may name) takes "
+                "only a number, a switch or a" if entry.type == "unknown" else
+                "an option that names a file or folder takes only a")
         raise FlexToolUserError(
-            f"Refusing {solver} option {_short(name_text)} (value {_short(value_text)}) from {where}: it comes "
-            "from the input database, where an option that names a file or folder takes only a plain file name "
-            "(ASCII letters, digits and '_ . + -', starting with a letter, digit or '_'; no '/', '\\', ':' or "
-            "'..'), and FlexTool puts that file in the solve's work folder (solve_data/subprocess). For a file "
-            f"elsewhere, remove the option from the database and {instead}"
+            head + f"it comes from {origin}, where {kind} "
+            "plain file name (ASCII letters, digits and '_ . + -', starting with a letter, digit or '_'; no '/', "
+            "'\\', ':' or '..'), and FlexTool puts that file in the solve's work folder (solve_data/subprocess). "
+            + (f"For a file elsewhere, remove the option from the database and {_instead(solver)}"
+               if untrusted is None else untrusted)
         )
+    if _solver_reads_file(value_text):
+        raise FlexToolUserError(
+            head + f"it comes from {origin} and names a file that a solver reads by itself from the "
+            "folder it runs in (its settings or licence file), so the next solve in the work folder would read it. "
+            + (f"Give the file another name, or {_instead(solver)}" if untrusted is None
+               else "Give the file another name. " + untrusted)
+        )
+
+
+#: The ``highs_method`` / ``highs_parallel`` / ``highs_presolve`` parameters of FlexTool 3 databases, folded into
+#: ``solver_arguments`` by the v56 migration under HiGHS' names whatever the solve's solver.
+_FLEXTOOL3_HIGHS_OPTIONS = frozenset({"solver", "parallel", "presolve"})
+#: FlexTool 3 HiGHS options dropped from a commercial solve, warned once per run: ``(solver, name)``.
+_warned_flextool3_options: set[tuple[str, str]] = set()
+
+
+def drop_flextool3_highs_option(
+        solver: str, name: object, value: object, where: str, logger: logging.Logger | None = None) -> bool:
+    """Whether the database option *name* = *value* of a solve on the commercial *solver* is a FlexTool 3 HiGHS
+    setting (``solver`` / ``parallel`` / ``presolve`` as the v56 migration writes them) to leave out: *solver* has
+    no such parameter, or its value is a HiGHS word (``on``, ``off``, ``choose``, ``simplex``, ...) where every
+    commercial parameter of that name takes a number.  One warning per run for each solver and name.  Leaving a
+    database option out cannot widen what the database can do."""
+    name_text = str(name)
+    if solver == "highs" or name_text not in _FLEXTOOL3_HIGHS_OPTIONS or value is None:
+        return False
+    value_text = "1" if value is True else "0" if value is False else str(value)
+    if _solver_catalogue.load(solver).entry(name_text) is not None and _is_number(value_text):
+        return False
+    if (solver, name_text) not in _warned_flextool3_options:
+        _warned_flextool3_options.add((solver, name_text))
+        label = _solver_catalogue.SOLVER_LABEL[solver]
+        (logger or logging.getLogger(__name__)).warning(
+            "Not passing %s=%s (%s) to %s: it is a HiGHS option, as FlexTool 3 databases set it for every solve "
+            "(highs_method / highs_parallel / highs_presolve, moved into solver_arguments by the database "
+            "migration), and this solve uses %s. Remove it from the solve's solver_arguments, or set %s's own "
+            "parameter there.",
+            name_text, _short(value_text), where, label, label, label,
+        )
+    return True
+
+
+#: Names of the run's own option files and flags that are not in FlexTool's list, warned once per run:
+#: ``(solver, source, key)``.
+_warned_unlisted_trusted: set[tuple[str, str, str]] = set()
+
+
+def warn_unlisted_trusted_option(
+        solver: str, name: object, where: str, logger: logging.Logger | None = None) -> None:
+    """One warning per run when *name*, from the run's own option file or flags (*where*: ``<file>, line N`` or
+    the flags), is not in FlexTool's list of *solver*'s parameters (HiGHS: nor known to the installed HiGHS).  It
+    is passed as written (item 240 B1 decision D3): the warning catches a misspelling or a CPLEX abbreviation,
+    which the merge of the layers does not match to its full name."""
+    catalogue = _solver_catalogue.load(solver)
+    if catalogue.entry(name) is not None:
+        return
+    key = catalogue_key(solver, name)
+    if solver == "highs" and highs_live_type(key) is not None:
+        return
+    source = where.split(", line ", 1)[0]
+    if (solver, source, key) in _warned_unlisted_trusted:
+        return
+    _warned_unlisted_trusted.add((solver, source, key))
+    problem = _unlisted_problem(solver, str(name), database=False)
+    (logger or logging.getLogger(__name__)).warning(
+        "%s: %s option %s: %s%s Passed to %s as written.", where, solver, _short(str(name)), problem,
+        "" if problem.endswith("?") else ".", catalogue.label,
+    )
+
+
+#: Ends the refusals :func:`untrusted_option_file_problems` collects, so the reason can be cut out of the message.
+_SCREEN_END = "\x1f"
+
+
+def untrusted_option_file_problems(solver: str, text: str) -> list[str]:
+    """The lines of *solver*'s option file *text* that a run refuses while the file gets the input database's
+    rules (item 240 B3: a folder this computer did not set up, such as an imported project's ``solver_config/``):
+    the same checks as such a run (:func:`validate_solver_option`, then :func:`check_database_solver_option` on
+    each line; a line FlexTool drops anyway, :data:`_HIGHS_OPT_IGNORED_KEYS` / :data:`_FLEXTOOL_OWN_OPTIONS`, is
+    skipped), with this computer's switch for unlisted names.  One message per refused line, ``line N: <name>
+    <value>: <why>``; a server option's value is shown as ``<hidden>`` (it can be a licence key or a password).
+    Project import and the first open of an imported project hold back a file with a message
+    (``flextool.project_package.settle_shipped_solver_config``), so the import and the run follow one rule."""
+    from flextool._solver_option_rules import native_opt_lines
+
+    highs = solver == "highs"
+    own = _FLEXTOOL_OWN_OPTIONS.get(solver, frozenset())
+    problems: list[str] = []
+    for lineno, name, value in (_highs_opt_lines(text) if highs else native_opt_lines(text)):
+        if (name in _HIGHS_OPT_IGNORED_KEYS) if highs else (commercial_option_key(solver, name) in own):
+            continue
+        where = f"line {lineno}"
+        try:
+            validate_solver_option(solver, name, value, where)
+            check_database_solver_option(solver, name, value, where, untrusted=_SCREEN_END)
+        except FlexToolUserError as exc:
+            message = str(exc)
+            reason = message.split(f" from {where}: ", 1)[-1]
+            # validate_solver_option ends with the general naming rule; a database refusal with the marker.
+            reason = reason.split(" A solver option name is ", 1)[0].split(_SCREEN_END, 1)[0].strip()
+            shown_value = "<hidden>" if is_server_option(solver, name) else value
+            shown = f"{name} = {shown_value}" if highs else f"{name} {shown_value}"
+            problems.append(f"line {lineno}: {shown.strip()}: {reason.rstrip('.')}")
+    return problems
+
+
+def check_run_solver_options(
+        solver_settings: Any, logger: logging.Logger | None = None, *,
+        solves: "Iterable[str] | None" = None, shown_as: Mapping[str, str] | None = None) -> None:
+    """Check the ``solver_arguments`` of the run's solves under the solver each uses, before the run's first solve
+    (item 240 B1), so that a refused option stops the run in seconds, not after hours of earlier solves.
+
+    *solver_settings* is :class:`flextool.engine.input._solve_config.SolverSettings` (``solvers``: solve ->
+    solver, HiGHS when absent; ``arguments``: solve -> the database map).  *solves*: the solves the run runs
+    (:meth:`~flextool.engine.input._solve_config.SolveConfig.solves_in_run`); ``None`` checks every solve of
+    *solver_settings*.  A solve the model does not run is not checked: its options never reach a solver, so they
+    must not stop the run (review b1 F7).  *shown_as*: the database solve a solve was made from (a 2-D period
+    map's ``<solve>_<period>``), named in the message and checked once.  The same checks as each solve's own
+    (:func:`resolve_commercial_options`, :func:`_resolve_effective_highs_options`), which stay for rolls,
+    duplicated solves and direct callers."""
+    from flextool.engine.solve._subprocess_solve import _format_native_opt_value
+
+    solvers = getattr(solver_settings, "solvers", None) or {}
+    all_arguments = getattr(solver_settings, "arguments", None) or {}
+    names = list(all_arguments) if solves is None else [s for s in dict.fromkeys(solves) if s in all_arguments]
+    checked: set[str] = set()
+    for solve in names:
+        arguments = all_arguments[solve]
+        solver = solvers.get(solve) or "highs"
+        if solver not in _solver_catalogue.SOLVERS:
+            continue
+        shown = (shown_as or {}).get(solve, solve)
+        if shown in checked:
+            continue
+        checked.add(shown)
+        where = f"solver_arguments of solve {shown}"
+        for name, value in (arguments or {}).items():
+            if value is None or drop_flextool3_highs_option(solver, name, value, where, logger):
+                continue
+            text = value if solver == "highs" else _format_native_opt_value(value)
+            validate_solver_option(solver, name, text, where)
+            check_database_solver_option(solver, name, text, where)
 
 
 #: Solution-file options that older ``highs.opt.template`` versions shipped
@@ -387,6 +761,101 @@ def _drop_solution_file_options(
     return options
 
 
+def _in_workspace(key: object, value: Any, workspace: Path | None) -> Any:
+    """A plain file name that a database-rules layer gives a HiGHS file option, as a path in *workspace* (created
+    when needed); any other value as it is."""
+    if (
+        workspace is not None and _option_key("highs", key) in _HIGHS_FILE_NAME_OPTIONS
+        and isinstance(value, str) and value
+    ):
+        workspace.mkdir(parents=True, exist_ok=True)
+        return str(workspace / value)
+    return value
+
+
+def _declared_option_type(solver: str, name: object) -> str | None:
+    """The type FlexTool's list of *solver*'s parameters gives *name* (HiGHS: else the installed HiGHS's type),
+    or ``None`` when neither knows it."""
+    entry = _solver_catalogue.load(solver).entry(name)
+    if entry is not None:
+        return entry.type
+    if solver == "highs":
+        return highs_live_type(catalogue_key("highs", name))
+    return None
+
+
+def _as_number(value: object) -> int | float | None:
+    """*value* as a number: an ``int`` / ``float`` as it is, a text that reads as one (an integer text as an
+    ``int``, so a large one keeps every digit); ``None`` for a boolean, a word or anything else."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            return int(text)
+        except ValueError:
+            pass
+        try:
+            return float(text)
+        except ValueError:
+            return None
+    return None
+
+
+def _not_whole_number(solver: str, name: object, value: object, where: str) -> FlexToolUserError:
+    return FlexToolUserError(
+        f"{_solver_catalogue.SOLVER_LABEL[solver]} option {_short(str(name))} takes a whole number, and {where} "
+        f"gives it {_short(str(value))}. Correct the value there and run again."
+    )
+
+
+def typed_highs_option_value(name: object, value: Any, where: str) -> Any:
+    """*value* in the type HiGHS declares for option *name*, for ``setOptionValue`` (in-process) and the
+    ``--save-memory`` child's option files alike.
+
+    The input database stores every number as a float and ``solver_arguments`` arrive as its text (``3.0``),
+    which HiGHS refuses for an integer option (``3.0``) and for a switch (``1.0``).  An integer option gets a
+    whole number as an integer (``3.0`` -> ``3``); a switch gets 1 / 0 as true / false.  A text value stays text
+    (``"3.0"`` -> ``"3"``, ``"1.0"`` -> ``"true"``; an integer text such as ``"3"`` unchanged), a number becomes an
+    ``int`` / ``bool``.  A number that is not whole (an integer option) or not 0 or 1 (a switch) is a
+    :class:`FlexToolUserError` naming the option and *where*.  Anything else (a word, a ``double`` or text option,
+    an option neither FlexTool's list nor the installed HiGHS knows) is passed as it is, for HiGHS to judge.
+    """
+    kind = _declared_option_type("highs", name)
+    if kind not in ("int", "bool"):
+        return value
+    number = _as_number(value)
+    if number is None or (isinstance(value, str) and isinstance(number, int) and (kind == "int" or number in (0, 1))):
+        return value  # a word for HiGHS to judge, or an integer text HiGHS reads as it is
+    if kind == "int":
+        if not isinstance(number, int):
+            if not (math.isfinite(number) and number.is_integer()):
+                raise _not_whole_number("highs", name, value, where)
+            number = int(number)
+        return str(number) if isinstance(value, str) else number
+    if number in (0, 1):
+        if isinstance(value, str):
+            return "true" if number == 1 else "false"
+        return number == 1
+    raise FlexToolUserError(
+        f"HiGHS option {_short(str(name))} is a switch (true / false, or 1 / 0), and {where} gives it "
+        f"{_short(str(value))}. Correct the value there and run again."
+    )
+
+
+def _refuse_fractional_integer_option(solver: str, option: "CommercialOption") -> None:
+    """Refuse a commercial option whose value is a number that is not whole where *solver*'s list says the
+    parameter is an integer (a whole number written ``3.0`` is already passed as ``3`` by
+    :func:`flextool.engine.solve._subprocess_solve._format_native_opt_value`)."""
+    if _declared_option_type(solver, option.name) != "int":
+        return
+    number = _as_number(option.value)
+    if isinstance(number, float) and not (math.isfinite(number) and number.is_integer()):
+        raise _not_whole_number(solver, option.name, option.value, option.layer)
+
+
 def _resolve_effective_highs_options(
     *,
     solver_arguments_map: Mapping[str, Any] | None,
@@ -397,6 +866,7 @@ def _resolve_effective_highs_options(
     highs_opt_text: str | None = None,
     solve_name: str | None = None,
     workspace: Path | None = None,
+    highs_opt_untrusted: str | None = None,
 ) -> dict[str, Any]:
     """Resolve the effective HiGHS solver options for one solve.
 
@@ -464,6 +934,12 @@ def _resolve_effective_highs_options(
         a HiGHS file option (:data:`_PATH_OPTIONS`) becomes a path in
         *workspace* (created when needed; ``None`` leaves the name as it is,
         a file in the current folder).
+    highs_opt_untrusted
+        ``None``: the ``highs.opt`` layer is trusted.  Else it is a file the run found on its own outside a
+        workspace this computer set up (item 240 B3,
+        :meth:`flextool._solver_config_source.SolverOptionFiles.untrusted_note`): each of its lines gets the
+        database's rules (:func:`check_database_solver_option`, this text ending a refusal), and a plain file name
+        it gives a file option is placed in *workspace*, as for ``solver_arguments``.
 
     Returns
     -------
@@ -475,14 +951,29 @@ def _resolve_effective_highs_options(
     if highs_opt_text is None and highs_opt_path is not None and highs_opt_path.is_file():
         highs_opt_text = highs_opt_path.read_text(encoding="utf-8")
     of_solve = f" of solve {solve_name}" if solve_name else ""
-    file_options: dict[str, str] = {}
+    file_options: dict[str, Any] = {}
+    file_label = str(highs_opt_path) if highs_opt_path is not None else "highs.opt"
     if highs_opt_text is not None:
-        file_label = str(highs_opt_path) if highs_opt_path is not None else "highs.opt"
         for lineno, key, val in _highs_opt_lines(highs_opt_text):
             if key not in _HIGHS_OPT_IGNORED_KEYS:  # dropped below, never passed on
                 validate_solver_option("highs", key, val, f"{file_label}, line {lineno}")
+                if highs_opt_untrusted is None:
+                    warn_unlisted_trusted_option("highs", key, f"{file_label}, line {lineno}")
+                else:
+                    check_database_solver_option(
+                        "highs", key, val, f"{file_label}, line {lineno}", untrusted=highs_opt_untrusted)
         file_options = _parse_highs_opt_text(highs_opt_text)
-    options.update(_drop_solution_file_options(file_options, highs_opt_path))
+    file_options = _drop_solution_file_options(file_options, highs_opt_path)
+    if highs_opt_untrusted is not None:
+        file_options = {key: _in_workspace(key, value, workspace) for key, value in file_options.items()}
+    if file_options:
+        # The line a value comes from (the last one of a repeated name, which is the one kept).
+        file_lines = {key: lineno for lineno, key, _val in _highs_opt_lines(highs_opt_text or "")}
+        file_options = {
+            key: typed_highs_option_value(key, val, f"{file_label}, line {file_lines.get(key)}")
+            for key, val in file_options.items()
+        }
+    options.update(file_options)
     if solver_config is not None:
         knobs = _PARAM_MAP["highs"]
         for knob in ("time_limit", "mip_gap", "threads"):
@@ -490,22 +981,18 @@ def _resolve_effective_highs_options(
             if value is not None:
                 validate_solver_option("highs", knobs[knob], value, f"solver_mip_gap{of_solve}")
                 check_database_solver_option("highs", knobs[knob], value, f"solver_mip_gap{of_solve}")
-                options[knobs[knob]] = value
+                options[knobs[knob]] = typed_highs_option_value(knobs[knob], value, f"solver_mip_gap{of_solve}")
     if solver_arguments_map:
         for key, value in solver_arguments_map.items():
             validate_solver_option("highs", key, value, f"solver_arguments{of_solve}")
             check_database_solver_option("highs", key, value, f"solver_arguments{of_solve}")
-            if (
-                workspace is not None and _option_key("highs", key) in _PATH_OPTIONS["highs"]
-                and isinstance(value, str) and value
-            ):
-                workspace.mkdir(parents=True, exist_ok=True)
-                value = str(workspace / value)
-            options[str(key)] = value
+            value = typed_highs_option_value(key, value, f"solver_arguments{of_solve}")
+            options[str(key)] = _in_workspace(key, value, workspace)
     if cli_overrides:
         for key, value in cli_overrides.items():
             validate_solver_option("highs", key, value, "the run's flags or environment variables")
-            options[str(key)] = value
+            warn_unlisted_trusted_option("highs", key, "the run's flags or environment variables")
+            options[str(key)] = typed_highs_option_value(key, value, "the run's flags or environment variables")
     return options
 
 
@@ -541,73 +1028,6 @@ _PARAM_MAP: dict[str, dict[str, str]] = {
 }
 
 
-def build_solver_options(solver_config: SolverConfig) -> dict[str, Any]:
-    """Translate a :class:`SolverConfig` into the raw options dict that
-    polar-high's ``solve()`` consumes.
-
-    The database layers only (no option file, no operator flags, exact key
-    match).  FlexTool's own commercial solves use
-    :func:`resolve_commercial_options`, the full stack.
-
-    1. The three convenience knobs (``time_limit`` / ``mip_gap`` /
-       ``threads``), when set on *solver_config*, are translated to the
-       chosen solver's native parameter name via :data:`_PARAM_MAP`.
-       ``None`` values are skipped (no override).
-    2. The raw ``solver_config.options`` dict is merged on top of the
-       translated knobs — **raw options win** on key collisions.  The
-       user knows what they're doing; if they hand-write
-       ``solver_arguments = {"TimeLimit": 30}`` and also set
-       ``solver_time_limit = 60``, the raw value (30) wins.
-
-    Parameters
-    ----------
-    solver_config
-        Solve-level config built by
-        :meth:`flextool.engine.input._solve_config.SolveConfig.load_from_db`.
-
-    Returns
-    -------
-    dict[str, Any]
-        Option dict ready to ``**unpack`` into
-        :func:`polar_high.solvers.solve`.  Empty dict when no
-        convenience knobs are set and ``options`` is empty.
-
-    Raises
-    ------
-    ValueError
-        If ``solver_config.name`` is not in :data:`_PARAM_MAP` AND at
-        least one convenience knob is set.  Raw-options-only with an
-        unknown solver passes through silently so users can plug a
-        future solver via ``solver_arguments`` before
-        :data:`_PARAM_MAP` is updated.
-    """
-    has_convenience_knob = (
-        solver_config.time_limit is not None
-        or solver_config.mip_gap is not None
-        or solver_config.threads is not None
-    )
-    mapping = _PARAM_MAP.get(solver_config.name)
-    if mapping is None and has_convenience_knob:
-        available = ", ".join(sorted(_PARAM_MAP.keys()))
-        raise ValueError(
-            f"unknown solver {solver_config.name!r}, expected one of: "
-            f"{available}"
-        )
-
-    opts: dict[str, Any] = {}
-    if mapping is not None:
-        if solver_config.time_limit is not None:
-            opts[mapping["time_limit"]] = solver_config.time_limit
-        if solver_config.mip_gap is not None:
-            opts[mapping["mip_gap"]] = solver_config.mip_gap
-        if solver_config.threads is not None:
-            opts[mapping["threads"]] = solver_config.threads
-
-    # Raw options take precedence — see docstring.
-    opts.update(solver_config.options)
-    return opts
-
-
 # ---------------------------------------------------------------------------
 # Commercial option stack (item 230)
 # ---------------------------------------------------------------------------
@@ -617,7 +1037,10 @@ def build_solver_options(solver_config: SolverConfig) -> dict[str, Any]:
 #   2. the solve's ``solver_mip_gap`` (translated through :data:`_PARAM_MAP`);
 #   3. the solve's ``solver_arguments`` (raw native names);
 #   4. the operator layer: ``--solver-time-limit`` / ``--solver-mip-gap``, else
-#      ``FLEXTOOL_SOLVER_TIME_LIMIT`` / ``FLEXTOOL_SOLVER_MIP_GAP``.
+#      ``FLEXTOOL_SOLVER_TIME_LIMIT`` / ``FLEXTOOL_SOLVER_MIP_GAP``, and the thread
+#      budget (``--threads`` / ``FLEXTOOL_THREADS``; item 232): it replaces the
+#      solver's thread count, also a value meaning all cores, with one printed
+#      line per run (:func:`_note_thread_override`).
 # Names are compared as the solver reads them (:func:`commercial_option_key`:
 # without case; CPLEX ``.`` read as a space; Gurobi without ``_``; Xpress
 # without an ``XPRS_`` prefix), so ``MIPGap`` in the file and ``mip_gap`` in
@@ -651,6 +1074,9 @@ _WATCHDOG_GRACE_S = 600.0
 _warned_dropped_options: set[tuple[str, str, str]] = set()
 _warned_highs_only: set[tuple[str, ...]] = set()
 _warned_precommands: set[str] = set()
+_warned_thread_overrides: set[tuple[str, str, str]] = set()
+#: (control, value) pairs of an Xpress MIP log control already reported as set back to 1 in this run.
+_warned_xpress_mip_log: set[tuple[str, str]] = set()
 
 
 def reset_run_warnings() -> None:
@@ -659,6 +1085,36 @@ def reset_run_warnings() -> None:
     _warned_dropped_options.clear()
     _warned_highs_only.clear()
     _warned_precommands.clear()
+    _warned_unlisted_allowed.clear()
+    _warned_unlisted_trusted.clear()
+    _warned_flextool3_options.clear()
+    _warned_thread_overrides.clear()
+    _warned_xpress_mip_log.clear()
+
+
+def local_solver_wrapper(solver: str):
+    """This computer's wrapper of the commercial *solver*
+    (:func:`flextool._local_solver_settings.solver_wrapper`: ``FLEXTOOL_SOLVER_WRAPPER_<SOLVER>``, else
+    ``solver_settings.json``), checked, or ``None``; a wrapper that cannot be used is a :class:`FlexToolUserError`
+    naming where it was set (item 240 B2).  HiGHS has none: it runs inside FlexTool."""
+    from flextool._local_solver_settings import WRAPPER_SOLVERS, LocalSolverSettingsError, solver_wrapper
+
+    if solver not in WRAPPER_SOLVERS:
+        return None
+    try:
+        return solver_wrapper(solver)
+    except LocalSolverSettingsError as exc:
+        raise FlexToolUserError(f"{exc} No solve was started.") from exc
+
+
+def check_run_solver_wrappers(solver_settings: Any, *, solves: "Iterable[str] | None" = None) -> None:
+    """Check this computer's wrapper of every commercial solver the run's solves use, before the first solve, so
+    an unusable wrapper stops the run before any model is written (item 240 B2).  *solves*: the solves the run
+    runs (``None``: every solve of *solver_settings*), as in :func:`check_run_solver_options`."""
+    solvers = getattr(solver_settings, "solvers", None) or {}
+    used = solvers if solves is None else {s: solvers[s] for s in solves if s in solvers}
+    for solver in sorted({name for name in used.values() if name}):
+        local_solver_wrapper(solver)
 
 
 def warn_solver_precommands(precommands: Mapping[str, Any] | None, logger: logging.Logger | None = None) -> None:
@@ -676,8 +1132,9 @@ def warn_solver_precommands(precommands: Mapping[str, Any] | None, logger: loggi
         (logger or logging.getLogger(__name__)).warning(
             "solver_precommand of solve %s (%s) is not run: FlexTool does not run commands stored in a database, "
             "for safety (a database from someone else could otherwise run any program on this computer). To hold "
-            "a floating licence, use your solver's own licence server setup; a solver wrapper set on this "
-            "computer is planned. See docs/solvers/index.md.",
+            "a floating licence, use your solver's own licence server setup, or set the program as a solver "
+            "wrapper on this computer instead: FlexTool window Solver options, On this computer, or "
+            "FLEXTOOL_SOLVER_WRAPPER_<SOLVER> (see 'Running a solver through a wrapper' in docs/solvers/index.md).",
             solve, _short(text),
         )
 
@@ -690,60 +1147,55 @@ class CommercialOption(NamedTuple):
     layer: str
 
 
-def commercial_option_key(solver: str, name: str) -> str:
-    """The comparison key of a commercial parameter name: one key for every spelling the solver reads as the
-    same parameter, so that the file-path filter and the merge of the layers match what the solver does.
-
-    Every solver: case-folded, runs of whitespace collapsed.  CPLEX: ``.`` read as a space.  Gurobi: ``_``
-    after the first character removed (the Gurobi library (``GRBsetparam``, 13.0.2) reads ``Log_File``,
-    ``LOG_FILE`` and ``M_I_P_Gap`` as ``LogFile`` / ``MIPGap``, but refuses a leading ``_``; it ignores no
-    other character).  Xpress: one leading ``xprs_`` removed (the library's control lookup, xpress 46.01.02,
-    reads ``XPRS_MAXTIME`` / ``xprs_maxtime`` as ``MAXTIME``, but not ``XPRS_XPRS_MAXTIME`` or ``XPRSMAXTIME``).
-    COPT (coptpy 8.0.4) only ignores case; HiGHS names are exact.
-    """
-    key = str(name).strip()
-    if solver == "cplex":
-        key = key.replace(".", " ")
-    key = " ".join(key.split()).casefold()
-    if solver == "gurobi":
-        key = key[:1] + key[1:].replace("_", "")
-    elif solver == "xpress" and key.startswith("xprs_"):
-        key = key[len("xprs_"):]
-    return key
-
-
-def _native_value(solver: str, knob: str, value: object) -> str:
+def _native_value(solver: str, knob: str, value: object, *, is_mip: bool = False) -> str:
     """Text of a convenience-knob value for *solver*: Xpress ``MAXTIME`` is an
-    integer control, so a time limit is rounded up to whole seconds."""
+    integer control, so a time limit is rounded up to whole seconds.  On a MIP
+    (*is_mip*) it is then negated: a positive ``MAXTIME`` stops a MIP only once it
+    has an integer solution, a negative one is a hard limit of its absolute value
+    (:func:`commercial_time_limit`), and FlexTool's time limit is a hard limit.
+    ``-ceil(t)``, not ``ceil(-t)``: 59.5 s gives ``-60``, never ``-59``."""
     from flextool.engine.solve._subprocess_solve import _format_native_opt_value
 
     if solver == "xpress" and knob == "time_limit":
-        return str(int(math.ceil(float(value))))
+        seconds = int(math.ceil(float(value)))
+        return str(-seconds if is_mip else seconds)
     return _format_native_opt_value(value)
 
 
 def _operator_native_overrides(
-    solver: str, run_options: "RunOptions | None",
+    solver: str, run_options: "RunOptions | None", *, is_mip: bool = False,
 ) -> list[CommercialOption]:
     """The operator layer of a commercial solve: the time limit and the MIP gap
-    given by flag or by ``FLEXTOOL_SOLVER_*``, under *solver*'s native names.
+    given by flag or by ``FLEXTOOL_SOLVER_*``, and the run's thread budget, under
+    *solver*'s native names.
 
-    The HiGHS-only ``FLEXTOOL_HIGHS_TIME_LIMIT`` / ``FLEXTOOL_HIGHS_MIP_GAP``
-    do not apply, and threads stay with the option file (``--threads`` is the
-    run's FlexTool budget only).  A registry default adds nothing.
+    threads: the run's budget (``--threads`` / ``FLEXTOOL_THREADS``, else a Spine
+    Toolbox run's default of 1: :func:`flextool._thread_budget.solver_budget`)
+    replaces the solver's thread count; without them the option file and
+    ``solver_arguments`` keep it (as for HiGHS).  *is_mip*: an Xpress time limit becomes a hard
+    ``MAXTIME -<limit>`` (:func:`_native_value`).  The HiGHS-only ``FLEXTOOL_HIGHS_TIME_LIMIT`` /
+    ``FLEXTOOL_HIGHS_MIP_GAP`` / ``--highs-threads`` do not apply.  A registry
+    default (and an unset budget, which is the available cores) adds nothing.
     """
+    from flextool._thread_budget import solver_budget
     from flextool.run_options import OPTIONS, RunOptions
 
     opts = run_options if run_options is not None else RunOptions.from_env()
     names = _PARAM_MAP[solver]
     out: list[CommercialOption] = []
-    for knob, key in (("time_limit", "solver_time_limit"), ("mip_gap", "solver_mip_gap")):
+    for knob, key in (
+        ("time_limit", "solver_time_limit"), ("mip_gap", "solver_mip_gap"), ("threads", "threads"),
+    ):
         resolved = opts.resolved.get(key)
         if resolved is None or resolved.source not in ("cli", "env") or resolved.value is None:
+            budget = solver_budget(opts) if knob == "threads" else None
+            if budget is not None and budget[1] == "toolbox":
+                out.append(CommercialOption(names[knob], _native_value(solver, knob, budget[0], is_mip=is_mip),
+                                            TOOLBOX_THREADS_LAYER))
             continue
         spec = OPTIONS[key]
         layer = f"flag {spec.flag}" if resolved.source == "cli" else f"environment variable {spec.env}"
-        out.append(CommercialOption(names[knob], _native_value(solver, knob, resolved.value), layer))
+        out.append(CommercialOption(names[knob], _native_value(solver, knob, resolved.value, is_mip=is_mip), layer))
     return out
 
 
@@ -756,6 +1208,8 @@ def resolve_commercial_options(
     solve_name: str | None = None,
     logger: logging.Logger | None = None,
     opt_text: str | None = None,
+    opt_untrusted: str | None = None,
+    is_mip: bool = False,
 ) -> list[CommercialOption]:
     """The parameters a commercial solve passes to *solver*, in final order.
 
@@ -766,12 +1220,23 @@ def resolve_commercial_options(
     start; when given, *opt_file* only names the file in messages (else the file
     is read).  Trust follows the source: the solve's ``solver_mip_gap`` and
     ``solver_arguments`` come from the input database and are also checked by
-    :func:`check_database_solver_option` (a path option takes only a plain file
-    name, which lands in the solve's work folder; no server options); the option
-    file and the flags may hold both.  Every layer passes
+    :func:`check_database_solver_option` (only names in FlexTool's list of the
+    solver's parameters; a path option takes only a plain file name, which lands
+    in the solve's work folder; no server options); the option file and the flags
+    may hold both, and an option-file name that is not in the list is warned
+    about once per run and passed (:func:`warn_unlisted_trusted_option`).  A
+    FlexTool 3 HiGHS setting in ``solver_arguments`` is left out with one warning
+    (:func:`drop_flextool3_highs_option`).  Every layer passes
     :func:`validate_solver_option`.  FlexTool's own result-file parameter
     (:data:`_FLEXTOOL_OWN_OPTIONS`) is dropped from every layer with one warning
-    per run for each name and kind of layer.
+    per run for each name and kind of layer.  *opt_untrusted* (``None``: the
+    option file is trusted) says why the option file gets the database's rules
+    instead (item 240 B3, a folder found outside a workspace this computer set
+    up): each of its lines is then checked like ``solver_arguments``.  *is_mip*
+    (the problem has an integer column): FlexTool's own Xpress time limit (the
+    solve's ``time_limit`` and the time-limit flag) is passed as a hard
+    ``MAXTIME -<limit>`` (:func:`_native_value`); a ``MAXTIME`` written in the
+    option file or ``solver_arguments`` is passed as written.
     """
     from flextool.engine.solve._subprocess_solve import (
         _format_native_opt_value,
@@ -786,19 +1251,25 @@ def resolve_commercial_options(
     if opt_text is None and opt_file is not None:
         opt_text = _read_native_opt_text(Path(opt_file))
     file_options: dict[str, str] = {}
+    file_label = str(opt_file) if opt_file is not None else f"{solver}.opt"
     if opt_text is not None:
-        file_label = str(opt_file) if opt_file is not None else f"{solver}.opt"
         for lineno, name, value in _native_opt_lines(opt_text):
             if commercial_option_key(solver, name) not in own:  # dropped below, never passed on
-                validate_solver_option(solver, name, value, f"{file_label}, line {lineno}")
+                where = f"{file_label}, line {lineno}"
+                validate_solver_option(solver, name, value, where)
+                if opt_untrusted is None:
+                    warn_unlisted_trusted_option(solver, name, where, logger)
+                else:
+                    check_database_solver_option(solver, name, value, where, untrusted=opt_untrusted)
         file_options = _parse_native_opt_text(opt_text)
-    entries += [CommercialOption(k, v, str(opt_file)) for k, v in file_options.items()]
+    entries += [CommercialOption(k, v, file_label) for k, v in file_options.items()]
     n_file_entries = len(entries)
     if solver_config is not None:
         names = _PARAM_MAP[solver]
         entries += [
             CommercialOption(
-                names[knob], _native_value(solver, knob, getattr(solver_config, knob)), f"solver_mip_gap{of_solve}"
+                names[knob], _native_value(solver, knob, getattr(solver_config, knob), is_mip=is_mip),
+                f"solver_mip_gap{of_solve}",
             )
             for knob in ("time_limit", "mip_gap", "threads")
             if getattr(solver_config, knob) is not None
@@ -807,6 +1278,7 @@ def resolve_commercial_options(
             CommercialOption(str(k), _format_native_opt_value(v), f"solver_arguments{of_solve}")
             for k, v in solver_config.options.items()
             if v is not None
+            and not drop_flextool3_highs_option(solver, k, v, f"solver_arguments{of_solve}", logger)
         ]
     # The input database's layers: a path option takes a plain file name (the solver runs in the solve's work
     # folder, so the file lands there) and a server option is refused, before any option is dropped or merged.
@@ -814,7 +1286,18 @@ def resolve_commercial_options(
         validate_solver_option(solver, option.name, option.value, option.layer)
         check_database_solver_option(solver, option.name, option.value, option.layer)
     n_checked = len(entries)
-    entries += _operator_native_overrides(solver, run_options)
+    thread_key = commercial_option_key(solver, _PARAM_MAP[solver]["threads"])
+    replaced_threads = None  # the lower layers' winning thread count, which the run's budget replaces
+    for option in entries:
+        if commercial_option_key(solver, option.name) == thread_key:
+            replaced_threads = option
+    operator = _operator_native_overrides(solver, run_options, is_mip=is_mip)
+    entries += operator
+    for option in entries:
+        _refuse_fractional_integer_option(solver, option)
+    budget = next((o for o in operator if commercial_option_key(solver, o.name) == thread_key), None)
+    if budget is not None and replaced_threads is not None:
+        _note_thread_override(solver, replaced_threads, budget)
 
     merged: dict[str, CommercialOption] = {}
     for position, option in enumerate(entries):
@@ -832,9 +1315,80 @@ def resolve_commercial_options(
                 )
             continue
         if position >= n_checked:  # the option file and the database layers were checked above
+            # The operator layer (time limit, MIP gap, the run's thread budget of item 232): the general check and
+            # FlexTool's list of the solver's parameters, as for the run's other trusted sources (item 240 B1).
             validate_solver_option(solver, option.name, option.value, option.layer)
+            warn_unlisted_trusted_option(solver, option.name, option.layer, logger)
         merged[key] = option._replace(name=key) if solver == "cplex" else option
     return list(merged.values())
+
+
+def note_xpress_mip_log_overrides(
+    overrides: Sequence[tuple[str, str, str]], option_layers: Mapping[str, str] | None,
+) -> None:
+    """One printed line per run for each Xpress log control a MIP solve sets back to 1
+    (:func:`flextool.engine.solve._subprocess_solve.xpress_mip_log_overrides`): FlexTool reads how a MIP search
+    ended from the log.  Printed, as :func:`_note_thread_override`, next to the solve's ``Solver args`` line."""
+    layers = {commercial_option_key("xpress", k): v for k, v in (option_layers or {}).items()}
+    for name, value, old in overrides:
+        if (name, old) in _warned_xpress_mip_log:
+            continue
+        _warned_xpress_mip_log.add((name, old))
+        where = layers.get(name.casefold())
+        print(
+            f"xpress uses {name} {value} on a MIP instead of {name} {old}"
+            f"{f' in {where}' if where else ''}: FlexTool reads how a MIP search ended from the Xpress log, "
+            f"which {name} {old} would leave out.",
+            flush=True,
+        )
+
+
+#: The operator layer's name for the thread count of a Spine Toolbox run that gives no ``--threads`` /
+#: ``FLEXTOOL_THREADS`` (:data:`flextool._thread_budget.TOOLBOX_DEFAULT_THREADS`).
+TOOLBOX_THREADS_LAYER = "Spine Toolbox run's default"
+
+
+def _thread_number(value: str) -> float | None:
+    try:
+        number = float(value)
+    except ValueError:
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _note_thread_override(solver: str, old: CommercialOption, new: CommercialOption) -> None:
+    """One printed line per run when the run's thread budget *new* replaces a different thread count *old*
+    of the option file or the input database (item 232).
+
+    Printed, not logged: it sits just before the solve's printed ``Solver args`` line, where ``logger.info``
+    does not reach the console.  Once per solver, kind of layer and old value, so rolls and repeated solves
+    print it once.  The advice to raise ``--threads`` (``FLEXTOOL_THREADS`` when the budget came from it) is
+    added only when the budget lowers the thread count (an "all cores" value: Gurobi / CPLEX ``0``, Xpress / COPT ``<= 0``, or a larger number).
+    """
+    old_number, new_number = _thread_number(old.value), _thread_number(new.value)
+    if old_number is not None and old_number == new_number:
+        return
+    warn_key = (solver, old.layer.split(" of solve ", 1)[0], old.value)
+    if warn_key in _warned_thread_overrides:
+        return
+    _warned_thread_overrides.add(warn_key)
+    all_cores = old_number is not None and (old_number == 0 or (solver in ("xpress", "copt") and old_number < 0))
+    lowers = all_cores or (old_number is not None and new_number is not None and old_number > new_number)
+    if not lowers:
+        tail = ""
+    elif new.layer == TOOLBOX_THREADS_LAYER:
+        tail = (" For more solver threads add --threads N to the FlexTool tool's arguments in Spine Toolbox "
+                "(or set FLEXTOOL_THREADS).")
+    elif new.layer.startswith("environment variable "):
+        env_name = new.layer.removeprefix("environment variable ")
+        tail = f" For more solver threads raise {env_name} (or give --threads)."
+    else:
+        tail = " For more solver threads raise --threads (Threads per run in the FlexTool window)."
+    print(
+        f"{solver} uses {new.name} {new.value}, the run's thread budget ({new.layer}), instead of {old.name} "
+        f"{old.value}{' (all cores)' if all_cores else ''} in {old.layer}.{tail}",
+        flush=True,
+    )
 
 
 def commercial_opt_file_layer(
@@ -843,13 +1397,16 @@ def commercial_opt_file_layer(
     solver_option_files: "SolverOptionFiles | None",
     solver_config_dir: "Path | None" = None,
     run_options: "RunOptions | None" = None,
-) -> tuple[str | None, str | None]:
-    """The option-file layer of a commercial solve: ``(text, where it came from)``, or ``(None, None)``.
+) -> tuple[str | None, str | None, str | None]:
+    """The option-file layer of a commercial solve: ``(text, where it came from, untrusted note)``, or
+    ``(None, None, None)``.
 
-    The run's files read at its start win (*solver_option_files*); else ``<solver_config_dir>/<solver>.opt``;
-    else the folder :func:`flextool._solver_config_source.resolve_solver_config_source` picks without a
-    database (``--solver-config-dir`` / ``FLEXTOOL_SOLVER_CONFIG_DIR``, the current folder, the packaged
-    default), for a caller outside ``run_chain_from_db``.
+    The run's files read at its start win (*solver_option_files*); else ``<solver_config_dir>/<solver>.opt``
+    (a folder the caller named: trusted); else the folder
+    :func:`flextool._solver_config_source.resolve_solver_config_source` picks without a database
+    (``--solver-config-dir`` / ``FLEXTOOL_SOLVER_CONFIG_DIR``, the current folder, the packaged default), for a
+    caller outside ``run_chain_from_db``.  The note is ``None`` for a trusted file, else
+    :meth:`~flextool._solver_config_source.SolverOptionFiles.untrusted_note` (item 240 B3).
     """
     from flextool._solver_config_source import read_solver_option_files, resolve_solver_config_source
 
@@ -858,13 +1415,15 @@ def commercial_opt_file_layer(
         if solver_config_dir is not None:
             path = Path(solver_config_dir) / f"{solver}.opt"
             try:
-                return path.read_text(encoding="utf-8"), str(path)
+                return path.read_text(encoding="utf-8"), str(path), None
             except OSError:
-                return None, None
+                return None, None, None
         source = resolve_solver_config_source(run_options=run_options)
         files = read_solver_option_files(source, (solver,))
     text = files.text(solver)
-    return (text, files.origin(solver)) if text is not None else (None, None)
+    if text is None:
+        return None, None, None
+    return text, files.origin(solver), files.untrusted_note(solver)
 
 
 def commercial_time_limit(solver: str, options: "list[CommercialOption] | Mapping[str, Any] | None") -> float | None:
@@ -873,10 +1432,11 @@ def commercial_time_limit(solver: str, options: "list[CommercialOption] | Mappin
     Read from the native time-limit name only (Xpress also ``TIMELIMIT``).  A
     value that is not a positive finite number (Gurobi's ``inf``) gives ``None``.
     Xpress ``MAXTIME``: a positive value stops an LP at the limit, and a MIP only
-    once it has a solution (FlexTool's Xpress path solves LPs only); a negative
-    value is a hard limit of its absolute value (xpress 46.01: ``MAXTIME -1`` and
-    ``1`` both stop at 1 s on a MIP with incumbents, only ``-1`` without one), so
-    its absolute value is the limit.
+    once it has a solution; a negative value is a hard limit of its absolute
+    value (xpress 46.01: ``MAXTIME -1`` and ``1`` both stop at 1 s on a MIP with
+    incumbents, only ``-1`` without one; rechecked with 9.8.1 / 46.01.02: ``MAXTIME
+    2`` ran on past 20 s on a MIP without an integer solution), so its absolute
+    value is the limit and the watchdog stops a MIP that finds no solution.
     """
     if not options or solver not in _PARAM_MAP:
         return None
@@ -1103,17 +1663,8 @@ def run_one_solve(
             f"{available_solvers}."
         )
         raise FlexToolUserError(msg)
-    if solver_config.name == "xpress" and problem_is_mip(getattr(problem, "_vars", None)):
-        # The Xpress console script runs ``lpoptimize``, which on a MIP solves
-        # only the LP relaxation: refuse instead of returning a wrong answer.
-        msg = (
-            f"Solve {solve_name or 'solve'!r} has integer variables, but FlexTool's Xpress driver solves only "
-            "linear problems (it would return the LP relaxation, not an integer solution). Use another solver "
-            "for this solve, or remove its integer variables."
-        )
-        raise FlexToolUserError(msg)
     if commercial_options is None:
-        opt_text, opt_label = commercial_opt_file_layer(
+        opt_text, opt_label, opt_untrusted = commercial_opt_file_layer(
             solver_config.name,
             solver_option_files=solver_option_files,
             solver_config_dir=solver_config_dir,
@@ -1123,10 +1674,12 @@ def run_one_solve(
             solver_config.name,
             opt_file=opt_label,
             opt_text=opt_text,
+            opt_untrusted=opt_untrusted,
             solver_config=solver_config,
             run_options=run_options,
             solve_name=solve_name,
             logger=logger,
+            is_mip=problem_is_mip(getattr(problem, "_vars", None)),
         )
     warn_highs_only_options(solver_config.name, run_options, logger)
     options = {o.name: o.value for o in commercial_options}
@@ -1281,11 +1834,14 @@ __all__ = [
     "resolve_commercial_options",
     "_parse_highs_opt_file",
     "_resolve_effective_highs_options",
-    "build_solver_options",
     "check_database_solver_option",
+    "untrusted_option_file_problems",
+    "check_run_solver_options",
+    "drop_flextool3_highs_option",
     "is_path_option",
     "is_server_option",
     "probe_solver_licenses",
     "solver_workspace",
     "run_one_solve",
+    "warn_unlisted_trusted_option",
 ]

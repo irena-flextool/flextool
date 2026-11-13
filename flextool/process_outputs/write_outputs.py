@@ -18,6 +18,7 @@ from flextool import run_record
 from flextool.lean_parquet import read_lean_parquet, read_lean_parquet_solve_labels, write_lean_parquet
 from flextool.process_outputs._sheet_names import excel_sheet_name
 from flextool.process_outputs._excel_writer import reserved_sheet_names, write_excel_with_metadata
+from flextool.safe_names import check_output_name, require_inside, require_strictly_inside, result_workbook_name
 from flextool.process_outputs.solve_order import INVESTMENT_PERIOD_TABLES, period_solve_labels
 from flextool.process_outputs._output_meta import (
     datapackage_resource,
@@ -75,6 +76,7 @@ from flextool.process_outputs.union_realized_slice import (
     union_sets,
 )
 from flextool.process_outputs.write_spinedb import write_spinedb
+from flextool.sqlite_url import is_sqlite_url, sqlite_file_path, sqlite_url_string
 
 
 def _parse_rename_entry(entry) -> tuple[str, bool]:
@@ -716,10 +718,33 @@ ALL_OUTPUTS = [
 ]
 
 
+def _refuse_settings_server_url(results_db_url, write_methods, warn=logging.warning):
+    """A results-database URL from the settings database that is not ``sqlite:`` (a database server): an error when
+    the ``spinedb`` write-method runs, otherwise a warning and ``None`` (the URL is not used).  A server URL is
+    taken only from the command line (``--results-db-url``); a settings database is a file that others may hand
+    over, and it must not send the results to a server it names."""
+    if 'spinedb' in write_methods:
+        from flextool.engine.input._solve_state import FlexToolConfigError
+        raise FlexToolConfigError(
+            f"The settings database names the results database {results_db_url!r} (output-results-db-url), which "
+            "is not a sqlite: URL. A results database server is used only from the command line: pass it with "
+            "--results-db-url. In the settings database, give a sqlite: URL (a file on any drive, a network "
+            "drive too) or leave output-results-db-url empty."
+        )
+    warn(
+        "The settings database names the results database %r (output-results-db-url), which is not a sqlite: URL; "
+        "it is not used (a server URL is taken only from --results-db-url).", results_db_url,
+    )
+    return None
+
+
 def _resolve_settings(write_methods, output_config_path, active_configs, plot_rows,
                       output_location, plot_file_format, settings_db_url,
-                      fallback_output_location, results_db_url=None):
+                      fallback_output_location, results_db_url=None, warn=logging.warning):
     """Resolve output settings: explicit args > settings DB > hardcoded defaults.
+
+    *warn* (``logging.warning``-like) gets the warnings: a caller that resolves twice passes a no-op the second
+    time, so each warning shows once.
 
     ``output-spinedb`` from the settings DB is honored on BOTH the native
     solve path and the parquet-replay path: a True flag writes the results
@@ -727,9 +752,15 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
     rebuilds/augments it from parquet without re-solving).
     """
     db_reachable = False
+    results_db_url_from_settings = False
     if settings_db_url:
         if settings_db_url.startswith('sqlite:///'):
-            db_reachable = os.path.exists(settings_db_url.replace('sqlite:///', ''))
+            # The file as it is after ``sqlite:///``: a drive path (``C:/a/s.sqlite``), a UNC path on a network share
+            # (``//server/share/s.sqlite``, ``\\server\share\s.sqlite``) or a POSIX path.
+            settings_db_path = sqlite_file_path(settings_db_url)
+            db_reachable = settings_db_path is not None and settings_db_path.exists()
+            if not db_reachable:
+                warn("The settings database %s was not found; its output settings are not used.", settings_db_url)
         else:
             db_reachable = True  # HTTP or other remote URLs — let DatabaseMapping handle errors
     if db_reachable:
@@ -752,8 +783,12 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
                 # CLI-supplied results_db_url wins; otherwise honor the
                 # optional settings value (mirrors the write_methods
                 # CLI-vs-settings precedence above).
-                if results_db_url is None and 'output-results-db-url' in settings_params:
-                    results_db_url = str(settings_params['output-results-db-url'])
+                # A blank or None value (blanked in Toolbox rather than removed) is "not set": the default
+                # ``<output_location>/results.sqlite`` is used.
+                settings_results_url = settings_params.get('output-results-db-url')
+                if results_db_url is None and settings_results_url is not None and str(settings_results_url).strip():
+                    results_db_url = str(settings_results_url)
+                    results_db_url_from_settings = True
 
                 if output_config_path is None and 'output-config-path' in settings_params:
                     output_config_path = str(settings_params['output-config-path'])
@@ -816,18 +851,24 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
         output_location = fallback_output_location or ''
     if plot_file_format is None:
         plot_file_format = 'png'
+    if results_db_url_from_settings and not is_sqlite_url(results_db_url):
+        results_db_url = _refuse_settings_server_url(results_db_url, write_methods, warn)
 
     return write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format, results_db_url
 
 
-def resolve_output_settings(*, write_methods, output_location, settings_db_url, fallback_output_location):
+def resolve_output_settings(*, write_methods, output_location, settings_db_url, fallback_output_location,
+                            results_db_url=None, warn=logging.warning):
     """Where a run's outputs land and which write methods run: ``(absolute output location, write methods)``.
 
     The same rule as :func:`write_outputs` (explicit argument > settings DB > default), so a caller that resolves
-    once can name the output folder before the solve (the run record) and pass both values on.
+    once can name the output folder before the solve (the run record) and pass both values on.  A results-database
+    server URL in the settings DB is refused here already (before the solve) when ``spinedb`` runs and
+    *results_db_url* (the command line's) is not given.  *warn* gets the warnings (see :func:`_resolve_settings`).
     """
     write_methods, _, _, _, output_location, _, _ = _resolve_settings(
         write_methods, None, None, None, output_location, None, settings_db_url, fallback_output_location,
+        results_db_url, warn,
     )
     return os.path.abspath(output_location), list(write_methods)
 
@@ -879,7 +920,7 @@ def _note_parquet_written(parquet_dir: str) -> None:
     _note_parquet(parquet_dir, written=True)
 
 
-def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False, write_plot_data=False, timing_recorder=None, flex_data=None, solution=None, solve_name=None, solve_steps=None, flex_data_provider=None, results_db_url=None):
+def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False, write_plot_data=False, timing_recorder=None, flex_data=None, solution=None, solve_name=None, solve_steps=None, flex_data_provider=None, results_db_url=None, settings_warnings=True):
     """
     Write FlexTool outputs to various formats.
 
@@ -935,11 +976,19 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             ``read_parquet_dir`` REPLAY path it rebuilds the ``s`` shim from
             the processed parquet (``build_replay_s``, with ``par=None`` —
             the two discount/inflation params are dropped on the replay path).
+        settings_warnings: False when the caller already resolved the settings
+            (``resolve_output_settings``) and showed their warnings, so they
+            are not shown twice.
     """
+    # The scenario name and the subdir become folder and file names: refuse one that is not a plain folder name
+    # (UnsafeNameError) before anything is written or cleaned up.
+    check_output_name(scenario_name, "scenario name")
+    if subdir:
+        check_output_name(subdir, "output folder name")
     write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format, results_db_url = _resolve_settings(
         write_methods, output_config_path, active_configs, plot_rows,
         output_location, plot_file_format, settings_db_url, fallback_output_location,
-        results_db_url,
+        results_db_url, logging.warning if settings_warnings else (lambda *_args: None),
     )
 
     logging.debug(
@@ -1103,6 +1152,10 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         # The run record (``_run_status.json``, ``_run.log``) stays.
         if not single_result:
             _note_parquet(parquet_dir, written=False)
+            # Only ever the scenario's own folder under output_parquet/ (without a subdir, an API call, the
+            # folder itself on purpose).
+            (require_strictly_inside if subdir else require_inside)(
+                parquet_dir, os.path.join(output_location, 'output_parquet'))
             for filename in os.listdir(parquet_dir):
                 if _is_run_record_file(filename):
                     continue
@@ -1263,6 +1316,8 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
 
         # Only empty csv dir when not processing single result
         if not single_result:
+            # Only ever the scenario's own folder under output_csv/ (without a subdir, the folder itself).
+            (require_strictly_inside if subdir else require_inside)(csv_dir, os.path.join(output_location, 'output_csv'))
             for filename in os.listdir(csv_dir):
                 file_path = os.path.join(csv_dir, filename)
                 if os.path.isfile(file_path):
@@ -1372,7 +1427,9 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         rename_raw = settings.get('rename', {})
         excel_dir = os.path.join(output_location, 'output_excel')
         os.makedirs(excel_dir, exist_ok=True)
-        excel_path = os.path.join(excel_dir, 'output_' + scenario_name + '.xlsx')
+        # Named after the result folder (the window's are <scenario>_<source number>), so that each folder has
+        # its own workbook; the command line and Spine Toolbox write subdir == scenario_name.
+        excel_path = os.path.join(excel_dir, result_workbook_name(subdir or scenario_name))
         # Build list of (sheet_name, raw_key, df) sorted alphabetically.  The
         # raw key is kept so unit/semantics metadata can be derived per sheet.
         sheets: list[tuple[str, str, pd.DataFrame]] = []
@@ -1398,7 +1455,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
     # Write to SpineDB results database
     if 'spinedb' in write_methods:
         db_url = results_db_url or (
-            'sqlite:///' + os.path.join(output_location or '.', 'results.sqlite')
+            sqlite_url_string(os.path.join(output_location or '.', 'results.sqlite'))
         )
         if read_parquet_dir:
             # Replay path: ``s`` / ``par`` are UNDEFINED here (assigned only

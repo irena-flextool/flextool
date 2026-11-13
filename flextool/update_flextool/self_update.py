@@ -10,10 +10,12 @@ try:
 except ModuleNotFoundError:
     exit("Cannot find the required Spine-Toolbox module. Check that the environment is activated and the toolbox is installed")
 from spinedb_api.exception import NothingToCommit
+from flextool._child_python import pip_env, python_module_argv
 from flextool._resources import package_data_path
 from flextool.update_flextool.db_migration import migrate_database
 from flextool.update_flextool.initialize_database import initialize_database
 from flextool.update_flextool import canonical_databases
+from flextool.sqlite_url import sqlite_url_string
 
 
 def _reinstall_if_needed():
@@ -45,7 +47,6 @@ def _reinstall_if_needed():
     caller's CWD (Spine Toolbox typically invokes from the project
     directory, not the flextool repo root).
     """
-    import sys
     import os
 
     # flextool/update_flextool/self_update.py  →  flextool/  →  repo root.
@@ -54,8 +55,8 @@ def _reinstall_if_needed():
     )))
 
     result = subprocess.run(
-        [sys.executable, "-m", "pip", "show", "flextool"],
-        capture_output=True, text=True,
+        python_module_argv("pip", "show", "flextool"),
+        capture_output=True, text=True, env=pip_env(),
     )
     is_editable = "Editable project location" in result.stdout
 
@@ -65,7 +66,10 @@ def _reinstall_if_needed():
     )
     target = ["-e", repo_root] if is_editable else [repo_root]
     completed = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--upgrade", *target],
+        # -P only, no PYTHONSAFEPATH (pip_env): pip runs the setup scripts of the packages it builds, which may need
+        # their own folder on sys.path.
+        python_module_argv("pip", "install", "--upgrade", *target),
+        env=pip_env(),
     )
     if completed.returncode != 0:
         flag = "-e " if is_editable else ""
@@ -98,7 +102,7 @@ def _run_fix_steps(steps) -> bool:
     """Run pip *steps* in order, echoing each; stop at the first failure."""
     for step in steps:
         print("\n$ " + " ".join(step))
-        completed = subprocess.run(step)
+        completed = subprocess.run(step, env=pip_env())
         if completed.returncode != 0:
             print(
                 f"Warning: '{' '.join(step)}' exited {completed.returncode}. "
@@ -188,7 +192,7 @@ def _sync_settings_param_defs(json_template, sqlite_path):
         }
         if not payload:
             return
-        with open_database_mapping('sqlite:///' + sqlite_path, create=False) as db:
+        with open_database_mapping(sqlite_url_string(sqlite_path), create=False) as db:
             (num, _log) = import_data(db, unparse_value=keep_serialized_unparse, **payload)
             if num:
                 db.commit_session(
@@ -269,6 +273,36 @@ def _refresh_solver_config(folder: Path, *, verbose: bool = False, warn: bool = 
             print(msg)
 
 
+def _list_workspace(solver_config_is_own: bool, *, warn: bool = False) -> None:
+    """List the current folder as a workspace this computer set up when its ``solver_config/`` was missing or held
+    nothing but FlexTool's own default files before this call (item 240 B3).  Otherwise, unless it is listed
+    already, say once why it is not (a warning for ``flextool-update``, an INFO line at the window's start)."""
+    from flextool._local_solver_settings import (
+        LocalSolverSettingsError, add_trusted_workspace, is_trusted_workspace, settings_path,
+    )
+
+    workspace = Path.cwd()
+    try:
+        if solver_config_is_own:
+            if add_trusted_workspace(workspace):
+                logging.info("Listed %s as a workspace this computer set up (in %s).", workspace, settings_path())
+            return
+        if is_trusted_workspace(workspace):
+            return
+    except LocalSolverSettingsError as exc:
+        logging.warning("%s The workspace %s is not listed as set up by this computer.", exc, workspace)
+        return
+    (logging.warning if warn else logging.info)(
+        "%s holds solver option files that FlexTool did not write, so this workspace is not marked as set up by "
+        "this computer: runs that find these files on their own give them the input database's rules (no file "
+        "paths outside the work folder, no server settings, only listed parameter names). If you made them, or "
+        "have read them and trust them, tick \"Trust this workspace's solver option files\" in the FlexTool "
+        "window (Solver options, On this computer), run flextool-trust-workspace %s, or pass the folder with "
+        "--solver-config-dir (or FLEXTOOL_SOLVER_CONFIG_DIR).",
+        workspace / "solver_config", workspace,
+    )
+
+
 def ensure_runtime_files(verbose: bool = False, *, warn: bool = False) -> None:
     """Idempotently materialize the per-installation runtime files that
     FlexTool needs but does not track in git.
@@ -293,6 +327,10 @@ def ensure_runtime_files(verbose: bool = False, *, warn: bool = False) -> None:
     ``example_input.xlsx``, the ``solver_config/<solver>.opt`` files,
     ``templates/project_folder.txt``, and ``results.sqlite``.
 
+    It also lists the workspace as one this computer set up (item 240 B3, :func:`_list_workspace`), but only when
+    ``solver_config/`` was missing or held nothing but FlexTool's own default files: a received workspace with
+    edited option files is not listed by being opened.
+
     It deliberately does NOT perform the update-only operations (git
     restore/pull, reinstall, the unconditional template refresh that
     keeps artifacts schema-current after a pull, parameter-definition
@@ -305,6 +343,10 @@ def ensure_runtime_files(verbose: bool = False, *, warn: bool = False) -> None:
     comparison_settings_json = str(package_data_path("schemas/comparison_settings_template.json"))
 
     os.makedirs("templates", exist_ok=True)
+    # Item 240 B3: before anything is seeded, whether solver_config/ is missing or holds nothing but FlexTool's
+    # own default files.  Only then is this workspace listed as set up by this computer (step 3b).
+    from flextool._solver_config_source import holds_only_flextool_defaults
+    solver_config_is_own = holds_only_flextool_defaults(Path("solver_config"))
     os.makedirs("solver_config", exist_ok=True)
 
     # 1. Root input/settings DBs + their templates/ copies, from the
@@ -337,7 +379,7 @@ def ensure_runtime_files(verbose: bool = False, *, warn: bool = False) -> None:
             ("templates/input_data_template.sqlite", "templates/empty_input_template.xlsx"),
         ):
             if os.path.exists(sqlite_rel) and not os.path.exists(xlsx_rel):
-                export_to_excel(f"sqlite:///{sqlite_rel}", xlsx_rel)
+                export_to_excel(sqlite_url_string(sqlite_rel), xlsx_rel)
         if not os.path.exists("example_input.xlsx") and os.path.exists("templates/example_input_template.xlsx"):
             shutil.copy("templates/example_input_template.xlsx", "example_input.xlsx")
     except Exception as exc:
@@ -352,6 +394,13 @@ def ensure_runtime_files(verbose: bool = False, *, warn: bool = False) -> None:
         _refresh_solver_config(Path("solver_config"), verbose=verbose, warn=warn)
     except Exception as exc:
         logging.warning("ensure_runtime_files: solver_config seeding failed: %s", exc)
+
+    # 3b. Item 240 B3: list this workspace as one this computer set up (in the user config folder, outside the
+    #     workspace), so the option files of its solver_config/ are trusted when a run finds them on its own.
+    try:
+        _list_workspace(solver_config_is_own, warn=warn)
+    except Exception as exc:
+        logging.warning("ensure_runtime_files: listing the workspace failed: %s", exc)
 
     # 4. templates/project_folder.txt — a commented guide; its CONTENTS are
     #    load-bearing for Spine Toolbox (the run Tool reads the first
@@ -452,7 +501,7 @@ def update_flextool(skip_git):
         if not os.path.exists(sqlite_rel):
             continue
         try:
-            export_to_excel(f"sqlite:///{sqlite_rel}", xlsx_rel)
+            export_to_excel(sqlite_url_string(sqlite_rel), xlsx_rel)
         except Exception as exc:
             print(f"Warning: failed to generate {xlsx_rel}: {exc}")
 
@@ -499,7 +548,7 @@ def update_flextool(skip_git):
     #get template JSON. This can be the master or old template if conflicting migrations in between
     with open (result_template_path) as json_file:
         template = json.load(json_file)
-    with open_database_mapping('sqlite:///' + 'results.sqlite', create = False, upgrade = True) as db:
+    with open_database_mapping(sqlite_url_string('results.sqlite'), create = False, upgrade = True) as db:
         #these update the old descriptions, but wont remove them or change names (the new name is created, but old stays)
         (num,log) = import_data(db, parameter_definitions = template["parameter_definitions"])
         try:
@@ -512,7 +561,7 @@ def initialize_result_database(filename,json_path):
 
     with open (json_path) as json_file:
         template = json.load(json_file)
-    with open_database_mapping('sqlite:///' + filename, create = True) as db:
+    with open_database_mapping(sqlite_url_string(filename), create = True) as db:
         (num,log) = import_data(db,**template)
         print("Result database initialized")
         db.commit_session("Result database initialized")
@@ -542,10 +591,17 @@ def migrate_project(old_path, new_path):
                 if param != "x" and param != "y":
                     old_dict["items"][item][param] = new_dict["items"][item][param]
 
-    if ("Open_summary" not in old_dict["items"].keys()) and ("Open_summary" in new_dict["items"].keys()):
-        old_dict["items"]["Open_summary"] = new_dict["items"]["Open_summary"]
-        old_dict["project"]["connections"].append({"name": "from FlexTool3 to Open_summary", "from": ["FlexTool3","bottom"],"to": ["Open_summary","right"]})
-        old_dict["project"]["specifications"]["Tool"].append({"type": "path","relative": True,"path": ".spinetoolbox/specifications/Tool/open_summary.json"})
+    # The Open_summary item of old projects ran open_summary.py, which no longer exists, and its specification file
+    # is gone: drop the item, its connections and the specification entry.
+    old_dict["items"].pop("Open_summary", None)
+    project = old_dict.get("project", {})
+    project["connections"] = [c for c in project.get("connections", [])
+                              if "Open_summary" not in (c.get("from", [None])[0], c.get("to", [None])[0])]
+    tool_specs = project.get("specifications", {}).get("Tool")
+    if tool_specs is not None:
+        project["specifications"]["Tool"] = [
+            spec for spec in tool_specs if not str(spec.get("path", "")).endswith("specifications/Tool/open_summary.json")
+        ]
 
     if ("Migrate database version" not in old_dict["items"].keys()) and ("Migrate database version" in new_dict["items"].keys()):
         old_dict["items"]["Migrate database version"] = new_dict["items"]["Migrate database version"]

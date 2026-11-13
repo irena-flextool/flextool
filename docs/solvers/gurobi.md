@@ -98,11 +98,14 @@ the FlexTool log.
   expired"*. Renew the licence through the Gurobi web portal.
 - **`gurobi_cl` not found.** *"Solver 'gurobi' CLI binary is not installed on
   this system."* Install Gurobi and put `gurobi_cl` on the `PATH`.
-- **Unknown Gurobi parameter.** A misspelt name in `solver_arguments` or
-  `gurobi.opt` (e.g. `MIPGapp`) is ignored by Gurobi, which prints
-  `Unknown parameter: 'MIPGapp' (ignored)` and solves on. FlexTool repeats it
-  as a warning naming where the parameter was set (the option file, or the
-  `solver_arguments` of which solve). Fix the name. With console logging off
+- **Unknown Gurobi parameter.** A misspelt name in `solver_arguments` (e.g.
+  `MIPGapp`) stops the run before its first solve, with the closest name
+  (`MIPGap`) in the message: the database may name only parameters in
+  FlexTool's list ([What the database may set](index.md#what-the-database-may-set)).
+  In `gurobi.opt` (or from `solver_arguments` where this computer allows
+  unlisted names) FlexTool warns and passes it; Gurobi ignores it, prints
+  `Unknown parameter: 'MIPGapp' (ignored)` and solves on, and FlexTool repeats
+  that as a warning naming where the parameter was set. Fix the name. With console logging off
   (`LogToConsole 0`) Gurobi prints no such line, and there is no warning.
 - **File parameters.** Parameters that name a file or folder (`LogFile`,
   `SolFiles`, `NodefileDir`, `InputFile`, the `.prm` / `.json` file lists of
@@ -112,9 +115,13 @@ the FlexTool log.
   [What the database may set](index.md#what-the-database-may-set).
   `ResultFile` is ignored everywhere (with a warning): FlexTool names its own
   result file and reads the solution from it.
-- **Time limit reached.** A MIP stopped at its time limit with a solution is
+- **Time or other limit reached.** A MIP stopped at its time, node,
+  solution or work limit, or at `BestObjStop` / `BestBdStop`, with a solution is
   kept with a warning that gives the gap reached; an LP, or a MIP without a
-  solution, stops the run. See [Time limit](index.md#time-limit).
+  solution, stops the run. See [Time and other limits](index.md#time-and-other-limits).
+- **Objective values.** `BestObjStop`, `BestBdStop`, `Cutoff`, `MIPGapAbs` and `PoolGapAbs` are written in
+  unscaled currency; FlexTool scales them to the objective Gurobi sees (see
+  [Time and other limits](index.md#time-and-other-limits)).
 
 ## How to set it in FlexTool
 
@@ -137,8 +144,9 @@ flextool <input_db_url> --solver-time-limit 60 --solver-mip-gap 0.001
 `solver_mip_gap` (0.005) and any `MIPGap` in `solver_arguments` or
 `gurobi.opt`. Without the flags, `solver_mip_gap` gives `MIPGap=0.005`, and a
 `MIPGap` (or `mipgap`: names match without regard to case) in
-`solver_arguments` wins over it. The thread count comes from `Threads` in
-`gurobi.opt` (`--threads` and `--highs-threads` do not change it). The run
+`solver_arguments` wins over it. `--threads` (Threads per run in the
+FlexTool window) sets `Threads`; without it, `Threads` in `gurobi.opt` or
+`solver_arguments` applies. `--highs-threads` does not change it. The run
 prints what Gurobi receives, for example:
 
 ```text

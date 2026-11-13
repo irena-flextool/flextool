@@ -33,6 +33,7 @@ from spinedb_api import export_data
 from spinedb_api.parameter_value import to_database
 
 from flextool.update_flextool.db_handle import open_database_mapping
+from flextool.sqlite_url import sqlite_url_string
 
 
 def keep_serialized_parse(value: bytes | None, type_: str | None) -> Any:
@@ -84,7 +85,7 @@ def export_database(database_path: str, json_path: str) -> None:
     if database_path.startswith("sqlite://"):
         url = database_path
     elif database_path.endswith(".sqlite"):
-        url = "sqlite:///" + database_path
+        url = sqlite_url_string(database_path)
     else:
         raise ValueError(
             f"Expected a .sqlite path or sqlite:// URL, got {database_path!r}"

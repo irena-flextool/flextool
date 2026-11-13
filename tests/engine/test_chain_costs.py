@@ -15,7 +15,8 @@ start of operation c(d)::
     lump_invest[d] = A · Σ_{d' ≥ c(d)} F_inv(d')        lump_fixed[d] = 100 · 1000 · Σ_{d' ≥ c(d)} F_ops(d')
 
 The chain ``invest_solveSequence_5weeks`` (y2020 … y2035: each solve holds its own period and the next one) gets
-these values in every solve, while each solve's own factors restart at its first period.
+these values in every solve, and each solve's own factors (the objective's) are those of its periods: every solve
+discounts from the start of the run (item 242).
 """
 from __future__ import annotations
 
@@ -82,16 +83,16 @@ def _assert_run_factors(fd) -> None:
 def test_chain_reports_from_the_start_of_the_run(tmp_path_factory) -> None:
     """Every solve of the chain gets the factors of all four run periods from the start of the run, and the
     lumps of its decisions over the operating window up to the end of the run (p2035), not only over its own two
-    periods; the solve's own factors (the objective's) are unchanged and restart at its first period."""
+    periods; the solve's own factors (the objective's) are the run factors of its periods: every solve discounts
+    from the start of the run (item 242; before, they restarted at the solve's first period)."""
     steps = _steps(tmp_path_factory, "chain_run_fields", [], CHAIN)
     assert list(steps) == ["y2020_5week", "y2025_5week", "y2030_5week", "y2035_5week"]
     for k, (name, step) in enumerate(steps.items()):
         fd = step.flex_data
         own = PERIODS[k:k + 2]
         _assert_run_factors(fd)
-        # The objective's factors: discounted from the solve's own first period.
-        assert _d(fd.p_inflation_op) == pytest.approx({d: F_OPS[PERIODS[i]] for i, d in enumerate(own)},
-                                                       rel=1e-12), name
+        # The objective's factors: discounted from the start of the run, as the reported costs.
+        assert _d(fd.p_inflation_op) == pytest.approx({d: F_OPS[d] for d in own}, rel=1e-12), name
         assert _window(fd.edd_operating_window, "d_invest") == {d: _later(d) for d in own}, name
         assert _ed(fd.ed_annuity) == pytest.approx({d: ANNUITY for d in own}, rel=1e-12), name
         assert _ed(fd.ed_entity_annual_discounted_run) == pytest.approx(
@@ -420,7 +421,7 @@ def test_unrealized_look_ahead_of_the_last_solve(tmp_path_factory) -> None:
 def _summary_totals(csv_dir: Path) -> dict[str, float]:
     """``{"full": …, "realized": …}``: the calculated totals (M CUR) of ``summary_solve.csv``."""
     out: dict[str, float] = {}
-    for line in (csv_dir / "summary_solve.csv").read_text().splitlines():
+    for line in (csv_dir / "summary_solve.csv").read_text(encoding="utf-8").splitlines():
         if line.startswith('"Total cost (calculated) full horizon'):
             out["full"] = float(line.split(",")[1])
         elif line.startswith('"Total cost (calculated) realized periods'):
@@ -540,10 +541,10 @@ STOCH_RD_VALUES = [["model", "flextool", "inflation_rate", b64(0.04, "float")],
 
 
 def _stoch_variant(tmp_path_factory, name: str, mutate) -> Path:
-    data = json.loads(STOCH_RD_JSON.read_text())
+    data = json.loads(STOCH_RD_JSON.read_text(encoding="utf-8"))
     mutate(data)
     out = tmp_path_factory.mktemp(f"{name}_json") / f"{name}.json"
-    out.write_text(json.dumps(data))
+    out.write_text(json.dumps(data), encoding="utf-8")
     return out
 
 
@@ -566,6 +567,132 @@ def test_stochastic_realization_reports_the_deterministic_twin(tmp_path_factory)
     twin = _results(tmp_path_factory, "stoch_rd_twin", STOCH_RD_VALUES, STOCH_RD_CHAIN,
                     fixture_json=_stoch_variant(tmp_path_factory, "stoch_rd_det", _deterministic))
     _assert_same_results(stoch, twin)
+
+
+def _realized_fan_chain_db(tmp_path_factory) -> tuple[str, str]:
+    """The fan → realize → next solve chain of :func:`test_chain_of_realized_fans_reports_from_the_run_start`,
+    built from the schema JSON."""
+    import spinedb_api as api
+
+    from flextool.update_flextool.db_handle import open_database_mapping
+    from flextool.update_flextool.initialize_database import initialize_database
+
+    def m(d: dict, name: str):
+        return api.Map(list(d), list(d.values()), index_name=name)
+
+    steps = [f"t{i:04d}" for i in range(1, 9)]
+    # Wind CF per branch: (p2030 steps, p2040 steps); the t0001 forecast covers both periods, the t0005 one p2040.
+    cf = {"high": (0.9, 0.9), "low": (0.3, 0.25), "rlz": (0.5, 0.6)}
+    profile = m({b: m({"t0001": m(dict(zip(steps, [c30] * 4 + [c40] * 4)), "time"),
+                       "t0005": m(dict(zip(steps[4:], [c40] * 4)), "time")}, "analysis_time")
+                 for b, (c30, c40) in cf.items()}, "branch")
+
+    def fan(period: str, at: str):
+        return m({period: m({b: m({at: m({r: w}, "realized")}, "analysis_time")
+                             for b, (r, w) in {"high": ("no", 0.5), "low": ("no", 0.5),
+                                               "rlz": ("yes", 0.0)}.items()}, "branch")}, "period")
+
+    def solve(name: str, period: str, timeset: str, at: str) -> list:
+        own = api.Array([period])
+        return [("solve", name, "solve_mode", "single_solve"),
+                ("solve", name, "period_timeset", m({period: timeset}, "period")),
+                ("solve", name, "years_represented", m({period: 2.0}, "period")),
+                ("solve", name, "invest_periods", own), ("solve", name, "realized_invest_periods", own),
+                ("solve", name, "realized_periods", own), ("solve", name, "stochastic_branches", fan(period, at))]
+
+    entities = [("model", "flextool"), ("timeline", "tl"), ("timeset", "ts30"), ("timeset", "ts40"),
+                ("node", "elec"), ("unit", "wind"), ("unit__outputNode", ("wind", "elec")), ("profile", "wprof"),
+                ("unit__node__profile", ("wind", "elec", "wprof")), ("group", "g"), ("group__unit", ("g", "wind")),
+                ("solve", "s30"), ("solve", "s40")]
+    values = [
+        ("model", "flextool", "solves", api.Array(["s30", "s40"])),
+        ("model", "flextool", "inflation_rate", 0.1),
+        ("timeline", "tl", "timestep_duration", m({t: 1.0 for t in steps}, "time")),
+        ("timeset", "ts30", "timeline", "tl"), ("timeset", "ts30", "timeset_duration", m({"t0001": 4.0}, "time")),
+        ("timeset", "ts40", "timeline", "tl"), ("timeset", "ts40", "timeset_duration", m({"t0005": 4.0}, "time")),
+        ("node", "elec", "node_type", "balance"), ("node", "elec", "inflow", -100.0),
+        ("node", "elec", "penalty_up", 10000.0), ("node", "elec", "penalty_down", 10000.0),
+        ("unit", "wind", "existing", 0.0), ("unit", "wind", "efficiency", 1.0),
+        ("unit", "wind", "virtual_unitsize", 1.0), ("unit", "wind", "invest_method", "invest_total"),
+        ("unit", "wind", "invest_cost", 1000.0), ("unit", "wind", "lifetime", 30.0),
+        ("unit", "wind", "discount_rate", 0.05), ("unit", "wind", "invest_max_total", 1000.0),
+        ("unit", "wind", "fixed_cost", 10.0),
+        ("unit__outputNode", ("wind", "elec"), "other_operational_cost", 1.0),
+        ("unit__node__profile", ("wind", "elec", "wprof"), "profile_method", "upper_limit"),
+        ("profile", "wprof", "profile", profile),
+        ("group", "g", "include_stochastics", "yes"),
+        *solve("s30", "p2030", "ts30", "t0001"), *solve("s40", "p2040", "ts40", "t0005")]
+    db = tmp_path_factory.mktemp("realized_fan_chain") / "chain.sqlite"
+    initialize_database(str(FLEXTOOL_ROOT / "flextool" / "schemas" / "spinedb_schema.json"), str(db))
+    url = f"sqlite:///{db.resolve().as_posix()}"
+    with open_database_mapping(url) as mp:
+        _, errors = api.import_data(
+            mp, alternatives=[("a", "")], scenarios=[("sc", False, "")], scenario_alternatives=[("sc", "a", None)],
+            entities=entities, entity_alternatives=[("node", ("elec",), "a", True), ("unit", ("wind",), "a", True)],
+            parameter_values=[(c, e, p, v, "a") for c, e, p, v in values])
+        assert not errors, errors
+        mp.commit_session("realized fan chain")
+    return url, "sc"
+
+
+@pytest.mark.solver
+def test_chain_of_realized_fans_reports_from_the_run_start(tmp_path_factory) -> None:
+    """Two stochastic solves in a chain, each with a fan of forecasts high / low (weights 0.5) and a realized
+    designation rlz at its own period's start: s30 (p2030) → s30__realized_dispatch → s40 (p2040) →
+    s40__realized_dispatch.  Before: the run stopped ("periods ['p2030_rlz'] have no year from the start of the
+    run"); the realized branch copy p2030_rlz is no period of the run, its operations are reported by the
+    realization solve at the year of its real period p2030.
+
+    By hand: p2030 and p2040 each represent 2 years, so the run years are Y = 0 (p2030) and 2 (p2040); inflation
+    r = 0.1, offsets ops 0.5 / inv 0 (the defaults)::
+
+        F_inv(d) = Σ_{y=0,1} 1.1^-(Y_d + y)         F_inv = {p2030: 1.909091, p2040: 1.577761}
+        F_ops(d) = Σ_{y=0,1} 1.1^-(Y_d + y + 0.5)   F_ops = {p2030: 1.820247, p2040: 1.504336}
+
+    Both investments and operations of s40 are discounted from the start of the run (Y = 2), not from the
+    start of s40, in the reported costs and in s40's own objective (item 242): its p_inflation_op of p2040 is
+    1.1^-2.5 + 1.1^-3.5 = 1.504336.  Wind: annuity A = 1000 · 1000 · 0.05 / (1 − 1.05^−30) = 65 051.44 CUR/MW/yr, fixed cost
+    10 000 CUR/MW/yr, reinvest_automatic (operates to the end of the run).  The builds: the low forecast must
+    cover the demand of 100 MW (penalty 1e4): 100 / 0.3 = 333.33 MW in p2030, 100 / 0.25 = 400 MW in p2040, so
+    66.67 MW more.  Discounted: p2030 333.33 · A · (F_inv(p2030) + F_inv(p2040)), p2040 66.67 · A · F_inv(p2040);
+    fixed cost invested likewise with 10 000 and F_ops.  Operations: the realized wind (CF 0.5 / 0.6, enough
+    for the demand) produces 100 MWh/h at 1 CUR/MWh: 0.876 M/yr annualized, · F_ops(d) discounted."""
+    from flextool.engine import run_chain_from_db
+    from flextool.process_outputs.write_outputs import write_outputs
+
+    url, scen = _realized_fan_chain_db(tmp_path_factory)
+    work = tmp_path_factory.mktemp("realized_fan_chain_w")
+    steps = run_chain_from_db(url, scen, work_folder=work, keep_solutions=True)
+    assert list(steps) == ["s30", "s30__realized_dispatch", "s40", "s40__realized_dispatch"]
+    s40_ops = _d(steps["s40"].flex_data.p_inflation_op)
+    assert s40_ops["p2040"] == pytest.approx(1.1 ** -2.5 + 1.1 ** -3.5, rel=1e-12)
+    assert s40_ops["p2040"] == pytest.approx(1.504336, rel=1e-6)
+    last = next(reversed(list(steps.values())))
+    write_outputs(scenario_name=scen, output_location=str(work), subdir=scen, write_methods=["csv"],
+                  flex_data=last.flex_data, solution=last.solution, solve_name=last.solve_name,
+                  flex_data_provider=getattr(last, "flex_data_provider", None),
+                  raw_output_dir=str(work / "output_raw"))
+    out = work / "output_csv" / scen
+    f_inv = {"p2030": 1.0 + 1.1 ** -1, "p2040": 1.1 ** -2 + 1.1 ** -3}
+    f_ops = {"p2030": 1.1 ** -0.5 + 1.1 ** -1.5, "p2040": 1.1 ** -2.5 + 1.1 ** -3.5}
+    annuity = 1000.0 * 1000.0 * 0.05 / (1.0 - 1.05 ** -30)
+    built = {"p2030": 100.0 / 0.3, "p2040": 100.0 / 0.25 - 100.0 / 0.3}
+    window = {"p2030": ["p2030", "p2040"], "p2040": ["p2040"]}
+    operations = 100.0 * 1.0 * 8760.0
+    discounted = pd.read_csv(out / "cost_unit_discounted__d.csv")
+    annualized = pd.read_csv(out / "cost_unit_annualized__d.csv")
+    for d in ("p2030", "p2040"):
+        row = _row(discounted, d, "wind")
+        assert row["investment"] * MEGA == pytest.approx(built[d] * annuity * sum(f_inv[p] for p in window[d]),
+                                                         rel=1e-6), d
+        assert row["fixed cost invested"] * MEGA == pytest.approx(
+            built[d] * 10_000.0 * sum(f_ops[p] for p in window[d]), rel=1e-6), d
+        assert row["other operational"] * MEGA == pytest.approx(operations * f_ops[d], rel=1e-6), d
+        operating = sum(built[p] for p in built if p <= d)
+        row = _row(annualized, d, "wind")
+        assert row["investment"] * MEGA == pytest.approx(operating * annuity, rel=1e-6), d
+        assert row["fixed cost invested"] * MEGA == pytest.approx(operating * 10_000.0, rel=1e-6), d
+        assert row["other operational"] * MEGA == pytest.approx(operations, rel=1e-6), d
 
 
 FAN_JSON = FLEXTOOL_ROOT / "tests" / "fixtures" / "stoch_two_period_invest.json"

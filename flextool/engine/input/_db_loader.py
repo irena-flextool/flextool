@@ -55,16 +55,23 @@ class FlexToolRunner:
         # outputs; the solver option folder as a run resolves it
         # (``flextool._solver_config_source``; ``run_chain_from_db`` passes its own).
         from flextool._resources import package_data_path
-        from flextool._solver_config_source import resolve_solver_config_source
+        from flextool._solver_config_source import read_solver_option_files, resolve_solver_config_source
         _pkg_dir = package_data_path("")
+        # Read the files here: a ladder of several folders is read file by file (its top folder alone would lose
+        # the lower ones), and a folder found outside a workspace or project this computer set up keeps the
+        # database's rules (item 240 B3; ``run_chain_from_db`` hands its own files to the solves).
+        solver_option_files = None
         if solver_config_dir is None:
-            solver_config_dir = resolve_solver_config_source(run_options=run_options, input_db_url=input_db_url).dir
+            source = resolve_solver_config_source(run_options=run_options, input_db_url=input_db_url)
+            solver_config_dir = source.dir
+            solver_option_files = read_solver_option_files(source)
         paths = PathConfig(
             flextool_dir=Path(flextool_dir) if flextool_dir is not None else _pkg_dir,
             solver_config_dir=Path(solver_config_dir) if solver_config_dir is not None else None,
             root_dir=Path(root_dir) if root_dir is not None else Path.cwd(),
             output_path=Path(output_path) if output_path is not None else Path.cwd(),
             work_folder=resolved_work_folder,
+            solver_option_files=solver_option_files,
         )
         # read the data in
         # open connection to input db

@@ -1129,8 +1129,9 @@ def _lineage_leaves(
     Returns ``(label, members)`` pairs (F4, Slice E design §6.2): the
     real-named calendar-anchor leaf labeled ``"__anchor"`` (its members
     are exactly the ``anchors`` list — the real-named, calendar-canonical
-    periods, under R-NAME owned by the reference forecast; this is NOT a
-    "realized" scenario, just the shared real-named chain) and each
+    periods, owned by the realized branch when one is designated and by no
+    branch otherwise; this is NOT a "realized" scenario, just the shared
+    real-named chain) and each
     branch leaf labeled its time-branch id — so a caller that keys
     constraint rows off the leaf (``d_leaf``) carries the authoritative
     label rather than re-deriving and zipping it (a brittle

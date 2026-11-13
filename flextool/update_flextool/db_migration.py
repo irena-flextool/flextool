@@ -11,6 +11,7 @@ import logging
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_handle import open_database_mapping
 from flextool._resources import package_data_path
+from flextool.sqlite_url import sqlite_url_string
 
 
 def _pre_v26_template(name: str) -> str:
@@ -109,7 +110,7 @@ def migrate_database(
     if database_path.startswith('sqlite://') or database_path.startswith('http://'):
         mapping_name = database_path
     elif os.path.exists(database_path) and database_path.endswith(".sqlite"):
-        mapping_name = 'sqlite:///' + database_path
+        mapping_name = sqlite_url_string(database_path)
     else:
         logging.critical("No sqlite file at " + database_path)
         exit(-1)
@@ -5041,7 +5042,7 @@ def migrate_repository_database(database_path: str) -> None:
     (only upgraded user databases print behaviour-change notices).
     """
     migrate_database(database_path)
-    url = database_path if "://" in database_path else "sqlite:///" + database_path
+    url = database_path if "://" in database_path else sqlite_url_string(database_path)
     with open_database_mapping(url) as db:
         if remove_behaviour_change_markers(db):
             db.commit_session("Removed behaviour-change markers (repository database)")
@@ -6567,6 +6568,94 @@ def _v79_stochastic_storage_paths(db) -> None:
         _v77_set_marker(db, "stochastic_storage_paths_tied", json.dumps({"since": 79, "solves": solves}))
 
 
+#: v79: the solve parameters that split a solve when given as a 2-D map.
+_V79_SPLIT_PERIOD_PARAMETERS = ("invest_periods", "realized_invest_periods", "realized_periods", "fix_storage_periods")
+
+
+def _v79_period_names(value) -> list[str]:
+    """The period names of a parsed 1-D period parameter: an array's values, a map's indexes."""
+    if isinstance(value, Map):
+        return [str(d) for d in value.indexes]
+    values = getattr(value, "values", None)
+    return [str(d) for d in values] if values is not None else []
+
+
+def _v79_map_out_of_period_order(value, periods: list[str]) -> bool:
+    """A ``years_represented`` map (periods with years above 0) that lists the ``periods`` out of their order, or
+    lists a period outside them before one of them (it moves that period's start in the map count)."""
+    if not isinstance(value, Map) or not periods:
+        return False
+    keys = [str(d) for d, v in zip(value.indexes, value.values)
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0]
+    used = [d for d in keys if d in periods]
+    if used != [d for d in periods if d in used]:
+        return True
+    last_used = max((i for i, d in enumerate(keys) if d in periods), default=0)
+    return any(d not in periods for d in keys[:last_used])
+
+
+def _v79_discount_from_run_start(db) -> None:
+    """Every solve discounts its investments and its operations from the start of the run (part of v79).
+
+    No value is rewritten.  Behaviour-change marker ``chained_solve_discount_from_run_start``
+    (``{"since": 79, "solves": [...]}``) only on a database with an ``inflation_rate`` value other than 0 (with 0
+    every discount base gives the same results) and a solve whose results can change:
+
+    * the solves of a ``model.solves`` list of two or more solves (a later solve starts after the run start),
+    * a solve with ``contains_solves`` (its contained solves run after it, also from a later period),
+    * a solve with a 2-D period map (``invest_periods`` / ``realized_invest_periods`` / ``realized_periods`` /
+      ``fix_storage_periods``: it splits into solves that start later),
+    * a solve with a fractional ``years_represented`` (it counted as a whole year for the later periods),
+    * a solve whose ``years_represented`` map does not list its periods in the solve's period order, or lists a
+      period the solve does not use before one it does (the investment walk counted the years in the period
+      order of the solve, the operations in the map order; both now count in the map order, which also moves a
+      single solve).  The period order is approximated by ``realized_periods`` then ``invest_periods`` (and also
+      with ``period_timeset`` after them); either order flags the solve.
+
+    The marker is broader than the change: a run whose solves all start at the run start with whole years keeps
+    its results, and the migration does not read which alternatives a scenario combines.  Idempotent: a rerun
+    finds the marker written.
+    """
+    if not (db.get_item("entity_class", name="solve") and db.get_item("entity_class", name="model")):
+        return
+    if not any(v != 0.0 for pv in db.find_parameter_values(entity_class_name="model",
+                                                           parameter_definition_name="inflation_rate")
+               for v in _v79_numbers(from_database(pv["value"], pv["type"]))):
+        return
+    solves: set[str] = set()
+    for pv in db.find_parameter_values(entity_class_name="model", parameter_definition_name="solves"):
+        value = from_database(pv["value"], pv["type"])
+        names = [str(n) for n in getattr(value, "values", [])] if value is not None else []
+        if len(names) >= 2:
+            solves.update(names)
+    for pv in db.find_parameter_values(entity_class_name="solve", parameter_definition_name="contains_solves"):
+        if from_database(pv["value"], pv["type"]) is not None:
+            solves.add(pv["entity_byname"][0])
+    for name in _V79_SPLIT_PERIOD_PARAMETERS:
+        for pv in db.find_parameter_values(entity_class_name="solve", parameter_definition_name=name):
+            value = from_database(pv["value"], pv["type"])
+            if isinstance(value, Map) and any(isinstance(v, Map) for v in value.values):
+                solves.add(pv["entity_byname"][0])
+    order: dict[str, dict[str, list[str]]] = {}
+    for name in ("realized_periods", "invest_periods", "period_timeset"):
+        for pv in db.find_parameter_values(entity_class_name="solve", parameter_definition_name=name):
+            seen = order.setdefault(pv["entity_byname"][0], {}).setdefault(name, [])
+            for d in _v79_period_names(from_database(pv["value"], pv["type"])):
+                if d not in seen:
+                    seen.append(d)
+    for pv in db.find_parameter_values(entity_class_name="solve", parameter_definition_name="years_represented"):
+        value = from_database(pv["value"], pv["type"])
+        if any(v != int(v) for v in _v79_numbers(value)):
+            solves.add(pv["entity_byname"][0])
+        by_name = order.get(pv["entity_byname"][0], {})
+        realized_invest = [*by_name.get("realized_periods", []), *by_name.get("invest_periods", [])]
+        if any(_v79_map_out_of_period_order(value, list(dict.fromkeys(periods)))
+               for periods in (realized_invest, [*realized_invest, *by_name.get("period_timeset", [])])):
+            solves.add(pv["entity_byname"][0])
+    if solves:
+        _v77_set_marker(db, "chained_solve_discount_from_run_start", json.dumps({"since": 79, "solves": sorted(solves)}))
+
+
 def _migrate_v79_schema_batch(db) -> None:
     """All schema changes of database version 79 (v78 -> v79), in one step.
 
@@ -6599,6 +6688,8 @@ def _migrate_v79_schema_batch(db) -> None:
         ``stochastic_storage_paths_tied`` (:func:`_v79_stochastic_storage_paths`).
     14. ``solve.solver_precommand`` is never run: its and the ``solver_arguments`` descriptions
         (:func:`_v79_solver_precommand_descriptions`).
+    15. Every solve discounts from the start of the run: the behaviour-change marker
+        ``chained_solve_discount_from_run_start`` (:func:`_v79_discount_from_run_start`).
 
     No value is rewritten.  Each part is idempotent, so a rerun of the step changes nothing.
     """
@@ -6616,12 +6707,14 @@ def _migrate_v79_schema_batch(db) -> None:
     _v79_rp_stochastic_descriptions(db)
     _v79_stochastic_storage_paths(db)
     _v79_solver_precommand_descriptions(db)
+    _v79_discount_from_run_start(db)
     _commit_step(db, "v79: constraint_online_coeff, ramp_cost, reduce_*_detail_method, time-varying group "
                      "limits, time series combined over a solve's new_stepduration step, capacity margin by "
                      "entity class and share_of_peak, constraint_period_method, discount_rate 0 is 0 %, "
                      "startup_input_method and startup_energy, investment offered without invest_cost, "
                      "node.unit_of_measure, representative periods in stochastic and rolling solves, storage "
-                     "along each stochastic path, solver_precommand not run")
+                     "along each stochastic path, solver_precommand not run, every solve discounted from the run "
+                     "start")
 
 
 def _v79_adder_has_value(value) -> bool:

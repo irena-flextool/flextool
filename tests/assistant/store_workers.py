@@ -103,6 +103,17 @@ def ledger_loop(root: str, requests: int, go) -> None:
         ledger.record("gemini", "Google Gemini", "model-a", Usage(10, 0, 0, 1))
 
 
+def ledger_once_while_locked(root: str, recorded, out) -> None:
+    """Count one request while the parent holds the ledger's lock (longer than a writer waits): the update fails,
+    the count is kept, and the exit of this process writes it once the lock is free."""
+    from flextool.assistant import usage
+    from flextool.assistant.llm_adapter import Usage
+
+    written = usage.Ledger(Path(root)).record("gemini", "Google Gemini", "model-a", Usage(10, 0, 0, 1))
+    out.put((written, usage.pending_count()))
+    recorded.set()
+
+
 def record_consents(root: str, tag: str, count: int, ready, go, out) -> None:
     """Accept the data notice for *count* endpoints of its own (``https://{tag}-{i}.example.test/v1``) as fast as
     it can, as two FlexTool windows or a window and a terminal would at the same moment."""

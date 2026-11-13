@@ -134,11 +134,13 @@ For **invested** assets, the fixed cost is paid in every period the new capacity
 
 A period can represent multiple years via the `years_represented` parameter on the solve entity. For example, a period `p2025` with `years_represented = 5` means that the modelled timeline (e.g., one representative week) stands in for 5 full years (2025-2029).
 
-Internally, FlexTool expands this into per-year entries. A period with `years_represented = 5` becomes 5 rows in the solve data, each representing 1 year at a different distance from the solve start. The inflation factor then sums the per-year inflation adjustments:
+Internally, FlexTool expands this into per-year entries. A period with `years_represented = 5` becomes 5 rows in the solve data, each representing 1 year at a different distance from the start of the run (the first period of the model's first solve; a later solve counts the years of the earlier solves' periods first). The inflation factor then sums the per-year inflation adjustments:
 
 ```
-inflation_factor = Σ_y  p_years_represented[d,y] × 1/(1 + inflation_rate)^years_from_solve[y]
+inflation_factor = Σ_y  p_years_represented[d,y] × 1/(1 + inflation_rate)^(years_from_run_start[d,y] + p_years_represented[d,y] × offset)
 ```
+
+where `years_from_run_start[d,y]` is the start of year `y` of period `d` (a fractional year counts as its fraction: after a period of 2.5 years the next one starts at 2.5) and `offset` is `inflation_offset_investment` or `inflation_offset_operations`.
 
 With `inflation_rate = 0`, each term contributes `p_years_represented[d,y] × 1 = 1`, and the sum equals `years_represented` (i.e., 5). With `inflation_rate = 2%`, each year is deflated slightly more, giving a sum of approximately 4.81.
 

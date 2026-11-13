@@ -1082,9 +1082,9 @@ def _with_fan_label_rows(param, flex_data: "FlexData"):
 
 RUN_FIELDS_MISSING_WARNING = (
     "Warning: the reported costs are built from solve data without the run-level cost fields (a CSV-dump "
-    "reload): investment, retirement and fixed costs are discounted from the start of each solve, not from the "
-    "start of the run, and the annualized investment, retirement and fixed costs of new and retired capacity "
-    "are 0.")
+    "reload): investment, retirement and fixed costs are those of each solve's own periods, not over the "
+    "periods of the whole run, and the annualized investment, retirement and fixed costs of new and retired "
+    "capacity are 0.")
 
 
 def warn_if_run_fields_missing(flex_datas) -> bool:

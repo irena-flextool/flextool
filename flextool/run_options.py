@@ -98,6 +98,17 @@ def _path_text(text: str) -> str:
     return text.strip()
 
 
+def split_path_list(text: str) -> tuple[str, ...]:
+    """The folders of an environment value that lists several (``FLEXTOOL_SOLVER_CONFIG_DIR``): split at
+    :data:`os.pathsep` (``:`` on Linux and macOS, ``;`` on Windows, as ``PATH``), each stripped, empty parts
+    dropped."""
+    return tuple(part.strip() for part in text.split(os.pathsep) if part.strip())
+
+
+def _path_list(text: str) -> tuple[str, ...] | None:
+    return split_path_list(text) or None
+
+
 def _workers(text: str) -> int | None:
     value = int(text.strip())
     # 0 or a negative count is the documented "automatic" setting.
@@ -154,7 +165,8 @@ OPTIONS: dict[str, OptionSpec] = {
             key="threads", flag="--threads", env="FLEXTOOL_THREADS", db=None,
             parse=_positive_int, default=None, audience="user",
             help="threads for one FlexTool run: FlexTool's data processing (at most 8 unless POLARS_MAX_THREADS) "
-                 "and the solver; unset uses the available cores",
+                 "and the solver (HiGHS and the commercial solvers' thread count); unset uses the available cores "
+                 "and leaves the solvers' thread settings as they are (a Spine Toolbox run: 1 thread for all)",
         ),
         _spec(
             key="highs_threads", flag="--highs-threads", env="FLEXTOOL_HIGHS_THREADS", db=None,
@@ -201,9 +213,20 @@ OPTIONS: dict[str, OptionSpec] = {
         ),
         _spec(
             key="solver_config_dir", flag="--solver-config-dir", env="FLEXTOOL_SOLVER_CONFIG_DIR", db=None,
-            parse=_path_text, default=None, audience="user",
-            help="folder of the solver option files (highs.opt, gurobi.opt, ...); unset looks next to the input "
-                 "database, in its workspace, the Spine Toolbox project folder and the current folder",
+            parse=_path_list, default=None, audience="user",
+            help="folders of the solver option files (highs.opt, gurobi.opt, ...), highest first: each solver's "
+                 "file comes from the first folder that has it, else FlexTool's default; repeat the flag for "
+                 "several folders (the environment variable separates them with os.pathsep, ':' or on Windows "
+                 "';'); unset looks next to the input database, in its project and workspace, the Spine Toolbox "
+                 "project folder and the current folder",
+        ),
+        _spec(
+            key="workspace_solver_config_dir", flag="--workspace-solver-config-dir", env=None, db=None,
+            parse=_path_list, default=None, audience="user",
+            help="solver option folders the launcher found, highest first (the FlexTool window passes its "
+                 "project's solver_config, then its workspace's; repeat the flag for several); the files of each "
+                 "are trusted only when its workspace or project is one this computer set up; above the "
+                 "--solver-config-dir folders when both are given",
         ),
         _spec(
             key="scaling", flag="--scaling", env="FLEXTOOL_SCALING", db="solve.scaling",
@@ -296,12 +319,20 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         _user("POLARS_FORCE_PKG", "force one polars build; also skips FlexTool's processor check"),
         _user("FLEXTOOL_RUN_LOG_MAX_BYTES", "bytes of a run's _run.log kept from its end (4 MiB, at most 256 MiB); "
               "the first 64 KiB are kept too"),
+        _user("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", "1 takes solver parameter names that are not in "
+              "FlexTool's lists from input databases (default off; also solver_settings.json in the user config "
+              "folder)"),
+        *(_user(name, f"the program (and its arguments, as a JSON list) that starts in front of {label}'s "
+                "program; empty or [] means none (also solver_settings.json)")
+          for name, label in (("FLEXTOOL_SOLVER_WRAPPER_GUROBI", "Gurobi"), ("FLEXTOOL_SOLVER_WRAPPER_CPLEX", "CPLEX"),
+                              ("FLEXTOOL_SOLVER_WRAPPER_XPRESS", "Xpress"), ("FLEXTOOL_SOLVER_WRAPPER_COPT", "COPT"))),
         _user("FLEXTOOL_MIGRATION_LOCK_TIMEOUT", "Windows: seconds a migration waits for the lock of another "
               "migration of the same database (600); not read on Linux or macOS"),
         _user("POLARS_MAX_THREADS", "polars thread pool size, in place of FlexTool's limit of 8 but at most the "
               "run's --threads; the run header prints the effective count", read_by="polars"),
         # --- dev: solve acceptance ------------------------------------------------------------------------
-        _dev("FLEXTOOL_ACCEPT_NEAR_OPTIMAL", "0 rejects every HiGHS status other than optimal (default on)"),
+        _dev("FLEXTOOL_ACCEPT_NEAR_OPTIMAL", "0 rejects every solver status other than optimal, a MIP stopped by a "
+             "limit included (default on)"),
         _dev("FLEXTOOL_ACCEPT_PD_GAP", "largest primal-dual gap of an accepted near-optimal solve (1e-2)"),
         _dev("FLEXTOOL_ACCEPT_PRIMAL_REL", "relative primal infeasibility of an accepted near-optimal solve; "
              "replaces the default max(1e-6, 10 x primal_feasibility_tolerance)"),
@@ -362,8 +393,14 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         _dev("_RJEM_MALLOC_CONF", "jemalloc settings of polars' allocator; FlexTool sets page decay"),
         # --- test suite -----------------------------------------------------------------------------------
         _test("FLEXTOOL_NATIVE_PARITY_SWEEP", "run the slow parity sweep over every fixture"),
+        _test("FLEXTOOL_WRITE_SOLVER_HANDOFF_GOLDEN", "1 rewrites the solver hand-off golden record"),
         _test("FLEXTOOL_TEST_RSS_BUDGET_MB", "RSS budget of the input-derivation memory test (1500)"),
         _test("FLEXTOOL_TEST_KEYRING_LOG", "set by the root conftest: the file the session's keyring violations go to"),
+        _test("FLEXTOOL_TEST_SANDBOX", "set by the root conftest: the session's temp folder that HOME, XDG_* and "
+              "APPDATA/LOCALAPPDATA point into"),
+        _test("FLEXTOOL_TEST_REAL_HOME", "set by the root conftest: the real home folder, which no test may write under"),
+        _test("FLEXTOOL_TEST_REAL_USER_DIRS", "set by the root conftest: the real FlexTool user folders, which no test "
+              "may reach"),
         _test("FLEXTOOL_SHIM_RECORD", "set by the commercial_shim tests: the file each solver shim appends its "
               "call record to"),
     )
@@ -437,7 +474,7 @@ class RunOptions:
         """Options of a ``cmd_run_flextool`` run: the parsed flags of *args* over the environment."""
         env = os.environ if environ is None else environ
         resolved = {
-            key: resolve(spec, cli=getattr(args, spec.dest, None) if spec.flag else None, environ=env)
+            key: resolve(spec, cli=_cli_value(spec, getattr(args, spec.dest, None)) if spec.flag else None, environ=env)
             for key, spec in OPTIONS.items()
         }
         return cls(resolved=resolved)
@@ -482,6 +519,10 @@ class RunOptions:
                 if r.value:
                     argv.append(spec.flag)
                 continue
+            if isinstance(r.value, (tuple, list)):  # a repeatable flag: once per value
+                for item in r.value:
+                    argv.extend([spec.flag, _format_value(item)])
+                continue
             argv.extend([spec.flag, _format_value(r.value)])
         return argv
 
@@ -497,10 +538,22 @@ class RunOptions:
         return lines
 
 
+def _cli_value(spec: OptionSpec, value: Any) -> Any:
+    """A parsed flag value as the registry holds it: a repeatable flag's list (``action="append"``) as a tuple, an
+    empty one as unset; one folder of a folder-list option as a 1-tuple."""
+    if isinstance(value, list):
+        return tuple(str(v) for v in value) or None
+    if spec.parse is _path_list and isinstance(value, (str, os.PathLike)):
+        return (str(value),) if str(value).strip() else None
+    return value
+
+
 def _format_value(value: Any) -> str:
     # ``repr`` of a float is the shortest text that parses back to the same float.
     if isinstance(value, float):
         return repr(value)
+    if isinstance(value, (tuple, list)):  # several folders: shown as an environment value lists them
+        return os.pathsep.join(str(item) for item in value)
     return str(value)
 
 
@@ -514,4 +567,5 @@ __all__ = [
     "RunOptions",
     "Source",
     "resolve",
+    "split_path_list",
 ]

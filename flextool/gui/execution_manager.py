@@ -18,6 +18,9 @@ from typing import Callable
 
 import psutil
 
+from flextool._child_python import SAFE_PATH_FLAG, child_env
+from flextool._safe_text import printable
+from flextool.safe_names import describe_name, output_name_problem, require_strictly_inside
 from flextool._process_tree import kill_process_tree
 from flextool.gui.cli_format import format_cmd_for_log, terminal_command
 from flextool.gui.data_models import TIMESTAMP_FORMAT, GlobalSettings, ProjectSettings, ScenarioInfo
@@ -31,6 +34,7 @@ from flextool.run_record import (
     results_usable,
     write_stop_request,
 )
+from flextool.sqlite_url import sqlite_url_string
 
 logger = logging.getLogger(__name__)
 
@@ -770,6 +774,12 @@ class ExecutionManager:
         ownership_changed = False
         with self._lock:
             for scenario in scenarios:
+                # The name becomes work/, output_parquet/... folder names: never queue one that is not a plain
+                # folder name (the main window tells the user before it gets here).
+                reason = output_name_problem(scenario.name)
+                if reason is not None:
+                    logger.warning("Scenario %s is not run: its name %s.", describe_name(scenario.name), reason)
+                    continue
                 is_xlsx = scenario.source_name.lower().endswith(
                     (".xlsx", ".xls", ".ods")
                 )
@@ -777,13 +787,12 @@ class ExecutionManager:
                 if is_xlsx:
                     xlsx_path = source_path
                     stem = Path(scenario.source_name).stem
-                    input_db_url = (
-                        "sqlite:///"
-                        + str(self.project_path / "intermediate" / f"{stem}.sqlite")
+                    input_db_url = sqlite_url_string(
+                        self.project_path / "intermediate" / f"{stem}.sqlite"
                     )
                 else:
                     xlsx_path = None
-                    input_db_url = "sqlite:///" + str(source_path)
+                    input_db_url = sqlite_url_string(source_path)
 
                 prev_owners = dict(self.settings.bare_output_owners)
                 output_subdir = choose_output_subdir_for_write(
@@ -918,7 +927,8 @@ class ExecutionManager:
         return job
 
     def append_stdout(self, job_id: int, line: str) -> None:
-        """Thread-safe append of a stdout line to a job."""
+        """Thread-safe append of a stdout line to a job (control characters shown as ``\\xNN``)."""
+        line = printable(line, keep_newlines=True)
         with self._lock:
             job = self._get_job(job_id)
             if job is not None:
@@ -1021,7 +1031,7 @@ class ExecutionManager:
             )
         if not has_pending:
             return
-        db_url = "sqlite:///" + str(self.project_path / "results.sqlite")
+        db_url = sqlite_url_string(self.project_path / "results.sqlite")
         try:
             from flextool.process_outputs.write_spinedb import ensure_results_db
             ensure_results_db(db_url)
@@ -1210,8 +1220,9 @@ class ExecutionManager:
                 # Step 2: Build and run the main FlexTool command
                 work_folder = self.project_path / "work" / job.output_subdir
 
-                # Clean work folder so re-executions start fresh
+                # Clean work folder so re-executions start fresh (only ever a folder under <project>/work/)
                 if work_folder.exists():
+                    require_strictly_inside(work_folder, self.project_path / "work")
                     shutil.rmtree(work_folder, ignore_errors=True)
                 work_folder.mkdir(parents=True, exist_ok=True)
 
@@ -1241,12 +1252,11 @@ class ExecutionManager:
 
                 # The pipe-owner variables (docs/dev/architecture.md, "Runtime options" item 4): the engine prints
                 # the run-record marker instead of copying its own output into _run.log, and writes UTF-8 unbuffered.
-                env = {
-                    **os.environ,
-                    "PYTHONUNBUFFERED": "1",
-                    "PYTHONIOENCODING": "utf-8",
-                    RUN_LOG_OWNER_ENV: "1",
-                }
+                env = child_env(
+                    PYTHONUNBUFFERED="1",
+                    PYTHONIOENCODING="utf-8",
+                    **{RUN_LOG_OWNER_ENV: "1"},
+                )
                 popen_kwargs = dict(
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, encoding="utf-8", errors="replace", bufsize=1,
@@ -1275,7 +1285,8 @@ class ExecutionManager:
                 # Read stdout line by line
                 assert proc.stdout is not None
                 for line in proc.stdout:
-                    stripped = line.rstrip("\n")
+                    # Control characters inside a line are shown as \xNN in the log window and _run.log.
+                    stripped = printable(line.rstrip("\r\n"))
                     if not owner.feed(stripped):
                         # The engine's run-record marker: its record now says "running".
                         with self._lock:
@@ -1440,7 +1451,7 @@ class ExecutionManager:
 
         cmd = [
             sys.executable,
-            "-m",
+            SAFE_PATH_FLAG, "-m",
             "flextool.cli.cmd_run_flextool",
             job.input_db_url,
             "--scenario-name",
@@ -1493,14 +1504,19 @@ class ExecutionManager:
             cmd.append("--write-plot-data")
 
         # "Threads per run" (Execution jobs window): FlexTool's data processing and the solver of this run.
-        # ``--threads`` gives HiGHS ``threads=N`` with its parallel simplex left off.
+        # ``--threads`` gives HiGHS ``threads=N`` (parallel simplex off) and replaces a commercial solver's
+        # thread count.
         cmd.extend(["--threads", str(max(1, int(self.execution_limits.max_cores_per_job)))])
 
-        # The solver option files of the workspace (``FLEXTOOL_SOLVER_CONFIG_DIR`` when set, else
-        # ``<workspace>/solver_config``), given explicitly so a run never depends on where its input database is
-        # (an external source database may sit in another tree).  Project export / import use the same folder.
-        from flextool._solver_config_source import workspace_solver_config_dir
-        cmd.extend(["--solver-config-dir", str(workspace_solver_config_dir())])
+        # The solver option folders, file by file: the project's ``solver_config`` (when it has one), then the
+        # workspace's (``FLEXTOOL_SOLVER_CONFIG_DIR`` when set, else ``<workspace>/solver_config``); given
+        # explicitly, one flag per folder, so a run never depends on where its input database is (an external
+        # source database may sit in another tree).  Project export uses the same folders.  The folders the window
+        # found go as --workspace-solver-config-dir, whose files are trusted only when this computer set up their
+        # project or workspace; those of ``FLEXTOOL_SOLVER_CONFIG_DIR`` (the user's choice) as --solver-config-dir
+        # (item 240 B3).
+        from flextool._solver_config_source import gui_solver_config_flags
+        cmd.extend(gui_solver_config_flags(self.project_path))
 
         # "Debug" radio group in the main window: Off / Basic / Full.
         # Basic → --debug=basic only (verbose checkpoints, no tracemalloc).
@@ -1603,6 +1619,10 @@ class ExecutionManager:
         left_out: list[tuple[str, str]] = []
         usable: list[str] = []
         for subdir in all_scenarios:
+            if (why := output_name_problem(subdir)) is not None:
+                # Never passed to the command: it would not be one plain argument (flextool.safe_names).
+                left_out.append((describe_name(subdir), f"its folder name {why}"))
+                continue
             status = read_status_settled(self.project_path / "output_parquet" / subdir)
             if results_usable(status):
                 usable.append(subdir)
@@ -1618,7 +1638,7 @@ class ExecutionManager:
 
         cmd = [
             sys.executable,
-            "-m",
+            SAFE_PATH_FLAG, "-m",
             "flextool.cli.cmd_scenario_results",
             "--parquet-base-dir",
             str(self.project_path / "output_parquet"),
@@ -1690,7 +1710,7 @@ class ExecutionManager:
         success = False
 
         try:
-            env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+            env = child_env(PYTHONUNBUFFERED="1")
             estimate_gb, _src = self._compute_memory_budget_for_job(None)
             with self._lock:
                 job.memory_cap_gb = estimate_gb

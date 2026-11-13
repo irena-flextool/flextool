@@ -9,9 +9,11 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 
+from flextool._child_python import SAFE_PATH_FLAG, child_env
 from flextool._resources import package_data_path
 from flextool.gui.dialogs.file_picker import FilePickerDialog
 from flextool.gui.project_utils import get_projects_dir
+from flextool.sqlite_url import sqlite_url_string
 
 logger = logging.getLogger(__name__)
 
@@ -628,7 +630,7 @@ class AddDialog(tk.Toplevel):
             initialize_database(str(json_template), str(tmp_sqlite))
 
             # Read parameter groups + required list, then ask the user
-            db_url = f"sqlite:///{tmp_sqlite}"
+            db_url = sqlite_url_string(tmp_sqlite)
             dc = read_database(db_url)
             settings = load_settings()
             groups = [
@@ -798,9 +800,9 @@ class AddDialog(tk.Toplevel):
         if self._input_source_mgr is not None:
             old_sources = {s.name for s in self._input_source_mgr._sources}
 
-        db_url = f"sqlite:///{work}"
+        db_url = sqlite_url_string(work)
         cmd = [
-            sys.executable, "-m",
+            sys.executable, SAFE_PATH_FLAG, "-m",
             "flextool.cli.cmd_read_old_flextool",
             str(filepath),
             db_url,
@@ -832,10 +834,9 @@ class AddDialog(tk.Toplevel):
                 main_window.execution_window.select_job(job.job_id)
 
             def _worker() -> None:
-                import os as _os
                 rc = 1
                 try:
-                    env = {**_os.environ, "PYTHONUNBUFFERED": "1"}
+                    env = child_env(PYTHONUNBUFFERED="1")
                     proc = subprocess.Popen(
                         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                         text=True, bufsize=1, cwd=str(self._flextool_root),
