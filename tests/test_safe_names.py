@@ -138,3 +138,19 @@ def test_a_plot_name_from_the_settings_stays_in_the_plot_folder(tmp_path: Path) 
     for name, member in (("../../../evil", None), ("ok", "../x"), ("/abs/evil", "a\\b")):
         path = Path(generate_split_filename(name, str(plot_dir), "png", file_member=member))
         assert path.parent == plot_dir
+
+
+def test_scenario_results_database_mode_leaves_out_such_a_name(monkeypatch, caplog) -> None:
+    """``flextool-scenario-results <db_url>``: a scenario name read from the Output-info database that is not a folder
+    name is left out of the comparison with a warning; the others are compared."""
+    import flextool.cli.cmd_scenario_results as csr
+
+    folders = {"base": "/p/base", "../x": "/p/x", "S2 Dry": "/p/s2"}
+    seen: dict = {}
+    monkeypatch.setattr(csr, "read_scenario_folders", lambda url: dict(folders))
+    monkeypatch.setattr(csr.orchestrator, "run", lambda **kw: seen.update(kw))
+    monkeypatch.setattr(sys, "argv", ["flextool-scenario-results", "sqlite:///output_info.sqlite"])
+    with caplog.at_level("WARNING"):
+        csr.main()
+    assert seen["scenario_folders"] == {"base": "/p/base", "S2 Dry": "/p/s2"}
+    assert "'../x'" in caplog.text

@@ -1043,12 +1043,18 @@ def main():
     except UnsafeNameError as exc:
         logging.error("%s", exc)
         sys.exit(1)
-    output_location, write_methods = resolve_output_settings(
-        write_methods=args.write_methods,
-        output_location=args.output_location,
-        settings_db_url=settings_db_url,
-        fallback_output_location=str(output_path),
-    )
+    from flextool.engine.input._solve_state import FlexToolConfigError
+    try:
+        output_location, write_methods = resolve_output_settings(
+            write_methods=args.write_methods,
+            output_location=args.output_location,
+            settings_db_url=settings_db_url,
+            fallback_output_location=str(output_path),
+            results_db_url=args.results_db_url,
+        )
+    except FlexToolConfigError as exc:  # a results-database server URL in the settings database
+        logging.error("%s", exc)
+        sys.exit(1)
 
     # The run record (_run_status.json, _run.log) starts here, before the
     # header block, so the header and every later warning are in it.

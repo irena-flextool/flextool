@@ -76,7 +76,7 @@ from flextool.process_outputs.union_realized_slice import (
     union_sets,
 )
 from flextool.process_outputs.write_spinedb import write_spinedb
-from flextool.sqlite_url import sqlite_file_path, sqlite_url_string
+from flextool.sqlite_url import is_sqlite_url, sqlite_file_path, sqlite_url_string
 
 
 def _parse_rename_entry(entry) -> tuple[str, bool]:
@@ -718,6 +718,26 @@ ALL_OUTPUTS = [
 ]
 
 
+def _refuse_settings_server_url(results_db_url, write_methods):
+    """A results-database URL from the settings database that is not ``sqlite:`` (a database server): an error when
+    the ``spinedb`` write-method runs, otherwise a warning and ``None`` (the URL is not used).  A server URL is
+    taken only from the command line (``--results-db-url``); a settings database is a file that others may hand
+    over, and it must not send the results to a server it names."""
+    if 'spinedb' in write_methods:
+        from flextool.engine.input._solve_state import FlexToolConfigError
+        raise FlexToolConfigError(
+            f"The settings database names the results database {results_db_url!r} (output-results-db-url), which "
+            "is not a sqlite: URL. A results database server is used only from the command line: pass it with "
+            "--results-db-url. In the settings database, give a sqlite: URL (a file on any drive, a network "
+            "drive too) or leave output-results-db-url empty."
+        )
+    logging.warning(
+        "The settings database names the results database %r (output-results-db-url), which is not a sqlite: URL; "
+        "it is not used (a server URL is taken only from --results-db-url).", results_db_url,
+    )
+    return None
+
+
 def _resolve_settings(write_methods, output_config_path, active_configs, plot_rows,
                       output_location, plot_file_format, settings_db_url,
                       fallback_output_location, results_db_url=None):
@@ -729,10 +749,16 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
     rebuilds/augments it from parquet without re-solving).
     """
     db_reachable = False
+    results_db_url_from_settings = False
     if settings_db_url:
         if settings_db_url.startswith('sqlite:///'):
+            # The file as it is after ``sqlite:///``: a drive path (``C:/a/s.sqlite``), a UNC path on a network share
+            # (``//server/share/s.sqlite``, ``\\server\share\s.sqlite``) or a POSIX path.
             settings_db_path = sqlite_file_path(settings_db_url)
             db_reachable = settings_db_path is not None and settings_db_path.exists()
+            if not db_reachable:
+                logging.warning("The settings database %s was not found; its output settings are not used.",
+                                settings_db_url)
         else:
             db_reachable = True  # HTTP or other remote URLs — let DatabaseMapping handle errors
     if db_reachable:
@@ -757,6 +783,7 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
                 # CLI-vs-settings precedence above).
                 if results_db_url is None and 'output-results-db-url' in settings_params:
                     results_db_url = str(settings_params['output-results-db-url'])
+                    results_db_url_from_settings = True
 
                 if output_config_path is None and 'output-config-path' in settings_params:
                     output_config_path = str(settings_params['output-config-path'])
@@ -819,18 +846,24 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
         output_location = fallback_output_location or ''
     if plot_file_format is None:
         plot_file_format = 'png'
+    if results_db_url_from_settings and not is_sqlite_url(results_db_url):
+        results_db_url = _refuse_settings_server_url(results_db_url, write_methods)
 
     return write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format, results_db_url
 
 
-def resolve_output_settings(*, write_methods, output_location, settings_db_url, fallback_output_location):
+def resolve_output_settings(*, write_methods, output_location, settings_db_url, fallback_output_location,
+                            results_db_url=None):
     """Where a run's outputs land and which write methods run: ``(absolute output location, write methods)``.
 
     The same rule as :func:`write_outputs` (explicit argument > settings DB > default), so a caller that resolves
-    once can name the output folder before the solve (the run record) and pass both values on.
+    once can name the output folder before the solve (the run record) and pass both values on.  A results-database
+    server URL in the settings DB is refused here already (before the solve) when ``spinedb`` runs and
+    *results_db_url* (the command line's) is not given.
     """
     write_methods, _, _, _, output_location, _, _ = _resolve_settings(
         write_methods, None, None, None, output_location, None, settings_db_url, fallback_output_location,
+        results_db_url,
     )
     return os.path.abspath(output_location), list(write_methods)
 

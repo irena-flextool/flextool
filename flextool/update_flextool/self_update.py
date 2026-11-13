@@ -591,10 +591,17 @@ def migrate_project(old_path, new_path):
                 if param != "x" and param != "y":
                     old_dict["items"][item][param] = new_dict["items"][item][param]
 
-    if ("Open_summary" not in old_dict["items"].keys()) and ("Open_summary" in new_dict["items"].keys()):
-        old_dict["items"]["Open_summary"] = new_dict["items"]["Open_summary"]
-        old_dict["project"]["connections"].append({"name": "from FlexTool3 to Open_summary", "from": ["FlexTool3","bottom"],"to": ["Open_summary","right"]})
-        old_dict["project"]["specifications"]["Tool"].append({"type": "path","relative": True,"path": ".spinetoolbox/specifications/Tool/open_summary.json"})
+    # The Open_summary item of old projects ran open_summary.py, which no longer exists, and its specification file
+    # is gone: drop the item, its connections and the specification entry.
+    old_dict["items"].pop("Open_summary", None)
+    project = old_dict.get("project", {})
+    project["connections"] = [c for c in project.get("connections", [])
+                              if "Open_summary" not in (c.get("from", [None])[0], c.get("to", [None])[0])]
+    tool_specs = project.get("specifications", {}).get("Tool")
+    if tool_specs is not None:
+        project["specifications"]["Tool"] = [
+            spec for spec in tool_specs if not str(spec.get("path", "")).endswith("specifications/Tool/open_summary.json")
+        ]
 
     if ("Migrate database version" not in old_dict["items"].keys()) and ("Migrate database version" in new_dict["items"].keys()):
         old_dict["items"]["Migrate database version"] = new_dict["items"]["Migrate database version"]

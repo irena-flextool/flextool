@@ -42,9 +42,6 @@ from flextool.run_options import Resolved, RunOptions
 from flextool._child_python import child_env, python_module_argv
 from flextool.sqlite_url import sqlite_url_string
 
-# Repo root = <root>/flextool/calibrate/_solve.py → parents[2].
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-
 
 @dataclass
 class SolveRun:
@@ -123,7 +120,6 @@ def run_solve(
     started_at = time.time()
     proc = subprocess.run(
         argv,
-        cwd=str(_REPO_ROOT),
         env=child_env(),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

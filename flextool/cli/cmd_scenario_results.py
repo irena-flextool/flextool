@@ -16,7 +16,7 @@ from spinedb_api.filters.tools import append_filter_config
 
 from flextool.cli._console import run_tool
 from flextool.scenario_comparison import orchestrator
-from flextool.scenario_comparison.db_reader import build_scenario_folders_from_dir
+from flextool.scenario_comparison.db_reader import build_scenario_folders_from_dir, read_scenario_folders
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 
 import logging
@@ -260,6 +260,18 @@ def main() -> None:
         # Database mode with alternative filters
         alternative_filter = alternative_filter_config(alternatives)
         db_url = append_filter_config(db_url, alternative_filter)
+    if pre_built_folders is None and db_url is not None:
+        # Database mode: the scenario names come from the Output-info database too (all of its alternatives, or a
+        # Toolbox filter's); one that cannot name a folder is left out with a warning, as the comparison lists do.
+        print(f"Reading scenario information from {db_url}...")
+        pre_built_folders = {}
+        for name, folder in read_scenario_folders(db_url).items():
+            try:
+                check_output_name(name, "scenario name")
+            except UnsafeNameError as exc:
+                logging.warning("%s It is left out of the comparison.", exc)
+                continue
+            pre_built_folders[name] = folder
 
     # Resolve dispatch_plots flags
     do_dispatch = args.dispatch_plots

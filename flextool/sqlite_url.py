@@ -66,6 +66,14 @@ def read_only_sqlite_url(path: str | os.PathLike[str]) -> URL:
     return url
 
 
+def is_sqlite_url(url: str) -> bool:
+    """Whether *url* is an SQLite URL: it starts with ``sqlite:`` (any case, leading blanks ignored).  A plain
+    string test: ``sqlite:///Z:/a.sqlite``, ``sqlite://///server/share/x.sqlite`` (a UNC path on a network share)
+    and ``sqlite:////server/share/x.sqlite`` are SQLite URLs whatever the file; a database server URL
+    (``postgresql://``, ``http://``) is not."""
+    return url.strip().lower().startswith("sqlite:")
+
+
 def _split_sqlite_url(url: str) -> tuple[str, str]:
     """``(database, query)`` of a ``sqlite:///`` string: the text after ``sqlite:///`` up to the first ``?``, and
     the query after it.  A ``#`` in the query starts the rest of the path: spinedb-api's ``append_filter_config``

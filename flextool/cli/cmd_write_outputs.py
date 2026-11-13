@@ -1,4 +1,5 @@
 from flextool.cli._console import run_tool
+from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.process_outputs.write_outputs import write_outputs
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 from flextool.update_flextool.db_handle import database_mapping, open_database_mapping
@@ -128,6 +129,9 @@ def main():
                     write_plot_data=args.write_plot_data,
                     results_db_url=args.results_db_url,
                 )
+        except FlexToolConfigError as exc:  # e.g. a results-database server URL in the settings database
+            logging.error("%s", exc)
+            sys.exit(1)
         finally:
             if db_map is not None:
                 db_map.close()
