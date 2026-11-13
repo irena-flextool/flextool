@@ -68,9 +68,10 @@ def read_only_sqlite_url(path: str | os.PathLike[str]) -> URL:
 
 def is_sqlite_url(url: str) -> bool:
     """Whether *url* is an SQLite URL: it starts with ``sqlite:`` (any case, leading blanks ignored).  A plain
-    string test: ``sqlite:///Z:/a.sqlite``, ``sqlite://///server/share/x.sqlite`` (a UNC path on a network share)
-    and ``sqlite:////server/share/x.sqlite`` are SQLite URLs whatever the file; a database server URL
-    (``postgresql://``, ``http://``) is not."""
+    string test: ``sqlite:///Z:/a.sqlite`` and ``sqlite://///server/share/x.sqlite`` (a UNC path on a network
+    share) are SQLite URLs, and so is ``sqlite:////server/share/x.sqlite`` (the path ``/server/share/x.sqlite``,
+    on Windows on the current drive, *not* a UNC path); a database server URL (``postgresql://``, ``http://``)
+    is not."""
     return url.strip().lower().startswith("sqlite:")
 
 

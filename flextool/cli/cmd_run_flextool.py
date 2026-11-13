@@ -1044,6 +1044,9 @@ def main():
         logging.error("%s", exc)
         sys.exit(1)
     from flextool.engine.input._solve_state import FlexToolConfigError
+    # The settings warnings are held until the run record has started, so they show once and are in _run.log too
+    # (write_outputs below does not repeat them).
+    settings_warnings: list[tuple] = []
     try:
         output_location, write_methods = resolve_output_settings(
             write_methods=args.write_methods,
@@ -1051,8 +1054,11 @@ def main():
             settings_db_url=settings_db_url,
             fallback_output_location=str(output_path),
             results_db_url=args.results_db_url,
+            warn=lambda *msg: settings_warnings.append(msg),
         )
     except FlexToolConfigError as exc:  # a results-database server URL in the settings database
+        for msg in settings_warnings:
+            logging.warning(*msg)
         logging.error("%s", exc)
         sys.exit(1)
 
@@ -1063,6 +1069,8 @@ def main():
         output_location=output_location, output_subdir=output_subdir,
         write_methods=write_methods, work_folder=work_folder,
     )
+    for msg in settings_warnings:
+        logging.warning(*msg)
     _restore_signals = _install_termination_handlers()
     state, exit_code, error = "succeeded", 0, None
     try:
@@ -1261,6 +1269,7 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
                         last_step, "flex_data_provider", None
                     ),
                     results_db_url=args.results_db_url,
+                    settings_warnings=False,  # shown once, after the run record started
                 )
                 if 'parquet' not in write_methods:
                     rec.outputs_not_requested()

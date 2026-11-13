@@ -138,6 +138,46 @@ def test_settings_results_db_url_sqlite_any_drive_accepted(tmp_path, results_url
     assert resolved_url == results_url
 
 
+@pytest.mark.parametrize("results_url", ["", "   "])
+def test_settings_results_db_url_blank_is_not_set(tmp_path, results_url):
+    """A blank output-results-db-url (blanked in Toolbox rather than removed) is "not set": no error with spinedb,
+    and the default ``<output_location>/results.sqlite`` is used (``None`` here)."""
+    url = _build_settings_db(tmp_path, {"spinedb": True}, results_db_url=results_url)
+    methods, resolved_url = _resolve_results_url(url)
+    assert "spinedb" in methods
+    assert resolved_url is None
+
+
+def test_settings_results_db_url_none_value_is_not_set(tmp_path):
+    """A None (null) output-results-db-url value is "not set" too."""
+    url = _build_settings_db(tmp_path, {"spinedb": True}, results_db_url=None)
+    with DatabaseMapping(url) as db:
+        db.add_or_update_parameter_definition(entity_class_name="settings", name="output-results-db-url")
+        value, type_ = to_database(None)
+        db.add_or_update_parameter_value(
+            entity_class_name="settings", entity_byname=("the_settings",),
+            parameter_definition_name="output-results-db-url", alternative_name="Base", value=value, type=type_,
+        )
+        db.commit_session("null results url")
+    methods, resolved_url = _resolve_results_url(url)
+    assert "spinedb" in methods
+    assert resolved_url is None
+
+
+def test_settings_warnings_go_to_warn_callback(tmp_path, caplog):
+    """A caller that resolves twice (flextool-run) collects the warnings through *warn* and logs them once."""
+    url = _build_settings_db(tmp_path, {"csv": True}, results_db_url="postgresql://host/db")
+    got = []
+    with caplog.at_level("WARNING"):
+        _resolve_settings(
+            write_methods=None, output_config_path=None, active_configs=None, plot_rows=None,
+            output_location=None, plot_file_format=None, settings_db_url=url,
+            fallback_output_location=str(tmp_path), results_db_url=None, warn=lambda *m: got.append(m),
+        )
+    assert len(got) == 1 and "postgresql://host/db" in got[0][1]
+    assert "postgresql://host/db" not in caplog.text
+
+
 def test_settings_results_db_server_url_refused_with_spinedb(tmp_path, monkeypatch):
     """A server URL from the settings DB is refused when spinedb runs, before any results database is opened;
     the error names the command-line flag."""
