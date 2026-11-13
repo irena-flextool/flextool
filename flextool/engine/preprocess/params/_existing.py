@@ -396,13 +396,14 @@ def _solve_years_represented(source: "InputSource", active_solve: str | None) ->
     """``{period: years_represented}`` of ``solve.years_represented`` for the active solve; ``None`` without it."""
     if active_solve is None:
         return None
+    from flextool.engine.input._param_shapes import solve_years_represented
     try:
-        df = source.parameter("solve", "years_represented")
+        df = solve_years_represented(source)
     except (KeyError, AttributeError):
         return None
-    if df is None or df.height == 0 or "period" not in df.columns:
+    if df is None or df.height == 0:
         return None
-    sub = df.filter(pl.col("name").cast(pl.Utf8) == active_solve)
+    sub = df.filter(pl.col("name") == active_solve)
     if sub.height == 0:
         return None
     out: dict[str, float] = {}

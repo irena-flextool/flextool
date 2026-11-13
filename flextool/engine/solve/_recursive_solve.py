@@ -21,7 +21,7 @@ Architecture notes
     renamed solves).
   - ``first_of_complete_solve`` / ``last_of_solve`` track per-complete-solve
     boundary names for state initial / terminal constraints downstream.
-  - ``duplicate_solve(...)`` is invoked for the single-matching-period
+  - ``derive_solve(...)`` is invoked for the single-matching-period
     rename path which fans an input solve into ``solve + "_" + period``.
 
 * Lazy import of :class:`StochasticSolver`: ``recursive_solve`` only
@@ -42,11 +42,11 @@ Behavioural quirks
 
 * **Single-matching-period rename**: when a child solve's period set
   intersects its parent's by exactly one period, the child is renamed
-  to ``solve + "_" + period`` and ``duplicate_solve`` carbon-copies the
-  parent's lockstep dicts under the new name.  ``duplicate_solve`` does
-  NOT carbon-copy the period attributes (``invest_periods``,
-  ``realized_periods``, …); the empty-scope fallback at the parent_scope
-  computation site catches this.
+  to ``solve + "_" + period`` and ``derive_solve`` carbon-copies the
+  parent's per-solve dicts under the new name (its period lists included;
+  its active time is its one period).  A renamed solve with none of the
+  scope period lists for its period gets the empty-scope fallback at the
+  parent_scope computation site.
 
 * **Multi-period child** (``len(matching_periods) > 1``) is the
   single-solve-with-multi-period parent case: keep the original solve
@@ -610,10 +610,9 @@ class RecursiveSolveBuilder:
         When *solve* has children (``contains_solves[solve]``) recurse
         into each child with parent scope = union of fix_storage,
         realized, and realized_invest periods of *solve*.  When the
-        scope is empty (because *solve* was renamed via the
-        single-matching-period path and ``duplicate_solve`` did not
-        carbon-copy the period attributes), fall back to *solve*'s own
-        active periods.
+        scope is empty (*solve* has none of those period lists for its
+        active periods, e.g. a renamed single-period solve), fall back to
+        *solve*'s own active periods.
 
         Args:
             solve: Active solve name (may be a renamed copy).
@@ -674,10 +673,9 @@ class RecursiveSolveBuilder:
                 | set(realized_invest_time_list.keys())
             )
 
-            # Fallback: when a solve was renamed (e.g.
-            # ``storage_fullYear_6h_p2020``), its period attributes
-            # aren't copied by ``duplicate_solve``, leaving scope empty.
-            # Use the solve's own active periods as scope in that case.
+            # Fallback: a solve with none of the scope period lists for its
+            # active periods (e.g. a renamed ``storage_fullYear_6h_p2020``)
+            # has an empty scope; use its own active periods instead.
             if not parent_scope_periods:
                 parent_scope_periods = set(full_active_time_list.keys())
 
@@ -703,6 +701,28 @@ class RecursiveSolveBuilder:
             parent_roll_lists=parent_roll_lists,
         )
 
+    def _rename_periods(self, solve: str) -> set[str]:
+        """The periods of *solve* that the nested rename matches between a contained solve and its parent.
+
+        The period lists hold ``(key, period)`` tuples: ``(period, period)`` for a 1-D list, ``(row, period)`` for
+        a solve split by a 2-D period map (``row`` = the map's first column, any name).  A solve's periods are the
+        periods of its ``invest_periods``, ``fix_storage_periods`` and ``realized_periods``.  A split solve stands
+        for the periods it realizes (``realized_periods``, ``realized_invest_periods``, ``fix_storage_periods``),
+        not for its look-ahead ``invest_periods``; with none of them, all of its periods.  Before, the rename read
+        the first element of the tuple, which is the row name of a split solve: right only when every row was
+        named after the period it realizes.
+        """
+        sc = self.state.solve
+        # Indexed (not ``.get``) as before: the period dicts are defaultdicts, and later steps see the entries.
+        all_periods = {str(t[1]) for f in ("invest_periods", "fix_storage_periods", "realized_periods")
+                       for t in getattr(sc, f)[solve]}
+        if solve in getattr(sc, "map2d_duplicate_of", {}):
+            realized = {str(t[1]) for f in ("realized_periods", "realized_invest_periods", "fix_storage_periods")
+                        for t in getattr(sc, f).get(solve, [])}
+            if realized:
+                return realized
+        return all_periods
+
     # ------------------------------------------------------------------
     # Recursive entry
     # ------------------------------------------------------------------
@@ -722,7 +742,7 @@ class RecursiveSolveBuilder:
         1. Append *solve* to ``state.solve.real_solves`` (deduplicated).
         2. If *solve* has a parent and exactly one period overlaps,
            rename it to ``solve + "_" + period`` via
-           :meth:`SolveConfig.duplicate_solve` and re-shape
+           :meth:`SolveConfig.derive_solve` and re-shape
            ``timesets_used_by_solves`` to keep only entries for that
            period.
         3. Compute the full active-time list via :func:`get_active_time`.
@@ -752,41 +772,22 @@ class RecursiveSolveBuilder:
         # parent dicts.  Multiple-period overlap keeps the original
         # name (single-solve-with-multi-period parent case).
         if parent_info.solve:
-            current_solve_periods = (
-                {t[0] for t in self.state.solve.invest_periods[solve]}
-                | {t[0] for t in self.state.solve.fix_storage_periods[solve]}
-                | {t[0] for t in self.state.solve.realized_periods[solve]}
-            )
-            parent_period = (
-                {t[0] for t in self.state.solve.invest_periods[parent_info.solve]}
-                | {t[0] for t in self.state.solve.fix_storage_periods[parent_info.solve]}
-                | {t[0] for t in self.state.solve.realized_periods[parent_info.solve]}
-            )
+            current_solve_periods = self._rename_periods(solve)
+            parent_period = self._rename_periods(parent_info.solve)
             matching_periods = list(current_solve_periods & parent_period)
             if len(matching_periods) == 1:
                 current_solve_period = matching_periods[0]
                 new_name = solve + "_" + str(current_solve_period)
-                self.state.solve.duplicate_solve(
-                    solve, new_name, update_model_solves=False
+                # The renamed solve is the solve itself for that one period: every per-solve field of
+                # ``solve`` (derive_solve), with the timesets of the period (added to the ones of an earlier
+                # rename of the same name).
+                timesets = list(self.state.solve.timesets_used_by_solves.get(new_name, []))
+                for pt in self.state.solve.timesets_used_by_solves.get(solve, []):
+                    if pt[0] == current_solve_period and pt not in timesets:
+                        timesets.append(pt)
+                self.state.solve.derive_solve(
+                    solve, new_name, overrides={"timesets_used_by_solves": timesets},
                 )
-                self.state.solve.solve_period_years_represented[new_name] = (
-                    self.state.solve.solve_period_years_represented[solve]
-                )
-
-                new_period_timeset_list = [
-                    pt
-                    for pt in self.state.solve.timesets_used_by_solves.get(solve, [])
-                    if pt[0] == current_solve_period
-                ]
-                if new_name not in self.state.solve.timesets_used_by_solves:
-                    self.state.solve.timesets_used_by_solves[new_name] = (
-                        new_period_timeset_list
-                    )
-                else:
-                    existing = self.state.solve.timesets_used_by_solves[new_name]
-                    for item in new_period_timeset_list:
-                        if item not in existing:
-                            existing.append(item)
             # When multiple periods match (single-solve parent with
             # multiple periods), keep the original solve name and all
             # its timesets — the active time will be filtered by

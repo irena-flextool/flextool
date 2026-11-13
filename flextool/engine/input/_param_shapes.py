@@ -504,6 +504,14 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     # ``_derived.p_timestep_weight_from_source`` and validated for the writer by
     # :func:`check_index_name_path` (``_timeline.TimelineConfig.load_from_db``).
     ("timeset", "timeset_weights"): {Shape.MAP_TIME},
+    # ─── solve: years each period represents ────────────────────────────
+    # ``solve.years_represented`` — a 1-D Map period -> years (schema: map rank 1).  The index is ``period``, or
+    # Spine's silent ``x`` (the only shape, so it resolves to ``period``).  Read through
+    # :func:`solve_years_represented` by the investment annuities, the period start years and the inflation factors
+    # (``params/_derived.py``, ``params/_existing.py``); the operations side reads the SolveConfig-written
+    # ``p_years_represented``.  Before this entry the readers tested for a ``period`` column, so a map without an
+    # index name gave investments one year per period.
+    ("solve", "years_represented"): {Shape.MAP_PERIOD},
 }
 
 
@@ -2892,6 +2900,25 @@ def _broadcast_with_stochastic_entities(
     if out.height == 0:
         return None
     return Param((*keys, "d", "t"), out)
+
+
+def solve_years_represented(source: "InputSource") -> "pl.DataFrame | None":
+    """``[name, period, value]`` of ``solve.years_represented`` (Utf8 ``name``, ``period`` in the source's dtype,
+    Float64 ``value``) in the source's row order, whatever the map's index name (``period`` or Spine's silent ``x``); ``None`` when no
+    solve has a value.
+
+    The one reader of the parameter for the DB-direct consumers.  It resolves the index through
+    :func:`resolve_param_shape` (allow-list ``{MAP_PERIOD}``), so a map left with the default index name counts
+    the same as one named ``period``; a level named something else stops the run with the resolver's message.
+    """
+    resolved = resolve_param_shape(source, "solve", "years_represented")
+    if resolved is None or resolved.frame is None or resolved.period_index_column is None:
+        return None
+    return resolved.frame.select(
+        pl.col("name").cast(pl.Utf8),
+        pl.col(resolved.period_index_column).alias("period"),
+        pl.col("value").cast(pl.Float64, strict=False),
+    )
 
 
 def broadcast_to_period(

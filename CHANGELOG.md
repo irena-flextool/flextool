@@ -85,6 +85,37 @@ Each line says what changes for a model that ran before and what to do; the deta
   are not passed on. A CPLEX option name starting with `set` (FlexTool adds it) is refused with a message naming
   it, from every source (CPLEX refused the `set set ...` line before); a UTF-8 byte order mark at the start of an
   option file is ignored (before, it made the first option's name invalid).
+- **A solve that FlexTool splits or adds now runs on the solver you chose.** Since 4.0, when a solve on Gurobi,
+  CPLEX, Xpress or COPT was split into one solve per period (a 2-D map in `invest_periods`, `realized_periods`,
+  `realized_invest_periods`, `fix_storage_periods` or `period_timeset`), the split solves ran on HiGHS, without
+  `solver_mip_gap` and with the `solver_arguments` names HiGHS also knows; since 4.1, the realization solve FlexTool
+  adds to a stochastic solve (`<solve>__realized_dispatch`) ran on HiGHS too. The run did not say so. Results of such runs could have come from HiGHS;
+  rerun them. Now every such solve runs on the original solve's solver, with its `solver_arguments`,
+  `solver_mip_gap`, option file and this computer's solver wrapper.
+- **A solve split by a 2-D period map now runs as the solves you would write by hand.** A 2-D map in
+  `invest_periods`, `realized_invest_periods`, `realized_periods` or `fix_storage_periods` splits a solve into one
+  solve per row (`<solve>_<row>`). Before, the split solves silently lost parameters of their solve: since 4.0
+  `stochastic_branches` and `stochastic_invest_method` (they ran deterministic) and `new_stepduration` (they ran on
+  the coarser time steps with hourly data, at a fraction of the demand); since 4.1 `dispatch_realization_method` (a
+  *separate_dispatch* solve had no realization solve) and `shared_operation_periods` / `shared_invest_periods`. A
+  1-D `realized_periods`, `realized_invest_periods` or `fix_storage_periods` next to the 2-D map was read as the
+  row's name. Now a split solve has every parameter of its solve; a 1-D period list keeps the split solve's own
+  periods, and `years_represented` counts from the split solve's first period, as before. A solve listed after the
+  split solve in `model.solves` now runs after the split solves (before, it ran before them). Results of such
+  models change: rerun them.
+- **Two set-ups of split solves now stop the run, and the message says what to change.** A 1-D `realized_periods`
+  (or `realized_invest_periods`) next to a 2-D `invest_periods` that looks ahead, such as {p2035: [p2035, p2040],
+  p2040: [p2040]}: both split solves would realize p2040, and the later one would overwrite the results of the
+  first. Make `realized_periods` a 2-D map with each period in one row: {p2035: [p2035], p2040: [p2040]}. A
+  stochastic solve split so that one split solve has none of the periods where the forecasts start: that split
+  solve would ignore `stochastic_branches`, so it stops, as the same solve written by hand does. Give the forecasts
+  a start in a period of each split solve, or write the solves by hand and leave `stochastic_branches` out of the
+  solve that has none of their periods. A 2-D `period_timeset` is now an error too: give `period_timeset` all the
+  periods and split the solve with a 2-D period list.
+- **`years_represented` without an index name now counts for investments.** A map left with Spine's default index
+  name gave investments one year per period, while operations counted all the years, so investments were too
+  cheap (every 4.x release). Investment results of such models change. A map whose index has another name (for
+  example `year`) now stops a model with investments: name the index `period`, or leave it without a name.
 - **The memory-saving solve (`--save-memory`, or warm start off) could put values on the wrong variables**; results
   of such runs can change. FlexTool now needs polar-high 3.12.4 or newer (installed with FlexTool).
 - **Fixes that change results:** a user constraint without capacity terms got a right-hand side of 0 when another
@@ -596,6 +627,19 @@ Each line says what changes for a model that ran before and what to do; the deta
 
 #### Solving
 
+- **Solves split by a 2-D period map** (see "Behaviour changes" for what changes in their results): a
+  `construction_lead_time` no longer stops a split solve (4.2.0 to 4.3.0); it works as in solves written by hand (a
+  decision whose capacity would come online after the split solve's last period is not offered, with a warning).
+  The realization solve FlexTool adds to a stochastic solve now has its solve's `scaling` (before, it used the
+  run's scaling setting instead; 4.1.0 to 4.3.0). The first column of the map may have any index name (before, a
+  name other than the default `x` silently gave the split solves no investments); a row with more periods than the
+  map has rows no longer crashes; a 2-D map on a solve that the model does not run no longer adds solves to the
+  run (every 4.x release). A solve contained in a split solve now gets the name of the period that the split solve
+  realizes (`<solve>_<period>`), whatever the row is called; before, with a row not named after its period, the
+  contained solve kept one name in every split solve, so the results of its runs were filed under one name. New
+  errors, for set-ups that gave wrong results or crashed: a split solve whose name is already a solve of the
+  database (before, the two were silently mixed), a 2-D map on a solve that is only contained in another solve,
+  and a 2-D map in `shared_invest_periods`.
 - **Solver options can no longer add commands to a solver run** (since 4.0). A `solver_arguments` entry or an
   option-file line with a line break, `;`, a quote or a space could add a command to the script piped to CPLEX,
   Xpress or COPT, or address another Gurobi or HiGHS option. Every option of every solver is now checked before the

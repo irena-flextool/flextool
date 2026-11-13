@@ -297,6 +297,52 @@ def test_option_stack_as_the_solver_got_it(solver, shim, db, tmp_path, scenario,
         assert len(got) == 3, got
 
 
+def test_a_solve_split_by_period_keeps_its_solver_and_settings(solver, shim, db, tmp_path) -> None:
+    """``split_<s>``: ``realized_periods`` is a 2-D map, so FlexTool splits ``y2020_2day_dispatch`` into one solve
+    per period.  Every one of them runs on the solver of the database solve, with its ``solver_mip_gap`` (0.2), its
+    ``solver_arguments`` (time limit 800) and the option file (1 thread).  Before the fix the split solves lost the
+    solver configuration and ran on HiGHS.  (The solver-wrapper check of feat/solver-security is left out here:
+    the wrapper is not on this branch.)"""
+    split_solves = _check_db_module().SPLIT_SOLVES
+    cfg = _cfg(tmp_path, solver, f"{THREADS[solver]} 1\n")
+    steps = _run(db, f"split_{solver}", tmp_path / "w", cfg)
+    assert list(steps) == list(split_solves)
+    assert all(steps[s].optimal for s in split_solves)
+    calls = _calls(shim)
+    assert len(calls) == len(split_solves), calls
+    for call in calls:
+        assert not call["unknown"], call
+        assert call["params"] == pytest.approx({GAP[solver]: 0.2, TIME[solver]: 800, THREADS[solver]: 1}), call
+
+
+@pytest.mark.parametrize("solver", ["gurobi", "cplex", "copt"], indirect=True)
+def test_the_realization_solve_flextool_adds_runs_on_the_parents_solver(solver, shim, tmp_path) -> None:
+    """``separate_dispatch_noinvest`` (``tests/fixtures/separate_dispatch_noinvest.json``) with ``stoch_rd`` on
+    the solver and ``solver_mip_gap`` 0.2: the realization solve ``stoch_rd__realized_dispatch`` FlexTool adds
+    also runs on that solver with that gap (before the fix it ran on HiGHS).  Its objective is the hand-computed
+    4 380 000 of ``test_separate_dispatch_noinvest_capacity.py``.  Xpress is left out: the model has integers."""
+    from flextool.engine import run_chain_from_db
+    from flextool.update_flextool.db_migration import migrate_database
+    from tests.db_utils import json_to_db
+
+    check_db = _check_db_module()
+    data = json.loads((check_db.REPO / "tests" / "fixtures" / "separate_dispatch_noinvest.json").read_text())
+    data = check_db._lp_snapshot()._overlay(data, name="on_solver", base="separate_dispatch_noinvest", values=[
+        ["solve", "stoch_rd", "solver", solver], ["solve", "stoch_rd", "solver_mip_gap", 0.2]])
+    json_path = tmp_path / "rd.json"
+    json_path.write_text(json.dumps(data))
+    url = json_to_db(json_path, tmp_path / "rd.sqlite")
+    migrate_database(url)
+    steps = run_chain_from_db(input_db_url=url, scenario_name="on_solver", work_folder=tmp_path / "w",
+                              solver_config_dir=_cfg(tmp_path, solver, f"{THREADS[solver]} 1\n"),
+                              run_options=_run_options(url))
+    assert list(steps) == ["stoch_rd", "stoch_rd__realized_dispatch"]
+    assert steps["stoch_rd__realized_dispatch"].obj == pytest.approx(4_380_000.0, rel=1e-6)
+    calls = _calls(shim)
+    assert len(calls) == 2, calls
+    assert all(c["params"] == pytest.approx({GAP[solver]: 0.2, THREADS[solver]: 1}) for c in calls), calls
+
+
 @pytest.mark.parametrize("solver", ["gurobi"], indirect=True)
 def test_unknown_gurobi_parameter_is_named_with_its_layer(solver, shim, db, tmp_path, caplog) -> None:
     """Gurobi does not know ``NoSuchParameter`` (in ``solver_arguments``): it solves without it, and FlexTool

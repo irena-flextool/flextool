@@ -28,8 +28,8 @@ def test_derivation_rule_matches_registry():
     assert set(PERIOD_TIME_PARAMS) == expected
 
 
-def test_count_is_65_split_22_dual_1_time_only_42_period_only():
-    assert len(PERIOD_TIME_PARAMS) == 65
+def test_count_is_66_split_22_dual_1_time_only_42_period_only_1_period_map_only():
+    assert len(PERIOD_TIME_PARAMS) == 66
     # 22 dual-axis: 21 with the full 2-D shape (incl. node.energy_margin_adder, which has no time-only map) +
     # commodity.price (two 1-D).
     dual_2d = {k for k, v in PARAM_ALLOWED_SHAPES.items()
@@ -51,7 +51,10 @@ def test_count_is_65_split_22_dual_1_time_only_42_period_only():
     assert len(period_only) == 42
     assert ("group", "capacity_margin_share") in period_only
     assert ("unit__inputNode", "startup_energy") in period_only
-    assert set(PERIOD_TIME_PARAMS) == dual_2d | commodity_price | time_only | period_only
+    # 1 period map only (no constant): the years each period of a solve represents.
+    period_map_only = {k for k, v in PARAM_ALLOWED_SHAPES.items() if set(v) == {Shape.MAP_PERIOD}}
+    assert period_map_only == {("solve", "years_represented")}
+    assert set(PERIOD_TIME_PARAMS) == dual_2d | commodity_price | time_only | period_only | period_map_only
 
 
 def test_facet_and_scalar_str_shapes_excluded():
