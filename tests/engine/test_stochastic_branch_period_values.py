@@ -672,7 +672,7 @@ def test_no_active_pairs_after_failed_stochastic_load(tmp_path_factory, monkeypa
     url, scen = make_db(tmp_path_factory, alt="c6_fail", values=[],
                         base_chain=_chain(STOCHASTICS_JSON, "2_day_stochastic_dispatch"),
                         fixture_json=STOCHASTICS_JSON)
-    with pytest.raises(Exception):
+    with pytest.raises(RuntimeError, match="c6 injected failure"):  # not an earlier, unrelated error
         run(tmp_path_factory, url, scen)
     assert seen.get("pairs") is not None and seen["pairs"].height == len(BRANCH_PERIODS), seen
     assert _branch.active_branch_anchor_pairs() is None
