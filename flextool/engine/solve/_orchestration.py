@@ -366,6 +366,8 @@ def _solve_highs_options(
         solve_name=complete_solve_name,
         # A plain file name the database gives a HiGHS file option lands in the solve's work folder.
         workspace=solver_workspace(state.paths.work_folder),
+        # A highs.opt found outside a workspace this computer set up gets the database's rules (item 240 B3).
+        highs_opt_untrusted=files.untrusted_note("highs") if files is not None and highs_opt_text is not None else None,
     )
 
 
@@ -4160,7 +4162,7 @@ def _drive_cascade(
                         resolve_commercial_options,
                     )
                     if _active_solver_cfg.name in _NATIVE_NAMES:
-                        _opt_text, _opt_label = commercial_opt_file_layer(
+                        _opt_text, _opt_label, _opt_untrusted = commercial_opt_file_layer(
                             _active_solver_cfg.name,
                             solver_option_files=state.paths.solver_option_files,
                             solver_config_dir=state.paths.solver_config_dir,
@@ -4170,6 +4172,7 @@ def _drive_cascade(
                             _active_solver_cfg.name,
                             opt_file=_opt_label,
                             opt_text=_opt_text,
+                            opt_untrusted=_opt_untrusted,
                             solver_config=_active_solver_cfg,
                             run_options=run_options,
                             solve_name=complete_solve_name,

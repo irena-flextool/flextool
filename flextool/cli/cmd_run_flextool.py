@@ -614,7 +614,19 @@ def build_parser() -> argparse.ArgumentParser:
              'file is missing in the folder uses FlexTool\'s default.  The run '
              'copies the files it used to <work folder>/solve_data/'
              'solver_config/.  Environment variable: '
-             'FLEXTOOL_SOLVER_CONFIG_DIR; the flag wins.',
+             'FLEXTOOL_SOLVER_CONFIG_DIR; the flag wins.  The files of a '
+             'folder named here are trusted (file paths, server settings); '
+             'the files of a folder found on its own are trusted only in a '
+             'workspace this computer set up (flextool-update).',
+    )
+    parser.add_argument(
+        '--workspace-solver-config-dir', metavar='PATH', default=None,
+        help='The solver option folder of the workspace the run was started '
+             'from, as the FlexTool window passes it: used like '
+             '--solver-config-dir, but its files are trusted only when the '
+             'workspace is one this computer set up; otherwise they get the '
+             'input database\'s rules.  --solver-config-dir and '
+             'FLEXTOOL_SOLVER_CONFIG_DIR win over it.',
     )
     parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
     parser.add_argument('--write-methods', type=str, nargs='+', default=None,

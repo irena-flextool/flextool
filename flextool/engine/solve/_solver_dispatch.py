@@ -406,10 +406,18 @@ def _unlisted_problem(solver: str, name_text: str, *, database: bool = True) -> 
 _warned_unlisted_allowed: set[tuple[str, str]] = set()
 
 
-def _database_entry(solver: str, name_text: str, value_text: str, where: str) -> Entry:
+def _remove(solver: str, untrusted: str | None) -> str:
+    """The end of a refusal: what to do instead (the input database's, or an untrusted option file's)."""
+    if untrusted is None:
+        return f"Remove it from the database and {_instead(solver)}"
+    return untrusted
+
+
+def _database_entry(solver: str, name_text: str, value_text: str, where: str, untrusted: str | None = None) -> Entry:
     """The catalogue entry of a database option: the listed one; for HiGHS one the installed HiGHS knows as a
     number or a switch; else, when this computer allows unlisted names, one from the name rules (one warning per
-    run and name).  Otherwise refused (:class:`FlexToolUserError`)."""
+    run and name).  Otherwise refused (:class:`FlexToolUserError`).  *untrusted*: the option is a line of an
+    option file that gets the database's rules, and this is why (item 240 B3)."""
     catalogue = _solver_catalogue.load(solver)
     entry = catalogue.entry(name_text)
     if entry is not None:
@@ -421,15 +429,16 @@ def _database_entry(solver: str, name_text: str, value_text: str, where: str) ->
         if live == "string":
             raise FlexToolUserError(
                 head + f"it is a text option of the installed HiGHS that is not in FlexTool's list of HiGHS options "
-                f"({catalogue.versions_text()}), so nobody has checked what its value may name. Remove it from "
-                f"the database and {_instead(solver)}"
+                f"({catalogue.versions_text()}), so nobody has checked what its value may name. "
+                + _remove(solver, untrusted)
             )
         if live in ("bool", "int", "double") and rule_class(solver, key) is None:
             return Entry(key, key, live, "plain")
     allow = _allow_unlisted()
     if not allow.value:
         problem = _unlisted_problem(solver, name_text)
-        raise FlexToolUserError(head + problem + ("" if problem.endswith("?") else ".") + " " + _unlisted_remedy(solver))
+        remedy = _unlisted_remedy(solver) if untrusted is None else untrusted
+        raise FlexToolUserError(head + problem + ("" if problem.endswith("?") else ".") + " " + remedy)
     if (solver, key) not in _warned_unlisted_allowed:
         _warned_unlisted_allowed.add((solver, key))
         logging.getLogger(__name__).warning(
@@ -444,9 +453,14 @@ def _database_entry(solver: str, name_text: str, value_text: str, where: str) ->
     return Entry(key, name_text, "unknown", "plain")
 
 
-def check_database_solver_option(solver: str, name: object, value: object, where: str) -> None:
+def check_database_solver_option(
+        solver: str, name: object, value: object, where: str, *, untrusted: str | None = None) -> None:
     """Refuse an option from the input database (*where*: ``solver_arguments of solve X``) that is not in
     FlexTool's list of *solver*'s parameters, names a path or reaches another machine.
+
+    *untrusted*: the option is a line of an option file that a run found on its own outside a workspace this
+    computer set up (item 240 B3); it gets the same rules, and the refusal ends with *untrusted* (why, and how to
+    trust the folder) instead of the database's remedy.
 
     The name must be listed (:func:`_database_entry`; HiGHS: or known to the installed HiGHS as a number or a
     switch; any solver: or allowed on this computer).  A ``file`` parameter takes a number, a boolean or a plain
@@ -457,23 +471,26 @@ def check_database_solver_option(solver: str, name: object, value: object, where
     """
     value_text = "" if value is None or isinstance(value, bool) else str(value)
     name_text = str(name)
-    entry = _database_entry(solver, name_text, value_text, where)
+    entry = _database_entry(solver, name_text, value_text, where, untrusted)
     head = f"Refusing {solver} option {_short(name_text)} (value {_short(value_text)}) from {where}: "
+    origin = "the input database" if untrusted is None else "an option file that gets the input database's rules"
     if entry.cls == "local_only":
         if entry.reason == "remote":
             raise FlexToolUserError(
-                head + "it comes from the input database, and an option that connects the solver to another "
+                head + f"it comes from {origin}, and an option that connects the solver to another "
                 "computer (a server, cloud or licence service) or carries its credentials is not taken from there. "
-                f"Remove it from the database and {_instead(solver)}"
+                + _remove(solver, untrusted)
             )
         if entry.reason == "command":
             raise FlexToolUserError(
                 head + f"it is a command of the {_solver_catalogue.SOLVER_LABEL[solver]} console, not a parameter. "
-                "Remove it from the database."
+                + ("Remove it from the database." if untrusted is None else untrusted)
             )
         raise FlexToolUserError(
-            head + "it is a text parameter that FlexTool has not checked for use from an input database. Remove it "
-            f"from the database and {_instead(solver)}"
+            head + "it is a text parameter that FlexTool has not checked for use from "
+            + ("an input database" if untrusted is None else "an option file that gets the input database's rules")
+            + ". "
+            + _remove(solver, untrusted)
         )
     if entry.cls not in ("file", "flextool") or not value_text or _is_number(value_text):
         return
@@ -481,16 +498,18 @@ def check_database_solver_option(solver: str, name: object, value: object, where
         not value_text.isascii() or _PLAIN_FILE_NAME.fullmatch(value_text) is None or ".." in value_text
     ):
         raise FlexToolUserError(
-            head + "it comes from the input database, where an option that names a file or folder takes only a "
+            head + f"it comes from {origin}, where an option that names a file or folder takes only a "
             "plain file name (ASCII letters, digits and '_ . + -', starting with a letter, digit or '_'; no '/', "
             "'\\', ':' or '..'), and FlexTool puts that file in the solve's work folder (solve_data/subprocess). "
-            f"For a file elsewhere, remove the option from the database and {_instead(solver)}"
+            + (f"For a file elsewhere, remove the option from the database and {_instead(solver)}"
+               if untrusted is None else untrusted)
         )
     if _solver_reads_file(value_text):
         raise FlexToolUserError(
-            head + "it comes from the input database and names a file that a solver reads by itself from the "
+            head + f"it comes from {origin} and names a file that a solver reads by itself from the "
             "folder it runs in (its settings or licence file), so the next solve in the work folder would read it. "
-            f"Give the file another name, or {_instead(solver)}"
+            + (f"Give the file another name, or {_instead(solver)}" if untrusted is None
+               else "Give the file another name. " + untrusted)
         )
 
 
@@ -625,6 +644,18 @@ def _drop_solution_file_options(
     return options
 
 
+def _in_workspace(key: object, value: Any, workspace: Path | None) -> Any:
+    """A plain file name that a database-rules layer gives a HiGHS file option, as a path in *workspace* (created
+    when needed); any other value as it is."""
+    if (
+        workspace is not None and _option_key("highs", key) in _HIGHS_FILE_NAME_OPTIONS
+        and isinstance(value, str) and value
+    ):
+        workspace.mkdir(parents=True, exist_ok=True)
+        return str(workspace / value)
+    return value
+
+
 def _resolve_effective_highs_options(
     *,
     solver_arguments_map: Mapping[str, Any] | None,
@@ -635,6 +666,7 @@ def _resolve_effective_highs_options(
     highs_opt_text: str | None = None,
     solve_name: str | None = None,
     workspace: Path | None = None,
+    highs_opt_untrusted: str | None = None,
 ) -> dict[str, Any]:
     """Resolve the effective HiGHS solver options for one solve.
 
@@ -702,6 +734,12 @@ def _resolve_effective_highs_options(
         a HiGHS file option (:data:`_PATH_OPTIONS`) becomes a path in
         *workspace* (created when needed; ``None`` leaves the name as it is,
         a file in the current folder).
+    highs_opt_untrusted
+        ``None``: the ``highs.opt`` layer is trusted.  Else it is a file the run found on its own outside a
+        workspace this computer set up (item 240 B3,
+        :meth:`flextool._solver_config_source.SolverOptionFiles.untrusted_note`): each of its lines gets the
+        database's rules (:func:`check_database_solver_option`, this text ending a refusal), and a plain file name
+        it gives a file option is placed in *workspace*, as for ``solver_arguments``.
 
     Returns
     -------
@@ -719,9 +757,16 @@ def _resolve_effective_highs_options(
         for lineno, key, val in _highs_opt_lines(highs_opt_text):
             if key not in _HIGHS_OPT_IGNORED_KEYS:  # dropped below, never passed on
                 validate_solver_option("highs", key, val, f"{file_label}, line {lineno}")
-                warn_unlisted_trusted_option("highs", key, f"{file_label}, line {lineno}")
+                if highs_opt_untrusted is None:
+                    warn_unlisted_trusted_option("highs", key, f"{file_label}, line {lineno}")
+                else:
+                    check_database_solver_option(
+                        "highs", key, val, f"{file_label}, line {lineno}", untrusted=highs_opt_untrusted)
         file_options = _parse_highs_opt_text(highs_opt_text)
-    options.update(_drop_solution_file_options(file_options, highs_opt_path))
+    file_options = _drop_solution_file_options(file_options, highs_opt_path)
+    if highs_opt_untrusted is not None:
+        file_options = {key: _in_workspace(key, value, workspace) for key, value in file_options.items()}
+    options.update(file_options)
     if solver_config is not None:
         knobs = _PARAM_MAP["highs"]
         for knob in ("time_limit", "mip_gap", "threads"):
@@ -734,13 +779,7 @@ def _resolve_effective_highs_options(
         for key, value in solver_arguments_map.items():
             validate_solver_option("highs", key, value, f"solver_arguments{of_solve}")
             check_database_solver_option("highs", key, value, f"solver_arguments{of_solve}")
-            if (
-                workspace is not None and _option_key("highs", key) in _HIGHS_FILE_NAME_OPTIONS
-                and isinstance(value, str) and value
-            ):
-                workspace.mkdir(parents=True, exist_ok=True)
-                value = str(workspace / value)
-            options[str(key)] = value
+            options[str(key)] = _in_workspace(key, value, workspace)
     if cli_overrides:
         for key, value in cli_overrides.items():
             validate_solver_option("highs", key, value, "the run's flags or environment variables")
@@ -977,6 +1016,7 @@ def resolve_commercial_options(
     solve_name: str | None = None,
     logger: logging.Logger | None = None,
     opt_text: str | None = None,
+    opt_untrusted: str | None = None,
 ) -> list[CommercialOption]:
     """The parameters a commercial solve passes to *solver*, in final order.
 
@@ -996,7 +1036,10 @@ def resolve_commercial_options(
     (:func:`drop_flextool3_highs_option`).  Every layer passes
     :func:`validate_solver_option`.  FlexTool's own result-file parameter
     (:data:`_FLEXTOOL_OWN_OPTIONS`) is dropped from every layer with one warning
-    per run for each name and kind of layer.
+    per run for each name and kind of layer.  *opt_untrusted* (``None``: the
+    option file is trusted) says why the option file gets the database's rules
+    instead (item 240 B3, a folder found outside a workspace this computer set
+    up): each of its lines is then checked like ``solver_arguments``.
     """
     from flextool.engine.solve._subprocess_solve import (
         _format_native_opt_value,
@@ -1015,8 +1058,12 @@ def resolve_commercial_options(
         file_label = str(opt_file) if opt_file is not None else f"{solver}.opt"
         for lineno, name, value in _native_opt_lines(opt_text):
             if commercial_option_key(solver, name) not in own:  # dropped below, never passed on
-                validate_solver_option(solver, name, value, f"{file_label}, line {lineno}")
-                warn_unlisted_trusted_option(solver, name, f"{file_label}, line {lineno}", logger)
+                where = f"{file_label}, line {lineno}"
+                validate_solver_option(solver, name, value, where)
+                if opt_untrusted is None:
+                    warn_unlisted_trusted_option(solver, name, where, logger)
+                else:
+                    check_database_solver_option(solver, name, value, where, untrusted=opt_untrusted)
         file_options = _parse_native_opt_text(opt_text)
     entries += [CommercialOption(k, v, str(opt_file)) for k, v in file_options.items()]
     n_file_entries = len(entries)
@@ -1070,13 +1117,16 @@ def commercial_opt_file_layer(
     solver_option_files: "SolverOptionFiles | None",
     solver_config_dir: "Path | None" = None,
     run_options: "RunOptions | None" = None,
-) -> tuple[str | None, str | None]:
-    """The option-file layer of a commercial solve: ``(text, where it came from)``, or ``(None, None)``.
+) -> tuple[str | None, str | None, str | None]:
+    """The option-file layer of a commercial solve: ``(text, where it came from, untrusted note)``, or
+    ``(None, None, None)``.
 
-    The run's files read at its start win (*solver_option_files*); else ``<solver_config_dir>/<solver>.opt``;
-    else the folder :func:`flextool._solver_config_source.resolve_solver_config_source` picks without a
-    database (``--solver-config-dir`` / ``FLEXTOOL_SOLVER_CONFIG_DIR``, the current folder, the packaged
-    default), for a caller outside ``run_chain_from_db``.
+    The run's files read at its start win (*solver_option_files*); else ``<solver_config_dir>/<solver>.opt``
+    (a folder the caller named: trusted); else the folder
+    :func:`flextool._solver_config_source.resolve_solver_config_source` picks without a database
+    (``--solver-config-dir`` / ``FLEXTOOL_SOLVER_CONFIG_DIR``, the current folder, the packaged default), for a
+    caller outside ``run_chain_from_db``.  The note is ``None`` for a trusted file, else
+    :meth:`~flextool._solver_config_source.SolverOptionFiles.untrusted_note` (item 240 B3).
     """
     from flextool._solver_config_source import read_solver_option_files, resolve_solver_config_source
 
@@ -1085,13 +1135,15 @@ def commercial_opt_file_layer(
         if solver_config_dir is not None:
             path = Path(solver_config_dir) / f"{solver}.opt"
             try:
-                return path.read_text(encoding="utf-8"), str(path)
+                return path.read_text(encoding="utf-8"), str(path), None
             except OSError:
-                return None, None
+                return None, None, None
         source = resolve_solver_config_source(run_options=run_options)
         files = read_solver_option_files(source, (solver,))
     text = files.text(solver)
-    return (text, files.origin(solver)) if text is not None else (None, None)
+    if text is None:
+        return None, None, None
+    return text, files.origin(solver), files.untrusted_note(solver)
 
 
 def commercial_time_limit(solver: str, options: "list[CommercialOption] | Mapping[str, Any] | None") -> float | None:
@@ -1340,7 +1392,7 @@ def run_one_solve(
         )
         raise FlexToolUserError(msg)
     if commercial_options is None:
-        opt_text, opt_label = commercial_opt_file_layer(
+        opt_text, opt_label, opt_untrusted = commercial_opt_file_layer(
             solver_config.name,
             solver_option_files=solver_option_files,
             solver_config_dir=solver_config_dir,
@@ -1350,6 +1402,7 @@ def run_one_solve(
             solver_config.name,
             opt_file=opt_label,
             opt_text=opt_text,
+            opt_untrusted=opt_untrusted,
             solver_config=solver_config,
             run_options=run_options,
             solve_name=solve_name,

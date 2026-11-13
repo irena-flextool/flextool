@@ -130,6 +130,7 @@ def build_calibrate_command(
     final_write_methods: list[str] | None = None,
     threads: int | None = None,
     solver_config_dir: str | None = None,
+    workspace_solver_config_dir: str | None = None,
 ) -> list[str]:
     """Build the argv for the calibrate CLI.
 
@@ -152,6 +153,9 @@ def build_calibrate_command(
     ``solver_config_dir`` (the workspace's solver option folder) is emitted as
     ``--solver-config-dir PATH`` when given; the calibrator passes it to each
     solve, so its solves use the same option files as a GUI run.
+    ``workspace_solver_config_dir`` is emitted as ``--workspace-solver-config-dir PATH``: the same, for the
+    workspace's own folder, whose files are trusted only when this computer set the workspace up
+    (:func:`flextool._solver_config_source.workspace_solver_config_flag` picks one of the two).
     """
     argv: list[str] = [
         python_exe,
@@ -187,6 +191,8 @@ def build_calibrate_command(
         argv += ["--threads", str(max(1, int(threads)))]
     if solver_config_dir:
         argv += ["--solver-config-dir", str(solver_config_dir)]
+    if workspace_solver_config_dir:
+        argv += ["--workspace-solver-config-dir", str(workspace_solver_config_dir)]
     return argv
 
 

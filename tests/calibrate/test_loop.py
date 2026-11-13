@@ -60,7 +60,8 @@ def _install_scripted_solve(monkeypatch, signals):
     def fake_write_calib_alt(url, scenario, adders):
         return None
 
-    def fake_run_solve(url, scenario, *, work_dir, out_root, cache_dir, threads=None, solver_config_dir=None):
+    def fake_run_solve(url, scenario, *, work_dir, out_root, cache_dir, threads=None, solver_config_dir=None,
+                       workspace_solver_config_dir=None):
         state["i"] += 1
         return SimpleNamespace(
             assess_dir=Path(out_root) / f"iter_{state['i']}",
@@ -254,7 +255,7 @@ def test_calibration_clears_only_its_own_result_folder(tmp_path, monkeypatch, de
     ])
 
     def solve_writing_results(url, scenario, *, work_dir, out_root, cache_dir, threads=None,
-                              solver_config_dir=None):
+                              solver_config_dir=None, workspace_solver_config_dir=None):
         state["i"] += 1
         folder = Path(out_root) / "output_parquet" / scenario
         folder.mkdir(parents=True, exist_ok=True)

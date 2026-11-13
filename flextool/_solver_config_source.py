@@ -5,6 +5,8 @@ A run reads ``highs.opt``, ``gurobi.opt``, ``cplex.opt``, ``xpress.opt`` and ``c
 
 1. an explicit folder: ``run_chain_from_db(solver_config_dir=...)``, else ``--solver-config-dir``;
 2. ``$FLEXTOOL_SOLVER_CONFIG_DIR`` (the flag's environment twin);
+2b. ``--workspace-solver-config-dir``: the folder the FlexTool window (and the calibrator it starts) names for its
+   workspace;
 3. the input database's layout (a file database only, a Spine Toolbox ``?spinedbfilter=`` query stripped):
    ``solver_config/`` next to the database, then, for a database in a GUI project
    (``<workspace>/projects/<P>/input_sources/`` or ``.../intermediate/``), ``<workspace>/solver_config/``.  The
@@ -26,6 +28,14 @@ folder is taken as given; a solver whose file is missing there uses its packaged
 :func:`snapshot_solver_option_files` reads the chosen files once at run start, writes the copy
 ``<work_folder>/solve_data/solver_config/`` as the record of what the run used, and returns the texts every
 solve of the run reads from (an edit during the run does not reach later solves).
+
+**Trust** (item 240 B3).  The files of a folder the user named (tiers 1-2) and the packaged defaults are trusted:
+file paths and server settings in them reach the solver.  A folder found on its own (tiers 2b-5) is trusted only
+when the folder it is in is a workspace this computer set up (``trusted_workspaces`` in
+:mod:`flextool._local_solver_settings`); otherwise :attr:`SolverConfigSource.trusted` is ``False`` and each line of
+its files gets the input database's rules (``check_database_solver_option``), with
+:attr:`SolverConfigSource.trust_note` saying why and how to trust it.  ``templates/project_folder.txt`` is no
+trust anchor: it is plain content and can come with a received workspace.
 
 This module imports nothing from the engine, so the CLI, the GUI, project packaging and the calibrator can use it.
 (It is not ``flextool/solver_config.py``: that name is the package-data folder of the templates.)
@@ -55,6 +65,7 @@ SNAPSHOT_RELATIVE = Path("solve_data") / SOLVER_CONFIG_FOLDER
 REASON_ARGUMENT = "solver_config_dir argument"
 REASON_FLAG = "--solver-config-dir"
 REASON_ENV = "FLEXTOOL_SOLVER_CONFIG_DIR"
+REASON_WORKSPACE = "workspace of the FlexTool window"
 REASON_DB_FOLDER = "next to the input database"
 REASON_DB_WORKSPACE = "workspace of the input database"
 REASON_TOOLBOX = "Spine Toolbox project folder"
@@ -118,6 +129,10 @@ class SolverConfigSource:
     tried: tuple[Path, ...] = ()
     #: Folders passed over because they hold only unedited FlexTool templates (see :func:`is_template_copy`).
     skipped: tuple[Path, ...] = ()
+    #: Whether the folder's files may name paths and servers (item 240 B3); ``False``: the input database's rules.
+    trusted: bool = True
+    #: Why the folder is not trusted and how to trust it (``None`` when trusted), for the messages.
+    trust_note: str | None = None
 
     def describe(self) -> str:
         """``<dir> (<reason>)`` for the run header and log; the folders tried when none was found."""
@@ -125,7 +140,8 @@ class SolverConfigSource:
             f"; skipped {', '.join(str(p) for p in self.skipped)}: unedited FlexTool templates" if self.skipped else ""
         )
         if self.dir is not None:
-            return f"{self.dir} ({self.reason}{skipped})"
+            untrusted = "" if self.trusted else f"; {UNTRUSTED_SHORT}"
+            return f"{self.dir} ({self.reason}{untrusted}{skipped})"
         if self.tried:
             return f"{REASON_DEFAULTS} (no solver_config folder in: {', '.join(str(p) for p in self.tried)}{skipped})"
         if skipped:
@@ -198,6 +214,73 @@ def is_template_copy(folder: Path) -> bool:
     return found
 
 
+def holds_only_flextool_defaults(folder: Path) -> bool:
+    """Whether *folder* (a workspace's ``solver_config``) is missing, or holds no option file but unedited
+    FlexTool templates (this or an earlier shipped version): the state in which ``ensure_runtime_files`` lists its
+    workspace as set up by this computer (item 240 B3).
+
+    Every file whose name ends in ``.opt`` (any case) counts; other files are ignored, since no run reads them.  A
+    symbolic link (the folder or a file in it) is the user's own arrangement, whose target may change later: it is
+    never taken as FlexTool's own."""
+    try:
+        if folder.is_symlink():
+            return False
+        if not folder.exists():
+            return True
+        if not folder.is_dir():
+            return False
+        for entry in folder.iterdir():
+            if not entry.name.casefold().endswith(".opt"):
+                continue
+            solver = entry.name[:-4]
+            if solver not in SOLVER_NAMES or entry.is_symlink() or not entry.is_file():
+                return False
+            if not is_unedited_template(solver, entry.read_bytes()):
+                return False
+    except OSError:
+        return False
+    return True
+
+
+#: How :meth:`SolverConfigSource.describe` marks a folder that is not trusted.
+UNTRUSTED_SHORT = "not a workspace this computer set up: its files get the input database's rules"
+
+
+def untrusted_note(folder: Path, reason: str, problem: str | None = None) -> str:
+    """The message part that says why the option files of *folder* (found as *reason*) get the input database's
+    rules, and how to trust them (item 240 B3)."""
+    damaged = f" ({problem})" if problem else ""
+    return (
+        f"The option files in {folder} ({reason}) get the input database's rules, because FlexTool found that "
+        f"folder on its own and it is not in a workspace this computer set up{damaged}: a file option takes only a "
+        "plain file name, placed in the solve's work folder; no server or licence settings; only parameter names "
+        "in FlexTool's list. If you made these files, or have read them and trust them, pass the folder with "
+        "--solver-config-dir (or set FLEXTOOL_SOLVER_CONFIG_DIR), or tick \"Trust this workspace's solver option "
+        "files\" in the FlexTool window (Solver options, On this computer). flextool-update and the FlexTool "
+        "window mark a workspace as set up by this computer only when they create its solver_config/ or find "
+        "nothing in it but FlexTool's own default files, so a workspace received with edited option files is "
+        "never marked on its own."
+    )
+
+
+def _folder_trust(folder: Path, reason: str) -> tuple[bool, str | None]:
+    """``(trusted, note)`` of a folder found on its own: trusted when the folder it is in is listed."""
+    from flextool._local_solver_settings import LocalSolverSettingsError, is_trusted_workspace
+
+    problem = None
+    try:
+        if is_trusted_workspace(folder.parent):
+            return True, None
+    except LocalSolverSettingsError as exc:
+        problem = str(exc)
+    return False, untrusted_note(folder, reason, problem)
+
+
+def _found(folder: Path, reason: str, *, tried: tuple[Path, ...] = (), skipped: tuple[Path, ...] = ()) -> "SolverConfigSource":
+    trusted, note = _folder_trust(folder, reason)
+    return SolverConfigSource(folder, reason, tried, skipped, trusted=trusted, trust_note=note)
+
+
 def is_flextool_workspace(folder: Path) -> bool:
     """Whether *folder* is a FlexTool workspace: it holds ``templates/project_folder.txt``, which
     ``ensure_runtime_files`` (FlexTool window start, ``flextool-update``) seeds together with ``solver_config/``."""
@@ -247,6 +330,10 @@ def resolve_solver_config_source(
     chosen = run_options.resolved.get("solver_config_dir")
     if chosen is not None and chosen.value and chosen.source in ("cli", "env"):
         return SolverConfigSource(Path(chosen.value), REASON_FLAG if chosen.source == "cli" else REASON_ENV)
+    workspace = run_options.resolved.get("workspace_solver_config_dir")
+    if workspace is not None and workspace.value and workspace.source == "cli":
+        # The FlexTool window names its workspace's folder: taken as given, trusted only if listed.
+        return _found(Path(workspace.value), REASON_WORKSPACE)
 
     candidates = _database_candidates(input_db_url)
     if project_folder_file:
@@ -271,7 +358,7 @@ def resolve_solver_config_source(
                 # FlexTool 4.3 and older copied the templates into the folder a run started from.
                 skipped.append(folder)
                 continue
-            return SolverConfigSource(folder, reason, skipped=tuple(skipped))
+            return _found(folder, reason, skipped=tuple(skipped))
         tried.append(folder)
     return SolverConfigSource(None, REASON_DEFAULTS, tuple(tried), tuple(skipped))
 
@@ -287,13 +374,25 @@ def workspace_solver_config_dir(environ: Mapping[str, str] | None = None, cwd: s
     """The workspace's solver option folder, for launchers that know the workspace (GUI, project packaging).
 
     ``$FLEXTOOL_SOLVER_CONFIG_DIR`` when set, else ``<cwd>/solver_config`` (the GUI's current folder is the
-    workspace).  The GUI passes it to every run as ``--solver-config-dir``, so its runs never depend on where
-    the input database is.
+    workspace).  The GUI passes it to every run (:func:`workspace_solver_config_flag`), so its runs never depend
+    on where the input database is.
     """
     env = (os.environ if environ is None else environ).get("FLEXTOOL_SOLVER_CONFIG_DIR", "").strip()
     if env:
         return Path(env)
     return Path(cwd if cwd is not None else Path.cwd()) / SOLVER_CONFIG_FOLDER
+
+
+def workspace_solver_config_flag(
+        environ: Mapping[str, str] | None = None, cwd: str | os.PathLike | None = None) -> tuple[str, Path]:
+    """The flag a launcher that knows its workspace (the FlexTool window, its calibrator, ``flextool-time-runs``)
+    passes to each run, with the folder: ``--solver-config-dir $FLEXTOOL_SOLVER_CONFIG_DIR`` when the user set
+    that variable (their choice, trusted), else ``--workspace-solver-config-dir <cwd>/solver_config``, whose files
+    are trusted only when the workspace is one this computer set up (item 240 B3)."""
+    env = (os.environ if environ is None else environ).get("FLEXTOOL_SOLVER_CONFIG_DIR", "").strip()
+    if env:
+        return "--solver-config-dir", Path(env)
+    return "--workspace-solver-config-dir", Path(cwd if cwd is not None else Path.cwd()) / SOLVER_CONFIG_FOLDER
 
 
 def _template_path(solver: str) -> Path | None:
@@ -323,12 +422,19 @@ class SolverOptionFiles:
     def text(self, solver: str) -> str | None:
         return self.texts.get(solver)
 
+    def untrusted_note(self, solver: str) -> str | None:
+        """``None`` when *solver*'s file is trusted (from a trusted folder, or FlexTool's packaged default); else
+        why its lines get the input database's rules and how to trust them (item 240 B3)."""
+        if self.source.trusted or self.origins.get(solver, "").startswith("FlexTool default"):
+            return None
+        return self.source.trust_note or untrusted_note(self.source.dir or Path("."), self.source.reason)
+
     def origin(self, solver: str) -> str:
         return self.origins.get(solver, f"{solver}.opt")
 
     def record(self) -> dict[str, Any]:
-        """The run record's ``solver_config`` block: the folder (``None``: FlexTool's defaults) and why, the
-        folders skipped as unedited template copies, the snapshot folder, and per option file its source (the
+        """The run record's ``solver_config`` block: the folder (``None``: FlexTool's defaults) and why, whether its
+        files are trusted (item 240 B3), the folders skipped as unedited template copies, the snapshot folder, and per option file its source (the
         file, or ``"FlexTool default"``), the SHA-256 of the text the run used (CRLF read as LF, the hash of
         :data:`SHIPPED_TEMPLATE_SHA256`) and whether that is an unedited FlexTool template, and whether this
         computer allows solver parameter names that are not in FlexTool's lists from databases, and where that was
@@ -351,6 +457,7 @@ class SolverOptionFiles:
         return {
             "dir": _absolute(self.source.dir) if self.source.dir is not None else None,
             "reason": self.source.reason,
+            "trusted": self.source.trusted,
             "skipped": [_absolute(p) for p in self.source.skipped],
             "snapshot_dir": _absolute(self.snapshot_dir) if self.snapshot_dir is not None else None,
             "files": files,
@@ -489,11 +596,14 @@ __all__ = [
     "SOLVER_NAMES",
     "SolverConfigSource",
     "SolverOptionFiles",
+    "holds_only_flextool_defaults",
     "input_db_filesystem_path",
     "is_flextool_workspace",
     "is_template_copy",
     "read_solver_option_files",
     "resolve_solver_config_source",
     "snapshot_solver_option_files",
+    "untrusted_note",
     "workspace_solver_config_dir",
+    "workspace_solver_config_flag",
 ]

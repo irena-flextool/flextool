@@ -352,21 +352,23 @@ solver started.
 A run takes all its `<solver>.opt` files from one `solver_config` folder, the
 first of:
 
-1. `--solver-config-dir PATH` (the GUI always sends it: the workspace's
-   `solver_config`, or the folder of `FLEXTOOL_SOLVER_CONFIG_DIR` when that
-   variable is set for the GUI);
-2. the `FLEXTOOL_SOLVER_CONFIG_DIR` environment variable;
-3. `solver_config/` next to the input database, then, for a database in a GUI
+1. `--solver-config-dir PATH`;
+2. the `FLEXTOOL_SOLVER_CONFIG_DIR` environment variable (the FlexTool window
+   passes it on as `--solver-config-dir` when it is set);
+3. `--workspace-solver-config-dir PATH`: the FlexTool window (and the
+   calibration it starts) always sends its workspace's `solver_config` this
+   way when `FLEXTOOL_SOLVER_CONFIG_DIR` is not set;
+4. `solver_config/` next to the input database, then, for a database in a GUI
    project (`<workspace>/projects/<project>/input_sources/`), the workspace's
    `solver_config/`. The search goes no further up, so a `solver_config`
    folder somewhere above an unrelated database is never picked up;
-4. for a Spine Toolbox run with `--project-folder-file`, the `solver_config/`
+5. for a Spine Toolbox run with `--project-folder-file`, the `solver_config/`
    of that Toolbox project;
-5. `solver_config/` in the current folder;
-6. none found: FlexTool's defaults (the shipped templates), with a warning
+6. `solver_config/` in the current folder;
+7. none found: FlexTool's defaults (the shipped templates), with a warning
    that lists the folders tried.
 
-Tiers 3 to 5 count a folder only when it holds at least one `<solver>.opt`.
+Tiers 4 to 6 count a folder only when it holds at least one `<solver>.opt`.
 They skip `solver_config/` in the current folder when every `.opt` in it is an
 unedited FlexTool template (of this or an earlier version) and the current
 folder is not a FlexTool folder: FlexTool 4.3 and older left such a copy in
@@ -387,6 +389,51 @@ The run header and the log say which folder was used and why, for example:
 ```text
 Solver config:  /home/me/flextool/solver_config (next to the input database)
 ```
+
+#### Which option folders are trusted
+
+The files of a folder you name (`--solver-config-dir`,
+`FLEXTOOL_SOLVER_CONFIG_DIR`) and FlexTool's shipped defaults are trusted:
+they may use full file paths, server and licence settings, and parameter
+names that are not in FlexTool's list (with a warning). A folder that a run
+finds by itself (tiers 3 to 6) may have come from someone else, inside a
+workspace, a model folder or a Spine Toolbox project that was shared or
+unzipped. Its files are trusted only when the folder it is in is a workspace
+this computer set up; otherwise every line gets the input database's rules
+(see "What the database may set"): a file option takes only a plain file
+name, placed in the solve's work folder; no server or licence settings; only
+parameter names in FlexTool's list. A refused line stops the run with a
+message that names the file, the line, and how to trust the folder. The
+`Solver config:` line says `not a workspace this computer set up` for such a
+folder, and the run record's `solver_config.trusted` is `false`.
+
+| Where the folder comes from | Trusted |
+|---|---|
+| `--solver-config-dir`, `FLEXTOOL_SOLVER_CONFIG_DIR` | always |
+| `--workspace-solver-config-dir` (the FlexTool window), next to the database, the database's workspace, the Toolbox project, the current folder | when its workspace is on this computer's list |
+| FlexTool's shipped defaults | always |
+
+This computer's list is `trusted_workspaces` in `solver_settings.json` in
+FlexTool's user settings folder (on Linux `~/.config/flextool/`, on Windows
+`%LOCALAPPDATA%\flextool\`, on macOS `~/Library/Application Support/flextool/`),
+outside every workspace, so nothing that comes with a workspace can add to it.
+A workspace gets on the list:
+
+- when `flextool-update`, or the FlexTool window at its start, creates its
+  `solver_config/`, or finds nothing in it but FlexTool's own default files
+  (unedited `.opt` files of this or an earlier version; a symbolic link does
+  not count). A workspace received with edited option files is therefore
+  never listed by being opened;
+- when you tick "Trust this workspace's solver option files" in the FlexTool
+  window (Solver options → On this computer), after reading the files.
+
+For a workspace whose option files you edited before this check existed, tick
+that box once (or pass the folder with `--solver-config-dir`). On CI or a
+server, pass the folder with `--solver-config-dir` or set
+`FLEXTOOL_SOLVER_CONFIG_DIR` in the job's environment: a folder named that way
+is trusted on every run, and nothing needs to be listed. A fresh checkout
+where `flextool-update` creates `solver_config/` is listed too (in the user
+settings folder of the user who ran it).
 
 The run reads the files once at its start: every roll and solve of the run
 uses them as they were then, and an edit during the run reaches only the next

@@ -72,6 +72,7 @@ def run_solve(
     threads: int | None = None,
     launcher: str = "calibrator",
     solver_config_dir: Path | None = None,
+    workspace_solver_config_dir: Path | None = None,
 ) -> SolveRun:
     """Run one calibrator solve and return its raw :class:`SolveRun`.
 
@@ -101,6 +102,9 @@ def run_solve(
     solver_config_dir:
         Folder of the solver option files (``--solver-config-dir``); ``None`` sends no flag (the child resolves
         the folder itself: ``FLEXTOOL_SOLVER_CONFIG_DIR``, else from the input database's location).
+    workspace_solver_config_dir:
+        The FlexTool window's workspace folder of the option files (``--workspace-solver-config-dir``: trusted
+        only when this computer set the workspace up); ``None`` sends no flag.
 
     The solve runs under the ``flextool-run`` supervisor, which writes the run's ``_run.log``; its output still
     comes back here in ``stdout``.  The child inherits this process's environment, plus ``PYTHONSAFEPATH=1``
@@ -108,7 +112,7 @@ def run_solve(
     """
     argv = solve_argv(
         url, scenario, work_dir=work_dir, out_root=out_root, cache_dir=cache_dir, threads=threads, launcher=launcher,
-        solver_config_dir=solver_config_dir,
+        solver_config_dir=solver_config_dir, workspace_solver_config_dir=workspace_solver_config_dir,
     )
     assess_dir = Path(out_root) / "output_parquet" / scenario
 
@@ -140,6 +144,7 @@ def solve_argv(
     threads: int | None = None,
     launcher: str = "calibrator",
     solver_config_dir: Path | None = None,
+    workspace_solver_config_dir: Path | None = None,
 ) -> list[str]:
     """The command line of one calibrator iteration (parameters as :func:`run_solve`).
 
@@ -155,6 +160,8 @@ def solve_argv(
         chosen["threads"] = Resolved(int(threads), "cli")
     if solver_config_dir is not None:
         chosen["solver_config_dir"] = Resolved(str(solver_config_dir), "cli")
+    if workspace_solver_config_dir is not None:
+        chosen["workspace_solver_config_dir"] = Resolved(str(workspace_solver_config_dir), "cli")
     warm = RunOptions(resolved=chosen)
     return [
         *python_module_argv("flextool_run_supervisor"),

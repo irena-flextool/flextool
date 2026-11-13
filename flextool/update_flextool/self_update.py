@@ -272,6 +272,36 @@ def _refresh_solver_config(folder: Path, *, verbose: bool = False, warn: bool = 
             print(msg)
 
 
+def _list_workspace(solver_config_is_own: bool, *, warn: bool = False) -> None:
+    """List the current folder as a workspace this computer set up when its ``solver_config/`` was missing or held
+    nothing but FlexTool's own default files before this call (item 240 B3).  Otherwise, unless it is listed
+    already, say once why it is not (a warning for ``flextool-update``, an INFO line at the window's start)."""
+    from flextool._local_solver_settings import (
+        LocalSolverSettingsError, add_trusted_workspace, is_trusted_workspace, settings_path,
+    )
+
+    workspace = Path.cwd()
+    try:
+        if solver_config_is_own:
+            if add_trusted_workspace(workspace):
+                logging.info("Listed %s as a workspace this computer set up (in %s).", workspace, settings_path())
+            return
+        if is_trusted_workspace(workspace):
+            return
+    except LocalSolverSettingsError as exc:
+        logging.warning("%s The workspace %s is not listed as set up by this computer.", exc, workspace)
+        return
+    (logging.warning if warn else logging.info)(
+        "%s holds solver option files that FlexTool did not write, so this workspace is not marked as set up by "
+        "this computer: runs that find these files on their own give them the input database's rules (no file "
+        "paths outside the work folder, no server settings, only listed parameter names). If you made them, or "
+        "have read them and trust them, tick \"Trust this workspace's solver option files\" in the FlexTool "
+        "window (Solver options, On this computer), or pass the folder with --solver-config-dir (or "
+        "FLEXTOOL_SOLVER_CONFIG_DIR).",
+        workspace / "solver_config",
+    )
+
+
 def ensure_runtime_files(verbose: bool = False, *, warn: bool = False) -> None:
     """Idempotently materialize the per-installation runtime files that
     FlexTool needs but does not track in git.
@@ -296,6 +326,10 @@ def ensure_runtime_files(verbose: bool = False, *, warn: bool = False) -> None:
     ``example_input.xlsx``, the ``solver_config/<solver>.opt`` files,
     ``templates/project_folder.txt``, and ``results.sqlite``.
 
+    It also lists the workspace as one this computer set up (item 240 B3, :func:`_list_workspace`), but only when
+    ``solver_config/`` was missing or held nothing but FlexTool's own default files: a received workspace with
+    edited option files is not listed by being opened.
+
     It deliberately does NOT perform the update-only operations (git
     restore/pull, reinstall, the unconditional template refresh that
     keeps artifacts schema-current after a pull, parameter-definition
@@ -308,6 +342,10 @@ def ensure_runtime_files(verbose: bool = False, *, warn: bool = False) -> None:
     comparison_settings_json = str(package_data_path("schemas/comparison_settings_template.json"))
 
     os.makedirs("templates", exist_ok=True)
+    # Item 240 B3: before anything is seeded, whether solver_config/ is missing or holds nothing but FlexTool's
+    # own default files.  Only then is this workspace listed as set up by this computer (step 3b).
+    from flextool._solver_config_source import holds_only_flextool_defaults
+    solver_config_is_own = holds_only_flextool_defaults(Path("solver_config"))
     os.makedirs("solver_config", exist_ok=True)
 
     # 1. Root input/settings DBs + their templates/ copies, from the
@@ -355,6 +393,13 @@ def ensure_runtime_files(verbose: bool = False, *, warn: bool = False) -> None:
         _refresh_solver_config(Path("solver_config"), verbose=verbose, warn=warn)
     except Exception as exc:
         logging.warning("ensure_runtime_files: solver_config seeding failed: %s", exc)
+
+    # 3b. Item 240 B3: list this workspace as one this computer set up (in the user config folder, outside the
+    #     workspace), so the option files of its solver_config/ are trusted when a run finds them on its own.
+    try:
+        _list_workspace(solver_config_is_own, warn=warn)
+    except Exception as exc:
+        logging.warning("ensure_runtime_files: listing the workspace failed: %s", exc)
 
     # 4. templates/project_folder.txt — a commented guide; its CONTENTS are
     #    load-bearing for Spine Toolbox (the run Tool reads the first

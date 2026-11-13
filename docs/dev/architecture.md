@@ -143,6 +143,13 @@ The contract:
    (`flextool/_local_solver_settings.py`: `FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS`, else
    `user_config_dir()/solver_settings.json`) is never read from a database, project, workspace or flag. Option
    files and flags warn on an unlisted name and pass it.
+   An option folder the run found by itself (tiers 3-5, and the GUI's `--workspace-solver-config-dir`) is trusted
+   only when its parent is in `trusted_workspaces` of that settings file (`SolverConfigSource.trusted`); otherwise
+   `SolverOptionFiles.untrusted_note()` is handed to `resolve_commercial_options` / `_resolve_effective_highs_options`
+   and each file line goes through `check_database_solver_option(untrusted=...)`. Only `ensure_runtime_files`
+   (when it creates `solver_config/` or finds only unedited templates, `holds_only_flextool_defaults`) and the
+   GUI's explicit "trust this workspace" add to the list; nothing inside a workspace (`templates/project_folder.txt`
+   included) is a trust anchor. `--solver-config-dir` / `FLEXTOOL_SOLVER_CONFIG_DIR` stay trusted.
 7. The run header prints `RunOptions.summary_lines()` — each option set by a flag or an environment variable,
    with its source — and the thread budget (`Threads:`), with polars' and HiGHS' thread counts.
 

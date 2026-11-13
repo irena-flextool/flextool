@@ -245,6 +245,16 @@ def build_parser() -> argparse.ArgumentParser:
             "Folder of the solver option files (highs.opt, gurobi.opt, ...) for each solve (passed on as --solver-config-dir). Default: each solve finds the folder itself (FLEXTOOL_SOLVER_CONFIG_DIR, next to the input database, its workspace)."
         ),
     )
+    parser.add_argument(
+        "--workspace-solver-config-dir",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "The solver option folder of the workspace, as the FlexTool window passes it (passed on to each solve "
+            "as --workspace-solver-config-dir): its files are trusted only when this computer set the workspace up."
+        ),
+    )
     return parser
 
 
@@ -277,6 +287,7 @@ def _config_from_args(args: argparse.Namespace) -> CalibConfig:
         final_write_methods=final_write_methods,
         threads=args.threads if args.threads is not None and args.threads >= 1 else None,
         solver_config_dir=args.solver_config_dir,
+        workspace_solver_config_dir=args.workspace_solver_config_dir,
     )
 
 

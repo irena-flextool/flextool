@@ -127,6 +127,21 @@ Each line says what changes for a model that ran before and what to do; the deta
   databases on your computer with `FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS=1` or
   `"allow_unlisted_parameters": true` in `solver_settings.json` in FlexTool's user settings folder; no database,
   project or command-line flag can switch this on. See "What the database may set" in the solver docs.
+- **Solver option files that FlexTool finds by itself get the database's rules, unless your computer set up their
+  workspace.** A run looks for `solver_config/` next to the input database, in the workspace of a project
+  database, in the Spine Toolbox project folder or in the folder it starts in, and the FlexTool window uses its
+  workspace's. Such a folder may have come with a workspace, model or Toolbox project from someone else, so its
+  `.opt` files now get the same limits as the database's `solver_arguments` (only plain file names, placed in the
+  work folder; no server or licence settings; only listed parameter names), unless the folder is in a workspace
+  this computer set up. FlexTool remembers those workspaces in `solver_settings.json` in its user settings folder,
+  outside the workspace: `flextool-update` and the FlexTool window add their workspace when they create its
+  `solver_config/`, or find nothing there but FlexTool's own default files. A workspace whose option files were
+  already edited is not added by itself, so **if you edited `solver_config/*.opt` and use file paths, server
+  settings or parameters that are not in FlexTool's list there, your runs now stop with a message** naming the file,
+  the line and what to do: tick "Trust this workspace's solver option files" in the FlexTool window (Solver
+  options → On this computer), or pass the folder with `--solver-config-dir` or `FLEXTOOL_SOLVER_CONFIG_DIR`, which
+  are trusted as before (also the way for CI and servers). Option files with plain settings (threads, gaps, time
+  limits) work as before. The run's `Solver config:` line and the run record say whether the folder was trusted.
 - **`solver_precommand` is not run, and a value now gives a warning.** FlexTool 3 ran it in front of CPLEX (for
   example to reserve a floating licence); FlexTool 4 does not run commands stored in a database, for safety: a
   database from someone else could otherwise run any program on your computer. The parameter is kept only so that

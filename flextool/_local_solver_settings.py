@@ -1,12 +1,19 @@
-"""Solver settings of this computer, never of a project or database (item 240 B1).
+"""Solver settings of this computer, never of a project or database (item 240 B1, B3).
 
-One setting today: whether solver parameter names that are not in FlexTool's list of the solver's parameters
-(:mod:`flextool.engine.solve._solver_catalogue`) are taken from input databases.  Off by default.  Two places,
-the environment first:
+``<user config folder>/solver_settings.json`` (:func:`flextool.user_dirs.user_config_dir`, ``"format": 1``) holds:
 
-1. ``FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS`` = ``1`` / ``0`` (also ``true`` / ``false``, ``yes`` / ``no``);
-2. ``<user config folder>/solver_settings.json`` (:func:`flextool.user_dirs.user_config_dir`), key
-   ``allow_unlisted_parameters`` (``true`` / ``false``), with ``"format": 1``.
+- ``allow_unlisted_parameters`` (``true`` / ``false``): whether solver parameter names that are not in FlexTool's
+  list of the solver's parameters (:mod:`flextool.engine.solve._solver_catalogue`) are taken from input databases.
+  Off by default.  ``FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS`` = ``1`` / ``0`` (also ``true`` / ``false``,
+  ``yes`` / ``no``) wins over the file.
+- ``trusted_workspaces`` (a list of folders): the workspaces this computer set up (B3).  A ``solver_config/``
+  folder that a run finds on its own (next to the input database, in the workspace of a project database, in the
+  Spine Toolbox project folder, in the current folder, or the FlexTool window's workspace) has its option files
+  trusted (file paths, server settings) only when the folder it is in is listed.  ``ensure_runtime_files``
+  (``flextool-update``, the FlexTool window's start) lists its workspace only when it creates ``solver_config/``
+  there or finds nothing in it but FlexTool's own default files; the FlexTool window's "Trust this workspace"
+  setting lists it on the user's word.  The list is outside every workspace, so a file that came with a
+  workspace cannot put it there.
 
 Not in the database, a project folder, ``settings.yaml`` or ``projects.yaml``: those travel with a project or a
 workspace.  No command-line flag either: a Spine Toolbox project carries tool command lines and can come from
@@ -21,11 +28,12 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 ALLOW_UNLISTED_ENV = "FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS"
 SETTINGS_FILE_NAME = "solver_settings.json"
 FORMAT = 1
+TRUSTED_WORKSPACES_KEY = "trusted_workspaces"
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _FALSE = frozenset({"0", "false", "no", "off"})
 
@@ -107,3 +115,105 @@ def allow_unlisted_record(environ: Mapping[str, str] | None = None) -> dict[str,
         return allow_unlisted_parameters(environ).record()
     except LocalSolverSettingsError as exc:
         return {"value": None, "source": str(exc)}
+
+
+def update_settings_file(change: Callable[[dict], None], path: Path | None = None) -> None:
+    """Read the settings file, let *change* edit its content in place, and write it back (under its lock, through a
+    temporary file).  A damaged file, or one of a newer format, is not replaced: :class:`LocalSolverSettingsError`."""
+    from flextool.assistant._files import LockTimeout, locked, write_text_atomic
+
+    path = settings_path() if path is None else path
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with locked(path):
+            data = dict(read_settings_file(path))
+            change(data)
+            data["format"] = FORMAT
+            write_text_atomic(path, json.dumps(data, indent=1, ensure_ascii=False, sort_keys=True) + "\n")
+    except LockTimeout as exc:
+        raise LocalSolverSettingsError(f"FlexTool's solver settings file {path}: {exc}") from exc
+    except OSError as exc:
+        raise LocalSolverSettingsError(f"FlexTool cannot write its solver settings file {path} ({exc}).") from exc
+
+
+# --- workspaces this computer set up (B3) --------------------------------------------------------------------
+
+
+def workspace_key(folder: str | os.PathLike) -> str:
+    """How a workspace is listed: its absolute path with symbolic links resolved, in the case the platform
+    compares (``os.path.normcase``: lower case on Windows)."""
+    try:
+        resolved = Path(folder).resolve()
+    except (OSError, RuntimeError):
+        resolved = Path(os.path.abspath(folder))
+    return os.path.normcase(str(resolved))
+
+
+def trusted_workspaces(path: Path | None = None) -> tuple[str, ...]:
+    """The workspaces this computer set up, as listed; raises :class:`LocalSolverSettingsError` for a damaged file
+    or a value that is not a list of folder names."""
+    path = settings_path() if path is None else path
+    value = read_settings_file(path).get(TRUSTED_WORKSPACES_KEY, [])
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+        raise LocalSolverSettingsError(
+            f"FlexTool's solver settings file {path}: {TRUSTED_WORKSPACES_KEY} is not a list of folder names.")
+    return tuple(value)
+
+
+def is_trusted_workspace(folder: str | os.PathLike, path: Path | None = None) -> bool:
+    """Whether *folder* is a workspace this computer set up: listed by :func:`workspace_key`, or the same folder on
+    disk as a listed one (macOS keeps a path's case as typed although its disks compare without case).  Raises
+    :class:`LocalSolverSettingsError` when the settings file cannot be read."""
+    listed = trusted_workspaces(path)
+    if not listed:
+        return False
+    key = workspace_key(folder)
+    if key in listed:
+        return True
+    for entry in listed:
+        try:
+            if os.path.samefile(entry, folder):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def add_trusted_workspace(folder: str | os.PathLike, path: Path | None = None) -> bool:
+    """List *folder* as a workspace this computer set up; ``False`` when it already was."""
+    key = workspace_key(folder)
+    added = False
+
+    def change(data: dict) -> None:
+        nonlocal added
+        current = data.get(TRUSTED_WORKSPACES_KEY, [])
+        current = [item for item in current if isinstance(item, str) and item] if isinstance(current, list) else []
+        if key not in current:
+            current.append(key)
+            added = True
+        data[TRUSTED_WORKSPACES_KEY] = current
+
+    update_settings_file(change, path)
+    return added
+
+
+def remove_trusted_workspace(folder: str | os.PathLike, path: Path | None = None) -> None:
+    """Take *folder* off the list of workspaces this computer set up."""
+    key = workspace_key(folder)
+
+    def change(data: dict) -> None:
+        current = data.get(TRUSTED_WORKSPACES_KEY, [])
+        current = current if isinstance(current, list) else []
+        kept = []
+        for item in current:
+            if not isinstance(item, str) or item == key:
+                continue
+            try:
+                if os.path.samefile(item, folder):
+                    continue
+            except OSError:
+                pass
+            kept.append(item)
+        data[TRUSTED_WORKSPACES_KEY] = kept
+
+    update_settings_file(change, path)

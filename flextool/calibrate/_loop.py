@@ -109,6 +109,9 @@ class CalibConfig:
     ``solver_config_dir``   — folder of the solver option files of each
                               solve (``--solver-config-dir``); ``None``
                               sends no flag.
+    ``workspace_solver_config_dir`` — the same for the FlexTool window's
+                              workspace folder (``--workspace-solver-config-dir``:
+                              trusted only when this computer set it up).
     """
 
     iterations: int
@@ -126,6 +129,7 @@ class CalibConfig:
     final_write_methods: tuple[str, ...] = ("csv",)
     threads: int | None = None
     solver_config_dir: Path | None = None
+    workspace_solver_config_dir: Path | None = None
 
 
 @dataclass
@@ -451,6 +455,7 @@ def run_calibration(
             cache_dir=config.warm_start_cache_dir,
             threads=config.threads,
             solver_config_dir=config.solver_config_dir,
+            workspace_solver_config_dir=config.workspace_solver_config_dir,
         )
         solve_seconds = time.time() - run.started_at
         iterations_run = k + 1

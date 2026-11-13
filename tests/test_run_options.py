@@ -27,6 +27,7 @@ SAMPLES: dict[str, tuple[object, str, object, object]] = {
     "warm_start": (True, "1", True, True),
     "basis_cache_dir": ("/flag/cache", "/env/cache", "/env/cache", "/db/cache"),
     "solver_config_dir": ("/flag/cfg", "/env/cfg", "/env/cfg", "/db/cfg"),
+    "workspace_solver_config_dir": ("/flag/ws/solver_config", "", None, "/db/ws/solver_config"),
     "benders_workers": (3, "5", 5, 2),
     "benders_in_out_weight": (0.5, "0.3", 0.3, 0.7),
 }
@@ -207,7 +208,7 @@ def test_to_argv_round_trips_through_the_run_parser():
         "threads": 5, "highs_threads": 3, "presolve": "off", "solver_log_level": "silent", "solver_time_limit": 12.5,
         "solver_mip_gap": 0.0005, "scaling": "basic", "user_bound_scale": -3,
         "save_memory": True, "warm_start": True, "basis_cache_dir": "/tmp/cache", "benders_workers": 2,
-        "solver_config_dir": "/tmp/solver_config",
+        "solver_config_dir": "/tmp/solver_config", "workspace_solver_config_dir": "/tmp/ws/solver_config",
     }
     flagged = {key for key, spec in OPTIONS.items() if spec.flag}
     assert set(given) == flagged

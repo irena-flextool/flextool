@@ -206,6 +206,12 @@ OPTIONS: dict[str, OptionSpec] = {
                  "database, in its workspace, the Spine Toolbox project folder and the current folder",
         ),
         _spec(
+            key="workspace_solver_config_dir", flag="--workspace-solver-config-dir", env=None, db=None,
+            parse=_path_text, default=None, audience="user",
+            help="the solver option folder of the launcher's workspace (the FlexTool window passes it); its files "
+                 "are trusted only when the workspace is one this computer set up",
+        ),
+        _spec(
             key="scaling", flag="--scaling", env="FLEXTOOL_SCALING", db="solve.scaling",
             parse=_choice("off", "solver_only", "basic", "full"), default="full", audience="user",
             help="autoscaler strategy (off / solver_only / basic / full)",

@@ -62,7 +62,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from flextool._child_python import child_env
-from flextool._solver_config_source import workspace_solver_config_dir
+from flextool._solver_config_source import workspace_solver_config_flag
 from flextool.gui.calibrate_commands import (
     build_calibrate_command,
     build_rp_command,
@@ -151,6 +151,16 @@ class CalibJobSpec:
 # --------------------------------------------------------------------------- #
 
 _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def solver_config_kwargs() -> dict[str, str]:
+    """The solver option folder of a calibration the FlexTool window starts, as
+    :func:`~flextool.gui.calibrate_commands.build_calibrate_command` takes it: ``solver_config_dir`` when the user
+    set ``FLEXTOOL_SOLVER_CONFIG_DIR``, else ``workspace_solver_config_dir`` (the workspace's ``solver_config``,
+    trusted only when this computer set the workspace up; item 240 B3)."""
+    flag, folder = workspace_solver_config_flag()
+    key = "solver_config_dir" if flag == "--solver-config-dir" else "workspace_solver_config_dir"
+    return {key: str(folder)}
 
 
 def _safe_name(scenario: str) -> str:
@@ -470,7 +480,7 @@ def launch_calibration_jobs(
             debug=spec.debug,
             final_write_methods=spec.final_write_methods,
             threads=mgr.execution_limits.max_cores_per_job,
-            solver_config_dir=str(workspace_solver_config_dir()),
+            **solver_config_kwargs(),
         )
         display_name = f"Calibrate: {spec.scenario}"
         action_key = f"calibrate:{spec.scenario}"
