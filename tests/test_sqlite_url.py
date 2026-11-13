@@ -3,7 +3,8 @@ with spinedb-api 0.36.7 (reads a URL string as it is) and 0.36.8 (percent-decode
 
 from __future__ import annotations
 
-from pathlib import Path
+import sys
+from pathlib import Path, PureWindowsPath
 
 import pytest
 from spinedb_api.filters.scenario_filter import scenario_filter_config
@@ -43,20 +44,64 @@ def test_string_url_keeps_the_path_as_it_is(path):
     assert sqlite_url(Path(path)).database == str(Path(path))
 
 
+#: An absolute path of this system holding '#', '%25', spaces and a non-ASCII letter.  ``/tmp/...`` is absolute
+#: on POSIX only; on Windows it is on the current drive (``D:\tmp\...``), and ``str`` gives backslashes there.
+HOSTILE_ABSOLUTE = Path("/tmp/G #2 ä%25x/t.sqlite").absolute()
+
+
 def test_read_only_url_keeps_its_encoding_and_query():
-    url = read_only_sqlite_url_string(Path("/tmp/G #2 ä%25x/t.sqlite"))
+    url = read_only_uri_of_posix("/tmp/G #2 ä%25x/t.sqlite")
     assert url == "sqlite:///file:/tmp/G%20%232%20%C3%A4%2525x/t.sqlite?mode=ro&uri=true"
     parsed = to_sqlalchemy_url(url)
     assert parsed.database == "file:/tmp/G%20%232%20%C3%A4%2525x/t.sqlite"
     assert dict(parsed.query) == {"mode": "ro", "uri": "true"}
-    assert read_only_sqlite_url(Path("/tmp/G #2 ä%25x/t.sqlite")) == parsed
+    # A path object is made absolute on this system first (on Windows a drive is put in front).
+    assert read_only_sqlite_url_string(HOSTILE_ABSOLUTE) == read_only_uri_of_posix(HOSTILE_ABSOLUTE.as_posix())
+    assert read_only_sqlite_url(HOSTILE_ABSOLUTE) == to_sqlalchemy_url(read_only_sqlite_url_string(HOSTILE_ABSOLUTE))
+
+
+@pytest.mark.parametrize(("windows_path", "uri_path"), [
+    ("C:\\Users\\G #2 ä%25x\\t.sqlite", "/C:/Users/G%20%232%20%C3%A4%2525x/t.sqlite"),
+    ("c:/a b/x.sqlite", "/c:/a%20b/x.sqlite"),
+    ("\\\\server\\my share\\G #1\\x.sqlite", "////server/my%20share/G%20%231/x.sqlite"),
+])
+def test_read_only_uri_of_a_windows_path(windows_path, uri_path):
+    """Windows semantics checked on any system (``PureWindowsPath`` is ntpath): a drive path becomes
+    ``file:/C:/...`` and a UNC path ``file:////server/share/...``, the forms SQLite's Windows VFS opens; reading
+    the URI back gives the same Windows path."""
+    posix = PureWindowsPath(windows_path).as_posix()
+    url = read_only_uri_of_posix(posix)
+    assert url == "sqlite:///file:" + uri_path + "?mode=ro&uri=true"
+    assert PureWindowsPath(str(sqlite_file_path(url))) == PureWindowsPath(windows_path)
+
+
+@pytest.mark.parametrize("windows_path", [
+    "C:\\Users\\A B\\G #2 ä%25x\\t.sqlite",
+    "C:/Users/A B/G #2/t.sqlite",
+    "\\\\server\\share\\G #1\\x.sqlite",
+    "\\tmp\\G #2\\t.sqlite",
+])
+def test_windows_paths_keep_drive_unc_and_backslashes(windows_path, monkeypatch):
+    """A Windows path (``str`` of a ``WindowsPath``: backslashes) in a URL string is read back as it is, also after
+    spinedb-api put a filter query in front of a ``#`` while running on Windows (its slash fix-up looks at
+    ``sys.platform``, so that is set to ``win32`` here)."""
+    url = sqlite_url_string(PureWindowsPath(windows_path))
+    assert url == "sqlite:///" + str(PureWindowsPath(windows_path))
+    monkeypatch.setattr(sys, "platform", "win32")
+    filtered = append_filter_config(url, scenario_filter_config("S"))
+    monkeypatch.undo()
+    for each in (url, filtered):
+        parsed = to_sqlalchemy_url(each)
+        assert parsed.database == str(PureWindowsPath(windows_path)), each
+        assert PureWindowsPath(str(sqlite_file_path(each))) == PureWindowsPath(windows_path), each
+    assert to_sqlalchemy_url(filtered).query["spinedbfilter"] == "cfg:scenario:S"
 
 
 def test_filter_query_in_front_of_a_hash_belongs_to_the_path():
     # spinedb-api's append_filter_config reads '#' as a fragment and puts the query in front of it.
-    url = append_filter_config("sqlite:////tmp/G #2 ä%25x/t.sqlite", scenario_filter_config("S"))
+    url = append_filter_config(sqlite_url_string(HOSTILE_ABSOLUTE), scenario_filter_config("S"))
     parsed = to_sqlalchemy_url(url)
-    assert parsed.database == "/tmp/G #2 ä%25x/t.sqlite"
+    assert parsed.database == str(HOSTILE_ABSOLUTE)
     assert parsed.query["spinedbfilter"] == "cfg:scenario:S"
 
 
@@ -83,9 +128,9 @@ def test_file_path_of_every_url_form(path):
 
 
 def test_file_path_of_a_filter_before_a_hash_is_not_cut():
-    url = append_filter_config("sqlite:////tmp/G #2 ä%25x/t.sqlite", scenario_filter_config("S"))
+    url = append_filter_config(sqlite_url_string(HOSTILE_ABSOLUTE), scenario_filter_config("S"))
     assert url.index("?spinedbfilter=") < url.index("#2")
-    assert sqlite_file_path(url) == Path("/tmp/G #2 ä%25x/t.sqlite")
+    assert sqlite_file_path(url) == HOSTILE_ABSOLUTE
 
 
 def test_file_path_of_other_databases_is_none():
@@ -99,8 +144,8 @@ def test_path_extractors_use_the_shared_helper():
     from flextool.run_record._status import db_path_from_url
     from flextool.update_flextool.frozen import sqlite_path_from
 
-    url = append_filter_config("sqlite:////tmp/G #2 ä%25x/t.sqlite", scenario_filter_config("S"))
-    expected = Path("/tmp/G #2 ä%25x/t.sqlite")
+    url = append_filter_config(sqlite_url_string(HOSTILE_ABSOLUTE), scenario_filter_config("S"))
+    expected = HOSTILE_ABSOLUTE
     assert db_path_from_url(url) == expected
     assert input_db_filesystem_path(url) == expected
     assert sqlite_path_from(url) == expected
