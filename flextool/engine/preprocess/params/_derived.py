@@ -2983,9 +2983,8 @@ def _resolve_synthetic_solve(source: "InputSource",
 
     Δ.19 — flextool's orchestrator synthesises per-period sub-solve
     names at runtime by joining a Spine ``solve`` name with one of its
-    ``invest_periods`` anchor keys (see ``_solve_config.py:618-660`` —
-    ``periods_to_tuples`` walks the outer Map and calls
-    ``duplicate_solve(<base>, <base>_<anchor>)``).  These synthetic
+    2-D period map's outer keys (``SolveConfig._split_2d_period_maps``
+    makes ``<base>_<anchor>`` with ``derive_solve(<base>, ...)``).  These synthetic
     names don't exist as rows in Spine; the per-solve override chain
     would otherwise return None for every ``solve``-keyed parameter.
 

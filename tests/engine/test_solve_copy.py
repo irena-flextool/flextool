@@ -278,3 +278,53 @@ def test_forecasts_of_no_period_of_a_split_solve_stop_the_run(tmp_path_factory):
                   "'st_p2' has only the period(s) p2", "at its first time step: p2/t03",
                   "leave stochastic_branches out of the solve for p2")
         assert [part in str(err.value) for part in advice] == [mode == "split"] * len(advice), str(err.value)
+
+
+# ---------------------------------------------------------------------------
+# The solver settings of a split solve (feat/solver-security merged with the copy step)
+# ---------------------------------------------------------------------------
+
+
+def _gurobi_split(time_limit_name: str) -> dict:
+    """Model A split, on Gurobi with ``solver_mip_gap`` 0.2 and ``solver_arguments`` {*time_limit_name*: 800}."""
+    return scm.model_a("split", solve_rows=[
+        ["solver", scm.pack("gurobi", "str")],
+        ["solver_mip_gap", scm.pack(0.2, "float")],
+        ["solver_arguments", scm.pack(scm.pmap([(time_limit_name, 800.0)]), "map")]])
+
+
+def test_a_split_solve_runs_on_its_solves_solver_and_is_checked_as_it(tmp_path):
+    """The split solves are the solves the run checks before its first solve (item 240 B1 / B2): each has the
+    database solve's solver, ``solver_arguments`` and ``solver_mip_gap`` (``solver_config_for`` agrees with
+    ``solver_settings.solvers``), and a refused option is reported once, under the database solve's name."""
+    from flextool.engine.solve._solver_dispatch import FlexToolUserError, check_run_solver_options
+
+    sc = _config(_gurobi_split("TimeLimit"), tmp_path / "ok")
+    assert sc.solves_in_run() == ["inv_p1", "inv_p2"]
+    assert sc.database_solve_names() == {"inv_p1": "inv", "inv_p2": "inv"}
+    parent = sc.solver_config_for("inv")
+    assert (parent.name, parent.mip_gap) == ("gurobi", 0.2)
+    for solve in ("inv_p1", "inv_p2"):
+        assert sc.solver_config_for(solve) == parent
+        assert sc.solver_settings.arguments[solve] == sc.solver_settings.arguments["inv"]
+    check_run_solver_options(sc.solver_settings, solves=sc.solves_in_run(), shown_as=sc.database_solve_names())
+
+    bad = _config(_gurobi_split("NoSuchParameter"), tmp_path / "bad")
+    with pytest.raises(FlexToolUserError, match="solver_arguments of solve inv: ") as err:
+        check_run_solver_options(bad.solver_settings, solves=bad.solves_in_run(), shown_as=bad.database_solve_names())
+    assert "inv_p1" not in str(err.value) and "inv_p2" not in str(err.value), str(err.value)
+
+
+def test_solves_in_run_reads_a_contained_solve_given_as_one_name():
+    """``contains_solves`` may hold one name instead of a list (a partly built config); both are followed, in
+    order, each solve once."""
+    from types import SimpleNamespace
+
+    from flextool.engine.input._solve_config import SolveConfig
+
+    cfg = SimpleNamespace(model_solve={"m": ["invest", "dispatch"]},
+                          contains_solves={"invest": "month", "month": ["week", "invest"]},
+                          database_solves=["invest", "month", "week", "dispatch", "unused"])
+    assert SolveConfig.solves_in_run(cfg) == ["invest", "dispatch", "month", "week"]
+    cfg.model_solve = {}
+    assert SolveConfig.solves_in_run(cfg) == ["invest", "month", "week", "dispatch", "unused"]
