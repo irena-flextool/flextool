@@ -473,7 +473,7 @@ import re  # noqa: E402
 from flextool.cli.cmd_run_flextool import build_parser  # noqa: E402
 from flextool.engine.input._solve_config import SolverConfig  # noqa: E402
 from flextool.engine.solve._acceptance import classify_acceptance  # noqa: E402
-from flextool.engine.solve._solver_dispatch import FlexToolUserError, run_one_solve  # noqa: E402
+from flextool.engine.solve._solver_dispatch import run_one_solve  # noqa: E402
 from flextool.run_options import RunOptions  # noqa: E402
 
 _GUROBI_TIME_LIMIT_LOG = (
@@ -787,11 +787,3 @@ def test_flags_reach_gurobi_and_set_the_watchdog(tmp_path, monkeypatch) -> None:
     (argv,) = _argv_of_calls(tmp_path)
     assert argv[:-2] == ["Threads=0", "MIPGap=0.001", "TimeLimit=60"]
     assert timeouts == [720.0]
-
-
-def test_xpress_refuses_a_mip(monkeypatch) -> None:
-    """The Xpress script runs ``lpoptimize``, which returns the LP relaxation of a MIP: refused up front."""
-    monkeypatch.setattr(sps, "_find_solver_binary", lambda name: pytest.fail("no solver may be started"))
-    with pytest.raises(FlexToolUserError, match="integer variables"):
-        run_one_solve(_mip_lp(["A", "B"]), SolverConfig(name="xpress"), solve_name="unit",
-                      run_options=RunOptions.from_env({}))

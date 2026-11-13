@@ -4,7 +4,7 @@ Invocation, as FlexTool builds it (``_xpress_script``): no arguments, a command 
 
     setControl <NAME> <value>      (one per resolved parameter)
     readprob <solve>.mps
-    lpoptimize
+    lpoptimize                     (mipoptimize for a MIP)
     writeslxsol <solve>.sol
     writeprtsol <solve>.sol
     quit
@@ -15,9 +15,11 @@ What it does:
   controls are upper case), the value parsed for the control's type (an integer control refuses ``1.5`` and
   ``1.0``) and set.  An unknown control or a bad value prints an
   error line and the script goes on without it.
-* ``readprob`` / ``lpoptimize``: ``problem.readProb`` / ``problem.lpOptimize``.  On a MIP, ``lpoptimize``
-  solves only the LP relaxation, as the console command does (FlexTool refuses MIPs on Xpress before it gets
-  here).  The package's log goes to stdout.
+* ``readprob`` / ``lpoptimize`` / ``mipoptimize``: ``problem.readProb`` / ``problem.lpOptimize`` /
+  ``problem.mipOptimize``.  On a MIP, ``lpoptimize`` would solve only the LP relaxation, as the console command
+  does; FlexTool sends ``mipoptimize`` for a MIP.  The package's log goes to stdout.  After ``mipoptimize`` the
+  record holds ``mipstatus`` and the relative gap ``|MIPOBJVAL - BESTBOUND| / max(|MIPOBJVAL|, |BESTBOUND|)``
+  (``None`` without an integer solution).
 * ``writeslxsol`` / ``writeprtsol``: ``problem.writeSlxSol`` / ``problem.writePrtSol`` — the library writers
   the console commands call.  The package writes the SLX file under the given name and the print file with
   ``.prt`` appended; ``_parse_xpress_sol`` looks for both spellings.
@@ -27,9 +29,18 @@ What it does NOT reproduce:
 * Whether the console takes ``setControl <NAME> <value>`` at all, and its parsing of names (case), values
   (``1.0`` for an integer control) and paths.
   The real console's control syntax is the first thing to check with a licensed ``optimizer``.
-* Console-only log lines, in particular whatever the console prints when ``MAXTIME`` stops a solve (FlexTool
+* Console-only log lines, in particular whatever the console prints when ``MAXTIME`` stops an LP (FlexTool
   looks for ``MAXTIME limit reached`` / ``*** Time limit reached ***`` / ``time limit hit``; the library log
   here says ``Problem is unfinished``).
+
+Library-verified, console-unverified (xpress 9.8.1, community licence): how a MIP search ends, which
+``_parse_xpress_sol`` reads from the log because the print solution cannot tell.  A MIP stopped by ``MAXTIME`` /
+``MAXNODE`` / ``MAXMIPSOL`` logs ``STOPPING - MAXTIME limit reached (...)`` (or ``MAXNODE`` / ``MAXMIPSOL``) and
+``*** Search unfinished ***``, yet its print solution still says ``Optimal solution found``.  A finished search
+logs ``*** Search completed ***``; an infeasible MIP adds ``Problem is integer infeasible`` and the writers raise
+``?422 Solution is not available`` (the SLX file then holds only ``ENDATA``).  A search stopped before any integer
+solution logs ``Number of solutions found / nodes : 0 / <n>`` and no ``Final MIP objective`` line, and the SLX
+file holds the LP relaxation.  ``writeSlxSol`` / ``writePrtSol`` after a MIP write the integer solution.
 * The console's exit code and its banner.
 """
 from __future__ import annotations
@@ -77,6 +88,14 @@ def main(stdin_text: str) -> int:
             elif command == "lpoptimize":
                 prob.lpOptimize()
                 entry["status"] = int(prob.attributes.lpstatus)
+            elif command == "mipoptimize":
+                prob.mipOptimize()
+                entry["status"] = int(prob.attributes.mipstatus)
+                entry["mip_gap"] = None
+                if int(prob.attributes.mipsols) > 0:
+                    obj, bound = float(prob.attributes.mipobjval), float(prob.attributes.bestbound)
+                    scale = max(abs(obj), abs(bound))
+                    entry["mip_gap"] = abs(obj - bound) / scale if scale > 0.0 else 0.0
             elif command == "writeslxsol":
                 prob.writeSlxSol(single_path("writeslxsol", rest))
             elif command == "writeprtsol":

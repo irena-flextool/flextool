@@ -844,7 +844,7 @@ def _check_params(solver: str, params: CommercialParams) -> None:
 
 
 def _gurobi_script(
-    binary: Path, mps_path: Path, sol_path: Path, params: CommercialParams = (),
+    binary: Path, mps_path: Path, sol_path: Path, params: CommercialParams = (), *, is_mip: bool = False,
 ) -> tuple[list[str], str | None]:
     """``gurobi_cl [<Name>=<value> ...] ResultFile=<sol> <mps>``.
 
@@ -853,7 +853,8 @@ def _gurobi_script(
     has no parameter-file argument: ``ReadParams=<file>`` is reported as
     ``Unknown parameter: 'ReadParams' (ignored)`` and the solve then runs
     at Gurobi's defaults.)  The same pairs are written next to the MPS as the
-    record of what was passed (:func:`_write_commercial_opt_file`).
+    record of what was passed (:func:`_write_commercial_opt_file`).  *is_mip* is not used: ``gurobi_cl`` solves
+    an LP and a MIP alike.
     """
     _check_params("gurobi", params)
     argv: list[str] = [str(binary)]
@@ -866,12 +867,13 @@ def _gurobi_script(
 
 
 def _cplex_script(
-    binary: Path, mps_path: Path, sol_path: Path, params: CommercialParams = (),
+    binary: Path, mps_path: Path, sol_path: Path, params: CommercialParams = (), *, is_mip: bool = False,
 ) -> tuple[list[str], str]:
     """CPLEX interactive optimizer: pipe commands on stdin.
 
     Each of *params* becomes ``set <name> <value>``, emitted *before* the ``read``/``optimize``
-    pair so parameter values are in effect when the model loads.
+    pair so parameter values are in effect when the model loads.  *is_mip* is not used: ``optimize`` solves an
+    LP and a MIP alike.
     """
     _check_params("cplex", params)
     pre = [f"set {name} {value}" for name, value in params]
@@ -885,18 +887,19 @@ def _cplex_script(
 
 
 def _xpress_script(
-    binary: Path, mps_path: Path, sol_path: Path, params: CommercialParams = (),
+    binary: Path, mps_path: Path, sol_path: Path, params: CommercialParams = (), *, is_mip: bool = False,
 ) -> tuple[list[str], str]:
     """Xpress optimizer console script via stdin.
 
     Each of *params* becomes ``setControl <NAME> <value>``, emitted *before* ``readprob``/
-    ``lpoptimize`` so controls are in effect for the solve.
+    ``lpoptimize`` so controls are in effect for the solve.  A MIP (*is_mip*) is solved by ``mipoptimize``:
+    ``lpoptimize`` would solve only its LP relaxation.  An LP keeps ``lpoptimize``.
     """
     _check_params("xpress", params)
     pre = [f"setControl {name} {value}" for name, value in params]
     fixed = [
         f"readprob {mps_path}",
-        "lpoptimize",
+        "mipoptimize" if is_mip else "lpoptimize",
         # Force the MPS-like **SLX** solution (name-based, whitespace-
         # safe) for the primal — Xpress' default ``writesol`` emits an
         # index-based ``.asc``/``.hdr`` CSV pair with no usable
@@ -911,11 +914,12 @@ def _xpress_script(
 
 
 def _copt_script(
-    binary: Path, mps_path: Path, sol_path: Path, params: CommercialParams = (),
+    binary: Path, mps_path: Path, sol_path: Path, params: CommercialParams = (), *, is_mip: bool = False,
 ) -> tuple[list[str], str]:
     """COPT's ``copt_cmd`` script via stdin.
 
-    Each of *params* becomes ``set <ParamName> <value>``, emitted *before* ``read``/``optimize``.
+    Each of *params* becomes ``set <ParamName> <value>``, emitted *before* ``read``/``optimize``.  *is_mip* is
+    not used: ``optimize`` solves an LP and a MIP alike.
     """
     _check_params("copt", params)
     pre = [f"set {name} {value}" for name, value in params]
@@ -1118,6 +1122,22 @@ _COPT_GAP = re.compile(r"^Best gap\s*:\s*([-+\d.eE]+)%", re.MULTILINE)
 _CPLEX_GAP = re.compile(r"gap\s*=\s*[^,()]*,\s*([-+\d.eE]+)%")
 _XPRESS_TIME_LIMIT = re.compile(r"MAXTIME limit reached|\*\*\* Time limit reached \*\*\*|time limit hit",
                                 re.IGNORECASE)
+#: How an Xpress MIP search ended, from its log.  The print solution cannot tell: after a search stopped by a
+#: limit it still says ``Optimal solution found`` (that is the LP at the last node), and after a search stopped
+#: before any integer solution the SLX file holds the LP relaxation.  Verified with the ``xpress`` 9.8.1 Python
+#: package (the library's log, which the console prints); the console's own wording is not verified.
+#: ``STOPPING - MAXNODE limit reached (MAXNODE=5  nodes=5).`` / ``... MAXMIPSOL ...`` / ``... MAXTIME ...``.
+_XPRESS_MIP_STOP = re.compile(r"^\s*STOPPING - (MAXTIME|MAXNODE|MAXMIPSOL) limit reached", re.MULTILINE)
+_XPRESS_MIP_STOP_STATUS = {"MAXTIME": "TIME_LIMIT", "MAXNODE": "NODE_LIMIT", "MAXMIPSOL": "SOLUTION_LIMIT"}
+_XPRESS_SEARCH_COMPLETED = re.compile(r"^\s*\*\*\* Search completed \*\*\*", re.MULTILINE)
+_XPRESS_SEARCH_UNFINISHED = re.compile(r"^\s*\*\*\* Search unfinished \*\*\*", re.MULTILINE)
+_XPRESS_INTEGER_INFEASIBLE = re.compile(r"^\s*Problem is integer infeasible\b", re.MULTILINE)
+#: ``  Number of solutions found / nodes   :        11 /      4693``: the integer solutions of the search.
+_XPRESS_MIP_SOLUTIONS = re.compile(r"^\s*Number of solutions found / nodes\s*:\s*(\d+)\s*/", re.MULTILINE)
+#: ``Final MIP objective                   : 2.300000000000000e+01`` (written only when a solution exists) and
+#: ``Final MIP bound                       : 0.000000000000000e-01``.
+_XPRESS_FINAL_OBJECTIVE = re.compile(r"^\s*Final MIP objective\s*:\s*(\S+)", re.MULTILINE)
+_XPRESS_FINAL_BOUND = re.compile(r"^\s*Final MIP bound\s*:\s*(\S+)", re.MULTILINE)
 #: ``gurobi_cl``'s message for a parameter name it does not know (it then solves on without it).
 _GUROBI_UNKNOWN_PARAMETER = re.compile(r"Unknown parameter:?\s*'([^']+)'")
 
@@ -1172,7 +1192,7 @@ def _parse_gurobi_json(path: Path) -> _ParsedSolution | None:
     )
 
 
-def _parse_gurobi_sol(path: Path, stdout: str = "") -> _ParsedSolution:
+def _parse_gurobi_sol(path: Path, stdout: str = "", *, is_mip: bool = False) -> _ParsedSolution:
     """Parse a Gurobi result file: JSON (status, gap, non-zero values) first,
     else the ``.sol`` text format (values only).
 
@@ -1280,7 +1300,7 @@ def _copt_status(stdout: str) -> str | None:
     return None
 
 
-def _parse_copt_sol(path: Path, stdout: str = "") -> _ParsedSolution:
+def _parse_copt_sol(path: Path, stdout: str = "", *, is_mip: bool = False) -> _ParsedSolution:
     """COPT's ``.sol`` has Gurobi's text layout and no status; the status comes from the console
     (:func:`_copt_status`).
 
@@ -1360,7 +1380,7 @@ def _cplex_status(status_str: str, status_value: int | None = None) -> str:
     return "OTHER"
 
 
-def _parse_cplex_sol(path: Path, stdout: str = "") -> _ParsedSolution:
+def _parse_cplex_sol(path: Path, stdout: str = "", *, is_mip: bool = False) -> _ParsedSolution:
     """Parse CPLEX XML ``.sol`` via :mod:`xml.etree.ElementTree`; the gap of a
     MIP stopped by a limit comes from the console (``gap = ..., X%``).
 
@@ -1435,7 +1455,7 @@ def _parse_cplex_sol(path: Path, stdout: str = "") -> _ParsedSolution:
     return _ParsedSolution(status, objective, (primal or None), (dual or None), gap)
 
 
-def _parse_xpress_sol(path: Path, stdout: str = "") -> _ParsedSolution:
+def _parse_xpress_sol(path: Path, stdout: str = "", *, is_mip: bool = False) -> _ParsedSolution:
     """Parse the Xpress solution written by :func:`_xpress_script`.
 
     We force Xpress to emit the MPS-like **SLX** solution (name-based,
@@ -1449,6 +1469,9 @@ def _parse_xpress_sol(path: Path, stdout: str = "") -> _ParsedSolution:
     SLX body lines look like ``  C C0000001   10`` (indicator, name,
     value); the print solution carries one
     ``Objective function value is <v>`` line.
+
+    A MIP (*is_mip*) is judged by its log (:func:`_xpress_mip_status`), never by the print solution: its values
+    are used only when the log shows an integer solution.
     """
     def _first_existing(cands: list[Path]) -> Path | None:
         for c in cands:
@@ -1495,6 +1518,8 @@ def _parse_xpress_sol(path: Path, stdout: str = "") -> _ParsedSolution:
             except ValueError:
                 objective = None
 
+    if is_mip:
+        return _xpress_mip_result(stdout, primal, objective)
     if not primal:
         status = "OTHER"
     elif _XPRESS_TIME_LIMIT.search(stdout):
@@ -1506,6 +1531,64 @@ def _parse_xpress_sol(path: Path, stdout: str = "") -> _ParsedSolution:
     return _ParsedSolution(status, objective, (primal or None), None)
 
 
+def _last_float(pattern: "re.Pattern[str]", text: str) -> float | None:
+    """The number of *pattern*'s last match in *text*, else ``None``."""
+    found = pattern.findall(text)
+    if not found:
+        return None
+    try:
+        return float(found[-1])
+    except ValueError:
+        return None
+
+
+def _xpress_mip_status(stdout: str) -> str:
+    """How an Xpress MIP search ended, from its log (library-verified wording, see :data:`_XPRESS_MIP_STOP`).
+
+    ``Problem is integer infeasible`` → ``INFEASIBLE``; a ``STOPPING - <limit> limit reached`` line → that
+    limit's status; ``*** Search completed ***`` → ``OPTIMAL``; any other ``*** Search unfinished ***`` →
+    ``UNFINISHED``; a log with none of these → ``OTHER``.
+    """
+    if _XPRESS_INTEGER_INFEASIBLE.search(stdout):
+        return "INFEASIBLE"
+    stops = _XPRESS_MIP_STOP.findall(stdout)
+    if stops:
+        return _XPRESS_MIP_STOP_STATUS[stops[-1]]
+    if _XPRESS_TIME_LIMIT.search(stdout):
+        return "TIME_LIMIT"
+    if _XPRESS_SEARCH_UNFINISHED.search(stdout):
+        return "UNFINISHED"
+    if _XPRESS_SEARCH_COMPLETED.search(stdout):
+        return "OPTIMAL"
+    return "OTHER"
+
+
+def _xpress_mip_result(stdout: str, primal: dict[str, float], prt_objective: float | None) -> _ParsedSolution:
+    """The result of an Xpress MIP: the SLX values count only when the log shows an integer solution
+    (``Number of solutions found`` above 0, or a ``Final MIP objective`` line).  Without one the SLX file holds
+    the LP relaxation (or nothing), so there is no solution and the run stops.  The objective is the log's
+    ``Final MIP objective`` (full precision), else the print solution's; the relative gap of a search stopped by
+    a limit is ``|objective - bound| / max(|objective|, |bound|)`` (Xpress' ``MIPRELSTOP`` measure) from the
+    log's final objective and bound."""
+    status = _xpress_mip_status(stdout)
+    final_objective = _last_float(_XPRESS_FINAL_OBJECTIVE, stdout)
+    counts = _XPRESS_MIP_SOLUTIONS.findall(stdout)
+    has_solution = (int(counts[-1]) > 0) if counts else final_objective is not None
+    if status == "INFEASIBLE" or not has_solution or not primal:
+        if status in ("OPTIMAL", "OTHER"):
+            status = "NO_INTEGER_SOLUTION"
+        return _ParsedSolution(status, None, None, None)
+    objective = final_objective if final_objective is not None else prt_objective
+    gap = None
+    bound = _last_float(_XPRESS_FINAL_BOUND, stdout)
+    if status in LIMIT_SHIM_STATUSES and objective is not None and bound is not None:
+        scale = max(abs(objective), abs(bound))
+        gap = abs(objective - bound) / scale if scale > 0.0 else 0.0
+    return _ParsedSolution(status, objective, primal, None, gap)
+
+
+#: Each parser takes ``(path, stdout, *, is_mip)``; only Xpress' reads *is_mip* (its print solution cannot tell
+#: how a MIP search ended).
 _PARSERS = {
     "gurobi": _parse_gurobi_sol,
     "cplex": _parse_cplex_sol,
@@ -1567,6 +1650,8 @@ _NO_SOLUTION_REASONS = {
     "OBJECTIVE_LIMIT": "stopped at an objective limit before finding a solution",
     "MEM_LIMIT": "stopped at its memory limit before finding a solution",
     "INTERRUPTED": "was interrupted before finding a solution",
+    "UNFINISHED": "stopped unfinished before finding a solution",
+    "NO_INTEGER_SOLUTION": "found no integer solution (its log shows none)",
 }
 
 
@@ -2565,6 +2650,11 @@ def _solve_commercial_subprocess(
         # The MPS file carries no objective constant (``add_obj_constant``);
         # the solver's objective leaves it out and the Solution adds it back.
         obj_offset = float(getattr(problem, "_obj_offset", 0.0) or 0.0)
+        # Whether the problem has an integer column, taken before the release: Xpress needs ``mipoptimize`` for
+        # a MIP, and its parser judges a MIP by the log.
+        from flextool.engine.solve._solver_dispatch import problem_is_mip
+
+        is_mip = problem_is_mip(getattr(problem, "_vars", None))
         problem.write_mps(str(mps_path), release=True, emit_names=False)
 
         # The resolved parameters as (name, value) pairs: the script builder emits one argument or line per
@@ -2573,7 +2663,7 @@ def _solve_commercial_subprocess(
         _write_commercial_opt_file(params, opt_path)
 
         argv, stdin_text = _SCRIPTS[solver_name](
-            binary, Path(mps_path.name), Path(sol_path.name), params,
+            binary, Path(mps_path.name), Path(sol_path.name), params, is_mip=is_mip,
         )
         if stdin_text is not None:
             # The command script piped to the console (CPLEX / Xpress / COPT), next to the MPS: replay it by hand
@@ -2645,7 +2735,7 @@ def _solve_commercial_subprocess(
                 raise RuntimeError(f"LICENSE: {msg}")
             raise RuntimeError(msg)
 
-        parsed = _PARSERS[solver_name](sol_path, stdout)
+        parsed = _PARSERS[solver_name](sol_path, stdout, is_mip=is_mip)
         status_str, objective, primal, dual = parsed.status, parsed.objective, parsed.primal, parsed.dual
         if primal is None:
             # A status the solver reported (infeasible, a limit) is the reason; the licence

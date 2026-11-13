@@ -699,3 +699,162 @@ def test_a_solver_that_exits_0_without_a_result_never_gets_an_earlier_runs_file(
         sps._solve_commercial_subprocess(_cost_lp(["a", "b"]), solver, None, solve_name="probe", logger=None,
                                          work_folder=work)
     assert not any((out_dir / name).exists() for name in _STALE_RESULTS[solver])
+
+
+# ---------------------------------------------------------------------------
+# Xpress MIPs: ``mipoptimize``, and the status from the log (item 230 row 20)
+# ---------------------------------------------------------------------------
+
+
+def test_xpress_script_solves_a_mip_with_mipoptimize_and_an_lp_with_lpoptimize(tmp_path: Path) -> None:
+    """``lpoptimize`` on a MIP solves only its LP relaxation: a MIP gets ``mipoptimize``, an LP keeps the
+    script it had."""
+    from flextool.engine.solve._subprocess_solve import _xpress_script
+
+    args = (Path("optimizer"), Path("s.mps"), Path("s.sol"), (("THREADS", "1"),))
+    _, lp = _xpress_script(*args)
+    _, mip = _xpress_script(*args, is_mip=True)
+    assert lp == "setControl THREADS 1\nreadprob s.mps\nlpoptimize\nwriteslxsol s.sol\nwriteprtsol s.sol\nquit\n"
+    assert mip == lp.replace("lpoptimize", "mipoptimize")
+
+
+#: The ends of Xpress MIP logs (the ``xpress`` 9.8.1 package's library log, which the console prints): the
+#: market split MIP stopped by ``MAXTIME 1`` / ``MAXNODE 5`` / ``MAXMIPSOL 1``, stopped by ``MAXNODE 1`` with
+#: heuristics and cuts off (no integer solution), a small MIP solved, an infeasible MIP.
+_XPRESS_TIME_LIMIT_LOG = """\
+Optimal solution found
+STOPPING - MAXTIME limit reached (TIMELIMIT=1.00  time=1.00).
+ *** Search unfinished ***    Time:     1.00 Nodes:       4693
+Final MIP objective                   : 2.300000000000000e+01
+Final MIP bound                       : 0.000000000000000e-01
+  Solution time / primaldual integral :      1.00s/ 100.000000%
+  Number of solutions found / nodes   :        11 /      4693
+"""
+_XPRESS_NODE_LIMIT_LOG = """\
+STOPPING - MAXNODE limit reached (MAXNODE=5  nodes=5).
+ *** Search unfinished ***    Time:     0.08 Nodes:          5
+Final MIP objective                   : 3.999999999999999e+01
+Final MIP bound                       : 1.000000000000000e+01
+  Number of solutions found / nodes   :         7 /         5
+"""
+_XPRESS_SOLUTION_LIMIT_LOG = """\
+STOPPING - MAXMIPSOL limit reached (MAXMIPSOL=1  mipsols=1).
+ *** Maximum integer solutions *** Time:     0.01 Nodes:          0
+ *** Search unfinished ***    Time:     0.01 Nodes:          0
+Final MIP objective                   : 1.120000000000000e+03
+Final MIP bound                       : 0.000000000000000e-01
+  Number of solutions found / nodes   :         1 /         0
+"""
+_XPRESS_NODE_LIMIT_NO_SOLUTION_LOG = """\
+STOPPING - MAXNODE limit reached (MAXNODE=1  nodes=1).
+ *** Maximum nodes ***
+ *** Search unfinished ***    Time:     0.01 Nodes:          1
+  Number of solutions found / nodes   :         0 /         1
+"""
+_XPRESS_SOLVED_LOG = """\
+Optimal solution found
+ *** Search completed ***
+Final MIP objective                   : -1.150000000000000e+01
+Final MIP bound                       : -1.150000000000000e+01
+  Number of solutions found / nodes   :         1 /         1
+"""
+_XPRESS_INFEASIBLE_LOG = """\
+The problem is infeasible due to row R1
+ *** Search completed ***
+Problem is integer infeasible
+  Number of solutions found / nodes   :         0 /         0
+"""
+#: An SLX file and the print solution as Xpress writes them; after a search stopped by a limit the print
+#: solution still says ``Optimal solution found``.
+_XPRESS_SLX = "NAME          noname\n  C C0000001                   1\n  C C0000002                0.75\nENDATA\n"
+_XPRESS_PRT = "Solution Statistics\nMinimization performed\nOptimal solution found after 0 iterations\n" \
+              "Objective function value is    23.000000\n"
+
+
+@pytest.mark.parametrize("log, status, objective, gap", [
+    (_XPRESS_TIME_LIMIT_LOG, "TIME_LIMIT", 23.0, 1.0),
+    (_XPRESS_NODE_LIMIT_LOG, "NODE_LIMIT", 39.99999999999999, 0.75),
+    (_XPRESS_SOLUTION_LIMIT_LOG, "SOLUTION_LIMIT", 1120.0, 1.0),
+    (_XPRESS_SOLVED_LOG, "OPTIMAL", -11.5, None),
+    (" *** Search unfinished ***\n  Number of solutions found / nodes   :         3 /        40\n", "UNFINISHED",
+     23.0, None),   # a stop FlexTool does not know: rejected by the acceptance step, never OPTIMAL
+])
+def test_xpress_mip_status_comes_from_the_log_not_the_print_solution(log, status, objective, gap,
+                                                                     tmp_path: Path) -> None:
+    """A MIP stopped by MAXTIME / MAXNODE / MAXMIPSOL is that limit (a search limit: kept with a warning, item
+    246), with the log's full-precision objective and the gap ``|obj - bound| / max(|obj|, |bound|)``, although
+    the print solution says ``Optimal solution found``.  Only ``*** Search completed ***`` is OPTIMAL."""
+    from flextool.engine.solve._subprocess_solve import _parse_xpress_sol
+
+    (tmp_path / "s.sol.slx").write_text(_XPRESS_SLX)
+    (tmp_path / "s.sol.prt").write_text(_XPRESS_PRT)
+    parsed = _parse_xpress_sol(tmp_path / "s.sol", log, is_mip=True)
+    assert (parsed.status, parsed.primal) == (status, {"C0000001": 1.0, "C0000002": 0.75})
+    assert parsed.objective == pytest.approx(objective, rel=1e-15)
+    assert parsed.mip_gap == (None if gap is None else pytest.approx(gap, rel=1e-12))
+
+
+@pytest.mark.parametrize("log, status", [
+    (_XPRESS_INFEASIBLE_LOG, "INFEASIBLE"),
+    (_XPRESS_NODE_LIMIT_NO_SOLUTION_LOG, "NODE_LIMIT"),
+    (_XPRESS_NODE_LIMIT_NO_SOLUTION_LOG.replace("MAXNODE limit", "MAXTIME limit"), "TIME_LIMIT"),
+    (" *** Search completed ***\n", "NO_INTEGER_SOLUTION"),   # no solution count, no final objective
+    ("", "NO_INTEGER_SOLUTION"),   # a log that says nothing proves no integer solution
+])
+def test_xpress_mip_without_an_integer_solution_never_reads_the_lp_relaxation(log, status, tmp_path: Path) -> None:
+    """A search stopped before an integer solution leaves the LP relaxation in the SLX file (and the print
+    solution says ``Optimal solution found``): there is no solution, so the run stops with the log's reason."""
+    from flextool.engine.solve._subprocess_solve import _NO_SOLUTION_REASONS, _parse_xpress_sol
+
+    (tmp_path / "s.sol.slx").write_text(_XPRESS_SLX)
+    (tmp_path / "s.sol.prt").write_text(_XPRESS_PRT)
+    parsed = _parse_xpress_sol(tmp_path / "s.sol", log, is_mip=True)
+    assert (parsed.status, parsed.primal, parsed.objective) == (status, None, None)
+    assert status in _NO_SOLUTION_REASONS
+
+
+def test_xpress_lp_parse_is_unchanged_by_the_mip_reading(tmp_path: Path) -> None:
+    """An LP keeps the print-solution reading: a MIP log line in its output changes nothing."""
+    from flextool.engine.solve._subprocess_solve import _parse_xpress_sol
+
+    (tmp_path / "s.sol.slx").write_text(_XPRESS_SLX)
+    (tmp_path / "s.sol.prt").write_text(_XPRESS_PRT)
+    parsed = _parse_xpress_sol(tmp_path / "s.sol", _XPRESS_NODE_LIMIT_NO_SOLUTION_LOG.replace("MAXNODE", "X"))
+    assert (parsed.status, parsed.objective) == ("OPTIMAL", 23.0)
+
+
+#: A stand-in ``optimizer`` that records its stdin and, like Xpress after a MIP search stopped before any
+#: integer solution, writes the LP relaxation and a print solution saying ``Optimal solution found``.
+_XPRESS_NO_INCUMBENT_STUB = """\
+#!{py}
+import sys
+from pathlib import Path
+script = sys.stdin.read()
+Path("stdin.txt").write_text(script)
+sol = next(line.split()[1] for line in script.splitlines() if line.startswith("writeslxsol"))
+Path(sol).write_text({slx!r})
+Path(sol + ".prt").write_text({prt!r})
+print({log!r})
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the solver stub is a POSIX shebang script")
+def test_an_xpress_mip_runs_mipoptimize_and_stops_without_an_integer_solution(tmp_path: Path, monkeypatch) -> None:
+    """A MIP on Xpress is no longer refused: the script holds ``mipoptimize``; a search stopped by its node
+    limit before an integer solution stops the run with that reason, never with the LP relaxation's values."""
+    import stat
+
+    from flextool.engine.solve import _subprocess_solve as sps
+    from tests.engine.test_subprocess_gurobi_name_recovery import _mip_lp
+
+    stub = tmp_path / "optimizer"
+    stub.write_text(_XPRESS_NO_INCUMBENT_STUB.format(py=sys.executable, slx=_XPRESS_SLX, prt=_XPRESS_PRT,
+                                                     log=_XPRESS_NODE_LIMIT_NO_SOLUTION_LOG))
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setattr(sps, "_find_solver_binary", lambda name: stub)
+    work = tmp_path / "work"
+    with pytest.raises(RuntimeError, match="stopped at its node limit before finding a solution"):
+        sps._solve_commercial_subprocess(_mip_lp(["a", "b"]), "xpress", None, solve_name="probe", logger=None,
+                                         work_folder=work)
+    script = (work / "solve_data" / "subprocess" / "stdin.txt").read_text().splitlines()
+    assert "mipoptimize" in script and "lpoptimize" not in script

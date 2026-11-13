@@ -226,6 +226,9 @@ def test_tiny_lp(solver, shim, db, highs_objective, tmp_path, capsys) -> None:
     assert steps[SOLVE].obj == pytest.approx(highs_objective["lp"], rel=1e-6)
     calls = _calls(shim)
     assert calls and all(c["params"] == {THREADS[solver]: 2} and not c["unknown"] for c in calls), calls
+    if solver == "xpress":
+        # An LP keeps ``lpoptimize`` (only a MIP gets ``mipoptimize``).
+        assert all("\nlpoptimize\n" in c["stdin"] and "mipoptimize" not in c["stdin"] for c in calls), calls
     out = capsys.readouterr().out
     args_line = f"Solver args ({solver}): {THREADS[solver]}=2"
     assert args_line in out and BANNER[solver] in out.split(args_line, 1)[1], out[-3000:]
@@ -245,22 +248,17 @@ def test_work_folder_with_a_space(solver, shim, db, highs_objective, tmp_path) -
 
 def test_tiny_mip_with_the_gap_flag(solver, shim, db, highs_objective, tmp_path, capsys) -> None:
     """``--solver-mip-gap 0.0123`` on the ``coal_min_load_MIP_wind`` MIP: the solver reports its gap parameter
-    as 0.0123 (read back from the package), and the ``Solver args`` line says the same.  Xpress: FlexTool
-    refuses the MIP before the solver program runs."""
-    from flextool.engine.solve._solver_dispatch import FlexToolUserError
-
+    as 0.0123 (read back from the package), and the ``Solver args`` line says the same.  Xpress solves it with
+    ``mipoptimize`` (``lpoptimize`` would give the LP relaxation)."""
     cfg = _cfg(tmp_path, solver, f"{GAP[solver]} 0.5\n")
-    if solver == "xpress":
-        with pytest.raises(FlexToolUserError, match="integer variables.*solves only linear problems"):
-            _run(db, "mip_xpress", tmp_path / "w", cfg, "--solver-mip-gap", "0.0123")
-        assert _calls(shim) == []
-        return
     steps = _run(db, f"mip_{solver}", tmp_path / "w", cfg, "--solver-mip-gap", "0.0123")
     assert steps[SOLVE].optimal
     # Within the requested gap of HiGHS' (near-)optimum.
     assert steps[SOLVE].obj == pytest.approx(highs_objective["mip"], rel=0.0123 + 1e-3)
     calls = _calls(shim)
     assert calls and all(c["is_mip"] and c["params"] == {GAP[solver]: 0.0123} for c in calls), calls
+    if solver == "xpress":
+        assert all("\nmipoptimize\n" in c["stdin"] and "lpoptimize" not in c["stdin"] for c in calls), calls
     printed = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("Solver args")]
     assert printed and all(ln == f"Solver args ({solver}): {GAP[solver]}=0.0123" for ln in printed), printed
 
@@ -526,19 +524,15 @@ def _market_split(m: int = 6, seed: int = 1) -> Problem:
 def test_mip_at_its_time_limit_keeps_the_solution(solver, shim, tmp_path) -> None:
     """``--solver-time-limit 1`` on the market split MIP: the solver stops at 1 s with an incumbent, FlexTool
     reads ``TIME_LIMIT`` and the solver's gap, and the cascade's acceptance step keeps the solution with a
-    warning (D2).  Xpress: FlexTool refuses the MIP before the solver program runs."""
+    warning (D2).  Xpress: the status and the gap come from its log (``STOPPING - MAXTIME limit reached``; the
+    print solution says ``Optimal solution found``)."""
     from flextool.engine.input._solve_config import SolverConfig
     from flextool.engine.solve._acceptance import classify_acceptance
-    from flextool.engine.solve._solver_dispatch import FlexToolUserError, run_one_solve
+    from flextool.engine.solve._solver_dispatch import run_one_solve
 
     cfg = _cfg(tmp_path, solver, f"{THREADS[solver]} 2\n")
     opts = _run_options("unused.sqlite", "--solver-time-limit", "1")
     kwargs = dict(solve_name="market_split", work_folder=tmp_path / "w", run_options=opts, solver_config_dir=cfg)
-    if solver == "xpress":
-        with pytest.raises(FlexToolUserError, match="integer variables"):
-            run_one_solve(_market_split(), SolverConfig(name=solver), **kwargs)
-        assert _calls(shim) == []
-        return
     sol = run_one_solve(_market_split(), SolverConfig(name=solver), **kwargs)
     (call,) = _calls(shim)
     assert call["params"] == {THREADS[solver]: 2, TIME[solver]: 1.0}, call
@@ -553,24 +547,23 @@ def test_mip_at_its_time_limit_keeps_the_solution(solver, shim, tmp_path) -> Non
 
 
 #: The native name of the MIP node limit (CPLEX by its interactive path).
-NODES = {"gurobi": "NodeLimit", "cplex": "mip limits nodes", "copt": "NodeLimit"}
+NODES = {"gurobi": "NodeLimit", "cplex": "mip limits nodes", "xpress": "MAXNODE", "copt": "NodeLimit"}
 
 
 #: The options a node-limit warning names, by solver.
-NODE_OPTIONS = {"gurobi": "Gurobi NodeLimit", "cplex": "CPLEX mip limits nodes", "copt": "COPT NodeLimit"}
+NODE_OPTIONS = {"gurobi": "Gurobi NodeLimit", "cplex": "CPLEX mip limits nodes", "xpress": "Xpress MAXNODE",
+                "copt": "COPT NodeLimit"}
 
 
 def test_mip_at_a_node_limit_keeps_the_solution(solver, shim, tmp_path) -> None:
     """Review F1 / item 246: a node limit of 5 on the market split MIP stops the solver with an incumbent (found
     at the root) but no proof.  FlexTool reads ``NODE_LIMIT`` (Gurobi from its JSON status, CPLEX from the file's
-    status code, COPT from its log) and the solver's gap, and the acceptance step keeps the solution with a
-    warning naming the node limit, its option and the gap, as for a time limit.  Xpress: no MIP."""
+    status code, COPT and Xpress from their logs) and the solver's gap, and the acceptance step keeps the
+    solution with a warning naming the node limit, its option and the gap, as for a time limit."""
     from flextool.engine.input._solve_config import SolverConfig
     from flextool.engine.solve._acceptance import classify_acceptance
     from flextool.engine.solve._solver_dispatch import run_one_solve
 
-    if solver == "xpress":
-        pytest.skip("FlexTool's Xpress driver solves only LPs")
     cfg = _cfg(tmp_path, solver, f"{THREADS[solver]} 1\n{NODES[solver]} 5\n")
     sol = run_one_solve(_market_split(), SolverConfig(name=solver), solve_name="market_split",
                         work_folder=tmp_path / "w", run_options=_run_options("unused.sqlite"), solver_config_dir=cfg)
@@ -583,6 +576,51 @@ def test_mip_at_a_node_limit_keeps_the_solution(solver, shim, tmp_path) -> None:
     assert acc.accepted and acc.limit_stopped and acc.model_status == "kSolutionLimit", acc
     assert "stopped at its node limit" in acc.message and f"({NODE_OPTIONS[solver]}, in" in acc.message, acc.message
     assert f"(relative MIP gap {call['mip_gap']:.4%})" in acc.message, acc.message
+
+
+@pytest.mark.parametrize("solver", ["xpress"], indirect=True)
+def test_xpress_mip_stopped_before_an_integer_solution_stops_the_run(solver, shim, tmp_path) -> None:
+    """The market split with ``MAXNODE 1`` and heuristics and cuts off: Xpress stops before any integer solution,
+    its SLX file holds the LP relaxation and its print solution says ``Optimal solution found``.  The run stops
+    with the node-limit reason; it never returns the relaxation."""
+    from flextool.engine.input._solve_config import SolverConfig
+    from flextool.engine.solve._solver_dispatch import FlexToolUserError, run_one_solve
+
+    cfg = _cfg(tmp_path, solver, "THREADS 1\nMAXNODE 1\nHEUREMPHASIS 0\nCUTSTRATEGY 0\n")
+    with pytest.raises(FlexToolUserError, match="stopped at its node limit before finding a solution"):
+        run_one_solve(_market_split(), SolverConfig(name=solver), solve_name="market_split",
+                      work_folder=tmp_path / "w", run_options=_run_options("unused.sqlite"), solver_config_dir=cfg)
+    (call,) = _calls(shim)
+    assert call["is_mip"] and call["mip_gap"] is None and "\nmipoptimize\n" in call["stdin"], call
+    slx = tmp_path / "w" / "solve_data" / "subprocess" / "market_split.sol"
+    assert len(slx.read_text().splitlines()) > 2, "the SLX file no longer holds the relaxation; the test is moot"
+
+
+def _infeasible_mip() -> Problem:
+    """``min x`` with ``x`` integer in ``[0, 10]`` and ``x == 10.5``: the LP relaxation is feasible, the MIP is
+    not."""
+    pb = Problem()
+    over = pl.DataFrame({"i": ["a"]})
+    x = pb.add_var("x", ("i",), over, lower=0.0, upper=10.0, integer=True)
+    pb.add_cstr("fix", over=over, sense="==", lhs_terms={"x": x},
+                rhs_terms={"r": Param(("i",), pl.DataFrame({"i": ["a"], "value": [10.5]}), name="r")})
+    pb.set_objective(Sum(x, over="i"))
+    return pb
+
+
+@pytest.mark.parametrize("solver", ["xpress"], indirect=True)
+def test_an_infeasible_xpress_mip_stops_the_run(solver, shim, tmp_path) -> None:
+    """An integer-infeasible MIP on Xpress: the log says ``Problem is integer infeasible``, the run stops with "is
+    infeasible" (not the LP relaxation's x = 10.5, not a no-solution-file error)."""
+    from flextool.engine.input._solve_config import SolverConfig
+    from flextool.engine.solve._solver_dispatch import FlexToolUserError, run_one_solve
+
+    cfg = _cfg(tmp_path, solver, "THREADS 1\n")
+    with pytest.raises(FlexToolUserError, match="is infeasible"):
+        run_one_solve(_infeasible_mip(), SolverConfig(name=solver), solve_name="s", work_folder=tmp_path / "w",
+                      run_options=_run_options("unused.sqlite"), solver_config_dir=cfg)
+    (call,) = _calls(shim)
+    assert call["is_mip"] and call["status"] == 5 and "\nmipoptimize\n" in call["stdin"], call   # 5: infeasible
 
 
 def test_an_infeasible_solve_after_a_solved_one_never_returns_the_earlier_result(solver, shim, tmp_path) -> None:

@@ -1383,10 +1383,11 @@ def commercial_time_limit(solver: str, options: "list[CommercialOption] | Mappin
     Read from the native time-limit name only (Xpress also ``TIMELIMIT``).  A
     value that is not a positive finite number (Gurobi's ``inf``) gives ``None``.
     Xpress ``MAXTIME``: a positive value stops an LP at the limit, and a MIP only
-    once it has a solution (FlexTool's Xpress path solves LPs only); a negative
-    value is a hard limit of its absolute value (xpress 46.01: ``MAXTIME -1`` and
-    ``1`` both stop at 1 s on a MIP with incumbents, only ``-1`` without one), so
-    its absolute value is the limit.
+    once it has a solution; a negative value is a hard limit of its absolute
+    value (xpress 46.01: ``MAXTIME -1`` and ``1`` both stop at 1 s on a MIP with
+    incumbents, only ``-1`` without one; rechecked with 9.8.1 / 46.01.02: ``MAXTIME
+    2`` ran on past 20 s on a MIP without an integer solution), so its absolute
+    value is the limit and the watchdog stops a MIP that finds no solution.
     """
     if not options or solver not in _PARAM_MAP:
         return None
@@ -1611,15 +1612,6 @@ def run_one_solve(
             f"Unknown solver {solver_config.name!r}.  Supported solvers: "
             f"highs, gurobi, cplex, xpress, copt.  Installed wrappers: "
             f"{available_solvers}."
-        )
-        raise FlexToolUserError(msg)
-    if solver_config.name == "xpress" and problem_is_mip(getattr(problem, "_vars", None)):
-        # The Xpress console script runs ``lpoptimize``, which on a MIP solves
-        # only the LP relaxation: refuse instead of returning a wrong answer.
-        msg = (
-            f"Solve {solve_name or 'solve'!r} has integer variables, but FlexTool's Xpress driver solves only "
-            "linear problems (it would return the LP relaxation, not an integer solution). Use another solver "
-            "for this solve, or remove its integer variables."
         )
         raise FlexToolUserError(msg)
     if commercial_options is None:

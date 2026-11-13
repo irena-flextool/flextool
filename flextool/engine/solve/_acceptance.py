@@ -339,6 +339,8 @@ _LIMIT_OPTIONS = {
     ("cplex", "SOLUTION_LIMIT"): "mip limits solutions",
     ("cplex", "ITERATION_LIMIT"): "simplex limits iterations or barrier limits iteration",
     ("copt", "NODE_LIMIT"): "NodeLimit",
+    ("xpress", "NODE_LIMIT"): "MAXNODE",
+    ("xpress", "SOLUTION_LIMIT"): "MAXMIPSOL",
 }
 
 _SOLVER_DISPLAY_NAMES = {"highs": "HiGHS", "gurobi": "Gurobi", "cplex": "CPLEX", "copt": "COPT", "xpress": "Xpress"}
