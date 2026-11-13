@@ -52,7 +52,7 @@ from spinedb_api.filters.tools import name_from_dict
 from spinedb_api import to_database, DateTime
 from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api.exception import NothingToCommit
-from flextool.sqlite_url import sqlite_url_string
+from flextool.sqlite_url import sqlite_file_path, sqlite_url_string
 
 # Start the memory sampler as the first statement after imports.  The
 # few hundred ms of import-cascade RSS that precede this point are not
@@ -1315,7 +1315,8 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
     # Write scenario information to output database if provided
     if args.output_db_url:
         # Check if database exists
-        db_exists = os.path.exists(args.output_db_url.replace('sqlite:///', ''))
+        output_db_path = sqlite_file_path(args.output_db_url)
+        db_exists = output_db_path is not None and output_db_path.exists()
 
         with open_database_mapping(args.output_db_url, create=not db_exists) as output_db:
             # Create/update scenario class if it doesn't exist

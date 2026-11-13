@@ -150,14 +150,11 @@ def _target_version() -> int:
 
 def sqlite_path_from(database: str | Path) -> Path | None:
     """The file of a plain path or a ``sqlite:///`` URL (its query string dropped); ``None`` for other URLs."""
+    from flextool.sqlite_url import sqlite_file_path
+
     if isinstance(database, Path):
         return database
-    text = str(database)
-    if text.startswith("sqlite:///"):
-        return Path(text[len("sqlite:///"):].split("?", 1)[0])
-    if "://" in text:
-        return None
-    return Path(text)
+    return sqlite_file_path(str(database))
 
 
 #: Seconds a read-only check waits for a writer's lock before it gives up (and refuses).

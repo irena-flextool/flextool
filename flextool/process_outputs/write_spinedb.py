@@ -51,7 +51,7 @@ from spinedb_api.parameter_value import Map
 from flextool import units_of_measure as uom
 from flextool.process_outputs._output_meta import FACTOR, result_key_summary
 from flextool.process_outputs.solve_order import period_solve_labels
-from flextool.sqlite_url import sqlite_url_string
+from flextool.sqlite_url import sqlite_file_path, sqlite_url_string
 
 logger = logging.getLogger(__name__)
 
@@ -363,7 +363,7 @@ def ensure_results_db(db_url: str) -> None:
     create (no atomic rename / file lock possible across a network DSN).
     """
     if db_url.startswith("sqlite:///"):
-        path = db_url[len("sqlite:///"):]
+        path = str(sqlite_file_path(db_url))
         # A present DB may still lag the current schema (additive params /
         # classes shipped after it was built).  Bring it up to date without
         # taking the cold-start lock in the steady state.
@@ -414,7 +414,7 @@ def _top_up_schema_if_stale(db_url: str) -> None:
         return
 
     # Stale path: serialize the top-up under the sidecar lock.
-    path = db_url[len("sqlite:///"):]
+    path = str(sqlite_file_path(db_url))
     lock_path = path + ".lock"
     with open(lock_path, "a") as lock_fh:
         _lock_exclusive(lock_fh)

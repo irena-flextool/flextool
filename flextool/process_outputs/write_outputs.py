@@ -76,7 +76,7 @@ from flextool.process_outputs.union_realized_slice import (
     union_sets,
 )
 from flextool.process_outputs.write_spinedb import write_spinedb
-from flextool.sqlite_url import sqlite_url_string
+from flextool.sqlite_url import sqlite_file_path, sqlite_url_string
 
 
 def _parse_rename_entry(entry) -> tuple[str, bool]:
@@ -731,7 +731,8 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
     db_reachable = False
     if settings_db_url:
         if settings_db_url.startswith('sqlite:///'):
-            db_reachable = os.path.exists(settings_db_url.replace('sqlite:///', ''))
+            settings_db_path = sqlite_file_path(settings_db_url)
+            db_reachable = settings_db_path is not None and settings_db_path.exists()
         else:
             db_reachable = True  # HTTP or other remote URLs — let DatabaseMapping handle errors
     if db_reachable:

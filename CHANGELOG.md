@@ -1358,6 +1358,11 @@ Each line says what changes for a model that ran before and what to do; the deta
   decodes `%xx` in a database address once more, so a project folder such as `100%25 RE` or `G #2` was not found
   (input sources, results, the AI assistant). FlexTool now hands spinedb-api the file path as it is; addresses in
   messages and run records are unchanged.
+- **A database in a folder whose name holds `#`, run from Spine Toolbox with a scenario filter, was looked for
+  at a cut-off path.** Toolbox puts its filter (`?spinedbfilter=…`) in front of the `#`, and the version check,
+  the solver-option folder, the run record and the settings / output-info database checks cut the address at
+  the `?`, so they read `G ` for the folder `G #2`. They now share one address → file reader that keeps the whole
+  path.
 
 #### FlexTool 2 import
 

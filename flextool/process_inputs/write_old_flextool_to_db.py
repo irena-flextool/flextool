@@ -3817,9 +3817,11 @@ def _sqlite_path_from_url(db_url: str) -> str | None:
     ``sqlite:////abs/path.sqlite`` → ``/abs/path.sqlite`` (the 4th slash is
     the leading slash of the path).
     """
-    prefix = "sqlite:///"
-    if db_url.startswith(prefix):
-        return db_url[len(prefix):]
+    from flextool.sqlite_url import SQLITE_PREFIX, sqlite_file_path
+
+    if db_url.startswith(SQLITE_PREFIX):
+        path = sqlite_file_path(db_url)
+        return None if path is None else str(path)
     return None
 
 

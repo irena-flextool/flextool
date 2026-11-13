@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import parse_qsl, quote
+from urllib.parse import parse_qsl, quote, unquote
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import URL
@@ -66,6 +66,44 @@ def read_only_sqlite_url(path: str | os.PathLike[str]) -> URL:
     return url
 
 
+def _split_sqlite_url(url: str) -> tuple[str, str]:
+    """``(database, query)`` of a ``sqlite:///`` string: the text after ``sqlite:///`` up to the first ``?``, and
+    the query after it.  A ``#`` in the query starts the rest of the path: spinedb-api's ``append_filter_config``
+    puts a filter query in front of a ``#`` it reads as a fragment (``/a/G ?spinedbfilter=...#2/t.sqlite`` is
+    the file ``/a/G #2/t.sqlite``)."""
+    database, _, query = url[len(SQLITE_PREFIX):].partition("?")
+    query, hash_, fragment = query.partition("#")
+    return database + hash_ + fragment, query
+
+
+def sqlite_file_path(url: str | os.PathLike[str] | None) -> Path | None:
+    """The file of a ``sqlite:///`` URL string or of a bare path; ``None`` for an empty value, an in-memory
+    ``sqlite://`` and any other database URL (a server).
+
+    The path is the text after ``sqlite:///`` as it is (no decoding), without the query (``?spinedbfilter=...``
+    of Spine Toolbox, ``?mode=ro``); a ``#`` that a filter query was put in front of is joined back
+    (:func:`_split_sqlite_url`).  A read-only SQLite URI (``sqlite:///file:/a/b%20c.sqlite?mode=ro&uri=true``,
+    :func:`read_only_uri_of_posix`) is decoded back to its file (``/a/b c.sqlite``; ``C:/...`` and
+    ``//server/share/...`` too).  Pure string -> path; does not touch the filesystem."""
+    if url is None:
+        return None
+    if not isinstance(url, str):
+        text = os.fspath(url)
+        return Path(text) if text else None
+    if not url:
+        return None
+    if not url.startswith(SQLITE_PREFIX):
+        return None if "://" in url else Path(url)
+    database, query = _split_sqlite_url(url)
+    if database.startswith("file:") and ("uri", "true") in parse_qsl(query, keep_blank_values=True):
+        database = unquote(database[len("file:"):])
+        if database.startswith("////"):
+            database = database[2:]
+        elif len(database) > 2 and database[0] == "/" and database[2] == ":":
+            database = database[1:]
+    return Path(database) if database else None
+
+
 def to_sqlalchemy_url(url: str | os.PathLike[str] | URL) -> str | URL:
     """*url* in the form to give ``DatabaseMapping`` / ``create_engine``: a ``sqlite:///`` string becomes a
     :class:`~sqlalchemy.engine.URL` whose database is the text after ``sqlite:///`` as it is (up to the first
@@ -83,9 +121,7 @@ def to_sqlalchemy_url(url: str | os.PathLike[str] | URL) -> str | URL:
         return sqlite_url(url)
     if not url.startswith(SQLITE_PREFIX):
         return url
-    database, _, query = url[len(SQLITE_PREFIX):].partition("?")
-    query, hash_, fragment = query.partition("#")
-    database += hash_ + fragment
+    database, query = _split_sqlite_url(url)
     params: dict[str, list[str]] = {}
     for key, value in parse_qsl(query, keep_blank_values=True):
         params.setdefault(key, []).append(value)

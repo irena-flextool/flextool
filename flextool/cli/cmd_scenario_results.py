@@ -10,6 +10,7 @@ from pathlib import Path
 import matplotlib
 from spinedb_api import from_database, Array
 from flextool.update_flextool.db_handle import open_database_mapping
+from flextool.sqlite_url import sqlite_file_path
 from spinedb_api.filters.alternative_filter import alternative_filter_config
 from spinedb_api.filters.tools import append_filter_config
 
@@ -141,7 +142,8 @@ def main() -> None:
     shared_legend = args.shared_legend
 
     settings_db_url = args.settings_db_url
-    if settings_db_url and os.path.exists(settings_db_url.replace('sqlite:///', '')):
+    settings_db_path = sqlite_file_path(settings_db_url)
+    if settings_db_path is not None and settings_db_path.exists():
         with open_database_mapping(settings_db_url) as settings_db:
             settings_entities = settings_db.get_entity_items(entity_class_name="settings")
             if len(settings_entities) == 1:

@@ -17,7 +17,9 @@ def _ensure_target_db_exists(target_db_url: str) -> None:
     if not target_db_url.startswith("sqlite:///"):
         return  # Only handle local sqlite files
 
-    db_path = target_db_url.replace("sqlite:///", "", 1)
+    from flextool.sqlite_url import sqlite_file_path
+
+    db_path = str(sqlite_file_path(target_db_url))
     if os.path.exists(db_path):
         return  # Already exists -- nothing to do
 

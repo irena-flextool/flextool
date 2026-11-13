@@ -123,12 +123,9 @@ def _mtime_iso(path: Path | None) -> str | None:
 
 def db_path_from_url(db_url: str | None) -> Path | None:
     """The file of a ``sqlite:///`` URL or bare path, without a ``?query``; ``None`` for other databases."""
-    if not db_url:
-        return None
-    if "://" in db_url and not db_url.startswith("sqlite:"):
-        return None
-    text = db_url.replace("sqlite:///", "", 1).split("?", 1)[0]
-    return Path(text) if text else None
+    from flextool.sqlite_url import sqlite_file_path
+
+    return sqlite_file_path(db_url)
 
 
 def _versions() -> dict[str, str | None]:

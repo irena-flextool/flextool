@@ -325,16 +325,9 @@ def input_db_filesystem_path(input_db_url: str | os.PathLike | None) -> Path | N
     Strips the ``sqlite:///`` scheme and an appended Spine filter query (``?spinedbfilter=...``, which Spine
     Toolbox adds).  Pure string -> path; does not touch the filesystem.
     """
-    if not input_db_url:
-        return None
-    text = str(input_db_url)
-    if "://" in text and not text.startswith("sqlite:"):
-        return None
-    no_scheme = text.replace("sqlite:///", "", 1)
-    no_query = no_scheme.split("?", 1)[0]
-    if not no_query:
-        return None
-    return Path(no_query)
+    from flextool.sqlite_url import sqlite_file_path
+
+    return sqlite_file_path(input_db_url)
 
 
 def _has_option_file(folder: Path) -> bool:

@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from flextool.assistant.errors import ToolError
-from flextool.sqlite_url import read_only_uri_of_posix, to_sqlalchemy_url
+from flextool.sqlite_url import read_only_uri_of_posix
 
 FETCHED = (
     "alternative", "scenario", "scenario_alternative", "entity_class", "entity", "entity_alternative",
@@ -405,15 +405,18 @@ def _release_abandoned_connections() -> None:
 def closed_mapping(path: Path) -> tuple[Any, Any, dict[str, str]]:
     """Open *path* read-only, read ``model.version`` and the behaviour-change markers, fetch :data:`FETCHED` and
     close the mapping.  Returns ``(closed mapping, raw version, markers)``; raises :class:`ToolError`."""
-    from spinedb_api import DatabaseMapping, from_database
+    from spinedb_api import from_database
     from spinedb_api.exception import SpineDBAPIError, SpineDBVersionError
+
+    from flextool.update_flextool.db_handle import database_mapping
 
     name = Path(path).name
     refusal: ToolError | None = None
     try:
-        # A URL object: spinedb-api 0.36.8 percent-decodes a URL string once more (``%23`` → ``#``).
-        db = DatabaseMapping(to_sqlalchemy_url(db_uri(path)), create=False, upgrade=False,
-                             sqlite_timeout=SQLITE_TIMEOUT_S)
+        # Opened as a URL object (spinedb-api 0.36.8 percent-decodes a URL string once more: ``%23`` → ``#``),
+        # with any Spine filter query applied as for a string.
+        db = database_mapping(db_uri(path), create=False, upgrade=False,
+                              sqlite_timeout=SQLITE_TIMEOUT_S)
     except SpineDBVersionError:
         refusal = ToolError("old_spine_format")
     except SpineDBAPIError as exc:

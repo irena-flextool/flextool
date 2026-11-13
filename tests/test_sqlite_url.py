@@ -11,8 +11,10 @@ from spinedb_api.filters.tools import append_filter_config
 from sqlalchemy.engine import URL
 
 from flextool.sqlite_url import (
+    read_only_uri_of_posix,
     read_only_sqlite_url,
     read_only_sqlite_url_string,
+    sqlite_file_path,
     sqlite_url,
     sqlite_url_string,
     to_sqlalchemy_url,
@@ -56,6 +58,52 @@ def test_filter_query_in_front_of_a_hash_belongs_to_the_path():
     parsed = to_sqlalchemy_url(url)
     assert parsed.database == "/tmp/G #2 ä%25x/t.sqlite"
     assert parsed.query["spinedbfilter"] == "cfg:scenario:S"
+
+
+@pytest.mark.parametrize("path", [
+    "/tmp/G #2 ä%25x project/t.sqlite",
+    "/tmp/x%25y/t.sqlite",
+    "rel dir/%41.sqlite",
+    "C:/Users/A B/x#1.sqlite",
+    "//server/my share/G #1/x.sqlite",
+])
+def test_file_path_of_every_url_form(path):
+    """Item 263: the file of a URL is the path as written, also when Toolbox put a filter query in front of a
+    ``#`` of a folder name, and for the read-only URI (decoded back)."""
+    assert sqlite_file_path(sqlite_url_string(path)) == Path(path)
+    assert sqlite_file_path(sqlite_url_string(path) + "?mode=ro") == Path(path)
+    # The form spinedb-api's append_filter_config gives: the query goes in front of the first '#'.
+    head, hash_, tail = path.partition("#")
+    filtered = sqlite_url_string(head) + "?spinedbfilter=cfg%3Ascenario%3AS" + hash_ + tail
+    assert sqlite_file_path(filtered) == Path(path)
+    if not path.startswith("rel"):
+        assert sqlite_file_path(read_only_uri_of_posix(path)) == Path(path)
+    assert sqlite_file_path(path) == Path(path)
+    assert sqlite_file_path(Path(path)) == Path(path)
+
+
+def test_file_path_of_a_filter_before_a_hash_is_not_cut():
+    url = append_filter_config("sqlite:////tmp/G #2 ä%25x/t.sqlite", scenario_filter_config("S"))
+    assert url.index("?spinedbfilter=") < url.index("#2")
+    assert sqlite_file_path(url) == Path("/tmp/G #2 ä%25x/t.sqlite")
+
+
+def test_file_path_of_other_databases_is_none():
+    for url in (None, "", "sqlite:///", "sqlite://", "postgresql://u@host/db", "http://127.0.0.1:5000"):
+        assert sqlite_file_path(url) is None, url
+
+
+def test_path_extractors_use_the_shared_helper():
+    """The six URL -> path readers of review 262 give the whole path of a filtered ``#`` folder."""
+    from flextool._solver_config_source import input_db_filesystem_path
+    from flextool.run_record._status import db_path_from_url
+    from flextool.update_flextool.frozen import sqlite_path_from
+
+    url = append_filter_config("sqlite:////tmp/G #2 ä%25x/t.sqlite", scenario_filter_config("S"))
+    expected = Path("/tmp/G #2 ä%25x/t.sqlite")
+    assert db_path_from_url(url) == expected
+    assert input_db_filesystem_path(url) == expected
+    assert sqlite_path_from(url) == expected
 
 
 def test_other_urls_pass_unchanged():
