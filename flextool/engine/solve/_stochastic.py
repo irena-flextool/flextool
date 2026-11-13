@@ -590,11 +590,19 @@ class StochasticSolver:
                     split_of = getattr(getattr(self.state, "solve", None), "map2d_duplicate_of", {}).get(
                         complete_solves[solve])
                     if split_of is not None:
+                        split = complete_solves[solve]
+                        own = list(active_time_list)
+                        firsts = ", ".join(
+                            f"{p}/{active_time_list[p][0].timestep}" for p in own if active_time_list[p])
                         message += (
-                            f" Solve {complete_solves[solve]!r} is the 2-D period map entry {split_of[1]!r} of "
-                            f"solve {split_of[0]!r} and has all of its stochastic_branches, but none of their "
-                            "periods is in this split solve: give the forecasts a period of each split solve, or "
-                            "write the solves without forecasts by hand."
+                            f" Solve {split!r} is the 2-D period map row {split_of[1]!r} of solve "
+                            f"{split_of[0]!r}, and it has the stochastic_branches of {split_of[0]!r}. Those "
+                            f"start in the period(s) {', '.join(sorted(declared_start_steps))}, but {split!r} has "
+                            f"only the period(s) {', '.join(own)}. Either give stochastic_branches of "
+                            f"{split_of[0]!r} forecasts that also start in a period of {split!r} (at its first "
+                            f"time step: {firsts}), or write the split solves as separate solves (one solve per "
+                            f"row of the 2-D map, with 1-D period lists) and leave stochastic_branches out of "
+                            f"the solve for {', '.join(own)}."
                         )
                     self.logger.error(message)
                     raise FlexToolConfigError(message)

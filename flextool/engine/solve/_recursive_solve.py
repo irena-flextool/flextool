@@ -701,6 +701,28 @@ class RecursiveSolveBuilder:
             parent_roll_lists=parent_roll_lists,
         )
 
+    def _rename_periods(self, solve: str) -> set[str]:
+        """The periods of *solve* that the nested rename matches between a contained solve and its parent.
+
+        The period lists hold ``(key, period)`` tuples: ``(period, period)`` for a 1-D list, ``(row, period)`` for
+        a solve split by a 2-D period map (``row`` = the map's first column, any name).  A solve's periods are the
+        periods of its ``invest_periods``, ``fix_storage_periods`` and ``realized_periods``.  A split solve stands
+        for the periods it realizes (``realized_periods``, ``realized_invest_periods``, ``fix_storage_periods``),
+        not for its look-ahead ``invest_periods``; with none of them, all of its periods.  Before, the rename read
+        the first element of the tuple, which is the row name of a split solve: right only when every row was
+        named after the period it realizes.
+        """
+        sc = self.state.solve
+        # Indexed (not ``.get``) as before: the period dicts are defaultdicts, and later steps see the entries.
+        all_periods = {str(t[1]) for f in ("invest_periods", "fix_storage_periods", "realized_periods")
+                       for t in getattr(sc, f)[solve]}
+        if solve in getattr(sc, "map2d_duplicate_of", {}):
+            realized = {str(t[1]) for f in ("realized_periods", "realized_invest_periods", "fix_storage_periods")
+                        for t in getattr(sc, f).get(solve, [])}
+            if realized:
+                return realized
+        return all_periods
+
     # ------------------------------------------------------------------
     # Recursive entry
     # ------------------------------------------------------------------
@@ -750,16 +772,8 @@ class RecursiveSolveBuilder:
         # parent dicts.  Multiple-period overlap keeps the original
         # name (single-solve-with-multi-period parent case).
         if parent_info.solve:
-            current_solve_periods = (
-                {t[0] for t in self.state.solve.invest_periods[solve]}
-                | {t[0] for t in self.state.solve.fix_storage_periods[solve]}
-                | {t[0] for t in self.state.solve.realized_periods[solve]}
-            )
-            parent_period = (
-                {t[0] for t in self.state.solve.invest_periods[parent_info.solve]}
-                | {t[0] for t in self.state.solve.fix_storage_periods[parent_info.solve]}
-                | {t[0] for t in self.state.solve.realized_periods[parent_info.solve]}
-            )
+            current_solve_periods = self._rename_periods(solve)
+            parent_period = self._rename_periods(parent_info.solve)
             matching_periods = list(current_solve_periods & parent_period)
             if len(matching_periods) == 1:
                 current_solve_period = matching_periods[0]

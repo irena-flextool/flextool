@@ -1267,16 +1267,37 @@ class SolveConfig:
             by_parent.setdefault(parent, []).append(new)
         for parent, new_names in by_parent.items():
             for field_name in ("realized_periods", "realized_invest_periods"):
+                realized = {new: list(dict.fromkeys(str(t[1]) for t in getattr(self, field_name).get(new, [])))
+                            for new in new_names}
                 seen: dict[str, str] = {}
                 for new in new_names:
-                    for period in dict.fromkeys(str(t[1]) for t in getattr(self, field_name).get(new, [])):
+                    for period in realized[new]:
                         if period in seen:
                             raise FlexToolConfigError(
-                                f"solve '{parent}': the split solves '{seen[period]}' and '{new}' both realize "
-                                f"period '{period}' ({field_name}). Each period can be realized by one solve only: "
-                                f"make {field_name} a 2-D map with the period in one row, or remove the overlap."
-                            )
+                                self._split_overlap_message(parent, field_name, seen[period], new, period, realized))
                         seen[period] = new
+
+    def _split_overlap_message(self, parent: str, field_name: str, first: str, second: str, period: str,
+                               realized: dict[str, list[str]]) -> str:
+        """The D3 error: what overlaps, where it comes from, and the values that would run."""
+        row = {new: self.map2d_duplicate_of[new][1] for new in realized}
+        head = (f"solve '{parent}': the split solves '{first}' and '{second}' both realize period '{period}' "
+                f"({field_name}), and each period can be realized by one solve only.")
+        if parent in self.map2d_period_parents.get(field_name, set()):
+            return (f"{head} {field_name} is a 2-D map whose rows '{row[first]}' and '{row[second]}' both list "
+                    f"'{period}': remove '{period}' from one of the two rows.")
+        # A 1-D list: each split solve realizes the periods of the list that it has.  Suggest the 2-D map that gives
+        # each period to the last split solve that has it (the one that looks least far ahead).
+        last: dict[str, str] = {}
+        for new, periods in realized.items():
+            for p in periods:
+                last[p] = new
+        rows = {row[new]: [p for p, owner in last.items() if owner == new] for new in realized}
+        listed = "; ".join(f"'{new}' realizes {', '.join(periods)}" for new, periods in realized.items())
+        suggestion = "{" + ", ".join(f"{r}: [{', '.join(ps)}]" for r, ps in rows.items() if ps) + "}"
+        return (f"{head} {field_name} of '{parent}' is a 1-D list, and each split solve realizes the periods of the "
+                f"list that its row of the 2-D maps has ({listed}). Make {field_name} a 2-D map with the same "
+                f"first column and each period in one row only, for example {suggestion}.")
 
     def copy_reader_values(self, copy_name: str) -> dict[str, Any]:
         """The ``solve`` parameter values a solve of a 2-D period map (*copy_name*) has instead of its database
