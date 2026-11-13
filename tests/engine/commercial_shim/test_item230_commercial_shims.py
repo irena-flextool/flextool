@@ -295,10 +295,22 @@ def test_option_stack_as_the_solver_got_it(solver, shim, db, tmp_path, scenario,
 
 
 @pytest.mark.parametrize("solver", ["gurobi"], indirect=True)
-def test_unknown_gurobi_parameter_is_named_with_its_layer(solver, shim, db, tmp_path, caplog) -> None:
-    """Gurobi does not know ``NoSuchParameter`` (in ``solver_arguments``): it solves without it, and FlexTool
+def test_unknown_gurobi_parameter_is_refused_unless_this_computer_allows_it(
+        solver, shim, db, tmp_path, caplog, monkeypatch) -> None:
+    """Item 240 B1: ``NoSuchParameter`` (in ``solver_arguments``) is not in FlexTool's list of Gurobi parameters,
+    so the run stops before the solver program starts, naming it and the solve.  Allowed on this computer
+    (``FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS=1``), it reaches Gurobi, which solves without it, and FlexTool
     warns naming the parameter and the layer.  Gurobi only: FlexTool reads no such message from the others."""
+    from flextool.engine.solve._solver_dispatch import FlexToolUserError
+
     cfg = _cfg(tmp_path, "gurobi", "Threads 2\n")
+    with pytest.raises(FlexToolUserError) as err:
+        _run(db, "unknown_gurobi", tmp_path / "w0", cfg)
+    assert "'NoSuchParameter'" in str(err.value) and f"solver_arguments of solve {SOLVE}" in str(err.value)
+    assert "not in FlexTool's list of Gurobi parameters" in str(err.value)
+    assert _calls(shim) == [], "the solver program was called"
+    assert not list((tmp_path / "w0").rglob("*.mps")), "the run wrote a model before refusing"
+    monkeypatch.setenv("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", "1")
     with caplog.at_level(logging.WARNING):
         steps = _run(db, "unknown_gurobi", tmp_path / "w", cfg)
     assert steps[SOLVE].optimal
@@ -306,6 +318,8 @@ def test_unknown_gurobi_parameter_is_named_with_its_layer(solver, shim, db, tmp_
     assert calls and all(c["unknown"] == ["NoSuchParameter"] for c in calls), calls
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert any("'NoSuchParameter'" in w and f"solver_arguments of solve {SOLVE}" in w for w in warnings), warnings
+    allowed = [w for w in warnings if w.startswith("Passing gurobi option 'NoSuchParameter'")]
+    assert len(allowed) == 1 and "FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS" in allowed[0], warnings
 
 
 #: A parameter that makes the solver read or write at a path, for the option file (each solver's parameter

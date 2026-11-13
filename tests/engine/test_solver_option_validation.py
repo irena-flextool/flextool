@@ -102,7 +102,7 @@ def test_option_file_value_ending_in_a_backslash_is_refused(solver) -> None:
     with pytest.raises(FlexToolUserError, match="ends with a backslash") as err:
         _resolve(solver, opt_text="Threads 1\nTUNEROUTPUTPATH C:\\out\\\n")
     assert "cfg/x.opt, line 2" in str(err.value)
-    assert [o.value for o in _resolve(solver, options={"A": "C:\\out\\x"})] == ["C:\\out\\x"]
+    assert [o.value for o in _resolve(solver, opt_text="TUNEROUTPUTPATH C:\\out\\x\n")] == ["C:\\out\\x"]
 
 
 #: A parameter name of each commercial solver, as the database or an option file spells it.
@@ -117,8 +117,9 @@ def test_empty_value_is_refused_from_the_database(solver) -> None:
         _resolve(solver, options={"Threads": "1", _GAP_NAME[solver]: ""})
     assert "solver_arguments of solve invest" in str(err.value)
     # A missing value (None) is still skipped, a switch is still 1 / 0.
-    assert [(o.name, o.value) for o in _resolve(solver, options={"Threads": None, "Presolve": False})] == [
-        ("presolve" if solver == "cplex" else "Presolve", "0")]
+    presolve = {"cplex": "preprocessing presolve", "xpress": "PRESOLVE"}.get(solver, "Presolve")
+    assert [(o.name, o.value) for o in _resolve(solver, options={"Threads": None, presolve: False})] == [
+        (presolve, "0")]
 
 
 def test_highs_empty_value_is_refused_in_process_as_in_the_save_memory_child() -> None:
@@ -154,7 +155,7 @@ def test_cplex_value_that_is_a_name_word_is_refused_from_every_source() -> None:
         _resolve("cplex", opt_text="mip tol mipgap\n")
     # Text parameters (also abbreviated) take a word; a switch word, a number and a path pass everywhere.
     options = _resolve("cplex", options={
-        "workdir": "scratch", "out intsol": "incumbent", "read fileencoding": "UTF-8", "cpumask": "ffff",
+        "workdir": "scratch", "output intsolfileprefix": "incumbent", "read fileencoding": "UTF-8", "cpumask": "ffff",
         "emphasis numerical": "yes", "timelimit": "1e+75", "mip tolerances mipgap": "0.01",
     })
     assert [o.value for o in options] == ["scratch", "incumbent", "UTF-8", "ffff", "yes", "1e+75", "0.01"]
@@ -180,7 +181,9 @@ def test_cplex_text_parameters_and_switch_words_match_its_parameters() -> None:
     model = cplex.Cplex()  # the parameter objects hold only a weak reference to it
     walk(model.parameters, [])
     assert len(leaves) > 150
-    assert {n for n, d in leaves.items() if isinstance(d, str)} | {"logfile"} == _solver_dispatch._CPLEX_TEXT_PARAMETERS
+    # Plus the Interactive Optimizer's own text parameters (IBM's command table, in FlexTool's CPLEX list).
+    assert {n for n, d in leaves.items() if isinstance(d, str)} | {"logfile", "distmip config"} == (
+        _solver_dispatch._CPLEX_TEXT_PARAMETERS)
     assert not {w for n in leaves for w in n.split(" ")} & _solver_dispatch._CPLEX_SWITCH_WORDS
     for name in leaves:
         *head, last = name.split(" ")
@@ -202,9 +205,11 @@ def test_space_in_a_name_is_refused_except_cplex_single_spaces() -> None:
 
 
 @pytest.mark.parametrize("solver", _COMMERCIAL)
-def test_legitimate_values_pass(solver: str, tmp_path: Path) -> None:
+def test_legitimate_values_pass(solver: str, tmp_path: Path, monkeypatch) -> None:
     """Negative numbers, scientific notation, infinity and dotted names reach the solver unchanged; each script
-    has one line per parameter plus the fixed commands."""
+    has one line per parameter plus the fixed commands.  (The names are made up, so this computer allows unlisted
+    names here.)"""
+    monkeypatch.setenv("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", "1")
     values = {"A": "-1", "B": "1e-4", "C": "inf", "D": "-inf", "E": "1e+20", "F.g": "on", "G": True}
     options = _resolve(solver, options=values)
     assert [o.value for o in options] == ["-1", "1e-4", "inf", "-inf", "1e+20", "on", "1"]
@@ -294,7 +299,7 @@ def test_database_path_option_is_refused(solver: str, value: str) -> None:
 
 @pytest.mark.parametrize("solver, name", [
     ("highs", "write_basis_file"), ("highs", "mip_improving_solution_file"), ("gurobi", "ResultFile"),
-    ("gurobi", "NodefileDir"), ("cplex", "logfile"), ("cplex", "output.intsolfileprefix"), ("cplex", "write"),
+    ("gurobi", "NodefileDir"), ("cplex", "logfile"), ("cplex", "output.intsolfileprefix"), ("cplex", "workdir"),
     ("xpress", "TUNERMETHODFILE"), ("copt", "LogFile"),
 ])
 def test_every_listed_path_option_is_refused_with_a_path_from_the_database(solver: str, name: str) -> None:
@@ -514,8 +519,10 @@ def test_copt_parameters_pass(tmp_path) -> None:
     assert [(o.name, o.value) for o in resolved] == [("Threads", "2"), ("RelGap", "0.01"), ("TimeLimit", "60")]
 
 
-def test_cplex_abbreviations_of_a_path_parameter_are_path_options() -> None:
-    """The CPLEX Interactive Optimizer takes any unique abbreviation of each word of a ``set`` command."""
+def test_cplex_abbreviations_of_a_path_parameter_are_path_options(monkeypatch) -> None:
+    """The CPLEX Interactive Optimizer takes any unique abbreviation of each word of a ``set`` command.  From the
+    database an abbreviation is refused naming the full name (item 240 D2); where this computer allows unlisted
+    names, the path rule still recognises it."""
     for name in ("logfile", "log", "workd", "WorkDir", "output intsolfileprefix", "output.intsol", "o i",
                  "read", "write problem"):
         assert is_path_option("cplex", name), name
@@ -523,6 +530,9 @@ def test_cplex_abbreviations_of_a_path_parameter_are_path_options() -> None:
         assert not is_path_option("cplex", name), name
     # No abbreviations for the others.
     assert not is_path_option("gurobi", "Log") and is_path_option("gurobi", "logfile")
+    with pytest.raises(FlexToolUserError, match="not a full CPLEX parameter name; write 'logfile'"):
+        _resolve("cplex", options={"log": "cplex.log"})
+    monkeypatch.setenv("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", "1")
     with pytest.raises(FlexToolUserError, match="plain file name"):
         _resolve("cplex", options={"log": "/tmp/cplex.log"})
     assert [o.value for o in _resolve("cplex", options={"log": "cplex.log"})] == ["cplex.log"]
@@ -599,8 +609,9 @@ def test_highs_path_options_are_its_file_options() -> None:
     highspy = pytest.importorskip("highspy")
     h = highspy.Highs()
     h.setOptionValue("output_flag", False)
-    for name in _PATH_OPTIONS["highs"]:
+    for name in _solver_dispatch._HIGHS_FILE_NAME_OPTIONS:
         assert h.getOptionType(name) == (highspy.HighsStatus.kOk, highspy.HighsOptionType.kString), name
+    assert len(_solver_dispatch._HIGHS_FILE_NAME_OPTIONS) == 9
 
 
 def test_gurobi_path_options_are_its_parameters() -> None:
@@ -610,7 +621,11 @@ def test_gurobi_path_options_are_its_parameters() -> None:
     by_key = {n.casefold(): d for n, d in param_details.items()}
     for key in _PATH_OPTIONS["gurobi"]:
         assert key in by_key, key
-        assert by_key[key]["values"]["type"] == ("int" if key == "record" else "string"), key
+    # The text ones (the numeric ones, Record and the names with file / dir / path, take a number from anywhere).
+    assert {k for k in _PATH_OPTIONS["gurobi"] if by_key[k]["values"]["type"] == "string"} == {
+        "resultfile", "logfile", "solfiles", "nodefiledir", "inputfile", "concurrentsettings", "multiobjsettings",
+        "tunebasesettings", "tuneignoresettings", "tuneparams"}
+    assert "record" in _PATH_OPTIONS["gurobi"]
 
 
 def test_gurobi_server_options_are_its_parameters() -> None:
@@ -684,6 +699,10 @@ def test_gurobi_library_reads_names_as_the_key_does() -> None:
         lib.GRBfreeenv(env)
 
 
+#: Xpress's text controls that name a file or folder (its other file / path controls are numbers).
+_XPRESS_TEXT_PATH_CONTROLS = {"tunermethodfile", "tuneroutputpath", "tunersessionname"}
+
+
 def test_xpress_library_reads_names_as_the_key_does() -> None:
     """Pin :func:`commercial_option_key` for Xpress to the library's control lookup (``getcontrolinfo``): case
     and one ``XPRS_`` prefix are ignored; a second prefix or ``XPRS`` without ``_`` is not."""
@@ -700,7 +719,7 @@ def test_xpress_library_reads_names_as_the_key_does() -> None:
         except Exception:  # the package's own error type for an unknown name
             return None
 
-    for key in _PATH_OPTIONS["xpress"]:
+    for key in _XPRESS_TEXT_PATH_CONTROLS:
         for name in (key.upper(), f"XPRS_{key.upper()}", f"xprs_{key}", f"Xprs_{key.title()}"):
             assert control_id(name) == control_id(key.upper()) is not None, name
             assert commercial_option_key("xpress", name) == key, name
@@ -717,7 +736,8 @@ def test_cplex_path_options_are_its_parameters() -> None:
     assert isinstance(c.parameters.workdir.default(), str)
     assert isinstance(c.parameters.output.intsolfileprefix.default(), str)
     # ``logfile`` is an Interactive Optimizer parameter, not in the Python API.
-    assert _PATH_OPTIONS["cplex"] == {"workdir", "output intsolfileprefix", "logfile"}
+    assert _PATH_OPTIONS["cplex"] & _solver_dispatch._CPLEX_TEXT_PARAMETERS == {
+        "workdir", "output intsolfileprefix", "logfile"}
 
 
 def test_xpress_path_options_are_its_controls() -> None:
@@ -726,8 +746,7 @@ def test_xpress_path_options_are_its_controls() -> None:
     warnings.simplefilter("ignore")
     xp = pytest.importorskip("xpress")
     controls = xp.problem().getControl()
-    for key in _PATH_OPTIONS["xpress"]:
-        assert isinstance(controls[key], str), key
+    assert {k for k in _PATH_OPTIONS["xpress"] if isinstance(controls[k], str)} == _XPRESS_TEXT_PATH_CONTROLS
 
 
 def test_copt_has_no_string_parameter() -> None:

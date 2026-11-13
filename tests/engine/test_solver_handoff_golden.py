@@ -214,6 +214,9 @@ def _all_cases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, dic
 
 def test_solver_handoff_matches_the_golden_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
+    # The record is how options are handed over, made before item 240 B1 refused names that are not in FlexTool's
+    # lists (the corpus has CPLEX ``Presolve``); allowing such names keeps it the same record.
+    monkeypatch.setenv("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", "1")
     monkeypatch.chdir(tmp_path)  # HiGHS opens a log_file as soon as it is set
     cases = _all_cases(tmp_path, monkeypatch)
     if os.environ.get("FLEXTOOL_WRITE_SOLVER_HANDOFF_GOLDEN") == "1":

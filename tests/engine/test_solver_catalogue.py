@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -174,6 +175,27 @@ def test_catalogue_is_package_data_and_a_missing_file_stops(monkeypatch, tmp_pat
     finally:
         _solver_catalogue.load.cache_clear()
 
+
+
+def test_docs_list_the_file_parameters_and_versions_of_the_catalogue() -> None:
+    """``docs/solvers/index.md`` "What the database may set": the table of file and folder parameters is the
+    catalogue's text-valued file entries, and the versions table names each catalogue's versions."""
+    text = (REPO / "docs" / "solvers" / "index.md").read_text()
+    section = text.split("#### What the database may set", 1)[1].split("\n#### ", 1)[0]
+    table = section.split("| Solver | File and folder parameters |", 1)[1].split("\n\n", 1)[0]
+    labels = {v: k for k, v in _solver_catalogue.SOLVER_LABEL.items()}
+    rows = {}
+    for line in table.splitlines()[2:]:
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        rows[labels[cells[0]]] = set(re.findall(r"`([^`]+)`", cells[1]))
+    for solver in SOLVERS:
+        catalogue = _solver_catalogue.load(solver)
+        expected = {e.name for e in catalogue.entries.values() if e.cls in ("file", "flextool") and e.type == "string"}
+        assert rows[solver] == expected, solver
+        versions = section.split("| List made from |", 1)[1].split("\n\n", 1)[0]
+        cells = {line.split("|")[1].strip(): line for line in versions.splitlines() if line.count("|") >= 3}
+        row = cells[catalogue.label]
+        assert all(v.rsplit(".", 1)[0] in row for v in catalogue.versions), (solver, row)
 
 
 def test_solver_arguments_examples_in_the_docs_are_listed_names() -> None:

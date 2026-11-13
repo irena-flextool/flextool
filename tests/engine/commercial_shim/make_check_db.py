@@ -18,7 +18,8 @@ with these scenarios for each solver ``<s>`` in gurobi, cplex, xpress, copt (sol
   ``<folder>/path_option_<s>`` (item 236: the precommand is never run, and a path from the input database is
   refused before the solver starts);
 
-plus ``unknown_gurobi`` (``solver_arguments`` ``NoSuchParameter`` 1) and ``iterlimit_xpress`` (``LPITERLIMIT``
+plus ``unknown_gurobi`` (``solver_arguments`` ``NoSuchParameter`` 1, not a Gurobi parameter: refused unless this
+computer allows unlisted names) and ``iterlimit_xpress`` (``LPITERLIMIT``
 1, ``PRESOLVE`` 0).  The scenarios ``coal`` and ``coal_min_load_MIP_wind`` themselves solve with HiGHS.
 """
 from __future__ import annotations

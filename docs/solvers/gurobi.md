@@ -98,11 +98,14 @@ the FlexTool log.
   expired"*. Renew the licence through the Gurobi web portal.
 - **`gurobi_cl` not found.** *"Solver 'gurobi' CLI binary is not installed on
   this system."* Install Gurobi and put `gurobi_cl` on the `PATH`.
-- **Unknown Gurobi parameter.** A misspelt name in `solver_arguments` or
-  `gurobi.opt` (e.g. `MIPGapp`) is ignored by Gurobi, which prints
-  `Unknown parameter: 'MIPGapp' (ignored)` and solves on. FlexTool repeats it
-  as a warning naming where the parameter was set (the option file, or the
-  `solver_arguments` of which solve). Fix the name. With console logging off
+- **Unknown Gurobi parameter.** A misspelt name in `solver_arguments` (e.g.
+  `MIPGapp`) stops the run before its first solve, with the closest name
+  (`MIPGap`) in the message: the database may name only parameters in
+  FlexTool's list ([What the database may set](index.md#what-the-database-may-set)).
+  In `gurobi.opt` (or from `solver_arguments` where this computer allows
+  unlisted names) FlexTool warns and passes it; Gurobi ignores it, prints
+  `Unknown parameter: 'MIPGapp' (ignored)` and solves on, and FlexTool repeats
+  that as a warning naming where the parameter was set. Fix the name. With console logging off
   (`LogToConsole 0`) Gurobi prints no such line, and there is no warning.
 - **File parameters.** Parameters that name a file or folder (`LogFile`,
   `SolFiles`, `NodefileDir`, `InputFile`, the `.prm` / `.json` file lists of

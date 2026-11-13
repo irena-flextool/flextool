@@ -132,12 +132,13 @@ These are passed through untouched, within the limits of
 the way the solver reads them: without regard to case (`mipgap` and `MIPGap`
 are one parameter); Gurobi also ignores `_` (`MIP_Gap` is `MIPGap`) and Xpress
 an `XPRS_` prefix; for CPLEX a dotted name such as `mip.tolerances.mipgap` is
-the same as `mip tolerances mipgap`. Write CPLEX names in full: an abbreviation
-is not matched to its full name when the layers are merged (the file and folder
-parameters below excepted: they are recognised abbreviated too). What a solver
-does with a misspelt name is the solver's own: Gurobi ignores it with a
-message, and FlexTool repeats that message as a warning naming where the name
-was set.
+the same as `mip tolerances mipgap`. Write CPLEX names in full: from the
+database an abbreviation is refused (the message gives the full name), and in
+an option file it is not matched to its full name when the layers are merged.
+A name that is not one of the solver's parameters is refused from the database
+(see below); in your own option files it gives a warning and is passed on, and
+what the solver does with it is the solver's own: Gurobi ignores it with a
+message, which FlexTool repeats as a warning naming where the name was set.
 
 FlexTool's results are not affected by a solver's file parameters (they are in
 `output_parquet/<scenario>/` and the outputs you chose). Gurobi's `ResultFile`
@@ -156,43 +157,74 @@ line of your own computer. The solver option files (`solver_config/<solver>.opt`
 the flags and the environment variables keep full paths and server
 parameters; from the database:
 
+- **Only the solver's own parameter names** are taken. FlexTool has a list of
+  every parameter of each solver, made from the solver's own package:
+
+  | Solver | List made from |
+  |--------|----------------|
+  | HiGHS  | HiGHS 1.15.1 (highspy) |
+  | Gurobi | Gurobi 13.0.2 (gurobipy), with `gurobi_cl`'s own parameters |
+  | CPLEX  | CPLEX 22.1.2 (the cplex package), with the Interactive Optimizer's `logfile`, `defaults` and `distmip config` from IBM's documentation |
+  | Xpress | Xpress 46.01.02 (xpress 9.8.1) |
+  | COPT   | COPT 8.0.4 (coptpy), with the console's `LogFile` |
+
+  A name that is not in the list is refused, and the message suggests the
+  closest listed name: a misspelling (`MIPGapp`), a name in the wrong case
+  for HiGHS (`Presolve`; HiGHS takes `presolve` only), a CPLEX abbreviation
+  (`mip tol mipgap`: the message says to write `mip tolerances mipgap`), or a
+  parameter of a newer solver version than the list. For HiGHS, a name that
+  the installed HiGHS knows as a number or a switch is taken as well, so
+  updating HiGHS does not stop your runs; a text option of a newer HiGHS is
+  not. Rare and advanced parameters of the listed versions are in the list.
+  Names are matched as the solver reads them (above).
 - **Ordinary parameters** (gaps, tolerances, methods, thread counts, switches)
   are taken as they are.
 - **A parameter that names a file or folder** takes only a plain file name:
   ASCII letters, digits and `_ . + -`, starting with a letter, digit or `_`,
   with no `/`, `\`, `:` or `..`. The file is written in the solve's work
   folder, `<work folder>/solve_data/subprocess/`. A full path is refused.
-  These are the parameters whose name contains *file*, *dir* or *path*, and
-  also:
+  These are the parameters whose value is a file or folder name:
 
   | Solver | File and folder parameters |
   |--------|----------------------------|
   | HiGHS  | `log_file`, `solution_file`, `read_solution_file`, `read_basis_file`, `write_basis_file`, `write_model_file`, `write_presolved_model_file`, `write_iis_model_file`, `mip_improving_solution_file` |
-  | Gurobi | `ResultFile`, `LogFile`, `SolFiles`, `NodefileDir`, `InputFile`, `ConcurrentSettings`, `MultiObjSettings`, `TuneBaseSettings`, `TuneIgnoreSettings`, `TuneParams`, `Record` |
-  | CPLEX  | `logfile`, `workdir`, `output intsolfileprefix` (also abbreviated, as the Interactive Optimizer accepts) and names starting with `read` or `write` |
+  | Gurobi | `ResultFile`, `LogFile`, `SolFiles`, `NodefileDir`, `InputFile`, `ConcurrentSettings`, `MultiObjSettings`, `TuneBaseSettings`, `TuneIgnoreSettings`, `TuneParams` |
+  | CPLEX  | `logfile`, `workdir`, `output intsolfileprefix` |
   | Xpress | `TUNERMETHODFILE`, `TUNEROUTPUTPATH`, `TUNERSESSIONNAME` |
   | COPT   | `LogFile` |
 
-  Names are matched as the solver reads them (above), so `Log_File` for
-  Gurobi or `XPRS_TUNEROUTPUTPATH` for Xpress is the same parameter. A number
-  or a switch in such a parameter (Gurobi `NodefileStart 0.5`) passes.
-  Every solver runs in the same work folder, so the file name may not be one
-  that a solver reads by itself from there: `gurobi.env`, a name ending in
-  `.lic`, `license.dat`, `license.key`, `client.ini`, `xpauth.xpr` or
-  `nethasp.ini` (in any case).
-- **Gurobi server, cloud and licence parameters** are refused:
-  `ComputeServer`, `ServerPassword`, `ServerTimeout`, the `CS...` Cluster
-  Manager parameters (`CSManager`, `CSAPIAccessID`, `CSAPISecret`, `CSGroup`,
-  `CSPriority`, `CSRouter`, ...), the `Cloud...` Instant Cloud parameters, the
-  `WLS...` Web License Service parameters, `TokenServer`, `TSPort`,
-  `LicenseID`, `UserName`, `WorkerPool` and `WorkerPassword`.
-- **Xpress remote-solving controls** are refused: `COMPUTE`, which sends the
-  solve to a remote service, and the other `COMPUTE...` controls
-  (`COMPUTEEXECSERVICE`, `COMPUTEJOBPRIORITY`, `COMPUTELOG`).
+  A number or a switch in a parameter whose name has *file*, *dir* or *path*
+  in it (Gurobi `NodefileStart 0.5`), or that writes files of its own (Gurobi
+  and CPLEX `Record`), passes. Every solver runs in the same work folder, so
+  the file name may not be one that a solver reads by itself from there:
+  `gurobi.env`, a name ending in `.lic`, `license.dat`, `license.key`,
+  `client.ini`, `xpauth.xpr` or `nethasp.ini` (in any case).
+- **Server, cloud and licence parameters** are refused, whatever their type
+  (an integer can switch remote solving on). Gurobi: `ComputeServer`,
+  `ServerPassword`, `ServerTimeout`, the `CS...` Cluster Manager parameters
+  (`CSManager`, `CSAPIAccessID`, `CSAPISecret`, `CSGroup`, `CSPriority`,
+  `CSRouter`, ...), the `Cloud...` Instant Cloud parameters, the `WLS...` Web
+  License Service parameters, `TokenServer`, `TSPort`, `LicenseID`,
+  `Username`, `WorkerPool` and `WorkerPassword`. Xpress: `COMPUTE`, which
+  sends the solve to a remote service, and the other `COMPUTE...` controls
+  (`COMPUTEEXECSERVICE`, `COMPUTEJOBPRIORITY`, `COMPUTELOG`). CPLEX:
+  `distmip config` (the machines of a distributed MIP solve).
+- **A few others are refused** as well: Gurobi's `JobID` and `Dummy` (text
+  parameters with no use from a database) and CPLEX's `defaults` (a command
+  that resets every parameter, not a parameter).
+- **FlexTool 3's HiGHS settings** in a solve that uses Gurobi, CPLEX, Xpress
+  or COPT are left out with one warning per run: the database migration moved
+  FlexTool 3's `highs_method`, `highs_parallel` and `highs_presolve` into
+  `solver_arguments` as `solver`, `parallel` and `presolve` for every solve.
+  A number for the solver's own parameter of that name (Gurobi `presolve 2`)
+  is still passed.
 
-The error names the parameter, its value and the solve. Put a file path or a
-server parameter in the solver's option file, `solver_config/<solver>.opt`
-(or that file in a folder given with `--solver-config-dir`), which keeps them.
+The error names the parameter, its value and the solve. FlexTool checks the
+`solver_arguments` of every solve of the scenario before the first solve
+starts, so the run stops in seconds, not after hours of earlier solves. Put a
+file path, a server parameter or a parameter that is not in the list in the
+solver's option file, `solver_config/<solver>.opt` (or that file in a folder
+given with `--solver-config-dir`), which keeps them.
 The checks against extra commands (no line breaks, spaces, quotes, `;`, `#`,
 `=` or a backslash at the end) apply to every source. So does the rule that
 every parameter has a value: an empty value is refused for every solver
@@ -201,6 +233,34 @@ line with a name and no value (for CPLEX also a last word that is not a
 number where the parameter takes one, such as `mip tolerances mipgap`
 without its value). The solution-file lines of old `highs.opt` templates are
 dropped, as before.
+
+#### Allowing a parameter that is not in the list
+
+A newer solver version can have parameters that FlexTool's list does not
+have yet. Set such a parameter in `solver_config/<solver>.opt`, which takes
+any name (with a warning). Or allow names that are not in the list from input
+databases on your computer, in one of two ways (the first wins):
+
+- the environment variable `FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS=1`
+  (`0` refuses them again); or
+- the file `solver_settings.json` in FlexTool's folder of your user settings
+  (`~/.config/flextool/` on Linux, `%LOCALAPPDATA%\flextool\` on Windows,
+  `~/Library/Application Support/flextool/` on macOS):
+
+  ```json
+  {"format": 1, "allow_unlisted_parameters": true}
+  ```
+
+The setting is on your computer only: no database, project, workspace or
+command-line flag can switch it on, since those can come from someone else.
+With it on, an unlisted name is passed with one warning per run that says
+where the setting is; a name that looks like a file or folder parameter still
+takes only a plain file name, and a name that looks like a server parameter
+(Gurobi `CS...`, `Cloud...`, `WLS...`, `Server...`, `Token...`, `Worker...`;
+Xpress `COMPUTE...`) is still refused, as are the listed ones above. A HiGHS
+text option that FlexTool's list does not have is refused even then. The
+run's record (`output_parquet/<scenario>/_run_status.json`, `solver_config`)
+says whether the setting was on and where it came from.
 
 ### Per-solver baseline `.opt` files
 

@@ -108,11 +108,25 @@ Each line says what changes for a model that ran before and what to do; the deta
   a Gurobi Compute Server, Cloud, WLS, token-server or licence option, and an Xpress remote-solving control
   (`COMPUTE...`), is refused with a message naming the option, its value and the solve. Move such options to `solver_config/<solver>.opt`: the option files, flags and
   environment variables keep full paths and server options. Names are matched as the solver reads them (Gurobi
-  ignores `_`, Xpress an `XPRS_` prefix, CPLEX takes abbreviations); the full list is in the solver docs. Gurobi's
+  ignores `_`, Xpress an `XPRS_` prefix, CPLEX reads `.` as a space); the full list is in the solver docs. Gurobi's
   `ResultFile` is FlexTool's own and is ignored, with a warning, wherever it is set. FlexTool's results are in
   `output_parquet/<scenario>/` as before; a commercial solver's log is saved as
   `<work folder>/solve_data/subprocess/<solve>.log`; HiGHS' log is in the run's log,
   `output_parquet/<scenario>/_run.log` (with `flextool-run` or the FlexTool window).
+- **Solver parameter names in the input database must be the solver's own.** FlexTool now has a list of every
+  parameter of HiGHS 1.15.1, Gurobi 13.0.2, CPLEX 22.1.2, Xpress 46.01 and COPT 8.0.4, and a solve's
+  `solver_arguments` may name only those. Any other name is refused before the first solve of the run, with a
+  message that suggests the closest name: a misspelling (`MIPGapp`, which the solver ignored or refused before), a
+  HiGHS name in another case (`Presolve`), a CPLEX abbreviation (write `mip tolerances mipgap`, not
+  `mip tol mipgap`), or a parameter of a newer solver version. HiGHS names that your installed HiGHS knows as a
+  number or a switch are taken too. The remote-solving and licence parameters are refused whatever their type,
+  and so are Gurobi's `JobID` / `Dummy` and CPLEX's `defaults`. FlexTool 3's `solver`, `parallel` and `presolve`
+  (moved into `solver_arguments` by the database migration, for every solve) are left out of a solve that uses
+  Gurobi, CPLEX, Xpress or COPT, with one warning per run. To use a parameter that is not in the list, put it in
+  `solver_config/<solver>.opt` (an unknown name there gives a warning and is passed on), or allow such names from
+  databases on your computer with `FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS=1` or
+  `"allow_unlisted_parameters": true` in `solver_settings.json` in FlexTool's user settings folder; no database,
+  project or command-line flag can switch this on. See "What the database may set" in the solver docs.
 - **`solver_precommand` is not run, and a value now gives a warning.** FlexTool 3 ran it in front of CPLEX (for
   example to reserve a floating licence); FlexTool 4 does not run commands stored in a database, for safety: a
   database from someone else could otherwise run any program on your computer. The parameter is kept only so that

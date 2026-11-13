@@ -296,6 +296,9 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         _user("POLARS_FORCE_PKG", "force one polars build; also skips FlexTool's processor check"),
         _user("FLEXTOOL_RUN_LOG_MAX_BYTES", "bytes of a run's _run.log kept from its end (4 MiB, at most 256 MiB); "
               "the first 64 KiB are kept too"),
+        _user("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", "1 takes solver parameter names that are not in "
+              "FlexTool's lists from input databases (default off; also solver_settings.json in the user config "
+              "folder)"),
         _user("FLEXTOOL_MIGRATION_LOCK_TIMEOUT", "Windows: seconds a migration waits for the lock of another "
               "migration of the same database (600); not read on Linux or macOS"),
         _user("POLARS_MAX_THREADS", "polars thread pool size, in place of FlexTool's limit of 8 but at most the "
@@ -362,6 +365,7 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         _dev("_RJEM_MALLOC_CONF", "jemalloc settings of polars' allocator; FlexTool sets page decay"),
         # --- test suite -----------------------------------------------------------------------------------
         _test("FLEXTOOL_NATIVE_PARITY_SWEEP", "run the slow parity sweep over every fixture"),
+        _test("FLEXTOOL_WRITE_SOLVER_HANDOFF_GOLDEN", "1 rewrites the solver hand-off golden record"),
         _test("FLEXTOOL_TEST_RSS_BUDGET_MB", "RSS budget of the input-derivation memory test (1500)"),
         _test("FLEXTOOL_TEST_KEYRING_LOG", "set by the root conftest: the file the session's keyring violations go to"),
         _test("FLEXTOOL_SHIM_RECORD", "set by the commercial_shim tests: the file each solver shim appends its "

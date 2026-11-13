@@ -330,8 +330,12 @@ class SolverOptionFiles:
         """The run record's ``solver_config`` block: the folder (``None``: FlexTool's defaults) and why, the
         folders skipped as unedited template copies, the snapshot folder, and per option file its source (the
         file, or ``"FlexTool default"``), the SHA-256 of the text the run used (CRLF read as LF, the hash of
-        :data:`SHIPPED_TEMPLATE_SHA256`) and whether that is an unedited FlexTool template.  Paths are absolute,
-        so the record means the same read from elsewhere."""
+        :data:`SHIPPED_TEMPLATE_SHA256`) and whether that is an unedited FlexTool template, and whether this
+        computer allows solver parameter names that are not in FlexTool's lists from databases, and where that was
+        set (:func:`flextool._local_solver_settings.allow_unlisted_record`).  Paths are absolute, so the record
+        means the same read from elsewhere."""
+        from flextool._local_solver_settings import allow_unlisted_record
+
         files: dict[str, dict[str, Any]] = {}
         for solver in SOLVER_NAMES:
             text = self.texts.get(solver)
@@ -350,6 +354,7 @@ class SolverOptionFiles:
             "skipped": [_absolute(p) for p in self.source.skipped],
             "snapshot_dir": _absolute(self.snapshot_dir) if self.snapshot_dir is not None else None,
             "files": files,
+            "allow_unlisted_parameters": allow_unlisted_record(),
         }
 
 

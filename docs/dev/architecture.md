@@ -135,6 +135,14 @@ The contract:
    start into `PathConfig.solver_option_files` (every solve reads its layer from there, never from disk) and
    writes the record `<work_folder>/solve_data/solver_config/`. The GUI and the calibrator pass the folder
    explicitly.
+   Trust follows the source: the database layers (`solver_arguments`, `solver_mip_gap`) take only names in
+   `engine/solve/solver_catalogue/<solver>.json` (`_solver_catalogue`, written by `tools/solver_catalogue.py` with
+   a reviewed class per name: `plain` / `file` / `local_only` / `flextool`), checked for every solve before the
+   first (`check_run_solver_options`) and again per solve (`check_database_solver_option`). HiGHS names the
+   installed highspy knows as bool / int / double pass too. The per-user switch for unlisted names
+   (`flextool/_local_solver_settings.py`: `FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS`, else
+   `user_config_dir()/solver_settings.json`) is never read from a database, project, workspace or flag. Option
+   files and flags warn on an unlisted name and pass it.
 7. The run header prints `RunOptions.summary_lines()` — each option set by a flag or an environment variable,
    with its source — and the thread budget (`Threads:`), with polars' and HiGHS' thread counts.
 

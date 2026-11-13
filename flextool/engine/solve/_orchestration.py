@@ -342,6 +342,12 @@ def _solve_highs_options(
         solver_workspace,
     )
 
+    solver_config = state.solve.solver_configs.get(complete_solve_name, SolverConfig())
+    # A solve on a commercial solver has its solver_arguments in that solver's names, checked against that
+    # solver's list (resolve_commercial_options); they are not HiGHS options (item 240 B1).
+    solver_arguments = (
+        state.solve.solver_settings.arguments.get(complete_solve_name, {}) if solver_config.name == "highs" else {}
+    )
     files = state.paths.solver_option_files
     highs_opt_text = files.text("highs") if files is not None else None
     if files is not None:
@@ -352,15 +358,11 @@ def _solve_highs_options(
         highs_opt_path = None
     return _resolve_effective_highs_options(
         highs_opt_text=highs_opt_text,
-        solver_arguments_map=state.solve.solver_settings.arguments.get(
-            complete_solve_name, {}
-        ),
+        solver_arguments_map=solver_arguments,
         highs_opt_path=highs_opt_path,
         cli_overrides=_operator_highs_overrides(state.run_options),
         baseline=baseline,
-        solver_config=state.solve.solver_configs.get(
-            complete_solve_name, SolverConfig()
-        ),
+        solver_config=solver_config,
         solve_name=complete_solve_name,
         # A plain file name the database gives a HiGHS file option lands in the solve's work folder.
         workspace=solver_workspace(state.paths.work_folder),
@@ -5124,8 +5126,10 @@ def run_chain_from_db(
 
         sc = SolveConfig.load_from_db_url(db_url, scenario_name, logger=logger)
         # Item 236 A3: a solve's solver_precommand is never run; say so once per solve in this run.
-        from flextool.engine.solve._solver_dispatch import warn_solver_precommands
+        from flextool.engine.solve._solver_dispatch import check_run_solver_options, warn_solver_precommands
         warn_solver_precommands(sc.solver_settings.precommand, logger)
+        # Item 240 B1: every solve's solver_arguments, under its solver, before the first solve.
+        check_run_solver_options(sc.solver_settings, logger)
         _memrec.checkpoint("solve_config_loaded", logger,
                            user_label="SolveConfig loaded (from DB)")
         tc = TimelineConfig.load_from_db_url(db_url, scenario_name, logger=logger)
