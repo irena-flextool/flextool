@@ -57,16 +57,97 @@ _SHEET_NAME_ALIASES: dict[str, list[str]] = {
     "timeline": ["timeline_t"],
 }
 
+# Sheets of a specification workbook that carry no model data (the importer
+# never reads them, and their contents are not a loss).  Any other sheet that
+# no import table covers is reported, so obsolete sheets are never dropped
+# silently.
+_NON_DATA_SHEETS: frozenset[str] = frozenset({"navigate", "version"})
 
-def _remap_value(value: Any) -> Any:
+# Header names that older template vintages used for a column the current
+# template (the ``layout`` recorded in the specification) names differently.
+# The importer locates every column by its header, so a renamed header must
+# resolve to the current name; parameter renames in ``_PARAMETER_NAME_REMAP``
+# resolve the same way.
+#   is_active / can_provide -> the entity-alternative activity column, which
+#       the changelog-v24 template heads 'Entity Alternative'
+#   timeblockSet            -> timeset (sheet timeblockSet, pre-v25)
+#   is_realized             -> realize_dispatch (solve_period)
+#   realize_invests         -> realized_invest_periods (solve_period)
+#   fix_storage             -> fix_storage_periods (solve_period)
+#   contains_solve          -> contains_solves (solve_sequence)
+_HEADER_ALIASES: dict[str, str] = {
+    "is_active": "Entity Alternative",
+    "can_provide": "Entity Alternative",
+    "timeblockSet": "timeset",
+    "is_realized": "realize_dispatch",
+    "realize_invests": "realized_invest_periods",
+    "fix_storage": "fix_storage_periods",
+    "contains_solve": "contains_solves",
+}
+
+# Parameter-specific remapping of legacy *values* (a global remap would also
+# rewrite an entity or alternative that happens to carry the same name).
+# Older templates named the solve modes by what they did; the schema knows
+# only how the solve is sequenced.
+_PARAMETER_VALUE_REMAP: dict[str, dict[str, str]] = {
+    "solve_mode": {
+        "invest": "single_solve",
+        "dispatch_single": "single_solve",
+        "dispatch_rolling": "rolling_window",
+    },
+}
+
+# Period-map parameters for which a period without a value means "no lower
+# bound", so filling it with 0 is exactly equivalent: invested, retired and
+# cumulative capacity are never negative.  Other period maps are not filled
+# (their blank periods are reported instead).
+_ZERO_FILL_PERIOD_PARAMETERS: frozenset[str] = frozenset({
+    "invest_min_period",
+    "retire_min_period",
+    "cumulative_min_capacity",
+})
+
+_ACTIVE_TRUE = frozenset({"yes", "true", "1", "1.0"})
+_ACTIVE_FALSE = frozenset({"no", "false", "0", "0.0", ""})
+
+
+def _parse_activity(value: Any) -> Optional[bool]:
+    """Read an entity-alternative activity cell; ``None`` if it is not a yes/no value."""
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in _ACTIVE_TRUE:
+        return True
+    if text in _ACTIVE_FALSE:
+        return False
+    return None
+
+
+def _remap_value(value: Any, parameter_name: Optional[str] = None) -> Any:
     """Return the remapped value if it is a known old name, else unchanged."""
     # numpy scalars (e.g. int64 from pandas-pivoted integer cells) are not
     # JSON-serializable; coerce to a native Python scalar before to_database.
     if isinstance(value, np.generic):
         value = value.item()
     if isinstance(value, str):
-        return _VALUE_REMAP.get(value, value)
+        value = _VALUE_REMAP.get(value, value)
+        if parameter_name is not None:
+            value = _PARAMETER_VALUE_REMAP.get(parameter_name, {}).get(value, value)
     return value
+
+
+def _header_text(cell: Any) -> Optional[str]:
+    """A header cell as stripped text, or ``None`` for an empty cell."""
+    if cell is None or (isinstance(cell, float) and np.isnan(cell)):
+        return None
+    if cell is pd.NA or cell is pd.NaT:
+        return None
+    text = str(cell).strip()
+    return text or None
 
 
 class TabularReader:
@@ -92,6 +173,14 @@ class TabularReader:
         self.alternatives_added = set()
         self.entities_added = {}
         self.entity_alternatives_added = {}
+        # Problems met while importing: ``errors`` are values or mappings that
+        # could not be imported, ``warnings`` are things imported in a way the
+        # user should check (unknown columns, blank periods, ...).
+        self.error_count = 0
+        self.warning_count = 0
+        # Periods of the model (solve_period sheet), used to complete sparse
+        # period maps.  Set by the caller before the period sheets are read.
+        self.model_periods: list = []
 
     # ==================== Specification Methods ====================
 
@@ -141,6 +230,180 @@ class TabularReader:
         table_row_types = self.specifications.get("tables", {}).get(table_key, {}).get("row_types", {})
         return table_row_types
 
+    def get_table_layout(self, table_name: str) -> Dict[str, Any]:
+        """The header layout of a table in the current template (may be empty).
+
+        ``{"header_row": r, "columns": [...]}`` names the columns of a sheet
+        whose header row is ``r``; ``{"label_column": c, "rows": [...]}`` names
+        the leading header rows of a sheet whose row labels are in column ``c``
+        (the time-series sheets).  The positions in the mappings and in
+        ``column_types`` refer to this layout.
+        """
+        table_key = table_name.replace('.csv', '').lower()
+        return self.specifications.get("tables", {}).get(table_key, {}).get("layout", {})
+
+    def warn(self, message: str) -> None:
+        """Report something the user should check; counted for the final status."""
+        import sys
+        self.warning_count += 1
+        print(f"\n  Warning: {message}", file=sys.stderr)
+
+    def _canonical_header(self, header: Optional[str], known: set) -> Optional[str]:
+        """Resolve a workbook header to the current template's name for it."""
+        if header is None or header in known:
+            return header
+        for remap in (_HEADER_ALIASES, _PARAMETER_NAME_REMAP):
+            target = remap.get(header)
+            if target is not None and target in known:
+                return target
+        return header
+
+    def normalize_layout(self, raw_df: pd.DataFrame, table_name: str) -> pd.DataFrame:
+        """Rearrange a sheet so that its columns (or header rows) sit where the spec expects them.
+
+        The import mappings and ``column_types`` address columns by position
+        in the current template.  Older template vintages put the same
+        columns in a different order (e.g. the activity column before
+        ``has_balance``), so every column is located by its header name and
+        moved to its template position: a column the sheet lacks becomes an
+        empty column, so the mappings reading it find no data.  Columns whose
+        header the template does not know are kept after the template's
+        columns (their header still names the parameter they carry) and are
+        reported, as is a column with values but no header.  Header cells
+        given under a legacy name are rewritten to the current name.
+
+        Time-series sheets (``label_column`` layouts) get the same treatment
+        for their leading header rows.
+        """
+        layout = self.get_table_layout(table_name)
+        if raw_df is None or raw_df.empty or not layout:
+            return raw_df
+        if "columns" in layout:
+            return self._normalize_columns(raw_df, table_name, layout)
+        if "rows" in layout:
+            return self._normalize_rows(raw_df, table_name, layout)
+        return raw_df
+
+    def _spec_width(self, table_name: str) -> int:
+        """One past the highest column position the spec addresses for a table."""
+        table_key = table_name.replace('.csv', '').lower()
+        table = self.specifications.get("tables", {}).get(table_key, {})
+        positions = [int(k) for k in table.get("column_types", {})]
+        for mapping in table.get("mappings", {}).values():
+            positions.extend(int(c) for c in mapping.get("skip_columns", []))
+            for rule in mapping.get("rules", []):
+                pos = rule.get("position")
+                if isinstance(pos, int) and pos >= 0:
+                    positions.append(pos)
+        return max(positions) + 1 if positions else 0
+
+    def _normalize_columns(self, raw_df: pd.DataFrame, table_name: str,
+                           layout: Dict[str, Any]) -> pd.DataFrame:
+        header_row = layout["header_row"]
+        expected = layout["columns"]
+        if len(raw_df) <= header_row:
+            return raw_df
+        known = {name for name in expected if name is not None}
+        headers = [self._canonical_header(_header_text(c), known)
+                   for c in raw_df.iloc[header_row].tolist()]
+
+        first_at: Dict[str, int] = {}
+        for actual, name in enumerate(headers):
+            if name is not None and name not in first_at:
+                first_at[name] = actual
+
+        width = max(len(expected), self._spec_width(table_name))
+        placement: List[Optional[int]] = [None] * width
+        used = set()
+        for pos, name in enumerate(expected):
+            if name is not None and name in first_at:
+                placement[pos] = first_at[name]
+                used.add(first_at[name])
+
+        data_rows = raw_df.iloc[header_row + 1:]
+        for actual, name in enumerate(headers):
+            if actual in used:
+                continue
+            has_data = bool(data_rows.iloc[:, actual].notna().any()) if len(data_rows) else False
+            if name is None:
+                if has_data:
+                    self.warn(
+                        f"Sheet '{table_name}', column {actual + 1} has values but no "
+                        f"header in row {header_row + 1}; its values are not imported."
+                    )
+                continue
+            if name in first_at and first_at[name] != actual:
+                self.warn(
+                    f"Sheet '{table_name}': column header '{name}' appears more than once; "
+                    f"only its first column (column {first_at[name] + 1}) is imported."
+                )
+                continue
+            if has_data:
+                self.warn(
+                    f"Sheet '{table_name}': column '{name}' is not a column of this sheet in "
+                    f"the current template; its values are imported as parameter '{name}' "
+                    f"(they fail if the database has no such parameter)."
+                )
+            placement.append(actual)
+
+        columns = []
+        for actual in placement:
+            if actual is None:
+                columns.append(pd.Series([np.nan] * len(raw_df), index=raw_df.index, dtype=object))
+            else:
+                columns.append(raw_df.iloc[:, actual])
+        result = pd.concat(columns, axis=1, ignore_index=True)
+        # Header cells given under a legacy name carry the current name, so
+        # the parameter they define is the current one.
+        for pos, actual in enumerate(placement):
+            if actual is not None and headers[actual] is not None:
+                result.iat[header_row, pos] = headers[actual]
+        return result
+
+    def _normalize_rows(self, raw_df: pd.DataFrame, table_name: str,
+                        layout: Dict[str, Any]) -> pd.DataFrame:
+        label_column = layout["label_column"]
+        expected = layout["rows"]
+        if raw_df.shape[1] <= label_column:
+            return raw_df
+        known = set(expected)
+        labels: List[Optional[str]] = []
+        for cell in raw_df.iloc[:, label_column].tolist():
+            text = _header_text(cell)
+            if text is None:
+                break
+            labels.append(self._canonical_header(text, known))
+        n_header = len(labels)
+
+        first_at: Dict[str, int] = {}
+        for actual, name in enumerate(labels):
+            if name not in first_at:
+                first_at[name] = actual
+        for actual, name in enumerate(labels):
+            if first_at[name] != actual:
+                self.warn(
+                    f"Sheet '{table_name}': header row '{name}' appears more than once; "
+                    f"only its first row (row {first_at[name] + 1}) is used."
+                )
+            elif name not in known:
+                self.warn(
+                    f"Sheet '{table_name}': header row '{name}' (row {actual + 1}) is not a "
+                    f"header row of this sheet in the current template; the row is not imported."
+                )
+
+        header_rows = []
+        for pos, name in enumerate(expected):
+            actual = first_at.get(name)
+            if actual is None:
+                row = pd.Series([np.nan] * raw_df.shape[1], index=raw_df.columns, dtype=object)
+            else:
+                row = raw_df.iloc[actual].copy()
+                row.iloc[label_column] = name
+            header_rows.append(row)
+        header_df = pd.DataFrame(header_rows, columns=raw_df.columns)
+        result = pd.concat([header_df, raw_df.iloc[n_header:]], ignore_index=True)
+        return result
+
     def is_table_selected(self, table_name: str) -> bool:
         """Check if a table is selected for processing."""
         table_key = table_name.replace('.csv', '').lower()
@@ -189,6 +452,7 @@ class TabularReader:
                         db_map.add_entity(entity_class_name=ent_class,
                             entity_byname=ent)
                     except Exception as e:
+                        self.error_count += 1
                         self.logger.warning(
                             "Could not add entity %s from class %s (table.mapping %s.%s): %s",
                             ent, ent_class, table_name, mapping_name, e,
@@ -203,6 +467,7 @@ class TabularReader:
                 try:
                     db_map.add_alternative(name=alt)
                 except Exception as e:
+                    self.error_count += 1
                     self.logger.warning(
                         "Could not add alternative %s (table.mapping %s.%s): %s",
                         alt, table_name, mapping_name, e,
@@ -219,12 +484,22 @@ class TabularReader:
                     'entity_byname': ent,
                     'alternative': alt
                 }
+                # 'no' must read as inactive (``bool('no')`` is True).
+                active = _parse_activity(value)
+                if active is None:
+                    self.warn(
+                        f"Sheet '{table_name}': activity value {value!r} of {ent_class} "
+                        f"{'/'.join(map(str, ent)) if isinstance(ent, tuple) else ent} in "
+                        f"alternative '{alt}' is not yes/no (true/false); not imported."
+                    )
+                    continue
                 try:
                     db_map.add_entity_alternative(entity_class_name=ent_class,
                         entity_byname=ent,
                         alternative_name=alt,
-                        active=bool(value)),
+                        active=active)
                 except Exception as e:
+                    self.error_count += 1
                     self.logger.warning(
                         "Could not add entity_alternative %s, %s from class %s (table.mapping %s.%s): %s",
                         ent, alt, ent_class, table_name, mapping_name, e,
@@ -243,6 +518,7 @@ class TabularReader:
                         alternative_name=alt,
                         rank=i)
                 except Exception as e:
+                    self.error_count += 1
                     self.logger.warning(
                         "Could not add scenario %s - alternative %s (table.mapping %s.%s): %s",
                         scen, alt, table_name, mapping_name, e,
@@ -264,7 +540,12 @@ class TabularReader:
             print(' ', end='')
 
         errors = []
-        
+        # (class, parameter, alternative) -> number of values, for the summary lines
+        overrides: Dict[Tuple, int] = {}
+        zero_filled: Dict[Tuple, int] = {}
+        # (class, parameter, alternative) -> [(entity, missing periods)]
+        sparse: Dict[Tuple, list] = {}
+
         # Order the dataframe column levels to be reliable
         data_df.columns = data_df.columns.reorder_levels(['EntityClass', 'ParameterDefinition', 'Alternative', 'Entity_byname'])
         data_df.columns.names = ['entity_class_name', 'parameter_definition_name', 'alternative_name', 'entity_byname']
@@ -293,7 +574,7 @@ class TabularReader:
                 # Skip empty cells (nan from "edited but empty" Excel cells)
                 if self._is_nan(raw_value):
                     continue
-                raw_value = _remap_value(raw_value)
+                raw_value = _remap_value(raw_value, col_name[1])
 
                 # ``is_active`` (and the legacy ``can_provide`` that remaps to
                 # it) is not a stored parameter in the modern schema: spinedb
@@ -301,7 +582,10 @@ class TabularReader:
                 # target has no ``is_active`` definition, so route it straight
                 # to an entity_alternative row (active=yes/true -> True).
                 if col_name[1] == 'is_active':
-                    active = str(raw_value).strip().lower() in ('yes', 'true', '1')
+                    active = _parse_activity(raw_value)
+                    if active is None:
+                        errors.append(f"is_active value {raw_value!r} is not yes/no (true/false) for (class, alternative, entity): {col_name[0]}, {col_name[2]}, {col_name[3]} based on table.mapping {table_name}.{mapping_name}.")
+                        continue
                     try:
                         db_map.add_or_update_entity_alternative(
                             entity_class_name=col_name[0],
@@ -314,19 +598,8 @@ class TabularReader:
                     continue
 
                 value, type_ = to_database(raw_value)
-
-                # Add parameter value
-                try:
-                    db_map.add_parameter_value(
-                        entity_class_name=col_name[0],
-                        parameter_definition_name=col_name[1],
-                        alternative_name=col_name[2],
-                        entity_byname=col_name[3],
-                        value=value,
-                        type=type_
-                    )
-                except Exception as e:
-                    errors.append(f"Failed to add a constant for (class, parameter, alternative, entity): {col_name[0]}, {col_name[1]}, {col_name[2]}, {col_name[3]} based on table.mapping {table_name}.{mapping_name}.\n    {e}")
+                self._write_parameter_value(db_map, col_name, value, type_, 'a constant',
+                                            table_name, mapping_name, errors, overrides)
 
         elif value_type == 'array':
             # Array
@@ -336,49 +609,152 @@ class TabularReader:
                     continue  # Skip entirely empty arrays
                 array_obj = Array(values=clean_data.to_list(), index_name=col_data.index.name)
                 value, type_ = to_database(array_obj)
-
-                # Add parameter value
-                try:
-                    db_map.add_parameter_value(
-                        entity_class_name=col_name[0],
-                        parameter_definition_name=col_name[1],
-                        alternative_name=col_name[2],
-                        entity_byname=col_name[3],
-                        value=value,
-                        type=type_
-                    )
-                except Exception as e:
-                    errors.append(f"Failed to add an array for (class, parameter, alternative, entity): {col_name[0]}, {col_name[1]}, {col_name[2]}, {col_name[3]} based on table.mapping {table_name}.{mapping_name}.\n    {e}")
+                self._write_parameter_value(db_map, col_name, value, type_, 'an array',
+                                            table_name, mapping_name, errors, overrides)
 
         elif value_type == 'map':
             # Map
+            # A period sheet ('_p') gives each parameter per period; a blank
+            # cell leaves that period out of the map.  The periods of the
+            # model (solve_period sheet) plus those listed in this sheet are
+            # the periods a complete map has.
+            fill_periods = (data_df.index.name == 'period' and table_name.endswith('_p'))
+            sheet_periods: list = []
+            if fill_periods:
+                sheet_periods = list(dict.fromkeys(
+                    list(self.model_periods) + [p for p in data_df.index.tolist() if not self._is_nan(p)]
+                ))
             for col_name, col_data in data_df.items():
                 df_col = data_df[col_name].dropna()
                 if df_col.empty:
                     continue  # Skip entirely empty maps
-                map_obj = Map(indexes=df_col.index.to_list(), values=df_col.values.tolist(), index_name=df_col.index.name)
+                indexes = df_col.index.to_list()
+                values = df_col.values.tolist()
+                if fill_periods:
+                    present = dict(zip(indexes, values))
+                    missing = [p for p in sheet_periods if p not in present]
+                    if missing:
+                        constant = self._existing_constant(db_map, col_name)
+                        if constant is not None:
+                            # Period series overrides the constant: the
+                            # periods it leaves blank keep the constant.
+                            fill = constant
+                        elif col_name[1] in _ZERO_FILL_PERIOD_PARAMETERS:
+                            # A blank lower limit is no lower limit, i.e. 0.
+                            fill = 0.0
+                            key = col_name[:3]
+                            zero_filled[key] = zero_filled.get(key, 0) + 1
+                        else:
+                            fill = None
+                            sparse.setdefault(col_name[:3], []).append((col_name[3], missing))
+                        if fill is not None:
+                            for p in missing:
+                                present[p] = fill
+                            order = {p: i for i, p in enumerate(sheet_periods)}
+                            indexes = sorted(present, key=lambda p: order.get(p, len(order)))
+                            values = [present[p] for p in indexes]
+                map_obj = Map(indexes=indexes, values=values, index_name=df_col.index.name)
                 value, type_ = to_database(map_obj)
-
-                # Add parameter value
-                try:
-                    db_map.add_parameter_value(
-                        entity_class_name=col_name[0],
-                        parameter_definition_name=col_name[1],
-                        alternative_name=col_name[2],
-                        entity_byname=col_name[3],
-                        value=value,
-                        type=type_
-                    )
-                except Exception as e:
-                    errors.append(f"Failed to add a map for (class, parameter, alternative, entity): {col_name[0]}, {col_name[1]}, {col_name[2]}, {col_name[3]} based on table.mapping {table_name}.{mapping_name}.\n    {e}")
+                self._write_parameter_value(db_map, col_name, value, type_, 'a map',
+                                            table_name, mapping_name, errors, overrides)
 
         # Report errors as warnings — individual cells that can't be imported
         # should not abort the entire import
+        import sys
         if errors:
-            import sys
-            error_msg = f"\nWarnings while processing sheet '{table_name}', mapping '{mapping_name}':\n"
+            self.error_count += len(errors)
+            error_msg = f"\nErrors while processing sheet '{table_name}', mapping '{mapping_name}' (values not imported):\n"
             error_msg += "\n".join(f"  - {err}" for err in errors)
             print(error_msg, file=sys.stderr)
+        for (cls, param, alt), count in overrides.items():
+            print(f"\n  Note: sheet '{table_name}': {count} {cls} '{param}' value(s) in alternative "
+                  f"'{alt}' given both as a constant and as a series; the series overrides the "
+                  f"constant (periods the series leaves blank keep the constant).")
+        for (cls, param, alt), count in zero_filled.items():
+            print(f"\n  Note: sheet '{table_name}': {count} {cls} '{param}' map(s) in alternative "
+                  f"'{alt}' leave periods blank; a blank lower limit is no limit, written as 0.")
+        for (cls, param, alt), items in sparse.items():
+            detail = "; ".join(
+                f"{'/'.join(map(str, ent)) if isinstance(ent, tuple) else ent}: {', '.join(map(str, miss))}"
+                for ent, miss in items
+            )
+            self.warn(
+                f"Sheet '{table_name}': {cls} '{param}' in alternative '{alt}' has no value for "
+                f"some periods (blank cells, not filled): {detail}"
+            )
+
+    def _existing_constant(self, db_map, col_name: Tuple) -> Any:
+        """The constant (non-indexed) value already stored for ``col_name``, else ``None``."""
+        from spinedb_api import from_database
+        from spinedb_api.parameter_value import IndexedValue
+        existing = db_map.get_parameter_value_item(
+            entity_class_name=col_name[0],
+            parameter_definition_name=col_name[1],
+            alternative_name=col_name[2],
+            entity_byname=col_name[3],
+        )
+        if not existing:
+            return None
+        parsed = from_database(existing["value"], existing["type"])
+        if parsed is None or isinstance(parsed, IndexedValue):
+            return None
+        return parsed
+
+    def _write_parameter_value(self, db_map, col_name: Tuple, value, type_, kind: str,
+                               table_name: str, mapping_name: str, errors: list,
+                               overrides: Dict[Tuple, int]) -> None:
+        """Add one parameter value; settle a collision with a value an earlier sheet wrote.
+
+        The template lets a parameter be given as a constant ('_c' sheet) and
+        as a period or time series ('_p' / '_t' sheet); the series overrides
+        the constant, whichever is read first.  The same value written twice
+        (by two mappings reading one cell) is a no-op.  Any other collision
+        keeps the first value and is reported.
+        """
+        from spinedb_api import from_database
+        from spinedb_api.parameter_value import IndexedValue
+        what = (f"{col_name[0]}, {col_name[1]}, {col_name[2]}, {col_name[3]} "
+                f"based on table.mapping {table_name}.{mapping_name}")
+        try:
+            db_map.add_parameter_value(
+                entity_class_name=col_name[0],
+                parameter_definition_name=col_name[1],
+                alternative_name=col_name[2],
+                entity_byname=col_name[3],
+                value=value,
+                type=type_
+            )
+            return
+        except Exception as e:
+            add_error = e
+        existing = db_map.get_parameter_value_item(
+            entity_class_name=col_name[0],
+            parameter_definition_name=col_name[1],
+            alternative_name=col_name[2],
+            entity_byname=col_name[3],
+        )
+        if not existing:
+            errors.append(f"Failed to add {kind} for (class, parameter, alternative, entity): {what}.\n    {add_error}")
+            return
+        if existing["type"] == type_ and existing["value"] == value:
+            return
+        existing_indexed = isinstance(from_database(existing["value"], existing["type"]), IndexedValue)
+        new_indexed = isinstance(from_database(value, type_), IndexedValue)
+        key = col_name[:3]
+        if new_indexed and not existing_indexed:
+            try:
+                db_map.update_item("parameter_value", id=existing["id"], value=value, type=type_)
+            except Exception as e:
+                errors.append(f"Failed to replace the constant with {kind} for (class, parameter, alternative, entity): {what}.\n    {e}")
+                return
+            overrides[key] = overrides.get(key, 0) + 1
+        elif existing_indexed and not new_indexed:
+            overrides[key] = overrides.get(key, 0) + 1
+        else:
+            errors.append(
+                f"Two different values for (class, parameter, alternative, entity): {what}; "
+                f"the value read earlier is kept."
+            )
 
 
     # ==================== Reading Methods ====================
@@ -408,9 +784,12 @@ class TabularReader:
             self.logger.info(f"Skipping {sheet_name} - not in selected tables")
             return pd.DataFrame(), {}
 
-        # Get column type specifications
-        table_column_types = self.get_table_column_types(sheet_name.lower())
-        default_column_type = self.specifications['tables']['node_c']['default_column_type']
+        # Get column type specifications.  They address columns by their
+        # position in the current template layout (``normalize_layout`` moves
+        # the columns there).  Columns the spec does not type -- e.g. columns
+        # of a header the template does not know -- keep the cell types Excel
+        # gives them: numbers stay numbers and text stays text.
+        table_column_types = dict(self.get_table_column_types(sheet_name.lower()))
 
         # Check if the sheet exists in the file before trying to read it
         import openpyxl
@@ -445,10 +824,6 @@ class TabularReader:
 
         # Note: Column type conversions are applied after dataframe processing
         # in the extraction methods, not here on the raw dataframe
-
-        if len(table_column_types) < len(raw_df.columns):
-            for i in range(len(table_column_types),len(raw_df.columns),1):
-                table_column_types[i] = default_column_type
 
         return raw_df, table_column_types
 
@@ -596,8 +971,8 @@ class TabularReader:
                     if isinstance(pos, int):
                         positions.append(pos)
                     if cfg['filter_re']:
-                        filters[map_type + '_' + counter] = [cfg['filter_re'], pos]
-                        counter =+ counter
+                        filters[f"{map_type}_{counter}"] = [cfg['filter_re'], pos]
+                        counter += 1
                 # Store as list
                 if positions:
                     row_level_flag = False
@@ -661,16 +1036,23 @@ class TabularReader:
         skip_cols = set(mapping_info['skip_columns'])
 
         # Step 1a: Find columns based on regex filter that will be later removed (but not yet, to keep the column order)
+        # The filtered cells are matched as text: an empty column (all NaN,
+        # float dtype) has no ``.str`` accessor, and simply matches nothing.
         for map_type, rules in filters.items():
             position = rules[1]
             if not isinstance(position, int):
                 raise TypeError(f"Regex filter for a mapping that does not have integer position: {mapping_info}")
             if position >= 0:  # Positive, drop rows
-                df_work = df_work.drop(df_work.index[data_start_row:][~df_work.iloc[data_start_row:][position].str.contains(rules[0], regex=True, na=False)])
-            else:              # Positive, drop columns
+                cells = df_work.iloc[data_start_row:, position].astype('string')
+                keep = cells.str.contains(rules[0], regex=True, na=False)
+                df_work = df_work.drop(df_work.index[data_start_row:][~keep.to_numpy()])
+            else:              # Negative, drop columns
                 avoid_cols = set(skip_cols.union(label_column_indices))
-                examine_cols = list(set(range(len(df_work.columns))) - avoid_cols)
-                filter_cols = (~df_work.iloc[-position-1,examine_cols].str.contains(rules[0], regex=True, na=False)).index.tolist()
+                examine_cols = sorted(set(range(len(df_work.columns))) - avoid_cols)
+                cells = df_work.iloc[-position-1, examine_cols].astype('string')
+                matches = cells.str.contains(rules[0], regex=True, na=False)
+                # Skip only the columns that do NOT match the filter.
+                filter_cols = matches.index[~matches.to_numpy()].tolist()
                 if filter_cols:
                     skip_cols = skip_cols.union(filter_cols)
 
