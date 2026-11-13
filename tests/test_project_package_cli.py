@@ -559,14 +559,14 @@ def test_export_ships_the_files_the_project_runs_use(workspace: dict, monkeypatc
     own.mkdir()
     (own / "gurobi.opt").write_text("Threads 2\n")
     (workspace["config"] / "gurobi.opt").write_text("Threads 4\n")
-    (workspace["config"] / "cplex.opt").write_text(_template_text("cplex"))
+    (workspace["config"] / "cplex.opt").write_text(_template_text("cplex"), encoding="utf-8")
     (workspace["config"] / "notes.opt").write_text("not a solver file\n")
     out = workspace["root"] / "out" / "eff.flextool.zip"
     manifest = pp.export_project(workspace["project"], out, [])
     assert sorted(manifest.solver_config) == ["gurobi.opt", "highs.opt"]
     with zipfile.ZipFile(out) as zf:
-        assert zf.read("Proj/solver_config/gurobi.opt") == b"Threads 2\n"
-        assert zf.read("Proj/solver_config/highs.opt") == b"mip_rel_gap = 0.01\n"
+        assert zf.read("Proj/solver_config/gurobi.opt").replace(b"\r\n", b"\n") == b"Threads 2\n"  # CRLF on Windows
+        assert zf.read("Proj/solver_config/highs.opt").replace(b"\r\n", b"\n") == b"mip_rel_gap = 0.01\n"
         assert not [n for n in zf.namelist() if n.endswith(("cplex.opt", "notes.opt"))]
 
 
@@ -629,7 +629,7 @@ def _old_import(tmp_path: Path) -> tuple[Path, Path]:
     (imported / "highs.opt").write_text("mip_rel_gap = 0.03\n")
     (imported / "gurobi.opt").write_text("ComputeServer evil:61000\n")
     (imported / "cplex.opt").write_text("logfile /home/u/.bashrc\n")
-    (imported / "xpress.opt").write_text(_template_text("xpress"))
+    (imported / "xpress.opt").write_text(_template_text("xpress"), encoding="utf-8")
     return project, imported
 
 
@@ -751,7 +751,7 @@ def test_import_names_the_workspace_default(workspace: dict, tmp_path: Path) -> 
     pp.export_project(workspace["project"], out, [], solver_config_dir=[own])
     receiver = tmp_path / "receiver"
     receiver.mkdir()
-    (receiver / "gurobi.opt").write_text(_template_text("gurobi"))
+    (receiver / "gurobi.opt").write_text(_template_text("gurobi"), encoding="utf-8")
     report = pp.import_project(out, workspace["projects"], "Recv", solver_config_dir=receiver)
     assert "Solver options gurobi.opt: this workspace uses FlexTool's default." in pp.describe_import(report)
 
