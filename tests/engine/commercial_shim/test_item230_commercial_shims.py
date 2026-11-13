@@ -294,15 +294,13 @@ def test_option_stack_as_the_solver_got_it(solver, shim, db, tmp_path, scenario,
         assert len(got) == 3, got
 
 
-def test_a_solve_split_by_period_keeps_its_solver_and_settings(solver, shim, db, tmp_path, monkeypatch) -> None:
+def test_a_solve_split_by_period_keeps_its_solver_and_settings(solver, shim, db, tmp_path) -> None:
     """``split_<s>``: ``realized_periods`` is a 2-D map, so FlexTool splits ``y2020_2day_dispatch`` into one solve
-    per period.  Every one of them runs on the solver of the database solve, through this computer's wrapper,
-    with its ``solver_mip_gap`` (0.2), its ``solver_arguments`` (time limit 800) and the option file (1 thread).
-    Before the fix the split solves lost the solver configuration and ran on HiGHS (and, since the HiGHS list of
-    item 240 B1, stopped at the first split solve, refusing the solver's own parameter name as a HiGHS one)."""
+    per period.  Every one of them runs on the solver of the database solve, with its ``solver_mip_gap`` (0.2), its
+    ``solver_arguments`` (time limit 800) and the option file (1 thread).  Before the fix the split solves lost the
+    solver configuration and ran on HiGHS.  (The solver-wrapper check of feat/solver-security is left out here:
+    the wrapper is not on this branch.)"""
     split_solves = _check_db_module().SPLIT_SOLVES
-    wrapper, record = _recording_wrapper(tmp_path)
-    monkeypatch.setenv(WRAPPER_ENV[solver], str(wrapper))
     cfg = _cfg(tmp_path, solver, f"{THREADS[solver]} 1\n")
     steps = _run(db, f"split_{solver}", tmp_path / "w", cfg)
     assert list(steps) == list(split_solves)
@@ -312,7 +310,6 @@ def test_a_solve_split_by_period_keeps_its_solver_and_settings(solver, shim, db,
     for call in calls:
         assert not call["unknown"], call
         assert call["params"] == pytest.approx({GAP[solver]: 0.2, TIME[solver]: 800, THREADS[solver]: 1}), call
-    assert len(_wrapped_calls(record)) == len(split_solves)
 
 
 @pytest.mark.parametrize("solver", ["gurobi", "cplex", "copt"], indirect=True)
