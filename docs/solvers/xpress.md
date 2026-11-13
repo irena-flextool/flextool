@@ -20,8 +20,20 @@ limit):
   naming the limit and the gap reached; without one the run stops (see
   [Time and other limits](index.md#time-and-other-limits)).
 - `Problem is integer infeasible`: the run stops, "is infeasible".
+- `Problem is unbounded`: the run stops, "is unbounded" (the log also says
+  `*** Search completed ***`, and may count heuristic solutions; FlexTool uses
+  none of them).
 - A search that ends with no integer solution (`Number of solutions found` 0)
   stops the run: FlexTool never uses the LP relaxation Xpress writes then.
+
+Any other stop (for example `MAXSTALLTIME`) ends as an unfinished search,
+which stops the run even with an integer solution.
+
+FlexTool needs these log lines. `OUTPUTLOG` other than 1 or `MIPLOG 0` leaves
+them out, so on a MIP FlexTool adds `setControl OUTPUTLOG 1` /
+`setControl MIPLOG 1` after your controls, with a printed line naming the value
+it replaced. Other `MIPLOG` values (2, 3, negative) are kept: they print the
+lines too. An LP keeps your values.
 
 These log texts were checked with the `xpress` Python package's library;
 check them with your `optimizer` console on a small MIP before relying on a
@@ -134,8 +146,8 @@ solve_advanced.solver_arguments:
 flextool <input_db_url> --solver-time-limit 60
 ```
 
-`--solver-time-limit` and `--solver-mip-gap` reach Xpress as `MAXTIME 60` (whole seconds, rounded up) and
-`MIPRELSTOP` (for a MIP), over the solve's `solver_mip_gap`, its `solver_arguments` and
+`--solver-time-limit` and `--solver-mip-gap` reach Xpress as `MAXTIME` (whole seconds, rounded up: `MAXTIME
+60` on an LP, `MAXTIME -60` on a MIP, see below) and `MIPRELSTOP` (for a MIP), over the solve's `solver_mip_gap`, its `solver_arguments` and
 `xpress.opt` (precedence in [Solver selection](index.md)). Parameter names
 match without regard to case. `--threads` (Threads per run in the FlexTool window) sets `THREADS`;
 without it, `THREADS` in `xpress.opt` or `solver_arguments` applies. `--highs-threads`
@@ -145,10 +157,14 @@ prints what Xpress receives in a `Solver args (xpress):` line before each
 solve.
 
 A positive `MAXTIME` stops a MIP only once Xpress has an integer solution; a
-MIP that has none goes on until FlexTool stops it (twice the limit plus 10
-minutes), and the run stops. For a hard limit on a MIP, give a negative value
-in the solve's `solver_arguments` (`MAXTIME -60`) and leave
-`--solver-time-limit` unset.
+negative one is a hard limit of its absolute value. FlexTool's own time limit
+(`--solver-time-limit`, `FLEXTOOL_SOLVER_TIME_LIMIT`, or the solve's time limit)
+is a hard limit, so on a MIP it reaches Xpress negated: `--solver-time-limit
+59.5` gives `MAXTIME -60`. The `Solver args (xpress):` line, the `<solve>.opt`
+record next to the MPS and the script Xpress gets all show `-60`. A `MAXTIME`
+you write in `xpress.opt` or `solver_arguments` (without the flag) is passed as
+written: a positive value there lets a MIP without an integer solution go on
+until FlexTool stops it (twice the limit plus 10 minutes), and the run stops.
 
 ---
 

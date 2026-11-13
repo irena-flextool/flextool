@@ -953,9 +953,12 @@ Each line says what changes for a model that ran before and what to do; the deta
   with integer variables now runs `mipoptimize`, and its status comes from the Xpress log, not from the print
   solution (which says "Optimal solution found" after a search stopped by a limit): a MIP stopped by `MAXTIME`,
   `MAXNODE` or `MAXMIPSOL` with an integer solution keeps it with a warning naming the limit and the gap; an
-  integer-infeasible MIP, or one that ends without an integer solution, stops the run and never uses the LP
-  relaxation. The log texts were checked with the `xpress` Python package, not yet with a licensed `optimizer`
-  console.
+  integer-infeasible or unbounded MIP, or one that ends without an integer solution, stops the run and never uses
+  the LP relaxation. FlexTool reads the log, so on a MIP it sets `OUTPUTLOG 1` (and `MIPLOG 1` over `MIPLOG 0`)
+  after your controls, with a printed line. `--solver-time-limit` on a MIP is now a hard `MAXTIME -<limit>` (a
+  positive `MAXTIME` stops a MIP only once it has a solution); a `MAXTIME` in `xpress.opt` or `solver_arguments`
+  is passed as written. The log texts were checked with the `xpress` Python package, not yet with a licensed
+  `optimizer` console.
 - **The `Solver args` line of a commercial solve showed HiGHS options**; it is now
   `Solver args (<solver>): ...` with what the solver receives, under its own names.
 - **The log of a commercial solver is shown as the solver writes it.** Gurobi, CPLEX, Xpress and COPT printed
