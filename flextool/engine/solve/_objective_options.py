@@ -32,8 +32,9 @@ from flextool.engine.input._solve_state import FlexToolConfigError
 if TYPE_CHECKING:  # pragma: no cover
     from polar_high import Problem
 
-#: The polar-high release that maps objective-valued options.
-POLAR_HIGH_OBJECTIVE_OPTIONS_VERSION = "3.14.0"
+#: The polar-high release that maps objective-valued options.  (A version constant, not an environment variable:
+#: its name does not start with ``POLAR_HIGH_``, which the environment-variable registry test reserves.)
+MIN_POLAR_HIGH_FOR_OBJECTIVE_OPTIONS = "3.14.0"
 
 #: Units the user writes these options in (named in the echo and messages).
 USER_UNITS = "unscaled currency"
@@ -126,7 +127,7 @@ def _unsupported_error(solver: str, names: list[str], solve_name: str | None) ->
     where = f"Solve '{solve_name}' sets" if solve_name else "The solve sets"
     return FlexToolConfigError(
         f"{where} the {solver} option(s) {', '.join(names)}, which are written in {USER_UNITS} and must be "
-        f"scaled to the objective the solver sees. That needs polar-high {POLAR_HIGH_OBJECTIVE_OPTIONS_VERSION} "
+        f"scaled to the objective the solver sees. That needs polar-high {MIN_POLAR_HIGH_FOR_OBJECTIVE_OPTIONS} "
         f"or later; the installed polar-high is older. Update polar-high, or remove these options."
     )
 
@@ -229,7 +230,7 @@ def check_benders_options(
 
 
 __all__ = [
-    "POLAR_HIGH_OBJECTIVE_OPTIONS_VERSION",
+    "MIN_POLAR_HIGH_FOR_OBJECTIVE_OPTIONS",
     "USER_UNITS",
     "check_benders_options",
     "echo_values",
