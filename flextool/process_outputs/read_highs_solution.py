@@ -255,6 +255,10 @@ def _invest_dual(
     # bracketed entity columns of the two sides are disjoint (process
     # names vs. node names), so ``df.add(fill_value=0.0)`` cleanly
     # unions them into one wide frame at the output boundary.
+    # A per-period cap / floor holds the investment of its period, so its dual is read on the investment axis
+    # as ``v_invest`` is (item 266): the solve that realizes a period's investment writes its row, also for a
+    # period it does not dispatch, and a dispatch-only solve writes none.  ``drop_levels`` then keeps the
+    # realizing solve's row (``_V_REALIZING_SOLVE``).
     return VariableSpec(
         name=mps_name,
         col_names=(col,),
@@ -264,6 +268,7 @@ def _invest_dual(
         value_scale=_INV_SCALE_THE_OBJECTIVE,
         output_name=f"v_dual_{output_suffix}",
         derived_from=derived_from,
+        period_source="invest",
     )
 
 
@@ -1377,12 +1382,16 @@ def write_v_dual_invest_by_class(
     inv_scale = _resolve_inv_scale_the_objective(
         scale_the_objective=scale_the_objective,
     )
+    # The investment axis, as ``v_invest`` itself (item 266): the realizing solve's reduced cost of a period it
+    # does not dispatch gets its row, and a dispatch-only solve writes none.
     duals = extract_variable(
         h, "v_invest", ("entity",),
         solve_name=solve_name, has_time=False, source="col_dual",
         value_scale=inv_scale,
         realized_periods_csv=realized_periods_csv,
         flex_data=flex_data,
+        provider=provider,
+        period_source="invest",
     )
 
     classes = {

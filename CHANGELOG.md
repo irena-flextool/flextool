@@ -709,6 +709,10 @@ Each line says what changes for a model that ran before and what to do; the deta
   took the later solve's 0: no invested capacity in `unit_capacity__d` (and the connection / node tables), no
   investment cost and no capacity-margin shortfall for that period. The investment results of a period now come
   from the solve that realizes its investment.
+- **The investment marginals of a period an earlier solve realizes came from a later solve.** In the same chain,
+  `unit_invest_marginal__d` (and the connection / node tables) took the later solve's 0 for that period, also when
+  the earlier solve did not invest there and the marginal was not 0. The marginals (the investment reduced costs and
+  the per-period investment limit duals) now come from the solve that realizes the period's investment.
 
 #### Time resolution
 
