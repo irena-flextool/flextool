@@ -6571,6 +6571,28 @@ def _v79_stochastic_storage_paths(db) -> None:
 _V79_SPLIT_PERIOD_PARAMETERS = ("invest_periods", "realized_invest_periods", "realized_periods", "fix_storage_periods")
 
 
+def _v79_period_names(value) -> list[str]:
+    """The period names of a parsed 1-D period parameter: an array's values, a map's indexes."""
+    if isinstance(value, Map):
+        return [str(d) for d in value.indexes]
+    values = getattr(value, "values", None)
+    return [str(d) for d in values] if values is not None else []
+
+
+def _v79_map_out_of_period_order(value, periods: list[str]) -> bool:
+    """A ``years_represented`` map (periods with years above 0) that lists the ``periods`` out of their order, or
+    lists a period outside them before one of them (it moves that period's start in the map count)."""
+    if not isinstance(value, Map) or not periods:
+        return False
+    keys = [str(d) for d, v in zip(value.indexes, value.values)
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0]
+    used = [d for d in keys if d in periods]
+    if used != [d for d in periods if d in used]:
+        return True
+    last_used = max((i for i, d in enumerate(keys) if d in periods), default=0)
+    return any(d not in periods for d in keys[:last_used])
+
+
 def _v79_discount_from_run_start(db) -> None:
     """Every solve discounts its investments and its operations from the start of the run (part of v79).
 
@@ -6582,7 +6604,12 @@ def _v79_discount_from_run_start(db) -> None:
     * a solve with ``contains_solves`` (its contained solves run after it, also from a later period),
     * a solve with a 2-D period map (``invest_periods`` / ``realized_invest_periods`` / ``realized_periods`` /
       ``fix_storage_periods``: it splits into solves that start later),
-    * a solve with a fractional ``years_represented`` (it counted as a whole year for the later periods).
+    * a solve with a fractional ``years_represented`` (it counted as a whole year for the later periods),
+    * a solve whose ``years_represented`` map does not list its periods in the solve's period order, or lists a
+      period the solve does not use before one it does (the investment walk counted the years in the period
+      order of the solve, the operations in the map order; both now count in the map order, which also moves a
+      single solve).  The period order is approximated by ``realized_periods`` then ``invest_periods`` (and also
+      with ``period_timeset`` after them); either order flags the solve.
 
     The marker is broader than the change: a run whose solves all start at the run start with whole years keeps
     its results, and the migration does not read which alternatives a scenario combines.  Idempotent: a rerun
@@ -6608,8 +6635,21 @@ def _v79_discount_from_run_start(db) -> None:
             value = from_database(pv["value"], pv["type"])
             if isinstance(value, Map) and any(isinstance(v, Map) for v in value.values):
                 solves.add(pv["entity_byname"][0])
+    order: dict[str, dict[str, list[str]]] = {}
+    for name in ("realized_periods", "invest_periods", "period_timeset"):
+        for pv in db.find_parameter_values(entity_class_name="solve", parameter_definition_name=name):
+            seen = order.setdefault(pv["entity_byname"][0], {}).setdefault(name, [])
+            for d in _v79_period_names(from_database(pv["value"], pv["type"])):
+                if d not in seen:
+                    seen.append(d)
     for pv in db.find_parameter_values(entity_class_name="solve", parameter_definition_name="years_represented"):
-        if any(v != int(v) for v in _v79_numbers(from_database(pv["value"], pv["type"]))):
+        value = from_database(pv["value"], pv["type"])
+        if any(v != int(v) for v in _v79_numbers(value)):
+            solves.add(pv["entity_byname"][0])
+        by_name = order.get(pv["entity_byname"][0], {})
+        realized_invest = [*by_name.get("realized_periods", []), *by_name.get("invest_periods", [])]
+        if any(_v79_map_out_of_period_order(value, list(dict.fromkeys(periods)))
+               for periods in (realized_invest, [*realized_invest, *by_name.get("period_timeset", [])])):
             solves.add(pv["entity_byname"][0])
     if solves:
         _v77_set_marker(db, "chained_solve_discount_from_run_start", json.dumps({"since": 79, "solves": sorted(solves)}))

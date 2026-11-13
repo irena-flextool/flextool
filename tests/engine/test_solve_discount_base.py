@@ -94,11 +94,31 @@ def test_a_solve_that_starts_the_run_keeps_its_own_count() -> None:
     assert year_rows_from_history({"p2": 0.0}, {"p2": whole["p1"]}, also_counted=whole) is not None
 
 
-def test_a_period_without_history_is_an_error() -> None:
+def test_a_period_without_history_is_an_error_only_when_the_rows_are_needed() -> None:
+    """The gate over the periods with history decides first: a solve that keeps its own count keeps it even with
+    a period outside its history (byte-identical, as before); one that needs the rows cannot discount that
+    period."""
     from flextool.engine.preprocess.params._npv import year_rows_from_history
 
+    assert year_rows_from_history({"p1": 0.0}, {"p1": [("0", 1.0)], "p3": [("1", 1.0)]}, solve="s") is None
     with pytest.raises(ValueError, match="Period 'p3' of solve 's'"):
-        year_rows_from_history({"p2": 5.0}, {"p3": [("0", 1.0)]}, solve="s")
+        year_rows_from_history({"p2": 5.0}, {"p2": [("0", 1.0)], "p3": [("1", 1.0)]}, solve="s")
+
+
+def test_a_single_solve_with_its_map_out_of_period_order_counts_in_the_map_order() -> None:
+    """A single solve whose ``years_represented`` map lists p2 before p1 (periodAll order p1, p2): its history and
+    its own rows count in the map order (p2 from 0, p1 from 5), the investment walk's database count in the period
+    order (p1 from 0).  Both factors take the map order (the run's base); the v79 marker names such a solve."""
+    from flextool.engine.preprocess.params._npv import year_rows_from_history
+
+    own = {"p2": [(str(y), 1.0) for y in range(5)], "p1": [(str(y), 1.0) for y in range(5, 10)]}
+    walk = {"p1": [(str(y), 1.0) for y in range(5)], "p2": [(str(y), 1.0) for y in range(5, 10)]}
+    history = {"p2": 0.0, "p1": 5.0}
+    assert year_rows_from_history(history, own) is None
+    rows = year_rows_from_history(history, own, also_counted=walk)
+    assert rows is not None
+    assert rows.filter(pl.col("d") == "p1")["base"].to_list() == [5.0, 6.0, 7.0, 8.0, 9.0]
+    assert rows.filter(pl.col("d") == "p2")["base"].to_list() == [0.0, 1.0, 2.0, 3.0, 4.0]
 
 
 def test_notice_names_the_solve_once_and_only_with_inflation(capsys) -> None:

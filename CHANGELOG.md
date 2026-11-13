@@ -161,7 +161,9 @@ Each line says what changes for a model that ran before and what to do; the deta
   bounds and terms without a discount factor, but the printed objective, the investment duals (`invest_marginal`)
   and the cumulative CO2 cap price of later solves are now on the run's discount base. A fractional
   `years_represented` (e.g. 2.5) now counts as its fraction for the periods after it (before: a whole year, so the
-  next period started at year 3), also in a single solve. The reported costs were already discounted from the
+  next period started at year 3), also in a single solve. A `years_represented` map that lists the periods out of
+  the solve's period order (or an unused period before a used one) discounted the investments in the period order
+  and the operations in the map order, also in a single solve; both now follow the map order. The reported costs were already discounted from the
   start of the run. Rerun such models; the upgrade marks the databases this can affect.
 - **The memory-saving solve (`--save-memory`, or warm start off) could put values on the wrong variables**; results
   of such runs can change. FlexTool now needs polar-high 3.13.0 or newer (installed with FlexTool).

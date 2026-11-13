@@ -43,7 +43,7 @@ Seed: ``data/v75_seed_stoch_two_period.json`` (a frozen version-75 copy of
   the ``solve.solver_arguments`` description.
 * writes the marker ``chained_solve_discount_from_run_start`` only on a database with an ``inflation_rate`` other
   than 0 and a solve that can start after the run start (a ``model.solves`` list of two or more, ``contains_solves``,
-  a 2-D period map) or has a fractional ``years_represented``.
+  a 2-D period map) or has a fractional ``years_represented`` or one out of the solve's period order.
 
 It changes no other definition and no value, and a rerun commits nothing.
 """
@@ -458,7 +458,7 @@ DISCOUNT_MARKER = "chained_solve_discount_from_run_start"
 def test_discount_marker_only_with_inflation_and_a_later_or_fractional_solve(tmp_path_factory, plain,
                                                                              monkeypatch) -> None:
     """The marker needs an inflation_rate other than 0 and a solve that can start after the run start (two or more
-    solves in model.solves, contains_solves, a 2-D period map) or a fractional years_represented; it names those
+    solves in model.solves, contains_solves, a 2-D period map) or a fractional or out-of-order years_represented; it names those
     solves.  The seed's one solve without inflation, with inflation alone, or two solves without inflation write
     none."""
     assert DISCOUNT_MARKER not in plain["markers"]
@@ -473,6 +473,12 @@ def test_discount_marker_only_with_inflation_and_a_later_or_fractional_solve(tmp
         "v79_dfr_contains": ({"inflation": 0.05, "contains": ["inner"]}, ["stoch_2p"]),
         "v79_dfr_split": ({"inflation": 0.05, "split": split}, ["stoch_2p"]),
         "v79_dfr_fraction": ({"inflation": 0.05, "years": Map(["p1", "p2"], [2.5, 5.0])}, ["stoch_2p"]),
+        # The seed solve realizes p2035, p2040: a map in that order (with an unused period after) writes none, one
+        # out of that order, or with an unused period before a used one, names the single solve.
+        "v79_dfr_in_order": ({"inflation": 0.05, "years": Map(["p2035", "p2040", "p9"], [5.0, 5.0, 5.0])}, None),
+        "v79_dfr_out_of_order": ({"inflation": 0.05, "years": Map(["p2040", "p2035"], [5.0, 5.0])}, ["stoch_2p"]),
+        "v79_dfr_unused_first": ({"inflation": 0.05, "years": Map(["p9", "p2035", "p2040"], [5.0, 5.0, 5.0])},
+                                 ["stoch_2p"]),
     }
     for tag, (values, solves) in cases.items():
         run = _migrate(tmp_path_factory, tag, values)

@@ -1678,18 +1678,19 @@ def year_rows_from_history(history: dict[str, float] | None,
     ``None`` when the solve's own count already gives every year that base (a solve that starts the run with
     whole-year widths): the solve keeps that count.  ``also_counted`` is another count of the same solve (the
     database map over periodAll, which the deterministic investment walk reads); a base it gives differently
-    also takes the rows.  ``None`` without a period history.  A period with years but no history is an error."""
+    also takes the rows.  ``None`` without a period history.  A period with years but no history is an error
+    only when the rows are needed (the gate over the periods with history fails): otherwise the solve keeps its
+    own count, as before."""
     from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
     if not history or not years:
         return None
     own = {d: _sorted_years(rows) for d, rows in years.items() if rows}
+    missing = [d for d in own if d not in history]
     rows_out: list[tuple[str, str, float, float]] = []
     new_base: dict[str, list[float]] = {}
     for d, rows in own.items():
         if d not in history:
-            raise ValueError(
-                f"Period '{d}' of solve '{solve}' has represented years but no year from the start of the run "
-                "(it is not in the solve's period history); its costs cannot be discounted.")
+            continue
         cum = 0.0
         bases: list[float] = []
         for y, w in rows:
@@ -1706,9 +1707,13 @@ def year_rows_from_history(history: dict[str, float] | None,
         counts.append({d: other_bases[d] for d in own if d in other_bases})
     differs = any(len(count[d]) != len(new_base[d])
                   or any(abs(a - b) > YEAR_TOL for a, b in zip(count[d], new_base[d]))
-                  for count in counts for d in count)
+                  for count in counts for d in count if d in new_base)
     if not differs:
         return None
+    if missing:
+        raise ValueError(
+            f"Period '{missing[0]}' of solve '{solve}' has represented years but no year from the start of the run "
+            "(it is not in the solve's period history); its costs cannot be discounted.")
     return pl.DataFrame(rows_out, schema={"d": pl.Utf8, "y": pl.Utf8, "width": pl.Float64, "base": pl.Float64},
                         orient="row")
 
