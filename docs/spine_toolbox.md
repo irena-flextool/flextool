@@ -39,10 +39,12 @@ Ticking scenarios there decides which ones run when you execute the workflow; To
 execute several in parallel as long as the **FlexTool** item is configured to use work
 directories.
 
-Each FlexTool run uses all available cores for its own data processing (at most 8 threads) unless told
-otherwise, and Toolbox does not pass a thread count. When Toolbox runs several scenarios at once, add
-`--threads N` to the **FlexTool** Tool's command-line arguments, with N about the number of cores divided by
-the number of runs executed at once. N covers FlexTool's data processing and the solver of each run.
+A FlexTool run started from Spine Toolbox uses **1 thread** for its data processing and its solver (HiGHS,
+the thread count of Gurobi, CPLEX, Xpress and COPT over their option file, and one Benders region solve at a
+time): Toolbox can execute several scenarios at once and nothing shares the cores between them. For more threads
+per run, add `--threads N` to the **FlexTool** Tool's command-line arguments (or set `FLEXTOOL_THREADS`), with N
+about the number of cores divided by the number of runs executed at once. The run header's `Threads:` line says
+`1 (Spine Toolbox run)` when the default applies.
 
 ## The shipped workflow
 

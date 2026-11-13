@@ -1169,13 +1169,15 @@ def _operator_native_overrides(
     given by flag or by ``FLEXTOOL_SOLVER_*``, and the run's thread budget, under
     *solver*'s native names.
 
-    threads: the run's budget (``--threads`` / ``FLEXTOOL_THREADS``) replaces the
-    solver's thread count; without them the option file and ``solver_arguments``
-    keep it (as for HiGHS).  *is_mip*: an Xpress time limit becomes a hard
+    threads: the run's budget (``--threads`` / ``FLEXTOOL_THREADS``, else a Spine
+    Toolbox run's default of 1: :func:`flextool._thread_budget.solver_budget`)
+    replaces the solver's thread count; without them the option file and
+    ``solver_arguments`` keep it (as for HiGHS).  *is_mip*: an Xpress time limit becomes a hard
     ``MAXTIME -<limit>`` (:func:`_native_value`).  The HiGHS-only ``FLEXTOOL_HIGHS_TIME_LIMIT`` /
     ``FLEXTOOL_HIGHS_MIP_GAP`` / ``--highs-threads`` do not apply.  A registry
     default (and an unset budget, which is the available cores) adds nothing.
     """
+    from flextool._thread_budget import solver_budget
     from flextool.run_options import OPTIONS, RunOptions
 
     opts = run_options if run_options is not None else RunOptions.from_env()
@@ -1186,6 +1188,10 @@ def _operator_native_overrides(
     ):
         resolved = opts.resolved.get(key)
         if resolved is None or resolved.source not in ("cli", "env") or resolved.value is None:
+            budget = solver_budget(opts) if knob == "threads" else None
+            if budget is not None and budget[1] == "toolbox":
+                out.append(CommercialOption(names[knob], _native_value(solver, knob, budget[0], is_mip=is_mip),
+                                            TOOLBOX_THREADS_LAYER))
             continue
         spec = OPTIONS[key]
         layer = f"flag {spec.flag}" if resolved.source == "cli" else f"environment variable {spec.env}"
@@ -1337,6 +1343,11 @@ def note_xpress_mip_log_overrides(
         )
 
 
+#: The operator layer's name for the thread count of a Spine Toolbox run that gives no ``--threads`` /
+#: ``FLEXTOOL_THREADS`` (:data:`flextool._thread_budget.TOOLBOX_DEFAULT_THREADS`).
+TOOLBOX_THREADS_LAYER = "Spine Toolbox run's default"
+
+
 def _thread_number(value: str) -> float | None:
     try:
         number = float(value)
@@ -1365,6 +1376,9 @@ def _note_thread_override(solver: str, old: CommercialOption, new: CommercialOpt
     lowers = all_cores or (old_number is not None and new_number is not None and old_number > new_number)
     if not lowers:
         tail = ""
+    elif new.layer == TOOLBOX_THREADS_LAYER:
+        tail = (" For more solver threads add --threads N to the FlexTool tool's arguments in Spine Toolbox "
+                "(or set FLEXTOOL_THREADS).")
     elif new.layer.startswith("environment variable "):
         env_name = new.layer.removeprefix("environment variable ")
         tail = f" For more solver threads raise {env_name} (or give --threads)."

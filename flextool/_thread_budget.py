@@ -1,7 +1,9 @@
 """The thread budget of one FlexTool run, applied to polars before polars is imported.
 
-One number *B* limits a run: FlexTool's own data processing (polars) and the solver (HiGHS, Benders region
-solves).  It comes from ``--threads N`` > ``FLEXTOOL_THREADS`` > the available cores.  The assistant
+One number *B* limits a run: FlexTool's own data processing (polars) and the solver (HiGHS, the commercial
+solvers' thread count, Benders region solves).  It comes from ``--threads N`` > ``FLEXTOOL_THREADS`` > the
+available cores; a Spine Toolbox run (:func:`is_toolbox_run`) takes 1 instead of the cores, because Toolbox runs
+its tools in parallel and nothing shares the cores between them.  The assistant
 (``flextool-assistant``) is the exception: it reads files while a model may be running and must not compete
 with it, so its budget is 1 unless its own ``--threads N`` raises it (``FLEXTOOL_THREADS``, the budget of a run,
 does not apply to it).
@@ -56,7 +58,16 @@ _CLI_SCRIPTS = frozenset({
     "cmd_run_flextool.py", "cmd_solve_mps.py", "cmd_execute_flextool_workflow.py",
 }) | _SINGLE_THREAD_SCRIPTS
 
-BudgetSource = Literal["cli", "env", "auto"]
+#: The file Spine Toolbox runs for the FlexTool tool (``.spinetoolbox/specifications/Tool/flextool3.json``): as a
+#: subprocess (``python cmd_run_flextool.py ...``), in its Basic Console (``sys.argv`` set, the file ``exec``-ed) or
+#: in a Jupyter console (``%run``).  Every other FlexTool launcher starts the engine as ``-m
+#: flextool.cli.cmd_run_flextool`` (the FlexTool window, ``flextool-run``, the workflow runner, the calibrator).
+_TOOLBOX_SCRIPTS = frozenset({"cmd_run_flextool.py"})
+
+#: The budget of a Spine Toolbox run that gives neither ``--threads`` nor ``FLEXTOOL_THREADS``.
+TOOLBOX_DEFAULT_THREADS = 1
+
+BudgetSource = Literal["cli", "env", "toolbox", "auto"]
 PolarsSource = Literal["budget", "cap", "env", "already_loaded"]
 
 
@@ -64,7 +75,8 @@ PolarsSource = Literal["budget", "cap", "env", "already_loaded"]
 class ThreadBudget:
     """What :func:`apply_before_polars` decided for this process.
 
-    *budget* is B; *source* where it came from (``auto`` = the available cores).  *polars* is the polars thread
+    *budget* is B; *source* where it came from (``toolbox`` = a Spine Toolbox run's default of 1, ``auto`` = the
+    available cores).  *polars* is the polars thread
     count: the pool size it was given, or for ``already_loaded`` the size of the pool polars already had.
     *polars_source* says what limited it: ``budget`` (B), ``cap`` (:data:`THREAD_CAP_POLARS`), ``env`` (the
     user's ``POLARS_MAX_THREADS``) or ``already_loaded`` (polars was imported before flextool; its pool cannot
@@ -118,6 +130,26 @@ def _is_flextool_cli(argv: Sequence[str], orig_argv: Sequence[str]) -> bool:
     return _is_command(argv, orig_argv, _CLI_MODULES, _CLI_SCRIPTS)
 
 
+def is_toolbox_run(argv: Sequence[str] | None = None, orig_argv: Sequence[str] | None = None) -> bool:
+    """Whether this process is a FlexTool run that Spine Toolbox started (*argv* / *orig_argv* default to ``sys``'s).
+
+    Spine Toolbox sets no environment variable of its own, so the run is known by its command line: the file
+    ``cmd_run_flextool.py`` run as a script (:data:`_TOOLBOX_SCRIPTS`).  Under ``python -m
+    flextool.cli.cmd_run_flextool`` ``sys.argv[0]`` is that file's path too once the module runs, so a ``-m`` of a
+    FlexTool command rules it out.  Read at the time of the call: a Basic Console sets ``sys.argv`` for each run.
+    """
+    argv = sys.argv if argv is None else argv
+    orig_argv = getattr(sys, "orig_argv", []) if orig_argv is None else orig_argv
+    for i, arg in enumerate(orig_argv[:-1]):
+        if arg == "-m":
+            if orig_argv[i + 1] in _CLI_MODULES:
+                return False
+            break
+    if not argv:
+        return False
+    return argv[0].replace("\\", "/").rsplit("/", 1)[-1].lower() in _TOOLBOX_SCRIPTS
+
+
 def command_default_threads(argv: Sequence[str], orig_argv: Sequence[str]) -> int | None:
     """The budget of a command line that gives no ``--threads``, when the command has its own: 1 for the
     assistant (it must not compete with a running model), else ``None`` (``FLEXTOOL_THREADS``, then the cores).
@@ -150,11 +182,14 @@ def cli_threads_from_argv(argv: Sequence[str], orig_argv: Sequence[str]) -> int 
         return None
 
 
-def resolve_budget(cli: int | None, environ: Mapping[str, str]) -> tuple[int, BudgetSource]:
-    """B and its source: the flag, else ``FLEXTOOL_THREADS``, else :func:`available_cores`."""
+def resolve_budget(cli: int | None, environ: Mapping[str, str], *, toolbox: bool = False) -> tuple[int, BudgetSource]:
+    """B and its source: the flag, else ``FLEXTOOL_THREADS``, else :data:`TOOLBOX_DEFAULT_THREADS` for a Spine
+    Toolbox run (*toolbox*), else :func:`available_cores`."""
     r = resolve(OPTIONS["threads"], cli=cli, environ=environ)
     if r.source in ("cli", "env") and r.value is not None:
         return int(r.value), r.source
+    if toolbox:
+        return TOOLBOX_DEFAULT_THREADS, "toolbox"
     return available_cores(), "auto"
 
 
@@ -191,7 +226,7 @@ def apply_before_polars(
     cli = cli_threads_from_argv(argv, orig_argv)
     if cli is None:
         cli = command_default_threads(argv, orig_argv)
-    budget, source = resolve_budget(cli, env)
+    budget, source = resolve_budget(cli, env, toolbox=is_toolbox_run(argv, orig_argv))
     if "polars" in sys.modules:
         _applied = ThreadBudget(budget, source, _loaded_pool_size(), "already_loaded")
         return previous
@@ -250,26 +285,28 @@ def highs_thread_options(run_options: "RunOptions") -> tuple[dict[str, object], 
 
     * ``--highs-threads h`` with h > 1: ``threads=h, parallel=on`` (HiGHS' parallel simplex, an explicit
       opt-in); with a caller-set budget B below h, h is lowered to B with a warning.
-    * a caller-set budget B (``--threads`` / ``FLEXTOOL_THREADS``) and no ``--highs-threads``: ``threads=B``;
-      ``parallel`` stays as the lower layers set it (FlexTool pins ``off``).  An explicit ``--highs-threads 1``
-      with a budget gives ``threads=1``.
+    * a solver budget B (:func:`solver_budget`: ``--threads`` / ``FLEXTOOL_THREADS``, or a Spine Toolbox run's
+      default of 1) and no ``--highs-threads``: ``threads=B``; ``parallel`` stays as the lower layers set it
+      (FlexTool pins ``off``).  An explicit ``--highs-threads 1`` with a budget gives ``threads=1``.
     * otherwise nothing: HiGHS' own default and ``highs.opt`` apply (the run is as before the budget existed).
 
     Only flag- and environment-sourced values count; registry defaults add nothing.
     """
-    def given(key: str):
-        r = run_options.get(key)
-        return r.value if r.source in ("cli", "env") else None
-
-    budget = given("threads")
-    highs = given("highs_threads")
+    r = run_options.get("highs_threads")
+    highs = r.value if r.source in ("cli", "env") else None
+    solver = solver_budget(run_options)
+    budget = solver[0] if solver is not None else None
     warning = None
     if highs is not None and int(highs) > 1:
         h = int(highs)
-        if budget is not None and h > int(budget):
-            warning = (f"--highs-threads {h} is more than the run's --threads {int(budget)}; "
-                       f"HiGHS uses {int(budget)} threads")
-            h = int(budget)
+        if solver is not None and h > solver[0]:
+            if solver[1] == "toolbox":
+                warning = (f"--highs-threads {h} is more than a Spine Toolbox run's default of {solver[0]} thread "
+                           f"(give --threads for more); HiGHS uses {solver[0]} thread")
+            else:
+                warning = (f"--highs-threads {h} is more than the run's --threads {solver[0]}; "
+                           f"HiGHS uses {solver[0]} threads")
+            h = solver[0]
         if h > 1:
             return {"threads": h, "parallel": "on"}, warning
         return {"threads": 1}, warning
@@ -278,12 +315,30 @@ def highs_thread_options(run_options: "RunOptions") -> tuple[dict[str, object], 
     return {}, None
 
 
-def run_budget(run_options: "RunOptions") -> tuple[int, BudgetSource]:
-    """B of a run whose options are *run_options*: its ``--threads`` / ``FLEXTOOL_THREADS``, else the cores."""
+def solver_budget(run_options: "RunOptions | None") -> tuple[int, BudgetSource] | None:
+    """The thread budget the solvers take, or ``None`` (they keep their own thread settings).
+
+    ``--threads`` / ``FLEXTOOL_THREADS`` (*run_options*; ``None`` reads the environment), else a Spine Toolbox
+    run's :data:`TOOLBOX_DEFAULT_THREADS` (``toolbox``): every solver of a Toolbox run (HiGHS, the commercial
+    solvers' thread count, Benders region solves at once) gets 1 thread, so the runs Toolbox executes in parallel
+    do not each take every core.  The available cores (no budget given) leave the solvers as they are.
+    """
+    if run_options is None:
+        from flextool.run_options import RunOptions
+
+        run_options = RunOptions.from_env()
     r = run_options.get("threads")
     if r.source in ("cli", "env") and r.value is not None:
         return int(r.value), r.source
-    return available_cores(), "auto"
+    if is_toolbox_run():
+        return TOOLBOX_DEFAULT_THREADS, "toolbox"
+    return None
+
+
+def run_budget(run_options: "RunOptions") -> tuple[int, BudgetSource]:
+    """B of a run whose options are *run_options*: :func:`solver_budget`, else the cores."""
+    solver = solver_budget(run_options)
+    return solver if solver is not None else (available_cores(), "auto")
 
 
 def peek_mismatch(run_options: "RunOptions") -> str | None:
@@ -311,7 +366,8 @@ def header_text(run_options: "RunOptions", environ: Mapping[str, str] | None = N
     the solver only.
     """
     budget, source = run_budget(run_options)
-    origin = {"cli": "flag", "env": "env FLEXTOOL_THREADS", "auto": "available cores"}[source]
+    origin = {"cli": "flag", "env": "env FLEXTOOL_THREADS", "toolbox": "Spine Toolbox run",
+              "auto": "available cores"}[source]
     pool = _loaded_pool_size()
     wanted, _ = polars_threads(budget, os.environ if environ is None else environ)
     if pool is None:
@@ -334,10 +390,12 @@ __all__ = [
     "current",
     "header_text",
     "highs_thread_options",
+    "is_toolbox_run",
     "peek_mismatch",
     "polars_pool",
     "polars_threads",
     "resolve_budget",
     "restore_env",
     "run_budget",
+    "solver_budget",
 ]

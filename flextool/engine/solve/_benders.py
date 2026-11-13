@@ -245,19 +245,27 @@ def _resolve_benders_workers(n_regions: int, workers, run_options: RunOptions | 
 
     Precedence: an explicit ``workers`` argument > the run's ``--benders-workers`` /
     ``FLEXTOOL_BENDERS_WORKERS`` (from *run_options*; ``None`` reads the environment) > the run's thread budget
-    ``--threads`` / ``FLEXTOOL_THREADS`` (one region solve per thread: with more than one worker the region
-    solves run single-threaded) > auto ``min(n, cpu-1)``.  Clamped to ``[1, n_regions]`` by
+    ``--threads`` / ``FLEXTOOL_THREADS``, else a Spine Toolbox run's default of 1
+    (:func:`flextool._thread_budget.solver_budget`; one region solve per thread: with more than one worker the
+    region solves run single-threaded) > auto ``min(n, cpu-1)``.  Clamped to ``[1, n_regions]`` by
     :func:`resolve_worker_count`.  An explicit worker count above the budget is kept, with one warning.
     """
+    from flextool._thread_budget import solver_budget
+
     if workers is None:
         workers = _benders_run_option("benders_workers", run_options)
     budget = _benders_run_option("threads", run_options)
+    source = "the run's --threads"
+    if budget is None:
+        implicit = solver_budget(run_options)
+        if implicit is not None and implicit[1] == "toolbox":
+            budget, source = implicit[0], "a Spine Toolbox run's default threads"
     if workers is None:
         workers = budget
     elif budget is not None and min(int(workers), n_regions) > int(budget):
         _logger.warning(
-            "Benders: --benders-workers %d is more than the run's --threads %d; %d region solves run at once",
-            int(workers), int(budget), min(int(workers), n_regions),
+            "Benders: --benders-workers %d is more than %s %d; %d region solves run at once",
+            int(workers), source, int(budget), min(int(workers), n_regions),
         )
     return resolve_worker_count(n_regions, workers)
 

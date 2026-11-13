@@ -1092,7 +1092,11 @@ runtime library, so there are two paths:
   Windows (mimalloc) and builds without jemalloc are a silent no-op.
 
 **Thread budget.** One number B per run (`--threads` > `FLEXTOOL_THREADS` > the available cores, by CPU
-affinity) limits FlexTool's processing and the solver (`flextool/_thread_budget.py`). polars reads
+affinity) limits FlexTool's processing and the solver (`flextool/_thread_budget.py`). A Spine Toolbox run takes 1
+instead of the cores (`is_toolbox_run`: `sys.argv[0]` is the `cmd_run_flextool.py` file and no `-m` of a FlexTool
+command; Toolbox sets no environment variable and runs its tools in parallel with nothing sharing the cores), for
+polars and every solver: `solver_budget` gives HiGHS `threads=1`, the commercial thread count over the option file
+(operator layer "Spine Toolbox run's default") and at most one Benders region solve at once. polars reads
 `POLARS_MAX_THREADS` only at import, and `import flextool` imports it, so `flextool/__init__.py` runs, in this
 order: the thread budget (`apply_before_polars`: when the process is a FlexTool command that accepts
 `--threads` — `sys.orig_argv` holds `-m flextool.cli.cmd_run_flextool` / `cmd_solve_mps` /
@@ -1108,7 +1112,7 @@ The environment therefore never carries B: a child gets `--threads` on its comma
 GUI jobs, the `--save-memory` solve child). With a polar-high older than 3.12.2, whose import sets
 `POLARS_MAX_THREADS=1` even with polars loaded, it is imported before the restore so that value is removed too.
 When polars was imported before flextool, its pool cannot change; the header says so. HiGHS: a caller-set B
-gives `threads=B` with the `parallel=off` pin kept (`highs_thread_options`); `--highs-threads N>1` keeps its
+(or a Toolbox run's 1) gives `threads=B` with the `parallel=off` pin kept (`highs_thread_options`); `--highs-threads N>1` keeps its
 parallel-simplex opt-in, at most B. Benders: without `--benders-workers`, at most B region solves at once.
 
 ## Solver outputs: folder layout

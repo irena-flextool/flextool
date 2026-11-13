@@ -724,7 +724,10 @@ def build_parser() -> argparse.ArgumentParser:
                              'option file and solver_arguments) and a Benders '
                              'solve runs at most N region solves at once.  '
                              'Default: the available cores, with the solvers\' '
-                             'own thread settings and Benders as before.  When '
+                             'own thread settings and Benders as before; a '
+                             'Spine Toolbox run (this file run as a script) '
+                             'uses 1 thread for all of it, since Toolbox runs '
+                             'its tools in parallel.  When '
                              'several runs execute in parallel, give each about '
                              'cores / runs.  Environment variable: '
                              'FLEXTOOL_THREADS; the flag wins.')

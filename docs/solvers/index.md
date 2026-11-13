@@ -75,8 +75,11 @@ replaces a different value, for example `gurobi uses Threads 1, the run's
 thread budget (flag --threads), instead of Threads 0 (all cores) in
 <folder>/gurobi.opt.` For more solver threads raise `--threads` (Threads per
 run in the FlexTool window), or `FLEXTOOL_THREADS` when the budget came from
-it. Without `--threads` and `FLEXTOOL_THREADS` (a terminal
-or Spine Toolbox run that gives neither) the option file and
+it. A Spine Toolbox run that gives neither takes 1 thread for every
+solver (Toolbox executes its runs in parallel), printed as `gurobi uses
+Threads 1, the run's thread budget (Spine Toolbox run's default), ...`;
+add `--threads N` to the FlexTool tool's arguments for more. Without
+`--threads` and `FLEXTOOL_THREADS` in a terminal run the option file and
 `solver_arguments` keep the thread count. Per-algorithm thread controls
 (Xpress `BARTHREADS` / `MIPTHREADS` / `CONCURRENTTHREADS`, COPT `BarThreads` /
 `SimplexThreads` / `CrossoverThreads` / `MipTasks`, Gurobi `ConcurrentJobs`)

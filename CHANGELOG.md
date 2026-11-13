@@ -96,6 +96,11 @@ Each line says what changes for a model that ran before and what to do; the deta
   all cores (`0`); the run prints a line when it replaces a value. A GUI run with `Threads 0` in `gurobi.opt` now uses
   1 thread: raise Threads per run. Without `--threads` and `FLEXTOOL_THREADS` the option file keeps it;
   per-algorithm thread controls (Xpress `BARTHREADS`, COPT `BarThreads`, ...) are not changed.
+- **A Spine Toolbox run uses 1 thread unless `--threads` or `FLEXTOOL_THREADS` is given** (before: all cores for
+  FlexTool's processing, at most 8, and the solvers' own thread settings): polars, HiGHS, the thread count of
+  Gurobi, CPLEX, Xpress and COPT (over the option file, with the printed line naming "Spine Toolbox run's
+  default") and Benders region solves. Toolbox runs its tools in parallel and nothing shares the cores between
+  them. For more, add `--threads N` to the FlexTool tool's arguments.
 - **At a search limit (time, node, solution, work or iteration) a MIP with a solution keeps it, with a warning
   naming the limit, its option and the gap; an LP or a solve without a solution stops the run**, for every solver.
   So does an objective target the user set (HiGHS `objective_target`, Gurobi `BestObjStop`). A memory limit, an
