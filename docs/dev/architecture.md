@@ -151,8 +151,9 @@ The contract:
    GUI's explicit "trust this workspace" add to the list; nothing inside a workspace (`templates/project_folder.txt`
    included) is a trust anchor. `--solver-config-dir` / `FLEXTOOL_SOLVER_CONFIG_DIR` stay trusted.
    A commercial solver may run behind this computer's solver wrapper (`_local_solver_settings.solver_wrapper`:
-   `FLEXTOOL_SOLVER_WRAPPER_<SOLVER>`, else `wrappers` in the same file; `check_wrapper` holds the rules), checked
-   for every solver of the run before the first solve (`check_run_solver_wrappers`) and again before each start;
+   `FLEXTOOL_SOLVER_WRAPPER_GUROBI` and its CPLEX, XPRESS, COPT twins, else `wrappers` in the same file;
+   `check_wrapper` holds the rules), checked for every solver of the run before the first solve
+   (`check_run_solver_wrappers`) and again before each start;
    `_solve_commercial_subprocess` prepends it to the solver's argv (no shell; the solver path is absolute,
    `_find_solver_binary` skips relative and, on Windows, current-folder `PATH` entries), logs the `Running ...
    through the solver wrapper` line and notes `solver_wrappers` in the run record (export keeps only the program).

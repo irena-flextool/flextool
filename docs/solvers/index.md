@@ -128,6 +128,10 @@ someone else carries command lines), in one of two ways (the first wins):
   {"format": 1, "wrappers": {"cplex": ["/usr/local/bin/lic_hold", "--queue", "opt"]}}
   ```
 
+Runs from the FlexTool window, the terminal and Spine Toolbox all use the
+same setting: a Toolbox run reads the environment variable (set it where
+Toolbox is started) or the settings file of the user running Toolbox.
+
 FlexTool then runs, without a shell, the wrapper's items followed by the
 solver's own command: the solver program's full path and its arguments.
 
