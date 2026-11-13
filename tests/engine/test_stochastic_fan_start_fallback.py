@@ -370,11 +370,11 @@ def _not_fanned_error(branch: str) -> str:
     return (
         "Roll 'sol_roll_0' of rolling solve 'sol' opens its stochastic fan at period 'p1' (analysis_time 't0001'). "
         "The stochastic_branches of solve 'sol' also mark a realized branch later in its horizon, where no solve or "
-        f"roll fans out: period 'p2' at analysis_time 't0005' (realized branch '{branch}'). That row would switch "
-        "the realization dispatch to that branch from that period on, or only repeat the branch realized before. "
-        "A solve has one realization series: give the realized: yes row only where a solve or roll fans out (in a "
-        "rolling solve, where each roll fans out), always with the same branch, and change that branch's series to "
-        "give the realization new data. Remove these rows. Check stochastic_branches.")
+        f"roll fans out: period 'p2' at analysis_time 't0005' (realized branch '{branch}'). This row switches the "
+        "realization dispatch to its branch from that period on, and it is not allowed even when it names the "
+        "branch already realized. A solve has one realization series: give the realized: yes row only where a "
+        "solve or roll fans out, always with the same branch, and change that branch's series to give the "
+        "realization new data. Remove this row. Check stochastic_branches.")
 
 
 @pytest.mark.parametrize(("fans", "expected"), [
@@ -389,14 +389,18 @@ def _not_fanned_error(branch: str) -> str:
         "realization series: name the same branch in every realized: yes row, and give that branch the data of "
         "each roll at the roll's analysis_time. Check stochastic_branches.",
         id="fan-point-other-branch"),
+    pytest.param([*_realized_rolls("obs"), ("p2", "alt", "t0005", "yes", 0.0)], _not_fanned_error("alt"),
+                 id="r1-before-r2"),
+    pytest.param([*_realized_rolls("obs"), *_two_forecasts("p2", "t0005")], _ROLL_0_P2_ERROR,
+                 id="229-before-r2"),
     pytest.param(_realized_rolls("real"), None, id="valid"),
 ])
 def test_realized_row_where_no_roll_fans_out_or_switching_branch(tmp_path_factory, fans, expected) -> None:
     """Rolling 8/12, NP=3: rolls start (and fan) at p1/t0001 and p3/t0009, both with forecasts high/low and
     realized: yes ``real``.  A realized: yes row at p2/t0005, where no roll fans out, is an error naming roll 0
     (roll 1 does not reach p2) whatever branch it names: it switches the realization series or only repeats it.
-    Fan points naming different realized branches are an error too (one realization series per solve).  The
-    same branch at every roll's fan point is valid (before: the first two switched silently)."""
+    Fan points naming different realized branches are an error too (one realization series per solve); the
+    item-229 check comes first, then this R1, then that R2.  The same branch at every roll's fan point is valid (before: the first two switched silently)."""
     if expected is None:
         steps = _run(tmp_path_factory, n_periods=3, fans=fans, rolling=(8.0, 12.0))
         assert {"sol_roll_0", "sol_roll_1"} <= set(steps)

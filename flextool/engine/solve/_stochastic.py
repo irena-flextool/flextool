@@ -578,18 +578,28 @@ class StochasticSolver:
                 + ")"
                 for (p, t, r) in remaining
             )
+            n_rows = sum(len(r) for (_p, _t, r) in remaining)
+            if n_rows == 1:
+                marks, row, rows, switch = (
+                    "a realized branch", "This row", "this row",
+                    "switches the realization dispatch to its branch from that period "
+                    "on, and it is not allowed even when it names",
+                )
+            else:
+                marks, row, rows, switch = (
+                    "realized branches", "These rows", "these rows",
+                    "switch the realization dispatch to their branch from that period "
+                    "on, and they are not allowed even when they name",
+                )
             message = (
                 f"{who} opens its stochastic fan at period {trig_period!r} "
                 f"(analysis_time {trig_step!r}). The stochastic_branches of solve "
-                f"{c!r} also mark a realized branch later in its horizon, where no "
-                f"solve or roll fans out: {items}. That row would switch the "
-                "realization dispatch to that branch from that period on, or "
-                "only repeat the branch realized before. A solve has one realization "
-                "series: give the realized: yes row only where a solve or roll "
-                "fans out (in a rolling solve, where each roll fans out), always "
-                "with the same branch, and change that branch's series to give "
-                "the realization new data. Remove these rows. Check "
-                "stochastic_branches."
+                f"{c!r} also mark {marks} later in its horizon, where no solve or "
+                f"roll fans out: {items}. {row} {switch} the branch already "
+                "realized. A solve has one realization series: give the realized: "
+                "yes row only where a solve or roll fans out, always with the same "
+                "branch, and change that branch's series to give the realization "
+                f"new data. Remove {rows}. Check stochastic_branches."
             )
             self.logger.error(message)
             raise FlexToolConfigError(message)

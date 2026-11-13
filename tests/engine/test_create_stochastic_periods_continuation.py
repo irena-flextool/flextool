@@ -405,3 +405,13 @@ def test_rolls_of_one_sequence_share_the_realization_series() -> None:
         "'w2030' at period 'p2020' (analysis_time 't0001'); 'w2040' at period 'p2030' (analysis_time 't0004'). "
         "A solve has one realization series: name the same branch in every realized: yes row, and give that "
         "branch the data of each roll at the roll's analysis_time. Check stochastic_branches.")
+
+
+def test_renamed_rolling_inner_solves_have_their_own_realization_series() -> None:
+    """A nested rolling inner solve renamed per outer period: ``inner_p2020_roll_0`` and
+    ``inner_p2030_roll_0`` are two roll sequences (``inner_p2020``, ``inner_p2030``), so different realized
+    branches at their fan points are valid."""
+    solver = _make_solver()
+    solver.state.solve = SimpleNamespace(solve_modes={"inner": "rolling_window"})
+    out = _run_two(solver, ("inner_p2020_roll_0", "inner_p2030_roll_0"))
+    assert out[6] == {"inner_p2020_roll_0": ("p2020", "t0001"), "inner_p2030_roll_0": ("p2030", "t0004")}
