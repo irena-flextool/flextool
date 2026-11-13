@@ -162,7 +162,8 @@ flextool-run INPUT_DB_URL [OUTPUT_DB_URL] [options]
 `python run_flextool.py` and `python -m flextool.cli.cmd_run_flextool` take the same arguments.
 
 Each run writes two files into its `output_parquet/<subdir>/` folder: `_run_status.json` (running, succeeded,
-failed, ...; each solve's outcome; whether the parquet files there belong to this run) and `_run.log` (the run's
+failed, ...; each solve's outcome; the solver option files used: folder, and a SHA-256 of each; whether the
+parquet files there belong to this run) and `_run.log` (the run's
 console output). Under `flextool-run`, the GUI, the workflow runner and the calibrator the log also holds the
 solver's native output and any crash dump.
 
@@ -220,7 +221,7 @@ script); a given flag wins over the variable, and the variable over the solve's 
 | `--solver-time-limit SECONDS` | Time limit of each solve, on every solver (HiGHS `time_limit`, Gurobi `TimeLimit`, CPLEX `timelimit`, Xpress `MAXTIME`, COPT `TimeLimit`), a positive number (default: none; 0 or a negative value is ignored with a warning). Wins over a time limit in the solve's `solver_arguments` and in the solver's option file. A MIP stopped at the limit keeps its solution with a warning; an LP, or a solve without a solution, stops the run (see [Time limit](solvers/index.md#time-limit)). Env fallback: `FLEXTOOL_SOLVER_TIME_LIMIT` (`FLEXTOOL_HIGHS_TIME_LIMIT`: HiGHS only) |
 | `--solver-mip-gap GAP` | MIP relative gap for every solve of the run, on every solver (HiGHS `mip_rel_gap`, Gurobi `MIPGap`, CPLEX `mip tolerances mipgap`, Xpress `MIPRELSTOP`, COPT `RelGap`). Unset: each solve's `solver_mip_gap`, else the gap in the solver's option file. Env fallback: `FLEXTOOL_SOLVER_MIP_GAP` (`FLEXTOOL_HIGHS_MIP_GAP`: HiGHS only) |
 | `--solver-config-dir PATH` | Folder of the solver option files (`highs.opt`, `gurobi.opt`, ...). Unset: `solver_config/` next to the input database, then in the workspace of a GUI project database, then in the Spine Toolbox project folder (`--project-folder-file`), then in the current folder; FlexTool's defaults with a warning when none has an option file. The run header's `Solver config:` line names the folder used; the run copies the files to `<work folder>/solve_data/solver_config/` (see [Where the option files come from](solvers/index.md#where-the-option-files-come-from)). Env fallback: `FLEXTOOL_SOLVER_CONFIG_DIR` |
-| `--solver-log-level {silent,normal,verbose}` | HiGHS log output (default `normal`). Env fallback: `FLEXTOOL_SOLVER_LOG_LEVEL` |
+| `--solver-log-level {silent,normal,verbose}` | Solver log output (default `normal`); `silent` also hides a commercial solver's log (still saved as `solve_data/subprocess/<solve>.log`); `verbose` is HiGHS only. Env fallback: `FLEXTOOL_SOLVER_LOG_LEVEL` |
 | `--save-memory` | Opt-in peak-RSS reduction: after the LP matrix is built, drop polar-high's polars/numpy source, write the LP to a temp MPS file, and solve it in a separate HiGHS subprocess (via `cmd_solve_mps`) so the solver's working set lives outside the FlexTool address space. Frees ~5-10 GB on large models at ~+90 s I/O per sub-solve. Also disables warm-LP reuse across cascade iterations. See [architecture.md](dev/architecture.md). Env fallback: `FLEXTOOL_SAVE_MEMORY=1` |
 | `--warm-start` | Reuse a cached HiGHS basis for solves of the same model structure, in-process and with `--save-memory` (Benders solves excepted); any mismatch falls back to a cold solve. Env fallback: `FLEXTOOL_WARM_START=1` |
 | `--basis-cache-dir PATH` | Folder of the `--warm-start` basis cache (default `<work folder>/basis_cache`); share one folder to reuse bases between runs. Env fallback: `FLEXTOOL_BASIS_CACHE_DIR` |

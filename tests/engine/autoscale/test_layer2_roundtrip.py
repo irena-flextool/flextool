@@ -274,3 +274,197 @@ def test_layer2_mip_preserves_integrality(register_test_families):
     np.testing.assert_allclose(
         sol.col_value, raw["col_value"], rtol=_RTOL, atol=_ATOL,
     )
+
+
+# ---------------------------------------------------------------------------
+# The live HiGHS handle after the unscale (items 194, 239)
+#
+# The output writers read the solve from the HiGHS handle
+# (``h.getSolution()``), not from the ``Solution``.  After the unscale the
+# handle must give the model's own primal, row duals and reduced costs, and
+# keep a valid basis.
+
+_DETERMINISTIC = {"presolve": "off", "threads": 1, "simplex_strategy": 1, "output_flag": False}
+
+
+def _build_three_col_lp() -> Problem:
+    """min x1 + 2 x2 + 3 x3  s.t.  x1 + x2 + x3 >= 1,  x1 - x2 <= 0.5,  0 <= x <= 10.
+
+    Hand solution (independent of any solver run): x2 = 1 - x1 from the
+    cover row and x1 - x2 <= 0.5 give x1 <= 0.75; cost x1 + 2 (1 - x1) falls
+    with x1, so x = (0.75, 0.25, 0), objective 1.25.  Both rows are tight;
+    duals from c_j = sum_i y_i a_ij on the basic x1, x2:
+    1 = y1 + y2, 2 = y1 - y2  ->  y = (1.5, -0.5).  Reduced costs
+    d = c - A^T y = (0, 0, 3 - 1.5) = (0, 0, 1.5).
+    """
+    pb = Problem()
+    idx = pl.DataFrame({"i": [0]})
+    x1 = pb.add_var("v_test_x1", "i", idx, lower=0.0, upper=10.0)
+    x2 = pb.add_var("v_test_x2", "i", idx, lower=0.0, upper=10.0)
+    x3 = pb.add_var("v_test_x3", "i", idx, lower=0.0, upper=10.0)
+    pb.add_cstr(
+        "test_cover",
+        sense=">=",
+        lhs_terms={
+            "a": Sum(x1, over=("i",)),
+            "b": Sum(x2, over=("i",)),
+            "c": Sum(x3, over=("i",)),
+        },
+        rhs_terms={"one": 1.0},
+    )
+    pb.add_cstr(
+        "test_diff",
+        sense="<=",
+        lhs_terms={"a": Sum(x1, over=("i",)), "b": Sum(x2 * -1.0, over=("i",))},
+        rhs_terms={"half": 0.5},
+    )
+    pb.set_objective(Sum(x1 * 1.0 + x2 * 2.0 + x3 * 3.0), sense="min")
+    return pb
+
+
+_HAND_X = np.array([0.75, 0.25, 0.0])
+_HAND_ROW_DUAL = np.array([1.5, -0.5])
+_HAND_COL_DUAL = np.array([0.0, 0.0, 1.5])
+
+
+@pytest.fixture
+def three_col_families(register_test_families):
+    add_var, add_cstr = register_test_families
+    # One quantity type per column and row, so each gets its own factor.
+    add_var("v_test_x1", VarFamily(QuantityType.POWER))
+    add_var("v_test_x2", VarFamily(QuantityType.ENERGY))
+    add_var("v_test_x3", VarFamily(QuantityType.EMISSION_MASS))
+    add_cstr("test_cover", CstrFamily(QuantityType.DURATION))
+    add_cstr("test_diff", CstrFamily(QuantityType.FRACTION))
+
+
+def test_layer2_unscale_handle_gives_true_duals(three_col_families):
+    """Layer 2 forced on: the handle's reduced costs and duals equal the hand values (item 239).
+
+    HiGHS recomputes ``col_dual`` inside ``setSolution`` from the scaled LP
+    on the handle, which gave (3.22, 28.25, 7.5) here for the true
+    (0, 0, 1.5); the writers of ``v_dual_invest_*`` read the handle.
+    """
+    import highspy
+
+    from flextool.engine.autoscale._layer2 import apply_layer2_with_exponents
+    from flextool.process_outputs.read_highs_solution import handle_col_dual
+
+    # Oracle 2: a cold solve of the same LP without Layer 2.
+    raw = _build_three_col_lp().solve(options=_DETERMINISTIC, keep_solver=True)
+    raw_sol = raw.highs.getSolution()
+    np.testing.assert_allclose(raw_sol.col_value, _HAND_X, atol=1e-12)
+    np.testing.assert_allclose(raw_sol.row_dual, _HAND_ROW_DUAL, atol=1e-12)
+    np.testing.assert_allclose(raw_sol.col_dual, _HAND_COL_DUAL, atol=1e-12)
+
+    pb = _build_three_col_lp()
+    plan = apply_layer2_with_exponents(pb, {
+        QuantityType.POWER: 2, QuantityType.ENERGY: -1, QuantityType.EMISSION_MASS: 1,
+        QuantityType.DURATION: 3, QuantityType.FRACTION: -2,
+    })
+    np.testing.assert_array_equal(plan.col_factors, [4.0, 0.5, 2.0])
+    np.testing.assert_array_equal(plan.row_factors, [8.0, 0.25])
+
+    sol = pb.solve(options=_DETERMINISTIC, keep_solver=True)
+    h = sol.highs
+    assert isinstance(h, highspy.Highs)
+    # The scaled solve's own reduced costs differ from the true ones
+    # (x3: 1.5 / 2), so a pass below is not a no-op.
+    assert h.getSolution().col_dual[2] == pytest.approx(0.75, abs=1e-12)
+
+    unscale_solution(sol, plan)
+
+    np.testing.assert_allclose(sol.col_value, _HAND_X, atol=1e-12)
+    np.testing.assert_allclose(sol.row_dual, _HAND_ROW_DUAL, atol=1e-12)
+    np.testing.assert_allclose(sol.col_dual, _HAND_COL_DUAL, atol=1e-12)
+    hs = h.getSolution()
+    np.testing.assert_allclose(hs.col_value, _HAND_X, atol=1e-12)
+    np.testing.assert_allclose(hs.row_dual, _HAND_ROW_DUAL, atol=1e-12)
+    # What the output writers read (``extract_variable`` / ``write_all_variables``).
+    np.testing.assert_allclose(handle_col_dual(h), _HAND_COL_DUAL, atol=1e-12)
+    np.testing.assert_allclose(handle_col_dual(h, hs), _HAND_COL_DUAL, atol=1e-12)
+
+    # Solved again, the handle's own (scaled) values apply, not the kept ones.
+    h.run()
+    assert h.getModelStatus() == highspy.HighsModelStatus.kOptimal
+    np.testing.assert_allclose(handle_col_dual(h), [0.0, 0.0, 0.75], atol=1e-12)
+
+
+def _random_lp(c: np.ndarray, A: np.ndarray, row_upper: np.ndarray, col_upper: np.ndarray):
+    import highspy
+    import scipy.sparse as sp
+
+    m, n = A.shape
+    h = highspy.Highs()
+    for k, v in _DETERMINISTIC.items():
+        h.setOptionValue(k, v)
+    h.setOptionValue("solver", "simplex")
+    lp = highspy.HighsLp()
+    lp.num_col_ = n
+    lp.num_row_ = m
+    lp.col_cost_ = c
+    lp.col_lower_ = np.zeros(n)
+    lp.col_upper_ = col_upper
+    lp.row_lower_ = -np.inf * np.ones(m)
+    lp.row_upper_ = row_upper
+    M = sp.csc_matrix(A)
+    lp.a_matrix_.format_ = highspy.MatrixFormat.kColwise
+    lp.a_matrix_.start_ = M.indptr
+    lp.a_matrix_.index_ = M.indices
+    lp.a_matrix_.value_ = M.data
+    h.passModel(lp)
+    return h
+
+
+def test_layer2_unscale_handle_keeps_warm_basis():
+    """After the unscale the handle keeps a valid basis, so a re-solve after a change is warm (item 194).
+
+    ``setSolution`` clears the basis-valid flag; without the restore the
+    re-solve below starts cold (about 394 against 79 iterations).
+    """
+    from types import SimpleNamespace
+
+    rng = np.random.default_rng(0)
+    n, m = 300, 200
+    A = rng.random((m, n)) * (rng.random((m, n)) < 0.05)
+    c = -rng.random(n)
+    cf = 2.0 ** rng.integers(-3, 4, n)
+    rf = 2.0 ** rng.integers(-3, 4, m)
+    # The Layer-2 transform: x' = cf x, c' = c / cf, A' = diag(rf) A diag(1/cf), rows * rf.
+    c_s = c / cf
+    A_s = (A * rf[:, None]) / cf[None, :]
+    ru_s = np.ones(m) * rf
+    cu_s = np.full(n, 10.0) * cf
+
+    h = _random_lp(c_s, A_s, ru_s, cu_s)
+    h.run()
+    before = h.getBasis()
+    assert before.valid
+    col_status = [int(s) for s in before.col_status]
+    row_status = [int(s) for s in before.row_status]
+    s = h.getSolution()
+    sol = SimpleNamespace(
+        highs=h,
+        col_value=np.asarray(s.col_value),
+        col_dual=np.asarray(s.col_dual),
+        row_dual=np.asarray(s.row_dual),
+    )
+    unscale_solution(sol, SimpleNamespace(col_factors=cf, row_factors=rf))
+
+    after = h.getBasis()
+    assert after.valid
+    assert [int(x) for x in after.col_status] == col_status
+    assert [int(x) for x in after.row_status] == row_status
+    np.testing.assert_array_equal(np.asarray(h.getSolution().col_value), sol.col_value)
+
+    # The same cost change on the unscaled handle and on a cold copy.
+    idx = np.arange(0, n, 7)
+    h.changeColsCost(len(idx), idx, c_s[idx] * 1.3)
+    h.run()
+    iters_fixed = h.getInfo().simplex_iteration_count
+    cold = _random_lp(c_s, A_s, ru_s, cu_s)
+    cold.changeColsCost(len(idx), idx, c_s[idx] * 1.3)
+    cold.run()
+    iters_cold = cold.getInfo().simplex_iteration_count
+    assert h.getObjectiveValue() == pytest.approx(cold.getObjectiveValue(), rel=1e-9)
+    assert iters_fixed * 2 < iters_cold, (iters_fixed, iters_cold)

@@ -8,8 +8,8 @@ CPLEX is invoked via the **solve** parameter *solver*. FlexTool builds the LP in
 
 Additional parameters:
 
-- `solver_precommand` creates a text in front of the cplex call. This is useful when dealing with floating licences. The command allows to call the licence server to reserve the licence for the duration of the cplex program with a command line argument.
-- `solver_arguments` is an array containing additional CPLEX solver commands
+- `solver_precommand` is not used. FlexTool 3 put it in front of the cplex call (for example to reserve a floating licence); FlexTool 4 never runs commands stored in a database, for safety, and warns when one is set (the parameter is kept only so that older databases still read). Use the solver's own licence server setup, or reserve the licence before starting FlexTool; see [Solver precommand](../solvers/index.md#solver-precommand-is-not-run).
+- `solver_arguments` is a map of CPLEX parameter names to values (for example `mip.tolerances.mipgap` → `0.001`), set on top of the option file; a file or folder parameter takes only a plain file name there (see [What the database may set](../solvers/index.md#what-the-database-may-set)). See [Authoring `solver_arguments`](../solvers/index.md#authoring-solver_arguments-in-spine).
 
 <!-- TODO: expand in dev/engine.md — document the exact CPLEX command line under the polars-based LP build. -->
 

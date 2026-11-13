@@ -400,18 +400,17 @@ def test_solver_options_passthrough(
                 "Vars": [{"VarName": "C0000001", "X": 1.0}],
             }))
 
-        class _CP:
-            returncode = 0
-            stdout = ""
-            stderr = ""
-        return _CP()
+        from flextool.engine.solve._subprocess_solve import _SolverRun
+
+        return _SolverRun(returncode=0, stdout="", stderr="", lines=[], timed_out=False)
 
     binary = Path("/fake/gurobi_cl")
     with patch(
         "flextool.engine.solve._subprocess_solve._find_solver_binary",
         return_value=binary,
     ), patch(
-        "flextool.engine.solve._subprocess_solve.subprocess.run",
+        # The solver process is started by ``_run_solver_process`` (item 238: a ``Popen`` that streams the log).
+        "flextool.engine.solve._subprocess_solve._run_solver_process",
         side_effect=_fake_subprocess_run,
     ):
         sol = run_one_solve(pb, cfg)

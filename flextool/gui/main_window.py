@@ -5957,10 +5957,12 @@ class MainWindow(tk.Tk):
                 log_row, text=_t, variable=d_sll, value=_v,
             ).pack(side="left", padx=(0, 6))
         _attach_tip(log_row, (
-            "HiGHS log verbosity (--solver-log-level).\n"
-            "  • silent   — output_flag=false (suppress HiGHS console).\n"
-            "  • normal   — output_flag=true (default).\n"
-            "  • verbose  — output_flag=true + log_dev_level=2 for\n"
+            "Solver log in the run output (--solver-log-level).\n"
+            "  • silent   — no solver log: HiGHS output_flag=false; a\n"
+            "              commercial solver's log is hidden but still\n"
+            "              saved as solve_data/subprocess/<solve>.log.\n"
+            "  • normal   — the solver's log is shown (default).\n"
+            "  • verbose  — HiGHS only: also log_dev_level=2 for\n"
             "              per-iteration solver telemetry."
         ))
         row += 1

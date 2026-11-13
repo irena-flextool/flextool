@@ -14,8 +14,9 @@
 # <work folder>/solve_data/solver_config/ as the record of the run.
 #
 # Gurobi ignores an unknown parameter name with a message; FlexTool repeats it
-# as a warning.  Parameters that make Gurobi write files (ResultFile, LogFile,
-# SolFiles, NodefileDir) are not passed on: FlexTool reads its own result file.
+# as a warning.  ResultFile is not passed on: FlexTool names its own result
+# file.  This file may hold full paths and server settings; a solve's
+# solver_arguments (the input database) may not (docs/solvers/index.md).
 #
 # Reference: https://docs.gurobi.com/projects/optimizer/en/current/reference/parameters.html
 #

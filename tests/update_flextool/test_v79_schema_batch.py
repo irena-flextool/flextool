@@ -39,6 +39,8 @@ Seed: ``data/v75_seed_stoch_two_period.json`` (a frozen version-75 copy of
   node on plain ``bind_within_solve``, or on ``bind_forward_only`` (stored or the default) whose
   ``storage_start_end_method`` is not ``fix_start`` / ``fix_start_end`` in every alternative that stores one (none
   stored: the default ``fix_nothing``).
+* rewrites the ``solve.solver_precommand`` description (never run, kept so older databases read) and drops it from
+  the ``solve.solver_arguments`` description.
 
 It changes no other definition and no value, and a rerun commits nothing.
 """
@@ -81,10 +83,12 @@ DISCOUNT_CHANGED = {(cls, name) for cls in ("unit", "connection", "node") for na
 STARTUP_NEW = {("unit__inputNode", "startup_input_method"), ("unit__inputNode", "startup_energy")}
 UOM_NEW = ("node", "unit_of_measure")
 RP_CHANGED = {("node", "storage_binding_method"), ("timeset", "representative_period_weights")}
+PRECOMMAND_CHANGED = {("solve", "solver_precommand"), ("solve", "solver_arguments")}
 #: Every definition the step adds or changes.
 ALL_CHANGED = (set(ONLINE_NEW) | set(RAMP_CHANGED) | set(REDUCE_NEW) | set(GROUP_LIMITS_CHANGED)
                | {ADDER, DURATION} | EFFICIENCY_CHANGED | COEFF_CHANGED | {SHARE_NEW} | MARGIN_CHANGED
-               | {PERIOD_METHOD_NEW} | DISCOUNT_CHANGED | STARTUP_NEW | {UOM_NEW} | RP_CHANGED)
+               | {PERIOD_METHOD_NEW} | DISCOUNT_CHANGED | STARTUP_NEW | {UOM_NEW} | RP_CHANGED
+               | PRECOMMAND_CHANGED)
 
 
 def _defs(db) -> dict:
@@ -473,6 +477,18 @@ def test_rewrites_the_rp_descriptions(plain) -> None:
     assert "do not work with stochastic" not in shipped[("node", "storage_binding_method")]
 
 
+# ─── solver_precommand is never run ──────────────────────────────────────
+
+
+def test_rewrites_the_solver_precommand_descriptions(plain) -> None:
+    shipped = _shipped()
+    for key in PRECOMMAND_CHANGED:
+        assert plain["after"][key][2] == shipped[key] == m._v79_solver_precommand_texts()[key] != plain["before"][key][2]
+        assert plain["after"][key][:2] + plain["after"][key][3:] == plain["before"][key][:2] + plain["before"][key][3:]
+    assert "never runs" in shipped[("solve", "solver_precommand")]
+    assert "solver_precommand" not in shipped[("solve", "solver_arguments")]
+
+
 # ─── the step as a whole ─────────────────────────────────────────────────
 
 
@@ -491,7 +507,8 @@ def test_changes_nothing_else(plain) -> None:
     "_v79_constraint_online_coeff", "_v79_ramp_cost_descriptions", "_v79_reduce_detail_methods",
     "_v79_group_limits_by_time", "_v79_solve_step_series", "_v79_capacity_margin", "_v79_constraint_period_method",
     "_v79_discount_rate_zero", "_v79_startup_input", "_v79_invest_without_cost", "_v79_node_unit_of_measure",
-    "_v79_rp_stochastic_descriptions", "_v79_stochastic_storage_paths", "_migrate_v79_schema_batch"])
+    "_v79_rp_stochastic_descriptions", "_v79_stochastic_storage_paths", "_v79_solver_precommand_descriptions",
+    "_migrate_v79_schema_batch"])
 def test_rerun_is_idempotent(plain, part: str, monkeypatch) -> None:
     with DatabaseMapping(plain["url"]) as db:
         _rerun_changes_nothing(db, getattr(m, part), monkeypatch)

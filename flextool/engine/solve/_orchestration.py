@@ -328,7 +328,9 @@ def _solve_highs_options(
     "Solver args" line and for Benders) < ``solver_config/highs.opt`` <
     the solve's convenience knobs (``solve.solver_mip_gap``) < the solve's
     ``solver_arguments`` < the operator's flags / environment variables
-    (:func:`_operator_highs_overrides`, from ``state.run_options``).
+    (:func:`_operator_highs_overrides`, from ``state.run_options``).  The two
+    database layers take no paths or server options
+    (:func:`~flextool.engine.solve._solver_dispatch.check_database_solver_option`).
     ``run_chain_from_db`` reads the run's option files once at its start
     (``state.paths.solver_option_files``); a bare ``PathConfig`` reads
     ``<solver_config_dir>/highs.opt``, or has no highs.opt layer when that is
@@ -337,6 +339,7 @@ def _solve_highs_options(
     from flextool.engine.input._solve_config import SolverConfig
     from flextool.engine.solve._solver_dispatch import (
         _resolve_effective_highs_options,
+        solver_workspace,
     )
 
     files = state.paths.solver_option_files
@@ -358,6 +361,9 @@ def _solve_highs_options(
         solver_config=state.solve.solver_configs.get(
             complete_solve_name, SolverConfig()
         ),
+        solve_name=complete_solve_name,
+        # A plain file name the database gives a HiGHS file option lands in the solve's work folder.
+        workspace=solver_workspace(state.paths.work_folder),
     )
 
 
@@ -5007,6 +5013,9 @@ def run_chain_from_db(
     from flextool.engine.solve._solver_dispatch import reset_run_warnings
     reset_run_warnings()
     solver_option_files = snapshot_solver_option_files(solver_config_source, work_folder, logger)
+    # Item 234: the run record names the folder and a hash of each option file, so two runs can be compared
+    # without their logs.
+    run_record.active().note_solver_config(solver_option_files.record())
     solver_config_dir_resolved = (
         solver_option_files.snapshot_dir or solver_config_source.dir
     )
@@ -5114,6 +5123,9 @@ def run_chain_from_db(
         from flextool.engine.input._timeline import TimelineConfig
 
         sc = SolveConfig.load_from_db_url(db_url, scenario_name, logger=logger)
+        # Item 236 A3: a solve's solver_precommand is never run; say so once per solve in this run.
+        from flextool.engine.solve._solver_dispatch import warn_solver_precommands
+        warn_solver_precommands(sc.solver_settings.precommand, logger)
         _memrec.checkpoint("solve_config_loaded", logger,
                            user_label="SolveConfig loaded (from DB)")
         tc = TimelineConfig.load_from_db_url(db_url, scenario_name, logger=logger)

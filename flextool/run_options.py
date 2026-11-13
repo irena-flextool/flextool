@@ -169,7 +169,8 @@ OPTIONS: dict[str, OptionSpec] = {
         _spec(
             key="solver_log_level", flag="--solver-log-level", env="FLEXTOOL_SOLVER_LOG_LEVEL", db=None,
             parse=_choice("silent", "normal", "verbose"), default="normal", audience="user",
-            help="HiGHS log verbosity (silent / normal / verbose)",
+            help="solver log on the screen: silent hides every solver's log (a commercial solver's is still saved as "
+                 "solve_data/subprocess/<solve>.log), normal shows it, verbose adds HiGHS' developer log (HiGHS only)",
         ),
         _spec(
             key="solver_time_limit", flag="--solver-time-limit", env="FLEXTOOL_SOLVER_TIME_LIMIT", db=None,

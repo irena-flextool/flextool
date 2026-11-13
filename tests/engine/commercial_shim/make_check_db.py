@@ -13,6 +13,11 @@ with these scenarios for each solver ``<s>`` in gurobi, cplex, xpress, copt (sol
 * ``stack_<s>``: the LP with ``solver_mip_gap`` 0.2 and ``solver_arguments`` gap 0.1 / time limit 800;
 * ``smg_<s>``: the LP with ``solver_mip_gap`` 0.2;
 
+* ``paths_<s>``: the LP with a ``solver_precommand`` that would create ``<folder>/precommand_ran_<s>`` and, for
+  each solver but COPT, a ``solver_arguments`` parameter that would make the solver write at
+  ``<folder>/path_option_<s>`` (item 236: the precommand is never run, and a path from the input database is
+  refused before the solver starts);
+
 plus ``unknown_gurobi`` (``solver_arguments`` ``NoSuchParameter`` 1) and ``iterlimit_xpress`` (``LPITERLIMIT``
 1, ``PRESOLVE`` 0).  The scenarios ``coal`` and ``coal_min_load_MIP_wind`` themselves solve with HiGHS.
 """
@@ -28,10 +33,24 @@ SOLVE = "y2020_2day_dispatch"
 SOLVERS = ("gurobi", "cplex", "xpress", "copt")
 LP_BASE = ["init", "west", "coal"]
 #: How each solver's ``solver_arguments`` spell the gap and the time limit in ``stack_<s>``: not the option
-#: file's spelling, so the case-insensitive (CPLEX: dotted) merge is exercised too.  Xpress keeps the upper-case
-#: names: its library takes no other case, and the console's case rule is not known here.
-ARG_GAP = {"gurobi": "mipgap", "cplex": "mip.tolerances.mipgap", "xpress": "MIPRELSTOP", "copt": "relgap"}
-ARG_TIME = {"gurobi": "timelimit", "cplex": "TimeLimit", "xpress": "MAXTIME", "copt": "timelimit"}
+#: file's spelling, so the merge by the solver's own name rule is exercised too (case; CPLEX dotted; Gurobi
+#: ``_``).  Xpress keeps the upper-case names: its Python ``setControl`` (the shim) takes no other case, and the
+#: console's case rule is not known here.
+ARG_GAP = {"gurobi": "Mip_Gap", "cplex": "mip.tolerances.mipgap", "xpress": "MIPRELSTOP", "copt": "relgap"}
+ARG_TIME = {"gurobi": "time_limit", "cplex": "TimeLimit", "xpress": "MAXTIME", "copt": "timelimit"}
+#: A parameter that makes the solver write at a path (each solver's parameter reference; COPT has none), in a
+#: spelling the solver's library also reads (Gurobi ignores ``_``, Xpress an ``XPRS_`` prefix).
+ARG_PATH = {"gurobi": "Log_File", "cplex": "logfile", "xpress": "XPRS_TUNEROUTPUTPATH"}
+
+
+def precommand_marker(folder: Path, solver: str) -> Path:
+    """The file the ``solver_precommand`` of ``paths_<solver>`` would create if it were run."""
+    return Path(folder) / f"precommand_ran_{solver}"
+
+
+def path_option_target(folder: Path, solver: str) -> Path:
+    """Where the ``solver_arguments`` path parameter of ``paths_<solver>`` would make the solver write."""
+    return Path(folder) / f"path_option_{solver}"
 
 
 def _lp_snapshot():
@@ -57,6 +76,7 @@ def build(folder: Path) -> str:
     from tests.db_utils import json_to_db
 
     lps = _lp_snapshot()
+    folder = Path(folder)
     data = json.loads((REPO / "tests" / "fixtures" / "tests.json").read_text())
     for s in SOLVERS:
         data = lps._overlay(data, name=f"lp_{s}", base=LP_BASE, values=[["solve", SOLVE, "solver", s]])
@@ -69,13 +89,18 @@ def build(folder: Path) -> str:
         ])
         data = lps._overlay(data, name=f"smg_{s}", base=LP_BASE, values=[
             ["solve", SOLVE, "solver", s], ["solve", SOLVE, "solver_mip_gap", 0.2]])
+        paths = [["solve", SOLVE, "solver", s],
+                 ["solve", SOLVE, "solver_precommand", f"touch {precommand_marker(folder, s)}"]]
+        if s in ARG_PATH:
+            paths.append(["solve", SOLVE, "solver_arguments",
+                          _arguments([[ARG_PATH[s], str(path_option_target(folder, s))]])])
+        data = lps._overlay(data, name=f"paths_{s}", base=LP_BASE, values=paths)
     data = lps._overlay(data, name="unknown_gurobi", base=LP_BASE, values=[
         ["solve", SOLVE, "solver", "gurobi"],
         ["solve", SOLVE, "solver_arguments", _arguments([["NoSuchParameter", 1]])]])
     data = lps._overlay(data, name="iterlimit_xpress", base=LP_BASE, values=[
         ["solve", SOLVE, "solver", "xpress"],
         ["solve", SOLVE, "solver_arguments", _arguments([["LPITERLIMIT", 1], ["PRESOLVE", 0]])]])
-    folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     json_path = folder / "item230_check.json"
     json_path.write_text(json.dumps(data))

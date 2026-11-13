@@ -219,7 +219,7 @@ def _solve_and_write(db_url, scenario, work, solver_dir, *, subdir, write_method
                               solver_config_dir=solver_dir, warm=True, keep_solutions=True)
     last = next(reversed(steps.values()))
     write_outputs(scenario_name=scenario, output_location=str(work), subdir=subdir,
-                  output_config_path=str(REPO / "templates" / "default_plots.yaml"), write_methods=write_methods,
+                  output_config_path=str(REPO / "flextool" / "schemas" / "default_plots.yaml"), write_methods=write_methods,
                   fallback_output_location=str(work), raw_output_dir=str(work / "output_raw"),
                   solution=last.solution, solve_name=last.solve_name,
                   solve_steps=[(s.solve_name, s.flex_data, s.effective_solution) for s in steps.values()],
@@ -297,9 +297,11 @@ def test_capacity_rows_in_footer_csv_and_excel(case) -> None:
 
 
 def test_results_database_gets_the_node_units(case) -> None:
-    from spinedb_api import DatabaseMapping, from_database
+    from spinedb_api import from_database
 
-    with DatabaseMapping("sqlite:///" + str(case["work"] / "results.sqlite")) as db:
+    from flextool.update_flextool.db_handle import open_database_mapping
+
+    with open_database_mapping("sqlite:///" + str(case["work"] / "results.sqlite")) as db:
         values = {tuple(v["entity_byname"]): from_database(v["value"], v["type"])
                   for v in db.find_parameter_values(entity_class_name="node",
                                                     parameter_definition_name="unit_of_measure")}
@@ -314,7 +316,7 @@ def test_replay_gives_the_same_units(case, tmp_path) -> None:
     replay = tmp_path / "replay"
     shutil.copytree(case["work"] / "output_parquet", replay / "output_parquet")
     write_outputs(scenario_name=SCENARIO, output_location=str(replay), subdir=SCENARIO,
-                  output_config_path=str(REPO / "templates" / "default_plots.yaml"), write_methods=["csv"],
+                  output_config_path=str(REPO / "flextool" / "schemas" / "default_plots.yaml"), write_methods=["csv"],
                   fallback_output_location=str(replay), read_parquet_dir=True)
     replayed = {(r["file"], r["row"], r["header_1"], r["header_2"]): r["unit"]
                 for r in _units_csv(replay / "output_csv" / SCENARIO)}
@@ -369,14 +371,16 @@ def test_comparison_keeps_each_scenarios_units(tmp_path) -> None:
 def test_replay_reads_the_footers(case, tmp_path) -> None:
     """WP2 review 3: a replay takes the units the run wrote into the footers (here without _unit_context.json),
     and the results database defines node.unit_of_measure with the default MWh (review 2)."""
-    from spinedb_api import DatabaseMapping, from_database
+    from spinedb_api import from_database
+
+    from flextool.update_flextool.db_handle import open_database_mapping
     from flextool.process_outputs.write_outputs import write_outputs
 
     replay = tmp_path / "replay"
     shutil.copytree(case["work"] / "output_parquet", replay / "output_parquet")
     (replay / "output_parquet" / SCENARIO / UNIT_CONTEXT_FILE).unlink(missing_ok=True)
     write_outputs(scenario_name=SCENARIO, output_location=str(replay), subdir=SCENARIO,
-                  output_config_path=str(REPO / "templates" / "default_plots.yaml"), write_methods=["csv"],
+                  output_config_path=str(REPO / "flextool" / "schemas" / "default_plots.yaml"), write_methods=["csv"],
                   fallback_output_location=str(replay), read_parquet_dir=True)
     units = _units_csv(replay / "output_csv" / SCENARIO)
     desal = [r["unit"] for r in units if r["file"] == "unit__outputNode__dt.csv" and r["header_1"] == "med_desal"
@@ -385,7 +389,7 @@ def test_replay_reads_the_footers(case, tmp_path) -> None:
     capacity = [r["unit"] for r in units if r["row"] == "med_desal" and r["file"].startswith("unit_capacity")
                 and r["header_1"] == "total"]
     assert capacity == ["m3/h"]
-    with DatabaseMapping("sqlite:///" + str(case["work"] / "results.sqlite")) as db:
+    with open_database_mapping("sqlite:///" + str(case["work"] / "results.sqlite")) as db:
         definition = db.find_parameter_definitions(entity_class_name="node", name="unit_of_measure")[0]
         assert from_database(definition["default_value"], definition["default_type"]) == "MWh"
 

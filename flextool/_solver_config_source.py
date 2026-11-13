@@ -37,7 +37,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 if TYPE_CHECKING:
     from flextool.run_options import RunOptions
@@ -85,6 +85,7 @@ SHIPPED_TEMPLATE_SHA256: Mapping[str, frozenset[str]] = {
         "04353fb0e11360d9bc4adeaeb30318f082e1379d8ba44b4f44f2a953c9a90dcb",
         "245ffff3fcf99e0d79eb03fd8a95b73c9433c59f92f08d08f5f27f8ab723cc6a",
         "7911b914b4c8f1dc4eb335be410251111c12d762dcecb18d4ac19cb2a912c690",
+        "6f9b0366041a5d8310477f6275e6e9d2abac17e73c8bbdde6f0d9c70692c8c0e",
         "9d6548f8e598f688106e8dfe452fceb3dd11d73d15df4dffeb9e0ccdcee28c09",
     }),
     "cplex": frozenset({
@@ -173,6 +174,12 @@ def _template_hashes(solver: str) -> frozenset[str]:
         return known
 
 
+def is_unedited_template(solver: str, data: bytes) -> bool:
+    """Whether *data* (a ``<solver>.opt``'s bytes) is byte for byte, CRLF read as LF, a shipped FlexTool template
+    of *solver*: an earlier one or the installed one."""
+    return _normalised_sha256(data) in _template_hashes(solver)
+
+
 def is_template_copy(folder: Path) -> bool:
     """Whether *folder* holds at least one ``<solver>.opt`` and each one is byte for byte (CRLF read as LF) a
     shipped FlexTool template: the copy an earlier FlexTool left, not files someone edited."""
@@ -182,10 +189,10 @@ def is_template_copy(folder: Path) -> bool:
         try:
             if not path.is_file():
                 continue
-            digest = _normalised_sha256(path.read_bytes())
+            data = path.read_bytes()
         except OSError:
             return False
-        if digest not in _template_hashes(solver):
+        if not is_unedited_template(solver, data):
             return False
         found = True
     return found
@@ -318,6 +325,40 @@ class SolverOptionFiles:
 
     def origin(self, solver: str) -> str:
         return self.origins.get(solver, f"{solver}.opt")
+
+    def record(self) -> dict[str, Any]:
+        """The run record's ``solver_config`` block: the folder (``None``: FlexTool's defaults) and why, the
+        folders skipped as unedited template copies, the snapshot folder, and per option file its source (the
+        file, or ``"FlexTool default"``), the SHA-256 of the text the run used (CRLF read as LF, the hash of
+        :data:`SHIPPED_TEMPLATE_SHA256`) and whether that is an unedited FlexTool template.  Paths are absolute,
+        so the record means the same read from elsewhere."""
+        files: dict[str, dict[str, Any]] = {}
+        for solver in SOLVER_NAMES:
+            text = self.texts.get(solver)
+            if text is None:
+                continue
+            digest = _normalised_sha256(text.encode("utf-8"))
+            origin = self.origins.get(solver, "")
+            files[f"{solver}.opt"] = {
+                "source": "FlexTool default" if origin.startswith("FlexTool default") else _absolute(origin),
+                "sha256": digest,
+                "default": digest in _template_hashes(solver),
+            }
+        return {
+            "dir": _absolute(self.source.dir) if self.source.dir is not None else None,
+            "reason": self.source.reason,
+            "skipped": [_absolute(p) for p in self.source.skipped],
+            "snapshot_dir": _absolute(self.snapshot_dir) if self.snapshot_dir is not None else None,
+            "files": files,
+        }
+
+
+def _absolute(path: str | os.PathLike) -> str:
+    """*path* made absolute (as a text), or as given if that fails."""
+    try:
+        return str(Path(path).resolve())
+    except (OSError, RuntimeError):
+        return str(path)
 
 
 def read_solver_option_files(source: SolverConfigSource, names: tuple[str, ...] = SOLVER_NAMES) -> SolverOptionFiles:

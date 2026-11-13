@@ -3,6 +3,7 @@ import logging
 import os
 import subprocess
 import shutil
+from pathlib import Path
 try: 
     from spinedb_api import import_data
     from flextool.update_flextool.db_handle import open_database_mapping
@@ -213,13 +214,73 @@ _PROJECT_FOLDER_TEMPLATE = (
 )
 
 
-def ensure_runtime_files(verbose: bool = False) -> None:
+def _refresh_solver_config(folder: Path, *, verbose: bool = False, warn: bool = False) -> None:
+    """Seed each ``<folder>/<solver>.opt`` from its packaged template when missing, and replace one that is an
+    unedited copy of an EARLIER FlexTool template with the current one (item 233).
+
+    An edited file (any byte differs, CRLF read as LF) and a copy of the current template are left alone, so in
+    the steady state nothing is written.  The template's bytes are copied without its file permissions (a
+    read-only installed template must not give a read-only option file), to ``<solver>.opt.tmp-<pid>``, given the
+    replaced file's permissions (a file the user made private stays private) and then moved onto the file.  A
+    failure keeps the file: logged at INFO, or as a warning when *warn* (``flextool-update``; at every FlexTool
+    window start a locked workspace would warn every time).
+
+    A symbolic link is never seeded through or replaced, whatever it points to: it is the user's arrangement (an
+    option file shared by a team or kept elsewhere), its target may be outside the workspace or used by others,
+    and replacing the link would cut it off.  Replacing an unedited earlier default changes comments only, so
+    keeping the link costs nothing.
+    """
+    from flextool._solver_config_source import SOLVER_NAMES, _normalised_sha256, is_unedited_template
+
+    say = logging.warning if warn else logging.info
+    for solver in SOLVER_NAMES:
+        runtime = folder / f"{solver}.opt"
+        if runtime.is_symlink():
+            continue
+        try:
+            template = Path(package_data_path(f"solver_config/{solver}.opt.template"))
+            if not runtime.exists():
+                if verbose:
+                    print(f"Seeding {runtime}")
+                shutil.copyfile(template, runtime)
+                continue
+            data = runtime.read_bytes()
+            current = template.read_bytes()
+        except OSError as exc:
+            say("Could not seed or read %s (%s); it is left as it is.", runtime, exc)
+            continue
+        if not is_unedited_template(solver, data) or _normalised_sha256(data) == _normalised_sha256(current):
+            continue
+        tmp = folder / f"{solver}.opt.tmp-{os.getpid()}"
+        try:
+            shutil.copyfile(template, tmp)
+            shutil.copymode(runtime, tmp)
+            os.replace(tmp, runtime)
+        except OSError as exc:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            say("Could not update %s to FlexTool's current default (%s); the file is kept.", runtime, exc)
+            continue
+        msg = f"Updated {runtime.as_posix()} to FlexTool's current default (it was an unedited earlier default)."
+        logging.info(msg)
+        if verbose:
+            print(msg)
+
+
+def ensure_runtime_files(verbose: bool = False, *, warn: bool = False) -> None:
     """Idempotently materialize the per-installation runtime files that
     FlexTool needs but does not track in git.
 
-    Every step is **create-if-missing**: an existing user-edited file is
-    never overwritten, so this is safe to call on every GUI launch *and*
-    as the seeding step of :func:`update_flextool`.  Each group is wrapped
+    Every step is **create-if-missing**, except that a
+    ``solver_config/<solver>.opt`` that is an unedited copy of an earlier
+    FlexTool default is replaced by the current one (item 233,
+    :func:`_refresh_solver_config`): an existing user-edited file is never
+    overwritten, so this is safe to call on every GUI launch *and* as the
+    seeding step of :func:`update_flextool` (which passes *warn*, so a
+    file it cannot replace is a warning there and an INFO line at the
+    GUI start).  Each group is wrapped
     so that one failure (e.g. a locked DB) logs a warning and the rest
     still run — a seeding hiccup must never block GUI startup.
 
@@ -283,17 +344,12 @@ def ensure_runtime_files(verbose: bool = False) -> None:
         logging.warning("ensure_runtime_files: example/template seeding failed: %s", exc)
 
     # 3. Live solver options — HiGHS + the four commercial solvers — each
-    #    seeded from its bundled <solver>.opt.template if missing.  The
-    #    runtime files are gitignored and user-editable (delete one to
+    #    seeded from its bundled <solver>.opt.template if missing, and an
+    #    unedited copy of an earlier template replaced by the current one.
+    #    The runtime files are gitignored and user-editable (delete one to
     #    reset it to the bundled default).
     try:
-        for _solver in ("highs", "gurobi", "cplex", "xpress", "copt"):
-            _runtime = f"solver_config/{_solver}.opt"
-            if not os.path.exists(_runtime):
-                shutil.copy(
-                    str(package_data_path(f"solver_config/{_solver}.opt.template")),
-                    _runtime,
-                )
+        _refresh_solver_config(Path("solver_config"), verbose=verbose, warn=warn)
     except Exception as exc:
         logging.warning("ensure_runtime_files: solver_config seeding failed: %s", exc)
 
@@ -349,14 +405,16 @@ def update_flextool(skip_git):
     # example_input.xlsx, solver_config/*.opt, project_folder.txt,
     # results.sqlite).  Shared with the GUI startup path, so "an update
     # brought a new file to copy" is handled by the same create-if-missing
-    # logic in both places — no duplication.
-    ensure_runtime_files()
+    # logic in both places — no duplication.  ``warn``: a solver_config/*.opt
+    # that cannot be brought to the current default is a warning here.
+    ensure_runtime_files(warn=True)
 
     # ----- Update-only refresh of EXISTING artifacts (after a git pull) ---
-    # These differ from the create-if-missing seeding above: they bring
-    # already-present files up to the current schema, so they must NOT run
-    # on every GUI launch (that is why they stay here, not in
-    # ensure_runtime_files).
+    # These differ from the seeding above: they bring already-present files
+    # up to the current schema, so they must NOT run on every GUI launch
+    # (that is why they stay here, not in ensure_runtime_files).  The one
+    # refresh ensure_runtime_files does run, of unedited solver_config/*.opt
+    # copies, writes nothing once the files are current.
     output_settings_json = str(package_data_path("schemas/output_settings_template.json"))
     output_info_json = str(package_data_path("schemas/output_info_template.json"))
     comparison_settings_json = str(package_data_path("schemas/comparison_settings_template.json"))

@@ -82,7 +82,7 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
   - *realized_invest_periods* Array of the periods that will realize the investment decisions. If this is not defined when the invest_periods exist, the realized_periods that are also invest_periods are used to realize the invests as well. Every realized investment period must be one of the solve's invest_periods: FlexTool stops with an error naming the solve and the periods otherwise (also for a solve that has realized_invest_periods but no invest_periods). When invest_periods is a 2D map, realized_invest_periods must be a 2D map with the same solve names.
   - *invest_periods*: array of periods in which investments can be decided in this solve (applies only to entities that can be invested in). With a construction lead time, the capacity comes online later.
   - *years_represented*: Map to indicate how many years the period represents before the next period in the solve. Used for discounting. Can be below one (multiple periods in one year). Index: period, value: years.
-  - *solver*: choice of a solver. HiGHS is the default and only fully supported backend (called via the `highspy` Python bindings). CPLEX can still be wired in as an advanced option for licensed users via `solver_precommand` / `solver_arguments`; see the how-to.
+  - *solver*: choice of a solver. HiGHS is the default and only fully supported backend (called via the `highspy` Python bindings). Gurobi, CPLEX, Xpress and COPT can be used by licensed users, with their own options in `solver_arguments`; see [Solvers](../solvers/index.md).
   - *solver_arguments*: Map of solver option name → value, forwarded verbatim to the active solver. This is where the former `highs_*` shortcuts now live. For HiGHS, set `solver` to choose the method ('simplex' or 'ipm' which is interior point method; use 'choose' for MIP models, since 'simplex' and 'ipm' will not work), `parallel` ('on' or 'off') to control parallelisation of single solves (it can be better to turn it off when executing multiple scenarios in parallel), and `presolve` ('on' or 'off') to toggle presolve (which can have a large impact on solution time when solves are large). These only affect speed, not results.
   - *solve_mode*: a single solve or a set of rolling optimisation windows solved in a sequence
   - *timeline_hole_multiplier*: [-] default 1.0. Multiplier applied to the inverse-step-duration term in the `nodeBalance_eq` for variable-step timelines. Tunes how strongly an unrepresented gap between two timesteps is amortised into the storage state equation. Leave at the default unless investigating large-step / sparse-timeline numerical issues.
@@ -109,8 +109,8 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
 
   - For commercial solvers:
 
-    - *solver_precommand* the commandline text in front of the call for the commercial (CPLEX) solver. For a possibility of reserving a floating licence for the duration of the solve
-    - *solver_arguments* Array of additional commands passed to the commercial solver. Made for setting optimization parameters.
+    - *solver_precommand* is not used: FlexTool never runs commands stored in a database (FlexTool 3 ran it in front of CPLEX). It is kept only so that older databases still read, and a value gives a warning; to hold a floating licence, use the solver's own licence server setup.
+    - *solver_arguments* Map of the solver's own parameters (name → value), see [Solvers](../solvers/index.md). From the database, a parameter that names a file or folder takes only a plain file name (written in the solve's work folder), and Gurobi server, cloud and licence parameters are refused; set those in the solver option file instead.
 
 - `timeset`: timesets are sets of time with a start (from timeline) and a duration (number of time steps)
 

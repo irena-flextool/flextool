@@ -562,7 +562,7 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('solver_time_limit', 'solve'): QuantityType.DURATION,
     # Wall-clock time limit in seconds. DURATION carries time semantics; autoscaler treats it like other durations.
     ('solver_precommand', 'solve'): QuantityType.DIMENSIONLESS,
-    # Additional command to execute before calling the solver. Can be used to e.g. reserve a floating license for a commercial solver.
+    # Not used: FlexTool never runs solver_precommand (kept so older databases still read).
     ('use_row_scaling', 'solve'): QuantityType.DIMENSIONLESS,
     # Boolean-style toggle ('yes'/'no') enabling experimental automatic row scaling. Flag, no physical unit.
     ('solves', 'model'): QuantityType.DIMENSIONLESS,

@@ -6490,6 +6490,30 @@ def _v79_rp_stochastic_descriptions(db) -> None:
             db.update_parameter_definition(id=pdef["id"], description=text)
 
 
+def _v79_solver_precommand_texts() -> dict[tuple[str, str], str]:
+    """Descriptions written by v79 part 14: FlexTool never runs ``solve.solver_precommand``."""
+    return {
+        ("solve", "solver_precommand"): (
+            "[text] Not used: FlexTool never runs this command. Kept only so that older databases still read."),
+        ("solve", "solver_arguments"): (
+            "[text] Map of HiGHS solver options (option name -> value), layered on top of the floor values in "
+            "solver_config/highs.opt and below any CLI overrides (e.g. --solver-time-limit). Use this for ad-hoc "
+            "HiGHS knobs that do not have a dedicated FlexTool parameter (solver_mip_gap)."),
+    }
+
+
+def _v79_solver_precommand_descriptions(db) -> None:
+    """``solve.solver_precommand`` is not run (part of v79): its description says so, and the
+    ``solve.solver_arguments`` description no longer lists it as a dedicated parameter
+    (:func:`_v79_solver_precommand_texts`).  No value is rewritten.  Idempotent."""
+    for (cls, name), text in _v79_solver_precommand_texts().items():
+        if not db.get_item("entity_class", name=cls):
+            continue
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is not None and (pdef["description"] or "") != text:
+            db.update_parameter_definition(id=pdef["id"], description=text)
+
+
 def _v79_stochastic_storage_paths(db) -> None:
     """Storage in stochastic solves follows each path (part of v79): plain ``bind_within_solve`` closes one loop
     per path (every forecast branch ends at the level the solve starts from) and ``bind_forward_only`` with a free
@@ -6573,6 +6597,8 @@ def _migrate_v79_schema_batch(db) -> None:
     13. Storage in stochastic solves follows each path (plain ``bind_within_solve`` closes one loop per path, a
         free-start ``bind_forward_only`` fan in the first period starts at one level): the behaviour-change marker
         ``stochastic_storage_paths_tied`` (:func:`_v79_stochastic_storage_paths`).
+    14. ``solve.solver_precommand`` is never run: its and the ``solver_arguments`` descriptions
+        (:func:`_v79_solver_precommand_descriptions`).
 
     No value is rewritten.  Each part is idempotent, so a rerun of the step changes nothing.
     """
@@ -6589,12 +6615,13 @@ def _migrate_v79_schema_batch(db) -> None:
     _v79_node_unit_of_measure(db)
     _v79_rp_stochastic_descriptions(db)
     _v79_stochastic_storage_paths(db)
+    _v79_solver_precommand_descriptions(db)
     _commit_step(db, "v79: constraint_online_coeff, ramp_cost, reduce_*_detail_method, time-varying group "
                      "limits, time series combined over a solve's new_stepduration step, capacity margin by "
                      "entity class and share_of_peak, constraint_period_method, discount_rate 0 is 0 %, "
                      "startup_input_method and startup_energy, investment offered without invest_cost, "
                      "node.unit_of_measure, representative periods in stochastic and rolling solves, storage "
-                     "along each stochastic path")
+                     "along each stochastic path, solver_precommand not run")
 
 
 def _v79_adder_has_value(value) -> bool:

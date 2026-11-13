@@ -247,7 +247,7 @@ def _write_outputs(steps, wf: Path, scen: str) -> Path:
     try:
         os.chdir(wf)
         write_outputs(scenario_name=scen, output_location=str(wf), subdir=scen,
-                      output_config_path=str(Path(__file__).resolve().parents[2] / "templates" / "default_plots.yaml"),
+                      output_config_path=str(Path(__file__).resolve().parents[2] / "flextool" / "schemas" / "default_plots.yaml"),
                       write_methods=["csv"], fallback_output_location=str(wf), raw_output_dir=str(wf / "output_raw"),
                       solution=last.solution, solve_name=last.solve_name,
                       flex_data_provider=last.flex_data_provider or FlexDataProvider(),

@@ -208,6 +208,44 @@ def test_save_memory_child_gets_the_thread_budget(options_db, tmp_path, monkeypa
     assert _norm(_opt_file_options(tmp_path / "save_memory")["threads"]) == 2.0
 
 
+def test_solver_precommand_is_never_run(tmp_path, monkeypatch) -> None:
+    """``solve.solver_precommand`` is kept only so that older databases read: a solve with one set starts no
+    process (the command would come from the input database, so it must never reach a shell)."""
+    import subprocess
+
+    from flextool.update_flextool.db_migration import migrate_database
+    from tests.db_utils import json_to_db
+
+    marker = tmp_path / "precommand_ran"
+    data = json.loads((FIXTURES / "tests.json").read_text())
+    data = _lp_snapshot()._overlay(
+        data, name="custom", base=["init", "west", "coal"],
+        values=[["solve", SOLVE, "solver_precommand", f"touch {marker}"]])
+    (tmp_path / "f.json").write_text(json.dumps(data))
+    url = json_to_db(tmp_path / "f.json", tmp_path / "f.sqlite")
+    migrate_database(url)
+
+    started: list[str] = []
+    real_popen = subprocess.Popen
+
+    class RecordingPopen(real_popen):
+        def __init__(self, args, *a, **kw):
+            started.append(str(args))
+            super().__init__(args, *a, **kw)
+
+    def recording_system(command):
+        started.append(str(command))
+        return 0
+
+    monkeypatch.setattr(subprocess, "Popen", RecordingPopen)
+    monkeypatch.setattr(os, "system", recording_system)
+    monkeypatch.delenv("FLEXTOOL_SAVE_MEMORY", raising=False)
+    steps = _run(url, None, tmp_path / "work", warm=True)
+    assert steps, "the solve did not run"
+    assert started == [], f"a solve with solver_precommand set started processes: {started}"
+    assert not marker.exists()
+
+
 # ---------------------------------------------------------------------------
 # Benders master and regions (#39)
 # ---------------------------------------------------------------------------
@@ -485,7 +523,8 @@ def test_second_run_in_a_process_uses_its_own_solver_config(gurobi_db, tmp_path,
     monkeypatch.chdir(cwd)
     built: list[str] = []
 
-    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None):
+    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None,
+                   run_options=None):
         opt = _subprocess_solve._write_commercial_opt_file(options, Path(work_folder) / f"{solve_name}.gurobi.opt")
         built.append(opt.read_text() if opt is not None else "")
         return problem.solve(keep_solver=True)
@@ -512,7 +551,8 @@ def test_cli_gap_reaches_the_commercial_solver_and_its_args_line(gurobi_db, tmp_
     (cfg / "gurobi.opt").write_text("Threads 0\nMIPGap 0.002\n")
     passed: list[dict] = []
 
-    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None):
+    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None,
+                   run_options=None):
         passed.append(dict(options))
         return problem.solve(keep_solver=True)
 
@@ -548,7 +588,8 @@ def test_option_files_are_read_once_per_run(gurobi_db, tmp_path, monkeypatch) ->
     monkeypatch.setattr(Path, "read_text", counting_read_text)
     passed: list[dict] = []
 
-    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None):
+    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None,
+                   run_options=None):
         (cfg / "gurobi.opt").write_text("Threads 9\n")
         passed.append(dict(options))
         return problem.solve(keep_solver=True)

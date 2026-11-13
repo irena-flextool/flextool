@@ -346,7 +346,8 @@ _PINNED_TEMPLATE_SHA256 = {
         "9d6548f8e598f688106e8dfe452fceb3dd11d73d15df4dffeb9e0ccdcee28c09",  # 4.0
         "7911b914b4c8f1dc4eb335be410251111c12d762dcecb18d4ac19cb2a912c690",  # 4.2, 4.3
         "245ffff3fcf99e0d79eb03fd8a95b73c9433c59f92f08d08f5f27f8ab723cc6a",
-        "04353fb0e11360d9bc4adeaeb30318f082e1379d8ba44b4f44f2a953c9a90dcb",  # 4.4
+        "04353fb0e11360d9bc4adeaeb30318f082e1379d8ba44b4f44f2a953c9a90dcb",  # 4.4 development
+        "6f9b0366041a5d8310477f6275e6e9d2abac17e73c8bbdde6f0d9c70692c8c0e",  # 4.4
     },
     "cplex": {
         "a90f70f4ea8c7daf201f0678584ff7b2d7225236972f43a0aa114e3a95d1ec33",
