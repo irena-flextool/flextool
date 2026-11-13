@@ -3056,7 +3056,8 @@ CSVs exist only as a debugging aid.</p>
 <li><strong><code>_run_status.json</code></strong> (schema <code>flextool.run_status</code>) — written by the <strong>engine</strong>, the only process that knows
   the verdicts: <code>RunRecorder</code> (<code>_status.py</code>) creates it as <code>running</code>, rewrites it atomically as solves start and
   are classified, and finishes it in <code>main()</code>'s <code>finally</code> (<code>succeeded</code> / <code>failed</code> / <code>interrupted</code>). It records each
-  solve's model status and acceptance, its <code>reduced</code> detail levels (<code>reduce_*_detail_method</code>), the error, the input, the options and threads, and <code>outputs.parquet_state</code>:
+  solve's model status and acceptance, its <code>reduced</code> detail levels (<code>reduce_*_detail_method</code>), the error, the input, the options and threads, the solver option folder and a hash of each option file
+  (<code>solver_config</code>: <code>SolverOptionFiles.record()</code>), and <code>outputs.parquet_state</code>:
   a failed run keeps the earlier run's parquet, marked <code>previous_run</code>. <code>write_outputs</code> keeps both files when it
   empties the folder.</li>
 <li><strong><code>_run.log</code></strong> — written by the <strong>pipe owner</strong>, the process that reads the engine's stdout + stderr pipe and so

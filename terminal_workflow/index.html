@@ -3828,7 +3828,8 @@ in the same process; their <code>_run.log</code> holds only FlexTool's own conso
 </code></pre></div>
 <p><code>python run_flextool.py</code> and <code>python -m flextool.cli.cmd_run_flextool</code> take the same arguments.</p>
 <p>Each run writes two files into its <code>output_parquet/&lt;subdir&gt;/</code> folder: <code>_run_status.json</code> (running, succeeded,
-failed, ...; each solve's outcome; whether the parquet files there belong to this run) and <code>_run.log</code> (the run's
+failed, ...; each solve's outcome; the solver option files used: folder, and a SHA-256 of each; whether the
+parquet files there belong to this run) and <code>_run.log</code> (the run's
 console output). Under <code>flextool-run</code>, the GUI, the workflow runner and the calibrator the log also holds the
 solver's native output and any crash dump.</p>
 <h3 id="positional-arguments_1">Positional arguments</h3>
@@ -3995,7 +3996,7 @@ script); a given flag wins over the variable, and the variable over the solve's 
 </tr>
 <tr>
 <td><code>--solver-log-level {silent,normal,verbose}</code></td>
-<td>HiGHS log output (default <code>normal</code>). Env fallback: <code>FLEXTOOL_SOLVER_LOG_LEVEL</code></td>
+<td>Solver log output (default <code>normal</code>); <code>silent</code> also hides a commercial solver's log (still saved as <code>solve_data/subprocess/&lt;solve&gt;.log</code>); <code>verbose</code> is HiGHS only. Env fallback: <code>FLEXTOOL_SOLVER_LOG_LEVEL</code></td>
 </tr>
 <tr>
 <td><code>--save-memory</code></td>

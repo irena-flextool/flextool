@@ -4628,7 +4628,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>solve_advanced</td>
-<td>Map of HiGHS solver options (option name -&gt; value), layered on top of the floor values in solver_config/highs.opt and below any CLI overrides (e.g. --solver-time-limit). Use this for ad-hoc HiGHS knobs that do not have a dedicated FlexTool parameter (solver_mip_gap, solver_precommand).</td>
+<td>Map of HiGHS solver options (option name -&gt; value), layered on top of the floor values in solver_config/highs.opt and below any CLI overrides (e.g. --solver-time-limit). Use this for ad-hoc HiGHS knobs that do not have a dedicated FlexTool parameter (solver_mip_gap).</td>
 </tr>
 <tr>
 <td><code>solver_mip_gap</code></td>
@@ -4646,7 +4646,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>solve_advanced</td>
-<td>Additional command to execute before calling the solver. Can be used to e.g. reserve a floating license for a commercial solver.</td>
+<td>Not used: FlexTool never runs this command. Kept only so that older databases still read.</td>
 </tr>
 <tr>
 <td><code>stochastic_branches</code></td>

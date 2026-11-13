@@ -2753,7 +2753,8 @@ is the authoritative inventory):</p>
   <code>--solver-time-limit</code>, <code>solver_io_api</code> → <code>--matrix-file-format</code> (since removed: it had no effect), and
   <code>use_row_scaling</code> → the <code>--scaling</code> CLI flag (env <code>FLEXTOOL_SCALING</code>).
   The surviving <code>solve_advanced</code> DB parameters are <code>solver</code>,
-  <code>solver_arguments</code>, <code>solver_mip_gap</code>, and <code>solver_precommand</code>. See
+  <code>solver_arguments</code>, <code>solver_mip_gap</code>, and <code>solver_precommand</code> (not used: never run, kept only so that
+  older databases still read; item 236). See
   <a href="../../solvers/">Solver selection</a>.</li>
 </ul>
 <p>A separate hand-coded step (independent of the numbered chain)

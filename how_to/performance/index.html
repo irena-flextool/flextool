@@ -2542,8 +2542,8 @@
 <p>CPLEX is invoked via the <strong>solve</strong> parameter <em>solver</em>. FlexTool builds the LP in memory through polars + polar-high. The CPLEX path passes the problem to the <a href="https://www.ibm.com/docs/en/icos/12.8.0.0?topic=cplex-interactive-optimizer">Interactive Optimizer</a> and produces two additional files in the work directory: a CPLEX log file and the solution file in CPLEX format.</p>
 <p>Additional parameters:</p>
 <ul>
-<li><code>solver_precommand</code> creates a text in front of the cplex call. This is useful when dealing with floating licences. The command allows to call the licence server to reserve the licence for the duration of the cplex program with a command line argument.</li>
-<li><code>solver_arguments</code> is an array containing additional CPLEX solver commands</li>
+<li><code>solver_precommand</code> is not used. FlexTool 3 put it in front of the cplex call (for example to reserve a floating licence); FlexTool 4 never runs commands stored in a database, for safety, and warns when one is set (the parameter is kept only so that older databases still read). Use the solver's own licence server setup, or reserve the licence before starting FlexTool; see <a href="../../solvers/#solver-precommand-is-not-run">Solver precommand</a>.</li>
+<li><code>solver_arguments</code> is a map of CPLEX parameter names to values (for example <code>mip.tolerances.mipgap</code> → <code>0.001</code>), set on top of the option file; a file or folder parameter takes only a plain file name there (see <a href="../../solvers/#what-the-database-may-set">What the database may set</a>). See <a href="../../solvers/#authoring-solver_arguments-in-spine">Authoring <code>solver_arguments</code></a>.</li>
 </ul>
 <!-- TODO: expand in dev/engine.md — document the exact CPLEX command line under the polars-based LP build. -->
 

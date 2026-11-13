@@ -2643,7 +2643,11 @@ single-machine path:</p>
      variable to that path.</li>
 </ol>
 <p>WLS and Compute Server users set up the licence the way <code>gurobi_cl</code> reads it
-(a <code>gurobi.lic</code> with the WLS credentials, or <code>GRB_LICENSE_FILE</code>).</p>
+(a <code>gurobi.lic</code> with the WLS credentials, or <code>GRB_LICENSE_FILE</code>). Server,
+cloud and licence parameters (<code>ComputeServer</code>, <code>CS...</code>, <code>Cloud...</code>, <code>WLS...</code>,
+<code>TokenServer</code>, ...) are taken from <code>solver_config/gurobi.opt</code> only: the
+input database's <code>solver_arguments</code> may not set them (see
+<a href="../#what-the-database-may-set">What the database may set</a>).</p>
 <h2 id="verification">Verification</h2>
 <p>After installing <code>gurobipy</code>, run:</p>
 <div class="highlight"><pre><span></span><code>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"from polar_high.solvers import available_solvers; print(available_solvers)"</span>
@@ -2681,9 +2685,14 @@ the FlexTool log.</p>
   as a warning naming where the parameter was set (the option file, or the
   <code>solver_arguments</code> of which solve). Fix the name. With console logging off
   (<code>LogToConsole 0</code>) Gurobi prints no such line, and there is no warning.</li>
-<li><strong>File-writing parameters.</strong> <code>ResultFile</code>, <code>LogFile</code>, <code>SolFiles</code> and
-  <code>NodefileDir</code> are not passed to Gurobi (with a warning): FlexTool reads the
-  solution from its own result file.</li>
+<li><strong>File parameters.</strong> Parameters that name a file or folder (<code>LogFile</code>,
+  <code>SolFiles</code>, <code>NodefileDir</code>, <code>InputFile</code>, the <code>.prm</code> / <code>.json</code> file lists of
+  tuning, concurrent and multi-objective runs) take a full path in
+  <code>gurobi.opt</code>; in the database's <code>solver_arguments</code> they take only a plain
+  file name, written in the solve's work folder, and a path is refused. See
+  <a href="../#what-the-database-may-set">What the database may set</a>.
+  <code>ResultFile</code> is ignored everywhere (with a warning): FlexTool names its own
+  result file and reads the solution from it.</li>
 <li><strong>Time limit reached.</strong> A MIP stopped at its time limit with a solution is
   kept with a warning that gives the gap reached; an LP, or a MIP without a
   solution, stops the run. See <a href="../#time-limit">Time limit</a>.</li>

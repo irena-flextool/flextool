@@ -2423,6 +2423,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="How to switch solvers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#solver-precommand-is-not-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Solver precommand is not run
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2633,7 +2650,7 @@ they did before this feature was added.</p>
 <tr>
 <td><code>solver_precommand</code></td>
 <td>unset</td>
-<td>Shell command run before the solver subprocess (advanced)</td>
+<td>Not used: FlexTool never runs it (kept so older databases still read); a value gives a warning, see <a href="#solver-precommand-is-not-run">Solver precommand</a></td>
 </tr>
 </tbody>
 </table>
@@ -2644,7 +2661,7 @@ solve):</p>
 <thead>
 <tr>
 <th>CLI flag</th>
-<th>Replaces former DB param</th>
+<th>Former DB param (removed in v56; a stored value was dropped)</th>
 <th>Values / notes</th>
 </tr>
 </thead>
@@ -2672,12 +2689,12 @@ solve):</p>
 <tr>
 <td><code>--solver-log-level</code></td>
 <td><code>solver_log_level</code></td>
-<td>HiGHS only: <code>silent</code> / <code>normal</code> / <code>verbose</code></td>
+<td><code>silent</code> hides the log of every solver; <code>normal</code> (default) shows it; <code>verbose</code> is HiGHS only</td>
 </tr>
 </tbody>
 </table>
-<p><code>--presolve</code>, <code>--highs-threads</code>, <code>--solver-log-level</code> and <code>--user-bound-scale</code>
-are HiGHS options. When one of them is given and a solve runs on a commercial
+<p><code>--presolve</code>, <code>--highs-threads</code>, <code>--user-bound-scale</code> and
+<code>--solver-log-level verbose</code> are HiGHS options. When one of them is given and a solve runs on a commercial
 solver, the run warns once: set the solver's own parameter in the solve's
 <code>solver_arguments</code> or in its option file instead. Commercial solvers take
 their thread count from their option file (for example <code>Threads</code> in
@@ -2696,6 +2713,18 @@ solve of the run:</p>
 <p>Set the DB parameter in Spine Toolbox by selecting the <code>solve</code> entity,
 opening its parameter editor, finding the <code>solve_advanced</code> group, and
 entering the values above. Unspecified parameters take their defaults.</p>
+<h3 id="solver-precommand-is-not-run">Solver precommand is not run</h3>
+<p>FlexTool 3 ran the solve's <code>solver_precommand</code> in front of the CPLEX call,
+for example to reserve a floating licence for the solve. FlexTool 4 never
+runs it: a command stored in a database would run on the computer of anyone
+who opens that database and presses Run, so a database from someone else
+could run any program. A database that still has a value loads and solves as
+before, with a warning once per solve and run that the command is not run.</p>
+<p>To hold a floating licence, use your solver's own licence server setup (for
+example a Gurobi token server set in <code>gurobi.lic</code>, or the licence server in
+the licence file of CPLEX, Xpress or COPT); the solver then checks a licence
+out and back in for the solve by itself. A solver wrapper set on this
+computer (never in a database) is planned for a later release.</p>
 <h2 id="the-parameters-in-detail">The parameters in detail</h2>
 <table>
 <thead>
@@ -2729,7 +2758,7 @@ entering the values above. Unspecified parameters take their defaults.</p>
 <td><code>solver_precommand</code></td>
 <td>str</td>
 <td>unset</td>
-<td>Shell command run before the solver subprocess (advanced; e.g. to source a licence environment).</td>
+<td>Not used: FlexTool never runs this command (FlexTool 3 ran it in front of CPLEX). The parameter is kept only so that older databases still read; a value gives a warning once per solve. See <a href="#solver-precommand-is-not-run">Solver precommand</a>.</td>
 </tr>
 </tbody>
 </table>
@@ -2745,15 +2774,85 @@ Keys are the solver's own parameter names (e.g. <code>Presolve</code> for Gurobi
   Method     = 2
   Heuristics = 0.1
 </code></pre></div>
-<p>These are passed through untouched. Parameter names match without regard to
-case (<code>mipgap</code> and <code>MIPGap</code> are one parameter; for CPLEX a dotted name such as
-<code>mip.tolerances.mipgap</code> is the same as <code>mip tolerances mipgap</code>; write CPLEX
-names in full, an abbreviation is not matched). What a solver does with a
-misspelt name is the solver's own: Gurobi ignores it with a message, and
-FlexTool repeats that message as a warning naming where the name was set.
-Gurobi parameters that make it write files (<code>ResultFile</code>, <code>LogFile</code>,
-<code>SolFiles</code>, <code>NodefileDir</code>) are not passed on, with a warning: FlexTool reads
-the solution from its own result file.</p>
+<p>These are passed through untouched, within the limits of
+<a href="#what-the-database-may-set">What the database may set</a>. Parameter names match
+the way the solver reads them: without regard to case (<code>mipgap</code> and <code>MIPGap</code>
+are one parameter); Gurobi also ignores <code>_</code> (<code>MIP_Gap</code> is <code>MIPGap</code>) and Xpress
+an <code>XPRS_</code> prefix; for CPLEX a dotted name such as <code>mip.tolerances.mipgap</code> is
+the same as <code>mip tolerances mipgap</code>. Write CPLEX names in full: an abbreviation
+is not matched to its full name when the layers are merged (the file and folder
+parameters below excepted: they are recognised abbreviated too). What a solver
+does with a misspelt name is the solver's own: Gurobi ignores it with a
+message, and FlexTool repeats that message as a warning naming where the name
+was set.</p>
+<p>FlexTool's results are not affected by a solver's file parameters (they are in
+<code>output_parquet/&lt;scenario&gt;/</code> and the outputs you chose). Gurobi's <code>ResultFile</code>
+is FlexTool's own: FlexTool names the result file and reads the solution from
+it, so a <code>ResultFile</code> set anywhere is ignored with a warning. A commercial
+solver's log is saved as <code>&lt;work folder&gt;/solve_data/subprocess/&lt;solve&gt;.log</code>
+(see below). HiGHS' log is part of the run's console output, which
+<code>flextool-run</code> and the FlexTool window save in the run's log,
+<code>output_parquet/&lt;scenario&gt;/_run.log</code>.</p>
+<h4 id="what-the-database-may-set">What the database may set</h4>
+<p>An input database can come from someone else, so FlexTool trusts
+<code>solver_arguments</code> and <code>solver_mip_gap</code> less than the files and the command
+line of your own computer. The solver option files (<code>solver_config/&lt;solver&gt;.opt</code>),
+the flags and the environment variables keep full paths and server
+parameters; from the database:</p>
+<ul>
+<li><strong>Ordinary parameters</strong> (gaps, tolerances, methods, thread counts, switches)
+  are taken as they are.</li>
+<li><strong>A parameter that names a file or folder</strong> takes only a plain file name:
+  ASCII letters, digits and <code>_ . + -</code>, starting with a letter, digit or <code>_</code>,
+  with no <code>/</code>, <code>\</code>, <code>:</code> or <code>..</code>. The file is written in the solve's work
+  folder, <code>&lt;work folder&gt;/solve_data/subprocess/</code>. A full path is refused.
+  These are the parameters whose name contains <em>file</em>, <em>dir</em> or <em>path</em>, and
+  also:</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Solver</th>
+<th>File and folder parameters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>HiGHS</td>
+<td><code>log_file</code>, <code>solution_file</code>, <code>read_solution_file</code>, <code>read_basis_file</code>, <code>write_basis_file</code>, <code>write_model_file</code>, <code>write_presolved_model_file</code>, <code>write_iis_model_file</code>, <code>mip_improving_solution_file</code></td>
+</tr>
+<tr>
+<td>Gurobi</td>
+<td><code>ResultFile</code>, <code>LogFile</code>, <code>SolFiles</code>, <code>NodefileDir</code>, <code>InputFile</code>, <code>ConcurrentSettings</code>, <code>MultiObjSettings</code>, <code>TuneBaseSettings</code>, <code>TuneIgnoreSettings</code>, <code>TuneParams</code>, <code>Record</code></td>
+</tr>
+<tr>
+<td>CPLEX</td>
+<td><code>logfile</code>, <code>workdir</code>, <code>output intsolfileprefix</code> (also abbreviated, as the Interactive Optimizer accepts) and names starting with <code>read</code> or <code>write</code></td>
+</tr>
+<tr>
+<td>Xpress</td>
+<td><code>TUNERMETHODFILE</code>, <code>TUNEROUTPUTPATH</code>, <code>TUNERSESSIONNAME</code></td>
+</tr>
+<tr>
+<td>COPT</td>
+<td><code>LogFile</code></td>
+</tr>
+</tbody>
+</table>
+<p>Names are matched as the solver reads them (above), so <code>Log_File</code> for
+  Gurobi or <code>XPRS_TUNEROUTPUTPATH</code> for Xpress is the same parameter. A number
+  or a switch in such a parameter (Gurobi <code>NodefileStart 0.5</code>) passes.
+- <strong>Gurobi server, cloud and licence parameters</strong> are refused:
+  <code>ComputeServer</code>, <code>ServerPassword</code>, <code>ServerTimeout</code>, the <code>CS...</code> Cluster
+  Manager parameters (<code>CSManager</code>, <code>CSAPIAccessID</code>, <code>CSAPISecret</code>, <code>CSGroup</code>,
+  <code>CSPriority</code>, <code>CSRouter</code>, ...), the <code>Cloud...</code> Instant Cloud parameters, the
+  <code>WLS...</code> Web License Service parameters, <code>TokenServer</code>, <code>TSPort</code>,
+  <code>LicenseID</code>, <code>UserName</code>, <code>WorkerPool</code> and <code>WorkerPassword</code>.</p>
+<p>The error names the parameter, its value and the solve. Put a file path or a
+server parameter in the solver's option file, <code>solver_config/&lt;solver&gt;.opt</code>
+(or that file in a folder given with <code>--solver-config-dir</code>), which keeps them.
+The checks against extra commands (no line breaks, spaces, quotes, <code>;</code>, <code>#</code>,
+<code>=</code> or a backslash at the end) apply to every source.</p>
 <h3 id="per-solver-baseline-opt-files">Per-solver baseline <code>.opt</code> files</h3>
 <p>Every solver gets a baseline parameter file in a <code>solver_config/</code> folder
 (which folder: see <a href="#where-the-option-files-come-from">Where the option files come from</a>).
@@ -2762,7 +2861,10 @@ wheel as a <code>solver_config/&lt;solver&gt;.opt.template</code>, and <code>fle
 the GUI seed the workspace's <code>solver_config/&lt;solver&gt;.opt</code> from its template
 (and re-seed any that are missing).  The runtime files are gitignored, so you can edit them —
 or delete one to reset it to the bundled default — with zero git-committed
-change.</p>
+change. The FlexTool window (at start) and <code>flextool-update</code> replace a
+workspace <code>solver_config/&lt;solver&gt;.opt</code> that is an unedited copy of an earlier
+FlexTool default with the current one; an edited file is never touched. The
+option values are the same, so no solve changes.</p>
 <table>
 <thead>
 <tr>
@@ -2803,7 +2905,8 @@ change.</p>
 file, so <code>write_solution_to_file</code>, <code>solution_file</code> and <code>write_solution_style</code>
 are ignored in <code>highs.opt</code> (older templates set them; projects created then
 still have the lines). To have HiGHS write a solution file anyway, set these
-options in the solve's <code>solver_arguments</code>.</p>
+options in the solve's <code>solver_arguments</code> (<code>solution_file</code> takes a plain file
+name there; the file is written in <code>&lt;work folder&gt;/solve_data/subprocess/</code>).</p>
 <p>FlexTool reads each solver's baseline once at the start of the run, overlays
 the solve's <code>solver_mip_gap</code>, its <code>solver_arguments</code> Map and the run's flags
 <strong>parameter by parameter</strong> (one value per parameter, the highest layer wins),
@@ -2844,7 +2947,9 @@ received) and feeds it to the solver via the per-solver mechanism:</p>
 <li>The run's flags: <code>--solver-time-limit</code> and <code>--solver-mip-gap</code> (or
    <code>FLEXTOOL_SOLVER_TIME_LIMIT</code> / <code>FLEXTOOL_SOLVER_MIP_GAP</code>; the GUI's time
    limit is sent as the flag). HiGHS also takes <code>--highs-threads</code>,
-   <code>--presolve</code>, <code>--solver-log-level</code> and <code>--threads</code> here.</li>
+   <code>--presolve</code>, <code>--solver-log-level</code> and <code>--threads</code> here (a commercial
+   solver's log is hidden by <code>--solver-log-level silent</code> too, but that is not
+   one of its parameters).</li>
 <li>Raw <code>solver_arguments</code> entries on the solve.</li>
 <li>Translated convenience knobs (<code>solver_mip_gap</code>).</li>
 <li>The baseline file <code>&lt;solver&gt;.opt</code>.</li>
@@ -2864,6 +2969,16 @@ in that folder with the script as its input, for example
 <code>cd solve_data/subprocess &amp;&amp; cplex &lt; y2020_dispatch.script</code>. The solver's
 result file and its own log file (<code>gurobi.log</code>, <code>cplex.log</code>) are written there
 too.</p>
+<p>The solver's log is shown as the solver writes it, in the terminal, the
+FlexTool window (greyed, like HiGHS' log) and the run log, after a line
+<code>Running &lt;solver&gt; (&lt;program&gt;)</code>, and it is saved as <code>&lt;solve&gt;.log</code> in the same
+folder. Like the other files there, <code>&lt;solve&gt;.log</code> holds the last roll of a
+rolling solve. A failed solve's message points to the log instead of repeating
+it. With <code>--solver-log-level silent</code> the log is not shown (nor the <code>Running</code>
+line), but FlexTool still reads it to know how the solve ended, saves it, and a
+failure message then carries its last 20 lines. If FlexTool stops the solver
+(the time-limit watchdog, Ctrl-C, a failure), it also stops the processes the
+solver started.</p>
 <h3 id="where-the-option-files-come-from">Where the option files come from</h3>
 <p>A run takes all its <code>&lt;solver&gt;.opt</code> files from one <code>solver_config</code> folder, the
 first of:</p>
