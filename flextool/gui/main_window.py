@@ -5653,7 +5653,8 @@ class MainWindow(tk.Tk):
                 )
             return "sqlite:///" + str(source_path)
 
-        # The dialog reads only ``name`` and ``is_xlsx`` off each scenario, and
+        # The dialog reads only ``name``, ``is_xlsx`` and ``source_number`` (the
+        # calibration's check of the bare result folder) off each scenario, and
         # ``resolve_db_url`` reads ``source_name``; wrap each ScenarioInfo so it
         # exposes exactly those.
         scenarios = [
@@ -5661,6 +5662,7 @@ class MainWindow(tk.Tk):
                 name=info.name,
                 is_xlsx=_is_xlsx(info.source_name),
                 source_name=info.source_name,
+                source_number=info.source_number,
             )
             for info in checked
         ]

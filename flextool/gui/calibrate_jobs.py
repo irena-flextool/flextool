@@ -57,7 +57,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -144,6 +144,10 @@ class CalibJobSpec:
     warm_start_cache_dir: str | None = None
     work_dir: str | None = None
     output_location: str | None = None
+    # The input source of the scenario (``ScenarioInfo.source_number``); ``None`` when not known.  The calibration
+    # writes ``output_parquet/<scenario>/``, which a project may hold as another source's results (item 240 review
+    # b1 F3: :func:`_refuse_other_sources_folder`).
+    source_number: int | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -382,6 +386,37 @@ def _refuse_unsafe_name(mgr: ExecutionManager, kind: str, scenario: str) -> bool
     return False
 
 
+def _refuse_other_sources_folder(
+    mgr: ExecutionManager, project_path: Path, spec: "CalibJobSpec", bare_output_owners: "Mapping[str, int]",
+) -> bool:
+    """Whether the calibration of *spec* would clear another input source's results; if so, an already-failed
+    job in the execution window says why, and nothing is started.
+
+    The calibration writes, and clears before each iteration, ``<project>/output_parquet/<scenario>/``.  In the
+    window that bare folder can be the regular result folder of one source (``bare_output_owners``, from projects
+    made before result folders got the source number), so calibrating the same scenario name from another source
+    (or from a source the window cannot name) would delete those results and leave a run record of the other
+    database there (item 240 review b1 F3)."""
+    owner = bare_output_owners.get(spec.scenario)
+    folder = project_path / "output_parquet" / spec.scenario
+    if owner is None or owner == spec.source_number or not folder.exists():
+        return False
+    from flextool.safe_names import describe_name
+
+    job = mgr.add_auxiliary_job(JobType.OUTPUT_ACTION, f"Calibrate: {describe_name(spec.scenario)}",
+                                "calibrate:refused")
+    mgr.append_stdout(
+        job.job_id,
+        f"Not calibrating {describe_name(spec.scenario)}: the calibration writes and clears the result folder "
+        f"{folder}, which holds the results of {spec.scenario!r} from input source {owner}"
+        + ("" if spec.source_number is None else f", not from source {spec.source_number}")
+        + ". Rename or delete that folder (or the scenario in one of the sources) first, or calibrate the scenario "
+        "from the command line with its own --output-location.",
+    )
+    mgr.finish_job(job.job_id, False)
+    return True
+
+
 def _workspace_cwd() -> str:
     """The folder the RP and calibration processes run in: the workspace the GUI was started from, like the
     other jobs (never the project folder, which may come from someone else)."""
@@ -448,18 +483,25 @@ def launch_calibration_jobs(
     project_path: Path,
     jobs: Sequence[CalibJobSpec],
     runner: _SerialRunner | None = None,
+    bare_output_owners: "Mapping[str, int] | None" = None,
 ) -> None:
     """Enqueue one serialized calibration aux job per scenario.
 
     Returns immediately; calibrations run strictly one at a time on the
     calibration runner. Per-scenario directories are derived (and created)
     under ``project_path`` unless the spec overrides them. The optional
-    ``runner`` override exists for tests.
+    ``runner`` override exists for tests.  *bare_output_owners* is the
+    project's ``ProjectSettings.bare_output_owners``: a scenario whose bare
+    result folder another source owns is refused
+    (:func:`_refuse_other_sources_folder`).
     """
     run = runner if runner is not None else _CALIBRATE_RUNNER
     cwd = _workspace_cwd()
     for spec in jobs:
         if _refuse_unsafe_name(mgr, "Calibrate", spec.scenario):
+            continue
+        if spec.output_location is None and _refuse_other_sources_folder(
+                mgr, project_path, spec, bare_output_owners or {}):
             continue
         warm_start, work_dir, output_location = _calib_dirs(
             project_path, spec.scenario

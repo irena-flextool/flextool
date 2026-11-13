@@ -1067,7 +1067,9 @@ Each line says what changes for a model that ran before and what to do; the deta
   scenarios were lost (the run records too; their CSV, Excel and plot files stayed). A calibration now clears only
   the result folder of the scenario it calibrates. The same held for `python -m flextool.calibrate` with
   `--output-location` set to a folder that held other results; with `--debug` the earlier rounds are now kept in
-  `out_iter_<k>/<scenario>/`. Present since 4.0.0.
+  `out_iter_<k>/<scenario>/`. Present since 4.0.0. In a project from before result folders got the source
+  number, `output_parquet/<scenario>/` can be the results of one input source; calibrating a scenario of the same
+  name from another source is now refused with a message (before, it deleted those results).
 - **The model run refuses an input database that is not at the current FlexTool version.**
   Before, only databases below version 25 were refused, so an unmigrated database ran old data under the new
   version's semantics without a word. `flextool-run` (and `run_flextool.py`, `python -m

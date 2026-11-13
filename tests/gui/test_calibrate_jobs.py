@@ -89,6 +89,36 @@ def test_streams_stdout_and_finishes_success(tmp_path: Path, monkeypatch) -> Non
     assert any("-c" in line for line in job.stdout_lines[:2])
 
 
+def test_a_bare_result_folder_of_another_source_is_not_cleared(tmp_path: Path, monkeypatch) -> None:
+    """Item 240 review b1 F3: ``output_parquet/base/`` holds source 1's results (``bare_output_owners``).
+    Calibrating ``base`` from source 2 would clear it, so that job fails at once, naming the folder and both
+    sources, and the folder is untouched; from source 1 it starts."""
+    monkeypatch.setattr(cj, "build_calibrate_command",
+                        lambda *a, **k: _fake_argv("import sys; print('calibrating'); sys.exit(0)"))
+    results = tmp_path / "output_parquet" / "base"
+    results.mkdir(parents=True)
+    (results / "unit__dt.parquet").write_text("source 1")
+    mgr = _make_manager(tmp_path)
+    runner = _SerialRunner("test")
+    launch_calibration_jobs(
+        mgr, python_exe=sys.executable, project_path=tmp_path, runner=runner, bare_output_owners={"base": 1},
+        jobs=[CalibJobSpec(db_url="sqlite:///m2.sqlite", scenario="base", iterations=1, source_number=2)],
+    )
+    runner.wait(timeout=30)
+    job = _find_job(mgr, "calibrate:refused")
+    assert job.status == JobStatus.FAILED
+    assert any("from input source 1, not from source 2" in line and str(results) in line for line in job.stdout_lines)
+    assert not [j for j in mgr.get_jobs() if j.action_key == "calibrate:base"]
+    assert (results / "unit__dt.parquet").read_text() == "source 1"
+
+    launch_calibration_jobs(
+        mgr, python_exe=sys.executable, project_path=tmp_path, runner=runner, bare_output_owners={"base": 1},
+        jobs=[CalibJobSpec(db_url="sqlite:///m1.sqlite", scenario="base", iterations=1, source_number=1)],
+    )
+    runner.wait(timeout=30)
+    assert _find_job(mgr, "calibrate:base").status == JobStatus.SUCCESS
+
+
 def test_nonzero_exit_144_marks_failed(tmp_path: Path, monkeypatch) -> None:
     # exit-144 is the known intermittent calibrator exit; it must FAIL, not raise.
     script = "import sys; print('boom before exit'); sys.exit(144)"

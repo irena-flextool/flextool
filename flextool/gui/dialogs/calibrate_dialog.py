@@ -1156,6 +1156,7 @@ class CalibrateDialog(tk.Toplevel):
                     # Regenerate the same formats a regular run would (the
                     # project's "File outputs" choices), from the final parquet.
                     final_write_methods=final_write_methods_from_settings(s),
+                    source_number=getattr(sc, "source_number", None),
                 )
             )
         launch_calibration_jobs(
@@ -1163,6 +1164,8 @@ class CalibrateDialog(tk.Toplevel):
             python_exe=self._python_exe,
             project_path=self._project_path,
             jobs=specs,
+            # A scenario whose bare result folder another source owns is refused (item 240 review b1 F3).
+            bare_output_owners=dict(getattr(s, "bare_output_owners", None) or {}),
         )
         self._guard_calib()
         self._reveal_execution_window()
