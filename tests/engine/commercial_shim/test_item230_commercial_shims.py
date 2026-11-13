@@ -516,7 +516,7 @@ def test_mip_at_its_time_limit_keeps_the_solution(solver, shim, tmp_path) -> Non
     assert sol.shim_status == "TIME_LIMIT"
     assert sol.shim_mip_gap == pytest.approx(call["mip_gap"], abs=1e-4)
     acc = classify_acceptance(sol, ranges_post=None, solve_name="market_split")
-    assert acc.accepted and acc.time_limited and acc.model_status == "kTimeLimit", acc
+    assert acc.accepted and acc.limit_stopped and acc.model_status == "kTimeLimit", acc
     assert f"(relative MIP gap {call['mip_gap']:.4%})" in acc.message, acc.message
 
 
@@ -524,11 +524,15 @@ def test_mip_at_its_time_limit_keeps_the_solution(solver, shim, tmp_path) -> Non
 NODES = {"gurobi": "NodeLimit", "cplex": "mip limits nodes", "copt": "NodeLimit"}
 
 
-def test_mip_at_a_node_limit_is_rejected_by_name(solver, shim, tmp_path) -> None:
-    """Review F1 / D2: a node limit of 5 on the market split MIP stops the solver with an incumbent (found at
-    the root) but no proof; only a time limit keeps such a solution, so the acceptance step rejects it, naming
-    ``NODE_LIMIT`` (Gurobi from its JSON status, CPLEX from the file's status code, COPT from its log).
-    Xpress: no MIP."""
+#: The options a node-limit warning names, by solver.
+NODE_OPTIONS = {"gurobi": "Gurobi NodeLimit", "cplex": "CPLEX mip limits nodes", "copt": "COPT NodeLimit"}
+
+
+def test_mip_at_a_node_limit_keeps_the_solution(solver, shim, tmp_path) -> None:
+    """Review F1 / item 246: a node limit of 5 on the market split MIP stops the solver with an incumbent (found
+    at the root) but no proof.  FlexTool reads ``NODE_LIMIT`` (Gurobi from its JSON status, CPLEX from the file's
+    status code, COPT from its log) and the solver's gap, and the acceptance step keeps the solution with a
+    warning naming the node limit, its option and the gap, as for a time limit.  Xpress: no MIP."""
     from flextool.engine.input._solve_config import SolverConfig
     from flextool.engine.solve._acceptance import classify_acceptance
     from flextool.engine.solve._solver_dispatch import run_one_solve
@@ -542,8 +546,11 @@ def test_mip_at_a_node_limit_is_rejected_by_name(solver, shim, tmp_path) -> None
     assert call["params"] == {THREADS[solver]: 1, NODES[solver]: 5}, call
     assert call["is_mip"] and call["mip_gap"] is not None and call["mip_gap"] > 0.0, call
     assert (sol.shim_status, sol.optimal) == ("NODE_LIMIT", False)
+    assert sol.shim_mip_gap == pytest.approx(call["mip_gap"], abs=1e-4)
     acc = classify_acceptance(sol, ranges_post=None, solve_name="market_split")
-    assert not acc.accepted and "(solver status NODE_LIMIT)" in acc.message, acc
+    assert acc.accepted and acc.limit_stopped and acc.model_status == "kSolutionLimit", acc
+    assert "stopped at its node limit" in acc.message and f"({NODE_OPTIONS[solver]}, in" in acc.message, acc.message
+    assert f"(relative MIP gap {call['mip_gap']:.4%})" in acc.message, acc.message
 
 
 # ---------------------------------------------------------------------------

@@ -350,7 +350,7 @@ def test_save_memory_time_limit_status_mip_kept_lp_rejected(tmp_path: Path, monk
     np.testing.assert_allclose(mip.col_value, [1.0, 1.0])
     assert mip.obj == pytest.approx(-9.0)
     kept = classify_acceptance(mip, ranges_post=None, solve_name="s")
-    assert kept.accepted and kept.time_limited and kept.near_optimal
+    assert kept.accepted and kept.limit_stopped and kept.near_optimal
 
     lp = _solve_highs_subprocess(_small_knapsack(False), {"time_limit": 0.0}, solve_name="s", logger=None,
                                  work_folder=tmp_path / "lp")
@@ -420,3 +420,76 @@ def test_child_writes_the_mip_gap(tmp_path: Path, integer: bool, gap: float) -> 
                          "--solution", str(sol), "--mip-gap", str(gap_file)], capture_output=True)
     assert cp.returncode == 0, cp.stderr
     assert float(gap_file.read_text()) == gap
+
+
+def _knapsack60(*, integer: bool = True) -> Problem:
+    """60 binaries, 5 rows (``numpy.default_rng(1)``, weights and values in [10, 100), each capacity a third of
+    its row's weight): HiGHS needs a search tree to prove its optimum."""
+    rng = np.random.default_rng(1)
+    w, v = rng.integers(10, 100, (5, 60)), rng.integers(10, 100, 60)
+    items = pl.DataFrame({"item": [f"i{j}" for j in range(60)]})
+    p = Problem()
+    x = p.add_var("x", ("item",), items, lower=0.0, upper=1.0, integer=integer)
+    for i in range(5):
+        weight = Param(("item",), items.with_columns(value=pl.Series(w[i].astype(float))), name=f"w{i}")
+        p.add_cstr(f"c{i}", over=pl.DataFrame({"r": [0]}), sense="<=", lhs_terms={"a": Sum(x * weight, over=("item",))},
+                   rhs_terms={"d": Param(("r",), pl.DataFrame({"r": [0], "value": [float(w[i].sum() / 3)]}))})
+    value = Param(("item",), items.with_columns(value=pl.Series(-v.astype(float))), name="v")
+    p.set_objective(Sum(x * value, over=("item",)), sense="min")
+    return p
+
+
+def test_save_memory_child_at_a_solution_limit_keeps_a_mip(tmp_path: Path) -> None:
+    """Item 246, the real ``--save-memory`` child: ``mip_max_improving_sols = 1`` stops HiGHS at its first
+    incumbent (``Solution limit reached`` + ``Feasible``), read as ``SOLUTION_LIMIT`` with the child's gap, and
+    the MIP is kept with a warning naming HiGHS's options."""
+    from flextool.engine.solve._acceptance import classify_acceptance
+
+    sol = _solve_highs_subprocess(_knapsack60(), {"mip_max_improving_sols": 1, "threads": 1}, solve_name="s",
+                                  logger=None, work_folder=tmp_path)
+    assert (sol.optimal, sol.shim_status, sol.shim_primal_feasible, sol.shim_solver) == (
+        False, "SOLUTION_LIMIT", True, "highs")
+    assert sol.shim_mip_gap is not None and math.isfinite(sol.shim_mip_gap) and sol.shim_mip_gap > 0.0
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="s")
+    assert acc.accepted and acc.limit_stopped and acc.model_status == "kSolutionLimit", acc
+    assert "mip_max_improving_sols" in acc.message
+
+
+def test_save_memory_child_at_a_node_limit_without_a_solution_is_rejected(tmp_path: Path) -> None:
+    from flextool.engine.solve._acceptance import classify_acceptance
+
+    sol = _solve_highs_subprocess(_knapsack60(), {"mip_max_nodes": 0, "threads": 1}, solve_name="s",
+                                  logger=None, work_folder=tmp_path)
+    assert (sol.shim_status, sol.shim_primal_feasible) == ("SOLUTION_LIMIT", False)
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="s")
+    assert not acc.accepted and acc.model_status == "kSolutionLimit"
+    assert "before finding a feasible solution" in acc.message
+
+
+def test_save_memory_child_lp_at_its_iteration_limit_is_rejected(tmp_path: Path) -> None:
+    """Primal simplex with ``simplex_iteration_limit = 0`` stops with a feasible start point (measured, HiGHS
+    1.15): ``ITERATION_LIMIT``, and an LP at a limit stops the run."""
+    from flextool.engine.solve._acceptance import classify_acceptance
+
+    sol = _solve_highs_subprocess(_knapsack60(integer=False),
+                                  {"simplex_iteration_limit": 0, "simplex_strategy": 4, "threads": 1},
+                                  solve_name="s", logger=None, work_folder=tmp_path)
+    assert sol.shim_status == "ITERATION_LIMIT"
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="s")
+    assert not acc.accepted and acc.model_status == "kIterationLimit"
+    assert "linear problem" in acc.message and "simplex_iteration_limit" in acc.message
+
+
+@pytest.mark.parametrize(("line", "primal", "expected"), [
+    ("Time limit reached", "Feasible", ("TIME_LIMIT", True)),
+    ("Solution limit reached", "None", ("SOLUTION_LIMIT", False)),
+    ("Iteration limit reached", "Feasible", ("ITERATION_LIMIT", True)),
+    ("Target for objective reached", "Feasible", ("OBJECTIVE_TARGET", True)),
+    ("Bound on objective reached", "Infeasible", ("OBJECTIVE_BOUND", False)),
+    ("Memory limit reached", "Feasible", ("MEM_LIMIT", True)),
+    ("Interrupted by user", "Feasible", ("OTHER", True)),
+])
+def test_highs_sol_status_lines(line: str, primal: str, expected, tmp_path: Path) -> None:
+    sol = tmp_path / "s.sol"
+    sol.write_text(f"Model status\n{line}\n\n# Primal solution values\n{primal}\n")
+    assert sps._highs_sol_status(sol) == expected

@@ -78,6 +78,7 @@ import numpy as np
 
 from flextool._child_python import child_env, python_module_argv
 from flextool._solver_option_rules import native_opt_lines as _native_opt_lines
+from flextool.engine.solve._acceptance import LIMIT_SHIM_STATUSES
 
 if TYPE_CHECKING:
     from polar_high import Problem, Solution
@@ -529,21 +530,33 @@ def _parse_highs_sol(
     return col_value, col_dual, row_dual
 
 
-def _highs_sol_status(sol_path: Path) -> str:
-    """``TIME_LIMIT`` when a HiGHS style=0 solution file says ``Time limit reached`` with a ``Feasible``
-    primal, else ``OTHER``.  Reads the file's first lines only."""
+#: The model-status line of a HiGHS style=0 solution file (HiGHS 1.15) for a solve stopped by a limit or at an
+#: objective target or bound, as FlexTool's status names.  ``Solution limit reached`` is HiGHS's one status for
+#: its node, leaf, stall-node and improving-solution limits.
+_HIGHS_SOL_STATUSES = {
+    "Time limit reached": "TIME_LIMIT",
+    "Solution limit reached": "SOLUTION_LIMIT",
+    "Iteration limit reached": "ITERATION_LIMIT",
+    "Target for objective reached": "OBJECTIVE_TARGET",
+    "Bound on objective reached": "OBJECTIVE_BOUND",
+    "Memory limit reached": "MEM_LIMIT",
+}
+
+
+def _highs_sol_status(sol_path: Path) -> tuple[str, bool]:
+    """How a non-optimal HiGHS child solve ended, from its style=0 solution file: the status
+    (:data:`_HIGHS_SOL_STATUSES`, else ``OTHER``) and whether the file's primal is ``Feasible``.  Reads the
+    file's first lines only."""
     try:
         with open(sol_path) as fh:
             head = [fh.readline().strip() for _ in range(6)]
     except OSError:
-        return "OTHER"
+        return "OTHER", False
     model_status = head[1] if len(head) > 1 and head[0] == "Model status" else ""
     primal_status = next(
         (head[i + 1] for i, line in enumerate(head[:-1]) if line == "# Primal solution values"), "",
     )
-    if model_status == "Time limit reached" and primal_status == "Feasible":
-        return "TIME_LIMIT"
-    return "OTHER"
+    return _HIGHS_SOL_STATUSES.get(model_status, "OTHER"), primal_status == "Feasible"
 
 
 def _read_highs_mip_gap(gap_path: Path) -> float | None:
@@ -994,7 +1007,8 @@ class _ParsedSolution(NamedTuple):
 
 #: Gurobi ``Status`` codes (``SolutionInfo.Status`` of a JSON result file).
 _GUROBI_STATUS = {
-    2: "OPTIMAL", 3: "INFEASIBLE", 4: "INF_OR_UNBD", 5: "UNBOUNDED", 7: "ITERATION_LIMIT", 8: "NODE_LIMIT",
+    2: "OPTIMAL", 3: "INFEASIBLE", 4: "INF_OR_UNBD", 5: "UNBOUNDED", 6: "CUTOFF", 7: "ITERATION_LIMIT",
+    8: "NODE_LIMIT",
     9: "TIME_LIMIT", 10: "SOLUTION_LIMIT", 11: "INTERRUPTED", 12: "NUMERIC", 13: "SUBOPTIMAL",
     15: "USER_OBJ_LIMIT", 16: "WORK_LIMIT", 17: "MEM_LIMIT",
 }
@@ -1090,7 +1104,8 @@ def _parse_gurobi_sol(path: Path, stdout: str = "") -> _ParsedSolution:
 
     With the text format the status comes from the console output: a primal
     with ``Time limit reached`` in *stdout* is ``TIME_LIMIT``, one with another
-    limit or an interrupt (``Node limit reached``, ...) carries that status, one
+    limit or an interrupt (``Node limit reached``, ...) carries that status (with
+    the console's gap), one
     with ``Optimal solution found`` / ``Optimal objective`` is ``OPTIMAL``.  With
     none of these (console logging off, ``LogToConsole 0``) how the solve ended
     is unknown: ``NO_STATUS``, which the acceptance check rejects, since a solve
@@ -1099,7 +1114,7 @@ def _parse_gurobi_sol(path: Path, stdout: str = "") -> _ParsedSolution:
     """
     parsed = _parse_gurobi_json(path) if path.is_file() else None
     if parsed is not None:
-        if parsed.status == "TIME_LIMIT" and parsed.mip_gap is None:
+        if parsed.status in LIMIT_SHIM_STATUSES and parsed.mip_gap is None:
             parsed = parsed._replace(mip_gap=_percent(_GUROBI_GAP.search(stdout)))
         return parsed
     status, objective, primal = _parse_sol_text(path)
@@ -1108,8 +1123,11 @@ def _parse_gurobi_sol(path: Path, stdout: str = "") -> _ParsedSolution:
     if primal:
         stop = _GUROBI_OTHER_STOP.search(stdout)
         if stop is not None:
-            # Another limit or an interrupt: not optimal, rejected by name.
-            return _ParsedSolution(_GUROBI_STOP_STATUS[stop.group(1).lower()], objective, primal, None)
+            # Another limit (a MIP keeps its solution, the gap named) or an interrupt (rejected by name).
+            return _ParsedSolution(
+                _GUROBI_STOP_STATUS[stop.group(1).lower()], objective, primal, None,
+                _percent(_GUROBI_GAP.search(stdout)),
+            )
         if not _GUROBI_OPTIMAL.search(stdout):
             return _ParsedSolution("NO_STATUS", objective, primal, None)
     return _ParsedSolution(status, objective, primal, None)
@@ -1159,8 +1177,9 @@ def _copt_status(stdout: str) -> str | None:
     ``TIME_LIMIT``; ``stopped (node limit reached)`` ``NODE_LIMIT``; another ``stopped (...)`` is
     ``INTERRUPTED`` when it names an interrupt, else ``STOPPED``; ``infeasible`` / ``unbounded`` as named.  Else
     an LP's last ``Status:`` word (:data:`_COPT_LP_STATUS_NAMES`; another word, e.g. ``Numerical``, becomes
-    ``NUMERICAL``).  Only ``OPTIMAL`` is optimal, so every other limit or an interrupt is rejected by name and
-    only a MIP's ``TIME_LIMIT`` keeps its solution (the D2 rule of :mod:`flextool.engine.solve._acceptance`).
+    ``NUMERICAL``).  Only ``OPTIMAL`` is optimal: a MIP stopped by its time or node limit keeps its solution (the
+    D2 rule of :mod:`flextool.engine.solve._acceptance`, every search limit); an LP at a limit, an interrupt and
+    an unnamed stop are rejected by name.
     """
     mip = _COPT_MIP_STATUS.findall(stdout)
     if mip:
@@ -1200,13 +1219,15 @@ def _parse_copt_sol(path: Path, stdout: str = "") -> _ParsedSolution:
     status = _copt_status(stdout)
     if status is None:
         return _ParsedSolution("NO_STATUS" if primal else "OTHER", objective, primal, None)
-    gap = _percent(_COPT_GAP.search(stdout)) if primal and status == "TIME_LIMIT" else None
+    gap = _percent(_COPT_GAP.search(stdout)) if primal and status in LIMIT_SHIM_STATUSES else None
     return _ParsedSolution(status, objective if primal else None, primal, None, gap)
 
 
 #: CPLEX ``solutionStatusValue`` codes (``CPX_STAT_*`` for LP, ``CPXMIP_*`` for MIP; the CPLEX reference manual,
-#: "Solution status codes"), read first.  A limit or an abort is never optimal: with a solution, only a time
-#: limit is kept (the D2 rule of :mod:`flextool.engine.solve._acceptance`); the other limits are rejected by name.
+#: "Solution status codes"), read first.  A limit or an abort is never optimal: a MIP with a solution at a time,
+#: node, solution or iteration limit keeps it (the D2 rule of :mod:`flextool.engine.solve._acceptance`, every
+#: search limit); an LP at a limit, an objective-limit abort (12 / 21 / 22, LP only) and an interrupt are rejected
+#: by name.  (128 / 130 are the populate codes, unused by FlexTool and not verified here.)
 #: "Optimal with unscaled infeasibilities" (5, 115) breaks the feasibility tolerances once unscaled, and an
 #: "unbounded optimal face" (20, barrier without crossover) returns an interior point of an unbounded face, not a
 #: vertex: neither is a certified optimum, and FlexTool has no diagnostics of a solver run as a program to verify
@@ -1267,7 +1288,7 @@ def _cplex_status(status_str: str, status_value: int | None = None) -> str:
 
 def _parse_cplex_sol(path: Path, stdout: str = "") -> _ParsedSolution:
     """Parse CPLEX XML ``.sol`` via :mod:`xml.etree.ElementTree`; the gap of a
-    time-limited MIP comes from the console (``gap = ..., X%``).
+    MIP stopped by a limit comes from the console (``gap = ..., X%``).
 
     CPLEX writes no file without a solution; a console that says ``time limit exceeded`` then gives
     ``TIME_LIMIT`` (no solution), so the run is told it stopped at its limit.
@@ -1330,7 +1351,7 @@ def _parse_cplex_sol(path: Path, stdout: str = "") -> _ParsedSolution:
     if status == "OTHER" and primal and not status_str:
         # A file without a status string: the values are all there is to go on.
         status = "OPTIMAL"
-    gaps = _CPLEX_GAP.findall(stdout) if status == "TIME_LIMIT" else []
+    gaps = _CPLEX_GAP.findall(stdout) if status in LIMIT_SHIM_STATUSES else []
     gap = None
     if gaps:
         try:
@@ -1465,7 +1486,11 @@ _NO_SOLUTION_REASONS = {
     "TIME_LIMIT": "stopped at its time limit before finding a solution",
     "ITERATION_LIMIT": "stopped at its iteration limit before finding a solution",
     "NODE_LIMIT": "stopped at its node limit before finding a solution",
+    "SOLUTION_LIMIT": "stopped at its solution limit before finding a solution",
     "WORK_LIMIT": "stopped at its work limit before finding a solution",
+    "USER_OBJ_LIMIT": "stopped at its objective limit (BestObjStop or BestBdStop) before finding a solution",
+    "CUTOFF": "found no solution better than its objective cutoff (Cutoff)",
+    "OBJECTIVE_LIMIT": "stopped at an objective limit before finding a solution",
     "MEM_LIMIT": "stopped at its memory limit before finding a solution",
     "INTERRUPTED": "was interrupted before finding a solution",
 }
@@ -2240,12 +2265,19 @@ def _solve_highs_subprocess(
             highs=h,
         )
         # The child exits 0 for kOptimal, 1 otherwise; a non-optimal solve
-        # is told apart by the status line of its solution file (a time
-        # limit with a feasible primal is ``TIME_LIMIT``).  The acceptance
-        # check records it as the solve's model status.
-        sol.shim_status = "OPTIMAL" if optimal else _highs_sol_status(sol_path)
-        # The gap HiGHS stopped at, named in the time-limit warning.
-        sol.shim_mip_gap = _read_highs_mip_gap(gap_path) if sol.shim_status == "TIME_LIMIT" else None
+        # is told apart by the status and primal lines of its solution file
+        # (``Solution limit reached`` + ``Feasible``: a MIP stopped at its
+        # node limit with an incumbent).  The acceptance check judges a limit
+        # as in-process HiGHS's and records the solve's model status.
+        if optimal:
+            sol.shim_status, sol.shim_primal_feasible = "OPTIMAL", True
+        else:
+            sol.shim_status, sol.shim_primal_feasible = _highs_sol_status(sol_path)
+        sol.shim_solver = "highs"
+        # The gap HiGHS stopped at, named in the limit warning.
+        sol.shim_mip_gap = (
+            _read_highs_mip_gap(gap_path) if sol.shim_status in LIMIT_SHIM_STATUSES else None
+        )
         return sol
     finally:
         if cleanup:
@@ -2329,12 +2361,13 @@ def _solve_commercial_subprocess(
     them sets the watchdog (``2 x limit + 600 s``): the solver enforces the
     limit itself, the watchdog only catches a hung process.
 
-    The parsed status (``Solution.shim_status``) is ``TIME_LIMIT`` for a
-    solve stopped by its limit with a solution (Gurobi from its JSON
-    result file, else its console; COPT / Xpress from the console; CPLEX
-    from its solution file); ``Solution.shim_mip_gap`` carries the gap the
-    solver reported, when known.  The acceptance check decides what that
-    means (``_acceptance.classify_acceptance``).
+    The parsed status (``Solution.shim_status``) names a solve stopped by a
+    limit with a solution (``TIME_LIMIT``, ``NODE_LIMIT``, ``SOLUTION_LIMIT``,
+    ...: Gurobi from its JSON result file, else its console; COPT / Xpress
+    from the console; CPLEX from its solution file); ``Solution.shim_mip_gap``
+    carries the gap the solver reported, when known, and
+    ``Solution.shim_solver`` the solver.  The acceptance check decides what
+    that means (``_acceptance.classify_acceptance``).
     """
     from polar_high import Solution
 
@@ -2574,9 +2607,12 @@ def _solve_commercial_subprocess(
             highs=h,
         )
         # The status parsed from the solution file (OPTIMAL / INFEASIBLE /
-        # UNBOUNDED / TIME_LIMIT / OTHER); the acceptance check records it
+        # UNBOUNDED / a limit / OTHER); the acceptance check records it
         # as the solve's model status (no HiGHS diagnostics exist here).
+        # A primal is always there (a result without one is refused above).
         sol.shim_status = status_str
+        sol.shim_primal_feasible = True
+        sol.shim_solver = solver_name
         sol.shim_mip_gap = parsed.mip_gap
         return sol
     finally:

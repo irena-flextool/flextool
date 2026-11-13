@@ -331,7 +331,8 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         _user("POLARS_MAX_THREADS", "polars thread pool size, in place of FlexTool's limit of 8 but at most the "
               "run's --threads; the run header prints the effective count", read_by="polars"),
         # --- dev: solve acceptance ------------------------------------------------------------------------
-        _dev("FLEXTOOL_ACCEPT_NEAR_OPTIMAL", "0 rejects every HiGHS status other than optimal (default on)"),
+        _dev("FLEXTOOL_ACCEPT_NEAR_OPTIMAL", "0 rejects every solver status other than optimal, a MIP stopped by a "
+             "limit included (default on)"),
         _dev("FLEXTOOL_ACCEPT_PD_GAP", "largest primal-dual gap of an accepted near-optimal solve (1e-2)"),
         _dev("FLEXTOOL_ACCEPT_PRIMAL_REL", "relative primal infeasibility of an accepted near-optimal solve; "
              "replaces the default max(1e-6, 10 x primal_feasibility_tolerance)"),

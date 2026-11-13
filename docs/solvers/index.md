@@ -52,7 +52,7 @@ solve):
 
 | CLI flag               | Former DB param (removed in v56; a stored value was dropped) | Values / notes |
 |------------------------|--------------------------|-------------------------------------------------|
-| `--solver-time-limit`  | `solver_time_limit`      | Seconds per solve, on every solver (HiGHS `time_limit`, Gurobi `TimeLimit`, CPLEX `timelimit`, Xpress `MAXTIME`, COPT `TimeLimit`); unset means no limit. See [Time limit](#time-limit). |
+| `--solver-time-limit`  | `solver_time_limit`      | Seconds per solve, on every solver (HiGHS `time_limit`, Gurobi `TimeLimit`, CPLEX `timelimit`, Xpress `MAXTIME`, COPT `TimeLimit`); unset means no limit. See [Time and other limits](#time-and-other-limits). |
 | `--solver-mip-gap`     |                          | Relative MIP gap of every solve, on every solver (HiGHS `mip_rel_gap`, Gurobi `MIPGap`, CPLEX `mip tolerances mipgap`, Xpress `MIPRELSTOP`, COPT `RelGap`); wins over the solve's `solver_mip_gap` |
 | `--solver-config-dir`  |                          | A folder of the solver option files; repeat for several, highest first (file by file); see [Where the option files come from](#where-the-option-files-come-from) |
 | `--threads`            |                          | Threads of the run (the FlexTool window sends its Threads per run); sets every solver's thread count (HiGHS `threads` unless `--highs-threads` is given, Gurobi `Threads`, CPLEX `threads`, Xpress `THREADS`, COPT `Threads`). See below |
@@ -738,25 +738,42 @@ folder), and skipped, with a warning, while it holds only the templates 4.3
 copied there. To run with the files of a particular folder, pass
 `--solver-config-dir <folder>`.
 
-### Time limit
+### Time and other limits
 
 `--solver-time-limit` (and the GUI's time limit) applies to each solve
 separately: each roll of a rolling solve, and each master and region solve of
-a Benders decomposition, gets the full limit. The solver enforces it. When a
-solve stops at its time limit:
+a Benders decomposition, gets the full limit. The solver enforces it. The same
+rule holds for the solver's other search limits, set in its option file or the
+solve's `solver_arguments`: a node, leaf, solution-count, work or iteration
+limit (HiGHS `mip_max_nodes`, `mip_max_leaves`, `mip_max_stall_nodes`,
+`mip_max_improving_sols`, `simplex_iteration_limit`, ...; Gurobi `NodeLimit`,
+`SolutionLimit`, `WorkLimit`, `IterationLimit`; CPLEX `mip limits nodes`,
+`mip limits solutions`; COPT `NodeLimit`), and for an objective target or
+bound you set (HiGHS `objective_target` and `objective_bound`, Gurobi
+`BestObjStop` and `BestBdStop`). When a solve stops at one of them:
 
 - a MIP with a solution found keeps that solution, with a warning naming the
-  solve and, when the solver reports it, the gap reached; the run goes on;
-- an LP, or a MIP without a solution, stops the run with an error;
-- in a Benders decomposition, a master or region solve stopped by its limit
+  solve, the limit, its option and, when the solver reports it, the gap
+  reached; the run goes on;
+- an LP, or a MIP without a solution, stops the run with an error naming the
+  limit and its option (an LP stopped at a limit has no usable solution);
+- in a Benders decomposition, a master or region solve stopped by any limit
   stops the run with an error, MIP or not: the decomposition needs each of its
   solves to be optimal.
 
-Another limit or an interrupt (a node, iteration, solution or memory limit, or
-an aborted solve) is not a time limit: it stops the run, naming the solver's
-status, even with a solution. So does a solution the solver does not certify
-as optimal, such as CPLEX's "optimal with unscaled infeasibilities" or
-"optimal face unbounded".
+HiGHS has one status for its node, leaf, stall-node and improving-solution
+limits, so its warning names all four options.
+
+A memory limit or an interrupt (an aborted solve) stops the run, naming the
+solver's status, even with a solution. So does a solution the solver does not
+certify as optimal, such as CPLEX's "optimal with unscaled infeasibilities" or
+"optimal face unbounded", or Gurobi's "suboptimal".
+
+A HiGHS MIP solved with `objective_bound` set (in `highs.opt` or the solve's
+`solver_arguments`) gets a warning even when HiGHS reports it optimal: HiGHS
+treats the bound as a cutoff and reports the best solution within it as
+optimal, so it may not be the optimum. Remove `objective_bound` for a proven
+one.
 
 FlexTool reads how a solve ended from the solver's result file (HiGHS, Gurobi's
 JSON result, CPLEX) or from its console log (COPT, Xpress; Gurobi when it
@@ -765,7 +782,8 @@ writes a text result file). With COPT's log turned off (`Logging 0` or
 solve cannot be told from one stopped by a limit, so the run stops and says
 so: keep the log on (the shipped option files do). Xpress: FlexTool knows
 only its time limit and an unfinished solve, from the console and the print
-solution; another Xpress limit with a solution is not told apart.
+solution; another Xpress limit with a solution is not told apart (FlexTool's
+Xpress driver solves LPs only).
 
 FlexTool also stops a solver that has not finished well after its limit
 (after twice the limit plus 10 minutes), which only guards against a solver
@@ -808,8 +826,8 @@ each of its solves (polar-high 3.10.0 or later; with an older polar-high the
 thread count is not used while the regions run in parallel). A
 time limit (`--solver-time-limit`, or `time_limit` in `solver_arguments`)
 applies to each master and region solve separately, not to the whole
-decomposition. A master or region solve that stops at its limit stops the run
-(see "Time limit" above).
+decomposition. A master or region solve that stops at any limit stops the run
+(see "Time and other limits" above).
 
 ## Verifying which solvers are installed
 

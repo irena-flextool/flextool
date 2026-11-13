@@ -1561,11 +1561,21 @@ gap `1e-2` (the same order as the `mip_rel_gap` models routinely accept).
 The dual side is judged by the P-D gap only, so there is no dual ceiling.
 Each has a `FLEXTOOL_ACCEPT_*` env override; a set (positive)
 `FLEXTOOL_ACCEPT_PRIMAL_REL` replaces the derived relative ceiling outright.
-`FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0` restores the legacy hard-fail. A solve
+`FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0` restores the legacy hard-fail (a MIP kept at
+a limit included). A solve
 accepted above the former fixed `1e-6` prints the
 `acceptance_ceiling_follows_tolerance` behaviour-change notice. The subprocess/commercial path exposes no
-queryable handle, so `solve_diagnostics()` returns `None` and the solve is
-never near-optimal-accepted — it falls back to the strict `kOptimal` gate.
+queryable handle, so `solve_diagnostics()` returns `None` and the `kUnknown`
+check never applies; the result file's parsed status (`Solution.shim_status`)
+decides instead.
+
+A solve stopped by a search limit (time, work, node, leaf, solution-count,
+iteration) or at an objective target or bound, on any solver, goes through
+`_limit_verdict`: no feasible primal → reject; an LP → reject; a MIP → keep
+with a WARNING naming the stop, its option (`_LIMIT_OPTIONS`) and the gap
+(`Acceptance.limit_stopped`). A memory limit, an interrupt and the other
+uncertified statuses stay rejected. Benders master and region solves raise on
+any non-optimal status, outside this check.
 
 ## Test layout and fixture architecture
 

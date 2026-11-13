@@ -183,6 +183,54 @@ def test_save_memory_receives_the_same_options(options_db, tmp_path, monkeypatch
     _assert_expected(_opt_file_options(tmp_path / "save_memory"), "save_memory")
 
 
+@pytest.mark.parametrize("save_memory", ["0", "1"])
+def test_objective_bound_check_sees_every_layer(options_db, tmp_path, monkeypatch, caplog, save_memory) -> None:
+    """Item 246: the HiGHS ``objective_bound`` check of an optimal solve gets the solve's whole option set (here
+    ``solver_arguments`` and ``highs.opt``), in-process and with ``--save-memory``, and its warning is logged as
+    a WARNING."""
+    import logging
+
+    from flextool.engine.solve import _orchestration
+
+    seen: list[dict] = []
+
+    def recorder(sol, solve_name, solver_options):
+        seen.append(dict(solver_options or {}))
+        return f"objective_bound check of {solve_name}"
+
+    monkeypatch.setattr(_orchestration, "highs_objective_bound_warning", recorder)
+    monkeypatch.setenv("FLEXTOOL_SAVE_MEMORY", save_memory)
+    url, cfg = options_db
+    with caplog.at_level(logging.WARNING):
+        _run(url, cfg, tmp_path / "run", warm=True)
+    assert seen and all(_norm(o.get("presolve")) == "off" and _norm(o.get("solver")) == "simplex" for o in seen)
+    assert [r.levelno for r in caplog.records if r.getMessage().startswith("objective_bound check of")] == (
+        [logging.WARNING] * len(seen))
+
+
+def test_a_kept_limit_stopped_solve_is_logged_as_a_warning(options_db, tmp_path, monkeypatch, caplog) -> None:
+    """Item 246: the warning of a solve kept at a limit reaches the run's log as a WARNING (the runner's own
+    logger is held at ERROR during the cascade, so it must not go there)."""
+    import dataclasses
+    import logging
+
+    from flextool.engine.solve import _orchestration
+
+    real = _orchestration.classify_acceptance
+
+    def kept_at_a_limit(sol, *, ranges_post, solve_name):
+        acc = real(sol, ranges_post=ranges_post, solve_name=solve_name)
+        return dataclasses.replace(acc, near_optimal=True, limit_stopped=True, message=f"kept at a limit: {solve_name}")
+
+    monkeypatch.setattr(_orchestration, "classify_acceptance", kept_at_a_limit)
+    monkeypatch.delenv("FLEXTOOL_SAVE_MEMORY", raising=False)
+    url, cfg = options_db
+    with caplog.at_level(logging.WARNING):
+        _run(url, cfg, tmp_path / "run", warm=True)
+    levels = [r.levelno for r in caplog.records if r.getMessage().startswith("kept at a limit: ")]
+    assert levels and set(levels) == {logging.WARNING}
+
+
 def test_save_memory_child_gets_the_thread_budget(options_db, tmp_path, monkeypatch) -> None:
     """The ``--save-memory`` child solve gets the run's budget as ``--threads`` (it sizes the child's polars pool
     before polars is imported) and HiGHS ``threads`` in its options file."""

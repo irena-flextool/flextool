@@ -438,19 +438,19 @@ _COPT_LP_ITER_LIMIT_LOG = "Solving unfinished\nStatus: IterLimit  Objective: 0.0
 
 
 @pytest.mark.parametrize("log, status, gap", [
-    (_COPT_MIP_NODE_LIMIT_LOG, "NODE_LIMIT", None),
+    (_COPT_MIP_NODE_LIMIT_LOG, "NODE_LIMIT", 1.0),
     (_COPT_MIP_NODE_LIMIT_LOG.replace("(node limit reached)", "(interrupted by user)"), "INTERRUPTED", None),
     (_COPT_MIP_NODE_LIMIT_LOG.replace("(node limit reached)", "(something new)"), "STOPPED", None),
     (_COPT_MIP_TIME_LIMIT_LOG, "TIME_LIMIT", 1.0),
     (_COPT_MIP_SOLVED_LOG, "OPTIMAL", None),
-    (_COPT_LP_ITER_LIMIT_LOG, "ITERATION_LIMIT", None),
+    (_COPT_LP_ITER_LIMIT_LOG, "ITERATION_LIMIT", None),   # the LP log has no gap line
     (_COPT_LP_ITER_LIMIT_LOG.replace("IterLimit", "Numerical"), "NUMERICAL", None),
     ("", "NO_STATUS", None),   # Logging 0: the log says nothing
 ])
 def test_copt_status_with_a_solution_comes_from_its_log(log, status, gap, tmp_path: Path) -> None:
     """Review L2-2: only ``MIP status : solved`` / ``Status: Optimal`` is optimal; every other limit or an
-    interrupt is named (and rejected), only a time limit keeps a MIP solution, and values with no status in the
-    log are ``NO_STATUS``."""
+    interrupt is named, a limit's gap is read from the log (a MIP at a search limit keeps its solution, item 246),
+    and values with no status in the log are ``NO_STATUS``."""
     from flextool.engine.solve._subprocess_solve import _parse_copt_sol
 
     sol = tmp_path / "mip.sol"
@@ -459,8 +459,13 @@ def test_copt_status_with_a_solution_comes_from_its_log(log, status, gap, tmp_pa
     assert (parsed.status, parsed.primal, parsed.mip_gap) == (status, {"C0000001": 1.0, "C0000002": 0.0}, gap)
 
 
-def test_copt_mip_at_a_node_limit_is_rejected_naming_it(tmp_path: Path) -> None:
+def test_copt_mip_at_a_node_limit_keeps_its_solution_naming_it(tmp_path: Path) -> None:
+    """Item 246: a COPT MIP stopped by its node limit keeps its solution with a warning naming the limit, COPT's
+    NodeLimit and the log's gap; an LP at its iteration limit stops the run (COPT's option is not verified, so
+    the message names the solver's own parameter)."""
     from types import SimpleNamespace
+
+    import polars as pl
 
     from flextool.engine.solve._acceptance import classify_acceptance
     from flextool.engine.solve._subprocess_solve import _parse_copt_sol
@@ -468,9 +473,22 @@ def test_copt_mip_at_a_node_limit_is_rejected_naming_it(tmp_path: Path) -> None:
     sol_file = tmp_path / "mip.sol"
     sol_file.write_text("# Objective value 1\nC0000001  1\n")
     parsed = _parse_copt_sol(sol_file, _COPT_MIP_NODE_LIMIT_LOG)
-    sol = SimpleNamespace(optimal=False, shim_status=parsed.status, shim_mip_gap=parsed.mip_gap, _vars={})
+    assert (parsed.status, parsed.mip_gap) == ("NODE_LIMIT", 1.0)
+    mip_vars = {"u": SimpleNamespace(integer=True, frame=pl.DataFrame({"col_id": [0]}))}
+    sol = SimpleNamespace(optimal=False, shim_status=parsed.status, shim_mip_gap=parsed.mip_gap, _vars=mip_vars,
+                          shim_solver="copt", shim_primal_feasible=True)
     acc = classify_acceptance(sol, ranges_post=None, solve_name="unit")
-    assert not acc.accepted and "(solver status NODE_LIMIT)" in acc.message
+    assert acc.accepted and acc.limit_stopped and acc.model_status == "kSolutionLimit", acc
+    assert "stopped at its node limit" in acc.message and "(COPT NodeLimit, in the solver's option file" in acc.message
+    assert "(relative MIP gap 100.0000%)" in acc.message
+
+    lp = _parse_copt_sol(sol_file, _COPT_LP_ITER_LIMIT_LOG)
+    lp_sol = SimpleNamespace(optimal=False, shim_status=lp.status, shim_mip_gap=lp.mip_gap, _vars={},
+                             shim_solver="copt", shim_primal_feasible=True)
+    rejected = classify_acceptance(lp_sol, ranges_post=None, solve_name="unit")
+    assert not rejected.accepted and rejected.model_status == "kIterationLimit"
+    assert "it is a linear problem" in rejected.message
+    assert "(the solver's own iteration limit parameter)" in rejected.message
 
 
 _RECORDING_SOLVER = """\

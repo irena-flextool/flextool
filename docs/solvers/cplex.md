@@ -114,9 +114,10 @@ The error messages below are what FlexTool surfaces as `FlexToolUserError`.
   reported in the solver output; FlexTool does not check CPLEX's names. The
   names are in the IBM CPLEX parameters reference
   (<https://www.ibm.com/docs/en/icos/22.1.0?topic=cplex-list-parameters>).
-- **Time limit reached.** A MIP stopped at its time limit with a solution is
-  kept with a warning; an LP, or a MIP without a solution, stops the run. See
-  [Time limit](index.md#time-limit).
+- **Time or other limit reached.** A MIP stopped at its time, node or
+  solution limit with a solution is kept with a warning; an LP, or a MIP
+  without a solution, stops the run. See
+  [Time and other limits](index.md#time-and-other-limits).
 
 ## Licence holders and other programs in front of CPLEX
 

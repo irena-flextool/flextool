@@ -101,7 +101,7 @@ than code; the keyword set is `license`, `licence`, `oem`, `expired`,
   reported in the solver output; FlexTool does not check Xpress' names. The
   control names are in the Xpress Optimizer reference manual.
 - **Time limit reached.** An LP stopped at its time limit stops the run. See
-  [Time limit](index.md#time-limit).
+  [Time and other limits](index.md#time-and-other-limits).
 
 ## How to set it in FlexTool
 

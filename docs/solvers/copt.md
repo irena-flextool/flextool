@@ -95,9 +95,9 @@ documented as Gurobi's).
   `copt.lic` or setting `COPT_LICENSE_DIR`.
 - **Licence expired.** Same FlexTool message family with the vendor's
   expiry text. Renew through the Cardinal Operations licence portal.
-- **Time limit reached.** A MIP stopped at its time limit with a solution is
-  kept with a warning; an LP, or a MIP without a solution, stops the run. See
-  [Time limit](index.md#time-limit).
+- **Time or node limit reached.** A MIP stopped at its time or node limit
+  with a solution is kept with a warning; an LP, or a MIP without a solution,
+  stops the run. See [Time and other limits](index.md#time-and-other-limits).
 - **`copt_cmd` not on `PATH` (HiGHS-coexistence fallback).** FlexTool
   shows: *"Solver 'copt' returned an error: ..."* with the cause naming
   the missing binary. Add the COPT distribution's `bin` directory to

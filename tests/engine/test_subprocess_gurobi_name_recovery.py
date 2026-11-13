@@ -468,6 +468,7 @@ def test_real_commercial_solver_handles_spaces(
 
 import json  # noqa: E402
 import logging  # noqa: E402
+import re  # noqa: E402
 
 from flextool.cli.cmd_run_flextool import build_parser  # noqa: E402
 from flextool.engine.input._solve_config import SolverConfig  # noqa: E402
@@ -505,7 +506,7 @@ def test_gurobi_time_limit_from_the_console(tmp_path, monkeypatch) -> None:
     assert (sol.shim_status, sol.optimal) == ("TIME_LIMIT", False)
     assert sol.shim_mip_gap == pytest.approx(0.010101)
     acc = classify_acceptance(sol, ranges_post=None, solve_name="unit")
-    assert acc.accepted and acc.time_limited and "1.0101%" in acc.message
+    assert acc.accepted and acc.limit_stopped and "1.0101%" in acc.message
 
 
 def test_gurobi_without_the_time_limit_line_is_optimal(tmp_path, monkeypatch) -> None:
@@ -584,16 +585,62 @@ def test_gurobi_json_files_written_by_gurobi_parse() -> None:
     )
 
 
-def test_gurobi_text_result_with_another_limit_is_not_optimal(tmp_path, monkeypatch) -> None:
-    """A text result file with ``Node limit reached`` on the console is ``NODE_LIMIT``: rejected, by name."""
-    _gurobi(_write_fake_gurobi(tmp_path, _SOL_20, stdout="Node limit reached\nBest objective 2.0e+01\n"),
-            monkeypatch)
+def test_gurobi_text_result_with_another_limit_keeps_a_mip(tmp_path, monkeypatch) -> None:
+    """A text result file with ``Node limit reached`` on the console is ``NODE_LIMIT`` with the console's gap: a
+    MIP keeps the solution with a warning naming the limit, its option and the gap (item 246)."""
+    log = (
+        "Node limit reached\n"
+        "Best objective 2.000000000000e+01, best bound 1.900000000000e+01, gap 5.0000%\n"
+    )
+    _gurobi(_write_fake_gurobi(tmp_path, _SOL_20, stdout=log), monkeypatch)
     sol = _solve_commercial_subprocess(
         _mip_lp(["A", "B", "C"]), "gurobi", options=None, solve_name="unit", logger=None, work_folder=None,
     )
-    assert (sol.shim_status, sol.optimal) == ("NODE_LIMIT", False)
+    assert (sol.shim_status, sol.optimal, sol.shim_solver) == ("NODE_LIMIT", False, "gurobi")
+    assert sol.shim_mip_gap == pytest.approx(0.05)
     acc = classify_acceptance(sol, ranges_post=None, solve_name="unit")
-    assert not acc.accepted and "NODE_LIMIT" in acc.message
+    assert acc.accepted and acc.limit_stopped and acc.model_status == "kSolutionLimit", acc
+    assert "stopped at its node limit" in acc.message and "Gurobi NodeLimit" in acc.message
+    assert "(relative MIP gap 5.0000%)" in acc.message
+
+
+def _gurobi_json(status: int, *, with_vars: bool) -> str:
+    info = {"Status": status, "ObjVal": 20, "ObjBound": 19, "MIPGap": 0.05, "SolCount": int(with_vars)}
+    payload: dict = {"SolutionInfo": info}
+    if with_vars:
+        payload["Vars"] = [{"VarName": "C0000001", "X": 10}, {"VarName": "C0000002", "X": 5}]
+    return json.dumps(payload)
+
+
+@pytest.mark.parametrize(("status", "name", "model_status", "options"), [
+    (8, "NODE_LIMIT", "kSolutionLimit", "Gurobi NodeLimit"),
+    (10, "SOLUTION_LIMIT", "kSolutionLimit", "Gurobi SolutionLimit"),
+    (16, "WORK_LIMIT", "kTimeLimit", "Gurobi WorkLimit"),
+    (15, "USER_OBJ_LIMIT", "kObjectiveTarget", "Gurobi BestObjStop or BestBdStop"),
+])
+def test_gurobi_json_limit_with_a_solution_keeps_a_mip(status, name, model_status, options, tmp_path,
+                                                       monkeypatch) -> None:
+    _gurobi(_write_fake_gurobi(tmp_path, [_gurobi_json(status, with_vars=True)]), monkeypatch)
+    sol = _solve_commercial_subprocess(
+        _mip_lp(["A", "B", "C"]), "gurobi", options=None, solve_name="unit", logger=None, work_folder=None,
+    )
+    assert (sol.shim_status, sol.shim_mip_gap) == (name, pytest.approx(0.05))
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="unit")
+    assert acc.accepted and acc.limit_stopped and acc.model_status == model_status, acc
+    assert f"({options}, in the solver's option file" in acc.message and "5.0000%" in acc.message
+
+
+@pytest.mark.parametrize(("status", "reason"), [
+    (10, "stopped at its solution limit before finding a solution"),
+    (15, "stopped at its objective limit (BestObjStop or BestBdStop) before finding a solution"),
+    (6, "found no solution better than its objective cutoff (Cutoff)"),
+])
+def test_gurobi_json_stop_without_a_solution_names_it(status, reason, tmp_path, monkeypatch) -> None:
+    _gurobi(_write_fake_gurobi(tmp_path, [_gurobi_json(status, with_vars=False)]), monkeypatch)
+    with pytest.raises(RuntimeError, match=re.escape(reason)):
+        _solve_commercial_subprocess(
+            _mip_lp(["A", "B", "C"]), "gurobi", options=None, solve_name="unit", logger=None, work_folder=None,
+        )
 
 
 def test_gurobi_text_result_without_a_status_line_is_not_optimal(tmp_path, monkeypatch) -> None:

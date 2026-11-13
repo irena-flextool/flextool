@@ -115,9 +115,10 @@ the FlexTool log.
   [What the database may set](index.md#what-the-database-may-set).
   `ResultFile` is ignored everywhere (with a warning): FlexTool names its own
   result file and reads the solution from it.
-- **Time limit reached.** A MIP stopped at its time limit with a solution is
+- **Time or other limit reached.** A MIP stopped at its time, node,
+  solution or work limit, or at `BestObjStop` / `BestBdStop`, with a solution is
   kept with a warning that gives the gap reached; an LP, or a MIP without a
-  solution, stops the run. See [Time limit](index.md#time-limit).
+  solution, stops the run. See [Time and other limits](index.md#time-and-other-limits).
 
 ## How to set it in FlexTool
 

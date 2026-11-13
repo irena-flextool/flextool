@@ -76,8 +76,11 @@ Each line says what changes for a model that ran before and what to do; the deta
   all cores (`0`); the run prints a line when it replaces a value. A GUI run with `Threads 0` in `gurobi.opt` now uses
   1 thread: raise Threads per run. Without `--threads` and `FLEXTOOL_THREADS` the option file keeps it;
   per-algorithm thread controls (Xpress `BARTHREADS`, COPT `BarThreads`, ...) are not changed.
-- **At its time limit a MIP with a solution keeps it, with a warning; an LP or a solve without a solution stops the
-  run**, for every solver. A commercial solve stopped by another limit, or not certified optimal, now stops the run.
+- **At a search limit (time, node, solution, work or iteration) a MIP with a solution keeps it, with a warning
+  naming the limit, its option and the gap; an LP or a solve without a solution stops the run**, for every solver.
+  So does an objective target or bound the user set (HiGHS `objective_target`, Gurobi `BestObjStop`). A memory
+  limit, an interrupt, or a solve not certified optimal still stops the run. A HiGHS MIP solved with
+  `objective_bound` gets a warning that its "optimal" may not be optimal.
 - **Solver option files come from the run's `solver_config` folders, file by file** (`--solver-config-dir`, next to
   the database, the project, the workspace, ...), not from the folder FlexTool starts in. A GUI project can have its
   own `solver_config/`: its runs take each solver's option file from the project, else the workspace, else
@@ -778,8 +781,17 @@ Each line says what changes for a model that ran before and what to do; the deta
   the same for every solver (a Benders master or region solve stops the run at its limit, as before). Before,
   HiGHS and CPLEX stopped the run at the limit even with a usable MIP solution, so such runs now finish; Gurobi,
   COPT and Xpress reported a solve stopped at its time limit as optimal, without a word. A CPLEX, Gurobi or COPT
-  solve stopped by another limit (nodes, iterations, solutions, memory) or aborted was also reported optimal; it
-  now stops the run, naming the solver's status. So does a CPLEX solution "optimal with unscaled
+  solve stopped by another limit (nodes, iterations, solutions, memory) or aborted was also reported optimal. Now
+  a node, solution, work or iteration limit keeps a MIP solution like the time limit, with a warning naming the
+  limit, its option (e.g. Gurobi `NodeLimit`, HiGHS `mip_max_nodes`) and the gap, and stops an LP; a memory limit
+  or an abort stops the run, naming the solver's status. HiGHS's node, leaf and improving-solution limits (and the
+  same limits of a `--save-memory` solve) were rejected as an "unrecognised status"; they follow the same rule. A
+  MIP stopped at an objective target (HiGHS `objective_target`, Gurobi `BestObjStop` / `BestBdStop`) keeps its
+  solution with a warning too. A HiGHS MIP solved with `objective_bound` (from any option layer) gets a warning:
+  HiGHS treats the bound as a cutoff and reports the best solution within it as optimal, so it may not be. The
+  warning of a solve kept at a limit now reaches the run log (before, it was dropped). A `--save-memory` solve
+  stopped by a limit before it found a solution is recorded as stopped at a limit in the run record (before, as not
+  certified). So does a CPLEX solution "optimal with unscaled
   infeasibilities" or with an "optimal face unbounded", which is not a certified optimum, and a COPT solve (or a
   Gurobi one with a text result file) whose log is turned off, since how it ended cannot be read.
 - **HiGHS's time-limit warning names the MIP gap** with `--save-memory`, as the commercial solvers' does; before,
@@ -831,7 +843,8 @@ Each line says what changes for a model that ran before and what to do; the deta
   integer parameter can refuse `4.0`: the Xpress library does.
 - **A COPT solve stopped by a limit, or infeasible,** without a solution was reported as a licence error under
   COPT's size-limited licence, or as a missing solution file; it now names the limit (or the infeasibility).
-  With a solution, a COPT solve stopped by any limit but the time limit is no longer taken as optimal.
+  With a solution, a COPT solve stopped by a limit is no longer taken as optimal: a MIP at its node limit keeps
+  the solution with a warning, as at its time limit; an LP at its iteration limit stops the run.
 - **A CPLEX solve stopped at its time limit without a solution** stopped the run with "no solution file"; it now
   says the solve stopped at its time limit.
 - **A work folder with a space in its name** broke CPLEX, Xpress and COPT runs (FlexTool wrote the file paths

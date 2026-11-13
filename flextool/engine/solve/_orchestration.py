@@ -59,7 +59,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from flextool import run_record
-from flextool.engine.solve._acceptance import classify_acceptance
+from flextool.engine.solve._acceptance import (
+    classify_acceptance,
+    highs_objective_bound_warning,
+)
 from flextool.run_options import RunOptions
 from flextool._thread_budget import highs_thread_options
 from flextool.engine.solve._handoff import SolveHandoff
@@ -3872,9 +3875,12 @@ def _drive_cascade(
                 # The cache is keyed on the exact name set, so a roll is
                 # warm-started only from the same roll of an earlier run,
                 # never from the previous roll (whose labels differ).
-                # Capture failure is non-fatal (log + continue).
+                # Capture failure is non-fatal (log + continue).  Only an
+                # optimal solve's basis is a seed: a solve stopped by a limit
+                # (kept or rejected by the acceptance check below) is not.
                 if (
                     did_fresh_build
+                    and sol.optimal
                     and fresh_fp
                     and _basis_cache_active(
                         state.solve.decomposition_for(base_solve_name),
@@ -4369,10 +4375,21 @@ def _drive_cascade(
                 if _acc.scaling_hint:
                     print(_acc.scaling_hint, flush=True)
                 return 1
-            if _acc.time_limited:
-                self.state.logger.warning(_acc.message)
+            # The two warnings below go to this module's logger: the runner's
+            # own (``self.state.logger``) is held at ERROR during the cascade,
+            # so a warning there never reaches the run's output.
+            if _acc.limit_stopped:
+                logging.getLogger(__name__).warning(_acc.message)
             elif _acc.near_optimal:
                 self.state.logger.info(_acc.message)
+            if _active_solver_cfg.name == "highs" and _acc.model_status == "kOptimal":
+                # A HiGHS MIP treats ``objective_bound`` as a cutoff and calls
+                # the best solution within it optimal.
+                _bound_warning = highs_objective_bound_warning(
+                    sol, complete_solve_name, highs_options,
+                )
+                if _bound_warning is not None:
+                    logging.getLogger(__name__).warning(_bound_warning)
             if _acc.above_fixed_ceiling:
                 from flextool.engine import _behaviour_changes
                 _behaviour_changes.notice(
