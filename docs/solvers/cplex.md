@@ -120,8 +120,8 @@ On the `solve` entity:
 solve_advanced.solver         = "cplex"
 solve_advanced.solver_mip_gap = 0.01
 solve_advanced.solver_arguments:
-  lpmethod   = 4
-  preind     = 1
+  lpmethod                = 4
+  preprocessing presolve  = 1
 ```
 ```bash
 flextool <input_db_url> --solver-time-limit 60 --solver-mip-gap 0.001

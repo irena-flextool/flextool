@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, NamedTuple
 
 from flextool.engine.input._solve_config import SolverConfig
+from flextool.engine.solve._solver_catalogue import commercial_option_key
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -755,28 +756,6 @@ class CommercialOption(NamedTuple):
     name: str
     value: str
     layer: str
-
-
-def commercial_option_key(solver: str, name: str) -> str:
-    """The comparison key of a commercial parameter name: one key for every spelling the solver reads as the
-    same parameter, so that the file-path filter and the merge of the layers match what the solver does.
-
-    Every solver: case-folded, runs of whitespace collapsed.  CPLEX: ``.`` read as a space.  Gurobi: ``_``
-    after the first character removed (the Gurobi library (``GRBsetparam``, 13.0.2) reads ``Log_File``,
-    ``LOG_FILE`` and ``M_I_P_Gap`` as ``LogFile`` / ``MIPGap``, but refuses a leading ``_``; it ignores no
-    other character).  Xpress: one leading ``xprs_`` removed (the library's control lookup, xpress 46.01.02,
-    reads ``XPRS_MAXTIME`` / ``xprs_maxtime`` as ``MAXTIME``, but not ``XPRS_XPRS_MAXTIME`` or ``XPRSMAXTIME``).
-    COPT (coptpy 8.0.4) only ignores case; HiGHS names are exact.
-    """
-    key = str(name).strip()
-    if solver == "cplex":
-        key = key.replace(".", " ")
-    key = " ".join(key.split()).casefold()
-    if solver == "gurobi":
-        key = key[:1] + key[1:].replace("_", "")
-    elif solver == "xpress" and key.startswith("xprs_"):
-        key = key[len("xprs_"):]
-    return key
 
 
 def _native_value(solver: str, knob: str, value: object) -> str:

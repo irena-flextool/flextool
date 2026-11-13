@@ -304,6 +304,9 @@ exclude = ["flextool*.__pycache__"]
 #   * solver_config/*.opt.template      — solver options templates (HiGHS + the
 #                                         commercial solvers; seeded into
 #                                         solver_config/<solver>.opt on first run)
+#   * engine/solve/solver_catalogue/*.json — every parameter of each solver and what the
+#                                         input database may do with it (item 240 B1;
+#                                         written by tools/solver_catalogue.py)
 #   * export_to_tabular/*.yaml          — export settings (sheet config etc.)
 #   * process_inputs/*.json             — old-Excel/CSV import spec
 #                                         (import_old_excel_input.json), loaded by
@@ -327,6 +330,7 @@ flextool = [
     "schemas/canonical_databases/*.json",
     "schemas/pre_v26/*.json",
     "solver_config/*.opt.template",
+    "engine/solve/solver_catalogue/*.json",
     "export_to_tabular/*.yaml",
     "process_inputs/*.json",
     "assistant/_docs/md/*.md",
