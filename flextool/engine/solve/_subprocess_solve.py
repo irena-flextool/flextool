@@ -67,12 +67,13 @@ import os
 import queue
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping, NamedTuple, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, NamedTuple, Sequence
 
 import numpy as np
 
@@ -139,7 +140,7 @@ def _run_cold_probe(
     probe_stats: Path,
     logger: logging.Logger | None,
     threads: int | None = None,
-) -> float | None:
+) -> tuple[float | None, bool]:
     """Spawn a throwaway COLD child solve purely to measure its wall time.
 
     Used by the first-transfer A/B gate (see :data:`_WARM_AB_MARGIN`).
@@ -147,11 +148,17 @@ def _run_cold_probe(
     ``--solution`` and ``--stats`` and NO ``--warm-basis`` — a pure cold
     reference solve.  Its solution is discarded; only ``run_time`` matters.
 
-    Returns the cold ``run_time`` in seconds, or ``None`` when the probe
-    could not run or produced no usable time (caller then skips gating).
+    Returns ``(run_time, ended)``: the cold ``run_time`` in seconds, or
+    ``None`` when the probe could not run or produced no usable time; and
+    whether the probe child ran to its end (exit code 0 or 1).  A probe
+    stopped by a signal or crashed (any other exit code) is not a
+    measurement: the caller records no verdict, so the family is probed
+    again.  The probe's own files are removed first, so an earlier run's
+    stats in the persistent work folder are never read as this probe's.
     Fully defensive — never raises.
     """
     try:
+        _remove_old_results([probe_sol, probe_stats])
         probe_cmd = [
             *python_module_argv("flextool.cli.cmd_solve_mps"),
             "--mps", str(mps_path),
@@ -161,18 +168,63 @@ def _run_cold_probe(
         ]
         if threads is not None:
             probe_cmd += ["--threads", str(threads)]
-        subprocess.run(probe_cmd, env=child_env())
+        cp = subprocess.run(probe_cmd, env=child_env())
+        if cp.returncode not in (0, 1):
+            if logger is not None:
+                logger.warning(
+                    "save_memory: the cold A/B probe %s",
+                    _describe_child_exit(cp.returncode),
+                )
+            return None, False
         if not probe_stats.exists():
-            return None
+            return None, True
         pstats = json.loads(probe_stats.read_text())
         rt = pstats.get("run_time")
         if rt is None:
-            return None
-        return float(rt)
+            return None, True
+        return float(rt), True
     except Exception as exc:  # noqa: BLE001 - probe is measurement-only
         if logger is not None:
             logger.debug("save_memory: cold A/B probe failed (%s)", exc)
-        return None
+        return None, True
+
+
+def _remove_old_results(paths: Iterable[Path | None]) -> None:
+    """Remove result files an earlier run may have left, just before a solver starts.
+
+    The work folder (``<work>/solve_data/subprocess``) persists across runs and
+    same-named solves.  A solver that ends without writing its result (killed,
+    crashed, infeasible with no file, a wrapper that exits 0) must not have an
+    earlier run's file read as this solve's.  A file that cannot be removed
+    stops the solve: reading it afterwards would be exactly that mistake.
+    """
+    for path in paths:
+        if path is None:
+            continue
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise RuntimeError(
+                f"could not remove the result file {path} left by an earlier "
+                f"run ({exc}); remove it, or close the program holding it, "
+                f"and start the run again"
+            ) from exc
+
+
+def _describe_child_exit(returncode: int) -> str:
+    """How a child process ended, for an error message: the signal that stopped it
+    (POSIX: a negative exit code), a Windows status code in hex, else the exit code."""
+    if returncode < 0:
+        try:
+            name = signal.Signals(-returncode).name
+        except ValueError:
+            name = f"signal {-returncode}"
+        hint = " (often the out-of-memory killer)" if name == "SIGKILL" else ""
+        return f"was stopped by {name}{hint}"
+    if returncode > 0xFFFF:
+        # A Windows status such as 0xC0000005 (access violation) or 0xC0000409 (abort).
+        return f"failed with exit code 0x{returncode:08X}"
+    return f"failed with exit code {returncode}"
 
 
 # ---------------------------------------------------------------------------
@@ -1982,6 +2034,7 @@ def _solve_highs_subprocess(
     warm_abtested_marker: Path | None = None
     warm_first_transfer = False
     warm_cold_time: float | None = None
+    warm_probe_ended = True
     warm_run_time: float | None = None
 
     try:
@@ -2077,7 +2130,7 @@ def _solve_highs_subprocess(
                             warm_probe_stats = (
                                 out_dir / f"{safe_name}.probe.stats.json"
                             )
-                            warm_cold_time = _run_cold_probe(
+                            warm_cold_time, warm_probe_ended = _run_cold_probe(
                                 mps_path=mps_path,
                                 options_json=options_json,
                                 probe_sol=warm_probe_sol,
@@ -2114,10 +2167,36 @@ def _solve_highs_subprocess(
             logger.info(
                 "save_memory: spawning subprocess HiGHS for %r", solve_name,
             )
-        # The work folder persists across runs and same-named solves: a gap file left by an earlier one must
-        # not be named as this solve's gap when the child writes none (its write is best-effort).
-        gap_path.unlink(missing_ok=True)
+        # The work folder persists across runs and same-named solves: a solution, gap or stats file left by an
+        # earlier one must not be read as this solve's when the child writes none (killed, crashed; the gap
+        # write is best-effort).
+        _remove_old_results([sol_path, gap_path, warm_stats_path])
         cp = subprocess.run(cmd, env=child_env())
+        # Exit 0 is optimal and 1 not optimal (``cmd_solve_mps``); any other code is a crash or a signal
+        # (POSIX: negative).  Exit 1 is also an uncaught exception in the child, and on Windows a
+        # ``taskkill /F`` / Task Manager stop: without a solution file it is a failure too.  Checked before
+        # the warm-start steps, so a stopped run neither publishes a basis nor records an A/B verdict.
+        if cp.returncode not in (0, 1):
+            failure = _describe_child_exit(cp.returncode)
+        elif not sol_path.is_file():
+            failure = (
+                f"ended without writing a solution (it crashed or was stopped; exit code {cp.returncode})"
+            )
+        else:
+            failure = None
+        if failure is not None:
+            if warm_tmp_bas is not None:
+                try:
+                    warm_tmp_bas.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            kept = (
+                f"MPS+options preserved at {out_dir} for inspection" if not cleanup
+                else "its temporary files are removed"
+            )
+            raise RuntimeError(
+                f"the HiGHS child (--save-memory) for solve {solve_name!r} {failure}; {kept}"
+            )
         optimal = cp.returncode == 0
 
         # --- Warm-start publish + measurement ---------------------------
@@ -2174,7 +2253,15 @@ def _solve_highs_subprocess(
         # disables presolve, so compare wall times: keep injecting only
         # when warm is within (1 + margin) of cold, else mark ``.nowarm``.
         # No usable timing → trust warm and stop re-probing (``.abtested``).
-        if warm_first_transfer:
+        if warm_first_transfer and not warm_probe_ended:
+            # The cold probe was stopped or crashed: no measurement, so no
+            # verdict; the next solve of this family probes again.
+            if logger is not None:
+                logger.warning(
+                    "save_memory: the cold A/B probe for %s did not finish — "
+                    "no warm-start verdict recorded", fp,
+                )
+        elif warm_first_transfer:
             try:
                 cold_t = warm_cold_time
                 warm_t = warm_run_time
@@ -2212,12 +2299,6 @@ def _solve_highs_subprocess(
                         "save_memory: warm-start A/B gating failed (%s) — "
                         "no verdict recorded", exc,
                     )
-        if cp.returncode > 1:
-            raise RuntimeError(
-                f"subprocess HiGHS for solve {solve_name!r} failed with "
-                f"exit code {cp.returncode}; MPS+options preserved at "
-                f"{out_dir} for inspection"
-            )
         if logger is not None:
             logger.info(
                 "save_memory: subprocess complete (exit=%d, optimal=%s); "
@@ -2479,6 +2560,14 @@ def _solve_commercial_subprocess(
             print(running, flush=True)
         elif logger is not None:
             logger.info("%s", running)
+        # An earlier run's result in the persistent work folder must not be read as this solve's when the
+        # solver writes none (CPLEX or COPT without a solution, a crash or a wrapper that exits 0).  Every
+        # name a parser probes: Xpress appends ``.slx`` / ``.prt`` to the base name, or replaces its suffix.
+        _remove_old_results([
+            sol_path,
+            Path(str(sol_path) + ".slx"), Path(str(sol_path) + ".prt"),
+            sol_path.with_suffix(".slx"), sol_path.with_suffix(".prt"),
+        ])
         run = _run_solver_process(
             argv, stdin_text=stdin_text, cwd=out_dir, watchdog=watchdog, echo=echo,
             log_path=log_path, logger=logger, label=f"{display} ({binary}){via}",

@@ -553,6 +553,31 @@ def test_mip_at_a_node_limit_keeps_the_solution(solver, shim, tmp_path) -> None:
     assert f"(relative MIP gap {call['mip_gap']:.4%})" in acc.message, acc.message
 
 
+def test_an_infeasible_solve_after_a_solved_one_never_returns_the_earlier_result(solver, shim, tmp_path) -> None:
+    """Item 247 class: the work folder persists, so solve ``s`` leaves its result file there.  The next run's
+    ``s`` is infeasible (``x <= 10``, ``x == 15``): CPLEX says ``No solution exists`` and writes no file (exit 0),
+    COPT writes none; the run must stop, never return the earlier run's solution (objective 20).  Gurobi writes
+    a fresh JSON result with the infeasible status: ``is infeasible``."""
+    from flextool.engine.input._solve_config import SolverConfig
+    from flextool.engine.solve._solver_dispatch import FlexToolUserError, run_one_solve
+    from tests.engine.test_subprocess_gurobi_name_recovery import _cost_lp
+
+    cfg = _cfg(tmp_path, solver, f"{THREADS[solver]} 1\n")
+    kwargs = dict(solve_name="s", work_folder=tmp_path / "w", run_options=_run_options("unused.sqlite"),
+                  solver_config_dir=cfg)
+    first = run_one_solve(_cost_lp(["a", "b", "c"]), SolverConfig(name=solver), **kwargs)
+    assert first.optimal and first.obj == pytest.approx(20.0)
+    result = tmp_path / "w" / "solve_data" / "subprocess" / ("s.json" if solver == "gurobi" else "s.sol")
+    if solver != "xpress":
+        assert result.is_file()
+    reason = "produced no solution file" if solver in ("cplex", "xpress") else "is infeasible"
+    with pytest.raises(FlexToolUserError, match=reason):
+        run_one_solve(_cost_lp(["a"]), SolverConfig(name=solver), **kwargs)
+    assert len(_calls(shim)) == 2
+    if solver in ("cplex", "copt"):
+        assert not result.exists(), "the earlier run's result file is still there"
+
+
 # ---------------------------------------------------------------------------
 # The option-file folder: a run from another folder
 # ---------------------------------------------------------------------------

@@ -809,6 +809,20 @@ Each line says what changes for a model that ran before and what to do; the deta
   it pointed to the solver log. An in-process HiGHS solve names it too once a polar-high release newer than 3.12.4
   is installed (one whose `SolveDiagnostics` has `mip_gap`); with 3.12.4 it still points to the solver log. A gap
   below 0.01 % is printed with significant digits instead of as `0.0000%`.
+- **A `--save-memory` HiGHS solve that is killed stops the run with an error naming the cause** (item 247). A solve
+  process stopped by a signal, such as SIGKILL from the out-of-memory killer, went on to read its solution file and
+  failed with a raw "file not found", or read the solution an earlier run of the same solve had left in the work
+  folder. Now the error names the signal (a Windows status code in hex) and the folder that keeps the model file.
+  A process that ends with exit code 1 and no solution file (an error inside it, or on Windows `taskkill` or the
+  Task Manager) gets the error "ended without writing a solution". Such a stopped solve no longer records a
+  warm-start verdict (`--warm-start`): before, a killed first warm solve was recorded as "warm start helps" for
+  good; a killed cold timing solve now leaves the verdict to the next solve.
+- **A solver that writes no solution no longer gets the previous run's solution.** The work folder
+  (`solve_data/subprocess`) keeps each solve's result file between runs. A commercial solver that ended without
+  writing one (CPLEX "No solution exists" for an infeasible model, COPT without a solution, a crash or a solver
+  wrapper that exits 0) had the earlier run's file of the same solve read as this solve's answer, possibly as
+  optimal. The result files of a solve are now removed just before its solver starts, for HiGHS with
+  `--save-memory` as well.
 - **Solver option files come from one `solver_config` folder chosen per run**, no longer from the folder
   FlexTool is started from: `--solver-config-dir` (new) or `FLEXTOOL_SOLVER_CONFIG_DIR`, else `solver_config/`
   next to the input database or in the workspace of a GUI project database, else the Spine Toolbox project

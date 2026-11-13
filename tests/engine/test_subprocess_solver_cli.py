@@ -538,3 +538,129 @@ def test_a_work_folder_with_a_space_reaches_the_solver_as_bare_file_names(solver
         # Review F7: the script is kept next to the MPS for a replay by hand.
         assert (out_dir / "y2020_dispatch.script").read_text() == got["stdin"]
     assert "my runs" not in json.dumps(got["argv"]) + got["stdin"]
+
+
+# ---------------------------------------------------------------------------
+# Item 247: a stopped child and an earlier run's result files
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("returncode, expected", [
+    (-9, "was stopped by SIGKILL (often the out-of-memory killer)"),
+    (-15, "was stopped by SIGTERM"),
+    (0xC0000409, "failed with exit code 0xC0000409"),
+    (7, "failed with exit code 7"),
+])
+def test_a_child_exit_is_described_by_its_signal_or_code(returncode: int, expected: str) -> None:
+    """POSIX gives a signal as a negative exit code; Windows status codes read in hex."""
+    from flextool.engine.solve._subprocess_solve import _describe_child_exit
+
+    if returncode < 0 and sys.platform == "win32":
+        pytest.skip("POSIX signals")
+    assert _describe_child_exit(returncode) == expected
+
+
+def _solved_once(work: Path):
+    """Solve the tiny cost LP through the real HiGHS child in *work*: its ``s.sol`` stays there (objective 20)."""
+    from flextool.engine.solve._subprocess_solve import solve_via_subprocess
+    from tests.engine.test_subprocess_gurobi_name_recovery import _cost_lp
+
+    sol = solve_via_subprocess(_cost_lp(["a", "b", "c"]), "highs", None, solve_name="s", work_folder=work)
+    assert sol.optimal and sol.obj == pytest.approx(20.0)
+    stale = work / "solve_data" / "subprocess" / "s.sol"
+    assert stale.is_file()
+    return stale
+
+
+def _fake_child(monkeypatch, returncode: int) -> list[list[str]]:
+    """Replace the HiGHS child with one that writes nothing and ends with *returncode*."""
+    import subprocess
+
+    from flextool.engine.solve import _subprocess_solve as sps
+
+    calls: list[list[str]] = []
+
+    def run(cmd, *args, **kwargs):
+        calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, returncode)
+
+    monkeypatch.setattr(sps.subprocess, "run", run)
+    return calls
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_a_highs_child_stopped_by_a_signal_is_named_and_the_old_solution_is_not_read(tmp_path: Path,
+                                                                                      monkeypatch) -> None:
+    """Item 247: a ``--save-memory`` child killed by SIGKILL (exit -9) stops the run with an error naming the
+    signal and the preserved folder; an earlier run's ``.sol`` of the same solve is neither read nor kept."""
+    from flextool.engine.solve._subprocess_solve import solve_via_subprocess
+    from tests.engine.test_subprocess_gurobi_name_recovery import _cost_lp
+
+    work = tmp_path / "work"
+    stale = _solved_once(work)
+    calls = _fake_child(monkeypatch, -9)
+    with pytest.raises(RuntimeError) as err:
+        solve_via_subprocess(_cost_lp(["a", "b"], [5.0, 6.0]), "highs", None, solve_name="s", work_folder=work)
+    assert len(calls) == 1
+    assert "SIGKILL" in str(err.value) and "out-of-memory" in str(err.value)
+    assert str(stale.parent) in str(err.value)
+    assert not stale.exists()
+
+
+def test_a_highs_child_ending_with_exit_1_and_no_solution_is_an_error(tmp_path: Path, monkeypatch) -> None:
+    """Review M1-1: exit 1 is also an uncaught exception in the child and, on Windows, ``taskkill /F``.  Without
+    a solution file it stops the run with a clear error, never a raw FileNotFoundError and never the earlier
+    run's ``.sol`` (objective 20) as this solve's answer."""
+    from flextool.engine.solve._subprocess_solve import solve_via_subprocess
+    from tests.engine.test_subprocess_gurobi_name_recovery import _cost_lp
+
+    work = tmp_path / "work"
+    stale = _solved_once(work)
+    _fake_child(monkeypatch, 1)
+    with pytest.raises(RuntimeError, match="ended without writing a solution") as err:
+        solve_via_subprocess(_cost_lp(["a", "b"], [5.0, 6.0]), "highs", None, solve_name="s", work_folder=work)
+    assert not isinstance(err.value, FileNotFoundError)
+    assert "exit code 1" in str(err.value)
+    assert not stale.exists()
+
+
+_SILENT_SOLVER = """\
+#!{py}
+import sys
+sys.stdin.read()
+"""
+
+#: An earlier run's OPTIMAL result of solve ``probe``, as each solver writes it (objective 123).
+_STALE_RESULTS = {
+    "gurobi": {"probe.json": '{"SolutionInfo": {"Status": 2, "ObjVal": 123.0, "SolCount": 1}, '
+                             '"Vars": [{"VarName": "C0000001", "X": 0.7}, {"VarName": "C0000002", "X": 0.3}]}'},
+    "xpress": {"probe.sol.slx": "NAME probe\n C C0000001 0.7\n C C0000002 0.3\nENDATA\n",
+               "probe.sol.prt": "Optimal solution found\nObjective function value is 123\n"},
+}
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the solver stub is a POSIX shebang script")
+@pytest.mark.parametrize("solver", sorted(_STALE_RESULTS))
+def test_a_solver_that_exits_0_without_a_result_never_gets_an_earlier_runs_file(solver: str, tmp_path: Path,
+                                                                                monkeypatch) -> None:
+    """A solver program (or a wrapper) that exits 0 and writes nothing, with an OPTIMAL result of an earlier run
+    of the same solve in the work folder: the run stops with the no-solution error.  (Before the fix: OPTIMAL,
+    objective 123, the earlier run's values.)"""
+    import stat
+
+    from flextool.engine.solve import _subprocess_solve as sps
+    from tests.engine.test_subprocess_gurobi_name_recovery import _cost_lp
+
+    stub = tmp_path / "solver_stub"
+    stub.write_text(_SILENT_SOLVER.format(py=sys.executable))
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setattr(sps, "_find_solver_binary", lambda name: stub)
+    work = tmp_path / "work"
+    out_dir = work / "solve_data" / "subprocess"
+    out_dir.mkdir(parents=True)
+    for name, text in _STALE_RESULTS[solver].items():
+        (out_dir / name).write_text(text)
+    with pytest.raises(RuntimeError, match="produced no solution file we could parse"):
+        sps._solve_commercial_subprocess(_cost_lp(["a", "b"]), solver, None, solve_name="probe", logger=None,
+                                         work_folder=work)
+    assert not any((out_dir / name).exists() for name in _STALE_RESULTS[solver])
