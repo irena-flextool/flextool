@@ -112,8 +112,8 @@ Each line says what changes for a model that ran before and what to do; the deta
   only a plain file name, written in the solve's work folder (`<work folder>/solve_data/subprocess/`), and not the
   name of a file that a solver reads by itself from that folder (`gurobi.env`, a licence file such as `*.lic`,
   COPT's `license.dat` / `license.key` / `client.ini`, Xpress's `xpauth.xpr` / `nethasp.ini`); a full path,
-  a Gurobi Compute Server, Cloud, WLS, token-server or licence option, and an Xpress remote-solving control
-  (`COMPUTE...`), is refused with a message naming the option, its value and the solve. Move such options to `solver_config/<solver>.opt`: the option files, flags and
+  a Gurobi Compute Server, Cloud, WLS, token-server or licence option, an Xpress remote-solving control
+  (`COMPUTE...`), and a `/`, `\` or `:` in a text parameter that names no file (CPLEX `cpumask`), is refused with a message naming the option, its value and the solve. Move such options to `solver_config/<solver>.opt`: the option files, flags and
   environment variables keep full paths and server options. Names are matched as the solver reads them (Gurobi
   ignores `_`, Xpress an `XPRS_` prefix, CPLEX reads `.` as a space); the full list is in the solver docs. Gurobi's
   `ResultFile` is FlexTool's own and is ignored, with a warning, wherever it is set. FlexTool's results are in

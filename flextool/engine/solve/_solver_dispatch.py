@@ -522,6 +522,14 @@ def check_database_solver_option(
             + ". "
             + _remove(solver, untrusted)
         )
+    if entry.cls == "plain" and entry.type == "string" and any(ch in value_text for ch in "/\\:"):
+        # A text parameter holds no file (code pages, masks, MPS names, format words), but what the solver does
+        # with its value is not checked everywhere (CPLEX ``read fileencoding`` goes to its code-page converter),
+        # so a path cannot reach it from the database (item 240 review b1 F4).
+        raise FlexToolUserError(
+            head + f"it comes from {origin}, where a text parameter takes no '/', '\\' or ':'; none of its "
+            "values needs them. " + (f"For a value with them, {_instead(solver)}" if untrusted is None else untrusted)
+        )
     if entry.cls not in ("file", "flextool") or not value_text or _is_number(value_text):
         return
     if (

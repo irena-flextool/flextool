@@ -288,7 +288,9 @@ parameters; from the database:
   not. Rare and advanced parameters of the listed versions are in the list.
   Names are matched as the solver reads them (above).
 - **Ordinary parameters** (gaps, tolerances, methods, thread counts, switches)
-  are taken as they are.
+  are taken as they are. A text parameter that names no file (CPLEX
+  `read fileencoding` and `cpumask`, Xpress `MPSRHSNAME` and the like) takes
+  no `/`, `\` or `:` from the database; none of their values needs them.
 - **A parameter that names a file or folder** takes only a plain file name:
   ASCII letters, digits and `_ . + -`, starting with a letter, digit or `_`,
   with no `/`, `\`, `:` or `..`. The file is written in the solve's work

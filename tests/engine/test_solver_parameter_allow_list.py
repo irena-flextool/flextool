@@ -120,6 +120,17 @@ def test_listed_local_only_names_are_refused(solver, name, value, words) -> None
         _db(solver, {name: value})
 
 
+@pytest.mark.parametrize("solver, name, value", [
+    ("cplex", "read fileencoding", "/tmp/evil"), ("cplex", "cpumask", "C:x"), ("xpress", "MPSRHSNAME", r"..\x"),
+])
+def test_a_text_parameter_from_the_database_takes_no_path_characters(solver, name, value) -> None:
+    """Review b1 F4: a listed ``plain`` text parameter takes a word (``UTF-8``, ``ffff``, ``RHS1``) from the
+    database, never a value with ``/``, ``\\`` or ``:``."""
+    with pytest.raises(FlexToolUserError, match="a text parameter takes no"):
+        _db(solver, {name: value})
+    assert _db(solver, {name: "RHS1"}) == {name: "RHS1"}
+
+
 # ---------------------------------------------------------------------------
 # HiGHS names the installed HiGHS knows (D1)
 # ---------------------------------------------------------------------------
