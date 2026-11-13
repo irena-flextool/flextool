@@ -2776,6 +2776,8 @@ commonly useful HiGHS option names are:</p>
 </tr>
 </tbody>
 </table>
+<p><code>objective_target</code>, <code>objective_bound</code> and <code>mip_abs_gap</code> are written in unscaled currency; FlexTool scales them to
+the objective HiGHS sees (see <a href="../#time-and-other-limits">Time and other limits</a>).</p>
 <h3 id="the-former-highs_-parameters">The former <code>highs_*</code> parameters</h3>
 <p>Three older FlexTool parameters (<code>highs_presolve</code>, <code>highs_method</code>,
 <code>highs_parallel</code>) predated the generic mechanism and have been <strong>removed</strong>.

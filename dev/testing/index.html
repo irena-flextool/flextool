@@ -3240,6 +3240,12 @@ Tests workflow. Windows and macOS Tk are checked by hand.</p>
 <td>Run the slow parity sweep of <code>tests/engine/test_orchestration.py</code> over every fixture (about 5 min per fixture).</td>
 </tr>
 <tr>
+<td><code>FLEXTOOL_WRITE_SOLVER_HANDOFF_GOLDEN</code></td>
+<td>unset</td>
+<td><code>1</code></td>
+<td>Rewrite <code>tests/engine/data/solver_handoff_golden.json</code> from the current code (<code>tests/engine/test_solver_handoff_golden.py</code>; the test then skips). Only when a change to what the solvers are handed is intended.</td>
+</tr>
+<tr>
 <td><code>FLEXTOOL_TEST_RSS_BUDGET_MB</code></td>
 <td><code>1500</code></td>
 <td>MB</td>
@@ -3250,6 +3256,18 @@ Tests workflow. Windows and macOS Tk are checked by hand.</p>
 <td>set by the suite</td>
 <td>file</td>
 <td>Set by the root <code>conftest.py</code> in the first process of a session and inherited by the xdist workers: every process appends a call that reached a system keyring backend, or a store or removal on the default keyring, to this file, and the session fails when it is not empty (<code>tests/user_dirs_guard.py</code>). Not for use by hand.</td>
+</tr>
+<tr>
+<td><code>FLEXTOOL_TEST_SANDBOX</code></td>
+<td>set by the suite</td>
+<td>folder</td>
+<td>Set by the root <code>conftest.py</code> in the first process of a session and inherited by the xdist workers and the processes the tests start: <code>HOME</code> (<code>USERPROFILE</code> on Windows), <code>XDG_CONFIG_HOME</code>, <code>XDG_CACHE_HOME</code>, <code>XDG_DATA_HOME</code>, <code>XDG_STATE_HOME</code>, <code>APPDATA</code> and <code>LOCALAPPDATA</code> point into this temp folder, so a fallback to the platform's user folder stays inside it (<code>tests/user_dirs_guard.py</code>). Not for use by hand.</td>
+</tr>
+<tr>
+<td><code>FLEXTOOL_TEST_REAL_HOME</code>, <code>FLEXTOOL_TEST_REAL_USER_DIRS</code></td>
+<td>set by the suite</td>
+<td>folders</td>
+<td>The real home folder and the real FlexTool user folders, as the first process of the session found them before it redirected <code>HOME</code> and <code>XDG_*</code>. In every pytest process a <code>flextool.user_dirs</code> call that would give a folder under one of these, or under the real home's <code>.config</code>, <code>.cache</code>, <code>.local</code>, <code>Library</code> or <code>AppData</code>, is recorded in <code>FLEXTOOL_TEST_KEYRING_LOG</code> (the session fails) and raises. Not for use by hand.</td>
 </tr>
 <tr>
 <td><code>FLEXTOOL_SHIM_RECORD</code></td>

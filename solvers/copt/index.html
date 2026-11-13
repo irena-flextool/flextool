@@ -2709,9 +2709,11 @@ documented as Gurobi's).</p>
   <code>copt.lic</code> or setting <code>COPT_LICENSE_DIR</code>.</li>
 <li><strong>Licence expired.</strong> Same FlexTool message family with the vendor's
   expiry text. Renew through the Cardinal Operations licence portal.</li>
-<li><strong>Time limit reached.</strong> A MIP stopped at its time limit with a solution is
-  kept with a warning; an LP, or a MIP without a solution, stops the run. See
-  <a href="../#time-limit">Time limit</a>.</li>
+<li><strong>Time or node limit reached.</strong> A MIP stopped at its time or node limit
+  with a solution is kept with a warning; an LP, or a MIP without a solution,
+  stops the run. See <a href="../#time-and-other-limits">Time and other limits</a>.</li>
+<li><strong>Objective values.</strong> <code>AbsGap</code> is written in unscaled currency; FlexTool scales it to the objective COPT sees
+  (see <a href="../#time-and-other-limits">Time and other limits</a>).</li>
 <li><strong><code>copt_cmd</code> not on <code>PATH</code> (HiGHS-coexistence fallback).</strong> FlexTool
   shows: <em>"Solver 'copt' returned an error: ..."</em> with the cause naming
   the missing binary. Add the COPT distribution's <code>bin</code> directory to
@@ -2731,8 +2733,10 @@ solve_advanced.solver_arguments:
 <p><code>--solver-time-limit</code> and <code>--solver-mip-gap</code> reach COPT as <code>TimeLimit 60</code> and
 <code>RelGap 0.001</code>, over the solve's <code>solver_mip_gap</code>, its <code>solver_arguments</code> and
 <code>copt.opt</code> (precedence in <a href="../">Solver selection</a>). Parameter names
-match without regard to case. The thread count comes from <code>Threads</code> in
-<code>copt.opt</code>; <code>--threads</code> and <code>--highs-threads</code> do not change it. The run
+match without regard to case. <code>--threads</code> (Threads per run in the FlexTool window) sets <code>Threads</code>;
+without it, <code>Threads</code> in <code>copt.opt</code> or <code>solver_arguments</code> applies. <code>--highs-threads</code>
+does not change it. <code>BarThreads</code>, <code>SimplexThreads</code>, <code>CrossoverThreads</code> and
+<code>MipTasks</code> are used as given. The run
 prints what COPT receives in a <code>Solver args (copt):</code> line before each
 solve.</p>
 <hr />

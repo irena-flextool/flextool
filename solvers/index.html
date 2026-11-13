@@ -2437,6 +2437,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#running-a-solver-through-a-wrapper" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running a solver through a wrapper
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flextool-3-precommand-users" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FlexTool 3 precommand users
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2488,10 +2510,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#time-limit" class="md-nav__link">
+  <a href="#time-and-other-limits" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Time limit
+        Time and other limits
       
     </span>
   </a>
@@ -2669,7 +2691,7 @@ solve):</p>
 <tr>
 <td><code>--solver-time-limit</code></td>
 <td><code>solver_time_limit</code></td>
-<td>Seconds per solve, on every solver (HiGHS <code>time_limit</code>, Gurobi <code>TimeLimit</code>, CPLEX <code>timelimit</code>, Xpress <code>MAXTIME</code>, COPT <code>TimeLimit</code>); unset means no limit. See <a href="#time-limit">Time limit</a>.</td>
+<td>Seconds per solve, on every solver (HiGHS <code>time_limit</code>, Gurobi <code>TimeLimit</code>, CPLEX <code>timelimit</code>, Xpress <code>MAXTIME</code>, COPT <code>TimeLimit</code>); unset means no limit. See <a href="#time-and-other-limits">Time and other limits</a>.</td>
 </tr>
 <tr>
 <td><code>--solver-mip-gap</code></td>
@@ -2679,7 +2701,12 @@ solve):</p>
 <tr>
 <td><code>--solver-config-dir</code></td>
 <td></td>
-<td>The folder of the solver option files; see <a href="#where-the-option-files-come-from">Where the option files come from</a></td>
+<td>A folder of the solver option files; repeat for several, highest first (file by file); see <a href="#where-the-option-files-come-from">Where the option files come from</a></td>
+</tr>
+<tr>
+<td><code>--threads</code></td>
+<td></td>
+<td>Threads of the run (the FlexTool window sends its Threads per run); sets every solver's thread count (HiGHS <code>threads</code> unless <code>--highs-threads</code> is given, Gurobi <code>Threads</code>, CPLEX <code>threads</code>, Xpress <code>THREADS</code>, COPT <code>Threads</code>). See below</td>
 </tr>
 <tr>
 <td><code>--highs-threads</code></td>
@@ -2696,9 +2723,28 @@ solve):</p>
 <p><code>--presolve</code>, <code>--highs-threads</code>, <code>--user-bound-scale</code> and
 <code>--solver-log-level verbose</code> are HiGHS options. When one of them is given and a solve runs on a commercial
 solver, the run warns once: set the solver's own parameter in the solve's
-<code>solver_arguments</code> or in its option file instead. Commercial solvers take
-their thread count from their option file (for example <code>Threads</code> in
-<code>gurobi.opt</code>); <code>--threads</code> does not change it.</p>
+<code>solver_arguments</code> or in its option file instead.</p>
+<p><code>--threads</code> (and <code>FLEXTOOL_THREADS</code>; the FlexTool window always sends its
+Threads per run, default 1) sets the thread count of every solver: HiGHS
+<code>threads</code>, Gurobi <code>Threads</code>, CPLEX <code>threads</code>, Xpress <code>THREADS</code>, COPT
+<code>Threads</code>. It replaces the value of the option file and of
+<code>solver_arguments</code>, even a value meaning all cores (<code>0</code>; Xpress and COPT
+<code>0</code> or negative). FlexTool splits the computer's cores between the runs it executes in
+parallel, so the run's thread budget wins. The run prints one line when it
+replaces a different value, for example <code>gurobi uses Threads 1, the run's
+thread budget (flag --threads), instead of Threads 0 (all cores) in
+&lt;folder&gt;/gurobi.opt.</code> For more solver threads raise <code>--threads</code> (Threads per
+run in the FlexTool window), or <code>FLEXTOOL_THREADS</code> when the budget came from
+it. A Spine Toolbox run that gives neither takes 1 thread for every
+solver (Toolbox executes its runs in parallel), printed as <code>gurobi uses
+Threads 1, the run's thread budget (Spine Toolbox run's default), ...</code>;
+add <code>--threads N</code> to the FlexTool tool's arguments for more. Without
+<code>--threads</code> and <code>FLEXTOOL_THREADS</code> in a terminal run the option file and
+<code>solver_arguments</code> keep the thread count. Per-algorithm thread controls
+(Xpress <code>BARTHREADS</code> / <code>MIPTHREADS</code> / <code>CONCURRENTTHREADS</code>, COPT <code>BarThreads</code> /
+<code>SimplexThreads</code> / <code>CrossoverThreads</code> / <code>MipTasks</code>, Gurobi <code>ConcurrentJobs</code>)
+are not changed: a value set there is used as given, even when it is larger
+than the run's threads.</p>
 <p>The environment variables <code>FLEXTOOL_SOLVER_TIME_LIMIT</code> and
 <code>FLEXTOOL_SOLVER_MIP_GAP</code> are the twins of the two flags (the flag wins). The
 older names <code>FLEXTOOL_HIGHS_TIME_LIMIT</code> and <code>FLEXTOOL_HIGHS_MIP_GAP</code> still
@@ -2723,8 +2769,111 @@ before, with a warning once per solve and run that the command is not run.</p>
 <p>To hold a floating licence, use your solver's own licence server setup (for
 example a Gurobi token server set in <code>gurobi.lic</code>, or the licence server in
 the licence file of CPLEX, Xpress or COPT); the solver then checks a licence
-out and back in for the solve by itself. A solver wrapper set on this
-computer (never in a database) is planned for a later release.</p>
+out and back in for the solve by itself. For anything else that ran in front
+of the solver, set a solver wrapper on this computer (never in a database):
+see <a href="#running-a-solver-through-a-wrapper">Running a solver through a wrapper</a>
+and <a href="#flextool-3-precommand-users">FlexTool 3 precommand users</a>.</p>
+<h3 id="running-a-solver-through-a-wrapper">Running a solver through a wrapper</h3>
+<p>A solver wrapper is a program that FlexTool starts in front of Gurobi's,
+CPLEX's, Xpress's or COPT's program, for example to hold a floating licence
+for the solve, to queue the solve, or to lower the solver's priority
+(<code>nice</code>). It is set per solver on this computer only, never in a database, a
+project, a workspace or on the command line (a Spine Toolbox project from
+someone else carries command lines), in one of two ways (the first wins):</p>
+<ul>
+<li>the environment variable <code>FLEXTOOL_SOLVER_WRAPPER_GUROBI</code>,
+  <code>FLEXTOOL_SOLVER_WRAPPER_CPLEX</code>, <code>FLEXTOOL_SOLVER_WRAPPER_XPRESS</code> or
+  <code>FLEXTOOL_SOLVER_WRAPPER_COPT</code>: a JSON list of the program's full path and
+  its arguments, or just the program's full path (never split at spaces).
+  Empty or <code>[]</code> means no wrapper, also over the settings file (for CI);</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">FLEXTOOL_SOLVER_WRAPPER_GUROBI</span><span class="o">=</span><span class="s1">'["/usr/bin/nice", "-n", "10"]'</span>
+</code></pre></div>
+<ul>
+<li><code>wrappers</code> in <code>solver_settings.json</code> in FlexTool's user settings folder
+  (the FlexTool window writes it: Solver options → On this computer):</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"format"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"wrappers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"cplex"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"/usr/local/bin/lic_hold"</span><span class="p">,</span><span class="w"> </span><span class="s2">"--queue"</span><span class="p">,</span><span class="w"> </span><span class="s2">"opt"</span><span class="p">]}}</span>
+</code></pre></div>
+<p>Runs from the FlexTool window, the terminal and Spine Toolbox all use the
+same setting: a Toolbox run reads the environment variable (set it where
+Toolbox is started) or the settings file of the user running Toolbox.</p>
+<p>FlexTool then runs, without a shell, the wrapper's items followed by the
+solver's own command: the solver program's full path and its arguments.</p>
+<div class="highlight"><pre><span></span><code>/usr/local/bin/lic_hold --queue opt /opt/ibm/cplex/bin/x86-64_linux/cplex
+</code></pre></div>
+<p>The wrapper must start its remaining arguments as a command, pass its
+standard input and output through (CPLEX, Xpress and COPT get their commands
+on standard input), and return the solver's exit code. A shell script that
+ends in <code>exec "$@"</code> does; on Windows, and anywhere, a Python script does:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># lic_hold.py: run with the full path of python as the wrapper program</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span><span class="o">,</span><span class="w"> </span><span class="nn">sys</span>
+
+<span class="c1"># ... reserve the licence here ...</span>
+<span class="n">code</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">:])</span><span class="o">.</span><span class="n">returncode</span>  <span class="c1"># stdin, stdout and stderr pass through</span>
+<span class="c1"># ... release it here ...</span>
+<span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">code</span><span class="p">)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"format"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"wrappers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"cplex"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"C:\\Python312\\python.exe"</span><span class="p">,</span><span class="w"> </span><span class="s2">"C:\\tools\\lic_hold.py"</span><span class="p">]}}</span>
+</code></pre></div>
+<p>The rules, checked before the first solve of a run and again just before the
+solver starts:</p>
+<ul>
+<li>the first item is the wrapper program's full path (FlexTool never looks for
+  it on <code>PATH</code> or in the current folder), to an existing file, symbolic links
+  followed; executable on Linux and macOS, a <code>.exe</code> on Windows;</li>
+<li>a script that Windows runs through a command interpreter (<code>.bat</code>, <code>.cmd</code>,
+  <code>.ps1</code>, <code>.vbs</code>, <code>.js</code>, ...) and a command interpreter itself (<code>cmd.exe</code>,
+  <code>powershell</code>, <code>pwsh</code>, <code>wscript</code>, <code>cscript</code>) are refused on every system:
+  they would read the solver's path and arguments as a command line. On
+  Windows also <code>wsl.exe</code> and <code>bash.exe</code> (and <code>sh</code>, <code>zsh</code>, <code>mshta</code>,
+  <code>rundll32</code>, <code>regsvr32</code>, <code>forfiles</code>, <code>conhost</code>, <code>msiexec</code>), which join
+  their arguments into a command line or run what they name. Use a program,
+  or <code>python</code> with a script as above. On Linux and macOS a shell script
+  works, with the script as the program or as the shell's first argument,
+  when it starts the solver with <code>exec "$@"</code> (never <code>sh -c</code> with the
+  arguments pasted into a command text);</li>
+<li>at most 32 items, each at most 4096 characters.</li>
+</ul>
+<p>The run's log has the line
+<code>Running CPLEX (/opt/.../cplex) through the solver wrapper /usr/local/bin/lic_hold with 2 arguments (from environment variable FLEXTOOL_SOLVER_WRAPPER_CPLEX)</code>
+(with <code>--solver-log-level silent</code> it goes to the log only): the program and
+the number of its arguments, never the arguments, because the AI assistant
+can send the run log to its provider. The run record (<code>_run_status.json</code>,
+on this computer) has <code>solver_wrappers</code> with the items in full. A failure
+message says the solve was started through the wrapper, since the wrapper
+may be the cause. <strong>Keep passwords and tokens out of the wrapper's items
+anyway:</strong> the run record sits in the project's result folder, which may be
+synced or shared; let the wrapper read secrets itself. A project package leaves the run log out and
+keeps only the wrapper's program in the run record, with the number of its
+arguments. The solver program is found in the absolute folders of <code>PATH</code>
+(and, on Linux and macOS, the usual install folders), never in the current
+folder. HiGHS runs inside FlexTool and has no wrapper; to lower its priority,
+start FlexTool itself under <code>nice</code>. Watchdog, Ctrl-C and the stop of the
+solver's processes work through the wrapper: FlexTool stops the wrapper and
+everything it started.</p>
+<h3 id="flextool-3-precommand-users">FlexTool 3 precommand users</h3>
+<p>FlexTool 3 ran a solve's <code>solver_precommand</code> in front of CPLEX. FlexTool 4
+does not run it (see <a href="#solver-precommand-is-not-run">Solver precommand is not run</a>);
+set the same program once per computer as the CPLEX wrapper instead:</p>
+<ol>
+<li>Find the program's full path (FlexTool 3 found it on <code>PATH</code>): <code>which
+   lic_hold</code> on Linux and macOS, <code>where lic_hold</code> on Windows.</li>
+<li>Set it: in the FlexTool window, Solver options → On this computer, CPLEX
+   program; or <code>FLEXTOOL_SOLVER_WRAPPER_CPLEX=/full/path/lic_hold</code>. If the
+   precommand had arguments, give them one per line in the window, or as a
+   JSON list in the variable: <code>["/full/path/lic_hold", "--queue", "opt"]</code>.</li>
+<li>Check what the program does with its arguments. FlexTool 3 gave it
+   <code>cplex -c "read ..." ...</code>; FlexTool 4 gives it the full path of the CPLEX
+   program alone and sends CPLEX's commands on standard input. A program that
+   only runs <code>"$@"</code> (or <code>subprocess.run(sys.argv[1:])</code>) works unchanged; one
+   that read the CPLEX arguments must be changed. A <code>.bat</code> or <code>.cmd</code> must
+   become a program, for example the Python script above.</li>
+<li>Run once and look for the <code>Running CPLEX (...) through the solver wrapper</code>
+   line. The database's <code>solver_precommand</code> can stay (it is never run, and
+   gives a warning per solve); clear it to stop the warning. The same works
+   for Gurobi, Xpress and COPT with their own variables.</li>
+</ol>
 <h2 id="the-parameters-in-detail">The parameters in detail</h2>
 <table>
 <thead>
@@ -2779,12 +2928,13 @@ Keys are the solver's own parameter names (e.g. <code>Presolve</code> for Gurobi
 the way the solver reads them: without regard to case (<code>mipgap</code> and <code>MIPGap</code>
 are one parameter); Gurobi also ignores <code>_</code> (<code>MIP_Gap</code> is <code>MIPGap</code>) and Xpress
 an <code>XPRS_</code> prefix; for CPLEX a dotted name such as <code>mip.tolerances.mipgap</code> is
-the same as <code>mip tolerances mipgap</code>. Write CPLEX names in full: an abbreviation
-is not matched to its full name when the layers are merged (the file and folder
-parameters below excepted: they are recognised abbreviated too). What a solver
-does with a misspelt name is the solver's own: Gurobi ignores it with a
-message, and FlexTool repeats that message as a warning naming where the name
-was set.</p>
+the same as <code>mip tolerances mipgap</code>. Write CPLEX names in full: from the
+database an abbreviation is refused (the message gives the full name), and in
+an option file it is not matched to its full name when the layers are merged.
+A name that is not one of the solver's parameters is refused from the database
+(see below); in your own option files it gives a warning and is passed on, and
+what the solver does with it is the solver's own: Gurobi ignores it with a
+message, which FlexTool repeats as a warning naming where the name was set.</p>
 <p>FlexTool's results are not affected by a solver's file parameters (they are in
 <code>output_parquet/&lt;scenario&gt;/</code> and the outputs you chose). Gurobi's <code>ResultFile</code>
 is FlexTool's own: FlexTool names the result file and reads the solution from
@@ -2800,15 +2950,57 @@ line of your own computer. The solver option files (<code>solver_config/&lt;solv
 the flags and the environment variables keep full paths and server
 parameters; from the database:</p>
 <ul>
-<li><strong>Ordinary parameters</strong> (gaps, tolerances, methods, thread counts, switches)
-  are taken as they are.</li>
-<li><strong>A parameter that names a file or folder</strong> takes only a plain file name:
+<li><strong>Only the solver's own parameter names</strong> are taken. FlexTool has a list of
+  every parameter of each solver, made from the solver's own package:</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Solver</th>
+<th>List made from</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>HiGHS</td>
+<td>HiGHS 1.15.1 (highspy)</td>
+</tr>
+<tr>
+<td>Gurobi</td>
+<td>Gurobi 13.0.2 (gurobipy), with <code>gurobi_cl</code>'s own parameters</td>
+</tr>
+<tr>
+<td>CPLEX</td>
+<td>CPLEX 22.1.2 (the cplex package), with the Interactive Optimizer's <code>logfile</code>, <code>defaults</code> and <code>distmip config</code> from IBM's documentation</td>
+</tr>
+<tr>
+<td>Xpress</td>
+<td>Xpress 46.01.02 (xpress 9.8.1)</td>
+</tr>
+<tr>
+<td>COPT</td>
+<td>COPT 8.0.4 (coptpy), with the console's <code>LogFile</code></td>
+</tr>
+</tbody>
+</table>
+<p>A name that is not in the list is refused, and the message suggests the
+  closest listed name: a misspelling (<code>MIPGapp</code>), a name in the wrong case
+  for HiGHS (<code>Presolve</code>; HiGHS takes <code>presolve</code> only), a CPLEX abbreviation
+  (<code>mip tol mipgap</code>: the message says to write <code>mip tolerances mipgap</code>), or a
+  parameter of a newer solver version than the list. For HiGHS, a name that
+  the installed HiGHS knows as a number or a switch is taken as well, so
+  updating HiGHS does not stop your runs; a text option of a newer HiGHS is
+  not. Rare and advanced parameters of the listed versions are in the list.
+  Names are matched as the solver reads them (above).
+- <strong>Ordinary parameters</strong> (gaps, tolerances, methods, thread counts, switches)
+  are taken as they are. A text parameter that names no file (CPLEX
+  <code>read fileencoding</code> and <code>cpumask</code>, Xpress <code>MPSRHSNAME</code> and the like) takes
+  no <code>/</code>, <code>\</code> or <code>:</code> from the database; none of their values needs them.
+- <strong>A parameter that names a file or folder</strong> takes only a plain file name:
   ASCII letters, digits and <code>_ . + -</code>, starting with a letter, digit or <code>_</code>,
   with no <code>/</code>, <code>\</code>, <code>:</code> or <code>..</code>. The file is written in the solve's work
   folder, <code>&lt;work folder&gt;/solve_data/subprocess/</code>. A full path is refused.
-  These are the parameters whose name contains <em>file</em>, <em>dir</em> or <em>path</em>, and
-  also:</li>
-</ul>
+  These are the parameters whose value is a file or folder name:</p>
 <table>
 <thead>
 <tr>
@@ -2823,11 +3015,11 @@ parameters; from the database:</p>
 </tr>
 <tr>
 <td>Gurobi</td>
-<td><code>ResultFile</code>, <code>LogFile</code>, <code>SolFiles</code>, <code>NodefileDir</code>, <code>InputFile</code>, <code>ConcurrentSettings</code>, <code>MultiObjSettings</code>, <code>TuneBaseSettings</code>, <code>TuneIgnoreSettings</code>, <code>TuneParams</code>, <code>Record</code></td>
+<td><code>ResultFile</code>, <code>LogFile</code>, <code>SolFiles</code>, <code>NodefileDir</code>, <code>InputFile</code>, <code>ConcurrentSettings</code>, <code>MultiObjSettings</code>, <code>TuneBaseSettings</code>, <code>TuneIgnoreSettings</code>, <code>TuneParams</code></td>
 </tr>
 <tr>
 <td>CPLEX</td>
-<td><code>logfile</code>, <code>workdir</code>, <code>output intsolfileprefix</code> (also abbreviated, as the Interactive Optimizer accepts) and names starting with <code>read</code> or <code>write</code></td>
+<td><code>logfile</code>, <code>workdir</code>, <code>output intsolfileprefix</code></td>
 </tr>
 <tr>
 <td>Xpress</td>
@@ -2839,20 +3031,97 @@ parameters; from the database:</p>
 </tr>
 </tbody>
 </table>
-<p>Names are matched as the solver reads them (above), so <code>Log_File</code> for
-  Gurobi or <code>XPRS_TUNEROUTPUTPATH</code> for Xpress is the same parameter. A number
-  or a switch in such a parameter (Gurobi <code>NodefileStart 0.5</code>) passes.
-- <strong>Gurobi server, cloud and licence parameters</strong> are refused:
-  <code>ComputeServer</code>, <code>ServerPassword</code>, <code>ServerTimeout</code>, the <code>CS...</code> Cluster
-  Manager parameters (<code>CSManager</code>, <code>CSAPIAccessID</code>, <code>CSAPISecret</code>, <code>CSGroup</code>,
-  <code>CSPriority</code>, <code>CSRouter</code>, ...), the <code>Cloud...</code> Instant Cloud parameters, the
-  <code>WLS...</code> Web License Service parameters, <code>TokenServer</code>, <code>TSPort</code>,
-  <code>LicenseID</code>, <code>UserName</code>, <code>WorkerPool</code> and <code>WorkerPassword</code>.</p>
-<p>The error names the parameter, its value and the solve. Put a file path or a
-server parameter in the solver's option file, <code>solver_config/&lt;solver&gt;.opt</code>
-(or that file in a folder given with <code>--solver-config-dir</code>), which keeps them.
+<p>A number or a switch in a parameter whose name has <em>file</em>, <em>dir</em> or <em>path</em>
+  in it (Gurobi <code>NodefileStart 0.5</code>), or that writes files of its own (Gurobi
+  and CPLEX <code>Record</code>), passes. Every solver runs in the same work folder, so
+  the file name may not be one that a solver reads by itself from there:
+  <code>gurobi.env</code>, a name ending in <code>.lic</code>, <code>license.dat</code>, <code>license.key</code>,
+  <code>client.ini</code>, <code>xpauth.xpr</code> or <code>nethasp.ini</code> (in any case).
+- <strong>Server, cloud and licence parameters</strong> are refused, whatever their type
+  (an integer can switch remote solving on). Gurobi: <code>ComputeServer</code>,
+  <code>ServerPassword</code>, <code>ServerTimeout</code>, the <code>CS...</code> Cluster Manager parameters
+  (<code>CSManager</code>, <code>CSAPIAccessID</code>, <code>CSAPISecret</code>, <code>CSGroup</code>, <code>CSPriority</code>,
+  <code>CSRouter</code>, ...), the <code>Cloud...</code> Instant Cloud parameters, the <code>WLS...</code> Web
+  License Service parameters, <code>TokenServer</code>, <code>TSPort</code>, <code>LicenseID</code>,
+  <code>Username</code>, <code>WorkerPool</code> and <code>WorkerPassword</code>. Xpress: <code>COMPUTE</code>, which
+  sends the solve to a remote service, and the other <code>COMPUTE...</code> controls
+  (<code>COMPUTEEXECSERVICE</code>, <code>COMPUTEJOBPRIORITY</code>, <code>COMPUTELOG</code>). CPLEX:
+  <code>distmip config</code> (the machines of a distributed MIP solve).
+- <strong>A few others are refused</strong> as well: Gurobi's <code>JobID</code> and <code>Dummy</code> (text
+  parameters with no use from a database) and CPLEX's <code>defaults</code> (a command
+  that resets every parameter, not a parameter).
+- <strong>FlexTool 3's HiGHS settings</strong> in a solve that uses Gurobi, CPLEX, Xpress
+  or COPT are left out with one warning per run: the database migration moved
+  FlexTool 3's <code>highs_method</code>, <code>highs_parallel</code> and <code>highs_presolve</code> into
+  <code>solver_arguments</code> as <code>solver</code>, <code>parallel</code> and <code>presolve</code> for every solve.
+  A number for the solver's own parameter of that name (Gurobi <code>presolve 2</code>)
+  is still passed.</p>
+<p>The error names the parameter, its value and the solve. FlexTool checks the
+<code>solver_arguments</code> of every solve the model runs (<code>model.solves</code> and the
+solves they contain) before the first solve starts, so the run stops in
+seconds, not after hours of earlier solves. A solve that the model does not
+run is not checked: its options never reach a solver. Put a
+file path, a server parameter or a parameter that is not in the list in the
+solver's option file, <code>solver_config/&lt;solver&gt;.opt</code> in the project's or the
+workspace's <code>solver_config</code> (or a folder given with <code>--solver-config-dir</code>),
+which keeps them when the folder is trusted (see
+<a href="#which-option-folders-are-trusted">Which option folders are trusted</a>). An
+option file that came in a project package from someone else gets these
+rules in the project's runs until you trust the project's solver option
+files, and is checked by them when it is imported: a file with a line they
+refuse is kept as <code>&lt;solver&gt;.opt.review</code>, which no run reads. To use it as it
+is, read it, rename it to <code>&lt;solver&gt;.opt</code> and tick "Trust this project's solver
+option files" (Solver options → On this computer, with the project open), or
+run <code>flextool-trust-workspace &lt;project folder&gt;</code> in a terminal.
+Exporting a project applies the same rules to the option files it would
+ship: a file with such a parameter is left out of the package, and the export
+names its lines (a server password or a folder of your computer should not be
+sent unseen). A CPLEX parameter name in <code>cplex.opt</code> is written without the
+leading <code>set</code> (FlexTool adds it), and a name that starts with <code>set</code> is refused
+from every source. A UTF-8 byte order mark at the start of an option file is
+ignored.
 The checks against extra commands (no line breaks, spaces, quotes, <code>;</code>, <code>#</code>,
-<code>=</code> or a backslash at the end) apply to every source.</p>
+<code>=</code> or a backslash at the end) apply to every source. So does the rule that
+every parameter has a value: an empty value is refused for every solver
+(HiGHS included), and for Gurobi, CPLEX, Xpress and COPT also an option-file
+line with a name and no value (for CPLEX also a last word that is not a
+number where the parameter takes one, such as <code>mip tolerances mipgap</code>
+without its value, and a group of parameters given a value, such as
+<code>mip tolerances 0.01</code>: CPLEX would ask which parameter and read the
+script's next line as the answer). The solution-file lines of old <code>highs.opt</code> templates are
+dropped, as before.</p>
+<h4 id="allowing-a-parameter-that-is-not-in-the-list">Allowing a parameter that is not in the list</h4>
+<p>A newer solver version can have parameters that FlexTool's list does not
+have yet. Set such a parameter in <code>solver_config/&lt;solver&gt;.opt</code>, which takes
+any name (with a warning). Or allow names that are not in the list from input
+databases on your computer, in one of two ways (the first wins):</p>
+<ul>
+<li>the environment variable <code>FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS=1</code>
+  (<code>0</code> refuses them again); or</li>
+<li>the file <code>solver_settings.json</code> in FlexTool's folder of your user settings
+  (<code>~/.config/flextool/</code> on Linux, <code>%LOCALAPPDATA%\flextool\</code> on Windows,
+  <code>~/Library/Application Support/flextool/</code> on macOS):</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"format"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"allow_unlisted_parameters"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">}</span>
+</code></pre></div>
+<p>The setting is on your computer only: no database, project, workspace or
+command-line flag can switch it on, since those can come from someone else.
+With it on, an unlisted name is passed with one warning per run that says
+where the setting is. The rules for paths, servers and the files a solver
+reads by itself still apply:</p>
+<ul>
+<li>an unlisted name takes only a number, a switch or a plain file name (as a
+  file parameter above), never a path or a name such as <code>gurobi.env</code>;</li>
+<li>a name that looks like a server parameter (Gurobi <code>CS...</code>, <code>Cloud...</code>,
+  <code>WLS...</code>, <code>Server...</code>, <code>Token...</code>, <code>Worker...</code>; Xpress <code>COMPUTE...</code>; CPLEX
+  <code>distmip ...</code>) is still refused, as are the listed ones above;</li>
+<li>a CPLEX abbreviation of a listed name (<code>log</code> for <code>logfile</code>, <code>d c</code> for
+  <code>distmip config</code>, <code>def</code> for <code>defaults</code>) is still refused: the switch is for
+  a newer solver's parameters, not for abbreviations;</li>
+<li>a HiGHS text option that FlexTool's list does not have is still refused. The
+run's record (<code>output_parquet/&lt;scenario&gt;/_run_status.json</code>, <code>solver_config</code>)
+says whether the setting was on and where it came from.</li>
+</ul>
 <h3 id="per-solver-baseline-opt-files">Per-solver baseline <code>.opt</code> files</h3>
 <p>Every solver gets a baseline parameter file in a <code>solver_config/</code> folder
 (which folder: see <a href="#where-the-option-files-come-from">Where the option files come from</a>).
@@ -2910,35 +3179,36 @@ name there; the file is written in <code>&lt;work folder&gt;/solve_data/subproce
 <p>FlexTool reads each solver's baseline once at the start of the run, overlays
 the solve's <code>solver_mip_gap</code>, its <code>solver_arguments</code> Map and the run's flags
 <strong>parameter by parameter</strong> (one value per parameter, the highest layer wins),
-writes the merged result next to the MPS file (the record of what the solver
-received) and feeds it to the solver via the per-solver mechanism:</p>
+writes the merged result next to the MPS file as <code>&lt;solve&gt;.opt</code> (the record of
+what the solver received; nothing reads it back) and hands each parameter to
+the solver via the per-solver mechanism:</p>
 <table>
 <thead>
 <tr>
 <th>Solver</th>
-<th>How FlexTool feeds the merged file to the CLI</th>
+<th>How FlexTool hands the merged parameters to the CLI</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>HiGHS</td>
-<td><code>--options=&lt;file&gt;</code> argv flag on the <code>flextool.cli.cmd_solve_mps</code> subprocess</td>
+<td><code>--options-json=&lt;solve&gt;.options.json</code> on the <code>flextool.cli.cmd_solve_mps</code> subprocess (<code>--save-memory</code>), each option set in order; <code>--options=&lt;solve&gt;.opt</code> reads the record for a replay by hand</td>
 </tr>
 <tr>
 <td>Gurobi</td>
-<td><code>gurobi_cl &lt;Name&gt;=&lt;value&gt; ... ResultFile=&lt;sol&gt; &lt;mps&gt;</code>: one <code>Name=value</code> argument per line of the file</td>
+<td><code>gurobi_cl &lt;Name&gt;=&lt;value&gt; ... ResultFile=&lt;sol&gt; &lt;mps&gt;</code>: one <code>Name=value</code> argument per parameter</td>
 </tr>
 <tr>
 <td>CPLEX</td>
-<td>Each line emitted as <code>set &lt;name&gt; &lt;value&gt;</code> on the interactive optimizer's stdin before <code>read</code></td>
+<td>Each parameter emitted as <code>set &lt;name&gt; &lt;value&gt;</code> on the interactive optimizer's stdin before <code>read</code></td>
 </tr>
 <tr>
 <td>Xpress</td>
-<td>Each line emitted as <code>setControl &lt;NAME&gt; &lt;value&gt;</code> on the optimizer console's stdin before <code>readprob</code></td>
+<td>Each parameter emitted as <code>setControl &lt;NAME&gt; &lt;value&gt;</code> on the optimizer console's stdin before <code>readprob</code></td>
 </tr>
 <tr>
 <td>COPT</td>
-<td>Each line emitted as <code>set &lt;ParamName&gt; &lt;value&gt;</code> on <code>copt_cmd</code>'s stdin before <code>read</code></td>
+<td>Each parameter emitted as <code>set &lt;ParamName&gt; &lt;value&gt;</code> on <code>copt_cmd</code>'s stdin before <code>read</code></td>
 </tr>
 </tbody>
 </table>
@@ -2946,10 +3216,11 @@ received) and feeds it to the solver via the per-solver mechanism:</p>
 <ol>
 <li>The run's flags: <code>--solver-time-limit</code> and <code>--solver-mip-gap</code> (or
    <code>FLEXTOOL_SOLVER_TIME_LIMIT</code> / <code>FLEXTOOL_SOLVER_MIP_GAP</code>; the GUI's time
-   limit is sent as the flag). HiGHS also takes <code>--highs-threads</code>,
-   <code>--presolve</code>, <code>--solver-log-level</code> and <code>--threads</code> here (a commercial
-   solver's log is hidden by <code>--solver-log-level silent</code> too, but that is not
-   one of its parameters).</li>
+   limit is sent as the flag), and the run's <code>--threads</code> (or
+   <code>FLEXTOOL_THREADS</code>; the GUI's Threads per run is sent as the flag) as the
+   solver's thread count. HiGHS also takes <code>--highs-threads</code>, <code>--presolve</code> and
+   <code>--solver-log-level</code> here (a commercial solver's log is hidden by
+   <code>--solver-log-level silent</code> too, but that is not one of its parameters).</li>
 <li>Raw <code>solver_arguments</code> entries on the solve.</li>
 <li>Translated convenience knobs (<code>solver_mip_gap</code>).</li>
 <li>The baseline file <code>&lt;solver&gt;.opt</code>.</li>
@@ -2980,41 +3251,215 @@ failure message then carries its last 20 lines. If FlexTool stops the solver
 (the time-limit watchdog, Ctrl-C, a failure), it also stops the processes the
 solver started.</p>
 <h3 id="where-the-option-files-come-from">Where the option files come from</h3>
-<p>A run takes all its <code>&lt;solver&gt;.opt</code> files from one <code>solver_config</code> folder, the
-first of:</p>
+<p>A run reads each solver's file (<code>highs.opt</code>, <code>gurobi.opt</code>, <code>cplex.opt</code>,
+<code>xpress.opt</code>, <code>copt.opt</code>) <strong>file by file</strong> from an ordered list of
+<code>solver_config</code> folders, the <em>ladder</em>: each solver's file comes from the first
+folder of the ladder that has it, and a solver that no folder has uses
+FlexTool's default (the shipped template). The ladder is the first of:</p>
 <ol>
-<li><code>--solver-config-dir PATH</code> (the GUI always sends it: the workspace's
-   <code>solver_config</code>, or the folder of <code>FLEXTOOL_SOLVER_CONFIG_DIR</code> when that
-   variable is set for the GUI);</li>
-<li>the <code>FLEXTOOL_SOLVER_CONFIG_DIR</code> environment variable;</li>
-<li><code>solver_config/</code> next to the input database, then, for a database in a GUI
-   project (<code>&lt;workspace&gt;/projects/&lt;project&gt;/input_sources/</code>), the workspace's
-   <code>solver_config/</code>. The search goes no further up, so a <code>solver_config</code>
-   folder somewhere above an unrelated database is never picked up;</li>
-<li>for a Spine Toolbox run with <code>--project-folder-file</code>, the <code>solver_config/</code>
-   of that Toolbox project;</li>
-<li><code>solver_config/</code> in the current folder;</li>
-<li>none found: FlexTool's defaults (the shipped templates), with a warning
-   that lists the folders tried.</li>
+<li>the folders you give or the FlexTool window gives, and only these:
+   <code>--solver-config-dir PATH</code> (repeat the flag for several folders, highest
+   first) or the <code>FLEXTOOL_SOLVER_CONFIG_DIR</code> environment variable (several
+   folders separated by <code>:</code>, on Windows <code>;</code>, as in <code>PATH</code>), and the folders a
+   launcher found, <code>--workspace-solver-config-dir PATH</code> (repeatable, above the
+   others). Nothing from the database's folders or the current folder is
+   added. The FlexTool window (and the calibration it starts) always sends the
+   project's <code>solver_config/</code> (when the project has that folder), then the
+   workspace's <code>solver_config/</code>, as <code>--workspace-solver-config-dir</code>; when
+   <code>FLEXTOOL_SOLVER_CONFIG_DIR</code> is set for the window, its folders replace the
+   workspace's folder (passed on as <code>--solver-config-dir</code>) and the project's
+   stays on top;</li>
+<li>the input database's folders:</li>
+<li><code>solver_config/</code> next to the input database, alone;</li>
+<li>for a database in a GUI project
+     (<code>&lt;workspace&gt;/projects/&lt;project&gt;/input_sources/</code>), the project's
+     <code>solver_config/</code>, then the workspace's: the same files as a run of the
+     project from the FlexTool window.</li>
 </ol>
-<p>Tiers 3 to 5 count a folder only when it holds at least one <code>&lt;solver&gt;.opt</code>.
-They skip <code>solver_config/</code> in the current folder when every <code>.opt</code> in it is an
-unedited FlexTool template (of this or an earlier version) and the current
-folder is not a FlexTool folder: FlexTool 4.3 and older left such a copy in
-the folder a run was started from. The run then takes the next tier and
-warns, naming the skipped folder; to use your own option files, pass
+<p>The search goes no further up, so a <code>solver_config</code> folder somewhere above
+   an unrelated database is never picked up;
+3. for a Spine Toolbox run with <code>--project-folder-file</code>, the <code>solver_config/</code>
+   of that Toolbox project;
+4. <code>solver_config/</code> in the current folder;
+5. none found: FlexTool's defaults (the shipped templates), with a warning
+   that lists the folders tried.</p>
+<p>So a project's runs take each solver's options from the project's
+<code>solver_config/</code>, else the workspace's, else FlexTool's default. To give a
+project its own Gurobi options, for example, put just a <code>gurobi.opt</code> in
+<code>&lt;workspace&gt;/projects/&lt;project&gt;/solver_config/</code>: its runs still use the
+workspace's <code>highs.opt</code>. Delete the project's file to use the workspace's
+again.</p>
+<p>A project's <code>solver_config/</code> never gives an unedited FlexTool template (of
+this or an earlier version): that file holds the options FlexTool shipped then
+rather than a choice made for the project, and
+the workspace's file of that solver is used instead (the header names the
+skipped file). Tiers 2 to 4 count only when one of their folders holds a
+<code>&lt;solver&gt;.opt</code>. They skip <code>solver_config/</code> in the current folder when every
+<code>.opt</code> in it is an unedited FlexTool template and the current folder is not a
+FlexTool folder: FlexTool 4.3 and older left such a copy in the folder a run
+was started from. The run then takes the next tier and warns, naming the
+skipped folder; to use your own option files, pass
 <code>--solver-config-dir &lt;the folder with your files&gt;</code>, and delete the skipped
 folder to stop the warning. The FlexTool folder itself (the workspace, which
 holds <code>templates/project_folder.txt</code>) is never skipped: its <code>solver_config/</code>
 is the folder the FlexTool window uses, and a run from there uses it without
 a warning, edited or not.
-In the chosen folder, a solver whose file is missing uses its shipped default.
 A Spine Toolbox run (whose Data Store is the workspace's <code>input_data.sqlite</code>)
 therefore uses the workspace's <code>solver_config</code>, even though Toolbox runs the
 tool in a temporary folder.</p>
 <p>The run header and the log say which folder was used and why, for example:</p>
 <div class="highlight"><pre><span></span><code>Solver config:  /home/me/flextool/solver_config (next to the input database)
 </code></pre></div>
+<p>With several folders they name the folder of each file, then the solvers that
+use FlexTool's defaults:</p>
+<div class="highlight"><pre><span></span><code>Solver config:  /home/me/flextool/projects/P/solver_config (project of the FlexTool window): gurobi.opt; /home/me/flextool/solver_config (workspace of the FlexTool window): highs.opt; FlexTool defaults: cplex.opt, xpress.opt, copt.opt
+</code></pre></div>
+<p>A folder of the ladder that does not exist gives a warning; its solvers use
+the next folder or FlexTool's default.</p>
+<h4 id="which-option-folders-are-trusted">Which option folders are trusted</h4>
+<p>The files of a folder you name (<code>--solver-config-dir</code>,
+<code>FLEXTOOL_SOLVER_CONFIG_DIR</code>) and FlexTool's shipped defaults are trusted:
+they may use full file paths, server and licence settings, and parameter
+names that are not in FlexTool's list (with a warning). A folder that a run
+finds by itself (the FlexTool window's <code>--workspace-solver-config-dir</code>
+folders, and tiers 2 to 4) may have come from someone else, inside a
+workspace, a project, a model folder or a Spine Toolbox project that was
+shared or unzipped. Its files are trusted only when the folder it is in (the
+workspace; for <code>projects/&lt;project&gt;/solver_config</code>, the project) is one this
+computer set up; otherwise every line gets the input database's rules (see
+"What the database may set"): a file option takes only a plain file name,
+placed in the solve's work folder; no server or licence settings; only
+parameter names in FlexTool's list. Trust is judged per folder, so file by
+file: when a project's untrusted <code>gurobi.opt</code> is used over a trusted
+workspace's, the project's file gets the database's rules, and the
+workspace's <code>highs.opt</code> keeps its trust. A file that is byte for byte one of
+FlexTool's shipped templates is trusted wherever it lies. A refused line stops
+the run with a message that names the file, the line, and how to trust the
+folder. The <code>Solver config:</code> line says <code>not a workspace this computer set up</code>
+for such a folder, and the run record's <code>solver_config.layers[].trusted</code> and
+<code>solver_config.files[].trusted</code> are <code>false</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Where the folder comes from</th>
+<th>Trusted</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--solver-config-dir</code>, <code>FLEXTOOL_SOLVER_CONFIG_DIR</code></td>
+<td>always</td>
+</tr>
+<tr>
+<td><code>--workspace-solver-config-dir</code> (the FlexTool window), next to the database, the database's project or workspace, the Toolbox project, the current folder</td>
+<td>when its workspace (or project) is on this computer's list</td>
+</tr>
+<tr>
+<td>FlexTool's shipped defaults</td>
+<td>always</td>
+</tr>
+</tbody>
+</table>
+<p>This computer's list is <code>trusted_workspaces</code> in <code>solver_settings.json</code> in
+FlexTool's user settings folder (on Linux <code>~/.config/flextool/</code>, on Windows
+<code>%LOCALAPPDATA%\flextool\</code>, on macOS <code>~/Library/Application Support/flextool/</code>),
+outside every workspace, so nothing that comes with a workspace can add to it.
+A workspace gets on the list:</p>
+<ul>
+<li>when <code>flextool-update</code>, or the FlexTool window at its start, creates its
+  <code>solver_config/</code>, or finds nothing in it but FlexTool's own default files
+  (unedited <code>.opt</code> files of this or an earlier version; a symbolic link does
+  not count). A workspace received with edited option files is therefore
+  never listed by being opened;</li>
+<li>when you tick "Trust this workspace's solver option files" in the FlexTool
+  window (Solver options → On this computer), after reading the files.</li>
+</ul>
+<p>You can also trust a folder from a terminal: <code>flextool-trust-workspace
+&lt;folder&gt;</code> (the workspace, or a GUI project's folder) shows the option files of
+its <code>solver_config/</code> that differ from FlexTool's defaults, line by line, and
+asks before it lists the folder; <code>--remove</code> takes it off the list, <code>--list</code>
+shows the list (and also takes off a folder that no longer exists). It is a
+command you type and answer in a terminal, not a flag of a run: a Spine Toolbox
+project carries command lines for its tools, so a run flag could come with a
+project from someone else, while anything that could start this command unasked
+can already run any program as you. It therefore refuses piped input (<code>echo y
+| ...</code>) and has no <code>--yes</code>. Control and bidirectional characters in the files
+(an escape sequence that would erase a line from the screen) are shown as
+escapes such as <code>\x1b</code>, and the line is marked. What you answer for is what
+you saw: if a file changes between showing and your answer, nothing is
+trusted and the command says which file changed. The window's box does the
+same with the files as the dialog found them when it opened.</p>
+<p>The trust is for the folder as it was when it was listed, not for its path:</p>
+<ul>
+<li>a different folder put at the same path later (the trusted one deleted or
+  moved away, and a copy from someone else unpacked or copied there) is not
+  trusted; the message says the folder was replaced. FlexTool tells the
+  folders apart by their identity: on Linux and macOS the device, the inode
+  number and the time the folder was made (where the file system records it:
+  ext4, btrfs, XFS, APFS; not NFS or SMB shares); on Windows the volume serial
+  number, the file ID and the creation time. Moving, restoring or copying the
+  folder to another path or computer therefore asks for the trust again, and so
+  can a network drive or a macOS external volume mounted again (its device
+  number can change);</li>
+<li>an option file that changed since, or appeared since, is trusted when your
+  own account wrote it and no other account can change it: on Linux and macOS
+  you own it, no other account can write it, and its group can write it only
+  when the group is your own private group (the one named after you, with no
+  other members). Otherwise (another owner, writable by others, a link) it gets
+  the database's rules, with a message naming it, until you trust the folder
+  again (the box, or <code>flextool-trust-workspace</code>). On Windows FlexTool does not
+  read files' owners and access lists: a file in a folder that is still the
+  one you trusted counts as your own edit. Inside your user profile folders
+  (<code>C:\Users\&lt;you&gt;</code>) Windows lets no other ordinary account write, but a
+  folder made elsewhere, such as <code>C:\flextool</code>, lets every account that signs
+  in to the computer change its files: on a shared computer, keep trusted
+  workspaces in your profile. A drive that gives files no ID (some network
+  drives) gets no such pass: there any change asks to be trusted again;</li>
+<li>on a network drive every change counts as yours: a share mounted for your
+  account shows every file as your own, also the ones a colleague changed;</li>
+<li>so editing your own files never asks again, but files you unpack or copy
+  into a trusted folder yourself are your edits too, and so are changes that a
+  sync tool (OneDrive, Dropbox, a network share) or <code>git pull</code> writes with
+  your account. Do not trust a folder that other people can change through such
+  a tool; name it with <code>--solver-config-dir</code> for the runs that should use it.</li>
+</ul>
+<p>Entries in <code>trusted_workspaces</code> must be full folder paths: an entry such as <code>.</code>
+or <code>~/flextool</code> makes the list unreadable (nothing is trusted, and the message
+says why). Entries written by FlexTool 4.4 development versions (plain folder
+names) are bound to the folder at that path, with its files as they are, the
+first time FlexTool reads them. <code>FLEXTOOL_USER_HOME</code> or <code>XDG_CONFIG_HOME</code>
+naming a relative folder is ignored with a warning (the platform's folder is
+used); a full path is used wherever FlexTool starts. A settings file that lies
+inside a folder judged for trust makes that folder's trust unreadable, with a
+message: a workspace could otherwise carry its own list. The settings file
+must be UTF-8 text, and on Linux and macOS owned by you and writable by you
+only (FlexTool writes it so): a solver wrapper named in it runs as you, so a
+file that another account owns or can write is not read, and the message says
+how to fix it.</p>
+<p><strong>Spine Toolbox projects are code.</strong> A Toolbox project runs the tool scripts
+and command lines it carries, so it can do anything you can, solver options
+included: open a Toolbox project, or a launcher script that comes with a
+workspace, only from people you trust, as you would a program.</p>
+<p>A GUI project (for its own <code>projects/&lt;project&gt;/solver_config/</code>) gets on the
+list when the FlexTool window creates it, when the window opens it while its
+<code>solver_config/</code> is missing or holds nothing but FlexTool's default files and
+no received file waits for review (no <code>&lt;solver&gt;.opt.review</code>, no
+<code>imported_solver_config/</code>), and when you tick "Trust this project's solver
+option files" (Solver options → On this computer, with the project open). A
+project imported from a package is never listed by being imported or opened
+with its shipped files in place, and importing at the path of a project
+deleted earlier first takes that path off the list; renaming a project in the
+window keeps its trust, deleting it removes it. Copying a received file into
+a trusted folder (the workspace's <code>solver_config/</code>, a listed project's, or a
+folder you name with <code>--solver-config-dir</code>) makes it trusted there: read it
+first.</p>
+<p>For a workspace whose option files you edited before this check existed, tick
+that box once (or pass the folder with <code>--solver-config-dir</code>). On CI or a
+server, pass the folder with <code>--solver-config-dir</code> or set
+<code>FLEXTOOL_SOLVER_CONFIG_DIR</code> in the job's environment: a folder named that way
+is trusted on every run, and nothing needs to be listed. A fresh checkout
+where <code>flextool-update</code> creates <code>solver_config/</code> is listed too (in the user
+settings folder of the user who ran it).</p>
 <p>The run reads the files once at its start: every roll and solve of the run
 uses them as they were then, and an edit during the run reaches only the next
 run. The files the run used are copied to
@@ -3023,28 +3468,99 @@ afresh every run and never read back. Up to FlexTool 4.3 runs read a copy in
 <code>&lt;work folder&gt;/solver_config/</code>; such a folder is no longer read as the work
 folder's copy (the run warns and names it when it differs from the files the
 run uses). When the work folder is also the current folder, the folder is
-tier 5: it is used when you have edited a file in it (or it is the FlexTool
+tier 4: it is used when you have edited a file in it (or it is the FlexTool
 folder), and skipped, with a warning, while it holds only the templates 4.3
 copied there. To run with the files of a particular folder, pass
 <code>--solver-config-dir &lt;folder&gt;</code>.</p>
-<h3 id="time-limit">Time limit</h3>
+<h3 id="time-and-other-limits">Time and other limits</h3>
 <p><code>--solver-time-limit</code> (and the GUI's time limit) applies to each solve
 separately: each roll of a rolling solve, and each master and region solve of
-a Benders decomposition, gets the full limit. The solver enforces it. When a
-solve stops at its time limit:</p>
+a Benders decomposition, gets the full limit. The solver enforces it. The same
+rule holds for the solver's other search limits, set in its option file or the
+solve's <code>solver_arguments</code>: a node, leaf, solution-count, work or iteration
+limit (HiGHS <code>mip_max_nodes</code>, <code>mip_max_leaves</code>, <code>mip_max_stall_nodes</code>,
+<code>mip_max_improving_sols</code>, <code>simplex_iteration_limit</code>, ...; Gurobi <code>NodeLimit</code>,
+<code>SolutionLimit</code>, <code>WorkLimit</code>, <code>IterationLimit</code>; CPLEX <code>mip limits nodes</code>,
+<code>mip limits solutions</code>; Xpress <code>MAXNODE</code>, <code>MAXMIPSOL</code>; COPT <code>NodeLimit</code>), and for an objective target you
+set (HiGHS <code>objective_target</code>, Gurobi <code>BestObjStop</code> and <code>BestBdStop</code>; HiGHS
+<code>objective_bound</code> works differently, see below). When a solve stops at one
+of them:</p>
 <ul>
 <li>a MIP with a solution found keeps that solution, with a warning naming the
-  solve and, when the solver reports it, the gap reached; the run goes on;</li>
-<li>an LP, or a MIP without a solution, stops the run with an error;</li>
-<li>in a Benders decomposition, a master or region solve stopped by its limit
+  solve, the limit, its option and, when the solver reports it, the gap
+  reached; the run goes on;</li>
+<li>an LP, or a MIP without a solution, stops the run with an error naming the
+  limit and its option (an LP stopped at a limit has no usable solution);</li>
+<li>in a Benders decomposition, a master or region solve stopped by any limit
   stops the run with an error, MIP or not: the decomposition needs each of its
   solves to be optimal.</li>
 </ul>
-<p>Another limit or an interrupt (a node, iteration, solution or memory limit, or
-an aborted solve) is not a time limit: it stops the run, naming the solver's
-status, even with a solution. So does a solution the solver does not certify
-as optimal, such as CPLEX's "optimal with unscaled infeasibilities" or
-"optimal face unbounded".</p>
+<p>HiGHS has one status for its node, leaf, stall-node and improving-solution
+limits, so its warning names all four options.</p>
+<p>A memory limit or an interrupt (an aborted solve) stops the run, naming the
+solver's status, even with a solution. So does a solution the solver does not
+certify as optimal, such as CPLEX's "optimal with unscaled infeasibilities" or
+"optimal face unbounded", or Gurobi's "suboptimal".</p>
+<p>A HiGHS MIP solved with <code>objective_bound</code> set (in <code>highs.opt</code> or the solve's
+<code>solver_arguments</code>) gets a warning, once per solve, even when HiGHS reports it
+optimal: HiGHS treats the bound as a cutoff and reports the best solution
+within it as optimal, so it may not be the optimum. Remove <code>objective_bound</code>
+for a proven one.</p>
+<p><strong>Objective values are in unscaled currency.</strong> An option that is an objective
+value — a target, bound or cutoff, or an absolute gap — is written in the
+currency of the model's cost data (not the million currency of the cost
+outputs). The solver works on a
+scaled objective: the cost times the solve's <code>scale_the_objective</code> (default
+1e-6) and, for HiGHS, times <code>2^user_objective_scale</code> (set by the autoscaler, or
+by you). FlexTool scales these options by the same factors before the solver
+gets them, in every solve path: in-process HiGHS, <code>--save-memory</code> and the
+commercial solvers' option files. The <code>Solver args</code> line shows the value the
+solver gets and, in parentheses, the value you wrote, for example
+<code>mip_abs_gap=0.5 (500000 in unscaled currency)</code>. The options:</p>
+<table>
+<thead>
+<tr>
+<th>Solver</th>
+<th>Objective level (target, bound, cutoff)</th>
+<th>Objective difference (absolute gap)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>HiGHS</td>
+<td><code>objective_target</code>, <code>objective_bound</code></td>
+<td><code>mip_abs_gap</code></td>
+</tr>
+<tr>
+<td>Gurobi</td>
+<td><code>BestObjStop</code>, <code>BestBdStop</code>, <code>Cutoff</code></td>
+<td><code>MIPGapAbs</code>, <code>PoolGapAbs</code></td>
+</tr>
+<tr>
+<td>CPLEX</td>
+<td><code>mip tolerances lowercutoff</code> / <code>uppercutoff</code>, <code>mip limits lowerobjstop</code> / <code>upperobjstop</code>, <code>simplex limits lowerobj</code> / <code>upperobj</code></td>
+<td><code>mip tolerances absmipgap</code>, <code>mip tolerances objdifference</code>, <code>mip pool absgap</code>, <code>mip polishafter absmipgap</code>, <code>barrier limits objrange</code></td>
+</tr>
+<tr>
+<td>Xpress</td>
+<td><code>MIPABSCUTOFF</code></td>
+<td><code>MIPADDCUTOFF</code>, <code>MIPABSSTOP</code></td>
+</tr>
+<tr>
+<td>COPT</td>
+<td>(none)</td>
+<td><code>AbsGap</code></td>
+</tr>
+</tbody>
+</table>
+<p>Relative gaps and tolerances (<code>mip_rel_gap</code>, <code>MIPGap</code>, <code>--solver-mip-gap</code>,
+...) have no unit and are passed as written. A value of 1e20 or more, or
+<code>inf</code>, means "off" and is passed as written. In a rolling solve each roll
+compares the value with its own objective (each roll's cost, not the whole
+horizon's); in a stochastic solve, with the expected cost over the branches.
+A Benders solve refuses an objective target or bound, naming the option and
+where it was set: a whole-model level has no meaning for the master or a
+region. Its absolute gaps are passed, scaled for each part.</p>
 <p>FlexTool reads how a solve ended from the solver's result file (HiGHS, Gurobi's
 JSON result, CPLEX) or from its console log (COPT, Xpress; Gurobi when it
 writes a text result file). With COPT's log turned off (<code>Logging 0</code> or
@@ -3052,7 +3568,8 @@ writes a text result file). With COPT's log turned off (<code>Logging 0</code> o
 solve cannot be told from one stopped by a limit, so the run stops and says
 so: keep the log on (the shipped option files do). Xpress: FlexTool knows
 only its time limit and an unfinished solve, from the console and the print
-solution; another Xpress limit with a solution is not told apart.</p>
+solution; another Xpress limit with a solution is not told apart (FlexTool's
+Xpress driver solves LPs only).</p>
 <p>FlexTool also stops a solver that has not finished well after its limit
 (after twice the limit plus 10 minutes), which only guards against a solver
 that hangs: reading the model and writing the result are not counted in the
@@ -3088,8 +3605,8 @@ each of its solves (polar-high 3.10.0 or later; with an older polar-high the
 thread count is not used while the regions run in parallel). A
 time limit (<code>--solver-time-limit</code>, or <code>time_limit</code> in <code>solver_arguments</code>)
 applies to each master and region solve separately, not to the whole
-decomposition. A master or region solve that stops at its limit stops the run
-(see "Time limit" above).</p>
+decomposition. A master or region solve that stops at any limit stops the run
+(see "Time and other limits" above).</p>
 <h2 id="verifying-which-solvers-are-installed">Verifying which solvers are installed</h2>
 <p>To see which solver Python wrappers polar-high has detected on this system,
 run:</p>
@@ -3126,9 +3643,11 @@ per-solver page for the licence setup.</p>
   on a Gurobi solve, Gurobi sees <code>TimeLimit = 60</code>; without the flag it sees
   <code>30</code>. A <code>solver_arguments</code> entry wins over <code>solver_mip_gap</code> and over the
   option file.</li>
-<li><strong>Xpress and integer variables.</strong> FlexTool's Xpress driver solves linear
-  problems only; a solve with integer variables (integer investments, unit
-  online variables) stops with a message. Use another solver for such solves.</li>
+<li><strong>Xpress and integer variables.</strong> FlexTool runs <code>mipoptimize</code> for a solve
+  with integer variables (integer investments, unit online variables) and
+  <code>lpoptimize</code> for an LP. A MIP's status comes from the Xpress log; a MIP that
+  ends without an integer solution stops the run (it never uses the LP
+  relaxation). See <a href="xpress/">Xpress</a>.</li>
 </ul>
 
 

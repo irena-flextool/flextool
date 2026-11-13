@@ -2141,8 +2141,9 @@ solve dispatches within those decisions.</p>
 </ul>
 <p>The single-matching-period rename quirk: when a child solve's period
 set intersects its parent's by exactly one period, the child is
-renamed <code>solve + "_" + period</code> and <code>duplicate_solve</code> carbon-copies
-the parent's lockstep dicts under the new name. Preserved verbatim
+renamed <code>solve + "_" + period</code> and <code>SolveConfig.derive_solve</code> gives
+the new name a copy of every per-solve setting of the child
+(<code>PER_SOLVE_FIELDS</code>, solver settings included). Preserved verbatim
 from the legacy preprocessor.</p>
 <h3 id="43-stochastic-branches">4.3 Stochastic branches</h3>
 <p>Each branch is itself a sub-solve in the chain. <code>solve.stochastic_branches</code>

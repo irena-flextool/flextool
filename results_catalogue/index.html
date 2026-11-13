@@ -2443,45 +2443,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#ramps" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Ramps
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Ramps">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#unit_ramp_inputs_dt_ee" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        unit_ramp_inputs_dt_ee
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#unit_ramp_outputs_dt_ee" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        unit_ramp_outputs_dt_ee
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#dc-power-flow" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2818,6 +2779,28 @@
     <span class="md-ellipsis">
       
         timeline_breaks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_ramp_inputs_dt_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_ramp_inputs_dt_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_ramp_outputs_dt_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_ramp_outputs_dt_ee
       
     </span>
   </a>
@@ -5042,45 +5025,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#ramps" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Ramps
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Ramps">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#unit_ramp_inputs_dt_ee" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        unit_ramp_inputs_dt_ee
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#unit_ramp_outputs_dt_ee" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        unit_ramp_outputs_dt_ee
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#dc-power-flow" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5417,6 +5361,28 @@
     <span class="md-ellipsis">
       
         timeline_breaks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_ramp_inputs_dt_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_ramp_inputs_dt_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_ramp_outputs_dt_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_ramp_outputs_dt_ee
       
     </span>
   </a>
@@ -6164,24 +6130,6 @@ see <a href="../results/">Model outputs</a> for what the results mean and how th
 <li>every column: MW·s, level</li>
 <li>Results database: <code>group</code> entity <code>inertia_unit_node_t</code> parameter</li>
 </ul>
-<h2 id="ramps">Ramps</h2>
-<p>See <a href="../results/#ramps">Ramps</a> in Model outputs.</p>
-<h3 id="unit_ramp_inputs_dt_ee"><code>unit_ramp_inputs_dt_ee</code></h3>
-<p>Change of each unit's input flow from the previous time step.</p>
-<ul>
-<li>Files: <code>unit_ramp_inputs_dt_ee.parquet</code>, <code>unit_ramp__inputNode__dt.csv</code></li>
-<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>unit</code>, <code>source</code></li>
-<li>every column: MW, instantaneous</li>
-<li>Results database: <code>unit__node</code> entity <code>ramp_t</code> parameter</li>
-</ul>
-<h3 id="unit_ramp_outputs_dt_ee"><code>unit_ramp_outputs_dt_ee</code></h3>
-<p>Change of each unit's output flow from the previous time step.</p>
-<ul>
-<li>Files: <code>unit_ramp_outputs_dt_ee.parquet</code>, <code>unit_ramp__outputNode__dt.csv</code></li>
-<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>unit</code>, <code>sink</code></li>
-<li>every column: MW, instantaneous</li>
-<li>Results database: <code>unit__node</code> entity <code>ramp_t</code> parameter</li>
-</ul>
 <h2 id="dc-power-flow">DC power flow</h2>
 <p>See <a href="../results/#dc-power-flow">DC power flow</a> in Model outputs.</p>
 <h3 id="dc_angle_diff_dt_e"><code>dc_angle_diff_dt_e</code></h3>
@@ -6405,6 +6353,22 @@ see <a href="../results/">Model outputs</a> for what the results mean and how th
 <li>Files: <code>timeline_breaks.parquet</code>, <code>timeline_breaks.csv</code></li>
 <li>Membership set; its columns: <code>period</code>, <code>time</code></li>
 <li>Results database: not written there</li>
+</ul>
+<h3 id="unit_ramp_inputs_dt_ee"><code>unit_ramp_inputs_dt_ee</code></h3>
+<p>Change of each unit's input flow from the previous time step.</p>
+<ul>
+<li>Files: <code>unit_ramp_inputs_dt_ee.parquet</code>, <code>unit_ramp__inputNode__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>unit</code>, <code>source</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: <code>unit__node</code> entity <code>ramp_t</code> parameter</li>
+</ul>
+<h3 id="unit_ramp_outputs_dt_ee"><code>unit_ramp_outputs_dt_ee</code></h3>
+<p>Change of each unit's output flow from the previous time step.</p>
+<ul>
+<li>Files: <code>unit_ramp_outputs_dt_ee.parquet</code>, <code>unit_ramp__outputNode__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>unit</code>, <code>sink</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: <code>unit__node</code> entity <code>ramp_t</code> parameter</li>
 </ul>
 
 

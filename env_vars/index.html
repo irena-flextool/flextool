@@ -2643,8 +2643,8 @@ read (for example <code>FLEXTOOL_HIGHS_THREADS=many</code>) is ignored with one 
 <tr>
 <td><code>FLEXTOOL_SOLVER_CONFIG_DIR</code></td>
 <td><code>--solver-config-dir</code></td>
-<td>folder</td>
-<td>Where a run takes its solver option files (<code>highs.opt</code>, <code>gurobi.opt</code>, ...) from. Wins over the search of a run without it: <code>solver_config/</code> next to the input database, in the workspace of a GUI project database, in the Spine Toolbox project folder, in the current folder. The run copies the files it used to <code>&lt;work folder&gt;/solve_data/solver_config/</code>. See <a href="../solvers/#where-the-option-files-come-from">Where the option files come from</a>.</td>
+<td>folders, separated by <code>:</code> (Windows <code>;</code>)</td>
+<td>Where a run takes its solver option files (<code>highs.opt</code>, <code>gurobi.opt</code>, ...) from: each solver's file from the first folder that has it, else FlexTool's default. For the FlexTool window it replaces the workspace's folder (a project's own <code>solver_config/</code> stays first). Wins over the search of a run without it: <code>solver_config/</code> next to the input database, the project's and then the workspace's of a GUI project database, in the Spine Toolbox project folder, in the current folder. The files of a folder named here are trusted (full file paths, server settings), like the flag's; use it on CI and servers. The run copies the files it used to <code>&lt;work folder&gt;/solve_data/solver_config/</code>. See <a href="../solvers/#where-the-option-files-come-from">Where the option files come from</a>.</td>
 </tr>
 <tr>
 <td><code>FLEXTOOL_BENDERS_WORKERS</code></td>
@@ -2693,6 +2693,31 @@ read (for example <code>FLEXTOOL_HIGHS_THREADS=many</code>) is ignored with one 
 <td><code>FLEXTOOL_RUN_LOG_MAX_BYTES</code></td>
 <td>bytes (default <code>4194304</code>, 4 MiB; at most <code>268435456</code>, 256 MiB)</td>
 <td>Size limit of the run log <code>_run.log</code> in each run's <code>output_parquet/&lt;run&gt;/</code> folder. A longer log keeps its first 64 KiB and its last this many bytes, with a line that says how many bytes were left out between them. A larger value is taken as 256 MiB. The GUI's log window shows at most 2 MiB of a log: its start and its end, with a line that says how much is left out.</td>
+</tr>
+<tr>
+<td><code>FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS</code></td>
+<td><code>1</code> / <code>0</code></td>
+<td><code>1</code>: a solve's <code>solver_arguments</code> may hold solver parameter names that are not in FlexTool's list of that solver's parameters (a parameter of a newer solver version). Such a name still takes no file path and no server setting. <code>0</code> refuses them, which is the default. Overrides <code>allow_unlisted_parameters</code> in <code>solver_settings.json</code> in your user config folder. See <a href="../solvers/#what-the-database-may-set">What the database may set</a>.</td>
+</tr>
+<tr>
+<td><code>FLEXTOOL_SOLVER_WRAPPER_GUROBI</code></td>
+<td>JSON list, or a program path</td>
+<td>The solver wrapper of Gurobi: a program that starts in front of Gurobi's program, for example to hold a floating licence or to lower its priority. A JSON list (<code>["/usr/bin/nice", "-n", "10"]</code>) gives the program's full path and its arguments; any other text is one program path. Empty or <code>[]</code> means no wrapper. Overrides <code>wrappers</code> in <code>solver_settings.json</code> in your user config folder. See <a href="../solvers/#running-a-solver-through-a-wrapper">Running a solver through a wrapper</a>.</td>
+</tr>
+<tr>
+<td><code>FLEXTOOL_SOLVER_WRAPPER_CPLEX</code></td>
+<td>JSON list, or a program path</td>
+<td>The solver wrapper of CPLEX: a program that starts in front of CPLEX's program, for example to hold a floating licence or to lower its priority. A JSON list (<code>["/usr/bin/nice", "-n", "10"]</code>) gives the program's full path and its arguments; any other text is one program path. Empty or <code>[]</code> means no wrapper. Overrides <code>wrappers</code> in <code>solver_settings.json</code> in your user config folder. See <a href="../solvers/#running-a-solver-through-a-wrapper">Running a solver through a wrapper</a>.</td>
+</tr>
+<tr>
+<td><code>FLEXTOOL_SOLVER_WRAPPER_XPRESS</code></td>
+<td>JSON list, or a program path</td>
+<td>The solver wrapper of Xpress: a program that starts in front of Xpress's program, for example to hold a floating licence or to lower its priority. A JSON list (<code>["/usr/bin/nice", "-n", "10"]</code>) gives the program's full path and its arguments; any other text is one program path. Empty or <code>[]</code> means no wrapper. Overrides <code>wrappers</code> in <code>solver_settings.json</code> in your user config folder. See <a href="../solvers/#running-a-solver-through-a-wrapper">Running a solver through a wrapper</a>.</td>
+</tr>
+<tr>
+<td><code>FLEXTOOL_SOLVER_WRAPPER_COPT</code></td>
+<td>JSON list, or a program path</td>
+<td>The solver wrapper of COPT: a program that starts in front of COPT's program, for example to hold a floating licence or to lower its priority. A JSON list (<code>["/usr/bin/nice", "-n", "10"]</code>) gives the program's full path and its arguments; any other text is one program path. Empty or <code>[]</code> means no wrapper. Overrides <code>wrappers</code> in <code>solver_settings.json</code> in your user config folder. See <a href="../solvers/#running-a-solver-through-a-wrapper">Running a solver through a wrapper</a>.</td>
 </tr>
 <tr>
 <td><code>FLEXTOOL_MIGRATION_LOCK_TIMEOUT</code></td>

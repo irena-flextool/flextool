@@ -1901,16 +1901,73 @@ the registry of every environment variable FlexTool reads. Where a setting belon
    solver: <code>&lt;solver&gt;.opt</code>; then <code>solve.solver_mip_gap</code> &lt; <code>solve.solver_arguments</code> &lt; operator layer); the registry
    supplies only the operator layer (<code>_operator_highs_overrides</code>; <code>_solver_dispatch._operator_native_overrides</code>
    maps <code>--solver-time-limit</code> / <code>--solver-mip-gap</code> to the native names of <code>_PARAM_MAP</code>).
-   The option files come from one folder per run, <code>flextool/_solver_config_source.py</code> (engine-free; not
+   The option files come from one ladder of folders per run, read FILE BY FILE (each solver's file from the first
+   folder that has it, else the packaged template), <code>flextool/_solver_config_source.py</code> (engine-free; not
    <code>flextool/solver_config.py</code>, which would shadow the template data folder):
-   <code>resolve_solver_config_source</code> — explicit argument &gt; <code>--solver-config-dir</code> &gt; <code>FLEXTOOL_SOLVER_CONFIG_DIR</code> &gt;
-   the bounded database layout (next to the database; <code>&lt;workspace&gt;</code> of a <code>projects/&lt;P&gt;/input_sources/</code> database)<blockquote>
-<p>the Toolbox project folder &gt; cwd &gt; packaged templates. <code>snapshot_solver_option_files</code> reads them once at run
+   <code>resolve_solver_config_source</code> builds the ladder from the first tier that applies — explicit argument &gt;
+   <code>--workspace-solver-config-dir</code> (repeatable, found by a launcher) above <code>--solver-config-dir</code> (repeatable) &gt;
+   <code>FLEXTOOL_SOLVER_CONFIG_DIR</code> (<code>os.pathsep</code> list), a closed ladder &gt;
+   the bounded database layout (next to the database, alone; else <code>[&lt;P&gt;/solver_config, &lt;workspace&gt;/solver_config]</code>
+   for a <code>projects/&lt;P&gt;/input_sources/</code> database) &gt; the Toolbox project folder &gt; cwd &gt; packaged templates. A GUI
+   project's folder never gives an unedited template (it would hide the workspace's file). Project import screens
+   shipped files with the run's own rule for an untrusted file (<code>_solver_dispatch.untrusted_option_file_problems</code>:
+   <code>validate_solver_option</code> + <code>check_database_solver_option</code> per line) and holds a refused one back as
+   <code>&lt;solver&gt;.opt.review</code>; export's privacy screen is the engine-free <code>flextool/_solver_option_rules.py</code>. <code>snapshot_solver_option_files</code> reads them once at run
    start into <code>PathConfig.solver_option_files</code> (every solve reads its layer from there, never from disk) and
-   writes the record <code>&lt;work_folder&gt;/solve_data/solver_config/</code>. The GUI and the calibrator pass the folder
-   explicitly.</p>
-</blockquote>
-</li>
+   writes the record <code>&lt;work_folder&gt;/solve_data/solver_config/</code>. The GUI and the calibrator pass the ladder
+   explicitly (<code>gui_solver_config_flags</code>: the project's folder when it exists, then the workspace's, as
+   <code>--workspace-solver-config-dir</code>; the folders of <code>FLEXTOOL_SOLVER_CONFIG_DIR</code> as <code>--solver-config-dir</code>, below
+   the project's).
+   Trust follows the source: the database layers (<code>solver_arguments</code>, <code>solver_mip_gap</code>) take only names in
+   <code>engine/solve/solver_catalogue/&lt;solver&gt;.json</code> (<code>_solver_catalogue</code>, written by <code>tools/solver_catalogue.py</code> with
+   a reviewed class per name: <code>plain</code> / <code>file</code> / <code>local_only</code> / <code>flextool</code>), checked for every solve before the
+   first (<code>check_run_solver_options</code>) and again per solve (<code>check_database_solver_option</code>). HiGHS names the
+   installed highspy knows as bool / int / double pass too. The per-user switch for unlisted names
+   (<code>flextool/_local_solver_settings.py</code>: <code>FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS</code>, else
+   <code>user_config_dir()/solver_settings.json</code>) is never read from a database, project, workspace or flag. Option
+   files and flags warn on an unlisted name and pass it.
+   Trust is judged per folder of the ladder, so per file: a folder the run found by itself (tiers 2-4, and the
+   GUI's <code>--workspace-solver-config-dir</code> folders) is trusted only when its parent (the workspace, or the project
+   for <code>projects/&lt;P&gt;/solver_config</code>) is in <code>trusted_workspaces</code> of that settings file
+   (<code>SolverConfigSource.layer_note</code>); otherwise <code>SolverOptionFiles.untrusted_note(solver)</code>, from the folder that
+   gave that solver's file, is handed to <code>resolve_commercial_options</code> / <code>_resolve_effective_highs_options</code> and
+   each file line goes through <code>check_database_solver_option(untrusted=...)</code>. A file that is byte for byte a
+   shipped template is trusted wherever it lies. Only <code>ensure_runtime_files</code> (when it creates <code>solver_config/</code> or
+   finds only unedited templates, <code>holds_only_flextool_defaults</code>), the GUI's project create / open
+   (<code>note_project_set_up_here</code>: only with nothing received waiting, <code>awaits_review</code>) and the GUI's explicit "trust
+   this workspace / project" add to the list; project import, the first-open rename of <code>imported_solver_config/</code>
+   and project deletion take the path off (<code>forget_trusted_folder</code>); nothing inside a workspace
+   (<code>templates/project_folder.txt</code> included) is a trust anchor. An entry is bound to the folder trusted
+   (<code>folder_identity</code>: device + inode + birth time, Windows volume serial + file ID + creation time, <code>st_ctime</code>
+   before Python 3.12; ext4 reuses a deleted folder's inode at once, so the birth time is needed, and a stored one
+   must be matched) and to its <code>.opt</code> hashes (<code>TrustedFolder</code>): a
+   replaced folder is untrusted (<code>trust_status</code>), and a changed file is covered only when <code>only_you_can_change</code>
+   (POSIX owner, not group/other-writable unless the user's private group; on Windows a plain file, as owner and
+   ACL are not read) — <code>read_solver_option_files</code> keeps that per-file verdict in <code>SolverOptionFiles.file_notes</code>.
+   FlexTool's own file is told by content (<code>is_unedited_template</code>), never by the origin text. Text entries of 4.4
+   development builds are bound on first read; relative entries are refused; a relative <code>FLEXTOOL_USER_HOME</code> /
+   <code>XDG_CONFIG_HOME</code> is ignored (<code>user_dirs</code>; never depends on the start folder), and a settings file inside the
+   folder judged (<code>_check_settings_outside</code>) makes its trust unreadable. The settings file is refused on read when
+   not UTF-8 or (POSIX) another account owns or can write it (<code>_settings_file_problem</code>). <code>flextool-trust-workspace</code>
+   (<code>cli/cmd_trust_workspace.py</code>) is the terminal route: a typed, answered command, not a run flag (D4: a Toolbox
+   project carries tool command lines, and anything that can start the command unasked can already run code); it
+   refuses a stdin that is not a terminal and has no <code>--yes</code>, escapes what it shows (<code>_safe_text.printable</code>), and
+   trusts exactly the bytes it showed (<code>show_folder</code> → <code>apply_settings(workspace_shown=)</code>, <code>ShownFilesChanged</code>),
+   as does the window's box with the files as the dialog found them.
+   Spine Toolbox projects are code and are trusted as such.
+   <code>--solver-config-dir</code> / <code>FLEXTOOL_SOLVER_CONFIG_DIR</code> stay trusted.
+   A commercial solver may run behind this computer's solver wrapper (<code>_local_solver_settings.solver_wrapper</code>:
+   <code>FLEXTOOL_SOLVER_WRAPPER_GUROBI</code> and its CPLEX, XPRESS, COPT twins, else <code>wrappers</code> in the same file;
+   <code>check_wrapper</code> holds the rules), checked for every solver of the run before the first solve
+   (<code>check_run_solver_wrappers</code>) and again before each start;
+   <code>_solve_commercial_subprocess</code> prepends it to the solver's argv (no shell; the solver path is absolute,
+   <code>_find_solver_binary</code> skips relative and, on Windows, current-folder <code>PATH</code> entries), logs the <code>Running ...
+   through the solver wrapper</code> line with the program and its argument count only (D7 revised, review b2b3 L3: the
+   AI assistant sends run logs out) and notes <code>solver_wrappers</code> in full in the run record (export keeps only the
+   program and the count).
+   The settings file (written 0600) is written only by the GUI's Solver options → On this computer,
+   <code>flextool-trust-workspace</code> and <code>ensure_runtime_files</code>;
+   no assistant tool, database value, project file or flag writes or sets it.</li>
 <li>The run header prints <code>RunOptions.summary_lines()</code> — each option set by a flag or an environment variable,
    with its source — and the thread budget (<code>Threads:</code>), with polars' and HiGHS' thread counts.</li>
 </ol>
@@ -2996,6 +3053,16 @@ strategy that disables warm-start and round-trips each sub-solve through
 an on-disk MPS file, trading ~5-10 GB peak RSS for slower per-solve
 build time. The orchestrator emits a one-time warning when it disables
 warm-start because of this flag.</p>
+<p><strong>Solver hand-off.</strong> A subprocess solve gets its merged options as a list of
+<code>(name, value text)</code> pairs, never through a file it reads back: a commercial
+script builder (<code>_subprocess_solve._SCRIPTS</code>) takes <code>commercial_params(options)</code>
+and emits one argument or script line per pair; the <code>--save-memory</code> HiGHS
+child (<code>cmd_solve_mps --options-json</code>) sets each pair with <code>setOptionValue</code>,
+refusing an empty value as HiGHS' option-file reader does. <code>&lt;solve&gt;.opt</code> next
+to the MPS is the record only. <code>tests/engine/test_solver_handoff_golden.py</code>
+pins argv, scripts and HiGHS' resulting options for a corpus (golden made
+before the hand-off was changed) and compares seeded random option lists with
+the old write-and-read-back chain.</p>
 <p><strong>Memory: polars allocator.</strong> polars links jemalloc statically, and its
 own decay settings in 1.x (<code>dirty_decay_ms:500,muzzy_decay_ms:-1</code>) leave
 freed pages resident for good, which roughly doubles peak RSS on large
@@ -3020,7 +3087,11 @@ runtime library, so there are two paths:
   Python with <code>_RJEM_MALLOC_CONF=dirty_decay_ms:1000,muzzy_decay_ms:0</code>.
   Windows (mimalloc) and builds without jemalloc are a silent no-op.</p>
 <p><strong>Thread budget.</strong> One number B per run (<code>--threads</code> &gt; <code>FLEXTOOL_THREADS</code> &gt; the available cores, by CPU
-affinity) limits FlexTool's processing and the solver (<code>flextool/_thread_budget.py</code>). polars reads
+affinity) limits FlexTool's processing and the solver (<code>flextool/_thread_budget.py</code>). A Spine Toolbox run takes 1
+instead of the cores (<code>is_toolbox_run</code>: <code>sys.argv[0]</code> is the <code>cmd_run_flextool.py</code> file and no <code>-m</code> of a FlexTool
+command; Toolbox sets no environment variable and runs its tools in parallel with nothing sharing the cores), for
+polars and every solver: <code>solver_budget</code> gives HiGHS <code>threads=1</code>, the commercial thread count over the option file
+(operator layer "Spine Toolbox run's default") and at most one Benders region solve at once. polars reads
 <code>POLARS_MAX_THREADS</code> only at import, and <code>import flextool</code> imports it, so <code>flextool/__init__.py</code> runs, in this
 order: the thread budget (<code>apply_before_polars</code>: when the process is a FlexTool command that accepts
 <code>--threads</code> — <code>sys.orig_argv</code> holds <code>-m flextool.cli.cmd_run_flextool</code> / <code>cmd_solve_mps</code> /
@@ -3036,7 +3107,7 @@ The environment therefore never carries B: a child gets <code>--threads</code> o
 GUI jobs, the <code>--save-memory</code> solve child). With a polar-high older than 3.12.2, whose import sets
 <code>POLARS_MAX_THREADS=1</code> even with polars loaded, it is imported before the restore so that value is removed too.
 When polars was imported before flextool, its pool cannot change; the header says so. HiGHS: a caller-set B
-gives <code>threads=B</code> with the <code>parallel=off</code> pin kept (<code>highs_thread_options</code>); <code>--highs-threads N&gt;1</code> keeps its
+(or a Toolbox run's 1) gives <code>threads=B</code> with the <code>parallel=off</code> pin kept (<code>highs_thread_options</code>); <code>--highs-threads N&gt;1</code> keeps its
 parallel-simplex opt-in, at most B. Benders: without <code>--benders-workers</code>, at most B region solves at once.</p>
 <h2 id="solver-outputs-folder-layout">Solver outputs: folder layout</h2>
 <div class="highlight"><pre><span></span><code>work_folder/
@@ -3512,11 +3583,20 @@ gap <code>1e-2</code> (the same order as the <code>mip_rel_gap</code> models rou
 The dual side is judged by the P-D gap only, so there is no dual ceiling.
 Each has a <code>FLEXTOOL_ACCEPT_*</code> env override; a set (positive)
 <code>FLEXTOOL_ACCEPT_PRIMAL_REL</code> replaces the derived relative ceiling outright.
-<code>FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0</code> restores the legacy hard-fail. A solve
+<code>FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0</code> restores the legacy hard-fail (a MIP kept at
+a limit included). A solve
 accepted above the former fixed <code>1e-6</code> prints the
 <code>acceptance_ceiling_follows_tolerance</code> behaviour-change notice. The subprocess/commercial path exposes no
-queryable handle, so <code>solve_diagnostics()</code> returns <code>None</code> and the solve is
-never near-optimal-accepted — it falls back to the strict <code>kOptimal</code> gate.</p>
+queryable handle, so <code>solve_diagnostics()</code> returns <code>None</code> and the <code>kUnknown</code>
+check never applies; the result file's parsed status (<code>Solution.shim_status</code>)
+decides instead.</p>
+<p>A solve stopped by a search limit (time, work, node, leaf, solution-count,
+iteration) or at an objective target or bound, on any solver, goes through
+<code>_limit_verdict</code>: no feasible primal → reject; an LP → reject; a MIP → keep
+with a WARNING naming the stop, its option (<code>_LIMIT_OPTIONS</code>) and the gap
+(<code>Acceptance.limit_stopped</code>). A memory limit, an interrupt and the other
+uncertified statuses stay rejected. Benders master and region solves raise on
+any non-optimal status, outside this check.</p>
 <h2 id="test-layout-and-fixture-architecture">Test layout and fixture architecture</h2>
 <h3 id="json-fixture-single-source-of-truth">JSON-fixture single source of truth</h3>
 <p><code>tests/fixtures/*.json</code> is the only authoritative source for test data and

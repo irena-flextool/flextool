@@ -2655,7 +2655,7 @@ environment) is in <a href="../architecture/#runtime-options">architecture.md, "
 <td><code>FLEXTOOL_ACCEPT_NEAR_OPTIMAL</code></td>
 <td>on</td>
 <td><code>0</code></td>
-<td><code>0</code> rejects every HiGHS status other than optimal (the old hard failure), e.g. for strict test runs. On by default: an interior-point solve stopped without crossover (status Unknown) is accepted when the checks below pass.</td>
+<td><code>0</code> rejects every solver status other than optimal (the old hard failure), a MIP stopped by a limit included, e.g. for strict test runs. On by default: an interior-point solve stopped without crossover (status Unknown) is accepted when the checks below pass.</td>
 </tr>
 <tr>
 <td><code>FLEXTOOL_ACCEPT_PD_GAP</code></td>

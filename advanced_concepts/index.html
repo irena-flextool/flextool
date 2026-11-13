@@ -3030,9 +3030,10 @@ Approximation: nominal = real + inflation approximately (e.g., 5% + 2% = 7%).</p
 </table>
 <h3 id="how-multi-year-periods-are-handled-internally">How multi-year periods are handled internally</h3>
 <p>A period can represent multiple years via the <code>years_represented</code> parameter on the solve entity. For example, a period <code>p2025</code> with <code>years_represented = 5</code> means that the modelled timeline (e.g., one representative week) stands in for 5 full years (2025-2029).</p>
-<p>Internally, FlexTool expands this into per-year entries. A period with <code>years_represented = 5</code> becomes 5 rows in the solve data, each representing 1 year at a different distance from the solve start. The inflation factor then sums the per-year inflation adjustments:</p>
-<div class="highlight"><pre><span></span><code>inflation_factor = Σ_y  p_years_represented[d,y] × 1/(1 + inflation_rate)^years_from_solve[y]
+<p>Internally, FlexTool expands this into per-year entries. A period with <code>years_represented = 5</code> becomes 5 rows in the solve data, each representing 1 year at a different distance from the start of the run (the first period of the model's first solve; a later solve counts the years of the earlier solves' periods first). The inflation factor then sums the per-year inflation adjustments:</p>
+<div class="highlight"><pre><span></span><code>inflation_factor = Σ_y  p_years_represented[d,y] × 1/(1 + inflation_rate)^(years_from_run_start[d,y] + p_years_represented[d,y] × offset)
 </code></pre></div>
+<p>where <code>years_from_run_start[d,y]</code> is the start of year <code>y</code> of period <code>d</code> (a fractional year counts as its fraction: after a period of 2.5 years the next one starts at 2.5) and <code>offset</code> is <code>inflation_offset_investment</code> or <code>inflation_offset_operations</code>.</p>
 <p>With <code>inflation_rate = 0</code>, each term contributes <code>p_years_represented[d,y] × 1 = 1</code>, and the sum equals <code>years_represented</code> (i.e., 5). With <code>inflation_rate = 2%</code>, each year is deflated slightly more, giving a sum of approximately 4.81.</p>
 <p>This mechanism also supports fractional values. With <code>years_represented = 0.5</code> (half-year resolution for investment decisions), the inflation factor is <code>0.5 × 1/(1+π)^y</code>, correctly counting only half a year of costs.</p>
 <p>In the objective function, operational costs follow this pattern:</p>

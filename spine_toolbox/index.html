@@ -1678,6 +1678,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#toolbox-projects-are-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Toolbox projects are code
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#limitations" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2727,6 +2738,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#toolbox-projects-are-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Toolbox projects are code
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#limitations" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2801,10 +2823,12 @@ reconstructs the workflow, item positions, and connections.</p>
 Ticking scenarios there decides which ones run when you execute the workflow; Toolbox can
 execute several in parallel as long as the <strong>FlexTool</strong> item is configured to use work
 directories.</p>
-<p>Each FlexTool run uses all available cores for its own data processing (at most 8 threads) unless told
-otherwise, and Toolbox does not pass a thread count. When Toolbox runs several scenarios at once, add
-<code>--threads N</code> to the <strong>FlexTool</strong> Tool's command-line arguments, with N about the number of cores divided by
-the number of runs executed at once. N covers FlexTool's data processing and the solver of each run.</p>
+<p>A FlexTool run started from Spine Toolbox uses <strong>1 thread</strong> for its data processing and its solver (HiGHS,
+the thread count of Gurobi, CPLEX, Xpress and COPT over their option file, and one Benders region solve at a
+time): Toolbox can execute several scenarios at once and nothing shares the cores between them. For more threads
+per run, add <code>--threads N</code> to the <strong>FlexTool</strong> Tool's command-line arguments (or set <code>FLEXTOOL_THREADS</code>), with N
+about the number of cores divided by the number of runs executed at once. The run header's <code>Threads:</code> line says
+<code>1 (Spine Toolbox run)</code> when the default applies.</p>
 <h2 id="the-shipped-workflow">The shipped workflow</h2>
 <p>The workflow has <strong>no <code>Export_to_csv</code> step</strong>: the engine builds the LP in memory directly
 from the Spine database. CSV is an optional output renderer, not a hand-off format inside
@@ -2893,6 +2917,11 @@ with <strong>each scenario as a Spine <em>alternative</em></strong>:</p>
   Whatever else you tick in Output settings (<code>output-plot</code> / <code>output-excel</code> /
   <code>output-csv</code>) Re-create also (re)produces.</li>
 </ul>
+<p>To write the results into another database, set <code>output-results-db-url</code> in <strong>Output settings</strong> to a <code>sqlite:</code> URL
+(<code>sqlite:///C:/results/all.sqlite</code>; a mapped network drive or a UNC share, <code>sqlite://///server/share/all.sqlite</code>,
+works too). A database server URL is not taken from the settings database: a run that writes the results SpineDB
+stops with a message, and without <code>output-spinedb</code> the URL is ignored with a warning. Give a server URL with the
+tool's <code>--results-db-url</code> argument instead.</p>
 <p>Two caveats apply to the <strong>replay</strong> path only:</p>
 <ul>
 <li>The two inflation / discount-factor parameters are omitted (they need the live
@@ -2938,6 +2967,15 @@ the toolbar's <strong>+ From file…</strong> button to add the specifications f
 <code>.spinetoolbox/specifications/</code> of your FlexTool checkout. The specifications stay in the
 FlexTool repository (and update with <code>git pull</code> / <code>update_flextool.py</code>), while the new
 project file lives wherever you put it.</p>
+<h2 id="toolbox-projects-are-code">Toolbox projects are code</h2>
+<p>A Spine Toolbox project runs the tool scripts and command lines its specifications carry
+(the FlexTool tools include scripts from the project's folders), so a project can do
+anything you can do on your computer. FlexTool therefore treats a Toolbox project like a
+program: whatever it passes to FlexTool (<code>--solver-config-dir</code>, for example, whose option
+files are trusted) is taken as your own choice. Open a Toolbox project only from people you
+trust, as you would run their program. What FlexTool does guard against is data that comes
+with a project, such as an input database or a <code>solver_config/</code> folder that a run finds on
+its own: see <a href="../solvers/#which-option-folders-are-trusted">Which option folders are trusted</a>.</p>
 <h2 id="limitations">Limitations</h2>
 <ul>
 <li>The shipped workflow is tuned for the <strong>Spine database editor</strong>. One can use the 

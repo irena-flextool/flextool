@@ -2679,11 +2679,14 @@ the FlexTool log.</p>
   expired"</em>. Renew the licence through the Gurobi web portal.</li>
 <li><strong><code>gurobi_cl</code> not found.</strong> <em>"Solver 'gurobi' CLI binary is not installed on
   this system."</em> Install Gurobi and put <code>gurobi_cl</code> on the <code>PATH</code>.</li>
-<li><strong>Unknown Gurobi parameter.</strong> A misspelt name in <code>solver_arguments</code> or
-  <code>gurobi.opt</code> (e.g. <code>MIPGapp</code>) is ignored by Gurobi, which prints
-  <code>Unknown parameter: 'MIPGapp' (ignored)</code> and solves on. FlexTool repeats it
-  as a warning naming where the parameter was set (the option file, or the
-  <code>solver_arguments</code> of which solve). Fix the name. With console logging off
+<li><strong>Unknown Gurobi parameter.</strong> A misspelt name in <code>solver_arguments</code> (e.g.
+  <code>MIPGapp</code>) stops the run before its first solve, with the closest name
+  (<code>MIPGap</code>) in the message: the database may name only parameters in
+  FlexTool's list (<a href="../#what-the-database-may-set">What the database may set</a>).
+  In <code>gurobi.opt</code> (or from <code>solver_arguments</code> where this computer allows
+  unlisted names) FlexTool warns and passes it; Gurobi ignores it, prints
+  <code>Unknown parameter: 'MIPGapp' (ignored)</code> and solves on, and FlexTool repeats
+  that as a warning naming where the parameter was set. Fix the name. With console logging off
   (<code>LogToConsole 0</code>) Gurobi prints no such line, and there is no warning.</li>
 <li><strong>File parameters.</strong> Parameters that name a file or folder (<code>LogFile</code>,
   <code>SolFiles</code>, <code>NodefileDir</code>, <code>InputFile</code>, the <code>.prm</code> / <code>.json</code> file lists of
@@ -2693,9 +2696,13 @@ the FlexTool log.</p>
   <a href="../#what-the-database-may-set">What the database may set</a>.
   <code>ResultFile</code> is ignored everywhere (with a warning): FlexTool names its own
   result file and reads the solution from it.</li>
-<li><strong>Time limit reached.</strong> A MIP stopped at its time limit with a solution is
+<li><strong>Time or other limit reached.</strong> A MIP stopped at its time, node,
+  solution or work limit, or at <code>BestObjStop</code> / <code>BestBdStop</code>, with a solution is
   kept with a warning that gives the gap reached; an LP, or a MIP without a
-  solution, stops the run. See <a href="../#time-limit">Time limit</a>.</li>
+  solution, stops the run. See <a href="../#time-and-other-limits">Time and other limits</a>.</li>
+<li><strong>Objective values.</strong> <code>BestObjStop</code>, <code>BestBdStop</code>, <code>Cutoff</code>, <code>MIPGapAbs</code> and <code>PoolGapAbs</code> are written in
+  unscaled currency; FlexTool scales them to the objective Gurobi sees (see
+  <a href="../#time-and-other-limits">Time and other limits</a>).</li>
 </ul>
 <h2 id="how-to-set-it-in-flextool">How to set it in FlexTool</h2>
 <p>On the <code>solve</code> entity for the solve you want Gurobi to handle:</p>
@@ -2713,8 +2720,9 @@ solve_advanced.solver_arguments:
 <code>solver_mip_gap</code> (0.005) and any <code>MIPGap</code> in <code>solver_arguments</code> or
 <code>gurobi.opt</code>. Without the flags, <code>solver_mip_gap</code> gives <code>MIPGap=0.005</code>, and a
 <code>MIPGap</code> (or <code>mipgap</code>: names match without regard to case) in
-<code>solver_arguments</code> wins over it. The thread count comes from <code>Threads</code> in
-<code>gurobi.opt</code> (<code>--threads</code> and <code>--highs-threads</code> do not change it). The run
+<code>solver_arguments</code> wins over it. <code>--threads</code> (Threads per run in the
+FlexTool window) sets <code>Threads</code>; without it, <code>Threads</code> in <code>gurobi.opt</code> or
+<code>solver_arguments</code> applies. <code>--highs-threads</code> does not change it. The run
 prints what Gurobi receives, for example:</p>
 <div class="highlight"><pre><span></span><code>Solver args (gurobi): Threads=1, MIPGap=0.001, LogToConsole=1, Method=2, Presolve=2, MIPFocus=1, TimeLimit=60
 </code></pre></div>

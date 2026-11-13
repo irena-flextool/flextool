@@ -2609,10 +2609,34 @@ solver. FlexTool writes each solve's model to an MPS file and runs the Xpress
 <code>optimizer</code> console (found on <code>PATH</code> or in <code>~/xpressmp/bin</code>) on it in a
 separate process, giving every control as a <code>setControl &lt;NAME&gt; &lt;value&gt;</code>
 command. FlexTool never imports <code>xpress</code> directly.</p>
-<p>FlexTool's Xpress driver solves <strong>linear problems only</strong>: it runs
-<code>lpoptimize</code>, which for a problem with integer variables would return the LP
-relaxation. A solve with integer variables (integer investments, unit online
-variables) therefore stops with a message; use another solver for it.</p>
+<p>FlexTool runs <code>lpoptimize</code> for a linear problem and <code>mipoptimize</code> for a solve
+with integer variables (integer investments, unit online variables). For a MIP,
+FlexTool reads how the search ended from the Xpress log, not from the print
+solution (which says "Optimal solution found" also after a search stopped by a
+limit):</p>
+<ul>
+<li><code>*** Search completed ***</code>: optimal.</li>
+<li><code>STOPPING - MAXTIME limit reached</code> / <code>MAXNODE</code> / <code>MAXMIPSOL</code>: the time, node
+  or solution limit. A MIP with an integer solution keeps it with a warning
+  naming the limit and the gap reached; without one the run stops (see
+  <a href="../#time-and-other-limits">Time and other limits</a>).</li>
+<li><code>Problem is integer infeasible</code>: the run stops, "is infeasible".</li>
+<li><code>Problem is unbounded</code>: the run stops, "is unbounded" (the log also says
+  <code>*** Search completed ***</code>, and may count heuristic solutions; FlexTool uses
+  none of them).</li>
+<li>A search that ends with no integer solution (<code>Number of solutions found</code> 0)
+  stops the run: FlexTool never uses the LP relaxation Xpress writes then.</li>
+</ul>
+<p>Any other stop (for example <code>MAXSTALLTIME</code>) ends as an unfinished search,
+which stops the run even with an integer solution.</p>
+<p>FlexTool needs these log lines. <code>OUTPUTLOG</code> other than 1 or <code>MIPLOG 0</code> leaves
+them out, so on a MIP FlexTool adds <code>setControl OUTPUTLOG 1</code> /
+<code>setControl MIPLOG 1</code> after your controls, with a printed line naming the value
+it replaced. Other <code>MIPLOG</code> values (2, 3, negative) are kept: they print the
+lines too. An LP keeps your values.</p>
+<p>These log texts were checked with the <code>xpress</code> Python package's library;
+check them with your <code>optimizer</code> console on a small MIP before relying on a
+long run.</p>
 <p>Official site: <a href="https://www.fico.com/en/products/fico-xpress-optimization">https://www.fico.com/en/products/fico-xpress-optimization</a></p>
 <h2 id="license-options">License options</h2>
 <ul>
@@ -2681,7 +2705,9 @@ than code; the keyword set is <code>license</code>, <code>licence</code>, <code>
   reported in the solver output; FlexTool does not check Xpress' names. The
   control names are in the Xpress Optimizer reference manual.</li>
 <li><strong>Time limit reached.</strong> An LP stopped at its time limit stops the run. See
-  <a href="../#time-limit">Time limit</a>.</li>
+  <a href="../#time-and-other-limits">Time and other limits</a>.</li>
+<li><strong>Objective values.</strong> <code>MIPABSCUTOFF</code>, <code>MIPADDCUTOFF</code> and <code>MIPABSSTOP</code> are written in unscaled currency;
+  FlexTool scales them to the objective Xpress sees (see <a href="../#time-and-other-limits">Time and other limits</a>).</li>
 </ul>
 <h2 id="how-to-set-it-in-flextool">How to set it in FlexTool</h2>
 <p>On the <code>solve</code> entity:</p>
@@ -2693,13 +2719,24 @@ solve_advanced.solver_arguments:
 </code></pre></div>
 <div class="highlight"><pre><span></span><code>flextool<span class="w"> </span>&lt;input_db_url&gt;<span class="w"> </span>--solver-time-limit<span class="w"> </span><span class="m">60</span>
 </code></pre></div></p>
-<p><code>--solver-time-limit</code> and <code>--solver-mip-gap</code> reach Xpress as <code>MAXTIME 60</code> (whole seconds, rounded up) and
-<code>MIPRELSTOP</code>, over the solve's <code>solver_mip_gap</code>, its <code>solver_arguments</code> and
+<p><code>--solver-time-limit</code> and <code>--solver-mip-gap</code> reach Xpress as <code>MAXTIME</code> (whole seconds, rounded up: <code>MAXTIME
+60</code> on an LP, <code>MAXTIME -60</code> on a MIP, see below) and <code>MIPRELSTOP</code> (for a MIP), over the solve's <code>solver_mip_gap</code>, its <code>solver_arguments</code> and
 <code>xpress.opt</code> (precedence in <a href="../">Solver selection</a>). Parameter names
-match without regard to case. The thread count comes from <code>THREADS</code> in
-<code>xpress.opt</code>; <code>--threads</code> and <code>--highs-threads</code> do not change it. The run
+match without regard to case. <code>--threads</code> (Threads per run in the FlexTool window) sets <code>THREADS</code>;
+without it, <code>THREADS</code> in <code>xpress.opt</code> or <code>solver_arguments</code> applies. <code>--highs-threads</code>
+does not change it. <code>MIPTHREADS</code>, <code>BARTHREADS</code> and <code>CONCURRENTTHREADS</code> are
+used as given. The run
 prints what Xpress receives in a <code>Solver args (xpress):</code> line before each
 solve.</p>
+<p>A positive <code>MAXTIME</code> stops a MIP only once Xpress has an integer solution; a
+negative one is a hard limit of its absolute value. FlexTool's own time limit
+(<code>--solver-time-limit</code>, <code>FLEXTOOL_SOLVER_TIME_LIMIT</code>, or the solve's time limit)
+is a hard limit, so on a MIP it reaches Xpress negated: <code>--solver-time-limit
+59.5</code> gives <code>MAXTIME -60</code>. The <code>Solver args (xpress):</code> line, the <code>&lt;solve&gt;.opt</code>
+record next to the MPS and the script Xpress gets all show <code>-60</code>. A <code>MAXTIME</code>
+you write in <code>xpress.opt</code> or <code>solver_arguments</code> (without the flag) is passed as
+written: a positive value there lets a MIP without an integer solution go on
+until FlexTool stops it (twice the limit plus 10 minutes), and the run stops.</p>
 <hr />
 <p><em>Verified install on: [empty]</em></p>
 

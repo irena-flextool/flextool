@@ -1920,6 +1920,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#licence-holders-and-other-programs-in-front-of-cplex" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Licence holders and other programs in front of CPLEX
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-to-set-it-in-flextool" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2594,6 +2605,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#licence-holders-and-other-programs-in-front-of-cplex" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Licence holders and other programs in front of CPLEX
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-to-set-it-in-flextool" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2680,8 +2702,14 @@ discoverable.</p>
 <p>Write the parameter names of the interactive optimizer's <code>set</code> command, in
 full and with spaces (<code>mip tolerances mipgap</code>). A dotted name
 (<code>mip.tolerances.mipgap</code>, the Python-API spelling) is read as the spaced
-one; an abbreviation (<code>mip tol mipg</code>) is passed as written and does not
-replace the full name from another layer.</p>
+one. An abbreviation (<code>mip tol mipg</code>) is refused from <code>solver_arguments</code>,
+with the full name in the message, also where your computer allows names
+that are not in FlexTool's list; in <code>cplex.opt</code> it gives a warning, is
+passed as written and does not replace the full name from another layer.
+A group name with a value (<code>mip tolerances 0.01</code>, <code>simplex 1</code>) is refused
+from every source, <code>cplex.opt</code> included: the interactive optimizer would ask
+which parameter of the group is meant and read the next line as the answer. See
+<a href="../#what-the-database-may-set">What the database may set</a>.</p>
 <div class="highlight"><pre><span></span><code>solver_arguments:
   timelimit                = 60
   mip tolerances mipgap    = 0.01
@@ -2704,25 +2732,35 @@ replace the full name from another layer.</p>
   reported in the solver output; FlexTool does not check CPLEX's names. The
   names are in the IBM CPLEX parameters reference
   (<a href="https://www.ibm.com/docs/en/icos/22.1.0?topic=cplex-list-parameters">https://www.ibm.com/docs/en/icos/22.1.0?topic=cplex-list-parameters</a>).</li>
-<li><strong>Time limit reached.</strong> A MIP stopped at its time limit with a solution is
-  kept with a warning; an LP, or a MIP without a solution, stops the run. See
-  <a href="../#time-limit">Time limit</a>.</li>
+<li><strong>Time or other limit reached.</strong> A MIP stopped at its time, node or
+  solution limit with a solution is kept with a warning; an LP, or a MIP
+  without a solution, stops the run. See
+  <a href="../#time-and-other-limits">Time and other limits</a>.</li>
+<li><strong>Objective values.</strong> Cutoffs, objective stops and limits, and absolute gaps (<code>mip tolerances absmipgap</code>, ...)
+  are written in unscaled currency; FlexTool scales them to the objective CPLEX sees (see
+  <a href="../#time-and-other-limits">Time and other limits</a>).</li>
 </ul>
+<h2 id="licence-holders-and-other-programs-in-front-of-cplex">Licence holders and other programs in front of CPLEX</h2>
+<p>FlexTool 3 ran a solve's <code>solver_precommand</code> in front of CPLEX. FlexTool 4 never runs a command stored in a
+database; set the program on your computer as the CPLEX solver wrapper instead (<code>FLEXTOOL_SOLVER_WRAPPER_CPLEX</code>, or
+Solver options → On this computer in the FlexTool window). See
+<a href="../#flextool-3-precommand-users">FlexTool 3 precommand users</a>.</p>
 <h2 id="how-to-set-it-in-flextool">How to set it in FlexTool</h2>
 <p>On the <code>solve</code> entity:</p>
 <p><div class="highlight"><pre><span></span><code>solve_advanced.solver         = "cplex"
 solve_advanced.solver_mip_gap = 0.01
 solve_advanced.solver_arguments:
-  lpmethod   = 4
-  preind     = 1
+  lpmethod                = 4
+  preprocessing presolve  = 1
 </code></pre></div>
 <div class="highlight"><pre><span></span><code>flextool<span class="w"> </span>&lt;input_db_url&gt;<span class="w"> </span>--solver-time-limit<span class="w"> </span><span class="m">60</span><span class="w"> </span>--solver-mip-gap<span class="w"> </span><span class="m">0</span>.001
 </code></pre></div></p>
 <p><code>--solver-time-limit</code> and <code>--solver-mip-gap</code> reach CPLEX as <code>timelimit 60</code> and
 <code>mip tolerances mipgap 0.001</code>, over the solve's <code>solver_mip_gap</code>, its <code>solver_arguments</code> and
 <code>cplex.opt</code> (precedence in <a href="../">Solver selection</a>). Parameter names
-match without regard to case (and a dot is read as a space). The thread count comes from <code>threads</code> in
-<code>cplex.opt</code>; <code>--threads</code> and <code>--highs-threads</code> do not change it. The run
+match without regard to case (and a dot is read as a space). <code>--threads</code> (Threads per run in the FlexTool window) sets <code>threads</code>;
+without it, <code>threads</code> in <code>cplex.opt</code> or <code>solver_arguments</code> applies. <code>--highs-threads</code>
+does not change it. The run
 prints what CPLEX receives in a <code>Solver args (cplex):</code> line before each
 solve.</p>
 <hr />
