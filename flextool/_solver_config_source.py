@@ -988,7 +988,7 @@ def snapshot_solver_option_files(
         for solver in names:
             target = snapshot / f"{solver}.opt"
             if solver in files.texts:
-                target.write_text(files.texts[solver], encoding="utf-8")
+                target.write_text(files.texts[solver], encoding="utf-8", newline="\n")
             elif target.exists():
                 target.unlink()
     except OSError as exc:
