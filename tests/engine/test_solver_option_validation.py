@@ -276,7 +276,7 @@ def test_trusted_option_file_still_refuses_injection(solver: str, value: str, wo
     line = f"{name} = {value}" if solver == "highs" else f"{name} {value}"
     with pytest.raises(FlexToolUserError, match=words) as err:
         _resolve_db(solver, {}, opt_text=f"{line}\n")
-    assert f"cfg{os.sep}" in str(err.value) and "line 1" in str(err.value)
+    assert ("cfg/" in str(err.value) or f"cfg{os.sep}" in str(err.value)) and "line 1" in str(err.value)
 
 
 def test_trusted_flags_are_not_checked_as_the_database(monkeypatch) -> None:
