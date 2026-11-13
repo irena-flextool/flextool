@@ -1323,9 +1323,10 @@ def solver_config_activation_hint(project_path: Path, workspace_dirs: list[Path]
     return (f"The shipped solver options are in {project_path / SOLVER_CONFIG_DIR}. Runs of this project use "
             f"them ahead of the workspace's ({workspace}), file by file, with the input database's rules (a file "
             "option takes only a plain file name; no server or licence settings; only parameter names in "
-            f"FlexTool's list) until you trust them: read them, then tick {TRUST_PROJECT_SETTING}. Delete a file "
-            "there to use the workspace's. A file copied into the workspace's solver_config, or into a folder "
-            "named by --solver-config-dir or FLEXTOOL_SOLVER_CONFIG_DIR, is trusted there: its file paths and "
+            f"FlexTool's list) until you trust them: read them, then tick {TRUST_PROJECT_SETTING} (or run "
+            f"flextool-trust-workspace {project_path} in a terminal). Delete a file there to use the workspace's. "
+            "A file copied into the workspace's solver_config, or into a folder named by --solver-config-dir or "
+            "FLEXTOOL_SOLVER_CONFIG_DIR, is trusted there (a copy you make is your own edit): its file paths and "
             "server settings reach the solver, so read it first.")
 
 

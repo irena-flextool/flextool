@@ -293,7 +293,10 @@ def test_cli_export_results_and_solver_hint(workspace: dict, capsys: pytest.Capt
         f"use them ahead of the workspace's ({workspace['config']}), file by file, with the input database's rules")
     # Review b2b3 M2: the hint never sends the files to a trusted place without saying they are trusted there.
     assert "until you trust them" in hint and "Trust this project's solver option files" in hint
-    assert "is trusted there: its file paths and server settings reach the solver, so read it first." in hint
+    assert "its file paths and server settings reach the solver, so read it first." in hint
+    assert "is trusted there (a copy you make is your own edit)" in hint
+    # The terminal route of the same trust (review b2b3 L6), for users without the FlexTool window.
+    assert f"flextool-trust-workspace {workspace['projects'] / 'Other'}" in hint
 
 
 def _status_in(zip_path: Path, run: str) -> dict:

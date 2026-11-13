@@ -76,7 +76,7 @@ def test_ok_writes_this_computers_settings_file_and_not_the_project(root, tmp_pa
     dialog = _open_from_solver_options(root)
     assert "gurobi.opt" in " ".join(str(w.cget("text")) for w in _widgets(dialog) if isinstance(w, ttk.Label))
     dialog.program_vars["cplex"].set(str(program))
-    dialog.args_texts["cplex"].insert("1.0", "--queue\nopt name\n")
+    dialog.args_texts["cplex"].insert("1.0", "--queue \nopt name\n")  # spaces at the ends are removed
     dialog.allow_var.set(True)
     dialog.trust_var.set(True)
     dialog.ok()
@@ -84,7 +84,7 @@ def test_ok_writes_this_computers_settings_file_and_not_the_project(root, tmp_pa
     data = json.loads(local.settings_path().read_text())
     assert data["wrappers"] == {"cplex": [str(program), "--queue", "opt name"]}
     assert data["allow_unlisted_parameters"] is True
-    assert data["trusted_workspaces"] == [local.workspace_key(Path.cwd())]
+    assert local.trusted_workspaces() == (local.workspace_key(Path.cwd()),)
     assert local.solver_wrapper("cplex").argv == (str(program), "--queue", "opt name")
     assert not list(Path.cwd().rglob("settings.yaml")) and not list(Path.cwd().rglob("solver_settings.json"))
     # Opened again, the dialog shows what was saved; clearing the program and the box removes them.
@@ -136,7 +136,7 @@ def test_the_open_projects_box_trusts_its_solver_config_only_when_ticked(root, t
     texts = " ".join(str(w.cget("text")) for w in _widgets(dialog) if isinstance(w, (ttk.Label, ttk.Checkbutton)))
     assert "Trust this project's solver option files (P)" in texts and "Edited: cplex.opt" in texts
     dialog.ok()  # nothing changed: the project is not written
-    assert local.workspace_key(project) not in json.loads(local.settings_path().read_text())["trusted_workspaces"]
+    assert local.workspace_key(project) not in local.trusted_workspaces()
     dialog = _open_from_solver_options(root)
     dialog.project_trust_var.set(True)
     dialog.ok()
@@ -146,3 +146,25 @@ def test_the_open_projects_box_trusts_its_solver_config_only_when_ticked(root, t
     dialog.project_trust_var.set(False)
     dialog.ok()
     assert not local.is_trusted_workspace(project)
+
+
+def test_ok_keeps_the_entries_it_does_not_show(root, tmp_path) -> None:
+    """Review b2b3 L7: with an entry FlexTool cannot read in the list, the boxes show unticked with the problem,
+    and OK with the boxes unchanged writes no trust state: every entry is kept as stored.  Ticking the workspace
+    box changes only the workspace's entry."""
+    other = tmp_path / "other"
+    other.mkdir()
+    stored = [".", str(other)]
+    local.settings_path().parent.mkdir(parents=True)
+    local.settings_path().write_text(json.dumps({"format": 1, "trusted_workspaces": stored}))
+    dialog = _open_from_solver_options(root)
+    assert not dialog.trust_var.get()
+    texts = " ".join(str(w.cget("text")) for w in _widgets(dialog) if isinstance(w, ttk.Label))
+    assert "cannot read its list of trusted folders" in texts and "not a full folder path" in texts
+    dialog.ok()
+    assert json.loads(local.settings_path().read_text())["trusted_workspaces"] == stored
+    dialog = _open_from_solver_options(root)
+    dialog.trust_var.set(True)
+    dialog.ok()
+    kept = json.loads(local.settings_path().read_text())["trusted_workspaces"]
+    assert kept[:2] == stored and kept[2]["path"] == local.workspace_key(Path.cwd())

@@ -12,11 +12,16 @@ with a project or a workspace.
   ``FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS`` is set.
 - **Trust this workspace's solver option files**: puts the workspace (the folder FlexTool was started in) on this
   computer's list of workspaces it set up, so the files of its ``solver_config/`` may name paths and servers (B3).
-  The option files that differ from FlexTool's defaults are listed next to it, to be read first.
+  The option files that differ from FlexTool's defaults are listed next to it, to be read first.  The tick trusts
+  this folder as it is now (its identity and its files, review b2b3 M1): the box shows unticked, with the reason,
+  when the folder at this path was replaced since, or a file changed in a way FlexTool cannot take as the user's
+  own edit; ticking it again trusts the files as they are then.
 - **Trust this project's solver option files** (with a project open): the same for the project's own
   ``solver_config/`` (``projects/<P>/solver_config``), which a run reads file by file over the workspace's.  A
-  project that came as a package or a copied folder is not trusted until the box is ticked; its state is written
-  only when the box was changed.
+  project that came as a package or a copied folder is not trusted until the box is ticked.
+
+A box's state is written only when it was changed, and only that folder's entry: the other entries of the list
+are kept as stored, also ones FlexTool cannot read (review b2b3 L7).
 """
 from __future__ import annotations
 
@@ -28,6 +33,34 @@ from tkinter import filedialog, messagebox, ttk
 from flextool import _local_solver_settings as local
 
 _LABELS = {"gurobi": "Gurobi", "cplex": "CPLEX", "xpress": "Xpress", "copt": "COPT"}
+
+
+def _trust_state(folder: Path) -> tuple[bool | None, str]:
+    """The box value of *folder*'s trust (``None``: unknown, the list cannot be read) and a note for the dialog."""
+    from flextool._solver_config_source import is_unedited_template
+
+    try:
+        status = local.trust_status(folder)
+    except local.LocalSolverSettingsError as exc:
+        return None, (f"FlexTool cannot read its list of trusted folders: {exc}\nChanging this box changes only "
+                      "this folder's entry.")
+    if status.problem is not None:
+        return False, f"Not trusted: {status.problem}. Tick the box to trust the folder as it is now."
+    if not status.trusted:
+        return False, ""
+    changed = []
+    for name, why in status.changed_files(folder):
+        path = folder / "solver_config" / name
+        try:
+            if name.endswith(".opt") and is_unedited_template(name[:-4], path.read_bytes()):
+                continue
+        except OSError:
+            pass
+        changed.append(f"{name} ({why.split(' (', 1)[-1].rstrip(')')})" if " (" in why else name)
+    if changed:
+        return False, (f"Changed since you trusted it, and FlexTool cannot tell that you did it: {', '.join(changed)}."
+                       "\nThose files get the input database's rules: read them, then tick the box again.")
+    return True, ""
 
 
 def _edited_option_files(folder: Path) -> list[str]:
@@ -86,7 +119,9 @@ class LocalSolverSettingsDialog(tk.Toplevel):
             body, justify="left", foreground="#666666",
             text=("A program that starts in front of the solver, for example to hold a floating licence.\n"
                   "Give its full path; FlexTool adds the solver's path and arguments after its own arguments.\n"
-                  "Keep passwords out of the arguments: they are shown in the run log."),
+                  "Spaces at the ends of an argument line are removed. The run log shows the program and the\n"
+                  "number of its arguments only (the AI assistant can send the run log to its provider); the\n"
+                  "full list is in the run's record on this computer, left out of an exported project."),
         ).grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 4))
         row += 1
         for solver, label in _LABELS.items():
@@ -146,11 +181,9 @@ class LocalSolverSettingsDialog(tk.Toplevel):
 
         ttk.Separator(body, orient="horizontal").grid(row=row, column=0, columnspan=3, sticky="ew", pady=8)
         row += 1
-        try:
-            trusted = local.is_trusted_workspace(self.workspace)
-        except local.LocalSolverSettingsError:
-            trusted = False
-        self.trust_var = tk.BooleanVar(master=self, value=trusted)
+        trusted, self.workspace_trust_note = _trust_state(self.workspace)
+        self._workspace_trusted_at_open = bool(trusted)  # unknown (None): the box writes nothing unless ticked
+        self.trust_var = tk.BooleanVar(master=self, value=bool(trusted))
         ttk.Checkbutton(
             body, variable=self.trust_var, text="Trust this workspace's solver option files",
         ).grid(row=row, column=0, columnspan=3, sticky="w")
@@ -161,16 +194,16 @@ class LocalSolverSettingsDialog(tk.Toplevel):
             body, justify="left", foreground="#666666",
             text=(f"{folder}\n"
                   + (f"Edited: {', '.join(edited)}. Read them before you tick the box: trusted files may name\n"
-                     "files anywhere and solver servers. Untrusted ones get the input database's rules."
-                     if edited else "No file there differs from FlexTool's defaults.")),
+                     "files anywhere and solver servers. Untrusted ones get the input database's rules.\n"
+                     "The tick trusts this folder: a folder put at its path later is not trusted, and a later\n"
+                     "change is trusted only when your account made it and no other account can change the file."
+                     if edited else "No file there differs from FlexTool's defaults.")
+                  + (f"\n{self.workspace_trust_note}" if self.workspace_trust_note else "")),
         ).grid(row=row, column=0, columnspan=3, sticky="w")
         row += 1
         if self.project is not None:
-            try:
-                project_trusted: bool | None = local.is_trusted_workspace(self.project)
-            except local.LocalSolverSettingsError:
-                project_trusted = None  # unknown: the box writes nothing unless it is changed
-            self._project_trusted_at_open = project_trusted
+            project_trusted, self.project_trust_note = _trust_state(self.project)
+            self._project_trusted_at_open = bool(project_trusted)
             self.project_trust_var = tk.BooleanVar(master=self, value=bool(project_trusted))
             ttk.Checkbutton(
                 body, variable=self.project_trust_var,
@@ -184,7 +217,8 @@ class LocalSolverSettingsDialog(tk.Toplevel):
                 text=(f"{own}\n"
                       + (f"Edited: {', '.join(edited)}. Its runs use them over the workspace's files. Read them before\n"
                          "you tick the box, above all when the project came from someone else."
-                         if edited else "No file there differs from FlexTool's defaults.")),
+                         if edited else "No file there differs from FlexTool's defaults.")
+                      + (f"\n{self.project_trust_note}" if self.project_trust_note else "")),
             ).grid(row=row, column=0, columnspan=3, sticky="w")
             row += 1
 
@@ -215,18 +249,19 @@ class LocalSolverSettingsDialog(tk.Toplevel):
             var.set(chosen)
 
     def wrapper_argv(self, solver: str) -> list[str]:
-        """The wrapper of *solver* as entered: the program, then one argument per non-empty line."""
+        """The wrapper of *solver* as entered: the program, then one argument per non-empty line (spaces at its
+        ends removed)."""
         program = self.program_vars[solver].get().strip()
         if not program:
             return []
         lines = self.args_texts[solver].get("1.0", "end-1c").splitlines()
-        return [program, *(line for line in lines if line.strip())]
+        return [program, *(line.strip() for line in lines if line.strip())]
 
     def ok(self) -> None:
         """Check every wrapper, then write the settings; on a problem show it and keep the dialog open."""
         entered = {s: self.wrapper_argv(s) for s in _LABELS if s not in self.env_locked}
         allow = None if os.environ.get(local.ALLOW_UNLISTED_ENV, "").strip() else self.allow_var.get()
-        trust = self.trust_var.get()
+        trust = self.trust_var.get() if self.trust_var.get() != self._workspace_trusted_at_open else None
         trust_project = None
         if self.project_trust_var is not None and self.project_trust_var.get() != self._project_trusted_at_open:
             trust_project = self.project_trust_var.get()
