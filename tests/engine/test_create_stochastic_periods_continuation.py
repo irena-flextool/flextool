@@ -17,6 +17,7 @@ import logging
 from collections import defaultdict
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from flextool.engine.input._solve_state import ActiveTimeEntry, FlexToolConfigError
@@ -190,7 +191,7 @@ def test_zero_weight_branch_metadata_only() -> None:
 # W1 — triggering-cohort validation (spec §A.1/§A.2/§F-step2/§H.3).
 #
 # The shipped ``1_week_rolling_wind`` fixture fans at EVERY roll, so it never
-# exercises the pre-reveal-roll branch of Fix 1.  These solver-free cases cover
+# exercises a roll without a reveal (an error since 2026-11-13).  These solver-free cases cover
 # it (plus the reject paths) directly.  Rolling vs single is detected
 # structurally via ``state.solve.solve_modes[complete_solve] == "rolling_window"``
 # (not the ``_roll_N`` name suffix); so the state stub here grows a ``solve``
@@ -225,26 +226,26 @@ def _run_one(
     )
 
 
-def test_w1_rolling_pre_reveal_roll_does_not_raise() -> None:
-    """Fix 1: a rolling roll whose sliced window legitimately PRECEDES the
-    first reveal (reveal declared at a later roll's first step, unreachable
-    here) stays a deterministic trunk — no raise, no branching."""
+@pytest.mark.parametrize("name", [str, np.str_], ids=["str", "np.str_"])
+def test_w1_rolling_roll_without_reveal_raises(name) -> None:
+    """A roll of a stochastic rolling solve whose window reaches no reveal (reveal declared at t0010, a later
+    roll's first step) would be solved without forecasts: a configuration error (owner 2026-11-13: there must be
+    a forecast at each roll's start, or where it branches; before: a silent deterministic trunk).  The names
+    print as plain strings also when they arrive as ``np.str_`` (numpy 2 prints ``np.str_('p1')``)."""
     solver = _make_solver_with_modes({"roll_c": "rolling_window"})
-    # Reveal declared at t0010 (a later roll's first step); this roll's window
-    # only reaches t0001..t0003, so no reveal is reachable.
     info = [
-        ("p1", "rlz", "t0010", "yes", "1"),
-        ("p1", "low", "t0010", "no", "3"),
+        (name("p1"), name("rlz"), name("t0010"), "yes", "1"),
+        (name("p1"), name("low"), name("t0010"), "no", "3"),
     ]
-    (pb, sbtb, atl, jumps, fstl, rtl, bstl, labels) = _run_one(
-        solver, info, {"p1": ROLL_WIN},
-        solve="roll_c_roll_0", complete="roll_c",
-    )
-    # Deterministic trunk: self-row only, no fan, no branch start.
-    assert pb["roll_c_roll_0"] == [("p1", "p1")]
-    assert sbtb["roll_c_roll_0"] == []
-    assert bstl["roll_c_roll_0"] is None
-    assert list(atl["roll_c_roll_0"].keys()) == ["p1"]
+    win = [ActiveTimeEntry(timestep=name(e.timestep), index=e.index, duration=e.duration) for e in ROLL_WIN]
+    with pytest.raises(FlexToolConfigError) as err:
+        _run_one(solver, info, {name("p1"): win}, solve=name("roll_c_roll_0"), complete=name("roll_c"))
+    assert str(err.value) == (
+        "Roll 'roll_c_roll_0' of rolling solve 'roll_c' starts at period 'p1', time step 't0001', but no forecast "
+        "of stochastic_branches starts in its horizon (period 'p1' 't0001' to period 'p1' 't0003'), so it would "
+        "be solved without forecasts. Every roll of a stochastic rolling solve needs forecasts made at its start "
+        "(or where it branches later in its horizon): add stochastic_branches rows for period 'p1' at "
+        "analysis_time 't0001', or align the rolls with the forecast times (rolling_solve_jump).")
 
 
 def test_w1_rolling_fan_at_first_passes() -> None:

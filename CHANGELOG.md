@@ -30,14 +30,15 @@ Each line says what changes for a model that ran before and what to do; the deta
   `lifetime`, `ramp_cost`, a minimum above its maximum, `existing` as a time series, a used timeline without
   `timestep_duration`, a time series with no time step on a timeline, a timeset block that starts off its timeline,
   a CO2 method without its value, a `realized_invest_periods` outside `invest_periods`, partial or ungrouped
-  stochastic inflow / reservation, a forecast fan declared after a solve's first one, a `realized: yes` row that
-  switches the realized branch between rolls, a contained single solve that would run under one name with
+  stochastic inflow / reservation, a roll of a stochastic rolling solve that reaches no forecast, a
+  `realized: yes` row that switches the realized branch between rolls, a contained single solve that would run under one name with
   different periods, a time-only
   `energy_margin_adder`, capacity-margin groups across Benders regions or with a *balance_within_period* node (see
   "Input checks" and the entries below). Each error names what to fix.
 - **New warnings name data that ran silently:** nodes with nothing to balance them, untied zero
   `conversion_flow_coeff` flows, negative `existing`, time-series keys off the timeline, a CO2 cap on a method
-  without one, an `invest_method` on a non-storage node, percent-like values. The model is unchanged; check them.
+  without one, an `invest_method` on a non-storage node, percent-like values, forecasts declared where no solve or
+  roll fans out (ignored). The model is unchanged; check them.
 - **Profile and time maps without `index_name` are read as written.** A profile keyed by periods, or a period × time
   profile with an unnamed level, read 0 before; a node penalty, `availability` or `other_operational_cost` time map
   without `index_name` no longer adds its time steps to the periods. Results of such models change; name the map's
@@ -1106,10 +1107,16 @@ Each line says what changes for a model that ran before and what to do; the deta
   forecasts at each solve or roll start that cover the steps before the fan, or align the rolls with the forecast
   times (`rolling_solve_jump`). Such models ran with zeros, later forecasts or another forecast's data before:
   rerun them.
-- **A forecast fan declared later in a solve that already fans out is an error.** A solve or a roll fans out once,
-  at its first reveal; forecast branches declared at a later period (or, in a roll, at a later time step where no
-  roll fans out) were ignored without a message. The run now stops before solving, naming the solve or roll, the
-  period, the analysis time and the branches. Remove the rows or put the later fan in its own solve or roll.
+- **A forecast fan declared later in a solve that already fans out is ignored with a warning.** A solve or a roll
+  fans out once, at its first reveal; forecast branches declared at a later period (or, in a roll, at a later time
+  step where no roll fans out) were ignored without a message. They are still ignored, and one warning per run now
+  lists them: the solve, the period, the analysis time, the branches and the solves or rolls whose horizon reaches
+  them. Remove the rows, or put the later fan in its own solve or make a roll start there.
+- **A roll of a stochastic rolling solve that reaches no forecast is an error.** Every roll needs a forecast of
+  `stochastic_branches` at its start or where it fans out later in its horizon. A roll whose horizon reached none
+  was solved without forecasts and without a message; the run now stops before solving, naming the roll, its start
+  and its horizon. Add forecasts at the roll's start, or align the rolls with the forecast times
+  (`rolling_solve_jump`).
 - **A `realized: yes` row that switches the realization is an error.** In a rolling solve, a `realized: yes` row
   where no roll fans out, or one where a roll fans out that names a different branch than at the other rolls' fan
   points, silently switched the realization dispatch to that branch's series. The run now stops before solving.

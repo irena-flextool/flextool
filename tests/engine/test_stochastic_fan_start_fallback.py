@@ -316,46 +316,76 @@ def test_rolling_lookahead_not_covered_by_roll_forecast_is_an_error(tmp_path_fac
 
 
 # ── 4c: a later forecast cohort that no solve or roll fans out at (item 229) ──
-_LATER_COHORT_HEAD = (
-    "opens its stochastic fan at period 'p1' (analysis_time 't0001'). A solve or roll fans out only once, "
-    "but the stochastic_branches of solve 'sol' also declare forecast branches later in its horizon: period "
-    "'p2' at analysis_time 't0005' (forecast branches ")
-_ROLL_0_P2_ERROR = (
-    "Roll 'sol_roll_0' of rolling solve 'sol' " + _LATER_COHORT_HEAD + "'high', 'low'). FlexTool would ignore "
-    "them. Each roll fans out at the first reveal in its horizon, and no roll fans out at these. Remove these "
-    "rows, or make a roll start there (rolling_solve_jump). Check stochastic_branches.")
+_IGNORED_HEAD = ("Warning: stochastic_branches declares forecasts where no solve or roll fans out, and FlexTool "
+                 "ignores them: solve 'sol', period 'p2' at analysis_time 't0005' (forecast branches ")
+_IGNORED_TAIL = (" A solve or roll fans out once, at its first reveal, and its branches read the forecasts made "
+                 "then through the rest of its horizon. To use these forecasts, make a roll start there "
+                 "(rolling_solve_jump) or put the later fan in a separate solve; otherwise remove these "
+                 "stochastic_branches rows.")
+_ROLL_0_P2_IGNORED = (_IGNORED_HEAD + "'high', 'low'), in the horizon of roll 'sol_roll_0', which fans out at "
+                      "period 'p1' (analysis_time 't0001')." + _IGNORED_TAIL)
 
 
-@pytest.mark.parametrize(("rolling", "fans", "expected"), [
+def _warnings(out: str) -> list[str]:
+    return [line for line in out.splitlines() if line.startswith("Warning: stochastic_branches declares")]
+
+
+def _results(steps) -> dict:
+    """``{solve: (objective, sorted v_flow rows)}`` -- what the ignored cohort must not change."""
+    out = {}
+    for name, step in steps.items():
+        flows = step.solution.value("v_flow")
+        flows = flows.with_columns(pl.col(c).cast(pl.Utf8) for c in flows.columns if c != "value")
+        out[name] = (step.obj, sorted(flows.rows()))
+    return out
+
+
+@pytest.mark.parametrize(("rolling", "fans", "extra", "expected"), [
     pytest.param(
-        None,
-        [*_two_forecasts("p1", "t0001"), ("p2", "x", "t0005", "no", 0.5), ("p2", "mid", "t0005", "no", 0.5)],
-        "Solve 'sol' " + _LATER_COHORT_HEAD + "'mid', 'x'). FlexTool would ignore them. The branches opened "
-        "at 'p1' continue through every later period and read the forecasts made at 'p1''s analysis time "
-        "there. Remove these rows, or put the later fan in a separate solve. Check stochastic_branches.",
+        None, _two_forecasts("p1", "t0001"), [("p2", "x", "t0005", "no", 0.5), ("p2", "mid", "t0005", "no", 0.5)],
+        _IGNORED_HEAD + "'mid', 'x'), in the horizon of solve 'sol', which fans out at period 'p1' "
+        "(analysis_time 't0001')." + _IGNORED_TAIL,
         id="single"),
     pytest.param(
-        (8.0, 12.0),
-        [*_two_forecasts("p1", "t0001"), *_two_forecasts("p2", "t0005")],
-        _ROLL_0_P2_ERROR,
-        id="rolling"),
+        (8.0, 12.0), [*_two_forecasts("p1", "t0001"), *_two_forecasts("p3", "t0009")],
+        _two_forecasts("p2", "t0005"), _ROLL_0_P2_IGNORED, id="rolling"),
     pytest.param(
-        (6.0, 12.0),
-        [*_two_forecasts("p1", "t0001"), *_two_forecasts("p2", "t0005"), *_two_forecasts("p3", "t0009")],
-        _ROLL_0_P2_ERROR,
-        id="rolling-fan-after-roll-start"),
+        (6.0, 12.0), [*_two_forecasts("p1", "t0001"), *_two_forecasts("p3", "t0009")],
+        _two_forecasts("p2", "t0005"), _ROLL_0_P2_IGNORED, id="rolling-fan-after-roll-start"),
 ])
-def test_later_forecast_cohort_no_solve_fans_at_is_an_error(tmp_path_factory, rolling, fans, expected) -> None:
-    """A solve or roll fans out once, at its first reveal.  Single solve, NP=3: fan p1/t0001 (high/low) and
-    forecasts x, mid declared at p2/t0005 -- before, they were dropped silently.  Rolling 8/12, NP=3: rolls
-    start at t0001 and t0009; roll 0's horizon reaches p2/t0005, where no roll fans out.  Rolling 6/12, NP=3,
-    cohorts t0001/t0005/t0009: roll 1 starts at t0007 (inside p2) and fans at its first reveal p3/t0009, so
-    roll 0's look-ahead p3/t0009 is a fan point (no error) and only p2/t0005 is named.  All stop before
-    solving with a message naming the solve (roll), its fan point, the later cohort and its branches.  The
-    valid cases -- a later cohort that another roll fans out at -- are test 4 / 4b and the next test."""
+def test_later_forecast_cohort_no_solve_fans_at_is_ignored(tmp_path_factory, capfd, rolling, fans, extra,
+                                                           expected) -> None:
+    """A solve or roll fans out once, at its first reveal; forecasts declared where no solve or roll fans out are
+    ignored with ONE warning per run (owner decision 2026-11-13; item 229 made them an error).  Single solve,
+    NP=3: fan p1/t0001 (high/low) and forecasts x, mid declared at p2/t0005.  Rolling 8/12, NP=3: rolls start
+    (and fan) at t0001 and t0009; roll 0's horizon reaches p2/t0005, where no roll fans out.  Rolling 6/12, NP=3:
+    roll 1 starts at t0007 (inside p2) and fans at its first reveal p3/t0009, so roll 0's look-ahead p3/t0009 is
+    a fan point (not named) and only p2/t0005 is.  The run goes through with the results of the same model
+    without the extra rows.  The valid cases -- a later cohort that another roll fans out at -- are test 4 / 4b
+    and the next test."""
+    base = _results(_run(tmp_path_factory, n_periods=3, fans=fans, rolling=rolling))
+    assert _warnings(capfd.readouterr().out) == []
+    got = _results(_run(tmp_path_factory, n_periods=3, fans=[*fans, *extra], rolling=rolling))
+    assert _warnings(capfd.readouterr().out) == [expected]
+    assert list(got) == list(base)
+    for name in base:
+        assert got[name][0] == pytest.approx(base[name][0], rel=1e-12)
+        assert got[name][1] == base[name][1]
+
+
+def test_roll_without_a_forecast_in_its_horizon_is_an_error(tmp_path_factory) -> None:
+    """Every roll of a stochastic rolling solve needs forecasts made at its start, or where it branches later in
+    its horizon (owner 2026-11-13).  Rolling 8/12, NP=3, forecasts at p1/t0001 only: roll 1 (t0009..t0012)
+    reaches no forecast, and would be solved without any (before: silently deterministic).  Stops before
+    solving, naming the roll, its start and horizon."""
     with pytest.raises(FlexToolConfigError) as err:
-        _run(tmp_path_factory, n_periods=3, fans=fans, rolling=rolling)
-    assert str(err.value) == expected
+        _run(tmp_path_factory, n_periods=3, fans=_two_forecasts("p1", "t0001"), rolling=(8.0, 12.0))
+    assert str(err.value) == (
+        "Roll 'sol_roll_1' of rolling solve 'sol' starts at period 'p3', time step 't0009', but no forecast of "
+        "stochastic_branches starts in its horizon (period 'p3' 't0009' to period 'p3' 't0012'), so it would be "
+        "solved without forecasts. Every roll of a stochastic rolling solve needs forecasts made at its start (or "
+        "where it branches later in its horizon): add stochastic_branches rows for period 'p3' at analysis_time "
+        "'t0009', or align the rolls with the forecast times (rolling_solve_jump).")
 
 
 def test_later_cohort_at_another_rolls_fan_point_not_its_start(tmp_path_factory, monkeypatch) -> None:
@@ -409,16 +439,21 @@ def _not_fanned_error(branch: str) -> str:
         id="fan-point-other-branch"),
     pytest.param([*_realized_rolls("obs"), ("p2", "alt", "t0005", "yes", 0.0)], _not_fanned_error("alt"),
                  id="r1-before-r2"),
-    pytest.param([*_realized_rolls("obs"), *_two_forecasts("p2", "t0005")], _ROLL_0_P2_ERROR,
-                 id="229-before-r2"),
+    pytest.param(
+        [*_realized_rolls("obs"), *_two_forecasts("p2", "t0005")],
+        "The stochastic_branches of solve 'sol' mark different realized branches where its rolls fan out: 'real' "
+        "at period 'p1' (analysis_time 't0001'); 'obs' at period 'p3' (analysis_time 't0009'). A solve has one "
+        "realization series: name the same branch in every realized: yes row, and give that branch the data of "
+        "each roll at the roll's analysis_time. Check stochastic_branches.",
+        id="229-ignored-then-r2"),
     pytest.param(_realized_rolls("real"), None, id="valid"),
 ])
 def test_realized_row_where_no_roll_fans_out_or_switching_branch(tmp_path_factory, fans, expected) -> None:
     """Rolling 8/12, NP=3: rolls start (and fan) at p1/t0001 and p3/t0009, both with forecasts high/low and
     realized: yes ``real``.  A realized: yes row at p2/t0005, where no roll fans out, is an error naming roll 0
     (roll 1 does not reach p2) whatever branch it names: it switches the realization series or only repeats it.
-    Fan points naming different realized branches are an error too (one realization series per solve); the
-    item-229 check comes first, then this R1, then that R2.  The same branch at every roll's fan point is valid (before: the first two switched silently)."""
+    Fan points naming different realized branches are an error too (one realization series per solve); R1
+    comes before R2, and a later forecast cohort where no roll fans out (item 229) is only ignored.  The same branch at every roll's fan point is valid (before: the first two switched silently)."""
     if expected is None:
         steps = _run(tmp_path_factory, n_periods=3, fans=fans, rolling=(8.0, 12.0))
         assert {"sol_roll_0", "sol_roll_1"} <= set(steps)
