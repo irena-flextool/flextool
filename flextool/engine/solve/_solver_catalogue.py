@@ -178,16 +178,17 @@ def load(solver: str) -> Catalogue:
 # ---------------------------------------------------------------------------
 
 
-def cplex_full_names(catalogue: Catalogue, name: object) -> list[str]:
+def cplex_full_names(catalogue: Catalogue, name: object, *, every_class: bool = False) -> list[str]:
     """The catalogued CPLEX names that *name* abbreviates word by word (``mip tol mipgap`` ->
-    ``mip tolerances mipgap``), suggestible ones only, sorted; empty when *name* is listed or abbreviates none."""
+    ``mip tolerances mipgap``), sorted; empty when *name* is listed or abbreviates none.  Suggestible
+    (``plain`` / ``file``) ones only, unless *every_class* (``d c`` -> ``distmip config``, ``def`` -> ``defaults``)."""
     key = catalogue_key("cplex", name)
     if not key or key in catalogue.entries:
         return []
     words = key.split(" ")
     return sorted(
         e.key for e in catalogue.entries.values()
-        if e.cls in ("plain", "file")
+        if (every_class or e.cls in ("plain", "file"))
         and len(e.key.split(" ")) == len(words) and all(f.startswith(w) for w, f in zip(words, e.key.split(" ")))
     )
 

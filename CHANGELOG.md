@@ -133,7 +133,9 @@ Each line says what changes for a model that ran before and what to do; the deta
   `solver_config/<solver>.opt` (an unknown name there gives a warning and is passed on), or allow such names from
   databases on your computer with `FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS=1` or
   `"allow_unlisted_parameters": true` in `solver_settings.json` in FlexTool's user settings folder; no database,
-  project or command-line flag can switch this on. See "What the database may set" in the solver docs.
+  project or command-line flag can switch this on. Even with it on, such a name takes only a number, a switch or a
+  plain file name, a server-like name (also CPLEX `distmip ...`) is refused, and so is a CPLEX abbreviation of a
+  listed name (`d c` for `distmip config`). See "What the database may set" in the solver docs.
 - **Solver option files that FlexTool finds by itself get the database's rules, unless your computer set up their
   workspace.** A run looks for `solver_config/` next to the input database, in the workspace of a project
   database, in the Spine Toolbox project folder or in the folder it starts in, and the FlexTool window uses its

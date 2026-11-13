@@ -364,11 +364,18 @@ databases on your computer, in one of two ways (the first wins):
 The setting is on your computer only: no database, project, workspace or
 command-line flag can switch it on, since those can come from someone else.
 With it on, an unlisted name is passed with one warning per run that says
-where the setting is; a name that looks like a file or folder parameter still
-takes only a plain file name, and a name that looks like a server parameter
-(Gurobi `CS...`, `Cloud...`, `WLS...`, `Server...`, `Token...`, `Worker...`;
-Xpress `COMPUTE...`) is still refused, as are the listed ones above. A HiGHS
-text option that FlexTool's list does not have is refused even then. The
+where the setting is. The rules for paths, servers and the files a solver
+reads by itself still apply:
+
+- an unlisted name takes only a number, a switch or a plain file name (as a
+  file parameter above), never a path or a name such as `gurobi.env`;
+- a name that looks like a server parameter (Gurobi `CS...`, `Cloud...`,
+  `WLS...`, `Server...`, `Token...`, `Worker...`; Xpress `COMPUTE...`; CPLEX
+  `distmip ...`) is still refused, as are the listed ones above;
+- a CPLEX abbreviation of a listed name (`log` for `logfile`, `d c` for
+  `distmip config`, `def` for `defaults`) is still refused: the switch is for
+  a newer solver's parameters, not for abbreviations;
+- a HiGHS text option that FlexTool's list does not have is still refused. The
 run's record (`output_parquet/<scenario>/_run_status.json`, `solver_config`)
 says whether the setting was on and where it came from.
 

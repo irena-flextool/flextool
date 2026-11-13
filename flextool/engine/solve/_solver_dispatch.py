@@ -341,9 +341,14 @@ def is_path_option(solver: str, name: object) -> bool:
 
 
 def is_server_option(solver: str, name: object) -> bool:
-    """Whether *name* is an option of *solver* that connects to another machine or carries its credentials."""
+    """Whether *name* is an option of *solver* that connects to another machine or carries its credentials.
+
+    CPLEX: also a name whose first word abbreviates ``distmip`` (the distributed MIP's machines, a later CPLEX's
+    new ``distmip ...`` parameters), since the Interactive Optimizer accepts any unique abbreviation."""
     key = _option_key(solver, str(name))
-    return key in _SERVER_OPTIONS.get(solver, frozenset()) or key.startswith(_SERVER_OPTION_PREFIXES.get(solver, ()))
+    if key in _SERVER_OPTIONS.get(solver, frozenset()) or key.startswith(_SERVER_OPTION_PREFIXES.get(solver, ())):
+        return True
+    return solver == "cplex" and bool(key) and "distmip".startswith(key.split(" ")[0])
 
 
 def _is_number(text: str) -> bool:
@@ -434,6 +439,8 @@ def _database_entry(solver: str, name_text: str, value_text: str, where: str, un
             )
         if live in ("bool", "int", "double") and rule_class(solver, key) is None:
             return Entry(key, key, live, "plain")
+    if solver == "cplex":
+        _refuse_cplex_abbreviation(catalogue, name_text, head, untrusted)
     allow = _allow_unlisted()
     if not allow.value:
         problem = _unlisted_problem(solver, name_text)
@@ -448,9 +455,32 @@ def _database_entry(solver: str, name_text: str, value_text: str, where: str, un
         )
     if is_server_option(solver, name_text):
         return Entry(key, name_text, "unknown", "local_only", "remote")
-    if is_path_option(solver, name_text):
-        return Entry(key, name_text, "unknown", "file")
-    return Entry(key, name_text, "unknown", "plain")
+    # Nobody has checked what an unlisted name's value may name, so it takes the rules of a file parameter: a
+    # number, a switch or a plain file name, never a path or a file a solver reads by itself.
+    return Entry(key, name_text, "unknown", "file")
+
+
+def _refuse_cplex_abbreviation(catalogue: "_solver_catalogue.Catalogue", name_text: str, head: str,
+                               untrusted: str | None) -> None:
+    """Refuse a CPLEX name from the database that abbreviates a listed one (any class: ``d c`` stands for
+    ``distmip config``, ``def`` for ``defaults``), whatever this computer allows: the Interactive Optimizer reads
+    it as that parameter, and the switch for unlisted names is for a newer CPLEX's parameters, not for
+    abbreviations (item 240 B1 decision D2: the database takes full names only)."""
+    full = cplex_full_names(catalogue, name_text, every_class=True)
+    if not full:
+        return
+    named = ", ".join(repr(f) for f in full[:5])
+    usable = [f for f in full if catalogue.entries[f].cls in ("plain", "file")]
+    if len(full) == 1 and usable:
+        problem = f"it is not a full CPLEX parameter name; write {full[0]!r}"
+    else:
+        problem = f"it is not a full CPLEX parameter name; it abbreviates {named}"
+    raise FlexToolUserError(
+        head + problem + " (from the input database FlexTool takes CPLEX names only in full, whatever this "
+        "computer allows for names that are not in its list). "
+        + ("Write the full name in the database, or set the option in this computer's solver_config/cplex.opt."
+           if usable and untrusted is None else _remove("cplex", untrusted))
+    )
 
 
 def check_database_solver_option(
@@ -497,8 +527,11 @@ def check_database_solver_option(
     if (
         not value_text.isascii() or _PLAIN_FILE_NAME.fullmatch(value_text) is None or ".." in value_text
     ):
+        kind = ("an option that is not in FlexTool's list (so nobody has checked what its value may name) takes "
+                "only a number, a switch or a" if entry.type == "unknown" else
+                "an option that names a file or folder takes only a")
         raise FlexToolUserError(
-            head + f"it comes from {origin}, where an option that names a file or folder takes only a "
+            head + f"it comes from {origin}, where {kind} "
             "plain file name (ASCII letters, digits and '_ . + -', starting with a letter, digit or '_'; no '/', "
             "'\\', ':' or '..'), and FlexTool puts that file in the solve's work folder (solve_data/subprocess). "
             + (f"For a file elsewhere, remove the option from the database and {_instead(solver)}"

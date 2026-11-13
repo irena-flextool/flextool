@@ -208,9 +208,9 @@ def test_space_in_a_name_is_refused_except_cplex_single_spaces() -> None:
 def test_legitimate_values_pass(solver: str, tmp_path: Path, monkeypatch) -> None:
     """Negative numbers, scientific notation, infinity and dotted names reach the solver unchanged; each script
     has one line per parameter plus the fixed commands.  (The names are made up, so this computer allows unlisted
-    names here.)"""
+    names here; they abbreviate no CPLEX name, which the database may not use even then.)"""
     monkeypatch.setenv("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", "1")
-    values = {"A": "-1", "B": "1e-4", "C": "inf", "D": "-inf", "E": "1e+20", "F.g": "on", "G": True}
+    values = {"ZqA": "-1", "ZqB": "1e-4", "ZqC": "inf", "ZqD": "-inf", "ZqE": "1e+20", "ZqF.g": "on", "ZqG": True}
     options = _resolve(solver, options=values)
     assert [o.value for o in options] == ["-1", "1e-4", "inf", "-inf", "1e+20", "on", "1"]
     merged = commercial_params({o.name: o.value for o in options})
@@ -522,7 +522,9 @@ def test_copt_parameters_pass(tmp_path) -> None:
 def test_cplex_abbreviations_of_a_path_parameter_are_path_options(monkeypatch) -> None:
     """The CPLEX Interactive Optimizer takes any unique abbreviation of each word of a ``set`` command.  From the
     database an abbreviation is refused naming the full name (item 240 D2); where this computer allows unlisted
-    names, the path rule still recognises it."""
+    names, it is still refused (review b1 F1: the switch is for a newer CPLEX's names, not for abbreviations),
+    and so is an abbreviation of a server parameter or a command (``d c`` for ``distmip config``, ``def`` for
+    ``defaults``).  An unlisted name the switch lets through takes no path (it is checked as a file parameter)."""
     for name in ("logfile", "log", "workd", "WorkDir", "output intsolfileprefix", "output.intsol", "o i",
                  "read", "write problem"):
         assert is_path_option("cplex", name), name
@@ -533,9 +535,16 @@ def test_cplex_abbreviations_of_a_path_parameter_are_path_options(monkeypatch) -
     with pytest.raises(FlexToolUserError, match="not a full CPLEX parameter name; write 'logfile'"):
         _resolve("cplex", options={"log": "cplex.log"})
     monkeypatch.setenv("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", "1")
-    with pytest.raises(FlexToolUserError, match="plain file name"):
-        _resolve("cplex", options={"log": "/tmp/cplex.log"})
-    assert [o.value for o in _resolve("cplex", options={"log": "cplex.log"})] == ["cplex.log"]
+    for name, value, full in (("log", "cplex.log", "write 'logfile'"), ("dist conf", "/srv/vmc.xml", "'distmip config'"),
+                              ("distmip conf", r"\\h\s\vmc.xml", "'distmip config'"),
+                              ("d c", "/srv/vmc.xml", "'distmip config'"), ("def", "1", "'defaults'")):
+        with pytest.raises(FlexToolUserError, match=f"not a full CPLEX parameter name; (it abbreviates )?{full}"):
+            _resolve("cplex", options={name: value})
+    with pytest.raises(FlexToolUserError, match="connects the solver to another computer"):
+        _resolve("cplex", options={"distmip hosts": "1"})
+    with pytest.raises(FlexToolUserError, match="not in FlexTool's list .* plain file name"):
+        _resolve("cplex", options={"zq newer": "/tmp/x"})
+    assert [o.value for o in _resolve("cplex", options={"zq newer": "3"})] == ["3"]
 
 
 # ---------------------------------------------------------------------------

@@ -80,7 +80,8 @@ Write the parameter names of the interactive optimizer's `set` command, in
 full and with spaces (`mip tolerances mipgap`). A dotted name
 (`mip.tolerances.mipgap`, the Python-API spelling) is read as the spaced
 one. An abbreviation (`mip tol mipg`) is refused from `solver_arguments`,
-with the full name in the message; in `cplex.opt` it gives a warning, is
+with the full name in the message, also where your computer allows names
+that are not in FlexTool's list; in `cplex.opt` it gives a warning, is
 passed as written and does not replace the full name from another layer. See
 [What the database may set](index.md#what-the-database-may-set).
 
