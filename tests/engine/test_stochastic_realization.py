@@ -463,7 +463,9 @@ def test_recourse_shared_investment_ties_forecasts_to_each_other(tmp_path_factor
 def _rolling_hedge(data: dict) -> None:
     """``hedge_storage`` (fan at p2040 = t0004, storage ``resv`` with fix_start) as a rolling solve, horizon 4 h,
     jump 3 h: roll 0 (t0001-t0004) commits t0001-t0003 before the reveal, the fan only in its look-ahead; roll 1
-    (t0004-t0006) opens the fan at its first step."""
+    (t0004-t0006) opens the fan at its first step.  The fan is forecasts-only (high / low, no realized branch), so
+    the wind profile is plain: 0.8 at p2035, 0.0 at p2040 (a forecasts-only fan has no series for roll 0's
+    p2035 before the reveal, so a stochastic value there is an error, item 250)."""
     data["alternatives"].append(["roll", "rolling, fan in the look-ahead"])
     for sa in data["scenario_alternatives"]:
         if sa[0] == "hedge_storage" and sa[1] == "storage" and sa[2] is None:
@@ -472,7 +474,15 @@ def _rolling_hedge(data: dict) -> None:
 
     def enc(value, kind):
         return [base64.b64encode(json.dumps(value).encode()).decode(), kind]
+
+    def nested(pairs):
+        return {"type": "map", "index_type": "str", "data": [[k, v] for k, v in pairs]}
+    forecasts = {"index_type": "str", "data": [["p2040", nested([
+        ("high", nested([("t0004", nested([("no", 1.0)]))])), ("low", nested([("t0004", nested([("no", 3.0)]))]))])]]}
+    profile = {"index_type": "str", "data": [[f"t{i:04d}", 0.8 if i <= 3 else 0.0] for i in range(1, 7)]}
     data["parameter_values"] += [
+        ["solve", "stoch_2p_hedge", "stochastic_branches", enc(forecasts, "map"), "roll"],
+        ["profile", "wprof", "profile", enc(profile, "map"), "roll"],
         ["solve", "stoch_2p_hedge", "solve_mode", enc("rolling_window", "str"), "roll"],
         ["solve", "stoch_2p_hedge", "rolling_solve_horizon", enc(4.0, "float"), "roll"],
         ["solve", "stoch_2p_hedge", "rolling_solve_jump", enc(3.0, "float"), "roll"],

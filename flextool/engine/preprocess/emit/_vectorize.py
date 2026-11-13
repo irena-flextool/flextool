@@ -321,7 +321,7 @@ def build_fold_frame(
         if d not in seen:
             seen.add(d)
             uniq_periods.append(d)
-    fan_for_d = fan_for_d or {}
+    fan_for_d = fan_for_d if fan_for_d is not None else {}
     stoch_period: list[str] = []
     stoch_tb: list[str] = []
     stoch_ts: list[str] = []

@@ -301,7 +301,7 @@ def _resolve_pdtReserve(
     # (per value cell).
     tiers = tiers_by_d.get(d) if tiers_by_d is not None else None
     if tiers is None:
-        tiers = ts_tiers(d, ts_for_d, fan_for_d or {})
+        tiers = ts_tiers(d, ts_for_d, fan_for_d if fan_for_d is not None else {})
     if g_stoch:
         v = fold_over_tiers(pbt, (r, ud, g, param), [tb_for_d.get(d, ())], tiers, t)
         if v is not None:

@@ -32,7 +32,9 @@ mechanism note).  A free existing ``wind`` unit with a branch-varying
   * node ``elec`` demand = 120 MW at every step (deterministic inflow).
   * wind existing 100 MW, cost 0; profile (share of 100 MW):
       - p2035 (pre-reveal, SHARED across branches): 0.8 → wind 80 →
-        base residual 40 (= D1).
+        base residual 40 (= D1).  In ``hedge`` the realized branch ``real``
+        (``realized: yes``, not a weighted forecast) gives it at the solve's
+        start: a forecasts-only fan has no series before the reveal (item 250).
       - p2040 high:            0.0 → wind  0 → base residual 120 (= D2 high).
       - p2040 low:             0.6 → wind 60 → base residual  60 (= D2 low).
   * unit ``base`` → ``elec`` — the investable peaker (virtual_unitsize 1,
@@ -196,10 +198,13 @@ def build() -> dict:
 
     # ---- init: model / solve / time structure --------------------------
     # Mid-horizon reveal (scenario ``hedge``): branches declared at p2040.
+    # ``real`` (realized: yes, not a weighted forecast) provides the shared
+    # p2035 data before the reveal and the realization dispatch.
     stochastic_branches_rp = _map([
         ("p2040", _nested([
             ("high", _nested([("t0004", _nested([("no", 1.0)]))])),
             ("low", _nested([("t0004", _nested([("no", 3.0)]))])),
+            ("real", _nested([("t0004", _nested([("yes", 0.0)]))])),
         ])),
     ])
     # Wait-and-see (scenario ``hedge_ws``): branches declared at p2035.
@@ -216,16 +221,26 @@ def build() -> dict:
     )
     # Branch-varying wind profile (stoch alternative).  Keyed
     # branch → period-first-step → per-step share of the 100 MW wind cap.
-    # p2035 (t0001) is SHARED (0.8 in BOTH branches — pre-reveal data must
-    # be identical; under mid-horizon the reference forecast owns the real
-    # period names at n_real = 0, so its value binds the trunk).  p2040
-    # (t0004): high 0.0 (residual 120), low 0.6 (residual 60).
+    # p2035 (t0001) is SHARED (0.8 in BOTH branches; read by the ws
+    # fan-at-p2035 scenarios).  p2040 (t0004): high 0.0 (residual 120), low
+    # 0.6 (residual 60).
     profile_stoch = _map([
         ("high", _nested([
             ("t0001", _nested([(t, 0.80) for t in P1_STEPS])),
             ("t0004", _nested([(t, 0.0) for t in P2_STEPS])),
         ])),
         ("low", _nested([
+            ("t0001", _nested([(t, 0.80) for t in P1_STEPS])),
+            ("t0004", _nested([(t, 0.60) for t in P2_STEPS])),
+        ])),
+    ])
+    # Mid-horizon reveal (rp alternative): before the reveal p2035 reads the
+    # realized branch ``real`` at the solve's start t0001 (0.8, as above); the
+    # forecasts give p2040 only; ``real`` realizes the low forecast at p2040.
+    profile_rp = _map([
+        ("high", _nested([("t0004", _nested([(t, 0.0) for t in P2_STEPS]))])),
+        ("low", _nested([("t0004", _nested([(t, 0.60) for t in P2_STEPS]))])),
+        ("real", _nested([
             ("t0001", _nested([(t, 0.80) for t in P1_STEPS])),
             ("t0004", _nested([(t, 0.60) for t in P2_STEPS])),
         ])),
@@ -294,6 +309,7 @@ def build() -> dict:
         # ---- rp: mid-horizon reveal at p2040 ---------------------------
         ["solve", "stoch_2p_hedge", "stochastic_branches",
          _pack(stochastic_branches_rp, "map"), "rp"],
+        ["profile", "wprof", "profile", _pack(profile_rp, "map"), "rp"],
         # ---- ws: wait-and-see reveal at p2035 --------------------------
         ["solve", "stoch_2p_hedge", "stochastic_branches",
          _pack(stochastic_branches_ws, "map"), "ws"],
