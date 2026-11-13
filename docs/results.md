@@ -344,9 +344,26 @@ A step whose solve left reserves out has empty cells in these tables. A reserve 
 
 ## Ramps
 
-- `unit__node` entity `ramp_t` parameter — [MW] ramp of the unit input or output flow at each timestep: the change from the previous step (one table per direction: `unit_ramp__inputNode__dt`, `unit_ramp__outputNode__dt`). The ramp at a step with no previous step in the solve (the first step, the first step after a gap in the timeline, the first step of a representative period) is empty; at the first step of a rolling window it is measured from the previous window's last step. `ramp_t` is in MW per time step, while the limits `ramp_speed_up` / `ramp_speed_down` are a share of capacity per minute: a change may be at most `ramp_speed_up` × 60 × (average duration of the two steps in hours) × capacity (see [Units](reference/units.md)), so on hourly steps a `ramp_t` of 30 MW on a 100 MW unit is a speed of 30 / 100 / 60 = 0.005.
+A ramp is how much a unit's flow changed from the previous time step: the flow at this step minus the flow at
+the previous step. It is positive when the flow rose and negative when it fell. FlexTool writes it for every input
+and output of every unit, whether or not the unit has ramp limits.
 
-The "ramp room" envelope on the `node` entity (additional headroom for upward / downward ramps from non-VRE units, VRE units, and connections) is currently not emitted by the new pipeline — it is on the roadmap for re-exposure once the corresponding post-processing is ported.
+| Table (results database: `unit__node` `ramp_t`) | Unit | Sign | Empty when |
+|---|---|---|---|
+| `unit_ramp__outputNode__dt`: each unit output | MW per time step (or the node's unit) | + the output rose, − it fell | the step has no previous step: the first step of a solve, the step after a gap in the timeline, the first step of a representative period, or a period that does not continue the previous one |
+| `unit_ramp__inputNode__dt`: each unit input | MW per time step (or the node's unit) | + the unit took more from the node, − less | as above |
+
+In a rolling solve, the first step of a window is compared with the last realized step of the previous window. No
+column is a sum of the others. Earlier versions also had a node-level "ramp room" table, `node` `ramp_t`, with
+stacked headroom levels. It is no longer produced.
+
+**From MW per step to the ramp speed.** `ramp_speed_up` and `ramp_speed_down` are a share of capacity per minute
+(see [Units](reference/units.md)). To compare, divide the ramp by the capacity of that input or output and by the
+minutes between the two step centres (60 × the average of the two step durations in hours). Example: a 500 MW
+unit on hourly steps has `ramp_t` = −30 MW. That is 30 / 500 / (60 × 1) = 0.001, so it ramped down at 0.1 % of
+its capacity per minute, or 30 / 60 = 0.5 MW per minute. With 3-hour steps the same −30 MW is
+30 / 500 / 180 ≈ 0.00033. The ramp limit also counts the reserve the unit holds in that direction, so a unit can be
+at its limit with a `ramp_t` smaller than its ramp speed allows.
 
 ## DC power flow
 
