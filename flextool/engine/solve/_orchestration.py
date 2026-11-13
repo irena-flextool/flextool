@@ -2031,8 +2031,7 @@ def _spawn_realized_dispatch_siblings(
                 )
             _line = _realization.lookahead_in_configured_realization(solve_cfg, configured, p)
             if _line is not None:
-                if logger is not None:
-                    logger.warning(_line)
+                # Printed only (solve-site console convention): the logger writes to the console too.
                 print(f"Warning: {_line}", flush=True)
             # A realization solve takes its parent's detail levels (it pins
             # the parent's units online and reserves): name an authored

@@ -1455,8 +1455,8 @@ class SolveConfig:
         """Give the realization solve *sibling* of *parent* its per-solve settings (:meth:`derive_solve`): every
         field of the parent except :data:`REALIZATION_SOLVE_DROPS`, with ``solve_modes`` set to the parent's mode
         (``rolling_window`` or ``single_solve``) and ``realized_periods`` to the parent's realized window.  The
-        realization solve of a single solve has the parent's realized periods only (:meth:`realization_window`):
-        it dispatches no look-ahead period with the realized data (item 255).
+        realization solve of a single solve has the parent's periods from its first to its last realized period
+        (:meth:`realization_window`): it dispatches no look-ahead period with the realized data (item 255).
 
         Applied to the driving ``runner.state.solve`` (:meth:`spawn_realized_dispatch_sibling`) and to the outer
         cascade ``state.solve``, where the ``run()`` closure reads each solve's solver and scaling
@@ -1483,33 +1483,27 @@ class SolveConfig:
 
     def realization_window(self, parent: str) -> "tuple[list, list]":
         """The ``timesets_used_by_solves`` and ``solve_period_years_represented`` entries of the realization solve
-        of the single solve *parent*: the parent's entries of its realized periods only, in the parent's order
-        (item 255: the realization dispatches the committed periods, not the look-ahead).
+        of the single solve *parent*: the parent's entries from its first to its last realized period, in the
+        parent's order (item 255: the realization dispatches the committed periods, not the look-ahead).
 
-        Raises :class:`FlexToolConfigError` when a period the parent does not realize lies between two it
-        realizes: the realization solve would run its storage from one realized period straight into the next.
+        A period the parent does not realize between two it realizes is dispatched too, so storage runs through
+        it as in the parent, but not reported: the realization solve's ``realized_periods`` are the parent's.  It
+        lies before the last committed period, so dispatching it with the realized data uses no later actuals.
         """
         realized = {str(t[1]) for t in (getattr(self, "realized_periods", None) or {}).get(parent, [])}
         timesets = (getattr(self, "timesets_used_by_solves", None) or {}).get(parent, [])
         order = list(dict.fromkeys(str(p) for p, _ts in timesets))
         positions = [i for i, p in enumerate(order) if p in realized]
-        if positions:
-            gap = [p for p in order[positions[0]:positions[-1] + 1] if p not in realized]
-            if gap:
-                raise FlexToolConfigError(
-                    f"Solve '{parent}' realizes periods {', '.join(repr(p) for p in order if p in realized)} "
-                    f"but not {', '.join(repr(p) for p in gap)} between them.  Its realization solve dispatches "
-                    "the realized periods only, and its storage would run from one realized period straight "
-                    "into the next.  Add the period(s) in between to realized_periods, or split the solve.")
-        return ([copy.deepcopy(row) for row in timesets if str(row[0]) in realized],
+        span = set(order[positions[0]:positions[-1] + 1]) if positions else set()
+        return ([copy.deepcopy(row) for row in timesets if str(row[0]) in span],
                 [copy.deepcopy(row) for row in
                  (getattr(self, "solve_period_years_represented", None) or {}).get(parent, [])
-                 if str(row[0]) in realized])
+                 if str(row[0]) in span])
 
     def realization_reader_values(self, parent: str) -> dict[str, Any]:
         """The ``solve`` parameter values the reader gives the realization solve of *parent* instead of the
         parent's, for ``SpineDbReader.register_derived_solve(replace=...)``: for a single solve, ``period_timeset``
-        and ``years_represented`` of its realized periods only (:meth:`realization_window`), as maps with the
+        and ``years_represented`` of its first to last realized period (:meth:`realization_window`), as maps with the
         index name ``period`` (as :meth:`copy_reader_values`); empty for a rolling solve (its realization rolls
         are trimmed to each roll's jump)."""
         if (getattr(self, "solve_modes", None) or {}).get(parent, "single_solve") == "rolling_window":

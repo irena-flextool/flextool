@@ -206,15 +206,37 @@ def test_separate_dispatch_without_realized_periods_adds_no_realization_solve():
     assert sc.model_solve == {"m": ["P"]}
 
 
-def test_realized_periods_with_a_gap_are_an_error():
-    """A period the parent does not realize between two it realizes: the realization solve (realized periods
-    only) would run its storage from one straight into the next -- a configuration error naming the gap."""
-    import pytest
+def test_realization_of_realized_periods_with_a_gap_dispatches_the_span_and_reports_the_realized_ones():
+    """Owner decision (item 255 review S1): a period the parent does not realize between two it realizes is not an
+    error.  The realization solve dispatches the span from the first to the last realized period (p2030, p2035,
+    p2040; not the look-ahead p2045) in both halves, and its ``realized_periods`` (what it reports) are the
+    parent's: p2030 and p2040."""
+    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
 
-    from flextool.engine.input._solve_state import FlexToolConfigError
+    sc = _lookahead_parent(realized=(("p2030", "p2030"), ("p2040", "p2040")))
+    sc.timesets_used_by_solves["P"] = [("p2030", "ts30"), ("p2035", "ts35"), ("p2040", "ts40"), ("p2045", "ts45")]
+    sc.solve_period_years_represented["P"] = [("p2030", 5.0), ("p2035", 5.0), ("p2040", 5.0), ("p2045", 5.0)]
+    reader = _CapturingReader()
+    _spawn_realized_dispatch_siblings(sc, reader, logger=None)
+    sib = "P__realized_dispatch"
+    assert sc.timesets_used_by_solves[sib] == [("p2030", "ts30"), ("p2035", "ts35"), ("p2040", "ts40")]
+    assert sc.solve_period_years_represented[sib] == [("p2030", 5.0), ("p2035", 5.0), ("p2040", 5.0)]
+    assert sc.realized_periods[sib] == [("p2030", "p2030"), ("p2040", "p2040")]
+    [(_parent, _sibling, replace)] = reader.calls
+    assert list(replace["period_timeset"].indexes) == ["p2030", "p2035", "p2040"]
+    assert list(replace["period_timeset"].values) == ["ts30", "ts35", "ts40"]
+    assert list(replace["years_represented"].indexes) == ["p2030", "p2035", "p2040"]
 
-    sc = _lookahead_parent()
-    sc.timesets_used_by_solves["P"] = [("p2035", "ts35"), ("p2040", "ts40"), ("p2045", "ts45")]
-    sc.realized_periods["P"] = [("p2035", "p2035"), ("p2045", "p2045")]
-    with pytest.raises(FlexToolConfigError, match=r"Solve 'P' realizes periods 'p2035', 'p2045' but not 'p2040'"):
-        sc.realization_window("P")
+
+def test_configured_realization_holding_a_gap_period_is_not_warned_but_a_lookahead_period_is():
+    """An author-declared realization solve that holds the unrealized period between two realized ones dispatches
+    nothing the engine-added one would not: no warning.  One that also holds the look-ahead period is warned."""
+    from flextool.engine.solve._realization import lookahead_in_configured_realization
+
+    sc = _lookahead_parent(realized=(("p2030", "p2030"), ("p2040", "p2040")))
+    sc.timesets_used_by_solves["P"] = [("p2030", "ts30"), ("p2035", "ts35"), ("p2040", "ts40"), ("p2045", "ts45")]
+    sc.timesets_used_by_solves["R"] = [("p2030", "ts30"), ("p2035", "ts35"), ("p2040", "ts40")]
+    assert lookahead_in_configured_realization(sc, "R", "P") is None
+    sc.timesets_used_by_solves["R"].append(("p2045", "ts45"))
+    line = lookahead_in_configured_realization(sc, "R", "P")
+    assert line is not None and "also dispatches 'p2045'," in line and "p2035" not in line

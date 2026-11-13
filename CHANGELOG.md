@@ -1025,9 +1025,9 @@ Each line says what changes for a model that ran before and what to do; the deta
   look-ahead included, so the storage it left at the end of the realized periods, and handed to the next solve,
   was decided knowing the realized data of the look-ahead. It now dispatches the realized periods only, as each
   realization roll of a rolling solve dispatches its jump only; the storage at their end follows the node's end
-  rules. Realized periods with a period between them that is not realized are an error. A realization solve you
-  configure yourself keeps its periods, with a warning when it holds a period the stochastic solve does not
-  realize. A `separate_dispatch` solve without `realized_periods` (an invest-only solve) gets no realization
+  rules. A period between two realized periods that is not realized is dispatched too but not reported. A
+  realization solve you configure yourself keeps its periods, with a warning when it holds a period after the
+  stochastic solve's last realized period (or before its first). A `separate_dispatch` solve without `realized_periods` (an invest-only solve) gets no realization
   dispatch (before, it got one that dispatched the horizon and reported nothing).
 - **Two or more solves with a `realized: yes` branch run again** (4.2.0 to 4.3.0). A run of two or more solves in
   which a stochastic solve designates a `realized: yes` branch stopped with "periods ['p2030_rlz'] have no year
