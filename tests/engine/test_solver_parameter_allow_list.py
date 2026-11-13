@@ -256,7 +256,7 @@ def test_highs_option_file_and_flags_warn_on_an_unknown_name(caplog) -> None:
             cli_overrides={"thread": 2})
     assert options == {"mip_rel_gapp": "0.1", "thread": 2}
     warned = _warnings(caplog)
-    assert any(w.startswith("cfg/highs.opt, line 1: highs option 'mip_rel_gapp'") for w in warned), warned
+    assert any(w.startswith(f"{Path('cfg/highs.opt')}, line 1: highs option 'mip_rel_gapp'") for w in warned), warned
     assert any(w.startswith("the run's flags or environment variables: highs option 'thread'") for w in warned)
 
 

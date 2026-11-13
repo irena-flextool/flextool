@@ -134,7 +134,7 @@ def test_highs_empty_value_is_refused_in_process_as_in_the_save_memory_child() -
                 highs_opt_path=None, solve_name="invest", **{"solver_arguments_map": None, "cli_overrides": None,
                                                              **kwargs})
         assert where in str(err.value)
-    with pytest.raises(FlexToolUserError, match="cfg/highs.opt, line 1"):
+    with pytest.raises(FlexToolUserError, match=re.escape(f"{Path('cfg/highs.opt')}, line 1")):
         _resolve_db("highs", {}, opt_text="presolve=\n")
     # The old templates' solution-file lines are still dropped, not refused.
     assert _resolve_db("highs", {}, opt_text="solution_file=\nthreads=1\n") == {"threads": "1"}
