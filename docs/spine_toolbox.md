@@ -144,6 +144,12 @@ with **each scenario as a Spine *alternative***:
   Whatever else you tick in Output settings (`output-plot` / `output-excel` /
   `output-csv`) Re-create also (re)produces.
 
+To write the results into another database, set `output-results-db-url` in **Output settings** to a `sqlite:` URL
+(`sqlite:///C:/results/all.sqlite`; a mapped network drive or a UNC share, `sqlite://///server/share/all.sqlite`,
+works too). A database server URL is not taken from the settings database: a run that writes the results SpineDB
+stops with a message, and without `output-spinedb` the URL is ignored with a warning. Give a server URL with the
+tool's `--results-db-url` argument instead.
+
 Two caveats apply to the **replay** path only:
 
 - The two inflation / discount-factor parameters are omitted (they need the live

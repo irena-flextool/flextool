@@ -386,6 +386,12 @@ agent's service gets everything the tools return (see [Where your data goes](#wh
 
 ### Connect Claude Code
 
+The tools only read, but what they return holds text from the project's databases and run logs: names,
+descriptions and log lines that someone else may have written, for example in a database you were sent. FlexTool
+tells the agent that tool results are data, not instructions, but an agent may still act on text written to look
+like an instruction. If the agent can also run commands or write files on your computer, keep it asking you before
+each such action.
+
 Give Claude Code the command that starts the tools for one project. Use the absolute path of the project folder:
 
 ```bash

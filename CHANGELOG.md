@@ -279,6 +279,12 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **An imported project's input sources stay inside the project.** Importing a package leaves out the input
   sources that its settings point at files outside the project folder, and says which ones; add such a file
   again in the FlexTool window if you need it.
+- **A results database server is used only from the command line.** An `output-results-db-url` in the Output
+  settings database must now be a `sqlite:` URL (a file on any drive, a mapped network drive or a UNC share
+  `\\server\share` too). Another URL there stops a run that writes the results SpineDB (`output-spinedb`), before
+  the solve, with a message; with `output-spinedb` off it is ignored with a warning. A settings database is a file
+  that others may hand over, so it no longer sends results to a server it names. Pass a server URL with
+  `--results-db-url`.
 
 ### New features
 
@@ -640,6 +646,19 @@ Each line says what changes for a model that ran before and what to do; the deta
   unfinished cells again.
 
 ### Fixes
+
+#### Settings, comparison and project files
+
+- **A settings database that is not found is no longer ignored silently**: the run warns that its output settings
+  are not used. A settings database on a network drive (a mapped drive or a UNC share) is read.
+- **`flextool-scenario-results <db_url>` leaves out a scenario name from the Output-info database that cannot name
+  a folder**, with a warning, and compares the others (the `--alternatives` names were already checked).
+- **A plot plan's file name stays in its folder** whatever the plot configuration's result key or sub-configuration
+  holds (`/`, `..`).
+- **A calibration solve resolves a relative database path or output folder against the folder it was started
+  from** (before: the FlexTool source folder for the solve, the start folder for reading its results).
+- **The dead `Open_summary` Spine Toolbox item is dropped** from an old project when FlexTool updates it, and its
+  specification (which named a missing `open_summary.py`) is no longer shipped.
 
 #### Investment and discounting
 
