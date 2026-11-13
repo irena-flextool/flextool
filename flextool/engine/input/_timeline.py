@@ -514,6 +514,15 @@ class TimelineConfig:
                 warned.add(key)
             print(text, flush=True)
 
+    def inherit_solve_copies(self, solve_config: "SolveConfig") -> None:
+        """Give each solve of a 2-D period map (``solve_config.map2d_duplicate_of``) the ``new_stepduration`` of
+        its database solve: it runs on that solve's timesets, which ``create_timeline_from_timestep_duration``
+        re-points to the aggregated timeline, so it needs the aggregated data too (the timeline half of
+        ``SolveConfig.derive_solve``).  Called first by :meth:`create_assumptive_parts`; idempotent."""
+        for copy_name, (parent, _outer) in getattr(solve_config, "map2d_duplicate_of", {}).items():
+            if parent in self.new_step_durations:
+                self.new_step_durations[copy_name] = self.new_step_durations[parent]
+
     def create_assumptive_parts(self, solve_config: "SolveConfig") -> None:
         """Fill in missing time-structure parts from assumptions when
         the input data is incomplete.
@@ -537,6 +546,7 @@ class TimelineConfig:
         is a no-op (idempotent).
         """
         logger = logging.getLogger(__name__)
+        self.inherit_solve_copies(solve_config)
 
         # Rule 1: No timeset → synthesise one timeset, SYNTHETIC_TIMESET, from the sole timeline.
         if not self.timesets and len(self.timelines) == 1:

@@ -583,6 +583,21 @@ Each line says what changes for a model that ran before and what to do; the deta
 
 #### Solving
 
+- **A solve split by a 2-D period map is now the same solve as the one you would write by hand.** A 2-D map in
+  `invest_periods`, `realized_invest_periods`, `realized_periods` or `fix_storage_periods` splits a solve into one
+  solve per row (`<solve>_<name>`). Before, the split solves silently dropped `stochastic_branches` and
+  `stochastic_invest_method`, so they ran deterministic (every 4.x release, 4.0.0 to 4.3.0);
+  `dispatch_realization_method`, so a *separate_dispatch* solve had no realization solve (4.1.0 to 4.3.0);
+  `shared_operation_periods` and `shared_invest_periods` (4.1.0 to 4.3.0); a 1-D `realized_periods`,
+  `realized_invest_periods` or `fix_storage_periods` next to the 2-D map; and `new_stepduration`, so they ran on
+  the aggregated time steps with hourly data, at a fraction of the demand (every 4.x release). Results of such
+  models change. A split solve now has every parameter of its solve; a 1-D period list (and `shared_*`) counts
+  only the split solve's own periods, and `years_represented` counts from its own first period, as before. A 2-D
+  `period_timeset` is now an error (it gave each split solve one period-timeset pair, or crashed): give
+  `period_timeset` all the periods and split with a 2-D period list instead. A `construction_lead_time` no longer
+  stops a split solve (4.1.0 to 4.3.0): it works as in solves written by hand (a decision whose capacity would
+  come online after the split solve's last period is not offered, with a warning). The realization solve FlexTool
+  adds to a stochastic solve now also has its solve's `scaling` (before it always used *full*; 4.1.0 to 4.3.0).
 - **Solver options can no longer add commands to a solver run** (since 4.0). A `solver_arguments` entry or an
   option-file line with a line break, `;`, a quote or a space could add a command to the script piped to CPLEX,
   Xpress or COPT, or address another Gurobi or HiGHS option. Every option of every solver is now checked before the

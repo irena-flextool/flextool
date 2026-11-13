@@ -213,3 +213,107 @@ OBJECTIVE_SCALE = 1e-6
 def objective_coefficient(mps: Path, column: str) -> float:
     """The objective coefficient of *column* in *mps*, in EUR (the LP's objective scaling taken out)."""
     return lp_snapshot().parse_mps(mps).obj[column] / OBJECTIVE_SCALE
+
+
+def model_b(mode: str, *, fan_periods: tuple[str, ...] = ("p1", "p2")) -> dict:
+    """Model B: dispatch only, forecasts ``high`` (weight 1) / ``low`` (weight 3) of the wind profile declared at
+    the first step of each period in *fan_periods* (p1/t01, p2/t03).  *mode*: ``split`` (one solve ``st`` whose
+    ``realized_periods`` is the 2-D map ``{p1: [p1], p2: [p2]}``) or ``hand`` (``st_p1`` and ``st_p2`` written
+    out, each with the solve's whole ``stochastic_branches`` and ``years_represented``)."""
+    solves = ["st"] if mode == "split" else [f"st_{p}" for p in PERIODS]
+    spec = _base_spec(solves, [])
+    spec["entities"] += [["unit", "wind", None], ["group", "sg", None], ["profile", "wp", None],
+                         ["group__unit", ["sg", "wind"], None], ["unit__outputNode", ["wind", "elec"], None],
+                         ["unit__node__profile", ["wind", "elec", "wp"], None]]
+    spec["entity_alternatives"].append(["unit", ["wind"], "init", True])
+    first_step = {"p1": "t01", "p2": "t03"}
+    branches = pmap([(p, nested([("high", nested([(first_step[p], nested([("no", 1.0)]))])),
+                                 ("low", nested([(first_step[p], nested([("no", 3.0)]))]))]))
+                     for p in fan_periods])
+    profile = pmap([("high", nested([("t01", nested([(t, 0.4) for t in STEPS[:2]])),
+                                     ("t03", nested([(t, 0.4) for t in STEPS[2:]]))])),
+                    ("low", nested([("t01", nested([(t, 0.2) for t in STEPS[:2]])),
+                                    ("t03", nested([(t, 0.1) for t in STEPS[2:]]))]))])
+    pv = spec["parameter_values"]
+    pv += [
+        ["unit", "gen", "existing", pack(200.0, "float"), "init"],
+        ["unit", "wind", "efficiency", pack(1.0, "float"), "init"],
+        ["unit", "wind", "existing", pack(100.0, "float"), "init"],
+        ["unit__node__profile", ["wind", "elec", "wp"], "profile_method", pack("upper_limit", "str"), "init"],
+        ["profile", "wp", "profile", pack(profile, "map"), "init"],
+        ["group", "sg", "include_stochastics", pack("yes", "str"), "init"],
+    ]
+
+    def rows(solve: str, periods: list[str], realized) -> list:
+        return [["solve", solve, "solve_mode", pack("single_solve", "str"), "init"],
+                ["solve", solve, "period_timeset", pack(pmap([(p, PERIODS[p]) for p in periods]), "map"), "init"],
+                ["solve", solve, "years_represented",
+                 pack(pmap([(p, 1.0) for p in PERIODS], index_name="period"), "map"), "init"],
+                ["solve", solve, "stochastic_branches", pack(branches, "map"), "init"],
+                ["solve", solve, "realized_periods", realized, "init"]]
+
+    if mode == "split":
+        pv += rows("st", list(PERIODS), two_d({p: [p] for p in PERIODS}))
+    else:
+        for p in PERIODS:
+            pv += rows(f"st_{p}", [p], array([p]))
+    return spec
+
+
+def rename_solve(data: dict, old: str, new: str) -> dict:
+    """*data* (a packed fixture JSON) with the solve *old* renamed to *new* (its entity, its values and every
+    ``model.solves`` / ``contains_solves`` array that names it)."""
+    for entity in data["entities"]:
+        if entity[0] == "solve" and entity[1] == old:
+            entity[1] = new
+    for row in data["parameter_values"]:
+        if row[0] == "solve" and row[1] == old:
+            row[1] = new
+        if (row[0], row[2]) in (("model", "solves"), ("solve", "contains_solves")):
+            value = json.loads(base64.b64decode(row[3][0]))
+            if isinstance(value, dict):
+                value["data"] = [new if s == old else s for s in value["data"]]
+            elif value == old:
+                value = new
+            row[3] = [base64.b64encode(json.dumps(value).encode()).decode("ascii"), row[3][1]]
+    return data
+
+
+def model_a_ladder(mode: str, ladder: dict[str, dict[str, list[str]]], *, lists: dict[str, list[str]] | None = None,
+                   unit_rows: list | None = None, years_index: str | None = None) -> dict:
+    """Model A with any 2-D period maps.  *ladder*: ``{parameter: {outer key: [period, ...]}}`` of the 2-D
+    parameters; *lists*: the 1-D period lists of the solve (``{parameter: [period, ...]}``).  ``split`` writes one
+    solve ``inv`` with these values (``period_timeset`` over both periods); ``hand`` writes the solves the docs say
+    the maps stand for, ``inv_<outer>`` in the order of the outer keys: each 2-D parameter its inner list, each 1-D
+    list its periods that the solve has, ``period_timeset`` and ``years_represented`` (5 years per period) of its
+    periods.  *unit_rows* (``[parameter, packed value]``) go on the unit ``gen``."""
+    lists = dict(lists or {})
+    outers = list(dict.fromkeys(o for entries in ladder.values() for o in entries))
+    solves = ["inv"] if mode == "split" else [f"inv_{o}" for o in outers]
+    spec = model_a("single")
+    spec["entities"] = [e for e in spec["entities"] if e[0] != "solve"] + [["solve", s, None] for s in solves]
+    pv = [r for r in spec["parameter_values"] if r[0] != "solve" and (r[0], r[2]) != ("model", "solves")]
+    pv.append(["model", "flextool", "solves", array(solves), "init"])
+    pv += [["unit", "gen", par, value, "init"] for par, value in (unit_rows or [])]
+    yk = {} if years_index is None else {"index_name": years_index}
+
+    def rows(solve: str, periods: list[str], values: dict) -> list:
+        out = [["solve", solve, "solve_mode", pack("single_solve", "str"), "init"],
+               ["solve", solve, "period_timeset", pack(pmap([(p, PERIODS[p]) for p in periods]), "map"), "init"],
+               ["solve", solve, "years_represented", pack(pmap([(p, 5.0) for p in periods], **yk), "map"),
+                "init"]]
+        return out + [["solve", solve, par, value, "init"] for par, value in values.items()]
+
+    if mode == "split":
+        values = {par: two_d(entries) for par, entries in ladder.items()}
+        values.update({par: array(periods) for par, periods in lists.items()})
+        pv += rows("inv", list(PERIODS), values)
+    else:
+        for outer in outers:
+            own = list(dict.fromkeys(p for entries in ladder.values() for p in entries.get(outer, [])))
+            values = {par: array(entries[outer]) for par, entries in ladder.items() if entries.get(outer)}
+            values.update({par: array([p for p in periods if p in own]) for par, periods in lists.items()
+                           if any(p in own for p in periods)})
+            pv += rows(f"inv_{outer}", [p for p in PERIODS if p in own], values)
+    spec["parameter_values"] = pv
+    return spec

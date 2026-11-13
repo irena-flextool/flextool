@@ -9908,9 +9908,10 @@ def apply_synthetic_invest_sets(flex_data: object,
     # Construction lead time: drop the decisions whose capacity would start to operate after the solve or the
     # model horizon (with a warning) before every set below is built from ed_invest_set.
     synth_commission_lf = None
-    # A per-period sub-solve counts one year per period on its own calendar and takes its costs from the
-    # emitted seeds, so the start of operation and the cost window of a construction lead time cannot be
-    # placed in it.
+    # A synthetic sub-solve (a roll, a nested solve renamed for its period; the solves of a 2-D period map are
+    # real solves of the reader and never come here) counts one year per period on its own calendar and takes its
+    # costs from the emitted seeds, so the start of operation and the cost window of a construction lead time
+    # cannot be placed in it.
     from flextool.engine.preprocess.params._existing import (
         _construction_lag_configured as _lag_configured,
         lead_time_decisions as _lead_time_decisions,
@@ -9921,11 +9922,10 @@ def apply_synthetic_invest_sets(flex_data: object,
             longest = lagged.group_by("e").agg(pl.col("L").max()).sort("e")
             entities = ", ".join(f"{e} ({lead:g} years)" for e, lead in longest.iter_rows())
             raise FlexToolConfigError(
-                f"Solve '{base}' gives invest_periods as a map, so it runs one investment sub-solve per period "
-                f"(here '{active_solve}'). Each sub-solve covers only one investment period. Capacity with a "
-                f"construction lead time could never come online inside it. Entities with a lead time: "
-                f"{entities}. Use one investment solve over several periods instead (invest_periods as a list), "
-                "or remove the lead time.")
+                f"Solve '{active_solve}' is a sub-solve of '{base}' (a roll, or a nested solve renamed for its "
+                "period) that invests, and FlexTool cannot place the start of operation of a construction lead "
+                f"time in such a sub-solve. Entities with a lead time: {entities}. Make the investments in a "
+                "single_solve (a solve of its own in model.solves), or remove the lead time.")
     if workdir is not None:
         ed_inv, synth_commission_lf = _offer_invest_set(
             flex_data, source, active_solve,

@@ -1853,19 +1853,19 @@ def _spawn_realized_dispatch_siblings(
       accepts separate_dispatch only for a single top-level single_solve.
     * registration (W4b): THIS function → for each eligible parent, a DUAL
       in-memory registration of the sibling ``<parent>__realized_dispatch``:
-        - ``SpineDbReader.register_derived_solve`` — clones the parent's
-          RAW Spine params (``_REALIZED_DISPATCH_SIBLING_PARAMS``) so the
-          sibling takes the full override path (``_solve_in_spine`` True);
+        - ``SpineDbReader.register_derived_solve`` — clones every RAW Spine
+          param of the parent except
+          ``SpineDbReader.REALIZATION_SOLVE_DROPPED_PARAMS``, so the sibling
+          takes the full override path (``_solve_in_spine`` True);
         - ``SolveConfig.spawn_realized_dispatch_sibling`` — inserts the
-          sibling after the parent in ``model_solve`` and copies the
-          DERIVED SolveConfig scaffolding dicts; records the authoritative
-          ``SolveConfig.realized_dispatch_parent[sibling] = parent``.
-      ►► DUAL-DEFINITION INVARIANT: the reader's raw-param allow-list and
-         the SolveConfig copy/set lists describe the SAME sibling config in
-         two vocabularies (period_timeset↔timesets_used_by_solves,
-         years_represented↔solve_period_years_represented,
-         solve_mode↔solve_modes, realized_periods↔realized_periods). They
-         MUST stay aligned — pinned by
+          sibling after the parent in ``model_solve`` and derives its
+          SolveConfig fields (``derive_realization_solve``: every field
+          except ``_solve_config.REALIZATION_SOLVE_DROPS``); records the
+          authoritative ``SolveConfig.realized_dispatch_parent[sibling] =
+          parent``.
+      ►► DUAL-DEFINITION INVARIANT: the reader's drop list and the
+         SolveConfig drop list describe the SAME sibling config in two
+         vocabularies. They MUST stay aligned — pinned by
          ``tests/engine/test_realized_dispatch_coherence.py``.
     * projection (W4c): ``_run_model`` step 3.6 reads
       ``realized_dispatch_parent`` and projects each stochastic param onto
@@ -1899,7 +1899,7 @@ def _spawn_realized_dispatch_siblings(
     ``native_run_model`` actually drives.  *cascade_solve_cfg* is the outer
     cascade ``state.solve``, where the ``run()`` closure looks up each
     solve's solver: the sibling gets its parent's solver and solver
-    settings there too (``SolveConfig.copy_solver_settings``), so a sibling
+    settings and scaling there too (``SolveConfig.derive_realization_solve``), so a sibling
     of a Gurobi solve runs on Gurobi, not on HiGHS.  (The run()-site guard reads the
     SEPARATE outer cascade ``state.solve``, where the sibling is never
     injected, so it correctly no-ops for the sibling, which authors no
@@ -2043,15 +2043,17 @@ def _spawn_realized_dispatch_siblings(
                 f"'{sibling}' for solve '{parent}': a 'solve' entity named "
                 f"'{sibling}' already exists in the database."
             )
-        cascade_db_reader.register_derived_solve(parent, sibling)
+        from flextool.engine.input._spinedb_reader import SpineDbReader
+        cascade_db_reader.register_derived_solve(
+            parent, sibling, drop=SpineDbReader.REALIZATION_SOLVE_DROPPED_PARAMS)
         solve_cfg.spawn_realized_dispatch_sibling(parent, sibling)
         if cascade_solve_cfg is not None and cascade_solve_cfg is not solve_cfg:
-            cascade_solve_cfg.copy_solver_settings(parent, sibling)
+            cascade_solve_cfg.derive_realization_solve(parent, sibling)
         # The sibling reuses the parent's timesets, which a solve-level
         # new_stepduration has re-pointed to the aggregated timeline: it must
         # run at the same step (aggregated data, step lengths), not on the
         # aggregated steps with unaggregated data.  The reader half clones the
-        # raw ``new_stepduration`` (``_REALIZED_DISPATCH_SIBLING_PARAMS``).
+        # raw ``new_stepduration`` (it is not in the drop list).
         if timeline_cfg is not None:
             parent_step = timeline_cfg.new_step_durations.get(parent)
             if parent_step is not None:
@@ -2063,6 +2065,12 @@ def _spawn_realized_dispatch_siblings(
                 "registered engine-automatic realization solve '%s' for "
                 "solve '%s' (%s)", sibling, parent, why,
             )
+    if eligible:
+        from flextool.engine.input._solve_config import SolveConfig
+        siblings = [f"{parent}__realized_dispatch" for parent, _why in eligible]
+        SolveConfig.check_derived_solves(solve_cfg, siblings)
+        if cascade_solve_cfg is not None and cascade_solve_cfg is not solve_cfg:
+            SolveConfig.check_derived_solves(cascade_solve_cfg, siblings)
 
 
 def _validate_model_solve(state: RunnerState) -> list[str]:
@@ -2499,6 +2507,9 @@ def _drive_cascade(
             "cascade_spinedb_reader_constructed", _drive_logger,
             user_label="Inputs prepared",
         )
+    # The solves of a 2-D period map are solves of the reader too (before any reader-side lookup).
+    from flextool.engine.input._solve_config import register_solve_copies
+    register_solve_copies(runner.state.solve, cascade_db_reader)
     # One dedupe set for the solve-step aggregation warnings of the run: the CSV frames
     # (TimelineConfig.create_averaged_timeseries, once per complete solve) and the DB-direct readers
     # (load_flextool arms the reader's memo) warn once per run between them.

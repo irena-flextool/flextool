@@ -152,28 +152,3 @@ def test_benders_with_lead_time_matches_monolith(tmp_path_factory) -> None:
         assert commission.select("e", "d", "d_c").rows() == [("wind_A", "y2030", "y2035")]
         objective[decomposition] = step.obj
     assert objective["benders"] == pytest.approx(objective["none"], rel=1e-6)
-
-
-def test_per_period_sub_solves_refuse_lead_time(tmp_path_factory) -> None:
-    """A solve whose invest_periods is a map of per-period sub-solves (invest_5weeks_p2020 …) counts one year per
-    period on its own calendar and takes its costs from the emitted seeds, so a construction lead time cannot be
-    placed there: a configuration error naming the solve, the entity and its lead time, saying why and how to fix
-    it."""
-    from flextool.engine.input._solve_state import FlexToolConfigError
-
-    chain = ["init", "west", "wind", "coal", "coal_invest", "battery", "battery_invest", "5weeks",
-             "invest_twoYears4Times_5weeks"]
-    url, scen = make_db(tmp_path_factory, alt="lt_sub_solves", values=[["unit", PLANT, LEAD, b64(5.0, "float")]],
-                        base_chain=chain)
-    with pytest.raises(Exception) as err:
-        run(tmp_path_factory, url, scen)
-    found = [err.value]
-    while found[-1].__cause__ is not None or found[-1].__context__ is not None:
-        found.append(found[-1].__cause__ or found[-1].__context__)
-    config = [e for e in found if isinstance(e, FlexToolConfigError)]
-    assert config, found
-    message = str(config[0])
-    assert "invest_5weeks" in message and f"{PLANT} (5 years)" in message
-    assert "one investment sub-solve per period" in message
-    assert "could never come online inside it" in message
-    assert "Use one investment solve over several periods instead" in message
