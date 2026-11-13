@@ -359,10 +359,12 @@ solver's option file, `solver_config/<solver>.opt` in the project's or the
 workspace's `solver_config` (or a folder given with `--solver-config-dir`),
 which keeps them when the folder is trusted (see
 [Which option folders are trusted](#which-option-folders-are-trusted)). An
-option file that came in a project package from someone else is checked by
-the same rules when it is imported: a file with such a parameter is kept as
-`<solver>.opt.review`, which no run reads, until you have checked it and
-renamed it to `<solver>.opt`.
+option file that came in a project package from someone else gets these
+rules in the project's runs until you trust the project's solver option
+files, and is checked by them when it is imported: a file with a line they
+refuse is kept as `<solver>.opt.review`, which no run reads. To use it as it
+is, read it, rename it to `<solver>.opt` and tick "Trust this project's solver
+option files" (Solver options → On this computer, with the project open).
 Exporting a project applies the same rules to the option files it would
 ship: a file with such a parameter is left out of the package, and the export
 names its lines (a server password or a folder of your computer should not be
@@ -622,6 +624,20 @@ A workspace gets on the list:
   never listed by being opened;
 - when you tick "Trust this workspace's solver option files" in the FlexTool
   window (Solver options → On this computer), after reading the files.
+
+A GUI project (for its own `projects/<project>/solver_config/`) gets on the
+list when the FlexTool window creates it, when the window opens it while its
+`solver_config/` is missing or holds nothing but FlexTool's default files and
+no received file waits for review (no `<solver>.opt.review`, no
+`imported_solver_config/`), and when you tick "Trust this project's solver
+option files" (Solver options → On this computer, with the project open). A
+project imported from a package is never listed by being imported or opened
+with its shipped files in place, and importing at the path of a project
+deleted earlier first takes that path off the list; renaming a project in the
+window keeps its trust, deleting it removes it. Copying a received file into
+a trusted folder (the workspace's `solver_config/`, a listed project's, or a
+folder you name with `--solver-config-dir`) makes it trusted there: read it
+first.
 
 For a workspace whose option files you edited before this check existed, tick
 that box once (or pass the folder with `--solver-config-dir`). On CI or a

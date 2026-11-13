@@ -217,12 +217,12 @@ class SolverConfigSource:
             given[solver], passed = _ladder_file(self.layers, solver)
             skipped_files.extend(passed)
         if not self.lower and not skipped_files:
-            untrusted = "" if self.trusted else f"; {UNTRUSTED_SHORT}"
+            untrusted = "" if self.trusted else f"; {_untrusted_short(self.dir)}"
             return f"{self.dir} ({self.reason}{untrusted}{skipped})"
         parts: list[str] = []
         for index, (folder, reason) in enumerate(self.layers):
             names = [f"{s}.opt" for s in SOLVER_NAMES if given[s] == index]
-            untrusted = "" if self.layer_note(index) is None else f"; {UNTRUSTED_SHORT}"
+            untrusted = "" if self.layer_note(index) is None else f"; {_untrusted_short(folder)}"
             if names:
                 parts.append(f"{folder} ({reason}{untrusted}): {', '.join(names)}")
             elif not _is_dir(folder):
@@ -405,25 +405,93 @@ def holds_only_flextool_defaults(folder: Path) -> bool:
     return True
 
 
-#: How :meth:`SolverConfigSource.describe` marks a folder that is not trusted.
+#: How :meth:`SolverConfigSource.describe` marks a folder that is not trusted (a GUI project's: :data:`UNTRUSTED_SHORT_PROJECT`).
 UNTRUSTED_SHORT = "not a workspace this computer set up: its files get the input database's rules"
+UNTRUSTED_SHORT_PROJECT = "not a project this computer set up: its files get the input database's rules"
+#: The folder in which FlexTool 4.4 development builds unpacked a package's solver options (never read by a run).
+IMPORTED_SOLVER_CONFIG_FOLDER = "imported_solver_config"
+#: The suffix of a shipped option file that project import or the first open holds back (never read by a run).
+HELD_SUFFIX = ".review"
+
+
+def _untrusted_short(folder: Path) -> str:
+    return UNTRUSTED_SHORT_PROJECT if is_project_solver_config(folder) else UNTRUSTED_SHORT
 
 
 def untrusted_note(folder: Path, reason: str, problem: str | None = None) -> str:
     """The message part that says why the option files of *folder* (found as *reason*) get the input database's
-    rules, and how to trust them (item 240 B3)."""
+    rules, and how to trust them (item 240 B3).  A GUI project's folder (``<workspace>/projects/<P>/solver_config``)
+    is trusted through its project, any other through the workspace (the folder it is in)."""
     damaged = f" ({problem})" if problem else ""
-    return (
+    head = (
         f"The option files in {folder} ({reason}) get the input database's rules, because FlexTool found that "
-        f"folder on its own and it is not in a workspace this computer set up{damaged}: a file option takes only a "
+        f"folder on its own and it is not in a {{owner}} this computer set up{damaged}: a file option takes only a "
         "plain file name, placed in the solve's work folder; no server or licence settings; only parameter names "
-        "in FlexTool's list. If you made these files, or have read them and trust them, pass the folder with "
-        "--solver-config-dir (or set FLEXTOOL_SOLVER_CONFIG_DIR), or tick \"Trust this workspace's solver option "
-        "files\" in the FlexTool window (Solver options, On this computer). flextool-update and the FlexTool "
-        "window mark a workspace as set up by this computer only when they create its solver_config/ or find "
-        "nothing in it but FlexTool's own default files, so a workspace received with edited option files is "
-        "never marked on its own."
+        "in FlexTool's list. If you made these files, or have read them and trust them, "
     )
+    if is_project_solver_config(folder):
+        return head.format(owner="project") + (
+            "tick \"Trust this project's solver option files\" in the FlexTool window (Solver options, On this "
+            "computer, with the project open), or pass the folder with --solver-config-dir (or set "
+            "FLEXTOOL_SOLVER_CONFIG_DIR). The FlexTool window marks a project as set up by this computer only when "
+            "it creates the project, or opens it while its solver_config/ is missing or holds nothing but "
+            "FlexTool's own default files and no received option file waits for review, so option files that "
+            "came with a project (a project package, a copied folder) are never trusted on their own."
+        )
+    return head.format(owner="workspace") + (
+        "pass the folder with --solver-config-dir (or set FLEXTOOL_SOLVER_CONFIG_DIR), or tick \"Trust this "
+        "workspace's solver option files\" in the FlexTool window (Solver options, On this computer). "
+        "flextool-update and the FlexTool window mark a workspace as set up by this computer only when they "
+        "create its solver_config/ or find nothing in it but FlexTool's own default files, so a workspace "
+        "received with edited option files is never marked on its own."
+    )
+
+
+def awaits_review(project: Path) -> bool:
+    """Whether the GUI project *project* holds received solver option files that are not in use yet: an
+    ``imported_solver_config/`` (a 4.4 development build's import) or a held ``<solver>.opt.review``."""
+    try:
+        if (project / IMPORTED_SOLVER_CONFIG_FOLDER).exists():
+            return True
+        own = project / SOLVER_CONFIG_FOLDER
+        return own.is_dir() and any(entry.name.casefold().endswith(".opt" + HELD_SUFFIX) for entry in own.iterdir())
+    except OSError:
+        return True
+
+
+def note_project_set_up_here(project: str | os.PathLike) -> bool:
+    """List the GUI project *project* as set up by this computer (``trusted_workspaces``, item 240 B3) when its
+    ``solver_config/`` is missing or holds nothing but FlexTool's own default files
+    (:func:`holds_only_flextool_defaults`) and no received option file waits for review (:func:`awaits_review`):
+    then any option file that appears there later was put there on this computer.  The FlexTool window calls it
+    when it creates or opens a project.  Returns whether the project was added; a settings file that cannot be
+    read or written adds nothing (logged)."""
+    from flextool._local_solver_settings import LocalSolverSettingsError, add_trusted_workspace
+
+    folder = Path(project)
+    if not folder.is_dir() or awaits_review(folder):
+        return False
+    if not holds_only_flextool_defaults(folder / SOLVER_CONFIG_FOLDER):
+        return False
+    try:
+        return add_trusted_workspace(folder)
+    except LocalSolverSettingsError as exc:
+        _logger.warning("Could not note project %s as set up by this computer: %s", folder, exc)
+        return False
+
+
+def forget_trusted_folder(folder: str | os.PathLike) -> None:
+    """Take *folder* (a project or workspace) off this computer's trusted list, when it is on it: before received
+    files arrive at that path (a project import, the first open's rename of ``imported_solver_config/``) or after
+    the folder is deleted, so a later folder at the same path does not inherit the trust.  A settings file that
+    cannot be read or written is logged."""
+    from flextool._local_solver_settings import LocalSolverSettingsError, is_trusted_workspace, remove_trusted_workspace
+
+    try:
+        if is_trusted_workspace(folder):
+            remove_trusted_workspace(folder)
+    except LocalSolverSettingsError as exc:
+        _logger.warning("Could not take %s off this computer's trusted folders: %s", folder, exc)
 
 
 def _folder_trust(folder: Path, reason: str) -> tuple[bool, str | None]:
@@ -913,7 +981,10 @@ __all__ = [
     "gui_solver_config_dirs",
     "gui_solver_config_flags",
     "gui_solver_config_ladder",
+    "awaits_review",
+    "forget_trusted_folder",
     "holds_only_flextool_defaults",
+    "note_project_set_up_here",
     "input_db_filesystem_path",
     "is_flextool_workspace",
     "is_project_solver_config",

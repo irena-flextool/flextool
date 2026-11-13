@@ -6,14 +6,17 @@
   list of the solver's parameters (:mod:`flextool.engine.solve._solver_catalogue`) are taken from input databases.
   Off by default.  ``FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS`` = ``1`` / ``0`` (also ``true`` / ``false``,
   ``yes`` / ``no``) wins over the file.
-- ``trusted_workspaces`` (a list of folders): the workspaces this computer set up (B3).  A ``solver_config/``
-  folder that a run finds on its own (next to the input database, in the workspace of a project database, in the
-  Spine Toolbox project folder, in the current folder, or the FlexTool window's workspace) has its option files
-  trusted (file paths, server settings) only when the folder it is in is listed.  ``ensure_runtime_files``
-  (``flextool-update``, the FlexTool window's start) lists its workspace only when it creates ``solver_config/``
-  there or finds nothing in it but FlexTool's own default files; the FlexTool window's "Trust this workspace"
-  setting lists it on the user's word.  The list is outside every workspace, so a file that came with a
-  workspace cannot put it there.
+- ``trusted_workspaces`` (a list of folders): the workspaces and GUI projects this computer set up (B3).  A
+  ``solver_config/`` folder that a run finds on its own (next to the input database, in the project or workspace
+  of a project database, in the Spine Toolbox project folder, in the current folder, or the FlexTool window's
+  project and workspace) has its option files trusted (file paths, server settings) only when the folder it is
+  in is listed.  ``ensure_runtime_files`` (``flextool-update``, the FlexTool window's start) lists its workspace
+  only when it creates ``solver_config/`` there or finds nothing in it but FlexTool's own default files; the
+  FlexTool window lists a project when it creates it or opens it in that state with no received option file
+  waiting for review (:func:`flextool._solver_config_source.note_project_set_up_here`), and takes a project off
+  the list when it is deleted or a package is imported at its path.  The window's "Trust this workspace's / this
+  project's solver option files" settings list them on the user's word.  The list is outside every workspace,
+  so a file that came with a workspace or a project cannot put it there.
 - ``wrappers`` (``{"cplex": ["/usr/local/bin/lic_hold", "--queue", "opt"], ...}``): a program that starts in
   front of a commercial solver's program (B2), for example to hold a floating licence or to lower the solver's
   priority.  ``FLEXTOOL_SOLVER_WRAPPER_<SOLVER>`` wins over the file: a JSON list, or one program path (never
@@ -251,10 +254,12 @@ def apply_settings(
     allow_unlisted: bool | None = None,
     workspace: str | os.PathLike | None = None,
     trust_workspace: bool | None = None,
+    project: str | os.PathLike | None = None,
+    trust_project: bool | None = None,
 ) -> None:
     """Set several settings in *data* (the file's content, for :func:`update_settings_file`) at once: each wrapper
     of *wrappers* (an empty list removes it; check them with :func:`check_wrapper` first), the unlisted-names
-    switch, and whether *workspace* is on the list (``None``: unchanged)."""
+    switch, and whether *workspace* and the GUI *project* are on the list (``None``: unchanged)."""
     if wrappers:
         current = data.get(WRAPPERS_KEY)
         current = dict(current) if isinstance(current, dict) else {}
@@ -266,9 +271,10 @@ def apply_settings(
         data[WRAPPERS_KEY] = current
     if allow_unlisted is not None:
         data["allow_unlisted_parameters"] = bool(allow_unlisted)
-    if workspace is not None and trust_workspace is not None:
-        kept = _without_workspace(data, workspace)
-        data[TRUSTED_WORKSPACES_KEY] = [*kept, workspace_key(workspace)] if trust_workspace else kept
+    for folder, trust in ((workspace, trust_workspace), (project, trust_project)):
+        if folder is not None and trust is not None:
+            kept = _without_workspace(data, folder)
+            data[TRUSTED_WORKSPACES_KEY] = [*kept, workspace_key(folder)] if trust else kept
 
 
 # --- solver wrapper (B2) -----------------------------------------------------------------------------------------

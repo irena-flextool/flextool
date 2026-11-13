@@ -929,3 +929,38 @@ def test_cplex_name_with_a_leading_set_is_refused_from_every_source() -> None:
     with pytest.raises(FlexToolUserError, match="solver_arguments of solve invest: the name starts with 'set'"):
         _resolve("cplex", options={"set threads": "2"})
     assert [(o.name, o.value) for o in _resolve("cplex", opt_text="threads 2\n")] == [("threads", "2")]
+
+
+# --- Item 232 with item 240 B1: the run's thread budget is an option like any other ---------------------------
+
+
+@pytest.mark.parametrize("solver", _COMMERCIAL)
+def test_the_thread_budget_name_is_a_listed_plain_parameter(solver) -> None:
+    """The commercial thread count that ``--threads`` sets (``_PARAM_MAP``, item 232) is in FlexTool's list of the
+    solver's parameters as a plain parameter, so it passes the database's rules too (``solver_threads``)."""
+    from flextool.engine.solve import _solver_catalogue
+    from flextool.engine.solve._solver_dispatch import _PARAM_MAP, check_database_solver_option
+
+    entry = _solver_catalogue.load(solver).entry(_PARAM_MAP[solver]["threads"])
+    assert entry is not None and entry.cls == "plain"
+    check_database_solver_option(solver, _PARAM_MAP[solver]["threads"], "2", "solver_arguments of solve invest")
+
+
+def test_the_thread_budget_goes_through_the_checks_of_the_runs_own_options(monkeypatch, caplog) -> None:
+    """The operator layer (with the thread budget of item 232) is checked like the run's other trusted sources:
+    the general check refuses a bad value, and a name not in FlexTool's list gets the B1 warning."""
+    from flextool.engine.solve._solver_dispatch import _PARAM_MAP
+
+    reset_run_warnings()
+    budget = RunOptions.from_env({"FLEXTOOL_THREADS": "3"})
+    options = resolve_commercial_options("gurobi", opt_file=None, solver_config=None, run_options=budget)
+    assert [(o.name, o.value, o.layer) for o in options] == [("Threads", "3", "environment variable FLEXTOOL_THREADS")]
+    monkeypatch.setitem(_PARAM_MAP, "gurobi", {**_PARAM_MAP["gurobi"], "threads": "Thread"})
+    with caplog.at_level(logging.WARNING):
+        options = resolve_commercial_options("gurobi", opt_file=None, solver_config=None, run_options=budget)
+    assert [(o.name, o.value) for o in options] == [("Thread", "3")]
+    assert any("environment variable FLEXTOOL_THREADS: gurobi option 'Thread'" in r.getMessage()
+               and "not in FlexTool's list" in r.getMessage() for r in caplog.records)
+    monkeypatch.setitem(_PARAM_MAP, "gurobi", {**_PARAM_MAP["gurobi"], "threads": "Threads;quit"})
+    with pytest.raises(FlexToolUserError, match="environment variable FLEXTOOL_THREADS: the name contains"):
+        resolve_commercial_options("gurobi", opt_file=None, solver_config=None, run_options=budget)

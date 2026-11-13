@@ -13,6 +13,10 @@ with a project or a workspace.
 - **Trust this workspace's solver option files**: puts the workspace (the folder FlexTool was started in) on this
   computer's list of workspaces it set up, so the files of its ``solver_config/`` may name paths and servers (B3).
   The option files that differ from FlexTool's defaults are listed next to it, to be read first.
+- **Trust this project's solver option files** (with a project open): the same for the project's own
+  ``solver_config/`` (``projects/<P>/solver_config``), which a run reads file by file over the workspace's.  A
+  project that came as a package or a copied folder is not trusted until the box is ticked; its state is written
+  only when the box was changed.
 """
 from __future__ import annotations
 
@@ -43,13 +47,17 @@ def _edited_option_files(folder: Path) -> list[str]:
 
 class LocalSolverSettingsDialog(tk.Toplevel):
     """The modal "On this computer" dialog.  *workspace* is the folder whose trust it shows (default: the current
-    folder, the FlexTool window's workspace)."""
+    folder, the FlexTool window's workspace); *project* the open GUI project, whose own ``solver_config`` trust
+    it shows too (``None``: no project box)."""
 
-    def __init__(self, parent: tk.Misc, *, workspace: Path | None = None) -> None:
+    def __init__(self, parent: tk.Misc, *, workspace: Path | None = None, project: Path | None = None) -> None:
         data = local.read_settings_file()  # raises LocalSolverSettingsError (before any window); the opener shows it
         super().__init__(parent)
         self._parent = parent
         self.workspace = Path(workspace) if workspace is not None else Path.cwd()
+        self.project = Path(project) if project is not None else None
+        self.project_trust_var: tk.BooleanVar | None = None
+        self._project_trusted_at_open: bool | None = None
         self.title("Solver settings on this computer")
         self.transient(parent)
         self.resizable(False, False)
@@ -157,6 +165,28 @@ class LocalSolverSettingsDialog(tk.Toplevel):
                      if edited else "No file there differs from FlexTool's defaults.")),
         ).grid(row=row, column=0, columnspan=3, sticky="w")
         row += 1
+        if self.project is not None:
+            try:
+                project_trusted: bool | None = local.is_trusted_workspace(self.project)
+            except local.LocalSolverSettingsError:
+                project_trusted = None  # unknown: the box writes nothing unless it is changed
+            self._project_trusted_at_open = project_trusted
+            self.project_trust_var = tk.BooleanVar(master=self, value=bool(project_trusted))
+            ttk.Checkbutton(
+                body, variable=self.project_trust_var,
+                text=f"Trust this project's solver option files ({self.project.name})",
+            ).grid(row=row, column=0, columnspan=3, sticky="w", pady=(6, 0))
+            row += 1
+            own = self.project / "solver_config"
+            edited = _edited_option_files(own)
+            ttk.Label(
+                body, justify="left", foreground="#666666",
+                text=(f"{own}\n"
+                      + (f"Edited: {', '.join(edited)}. Its runs use them over the workspace's files. Read them before\n"
+                         "you tick the box, above all when the project came from someone else."
+                         if edited else "No file there differs from FlexTool's defaults.")),
+            ).grid(row=row, column=0, columnspan=3, sticky="w")
+            row += 1
 
         buttons = ttk.Frame(body)
         buttons.grid(row=row, column=0, columnspan=3, sticky="e", pady=(12, 0))
@@ -197,6 +227,9 @@ class LocalSolverSettingsDialog(tk.Toplevel):
         entered = {s: self.wrapper_argv(s) for s in _LABELS if s not in self.env_locked}
         allow = None if os.environ.get(local.ALLOW_UNLISTED_ENV, "").strip() else self.allow_var.get()
         trust = self.trust_var.get()
+        trust_project = None
+        if self.project_trust_var is not None and self.project_trust_var.get() != self._project_trusted_at_open:
+            trust_project = self.project_trust_var.get()
         try:
             for solver, argv in entered.items():
                 if argv:
@@ -204,7 +237,8 @@ class LocalSolverSettingsDialog(tk.Toplevel):
             # One write, under the file's lock: every setting or none.
             local.update_settings_file(
                 lambda data: local.apply_settings(data, wrappers=entered, allow_unlisted=allow,
-                                                  workspace=self.workspace, trust_workspace=trust))
+                                                  workspace=self.workspace, trust_workspace=trust,
+                                                  project=self.project, trust_project=trust_project))
         except local.LocalSolverSettingsError as exc:
             messagebox.showerror("Solver settings on this computer", str(exc), parent=self)
             return
@@ -228,10 +262,12 @@ class LocalSolverSettingsDialog(tk.Toplevel):
             pass
 
 
-def open_local_solver_settings(parent: tk.Misc, *, workspace: Path | None = None) -> LocalSolverSettingsDialog | None:
+def open_local_solver_settings(
+    parent: tk.Misc, *, workspace: Path | None = None, project: Path | None = None,
+) -> LocalSolverSettingsDialog | None:
     """Open the dialog; a settings file FlexTool cannot read is shown as an error instead."""
     try:
-        return LocalSolverSettingsDialog(parent, workspace=workspace)
+        return LocalSolverSettingsDialog(parent, workspace=workspace, project=project)
     except local.LocalSolverSettingsError as exc:
         messagebox.showerror("Solver settings on this computer", str(exc), parent=parent)
         return None

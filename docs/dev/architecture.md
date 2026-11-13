@@ -136,8 +136,9 @@ The contract:
    the bounded database layout (next to the database, alone; else `[<P>/solver_config, <workspace>/solver_config]`
    for a `projects/<P>/input_sources/` database) > the Toolbox project folder > cwd > packaged templates. A GUI
    project's folder never gives an unedited template (it would hide the workspace's file). Project import screens
-   shipped files with the engine-free `flextool/_solver_option_rules.py` (the database's path/server rules) and
-   holds a flagged one back as `<solver>.opt.review`. `snapshot_solver_option_files` reads them once at run
+   shipped files with the run's own rule for an untrusted file (`_solver_dispatch.untrusted_option_file_problems`:
+   `validate_solver_option` + `check_database_solver_option` per line) and holds a refused one back as
+   `<solver>.opt.review`; export's privacy screen is the engine-free `flextool/_solver_option_rules.py`. `snapshot_solver_option_files` reads them once at run
    start into `PathConfig.solver_option_files` (every solve reads its layer from there, never from disk) and
    writes the record `<work_folder>/solve_data/solver_config/`. The GUI and the calibrator pass the ladder
    explicitly (`gui_solver_config_flags`: the project's folder when it exists, then the workspace's, as
@@ -158,8 +159,11 @@ The contract:
    gave that solver's file, is handed to `resolve_commercial_options` / `_resolve_effective_highs_options` and
    each file line goes through `check_database_solver_option(untrusted=...)`. A file that is byte for byte a
    shipped template is trusted wherever it lies. Only `ensure_runtime_files` (when it creates `solver_config/` or
-   finds only unedited templates, `holds_only_flextool_defaults`) and the GUI's explicit "trust this workspace"
-   add to the list; nothing inside a workspace (`templates/project_folder.txt` included) is a trust anchor.
+   finds only unedited templates, `holds_only_flextool_defaults`), the GUI's project create / open
+   (`note_project_set_up_here`: only with nothing received waiting, `awaits_review`) and the GUI's explicit "trust
+   this workspace / project" add to the list; project import, the first-open rename of `imported_solver_config/`
+   and project deletion take the path off (`forget_trusted_folder`); nothing inside a workspace
+   (`templates/project_folder.txt` included) is a trust anchor.
    `--solver-config-dir` / `FLEXTOOL_SOLVER_CONFIG_DIR` stay trusted.
    A commercial solver may run behind this computer's solver wrapper (`_local_solver_settings.solver_wrapper`:
    `FLEXTOOL_SOLVER_WRAPPER_GUROBI` and its CPLEX, XPRESS, COPT twins, else `wrappers` in the same file;

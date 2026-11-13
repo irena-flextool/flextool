@@ -640,6 +640,42 @@ def warn_unlisted_trusted_option(
     )
 
 
+#: Ends the refusals :func:`untrusted_option_file_problems` collects, so the reason can be cut out of the message.
+_SCREEN_END = "\x1f"
+
+
+def untrusted_option_file_problems(solver: str, text: str) -> list[str]:
+    """The lines of *solver*'s option file *text* that a run refuses while the file gets the input database's
+    rules (item 240 B3: a folder this computer did not set up, such as an imported project's ``solver_config/``):
+    the same checks as such a run (:func:`validate_solver_option`, then :func:`check_database_solver_option` on
+    each line; a line FlexTool drops anyway, :data:`_HIGHS_OPT_IGNORED_KEYS` / :data:`_FLEXTOOL_OWN_OPTIONS`, is
+    skipped), with this computer's switch for unlisted names.  One message per refused line, ``line N: <name>
+    <value>: <why>``; a server option's value is shown as ``<hidden>`` (it can be a licence key or a password).
+    Project import and the first open of an imported project hold back a file with a message
+    (``flextool.project_package.settle_shipped_solver_config``), so the import and the run follow one rule."""
+    from flextool._solver_option_rules import native_opt_lines
+
+    highs = solver == "highs"
+    own = _FLEXTOOL_OWN_OPTIONS.get(solver, frozenset())
+    problems: list[str] = []
+    for lineno, name, value in (_highs_opt_lines(text) if highs else native_opt_lines(text)):
+        if (name in _HIGHS_OPT_IGNORED_KEYS) if highs else (commercial_option_key(solver, name) in own):
+            continue
+        where = f"line {lineno}"
+        try:
+            validate_solver_option(solver, name, value, where)
+            check_database_solver_option(solver, name, value, where, untrusted=_SCREEN_END)
+        except FlexToolUserError as exc:
+            message = str(exc)
+            reason = message.split(f" from {where}: ", 1)[-1]
+            # validate_solver_option ends with the general naming rule; a database refusal with the marker.
+            reason = reason.split(" A solver option name is ", 1)[0].split(_SCREEN_END, 1)[0].strip()
+            shown_value = "<hidden>" if is_server_option(solver, name) else value
+            shown = f"{name} = {shown_value}" if highs else f"{name} {shown_value}"
+            problems.append(f"line {lineno}: {shown.strip()}: {reason.rstrip('.')}")
+    return problems
+
+
 def check_run_solver_options(
         solver_settings: Any, logger: logging.Logger | None = None, *,
         solves: "Iterable[str] | None" = None, shown_as: Mapping[str, str] | None = None) -> None:
@@ -1231,7 +1267,10 @@ def resolve_commercial_options(
                 )
             continue
         if position >= n_checked:  # the option file and the database layers were checked above
+            # The operator layer (time limit, MIP gap, the run's thread budget of item 232): the general check and
+            # FlexTool's list of the solver's parameters, as for the run's other trusted sources (item 240 B1).
             validate_solver_option(solver, option.name, option.value, option.layer)
+            warn_unlisted_trusted_option(solver, option.name, option.layer, logger)
         merged[key] = option._replace(name=key) if solver == "cplex" else option
     return list(merged.values())
 
@@ -1728,6 +1767,7 @@ __all__ = [
     "_resolve_effective_highs_options",
     "build_solver_options",
     "check_database_solver_option",
+    "untrusted_option_file_problems",
     "check_run_solver_options",
     "drop_flextool3_highs_option",
     "is_path_option",

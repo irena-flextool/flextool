@@ -287,10 +287,13 @@ def test_cli_export_results_and_solver_hint(workspace: dict, capsys: pytest.Capt
     assert report.solver_config == [("highs.opt", "different")]
     assert "-mip_rel_gap = 0.05" in report.solver_config_diffs["highs.opt"]
     assert "+mip_rel_gap = 0.01" in "\n".join(pp.describe_import(report))
-    assert report.solver_config_hint == (
+    hint = report.solver_config_hint
+    assert hint.startswith(
         f"The shipped solver options are in {workspace['projects'] / 'Other' / 'solver_config'}. Runs of this project "
-        f"use them ahead of the workspace's ({workspace['config']}), file by file; delete a file there to use the "
-        "workspace's.")
+        f"use them ahead of the workspace's ({workspace['config']}), file by file, with the input database's rules")
+    # Review b2b3 M2: the hint never sends the files to a trusted place without saying they are trusted there.
+    assert "until you trust them" in hint and "Trust this project's solver option files" in hint
+    assert "is trusted there: its file paths and server settings reach the solver, so read it first." in hint
 
 
 def _status_in(zip_path: Path, run: str) -> dict:
@@ -586,7 +589,9 @@ def test_import_activates_clean_files_and_holds_back_path_options(workspace: dic
     assert report.solver_config_defaults == ["xpress.opt"]
     text = "\n".join(pp.describe_import(report))
     assert "cplex.opt: kept as solver_config/cplex.opt.review and not used" in text
-    assert "rename it to cplex.opt to use it" in text
+    # One rule with the run (item 240 B3): renaming the file back is not enough, the project must be trusted.
+    assert "get the input database's rules until you trust them" in text
+    assert "rename it to cplex.opt and tick \"Trust this project's solver option files\"" in text
 
 
 def test_first_open_renames_a_development_build_import(tmp_path: Path) -> None:
@@ -600,7 +605,8 @@ def test_first_open_renames_a_development_build_import(tmp_path: Path) -> None:
     assert not imported.exists() and (own / "highs.opt").read_text() == "mip_rel_gap = 0.03\n"
     assert not (own / "gurobi.opt").exists() and (own / "gurobi.opt.review").is_file()
     assert lines[0] == ("Project Old: renamed imported_solver_config/ to solver_config/. This project's runs now "
-                        "use its solver option files (highs.opt) ahead of the workspace's.")
+                        "use its solver option files (highs.opt) ahead of the workspace's, with the input "
+                        f"database's rules until you trust them ({pp.TRUST_PROJECT_SETTING}).")
     assert len(lines) == 2 and "gurobi.opt.review" in lines[1] and "line 2: ComputeServer" in lines[1]
     assert pp.adopt_imported_solver_config(project) == []
     # Both folders: nothing is touched, one line says which one runs read.
@@ -637,7 +643,8 @@ def test_first_open_holds_before_renaming_and_names_only_used_files(tmp_path: Pa
                                                        "xpress.opt"]
     # xpress.opt is an unedited template, which runs skip: not named as used.
     assert lines[0] == ("Project Old: renamed imported_solver_config/ to solver_config/. This project's runs now "
-                        "use its solver option files (highs.opt) ahead of the workspace's.")
+                        "use its solver option files (highs.opt) ahead of the workspace's, with the input "
+                        f"database's rules until you trust them ({pp.TRUST_PROJECT_SETTING}).")
     assert len(lines) == 3
 
 
@@ -764,3 +771,53 @@ def test_scrub_keeps_the_text_after_a_path(workspace: dict) -> None:
         "a": "from <path>/proj, wrote and/or copied",
         "b": "error in <path>/python3.11 module foo/bar.py line 3",
         "c": "read <path>\\run.log, wrote and/or copied"}
+
+
+# --- Item 240 B3 with item 231: an imported project's option files are not trusted -----------------------------
+
+
+def test_import_screens_with_the_runs_rules_and_never_inherits_trust(
+    workspace: dict, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The import holds back exactly what a run of the (untrusted) imported project refuses: a parameter name
+    that is not in FlexTool's list too, not only paths and servers.  A clean file is used, with the database's
+    rules; a path left on this computer's trusted list by a project deleted earlier is taken off first."""
+    from flextool import _local_solver_settings as local
+    from flextool._solver_config_source import resolve_solver_config_source
+    from flextool.run_options import Resolved, RunOptions
+
+    monkeypatch.setenv("FLEXTOOL_USER_HOME", str(workspace["root"] / "user_home"))
+    monkeypatch.delenv("FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS", raising=False)
+    own = workspace["project"] / "solver_config"
+    own.mkdir()
+    (own / "gurobi.opt").write_text("Threads 2\n")
+    out = workspace["root"] / "out" / "trust.flextool.zip"
+    pp.export_project(workspace["project"], out, [], solver_config_dir=[own, workspace["config"]])
+    _add_member(out, "Proj/solver_config/copt.opt", b"Threads 1\nTimeLimt 60\n")       # misspelt: not listed
+    target = workspace["projects"] / "Recv"
+    local.add_trusted_workspace(target)                   # a project of that name, trusted here, since deleted
+    report = pp.import_project(out, workspace["projects"], "Recv", solver_config_dir=workspace["config"])
+    assert not local.is_trusted_workspace(target)
+    assert list(report.solver_config_held) == ["copt.opt"]
+    (problem,) = report.solver_config_held["copt.opt"]
+    assert problem.startswith("line 2: TimeLimt 60: it is not in FlexTool's list of COPT parameters")
+    assert (target / "solver_config" / "gurobi.opt").is_file()
+    options = RunOptions(resolved={"workspace_solver_config_dir": Resolved(
+        (str(target / "solver_config"), str(workspace["config"])), "cli")})
+    source = resolve_solver_config_source(run_options=options)
+    assert source.trusted is False and "Trust this project's solver option files" in source.trust_note
+
+
+def test_first_open_takes_the_project_off_the_trusted_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Renaming a 4.4 development build's imported_solver_config/ never hands the received files a trust noted
+    for the project's path."""
+    from flextool import _local_solver_settings as local
+
+    monkeypatch.setenv("FLEXTOOL_USER_HOME", str(tmp_path / "user_home"))
+    project = tmp_path / "projects" / "Old"
+    (project / "imported_solver_config").mkdir(parents=True)
+    (project / "imported_solver_config" / "gurobi.opt").write_text("Threads 2\n")
+    local.add_trusted_workspace(project)
+    pp.adopt_imported_solver_config(project)
+    assert (project / "solver_config" / "gurobi.opt").is_file()
+    assert not local.is_trusted_workspace(project)

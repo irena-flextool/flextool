@@ -161,6 +161,10 @@ Each line says what changes for a model that ran before and what to do; the deta
   options → On this computer), or pass the folder with `--solver-config-dir` or `FLEXTOOL_SOLVER_CONFIG_DIR`, which
   are trusted as before (also the way for CI and servers). Option files with plain settings (threads, gaps, time
   limits) work as before. The run's `Solver config:` line and the run record say whether the folder was trusted.
+  The same holds for a GUI project's own `solver_config/`, judged file by file: an untrusted project file used over
+  a trusted workspace's file gets the database's rules. FlexTool notes a project it creates, or opens with no
+  edited option file and nothing received waiting for review; an imported project's shipped files stay untrusted
+  until you tick "Trust this project's solver option files" (Solver options → On this computer).
 - **`solver_precommand` is not run, and a value now gives a warning.** FlexTool 3 ran it in front of CPLEX (for
   example to reserve a floating licence); FlexTool 4 does not run commands stored in a database, for safety: a
   database from someone else could otherwise run any program on your computer. The parameter is kept only so that
@@ -437,12 +441,15 @@ Each line says what changes for a model that ran before and what to do; the deta
   results are not flagged as made from a changed input), suggests `<Name>_2` when the name is taken (exit code 3
   in the terminal), refuses a database newer than this FlexTool, migrates older ones on open (asking first for a
   frozen one), and unpacks the shipped solver options to the project's `solver_config/`, where its runs use them
-  ahead of the workspace's (delete a file there to use the workspace's). Export leaves out an option file with a
+  ahead of the workspace's (delete a file there to use the workspace's), with the input database's rules until you
+  trust the project's solver option files. Export leaves out an option file with a
   line that names a file or folder by its path or connects the solver to another computer (a server, cloud or
   licence service, or its password) or sets a CPLEX name starting with `set` (a run refuses it), and names those
   lines; a server option's value is shown as `<hidden>`. A project imported by a 4.4 development build has its
   shipped options in `imported_solver_config/`, which no run reads: the first time the FlexTool window opens it,
   the files are checked as at import and the folder is renamed to `solver_config/` (a log line says so).
+  Import holds back exactly what the project's runs would refuse (the input database's rules, which an imported
+  project's option files get until you trust them).
   The viewer's axis ranges file is cut to the shipped runs; run records have this computer's folder paths, user
   name and host name replaced and run logs stay home (on by default; `--keep-run-records` / untick to keep them);
   a run still being written is refused (`--results all` leaves it out); a `.sqlite` input that may be in the middle
@@ -456,8 +463,9 @@ Each line says what changes for a model that ran before and what to do; the deta
   without a file there uses the workspace's, else FlexTool's default. `--solver-config-dir` can be repeated, and
   `FLEXTOOL_SOLVER_CONFIG_DIR` takes several folders separated by `:` (on Windows `;`), highest first; only the
   folders given are read. With `FLEXTOOL_SOLVER_CONFIG_DIR` set for the FlexTool window, the project's folder still
-  comes first. A shipped option file with an option that names a path or a server, or a CPLEX name starting with
-  `set`, is kept as `<solver>.opt.review`, never read by a run, until you check it and rename it; an unedited
+  comes first. A shipped option file with a line the input database's rules refuse (a path, a server, a parameter
+  name not in FlexTool's list, a CPLEX name starting with `set`) is kept as `<solver>.opt.review`, never read by a
+  run; to use it, check it, rename it and trust the project's solver option files; an unedited
   FlexTool template in a project folder is skipped, so it never hides the workspace's file.
 
 #### Plots, timings and the parameter catalogue

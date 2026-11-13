@@ -121,3 +121,28 @@ def test_a_wrapper_set_by_the_environment_is_shown_read_only(root, tmp_path, mon
         str(w.cget("text")) for w in _widgets(dialog) if isinstance(w, ttk.Label)]
     dialog.ok()
     assert "xpress" not in json.loads(local.settings_path().read_text()).get("wrappers", {})
+
+
+def test_the_open_projects_box_trusts_its_solver_config_only_when_ticked(root, tmp_path) -> None:
+    """With a project open the dialog shows a second box for the project's own ``solver_config`` (item 231's
+    ladder, item 240 B3), with its edited files; OK writes the project's state only when the box was changed."""
+    workspace = Path.cwd()
+    project = workspace / "projects" / "P"
+    (project / "solver_config").mkdir(parents=True)
+    (project / "solver_config" / "cplex.opt").write_text("workdir /scratch/cplex\n")
+    root.current_project = "P"
+    dialog = _open_from_solver_options(root)
+    assert dialog.project == project and dialog.project_trust_var is not None
+    texts = " ".join(str(w.cget("text")) for w in _widgets(dialog) if isinstance(w, (ttk.Label, ttk.Checkbutton)))
+    assert "Trust this project's solver option files (P)" in texts and "Edited: cplex.opt" in texts
+    dialog.ok()  # nothing changed: the project is not written
+    assert local.workspace_key(project) not in json.loads(local.settings_path().read_text())["trusted_workspaces"]
+    dialog = _open_from_solver_options(root)
+    dialog.project_trust_var.set(True)
+    dialog.ok()
+    assert local.is_trusted_workspace(project) and not local.is_trusted_workspace(workspace)
+    dialog = _open_from_solver_options(root)
+    assert dialog.project_trust_var.get()
+    dialog.project_trust_var.set(False)
+    dialog.ok()
+    assert not local.is_trusted_workspace(project)

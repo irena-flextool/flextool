@@ -258,3 +258,158 @@ def test_the_run_record_says_whether_the_folder_was_trusted(tmp_path) -> None:
     settings.add_trusted_workspace(ws)
     source = resolve_solver_config_source(run_options=_options(), cwd=ws)
     assert read_solver_option_files(source).record()["trusted"] is True
+
+
+# ---------------------------------------------------------------------------
+# The file-by-file ladder (item 231): trust per folder, so per file
+# ---------------------------------------------------------------------------
+
+#: A project's own gurobi.opt (from someone else, or not yet trusted), with a full path.
+PROJECT_GUROBI = "Threads 3\nNodefileDir /srv/received/nodes\n"
+
+
+def _gui_workspace_with_project(root: Path) -> tuple[Path, Path]:
+    """A workspace this computer set up (listed) whose ``gurobi.opt`` names a path and whose ``highs.opt`` sets a
+    log file outside the work folder, and a project with its own ``gurobi.opt`` (a path too)."""
+    ws = _received_workspace(root / "ws", gurobi_text=EDITED_GUROBI)
+    (ws / "solver_config" / "highs.opt").write_text("log_file=/var/log/flextool/highs.log\n")
+    project = ws / "projects" / "P"
+    (project / "solver_config").mkdir(parents=True)
+    (project / "solver_config" / "gurobi.opt").write_text(PROJECT_GUROBI)
+    settings.add_trusted_workspace(ws)
+    return ws, project
+
+
+def _window_ladder(project: Path, ws: Path):
+    """The ladder a FlexTool window run of *project* resolves: the window's flags, parsed by the run's parser."""
+    from flextool._solver_config_source import gui_solver_config_flags
+    from flextool.cli.cmd_run_flextool import build_parser
+
+    flags = gui_solver_config_flags(project, environ={}, cwd=ws)
+    assert flags == ["--workspace-solver-config-dir", str(project / "solver_config"),
+                     "--workspace-solver-config-dir", str(ws / "solver_config")]
+    options = RunOptions.from_cli(build_parser().parse_args(["sqlite:///x.sqlite", *flags]), environ={})
+    return resolve_solver_config_source(run_options=options, cwd=ws)
+
+
+def test_an_untrusted_project_file_over_a_trusted_workspace_gets_the_database_rules(tmp_path) -> None:
+    """The workspace is trusted, the project is not: the project's ``gurobi.opt`` (which wins file by file) gets
+    the database's rules, so its full path is refused with the project's note; the workspace's ``highs.opt`` (no
+    project file for HiGHS) keeps the workspace's trust and its full path."""
+    ws, project = _gui_workspace_with_project(tmp_path)
+    source = _window_ladder(project, ws)
+    assert [(folder, reason) for folder, reason in source.layers] == [
+        (project / "solver_config", "project of the FlexTool window"),
+        (ws / "solver_config", "workspace of the FlexTool window")]
+    assert (source.trusted, source.layer_note(1)) == (False, None)
+    files = read_solver_option_files(source)
+    assert files.origin("gurobi") == str(project / "solver_config" / "gurobi.opt")
+    note = files.untrusted_note("gurobi")
+    assert note is not None and "Trust this project's solver option files" in note
+    with pytest.raises(FlexToolUserError) as err:
+        resolve_commercial_options("gurobi", opt_file=files.origin("gurobi"), opt_text=files.text("gurobi"),
+                                   opt_untrusted=note, solver_config=None, run_options=_options())
+    assert f"{project / 'solver_config' / 'gurobi.opt'}, line 2" in str(err.value)
+    assert "'/srv/received/nodes'" in str(err.value)
+    assert files.untrusted_note("highs") is None
+    got = _resolve_effective_highs_options(
+        solver_arguments_map=None, highs_opt_path=Path(files.origin("highs")), highs_opt_text=files.text("highs"),
+        cli_overrides=None, highs_opt_untrusted=files.untrusted_note("highs"))
+    assert got == {"log_file": "/var/log/flextool/highs.log"}
+    record = files.record()
+    assert [layer["trusted"] for layer in record["layers"]] == [False, True]
+    assert (record["files"]["gurobi.opt"]["trusted"], record["files"]["highs.opt"]["trusted"]) == (False, True)
+    assert "not a project this computer set up" in source.describe()
+    # The database layout of a project database gives the same ladder and the same trust.
+    db = project / "input_sources" / "model.sqlite"
+    db.parent.mkdir()
+    db.write_bytes(b"")
+    by_db = resolve_solver_config_source(run_options=_options(), input_db_url=f"sqlite:///{db}", cwd=tmp_path)
+    assert (by_db.trusted, by_db.layer_note(1)) == (False, None)
+    assert read_solver_option_files(by_db).untrusted_note("gurobi") is not None
+    # Trusting the project (the window's box) lets its own path through.
+    settings.add_trusted_workspace(project)
+    files = read_solver_option_files(_window_ladder(project, ws))
+    assert files.untrusted_note("gurobi") is None
+
+
+def test_named_folders_stay_trusted_below_an_untrusted_found_project_folder(tmp_path) -> None:
+    """``FLEXTOOL_SOLVER_CONFIG_DIR`` set for the window: its folder replaces the workspace's and is trusted (the
+    user's choice); the project's folder stays on top as a found folder, judged on its own."""
+    from flextool._solver_config_source import gui_solver_config_ladder
+
+    ws, project = _gui_workspace_with_project(tmp_path)
+    chosen = tmp_path / "chosen"
+    chosen.mkdir()
+    (chosen / "cplex.opt").write_text("workdir /scratch/cplex\n")
+    found, named = gui_solver_config_ladder(project, environ={"FLEXTOOL_SOLVER_CONFIG_DIR": str(chosen)}, cwd=ws)
+    assert (found, named) == ([project / "solver_config"], [chosen])
+    options = RunOptions(resolved={"workspace_solver_config_dir": Resolved(tuple(map(str, found)), "cli"),
+                                   "solver_config_dir": Resolved(tuple(map(str, named)), "cli")})
+    files = read_solver_option_files(resolve_solver_config_source(run_options=options, cwd=ws))
+    assert files.untrusted_note("gurobi") is not None and files.untrusted_note("cplex") is None
+    assert files.origin("cplex") == str(chosen / "cplex.opt")
+
+
+def test_a_shipped_template_in_an_untrusted_folder_is_flextools_own(tmp_path) -> None:
+    """A file that is byte for byte a shipped template is trusted wherever it lies (it is FlexTool's own)."""
+    from flextool._resources import package_data_path
+
+    ws = _received_workspace(tmp_path / "ws")
+    template = Path(package_data_path("solver_config/gurobi.opt.template")).read_text(encoding="utf-8")
+    (ws / "solver_config" / "gurobi.opt").write_text(template, encoding="utf-8")
+    files = read_solver_option_files(resolve_solver_config_source(run_options=_options(), cwd=ws))
+    assert files.source.trusted is False and files.untrusted_note("gurobi") is None
+
+
+def test_a_relative_folder_named_like_the_default_stays_untrusted(tmp_path, monkeypatch) -> None:
+    """Whether a file is FlexTool's packaged default is decided by its path in the ladder, not by the text of its
+    origin (review b2b3 M3): a folder whose name starts with "FlexTool default" is judged as any other."""
+    monkeypatch.chdir(tmp_path)
+    folder = Path("FlexTool default x") / "solver_config"
+    folder.mkdir(parents=True)
+    (folder / "gurobi.opt").write_text(EDITED_GUROBI)
+    source = resolve_solver_config_source(run_options=_options(workspace_solver_config_dir=str(folder)), cwd=tmp_path)
+    assert read_solver_option_files(source).untrusted_note("gurobi") is not None
+
+
+# ---------------------------------------------------------------------------
+# Projects this computer set up
+# ---------------------------------------------------------------------------
+
+
+def test_a_project_is_noted_only_when_nothing_received_waits_in_it(tmp_path) -> None:
+    """The window notes a project it creates or opens when its ``solver_config/`` is missing or holds only
+    FlexTool's defaults and no received file waits for review; edited files, a held ``.review`` file or a 4.4
+    development build's ``imported_solver_config/`` keep it off the list."""
+    from flextool._solver_config_source import forget_trusted_folder, note_project_set_up_here
+
+    projects = tmp_path / "ws" / "projects"
+    fresh, edited, held, old = (projects / name for name in ("Fresh", "Edited", "Held", "Old"))
+    for project in (fresh, edited, held, old):
+        project.mkdir(parents=True)
+    (edited / "solver_config").mkdir()
+    (edited / "solver_config" / "gurobi.opt").write_text(PROJECT_GUROBI)
+    (held / "solver_config").mkdir()
+    (held / "solver_config" / "gurobi.opt.review").write_text(PROJECT_GUROBI)
+    (old / "imported_solver_config").mkdir()
+    assert [note_project_set_up_here(p) for p in (fresh, edited, held, old)] == [True, False, False, False]
+    assert note_project_set_up_here(fresh) is False  # already listed
+    assert settings.trusted_workspaces() == (settings.workspace_key(fresh),)
+    forget_trusted_folder(fresh)
+    assert settings.trusted_workspaces() == ()
+
+
+def test_creating_and_renaming_a_project_keep_its_trust_with_it(tmp_path, monkeypatch) -> None:
+    from flextool.gui.project_utils import create_project, rename_project
+
+    monkeypatch.chdir(tmp_path)
+    project = create_project("Mine")
+    assert settings.is_trusted_workspace(project)
+    renamed = rename_project("Mine", "Ours")
+    assert settings.is_trusted_workspace(renamed) and not settings.is_trusted_workspace(project)
+    # A folder left at a new project's path with received option files is not noted.
+    leftover = tmp_path / "projects" / "Left" / "solver_config"
+    leftover.mkdir(parents=True)
+    (leftover / "gurobi.opt").write_text(PROJECT_GUROBI)
+    assert not settings.is_trusted_workspace(create_project("Left"))

@@ -13,9 +13,10 @@ What a package holds:
   the first ``<solver>.opt`` of the project's ``solver_config`` folder, then the workspace's, leaving out unedited
   FlexTool templates; a file with an option that names a path or another computer is left out and named,
   :func:`screen_export_solver_config`).  Import unpacks them into ``solver_config/`` of the new project,
-  where its runs use them ahead of the workspace's files, file by file; a file with an option that names a path
-  or another computer is kept as ``<solver>.opt.review`` (never read by a run) until the user checks it, and the
-  workspace's own files never change;
+  where its runs use them ahead of the workspace's files, file by file.  The imported project is not one this
+  computer set up (item 240 B3), so its runs give those files the input database's rules until the user trusts
+  the project's solver option files; a file with a line those rules refuse is kept as ``<solver>.opt.review``
+  (never read by a run) until the user checks it, and the workspace's own files never change;
 * the result runs the caller picks (``output_parquet/<run>/``, with ``output_parquet/_axis_bounds.json`` cut to
   those runs).  By default each run record (``_run_status.json``) has this computer's folder paths, user name and
   host name replaced by placeholders and the run log (``_run.log``) is left out (``scrub_run_records=False`` ships
@@ -324,11 +325,12 @@ def settle_shipped_solver_config(
 ) -> tuple[dict[str, list[str]], list[str]]:
     """Screen the solver option files of a shipped project's ``solver_config/`` *folder* (another person's files).
 
-    A ``<solver>.opt`` with an option that names a file or folder outside the solve's work folder, that connects
-    the solver to another computer, or a CPLEX name that starts with ``set`` (a line FlexTool would refuse or hold
-    back: :func:`flextool._solver_option_rules.screen_solver_option_file`), is
-    renamed to ``<solver>.opt.review`` (its modification time kept): no run reads it until the user has checked
-    it and renamed it back.  An existing ``<solver>.opt.review`` is replaced with *replace_held* (a package that
+    The project is not one this computer set up, so its runs give these files the input database's rules (item
+    240 B3).  A ``<solver>.opt`` with a line those rules refuse (a file or folder outside the solve's work folder,
+    a server or licence setting, a parameter name not in FlexTool's list, a CPLEX name that starts with ``set``:
+    :func:`flextool.engine.solve._solver_dispatch.untrusted_option_file_problems`, the same check as such a run)
+    is renamed to ``<solver>.opt.review`` (its modification time kept): no run reads it until the user has checked
+    it, renamed it back and trusted the project's solver option files.  An existing ``<solver>.opt.review`` is replaced with *replace_held* (a package that
     ships one: that file is never read), else the screen raises :class:`FileExistsError`.  With *drop_templates*
     an unedited FlexTool template is removed (runs never take one from a project folder).  Every file is read and
     screened before anything is renamed; when a rename fails, the files already held are renamed back and the
@@ -336,7 +338,7 @@ def settle_shipped_solver_config(
     held files, [file names of the removed templates]})``.
     """
     from flextool._solver_config_source import SOLVER_NAMES, is_unedited_template
-    from flextool._solver_option_rules import screen_solver_option_file
+    from flextool.engine.solve._solver_dispatch import untrusted_option_file_problems
 
     held: dict[str, list[str]] = {}
     templates: list[Path] = []
@@ -348,7 +350,7 @@ def settle_shipped_solver_config(
         if is_unedited_template(solver, data):
             templates.append(path)
             continue
-        problems = screen_solver_option_file(solver, data.decode("utf-8", errors="replace"))
+        problems = untrusted_option_file_problems(solver, data.decode("utf-8", errors="replace"))
         if problems:
             held[path.name] = problems
     done: list[tuple[Path, Path]] = []
@@ -410,10 +412,19 @@ def withheld_file_line(name: str, path: Path, problems: list[str]) -> str:
             "Remove those lines to ship the file; the receiver's runs use their own options for this solver.")
 
 
+#: How the FlexTool window's setting that trusts a project's option files is named in messages (item 240 B3).
+TRUST_PROJECT_SETTING = ("\"Trust this project's solver option files\" (Solver options, On this computer, with "
+                         "the project open)")
+
+
 def held_file_line(name: str, problems: list[str]) -> str:
-    """What a held shipped option file waits for (the import report and the first-open log line)."""
-    return (f"Solver options {name}: kept as {SOLVER_CONFIG_DIR}/{name}{HELD_SUFFIX} and not used, because "
-            f"{'; '.join(problems)}. Check it, then rename it to {name} to use it.")
+    """What a held shipped option file waits for (the import report and the first-open log line).  The rule is
+    the one a run applies (item 240 B3): an imported project's option files get the input database's rules until
+    the user trusts them, so renaming the file back alone does not make the refused lines pass."""
+    return (f"Solver options {name}: kept as {SOLVER_CONFIG_DIR}/{name}{HELD_SUFFIX} and not used, because this "
+            "project's solver option files get the input database's rules until you trust them, and those refuse "
+            f"{'; '.join(problems)}. To use the file as it is, read it, rename it to {name} and tick "
+            f"{TRUST_PROJECT_SETTING}.")
 
 
 def default_package_name(project: str, today: datetime | None = None) -> str:
@@ -1305,11 +1316,17 @@ def invalid_name_reason(name: str) -> str | None:
 
 
 def solver_config_activation_hint(project_path: Path, workspace_dirs: list[Path]) -> str:
-    """Where the shipped solver options of an imported project are and how its runs use them."""
+    """Where the shipped solver options of an imported project are and how its runs use them: ahead of the
+    workspace's, with the input database's rules until the user trusts the project's files (item 240 B3).  It
+    never sends the files to a trusted place without saying that they would be trusted there."""
     workspace = ", ".join(str(folder) for folder in workspace_dirs)
     return (f"The shipped solver options are in {project_path / SOLVER_CONFIG_DIR}. Runs of this project use "
-            f"them ahead of the workspace's ({workspace}), file by file; delete a file there to use the "
-            "workspace's.")
+            f"them ahead of the workspace's ({workspace}), file by file, with the input database's rules (a file "
+            "option takes only a plain file name; no server or licence settings; only parameter names in "
+            f"FlexTool's list) until you trust them: read them, then tick {TRUST_PROJECT_SETTING}. Delete a file "
+            "there to use the workspace's. A file copied into the workspace's solver_config, or into a folder "
+            "named by --solver-config-dir or FLEXTOOL_SOLVER_CONFIG_DIR, is trusted there: its file paths and "
+            "server settings reach the solver, so read it first.")
 
 
 def adopt_imported_solver_config(project_path: str | Path) -> list[str]:
@@ -1339,6 +1356,10 @@ def adopt_imported_solver_config(project_path: str | Path) -> list[str]:
         held, _dropped = settle_shipped_solver_config(imported, drop_templates=False, replace_held=False)
     except OSError as exc:
         return [f"Project {name}: cannot check the solver option files in {imported} ({exc}); " + keep]
+    from flextool._solver_config_source import forget_trusted_folder
+
+    # The received files must not inherit a trust noted for this path (item 240 B3).
+    forget_trusted_folder(project_path)
     try:
         _rename_with_retry(imported, own)
     except OSError as exc:
@@ -1359,7 +1380,8 @@ def adopt_imported_solver_config(project_path: str | Path) -> list[str]:
 
     active = [f"{s}.opt" for s in SOLVER_NAMES if used(s)]
     if active:
-        what = f"now use its solver option files ({', '.join(active)}) ahead of the workspace's."
+        what = (f"now use its solver option files ({', '.join(active)}) ahead of the workspace's, with the input "
+                f"database's rules until you trust them ({TRUST_PROJECT_SETTING}).")
     else:
         what = "keep using the workspace's solver options (it holds no edited option file that a run uses)."
     lines = [f"Project {name}: renamed {IMPORTED_SOLVER_CONFIG_DIR}/ to {SOLVER_CONFIG_DIR}/. This project's runs "
@@ -1477,6 +1499,10 @@ def _import(
             held, dropped = settle_shipped_solver_config(partial / SOLVER_CONFIG_DIR, drop_templates=True)
             if name_taken(projects_dir, target_name):
                 raise NameClashError(target_name, suggest_name(projects_dir, target_name))
+            # A project deleted earlier from this path may still be on this computer's trusted list: the received
+            # project must not inherit it (item 240 B3).
+            from flextool._solver_config_source import forget_trusted_folder
+            forget_trusted_folder(final)
             _rename_with_retry(partial, final)
         except BaseException:
             shutil.rmtree(partial, ignore_errors=True)

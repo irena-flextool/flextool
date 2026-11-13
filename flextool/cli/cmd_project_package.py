@@ -150,7 +150,8 @@ def _verify(args: argparse.Namespace) -> int:
         if manifest.solver_config:
             print("Solver options: " + ", ".join(manifest.solver_config)
                   + f" (unpacked to {pp.SOLVER_CONFIG_DIR}/ of the project; its runs use them ahead of the "
-                    "workspace's)")
+                    "workspace's, with the input database's rules until you trust the project's solver option "
+                    "files)")
         line = pp.pip_line(manifest)
         if line:
             print(f"To run with the same FlexTool and solver libraries: {line}")

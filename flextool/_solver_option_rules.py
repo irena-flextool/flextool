@@ -1,10 +1,12 @@
 """Solver option rules that need no engine: reading the option lines of a ``<solver>.opt`` text, the solvers'
-name forms, which options name a file or folder or another computer, and the screen of an option file that came
-from someone else (a project package).
+name forms, which options name a file or folder or another computer, and the screen of an option file that is
+about to leave this computer (a project export).
 
 The engine (:mod:`flextool.engine.solve._solver_dispatch`, :mod:`flextool.engine.solve._subprocess_solve`) uses
-the same rules for the input database's options; they live here so that project import (the command line and the
-FlexTool window) can screen a file without loading the engine and polars.
+the line readers and the CPLEX ``set`` rule.  The input database's rules themselves (FlexTool's list of each
+solver's parameters, item 240 B1) live in the engine: project import screens a received file with them
+(:func:`flextool.engine.solve._solver_dispatch.untrusted_option_file_problems`), as a run does.  The tables here
+serve the export's privacy screen: what a sent file must not carry unseen (a password, a folder of this computer).
 """
 from __future__ import annotations
 
@@ -218,8 +220,8 @@ def screen_solver_option_file(solver: str, text: str) -> list[str]:
     :func:`is_plain_file_name`): an option that connects the solver to another computer, or one that names a file
     or folder by more than a plain file name; and a CPLEX name that starts with the word ``set``
     (:func:`cplex_set_word_problem`), which a run refuses.  One message per such line, ``line N: <name> <value>
-    ...`` (a server option's value shown as ``<hidden>``); an empty list when the file is clean.  A project import or the first open of an imported project keeps a file
-    with a message as ``<solver>.opt.review`` (never read by a run) until the user has checked it.
+    ...`` (a server option's value shown as ``<hidden>``); an empty list when the file is clean.  A project export
+    leaves a file with a message out of the package (``flextool.project_package.screen_export_solver_config``).
     """
     lines = highs_opt_lines(text) if solver == "highs" else native_opt_lines(text)
     problems: list[str] = []

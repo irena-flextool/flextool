@@ -1965,10 +1965,14 @@ class MainWindow(tk.Tk):
         project_path = projects_dir / name
         # A project imported by an earlier 4.4 build has its shipped solver options in imported_solver_config/,
         # which no run reads: rename it to solver_config/ (screened) before any job of the project is built.
+        from flextool._solver_config_source import note_project_set_up_here
         from flextool.project_package import adopt_imported_solver_config
         for line in adopt_imported_solver_config(project_path):
             logger.info(line)
             print(line, flush=True)
+        # Item 240 B3: a project whose solver_config/ holds nothing but FlexTool's defaults, with no received file
+        # waiting for review, is noted as set up here, so option files put there later are trusted.
+        note_project_set_up_here(project_path)
         solver_defaults_reset = False
 
         def _on_solver_defaults_reset() -> None:
@@ -6102,7 +6106,12 @@ class MainWindow(tk.Tk):
         # of this workspace's option files (item 240 B1-B3).
         ttk.Label(body, text="On this computer:").grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
         from flextool.gui.dialogs.local_solver_settings_dialog import open_local_solver_settings
-        local_btn = ttk.Button(body, text="On this computer…", command=lambda: open_local_solver_settings(dlg))
+        def _open_project() -> Path | None:
+            name = getattr(self, "current_project", None)
+            return get_projects_dir() / name if name else None
+
+        local_btn = ttk.Button(body, text="On this computer…",
+                               command=lambda: open_local_solver_settings(dlg, project=_open_project()))
         local_btn.grid(row=row, column=1, sticky="w", pady=4)
         _attach_tip(local_btn, (
             "Settings of this computer, not saved in the project:\n"
@@ -6111,8 +6120,8 @@ class MainWindow(tk.Tk):
             "    for example to hold a floating licence);\n"
             "  • whether input databases may name solver parameters\n"
             "    that are not in FlexTool's list;\n"
-            "  • whether this workspace's solver option files are\n"
-            "    trusted (file paths, server settings)."
+            "  • whether this workspace's and this project's solver\n"
+            "    option files are trusted (file paths, server settings)."
         ))
         row += 1
 

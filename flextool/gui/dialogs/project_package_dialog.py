@@ -460,7 +460,8 @@ class ImportDialog(tk.Toplevel):
         if manifest.solver_config:
             lines.append("Solver options: " + ", ".join(manifest.solver_config)
                          + f" (unpacked to {pp.SOLVER_CONFIG_DIR}/ of the project; its runs use them ahead of "
-                         "the workspace's)")
+                         "the workspace's, with the input database's rules until you trust the project's solver "
+                         "option files)")
         self.summary_label.configure(text="\n".join(lines))
         self._blocking, warnings = pp.version_messages(manifest)
         self.warning_label.configure(text="\n".join(self._blocking + warnings),
