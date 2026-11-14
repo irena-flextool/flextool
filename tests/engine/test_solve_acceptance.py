@@ -184,6 +184,31 @@ def test_kunknown_abs_infeasibility_over_margin_rejected() -> None:
     assert not acc.accepted
 
 
+def test_reject_message_names_the_failing_checks_not_the_passing_one() -> None:
+    """Relative 4e-7 <= 1e-6 passes, but 12 rows and absolute 2.5 >
+    1e-7 x 10 = 1e-6 fail.  The message must not claim 4e-7 > 1e-6."""
+    acc = classify_acceptance(
+        _StubSolution(
+            optimal=False,
+            diagnostics=_diag(
+                status_name="kUnknown",
+                primal_feasible=False,
+                num_primal_infeasibilities=12,
+                max_primal_infeasibility=2.5,
+                max_relative_primal_infeasibility=4e-7,
+            ),
+            primal_feasibility_tolerance=1e-7,
+        ),
+        ranges_post=None,
+        solve_name="s",
+    )
+    assert not acc.accepted
+    assert "4.00e-07 > " not in acc.message
+    assert "max relative primal infeasibility 4.00e-07 <= 1.0e-06 passes" in acc.message
+    assert "12 infeasibilities" in acc.message
+    assert "max absolute primal infeasibility 2.5 > 1.0e-06" in acc.message
+
+
 @pytest.mark.parametrize(
     "status_name,needle",
     [

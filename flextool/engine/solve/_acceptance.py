@@ -710,24 +710,43 @@ def classify_acceptance(
     # Non-negotiable: the primal solution — the thing the cascade consumes —
     # must actually be feasible.  Use HiGHS' own verdict plus a scale-
     # invariant relative check and a tolerance-derived absolute backstop.
+    primal_abs_tol = primal_tol * primal_abs_margin
+    rel_ok = diag.max_relative_primal_infeasibility <= primal_rel_tol
+    abs_ok = diag.max_primal_infeasibility <= primal_abs_tol
     primal_ok = (
         diag.primal_feasible
         and diag.num_primal_infeasibilities == 0
-        and diag.max_relative_primal_infeasibility <= primal_rel_tol
-        and diag.max_primal_infeasibility
-        <= primal_tol * primal_abs_margin
+        and rel_ok
+        and abs_ok
     )
     if not primal_ok:
+        # Name the checks that failed (and the relative one when it passed),
+        # so the message never states a comparison that does not hold.
+        rel_text = (
+            f"max relative primal infeasibility "
+            f"{diag.max_relative_primal_infeasibility:.2e} "
+            f"{'<=' if rel_ok else '>'} {primal_rel_tol:.1e}"
+        )
+        failed = [f"{diag.num_primal_infeasibilities} infeasibilities"]
+        if not rel_ok:
+            failed.append(rel_text)
+        if not abs_ok:
+            failed.append(
+                f"max absolute primal infeasibility "
+                f"{diag.max_primal_infeasibility:.3g} > {primal_abs_tol:.1e} "
+                f"({primal_abs_margin:g} x the solver tolerance "
+                f"{primal_tol:.0e})"
+            )
+        if not diag.primal_feasible:
+            failed.append("the solver reports the primal solution infeasible")
+        passed = f"; {rel_text} passes" if rel_ok else ""
         return Acceptance(
             accepted=False,
             near_optimal=False,
             message=(
                 f"non-optimal solve for {solve_name}: the solver could not "
                 "certify optimality and the returned primal solution is NOT "
-                "feasible (max relative primal infeasibility "
-                f"{diag.max_relative_primal_infeasibility:.2e} > "
-                f"{primal_rel_tol:.1e}; "
-                f"{diag.num_primal_infeasibilities} infeasibilities). The "
+                f"feasible ({'; '.join(failed)}{passed}). The "
                 "solution cannot be used"
             ),
             scaling_hint=_scaling_hint_for_reject(ranges_post),
