@@ -217,6 +217,28 @@ The first time step of a solve, the first step after a gap in the timeline and t
 
 ![Add min_load](../img/tutorial/coal_min_load.png)
 
+## How to give a unit a part-load efficiency curve
+
+A thermal unit is usually least efficient at low load. *min_load_efficiency* (above) gives the fuel use as one straight line between minimum load and full load. For a curve with more points, set `conversion_method` to *piecewise_linear* and give the curve as `piecewise_linear_efficiency`: a map from load share (0–1 of the capacity online) to the efficiency at that load. The fuel use is linear between the points. `efficiency` and `efficiency_at_min_load` are not used.
+
+**A thermal unit.** A 100 MW *coal_plant* (`virtual_unitsize` 100) with the curve `{0.4: 0.30, 0.7: 0.40, 1.0: 0.42}` and `min_load` 0.4. Per 100 MW online:
+
+| load share | output [MW] | efficiency | heat rate = 1 / efficiency [MWh fuel / MWh] | fuel [MW] |
+|---|---|---|---|---|
+| 0.4 | 40 | 0.30 | 3.333 | 133.3 |
+| 0.7 | 70 | 0.40 | 2.500 | 175.0 |
+| 1.0 | 100 | 0.42 | 2.381 | 238.1 |
+
+Between the points the slope of the fuel use is the incremental heat rate: (175.0 − 133.3) / 30 = 1.389 from 40 to 70 MW and (238.1 − 175.0) / 30 = 2.103 from 70 to 100 MW. It must not fall from one segment to the next (the curve must be convex); a curve where it falls is an error, and the message gives the nearest curve that is accepted. Extended down to zero output, the first segment reaches 133.3 − 1.389 × 40 = 77.8 MW: the fuel the unit burns per 100 MW online even at zero output. So the unit needs online variables. Without a `startup_method` it gets *linear* start-ups (an info line says so); with `startup_method` *binary* it commits whole 100 MW units, as assumed below. One unit online at 60 MW (load share 0.6) burns 77.8 + 1.389 × 60 = 161.1 MW of fuel (efficiency 0.372); two units at 130 MW (load share 0.65 each) burn 2 × 77.8 + 1.389 × 130 = 336.1 MW.
+
+**From heat rates.** Data sheets often give heat rates. The efficiency at a load is 1 / heat rate (3.333 → 0.30). When the data gives a full-load heat rate and incremental heat rates, compute the fuel use at each point from the full-load point backwards (fuel = output × heat rate at full load, then subtract incremental heat rate × the output step of each segment) and take efficiency = output / fuel at each point.
+
+**min_load.** `min_load` does not move the curve. Set it to the first point's load share (0.4 here): with a lower `min_load` the first segment is extended below the first point, and without any the unit could be online at zero output burning 77.8 MW of fuel per 100 MW (a warning says so). On a unit with several outputs, the curve's load share is the output weighted by `conversion_flow_coeff`, while `min_load` is on the plain sum of the outputs.
+
+**An electrolyser.** An electrolyser is most efficient at low load. The 100 MW *electrolyser* with `{0.2: 0.70, 0.6: 0.66, 1.0: 0.60}` (no `startup_method`) needs no online variables: its curve is scaled by its built capacity. At 30 MW of hydrogen (load share 0.3) it takes 100 × (0.2 / 0.70 + 0.1 × 1.558) = 44.2 MW of power. In hours when power is free (curtailment) or the input node has a surplus, the model may take more power than the curve needs: the input can only be at least the curve's fuel use. A warning after the solve gives the amount; see *Input above the curve* in [Units](../reference/units.md#part-load-efficiency-curve-piecewise_linear).
+
+**A curve per period.** A map from period to a curve gives each period its own curve (e.g. an ageing unit). The curve cannot vary in time.
+
 ## How to give a unit a start-up fuel or start-up heat
 
 A start-up can use energy that the running unit does not: a coal unit is started on oil, a gas turbine burns gas to warm up, a CSP turbine takes steam from its tank before it delivers power. The input arc of the unit (`unit__inputNode`) says what it supplies, with `startup_input_method`:

@@ -155,7 +155,7 @@ What each value removes:
 - `integers_ramps` removes: what `integers` removes, and the ramp limits and ramp costs.
 - `integers_min_limits` removes: what `integers` removes, and min load, the `capacity_min_coeff` floors and the minimum up and down times.
 - `integers_ramps_min_limits` removes: what `integers` removes, the ramp limits and ramp costs, and the min limits.
-- `online` removes: what `integers_min_limits` removes, and the online variables: units online, start-ups, shut-downs, start-up costs, the user constraints with a `constraint_online_coeff` term and the part-load curve of `min_load_efficiency` units. Ramp limits stay and apply to the capacity.
+- `online` removes: what `integers_min_limits` removes, and the online variables: units online, start-ups, shut-downs, start-up costs, the user constraints with a `constraint_online_coeff` term and the part-load curve of `min_load_efficiency` units (a `piecewise_linear` unit's curve is folded to its best-efficiency envelope). Ramp limits stay and apply to the capacity.
 - `online_ramps` removes: what `online` removes, and the ramp limits and ramp costs.
 
 Each `integers*` level also removes the online variables that nothing in the solve uses any more (see
@@ -183,7 +183,10 @@ The parts in detail:
 - **Online variables.** The units online of every unit and connection with a `startup_method`, and with them start-ups, shut-downs, start-up costs and the min limits.
 
     A unit with `conversion_method` *min_load_efficiency* uses its full-load efficiency at every output: the same
-    fuel at full load and less at part load. A user constraint with a `constraint_online_coeff` term is left out of
+    fuel at full load and less at part load. A unit with `conversion_method` *piecewise_linear* uses its curve
+    scaled by its built capacity: below the load share of its best efficiency its fuel is output / best efficiency,
+    above it the curve applies (for the usual thermal curve, whose best efficiency is at full load, that is output /
+    full-load efficiency). A user constraint with a `constraint_online_coeff` term is left out of
     the solve whole, with a warning that names it. Ramp limits that are kept apply to the capacity, so a unit that
     starts from zero ramps up at its ramp speed (there is no start-up allowance). `online` contains every effect of
     `integers`, so the solve is an LP.
@@ -193,7 +196,8 @@ The parts in detail:
   were *no_startup*.
 
     The online variables are used by: a start-up cost (`startup_cost`), `min_load` and the `capacity_min_coeff`
-    floors, the minimum up and down times, the part-load curve of a *min_load_efficiency* unit, a
+    floors, the minimum up and down times, the part-load curve of a *min_load_efficiency* unit or of a
+    *piecewise_linear* unit whose efficiency rises from the first point of its curve to the second, a
     `constraint_online_coeff` term in a user constraint of the solve, a reserve that the unit or connection holds,
     inertia (an `inertia_constant` at a node of a group with `has_inertia`), ramp limits (their start-up and
     shut-down allowance) and, in a realization solve, the units online it takes from its parent solve. A reserve or
@@ -256,8 +260,8 @@ run log says so in the solve's info line:
 - `integers*` with a `constraint_online_coeff` term: the user constraint counts fractional units online.
 
 **An approximation, never tighter.** Every part only removes constraints or integer restrictions, except the
-full-load efficiency of `min_load_efficiency` units under `online*`, which uses less fuel than the part-load
-curve. CO2 limits read that fuel, so they relax as well. The reduced solve is therefore never more constrained than
+full-load efficiency of `min_load_efficiency` units and the best-efficiency envelope of `piecewise_linear` units
+under `online*`, which use less fuel than the part-load curve. CO2 limits read that fuel, so they relax as well. The reduced solve is therefore never more constrained than
 the full one.
 
 **Across solves.** Every roll of a rolling solve uses the solve's levels. A nested solve uses its own levels, not
@@ -284,7 +288,7 @@ have no entity columns.
 feature out. A period shared with a solve that kept the feature keeps its per-period value, in which the time
 steps of the solve that left it out count as 0. Its row is labelled with the last solve that realized the period,
 which may be the one that left the feature out. The costs stay: a left-out feature costs nothing in the solve.
-The fuel of a `min_load_efficiency` unit under `online*` is its output divided by its full-load efficiency.
+The fuel of a `min_load_efficiency` unit under `online*` is its output divided by its full-load efficiency; that of a `piecewise_linear` unit follows its best-efficiency envelope.
 
 ### Time structure assumptions
 

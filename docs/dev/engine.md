@@ -364,6 +364,47 @@ walks straight back to `_state_change_terms` and the frames it reads:
 most often `dtttdt` or `storage_bind_forward_only`, both populated by
 the loader.
 
+### Part-load curves (`piecewise_linear`)
+
+User docs: units.md "Part-load efficiency curve". A unit with `conversion_method` *piecewise_linear* has a curve
+`piecewise_linear_efficiency` (load share ℓ → efficiency η; one curve, or one per period; no time level). Its
+fuel use per unit of capacity is `F(ℓ) = ℓ/η(ℓ)`, linear between the points; convexity (non-falling incremental
+heat rate) is checked before the solve, so the curve is the upper envelope of its segment lines.
+
+- **Curve → lines** (`engine/input/_piecewise_curve.py`, no FlexData dependency, shared by both classifiers and the
+  load boundary so they cannot drift): segment `k` has intercept `β_k = ℓ_{k−1}ℓ_k(1/η_{k−1} − 1/η_k)/(ℓ_k −
+  ℓ_{k−1})` (input per unit of capacity at zero output) and slope `α_k = 1/η_k − β_k/ℓ_k`; collinear points
+  merge. *Online form* (the unit has online variables): the segments, plus an origin line `(1/η₀, 0)` when the
+  efficiency falls from the first point. *Capacity form* (no online variables): the origin line through the best
+  point `(1/max η, 0)` plus the segments with `β < 0`, exact for a capacity used as a fleet (`min_U U·f(x/U)` with
+  `U ≤ built`). Both forms give the same full-load fuel `F(1)`.
+- **Classes** (whole authored curve): one flat line → constant efficiency (`p_slope = 1/η`); one rising line →
+  a `process_min_load_eff` member (`p_slope = α`, `p_section = β`; byte-identical to *min_load_efficiency*);
+  two or more lines in some period → `process_piecewise` (fork forced, so the input has its own `v_flow`).
+  A rising first segment gives automatic *linear* start-ups in both classifiers.
+- **Load boundary** (`preprocess/params/_piecewise.apply_piecewise_curves`, in `load_flextool` after the DB
+  overrides, on every path: single, rolling, synthetic, nested, stochastic): reads the points through
+  `_param_shapes` (`MAP_LOAD` / `MAP_PERIOD_LOAD`; branch periods inherit the anchor's curve; a solve period without
+  a curve raises), writes `p_piecewise_slope` / `p_piecewise_intercept` `(p, seg, d)` and `p_piecewise_points`,
+  overwrites the seeded `p_slope` / `p_section` in place and recomputes the input capacity Params derived from them.
+  One-input, one-output multi-line units (`process_piecewise_remap`) keep their input-side items on the output
+  (`_projection.single_input_curve_arc_remap`); reserves, operating cost, start-up input, commodity / CO2,
+  flowGroup membership and inertia stay on the input.
+- **Model** (`core._eq_conversion_piecewise`, rows `conversion_piecewise` and the coarse twin): weighted input ≥
+  `pw_slope·x + pw_intercept·unitsize·U` for every line, `U` = units online, or the units built (existing count +
+  invested − divested) without online variables; `conversion_indirect` skips these units. The rows are `≥`, so the
+  input can exceed the curve where that costs nothing or pays (the over-burn cases, units.md "Input above the
+  curve"). Part-load measures of the reserve sizing use the lines (`_online._fuel_share`).
+- **Detail reduction** (`_reduce_detail._fold_piecewise`): `online*` rebuilds the lines in the capacity form;
+  under `integers*` the curve is an online use when its efficiency rises from the first point
+  (`process_piecewise_needs_online`).
+- **Checks.** Before the solve: `input_derivation/_validators.validate_piecewise_linear_inputs` (E1–E10, E12; E11 in the reader; the
+  warnings W1–W7, W7 = setups that invite input above the curve). After the solve:
+  `process_outputs/calc_piecewise` measures per solve, in `read_parameters`, the weighted input and its part above
+  the curve (`process_piecewise_input_dt` / `process_piecewise_excess_dt`, solve-keyed, persisted per roll and
+  unioned like the other parameters) and `write_outputs` logs W5 per unit (steps with
+  `excess > 1e-5·max(1, q)`, the largest and the total). No result table.
+
 ### RP-blended-weights inter-period coupling
 
 Representative-period storage (`b.has_rp`, set when `d.nodeState_rp`
