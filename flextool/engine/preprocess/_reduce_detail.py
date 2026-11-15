@@ -6,7 +6,8 @@ outputs).  It only removes or relaxes detail that the cascade produced from the 
 Every operation is one of: clear a set (its rows go), filter the rows of the online fields to the processes that
 keep their online variables (:func:`_prune_online`, :data:`PRUNE_FIELDS`), make the integer online columns
 continuous, or fold the ``min_load_efficiency`` section into the slope (an approximation: at part load less fuel
-than the curve, at full load the same).  A level that finds nothing to reduce returns the data unchanged, so the LP is byte-identical.
+than the curve, at a weighted output of 1 per unit of capacity the same; the input limits of the folded units
+follow the folded conversion, :func:`_refold_input_caps`).  A level that finds nothing to reduce returns the data unchanged, so the LP is byte-identical.
 
 Unit detail (``reduce_unit_detail_method``; the parts each value takes are in :data:`UNIT_PARTS`):
 
@@ -276,7 +277,10 @@ def _fold_min_load_efficiency(d: "FlexData", procs: set[str]) -> tuple[Param, Pa
     same fuel as the curve at full load and less at part load.  Both already carry a direct unit's
     conversion_flow_coeff fold (slope⁰·k_sink/k_src, section⁰/k_src), and the full-load input of the
     conversion equation is (slope⁰·k_sink + section⁰)/k_src = slope + section, so the fold keeps full load for
-    every coefficient.  Rows of other processes are unchanged; row order is kept.
+    every coefficient of a direct unit.  An indirect unit's weighted output at full capacity is its fuel width
+    ``W`` (``_derived._indirect_fuel_width_lf``), so its full-load fuel goes from slope·W + section to
+    (slope + section)·W: the same only for W = 1.  Its input limits follow (:func:`_refold_input_caps`).  Rows of
+    other processes are unchanged; row order is kept.
     """
     slope, section = d.p_slope, d.p_section
     for name, prm in (("p_slope", slope), ("p_section", section)):
@@ -348,6 +352,7 @@ def _refold_input_caps(d: "FlexData", new: dict, procs: set[str], db_reader: "In
 
         p_indirect_input_cap'[p,s,p,d,t] = input_share_max · fuel'[p,d,t] · delay_factor / conversion_flow_coeff_s
         fuel'[p,d,t]  = max_g(pw_slope'[p,g,d] · W[p] + pw_intercept'[p,g,d])   folded piecewise_linear units
+        fuel'[p,d,t]  = slope'[p,d,t] · W[p]  (slope' = slope + section)       folded min_load_efficiency units
         p_flow_upper'[p,s,p,d,t] = p_flow_upper[p,s,p,d,t] / p_indirect_input_cap[p,s,p,d,t]
                                    · p_indirect_input_cap'[p,s,p,d,t]           (where the limit changes)
 
@@ -611,9 +616,9 @@ def _reduce_unit(d: "FlexData", parts: frozenset[str], report: ReduceReport,
             removed.pop("integer_online", None)
         if online_cns and kept_integer:
             report.notes["fractional_online_constraints"] = list(online_cns)
-    folded_pw = set(removed.get("piecewise_linear", ()))
-    if folded_pw:
-        _refold_input_caps(d, new, folded_pw, db_reader)
+    folded = set(removed.get("piecewise_linear", ())) | set(removed.get("min_load_efficiency", ()))
+    if folded:
+        _refold_input_caps(d, new, folded, db_reader)
     return new
 
 

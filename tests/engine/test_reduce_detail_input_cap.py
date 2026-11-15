@@ -1,5 +1,6 @@
-"""``reduce_unit_detail_method online`` keeps the full capacity of an indirect unit whose weighted output at full
-capacity ``W`` is not 1 (``preprocess._reduce_detail._refold_input_caps``).
+"""``reduce_unit_detail_method online`` keeps the full capacity of an indirect ``piecewise_linear`` or
+``min_load_efficiency`` unit whose weighted output at full capacity ``W`` is not 1
+(``preprocess._reduce_detail._refold_input_caps``).
 
 The case (``tests/model/_piecewise_oracle_db.py``, built from the schema of ``tests.json``): unit ``CHP``, gas
 (20 CUR/MWh, input ``conversion_flow_coeff`` 1) -> elec (``conversion_flow_coeff`` 2) + heat (0.2), one 100-MW unit
@@ -20,6 +21,14 @@ Piecewise curve (0.3, 0.25), (0.6, 0.35), (1.0, 0.40): F(ℓ) = ℓ/η = 6/5, 12
 * Reduced (capacity form): origin line 1/max η = 5/2, no segment with a negative intercept.  Fuel 5/2 × 200 =
   500 MW; input limit 5/2 × W = 5 per unit of capacity (500 MW).  The kept online-form limit 125/28 would leave
   125/28 × 100 / 5 = 625/7 ≈ 89.29 MW of elec and 75/7 ≈ 10.71 MW to slack.  Cost 500 × 2 × 4380 × 20 = 87600000.
+
+``min_load_efficiency`` with ``efficiency`` 0.4 and ``efficiency_at_min_load`` 0.25 (the same end points):
+section = 0.3 × (1/0.25 − 1/0.4) / (1 − 0.3) = 9/14, slope = 1/0.4 − 9/14 = 13/7.
+
+* Online: input limit 13/7 × 2 + 9/14 = 61/14 per unit of capacity; fuel at 200 MW weighted output, 1 unit online
+  13/7 × 200 + 9/14 × 100 = 3050/7 MW (= 61/14 × 100).  Cost 3050/7 × 2 × 4380 × 20 = 534360000/7.
+* Reduced: slope 13/7 + 9/14 = 5/2, section 0; fuel 5/2 × 200 = 500 MW, input limit 5/2 × W = 5.  The kept limit
+  61/14 would leave 61/14 × 100 / 5 = 610/7 ≈ 87.14 MW of elec and 90/7 ≈ 12.86 MW to slack.  Cost 87600000.
 """
 from __future__ import annotations
 
@@ -43,25 +52,32 @@ def _strict_autoscale(monkeypatch) -> None:
     monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
 
 
-def _case(level: str | None) -> tuple[list, list]:
+CONVERSION = {
+    "piecewise": {"conversion_method": text("piecewise_linear"),
+                  "piecewise_linear_efficiency": curve([(0.3, 0.25), (0.6, 0.35), (1.0, 0.40)])},
+    "mle": {"conversion_method": text("min_load_efficiency"), "efficiency": scalar(0.4),
+            "efficiency_at_min_load": scalar(0.25)},
+}
+
+
+def _case(kind: str, level: str | None) -> tuple[list, list]:
     extra = [["solve", "s1", "reduce_unit_detail_method", text(level)]] if level else []
     ents, vals = merge(
         time_settings(2, ["p2030"], extra_solve=extra), commodity_node("gas", "gas_node", 20.0),
         balance_node("elec", {"t01": -100.0, "t02": -100.0}), balance_node("heat", {"t01": 0.0, "t02": 0.0}),
         unit("CHP", ["gas_node"], ["elec", "heat"], {
-            "conversion_method": text("piecewise_linear"),
-            "piecewise_linear_efficiency": curve([(0.3, 0.25), (0.6, 0.35), (1.0, 0.40)]),
-            "virtual_unitsize": scalar(100.0), "existing": scalar(1.0), "startup_method": text("binary"),
-            "startup_cost": scalar(0.0), "min_load": scalar(0.3)}))
+            **CONVERSION[kind], "virtual_unitsize": scalar(100.0), "existing": scalar(1.0),
+            "startup_method": text("binary"), "startup_cost": scalar(0.0), "min_load": scalar(0.3)}))
     vals += [["unit__outputNode", ["CHP", "elec"], "conversion_flow_coeff", scalar(2.0)],
              ["unit__outputNode", ["CHP", "heat"], "conversion_flow_coeff", scalar(0.2)]]
     return ents, vals
 
 
-def _run(tmp_path_factory, name: str, level: str | None):
+def _run(tmp_path_factory, kind: str, level: str | None):
     from flextool.engine import run_chain_from_db
 
-    url, scen = make_oracle_db(tmp_path_factory, name, *_case(level))
+    name = f"{kind}_cap_{level or 'none'}"
+    url, scen = make_oracle_db(tmp_path_factory, name, *_case(kind, level))
     steps = run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{name}_w"), keep_solutions=True)
     assert len(steps) == 1, list(steps)
     step = next(iter(steps.values()))
@@ -80,13 +96,15 @@ def _input_rows(param) -> list[float]:
             .sort("d", "t")["value"].to_list())
 
 
-@pytest.mark.parametrize("level, fuel, cap, obj", [
-    (None, Fr(3125, 7), Fr(125, 28), Fr(547500000, 7)),
-    ("online", Fr(500), Fr(5), Fr(87600000)),
+@pytest.mark.parametrize("kind, level, fuel, cap, obj", [
+    ("piecewise", None, Fr(3125, 7), Fr(125, 28), Fr(547500000, 7)),
+    ("piecewise", "online", Fr(500), Fr(5), Fr(87600000)),
+    ("mle", None, Fr(3050, 7), Fr(61, 14), Fr(534360000, 7)),
+    ("mle", "online", Fr(500), Fr(5), Fr(87600000)),
 ])
-def test_piecewise_reduced_unit_keeps_its_capacity(tmp_path_factory, level, fuel, cap, obj) -> None:
+def test_reduced_unit_keeps_its_capacity(tmp_path_factory, kind, level, fuel, cap, obj) -> None:
     """Reduced and unreduced serve the whole 100 MW; the reduced input limit is 5/2 × W = 5 (module docstring)."""
-    s = _run(tmp_path_factory, f"pw_cap_{level or 'none'}", level)
+    s = _run(tmp_path_factory, kind, level)
     assert _mw(s, "CHP", "elec") == pytest.approx([100.0, 100.0], rel=RTOL)
     slack = utf8(s.solution.value("vq_state_up")).filter(pl.col("n") == "elec")["value"].to_list()
     assert slack == pytest.approx([0.0, 0.0], abs=1e-9)

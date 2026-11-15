@@ -73,7 +73,7 @@ warm build, the handoff and the per-roll outputs. The per-roll emit and the inpu
     from its fields only and drop them. Unchanged frames are shared. A level that changes nothing returns the
     same object, so the LP is byte-identical.
 
-- **Only clears, prunes, relaxes or folds.** Each part sets its fields to `None` (the field lists `RAMP_FIELDS`, `ONLINE_FIELDS`, `RESERVE_FIELDS`, ... in `_reduce_detail.py`), except `relax_integrality` (integer online columns continuous), the `min_load_efficiency` fold (`p_slope + p_section`, `p_section = 0`) and the pruning of online variables without a use.
+- **Only clears, prunes, relaxes or folds.** Each part sets its fields to `None` (the field lists `RAMP_FIELDS`, `ONLINE_FIELDS`, `RESERVE_FIELDS`, ... in `_reduce_detail.py`), except `relax_integrality` (integer online columns continuous), the `min_load_efficiency` fold (`p_slope + p_section`, `p_section = 0`; the input limits of a folded indirect unit are recomputed from the folded slope, `_refold_input_caps`) and the pruning of online variables without a use.
 
     Under the `integers*` levels, `online_uses` lists, on the data after the level's removals, the uses of each
     process's online variables (`ONLINE_USES`: start-up cost, min load / capacity_min_coeff floors, min up / down
