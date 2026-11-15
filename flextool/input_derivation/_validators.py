@@ -49,6 +49,7 @@ __all__ = [
     "validate_group_limit_flags",
     "validate_non_sync_one_variable_connections",
     "validate_min_load_efficiency_inputs",
+    "validate_piecewise_linear_inputs",
     "validate_ladder_methods",
     "validate_group_output_memberships",
     "validate_connection_node_memberships",
@@ -1012,6 +1013,162 @@ def validate_min_load_efficiency_inputs(db, logger: logging.Logger) -> None:
             "efficiency is used at minimum load too (a flat curve; the minimum load still applies).", unit)
 
 
+def _has_time_level(parsed, timesteps: set[str]) -> bool:
+    """A parsed ``efficiency`` value with a time level: a time series, a map of two or more levels (period+time,
+    stochastic time), a map whose level is named ``time`` / ``t``, or an unnamed one keyed by timesteps."""
+    if isinstance(parsed, api.TimeSeries):
+        return True
+    if not isinstance(parsed, api.Map):
+        return False
+    if any(isinstance(v, (api.Map, api.TimeSeries)) for v in parsed.values):
+        return True
+    label = (parsed.index_name or "").strip().lower()
+    if label in ("time", "t"):
+        return True
+    if label in ("", "x"):
+        return any(str(k) in timesteps for k in parsed.indexes)
+    return False
+
+
+def _piecewise_w7_items(db, unit: str, inputs: list[str], remapped: bool) -> list[tuple[str, str]]:
+    """``[(item, input node)]`` that a multi-line piecewise_linear unit's input can meet by burning above its curve
+    (W7): an enabled upward reserve at an input node; for a unit whose input items stay on its input (not a
+    one-input, one-output unit, whose items act on its output): a lower_limit / fixed profile on an input, a
+    flowGroup with a minimum flow through an input, a greater_than / equal user constraint with a coefficient on an
+    input, an input-side ramp limit."""
+    items: list[tuple[str, str]] = []
+    on = set(inputs)
+    disabled = {k for k, v in _str_values(db, "reserve__upDown__unit__node", "is_enabled").items() if v == "no"}
+    for ent in db.find_entities(entity_class_name="reserve__upDown__unit__node"):
+        r, ud, u, n = ent["entity_byname"][:4]
+        if u == unit and ud == "up" and n in on and tuple(ent["entity_byname"]) not in disabled:
+            items.append((f"upward reserve '{r}'", n))
+    if remapped:
+        return items
+    default_pm = str(_definition_default(db, "unit__node__profile", "profile_method") or "upper_limit")
+    pm = _str_values(db, "unit__node__profile", "profile_method")
+    for ent in db.find_entities(entity_class_name="unit__node__profile"):
+        byname = tuple(ent["entity_byname"])
+        u, n, prof = byname[:3]
+        method = pm.get(byname, default_pm)
+        if u == unit and n in on and method in ("lower_limit", "fixed"):
+            items.append((f"profile '{prof}' ({method})", n))
+    minimum = {pv["entity_byname"][0] for par in ("min_instant_flow", "min_cumulative_flow")
+               for pv in db.find_parameter_values(entity_class_name="flowGroup", parameter_definition_name=par)
+               if pv["type"] is not None}
+    for ent in db.find_entities(entity_class_name="flowGroup__unit__node"):
+        g, u, n = ent["entity_byname"][:3]
+        if u == unit and n in on and g in minimum:
+            items.append((f"flowGroup '{g}' minimum", n))
+    default_sense = str(_definition_default(db, "constraint", "sense") or "equal")
+    senses = {k[0]: v for k, v in _str_values(db, "constraint", "sense").items()}
+    for pv in db.find_parameter_values(entity_class_name="unit__inputNode",
+                                       parameter_definition_name="constraint_flow_coeff"):
+        u, n = pv["entity_byname"][0], pv["entity_byname"][1]
+        if pv["type"] is None or u != unit or n not in on or not isinstance(pv["parsed_value"], api.Map):
+            continue
+        for cn in pv["parsed_value"].indexes:
+            if senses.get(str(cn), default_sense) in ("greater_than", "equal"):
+                items.append((f"constraint '{cn}'", n))
+    for (u, n), method in _str_values(db, "unit__inputNode", "ramp_method").items():
+        if u == unit and n in on and method in ("ramp_limit", "both"):
+            items.append(("ramp limit", n))
+    return items
+
+
+def validate_piecewise_linear_inputs(db, logger: logging.Logger) -> None:
+    """Check the inputs of ``piecewise_linear`` units (``specs/piecewise_efficiency_final.md`` §5; ``db`` is
+    scenario-filtered).
+
+    Errors (one :class:`FlexToolConfigError` with all of them): E1 a ``piecewise_linear`` unit without
+    ``piecewise_linear_efficiency``; E2 / E10 a value that is not a curve or a curve per period (the shape
+    resolver's message; a level-1 key that is no period of the database); E3-E8 a curve with a load key that is
+    not above 0 and at most 1, a load given twice, no point at load 1, an efficiency not above 0, a fuel use that
+    falls, or an incremental heat rate that falls (with the nearest accepted curve) -- per curve E3-E6, then E7, then
+    E8 (:func:`flextool.input_derivation._piecewise.parse_piecewise_curves`); E9 a time-varying ``efficiency``;
+    E12 no input or no output (``startup_only`` inputs do not count).  E11 (a solve period without a curve) is the
+    engine reader's.
+
+    Warnings: W1 a curve whose efficiency rises from the first point to the second (online variables) with a
+    ``min_load`` below its first point (none = 0); W2 ``efficiency`` / ``efficiency_at_min_load`` without a time
+    level on a piecewise_linear unit (not used); W6 ``piecewise_linear_efficiency`` on a unit of another
+    conversion_method (not used); W7 a multi-line unit with an input item the input can meet by burning above the
+    curve (:func:`_piecewise_w7_items`).  W3 (auto start-ups) is the classifier's
+    (``_process_method.derive_process_method``), W4 :func:`validate_startup_inputs`'.
+    """
+    from flextool.engine.input._piecewise_curve import curves_by_unit, piecewise_unit_flags, rises_first, segment
+    from flextool.input_derivation._piecewise import parse_piecewise_curves
+
+    default_ct = str(_definition_default(db, "unit", "conversion_method") or "constant_efficiency")
+    cts = {k[0]: v for k, v in _str_values(db, "unit", "conversion_method").items()}
+    units = _entity_names(db, "unit")
+    pw = sorted(u for u in units if cts.get(u, default_ct) == "piecewise_linear")
+    curves = parse_piecewise_curves(db, _period_universe(db) | _branch_periods(db))
+    for unit in sorted(curves.units - set(pw)):
+        logger.warning("Unit '%s': piecewise_linear_efficiency is not used (conversion_method is %s)", unit,
+                       cts.get(unit, default_ct))
+    if not pw:
+        return
+    errors: list[str] = []
+    for unit in pw:
+        if unit not in curves.units:
+            errors.append(f"unit '{unit}': conversion_method piecewise_linear needs piecewise_linear_efficiency (a "
+                          "map from load share to efficiency)")
+    for unit in pw:
+        errors.extend(curves.errors.get(unit, []))
+    _periods, timesteps = _period_and_timestep_names(db)
+    authored_eff: dict[str, list[str]] = {}
+    for par in ("efficiency", "efficiency_at_min_load"):
+        for pv in db.find_parameter_values(entity_class_name="unit", parameter_definition_name=par):
+            unit = pv["entity_byname"][0]
+            if pv["type"] is None or unit not in pw:
+                continue
+            if par == "efficiency" and _has_time_level(pv["parsed_value"], timesteps):
+                errors.append(f"unit '{unit}': a piecewise_linear unit cannot have a time-varying efficiency; its "
+                              "curve is piecewise_linear_efficiency (efficiency is not used)")
+            else:
+                authored_eff.setdefault(unit, []).append(par)
+    only = startup_only_arcs(db)
+    inputs = {u: [n for n in nodes if (u, n) not in only] for u, nodes in _arcs(db, "unit__inputNode").items()}
+    outputs = _arcs(db, "unit__outputNode")
+    for unit in pw:
+        if not inputs.get(unit) or not outputs.get(unit):
+            errors.append(f"unit '{unit}': a piecewise_linear unit needs at least one input and one output")
+    if errors:
+        raise FlexToolConfigError("piecewise_linear inputs: " + "; ".join(errors) + ".")
+
+    for unit in pw:
+        params = authored_eff.get(unit, [])
+        if params:
+            logger.warning("Unit '%s': %s %s not used by a piecewise_linear unit (its curve gives the efficiency)",
+                           unit, " and ".join(params), "is" if len(params) == 1 else "are")
+    by_unit = curves_by_unit(curves.frame)
+    min_load = _explicit_values(db, "unit", "min_load")
+    n_inputs = _arcs(db, "unit__inputNode")
+    delayed = {pv["entity_byname"][0] for pv in db.find_parameter_values(
+        entity_class_name="unit", parameter_definition_name="delay") if pv["type"] is not None}
+    for unit in pw:
+        by_d = by_unit.get(unit, {})
+        floor = min(min_load.get(unit) or [0.0])
+        for d in sorted(by_d, key=lambda x: (x is not None, x or "")):
+            pts = by_d[d]
+            if not rises_first(pts) or floor >= pts[0][0]:
+                continue
+            alpha, beta = segment(pts[0], pts[1])
+            eta_floor = floor / (alpha * floor + beta)
+            logger.warning(
+                "Unit '%s': min_load %s is below the first point of its curve%s (load %s): between them the first "
+                "segment is extended (efficiency at min_load ≈ %.2g); without a higher min_load the unit can be "
+                "online at zero output, burning %.2g MW of fuel per MW online", unit, f"{floor:g}",
+                f" in period {d}" if d is not None else "", f"{pts[0][0]:g}", eta_floor, beta)
+        if not by_d or not piecewise_unit_flags(by_d.values()).multi_line:
+            continue
+        remapped = (len(n_inputs.get(unit, [])) == 1 and len(outputs.get(unit, [])) == 1 and unit not in delayed)
+        for item, node in _piecewise_w7_items(db, unit, inputs.get(unit, []), remapped):
+            logger.warning("Unit '%s': its %s on input '%s' can be met by burning input above the part-load curve "
+                           "(piecewise_linear rows are 'at least'); check the post-solve warning", unit, item, node)
+
+
 def validate_ladder_methods(db, logger: logging.Logger) -> None:
     """Raise FlexToolConfigError if any commodity declares a ladder
     ``price_method`` but does not have the corresponding ladder parameter
@@ -1726,7 +1883,8 @@ def validate_startup_inputs(db, provider, logger: logging.Logger) -> None:
 
     * E1 ``startup_energy`` on a ``just_input`` arc (it would be ignored);
     * E2 a start-up role on a unit without online variables (``startup_method`` no_startup and no
-      ``minimum_time_method`` promotion): the draw is a term on the units started;
+      ``minimum_time_method`` or ``piecewise_linear`` promotion; read from ``input/process_method``, which has
+      both): the draw is a term on the units started;
     * E3 ``constraint_flow_coeff`` on a ``startup_only`` arc (the arc has no flow);
     * E4 a negative ``startup_energy``;
     * E5 a ``unit__node__profile``, ``flowGroup__unit__node`` or (enabled) ``reserve__upDown__unit__node`` entity
@@ -1738,8 +1896,8 @@ def validate_startup_inputs(db, provider, logger: logging.Logger) -> None:
     not a node of a commodity (the draw has no price and no balance: it goes nowhere); W4 a unit whose every
     input is ``startup_only`` and that has no profile (its output costs only the start-up energy); W5 a
     ``startup_and_input`` arc with a ``constraint_flow_coeff`` or in a flow group: the start-up input is not in
-    them (v1); W6 a ``min_load_efficiency`` unit whose every input is ``startup_only`` (its part-load section
-    has no input to draw from).
+    them (v1); W6 a ``min_load_efficiency`` or ``piecewise_linear`` unit whose every input is ``startup_only``
+    (its part-load section / curve has no input to draw from).
     """
     methods = startup_input_methods(db)
     roles = {arc: m for arc, m in methods.items() if m in STARTUP_ROLES}
@@ -1811,17 +1969,20 @@ def validate_startup_inputs(db, provider, logger: logging.Logger) -> None:
                            "commodity: the start-up energy is taken from nowhere and costs nothing.", u, n, n)
     inputs = _arcs(db, "unit__inputNode")
     with_profile = {ent["entity_byname"][0] for ent in db.find_entities(entity_class_name="unit__node__profile")}
-    min_load_eff = {k[0] for k, v in _str_values(db, "unit", "conversion_method").items()
-                    if v == "min_load_efficiency"}
+    curve_units = {k[0]: v for k, v in _str_values(db, "unit", "conversion_method").items()
+                   if v in ("min_load_efficiency", "piecewise_linear")}
     for u in sorted(inputs):
         if not all((u, n) in only for n in inputs[u]):
             continue
         if u not in with_profile:
             logger.warning("unit '%s': every input is startup_only and the unit has no profile, so its output "
                            "costs only the start-up energy.", u)
-        if u in min_load_eff:
+        if curve_units.get(u) == "min_load_efficiency":
             logger.warning("unit '%s': min_load_efficiency with only startup_only inputs: its part-load section "
                            "has no input to draw from.", u)
+        elif curve_units.get(u) == "piecewise_linear":
+            logger.warning("unit '%s': piecewise_linear with only startup_only inputs: its part-load curve has no "
+                           "input to draw from.", u)
     groups_of: dict[tuple[str, str], list[str]] = {}
     for ent in db.find_entities(entity_class_name="flowGroup__unit__node"):
         g, u, n = ent["entity_byname"][:3]

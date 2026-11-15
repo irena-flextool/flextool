@@ -1730,6 +1730,12 @@ _METHODS_MAPPING: dict[tuple[str, str, str], str] = {
     ("min_load_efficiency", "linear", "fork_yes"): "method_1way_nvar_LP",
     ("min_load_efficiency", "binary", "fork_no"): "method_1way_1var_MIP",
     ("min_load_efficiency", "binary", "fork_yes"): "method_1way_nvar_MIP",
+    ("piecewise_linear", "no_startup", "fork_no"): "method_1way_1var_off",
+    ("piecewise_linear", "no_startup", "fork_yes"): "method_1way_nvar_off",
+    ("piecewise_linear", "linear", "fork_no"): "method_1way_1var_LP",
+    ("piecewise_linear", "linear", "fork_yes"): "method_1way_nvar_LP",
+    ("piecewise_linear", "binary", "fork_no"): "method_1way_1var_MIP",
+    ("piecewise_linear", "binary", "fork_yes"): "method_1way_nvar_MIP",
     ("none", "no_startup", "fork_no"): "method_1way_1var_off",
     ("none", "no_startup", "fork_yes"): "method_1way_nvar_off",
     ("none", "linear", "fork_no"): "method_1way_1var_LP",
@@ -1822,6 +1828,17 @@ def _group_transfer_method_overrides(source: "InputSource") -> "pl.LazyFrame | N
     return out.lazy().select(pl.col("p").alias("_pk"), "ct_override")
 
 
+def _piecewise_flags(source: "InputSource") -> pl.DataFrame:
+    """``(p, multi_line, needs_online, single_line_rising, single_line_flat, auto_startup)`` of the units with a
+    ``piecewise_linear_efficiency`` curve, from the whole authored curve (every period;
+    :func:`flextool.engine.input._piecewise_curve.unit_flags_frame` -- the same function the input derivation's
+    classifier calls).  Memoised on the run's reader (data only)."""
+    from flextool.engine.input._param_shapes import _run_memo, piecewise_curve_frame
+    from flextool.engine.input._piecewise_curve import unit_flags_frame
+    return _run_memo(source, ("piecewise_unit_flags",),
+                     lambda: unit_flags_frame(piecewise_curve_frame(source)))
+
+
 def _classify_process_method(source: "InputSource") -> pl.DataFrame:
     """Build the per-process internal-method classification.
 
@@ -1853,8 +1870,14 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
          ``transfer_method`` overrides
          (:func:`_group_transfer_method_overrides`, as the input
          derivation's ``derived/ct_method_overrides``).
-      5. Apply minimum_time → linear-startup override.
-      6. Resolve fork from arc counts + delayed-set membership.
+      5. Apply minimum_time → linear-startup override, then the
+         piecewise_linear one: a ``piecewise_linear`` unit whose curve
+         burns fuel at zero output (the efficiency rises from the first
+         point to the second in some period) and has no start-ups gets
+         ``linear`` (:func:`_piecewise_flags`).
+      6. Resolve fork from arc counts + delayed-set membership; a
+         ``piecewise_linear`` unit with two or more lines in some period
+         is ``fork_yes`` (as a delayed unit).
       7. Map ``(ct, startup, fork) → method`` via the polars when/then
          chain built from :data:`_METHODS_MAPPING`.
       8. Drop ``not_applicable`` rows; ``not_applicable`` is also returned
@@ -1993,6 +2016,22 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
             ).then(pl.lit("linear"))
              .otherwise(pl.col("startup"))
         ).drop("mtm")
+    # Step 5b — piecewise_linear: auto linear start-ups and the forced fork of multi-line curves.
+    pw_flags = _piecewise_flags(source) if cm_unit is not None and (
+        cm_unit.get_column("value").cast(pl.Utf8) == "piecewise_linear").any() else None
+    if pw_flags is not None:
+        lf = (lf.with_columns(_pk=pl.col("p").cast(pl.Utf8))
+                .join(pw_flags.lazy().select(pl.col("p").alias("_pk"), "auto_startup", "multi_line"),
+                      on="_pk", how="left")
+                .with_columns(pw=(pl.col("ct") == "piecewise_linear") & (pl.col("klass") == "unit"))
+                .with_columns(
+                    startup=pl.when(pl.col("pw") & (pl.col("startup") == "no_startup")
+                                    & pl.col("auto_startup").fill_null(False))
+                              .then(pl.lit("linear")).otherwise(pl.col("startup")),
+                    pw_multi=pl.col("pw") & pl.col("multi_line").fill_null(False))
+                .drop("_pk", "auto_startup", "multi_line", "pw"))
+    else:
+        lf = lf.with_columns(pw_multi=pl.lit(False))
     # Step 6 — fork resolution.
     if src_counts is not None:
         lf = lf.join(src_counts, on="p", how="left")
@@ -2014,10 +2053,10 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
         lf = lf.with_columns(is_delayed=pl.lit(False))
     lf = lf.with_columns(
         fork=pl.when((pl.col("n_src") > 1) | (pl.col("n_sink") > 1)
-                      | pl.col("is_delayed"))
+                      | pl.col("is_delayed") | pl.col("pw_multi"))
               .then(pl.lit("fork_yes"))
               .otherwise(pl.lit("fork_no"))
-    )
+    ).drop("pw_multi")
 
     # Step 7 — map (ct, startup, fork) → method via when/then chain.
     expr = pl.lit("not_applicable")

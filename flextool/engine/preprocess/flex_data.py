@@ -5541,6 +5541,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
                     _wd_yr = None
                 flex_data.p_years_represented_d = _years_represented_boundary(
                     getattr(flex_data, "dt", None), db_reader, provider, _wd_yr)
+            # piecewise_linear units: the load-boundary step (one authority on every path).
+            from flextool.engine.preprocess.params._piecewise import apply_piecewise_curves
+            apply_piecewise_curves(flex_data, db_reader)
         elif _dump_hooks is not None:
             # Reader-less CSV reload: the reload's own seeds of the fields the overlay above writes.
             _dump_hooks.field_seeds(flex_data, sd, inp, provider)
