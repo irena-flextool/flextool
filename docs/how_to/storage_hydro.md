@@ -166,7 +166,7 @@ It needs to be added to an alternative in the `Entity Alternative` sheet.
 And parameters:
 
 - `efficiency`: 1
-- `existing`: A large enough number to not be a limit
+- `existing`: The largest flow the spill may need to carry, e.g. the peak inflow into the reservoir. The spill is then not limited in practice. Do not use a very large number instead (such as 1e9): the capacity scales the spill unit's flow, and a number far above the system's other flows makes the solve numerically unstable.
 
 ![Hydro reservoir with downriver](../img/concept/hydro_reservoir_with_downriver.png)
 
