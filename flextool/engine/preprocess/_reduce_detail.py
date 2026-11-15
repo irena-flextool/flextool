@@ -48,7 +48,9 @@ conversion_flow_coeff; direct: the arc flow), all per unitsize:
 
 ``min_load_efficiency``: fuel = slope·Y + section·u.  With section ≥ 0, u ≥ Y/L (also for Y ≤ 0, as u ≥ 0), so
 fuel ≥ (slope + section/L)·Y, the folded fuel.  With section < 0 (efficiency_at_min_load above efficiency),
-u ≤ Y/(ml·conv_min), so fuel ≥ (slope + section/(ml·conv_min))·Y, and fuel ≥ 0.  At full output (u = C, Y = a·W·C, a ≤ 1) the
+u ≤ Y/(ml·conv_min), so fuel ≥ (slope + section/(ml·conv_min))·Y, and fuel ≥ 0; when that slope is zero or
+below at a step with a positive output (several outputs, the smallest weight far below the others) the fold would
+make output free, and it raises instead (:func:`_free_output_cells`).  At full output (u = C, Y = a·W·C, a ≤ 1) the
 folded fuel is slope·a·W·C + section·a·C, at a = 1 the full model's; the full model's input limit
 input_share_max·(slope·W + section)·a·C covers it, so the input limits are kept.
 
@@ -366,7 +368,35 @@ def _availability_dt(d: "FlexData", procs: set[str]) -> pl.DataFrame:
     return f.select(*(pl.col(k).cast(pl.Utf8) for k in ("p", "d", "t")), pl.col("value").cast(pl.Float64).alias("avail"))
 
 
-def _fold_min_load_efficiency(d: "FlexData", procs: set[str]) -> tuple[Param, Param]:
+#: Relative rounding margin of :func:`_free_output_cells`: a folded slope at most this share of the unfolded slope
+#: counts as zero.
+_FREE_OUTPUT_RTOL = 1e-9
+
+
+def _solve_prefix(solve: str | None) -> str:
+    return f"Solve {solve}: " if solve else ""
+
+
+def _free_output_cells(joined: pl.DataFrame) -> pl.DataFrame:
+    """The cells of the ``min_load_efficiency`` fold (``__p, __d, __t`` with ``value`` the unfolded slope,
+    ``__folded`` the folded slope before the clamp at 0, ``__sec`` the section, ``__w`` the weighted output width
+    and ``__a`` the availability) where the folded fuel would make output free::
+
+        section < 0  and  W > 0  and  availability > 0  and  slope' ≤ 1e-9 · |slope|
+
+    The folded fuel is slope'·Y with Y the weighted output; W > 0 and availability > 0 are the steps where one
+    unit online can give Y > 0 (maxFlow_online, maxOutputSum_online), so the folded line gives zero or negative fuel
+    at a feasible positive output exactly there (up to rounding).  With section ≥ 0, slope' ≥ slope > 0.  With one
+    output (``conv_min`` its own weight, 1 for a direct unit) the bound is reached at minimum load and slope' =
+    1/η_min (conversion_flow_coeff 1), so only units whose smallest output weight is far below the weight of
+    the output they serve (several outputs; or a conversion_flow_coeff far from 1) can reach it."""
+    return joined.filter(
+        (pl.col("__sec") < 0.0) & (pl.col("__w") > 0.0) & (pl.col("__a").fill_null(1.0) > 0.0)
+        & (pl.col("__folded") <= _FREE_OUTPUT_RTOL * pl.col("value").abs()))
+
+
+def _fold_min_load_efficiency(d: "FlexData", procs: set[str], solve: str | None = None,
+                              level: str = "online") -> tuple[Param, Param]:
     """``(p_slope, p_section)`` with the section of ``procs`` folded into their slope per unit of the output
     measure one unit online can reach (proof in the module docstring, "Why the folds are relaxations")::
 
@@ -385,8 +415,11 @@ def _fold_min_load_efficiency(d: "FlexData", procs: set[str]) -> tuple[Param, Pa
     ``slope + section`` bit for bit.  ``section < 0`` (``efficiency_at_min_load`` above ``efficiency``) needs an
     output weight above 0 on every measured output (``conv_min > 0``), else :class:`FlexToolConfigError`; a unit
     with one output then runs at ``efficiency_at_min_load`` (slope' = 1/η_min), one with several at the bound
-    their smallest weight allows, at least 0 (the full model's fuel is never below 0: its input flows are not).
-    Rows of other processes are unchanged; row order is kept.
+    their smallest weight allows.  When that bound gives no fuel (:func:`_free_output_cells`: slope' ≤ 0 before the
+    clamp at a step where the unit can give a positive weighted output) the fold would make output free, and
+    :class:`FlexToolConfigError` names the solve (``solve``, the level ``level``) and the units.  The clamp at 0
+    stays for the steps without a positive output (availability 0).  Rows of other processes are unchanged; row
+    order is kept.
     """
     from flextool.engine.input._param_shapes import promote_param_to_dt
 
@@ -417,14 +450,14 @@ def _fold_min_load_efficiency(d: "FlexData", procs: set[str]) -> tuple[Param, Pa
     bad = sec.filter((pl.col("__sec") < 0.0) & ~(pl.col("__M") > 0.0))
     if bad.height > 0:
         raise FlexToolConfigError(
-            "reduce_unit_detail_method online: the min_load_efficiency unit(s) "
+            f"{_solve_prefix(solve)}reduce_unit_detail_method {level}: the min_load_efficiency unit(s) "
             f"{', '.join(sorted(set(bad.get_column('__p').to_list())))} are more efficient at minimum load than at "
             "full load, and their fuel cannot be folded without the units online: the minimum load does not bound "
             "the units online by the output (an output with a conversion_flow_coeff below 0, or no minimum load). "
             "Keep the online variables (an integers level) for them.")
     sec = sec.with_columns(__add=pl.when(pl.col("__M") > 0.0).then(pl.col("__sec") / pl.col("__M")).otherwise(0.0))
     joined = (sf.with_row_index("__row").with_columns(*u)
-              .join(sec.select(*uk, "__add", "__sec"), on=uk, how="left").sort("__row"))
+              .join(sec.select(*uk, "__add", "__sec", "__w", "__a"), on=uk, how="left").sort("__row"))
     if joined.height != sf.height:
         raise ValueError(f"reduce_unit_detail_method online: folding the section changed the p_slope rows "
                          f"({sf.height} -> {joined.height}).")
@@ -433,6 +466,20 @@ def _fold_min_load_efficiency(d: "FlexData", procs: set[str]) -> tuple[Param, Pa
         raise ValueError("reduce_unit_detail_method online: min_load_efficiency cells with a section but no "
                          f"slope: {missing.select(uk).head(5).rows()}.")
     folded = pl.col("value") + pl.col("__add").fill_null(0.0)
+    free = _free_output_cells(joined.with_columns(__folded=folded))
+    if free.height > 0:
+        worst = free.sort("__folded").unique("__p", keep="first", maintain_order=True).sort("__p")
+        cells = "; ".join(f"{p} {v:.6g} at period {dd}, step {t}"
+                          for p, dd, t, v in worst.select("__p", "__d", "__t", "__folded").iter_rows())
+        raise FlexToolConfigError(
+            f"{_solve_prefix(solve)}reduce_unit_detail_method {level}: the min_load_efficiency unit(s) "
+            f"{', '.join(worst.get_column('__p').to_list())} are more efficient at minimum load than at full load, "
+            "and without the units online their fuel cannot be folded: the bound that the minimum load and the "
+            "smallest output conversion_flow_coeff give for the units online leaves no fuel at a positive output "
+            f"(folded fuel per unit of weighted output, lowest: {cells}), so the solve would get output without "
+            "fuel. Keep the online variables of these units: choose a reduce_unit_detail_method that keeps them "
+            "(an integers* level keeps the online variables of a min_load_efficiency unit), or change the unit's "
+            "efficiency shape (efficiency_at_min_load not above efficiency, or another conversion_method).")
     new_slope = joined.with_columns(
         pl.when(~pl.col("__p").is_in(sorted(procs))).then(pl.col("value"))
         .when(pl.col("__sec") < 0.0).then(pl.max_horizontal(folded, pl.lit(0.0)))
@@ -585,9 +632,9 @@ def _prune_online(d: "FlexData", procs: set[str], new: dict) -> None:
 
 
 def _reduce_unit(d: "FlexData", parts: frozenset[str], report: ReduceReport,
-                 sparts: frozenset[str] = frozenset()) -> dict:
+                 sparts: frozenset[str] = frozenset(), solve: str | None = None) -> dict:
     """The changed fields of the unit parts ``parts`` (field -> new value); fills ``report``.  ``sparts``: the
-    system parts the solve leaves out (no use of online variables)."""
+    system parts the solve leaves out (no use of online variables); ``solve``: the solve's name for the errors."""
     new: dict = {}
     removed = report.removed
 
@@ -645,7 +692,7 @@ def _reduce_unit(d: "FlexData", parts: frozenset[str], report: ReduceReport,
             raise ValueError(f"reduce_unit_detail_method {report.unit}: min_load_efficiency process(es) "
                              f"{', '.join(sorted(folded))} have no p_slope / p_section to fold.")
         if folded:
-            new["p_slope"], new["p_section"] = _fold_min_load_efficiency(d, folded)
+            new["p_slope"], new["p_section"] = _fold_min_load_efficiency(d, folded, solve, report.unit)
             removed["min_load_efficiency"] = sorted(folded)
         if d.process_min_load_eff is not None:
             new["process_min_load_eff"] = None
@@ -732,20 +779,22 @@ def _interaction_notes(d: "FlexData", uparts: frozenset[str], sparts: frozenset[
             report.notes["inertia_from_flows"] = hit
 
 
-def apply_reduce_detail(d: "FlexData", unit: str = "none", system: str = "none") -> tuple["FlexData", ReduceReport]:
+def apply_reduce_detail(d: "FlexData", unit: str = "none", system: str = "none",
+                        solve: str | None = None) -> tuple["FlexData", ReduceReport]:
     """The reduced data of one sub-solve and what was left out.
 
     ``unit`` / ``system`` are the resolved values (``SolveConfig.reduce_unit_detail_for`` /
     ``reduce_system_detail_for``).  Returns ``d`` itself when nothing is reduced; otherwise a shallow copy (frames
     not changed are shared, extra attributes such as the axis vocabulary are kept) with the changed fields replaced.
-    An unknown value raises :class:`FlexToolConfigError`.
+    An unknown value raises :class:`FlexToolConfigError`, as does a ``min_load_efficiency`` unit whose fold would
+    make output free (:func:`_fold_min_load_efficiency`); ``solve`` names the solve in those errors.
     """
     report = ReduceReport(unit=unit, system=system)
     uparts = unit_parts(unit)
     sparts = system_parts(system)
     if not uparts and not sparts:
         return d, report
-    new = _reduce_unit(d, uparts, report, sparts) if uparts else {}
+    new = _reduce_unit(d, uparts, report, sparts, solve) if uparts else {}
     new.update(_reduce_system(d, sparts, report))
     _interaction_notes(d, uparts, sparts, report)
     if not new:

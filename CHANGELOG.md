@@ -80,7 +80,11 @@ Input databases move to data version 80. The FlexTool window, the Spine Toolbox 
   several flows the unit could not reach its capacity and the shortfall went to slack) and too loose when it was
   below 1. The same holds for `piecewise_linear` units under *online*, for an output `capacity_max_coeff` above 1
   and for a *min_load_efficiency* unit more efficient at minimum load than at full load (with one output it now
-  uses its minimum-load efficiency). Results of such reduced solves change; rerun them. Units whose outputs add up
+  uses its minimum-load efficiency). Results of such reduced solves change; rerun them. A *min_load_efficiency*
+  unit more efficient at minimum load than at full load with several outputs, whose smallest
+  `conversion_flow_coeff` is so far below the others that the reduced unit would produce without fuel, now stops
+  the run before the solve with an error naming the solve and the unit (before, it ran at its full-load efficiency): keep its
+  online variables (an `integers*` level) or change its efficiency shape. Units whose outputs add up
   to their capacity at coefficient 1 (`availability` at most 1) and that are not more efficient at minimum load
   are unchanged.
 - **Near-optimal solve acceptance judges the infeasibility count and the absolute check where HiGHS solved** (with

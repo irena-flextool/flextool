@@ -191,7 +191,13 @@ The parts in detail:
     the capacity): for a unit whose weighted outputs add up to more or less than its capacity (for example one
     output with `conversion_flow_coeff` 2), the full-load fuel is spread over that output, so the fuel at full output
     is the same as with the online variables. A *min_load_efficiency* unit that is more efficient at its minimum
-    load than at full load (`efficiency_at_min_load` above `efficiency`) uses its minimum-load efficiency instead. A user constraint with a `constraint_online_coeff` term is left out of
+    load than at full load (`efficiency_at_min_load` above `efficiency`) uses its minimum-load efficiency instead
+    (with several outputs: the efficiency its minimum load allows when all of it goes to the output with the
+    smallest `conversion_flow_coeff`). When that leaves no fuel at a positive output (for example a second output
+    with a much smaller `conversion_flow_coeff`), the unit would produce without fuel, so the run stops before the
+    solve with an error that names the solve and the unit. Keep that unit's online variables: choose an
+    `integers*` level for the solve (a *min_load_efficiency* unit keeps its online variables there), or change the
+    unit's efficiency shape (`efficiency_at_min_load` not above `efficiency`, or another `conversion_method`). A user constraint with a `constraint_online_coeff` term is left out of
     the solve whole, with a warning that names it. Ramp limits that are kept apply to the capacity, so a unit that
     starts from zero ramps up at its ramp speed (there is no start-up allowance). `online` contains every effect of
     `integers`, so the solve is an LP.

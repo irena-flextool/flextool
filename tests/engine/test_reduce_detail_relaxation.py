@@ -85,7 +85,7 @@ def _strict_autoscale(monkeypatch) -> None:
 
 
 def _case(kind: str, w: float, level: str | None, n_steps: int, rolling: bool,
-          heat: bool = True) -> tuple[list, list]:
+          heat: bool = True, heat_coef: float = 0.2) -> tuple[list, list]:
     extra = [["solve", "s1", "reduce_unit_detail_method", text(level)]] if level else []
     names = [f"t{i:02d}" for i in range(1, n_steps + 1)]
     elec = {t: -DEMAND[i % 2] for i, t in enumerate(names)}
@@ -98,19 +98,19 @@ def _case(kind: str, w: float, level: str | None, n_steps: int, rolling: bool,
             "startup_method": text("binary"), "startup_cost": scalar(0.0), "min_load": scalar(0.3)}))
     vals += [["unit__outputNode", ["CHP", "elec"], "conversion_flow_coeff", scalar(w)]]
     if heat:
-        vals += [["unit__outputNode", ["CHP", "heat"], "conversion_flow_coeff", scalar(0.2)]]
+        vals += [["unit__outputNode", ["CHP", "heat"], "conversion_flow_coeff", scalar(heat_coef)]]
     return ents, vals
 
 
 def _run(tmp_path_factory, kind: str, w: float, level: str | None, rolling: bool = False,
-         heat: bool = True) -> dict:
+         heat: bool = True, heat_coef: float = 0.2) -> dict:
     from flextool.engine import run_chain_from_db
 
     name = (f"{kind}_w{str(w).replace('.', 'p')}_{level or 'none'}{'_roll' if rolling else ''}"
-            f"{'' if heat else '_noheat'}")
+            f"{'' if heat else '_noheat'}{'' if heat_coef == 0.2 else '_heat' + str(heat_coef).replace('.', 'p')}")
     if name not in _RUNS:
         url, scen = make_oracle_db(tmp_path_factory, name,
-                                   *_case(kind, w, level, 4 if rolling else 2, rolling, heat))
+                                   *_case(kind, w, level, 4 if rolling else 2, rolling, heat, heat_coef))
         _RUNS[name] = run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{name}_w"),
                                         keep_solutions=True)
     steps = _RUNS[name]
@@ -192,23 +192,52 @@ def test_rolling_reduced_fold_is_a_relaxation(tmp_path_factory, kind) -> None:
         assert _cells(r.flex_data.p_indirect_input_cap).equals(_cells(f.flex_data.p_indirect_input_cap)), name
 
 
-@pytest.mark.parametrize("heat, red_fuel", [(False, [Fr(250), Fr(125)]), (True, [Fr(0), Fr(0)])],
-                         ids=["one_output", "two_outputs"])
-def test_section_below_zero_folds_from_the_min_load(tmp_path_factory, heat, red_fuel) -> None:
-    """``efficiency_at_min_load`` 0.4 above ``efficiency`` 0.25 (min_load 0.3): s = 0.3 × (1/0.4 − 1/0.25) / 0.7
-    = −9/14 < 0, σ = 4 + 9/14 = 65/14.  The full model burns σ·Y + s·100: 400 at 100 MW, 3250/14 − 900/14 = 1175/7
-    at 50 MW (elec weight 1, W = 1).  More units online burn less, so the bound is the minimum load:
-    u ≤ Σ out / 0.3 ≤ Y / (0.3 · conv_min).  One output (a direct unit, conv_min 1):
-    slope' = 65/14 − (9/14)/0.3 = 5/2 = 1/0.4, reduced 250 and 125.  With heat (weight 0.2, demand 0) conv_min = 0.2: 65/14 − (9/14)/0.06 = −85/14 < 0,
-    clamped to 0: no fuel.  The earlier fold (σ + s = 4: 400 and 200) burnt more than the full model at 50 MW."""
-    full_fuel = [Fr(400), Fr(1175, 7)]
-    full = next(iter(_run(tmp_path_factory, "mle_neg", 1.0, None, heat=heat).values()))
-    red = next(iter(_run(tmp_path_factory, "mle_neg", 1.0, "online", heat=heat).values()))
+def test_section_below_zero_one_output_folds_from_the_min_load(tmp_path_factory) -> None:
+    """``efficiency_at_min_load`` 0.4 above ``efficiency`` 0.25 (min_load 0.3), elec only: s = 0.3 × (1/0.4 − 1/0.25)
+    / 0.7 = −9/14 < 0, σ = 4 + 9/14 = 65/14.  The full model burns σ·Y + s·100: 400 at 100 MW, 3250/14 − 900/14 =
+    1175/7 at 50 MW.  More units online burn less, so the bound is the minimum load: u ≤ Y / 0.3 (a direct unit,
+    conv_min 1): slope' = 65/14 − (9/14)/0.3 = 5/2 = 1/0.4, reduced 250 and 125.  The earlier fold (σ + s = 4: 400
+    and 200) burnt more than the full model at 50 MW."""
+    full_fuel, red_fuel = [Fr(400), Fr(1175, 7)], [Fr(250), Fr(125)]
+    full = next(iter(_run(tmp_path_factory, "mle_neg", 1.0, None, heat=False).values()))
+    red = next(iter(_run(tmp_path_factory, "mle_neg", 1.0, "online", heat=False).values()))
     # One output makes CHP a direct unit (its flow is the arc gas_node -> elec); the cost is fuel only, so the
     # objective / COST_PER_MW is the fuel summed over the steps.
-    src = "CHP" if heat else "gas_node"
     for s, fuel in ((full, full_fuel), (red, red_fuel)):
-        assert _mw(s, src, "elec") == pytest.approx(list(DEMAND), rel=RTOL)
+        assert _mw(s, "gas_node", "elec") == pytest.approx(list(DEMAND), rel=RTOL)
         assert _slack(s) == pytest.approx([0.0, 0.0], abs=1e-9)
-        assert float(s.solution.obj) == pytest.approx(float(COST_PER_MW * sum(fuel)), rel=RTOL, abs=1e-6)
+        assert float(s.solution.obj) == pytest.approx(float(COST_PER_MW * sum(fuel)), rel=RTOL)
     assert float(red.solution.obj) <= float(full.solution.obj)
+
+
+def test_section_below_zero_free_output_raises(tmp_path_factory) -> None:
+    """The same curve with heat (weight 0.2, demand 0): conv_min = 0.2, so u ≤ Y / 0.06 and slope' = 65/14 −
+    (9/14)/0.06 = −85/14 ≤ 0: the folded unit would give elec without fuel (the full model burns 400 and 1175/7).
+    The solve stops before the build and names the solve, the unit and the way out."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    with pytest.raises(FlexToolConfigError, match=r"(?s)Solve s1: reduce_unit_detail_method online: .*unit\(s\) CHP "
+                       r"are more efficient at minimum load.*output without fuel.*Keep the online variables"):
+        _run(tmp_path_factory, "mle_neg", 1.0, "online", heat=True)
+
+
+def test_section_below_zero_several_outputs_with_fuel_folds(tmp_path_factory) -> None:
+    """Heat weight 0.9 instead: conv_min = 0.9, u ≤ Y / 0.27, slope' = 65/14 − (9/14)/(27/100) = 65/14 − 50/21 =
+    95/42 > 0, so the fold is kept: reduced 100 × 95/42 = 4750/21 and 2375/21 (elec only, Y = elec), at most the full
+    model's 400 and 1175/7 (W = 1: elec 1 fills the sum cap)."""
+    full_fuel, red_fuel = [Fr(400), Fr(1175, 7)], [Fr(4750, 21), Fr(2375, 21)]
+    full = next(iter(_run(tmp_path_factory, "mle_neg", 1.0, None, heat_coef=0.9).values()))
+    red = next(iter(_run(tmp_path_factory, "mle_neg", 1.0, "online", heat_coef=0.9).values()))
+    for s, fuel in ((full, full_fuel), (red, red_fuel)):
+        assert _mw(s, "CHP", "elec") == pytest.approx(list(DEMAND), rel=RTOL)
+        assert _slack(s) == pytest.approx([0.0, 0.0], abs=1e-9)
+        assert _mw(s, "gas_node", "CHP") == pytest.approx([float(f) for f in fuel], rel=RTOL)
+    assert _cells(red.flex_data.p_slope)["value"].to_list() == pytest.approx([95 / 42] * 2, rel=RTOL)
+
+
+def test_rising_efficiency_several_outputs_folds(tmp_path_factory) -> None:
+    """A two-output unit more efficient at full load (``mle``: η 0.4, η_min 0.25, heat weight 0.2, W = 1) folds
+    without the error: slope' = σ + s = 13/7 + 9/14 = 5/2 (the fold of ``test_reduced_fold_is_a_relaxation``)."""
+    red = next(iter(_run(tmp_path_factory, "mle", 1.0, "online").values()))
+    assert red.flex_data.process_online is None
+    assert _cells(red.flex_data.p_slope)["value"].to_list() == pytest.approx([2.5, 2.5], rel=RTOL)
