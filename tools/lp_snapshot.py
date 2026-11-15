@@ -1927,8 +1927,32 @@ def _patch_ladder_cum_silent(data: dict) -> dict:
                     values=[["commodity", "coal", "price_ladder_cumulative", ladder]])
 
 
+def _patch_piecewise_single_line(data: dict) -> dict:
+    """piecewise_linear units with one line (handled as min_load_efficiency units, params/_piecewise.py): the
+    two-output coal_chp (outputs weighted 1 and 2) with a rising two-point curve and its automatic linear
+    start-ups, and the direct coal_plant with a flat three-point curve (one line, constant efficiency), in a
+    rolling solve (the rolls' slope and p_flow_max are overwritten at the load boundary)."""
+    def curve(points: list[tuple[float, float]]) -> dict:
+        return {"index_type": "float", "data": [[k, v] for k, v in points]}
+
+    return _overlay(
+        data, name="piecewise_single_line", base=["init", "west", "coal", "coal_chp", "heat"],
+        values=[["unit", "coal_chp", "conversion_method", "piecewise_linear"],
+                ["unit", "coal_chp", "piecewise_linear_efficiency", curve([(0.3, 0.6), (1.0, 0.9)])],
+                ["unit", "coal_chp", "min_load", 0.3],
+                ["unit__outputNode", ["coal_chp", "west"], "conversion_flow_coeff", 1.0],
+                ["unit__outputNode", ["coal_chp", "heat"], "conversion_flow_coeff", 2.0],
+                ["unit", "coal_plant", "conversion_method", "piecewise_linear"],
+                ["unit", "coal_plant", "piecewise_linear_efficiency",
+                 curve([(0.2, 0.4), (0.6, 0.4), (1.0, 0.4)])],
+                ["solve", "y2020_2day_dispatch", "solve_mode", "rolling_window"],
+                ["solve", "y2020_2day_dispatch", "rolling_solve_horizon", 24.0],
+                ["solve", "y2020_2day_dispatch", "rolling_solve_jump", 12.0]])
+
+
 PATCHES: dict[str, Callable[[dict], dict]] = {
     "none": _no_patch,
+    "piecewise_single_line": _patch_piecewise_single_line,
     "invest_limits": _patch_invest_limits,
     "cumulative_capacity": _patch_cumulative_capacity,
     "stoch_invest_storage": _patch_stoch_invest_storage,
@@ -2146,6 +2170,7 @@ _PLAIN: tuple[tuple[str, str, str], ...] = (
 # a fixture scenario's alternative chain, registered as scenario ``name``.
 _PATCHED: tuple[tuple[str, str], ...] = (
     ("invest_limits", _T),
+    ("piecewise_single_line", _T),
     ("cumulative_capacity", _T),
     ("stoch_invest_storage", _F + "stoch_two_period_hedge.json"),
     ("multi_year_reinvest_choice", _T),
