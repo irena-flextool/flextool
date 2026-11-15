@@ -1191,8 +1191,11 @@ def validate_piecewise_linear_inputs(db, logger: logging.Logger) -> None:
     min_time = {k[0]: v for k, v in _str_values(db, "unit", "minimum_time_method").items()}
     default_startup = str(_definition_default(db, "unit", "startup_method") or "no_startup")
     default_min_time = str(_definition_default(db, "unit", "minimum_time_method") or "none")
+    # Only the solves the scenario runs (a solve that no model runs leaves nothing out).
+    from flextool.engine.input._timeline_rules import time_structure_from_backend
+    run = set(_used_solves(time_structure_from_backend(_RowsView(db))))
     online_left_out = any(v in ("online", "online_ramps")
-                          for v in _str_values(db, "solve", "reduce_unit_detail_method").values())
+                          for k, v in _str_values(db, "solve", "reduce_unit_detail_method").items() if k[0] in run)
     for unit in pw:
         by_d = by_unit.get(unit, {})
         unit_floors = floors.get(unit, {})

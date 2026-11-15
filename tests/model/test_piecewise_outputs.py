@@ -11,6 +11,10 @@ the oracle's hand calculation (exact fractions; rtol 1e-7):
 * O3 (disposal): W5 for E — 3 steps above the curve, the largest 1220/77 MWh, the total 3660/77 MWh (oracle §9; the
   step of the largest is a tie over t01-t03, §0.2: not asserted).
 * O3-c (flat curve = constant efficiency): no W5 (single-line units keep the equality).
+* O3 coarse: O3 on four 1-h steps with power_bal and h2 in a group with ``new_stepduration`` 2 h, so E is coarse:
+  one flow per 2-h step (60 MW in, 30 MW out, a rate over the step).  The excess 60 − 3400/77 = 1220/77 MW is in
+  each of the 4 fine steps: W5 counts 4 steps, the largest 1220/77 MWh (1 h), the total 4 × 1220/77 = 4880/77 MWh.
+  Read at the coarse steps' first fine steps only, it would count 2 steps and a total of 2440/77.
 """
 from __future__ import annotations
 
@@ -21,14 +25,28 @@ from fractions import Fraction as Fr
 import pandas as pd
 import pytest
 
-from tests.model._piecewise_oracle_db import make_oracle_db
-from tests.model.test_piecewise_oracles import CASES
+from tests.model._piecewise_oracle_db import balance_node, make_oracle_db, merge, scalar, time_settings, unit
+from tests.model.test_piecewise_oracles import CASES, E_CURVE, _pw
 
 pytestmark = pytest.mark.solver
 
 RTOL = 1e-7
 _W5_LOGGER = "flextool.process_outputs.calc_piecewise"
 _RUNS: dict = {}
+
+
+def _o3_coarse() -> tuple:
+    """O3 on four 1-h steps, its two balance nodes in a group with ``new_stepduration`` 2 h (module docstring)."""
+    group = ([["group", "two_h", None], ["group__node", ["two_h", "power_bal"], None],
+              ["group__node", ["two_h", "h2"], None]],
+             [["group", "two_h", "new_stepduration", scalar(2.0)]])
+    return merge(time_settings(4, ["p2030"]), group,
+                 balance_node("power_bal", 60.0, penalty_down=1000.0, penalty_up=10000.0),
+                 balance_node("h2", -30.0, penalty_down=1000.0, penalty_up=10000.0),
+                 unit("E", ["power_bal"], ["h2"], _pw(E_CURVE, existing=scalar(100.0))))
+
+
+_CASES = {**CASES, "O3-coarse": _o3_coarse}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -51,7 +69,7 @@ def _write(tmp_path_factory, name: str, *, in_memory: bool, caplog):
     key = (name, in_memory)
     if key in _RUNS:
         return _RUNS[key]
-    ents, vals = CASES[name]()
+    ents, vals = _CASES[name]()
     label = f"{name.replace('-', '_')}_{'mem' if in_memory else 'persisted'}"
     url, scen = make_oracle_db(tmp_path_factory, label, ents, vals)
     work = tmp_path_factory.mktemp(f"{label}_w")
@@ -117,9 +135,21 @@ def test_W5_O3_input_above_the_curve(tmp_path_factory, caplog, in_memory) -> Non
     _close([f.largest, f.total], [Fr(1220, 77), Fr(3660, 77)], what="largest, total [MWh]")
     assert len(messages) == 1
     msg = messages[0]
-    assert msg.startswith(f"Unit 'E' used more input than its curve needs in 3 time steps (largest "
+    assert msg.startswith(f"Unit 'E' used more weighted input (input × conversion_flow_coeff) than its curve needs "
+                          f"in 3 time steps (largest "
                           f"{float(Fr(1220, 77)):.4g} MWh in p2030/")
     assert f"total {float(Fr(3660, 77)):.4g} MWh): its input had no value or a negative value there" in msg
+
+
+@pytest.mark.parametrize("in_memory", [True, False], ids=["in_memory", "persisted"])
+def test_W5_coarse_unit_counts_every_fine_step(tmp_path_factory, caplog, in_memory) -> None:
+    steps, _out, found, _messages = _write(tmp_path_factory, "O3-coarse", in_memory=in_memory, caplog=caplog)
+    fd = next(iter(steps.values())).flex_data
+    assert fd.process_coarse_step is not None and "E" in set(fd.process_coarse_step["p"].cast(str).to_list())
+    assert [f.unit for f in found] == ["E"]
+    f = found[0]
+    assert f.steps == 4
+    _close([f.largest, f.total], [Fr(1220, 77), Fr(4880, 77)], what="largest, total [MWh]")
 
 
 def test_W5_not_for_the_flat_curve_O3_c(tmp_path_factory, caplog) -> None:

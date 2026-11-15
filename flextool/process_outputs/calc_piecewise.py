@@ -14,7 +14,9 @@ check measures, per realized step,
     excess[p,d,t] = q − need                                        [MW of weighted input]
 
 with the data and the solution of each solve (:func:`piecewise_input_and_excess`, called by ``read_parameters`` per
-solve, so a rolling run's rolls are each measured with their own lines and investments).  The warning
+solve, so a rolling run's rolls are each measured with their own lines and investments), on every fine step: a
+unit with coarse steps (a group's ``new_stepduration``) has its flows and units online once per coarse step, the
+same rate over the step (:func:`_value`).  The warning
 (:func:`warn_piecewise_excess`) counts the realized steps with ``excess > 1e-5 · max(1, q)`` (an interior-point
 tolerance does not warn) and gives the largest and the total ``excess · step_duration``.  Single-line units keep
 the conversion equality and are not measured.  No result table (design v1).
@@ -54,10 +56,25 @@ def _param(param, cols: tuple[str, ...], alias: str) -> "pl.DataFrame | None":
     return frame.select(*cols, pl.col("value").cast(pl.Float64).alias(alias))
 
 
-def _value(solution, name: str) -> "pl.DataFrame | None":
+def _value(solution, name: str, units: pl.DataFrame, flex_data: "FlexData") -> "pl.DataFrame | None":
+    """``solution.value(name)`` of the processes *units* (``p`` Utf8) on every fine step, keys Utf8.  The rows of
+    *units* are taken before any cast (the semi-join on ``p`` in the solution's own dtype); a process with coarse
+    steps (``new_stepduration``) has its variable at each coarse step's first fine step only, so the rows are
+    expanded to the other fine steps by the mode of ``_coarse_flows.COARSE_VARS`` (copy: the rate stays the same
+    over the coarse step)."""
+    from flextool.engine.output import _coarse_flows
+
     if solution is None or name not in getattr(solution, "_vars", {}):
         return None
-    return _utf8(solution.value(name)).with_columns(pl.col("value").cast(pl.Float64))
+    frame = solution.value(name)
+    frame = frame.collect() if isinstance(frame, pl.LazyFrame) else frame
+    key = frame.columns[0]
+    mine = units.select(pl.col("p").cast(frame.schema[key], strict=False).alias(key)).drop_nulls()
+    frame = frame.join(mine, on=key, how="semi")
+    if name in _coarse_flows.COARSE_VARS and frame.height > 0:
+        frame = _coarse_flows.expand_coarse(frame, flex_data, mode=_coarse_flows.COARSE_VARS[name], p=key,
+                                            name=name)
+    return _utf8(frame).with_columns(pl.col("value").cast(pl.Float64))
 
 
 def _with_coeff(flows: pl.DataFrame, coeff, side: str) -> pl.DataFrame:
@@ -75,13 +92,13 @@ def piecewise_input_and_excess(flex_data: "FlexData", solution: "Solution | None
     if pw is None or pw.height == 0:
         return None
     pw = pw.select("p").unique()
-    flow = _value(solution, "v_flow")
+    flow = _value(solution, "v_flow", pw, flex_data)
     slope = _param(getattr(flex_data, "p_piecewise_slope", None), ("p", "seg", "d"), "slope")
     intercept = _param(getattr(flex_data, "p_piecewise_intercept", None), ("p", "seg", "d"), "intercept")
     us = _param(flex_data.p_unitsize, ("p",), "us")
     if flow is None or slope is None or intercept is None or us is None:
         return None
-    flow = flow.join(pw, on="p", how="semi").join(us, on="p", how="inner").with_columns(
+    flow = flow.join(us, on="p", how="inner").with_columns(
         mw=pl.col("value") * pl.col("us"))
     keys = ["p", "source", "sink"]
 
@@ -117,7 +134,7 @@ def piecewise_input_and_excess(flex_data: "FlexData", solution: "Solution | None
         if members.height == 0:
             continue
         online_p.append(members)
-        val = _value(solution, var)
+        val = _value(solution, var, members, flex_data)
         if val is None:
             continue
         y_parts.append(val.join(members, on="p", how="semi").join(us, on="p", how="inner")
@@ -130,7 +147,7 @@ def piecewise_input_and_excess(flex_data: "FlexData", solution: "Solution | None
                else cap.with_columns(exist=pl.lit(None, dtype=pl.Float64)))
         for var, edd, d_col, alias in (("v_invest_p", "edd_invest_set", "d_invest", "inv"),
                                        ("v_divest_p", "edd_divest_active", "d_divest", "div")):
-            units = _invest_units(solution, var, getattr(flex_data, edd, None), d_col)
+            units = _invest_units(solution, var, getattr(flex_data, edd, None), d_col, built, flex_data)
             cap = (cap.join(units.rename({"value": alias}), on=["p", "d"], how="left") if units is not None
                    else cap.with_columns(pl.lit(None, dtype=pl.Float64).alias(alias)))
         y_parts.append(cap.join(us, on="p", how="inner").select(
@@ -150,10 +167,11 @@ def piecewise_input_and_excess(flex_data: "FlexData", solution: "Solution | None
             .sort("p", "d", "t"))
 
 
-def _invest_units(solution, var: str, edd, d_col: str) -> "pl.DataFrame | None":
+def _invest_units(solution, var: str, edd, d_col: str, units: pl.DataFrame,
+                  flex_data: "FlexData") -> "pl.DataFrame | None":
     """``(p, d, value)``: Σ_{d′} ``var``[p,d′] over ``edd`` (p | e, d′ = ``d_col``, d) — the units invested /
-    divested in service in d, as ``U`` of ``conversion_piecewise``."""
-    val = _value(solution, var)
+    divested in service in d of the processes *units*, as ``U`` of ``conversion_piecewise``."""
+    val = _value(solution, var, units, flex_data)
     edd = _utf8(edd)
     if val is None or edd is None or edd.height == 0:
         return None
@@ -234,8 +252,8 @@ def warn_piecewise_excess(par, s, node_units: "Mapping[str, str] | None" = None,
         units = {node_units.get(n, "MWh") for p, n in pairs if p == f.unit}
         unit = units.pop() if len(units) == 1 else "input units"
         log.warning(
-            "Unit '%s' used more input than its curve needs in %d time step%s (largest %.4g %s in %s/%s, total "
-            "%.4g %s): its input had no value or a negative value there (a surplus, a free or curtailed input, a "
+            "Unit '%s' used more weighted input (input × conversion_flow_coeff) than its curve needs in %d time "
+            "step%s (largest %.4g %s in %s/%s, total %.4g %s): its input had no value or a negative value there (a surplus, a free or curtailed input, a "
             "CO2 credit) or a reserve or a minimum on its input made it pay, so the solution is not unique or "
             "burns input for nothing.", f.unit, f.steps, "" if f.steps == 1 else "s", f.largest, unit, f.at[0], f.at[1], f.total, unit)
     return found

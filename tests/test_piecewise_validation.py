@@ -14,7 +14,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-from spinedb_api import DatabaseMapping, Map, TimeSeriesVariableResolution, to_database
+from spinedb_api import Array, DatabaseMapping, Map, TimeSeriesVariableResolution, to_database
 
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.input_derivation._process_method import derive_process_method
@@ -391,6 +391,15 @@ def test_W7_one_input_unit_flowgroup_inertia_and_negative_values(tmp_path, schem
                          extra_values=vals + [("solve", ("s1",), "reduce_unit_detail_method", "online")],
                          extra_entities=ents)
     assert f"Unit 'G': its inertia for group 'ig' on input 'fuel' {tail}" in warnings
+    # A solve that no model runs leaves nothing out: model.solves runs s1 only, s2 has reduce online.
+    caplog.clear()
+    (tmp_path / "not_run").mkdir()
+    _, warnings = _check(tmp_path / "not_run", schema_db_url, caplog, [_unit("E", curve=ELECTROLYSER), _unit("G")],
+                         extra_values=vals + [("model", ("flexTool",), "solves", Array(["s1"])),
+                                              ("solve", ("s2",), "reduce_unit_detail_method", "online")],
+                         extra_entities=ents + [("model", ("flexTool",)), ("solve", ("s2",))])
+    assert f"Unit 'G': its inertia for group 'ig' on input 'fuel' {tail}" not in warnings
+    assert f"Unit 'E': its inertia for group 'ig' on input 'fuel' {tail}" in warnings
 
 
 def test_W7_not_for_items_that_cannot_pay(tmp_path, schema_db_url, caplog) -> None:
