@@ -53,8 +53,8 @@ A coarse process (``processCoarse``) has one flow per coarse step: its room is 0
 and at a coarse step's last fine row ρ̄ uses the coarse step durations, and κ, F and c are the coarse steps' means
 (``_ramp_inputs`` writes them to every fine step of the coarse step).  Node groups (``print_dispatch``) sum the arcs
 at their non-storage members; a process with every node in the group is internal and counts 0; member storage
-nodes count as outside (§2.7).  The arcs are summed into the entities with one sparse membership-matrix product per
-band and direction.
+nodes count as outside (§2.7).  The arcs are summed into the entities with one membership-map sum (``np.add.at``)
+per band and direction.
 
 The arcs with ``conversion_flow_coeff = 0`` (``process_source_sink_uncapped``: outside every per-arc capacity and
 ramp row) have no room of their own and are left out; a process that touches more than one storage node is in the
@@ -67,7 +67,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from scipy import sparse
 
 #: The bands of the envelope tables, in table order.
 UP_BANDS = ("units_up", "storage_up", "vre_up", "connections_up")
@@ -614,45 +613,55 @@ def _membership(meta: pd.DataFrame, env_nodes: pd.Index, gn: pd.DataFrame, proc_
     return pd.concat([at_node, at_group], ignore_index=True)
 
 
-def _matrix(mem: pd.DataFrame, n_contrib: int, columns: pd.Index) -> sparse.csr_matrix:
-    """Sparse 0/1 matrix ``(contribution, column)`` of ``mem`` rows (``contribution``, ``column``)."""
+class _Map:
+    """A 0/1 map ``contribution → column`` (each pair once): ``values @ map`` sums the contributions of every
+    column.  ``source`` / ``target`` hold the pairs in contribution order, so each column adds its contributions
+    one after the other in that order, from 0."""
+
+    def __init__(self, source: np.ndarray, target: np.ndarray, n_columns: int):
+        self.source = source
+        self.target = target
+        self.n_columns = n_columns
+
+
+def _matrix(mem: pd.DataFrame, columns: pd.Index) -> _Map:
+    """The map ``(contribution, column)`` of ``mem`` rows (``contribution``, ``column``)."""
     if not len(mem):
-        return sparse.csr_matrix((n_contrib, len(columns)))
-    row = mem["contribution"].to_numpy(dtype=int)
-    col = columns.get_indexer(mem["column"])
-    out = sparse.coo_matrix((np.ones(len(row)), (row, col)), shape=(n_contrib, len(columns))).tocsr()
-    out.sum_duplicates()
-    out.data[:] = 1.0
-    return out
+        return _Map(np.zeros(0, dtype=int), np.zeros(0, dtype=int), len(columns))
+    pairs = pd.DataFrame({"source": mem["contribution"].to_numpy(dtype=int),
+                          "target": columns.get_indexer(mem["column"])})
+    pairs = pairs.drop_duplicates().sort_values(["source", "target"], kind="stable")
+    return _Map(pairs["source"].to_numpy(dtype=int), pairs["target"].to_numpy(dtype=int), len(columns))
 
 
-def _product(values: np.ndarray, matrix: sparse.csr_matrix) -> np.ndarray:
-    """``values @ matrix`` (dense rows × contributions times a sparse 0/1 matrix) as a dense array."""
-    return np.asarray((matrix.T.tocsr() @ values.T).T)
+def _product(values: np.ndarray, matrix: _Map) -> np.ndarray:
+    """``values @ matrix`` (rows × contributions summed into rows × columns)."""
+    out = np.zeros((matrix.n_columns, values.shape[0]))
+    if len(matrix.source):
+        np.add.at(out, matrix.target, values.T[matrix.source])
+    return out.T
 
 
 def _band_matrices(meta: pd.DataFrame, mem: pd.DataFrame, entities) -> dict:
-    """The sparse membership matrices of one entity kind: per band (units, vre, connections) ``contribution ×
+    """The membership maps of one entity kind: per band (units, vre, connections) ``contribution ×
     entity``; for the storage band ``contribution × (storage node, entity)`` pairs, ``pair × entity`` and the
     pair selection (``storage``, ``entity``, ``process``) of the state-of-charge cap."""
     entity_index = pd.Index(entities)
     mem = mem.merge(meta[["band", "storage", "process"]], left_on="contribution", right_index=True)
-    n_contrib = len(meta)
     out = {"entities": entity_index}
     for band in ("units", "vre", "connections"):
         sel = mem[mem["band"] == band].assign(column=lambda m: m["entity"])
-        out[band] = _matrix(sel, n_contrib, entity_index)
+        out[band] = _matrix(sel, entity_index)
     sel = mem[mem["band"] == "storage"]
     pairs = pd.MultiIndex.from_frame(sel[["storage", "entity"]].drop_duplicates()) if len(sel) else \
         pd.MultiIndex.from_tuples([], names=["storage", "entity"])
     sel = sel.assign(column=list(zip(sel["storage"], sel["entity"])))
-    out["storage"] = _matrix(sel, n_contrib, pairs)
+    out["storage"] = _matrix(sel, pairs)
     out["pairs"] = pairs
     out["pair_sel"] = sel
     if len(pairs):
         entity_of = entity_index.get_indexer(pairs.get_level_values("entity"))
-        out["to_entity"] = sparse.csr_matrix((np.ones(len(pairs)), (np.arange(len(pairs)), entity_of)),
-                                             shape=(len(pairs), len(entity_index)))
+        out["to_entity"] = _Map(np.arange(len(pairs)), entity_of, len(entity_index))
     return out
 
 

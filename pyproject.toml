@@ -117,9 +117,6 @@ dependencies = [
     # (>=2.2.3); 3.0.x is what fresh installs get and what CI tests; the next
     # major is capped.
     "pandas>=2.2.3,<4",
-    # Sparse membership matrices of the ramp envelope (process_outputs/calc_ramp_envelope); spinedb-api pulls
-    # it in already, listed because FlexTool imports it directly.
-    "scipy",
     # spinedb-api is 0.x and its minor releases break the API (0.33 SQLAlchemy
     # 1.4 + mandatory ``with`` sessions, 0.34 new item API, 0.36 SQLAlchemy 2),
     # so it is capped to the tested minor series.  0.36.5 added the
