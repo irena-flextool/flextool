@@ -395,8 +395,9 @@ heat rate) is checked before the solve, so the curve is the upper envelope of it
   invested − divested) without online variables; `conversion_indirect` skips these units. The rows are `≥`, so the
   input can exceed the curve where that costs nothing or pays (the over-burn cases, units.md "Input above the
   curve"). Part-load measures of the reserve sizing use the lines (`_online._fuel_share`).
-- **Detail reduction** (`_reduce_detail._fold_piecewise`): `online*` rebuilds the lines in the capacity form;
-  under `integers*` the curve is an online use when its efficiency rises from the first point
+- **Detail reduction** (`_reduce_detail._fold_piecewise`): `online*` rebuilds the lines in the capacity form
+  and recomputes the unit's input limits from them (`_refold_input_caps`: with a weighted output at full
+  capacity `W ≠ 1` the capacity-form fuel at full output differs from the online form's); under `integers*` the curve is an online use when its efficiency rises from the first point
   (`process_piecewise_needs_online`).
 - **Checks.** Before the solve: `input_derivation/_validators.validate_piecewise_linear_inputs` (E1–E10, E12; E11 in the reader; the
   warnings W1–W7, W7 = setups that invite input above the curve). After the solve:

@@ -3472,6 +3472,7 @@ def _drive_cascade(
                 data,
                 _unit_level,
                 self.state.solve.reduce_system_detail_for(complete_solve_name),
+                db_reader=cascade_db_reader,
             )
             _reduce_base = re.sub(r"_roll_\d+$", "", complete_solve_name)
             if _reduce_report.warnings:

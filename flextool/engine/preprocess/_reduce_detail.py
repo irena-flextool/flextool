@@ -68,6 +68,7 @@ from flextool.engine.input._solve_config import REDUCE_SYSTEM_DETAIL_METHODS, RE
 from flextool.engine.input._solve_state import FlexToolConfigError
 
 if TYPE_CHECKING:
+    from flextool.engine.input._input_source import InputSource
     from flextool.engine.preprocess.flex_data import FlexData
 
 _LOG = logging.getLogger(__name__)
@@ -315,9 +316,9 @@ def _fold_piecewise(d: "FlexData", procs: set[str]) -> tuple[Param, Param]:
     rebuilt in the form without online variables from their points (``p_piecewise_points``,
     :func:`flextool.engine.input._piecewise_curve.curve_lines`): the origin line through the best point
     ``1/max η`` and the segments with a negative intercept, scaled in ``conversion_piecewise`` by the units built
-    instead of the units online.  The full-load fuel ``1/η(1)`` is the same in both forms, so the input limits
-    (``p_indirect_input_cap``) stay.  The rows of the other units are kept, in place; the new rows of ``procs``
-    follow in ``(p, d, seg)`` order of the curve functions."""
+    instead of the units online.  The rows of the other units are kept, in place; the new rows of ``procs``
+    follow in ``(p, d, seg)`` order of the curve functions.  The input limits of the units follow the new lines
+    (:func:`_refold_input_caps`)."""
     from flextool.engine.input._piecewise_curve import curve_lines
 
     points = _frame(d.p_piecewise_points)
@@ -337,6 +338,82 @@ def _fold_piecewise(d: "FlexData", procs: set[str]) -> tuple[Param, Param]:
         out.append(Param(prm.dims, pl.concat([kept.select("p", "seg", "d", "value"), new], how="vertical"),
                          name=prm.name))
     return out[0], out[1]
+
+
+def _refold_input_caps(d: "FlexData", new: dict, procs: set[str], db_reader: "InputSource | None") -> None:
+    """``new["p_indirect_input_cap"]`` / ``new["p_flow_upper"]``: the input limits of the indirect units of
+    ``procs`` whose conversion was folded into ``new`` (``p_slope`` / ``p_section``, ``p_piecewise_slope`` /
+    ``p_piecewise_intercept``), recomputed from the folded conversion by the producer of the cascade
+    (``_derived.p_indirect_input_cap_from_source``)::
+
+        p_indirect_input_cap'[p,s,p,d,t] = input_share_max · fuel'[p,d,t] · delay_factor / conversion_flow_coeff_s
+        fuel'[p,d,t]  = max_g(pw_slope'[p,g,d] · W[p] + pw_intercept'[p,g,d])   folded piecewise_linear units
+        p_flow_upper'[p,s,p,d,t] = p_flow_upper[p,s,p,d,t] / p_indirect_input_cap[p,s,p,d,t]
+                                   · p_indirect_input_cap'[p,s,p,d,t]           (where the limit changes)
+
+    ``W`` is the weighted output at full capacity (``_derived._indirect_fuel_width_lf``).  The fold keeps the
+    fuel at a weighted output of 1 per unit of capacity, not at ``W``: with ``W ≠ 1`` and a rising curve the
+    folded lines need more fuel at full capacity than the unfolded ones, and the old limit would cap the unit
+    below its capacity.  ``p_flow_upper / p_indirect_input_cap`` is the capacity per unit of the arc's row
+    (the factor its producer multiplied the limit by).  The rows (keys, order, dtypes) stay; a row whose limit
+    is unchanged keeps its value bit for bit.  Other units' rows are unchanged."""
+    from flextool.engine.preprocess.params import _derived as _drv
+
+    cap = d.p_indirect_input_cap
+    units = _names(getattr(d, "process_indirect", None)) & procs
+    if not units or cap is None:
+        return
+    if db_reader is None:
+        raise ValueError(f"reduce_unit_detail_method: the input limits of {', '.join(sorted(units))} follow the "
+                         "folded conversion and need the input source (apply_reduce_detail(db_reader=...)).")
+    lines = None
+    pw_slope, pw_intercept = new.get("p_piecewise_slope"), new.get("p_piecewise_intercept")
+    if pw_slope is not None and pw_intercept is not None:
+        lk = ["p", "seg", "d"]
+        lines = (_frame(pw_slope).select(*(pl.col(k).cast(pl.Utf8) for k in lk), pl.col("value").alias("slope"))
+                 .join(_frame(pw_intercept).select(*(pl.col(k).cast(pl.Utf8) for k in lk),
+                                                   pl.col("value").alias("intercept")), on=lk, how="inner")
+                 .filter(pl.col("p").is_in(sorted(units))))
+        lines = lines if lines.height > 0 else None
+    recomputed = _drv.p_indirect_input_cap_from_source(
+        db_reader, d.process_source_sink, d.dt, new.get("p_slope", d.p_slope), new.get("p_section", d.p_section),
+        _drv._classify_process_method(db_reader), lines)
+    keys = ("p", "source", "sink", "d", "t")
+    uk = [f"__{k}" for k in keys]
+    u8 = [pl.col(k).cast(pl.Utf8).alias(f"__{k}") for k in keys]
+    if recomputed is None:
+        raise ValueError(f"reduce_unit_detail_method: no input limits recomputed for {', '.join(sorted(units))}.")
+    fresh = (recomputed.frame.select(*u8, pl.col("value").cast(pl.Float64).alias("__new"))
+             .filter(pl.col("__p").is_in(sorted(units))))
+    old = (_frame(cap).with_row_index("__row").with_columns(*u8)
+           .join(fresh, on=uk, how="left").sort("__row"))
+    mine = pl.col("__p").is_in(sorted(units))
+    lost = old.filter(mine & pl.col("__new").is_null())
+    if lost.height > 0:
+        raise ValueError("reduce_unit_detail_method: input-limit rows without a recomputed value: "
+                         f"{lost.select(uk).head(5).rows()}.")
+    changed = old.filter(mine & (pl.col("__new") != pl.col("value")))
+    if changed.height == 0:
+        return
+    new["p_indirect_input_cap"] = Param(cap.dims, old.with_columns(
+        pl.when(mine).then(pl.col("__new")).otherwise(pl.col("value")).cast(cap.frame.schema["value"])
+        .alias("value")).select(cap.frame.columns), name=cap.name)
+    fu = new.get("p_flow_upper", d.p_flow_upper)
+    if fu is None:
+        return
+    if tuple(fu.dims) != keys:
+        raise ValueError(f"reduce_unit_detail_method: p_flow_upper has dims {fu.dims}, expected {keys}.")
+    if changed.filter(pl.col("value") == 0.0).height > 0:
+        raise ValueError("reduce_unit_detail_method: an input limit of 0 changes with the fold, so p_flow_upper "
+                         f"cannot be rescaled: {changed.filter(pl.col('value') == 0.0).select(uk).head(5).rows()}.")
+    ratio = changed.select(*uk, pl.col("value").cast(pl.Float64).alias("__old"), "__new")
+    upper = (_frame(fu).with_row_index("__row").with_columns(*u8)
+             .join(ratio, on=uk, how="left").sort("__row"))
+    new["p_flow_upper"] = Param(fu.dims, upper.with_columns(
+        pl.when(pl.col("__new").is_not_null())
+        .then(pl.col("value") / pl.col("__old") * pl.col("__new"))
+        .otherwise(pl.col("value")).cast(fu.frame.schema["value"]).alias("value")).select(fu.frame.columns),
+        name=fu.name)
 
 
 def _online_constraints(d: "FlexData") -> list[str]:
@@ -433,9 +510,10 @@ def _prune_online(d: "FlexData", procs: set[str], new: dict) -> None:
 
 
 def _reduce_unit(d: "FlexData", parts: frozenset[str], report: ReduceReport,
-                 sparts: frozenset[str] = frozenset()) -> dict:
+                 sparts: frozenset[str] = frozenset(), db_reader: "InputSource | None" = None) -> dict:
     """The changed fields of the unit parts ``parts`` (field -> new value); fills ``report``.  ``sparts``: the
-    system parts the solve leaves out (no use of online variables)."""
+    system parts the solve leaves out (no use of online variables).  ``db_reader``: the input source the input
+    limits of folded units are recomputed from (:func:`_refold_input_caps`)."""
     new: dict = {}
     removed = report.removed
 
@@ -533,6 +611,9 @@ def _reduce_unit(d: "FlexData", parts: frozenset[str], report: ReduceReport,
             removed.pop("integer_online", None)
         if online_cns and kept_integer:
             report.notes["fractional_online_constraints"] = list(online_cns)
+    folded_pw = set(removed.get("piecewise_linear", ()))
+    if folded_pw:
+        _refold_input_caps(d, new, folded_pw, db_reader)
     return new
 
 
@@ -580,20 +661,23 @@ def _interaction_notes(d: "FlexData", uparts: frozenset[str], sparts: frozenset[
             report.notes["inertia_from_flows"] = hit
 
 
-def apply_reduce_detail(d: "FlexData", unit: str = "none", system: str = "none") -> tuple["FlexData", ReduceReport]:
+def apply_reduce_detail(d: "FlexData", unit: str = "none", system: str = "none", *,
+                        db_reader: "InputSource | None" = None) -> tuple["FlexData", ReduceReport]:
     """The reduced data of one sub-solve and what was left out.
 
     ``unit`` / ``system`` are the resolved values (``SolveConfig.reduce_unit_detail_for`` /
     ``reduce_system_detail_for``).  Returns ``d`` itself when nothing is reduced; otherwise a shallow copy (frames
     not changed are shared, extra attributes such as the axis vocabulary are kept) with the changed fields replaced.
-    An unknown value raises :class:`FlexToolConfigError`.
+    An unknown value raises :class:`FlexToolConfigError`.  ``db_reader`` (the sub-solve's input source) is needed
+    when the level folds the conversion of an indirect unit: its input limits are recomputed from the folded
+    conversion (:func:`_refold_input_caps`).
     """
     report = ReduceReport(unit=unit, system=system)
     uparts = unit_parts(unit)
     sparts = system_parts(system)
     if not uparts and not sparts:
         return d, report
-    new = _reduce_unit(d, uparts, report, sparts) if uparts else {}
+    new = _reduce_unit(d, uparts, report, sparts, db_reader) if uparts else {}
     new.update(_reduce_system(d, sparts, report))
     _interaction_notes(d, uparts, sparts, report)
     if not new:

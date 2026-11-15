@@ -288,7 +288,7 @@ have no entity columns.
 feature out. A period shared with a solve that kept the feature keeps its per-period value, in which the time
 steps of the solve that left it out count as 0. Its row is labelled with the last solve that realized the period,
 which may be the one that left the feature out. The costs stay: a left-out feature costs nothing in the solve.
-The fuel of a `min_load_efficiency` unit under `online*` is its output divided by its full-load efficiency; that of a `piecewise_linear` unit follows its best-efficiency envelope.
+The fuel of a `min_load_efficiency` unit under `online*` is its output divided by its full-load efficiency; that of a `piecewise_linear` unit follows its best-efficiency envelope. The input limit of a unit with several flows (`input_share_max`) follows the reduced fuel use, so the unit still reaches its full capacity.
 
 ### Time structure assumptions
 
