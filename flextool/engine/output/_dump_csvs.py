@@ -140,6 +140,14 @@ DIRECT_WRITES: dict[str, tuple[str, str, dict[str, str]]] = {
                      {"p": "process", "d": "period", "t": "time"}),
     "p_slope": ("solve_data", "pdtProcess_slope.csv",
                 {"p": "process", "d": "period", "t": "time"}),
+    # piecewise_linear units with two or more lines (params/_piecewise.py); a reload without a database refuses
+    # piecewise_linear units (_csv_reload/_field_seeds.py), so these are dumped for inspection.
+    "process_piecewise": ("solve_data", "process_piecewise.csv", {"p": "process"}),
+    "process_piecewise_needs_online": ("solve_data", "process_piecewise_needs_online.csv", {"p": "process"}),
+    "process_piecewise_remap": ("solve_data", "process_piecewise_remap.csv", {"p": "process"}),
+    "p_piecewise_slope": ("solve_data", "p_piecewise_slope.csv", {"p": "process", "d": "period"}),
+    "p_piecewise_intercept": ("solve_data", "p_piecewise_intercept.csv", {"p": "process", "d": "period"}),
+    "p_piecewise_points": ("solve_data", "p_piecewise_points.csv", {"p": "process", "d": "period"}),
     # ─── CO2 cap / price ─────────────────────────────────────────────
     "group_co2_max_period": ("solve_data", "group_co2_max_period.csv",
                               {"g": "group"}),

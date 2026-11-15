@@ -4811,6 +4811,7 @@ def p_flow_upper_from_source(source: "InputSource",
                                 p_entity_max_units: "Param | None",
                                 p_entity_all_existing: "Param | None",
                                 classified: pl.DataFrame | None = None,
+                                piecewise_lines: pl.DataFrame | None = None,
                                 ) -> "Param | None":
     """§3.3.5 — per-(p, source, sink, d, t) structural max flow.
 
@@ -4838,6 +4839,10 @@ def p_flow_upper_from_source(source: "InputSource",
     :func:`p_entity_max_units_from_source`.  Provides
     ``p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p]``
     directly, so we don't need to recompute the dispatch cap inline.
+
+    ``piecewise_lines`` — the lines ``(p, d, seg, slope, intercept)`` of the
+    multi-line ``piecewise_linear`` units (see :func:`_indirect_input_cap_lf`);
+    None without such units.
 
     ``p_entity_all_existing`` — fallback when ``p_entity_max_units`` is
     absent (no invest configured); when both invest sets are empty
@@ -4900,7 +4905,7 @@ def p_flow_upper_from_source(source: "InputSource",
     if classified is None:
         classified = _classify_process_method(source)
     in_cap_lf = _indirect_input_cap_lf(source, pss, dt, p_slope, p_section,
-                                       classified)
+                                       classified, piecewise_lines)
     process_sink_lf = _process_sink_pairs_lf(source)
 
     # ── 3. Coefficient frames ───────────────────────────────────────
@@ -5036,6 +5041,7 @@ def _indirect_input_cap_lf(source: "InputSource",
                            p_slope: "Param | None",
                            p_section: "Param | None",
                            classified: pl.DataFrame,
+                           piecewise_lines: pl.DataFrame | None = None,
                            ) -> pl.LazyFrame:
     """Input-arc limit per unit of capacity for indirect (multi-flow) units.
 
@@ -5051,7 +5057,14 @@ def _indirect_input_cap_lf(source: "InputSource",
     that runs the unit at full output from input ``s`` alone: ``W`` is
     :func:`_indirect_fuel_width_lf`; ``section`` (the min-load-efficiency
     term, per unit online ≤ capacity) only for ``min_load_efficiency``
-    processes; ``delay_factor = 1/max(delay weight)`` for delayed
+    processes and the single-line ``piecewise_linear`` units with a
+    section (``single_line_rising`` of :func:`_piecewise_flags`: their
+    ``p_section`` is the curve's intercept, set at the load boundary,
+    ``params/_piecewise.py``); a multi-line ``piecewise_linear`` unit
+    (``piecewise_lines``: its lines ``(p, d, seg, slope, intercept)``)
+    needs at full output the most fuel of its lines,
+    ``max_g(slope_g · W + intercept_g)``, in place of ``slope · W +
+    section``; ``delay_factor = 1/max(delay weight)`` for delayed
     processes (one input step can feed a heavier-weighted output step);
     ``src_div_s`` is the input's ``conversion_flow_coeff`` (``1`` when
     ``≤ 0``), for delayed processes too: their delayed conversion term
@@ -5071,8 +5084,16 @@ def _indirect_input_cap_lf(source: "InputSource",
                             & pl.col("method").is_in(list(_METHOD_INDIRECT)))
                     .select("p")
                     .unique())
+    # The section term: min_load_efficiency units, and the single-line piecewise_linear units whose curve has an
+    # intercept (handled as min_load_efficiency units; their p_section is the curve's intercept).
+    section_gate = pl.col("ct") == "min_load_efficiency"
+    if (classified.get_column("ct").cast(pl.Utf8) == "piecewise_linear").any():
+        rising = (_piecewise_flags(source).filter(pl.col("single_line_rising"))
+                  .get_column("p").to_list())
+        section_gate = section_gate | ((pl.col("ct") == "piecewise_linear")
+                                       & pl.col("p").cast(pl.Utf8).is_in(rising))
     min_load_p = (classified.lazy()
-                    .filter(pl.col("ct") == "min_load_efficiency")
+                    .filter(section_gate)
                     .select("p")
                     .unique()
                     .with_columns(_has_min_load=pl.lit(True)))
@@ -5118,12 +5139,31 @@ def _indirect_input_cap_lf(source: "InputSource",
             on=["p", "d", "t"], how="left")
     else:
         base = base.with_columns(section=pl.lit(None, dtype=pl.Float64))
+    #   fuel[p,d,t] = slope·W + section                       (section only behind the gate above)
+    #   fuel[p,d,t] = max_g(pw_slope[p,g,d]·W + pw_intercept[p,g,d])   multi-line piecewise_linear units
+    if piecewise_lines is not None and piecewise_lines.height > 0:
+        pw_fuel = (piecewise_lines.lazy()
+                   .select(pl.col("p").cast(pl.Utf8).alias("_pu"), pl.col("d").cast(pl.Utf8).alias("_du"),
+                           pl.col("slope").cast(pl.Float64), pl.col("intercept").cast(pl.Float64))
+                   .join(_indirect_fuel_width_lf(source)
+                         .select(pl.col("p").cast(pl.Utf8).alias("_pu"), "fuel_width"),
+                         on="_pu", how="left")
+                   .with_columns(fuel_width=pl.col("fuel_width").fill_null(0.0))
+                   .group_by("_pu", "_du")
+                   .agg(_pw_fuel=(pl.col("slope") * pl.col("fuel_width") + pl.col("intercept")).max()))
+        base = (base.with_columns(_pu=pl.col("p").cast(pl.Utf8), _du=pl.col("d").cast(pl.Utf8))
+                .join(pw_fuel, on=["_pu", "_du"], how="left", maintain_order="left")
+                .drop("_pu", "_du"))
+    else:
+        base = base.with_columns(_pw_fuel=pl.lit(None, dtype=pl.Float64))
     return (base
         .with_columns(
-            _fuel=(pl.col("slope").fill_null(0.0) * pl.col("fuel_width")
-                   + pl.when(pl.col("_has_min_load"))
-                       .then(pl.col("section").fill_null(0.0))
-                       .otherwise(0.0)),
+            _fuel=pl.when(pl.col("_pw_fuel").is_not_null())
+                    .then(pl.col("_pw_fuel"))
+                    .otherwise(pl.col("slope").fill_null(0.0) * pl.col("fuel_width")
+                               + pl.when(pl.col("_has_min_load"))
+                                   .then(pl.col("section").fill_null(0.0))
+                                   .otherwise(0.0)),
             # src_conv ≤ 0 inputs would feed the conversion negatively
             # (not tied to the fuel need): keep a finite limit with a
             # unit divisor.  Delayed and undelayed inputs alike enter the
@@ -5142,6 +5182,7 @@ def p_indirect_input_cap_from_source(source: "InputSource",
                                      p_slope: "Param | None",
                                      p_section: "Param | None",
                                      classified: pl.DataFrame | None = None,
+                                     piecewise_lines: pl.DataFrame | None = None,
                                      ) -> "Param | None":
     """``Param((p, source, sink, d, t))`` — the input-arc limit of indirect
     units per unit of capacity (:func:`_indirect_input_cap_lf`):
@@ -5164,7 +5205,7 @@ def p_indirect_input_cap_from_source(source: "InputSource",
     if classified is None:
         classified = _classify_process_method(source)
     out = (_indirect_input_cap_lf(source, pss, dt, p_slope, p_section,
-                                  classified)
+                                  classified, piecewise_lines)
            .sort("p", "source", "sink", "d", "t")
            .collect())
     if out.height == 0:

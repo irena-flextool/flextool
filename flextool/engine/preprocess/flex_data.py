@@ -1367,7 +1367,14 @@ class FlexData:
     # their direction switch v_exact_forward (model/_exact.py).
     process_exact: pl.DataFrame | None = None                 # set: (p,)
     process_minload: pl.DataFrame | None = None              # set: (p,)
-    process_min_load_eff: pl.DataFrame | None = None  # (p,) where ct_method=min_load_efficiency
+    process_min_load_eff: pl.DataFrame | None = None  # (p,) where ct_method=min_load_efficiency (+ single-line piecewise_linear units with an intercept)
+    # piecewise_linear units with two or more lines in some period (params/_piecewise.py, the load boundary):
+    process_piecewise: pl.DataFrame | None = None                 # set: (p,) — conversion_piecewise rows
+    process_piecewise_needs_online: pl.DataFrame | None = None    # set: (p,) — efficiency rises from the first point
+    process_piecewise_remap: pl.DataFrame | None = None           # set: (p,) — one input, one output, not delayed
+    p_piecewise_slope: Param | None = None       # (p, seg, d) — input per output of each line (online / capacity form)
+    p_piecewise_intercept: Param | None = None   # (p, seg, d) — input per unit of capacity at zero output of each line
+    p_piecewise_points: pl.DataFrame | None = None  # (p, d, load, eff) — the solve's curve points (load / eff non-dim)
     p_online_dt: pl.DataFrame | None = None                  # set: (p, d, t) — UC var domain
     pdt_online_linear: pl.DataFrame | None = None  # (p, d, t) — startup-cost obj index, linear
     pdt_online_integer: pl.DataFrame | None = None # (p, d, t) — startup-cost obj index, integer
@@ -5543,7 +5550,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
                     getattr(flex_data, "dt", None), db_reader, provider, _wd_yr)
             # piecewise_linear units: the load-boundary step (one authority on every path).
             from flextool.engine.preprocess.params._piecewise import apply_piecewise_curves
-            apply_piecewise_curves(flex_data, db_reader)
+            apply_piecewise_curves(flex_data, db_reader, provider)
         elif _dump_hooks is not None:
             # Reader-less CSV reload: the reload's own seeds of the fields the overlay above writes.
             _dump_hooks.field_seeds(flex_data, sd, inp, provider)

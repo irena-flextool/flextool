@@ -1053,6 +1053,12 @@ def _build_region_data(
     new.p_arc_max_cap_coef = _filter_param_arc(src.p_arc_max_cap_coef)
     new.p_indirect_input_cap = _filter_param_arc(src.p_indirect_input_cap)
     new.p_slope = _filter_param(src.p_slope, "p", keep_procs)
+    # piecewise_linear units with two or more lines: only this region's (dataclasses.replace carries them whole).
+    for _f in ("process_piecewise", "process_piecewise_needs_online", "process_piecewise_remap",
+               "p_piecewise_points"):
+        setattr(new, _f, _filter_frame(getattr(src, _f), "p", keep_procs))
+    new.p_piecewise_slope = _filter_param(src.p_piecewise_slope, "p", keep_procs)
+    new.p_piecewise_intercept = _filter_param(src.p_piecewise_intercept, "p", keep_procs)
     new.p_process_existing_count = _filter_param(src.p_process_existing_count, "p", keep_procs)
     new.p_process_availability = _filter_param(src.p_process_availability, "p", keep_procs)
     # Ramp limits and ramp costs: only this region's arcs (dt_ramp_link / dt_online_wrap / dt_ramp_carry / dt_online_carry are
@@ -1998,6 +2004,12 @@ def master_network_data(
     new.process_source_sink_uncapped = _keep_cross_triple(
         data.process_source_sink_uncapped)
     new.p_slope = _keep_proc_param(data.p_slope)
+    # piecewise_linear units with two or more lines: only the kept processes (none are cross connections).
+    for _f in ("process_piecewise", "process_piecewise_needs_online", "process_piecewise_remap",
+               "p_piecewise_points"):
+        setattr(new, _f, _keep_proc(getattr(data, _f)))
+    new.p_piecewise_slope = _keep_proc_param(data.p_piecewise_slope)
+    new.p_piecewise_intercept = _keep_proc_param(data.p_piecewise_intercept)
     new.p_process_existing_count = _keep_proc_param(data.p_process_existing_count)
     new.p_process_availability = _keep_proc_param(data.p_process_availability)
     # Ramp limits and ramp costs: only the kept (cross) arcs.
