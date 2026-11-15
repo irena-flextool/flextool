@@ -239,6 +239,14 @@ OPTIONS: dict[str, OptionSpec] = {
             help="HiGHS user_bound_scale exponent; unset lets the autoscaler choose",
         ),
         _spec(
+            key="scaling_guard", flag="--scaling-guard", env="FLEXTOOL_SCALING_GUARD", db=None,
+            parse=_choice("error", "warn", "off"), default="error", audience="user",
+            help="what to do when a solve's limits and bounds span more than the solver can enforce accurately "
+                 "after scaling (more than 17 decades for HiGHS): error stops before the solve, warn prints the "
+                 "problem and solves, off does not check; spreads above 13 decades and cost / coefficient "
+                 "problems only warn, and a commercial solver (which gets no FlexTool scaling) only warns",
+        ),
+        _spec(
             key="save_memory", flag="--save-memory", env="FLEXTOOL_SAVE_MEMORY", db=None,
             parse=_switch, default=False, audience="user",
             help="solve each LP in a separate process to lower peak memory",

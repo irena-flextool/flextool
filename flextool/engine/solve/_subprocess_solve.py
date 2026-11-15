@@ -2035,6 +2035,7 @@ def solve_via_subprocess(
     work_folder: Path | None = None,
     run_options: "RunOptions | None" = None,
     option_layers: Mapping[str, str] | None = None,
+    pre_run_check: Any = None,
 ) -> "Solution":
     """Solve *problem* via the appropriate CLI subprocess; return a Solution.
 
@@ -2077,6 +2078,11 @@ def solve_via_subprocess(
         Commercial solvers: parameter name -> the layer that set it (option
         file path, ``solver_arguments of solve X``, a flag), named in the
         warning about a parameter the solver does not know.
+    pre_run_check
+        HiGHS only: polar-high's ``pre_run_check``, run by
+        :meth:`Problem.write_mps` on the LP before the file is written (a raise
+        leaves no file and no child); the options it returns are added to the
+        child's option file.
 
     Returns
     -------
@@ -2102,6 +2108,7 @@ def solve_via_subprocess(
         return _solve_highs_subprocess(
             problem, options, solve_name=solve_name, logger=logger,
             work_folder=work_folder, run_options=run_options,
+            pre_run_check=pre_run_check,
         )
     if solver_name in _SCRIPTS:
         return _solve_commercial_subprocess(
@@ -2128,6 +2135,7 @@ def _solve_highs_subprocess(
     logger: logging.Logger | None,
     work_folder: Path | None,
     run_options: "RunOptions | None" = None,
+    pre_run_check: Any = None,
 ) -> "Solution":
     """HiGHS-specific subprocess path (unchanged contract).
 
@@ -2217,8 +2225,6 @@ def _solve_highs_subprocess(
     warm_run_time: float | None = None
 
     try:
-        _write_highs_option_files(_highs_option_pairs(options), opts_path, options_json)
-
         if logger is not None:
             logger.info(
                 "save_memory: building LP for %r, writing MPS to %s",
@@ -2243,7 +2249,15 @@ def _solve_highs_subprocess(
         # The MPS file carries no objective constant (``add_obj_constant``);
         # the solver's objective leaves it out and the Solution adds it back.
         obj_offset = float(getattr(problem, "_obj_offset", 0.0) or 0.0)
-        problem.write_mps(str(mps_path), release=True, emit_names=False)
+        # The scaling guard's roll recheck (``pre_run_check``) runs inside the
+        # write, on the LP the file will hold, before anything is written; the
+        # options it returns (a per-roll ``user_bound_scale``) join the child's
+        # option file, written after it.
+        hook_options = problem.write_mps(
+            str(mps_path), release=True, emit_names=False, pre_run_check=pre_run_check,
+        ) or {}
+        child_options = {**dict(options or {}), **hook_options}
+        _write_highs_option_files(_highs_option_pairs(child_options), opts_path, options_json)
 
         cmd = [
             *python_module_argv("flextool.cli.cmd_solve_mps"),

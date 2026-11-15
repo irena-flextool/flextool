@@ -62,16 +62,25 @@ from ._layer2_types import (
     lookup_var,
     resolve_cstr_rhs_type,
 )
+from ._guard import (
+    GuardOutcome,
+    RollRecheck,
+    resolve_guard_mode,
+    run_guard,
+)
+from ._guard import enforce as enforce_scaling_guard
 from ._quantity_types import QuantityType, lookup, resolve_group_capacity_type
-from ._report import format_console_summary, format_nonoptimal_hint, write_report
+from ._report import format_console_summary, format_nonoptimal_hint, render_guard, write_report
 
 __all__ = [
     "CONSTRAINT_FAMILIES",
     "CstrFamily",
+    "GuardOutcome",
     "Layer2Plan",
     "Layer3Plan",
     "QuantityType",
     "RangeReport",
+    "RollRecheck",
     "ScalingConfig",
     "ScalingMode",
     "USER_BOUND_SCALE_MAX",
@@ -86,6 +95,7 @@ __all__ = [
     "bucket_coefficients",
     "choose_scale_powers",
     "detect_ranges",
+    "enforce_scaling_guard",
     "format_console_summary",
     "format_nonoptimal_hint",
     "get_explicit_option",
@@ -98,10 +108,13 @@ __all__ = [
     "ranges_from_arrays",
     "ranges_from_streamed",
     "recommend_scaling",
+    "render_guard",
     "resolve_cstr_rhs_type",
     "resolve_group_capacity_type",
+    "resolve_guard_mode",
     "resolve_scaling_config",
     "resolve_user_bound_scale_override",
+    "run_guard",
     "unscale_solution",
     "write_report",
 ]

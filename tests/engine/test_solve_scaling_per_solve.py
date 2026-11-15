@@ -44,7 +44,7 @@ def _region_scaling_mode(url: str, tmp_path: Path, monkeypatch) -> ScalingMode:
 
     seen: list = []
 
-    def record(pb, cfg, region_name):
+    def record(pb, cfg, region_name, **kwargs):
         seen.append(cfg)
         raise _Stop
 

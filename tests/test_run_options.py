@@ -23,6 +23,7 @@ SAMPLES: dict[str, tuple[object, str, object, object]] = {
     "highs_mip_gap": (0.01, "0.0005", 0.0005, 0.002),
     "scaling": ("off", "basic", "basic", "solver_only"),
     "user_bound_scale": (-4, "-2", -2, -6),
+    "scaling_guard": ("warn", "off", "off", "warn"),
     "save_memory": (True, "1", True, True),
     "warm_start": (True, "1", True, True),
     "basis_cache_dir": ("/flag/cache", "/env/cache", "/env/cache", "/db/cache"),
@@ -75,6 +76,7 @@ def test_precedence_table(key, present):
         ("presolve", "maybe"),
         ("solver_time_limit", "-5"),
         ("scaling", "fulll"),
+        ("scaling_guard", "warning"),
         ("save_memory", "yes"),
         ("benders_in_out_weight", "1.0"),
     ],
@@ -207,6 +209,7 @@ def test_to_argv_round_trips_through_the_run_parser():
     given = {
         "threads": 5, "highs_threads": 3, "presolve": "off", "solver_log_level": "silent", "solver_time_limit": 12.5,
         "solver_mip_gap": 0.0005, "scaling": "basic", "user_bound_scale": -3,
+        "scaling_guard": "warn",
         "save_memory": True, "warm_start": True, "basis_cache_dir": "/tmp/cache", "benders_workers": 2,
         "solver_config_dir": ("/tmp/project/solver_config", "/tmp/solver_config"),
         "workspace_solver_config_dir": ("/tmp/project/solver_config", "/tmp/ws/solver_config"),
@@ -241,3 +244,13 @@ def test_solver_config_dir_lists_several_folders():
     flagged = RunOptions.from_cli(args, environ={"FLEXTOOL_SOLVER_CONFIG_DIR": "/env"})
     assert flagged.value("solver_config_dir") == ("/a", "/b")
     assert flagged.to_argv() == ["--solver-config-dir", "/a", "--solver-config-dir", "/b"]
+
+
+def test_scaling_guard_precedence_flag_over_env_over_default():
+    """``--scaling-guard`` > ``FLEXTOOL_SCALING_GUARD`` > ``error``; the database has no tier."""
+    assert OPTIONS["scaling_guard"].db is None
+    assert RunOptions.from_env({}).get("scaling_guard").value == "error"
+    env = RunOptions.from_env({"FLEXTOOL_SCALING_GUARD": "warn"})
+    assert (env.value("scaling_guard"), env.source("scaling_guard")) == ("warn", "env")
+    both = RunOptions.from_cli(_flags(scaling_guard="off"), environ={"FLEXTOOL_SCALING_GUARD": "warn"})
+    assert (both.value("scaling_guard"), both.source("scaling_guard")) == ("off", "cli")

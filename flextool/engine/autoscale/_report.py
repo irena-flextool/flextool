@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from polar_high.autoscale import Layer3Plan, RangeReport
 
 from ._layer2 import Layer2Plan
+
+if TYPE_CHECKING:
+    from ._guard import GuardOutcome
 
 
 def _decades(span: tuple[float, float]) -> Any:
@@ -124,6 +127,13 @@ def _dump_simple_yaml(obj: Any, indent: int = 0) -> str:
     return _scalar(obj)
 
 
+#: Plain words a YAML 1.1 loader (PyYAML ``safe_load``) reads as booleans or
+#: null; quoted so that a string such as the guard mode ``off`` stays a string.
+_YAML_NON_STRINGS = frozenset({
+    "y", "n", "yes", "no", "on", "off", "true", "false", "null", "~",
+})
+
+
 def _scalar(v: Any) -> str:
     """Render a scalar leaf for the YAML emitter."""
     if v is None:
@@ -139,7 +149,8 @@ def _scalar(v: Any) -> str:
     if isinstance(v, int):
         return str(v)
     s = str(v)
-    if any(c in s for c in (":", "#", "\n", "{", "}", "[", "]", "&", "*")) or s.strip() != s:
+    if (any(c in s for c in (":", "#", "\n", "{", "}", "[", "]", "&", "*")) or s.strip() != s
+            or s.lower() in _YAML_NON_STRINGS):
         # Escape via single-quoted scalar — YAML's safest form.
         return "'" + s.replace("'", "''") + "'"
     return s
@@ -181,12 +192,102 @@ def render_layer3(plan: Layer3Plan) -> dict[str, Any]:
     string so the operator can correlate the YAML entry with the
     one-line log emitted at apply time.
     """
-    return {
+    out: dict[str, Any] = {
         "user_objective_scale": int(plan.user_objective_scale),
         "user_bound_scale": int(plan.user_bound_scale),
         "simplex_scale_strategy": int(plan.simplex_scale_strategy),
         "reasoning": str(plan.reasoning),
+        "bound_source": str(getattr(plan, "bound_source", "") or ""),
+        "bound_tag": str(getattr(plan, "bound_tag", "") or ""),
     }
+    tol = getattr(plan, "primal_feasibility_tolerance", None)
+    if tol is not None:
+        out["primal_feasibility_tolerance"] = float(tol)
+    window = getattr(plan, "bound_window", None)
+    if window is not None:
+        out["bound_window"] = {
+            "n_min": int(window.n_min),
+            "n_max": int(window.n_max),
+            "small_end_factor": float(window.small_end_factor),
+            "fits": bool(window.fits),
+        }
+    return out
+
+
+def _render_extreme(ext: Any) -> dict[str, Any]:
+    return {
+        "family": ext.family,
+        "component": ext.component,
+        "post": float(ext.post),
+        "model": float(ext.model),
+    }
+
+
+def _render_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
+    dims = entry.get("dims") or {}
+    out: dict[str, Any] = {
+        "family": entry.get("family"),
+        "dims": ", ".join(f"{k}={v}" for k, v in dims.items()),
+        "post": float(entry.get("post", math.nan)),
+        "model": float(entry.get("model", math.nan)),
+    }
+    column = entry.get("column")
+    if column:
+        cdims = column.get("dims") or {}
+        out["column"] = f"{column.get('family')}(" + ", ".join(f"{k}={v}" for k, v in cdims.items()) + ")"
+    if entry.get("count_within_factor"):
+        out["count_within_factor"] = int(entry["count_within_factor"])
+    return out
+
+
+def render_guard(outcome: "GuardOutcome") -> dict[str, Any]:
+    """Build the ``guard`` section of the autoscaler audit YAML: the verdict
+    after the policy, the inputs it was judged at and every finding with its
+    numbers, the families at each end and the entries named there."""
+    out: dict[str, Any] = {
+        "verdict": outcome.level,
+        "mode": outcome.mode,
+        "solver": outcome.solver,
+    }
+    if outcome.region is not None:
+        out["region"] = outcome.region
+    if outcome.adjusted_bound_scale is not None:
+        out["roll_user_bound_scale"] = int(outcome.adjusted_bound_scale)
+    v = outcome.verdict
+    if v is None:
+        return out
+    out.update({
+        "primal_tolerance": float(v.primal_tol),
+        "dual_tolerance": float(v.dual_tol),
+        "tolerance_source": outcome.tol_source,
+        "window": {"lo": float(v.window[0]), "hi": float(v.window[1])},
+        "user_bound_scale": int(v.bound_scale),
+        "user_objective_scale": int(v.objective_scale),
+        "bound_source": v.bound_source,
+    })
+    printed = {m.group: m.level for m in outcome.messages}
+    findings: dict[str, Any] = {}
+    info: dict[str, Any] = {}
+    for f in v.findings:
+        rec: dict[str, Any] = {"level": printed.get(f.group, f.level), "kind": f.kind}
+        if f.group != "info":
+            rec["solver_level"] = f.level
+            rec["caused_by_layer2"] = bool(f.caused_by_prescale)
+        rec["numbers"] = {k: float(x) for k, x in f.numbers.items()}
+        if f.extremes:
+            rec["extremes"] = {side: _render_extreme(e) for side, e in f.extremes.items()}
+        located = outcome.located.get(f.group)
+        if located:
+            rec["entries"] = {side: [_render_entry(e) for e in entries]
+                              for side, entries in located.items()}
+        if f.group == "info":
+            info[f.kind] = rec
+        else:
+            findings[f.group] = rec
+    out["findings"] = findings
+    if info:
+        out["info"] = info
+    return out
 
 
 def write_report(result: Mapping[str, Any], path: Path | str) -> Path:
@@ -223,6 +324,7 @@ def format_console_summary(
     layer2_plan: "Layer2Plan | None",
     layer3_plan: "Layer3Plan | None",
     threshold_decades: float,
+    guard: "GuardOutcome | None" = None,
 ) -> str:
     """Compose the one-line console summary surfaced when autoscale fires.
 
@@ -235,11 +337,15 @@ def format_console_summary(
     "within comfort zone" confirmation — callers can branch on that path
     by inspecting the report themselves, but exposing the message here
     keeps the format definition in one place.
+
+    ``guard`` (the scaling guard's outcome) adds ``guard=ok|warn|error``
+    (``off`` when the check did not run); without it the line is as before.
     """
+    flag = "" if guard is None else f" guard={guard.level}"
     if not ranges_pre.trigger:
         return (
             "Autoscale by polar-high: LP within HiGHS comfort zone "
-            f"(spreads <= {threshold_decades:g} decades) — no scaling applied"
+            f"(spreads <= {threshold_decades:g} decades) — no scaling applied" + flag
         )
 
     pre_matrix = _fmt_decades(_decades(ranges_pre.matrix))
@@ -283,6 +389,8 @@ def format_console_summary(
             f"Bound={post_bound} RHS={post_rhs}"
         )
 
+    if flag:
+        parts[-1] += flag
     flat = " -> ".join(parts)
     if len(flat) <= 100:
         return flat
@@ -330,6 +438,7 @@ def format_nonoptimal_hint(ranges: RangeReport) -> str:
 __all__ = [
     "format_console_summary",
     "format_nonoptimal_hint",
+    "render_guard",
     "render_layer2",
     "render_layer3",
     "write_report",

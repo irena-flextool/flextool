@@ -24,7 +24,7 @@ import logging
 import math
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Mapping, NamedTuple, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, NamedTuple, Sequence
 
 from flextool._solver_option_rules import cplex_set_word_problem
 from flextool._solver_option_rules import highs_opt_lines as _highs_opt_lines
@@ -1529,6 +1529,7 @@ def run_one_solve(
     solver_config_dir: "Path | None" = None,
     commercial_options: "list[CommercialOption] | None" = None,
     solver_option_files: "SolverOptionFiles | None" = None,
+    pre_run_check: "Callable[[dict, object], Mapping[str, object] | None] | None" = None,
 ):
     """Dispatch *problem* to the chosen solver.
 
@@ -1597,6 +1598,15 @@ def run_one_solve(
         The run's option files, read once at run start (``run_chain_from_db``);
         win over *solver_config_dir*.  With neither, the folder is resolved like
         a run without a database (:func:`commercial_opt_file_layer`).
+    pre_run_check
+        HiGHS only: polar-high's ``pre_run_check(ranges, highs)``, called with
+        the ranges of the LP actually built right before the solver runs (the
+        scaling guard's roll recheck).  In-process it is
+        ``Problem.solve(pre_run_check=)``; with *save_memory* it runs in
+        ``Problem.write_mps(pre_run_check=)`` (no solver instance, ``None``)
+        and the options it returns go into the child's option file.  An
+        exception from it propagates before any solver runs.  Ignored on the
+        commercial path.
 
     Returns
     -------
@@ -1637,8 +1647,11 @@ def run_one_solve(
                 logger=logger,
                 work_folder=work_folder,
                 run_options=run_options,
+                pre_run_check=pre_run_check,
             )
         # Names reach HiGHS only when a HiGHS option writes a file with them.
+        if pre_run_check is not None:
+            return problem.solve(keep_solver=True, highs_names="auto", pre_run_check=pre_run_check)
         return problem.solve(keep_solver=True, highs_names="auto")
 
     # Commercial path.  Always subprocess: write MPS via the cheap

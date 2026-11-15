@@ -83,9 +83,11 @@ from flextool.engine.solve._determinism import (
     SIMPLEX_SCALE_STRATEGY_ADVANCED,
 )
 from flextool.engine.autoscale import (
+    GuardOutcome as _AutoscaleGuardOutcome,
     Layer2Plan as _AutoscaleLayer2Plan,
     Layer3Plan as _AutoscaleLayer3Plan,
     RangeReport as _AutoscaleRangeReport,
+    RollRecheck as _AutoscaleRollRecheck,
     ScalingMode as _AutoscaleScalingMode,
     USER_BOUND_SCALE_MAX as _USER_BOUND_SCALE_MAX,
     USER_BOUND_SCALE_MIN as _USER_BOUND_SCALE_MIN,
@@ -93,12 +95,15 @@ from flextool.engine.autoscale import (
     apply_layer2_with_exponents as _autoscale_apply_layer2_with_exponents,
     apply_scaling as _autoscale_apply_scaling,
     detect_ranges as _autoscale_compute_ranges,
+    enforce_scaling_guard as _autoscale_enforce_guard,
     format_console_summary as _autoscale_format_console_summary,
     mode_enables_layer1 as _autoscale_mode_enables_layer1,
     mode_enables_layer3 as _autoscale_mode_enables_layer3,
     recommend_scaling as _autoscale_recommend_scaling,
+    resolve_guard_mode as _autoscale_resolve_guard_mode,
     resolve_scaling_config as _autoscale_resolve_config,
     resolve_user_bound_scale_override as _resolve_user_bound_scale_override,
+    run_guard as _autoscale_run_guard,
     unscale_solution as _autoscale_unscale_solution,
     write_report as _autoscale_write_report,
 )
@@ -435,6 +440,7 @@ def _autoscale_emit_layer1(
     layer2_plan: "_AutoscaleLayer2Plan | None" = None,
     layer3_plan: "_AutoscaleLayer3Plan | None" = None,
     scaling_config: "ScalingConfig | None" = None,
+    guard: "_AutoscaleGuardOutcome | None" = None,
 ) -> None:
     """Layer 1 (detect) post-solve emitter.
 
@@ -512,11 +518,121 @@ def _autoscale_emit_layer1(
                     render_layer3 as _render_l3,
                 )
                 report_tree["layer3"] = _render_l3(layer3_plan)
+            if guard is not None:
+                from flextool.engine.autoscale._report import (
+                    render_guard as _render_guard,
+                )
+                report_tree["guard"] = _render_guard(guard)
             _autoscale_write_report(report_tree, yaml_path)
         except Exception:  # pragma: no cover — non-fatal
             logger.exception(
                 "autoscale Layer 1 report write failed (%s)", yaml_path,
             )
+
+
+def _autoscale_report_path(
+    cfg: "ScalingConfig", solve_name: str, work_folder: "str | os.PathLike | None",
+) -> "Path | None":
+    """Where the per-solve autoscale YAML goes: the configured path, else
+    ``<work_folder>/solve_data/autoscale_<solve>.yaml``."""
+    if cfg.report_yaml_path is not None:
+        return Path(cfg.report_yaml_path)
+    if work_folder is None:
+        return None
+    return Path(work_folder) / "solve_data" / f"autoscale_{solve_name}.yaml"
+
+
+def _autoscale_write_presolve_report(
+    *,
+    solve_name: str,
+    logger: logging.Logger,
+    work_folder: "str | os.PathLike | None",
+    ranges: "_AutoscaleRangeReport | None",
+    layer2_plan: "_AutoscaleLayer2Plan | None",
+    layer3_plan: "_AutoscaleLayer3Plan | None",
+    guard: "_AutoscaleGuardOutcome | None",
+    scaling_config: "ScalingConfig",
+) -> None:
+    """Write the autoscale YAML before the solve, at decision time: the
+    pre-solve ranges, the Layer 2 / Layer 3 decisions and the scaling-guard
+    verdict.  So the file exists also when the solve stops (a guard error, a
+    solver failure) or no post-solve readout runs; the post-solve emitter
+    (:func:`_autoscale_emit_layer1`) rewrites it with the solved LP's ranges.
+    Non-fatal."""
+    if not _autoscale_mode_enables_layer1(scaling_config.mode) or ranges is None:
+        return
+    yaml_path = _autoscale_report_path(scaling_config, solve_name, work_folder)
+    if yaml_path is None:
+        return
+    try:
+        from flextool.engine.autoscale._report import (
+            render_guard as _render_guard,
+            render_layer2 as _render_l2,
+            render_layer3 as _render_l3,
+        )
+        tree: dict = {"layer1": ranges}
+        if layer2_plan is not None:
+            tree["layer2"] = _render_l2(layer2_plan)
+        if layer3_plan is not None:
+            tree["layer3"] = _render_l3(layer3_plan)
+        if guard is not None:
+            tree["guard"] = _render_guard(guard)
+        _autoscale_write_report(tree, yaml_path)
+    except Exception:  # pragma: no cover — non-fatal
+        logger.exception("autoscale pre-solve report write failed (%s)", yaml_path)
+
+
+def _roll_label(complete_solve_name: str, roll_index: "int | str | None") -> str:
+    """``"<solve>, roll <k>"`` (1-based) for the scaling guard's messages
+    about a roll after the first; the solve name otherwise."""
+    if isinstance(roll_index, int) and roll_index > 0:
+        return f"{complete_solve_name}, roll {roll_index + 1}"
+    return complete_solve_name
+
+
+def _autoscale_guard_check(
+    pb: "Problem",
+    *,
+    ranges: "_AutoscaleRangeReport | None",
+    ranges_pre: "_AutoscaleRangeReport | None",
+    layer2_plan: "_AutoscaleLayer2Plan | None",
+    layer3_plan: "_AutoscaleLayer3Plan | None",
+    solve_name: str,
+    run_options: "RunOptions | None",
+    scaling_config: "ScalingConfig",
+    logger: logging.Logger,
+    solver: str = "highs",
+    commercial_options: "list | None" = None,
+) -> "_AutoscaleGuardOutcome | None":
+    """The scaling guard of one solve, from the Layer 3 readout (no extra
+    walk; :func:`locate_extremes` only on a warning / error).  ``None`` when
+    the autoscaler is off for this solve (``--scaling off|solver_only``: no
+    readout, no guard) or the readout is missing.  A failure of the check
+    itself is logged once and the solve goes on (re-raised under
+    ``FLEXTOOL_AUTOSCALE_STRICT=1``).  The verdict is acted on by
+    :func:`_autoscale_enforce_guard`, called outside every ``except``."""
+    if not _autoscale_mode_enables_layer3(scaling_config.mode):
+        return None
+    from flextool.engine._behaviour_changes import warn_once as _warn_once
+    if ranges is None:
+        # The Layer 3 readout failed (logged there; re-raised under strict).
+        _warn_once(("scaling_guard_failed",), "Warning: the scaling guard could not run (the range "
+                   "readout failed); the solves go on unchecked (details in the log).")
+        return None
+    try:
+        return _autoscale_run_guard(
+            pb, ranges=ranges, ranges_pre=ranges_pre, plan=layer3_plan,
+            solve_name=solve_name, mode=_autoscale_resolve_guard_mode(run_options),
+            solver=solver, commercial_options=commercial_options,
+            layer2_applied=layer2_plan is not None,
+        )
+    except Exception:
+        if os.environ.get("FLEXTOOL_AUTOSCALE_STRICT") == "1":
+            raise
+        if _warn_once(("scaling_guard_failed",), "Warning: the scaling guard could not run; "
+                      "the solves go on unchecked (details in the log)."):
+            logger.exception("scaling guard failed for %s", solve_name)
+        return None
 
 
 def _autoscale_apply_layer3_pre_solve(
@@ -526,6 +642,8 @@ def _autoscale_apply_layer3_pre_solve(
     solve_name: str,
     logger: logging.Logger,
     scaling_config: "ScalingConfig | None" = None,
+    ranges_pre: "_AutoscaleRangeReport | None" = None,
+    readout: "dict | None" = None,
 ) -> "_AutoscaleLayer3Plan | None":
     """Layer 3 (HiGHS-native top-up) pre-solve apply.
 
@@ -545,19 +663,37 @@ def _autoscale_apply_layer3_pre_solve(
     ``set_solver_options`` from elsewhere) has already set
     ``user_bound_scale`` or ``user_objective_scale``, Layer 3 skips that
     axis and the caller's value wins.
+
+    ``ranges_pre`` (the pre-Layer-2 readout) is reused instead of a second
+    walk when Layer 2 was not attempted (``layer2_plan is None`` and the
+    mode or the trigger skipped it): the LP is then unchanged.  ``readout``,
+    when given, receives the report Layer 3 decided on (``"ranges"``), for
+    the scaling guard and the console summary.
     """
     cfg = scaling_config if scaling_config is not None else _autoscale_resolve_config(None)
     if not _autoscale_mode_enables_layer3(cfg.mode):
         return None
-    try:
-        ranges_post_l2 = _autoscale_compute_ranges(pb, cfg)
-    except Exception:  # pragma: no cover — guard against future API drift
-        logger.exception(
-            "autoscale Layer 3 pre-solve range readout failed for %s; "
-            "skipping Layer 3 (Layer 1 / Layer 2 still applied)",
-            solve_name,
-        )
-        return None
+    l2_attempted = (
+        ranges_pre is not None
+        and cfg.mode is _AutoscaleScalingMode.FULL
+        and ranges_pre.trigger
+    )
+    if layer2_plan is None and ranges_pre is not None and not l2_attempted:
+        ranges_post_l2 = ranges_pre
+    else:
+        try:
+            ranges_post_l2 = _autoscale_compute_ranges(pb, cfg)
+        except Exception:  # pragma: no cover — guard against future API drift
+            if os.environ.get("FLEXTOOL_AUTOSCALE_STRICT") == "1":
+                raise
+            logger.exception(
+                "autoscale Layer 3 pre-solve range readout failed for %s; "
+                "skipping Layer 3 (Layer 1 / Layer 2 still applied)",
+                solve_name,
+            )
+            return None
+    if readout is not None:
+        readout["ranges"] = ranges_post_l2
     try:
         plan = _autoscale_recommend_scaling(ranges_post_l2, cfg, problem=pb)
     except Exception:  # pragma: no cover
@@ -699,6 +835,7 @@ class _AutoscaleShapeCacheEntry:
       :class:`RangeReport`s, cached so the per-roll Layer-1 YAML emit and
       the (deduped) console summary keep their range context without a
       re-walk.
+    * ``guard`` — the scaling guard's outcome (see the field).
 
     The KEY property: a cache HIT re-applies all of the above WITHOUT a
     single :func:`detect_ranges` / ``bucket_coefficients`` traversal,
@@ -711,6 +848,11 @@ class _AutoscaleShapeCacheEntry:
     layer3_plan: "_AutoscaleLayer3Plan | None"
     ranges_pre: "_AutoscaleRangeReport | None"
     ranges_post: "_AutoscaleRangeReport | None"
+    #: The scaling guard's outcome on the first solve of this shape
+    #: (``None``: no guard ran).  A HIT replays it (warnings print once per
+    #: run) with no walk and no ``locate_extremes``; the roll itself is
+    #: rechecked by :class:`_AutoscaleRollRecheck` from its built LP.
+    guard: "_AutoscaleGuardOutcome | None" = None
 
 
 def _autoscale_disable_cache() -> bool:
@@ -867,6 +1009,7 @@ def _autoscale_emit_console_summary(
     memrec: "_MemoryRecorder | None" = None,
     logger: logging.Logger | None = None,
     scaling_config: "ScalingConfig | None" = None,
+    guard: "_AutoscaleGuardOutcome | None" = None,
 ) -> None:
     """Emit the one-line user-visible autoscale summary.
 
@@ -898,6 +1041,7 @@ def _autoscale_emit_console_summary(
         layer2_plan=layer2_plan,
         layer3_plan=layer3_plan,
         threshold_decades=cfg.threshold_decades,
+        guard=guard,
     )
     print(line, flush=True)
     if memrec is not None:
@@ -2985,8 +3129,10 @@ def _drive_cascade(
                 solver_options=_benders_options,
                 scaling_config=scaling_config,
                 # ``--benders-workers`` / ``FLEXTOOL_BENDERS_WORKERS`` and
-                # ``FLEXTOOL_BENDERS_IN_OUT_WEIGHT``, resolved once for the run.
+                # ``FLEXTOOL_BENDERS_IN_OUT_WEIGHT``, resolved once for the run
+                # (also ``--scaling-guard`` for the region subproblems).
                 run_options=run_options,
+                solve_name=complete_solve_name,
             )
             # The run record: converged / not converged with a feasible
             # incumbent (the run goes on) / no incumbent (the run fails).
@@ -3724,6 +3870,8 @@ def _drive_cascade(
                         None if _autoscale_disable_cache()
                         else self._autoscale_shape_cache.get(_shape_key)
                     )
+                    _l3_readout: dict = {}
+                    _autoscale_hook = None
                     _phase_prof("autoscale_l2_start")
                     if _cache_entry is not None:
                         # HIT — replay decision, no range walk.
@@ -3745,6 +3893,18 @@ def _drive_cascade(
                             )
                         )
                         _autoscale_ranges_post = _cache_entry.ranges_post
+                        # Replay the first roll's guard outcome; recheck this
+                        # roll's built LP in WarmProblem's first build.
+                        _autoscale_guard = _cache_entry.guard
+                        if _autoscale_layer3_plan is not None:
+                            _autoscale_hook = _AutoscaleRollRecheck(
+                                inner_pb, plan=_autoscale_layer3_plan,
+                                config=_scaling_cfg,
+                                mode=_autoscale_resolve_guard_mode(run_options),
+                                solve_name=_roll_label(complete_solve_name, _roll_idx),
+                                base_solve=base_solve_name,
+                                layer2_applied=self._autoscale_warm_layer2_plan is not None,
+                            )
                     else:
                         # MISS — run the full traversals, then cache.
                         (
@@ -3769,8 +3929,25 @@ def _drive_cascade(
                             solve_name=complete_solve_name,
                             logger=self.state.logger,
                             scaling_config=_scaling_cfg,
+                            ranges_pre=_autoscale_ranges_pre,
+                            readout=_l3_readout,
                         )
-                        _autoscale_ranges_post = None
+                        # The post-Layer-2 readout Layer 3 decided on, shown by
+                        # the summary when the trigger fired (as the cold path).
+                        _autoscale_ranges_post = (
+                            _l3_readout.get("ranges")
+                            if _autoscale_ranges_pre is not None
+                            and _autoscale_ranges_pre.trigger
+                            else None
+                        )
+                        _autoscale_guard = _autoscale_guard_check(
+                            inner_pb, ranges=_l3_readout.get("ranges"),
+                            ranges_pre=_autoscale_ranges_pre,
+                            layer2_plan=self._autoscale_warm_layer2_plan,
+                            layer3_plan=_autoscale_layer3_plan,
+                            solve_name=complete_solve_name, run_options=run_options,
+                            scaling_config=_scaling_cfg, logger=self.state.logger,
+                        )
                         if not _autoscale_disable_cache():
                             _l2p = self._autoscale_warm_layer2_plan
                             self._autoscale_shape_cache[_shape_key] = (
@@ -3789,7 +3966,8 @@ def _drive_cascade(
                                     ),
                                     layer3_plan=_autoscale_layer3_plan,
                                     ranges_pre=_autoscale_ranges_pre,
-                                    ranges_post=None,
+                                    ranges_post=_autoscale_ranges_post,
+                                    guard=_autoscale_guard,
                                 )
                             )
                     _phase_prof("autoscale_summary_start")
@@ -3803,7 +3981,19 @@ def _drive_cascade(
                         memrec=_memrec_local if _emit_phase else None,
                         logger=self.state.logger,
                         scaling_config=_scaling_cfg,
+                        guard=_autoscale_guard,
                     )
+                    _autoscale_write_presolve_report(
+                        solve_name=complete_solve_name, logger=self.state.logger,
+                        work_folder=self.state.paths.work_folder,
+                        ranges=_autoscale_ranges_post or _autoscale_ranges_pre,
+                        layer2_plan=self._autoscale_warm_layer2_plan,
+                        layer3_plan=_autoscale_layer3_plan,
+                        guard=_autoscale_guard, scaling_config=_scaling_cfg,
+                    )
+                    # Outside every ``except``: an error stops the run here,
+                    # before HiGHS runs.
+                    _autoscale_enforce_guard(_autoscale_guard, base_solve=base_solve_name)
                     _phase_prof("autoscale_done")
                     # Phase 4 Step 4b — in-process warm-start basis
                     # INJECT (fresh build only).  Keyed on the LP name-set
@@ -3892,7 +4082,18 @@ def _drive_cascade(
                     time.perf_counter() if _phase_timing else 0.0
                 )
                 _phase_prof("solve_start")
-                sol = self._warm_problem.solve()
+                # A fresh build replaying a cached plan is rechecked from its
+                # own ranges (polar-high runs the hook on the first build only;
+                # a reuse solves the LP already checked).
+                _warm_hook = locals().get("_autoscale_hook") if did_fresh_build else None
+                if _warm_hook is not None:
+                    sol = self._warm_problem.solve(pre_run_check=_warm_hook)
+                    if _warm_hook.called:
+                        _autoscale_layer3_plan = _warm_hook.plan
+                        if _warm_hook.outcome is not None:
+                            _autoscale_guard = _warm_hook.outcome
+                else:
+                    sol = self._warm_problem.solve()
                 if _horizon_on:
                     # A WarmProblem keeps its constraint families alive.
                     _horizon_keys = snapshot_cstr_keys(self._warm_problem.problem)
@@ -4087,6 +4288,8 @@ def _drive_cascade(
                     self._autoscale_shape_cache.get(_cold_key)
                     if _cold_key is not None else None
                 )
+                _l3_readout: dict = {}
+                _new_cache_entry: "_AutoscaleShapeCacheEntry | None" = None
                 _phase_prof("autoscale_l2_start")
                 if _cache_entry is not None:
                     # HIT — replay decision, NO range walk.
@@ -4141,6 +4344,8 @@ def _drive_cascade(
                         solve_name=complete_solve_name,
                         logger=self.state.logger,
                         scaling_config=_scaling_cfg,
+                        ranges_pre=_autoscale_ranges_pre,
+                        readout=_l3_readout,
                     )
                     if _autoscale_profile:
                         _ap("layer3_applied")
@@ -4151,28 +4356,19 @@ def _drive_cascade(
                     # what HiGHS will see; Layer 3 acts inside HiGHS so its
                     # values are surfaced separately in the same line.
                     _phase_prof("autoscale_summary_start")
-                    _autoscale_ranges_post: "_AutoscaleRangeReport | None" = None
-                    if (
-                        _autoscale_ranges_pre is not None
-                        and _autoscale_ranges_pre.trigger
-                    ):
-                        try:
-                            _autoscale_ranges_post = _autoscale_compute_ranges(
-                                pb, _scaling_cfg,
-                            )
-                        except Exception:  # pragma: no cover — non-fatal
-                            self.state.logger.exception(
-                                "autoscale post-Layer-2 range readout failed "
-                                "for %s; console summary will omit the "
-                                "'ranges post' segment",
-                                complete_solve_name,
-                            )
+                    # The post-Layer-2 readout Layer 3 decided on (no second
+                    # walk); the summary shows it when the trigger fired.
+                    _autoscale_ranges_post: "_AutoscaleRangeReport | None" = (
+                        _l3_readout.get("ranges")
+                        if _autoscale_ranges_pre is not None and _autoscale_ranges_pre.trigger
+                        else None
+                    )
                     if _autoscale_profile:
                         _ap("ranges_post_computed",
                             ranges_post_ran=str(_autoscale_ranges_post is not None))
                     if _cold_key is not None:
                         _l2p = _autoscale_layer2_plan
-                        self._autoscale_shape_cache[_cold_key] = (
+                        _new_cache_entry = self._autoscale_shape_cache[_cold_key] = (
                             _AutoscaleShapeCacheEntry(
                                 layer2_exponents=(
                                     dict(_l2p.type_exponents)
@@ -4191,63 +4387,10 @@ def _drive_cascade(
                                 ranges_post=_autoscale_ranges_post,
                             )
                         )
-                _autoscale_emit_console_summary(
-                    ranges_pre=_autoscale_ranges_pre,
-                    ranges_post=_autoscale_ranges_post,
-                    layer2_plan=_autoscale_layer2_plan,
-                    layer3_plan=_autoscale_layer3_plan,
-                    solve_name=base_solve_name,
-                    already_emitted=self._autoscale_summary_emitted,
-                    memrec=_memrec_local if _emit_phase else None,
-                    logger=self.state.logger,
-                    scaling_config=_scaling_cfg,
-                )
-                _phase_prof("autoscale_done")
-                if _autoscale_profile:
-                    _ap("console_summary_done")
-                # Phase 3 — multi-solver dispatch.  ``run_one_solve`` calls
-                # ``pb.solve(keep_solver=True)`` for the default HiGHS path
-                # (byte-identical to the pre-Phase-3 behaviour); routes to
-                # ``solve_via_subprocess`` (HiGHS CLI / commercial CLI) on
-                # every cold path, which always returns a real
-                # ``polar_high.Solution`` with the HiGHS instance read back
-                # from the MPS.  The cascade-level SolverConfig lookup uses
-                # the active solve name with the standard
-                # default-when-absent fallback.
-                from flextool.engine.solve._solver_dispatch import (
-                    run_one_solve,
-                )
-                _t_solve_start = (
-                    time.perf_counter() if _phase_timing else 0.0
-                )
-                # Pre-solve range capture: every cold path now goes
-                # subprocess, and the subprocess Solution carries no
-                # ``streamed_lp_ranges`` (polar-high populates that
-                # during its in-process streaming solve, which the
-                # subprocess child doesn't share with us).  Re-use the
-                # post-Layer-2 RangeReport already computed above to
-                # synthesize the dict :func:`_autoscale_emit_layer1`
-                # consumes, so the per-solve ``autoscale_<solve>.yaml``
-                # still lands under ``solve_data/``.
-                _ranges_for_l1 = _autoscale_ranges_post or _autoscale_ranges_pre
-                # Blank line so HiGHS' "Running HiGHS …" banner (and the
-                # grey solver-output block in the GUI) separates from the
-                # scaling/LP-build rows above it.
-                print("", flush=True)
-                # Echo the effective solver options right before HiGHS'
-                # own banner: the full merged, post-precedence set the
-                # solver actually received (``highs.opt`` floor ∪
-                # ``solver_mip_gap`` ∪ DB ``solver_arguments`` ∪ CLI overrides), so the run is
-                # replicable from the log alone.  Resolved with
-                # ``baseline=None`` so the engine-internal determinism /
-                # scale keys are excluded — only what the operator
-                # touched is shown.  Uses ``print`` (not the logger) to
-                # sit in the same stdout stream as the blank separator
-                # above and HiGHS' native banner below — the GUI's
-                # ``execution_window`` parses these printed markers.
-                # A commercial solve echoes the parameters it passes, under
-                # their native names (``Solver args (gurobi): ...``), from the
-                # same resolved list ``run_one_solve`` hands to the CLI.
+                # The commercial parameters are resolved before the scaling
+                # guard, which judges a commercial solve at the solver's own
+                # feasibility tolerance (and prints the ``Solver args`` echo
+                # computed here further down, right before the solver).
                 _commercial_opts = None
                 if _active_solver_cfg.name != "highs":
                     from flextool.engine.solve._solver_dispatch import (
@@ -4294,6 +4437,107 @@ def _drive_cascade(
                         _eff_touched, prefer_first=list(_solver_args_map or {}),
                         translated=_highs_echo_translations(pb, _eff_touched, complete_solve_name),
                     )
+                # Scaling guard (before any solver runs; the raise is outside
+                # every ``except``).  First solve of a shape: judged from the
+                # Layer 3 readout.  A cache HIT replays that outcome (no walk,
+                # no ``locate_extremes``) and rechecks this roll's built LP in
+                # polar-high's ``pre_run_check`` (HiGHS only: in-process
+                # ``Problem.solve`` and the --save-memory ``write_mps``).
+                _autoscale_hook = None
+                if _cache_entry is not None:
+                    _autoscale_guard = _cache_entry.guard
+                    if (
+                        _autoscale_layer3_plan is not None
+                        and _active_solver_cfg.name == "highs"
+                    ):
+                        _autoscale_hook = _AutoscaleRollRecheck(
+                            pb, plan=_autoscale_layer3_plan, config=_scaling_cfg,
+                            mode=_autoscale_resolve_guard_mode(run_options),
+                            solve_name=_roll_label(complete_solve_name, _roll_idx),
+                            base_solve=base_solve_name,
+                            layer2_applied=_autoscale_layer2_plan is not None,
+                        )
+                else:
+                    _autoscale_guard = _autoscale_guard_check(
+                        pb, ranges=_l3_readout.get("ranges"),
+                        ranges_pre=_autoscale_ranges_pre,
+                        layer2_plan=_autoscale_layer2_plan,
+                        layer3_plan=_autoscale_layer3_plan,
+                        solve_name=complete_solve_name, run_options=run_options,
+                        scaling_config=_scaling_cfg, logger=self.state.logger,
+                        solver=_active_solver_cfg.name,
+                        commercial_options=_commercial_opts,
+                    )
+                    if _new_cache_entry is not None:
+                        _new_cache_entry.guard = _autoscale_guard
+                _autoscale_emit_console_summary(
+                    ranges_pre=_autoscale_ranges_pre,
+                    ranges_post=_autoscale_ranges_post,
+                    layer2_plan=_autoscale_layer2_plan,
+                    layer3_plan=_autoscale_layer3_plan,
+                    solve_name=base_solve_name,
+                    already_emitted=self._autoscale_summary_emitted,
+                    memrec=_memrec_local if _emit_phase else None,
+                    logger=self.state.logger,
+                    scaling_config=_scaling_cfg,
+                    guard=_autoscale_guard,
+                )
+                _autoscale_write_presolve_report(
+                    solve_name=complete_solve_name, logger=self.state.logger,
+                    work_folder=self.state.paths.work_folder,
+                    ranges=_autoscale_ranges_post or _autoscale_ranges_pre,
+                    layer2_plan=_autoscale_layer2_plan,
+                    layer3_plan=_autoscale_layer3_plan,
+                    guard=_autoscale_guard, scaling_config=_scaling_cfg,
+                )
+                _autoscale_enforce_guard(_autoscale_guard, base_solve=base_solve_name)
+                _phase_prof("autoscale_done")
+                if _autoscale_profile:
+                    _ap("console_summary_done")
+                # Phase 3 — multi-solver dispatch.  ``run_one_solve`` calls
+                # ``pb.solve(keep_solver=True)`` for the default HiGHS path
+                # (byte-identical to the pre-Phase-3 behaviour); routes to
+                # ``solve_via_subprocess`` (HiGHS CLI / commercial CLI) on
+                # every cold path, which always returns a real
+                # ``polar_high.Solution`` with the HiGHS instance read back
+                # from the MPS.  The cascade-level SolverConfig lookup uses
+                # the active solve name with the standard
+                # default-when-absent fallback.
+                from flextool.engine.solve._solver_dispatch import (
+                    run_one_solve,
+                )
+                _t_solve_start = (
+                    time.perf_counter() if _phase_timing else 0.0
+                )
+                # Pre-solve range capture: every cold path now goes
+                # subprocess, and the subprocess Solution carries no
+                # ``streamed_lp_ranges`` (polar-high populates that
+                # during its in-process streaming solve, which the
+                # subprocess child doesn't share with us).  Re-use the
+                # post-Layer-2 RangeReport already computed above to
+                # synthesize the dict :func:`_autoscale_emit_layer1`
+                # consumes, so the per-solve ``autoscale_<solve>.yaml``
+                # still lands under ``solve_data/``.
+                _ranges_for_l1 = _autoscale_ranges_post or _autoscale_ranges_pre
+                # Blank line so HiGHS' "Running HiGHS …" banner (and the
+                # grey solver-output block in the GUI) separates from the
+                # scaling/LP-build rows above it.
+                print("", flush=True)
+                # Echo the effective solver options right before HiGHS'
+                # own banner: the full merged, post-precedence set the
+                # solver actually received (``highs.opt`` floor ∪
+                # ``solver_mip_gap`` ∪ DB ``solver_arguments`` ∪ CLI overrides), so the run is
+                # replicable from the log alone.  Resolved with
+                # ``baseline=None`` so the engine-internal determinism /
+                # scale keys are excluded — only what the operator
+                # touched is shown.  Uses ``print`` (not the logger) to
+                # sit in the same stdout stream as the blank separator
+                # above and HiGHS' native banner below — the GUI's
+                # ``execution_window`` parses these printed markers.
+                # A commercial solve echoes the parameters it passes, under
+                # their native names (``Solver args (gurobi): ...``), from the
+                # same resolved list ``run_one_solve`` hands to the CLI
+                # (``_sa_line`` is computed above, before the scaling guard).
                 if _sa_line:
                     print(_sa_line, flush=True)
                 _phase_prof("solve_start")
@@ -4309,7 +4553,13 @@ def _drive_cascade(
                     solver_config_dir=state.paths.solver_config_dir,
                     commercial_options=_commercial_opts,
                     solver_option_files=state.paths.solver_option_files,
+                    pre_run_check=_autoscale_hook,
                 )
+                if _autoscale_hook is not None and _autoscale_hook.called:
+                    # The roll's own recheck: report what it used.
+                    _autoscale_layer3_plan = _autoscale_hook.plan
+                    if _autoscale_hook.outcome is not None:
+                        _autoscale_guard = _autoscale_hook.outcome
                 _t_solve_end = (
                     time.perf_counter() if _phase_timing else 0.0
                 )
@@ -4359,6 +4609,7 @@ def _drive_cascade(
                 layer2_plan=locals().get("_autoscale_layer2_plan"),
                 layer3_plan=locals().get("_autoscale_layer3_plan"),
                 scaling_config=_scaling_cfg,
+                guard=locals().get("_autoscale_guard"),
             )
             _phase_prof("layer1emit_done")
             # Memory checkpoint after the solve completes.  Fires on
