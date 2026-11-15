@@ -43,7 +43,7 @@ def test_template_at_mwh_is_the_default_unit() -> None:
     """Every template filled for an MWh node gives today's literal unit (so default outputs cannot change)."""
     templated = {name: tf for name, tf in _transforms().items() if tf.template}
     assert set(templated) == {
-        "RATE", "RAMP", "AVERAGE_MW", "ENERGY_ANNUAL", "PREENERGY_ANNUAL", "ENERGY_PERIOD", "ENERGY_PERSTEP",
+        "RATE", "RAMP", "RAMP_ROOM", "AVERAGE_MW", "ENERGY_ANNUAL", "PREENERGY_ANNUAL", "ENERGY_PERIOD", "ENERGY_PERSTEP",
         "ENERGY_HORIZON", "STORAGE_STATE", "CAPACITY_MWH", "CAPACITY_MW", "PRICE_ENERGY",
         "INVEST_COST_DISCOUNTED", "DUAL_INVEST_KW", "DUAL_INVEST_KWH"}
     for name, tf in templated.items():

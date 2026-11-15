@@ -436,6 +436,14 @@
       null
     ],
     [
+      "model",
+      "timestep_hours_t",
+      null,
+      null,
+      "[h/a] Hours a year each realized time step stands for: the step duration times the timestep weight divided by the period's share of a year (the weight of the ramp histogram of the ramp envelope).",
+      null
+    ],
+    [
       "node",
       "balance",
       null,
