@@ -602,6 +602,15 @@ right-hand side wrecks the scaling).  Two ways to drop the no-limit rows:
   constraint constant → `cdt_le` / `cdt_ge`).  The variable bounds of an entity investment read an unlimited
   `invest_max_period` / `cumulative_max_capacity` period as the no-limit bound (`max_flow_for_unconstrained_variables`).
 
+A solve with `new_stepduration` aggregates a time map before these checks (`broadcast_to_period_time` →
+`aggregate_if_active`), and the four time-series limits (`_solve_step_aggregation.NO_LIMIT_SIDE`:
+`max_instant_flow`, `min_instant_flow`, `inertia_limit`, `non_synchronous_limit`) are MEANs: a solve step that
+combines a no-limit time step with finite ones is itself `inf` (`-inf`), so the limit is dropped for the whole solve
+step.  That is kept on purpose (a partial limit has no single step value that is right); `_warn_mixed_no_limit_steps`
+warns once per (parameter, entity) and run, naming the `period/step`s (5 shown, then "and N more"), and refuses a step
+that combines `inf` and `-inf` (its mean would be NaN, which `check_limit_values` cannot see).  No SUM, HARMONIC or
+LAST series is a limit, so no other aggregation kind meets this.
+
 Gated by `tests/engine/test_limit_inf_no_limit.py` (LP with `inf` = LP with a non-binding value minus that period's
 rows, single / rolling / stochastic).
 

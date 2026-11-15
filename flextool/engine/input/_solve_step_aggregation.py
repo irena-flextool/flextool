@@ -206,6 +206,21 @@ _APPROXIMATE_WHEN_VARYING: dict[tuple[str, str], str] = {
         "each step."),
 }
 
+#: The time-series limits whose ``inf`` (``-inf`` for a lower limit) means no limit in that time step, by side.  A
+#: MEAN (or SUM) step that combines a no-limit base step with finite ones is itself ``inf`` (``-inf``): the limit is
+#: dropped for the whole step.  That is kept, and :func:`aggregate_if_active` warns about it
+#: (:func:`_warn_mixed_no_limit_steps`).  Every key is a MEAN (``tests/engine/test_limit_inf_no_limit.py``); no
+#: SUM, HARMONIC or LAST series is a limit.
+NO_LIMIT_SIDE: dict[tuple[str, str], str] = {
+    ("flowGroup", "max_instant_flow"): "upper",
+    ("flowGroup", "min_instant_flow"): "lower",
+    ("group", "inertia_limit"): "lower",
+    ("group", "non_synchronous_limit"): "upper",
+}
+
+#: How many solve steps the mixed no-limit warning names per entity.
+_MIXED_STEPS_SHOWN = 5
+
 #: Keys whose MEAN keeps the 6-decimal rounding of earlier releases: the profile, whose CSV path rounded its step
 #: mean before (the goldens).  Every other MEAN is unrounded, so small values (self_discharge_loss 1e-7 per hour)
 #: keep their precision.
@@ -574,9 +589,78 @@ def base_steps_of(base_steps: pl.DataFrame, steps: "pl.Series | None") -> pl.Dat
     return base_steps.filter(pl.col("new_step").cast(pl.Utf8).is_in(steps.cast(pl.Utf8).unique().implode()))
 
 
+def _warn_mixed_no_limit_steps(timed: pl.DataFrame, key: "tuple[str, str]", group_cols: list[str],
+                               base_steps: pl.DataFrame, *, time_col: str, value_col: str,
+                               period_col: "str | None", step_periods: "pl.DataFrame | None") -> None:
+    """Warn about the solve steps where a no-limit value (:data:`NO_LIMIT_SIDE`) meets a finite one.
+
+        nl = inf (upper) / -inf (lower)
+        M  = { (k, s) : ∃ b ∈ base(s), v[k, b] = nl  and  ∃ b' ∈ base(s), v[k, b'] finite }
+        warn once per (key, k) per run, naming the (period, s) of M for k     (MEAN / SUM: the step is nl)
+        raise FlexToolConfigError     if a step has both nl and -nl            (the step would be NaN)
+
+    ``k`` is the group of the frame other than ``period_col``; the period of a step is the row's ``period_col``
+    value, or the periods of ``step_periods`` (``d``, ``t``) holding the step for a row without one.  Only for
+    MEAN / SUM keys: there an infinite base value makes the step infinite, so the limit is dropped for the whole
+    step (kept: :data:`NO_LIMIT_SIDE`)."""
+    side = NO_LIMIT_SIDE.get(key)
+    if side is None or TIME_AGGREGATION.get(key) not in (Agg.MEAN, Agg.SUM):
+        return
+    v = pl.col(value_col).cast(pl.Float64, strict=False)
+    if not timed.select(v.is_infinite().any()).item():
+        return
+    nl = float("inf") if side == "upper" else float("-inf")
+    ent_cols = [c for c in group_cols if c != period_col]
+    has_period = period_col is not None and period_col in group_cols
+    base = base_steps.select(pl.col("time").cast(pl.Utf8).alias("__t"),
+                             pl.col("new_step").cast(pl.Utf8).alias("__s"),
+                             pl.col("pos").cast(pl.Int64).alias("__pos"))
+    steps = (timed
+             .select(pl.concat_str([pl.col(c).cast(pl.Utf8) for c in ent_cols], separator=", ").alias("__k"),
+                     (pl.col(period_col).cast(pl.Utf8) if has_period else pl.lit(None, pl.Utf8)).alias("__d"),
+                     pl.col(time_col).cast(pl.Utf8).alias("__t"), v.alias("__v"))
+             .filter(pl.col("__v").is_not_null())
+             .join(base, on="__t", how="inner")
+             .group_by("__k", "__d", "__s", maintain_order=True)
+             .agg((pl.col("__v") == nl).any().alias("__nl"), (pl.col("__v") == -nl).any().alias("__opp"),
+                  pl.col("__v").is_finite().any().alias("__fin"), pl.col("__pos").min().alias("__p0"))
+             .filter(pl.col("__nl") & (pl.col("__fin") | pl.col("__opp")))
+             .sort("__p0", maintain_order=True))
+    if steps.height == 0:
+        return
+    if step_periods is not None and step_periods.height > 0 and steps.get_column("__d").is_null().any():
+        dt = step_periods.select(pl.col("t").cast(pl.Utf8).alias("__s"), pl.col("d").cast(pl.Utf8).alias("__pd"))
+        steps = (steps.join(dt.unique(maintain_order=True), on="__s", how="left", maintain_order="left")
+                 .with_columns(pl.coalesce("__d", "__pd").alias("__d")).drop("__pd"))
+    at = pl.concat_str([pl.col("__d").fill_null(""), pl.col("__s")], separator="/").str.strip_chars("/")
+    steps = steps.with_columns(at.alias("__at"))
+    cls, param = key
+    both = steps.filter(pl.col("__opp"))
+    if both.height:
+        parts = [f"{cls} '{k}', parameter '{param}': {', '.join(g.get_column('__at').to_list()[:_MIXED_STEPS_SHOWN])}"
+                 for (k,), g in both.group_by("__k", maintain_order=True)]
+        raise FlexToolConfigError(
+            "; ".join(parts) + ". These solve steps of new_stepduration combine time steps of inf and -inf, which "
+            f"have no mean. For no limit in a time step, give {'inf' if side == 'upper' else '-inf'} there.")
+    from flextool.engine import _behaviour_changes
+
+    use = "inf" if side == "upper" else "-inf"
+    for (k,), g in steps.group_by("__k", maintain_order=True):
+        where = g.get_column("__at").to_list()
+        shown = ", ".join(where[:_MIXED_STEPS_SHOWN]) + (
+            f" and {len(where) - _MIXED_STEPS_SHOWN} more" if len(where) > _MIXED_STEPS_SHOWN else "")
+        _behaviour_changes.warn_once(
+            ("mixed_no_limit_step", cls, param, k),
+            f"Warning: {cls} '{k}', parameter '{param}' is {use} (no limit) in some but not all time steps of "
+            f"these solve steps of new_stepduration: {shown}. A solve step takes the mean of its time steps, which "
+            f"is {use}, so the limit is dropped for the whole solve step. To keep a limit, give {use} in all or "
+            f"none of the time steps of a solve step, or use a shorter new_stepduration.")
+
+
 def aggregate_if_active(frame: pl.DataFrame, key: "tuple[str, str] | None", *, time_col: str = "t",
                         value_col: str = "value", allow_sum: bool = False,
-                        steps: "pl.Series | None" = None) -> pl.DataFrame:
+                        steps: "pl.Series | None" = None, period_col: "str | None" = None,
+                        step_periods: "pl.DataFrame | None" = None) -> pl.DataFrame:
     """``frame`` aggregated to the armed solve steps (:func:`aggregate_to_solve_steps`, grouped by every column
     other than ``time_col`` and ``value_col``); ``frame`` itself when nothing is armed or it has no time rows.
 
@@ -586,6 +670,10 @@ def aggregate_if_active(frame: pl.DataFrame, key: "tuple[str, str] | None", *, t
     or constant default of a mixed frame) pass through unchanged.  A ``key`` without a :data:`TIME_AGGREGATION`
     entry raises.  A SUM key raises unless ``allow_sum``: its constant and period rows would need the base-step
     count, which the caller has to apply.
+
+    A limit of :data:`NO_LIMIT_SIDE` whose solve step combines ``inf`` (``-inf``) with finite values is warned about
+    (:func:`_warn_mixed_no_limit_steps`; ``period_col``: the frame's period column, ``step_periods``: the ``(d, t)``
+    of the solve, for the periods of a time-only row).
     """
     base = active_base_steps()
     if base is None or time_col not in frame.columns or frame.height == 0:
@@ -603,7 +691,10 @@ def aggregate_if_active(frame: pl.DataFrame, key: "tuple[str, str] | None", *, t
             f"constant values once per time step; it cannot go through the generic broadcast.")
     scope = _SOLVE_STEPS.get()
     group_cols = [c for c in frame.columns if c not in (time_col, value_col)]
-    agg = aggregate_to_solve_steps(timed, kind, group_cols, base_steps_of(base, steps), time_col=time_col,
+    base = base_steps_of(base, steps)
+    _warn_mixed_no_limit_steps(timed, key, group_cols, base, time_col=time_col, value_col=value_col,
+                               period_col=period_col, step_periods=step_periods)
+    agg = aggregate_to_solve_steps(timed, kind, group_cols, base, time_col=time_col,
                                    value_col=value_col, keys=key,
                                    notes=scope.notes if scope is not None else None,
                                    approx_entities=scope.approx_entities if scope is not None else None)

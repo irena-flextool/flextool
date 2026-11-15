@@ -2681,7 +2681,8 @@ def broadcast_to_period_time(
     # Only the steps of this solve's dt are aggregated (a roll pays for its own steps).
     if resolved.time_index_column is not None and active_base_steps() is not None:
         lf = aggregate_if_active(lf.collect(), resolved.key, time_col=resolved.time_index_column,
-                                 steps=period_filter.get_column("t")).lazy()
+                                 steps=period_filter.get_column("t"), period_col=resolved.period_index_column,
+                                 step_periods=period_filter).lazy()
     if filter_zero:
         lf = lf.filter(pl.col("value") != 0.0)
     # Phase 4 — align producer-side dim dtypes to the canonical Enum

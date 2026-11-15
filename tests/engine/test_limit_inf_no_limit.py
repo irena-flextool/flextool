@@ -455,3 +455,67 @@ def test_huge_finite_limit_warns_once_and_is_kept(tmp_path_factory, capsys) -> N
     rows, _ = _lp(list(steps.values())[0])
     caps = [ub for r, (_lb, ub, _c) in rows.items() if r.startswith("co2_max_period[co2_limit,p2020]")]
     assert caps and all(math.isfinite(ub) and ub > 1.0e14 for ub in caps)
+
+
+# ---------------------------------------------------------------------------
+# A solve step of new_stepduration that mixes inf and finite time steps: the step is inf, warned about once
+
+
+COARSE = [["solve", SOLVE, "new_stepduration", num(2.0)]]
+
+
+def _instant_time_map_pair(first: float, second: float, other: float) -> list:
+    """A time map: ``first`` at t0005, ``second`` at t0006 (one solve step of new_stepduration 2: t0005), ``other``
+    elsewhere."""
+    at = {"t0005": first, "t0006": second}
+    return b64({"index_type": "str", "index_name": "time",
+                "data": [[t, at.get(t, other)] for t in TIMESTEPS]}, "map")
+
+
+def test_no_limit_keys_are_means() -> None:
+    """The mixed-step warning covers MEAN (and SUM) steps, where one infinite time step makes the step infinite;
+    every time-series limit is a MEAN."""
+    from flextool.engine.input._solve_step_aggregation import NO_LIMIT_SIDE, TIME_AGGREGATION, Agg
+
+    assert {k: TIME_AGGREGATION[k] for k in NO_LIMIT_SIDE} == {k: Agg.MEAN for k in NO_LIMIT_SIDE}
+
+
+@pytest.mark.parametrize("rolling", [False, True])
+def test_instant_flow_inf_mixed_in_solve_step(tmp_path_factory, capsys, rolling) -> None:
+    """new_stepduration 2: max_instant_flow 1e5 MW with inf at t0005 and 1e5 at t0006, so the solve step t0005
+    (t0005 + t0006) has the mean (inf + 1e5) / 2 = inf: no maxInstant_flow row at t0005, one warning per run
+    naming the flowGroup, the parameter and p2020/t0005.  The reference has 1e5 at t0005 and 2e5 at t0006: the step
+    is (1e5 + 2e5) / 2 = 1.5e5 (finite, no warning); every other step is 1e5 in both."""
+    from flextool.engine import _behaviour_changes
+
+    _behaviour_changes._warned.discard(("mixed_no_limit_step", "flowGroup", "max_instant_flow", FLOW_GROUP))
+    extra = COARSE + (ROLLING if rolling else TWO_PERIODS)
+    a = _steps(tmp_path_factory, f"inf_mif_mix_{rolling}_a",
+               extra + [["flowGroup", FLOW_GROUP, "max_instant_flow", _instant_time_map_pair(INF, 1.0e5, 1.0e5)]],
+               PLANT_CHAIN, entities=FLOW_ENTITIES)
+    out = capsys.readouterr().out
+    msg = (f"Warning: flowGroup '{FLOW_GROUP}', parameter 'max_instant_flow' is inf (no limit) in some but not all "
+           f"time steps of these solve steps of new_stepduration: p2020/t0005")
+    assert out.count(f"flowGroup '{FLOW_GROUP}', parameter 'max_instant_flow' is inf") == 1, out[-3000:]
+    assert msg in out, out[-3000:]
+    assert "the limit is dropped for the whole solve step" in out
+    b = _steps(tmp_path_factory, f"inf_mif_mix_{rolling}_b",
+               extra + [["flowGroup", FLOW_GROUP, "max_instant_flow", _instant_time_map_pair(1.0e5, 2.0e5, 1.0e5)]],
+               PLANT_CHAIN, entities=FLOW_ENTITIES)
+    assert "parameter 'max_instant_flow' is inf" not in capsys.readouterr().out
+    assert len(a) > (2 if rolling else 0)
+    gone = (f"maxInstant_flow[{FLOW_GROUP},p2020,t0005]", f"maxInstant_flow[{FLOW_GROUP},p2025,t0005]")
+    _assert_lp_minus(a, b, gone)
+    step = next(s for s in b.values() if any(r.startswith(gone) for r in _lp(s)[0]))
+    rows, _ = _lp(step)
+    assert [ub for r, (_lb, ub, _c) in rows.items() if r.startswith(gone)][0] == 1.5e5
+    assert not any(r.startswith(f"maxInstant_flow[{FLOW_GROUP},p2020,t0006]") for r in rows)
+
+
+def test_instant_flow_inf_and_minus_inf_in_solve_step_is_an_error(tmp_path_factory) -> None:
+    """inf at t0005 and -inf at t0006 (one solve step of new_stepduration 2) have no mean: refused."""
+    with pytest.raises(FlexToolConfigError, match=rf"flowGroup '{FLOW_GROUP}', parameter 'max_instant_flow': "
+                                                  r"p2020/t0005.*combine time steps of inf and -inf"):
+        _steps(tmp_path_factory, "inf_mif_mix_both", COARSE + TWO_PERIODS + [
+            ["flowGroup", FLOW_GROUP, "max_instant_flow", _instant_time_map_pair(INF, -INF, 1.0e5)]],
+               PLANT_CHAIN, entities=FLOW_ENTITIES)
