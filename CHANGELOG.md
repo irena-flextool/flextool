@@ -101,6 +101,9 @@ Input databases move to data version 80. The FlexTool window, the Spine Toolbox 
   from the same seed are unchanged). spinedb-api still installs it.
 - Parameter descriptions: the limits say that `inf` / `-inf` is no limit; `conversion_method` names its four
   methods; `solver_precommand` points to the solver wrapper and `solver_arguments` says names are the solver's own.
+- **A quick right-click no longer runs the first menu item (Linux).** The right-click menus of the FlexTool window
+  (input sources, available and executed scenarios), the execution window and the assistant (a question, a chat's
+  tab) opened with their first item under the pointer, so releasing the button at once ran it.
 - The docs no longer mention `model.exclude_entity_outputs` (removed in v56).
 
 ## Release 4.4.0 (13.11.2026) — capacity margin, units of measure, start-up inputs, period-total constraints, FT2 import, stochastic input checks (no future information), per-project solver options, solver limits kept with warnings, Xpress MIPs, objective options in model units and many fixes (schema v79)

@@ -35,6 +35,7 @@ from flextool.gui.settings_io import (
 )
 from flextool.gui.assistant.entry import AssistantEntry
 from flextool.gui.assistant.strings import PROJECT_STILL_FINISHING as ASSISTANT_STILL_FINISHING
+from flextool.gui._menus import popup_at_pointer
 from flextool.gui.check_tree import CheckTreeController
 from flextool.gui.data_models import ExecutedScenarioInfo, GlobalSettings, ProjectSettings, ScenarioInfo
 from flextool.gui.input_sources import InputSourceManager
@@ -1543,7 +1544,10 @@ class MainWindow(tk.Tk):
             activeforeground=bg,
             selectcolor=fg,
             font="TkDefaultFont",
-            borderwidth=0,
+            # A 1px border in the menu's own colour (flat: looks as borderless as before) keeps
+            # entry 0 off the posting point: a quick right-click's release must not run it.
+            borderwidth=1,
+            relief="flat",
         )
 
     def _on_ui_settings_btn(self) -> None:
@@ -2566,7 +2570,7 @@ class MainWindow(tk.Tk):
                 tree.selection_set(item)
 
         if item and _is_ghost_iid(item):
-            self._show_ghost_source_menu(item, event.x_root, event.y_root)
+            self._show_ghost_source_menu(item, event)
             return
 
         menu = self._styled_popup_menu(self)
@@ -2594,7 +2598,7 @@ class MainWindow(tk.Tk):
         menu.add_command(label="Delete", command=self._on_delete_source)
         menu.add_separator()
         menu.add_command(label="Refresh", command=self._on_refresh_sources)
-        menu.tk_popup(event.x_root, event.y_root)
+        popup_at_pointer(menu, event)
 
     def _frozen_menu_source(self, item: str):
         """The live sqlite source of a right-clicked row, for the Freeze / Unfreeze actions (else ``None``)."""
@@ -2677,7 +2681,7 @@ class MainWindow(tk.Tk):
         self.input_source_mgr.undecline_frozen(path)
         self._refresh_input_sources()
 
-    def _show_ghost_source_menu(self, item: str, x_root: int, y_root: int) -> None:
+    def _show_ghost_source_menu(self, item: str, event: tk.Event) -> None:  # type: ignore[type-arg]
         """Context menu for a retired ghost row (deleted file, results remain).
 
         Offers re-linking the orphaned result folders to a live source
@@ -2713,7 +2717,7 @@ class MainWindow(tk.Tk):
         )
         menu.add_separator()
         menu.add_command(label="Refresh", command=self._on_refresh_sources)
-        menu.tk_popup(x_root, y_root)
+        popup_at_pointer(menu, event)
 
     def _delete_ghost_results(self, number: int) -> None:
         """Delete the orphaned result folders behind a retired ghost row."""
@@ -2875,7 +2879,7 @@ class MainWindow(tk.Tk):
             label="Add selected to execution jobs",
             command=self._on_add_selected_to_execution,
         )
-        menu.tk_popup(event.x_root, event.y_root)
+        popup_at_pointer(menu, event)
 
     def _on_executed_right_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         """Show context menu for executed scenarios tree."""
@@ -2904,7 +2908,7 @@ class MainWindow(tk.Tk):
             label="Delete irrevocably",
             command=self._on_delete_results,
         )
-        menu.tk_popup(event.x_root, event.y_root)
+        popup_at_pointer(menu, event)
 
     def _on_executed_space_from_menu(self) -> None:
         """Toggle checkboxes for selected items in executed_tree (from context menu)."""
