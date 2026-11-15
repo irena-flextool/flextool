@@ -231,3 +231,44 @@ def test_rerun_commits_nothing(migrated, monkeypatch) -> None:
         m._migrate_v80_schema_batch(db)
         assert len(commits) == 1
         assert _defs(db) == migrated["after"]["defs"] and _values(db) == migrated["after"]["values"]
+
+
+@pytest.mark.parametrize("stamp", [76, 78])
+def test_current_template_with_an_older_stamp_gets_no_duplicate_member(tmp_path_factory, stamp) -> None:
+    """A database built from the current template but stamped with an older version (as the v77 storage tests
+    build theirs): its ``capacity_margin_methods`` list already has the v80 names, and the v79 step adds
+    ``share_of_peak`` beside them.  The v80 step drops the old members instead of renaming them into
+    duplicates, rewrites a stored old value to its new name and leaves the shipped list."""
+    from tests.engine._unit_db import b64
+
+    data = json.loads((Path(__file__).resolve().parents[1] / "fixtures" / "tests.json").read_text())
+    for pd in data["parameter_definitions"]:
+        if pd[0] == "model" and pd[1] == "version":
+            pd[2] = b64(stamp, "float")
+    assert ["capacity_margin_methods", b64("relative_of_peak_demand", "str")] in data["parameter_value_lists"]
+    work = tmp_path_factory.mktemp(f"v80_stamp{stamp}")
+    (work / "f.json").write_text(json.dumps(data))
+    url = json_to_db(work / "f.json", work / "f.sqlite")
+    migrate_database(url, up_to=79)
+    with DatabaseMapping(url) as db:
+        assert {"share_of_peak", "absolute", "relative_of_peak_demand"} <= set(
+            _lists(db)["capacity_margin_methods"])
+        group = sorted(e["name"] for e in db.get_items("entity", entity_class_name="group"))[0]
+        alt = sorted(a["name"] for a in db.get_items("alternative"))[0]
+        val, typ = to_database("share_of_peak")
+        db.add_update_item("parameter_value", entity_class_name="group", entity_byname=(group,),
+                           parameter_definition_name="capacity_margin_method", alternative_name=alt,
+                           value=val, type=typ)
+        db.commit_session("an old-name method value")
+    migrate_database(url, up_to=80)
+    _, shipped_lists = _shipped()
+    with DatabaseMapping(url) as db:
+        members = _lists(db)["capacity_margin_methods"]
+        assert sorted(members) == sorted(shipped_lists["capacity_margin_methods"])
+        assert len(members) == len(set(members))
+        stored = db.get_item("parameter_value", entity_class_name="group", entity_byname=(group,),
+                             parameter_definition_name="capacity_margin_method", alternative_name=alt)
+        assert stored["parsed_value"] == "relative_of_peak_demand"
+    migrate_database(url, up_to=80)
+    with DatabaseMapping(url) as db:
+        assert _lists(db)["capacity_margin_methods"] == members

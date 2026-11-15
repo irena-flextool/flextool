@@ -10543,6 +10543,7 @@ def _v80_capacity_margin_rename(db) -> None:
     A definition rename keeps its values (they hang on the definition).  Each list member is renamed in place (its
     index, so the list order, is kept), then every stored ``capacity_margin_method`` value (all alternatives) is
     rewritten to the new name, so each value is a member of the list again; the default (``none``) is unchanged.
+    When the new name is already a member, the old member is removed instead of renamed (never a duplicate).
     The values change only by name.  Idempotent: a rerun finds the new names.
     """
     if not db.get_item("entity_class", name="group"):
@@ -10550,11 +10551,21 @@ def _v80_capacity_margin_rename(db) -> None:
     for old, new in V80_CAPACITY_MARGIN_RENAMES.items():
         _rename_or_drop_parameter_definition(db, "group", old, new)
     if db.get_item("parameter_value_list", name="capacity_margin_methods"):
-        for item in db.get_items("list_value", parameter_value_list_name="capacity_margin_methods"):
+        items = db.get_items("list_value", parameter_value_list_name="capacity_margin_methods")
+        members = {x["parsed_value"] for x in items}
+        for item in sorted(items, key=lambda x: x["index"]):
             new = V80_CAPACITY_MARGIN_METHODS.get(item["parsed_value"], item["parsed_value"])
-            if new != item["parsed_value"]:
+            if new == item["parsed_value"]:
+                continue
+            if new in members:
+                # The new name is already a member (a database built from the current template but stamped with
+                # an older version: an earlier step re-added the old name beside it).  Drop the old member; its
+                # stored values are rewritten to the new name below.
+                db.remove_item("list_value", item["id"])
+            else:
                 val, typ = to_database(new)
                 db.update_list_value(id=item["id"], value=val, type=typ)
+                members.add(new)
     renamed = []
     for pv in db.find_parameter_values(entity_class_name="group", parameter_definition_name="capacity_margin_method"):
         parsed = from_database(pv["value"], pv["type"])
