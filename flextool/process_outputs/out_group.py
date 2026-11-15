@@ -563,3 +563,11 @@ def nodeGroup_flows(par, s, v, r, debug):
     results.append((result_multi_d, 'nodeGroup_flows_d_gpe'))
 
     return results
+
+
+def nodeGroup_ramp_envelope(par, s, v, r, debug):
+    """Ramp envelope of each dispatch node group (``print_dispatch``, ``calc_ramp_envelope``): the bands of the
+    node envelope summed over the group's non-storage members, internal processes left out."""
+    if s.nodeGroupDispatch.empty:
+        return []
+    return [(r.nodeGroup_ramp_envelope_dt_gp, 'nodeGroup_ramp_envelope_dt_gp')]

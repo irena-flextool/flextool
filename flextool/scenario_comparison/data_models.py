@@ -94,6 +94,8 @@ class TimeSeriesResults:
     # --- Node outputs ---
     node_d_ep: pd.DataFrame | None = None
     node_dt_ep: pd.DataFrame | None = None
+    node_ramp_envelope_dt_ep: pd.DataFrame | None = None
+    timestep_hours_dt: pd.DataFrame | None = None
     node_inflow__dt: pd.DataFrame | None = None
     node_prices_dt_e: pd.DataFrame | None = None
     node_state_dt_e: pd.DataFrame | None = None
@@ -106,6 +108,7 @@ class TimeSeriesResults:
     # --- NodeGroup outputs ---
     nodeGroup_flows_d_gpe: pd.DataFrame | None = None
     nodeGroup_flows_dt_gpe: pd.DataFrame | None = None
+    nodeGroup_ramp_envelope_dt_gp: pd.DataFrame | None = None
     nodeGroup_flows_d_g: pd.DataFrame | None = None
     nodeGroup_flows_dt_g: pd.DataFrame | None = None
     nodeGroup_gd_p: pd.DataFrame | None = None
