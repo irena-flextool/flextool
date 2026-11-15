@@ -155,7 +155,8 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     # carries the per-row POWER coefficient.
     # flextool/engine/model/_reserve.py add_variables
     "v_reserve": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine/model/_reserve.py add_variables
+    # flextool/engine/model/_reserve.py add_variables.  A fraction of the reserve requirement, like the group
+    # slacks below: typed POWER so its entry (the requirement, MW) lands in the row's bucket.
     "vq_reserve": VarFamily(QuantityType.POWER),
     # flextool/engine/model/_reserve.py add_variables (total reserve of an n-1 group, MW)
     "v_reserve_total": VarFamily(QuantityType.POWER),
@@ -166,7 +167,10 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     # flextool/engine/model/_commodity_ladder.py add_variables
     "v_trade": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="unitsize"),
 
-    # ── Group-level slacks.  Direct physical units.
+    # ── Group-level slacks.  Not physical quantities: each slack is a fraction of its row's requirement, with
+    # that requirement (MW, MWs) as its coefficient, or 1 in a row pre-normalised by inv_group_cap.  The type is
+    # the row's own type, so in a row of the same type the row and column factors cancel and the entry keeps its
+    # raw value.  Re-typing them DIMENSIONLESS was equal or worse in every fixture measured (bug review §26).
     # flextool/engine/model/_group_slack.py add_variables
     "vq_capacity_margin": VarFamily(QuantityType.POWER),
     # flextool/engine/model/_group_slack.py add_variables: the slack energy of a storage node feeding a
@@ -302,15 +306,16 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # Exact entry: the "ramp" prefix above would otherwise catch it.
     "ramp_change_eq": CstrFamily(QuantityType.DIMENSIONLESS),
 
-    # ── Investment caps — entity scope.
+    # ── Investment caps — entity scope.  v_invest / v_divest ≤ max_units: a count of units (of unitsize /
+    # state_unitsize), not MW or MWh, so DIMENSIONLESS like the invest columns themselves.
     # flextool/engine/model/core.py _eq_invest_max_units
-    "maxInvest_var_bound": CstrFamily(QuantityType.POWER),
+    "maxInvest_var_bound": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine/model/core.py _eq_invest_max_units
-    "maxDivest_var_bound": CstrFamily(QuantityType.POWER),
+    "maxDivest_var_bound": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine/model/core.py _eq_invest_max_units
-    "maxInvest_var_bound_n": CstrFamily(QuantityType.ENERGY),
+    "maxInvest_var_bound_n": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine/model/core.py _eq_invest_max_units
-    "maxDivest_var_bound_n": CstrFamily(QuantityType.ENERGY),
+    "maxDivest_var_bound_n": CstrFamily(QuantityType.DIMENSIONLESS),
     # flextool/engine/model/core.py _eq_invest_period_caps
     "maxInvest_entity_period_p": CstrFamily(QuantityType.POWER),
     # flextool/engine/model/core.py _eq_invest_period_caps
@@ -686,10 +691,11 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # ── Benders (Option C) hand-built master constraints.  The hand master
     # is built AUTOSCALE-OFF, so Layer 2 never scales these rows; registering
     # them keeps the registry-coverage invariant complete (CLAUDE.md #1).
-    # ``maxInvest``: C[conn] <= max_units — capacity bound, mirrors the
-    # entity-scope ``maxInvest_var_bound`` (POWER RHS).
+    # ``maxInvest``: C[conn] <= max_units — a count of units (C is in units
+    # of unitsize), mirrors the entity-scope ``maxInvest_var_bound``
+    # (DIMENSIONLESS RHS).
     # flextool/engine/solve/_benders.py _BendersMaster._build (EQ. maxInvest)
-    "maxInvest": CstrFamily(QuantityType.POWER),
+    "maxInvest": CstrFamily(QuantityType.DIMENSIONLESS),
     # ``trade_capacity``: C[conn] - f[arc,d,t] >= 0 — the RHS is identically
     # zero (no per-row scaling), so CstrFamily(None) like the other zero-RHS
     # structural rows; the column scalers on C / f still propagate.
