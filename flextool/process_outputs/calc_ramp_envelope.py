@@ -3,8 +3,9 @@
 Row t of the tables is the transition t → t⁺ (t⁺ the unique realized successor of t, the inverse of
 ``s.ramp_link`` incl. the roll carry).  Per row and entity, in MW (``specs/ramp_envelope_final_spec.md`` §2):
 
-* ``ramp_net_load`` = N(t⁺) − N(t), N = demand − Σ VRE potential (+ = more supply needed); ``ramp_demand`` the
-  same for the demand alone (demand = −inflow);
+* ``ramp_net_load`` = N(t⁺) − N(t), N = demand − Σ VRE potential (+ = more supply needed; the potential of a VRE
+  unit that touches a storage node is left out, as its arcs are storage arcs); ``ramp_demand`` the same for the
+  demand alone (demand = −inflow);
 * ``units_up`` / ``units_down``, ``storage_up`` / ``storage_down``, ``vre_up`` / ``vre_down``,
   ``connections_up`` / ``connections_down``: the room toward t⁺ of the arcs at the entity in entity-supply MW,
   every band ≥ 0 and the down bands stored negative.
@@ -256,7 +257,7 @@ def compute_ramp_envelope(par, s, v, r) -> None:
                 values[kind][positions, :, position] = bands[band]
         del up, down
 
-    lines = _lines(par, r, nx_all, rows, dur_all, env_nodes, gn)
+    lines = _lines(par, s, r, nx_all, rows, dur_all, env_nodes, gn)
     for kind, entities, level in kinds:
         cols = pd.MultiIndex.from_product([entities, BANDS], names=[level, "band"])
         out_values = values[kind]
@@ -784,11 +785,15 @@ def _group_reduce(values: np.ndarray, col: np.ndarray, n: int, how: str) -> np.n
     return reduced.to_numpy(dtype=float).T
 
 
-def _lines(par, r, nx: _Next, rows, dur, env_nodes: pd.Index, gn: pd.DataFrame) -> dict:
-    """``{"node": {"net", "demand"}, "group": {...}}``: ramp_net_load and ramp_demand per entity (rows × entity)."""
+def _lines(par, s, r, nx: _Next, rows, dur, env_nodes: pd.Index, gn: pd.DataFrame) -> dict:
+    """``{"node": {"net", "demand"}, "group": {...}}``: ramp_net_load and ramp_demand per entity (rows × entity).
+    N = demand − Σ potential of the VRE arcs of the VRE band: a VRE unit that touches a storage node is in the
+    storage band (absolute frame), so its potential is left out of N too (line and bands in one frame)."""
     nodes = pd.Index(sorted(set(env_nodes) | set(gn["node"])), name="node")
     demand = -par.node_inflow.reindex(index=rows, columns=nodes).fillna(0.0).div(dur, axis=0)
     pot = r.potentialVREgen_dt
+    if pot.shape[1]:
+        pot = pot.loc[:, _storage_of(s, pot.columns.get_level_values("process")) == ""]
     if pot.shape[1]:
         pot_n = pot.reindex(rows).T.groupby(level="node").sum().T.reindex(columns=nodes).fillna(0.0)
     else:

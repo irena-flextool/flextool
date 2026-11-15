@@ -603,7 +603,9 @@ def test_case7c_carried_link_keeps_the_stopping_units_output() -> None:
 def test_case13_vre_unit_touching_a_storage_node_has_no_potential_shift() -> None:
     """Oracle Case 13: PV with outputs n (potential 30, 15) and storage S; its arc to n is in the storage band,
     absolute frame: up = 15 − 20 = −5 → 0, down = 20; SoC (state 33 of 50, D 0) 33 / 17 → storage 0 / 17 (with the
-    potential shift ΔP = −15 it would be 10 / 5).  Lines: net load −10 → 0: +10; demand −5."""
+    potential shift ΔP = −15 it would be 10 / 5).  Lines: the unit's potential is left out of the net load too,
+    N = demand 20 → 15: −5 (with the potential, −10 → 0: +10); demand −5.  Realized: line −5 = the arc's Δf 15 − 20,
+    inside the storage band [−17, 0]."""
     rows = [("p", "t1"), ("p", "t2")]
     f = Frames(rows, [(rows[1], rows[0])])
     f.unit("PV", sink="n", flow=[20, 15], capacity=60.0, pot=[30, 15])
@@ -612,7 +614,7 @@ def test_case13_vre_unit_touching_a_storage_node_has_no_potential_shift() -> Non
     f.storage("S", capacity=50.0, state=[33, 33])
     f.demand("n", [20, 15])
     env = _envelope(f).node_ramp_envelope_dt_ep
-    _assert_row(env, "n", rows[0], _row(10, -5, 0, 0, 0, 0, 0, -17, 0, 0))
+    _assert_row(env, "n", rows[0], _row(-5, -5, 0, 0, 0, 0, 0, -17, 0, 0))
     _assert_empty(env, "n", rows[1])
 
 
