@@ -58,8 +58,10 @@ def test_count_is_66_split_22_dual_1_time_only_42_period_only_1_period_map_only(
 
 
 def test_facet_and_scalar_str_shapes_excluded():
-    # Facet (price-ladder) + scalar-string (invest_method) keys must NOT
-    # be routed through per-row period/time placement.
+    # Facet (price-ladder), scalar-string (invest_method) and load-share
+    # (part-load curve: MAP_LOAD / MAP_PERIOD_LOAD, read whole by
+    # ``piecewise_curve_frame``) keys must NOT be routed through per-row
+    # period/time placement.
     excluded = set(PARAM_ALLOWED_SHAPES) - set(PERIOD_TIME_PARAMS)
     assert excluded == {
         ("commodity", "price_ladder_cumulative"),
@@ -67,6 +69,7 @@ def test_facet_and_scalar_str_shapes_excluded():
         ("node", "invest_method"),
         ("unit", "invest_method"),
         ("connection", "invest_method"),
+        ("unit", "piecewise_linear_efficiency"),
     }
     for key in excluded:
         assert key not in PERIOD_TIME_PARAMS

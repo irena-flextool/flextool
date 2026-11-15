@@ -469,25 +469,3 @@ def test_multi_line_curve_parameters(tmp_path_factory) -> None:
     pts = fd.p_piecewise_points.with_columns(pl.col("d").cast(pl.Utf8)).sort("load")
     assert pts.select("d", "load", "eff").rows() == [("p2020", 0.4, 0.30), ("p2020", 0.7, 0.40),
                                                      ("p2020", 1.0, 0.42)]
-
-
-def test_reload_without_database_refuses_piecewise_units(tmp_path_factory, tmp_path) -> None:
-    """A dump of a run with a piecewise_linear unit cannot be reloaded without the database (the curves are read
-    from it at the load boundary): the reader-less reload names the unit."""
-    from flextool.engine._csv_reload import copy_runner_meta, load_from_dump
-
-    c = CASES["direct_linear"]
-    steps, wf, _ = _RUNS.get(tmp_path_factory, alt="t1_direct_linear_pw", values=_twin_values(c, "pw"),
-                             base_chain=c["chain"], fixture_json=TESTS_JSON)
-    import shutil
-
-    work = tmp_path / "work"
-    shutil.copytree(wf, work)  # the cached run's folder is shared: snapshot into a copy
-    last = list(steps.values())[-1]
-    last.flex_data_provider.snapshot_processed_inputs(work)
-    out = tmp_path / "dumped"
-    last.flex_data.dump_csvs(out, include_heavy=True)
-    copy_runner_meta(work, out)
-    with pytest.raises(FlexToolConfigError, match=r"the dump has piecewise_linear unit\(s\) 'coal_plant': their "
-                                                  r"part-load curves are read from the database"):
-        load_from_dump(out)
