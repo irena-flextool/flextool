@@ -643,6 +643,17 @@ def _read_highs_mip_gap(gap_path: Path) -> float | None:
         return None
 
 
+def _read_highs_primal_feasible(path: Path) -> bool | None:
+    """The HiGHS child's primal-feasibility verdict in the user-scaled problem it solved (``--primal-feasible``),
+    else ``None`` when the child wrote none (no user scaling, not a limit stop, or the best-effort write
+    failed)."""
+    try:
+        text = path.read_text().strip()
+    except OSError:
+        return None
+    return {"1": True, "0": False}.get(text)
+
+
 class _SolHighsShim:
     """Duck-typed stand-in for ``highspy.Highs`` for the cold-path writers.
 
@@ -2188,6 +2199,7 @@ def _solve_highs_subprocess(
     opts_path = out_dir / f"{safe_name}.opt"
     options_json = out_dir / f"{safe_name}.options.json"
     gap_path = out_dir / f"{safe_name}.mipgap"
+    feasible_path = out_dir / f"{safe_name}.primalfeasible"
 
     # Warm-start basis-cache slots (populated only with warm start on;
     # declared here so the ``finally`` cleanup can reference them safely).
@@ -2239,6 +2251,7 @@ def _solve_highs_subprocess(
             "--solution", str(sol_path),
             "--options-json", str(options_json),
             "--mip-gap", str(gap_path),
+            "--primal-feasible", str(feasible_path),
             # The run's thread budget sizes the child's polars pool (read before polars is imported); the
             # child's HiGHS threads come from the options.
             "--threads", str(child_threads),
@@ -2340,7 +2353,7 @@ def _solve_highs_subprocess(
         # The work folder persists across runs and same-named solves: a solution, gap or stats file left by an
         # earlier one must not be read as this solve's when the child writes none (killed, crashed; the gap
         # write is best-effort).
-        _remove_old_results([sol_path, gap_path, warm_stats_path])
+        _remove_old_results([sol_path, gap_path, feasible_path, warm_stats_path])
         cp = subprocess.run(cmd, env=child_env())
         # Exit 0 is optimal and 1 not optimal (``cmd_solve_mps``); any other code is a crash or a signal
         # (POSIX: negative).  Exit 1 is also an uncaught exception in the child, and on Windows a
@@ -2526,6 +2539,12 @@ def _solve_highs_subprocess(
             sol.shim_status, sol.shim_primal_feasible = "OPTIMAL", True
         else:
             sol.shim_status, sol.shim_primal_feasible = _highs_sol_status(sol_path)
+            if sol.shim_status in LIMIT_SHIM_STATUSES:
+                # With user scaling, the verdict in the space HiGHS solved (the child's sidecar); the solution
+                # file's line is HiGHS's verdict after removing that scaling.
+                solved_space = _read_highs_primal_feasible(feasible_path)
+                if solved_space is not None:
+                    sol.shim_primal_feasible = solved_space
         sol.shim_solver = "highs"
         # The gap HiGHS stopped at, named in the limit warning.
         sol.shim_mip_gap = (
@@ -2534,7 +2553,7 @@ def _solve_highs_subprocess(
         return sol
     finally:
         if cleanup:
-            paths = [mps_path, sol_path, opts_path, options_json, gap_path]
+            paths = [mps_path, sol_path, opts_path, options_json, gap_path, feasible_path]
             # The warm-start stats sidecar and A/B probe throwaways live
             # inside ``out_dir`` — sweep them too so the ``rmdir`` below
             # succeeds.  The cache itself (``warm_cached`` / ``warm_tmp_bas``)

@@ -1593,6 +1593,29 @@ unscale resets status and info, not options): primal-relative ceiling
 `max(1e-6, 10 × tolerance)`, absolute margin `10×` the tolerance, and P-D
 gap `1e-2` (the same order as the `mip_rel_gap` models routinely accept).
 The dual side is judged by the P-D gap only, so there is no dual ceiling.
+
+The infeasibility count and the absolute check are made in the space HiGHS
+solved. Autoscale Layer 3's `user_bound_scale = N` makes HiGHS solve a
+problem whose bounds are `2^N` times the ones it was given and judge
+feasibility there; it then removes the scaling and recomputes its info
+counters without rescaling its tolerance, so with `N = -26` a residual of
+`1e-7` in the solved problem reads `6.7` afterwards and is counted as an
+infeasibility (and HiGHS's feasible/infeasible verdict, then just "count is
+zero", flips with it). With user scaling applied, the count, the absolute
+maximum and the verdict therefore come from polar-high's solved-space
+counters (`SolveDiagnostics.user_scaled_*`, polar-high >= 3.15.0: rebuilt
+exactly from the unscaled solution, as the scaling is by powers of two);
+the relative check stays on HiGHS's unscaled numbers. The trade-off: the
+absolute check now mirrors HiGHS's own tolerance and no longer limits the
+residual in the units of the problem passed to HiGHS (with `N = -26`, up to
+`2^26 × 10 × tolerance` there); the relative check is the guard in those
+units. Without user scaling, or with an older polar-high, the unscaled
+counters decide as before. The messages say which space each number is in.
+A MIP stopped by a limit is kept on the same solved-space verdict, also from
+the `--save-memory` HiGHS child (`cmd_solve_mps --primal-feasible`, read in
+place of the solution file's Feasible line). Commercial solvers never get
+the HiGHS user-scaling options.
+
 Each has a `FLEXTOOL_ACCEPT_*` env override; a set (positive)
 `FLEXTOOL_ACCEPT_PRIMAL_REL` replaces the derived relative ceiling outright.
 `FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0` restores the legacy hard-fail (a MIP kept at

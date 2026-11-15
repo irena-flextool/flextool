@@ -48,6 +48,23 @@ HiGHS ran with, read from the live ``Highs`` handle; the Layer-2 unscale's
   was asked to achieve, while the HiGHS default 1e-7 keeps the 1e-6 floor;
 * absolute backstop ``10 x primal_feasibility_tolerance``.
 
+The absolute backstop and the infeasibility count are judged in the space
+HiGHS solved.  With autoscale Layer 3's ``user_bound_scale = N`` HiGHS
+solves a problem whose bounds are ``2**N`` times the ones passed to it,
+judges feasibility there, and then reports its counters after removing that
+scaling, without rescaling its tolerance: with ``N = -26`` a residual of
+``1e-7`` in the solved problem reads ``6.7`` afterwards, and is counted as
+an infeasibility.  So when user scaling was applied the count and the
+absolute maximum come from ``SolveDiagnostics.user_scaled_*`` (polar-high
+>= 3.15.0; an older polar-high gives only the unscaled counters, which are
+then used as before), and the solver's own feasible / infeasible verdict --
+after unscaling it is just "count is zero" -- is replaced by the same
+verdict on the solved-space count.  The absolute check then mirrors
+HiGHS's own tolerance; the relative check, which is scale-invariant and
+stays on HiGHS's unscaled numbers, is the guard in the units of the
+problem passed to HiGHS.  Without user scaling both spaces are the same
+and nothing changes.
+
 The dual side is judged by the primal--dual objective error only (FlexTool
 consumes the primal), so there is no dual-infeasibility ceiling to scale.
 
@@ -99,9 +116,12 @@ _ACCEPT_PD_GAP_DEFAULT = 1e-2
 _ACCEPT_PRIMAL_REL_DEFAULT = 1e-6
 _ACCEPT_PRIMAL_REL_TOL_FACTOR = 10.0
 
-# Absolute backstop: HiGHS enforces feasibility on the internally-scaled LP,
-# so the unscaled slack can exceed the nominal tolerance.  One decade of
-# un-scaling headroom over the solver's own tolerance.
+# Absolute backstop: HiGHS enforces feasibility on its internally-scaled LP,
+# so the slack it reports can exceed the nominal tolerance.  One decade of
+# headroom over the solver's own tolerance.  Measured in the problem HiGHS
+# solved: with user scaling (``user_bound_scale``) on the solved-space
+# counters, not on the ones HiGHS reports after removing that scaling (see
+# the module docstring).
 _ACCEPT_PRIMAL_ABS_MARGIN_DEFAULT = 10.0
 
 
@@ -499,6 +519,51 @@ def _scaling_hint_for_reject(
 _VARIABLE_FREE_ROWS_SHOWN = 5
 
 
+@dataclass(frozen=True)
+class _PrimalCounters:
+    """The primal infeasibility count, absolute maximum and feasibility
+    verdict judged by the acceptance checks, and the space they are in."""
+
+    num: int
+    max_abs: float
+    feasible: bool
+    # The HiGHS ``user_bound_scale`` exponent when the numbers are in the
+    # user-scaled problem HiGHS solved; ``None`` when HiGHS applied no user
+    # scaling (or the installed polar-high cannot tell): then they are its
+    # own counters, in the problem passed to it.
+    bound_scale: int | None
+
+
+def _primal_counters(diag: Any) -> _PrimalCounters:
+    """The primal counters in the space HiGHS solved (see the module
+    docstring).  With user scaling, the solved-space count and maximum from
+    ``SolveDiagnostics.user_scaled_*`` and a verdict of "count is zero";
+    else HiGHS's own counters and verdict."""
+    bound_scale = int(getattr(diag, "user_bound_scale", 0) or 0)
+    objective_scale = int(getattr(diag, "user_objective_scale", 0) or 0)
+    num = getattr(diag, "user_scaled_num_primal_infeasibilities", None)
+    max_abs = getattr(diag, "user_scaled_max_primal_infeasibility", None)
+    if (bound_scale or objective_scale) and num is not None and max_abs is not None:
+        return _PrimalCounters(
+            num=int(num), max_abs=float(max_abs), feasible=int(num) == 0,
+            bound_scale=bound_scale,
+        )
+    return _PrimalCounters(
+        num=int(diag.num_primal_infeasibilities),
+        max_abs=float(diag.max_primal_infeasibility),
+        feasible=bool(diag.primal_feasible),
+        bound_scale=None,
+    )
+
+
+def _dual_feasible(diag: Any, counters: _PrimalCounters) -> bool:
+    """The dual solution's feasibility in the same space as ``counters``."""
+    if counters.bound_scale is not None:
+        num_dual = getattr(diag, "user_scaled_num_dual_infeasibilities", None)
+        return num_dual is not None and int(num_dual) == 0
+    return bool(diag.dual_feasible)
+
+
 def _classify_variable_free_model(sol: "Solution", solve_name: str) -> Acceptance | None:
     """The verdict on a ``kModelEmpty`` solve whose LP has rows but no columns, else ``None``.
 
@@ -656,7 +721,7 @@ def classify_acceptance(
             sol, solve_name,
             status=status, native=status, solver="highs",
             gap=getattr(diag, "mip_gap", None),
-            primal_feasible=bool(diag.primal_feasible),
+            primal_feasible=_primal_counters(diag).feasible,
             ranges_post=ranges_post,
         )
 
@@ -709,35 +774,41 @@ def classify_acceptance(
 
     # Non-negotiable: the primal solution — the thing the cascade consumes —
     # must actually be feasible.  Use HiGHS' own verdict plus a scale-
-    # invariant relative check and a tolerance-derived absolute backstop.
+    # invariant relative check and a tolerance-derived absolute backstop;
+    # the verdict, the count and the absolute maximum in the space HiGHS
+    # solved (``_primal_counters``).
+    primal = _primal_counters(diag)
+    if primal.bound_scale is None:
+        solved_space = ""
+        unscaled_space = ""
+    else:
+        solved_space = (
+            f" in the scaled problem HiGHS solved (user_bound_scale {primal.bound_scale})"
+        )
+        unscaled_space = " (unscaled)"
     primal_abs_tol = primal_tol * primal_abs_margin
     rel_ok = diag.max_relative_primal_infeasibility <= primal_rel_tol
-    abs_ok = diag.max_primal_infeasibility <= primal_abs_tol
-    primal_ok = (
-        diag.primal_feasible
-        and diag.num_primal_infeasibilities == 0
-        and rel_ok
-        and abs_ok
-    )
+    abs_ok = primal.max_abs <= primal_abs_tol
+    primal_ok = primal.feasible and primal.num == 0 and rel_ok and abs_ok
     if not primal_ok:
         # Name the checks that failed (and the relative one when it passed),
         # so the message never states a comparison that does not hold.
         rel_text = (
-            f"max relative primal infeasibility "
+            f"max relative primal infeasibility{unscaled_space} "
             f"{diag.max_relative_primal_infeasibility:.2e} "
             f"{'<=' if rel_ok else '>'} {primal_rel_tol:.1e}"
         )
-        failed = [f"{diag.num_primal_infeasibilities} infeasibilities"]
+        failed = [f"{primal.num} infeasibilities{solved_space}"]
         if not rel_ok:
             failed.append(rel_text)
         if not abs_ok:
             failed.append(
                 f"max absolute primal infeasibility "
-                f"{diag.max_primal_infeasibility:.3g} > {primal_abs_tol:.1e} "
+                f"{primal.max_abs:.3g} > {primal_abs_tol:.1e} "
                 f"({primal_abs_margin:g} x the solver tolerance "
-                f"{primal_tol:.0e})"
+                f"{primal_tol:.0e}){solved_space}"
             )
-        if not diag.primal_feasible:
+        if not primal.feasible and primal.bound_scale is None:
             failed.append("the solver reports the primal solution infeasible")
         passed = f"; {rel_text} passes" if rel_ok else ""
         return Acceptance(
@@ -773,14 +844,14 @@ def classify_acceptance(
     msg = (
         f"Accepted near-optimal solve for {solve_name}: HiGHS could not "
         "certify optimality after postsolve (status Unknown), but the primal "
-        "solution is feasible (max relative primal infeasibility "
+        f"solution is feasible (max relative primal infeasibility{unscaled_space} "
         f"{diag.max_relative_primal_infeasibility:.2e} <= {primal_rel_tol:.1e}"
-        f"; {diag.num_primal_infeasibilities} infeasibilities) and the "
+        f"; {primal.num} infeasibilities{solved_space}) and the "
         f"primal-dual objective error {diag.primal_dual_objective_error:.3%} "
         f"is within the accepted optimality gap {pd_gap_tol:.2%}. Using the "
         "primal solution."
     )
-    if diag.dual_feasible:
+    if _dual_feasible(diag, primal):
         msg += (
             " The dual solution is also feasible; only the post-solve dual "
             "objective certificate is inconsistent."
