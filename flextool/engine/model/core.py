@@ -109,7 +109,7 @@ from flextool.engine.model._common import (
     leaf_rows,
     minus_prior,
 )
-from flextool.engine.input._param_shapes import promote_param_to_dt
+from flextool.engine.input._param_shapes import drop_no_limit_rows, promote_param_to_dt, without_no_limit_rows
 from flextool.engine.model._pdt_join import (
     compute_pss_dt,
     compute_nodeBalance_dt,
@@ -3069,6 +3069,7 @@ def _eq_invest_period_caps(b: _Build) -> None:
     # (n: v_invest_n with state_unitsize[n], n ∈ ed_invest_period_set ∩ nd_invest_set)
     # v_divest_p[p,d] · unitsize[p]        ≤ divest_max_period[p,d]   ∀ (p,d) ∈ ed_divest_period_set ∩ pd_divest_set
     # v_divest_n[n,d] · state_unitsize[n]  ≤ divest_max_period[n,d]   ∀ (n,d) ∈ ed_divest_period_set ∩ nd_divest_set
+    #   (p,d) and (n,d) whose invest_max_period / retire_max_period is inf have no row (no limit in that period)
     # Caps the capacity coming online or retired in one period for entities with a per-period limit
     # (e.g. invest_method = invest_period_total).  An investment decided in o comes online in d = c(o)
     # (construction lead time); without a lead time c(o) = o and the row is v_invest_p[p,d] · unitsize[p] ≤
@@ -3105,12 +3106,16 @@ def _eq_invest_period_caps(b: _Build) -> None:
         cap_frame = cap.frame.pipe(rename_to_axis, {"e": axis})
         check_max_cap(over, cap_frame, axis, True, param_name=param_name)  # FA-12
         cap_param = Param((axis, "d"), cap_frame.select(axis, "d", "value"))
+        # A period with the limit inf has no row (no limit there).
+        over = without_no_limit_rows(over, cap_param, "upper")
+        if over.height == 0:
+            continue
         m.add_cstr(
             name,
             over      = over,
             sense     = "<=",
             lhs_terms = {kind:  var * unitsize},
-            rhs_terms = {"cap": cap_param},
+            rhs_terms = {"cap": drop_no_limit_rows(cap_param, "upper")},
         )
 
 
@@ -3505,7 +3510,9 @@ def _co2_period_cap_with_carry(d) -> Param:
 
 def _eq_co2_max_period(b: _Build) -> None:
     """CO2 emission cap per period."""
-    if not b.has_co2_cap:
+    # A group whose co2_max_period is inf in every period of the solve has no (g, d) left (_direct: an inf period
+    # leaves group_d_co2_capped).
+    if not b.has_co2_cap or not _has_rows(b.d.group_d_co2_capped):
         return
     m, d = b.m, b.d
     v_flow = b.v_flow
@@ -3521,6 +3528,8 @@ def _eq_co2_max_period(b: _Build) -> None:
     #       · co2_content[c]·w[d,t]/step_duration[d,t]   (start-up energy: an event, no step_duration)
     #   ≤ co2_max_period[g,d] · f_d_k[d]  −  co2_cum_realized_tonnes[g,α(d)] / period_share[d]
     #   ∀ (g,d) ∈ group_d_co2_capped;   w = step_duration · timestep_weight / period_share
+    #   group_d_co2_capped = the capped groups × the periods of dt, without the (g,d) where co2_max_period = inf
+    #   (no cap in that period: no row and no carry)
     #   f_d_k[d] = (realized hours of α(d) from earlier solves + this solve's hours of d) / complete hours of α(d)
     #   α(d) = the period label of a forecast branch period d, d itself otherwise; period_share, f_d_k and the
     #   realized carry of a forecast come from α(d) unless it has its own row: every forecast continues from
@@ -3754,6 +3763,8 @@ def _eq_user_constraints(b: _Build) -> None:
     #   = / ≤ / ≥  constant[cn] (or constant[cn,d] for a period map)
     #   ∀ (cn,d,t) ∈ cdt_{eq,le,ge} with a flow, state or online coefficient   (process_constraint_*)
     #   ∀ (cn,d) of the other constraints of cdt_{eq,le,ge}             (process_constraint_*_period)
+    #   cdt_le / cdt_ge leave out the (cn,d) whose constant is inf (less_than) / −inf (greater_than): no
+    #   constraint in that period (_direct.apply_constraint_no_limit)
     # where, for e a process p (us = unitsize, existing = capacity = existing_count·unitsize) or a storage node n
     # (us = state_unitsize, existing = capacity, the storage capacity), MW (MWh):
     #   inv[e,d] = Σ_{(e,o,d) ∈ edd_invest_commission} v_invest[e,o]·us[e] + carried_commission[e,d]

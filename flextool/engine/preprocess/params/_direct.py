@@ -41,7 +41,11 @@ from flextool.engine.input._param_shapes import (
     allowed_shapes_in_words,
     broadcast_to_period,
     broadcast_to_period_time,
+    check_limit_values,
+    drop_no_limit_rows,
     facet_long_frame,
+    no_limit_keys,
+    without_no_limit_rows,
     fill_default_over_grid,
     PeriodNeed,
     promote_param_to_dt,
@@ -164,6 +168,62 @@ def p_constraint_constant_from_source(source: "InputSource",
         return out
     frame = out.frame.collect() if isinstance(out.frame, pl.LazyFrame) else out.frame
     return Param(("cn", "d"), frame.lazy())
+
+
+def apply_constraint_no_limit(source: "InputSource", flex_data: object) -> None:
+    """A user constraint whose constant is ``inf`` (``less_than``) or ``-inf`` (``greater_than``) in a period has no
+    row in that period: the period leaves ``cdt_le`` / ``cdt_ge`` and the constant.
+
+        side(cn) = upper  if sense(cn) = less_than;   lower  if greater_than;   none  if equal (or no sense)
+        drop     = { (cn, d) : constant[cn(, d)] = no_limit_value(side(cn)) }       removed from cdt_le / cdt_ge
+                                                                                     and p_constraint_constant
+        raise FlexToolConfigError   if constant[cn(, d)] = ±inf otherwise (an equal constraint, the other
+                                    infinity): such a row can never hold
+        warn (check_limit_values)   if a less_than / greater_than constant is finite with |v| ≥ 1e15
+
+    A constant (no period) applies to every period, so an infinite one leaves the constraint out of the solve.
+    """
+    const = getattr(flex_data, "p_constraint_constant", None)
+    if const is None:
+        return
+    frame = const.frame.collect() if isinstance(const.frame, pl.LazyFrame) else const.frame
+    senses = dict(constraint_sense_from_source(source).select(pl.col("cn").cast(pl.Utf8),
+                                                              pl.col("sense").cast(pl.Utf8)).iter_rows())
+    side_of = {"less_than": "upper", "greater_than": "lower"}
+    cn_u = pl.col("cn").cast(pl.Utf8)
+    value = pl.col("value").cast(pl.Float64, strict=False)
+    for sense, side in side_of.items():
+        cns = sorted(cn for cn, x in senses.items() if x == sense)
+        if cns:
+            check_limit_values(Param(const.dims, frame.filter(cn_u.is_in(cns)).lazy()), ("cn",),
+                               entity_class="constraint", parameter_name="constant", side=side)
+    inf_rows = frame.filter(value.is_infinite())
+    if inf_rows.height == 0:
+        return
+    bad = sorted({str(cn) for cn, v in inf_rows.select(cn_u, value).iter_rows()
+                  if side_of.get(senses.get(str(cn), "")) is None})
+    if bad:
+        raise FlexToolConfigError(
+            "; ".join(f"constraint '{cn}', parameter 'constant'" for cn in bad)
+            + f": the constant is inf or -inf, but the constraint's sense is "
+              f"{', '.join(sorted({senses.get(cn, 'not given') for cn in bad}))}. An infinite constant means no "
+              "limit only for a less_than (inf) or greater_than (-inf) constraint.")
+    drop: list[pl.DataFrame] = []
+    for sense, side in side_of.items():
+        cns = sorted(cn for cn, x in senses.items() if x == sense)
+        part = Param(const.dims, frame.filter(cn_u.is_in(cns)).lazy())
+        keys = no_limit_keys(part, side)
+        if keys is not None:
+            drop.append(keys)
+        field = "cdt_le" if sense == "less_than" else "cdt_ge"
+        rows = getattr(flex_data, field, None)
+        if rows is not None:
+            setattr(flex_data, field, without_no_limit_rows(rows, part, side))
+    if drop:
+        dropped = Param(const.dims, pl.concat(drop).with_columns(value=pl.lit(float("inf"))).lazy())
+        kept = without_no_limit_rows(frame, dropped, "upper")
+        # Kept also when empty: the user-constraint feature needs the field while it has other data.
+        flex_data.p_constraint_constant = Param(const.dims, kept.lazy())
 
 
 def constraint_period_total_from_source(source: "InputSource") -> pl.DataFrame | None:
@@ -936,13 +996,18 @@ def _entity_period_time_param(source: "InputSource", entity_class: str,
 # §5.14 — group scalars sliced from input/p_group.csv
 def _g_scalar(source: "InputSource", parameter_name: str,
                 *, filter_zero: bool = True,
-                entity_class: str = "group") -> Param | None:
+                entity_class: str = "group",
+                limit_side: str | None = None) -> Param | None:
     """Group scalar Param ``Param(("g",), [g, value])``, dropping zero
     rows by default (mirrors ``_slice_pgroup``'s ``!= 0`` filter).
 
     ``entity_class`` defaults to ``"group"`` (all non-flow callers); the
     v58 cumulative-flow callers pass ``"flowGroup"`` since those four
     flow params now live on the dedicated ``flowGroup`` class.
+
+    ``limit_side`` (``"upper"`` / ``"lower"``) marks a limit whose missing row means no limit: an ``inf``
+    (``-inf`` for a lower limit) row is left out, the opposite infinity is refused and a huge finite value warned
+    about (:func:`check_limit_values`).
     """
     try:
         df = source.parameter_explicit(entity_class, parameter_name)
@@ -964,6 +1029,13 @@ def _g_scalar(source: "InputSource", parameter_name: str,
     out = lf.select("g", "value").collect()
     if out.height == 0:
         return None
+    if limit_side is not None:
+        param = Param(("g",), out.lazy())
+        check_limit_values(param, ("g",), entity_class=entity_class, parameter_name=parameter_name,
+                           side=limit_side)
+        out = drop_no_limit_rows(param, limit_side).lazy.collect()
+        if out.height == 0:
+            return None
     return Param(("g",), out.lazy())
 
 
@@ -1020,7 +1092,7 @@ def pdGroup_capacity_margin_from_source(source: "InputSource",
     active = _group_names(groupCapacityMarginManual(source)) if _gate_needed(need_periods, resolved) else None
     out = require_period_coverage(
         resolved, "g", period_filter, entity_class="group", parameter_name="capacity_margin",
-        need_periods=need_periods, active=active, filter_zero=True)
+        need_periods=need_periods, active=active, filter_zero=True, limit_side="lower")
     share = _group_names(groupCapacityMarginShareOfPeak(source))
     return _only_groups(out, share, keep=False) if share else out
 
@@ -1045,7 +1117,7 @@ def pdGroup_capacity_margin_share_from_source(source: "InputSource",
     out = require_period_coverage(
         resolved, "g", period_filter, entity_class="group", parameter_name="capacity_margin_share",
         need_periods=need_periods, active=share if _gate_needed(need_periods, resolved) else None,
-        filter_zero=True)
+        filter_zero=True, limit_side="lower")
     return _only_groups(out, share)
 
 
@@ -1237,7 +1309,7 @@ def pdtGroup_inertia_limit_from_source(source: "InputSource",
     active = _group_names(groupInertia(source)) if _gate_needed(need_periods, resolved) else None
     return require_period_coverage_time(
         resolved, "g", period_filter, entity_class="group", parameter_name="inertia_limit",
-        need_periods=need_periods, active=active, filter_zero=True)
+        need_periods=need_periods, active=active, filter_zero=True, limit_side="lower", drop_no_limit=True)
 
 
 def pdGroup_penalty_inertia_from_source(source: "InputSource",
@@ -1271,7 +1343,7 @@ def pdtGroup_non_synchronous_limit_from_source(source: "InputSource",
     active = _group_names(groupNonSync(source)) if _gate_needed(need_periods, resolved) else None
     return require_period_coverage_time(
         resolved, "g", period_filter, entity_class="group", parameter_name="non_synchronous_limit",
-        need_periods=need_periods, active=active, filter_zero=False)
+        need_periods=need_periods, active=active, filter_zero=False, limit_side="upper")
 
 
 def check_energy_margin_adder_shape(source: "InputSource", period_filter: pl.DataFrame | None) -> None:
@@ -1326,15 +1398,19 @@ def pdGroup_penalty_non_synchronous_from_source(source: "InputSource",
 # §1.16 — group invest/divest 1d_map(period) — drop zeros to match CSV
 def _group_invest_period_limit(source: "InputSource", resolved, parameter_name: str,
                                methods: "frozenset[str]", period_filter: pl.DataFrame | None,
-                               need_periods: "PeriodNeed | None", *, filter_zero: bool) -> Param | None:
+                               need_periods: "PeriodNeed | None", *, filter_zero: bool,
+                               limit_side: str) -> Param | None:
     """A group investment limit per period: a period map of a group whose ``invest_method`` is one of
     ``methods`` must cover ``need_periods`` (the solve's investment periods;
-    :func:`require_period_coverage`)."""
+    :func:`require_period_coverage`).  ``limit_side``: a maximum (``"upper"``) keeps its ``inf`` rows (the row of
+    that period is left out in the model); a minimum (``"lower"``, zero rows dropped) drops its ``-inf`` rows,
+    which set no floor, as 0 does."""
     active = (_names_with_method(source, "group", "invest_method", methods)
               if _gate_needed(need_periods, resolved) else None)
     return require_period_coverage(
         resolved, "g", period_filter, entity_class="group", parameter_name=parameter_name,
-        need_periods=need_periods, active=active, filter_zero=filter_zero)
+        need_periods=need_periods, active=active, filter_zero=filter_zero, limit_side=limit_side,
+        drop_no_limit=limit_side == "lower")
 
 
 def p_group_invest_max_period_from_source(source: "InputSource",
@@ -1352,7 +1428,7 @@ def p_group_invest_max_period_from_source(source: "InputSource",
     resolved = resolve_param_shape(
         source, "group", "invest_max_period", period_filter=period_filter)
     return _group_invest_period_limit(source, resolved, "invest_max_period", _INVEST_PERIOD_METHODS, period_filter,
-                                      need_periods, filter_zero=False)
+                                      need_periods, filter_zero=False, limit_side="upper")
 
 
 def p_group_invest_min_period_from_source(source: "InputSource",
@@ -1366,7 +1442,7 @@ def p_group_invest_min_period_from_source(source: "InputSource",
     resolved = resolve_param_shape(
         source, "group", "invest_min_period", period_filter=period_filter)
     return _group_invest_period_limit(source, resolved, "invest_min_period", _INVEST_PERIOD_METHODS, period_filter,
-                                      need_periods, filter_zero=True)
+                                      need_periods, filter_zero=True, limit_side="lower")
 
 
 def p_group_retire_max_period_from_source(source: "InputSource",
@@ -1383,7 +1459,7 @@ def p_group_retire_max_period_from_source(source: "InputSource",
     resolved = resolve_param_shape(
         source, "group", "retire_max_period", period_filter=period_filter)
     return _group_invest_period_limit(source, resolved, "retire_max_period", _DIVEST_PERIOD_METHODS, period_filter,
-                                      need_periods, filter_zero=False)
+                                      need_periods, filter_zero=False, limit_side="upper")
 
 
 def p_group_retire_min_period_from_source(source: "InputSource",
@@ -1397,7 +1473,7 @@ def p_group_retire_min_period_from_source(source: "InputSource",
     resolved = resolve_param_shape(
         source, "group", "retire_min_period", period_filter=period_filter)
     return _group_invest_period_limit(source, resolved, "retire_min_period", _DIVEST_PERIOD_METHODS, period_filter,
-                                      need_periods, filter_zero=True)
+                                      need_periods, filter_zero=True, limit_side="lower")
 
 
 def pd_max_cumulative_flow_from_source(source: "InputSource",
@@ -1417,7 +1493,7 @@ def pd_max_cumulative_flow_from_source(source: "InputSource",
         period_filter=period_filter)
     return require_period_coverage(
         resolved, "g", period_filter, entity_class="flowGroup", parameter_name="max_cumulative_flow",
-        need_periods=need_periods)
+        need_periods=need_periods, limit_side="upper", drop_no_limit=True)
 
 
 def pd_min_cumulative_flow_from_source(source: "InputSource",
@@ -1437,7 +1513,7 @@ def pd_min_cumulative_flow_from_source(source: "InputSource",
         period_filter=period_filter)
     return require_period_coverage(
         resolved, "g", period_filter, entity_class="flowGroup", parameter_name="min_cumulative_flow",
-        need_periods=need_periods)
+        need_periods=need_periods, limit_side="lower", drop_no_limit=True)
 
 
 # §1.16 — group scalar Direct Params (no period dimension)
@@ -1474,7 +1550,7 @@ def pd_group_cumulative_max_capacity_from_source(source: "InputSource",
     resolved = resolve_param_shape(
         source, "group", "cumulative_max_capacity", period_filter=period_filter)
     return _group_invest_period_limit(source, resolved, "cumulative_max_capacity", _CUMULATIVE_METHODS,
-                                      period_filter, need_periods, filter_zero=False)
+                                      period_filter, need_periods, filter_zero=False, limit_side="upper")
 
 
 def pd_group_cumulative_min_capacity_from_source(source: "InputSource",
@@ -1489,18 +1565,20 @@ def pd_group_cumulative_min_capacity_from_source(source: "InputSource",
     resolved = resolve_param_shape(
         source, "group", "cumulative_min_capacity", period_filter=period_filter)
     return _group_invest_period_limit(source, resolved, "cumulative_min_capacity", _CUMULATIVE_METHODS,
-                                      period_filter, need_periods, filter_zero=True)
+                                      period_filter, need_periods, filter_zero=True, limit_side="lower")
 
 
 def p_group_max_cumulative_flow_from_source(source: "InputSource") -> Param | None:
     """Zero rows are kept (``filter_zero=False``): an explicit 0 is a limit, see
     :func:`pd_max_cumulative_flow_from_source`."""
-    return _g_scalar(source, "max_cumulative_flow", entity_class="flowGroup", filter_zero=False)
+    return _g_scalar(source, "max_cumulative_flow", entity_class="flowGroup", filter_zero=False,
+                     limit_side="upper")
 
 
 def p_group_min_cumulative_flow_from_source(source: "InputSource") -> Param | None:
     """Zero rows are kept (``filter_zero=False``), see :func:`pd_min_cumulative_flow_from_source`."""
-    return _g_scalar(source, "min_cumulative_flow", entity_class="flowGroup", filter_zero=False)
+    return _g_scalar(source, "min_cumulative_flow", entity_class="flowGroup", filter_zero=False,
+                     limit_side="lower")
 
 
 # §1.16 — pdtGroup (Map period→time) instant flow caps
@@ -1521,7 +1599,7 @@ def pdt_max_instant_flow_from_source(source: "InputSource",
         source, "flowGroup", "max_instant_flow", period_filter=period_filter)
     return require_period_coverage_time(
         resolved, "g", period_filter, entity_class="flowGroup", parameter_name="max_instant_flow",
-        need_periods=need_periods)
+        need_periods=need_periods, limit_side="upper", drop_no_limit=True)
 
 
 def pdt_min_instant_flow_from_source(source: "InputSource",
@@ -1541,7 +1619,7 @@ def pdt_min_instant_flow_from_source(source: "InputSource",
         source, "flowGroup", "min_instant_flow", period_filter=period_filter)
     return require_period_coverage_time(
         resolved, "g", period_filter, entity_class="flowGroup", parameter_name="min_instant_flow",
-        need_periods=need_periods)
+        need_periods=need_periods, limit_side="lower", drop_no_limit=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1558,6 +1636,7 @@ def _e_period_param_union(source: "InputSource",
                             period_filter: pl.DataFrame | None = None,
                             need_periods: "PeriodNeed | None" = None,
                             methods: "frozenset[str] | None" = None,
+                            limit_side: str | None = None,
                             ) -> Param | None:
     """Union ``parameter_name`` across the supplied entity classes into a
     single ``Param(("e", "d"), [...])`` frame.
@@ -1589,6 +1668,10 @@ def _e_period_param_union(source: "InputSource",
     is one of ``methods`` must cover those periods (the solve's investment
     periods).  The check runs per class, so the error names the right class
     (:func:`require_period_coverage`).
+
+    ``limit_side`` marks the limit (:func:`check_limit_values`): a maximum (``"upper"``) keeps its ``inf`` rows (the
+    model leaves the row of that period out and the variable bound reads no limit), a minimum (``"lower"``, zero
+    rows dropped) drops its ``-inf`` rows, which set no floor, as 0 does.
     """
     parts: list[pl.LazyFrame] = []
     for cls in classes:
@@ -1598,7 +1681,8 @@ def _e_period_param_union(source: "InputSource",
                   if methods is not None and _gate_needed(need_periods, resolved) else None)
         part = require_period_coverage(
             resolved, "e", period_filter, entity_class=cls, parameter_name=parameter_name,
-            need_periods=need_periods, active=active, filter_zero=filter_zero)
+            need_periods=need_periods, active=active, filter_zero=filter_zero, limit_side=limit_side,
+            drop_no_limit=limit_side == "lower")
         if part is None:
             continue
         # ``broadcast_to_period`` returns a Param whose dims are either
@@ -1642,7 +1726,8 @@ def ed_invest_max_period_from_source(source: "InputSource",
                                     filter_zero=False,
                                     period_filter=period_filter,
                                     need_periods=need_periods,
-                                    methods=_INVEST_PERIOD_METHODS)
+                                    methods=_INVEST_PERIOD_METHODS,
+                                    limit_side="upper")
 
 
 def ed_divest_max_period_from_source(source: "InputSource",
@@ -1655,7 +1740,8 @@ def ed_divest_max_period_from_source(source: "InputSource",
                                     filter_zero=False,
                                     period_filter=period_filter,
                                     need_periods=need_periods,
-                                    methods=_DIVEST_PERIOD_METHODS)
+                                    methods=_DIVEST_PERIOD_METHODS,
+                                    limit_side="upper")
 
 
 def ed_invest_min_period_from_source(source: "InputSource",
@@ -1670,7 +1756,8 @@ def ed_invest_min_period_from_source(source: "InputSource",
                                     filter_zero=True,
                                     period_filter=period_filter,
                                     need_periods=need_periods,
-                                    methods=_INVEST_PERIOD_METHODS)
+                                    methods=_INVEST_PERIOD_METHODS,
+                                    limit_side="lower")
 
 
 def ed_divest_min_period_from_source(source: "InputSource",
@@ -1683,7 +1770,8 @@ def ed_divest_min_period_from_source(source: "InputSource",
                                     filter_zero=True,
                                     period_filter=period_filter,
                                     need_periods=need_periods,
-                                    methods=_DIVEST_PERIOD_METHODS)
+                                    methods=_DIVEST_PERIOD_METHODS,
+                                    limit_side="lower")
 
 
 def ed_cumulative_max_capacity_from_source(source: "InputSource",
@@ -1698,7 +1786,8 @@ def ed_cumulative_max_capacity_from_source(source: "InputSource",
                                     filter_zero=False,
                                     period_filter=period_filter,
                                     need_periods=need_periods,
-                                    methods=_CUMULATIVE_METHODS)
+                                    methods=_CUMULATIVE_METHODS,
+                                    limit_side="upper")
 
 
 def ed_cumulative_min_capacity_from_source(source: "InputSource",
@@ -1711,7 +1800,8 @@ def ed_cumulative_min_capacity_from_source(source: "InputSource",
                                     filter_zero=True,
                                     period_filter=period_filter,
                                     need_periods=need_periods,
-                                    methods=_CUMULATIVE_METHODS)
+                                    methods=_CUMULATIVE_METHODS,
+                                    limit_side="lower")
 
 
 # ---------------------------------------------------------------------------
@@ -1951,7 +2041,7 @@ def p_co2_max_period_from_source(source: "InputSource",
               if _gate_needed(need_periods, resolved) else None)
     return require_period_coverage(
         resolved, "g", period_filter, entity_class="group", parameter_name="co2_max_period",
-        need_periods=need_periods, active=active)
+        need_periods=need_periods, active=active, limit_side="upper")
 
 
 def require_co2_cap_values(source: "InputSource", parameter_name: str, methods: "frozenset[str]") -> None:
@@ -2916,6 +3006,7 @@ def apply_direct_params_b(source: "InputSource",
     # User-constraint constant: scalar, or a period map over the dispatch periods (rows are (cn, d, t)).
     flex_data.p_constraint_constant = p_constraint_constant_from_source(source, period_filter=dt,
                                                                         active_solve=active_solve)
+    apply_constraint_no_limit(source, flex_data)
 
     # ─── Δ.4b — group scalar (no period) ─────────────────────────────────
     for fn, field in (
@@ -3006,6 +3097,11 @@ def apply_direct_params_b(source: "InputSource",
         p_co2_max_period_from_source(source, period_filter=dt, need_periods=need_dispatch), dt)
     if v is not None:
         flex_data.p_co2_max_period = v
+        # A period with co2_max_period = inf has no cap: its (g, d) leaves the cap's row domain, so neither the
+        # row nor the rolling carry of that period is built.
+        capped = getattr(flex_data, "group_d_co2_capped", None)
+        if capped is not None:
+            flex_data.group_d_co2_capped = without_no_limit_rows(capped, v, "upper")
     # co2_max_total has no period axis (read from the emitted pdGroup slice); a total method without a value
     # would leave the group without its cap.
     require_co2_cap_values(source, "co2_max_total", _CO2_MAX_TOTAL_METHOD)

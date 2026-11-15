@@ -36,6 +36,8 @@ solve, mirroring the established hand-off used by the CSV path.
 """
 from __future__ import annotations
 
+import math
+
 import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -4121,6 +4123,8 @@ def p_entity_max_units_from_source(source: "InputSource",
     #                                   + eim[e]                        if e ∈ e_invest_total, (e,d) ∉ ed_invest_period
     #                                   + max(imp[e,d], eim[e])         if both
     #                                   + max_flow_for_unconstrained    if invest_method ∈ *_no_limit
+    #   cmc[e,d] = inf (no limit in d): existing[e,d] + max_flow_for_unconstrained;  imp[e,d] = inf: imp :=
+    #   max_flow_for_unconstrained (the bound of a *_no_limit method)
     # imp[e,d] / cmc[e,d] = authored[e,d]  (period map)
     #                     | authored[e]    (constant)
     #                     | authored[e, anchor(d)]  (recourse branch period without its own value)
@@ -4164,6 +4168,11 @@ def p_entity_max_units_from_source(source: "InputSource",
             p_unc = float(df_unc["value"].max())
         except Exception:
             pass
+    # invest_max_period = inf is no limit in that period: the variable takes the no-limit bound
+    # (max_flow_for_unconstrained_variables), as under an *_no_limit method; the per-period row is left out
+    # (core._eq_invest_period_caps).  cumulative_max_capacity = inf likewise: existing + the no-limit bound.
+    imp_map = {k: (p_unc if math.isinf(v) and v > 0 else v) for k, v in imp_map.items()}
+    cmc_unlimited = {k for k, v in cmc_map.items() if math.isinf(v) and v > 0}
 
     # Compute max_capacity per (e, d in period_in_use) and divide by unitsize.
     rows: list[tuple[str, str, float]] = []
@@ -4179,7 +4188,8 @@ def p_entity_max_units_from_source(source: "InputSource",
                     # A period map that leaves out an investment period of the solve never gets here:
                     # pass 1b refuses it (``require_period_coverage``).  The 0.0 is only reached for
                     # a period the solve does not invest in.
-                    v = cmc_map.get((e, d), 0.0)
+                    v = (existing_map.get((e, d), 0.0) + p_unc if (e, d) in cmc_unlimited
+                         else cmc_map.get((e, d), 0.0))
                 else:
                     # A cumulative_limits entity that never authors
                     # cumulative_max_capacity (e.g. only cumulative_min_capacity, a floor with no

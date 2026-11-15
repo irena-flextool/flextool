@@ -21,6 +21,8 @@ Byte-for-byte parity with the legacy emitters is the gate.
 """
 from __future__ import annotations
 
+import math
+
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -627,6 +629,11 @@ def _compute_p_entity_capacity_max_chain(
         if max_v is not None:
             p_unc = max_v
 
+    # invest_max_period / cumulative_max_capacity = inf is no limit in that period (the model leaves the row
+    # out): the bounds use the no-limit value p_unc, as an *_no_limit method does (``_derived`` does the same).
+    invest_max_period = {k: (p_unc if math.isinf(v) and v > 0 else v) for k, v in invest_max_period.items()}
+    cmc_unlimited = {k for k, v in cum_max_cap.items() if math.isinf(v) and v > 0}
+
     edd_invest_by_ed: dict[tuple[str, str], list[str]] = {}
     for (e, d_inv, d) in _read_triples(solve_data_dir / "edd_invest.csv",
                                          provider=provider):
@@ -643,7 +650,9 @@ def _compute_p_entity_capacity_max_chain(
                 max_capacity[(e, d)] = 0.0
                 continue
             if (e, d) in invest_cumulative:
-                if e in cmc_authors:
+                if (e, d) in cmc_unlimited:
+                    v = all_existing.get((e, d), 0.0) + p_unc
+                elif e in cmc_authors:
                     v = cum_max_cap.get((e, d), 0.0)
                 else:
                     # A cumulative_limits entity that never authors
@@ -688,7 +697,9 @@ def _compute_p_entity_capacity_max_chain(
                 invest_cum_max[(e, d)] = 0.0
                 continue
             if (e, d) in invest_cumulative:
-                if e in cmc_authors:
+                if (e, d) in cmc_unlimited:
+                    v = p_unc
+                elif e in cmc_authors:
                     v = max(
                         0.0,
                         cum_max_cap.get((e, d), 0.0)

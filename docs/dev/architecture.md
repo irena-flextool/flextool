@@ -584,6 +584,27 @@ cross-product) → `promote_param_to_dt` (narrowing inner-join on the
 carried axis). A new parameter that needs this must be added to
 `PARAM_ALLOWED_SHAPES`.
 
+##### Limits: `inf` is "no limit", a missing period is an error
+
+A period-map limit read through `require_period_coverage` / `require_period_coverage_time` must cover every period
+it applies to; a gap raises.  "No limit in this period" is written as `inf` (`-inf` for a lower limit).  The readers
+pass `limit_side` (`"upper"` / `"lower"`): `check_limit_values` refuses the opposite infinity and warns, once per
+(parameter, entity) and run, about a finite value of `HUGE_LIMIT_VALUE` (1e15) or more (kept as given: a huge
+right-hand side wrecks the scaling).  Two ways to drop the no-limit rows:
+
+- `drop_no_limit=True` drops them at the reader, for a limit whose missing row already means no limit (the flow
+  group limits, whose rows come from the Param; a minimum whose 0 sets no floor: `inertia_limit`,
+  `invest_min_period`, `retire_min_period`, `cumulative_min_capacity`).
+- Otherwise the Param keeps them and the consumer leaves the row out with `without_no_limit_rows(domain, param,
+  side)` and passes `drop_no_limit_rows(param, side)` as the right-hand side — for a family whose row domain does
+  not come from the Param (`co2_max_period` → `group_d_co2_capped`, the investment maxima behind FA-12,
+  `non_synchronous_limit` → `non_sync_rows`, `capacity_margin(_share)` → `capacity_margin_rows`, the user
+  constraint constant → `cdt_le` / `cdt_ge`).  The variable bounds of an entity investment read an unlimited
+  `invest_max_period` / `cumulative_max_capacity` period as the no-limit bound (`max_flow_for_unconstrained_variables`).
+
+Gated by `tests/engine/test_limit_inf_no_limit.py` (LP with `inf` = LP with a non-binding value minus that period's
+rows, single / rolling / stochastic).
+
 ##### Silent-label Maps are resolved per entity, not per parameter
 
 When the DB carries no explicit `index_name` on a Map (`"x"` or empty) and the registry admits both a

@@ -24,7 +24,11 @@ from polar_high import Param, Sum, Where
 from polar_high.engine import Expr
 
 from flextool.engine.input._axis_enums import align_join_dtypes, join_aligned
-from flextool.engine.input._param_shapes import promote_param_to_dt
+from flextool.engine.input._param_shapes import (
+    drop_no_limit_rows,
+    promote_param_to_dt,
+    without_no_limit_rows,
+)
 from flextool.engine.preprocess._provider_io import _provider_key
 from flextool.engine.model import _balance_terms, _coarse_flows
 from flextool.engine.model._common import _availability_factor, _has_rows, _indirect_sum_arcs, _var_view
@@ -186,6 +190,25 @@ def _capacity_margin_periods(d) -> pl.DataFrame | None:
     return out if out.height > 0 else None
 
 
+def capacity_margin_rows(d) -> pl.DataFrame | None:
+    """``(g, d)``: the capacity-margin groups × their periods (:func:`_capacity_margin_periods`), without the (g, d)
+    whose margin is ``-inf`` (no capacity-margin requirement in that period: no row and no slack); None without
+    any.
+
+        rows = groupCapacityMargin × D_inv − { (g,d) : capacity_margin[g,d] = −inf or capacity_margin_share[g,d] = −inf }
+
+    Both parameters are read, so the rows are the same before and after :func:`resolve_capacity_margin` turns a
+    share into the margin (a share of ``-inf`` gives the margin ``-inf``)."""
+    gcm = getattr(d, "groupCapacityMargin", None)
+    periods = _capacity_margin_periods(d)
+    if not _has_rows(gcm) or periods is None:
+        return None
+    rows = gcm.join(periods, how="cross")
+    for name in ("pdGroup_capacity_margin", "pdGroup_capacity_margin_share"):
+        rows = without_no_limit_rows(rows, getattr(d, name, None), "lower")
+    return rows if rows.height > 0 else None
+
+
 def _capacity_margin_branch_weight(d) -> Param | None:
     """``(d,)`` branch weight of the capacity-margin periods; None when the solve has no ``pd_branch_weight``.
 
@@ -203,10 +226,11 @@ def has_capacity_margin(d) -> bool:
     """True when some group has capacity_margin_method manual or share_of_peak, the group scaling is populated and
     the solve has an investment period in dt.
 
-    A group without a margin value has margin 0 (its capacity must cover its demand).  A solve without investment
-    periods (dispatch, rolling dispatch) has no capacity margin."""
+    A group without a margin value has margin 0 (its capacity must cover its demand); a margin of -inf is no
+    requirement in that period (:func:`capacity_margin_rows`).  A solve without investment periods (dispatch,
+    rolling dispatch) has no capacity margin."""
     return (_has_rows(getattr(d, "groupCapacityMargin", None)) and d.p_inv_group_cap is not None
-            and _capacity_margin_periods(d) is not None)
+            and capacity_margin_rows(d) is not None)
 
 
 def has_inertia(d) -> bool:
@@ -220,11 +244,22 @@ def has_inertia(d) -> bool:
 def has_non_sync(d) -> bool:
     """True when some group has has_non_synchronous = yes and the data to build its row is populated.
 
-    A flagged group without a non_synchronous_limit has limit 0."""
+    A flagged group without a non_synchronous_limit has limit 0; a limit of inf is no limit at that step
+    (:func:`non_sync_rows`)."""
     return (_has_rows(getattr(d, "groupNonSync", None))
             and d.group_node is not None
             and d.process_source_sink is not None and d.p_unitsize is not None
-            and d.p_step_duration is not None and d.p_inv_group_cap is not None)
+            and d.p_step_duration is not None and d.p_inv_group_cap is not None
+            and non_sync_rows(d).height > 0)
+
+
+def non_sync_rows(d) -> pl.DataFrame:
+    """``(g, d, t)``: the non-synchronous groups × dt, without the steps whose non_synchronous_limit is ``inf`` (no
+    limit there: no row and no slack).
+
+        rows = groupNonSync × dt − { (g,d,t) : non_synchronous_limit[g(,d)(,t)] = inf }"""
+    return without_no_limit_rows(d.groupNonSync.join(d.dt, how="cross"),
+                                 getattr(d, "pdtGroup_non_synchronous_limit", None), "upper")
 
 
 # ---------------------------------------------------------------------------
@@ -239,15 +274,14 @@ def add_variables(b: _Build) -> None:
 
     # ─── VAR. ─── vq_capacity_margin ─────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # vq_capacity_margin[g,d] ≥ 0   ∀ g ∈ groupCapacityMargin, d ∈ D_inv
+    # vq_capacity_margin[g,d] ≥ 0   ∀ (g,d) ∈ capacity_margin_rows = groupCapacityMargin × D_inv, without the
+    #   (g,d) whose margin is −inf (no requirement in that period)
     #   D_inv = period_invest ∩ periods of dt: the solve's investment periods and, in a stochastic fan, the
     #   forecast branch periods of those anchors (a period label has no dt); one slack per forecast
     # Capacity margin shortfall of group g in period d, as a fraction of
     # group_capacity_for_scaling: MW = vq_capacity_margin · group_capacity_for_scaling[g,d].
     if b.has_capacity_margin:
-        b.vq_capacity_margin = m.add_var("vq_capacity_margin", ("g", "d"),
-                                         d.groupCapacityMargin.join(_capacity_margin_periods(d), how="cross"),
-                                         lower=0.0)
+        b.vq_capacity_margin = m.add_var("vq_capacity_margin", ("g", "d"), capacity_margin_rows(d), lower=0.0)
 
     # ─── VAR. ─── v_capacity_margin_slack_energy ─────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -278,11 +312,12 @@ def add_variables(b: _Build) -> None:
 
     # ─── VAR. ─── vq_non_synchronous ─────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # vq_non_synchronous[g,d,t] ≥ 0   ∀ g ∈ groupNonSync, (d,t) ∈ dt
+    # vq_non_synchronous[g,d,t] ≥ 0   ∀ (g,d,t) ∈ non_sync_rows = groupNonSync × dt, without the steps whose
+    #   non_synchronous_limit is inf (no limit there)
     # Non-synchronous infeed of group g above its allowed share, as a
     # fraction of group_capacity_for_scaling: MW = vq_non_synchronous · group_capacity_for_scaling[g,d].
     if b.has_non_sync:
-        idx = d.groupNonSync.join(d.dt, how="cross")
+        idx = non_sync_rows(d)
         steps = _row_steps(b, "non_sync", idx)
         b.vq_non_synchronous = _coarse_flows.alias(
             b, m.add_var("vq_non_synchronous", ("g", "d", "t"), _coarse_flows.domain(b, idx, steps), lower=0.0),
@@ -615,7 +650,8 @@ def resolve_capacity_margin(d) -> None:
 
     The row, the group scaling, the Benders split and the outputs then read one MW value whatever the method.  A
     share_of_peak group whose share is positive but whose peak is 0 (no demand) gets a warning: its margin is 0.
-    Rows of 0 are dropped (margin 0).  Idempotent: a group's rows are replaced, not added to.
+    Rows of 0 are dropped (margin 0).  A share of -inf gives the margin -inf (no requirement in that period,
+    :func:`capacity_margin_rows`), whatever the peak.  Idempotent: a group's rows are replaced, not added to.
     """
     share = _param_frame(getattr(d, "pdGroup_capacity_margin_share", None))
     if share is None or share.height == 0:
@@ -629,7 +665,9 @@ def resolve_capacity_margin(d) -> None:
         peak_u = peak.select(pl.col("g").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
                              pl.col("value").cast(pl.Float64).alias("peak"))
     joined = share_u.join(peak_u, on=["g", "d"], how="left").with_columns(pl.col("peak").fill_null(0.0))
-    no_peak = sorted(set(joined.filter((pl.col("share") != 0.0) & (pl.col("peak") <= 0.0))["g"].to_list()))
+    unlimited = pl.col("share") == float("-inf")
+    no_peak = sorted(set(joined.filter((pl.col("share") != 0.0) & ~unlimited & (pl.col("peak") <= 0.0))["g"]
+                         .to_list()))
     if no_peak:
         from flextool.engine import _behaviour_changes
 
@@ -637,7 +675,9 @@ def resolve_capacity_margin(d) -> None:
             ("capacity_margin_share_no_peak", tuple(no_peak)),
             f"Warning: capacity margin group(s) {', '.join(no_peak)} have capacity_margin_method share_of_peak but "
             "no demand in some investment period: the margin there is 0.")
-    margin = (joined.with_columns(value=pl.col("share") * pl.col("peak"))
+    # A share of -inf (no requirement in that period) stays -inf, also without demand (-inf · 0 would be NaN).
+    margin = (joined.with_columns(value=pl.when(unlimited).then(pl.lit(float("-inf")))
+                                  .otherwise(pl.col("share") * pl.col("peak")))
               .filter(pl.col("value") != 0.0).select("g", "d", "value"))
     groups = sorted(set(share_u["g"].to_list()))
     current = _param_frame(getattr(d, "pdGroup_capacity_margin", None))
@@ -678,7 +718,8 @@ def _eq_capacity_margin(b: _Build) -> None:
     #   + vq_capacity_margin[g,d]
     #   ≥ (M[g,d] + Σ_{n ∈ N(g)} demand[n,d,t]) · icap[g,d]
     #     − Σ_{(p,s,k) ∈ K(g)} existing_count[p,d] · unitsize[p] · κ[g,p,s,k,d,t] · icap[g,d]
-    #   ∀ g ∈ groupCapacityMargin, (d,t) ∈ dt : d ∈ D_inv
+    #   ∀ (g,d) ∈ capacity_margin_rows, (d,t) ∈ dt
+    #   capacity_margin_rows = groupCapacityMargin × D_inv without the (g,d) whose margin is −inf (no requirement)
     #   groupCapacityMargin = groups with capacity_margin_method manual or share_of_peak
     #   D_inv = period_invest ∩ periods of dt (investment periods of the solve; a period label has no dt, so a
     #   fan contributes its forecast branch periods, one row per forecast); a solve without investment periods
@@ -763,7 +804,7 @@ def _eq_capacity_margin(b: _Build) -> None:
         lhs["storage_slack_neg"] = -(slack_energy * invc)
 
     if d.pdGroup_capacity_margin is not None:
-        rhs["floor"] = d.pdGroup_capacity_margin * invc
+        rhs["floor"] = drop_no_limit_rows(d.pdGroup_capacity_margin, "lower") * invc
     inflow_per = getattr(d, "pdtNodeInflow_per_step", None)
     if inflow_per is not None and gn is not None:
         rhs_inflow = (join_aligned(gn, inflow_per.frame.rename({"value": "inflow"}), on="n", how="inner")
@@ -776,6 +817,8 @@ def _eq_capacity_margin(b: _Build) -> None:
 
     _eq_slack_energy(b)
     over = gcm.join(dt_inv, how="cross")
+    for name in ("pdGroup_capacity_margin", "pdGroup_capacity_margin_share"):
+        over = without_no_limit_rows(over, getattr(d, name, None), "lower")
     _coarse_flows.add_row_rule_cstr(b, "capacityMargin", over=over, sense=">=", lhs_terms=lhs, rhs_terms=rhs,
                                     partition=_row_partition(b, "capacity_margin", over))
 
@@ -836,6 +879,15 @@ def _slack_energy_index(b: _Build) -> "pl.DataFrame | None":
     idx = (b.vq_state_up.frame.select("n", "d").unique()
            .filter(pl.col("n").cast(pl.Utf8).is_in(_names(pairs, "n")) & pl.col("d").cast(pl.Utf8).is_in(periods))
            .sort("n", "d"))
+    rows = capacity_margin_rows(b.d)
+    full = b.d.groupCapacityMargin.join(_capacity_margin_periods(b.d), how="cross")
+    if rows is not None and rows.height < full.height:
+        # Only the periods in which a group the node feeds has a capacity-margin row (a margin of -inf has none).
+        fed = (pairs.select(pl.col("g").cast(pl.Utf8), pl.col("n").cast(pl.Utf8))
+               .join(rows.select(pl.col("g").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)), on="g", how="inner")
+               .select(pl.concat_str(["n", "d"], separator="\x1f").alias("__k")).get_column("__k").unique())
+        idx = idx.filter(pl.concat_str([pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)], separator="\x1f")
+                         .is_in(fed.implode()))
     return idx if idx.height > 0 else None
 
 
@@ -1110,8 +1162,12 @@ def capacity_margin_report(d, sol, *, scale_the_objective: "float | None" = None
     contrib_df = (contrib_df.join(groups, on="g", how="semi")
                   .group_by("g", "d", "t", "cls", "entity").agg(pl.col("value").sum()))
 
-    # The requirement per step: M + the real demand of N(g).
+    # The requirement per step: M + the real demand of N(g); a (g, d) without a row (margin -inf) is not reported.
     base = groups.join(steps, how="cross")
+    cm_rows = capacity_margin_rows(d)
+    cm_keys = (_as_utf8(cm_rows.select("g", "d")) if cm_rows is not None
+               else pl.DataFrame(schema={"g": pl.Utf8, "d": pl.Utf8}))
+    base = base.join(cm_keys, on=["g", "d"], how="semi")
     margin = _param_utf8(d.pdGroup_capacity_margin, ("g", "d"), "margin")
     base = (base.join(margin, on=["g", "d"], how="left") if margin is not None
             else base.with_columns(margin=pl.lit(None, dtype=pl.Float64)))
@@ -1226,8 +1282,8 @@ def _eq_inertia(b: _Build) -> None:
     #   ∀ g ∈ groupInertia, (d,t) ∈ dt
     #   groupInertia = groups with has_inertia = yes;  inertia_limit[g,d,t] = the authored constant, period, time
     #   or period + time value (a time map covers every time step of the solve: a gap is an input error,
-    #   _direct.check_group_limit_time_coverage), 0 for a group without any value or an authored 0 (no requirement:
-    #   the row reads Σ … ≥ 0 and its slack is in no row)
+    #   _direct.check_group_limit_time_coverage), 0 for a group without any value or an authored 0 or −inf (no
+    #   requirement: the row reads Σ … ≥ 0 and its slack is in no row; the reader drops a −inf like a 0)
     #   arcs_side(g) = arcs whose side node is in g and that carry an inertia constant on that side
     #   x = v_online[p,d,t] for p ∈ process_online (linear or integer), else v_flow[p,s,k,d,t]
     # Synchronous machines connected to the group's nodes supply inertia (MWs)
@@ -1276,9 +1332,10 @@ def _eq_non_sync(b: _Build) -> None:
     p_us = d.p_unitsize
     invc = d.p_inv_group_cap
     pgns_all = d.pdtGroup_non_synchronous_limit           # authored values, zeros included
-    # The coefficients read the nonzero values only (a 0 limit adds no right-hand-side term).
+    # The coefficients read the nonzero finite values only (a 0 limit adds no right-hand-side term; an inf limit
+    # has no row, non_sync_rows).
     pgns = (None if pgns_all is None
-            else Param(pgns_all.dims, pgns_all.lazy.filter(pl.col("value") != 0.0)))
+            else Param(pgns_all.dims, drop_no_limit_rows(pgns_all, "upper").lazy.filter(pl.col("value") != 0.0)))
     gn_in_gns = d.group_node.join(d.groupNonSync, on="g", how="inner")
     proc_inside = d.process_group_inside_nonSync          # (p, g) | None
     sink_ns = d.process_sink_nonSync                      # (p, sink) | None
@@ -1301,7 +1358,7 @@ def _eq_non_sync(b: _Build) -> None:
     #                                       v_online[p,d,t] · section[p] · unitsize[p] · Δt[d,t]
     #                                 + Σ_{(p,s,k) ∈ back_out(g)} v_flow_back[p,s,k,d,t] · unitsize[p] · Δt[d,t]
     #                                 − Σ_{n ∈ N(g)} negative_inflow[n,d,t] )
-    #   ∀ g ∈ groupNonSync, (d,t) ∈ dt
+    #   ∀ (g,d,t) ∈ non_sync_rows = groupNonSync × dt without the steps whose ns_limit is inf (no limit there)
     #   groupNonSync = groups with has_non_synchronous = yes
     #   N(g) = nodes of g;  icap = inv_group_cap;  ns_limit = non_synchronous_limit (constant, period, time or
     #   period + time); a group without any value, and an authored 0, read as 0 (the right-hand side then
@@ -1411,7 +1468,7 @@ def _eq_non_sync(b: _Build) -> None:
 
     # Rows on every (d, t): a time map covers every time step of the solve (a gap is an input error,
     # _direct.check_group_limit_time_coverage).
-    over = d.groupNonSync.join(d.dt, how="cross")
+    over = non_sync_rows(d)
     _coarse_flows.add_row_rule_cstr(b, "non_sync_constraint", over=over, sense="<=", lhs_terms=lhs, rhs_terms=rhs,
                                     partition=_row_partition(b, "non_sync", over))
 

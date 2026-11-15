@@ -17,6 +17,7 @@ from polar_high import Param, Sum, Where
 from polar_high.engine import Var
 
 from flextool.engine.input._axis_enums import align_join_dtypes, rename_to_axis
+from flextool.engine.input._param_shapes import drop_no_limit_rows, without_no_limit_rows
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.model._common import _entity_rows, _has_rows, _var_view, dispatch_periods
 
@@ -113,17 +114,20 @@ def period_limit(b, name: str, axis: str, var: Var, unitsize, entity_rows: pl.Da
                  limit: Param | None, sense: str, param_name: str) -> pl.DataFrame | None:
     """Add ``name``: ``Σ_{(e,o,d) ∈ commission} v[e,o]·unitsize + carried[e,d] (sense) limit[e,d]`` over the
     ``(axis, d)`` that have a decision coming online, for the entities of ``entity_rows`` (``[axis]``).  Rows
-    without a variable are checked against the carried capacity for the entities with a lead time.  Returns the
-    row frame (``None`` when no row)."""
+    without a variable are checked against the carried capacity for the entities with a lead time.  A period whose
+    limit is the no-limit value (``inf`` for ``<=``, ``-inf`` for ``>=``) has no row.  Returns the row frame
+    (``None`` when no row)."""
     m, d = b.m, b.d
     if limit is None:
         return None
     rows = commission_rows(d, var, axis)
     rows, ents = align_join_dtypes(rows, entity_rows.select(axis).unique(), [axis])
     rows = rows.join(ents, on=axis, how="semi")
-    over = rows.select(axis, "d").unique().sort(axis, "d")
-    car = carried(d, "commission", axis, entity_rows)
     limit_frame = limit.frame.pipe(rename_to_axis, {"e": axis})
+    side = "upper" if sense == "<=" else "lower"
+    limit_param = Param((axis, "d"), limit_frame.select(axis, "d", "value"))
+    over = without_no_limit_rows(rows.select(axis, "d").unique().sort(axis, "d"), limit_param, side)
+    car = carried(d, "commission", axis, entity_rows)
     # Rows without a variable: the entities with a lead time in this solve's periods.
     lagged = lead_time_entities(d, axis, entity_rows)
     if lagged.height > 0:
@@ -144,7 +148,7 @@ def period_limit(b, name: str, axis: str, var: Var, unitsize, entity_rows: pl.Da
         over      = over,
         sense     = sense,
         lhs_terms = lhs,
-        rhs_terms = {"cap": Param((axis, "d"), limit_frame.select(axis, "d", "value"))},
+        rhs_terms = {"cap": drop_no_limit_rows(limit_param, side)},
     )
     return over
 

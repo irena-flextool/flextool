@@ -3353,6 +3353,146 @@ def _drop_zero_rows(out: "Param | None") -> "Param | None":
     return Param(out.dims, out.lazy.filter(pl.col("value") != 0.0))
 
 
+# ---------------------------------------------------------------------------
+# Limit values — ``inf`` is "no limit", a huge finite stand-in is warned about
+# ---------------------------------------------------------------------------
+
+#: A finite limit value at least this large in absolute value looks like a stand-in for "no limit" (e.g. 1e18): it
+#: reaches the LP as a right-hand side and spoils the scaling, so the reader warns and suggests ``inf``.
+HUGE_LIMIT_VALUE = 1e15
+
+#: How many periods (or time steps) a limit-value message names.
+_LIMIT_VALUES_SHOWN = 5
+
+
+def no_limit_value(side: str) -> float:
+    """The value that means "no limit": ``inf`` for an upper limit (``side = "upper"``), ``-inf`` for a lower one."""
+    if side not in ("upper", "lower"):
+        raise ValueError(f"limit side must be 'upper' or 'lower', not {side!r}")
+    return float("inf") if side == "upper" else float("-inf")
+
+
+def _limit_rows(out: "Param", entity_keys: "tuple[str, ...]", condition: pl.Expr) -> "dict[str, list[str]]":
+    """``{entity label: [period(/time) labels]}`` of the rows of ``out`` where ``condition`` holds (on the Float64
+    ``value``), in first-appearance order; the label is ``period``, ``period/time`` or ``time`` by the dims of
+    ``out``, ``constant`` without either."""
+    place = [c for c in ("d", "t") if c in out.dims]
+    rows = (out.lazy
+            .filter(condition)
+            .select(pl.concat_str([pl.col(c).cast(pl.Utf8) for c in entity_keys], separator=", ").alias("__k"),
+                    (pl.concat_str([pl.col(c).cast(pl.Utf8).fill_null("") for c in place], separator="/")
+                     if place else pl.lit("constant")).alias("__at"),
+                    pl.col("value").cast(pl.Float64).alias("__v"))
+            .collect())
+    found: dict[str, list[str]] = {}
+    for k, at, v in rows.iter_rows():
+        found.setdefault(k, []).append(f"{at.strip('/') or 'constant'} ({v:g})")
+    return found
+
+
+def check_limit_values(out: "Param | None", entity_keys: "tuple[str, ...]", *, entity_class: str,
+                       parameter_name: str, side: str) -> None:
+    """Refuse an infinite limit on the wrong side and warn about a huge finite one.
+
+        v = out[k, d(, t)]                                       ∀ row of out
+        raise FlexToolConfigError   if v = −inf and side = upper, or v = +inf and side = lower
+        warn once per (entity_class, parameter_name, k)          if v is finite and |v| ≥ HUGE_LIMIT_VALUE
+
+    ``inf`` on an upper limit (``-inf`` on a lower one) means no limit in that period; the opposite infinity is a
+    limit no solution can meet.  A finite value of 1e15 or more is kept as given (the limit applies), but such a
+    value is mostly meant as "no limit" and, as a right-hand side, spoils the numerical scaling: the warning names
+    the parameter, the entity, the periods and the value and suggests ``inf``.  Rolls and repeated solves of a run
+    warn once per entity and parameter (:func:`_behaviour_changes.warn_once`).
+    """
+    if out is None:
+        return
+    value = pl.col("value").cast(pl.Float64, strict=False)
+    wrong = no_limit_value("lower" if side == "upper" else "upper")
+    bad = _limit_rows(out, entity_keys, value == wrong)
+    if bad:
+        what, use = (("an upper limit of -inf", "inf") if side == "upper"
+                     else ("a lower limit of inf", "-inf"))
+        parts = [f"{entity_class} '{k}', parameter '{parameter_name}': "
+                 + ", ".join(at[:_LIMIT_VALUES_SHOWN]) + (" …" if len(at) > _LIMIT_VALUES_SHOWN else "")
+                 for k, at in sorted(bad.items())]
+        raise FlexToolConfigError(
+            "; ".join(parts) + f". This is {what}, which no solution can meet. For no limit in a period, give "
+            f"{use} there.")
+    huge = _limit_rows(out, entity_keys, value.is_finite() & (value.abs() >= HUGE_LIMIT_VALUE))
+    if not huge:
+        return
+    from flextool.engine import _behaviour_changes
+
+    use = "inf" if side == "upper" else "-inf"
+    for k, at in sorted(huge.items()):
+        shown = ", ".join(at[:_LIMIT_VALUES_SHOWN]) + (f" and {len(at) - _LIMIT_VALUES_SHOWN} more"
+                                                         if len(at) > _LIMIT_VALUES_SHOWN else "")
+        _behaviour_changes.warn_once(
+            ("huge_limit_value", entity_class, parameter_name, k),
+            f"Warning: {entity_class} '{k}', parameter '{parameter_name}' has a very large value: {shown}. It is "
+            f"used as a limit, and a number this large makes the solve numerically unstable. If no limit is meant "
+            f"in a period, give {use} there.")
+
+
+def drop_no_limit_rows(out: "Param | None", side: str) -> "Param | None":
+    """``out`` without its rows of value :func:`no_limit_value` (``inf`` / ``-inf``); None stays None."""
+    if out is None:
+        return None
+    return Param(out.dims, out.lazy.filter(pl.col("value").cast(pl.Float64, strict=False) != no_limit_value(side)))
+
+
+def no_limit_keys(param: "Param | None", side: str) -> "pl.DataFrame | None":
+    """The dims of the rows of ``param`` whose value is :func:`no_limit_value` (``inf`` for ``side = "upper"``,
+    ``-inf`` for ``"lower"``), as Utf8 columns; None when there are none."""
+    if param is None:
+        return None
+    keys = (param.lazy
+            .filter(pl.col("value").cast(pl.Float64, strict=False) == no_limit_value(side))
+            .select(*(pl.col(c).cast(pl.Utf8) for c in param.dims))
+            .unique(maintain_order=True)
+            .collect())
+    return keys if keys.height > 0 else None
+
+
+def without_no_limit_rows(frame: "pl.DataFrame", param: "Param | None", side: str) -> "pl.DataFrame":
+    """``frame`` (a row domain) without the rows a no-limit value of ``param`` covers.
+
+        drop = { r ∈ frame : ∃ k ∈ no_limit_keys(param, side), r[c] = k[c] ∀ c ∈ dims(param) ∩ columns(frame) }
+
+    A dim of ``param`` that ``frame`` lacks is not compared (a constant ``inf`` covers every period of the entity;
+    a ``(g, t)`` limit every period of that time step).  Order and dtypes of ``frame`` are kept; without any no-limit
+    row ``frame`` is returned as is."""
+    keys = no_limit_keys(param, side)
+    if keys is None or frame is None or frame.height == 0:
+        return frame
+    on = [c for c in keys.columns if c in frame.columns]
+    if not on:
+        return frame
+    sep = "\x1f"
+    key_of = pl.concat_str([pl.col(c).cast(pl.Utf8) for c in on], separator=sep)
+    drop = keys.select(key_of.alias("__k")).get_column("__k").unique()
+    return frame.filter(~key_of.is_in(drop.implode()))
+
+
+def _limit_tail(out: "Param | None", resolved: "ResolvedShape | None", entity_dim_aliases, helper: str, *,
+                entity_class: str, parameter_name: str, limit_side: "str | None", filter_zero: bool,
+                drop_no_limit: bool) -> "Param | None":
+    """The common end of :func:`require_period_coverage` / :func:`require_period_coverage_time`: the limit-value
+    check (:func:`check_limit_values`, with ``limit_side``) on the unfiltered broadcast, then the zero filter, then
+    the no-limit filter (``drop_no_limit``: a ``inf`` / ``-inf`` row is left out, for a limit whose missing row
+    already means no limit)."""
+    if limit_side is not None and out is not None and resolved is not None and resolved.frame is not None:
+        _rename, keys = _resolve_entity_dim_aliases(resolved, entity_dim_aliases, helper)
+        check_limit_values(out, keys, entity_class=entity_class, parameter_name=parameter_name, side=limit_side)
+    if filter_zero:
+        out = _drop_zero_rows(out)
+    if drop_no_limit:
+        if limit_side is None:
+            raise ValueError(f"{helper}: drop_no_limit needs limit_side")
+        out = drop_no_limit_rows(out, limit_side)
+    return out
+
+
 def require_period_coverage(
     resolved: "ResolvedShape | None",
     entity_dim_aliases: "str | dict[str, str]",
@@ -3363,6 +3503,8 @@ def require_period_coverage(
     need_periods: "PeriodNeed | None",
     active: "set[str] | None" = None,
     filter_zero: bool = False,
+    limit_side: "str | None" = None,
+    drop_no_limit: bool = False,
 ) -> "Param | None":
     """:func:`broadcast_to_period`, after checking that every period map covers the periods it must.
 
@@ -3382,16 +3524,23 @@ def require_period_coverage(
     (e.g. a solve with no investment periods).  ``active`` (entity labels, see
     :func:`_period_coverage_problems`) limits the check to the entities whose limit is switched on; None
     checks every entity.  Pure: the caller works out the period sets, the gate and the solve name.
+
+    ``limit_side`` (``"upper"`` / ``"lower"``) marks a limit: ``inf`` (``-inf`` for a lower limit) means no limit in
+    that period and passes the check, the opposite infinity is refused and a huge finite value is warned about
+    (:func:`check_limit_values`).  ``drop_no_limit`` then leaves the no-limit rows out, for a limit whose missing
+    row already means no limit; without it they stay, and the consumer leaves the row of that period out.
     """
-    if not need_periods or period_filter is None or period_filter.height == 0:
-        return broadcast_to_period(resolved, entity_dim_aliases, period_filter, filter_zero=filter_zero)
-    out = broadcast_to_period(resolved, entity_dim_aliases, period_filter, filter_zero=False)
-    if resolved is not None and resolved.frame is not None:
+    checked = bool(need_periods) and period_filter is not None and period_filter.height > 0
+    # Without a check the zero filter runs in the broadcast (an authored 0 needs no telling apart from a gap).
+    out = broadcast_to_period(resolved, entity_dim_aliases, period_filter, filter_zero=filter_zero and not checked)
+    if checked and resolved is not None and resolved.frame is not None:
         _rename, keys = _resolve_entity_dim_aliases(resolved, entity_dim_aliases, "require_period_coverage")
         _raise_period_coverage(
             _period_coverage_problems(resolved, out, keys, period_filter, need=need_periods, active=active),
             entity_class=entity_class, parameter_name=parameter_name, need=need_periods)
-    return _drop_zero_rows(out) if filter_zero else out
+    return _limit_tail(out, resolved, entity_dim_aliases, "require_period_coverage", entity_class=entity_class,
+                       parameter_name=parameter_name, limit_side=limit_side, filter_zero=filter_zero and checked,
+                       drop_no_limit=drop_no_limit)
 
 
 def require_period_coverage_time(
@@ -3404,23 +3553,28 @@ def require_period_coverage_time(
     need_periods: "PeriodNeed | None",
     active: "set[str] | None" = None,
     filter_zero: bool = False,
+    limit_side: "str | None" = None,
+    drop_no_limit: bool = False,
 ) -> "Param | None":
     """:func:`broadcast_to_period_time` with the period check of :func:`require_period_coverage`.
 
     Only the entities with a period level (a period map, or the period level of a period + time map) are
     checked, and only against the periods: a time map, a constant and the time steps inside a period are
     not.  The value of a (period, time) map covers a period when it has at least one number in it; a period
-    the map gives but with none of the solve's time steps is reported as such.
+    the map gives but with none of the solve's time steps is reported as such.  ``limit_side`` /
+    ``drop_no_limit`` as in :func:`require_period_coverage`, per (period, time) row.
     """
-    if not need_periods or period_filter is None or period_filter.height == 0:
-        return broadcast_to_period_time(resolved, entity_dim_aliases, period_filter, filter_zero=filter_zero)
-    out = broadcast_to_period_time(resolved, entity_dim_aliases, period_filter, filter_zero=False)
-    if resolved is not None and resolved.frame is not None:
+    checked = bool(need_periods) and period_filter is not None and period_filter.height > 0
+    out = broadcast_to_period_time(resolved, entity_dim_aliases, period_filter,
+                                   filter_zero=filter_zero and not checked)
+    if checked and resolved is not None and resolved.frame is not None:
         _rename, keys = _resolve_entity_dim_aliases(resolved, entity_dim_aliases, "require_period_coverage_time")
         _raise_period_coverage(
             _period_coverage_problems(resolved, out, keys, period_filter, need=need_periods, active=active),
             entity_class=entity_class, parameter_name=parameter_name, need=need_periods)
-    return _drop_zero_rows(out) if filter_zero else out
+    return _limit_tail(out, resolved, entity_dim_aliases, "require_period_coverage_time",
+                       entity_class=entity_class, parameter_name=parameter_name, limit_side=limit_side,
+                       filter_zero=filter_zero and checked, drop_no_limit=drop_no_limit)
 
 
 # ---------------------------------------------------------------------------
