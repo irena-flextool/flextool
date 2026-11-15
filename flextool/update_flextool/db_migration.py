@@ -10343,13 +10343,6 @@ def _migrate_v58_carve_flowgroup_out_of_group(db) -> None:
             raise SpineDBAPIError(f"v58: group.{old} not renamed")
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('filename',help= "The filepath of the database to be migrated")
-    args = parser.parse_args()
-    migrate_database(args.filename)
-
-
 def _v80_suffixes() -> dict[tuple[str, str], str]:
     """The sentence v80 appends to the description of each period-map limit: ``inf`` (``-inf`` for a lower limit)
     means no limit in that period (the row of that period is left out)."""
@@ -10405,3 +10398,10 @@ def _migrate_v80_limit_inf_descriptions(db) -> None:
         if not description.endswith(suffix):
             db.update_parameter_definition(id=pdef["id"], description=description + suffix)
     _commit_step(db, "v80: inf / -inf in a period-map limit is no limit in that period (descriptions)")
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('filename',help= "The filepath of the database to be migrated")
+    args = parser.parse_args()
+    migrate_database(args.filename)
