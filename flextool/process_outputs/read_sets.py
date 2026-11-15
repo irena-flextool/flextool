@@ -949,6 +949,31 @@ def read_sets(
     else:
         s.ramp_carry = empty_multi_index(["solve", "period", "time", "period_previous", "time_previous"])
 
+    # node_state_prev — (solve, node, period, time, period_prev, time_prev): the step whose state each storage
+    # step starts from in the storage balance (_self_discharge.state_links / previous_steps, the lags of
+    # core._state_change_terms): the chronological predecessor, or the step a binding method relinks it to
+    # (bind_within_timeblock wraps the first step of a timeblock to the timeblock's last step).  A step without a
+    # row starts from a fixed / carried state or the free state of a representative block.  The ramp envelope
+    # caps the storage room toward a step with the state that step starts from.
+    from flextool.engine.model._common import _has_rows
+    from flextool.engine.model._self_discharge import previous_steps, state_links
+
+    prev_names = ["solve", "node", "period", "time", "period_prev", "time_prev"]
+    prev = None
+    if _has_rows(getattr(flex_data, "nodeState", None)) or _has_rows(getattr(flex_data, "nodeState_rp", None)):
+        prev = previous_steps(state_links(
+            flex_data, has_rp=_has_rows(getattr(flex_data, "nodeState_rp", None)),
+            has_nsb=_has_rows(getattr(flex_data, "nodeStateBlock", None))))
+    if prev is not None and prev.height > 0:
+        pdf = (prev.unique()
+               .with_columns(pl.lit(solve_name).alias("solve"))
+               .select("solve", "n", "d", "t", "d_prev", "t_prev")
+               .sort(["solve", "n", "d", "t"])
+               .to_pandas())
+        s.node_state_prev = pd.MultiIndex.from_frame(pdf, names=prev_names)
+    else:
+        s.node_state_prev = empty_multi_index(prev_names)
+
     s.period__time_first = empty_multi_index(["solve", "period", "time"])
     s.period_first_of_solve = empty_multi_index(["solve", "period"])
     s.period_in_use = (

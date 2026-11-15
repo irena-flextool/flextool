@@ -1,10 +1,13 @@
 """Per-solve inputs of the ramp envelope (``calc_ramp_envelope``), read from a solve's own ``FlexData``.
 
-Each function returns a long polars frame keyed by ``(..., d, t)`` over the solve's steps, so that
-``read_parameters`` turns it into a solve-keyed ``(solve, period, time)`` frame: the per-roll realized slices
-(``persist_realized_slice``) then carry, after the union, the value of the solve that realized each step.  That
-matters for the ramp-limit sets: a solve whose ``reduce_unit_detail_method`` leaves out the ramps has none
-(``_reduce_detail``), and the envelope of a transition uses the set of the solve that realized its later step.
+Each function returns a long polars frame keyed by ``(..., d, t)`` over the solve's steps (only the rows that differ
+from the default), so that ``read_parameters`` turns it into a solve-keyed ``(solve, period, time)`` frame: the
+per-roll realized slices (``persist_realized_slice``) then carry, after the union, the value of the solve that
+realized each step.  The ramp-limit sets and their speeds have no time axis: :func:`ramp_limits` gives them per
+solve, and ``read_parameters`` keys them by ``(solve, period)`` over the solve's periods; the envelope reads the row
+of the solve that realized each step (``s.solve_period_time``).  That matters because a solve whose
+``reduce_unit_detail_method`` leaves out the ramps has none (``_reduce_detail``), and the envelope of a transition
+uses the set of the solve that realized its later step.
 
 The coefficients come from the model's own helpers (never re-derived here):
 
@@ -13,9 +16,15 @@ The coefficients come from the model's own helpers (never re-derived here):
 * the floor per unit online (``_unit_floors.arc_floor_share``);
 * the ramp-limit arc sets with their speeds (``process_source_sink_ramp_limit_{side}_{dir}`` without the
   ``conversion_flow_coeff = 0`` arcs, ``_common._drop_uncapped``) and the ramp row's capacity factor c
-  (``core._c_param_plain``; a coarse process's time-varying c is its coarse step's Δt-weighted mean, as
-  ``_coarse_flows.at_first_steps`` gives the ramp row);
+  (``core._c_param_plain``);
 * the coarse steps of the coarse processes (``FlexData.process_coarse_step``).
+
+A coarse process has one flow per coarse step, and its ramp row between two coarse steps takes the Δt-weighted means
+over each coarse step of the time-varying c and floor F (``_coarse_flows.at_first_steps``, the means of c and F in
+the ramp row of ``core._eq_ramp``); its capacity multiplier enters the coarse step's capacity row as the same mean
+(``_coarse_flows.average``).  So for a coarse process the capacity multiplier, the floor and c are written as their
+coarse-step means to every fine step of the coarse step (:func:`_coarse_mean`): the envelope reads them at any fine
+step of a coarse step and gets the value of that coarse step.
 
 Only unit arcs are covered (connections have no ramp limit and their range is read from their capacity and
 availability).  Values equal to the default are left out (1 for the capacity multiplier and c, 0 for the floor,
@@ -69,21 +78,31 @@ def _utf8(frame: pl.DataFrame, cols) -> pl.DataFrame:
     return frame.with_columns(pl.col(c).cast(pl.Utf8) for c in cols)
 
 
-def _on_arcs_dt(param, base: pl.DataFrame, *, default: float) -> pl.DataFrame:
-    """``param`` (a Param over any subset of ``p, source, sink, d, t``) read at every row of ``base``
-    (``p, source, sink, d, t``, Utf8), ``default`` where it has no value: ``base`` + ``value``."""
+def _on_arcs_dt(param, arcs: pl.DataFrame, dt: pl.DataFrame, *, default: float) -> "pl.DataFrame | None":
+    """``(p, source, sink, d, t, value)`` (Utf8 keys): ``param`` (a Param over any subset of ``p, source, sink, d,
+    t``) read at the arcs ``arcs`` (``p, source, sink``) and the steps ``dt``, only the rows whose value is not
+    ``default`` (no row = ``default``); ``None`` without such a row.  Only those arcs are crossed with the steps a
+    time-invariant ``param`` lacks (never the whole arcs × steps)."""
     if param is None:
-        return base.with_columns(value=pl.lit(default, pl.Float64))
+        return None
     frame = param.frame.collect() if isinstance(param.frame, pl.LazyFrame) else param.frame
     on = [k for k in (*_KEYS, "d", "t") if k in frame.columns]
-    frame = _utf8(frame.select(*on, pl.col("value").cast(pl.Float64)), on)
-    return (base.join(frame, on=on, how="left")
-            .with_columns(pl.col("value").fill_null(default)))
+    frame = _utf8(frame.select(*on, pl.col("value").cast(pl.Float64)), on).filter(pl.col("value") != default)
+    arc_on = [k for k in _KEYS if k in on]
+    rows = arcs.join(frame, on=arc_on, how="inner") if arc_on else arcs.join(frame, how="cross")
+    step_on = [k for k in ("d", "t") if k in on]
+    if len(step_on) < 2:
+        rows = rows.join(dt, on=step_on, how="inner") if step_on else rows.join(dt, how="cross")
+    else:
+        rows = rows.join(dt, on=["d", "t"], how="semi")
+    rows = rows.select(*_KEYS, "d", "t", "value")
+    return rows if rows.height > 0 else None
 
 
 def arc_capacity_factor(d: "FlexData") -> "pl.DataFrame | None":
     """``(p, source, sink, d, t, value)``: the capacity multiplier of each unit arc's ``maxFlow`` row
-    (``core._max_flow_rhs``'s ``cap_mult``: v_flow ≤ value · capacity), rows where it is not 1."""
+    (``core._max_flow_rhs``'s ``cap_mult``: v_flow ≤ value · capacity), rows where it is not 1 (a coarse
+    process's: its coarse-step mean, :func:`_coarse_mean`)."""
     from flextool.engine.model.core import _max_flow_rhs
 
     arcs = _unit_arcs(d)
@@ -94,12 +113,14 @@ def arc_capacity_factor(d: "FlexData") -> "pl.DataFrame | None":
         return None
     out = (_utf8(cap_mult.select(*_KEYS, "d", "t", pl.col("value").cast(pl.Float64)), [*_KEYS, "d", "t"])
            .join(arcs, on=_KEYS, how="semi"))
+    out = _coarse_mean(out, d, _KEYS, default=1.0).filter(pl.col("value") != 1.0)
     return out if out.height > 0 else None
 
 
 def arc_floor_share(d: "FlexData") -> "pl.DataFrame | None":
     """``(p, source, sink, d, t, value)``: the floor per unit online of each unit arc
-    (``_unit_floors.arc_floor_share``), rows where it is > 0."""
+    (``_unit_floors.arc_floor_share``), rows where it is > 0 (a coarse process's: its coarse-step mean,
+    :func:`_coarse_mean`)."""
     from flextool.engine.model import _unit_floors
 
     arcs = _unit_arcs(d)
@@ -108,33 +129,42 @@ def arc_floor_share(d: "FlexData") -> "pl.DataFrame | None":
     share = _unit_floors.arc_floor_share(d, arcs)
     if share is None or share.height == 0:
         return None
-    return _utf8(share.select(*_KEYS, "d", "t", pl.col("value").cast(pl.Float64)), [*_KEYS, "d", "t"])
+    out = _utf8(share.select(*_KEYS, "d", "t", pl.col("value").cast(pl.Float64)), [*_KEYS, "d", "t"])
+    out = _coarse_mean(out, d, _KEYS, default=0.0).filter(pl.col("value") != 0.0)
+    return out if out.height > 0 else None
 
 
-def _coarse_mean(frame: pl.DataFrame, d: "FlexData") -> pl.DataFrame:
-    """``frame`` (``p, source, sink, limit, d, t, value``) with the rows of each coarse process replaced by their
-    Δt-weighted mean over its coarse step (the ramp row's c of a coarse process, ``_coarse_flows.at_first_steps``),
-    written to every fine step of the coarse step."""
+def _coarse_mean(frame: pl.DataFrame, d: "FlexData", keys: list[str], *, default: float) -> pl.DataFrame:
+    """``frame`` (``*keys, d, t, value``, Utf8 keys; ``keys`` start with ``p``; rows where the value is not
+    ``default``, no row = ``default``) with the rows of each coarse process replaced by their Δt-weighted mean over
+    its coarse step (``FlexData.process_coarse_step`` ``w`` = Δt/Δ_b), written to every fine step of the coarse
+    step.  The mean counts the fine steps without a row at ``default``."""
     steps = getattr(d, "process_coarse_step", None)
-    if not _has_rows(steps):
+    if not _has_rows(steps) or frame.height == 0:
         return frame
     steps = _utf8(steps.select("p", "d", "b_first", "t", pl.col("w").cast(pl.Float64)), ["p", "d", "b_first", "t"])
-    coarse = frame.join(steps, on=["p", "d", "t"], how="inner")
-    if coarse.height == 0:
+    coarse_keys = frame.join(steps.select("p").unique(), on="p", how="semi").select(keys).unique(maintain_order=True)
+    if coarse_keys.height == 0:
         return frame
-    means = (coarse.group_by(*_KEYS, "limit", "d", "b_first")
+    # Every fine step of every coarse step of the coarse keys, the missing ones at the default.
+    dense = (coarse_keys.join(steps, on="p", how="inner")
+             .join(frame, on=[*keys, "d", "t"], how="left")
+             .with_columns(pl.col("value").fill_null(default)))
+    means = (dense.group_by(*keys, "d", "b_first")
              .agg((pl.col("value") * pl.col("w")).sum().alias("__mean")))
-    coarse = (coarse.join(means, on=[*_KEYS, "limit", "d", "b_first"], how="left")
-              .select(*_KEYS, "limit", "d", "t", pl.col("__mean").alias("value")))
-    fine = frame.join(steps.select("p", "d", "t"), on=["p", "d", "t"], how="anti")
+    coarse = (dense.select(*keys, "d", "b_first", "t")
+              .join(means, on=[*keys, "d", "b_first"], how="left")
+              .select(*keys, "d", "t", pl.col("__mean").alias("value")))
+    fine = frame.join(coarse_keys, on=keys, how="anti")
     return pl.concat([fine, coarse])
 
 
 def ramp_limits(d: "FlexData") -> "tuple[pl.DataFrame | None, pl.DataFrame | None]":
-    """``(speed, c)``, each ``(p, source, sink, limit, d, t, value)`` over the arcs of this solve's ramp-limit
-    sets (``limit`` ∈ :data:`RAMP_LIMITS` labels): the ramp speed (share of capacity per minute) and the ramp
-    row's capacity factor c (``core._c_param_plain``; the rows where c is not 1).  ``(None, None)`` without
-    ramp limits."""
+    """``(speed, c)`` of the arcs of this solve's ramp-limit sets (``limit`` ∈ :data:`RAMP_LIMITS` labels):
+    ``speed`` ``(p, source, sink, limit, value)``, the ramp speed (share of capacity per minute; a set has no time
+    axis), and ``c`` ``(p, source, sink, limit, d, t, value)``, the ramp row's capacity factor
+    (``core._c_param_plain``) at the rows where it is not 1 (a coarse process's: its coarse-step mean,
+    :func:`_coarse_mean`).  ``(None, None)`` without ramp limits."""
     from flextool.engine.model._common import _drop_uncapped
     from flextool.engine.model.core import _c_param_plain
 
@@ -155,14 +185,15 @@ def ramp_limits(d: "FlexData") -> "tuple[pl.DataFrame | None, pl.DataFrame | Non
         rows = arcs.join(sp, on=["p", side], how="inner")
         if rows.height == 0:
             continue
-        base = rows.select(_KEYS).join(dt, how="cross")
-        speeds.append(rows.join(dt, how="cross")
-                      .select(*_KEYS, pl.lit(label).alias("limit"), "d", "t", "value"))
-        c = _on_arcs_dt(_c_param_plain(d, idx_set, side), base, default=1.0)
-        coefs.append(c.select(*_KEYS, pl.lit(label).alias("limit"), "d", "t", "value"))
+        speeds.append(rows.select(*_KEYS, pl.lit(label).alias("limit"), "value"))
+        c = _on_arcs_dt(_c_param_plain(d, idx_set, side), rows.select(_KEYS), dt, default=1.0)
+        if c is not None:
+            coefs.append(c.select(*_KEYS, pl.lit(label).alias("limit"), "d", "t", "value"))
     if not speeds:
         return None, None
-    coef = _coarse_mean(pl.concat(coefs), d).filter(pl.col("value") != 1.0)
+    if not coefs:
+        return pl.concat(speeds), None
+    coef = _coarse_mean(pl.concat(coefs), d, [*_KEYS, "limit"], default=1.0).filter(pl.col("value") != 1.0)
     return pl.concat(speeds), (coef if coef.height > 0 else None)
 
 

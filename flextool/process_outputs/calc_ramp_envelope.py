@@ -20,7 +20,9 @@ Unit arcs (§2.1-§2.2), in v_flow space then node MW::
         = capacity(d⁺)                                otherwise (incl. a solve that left online out), floor 0
     C   = κ(t⁺) · U    (κ the arc's maxFlow multiplier, capacity coefficient × availability)
     L   = F(t⁺) · U    (F the floor per unit online)
-    f₂  = f(t) − F(t) · unitsize · shutdown(t⁺)      (the stopping units' output is forced movement)
+    f₂  = f(t) − F(t) · unitsize · shutdown(t⁺)      (the stopping units' output is forced movement; on a link
+                                                     carried from the previous roll f₂ = f: the model's carried
+                                                     ramp row has no shut-down floor term)
     up_a   = min(C − f₂, ρ̄↑) − R↑(t⁺),   down_a = min(f₂ − L, ρ̄↓) − R↓(t⁺)
     ρ̄   = speed · 60 · (Δ + Δ⁺)/2 · c(t⁺) · U        for the arcs of the ramp-limit sets of the solve that
                                                      realized t⁺; in one period only where speed·60·(Δ+Δ⁺)/2 < 1
@@ -33,30 +35,39 @@ up_a); a direct unit's input arc converts each step with its own slope and secti
     down_n = (slope(t⁺) − slope(t)) · f₂ + slope(t⁺) · up_a  + (section(t⁺) − section(t)) · U
 
 VRE arcs (an output with an ``upper_limit`` profile, §2.3) take C = pot(t⁺) and are measured against the
-potential: vre_up = clip0(up_a − ΔP), vre_down = clip0(down_a + ΔP), ΔP = pot(t⁺) − pot(t).  Storage arcs (§2.4,
-processes between a storage node S and the entity) are capped per S by the state of charge::
+potential: vre_up = clip0(up_a − ΔP), vre_down = clip0(down_a + ΔP), ΔP = pot(t⁺) − pot(t); a VRE unit that touches
+a storage node is in the storage band, without the potential shift.  Storage arcs (§2.4, processes between a
+storage node S and the entity) are capped per S by the state of charge::
 
-    up ≤ clip0(state(t)/Δ⁺ − D(t)) · η_out,   down ≤ clip0((capacity_S(d⁺) − state(t))/Δ⁺ + D(t)) / η_in
+    up ≤ clip0(state⁻(t⁺)/Δ⁺ − D(t)) · η_out,   down ≤ clip0((capacity_S(d⁺) − state⁻(t⁺))/Δ⁺ + D(t)) / η_in
 
-(D the net draw from S at t, η = 1/slope(t⁺) of the processes delivering from / to S).  Connections (§2.5) use the
-node-side range of their flow at t⁺, losses on the drawing side, with the reserve they hold at the node::
+(state⁻(t⁺) the state that the storage balance starts t⁺ from, ``s.node_state_prev``: the end-of-step state of t,
+or the step a binding method relinks t⁺ to, e.g. bind_within_timeblock at a timeblock's first step; the state of t
+where t⁺ has no such link; D the net draw from S at t, η = 1/slope(t⁺) of the processes delivering from / to S).
+Connections (§2.5) use the node-side range of their flow at t⁺, losses on the drawing side, with the reserve they
+hold at the node::
 
     up = cap·avail(t⁺) − f_in(t) − R↑_c,n(t⁺),   down = f_in(t) + cap·avail(t⁺)·slope(t⁺) − R↓_c,n(t⁺)
 
 A coarse process (``processCoarse``) has one flow per coarse step: its room is 0 on the rows inside a coarse step,
-and at a coarse step's last fine row ρ̄ uses the coarse step durations.  Node groups (``print_dispatch``) sum the
-arcs at their non-storage members; a process with every node in the group is internal and counts 0; member storage
-nodes count as outside (§2.7).  The arcs are summed into the entities with one membership-matrix product per band
-and direction.
+and at a coarse step's last fine row ρ̄ uses the coarse step durations, and κ, F and c are the coarse steps' means
+(``_ramp_inputs`` writes them to every fine step of the coarse step).  Node groups (``print_dispatch``) sum the arcs
+at their non-storage members; a process with every node in the group is internal and counts 0; member storage
+nodes count as outside (§2.7).  The arcs are summed into the entities with one sparse membership-matrix product per
+band and direction.
 
 The arcs with ``conversion_flow_coeff = 0`` (``process_source_sink_uncapped``: outside every per-arc capacity and
 ramp row) have no room of their own and are left out; a process that touches more than one storage node is in the
 storage band without a state-of-charge cap (the cap is per storage node).
+
+The rows are computed in blocks (the rows of a period, at most :data:`_BLOCK_ROWS` at a time): every row reads only
+its own step and t⁺, so the blocks are independent and only block-size arrays of rows × arcs are held.
 """
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from scipy import sparse
 
 #: The bands of the envelope tables, in table order.
 UP_BANDS = ("units_up", "storage_up", "vre_up", "connections_up")
@@ -65,14 +76,19 @@ BANDS = ("ramp_net_load", "ramp_demand", *UP_BANDS, *DOWN_BANDS)
 #: The ramp-limit sets (``_ramp_inputs.RAMP_LIMITS`` labels) per direction.
 _LIMITS = {"up": ("sink_up", "source_up"), "down": ("sink_down", "source_down")}
 _SENTINEL = "\x00no-successor"
+#: The most rows computed at a time.
+_BLOCK_ROWS = 2048
 
 
 class _Next:
     """The realized successor t⁺ of every row (spec §2.8): the inverse of ``s.ramp_link``, rows with no or with
-    several successors have none."""
+    several successors have none; and the solve that realized t⁺ (``s.solve_period_time``)."""
 
-    def __init__(self, rows: pd.MultiIndex, ramp_link: pd.MultiIndex, ramp_carry: "pd.MultiIndex | None"):
+    def __init__(self, rows: pd.MultiIndex, ramp_link: pd.MultiIndex, ramp_carry: "pd.MultiIndex | None",
+                 solve_period_time: "pd.MultiIndex | None" = None):
         self.rows = rows
+        #: The positions of the rows in the full row set (a block of :meth:`take` holds a part of them).
+        self.positions = np.arange(len(rows))
         later_p = ramp_link.get_level_values("period").astype(object)
         later_t = ramp_link.get_level_values("time").astype(object)
         prev = pd.MultiIndex.from_arrays(
@@ -85,8 +101,8 @@ class _Next:
         succ = succ.reindex(rows)
         self.has = succ["period"].notna().to_numpy()
         self.period_next = np.where(self.has, succ["period"].to_numpy(dtype=object), _SENTINEL)
-        time_next = np.where(self.has, succ["time"].to_numpy(dtype=object), _SENTINEL)
-        self.index = pd.MultiIndex.from_arrays([self.period_next, time_next], names=["period", "time"])
+        self.time_next = np.where(self.has, succ["time"].to_numpy(dtype=object), _SENTINEL)
+        self.index = pd.MultiIndex.from_arrays([self.period_next, self.time_next], names=["period", "time"])
         periods = rows.get_level_values("period").to_numpy(dtype=object)
         carried = np.zeros(len(rows), dtype=bool)
         if ramp_carry is not None and len(ramp_carry):
@@ -94,11 +110,29 @@ class _Next:
                 [ramp_carry.get_level_values("period"), ramp_carry.get_level_values("time"),
                  ramp_carry.get_level_values("period_previous"), ramp_carry.get_level_values("time_previous")])
             pairs = pd.MultiIndex.from_arrays(
-                [self.period_next, time_next, periods, rows.get_level_values("time").to_numpy(dtype=object)])
+                [self.period_next, self.time_next, periods, rows.get_level_values("time").to_numpy(dtype=object)])
             carried = np.asarray(pairs.isin(carry_pairs), dtype=bool)
+        #: Rows whose link is carried from the previous roll's last realized step (the model's carried ramp row).
+        self.carried = carried
         #: Rows whose link stays inside one period and is not carried from a previous roll: the ramp limit
         #: applies there only where the ramp room per unit of capacity is below 1.
         self.in_period = self.has & (self.period_next == periods) & ~carried
+        #: The solve that realized t⁺ (``_SENTINEL`` without t⁺ or without a realizing solve).
+        self.solve_next = np.full(len(rows), _SENTINEL, dtype=object)
+        if solve_period_time is not None and len(solve_period_time):
+            pt = solve_period_time.droplevel("solve")
+            at = pt.get_indexer(self.index)
+            hit = at >= 0
+            self.solve_next[hit] = solve_period_time.get_level_values("solve").to_numpy(dtype=object)[at[hit]]
+
+    def take(self, positions: np.ndarray) -> "_Next":
+        """The rows at ``positions`` (a block)."""
+        out = object.__new__(_Next)
+        out.rows = self.rows[positions]
+        for name in ("positions", "has", "period_next", "time_next", "carried", "in_period", "solve_next"):
+            setattr(out, name, getattr(self, name)[positions])
+        out.index = self.index[positions]
+        return out
 
     def frame(self, frame: pd.DataFrame, columns=None) -> pd.DataFrame:
         """``frame`` (indexed by ``(period, time)``) read at t⁺ of every row, NaN without t⁺."""
@@ -118,6 +152,18 @@ class _Next:
         out = frame.reindex(index=pd.Index(self.period_next, name="period"), columns=columns)
         out.index = self.rows
         return out
+
+
+def _blocks(rows: pd.MultiIndex) -> list[np.ndarray]:
+    """Row positions in blocks: the rows of each period (in row order), at most :data:`_BLOCK_ROWS` each."""
+    if not len(rows):
+        return []
+    codes = pd.factorize(rows.get_level_values("period"))[0]
+    order = np.argsort(codes, kind="stable")
+    out = []
+    for positions in np.split(order, np.flatnonzero(np.diff(codes[order])) + 1):
+        out += [positions[i:i + _BLOCK_ROWS] for i in range(0, len(positions), _BLOCK_ROWS)]
+    return out
 
 
 def _wide(values, rows, columns) -> pd.DataFrame:
@@ -161,58 +207,120 @@ def _process_nodes(s) -> pd.DataFrame:
     return ends[ends["node"] != ends["process"]].drop_duplicates(ignore_index=True)
 
 
+def _clip0(values: np.ndarray) -> np.ndarray:
+    """Per arc clip at 0, NaN (an arc missing from a solve: no room) as 0."""
+    return np.where(values >= 0.0, values, 0.0)
+
+
 def compute_ramp_envelope(par, s, v, r) -> None:
     """``r.node_ramp_envelope_dt_ep`` (node, band), ``r.nodeGroup_ramp_envelope_dt_gp`` (group, band) and
     ``r.timestep_hours_dt`` (the hours a year each step stands for: Δt · timestep_weight / period share)."""
     rows = r.flow_dt.index
-    nx = _Next(rows, s.ramp_link, getattr(s, "ramp_carry", None))
-    dur = par.step_duration.reindex(rows).to_numpy(dtype=float)
-    dur_next = nx.series(par.step_duration).to_numpy(dtype=float)
+    nx_all = _Next(rows, s.ramp_link, getattr(s, "ramp_carry", None), s.solve_period_time)
+    dur_all = par.step_duration.reindex(rows).to_numpy(dtype=float)
+    dur_next_all = nx_all.series(par.step_duration).to_numpy(dtype=float)
     storage_nodes = set(s.node_state)
     proc_nodes = _process_nodes(s)
-
-    unit_up, unit_down, unit_meta = _unit_contributions(par, s, v, r, nx, dur, dur_next)
-    conn_up, conn_down, conn_meta = _connection_contributions(par, s, r, nx)
-    up = pd.concat([unit_up, conn_up], axis=1)
-    down = pd.concat([unit_down, conn_down], axis=1)
-    meta = pd.concat([unit_meta, conn_meta], ignore_index=True)
-    del unit_up, unit_down, conn_up, conn_down
-    # Storage nodes have no envelope of their own: the arc ends at them are dropped.
-    keep = ~meta["node"].isin(storage_nodes).to_numpy()
-    up, down, meta = up.iloc[:, keep], down.iloc[:, keep], meta[keep].reset_index(drop=True)
-    # Clip per arc, last (spec §2.0); an arc missing from a solve has no room.
-    up = up.clip(lower=0.0).fillna(0.0)
-    down = down.clip(lower=0.0).fillna(0.0)
-
     env_nodes = s.node_balance.union(s.node_balance_period).difference(pd.Index(sorted(storage_nodes)))
     groups = s.nodeGroupDispatch
     gn = s.group_node.to_frame(index=False)
     gn = gn[gn["group"].isin(groups) & ~gn["node"].isin(storage_nodes)]
-    membership = _membership(meta, env_nodes, gn, proc_nodes)
-    storage_cap = _storage_capacity(par, s, v, r, nx, rows, dur_next)
+    kinds = (("node", list(env_nodes), "node"), ("group", list(groups), "group"))
+    values = {kind: np.full((len(rows), len(entities), len(BANDS)), np.nan) for kind, entities, _ in kinds}
 
-    lines = _lines(par, r, nx, rows, dur, env_nodes, gn)
-    for kind, entities, level in (("node", list(env_nodes), "node"), ("group", list(groups), "group")):
+    shared = _Shared(par, s, v, r, nx_all, dur_next_all)
+    matrices = None
+    for positions in _blocks(rows):
+        nx = nx_all.take(positions)
+        dur, dur_next = dur_all[positions], dur_next_all[positions]
+        unit_up, unit_down, unit_meta = _unit_contributions(par, s, r, nx, dur, dur_next, shared)
+        conn_up, conn_down, conn_meta = _connection_contributions(par, s, r, nx, shared)
+        up = np.concatenate([unit_up, conn_up], axis=1)
+        down = np.concatenate([unit_down, conn_down], axis=1)
+        del unit_up, unit_down, conn_up, conn_down
+        meta = pd.concat([unit_meta, conn_meta], ignore_index=True)
+        # Storage nodes have no envelope of their own: the arc ends at them are dropped.
+        keep = ~meta["node"].isin(storage_nodes).to_numpy()
+        up, down, meta = up[:, keep], down[:, keep], meta[keep].reset_index(drop=True)
+        # Clip per arc, last (spec §2.0); an arc missing from a solve has no room.
+        up, down = _clip0(up), _clip0(down)
+        if matrices is None:
+            membership = _membership(meta, env_nodes, gn, proc_nodes)
+            matrices = {kind: _band_matrices(meta, membership[membership["kind"] == kind], entities)
+                        for kind, entities, _ in kinds if entities}
+        storage_cap = _storage_capacity(par, s, nx, shared, positions)
+        for kind, entities, _ in kinds:
+            if not entities:
+                continue
+            bands = _band_sums(up, down, matrices[kind], storage_cap)
+            for position, band in enumerate(BANDS[2:], start=2):
+                values[kind][positions, :, position] = bands[band]
+        del up, down
+
+    lines = _lines(par, r, nx_all, rows, dur_all, env_nodes, gn)
+    for kind, entities, level in kinds:
         cols = pd.MultiIndex.from_product([entities, BANDS], names=[level, "band"])
-        values = np.full((len(rows), len(entities), len(BANDS)), np.nan)
+        out_values = values[kind]
         if entities:
-            bands = _band_sums(up, down, meta, membership[membership["kind"] == kind], entities, storage_cap, rows)
-            bands["ramp_net_load"] = lines[kind]["net"]
-            bands["ramp_demand"] = lines[kind]["demand"]
-            for position, band in enumerate(BANDS):
-                values[:, :, position] = bands[band].reindex(columns=entities).to_numpy(dtype=float)
-            values[~nx.has] = np.nan
-        out = pd.DataFrame(values.reshape(len(rows), len(entities) * len(BANDS)), index=rows, columns=cols)
+            for position, name in ((0, "net"), (1, "demand")):
+                out_values[:, :, position] = lines[kind][name].reindex(columns=entities).to_numpy(dtype=float)
+            out_values[~nx_all.has] = np.nan
+        out = pd.DataFrame(out_values.reshape(len(rows), len(entities) * len(BANDS)), index=rows, columns=cols)
         if kind == "node":
             r.node_ramp_envelope_dt_ep = out
         else:
             r.nodeGroup_ramp_envelope_dt_gp = out
+    del values
 
     weight = par.timestep_weight.reindex(rows).to_numpy(dtype=float)
     share = par.complete_period_share_of_year.reindex(rows.get_level_values("period")).to_numpy(dtype=float)
-    hours = pd.DataFrame({"timestep_hours": dur * weight / share}, index=rows)
+    hours = pd.DataFrame({"timestep_hours": dur_all * weight / share}, index=rows)
     hours.columns.name = "param"
     r.timestep_hours_dt = hours
+
+
+class _Shared:
+    """The inputs every block reads, prepared once: the reserves at each ``(process, updown, node)``, the ramp
+    speeds per ramp-limit set (rows of ``par.process_ramp_limit`` at the solve that realized each row's t⁺), and the
+    state-of-charge terms of the storage nodes."""
+
+    def __init__(self, par, s, v, r, nx: _Next, dur_next: np.ndarray):
+        res = r.reserves_dt
+        if res is None or res.shape[1] == 0:
+            self.reserves = pd.DataFrame(
+                index=r.flow_dt.index, columns=pd.MultiIndex.from_tuples([], names=["process", "updown", "node"]))
+        else:
+            self.reserves = res.T.groupby(level=["process", "updown", "node"]).sum().T
+        # Ramp speeds: per label, (rows of the frame, arc columns); each row's t⁺ reads the row of its solve.
+        limits = par.process_ramp_limit
+        self.limit_columns: dict = {}
+        self.limit_values: dict = {}
+        if limits is not None and limits.shape[1] > 0 and len(limits):
+            key = pd.MultiIndex.from_arrays([nx.solve_next, nx.period_next])
+            self.limit_row = limits.index.get_indexer(key)
+            for label in limits.columns.get_level_values("limit").unique():
+                part = limits.xs(label, level="limit", axis=1)
+                self.limit_columns[label] = part.columns
+                self.limit_values[label] = part.to_numpy(dtype=float)
+        else:
+            self.limit_row = np.full(len(nx.rows), -1)
+        self.storage = _storage_state(par, s, v, r, nx, dur_next)
+
+    def speeds(self, label: str, arcs: pd.MultiIndex, positions: np.ndarray) -> "tuple[np.ndarray, np.ndarray]":
+        """``(positions in arcs, rows × those arcs)``: the ramp speed of the ramp-limit set ``label`` toward t⁺ of
+        the rows at ``positions``, NaN where the solve that realized t⁺ has no such limit (or no t⁺)."""
+        columns = self.limit_columns.get(label)
+        if columns is None:
+            return np.zeros(0, dtype=int), np.zeros((len(positions), 0))
+        at = arcs.get_indexer(columns)
+        keep = np.flatnonzero(at >= 0)
+        if not len(keep):
+            return np.zeros(0, dtype=int), np.zeros((len(positions), 0))
+        row = self.limit_row[positions]
+        out = np.full((len(positions), len(keep)), np.nan)
+        hit = row >= 0
+        out[hit] = self.limit_values[label][row[hit]][:, keep]
+        return at[keep], out
 
 
 def _arc_columns(frame: "pd.DataFrame | None", arcs: pd.MultiIndex) -> "tuple[np.ndarray, pd.DataFrame | None]":
@@ -224,17 +332,18 @@ def _arc_columns(frame: "pd.DataFrame | None", arcs: pd.MultiIndex) -> "tuple[np
     return position[keep], frame.loc[:, keep]
 
 
-def _unit_contributions(par, s, v, r, nx: _Next, dur, dur_next):
-    """Raw per-arc node rooms of the unit arcs: ``(up, down, meta)``, up / down ``rows × contributions``,
-    meta one row per contribution (process, node, band, storage).  Full ``rows × arcs`` arrays only for the flow,
-    the capacity and the two rooms; every other attribute on the columns that have it."""
-    rows = r.flow_dt.index
+def _unit_contributions(par, s, r, nx: _Next, dur, dur_next, shared: _Shared):
+    """Raw per-arc node rooms of the unit arcs of the block ``nx``: ``(up, down, meta)``, up / down ``rows ×
+    contributions`` arrays, meta one row per contribution (process, node, band, storage).  Full ``rows × arcs``
+    arrays only for the flow, the capacity and the two rooms; every other attribute on the columns that have it."""
+    rows = nx.rows
+    n_rows = len(rows)
     pss = s.process_source_sink
     pss = pss[pss.get_level_values("process").isin(s.process_unit)]
     unc = getattr(s, "process_source_sink_uncapped", None)
     if unc is not None and len(unc):
         pss = pss[~pss.isin(unc)]
-    empty = (pd.DataFrame(index=rows), pd.DataFrame(index=rows),
+    empty = (np.zeros((n_rows, 0)), np.zeros((n_rows, 0)),
              pd.DataFrame(columns=["process", "node", "band", "storage"]))
     if len(pss) == 0:
         return empty
@@ -246,17 +355,19 @@ def _unit_contributions(par, s, v, r, nx: _Next, dur, dur_next):
     procs = pd.Index(p)
     is_in = np.asarray(snk == p)
     is_direct = np.asarray((src != p) & (snk != p))
-    n_rows, n_arcs = len(rows), len(arcs)
+    n_arcs = len(arcs)
+    arc_storage = _storage_of(s, p)
 
     # f: the arc's v_flow in MW — a direct unit's single flow is its output (flow_dt at the sink).
     flow_keys = pd.MultiIndex.from_arrays([p, np.where(is_in, src, p), np.where(is_in, p, snk)])
-    f2 = np.nan_to_num(r.flow_dt.reindex(columns=flow_keys).to_numpy(dtype=float), nan=0.0)
+    f2 = np.nan_to_num(r.flow_dt.reindex(index=rows, columns=flow_keys).to_numpy(dtype=float), nan=0.0)
     unitsize = par.entity_unitsize.reindex(p).to_numpy(dtype=float)
 
     # U: units online in both steps (online processes not left out by the solve that realized t⁺), else the
     # built capacity at d⁺.
     cap_u = nx.by_period(r.entity_all_capacity, procs).to_numpy(dtype=float, copy=True)
     online = np.zeros((n_rows, n_arcs), dtype=bool)
+    shutdown = np.zeros((n_rows, n_arcs))
     on_pos = np.flatnonzero(procs.isin(s.process_online))
     units_both = np.zeros((n_rows, len(on_pos)))
     if len(on_pos):
@@ -268,8 +379,9 @@ def _unit_contributions(par, s, v, r, nx: _Next, dur, dur_next):
         online[:, on_pos] = on
         units_both = np.where(on, online_next - startup_next, 0.0)
         cap_u[:, on_pos] = np.where(on, units_both * unitsize[on_pos][None, :], cap_u[:, on_pos])
-        shutdown = np.zeros((n_rows, n_arcs))
-        shutdown[:, on_pos] = np.where(on, shutdown_next, 0.0)
+        # A link carried from the previous roll: the model's carried ramp row has no shut-down floor term
+        # (core._eq_ramp: F[d′,t′] → 0), so the stopping units' output stays in f₂ there.
+        shutdown[:, on_pos] = np.where(on & ~nx.carried[:, None], shutdown_next, 0.0)
         del online_next, startup_next, shutdown_next
 
     # Floor F (online only): the stopping units are taken at F(t) (f₂), the floor toward t⁺ is F(t⁺)·U.
@@ -282,6 +394,7 @@ def _unit_contributions(par, s, v, r, nx: _Next, dur, dur_next):
         f2[:, fl_pos] -= floor_now * unitsize[fl_pos][None, :] * shutdown[:, fl_pos]
         low = floor_next * cap_u[:, fl_pos]
         del floor_now, floor_next
+    del online, shutdown
 
     # C = κ(t⁺)·U; a VRE arc's capacity toward t⁺ is its potential at t⁺.
     cap = cap_u.copy()
@@ -291,13 +404,19 @@ def _unit_contributions(par, s, v, r, nx: _Next, dur, dur_next):
     pot = r.potentialVREgen_dt
     vre_cols = pd.MultiIndex.from_arrays([p, snk], names=["process", "node"])
     vre_pos = np.flatnonzero(np.asarray(vre_cols.isin(pot.columns)) & ~is_in)
+    # The potential frame applies to the VRE arcs of the VRE band only: a VRE unit that touches a storage node is
+    # in the storage band.
+    shift_pos = vre_pos[arc_storage[vre_pos] == ""]
     delta_p = None
     if len(vre_pos):
         pot_next = np.nan_to_num(nx.frame(pot, columns=vre_cols[vre_pos]).to_numpy(dtype=float))
-        pot_now = np.nan_to_num(pot.reindex(index=rows, columns=vre_cols[vre_pos]).to_numpy(dtype=float))
         cap[:, vre_pos] = pot_next
-        delta_p = pot_next - pot_now
-        del pot_next, pot_now
+        if len(shift_pos):
+            at = pd.Index(vre_pos).get_indexer(shift_pos)
+            pot_now = np.nan_to_num(pot.reindex(index=rows, columns=vre_cols[shift_pos]).to_numpy(dtype=float))
+            delta_p = pot_next[:, at] - pot_now
+            del pot_now
+        del pot_next
 
     up_a = cap - f2
     down_a = f2.copy()
@@ -318,16 +437,16 @@ def _unit_contributions(par, s, v, r, nx: _Next, dur, dur_next):
         coarse_cell = ~np.isnan(cdur_now)
         coarse_rate = np.where(coarse_cell, 60.0 * (cdur_now + np.nan_to_num(cdur_next)) / 2.0, rate_row[:, None])
         inside = coarse_cell & (last == 0.0)
+        del cdur_now, cdur_next, last, coarse_cell
 
     # Ramp caps of the ramp-limit sets of the solve that realized t⁺: min with the capacity room, per direction.
     in_period = nx.in_period[:, None]
     for direction, labels in _LIMITS.items():
         target = up_a if direction == "up" else down_a
         for label in labels:
-            sp_pos, speed = _arc_columns(_level_frame(par.process_ramp_limit_dt, label, None), arcs)
+            sp_pos, speed = shared.speeds(label, arcs, nx.positions)
             if not len(sp_pos):
                 continue
-            speed = nx.frame(speed).to_numpy(dtype=float)
             coef = _level_frame(par.process_ramp_cap_coef_dt, label, arcs[sp_pos])
             coef = np.nan_to_num(nx.frame(coef).to_numpy(dtype=float), nan=1.0)
             rate = np.repeat(rate_row[:, None], len(sp_pos), axis=1)
@@ -339,11 +458,12 @@ def _unit_contributions(par, s, v, r, nx: _Next, dur, dur_next):
             applies = ~np.isnan(speed) & (~in_period | (room < 1.0))
             limit = np.where(applies, room * coef * cap_u[:, sp_pos], np.nan)
             target[:, sp_pos] = np.fmin(target[:, sp_pos], limit)
+            del speed, coef, rate, room, applies, limit
     del cap_u
 
     # Reserve held at t⁺ toward each direction of the arc: R↑ = up at the sink + φ · down at the source, R↓ the
     # mirror; φ = 1/slope(t⁺) on a direct arc.
-    res = _reserve_by_node(r, nx)
+    res = nx.frame(shared.reserves)
     direct_pos = np.flatnonzero(is_direct)
     slope_next_d = np.nan_to_num(nx.frame(par.process_slope, columns=procs[direct_pos]).to_numpy(dtype=float),
                                  nan=1.0)
@@ -360,6 +480,7 @@ def _unit_contributions(par, s, v, r, nx: _Next, dur, dur_next):
                 hit = at >= 0
                 held[:, hit] = held[:, hit] / slope_next_d[:, at[hit]]
             target[:, pos] -= held
+    del res
 
     # Node rooms per arc end: an output ×1 (a VRE output measured against its potential), an indirect unit's
     # input flipped, a direct unit's input converted with the slope and section of each step.
@@ -367,7 +488,7 @@ def _unit_contributions(par, s, v, r, nx: _Next, dur, dur_next):
     in_idx = np.flatnonzero(is_in)
     sink_up, sink_down = up_a[:, sink_idx], down_a[:, sink_idx]
     if delta_p is not None:
-        at = pd.Index(sink_idx).get_indexer(vre_pos)
+        at = pd.Index(sink_idx).get_indexer(shift_pos)
         sink_up[:, at] -= delta_p
         sink_down[:, at] += delta_p
     slope_now_d = np.nan_to_num(par.process_slope.reindex(index=rows, columns=procs[direct_pos])
@@ -389,7 +510,7 @@ def _unit_contributions(par, s, v, r, nx: _Next, dur, dur_next):
         sec_next = np.nan_to_num(nx.frame(par.process_section, columns=sec_procs).to_numpy(dtype=float))
         direct_up[:, sec_pos] += (sec_now - sec_next) * sec_units
         direct_down[:, sec_pos] += (sec_next - sec_now) * sec_units
-    del f2, f2_d, up_d, down_d
+    del f2, f2_d, up_d, down_d, slope_now_d, slope_next_d
 
     up_v = np.concatenate([sink_up, down_a[:, in_idx], direct_up], axis=1)
     down_v = np.concatenate([sink_down, up_a[:, in_idx], direct_down], axis=1)
@@ -404,12 +525,11 @@ def _unit_contributions(par, s, v, r, nx: _Next, dur, dur_next):
     nodes = np.concatenate([np.asarray(snk)[sink_idx], np.asarray(src)[in_idx], np.asarray(src)[direct_pos]])
     owner = np.asarray(p)[end_arc]
     vre_end = np.zeros(len(end_arc), dtype=bool)
-    vre_end[pd.Index(sink_idx).get_indexer(vre_pos)] = True
-    storage = _storage_of(s, owner)
+    vre_end[pd.Index(sink_idx).get_indexer(shift_pos)] = True
+    storage = arc_storage[end_arc]
     band = np.where(storage != "", "storage", np.where(vre_end, "vre", "units"))
     meta = pd.DataFrame({"process": owner, "node": nodes, "band": band, "storage": storage})
-    cols = pd.RangeIndex(len(meta))
-    return _wide(up_v, rows, cols), _wide(down_v, rows, cols), meta
+    return up_v, down_v, meta
 
 
 def _storage_of(s, procs) -> np.ndarray:
@@ -422,23 +542,15 @@ def _storage_of(s, procs) -> np.ndarray:
     return pd.Series(np.asarray(procs, dtype=object)).map(key).fillna("").to_numpy(dtype=object)
 
 
-def _reserve_by_node(r, nx: _Next) -> pd.DataFrame:
-    """Reserve held at t⁺ per ``(process, updown, node)`` (MW, summed over the reserves)."""
-    res = r.reserves_dt
-    if res is None or res.shape[1] == 0:
-        return pd.DataFrame(index=nx.rows, columns=pd.MultiIndex.from_tuples([], names=["process", "updown", "node"]))
-    summed = res.T.groupby(level=["process", "updown", "node"]).sum().T
-    return nx.frame(summed)
-
-
-def _connection_contributions(par, s, r, nx: _Next):
-    """Raw node rooms of the connection ends: ``(up, down, meta)`` as :func:`_unit_contributions`."""
-    rows = r.flow_dt.index
+def _connection_contributions(par, s, r, nx: _Next, shared: _Shared):
+    """Raw node rooms of the connection ends of the block ``nx``: ``(up, down, meta)`` as
+    :func:`_unit_contributions`."""
+    rows = nx.rows
     fin = pd.concat([r.connection_to_left_node__dt, r.connection_to_right_node__dt], axis=1)
     ends = _process_nodes(s).drop_duplicates(["process", "node"])
     ends = ends[ends["process"].isin(s.process_connection)].reset_index(drop=True)[["process", "node"]]
     if ends.empty:
-        return (pd.DataFrame(index=rows), pd.DataFrame(index=rows),
+        return (np.zeros((len(rows), 0)), np.zeros((len(rows), 0)),
                 pd.DataFrame(columns=["process", "node", "band", "storage"]))
     conn = pd.Index(ends["process"])
     keys = pd.MultiIndex.from_arrays([ends["process"], ends["node"]], names=["process", "node"])
@@ -454,7 +566,7 @@ def _connection_contributions(par, s, r, nx: _Next):
     cap = np.where(online, (online_next - startup_next) * unitsize[None, :], built)
     avail = np.nan_to_num(nx.frame(par.process_availability, columns=conn).to_numpy(dtype=float), nan=1.0)
     slope = np.nan_to_num(nx.frame(par.process_slope, columns=conn).to_numpy(dtype=float), nan=1.0)
-    res = _reserve_by_node(r, nx)
+    res = nx.frame(shared.reserves)
     r_up = np.nan_to_num(res.reindex(columns=pd.MultiIndex.from_arrays(
         [ends["process"], ["up"] * len(ends), ends["node"]])).to_numpy(dtype=float))
     r_down = np.nan_to_num(res.reindex(columns=pd.MultiIndex.from_arrays(
@@ -476,8 +588,7 @@ def _connection_contributions(par, s, r, nx: _Next):
                ["node_other"].fillna("").to_numpy(dtype=object))
     meta = pd.DataFrame({"process": ends["process"].to_numpy(dtype=object), "node": ends["node"].to_numpy(dtype=object),
                          "band": np.where(storage != "", "storage", "connections"), "storage": storage})
-    cols = pd.RangeIndex(len(meta))
-    return _wide(up, rows, cols), _wide(down, rows, cols), meta
+    return up, down, meta
 
 
 def _membership(meta: pd.DataFrame, env_nodes: pd.Index, gn: pd.DataFrame, proc_nodes: pd.DataFrame) -> pd.DataFrame:
@@ -503,78 +614,135 @@ def _membership(meta: pd.DataFrame, env_nodes: pd.Index, gn: pd.DataFrame, proc_
     return pd.concat([at_node, at_group], ignore_index=True)
 
 
-def _matrix(mem: pd.DataFrame, n_contrib: int, columns: pd.Index) -> np.ndarray:
-    """0/1 matrix ``(contribution, column)`` of ``mem`` rows (``contribution``, ``column``)."""
-    out = np.zeros((n_contrib, len(columns)))
-    if len(mem):
-        out[mem["contribution"].to_numpy(dtype=int), columns.get_indexer(mem["column"])] = 1.0
+def _matrix(mem: pd.DataFrame, n_contrib: int, columns: pd.Index) -> sparse.csr_matrix:
+    """Sparse 0/1 matrix ``(contribution, column)`` of ``mem`` rows (``contribution``, ``column``)."""
+    if not len(mem):
+        return sparse.csr_matrix((n_contrib, len(columns)))
+    row = mem["contribution"].to_numpy(dtype=int)
+    col = columns.get_indexer(mem["column"])
+    out = sparse.coo_matrix((np.ones(len(row)), (row, col)), shape=(n_contrib, len(columns))).tocsr()
+    out.sum_duplicates()
+    out.data[:] = 1.0
     return out
 
 
-def _band_sums(up, down, meta, mem, entities, storage_cap, rows) -> dict:
-    """The band frames (rows × entities; down bands negative) of one entity kind."""
-    out = {}
+def _product(values: np.ndarray, matrix: sparse.csr_matrix) -> np.ndarray:
+    """``values @ matrix`` (dense rows × contributions times a sparse 0/1 matrix) as a dense array."""
+    return np.asarray((matrix.T.tocsr() @ values.T).T)
+
+
+def _band_matrices(meta: pd.DataFrame, mem: pd.DataFrame, entities) -> dict:
+    """The sparse membership matrices of one entity kind: per band (units, vre, connections) ``contribution ×
+    entity``; for the storage band ``contribution × (storage node, entity)`` pairs, ``pair × entity`` and the
+    pair selection (``storage``, ``entity``, ``process``) of the state-of-charge cap."""
     entity_index = pd.Index(entities)
     mem = mem.merge(meta[["band", "storage", "process"]], left_on="contribution", right_index=True)
-    up_v, down_v = up.to_numpy(), down.to_numpy()
-    for band, up_name, down_name in (("units", "units_up", "units_down"), ("vre", "vre_up", "vre_down"),
-                                     ("connections", "connections_up", "connections_down")):
+    n_contrib = len(meta)
+    out = {"entities": entity_index}
+    for band in ("units", "vre", "connections"):
         sel = mem[mem["band"] == band].assign(column=lambda m: m["entity"])
-        matrix = _matrix(sel, up.shape[1], entity_index)
-        out[up_name] = _wide(up_v @ matrix, rows, entity_index)
-        out[down_name] = _wide(-(down_v @ matrix), rows, entity_index)
-    # Storage: the arcs of each (storage node, entity) pair, capped by the state of charge of the node.
+        out[band] = _matrix(sel, n_contrib, entity_index)
     sel = mem[mem["band"] == "storage"]
     pairs = pd.MultiIndex.from_frame(sel[["storage", "entity"]].drop_duplicates()) if len(sel) else \
         pd.MultiIndex.from_tuples([], names=["storage", "entity"])
     sel = sel.assign(column=list(zip(sel["storage"], sel["entity"])))
-    matrix = _matrix(sel, up.shape[1], pairs)
-    pair_up = up_v @ matrix
-    pair_down = down_v @ matrix
+    out["storage"] = _matrix(sel, n_contrib, pairs)
+    out["pairs"] = pairs
+    out["pair_sel"] = sel
     if len(pairs):
-        room_up, room_down = storage_cap(pairs, sel)
-        pair_up = np.fmin(pair_up, room_up)
-        pair_down = np.fmin(pair_down, room_down)
         entity_of = entity_index.get_indexer(pairs.get_level_values("entity"))
-        to_entity = np.zeros((len(pairs), len(entity_index)))
-        to_entity[np.arange(len(pairs)), entity_of] = 1.0
-        store_up, store_down = pair_up @ to_entity, pair_down @ to_entity
-    else:
-        store_up = store_down = np.zeros((len(rows), len(entity_index)))
-    out["storage_up"] = _wide(store_up, rows, entity_index)
-    out["storage_down"] = _wide(-store_down, rows, entity_index)
+        out["to_entity"] = sparse.csr_matrix((np.ones(len(pairs)), (np.arange(len(pairs)), entity_of)),
+                                             shape=(len(pairs), len(entity_index)))
     return out
 
 
-def _storage_capacity(par, s, v, r, nx: _Next, rows, dur_next):
-    """A function ``(pairs, sel) -> (room_up, room_down)`` (rows × pairs, entity MW): the state-of-charge cap of
-    each (storage node, entity) pair, clip0(state(t)/Δ⁺ − D(t))·η_out and clip0((cap(d⁺) − state(t))/Δ⁺ +
-    D(t))/η_in; ``inf`` for the processes that touch several storage nodes (no cap)."""
-    stores = pd.Index(sorted(s.node_state), name="node")
-    flow = r.flow_dt
-    if len(stores):
-        src = flow.columns.get_level_values("source")
-        snk = flow.columns.get_level_values("sink")
-        out_of = flow.loc[:, src.isin(stores)].T.groupby(level="source").sum().T.reindex(columns=stores)
-        into = flow.loc[:, snk.isin(stores)].T.groupby(level="sink").sum().T.reindex(columns=stores)
-        draw = (out_of.fillna(0.0) - into.fillna(0.0)).reindex(rows).to_numpy(dtype=float)
-        unitsize = par.entity_unitsize.reindex(stores).to_numpy(dtype=float)
-        state = v.state.reindex(index=rows, columns=stores).to_numpy(dtype=float) * unitsize[None, :]
-        capacity = nx.by_period(r.entity_all_capacity, stores).to_numpy(dtype=float)
-        room_up_s = np.clip(state / dur_next[:, None] - draw, 0.0, None)
-        room_down_s = np.clip((capacity - state) / dur_next[:, None] + draw, 0.0, None)
+def _band_sums(up: np.ndarray, down: np.ndarray, matrices: dict, storage_cap) -> dict:
+    """The band arrays (rows × entities; down bands negative) of one entity kind for a block of rows."""
+    out = {}
+    for band, up_name, down_name in (("units", "units_up", "units_down"), ("vre", "vre_up", "vre_down"),
+                                     ("connections", "connections_up", "connections_down")):
+        out[up_name] = _product(up, matrices[band])
+        out[down_name] = -_product(down, matrices[band])
+    # Storage: the arcs of each (storage node, entity) pair, capped by the state of charge of the node.
+    pairs = matrices["pairs"]
+    if len(pairs):
+        pair_up = _product(up, matrices["storage"])
+        pair_down = _product(down, matrices["storage"])
+        room_up, room_down = storage_cap(pairs, matrices["pair_sel"])
+        pair_up = np.fmin(pair_up, room_up)
+        pair_down = np.fmin(pair_down, room_down)
+        store_up = _product(pair_up, matrices["to_entity"])
+        store_down = _product(pair_down, matrices["to_entity"])
     else:
-        room_up_s = room_down_s = np.zeros((len(rows), 0))
+        store_up = store_down = np.zeros((up.shape[0], len(matrices["entities"])))
+    out["storage_up"] = store_up
+    out["storage_down"] = -store_down
+    return out
+
+
+def _storage_state(par, s, v, r, nx: _Next, dur_next: np.ndarray) -> "tuple[pd.Index, np.ndarray, np.ndarray]":
+    """``(stores, room_up_s, room_down_s)``: the state-of-charge rooms of the storage nodes (rows × stores, S
+    units), clip0(state⁻(t⁺)/Δ⁺ − D(t)) and clip0((cap(d⁺) − state⁻(t⁺))/Δ⁺ + D(t)).  state⁻(t⁺) is the state that
+    the storage balance starts t⁺ from (``s.node_state_prev``: the end-of-step state of the step it links t⁺ to,
+    e.g. a timeblock's last step at the timeblock's first step under bind_within_timeblock), the end-of-step state
+    of t where t⁺ has no link (a fixed / carried start) or its linked state is not in the outputs."""
+    stores = pd.Index(sorted(s.node_state), name="node")
+    rows = nx.rows
+    if not len(stores):
+        return stores, np.zeros((len(rows), 0)), np.zeros((len(rows), 0))
+    flow = r.flow_dt
+    src = flow.columns.get_level_values("source")
+    snk = flow.columns.get_level_values("sink")
+    out_of = flow.loc[:, src.isin(stores)].T.groupby(level="source").sum().T.reindex(columns=stores)
+    into = flow.loc[:, snk.isin(stores)].T.groupby(level="sink").sum().T.reindex(columns=stores)
+    draw = (out_of.fillna(0.0) - into.fillna(0.0)).reindex(rows).to_numpy(dtype=float)
+    unitsize = par.entity_unitsize.reindex(stores).to_numpy(dtype=float)
+    state_tab = v.state.reindex(columns=stores)
+    state_now = state_tab.reindex(index=rows).to_numpy(dtype=float)
+    state = state_now
+    prev = getattr(s, "node_state_prev", None)
+    if prev is not None and len(prev):
+        # One lookup for every (row, store): the step that t⁺ of the row starts the store's state from.
+        n_rows, n_stores = len(rows), len(stores)
+        key = pd.MultiIndex.from_arrays([np.tile(stores.to_numpy(dtype=object), n_rows),
+                                         np.repeat(nx.period_next, n_stores), np.repeat(nx.time_next, n_stores)])
+        at = prev.droplevel(["period_prev", "time_prev"]).get_indexer(key)
+        hit = at >= 0
+        prev_pt = pd.MultiIndex.from_arrays([prev.get_level_values("period_prev").to_numpy(dtype=object)[at[hit]],
+                                             prev.get_level_values("time_prev").to_numpy(dtype=object)[at[hit]]])
+        state_row = state_tab.index.get_indexer(prev_pt)
+        linked = np.full(n_rows * n_stores, np.nan)
+        flat_store = np.tile(np.arange(n_stores), n_rows)[hit]
+        found = state_row >= 0
+        values = state_tab.to_numpy(dtype=float)
+        linked_hit = np.full(int(hit.sum()), np.nan)
+        linked_hit[found] = values[state_row[found], flat_store[found]]
+        linked[hit] = linked_hit
+        linked = linked.reshape(n_rows, n_stores)
+        state = np.where(np.isnan(linked), state_now, linked)
+    state = state * unitsize[None, :]
+    capacity = nx.by_period(r.entity_all_capacity, stores).to_numpy(dtype=float)
+    room_up_s = np.clip(state / dur_next[:, None] - draw, 0.0, None)
+    room_down_s = np.clip((capacity - state) / dur_next[:, None] + draw, 0.0, None)
+    return stores, room_up_s, room_down_s
+
+
+def _storage_capacity(par, s, nx: _Next, shared: _Shared, positions: np.ndarray):
+    """A function ``(pairs, sel) -> (room_up, room_down)`` (rows of the block × pairs, entity MW): the
+    state-of-charge cap of each (storage node, entity) pair, the rooms of :func:`_storage_state` × η_out and /
+    η_in; ``inf`` for the processes that touch several storage nodes (no cap)."""
+    stores, room_up_all, room_down_all = shared.storage
+    room_up_s, room_down_s = room_up_all[positions], room_down_all[positions]
+    n_rows = len(positions)
     pss = s.process_source_sink
     delivers = pd.MultiIndex.from_arrays([pss.get_level_values("process"), pss.get_level_values("source")])
     receives = pd.MultiIndex.from_arrays([pss.get_level_values("process"), pss.get_level_values("sink")])
     connections = s.process_connection
-    slope_next = nx.frame(par.process_slope)
 
     def caps(pairs: pd.MultiIndex, sel):
         n = len(pairs)
-        room_up = np.full((len(rows), n), np.inf)
-        room_down = np.full((len(rows), n), np.inf)
+        room_up = np.full((n_rows, n), np.inf)
+        room_down = np.full((n_rows, n), np.inf)
         store = pairs.get_level_values("storage")
         known = np.asarray(store.isin(stores))
         position = stores.get_indexer(store[known])
@@ -583,7 +751,8 @@ def _storage_capacity(par, s, v, r, nx: _Next, rows, dur_next):
         # η of the processes of each pair: delivering from S (η_out) and into S (η_in); a pair without one of them
         # takes the efficiency of its other processes.
         procs = sel.drop_duplicates(["storage", "entity", "process"])
-        eta = 1.0 / slope_next.reindex(columns=pd.Index(procs["process"])).fillna(1.0).to_numpy(dtype=float)
+        slope_next = nx.frame(par.process_slope, columns=pd.Index(procs["process"]))
+        eta = 1.0 / slope_next.fillna(1.0).to_numpy(dtype=float)
         col = pairs.get_indexer(pd.MultiIndex.from_arrays([procs["storage"], procs["entity"]]))
         proc_store = pd.MultiIndex.from_arrays([procs["process"], procs["storage"]])
         is_conn = np.asarray(procs["process"].isin(connections))
