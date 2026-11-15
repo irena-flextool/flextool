@@ -30,10 +30,6 @@ Some of the outputs are optional. They can be removed to speed up the post-proce
 - `output_connection_flow_separate`: Default, no. Produces the connection flows separately for both directions.
 - `output_unit__node_ramp_t`: Default, no. Produces the ramps of individual units for all timesteps.
 
-Additionally a model level option to exclude all node, connection and unit level outputs and only leave group and model level results. This will significantly increase the speed of importing data to the result database.
-
-- model: `exclude_entity_outputs`: Default, no. Excludes results on node, unit and connection level, but preserves group level results
-
 A further debug option writes everything the LP holds over the model horizon to a separate raw dump: the look-ahead of each roll after `rolling_solve_jump` and the forecast branches of stochastic solves. The normal outputs keep only the realized results, with or without it.
 
 - model: `output_horizon`: Default, no. Writes one raw parquet per LP variable and constraint, with every row of every solve and a `realized` column, to `output_parquet/<scenario>/horizon/` (see [Results](../results.md)). The normal outputs are unchanged.
