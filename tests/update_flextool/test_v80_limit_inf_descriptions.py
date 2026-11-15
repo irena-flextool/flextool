@@ -11,7 +11,7 @@ The step
 * renames the ``capacity_margin_methods`` members ``manual`` -> ``absolute`` and ``share_of_peak`` ->
   ``relative_of_peak_demand`` (list order kept) and rewrites every stored ``capacity_margin_method`` value;
 * rewrites the capacity-margin, ``solve.solver_precommand``, ``solve.solver_arguments``,
-  ``unit.conversion_method`` and ``solve.reduce_unit_detail_method`` descriptions;
+  ``unit.conversion_method``, ``solve.reduce_unit_detail_method`` and ``group.print_dispatch`` descriptions;
 * appends ``piecewise_linear`` to ``conversion_methods``, adds ``unit.piecewise_linear_efficiency`` (a curve, or a
   curve per period) and appends the piecewise_linear sentences to ``efficiency``, ``efficiency_at_min_load`` and
   ``min_load``.
@@ -185,6 +185,19 @@ def test_replaces_the_reduce_unit_detail_description(migrated) -> None:
                   "(efficiency_at_min_load above efficiency) then runs at its full-load efficiency",
                   "piecewise_linear curve whose efficiency rises from its first point"):
         assert words in text
+
+
+def test_replaces_the_print_dispatch_description(migrated) -> None:
+    """print_dispatch also gives the group's ramp envelope and its Ramp envelope and Ramp frequency plots."""
+    before, after = migrated["before"]["defs"], migrated["after"]["defs"]
+    shipped, _ = _shipped()
+    key = ("group", "print_dispatch")
+    assert after[key][0] == shipped[key] == m._v80_texts()[key] != before[key][0]
+    assert before[key][0] == "[yes/no] " + m._V58_GROUP_OUTPUT_FLAG_DESCRIPTIONS["print_dispatch"]
+    assert after[key][1:] == before[key][1:]
+    assert after[key][0].startswith(before[key][0] + " ")
+    for words in ("ramp envelope (ramp_envelope_t", "Ramp envelope and Ramp frequency plots"):
+        assert words in after[key][0]
 
 
 PIECEWISE = ("unit", "piecewise_linear_efficiency")

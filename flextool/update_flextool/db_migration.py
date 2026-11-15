@@ -10128,6 +10128,18 @@ def _v58_check(item_error, what):
     return item_error
 
 
+
+#: v58: the descriptions of the renamed group output flags (``print_dispatch`` kept this text up to v79).
+_V58_GROUP_OUTPUT_FLAG_DESCRIPTIONS: dict[str, str] = {
+    "print_dispatch": (
+        "Combines unit/connection flows, flowGroup aggregated flows, and other balance elements "
+        "(slack, demand, internal_losses, etc.) into a set of timeseries and a preconfigured plot per group."
+    ),
+    "print_indicators": (
+        "Output indicators for the set of nodes in the group (Loss of Load, VRE generation, etc.)."
+    ),
+}
+
 def _migrate_v58_carve_flowgroup_out_of_group(db) -> None:
     # Step 1: create classes (guarded / idempotent)
     if not db.find_entity_classes(name="flowGroup"):
@@ -10280,15 +10292,7 @@ def _migrate_v58_carve_flowgroup_out_of_group(db) -> None:
     _commit_step(db, "v58: dropped old group flow defs + 3-dim classes")
 
     # Step 5: rename output flags on group + set their new descriptions
-    _v58_rename_descs = {
-        "print_dispatch": (
-            "Combines unit/connection flows, flowGroup aggregated flows, and other balance elements "
-            "(slack, demand, internal_losses, etc.) into a set of timeseries and a preconfigured plot per group."
-        ),
-        "print_indicators": (
-            "Output indicators for the set of nodes in the group (Loss of Load, VRE generation, etc.)."
-        ),
-    }
+    _v58_rename_descs = _V58_GROUP_OUTPUT_FLAG_DESCRIPTIONS
     for old, new in (("output_nodeGroup_dispatch", "print_dispatch"), ("output_nodeGroup_indicators", "print_indicators")):
         pdef = _v58_find_one(db, "parameter_definition", entity_class_name="group", name=old)
         if pdef is not None:
@@ -10488,6 +10492,12 @@ def _v80_texts() -> dict[tuple[str, str], str]:
             "than with their curve), and ramp limits apply to the capacity. Reserves are then limited by built "
             "capacity, not online capacity, and inertia is counted from flows. online_ramps: online, and no ramp "
             "limits or ramp costs. Never adds detail."),
+        ("group", "print_dispatch"): (
+            "[yes/no] Combines unit/connection flows, flowGroup aggregated flows, and other balance elements "
+            "(slack, demand, internal_losses, etc.) into a set of timeseries and a preconfigured plot per group. "
+            "Also gives the group's ramp envelope (ramp_envelope_t: how much the flows at its member nodes could "
+            "still change toward the next step, next to the net-load ramp) and its Ramp envelope and Ramp "
+            "frequency plots."),
     }
 
 
@@ -10622,7 +10632,8 @@ def _migrate_v80_schema_batch(db) -> None:
        the solve uses, checked, over the option file), of ``unit.conversion_method`` (with piecewise_linear) and of
        ``solve.reduce_unit_detail_method`` (min_load_efficiency and piecewise_linear units run at their full-load
        efficiency without online variables, as do min_load_efficiency units more efficient at min load under the
-       min_limits levels) (:func:`_v80_descriptions`).
+       min_limits levels) and of ``group.print_dispatch`` (also the group's ramp envelope and its Ramp envelope and
+       Ramp frequency plots) (:func:`_v80_descriptions`).
     4. ``conversion_method`` ``piecewise_linear``: the ``conversion_methods`` member, ``unit.piecewise_linear_efficiency``
        (a part-load curve, or a curve per period) and the sentences on ``efficiency``, ``efficiency_at_min_load`` and
        ``min_load`` (:func:`_v80_piecewise_linear`).
@@ -10636,8 +10647,8 @@ def _migrate_v80_schema_batch(db) -> None:
     _v80_piecewise_linear(db)
     _commit_step(db, "v80: inf / -inf in a limit is no limit in that period, capacity_margin_absolute / "
                      "capacity_margin_relative and the capacity_margin_method values absolute / "
-                     "relative_of_peak_demand, solver_precommand, solver_arguments and "
-                     "reduce_unit_detail_method descriptions, "
+                     "relative_of_peak_demand, solver_precommand, solver_arguments, "
+                     "reduce_unit_detail_method and print_dispatch descriptions, "
                      "conversion_method piecewise_linear and unit.piecewise_linear_efficiency")
 
 

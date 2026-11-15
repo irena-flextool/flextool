@@ -3832,7 +3832,7 @@
         null
       ],
       "yes_no",
-      "[yes/no] Combines unit/connection flows, flowGroup aggregated flows, and other balance elements (slack, demand, internal_losses, etc.) into a set of timeseries and a preconfigured plot per group.",
+      "[yes/no] Combines unit/connection flows, flowGroup aggregated flows, and other balance elements (slack, demand, internal_losses, etc.) into a set of timeseries and a preconfigured plot per group. Also gives the group's ramp envelope (ramp_envelope_t: how much the flows at its member nodes could still change toward the next step, next to the net-load ramp) and its Ramp envelope and Ramp frequency plots.",
       "output"
     ],
     [

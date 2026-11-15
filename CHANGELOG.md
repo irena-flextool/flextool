@@ -63,7 +63,8 @@ Input databases move to data version 80. The FlexTool window, the Spine Toolbox 
   (Dispatch / Ramp envelope / Ramp frequency) for node groups and nodes; the scenario comparison with dispatch plots
   writes `ramp_envelope_<nodeGroup|node>_<entity>_<scenario>.png` and `ramp_frequency_<nodeGroup|node>_<entity>.png`
   (nodes with the all-nodes option), with CSV files under Write plotted data. Band colours: `categories:
-  ramp_envelope:` in `plot_settings.yaml`, editable in the colour picker.
+  ramp_envelope:` in `plot_settings.yaml`, editable in the colour picker. The `group.print_dispatch` description
+  now says that it also gives the group's ramp envelope and its Ramp envelope and Ramp frequency plots.
 - **Scaling guard setting** in the FlexTool window's Solver options (Default (error) / Error / Warn / Off), saved in
   the project's `settings.yaml`; `--scaling-guard error|warn|off` and `FLEXTOOL_SCALING_GUARD` on the command line.
 - **A `new_stepduration` step that mixes a no-limit time step with finite ones warns.** `max_instant_flow`,
