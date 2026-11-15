@@ -184,6 +184,7 @@ NOT_TIME_SERIES: frozenset[tuple[str, str]] = frozenset({
     ("unit", "invest_max_period"),
     ("unit", "invest_min_period"),
     ("unit", "lifetime"),
+    ("unit", "piecewise_linear_efficiency"),
     ("unit", "retire_max_period"),
     ("unit", "retire_min_period"),
     ("unit", "salvage_value"),

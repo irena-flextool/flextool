@@ -558,6 +558,13 @@
       ]
     ],
     [
+      "conversion_methods",
+      [
+        "InBpZWNld2lzZV9saW5lYXIi",
+        "str"
+      ]
+    ],
+    [
       "decomposition_methods",
       [
         "Im5vbmUi",
@@ -4073,7 +4080,7 @@
         "str"
       ],
       "conversion_methods",
-      "[choice] Choice of conversion method.",
+      "[choice] How the unit converts inputs to outputs. constant_efficiency (default): output = efficiency \u00d7 input. min_load_efficiency: the fuel use is a straight line from min_load (efficiency_at_min_load) to full load (efficiency); needs online variables. piecewise_linear: the fuel use follows the part-load curve piecewise_linear_efficiency; efficiency is not used. none: for a unit without inputs or without outputs (a unit with both converts as with constant_efficiency).",
       "basics"
     ],
     [
@@ -4128,7 +4135,7 @@
         "float"
       ],
       null,
-      "[-] Efficiency of the unit at full load: outputs / inputs, each flow weighted by its conversion_flow_coeff (default 1, giving plain sum of outputs / sum of inputs). May be above 1: a heat pump with COP 3 has 3; a unit whose output is measured in another unit of measure (e.g. m\u00b3 of water per MWh of electricity) uses that ratio. A min_load_efficiency unit can have different efficiency below full load (see efficiency_at_min_load). No effect on a unit without inputs or without outputs. Constant, period, time, period+time or stochastic time.",
+      "[-] Efficiency of the unit at full load: outputs / inputs, each flow weighted by its conversion_flow_coeff (default 1, giving plain sum of outputs / sum of inputs). May be above 1: a heat pump with COP 3 has 3; a unit whose output is measured in another unit of measure (e.g. m\u00b3 of water per MWh of electricity) uses that ratio. A min_load_efficiency unit can have different efficiency below full load (see efficiency_at_min_load). No effect on a unit without inputs or without outputs. Constant, period, time, period+time or stochastic time. Not used by a piecewise_linear unit: the point at load 1 of its piecewise_linear_efficiency is its full-load efficiency.",
       "basics"
     ],
     [
@@ -4139,7 +4146,7 @@
         null
       ],
       null,
-      "[-] Output / input at minimum load, like efficiency (e.g. 0.4; may be above 1). Efficiency of a min_load_efficiency unit at its minimum load. Fuel use is a straight line from minimum load (this efficiency) to full load (efficiency). Has no effect when min_load is 0: the efficiency at zero output is not defined. No value: efficiency applies at minimum load too. Constant, period, time or period+time.",
+      "[-] Output / input at minimum load, like efficiency (e.g. 0.4; may be above 1). Efficiency of a min_load_efficiency unit at its minimum load. Fuel use is a straight line from minimum load (this efficiency) to full load (efficiency). Has no effect when min_load is 0: the efficiency at zero output is not defined. No value: efficiency applies at minimum load too. Constant, period, time or period+time. Used by min_load_efficiency units only.",
       "basics"
     ],
     [
@@ -4271,7 +4278,7 @@
         null
       ],
       null,
-      "[-] 0-1, share of the online capacity. Minimum load of the unit as a share of its online capacity. Applies only if the unit has online variables. No value means 0. Constant, period, time, period+time or stochastic time.",
+      "[-] 0-1, share of the online capacity. Minimum load of the unit as a share of its online capacity. Applies only if the unit has online variables. No value means 0. Constant, period, time, period+time or stochastic time. For a piecewise_linear unit, min_load is separate from the first point of its curve.",
       "basics"
     ],
     [
@@ -4295,6 +4302,17 @@
       "minimum_time_methods",
       "[choice] Choice between minimum up- and downtimes (none, min_downtime, min_uptime, both). Setting this to anything other than 'none' will activate online variables (at least linear) for the unit. Default: none (no minimum time constraints).",
       "tech_advanced"
+    ],
+    [
+      "unit",
+      "piecewise_linear_efficiency",
+      [
+        null,
+        null
+      ],
+      null,
+      "[-] Part-load efficiency curve of a piecewise_linear unit: a map from load share (0\u20131 of the unit's online capacity; of its built capacity when it has no online variables) to the efficiency at that load (output / input, each flow weighted by its conversion_flow_coeff, like efficiency; may be above 1). The last point must be at load 1 (full load). Fuel use is linear between the points. The extra input per extra output (the incremental heat rate) must not fall from one segment to the next: such a curve is an error, and the message gives the nearest curve that is accepted. When the efficiency rises from the first point to the second (the usual thermal curve), the unit burns fuel at zero output and needs online variables: a unit without startup_method gets linear start-ups (an info line says so). Below the first point the first segment is extended down to min_load; when the efficiency falls from the first point to the second (e.g. an electrolyser), the first point's efficiency applies below it instead. min_load is set separately and does not move the curve. A piecewise_linear unit does not use efficiency or efficiency_at_min_load, and its efficiency must not vary in time. One curve (map: load share \u2192 efficiency) or a curve per period (map: period \u2192 load share \u2192 efficiency).",
+      "basics"
     ],
     [
       "unit",
@@ -6724,6 +6742,18 @@
       "minimum_time_method",
       "str",
       0
+    ],
+    [
+      "unit",
+      "piecewise_linear_efficiency",
+      "map",
+      1
+    ],
+    [
+      "unit",
+      "piecewise_linear_efficiency",
+      "map",
+      2
     ],
     [
       "unit",

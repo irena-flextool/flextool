@@ -139,10 +139,12 @@ def _rerun_changes_nothing(db, step, monkeypatch) -> None:
 def _shipped() -> dict:
     """The shipped descriptions as v79 left them, under the v79 names.  What v80 changed is undone: its appended
     sentences (``inf`` is no limit, a coarse step mixing no-limit and finite time steps) are taken off, the
-    capacity-margin renames are mapped back, and a description v80 replaced as a whole is the v79 text."""
+    capacity-margin renames are mapped back, a description v80 replaced as a whole is the v79 text, and the
+    piecewise_linear sentences of v80 part 4 are taken off (its new definition is left in: no v79 test reads it)."""
     with open(package_data_path("schemas/spinedb_schema.json"), encoding="utf-8") as f:
         schema = json.load(f)
-    later = {key: "".join(sentences) for key, sentences in m._v80_suffixes().items()}
+    later = {key: "".join(sentences)
+             for key, sentences in {**m._v80_suffixes(), **m._v80_piecewise_sentences()}.items()}
     old_names = {("group", new): ("group", old) for old, new in m.V80_CAPACITY_MARGIN_RENAMES.items()}
     v79_texts = {**m._V79_CAPACITY_MARGIN_DESCRIPTIONS, **m._v79_solver_precommand_texts()}
     out = {}

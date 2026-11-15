@@ -10464,7 +10464,75 @@ def _v80_texts() -> dict[tuple[str, str], str]:
             "its options is refused. They override the same option in the solver's option file "
             "(solver_config/<solver>.opt) and solver_mip_gap; the run's flags (e.g. --solver-time-limit) override "
             "them."),
+        ("unit", "conversion_method"): (
+            "[choice] How the unit converts inputs to outputs. constant_efficiency (default): output = efficiency "
+            "× input. min_load_efficiency: the fuel use is a straight line from min_load (efficiency_at_min_load) "
+            "to full load (efficiency); needs online variables. piecewise_linear: the fuel use follows the "
+            "part-load curve piecewise_linear_efficiency; efficiency is not used. none: for a unit without inputs "
+            "or without outputs (a unit with both converts as with constant_efficiency)."),
     }
+
+
+#: v80: ``unit.piecewise_linear_efficiency`` -- the part-load curve of a ``piecewise_linear`` unit.
+V80_PIECEWISE_LINEAR_EFFICIENCY_DESCRIPTION = (
+    "[-] Part-load efficiency curve of a piecewise_linear unit: a map from load share (0–1 of the unit's online "
+    "capacity; of its built capacity when it has no online variables) to the efficiency at that load (output / "
+    "input, each flow weighted by its conversion_flow_coeff, like efficiency; may be above 1). The last point must "
+    "be at load 1 (full load). Fuel use is linear between the points. The extra input per extra output (the "
+    "incremental heat rate) must not fall from one segment to the next: such a curve is an error, and the message "
+    "gives the nearest curve that is accepted. When the efficiency rises from the first point to the second (the "
+    "usual thermal curve), the unit burns fuel at zero output and needs online variables: a unit without "
+    "startup_method gets linear start-ups (an info line says so). Below the first point the first segment is "
+    "extended down to min_load; when the efficiency falls from the first point to the second (e.g. an "
+    "electrolyser), the first point's efficiency applies below it instead. min_load is set separately and does not "
+    "move the curve. A piecewise_linear unit does not use efficiency or efficiency_at_min_load, and its efficiency "
+    "must not vary in time. One curve (map: load share → efficiency) or a curve per period (map: period → load "
+    "share → efficiency).")
+
+
+def _v80_piecewise_sentences() -> dict[tuple[str, str], tuple[str, ...]]:
+    """The sentences v80 appends to the descriptions of the unit parameters a ``piecewise_linear`` unit reads
+    differently (part 4)."""
+    return {
+        ("unit", "efficiency"): (" Not used by a piecewise_linear unit: the point at load 1 of its "
+                                 "piecewise_linear_efficiency is its full-load efficiency.",),
+        ("unit", "efficiency_at_min_load"): (" Used by min_load_efficiency units only.",),
+        ("unit", "min_load"): (" For a piecewise_linear unit, min_load is separate from the first point of its "
+                               "curve.",),
+    }
+
+
+def _v80_piecewise_linear(db) -> None:
+    """``conversion_method`` ``piecewise_linear`` and ``unit.piecewise_linear_efficiency`` (part 4 of v80).
+
+    ``piecewise_linear`` is appended to the ``conversion_methods`` value list (index = max + 1);
+    ``unit.piecewise_linear_efficiency`` (types ``1d_map`` / ``2d_map``: a curve, or a curve per period; no default,
+    no value list, group ``basics``) is added or updated to these fields; ``efficiency``, ``efficiency_at_min_load``
+    and ``min_load`` get the sentences of :func:`_v80_piecewise_sentences` they do not end with yet (the
+    ``conversion_method`` text is in :func:`_v80_texts`).  No value is rewritten.  Idempotent.
+    """
+    if not db.get_item("entity_class", name="unit"):
+        return
+    if db.get_item("parameter_value_list", name="conversion_methods"):
+        items = db.get_items("list_value", parameter_value_list_name="conversion_methods")
+        if "piecewise_linear" not in {x["parsed_value"] for x in items}:
+            val, typ = to_database("piecewise_linear")
+            db.add_list_value(parameter_value_list_name="conversion_methods", value=val, type=typ,
+                              index=max((x["index"] for x in items), default=-1) + 1)
+    fields = {"parameter_type_list": ("1d_map", "2d_map"), "parameter_group_name": "basics",
+              "description": V80_PIECEWISE_LINEAR_EFFICIENCY_DESCRIPTION}
+    pdef = _pdef_or_none(db, "unit", "piecewise_linear_efficiency")
+    if pdef is None:
+        db.add_parameter_definition(entity_class_name="unit", name="piecewise_linear_efficiency", **fields)
+    elif any((tuple(pdef[k] or ()) if k == "parameter_type_list" else pdef[k]) != v for k, v in fields.items()):
+        db.update_parameter_definition(id=pdef["id"], **fields)
+    for (cls, name), sentences in _v80_piecewise_sentences().items():
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is None:
+            continue
+        description = _v80_append_sentences(pdef["description"] or "", sentences)
+        if description != (pdef["description"] or ""):
+            db.update_parameter_definition(id=pdef["id"], description=description)
 
 
 def _v80_capacity_margin_rename(db) -> None:
@@ -10522,16 +10590,23 @@ def _migrate_v80_schema_batch(db) -> None:
        (:func:`_v80_capacity_margin_rename`).
     3. The descriptions of the capacity-margin parameters (new names), of ``solve.solver_precommand`` (never run;
        use a solver wrapper) and of ``solve.solver_arguments`` (the solver's own option names, for whichever solver
-       the solve uses, checked, over the option file) (:func:`_v80_descriptions`).
+       the solve uses, checked, over the option file) and of ``unit.conversion_method`` (with piecewise_linear)
+       (:func:`_v80_descriptions`).
+    4. ``conversion_method`` ``piecewise_linear``: the ``conversion_methods`` member, ``unit.piecewise_linear_efficiency``
+       (a part-load curve, or a curve per period) and the sentences on ``efficiency``, ``efficiency_at_min_load`` and
+       ``min_load`` (:func:`_v80_piecewise_linear`).
 
-    Values change only by the renames of part 2.  Each part is idempotent, so a rerun of the step changes nothing.
+    Values change only by the renames of part 2.  Each part is idempotent, so a rerun of the step changes nothing
+    (a database already at v80 gets part 4 by rerunning the step).
     """
     _v80_limit_inf_descriptions(db)
     _v80_capacity_margin_rename(db)
     _v80_descriptions(db)
+    _v80_piecewise_linear(db)
     _commit_step(db, "v80: inf / -inf in a limit is no limit in that period, capacity_margin_absolute / "
                      "capacity_margin_relative and the capacity_margin_method values absolute / "
-                     "relative_of_peak_demand, solver_precommand and solver_arguments descriptions")
+                     "relative_of_peak_demand, solver_precommand and solver_arguments descriptions, "
+                     "conversion_method piecewise_linear and unit.piecewise_linear_efficiency")
 
 
 if __name__ == '__main__':

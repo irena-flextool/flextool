@@ -10,7 +10,11 @@ The step
   ``capacity_margin_relative`` (the values go with the definition, in every alternative, unchanged);
 * renames the ``capacity_margin_methods`` members ``manual`` -> ``absolute`` and ``share_of_peak`` ->
   ``relative_of_peak_demand`` (list order kept) and rewrites every stored ``capacity_margin_method`` value;
-* rewrites the capacity-margin, ``solve.solver_precommand`` and ``solve.solver_arguments`` descriptions.
+* rewrites the capacity-margin, ``solve.solver_precommand``, ``solve.solver_arguments`` and
+  ``unit.conversion_method`` descriptions;
+* appends ``piecewise_linear`` to ``conversion_methods``, adds ``unit.piecewise_linear_efficiency`` (a curve, or a
+  curve per period) and appends the piecewise_linear sentences to ``efficiency``, ``efficiency_at_min_load`` and
+  ``min_load``.
 
 The new texts and the value list are the shipped schema's; nothing else changes, and a rerun commits nothing.
 """
@@ -165,13 +169,53 @@ def test_replaces_the_solver_descriptions(migrated) -> None:
     assert "HiGHS knobs" not in arguments
 
 
+PIECEWISE = ("unit", "piecewise_linear_efficiency")
+
+
+def test_adds_the_piecewise_linear_member(migrated) -> None:
+    before, after = migrated["before"]["lists"], migrated["after"]["lists"]
+    _, shipped_lists = _shipped()
+    assert "piecewise_linear" not in before["conversion_methods"]
+    assert after["conversion_methods"] == before["conversion_methods"] + ["piecewise_linear"]
+    assert set(after["conversion_methods"]) == set(shipped_lists["conversion_methods"])
+    assert shipped_lists["conversion_methods"][-1] == "piecewise_linear"
+
+
+def test_adds_the_piecewise_linear_efficiency_definition(migrated) -> None:
+    before, after = migrated["before"]["defs"], migrated["after"]["defs"]
+    shipped, _ = _shipped()
+    assert PIECEWISE not in before
+    description, types, group, value_list, default, default_type = after[PIECEWISE]
+    assert types == ("1d_map", "2d_map") and group == "basics" and value_list is None
+    assert default is None and default_type is None
+    assert description == shipped[PIECEWISE] == m.V80_PIECEWISE_LINEAR_EFFICIENCY_DESCRIPTION
+    for words in ("The last point must be at load 1", "the message gives the nearest curve that is accepted",
+                  "gets linear start-ups (an info line says so)", "does not use efficiency or efficiency_at_min_load",
+                  "a curve per period (map: period → load share → efficiency)"):
+        assert words in description
+
+
+def test_piecewise_linear_descriptions(migrated) -> None:
+    before, after = migrated["before"]["defs"], migrated["after"]["defs"]
+    shipped, _ = _shipped()
+    key = ("unit", "conversion_method")
+    assert after[key][0] == shipped[key] == m._v80_texts()[key] != before[key][0]
+    assert "piecewise_linear: the fuel use follows the part-load curve piecewise_linear_efficiency" in after[key][0]
+    assert after[key][1:] == before[key][1:]
+    for key, sentences in m._v80_piecewise_sentences().items():
+        assert after[key][0] == before[key][0].rstrip() + "".join(sentences) == shipped[key]
+        assert after[key][1:] == before[key][1:]
+
+
 def test_changes_nothing_else(migrated) -> None:
     before, after = migrated["before"], migrated["after"]
-    touched = set(m._v80_suffixes()) | set(m._v80_texts()) | set(RENAMED) | {("model", "version")}
+    touched = (set(m._v80_suffixes()) | set(m._v80_texts()) | set(RENAMED) | set(m._v80_piecewise_sentences())
+               | {PIECEWISE, ("model", "version")})
     assert ({k: v for k, v in after["defs"].items() if k not in touched}
             == {k: v for k, v in before["defs"].items() if k not in touched})
-    assert ({k: v for k, v in after["lists"].items() if k != "capacity_margin_methods"}
-            == {k: v for k, v in before["lists"].items() if k != "capacity_margin_methods"})
+    changed_lists = {"capacity_margin_methods", "conversion_methods"}
+    assert ({k: v for k, v in after["lists"].items() if k not in changed_lists}
+            == {k: v for k, v in before["lists"].items() if k not in changed_lists})
 
 
 def test_rerun_commits_nothing(migrated, monkeypatch) -> None:

@@ -443,6 +443,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Map of periods with associated timesets that will be included in the solve. Index: period name, value: timeset name.
     ('periods_available', 'model'): QuantityType.DIMENSIONLESS,
     # (Optional) Array of periods available for the model. Periods that are in the data, but are not in period_timeset.
+    ('piecewise_linear_efficiency', 'unit'): QuantityType.FRACTION,
+    # [-] Part-load efficiency curve of a piecewise_linear unit: a map from load share to the efficiency at that load (output / input). Load...
     ('price', 'commodity'): QuantityType.PRICE_PER_ENERGY,
     # [CUR/MWh or other unit] Price of the commodity. Constant, period or time.
     ('price_ladder_annual', 'commodity'): QuantityType.DIMENSIONLESS,
