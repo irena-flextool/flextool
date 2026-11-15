@@ -60,7 +60,7 @@ _FIELDS: tuple[str, ...] = (
     "process_sink_nonSync", "process_group_inside_nonSync",
     "p_inv_group_cap", "p_group_capacity_for_scaling",
     "pdGroup_capacity_margin", "pdGroup_penalty_capacity_margin",
-    "pdGroup_capacity_margin_share", "pdGroup_peak_demand",
+    "pdGroup_capacity_margin_relative", "pdGroup_peak_demand",
     "pdtGroup_inertia_limit", "pdGroup_penalty_inertia",
     "pdtGroup_non_synchronous_limit", "pdGroup_penalty_non_synchronous",
     "p_process_sink_inertia_constant", "p_process_source_inertia_constant",
@@ -157,7 +157,7 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
         out["p_group_capacity_for_scaling"] = Param(("g", "d"), ig.with_columns(value=1.0 / pl.col("value"))
                                                     .select("g", "d", "value"))
 
-    # The capacity-margin groups' peak demand over each period's original timeline (share_of_peak;
+    # The capacity-margin groups' peak demand over each period's original timeline (relative_of_peak_demand;
     # preprocess.emit._capacity_margin_peak), MW.
     df = _provider_get(provider, sd / "pdGroup_peak_demand.csv")
     if df is not None and df.height > 0:
@@ -195,7 +195,7 @@ def capacity_margin_rows(d) -> pl.DataFrame | None:
     whose margin is ``-inf`` (no capacity-margin requirement in that period: no row and no slack); None without
     any.
 
-        rows = groupCapacityMargin × D_inv − { (g,d) : capacity_margin[g,d] = −inf or capacity_margin_share[g,d] = −inf }
+        rows = groupCapacityMargin × D_inv − { (g,d) : capacity_margin_absolute[g,d] = −inf or capacity_margin_relative[g,d] = −inf }
 
     Both parameters are read, so the rows are the same before and after :func:`resolve_capacity_margin` turns a
     share into the margin (a share of ``-inf`` gives the margin ``-inf``)."""
@@ -204,7 +204,7 @@ def capacity_margin_rows(d) -> pl.DataFrame | None:
     if not _has_rows(gcm) or periods is None:
         return None
     rows = gcm.join(periods, how="cross")
-    for name in ("pdGroup_capacity_margin", "pdGroup_capacity_margin_share"):
+    for name in ("pdGroup_capacity_margin", "pdGroup_capacity_margin_relative"):
         rows = without_no_limit_rows(rows, getattr(d, name, None), "lower")
     return rows if rows.height > 0 else None
 
@@ -223,7 +223,7 @@ def _capacity_margin_branch_weight(d) -> Param | None:
 
 
 def has_capacity_margin(d) -> bool:
-    """True when some group has capacity_margin_method manual or share_of_peak, the group scaling is populated and
+    """True when some group has capacity_margin_method absolute or relative_of_peak_demand, the group scaling is populated and
     the solve has an investment period in dt.
 
     A group without a margin value has margin 0 (its capacity must cover its demand); a margin of -inf is no
@@ -641,19 +641,19 @@ def _param_frame(param) -> "pl.DataFrame | None":
 
 
 def resolve_capacity_margin(d) -> None:
-    """The margin of the ``share_of_peak`` groups into ``pdGroup_capacity_margin`` [MW]:
+    """The margin of the ``relative_of_peak_demand`` groups into ``pdGroup_capacity_margin`` [MW]:
 
-        M[g,d] = capacity_margin[g,d]                              g with capacity_margin_method manual
-               = capacity_margin_share[g,d] · P[g,d]                g with capacity_margin_method share_of_peak
+        M[g,d] = capacity_margin_absolute[g,d]                              g with capacity_margin_method absolute
+               = capacity_margin_relative[g,d] · P[g,d]                g with capacity_margin_method relative_of_peak_demand
         P[g,d] = pdGroup_peak_demand (preprocess.emit._capacity_margin_peak): the peak demand of N(g) over the
                  period's original timeline
 
     The row, the group scaling, the Benders split and the outputs then read one MW value whatever the method.  A
-    share_of_peak group whose share is positive but whose peak is 0 (no demand) gets a warning: its margin is 0.
+    relative_of_peak_demand group whose share is positive but whose peak is 0 (no demand) gets a warning: its margin is 0.
     Rows of 0 are dropped (margin 0).  A share of -inf gives the margin -inf (no requirement in that period,
     :func:`capacity_margin_rows`), whatever the peak.  Idempotent: a group's rows are replaced, not added to.
     """
-    share = _param_frame(getattr(d, "pdGroup_capacity_margin_share", None))
+    share = _param_frame(getattr(d, "pdGroup_capacity_margin_relative", None))
     if share is None or share.height == 0:
         return
     peak = _param_frame(getattr(d, "pdGroup_peak_demand", None))
@@ -672,8 +672,8 @@ def resolve_capacity_margin(d) -> None:
         from flextool.engine import _behaviour_changes
 
         _behaviour_changes.warn_once(
-            ("capacity_margin_share_no_peak", tuple(no_peak)),
-            f"Warning: capacity margin group(s) {', '.join(no_peak)} have capacity_margin_method share_of_peak but "
+            ("capacity_margin_relative_no_peak", tuple(no_peak)),
+            f"Warning: capacity margin group(s) {', '.join(no_peak)} have capacity_margin_method relative_of_peak_demand but "
             "no demand in some investment period: the margin there is 0.")
     # A share of -inf (no requirement in that period) stays -inf, also without demand (-inf · 0 would be NaN).
     margin = (joined.with_columns(value=pl.when(unlimited).then(pl.lit(float("-inf")))
@@ -720,7 +720,7 @@ def _eq_capacity_margin(b: _Build) -> None:
     #     − Σ_{(p,s,k) ∈ K(g)} existing_count[p,d] · unitsize[p] · κ[g,p,s,k,d,t] · icap[g,d]
     #   ∀ (g,d) ∈ capacity_margin_rows, (d,t) ∈ dt
     #   capacity_margin_rows = groupCapacityMargin × D_inv without the (g,d) whose margin is −inf (no requirement)
-    #   groupCapacityMargin = groups with capacity_margin_method manual or share_of_peak
+    #   groupCapacityMargin = groups with capacity_margin_method absolute or relative_of_peak_demand
     #   D_inv = period_invest ∩ periods of dt (investment periods of the solve; a period label has no dt, so a
     #   fan contributes its forecast branch periods, one row per forecast); a solve without investment periods
     #   has no capacity margin
@@ -743,7 +743,7 @@ def _eq_capacity_margin(b: _Build) -> None:
     #   connection (capacity_margin_storage_slack_nodes);  v_capacity_margin_slack_energy = Σ_t vq_state_up · Δt
     #   (capacityMargin_slack_energy)
     #   demand = −inflow_real / Δt (pdtNodeInflow_per_step: the inflow before any energy margin)
-    #   M[g,d] = capacity_margin[g,d] (manual)  |  capacity_margin_share[g,d] · P[g,d] (share_of_peak), 0 where not
+    #   M[g,d] = capacity_margin_absolute[g,d] (absolute)  |  capacity_margin_relative[g,d] · P[g,d] (relative_of_peak_demand), 0 where not
     #   authored;  P[g,d] = max(0, max_t Σ_{n ∈ N(g)} demand[n,d,t]) over the period's original time series
     #   (before representative periods and new_stepduration; _capacity_margin_peak, resolve_capacity_margin)
     #   Σ_{d′} over edd_invest_set / edd_divest_active
@@ -817,7 +817,7 @@ def _eq_capacity_margin(b: _Build) -> None:
 
     _eq_slack_energy(b)
     over = gcm.join(dt_inv, how="cross")
-    for name in ("pdGroup_capacity_margin", "pdGroup_capacity_margin_share"):
+    for name in ("pdGroup_capacity_margin", "pdGroup_capacity_margin_relative"):
         over = without_no_limit_rows(over, getattr(d, name, None), "lower")
     _coarse_flows.add_row_rule_cstr(b, "capacityMargin", over=over, sense=">=", lhs_terms=lhs, rhs_terms=rhs,
                                     partition=_row_partition(b, "capacity_margin", over))

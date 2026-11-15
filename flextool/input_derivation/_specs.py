@@ -148,7 +148,7 @@ _PARAMETER_SPECS: list[dict] = [
         "cl_pars": [("group", "capacity_margin_method")],
         "header": "groupCapacityMargin",
         "filename": "input/groupCapacityMargin.csv",
-        "filter_in_value": {"manual", "share_of_peak"},
+        "filter_in_value": {"absolute", "relative_of_peak_demand"},
         "no_value": True,
     },
     {
@@ -895,8 +895,8 @@ _PARAMETER_SPECS: list[dict] = [
     # --- p_group (scalars) ---
     {
         "cl_pars": [("group", "groupParam"),
-                    ("group", "capacity_margin"),
-                    ("group", "capacity_margin_share"),
+                    ("group", "capacity_margin_absolute"),
+                    ("group", "capacity_margin_relative"),
                     ("group", "co2_max_total"),
                     ("group", "co2_price"),
                     ("group", "inertia_limit"),

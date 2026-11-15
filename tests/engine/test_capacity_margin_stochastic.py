@@ -26,8 +26,8 @@ REPO = Path(__file__).resolve().parents[2]
 RECOURSE_JSON = REPO / "tests" / "fixtures" / "stoch_two_period_invest.json"
 CHAIN = ["init", "base", "stoch", "recourse"]
 CM_G = [["group", "cm_g", None], ["group__node", ["cm_g", "elec"], None]]
-MARGIN = [["group", "cm_g", "capacity_margin", b64(1.0e5, "float")],
-          ["group", "cm_g", "capacity_margin_method", b64("manual", "str")],
+MARGIN = [["group", "cm_g", "capacity_margin_absolute", b64(1.0e5, "float")],
+          ["group", "cm_g", "capacity_margin_method", b64("absolute", "str")],
           ["group", "cm_g", "penalty_capacity_margin", b64(1.0, "float")]]
 FAN = ("p2035_high", "p2035_low", "p2040_high", "p2040_low")
 

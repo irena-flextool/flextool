@@ -44,12 +44,12 @@ def test_count_is_66_split_22_dual_1_time_only_42_period_only_1_period_map_only(
     # 1 time-only: the per-timestep weight map of a timeset.
     time_only = {k for k, v in PARAM_ALLOWED_SHAPES.items() if set(v) == {Shape.MAP_TIME}}
     assert time_only == {("timeset", "timeset_weights")}
-    # 42 period-only (incl. group cumulative_{max,min}_capacity, capacity_margin_share, the user-constraint
+    # 42 period-only (incl. group cumulative_{max,min}_capacity, capacity_margin_relative, the user-constraint
     # constant and unit__inputNode.startup_energy): exactly {SCALAR, MAP_PERIOD}.
     period_only = {k for k, v in PARAM_ALLOWED_SHAPES.items()
                    if set(v) == {Shape.SCALAR, Shape.MAP_PERIOD}}
     assert len(period_only) == 42
-    assert ("group", "capacity_margin_share") in period_only
+    assert ("group", "capacity_margin_relative") in period_only
     assert ("unit__inputNode", "startup_energy") in period_only
     # 1 period map only (no constant): the years each period of a solve represents.
     period_map_only = {k for k, v in PARAM_ALLOWED_SHAPES.items() if set(v) == {Shape.MAP_PERIOD}}

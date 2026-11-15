@@ -188,7 +188,7 @@ STARTUP_COST_INTEGER: tuple[str, ...] = ("p_startup_cost", "pdt_online_integer")
 RAMP: tuple[str, ...] = ("dt_ramp_link", "p_step_duration", "p_process_existing_count")
 # The ramp cost needs no dt_ramp_link: a solve with only carried rows, or none, builds what it has.
 RAMP_COST: tuple[str, ...] = ("p_unitsize", "p_ramp_cost_arc")
-# Checked whenever a group has capacity_margin_method = manual: without period_invest or the group scaling the
+# Checked whenever a group has capacity_margin_method = absolute: without period_invest or the group scaling the
 # capacity margin would be skipped without a word.
 CAPACITY_MARGIN: tuple[str, ...] = ("period_invest", "p_inv_group_cap")
 # Investment adds the units of the earlier investment periods still in service (edd_invest_set, processes and

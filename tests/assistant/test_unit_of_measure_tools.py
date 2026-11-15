@@ -78,7 +78,7 @@ def test_input_units_follow_the_nodes(cls, parameter, byname, expected) -> None:
     ("node", "inflow", ("elec",), "MWh per time step"),
     ("connection", "invest_cost", ("line",), "CUR/kW"),
     ("unit__outputNode", "inertia_constant", ("pump", "water"), "MWs/MW"),
-    ("group", "capacity_margin", ("g_water",), "MW"),
+    ("group", "capacity_margin_absolute", ("g_water",), "MW"),
     ("reserve__upDown__group", "reservation", ("r", "up", "g_water"), "MW"),
 ])
 def test_mwh_nodes_and_power_features_keep_the_default(cls, parameter, byname, expected) -> None:

@@ -60,8 +60,8 @@ def chain_run(tmp_path_factory):
 
     entities = [["group", "cm", None], ["group__node", ["cm", "west"], None]]
     values = [["unit", "coal_plant", "existing", b64(COAL, "float")],
-              ["group", "cm", "capacity_margin_method", b64("manual", "str")],
-              ["group", "cm", "capacity_margin", b64(MARGIN, "float")],
+              ["group", "cm", "capacity_margin_method", b64("absolute", "str")],
+              ["group", "cm", "capacity_margin_absolute", b64(MARGIN, "float")],
               ["group", "cm", "penalty_capacity_margin", b64(PENALTY, "float")]]
     url, scen = make_db(tmp_path_factory, alt="item85", values=values, base_chain=CHAIN, entities=entities)
     work = tmp_path_factory.mktemp("item85_w")

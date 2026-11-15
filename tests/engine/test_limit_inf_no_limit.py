@@ -333,9 +333,9 @@ def test_capacity_margin_minus_inf_period(tmp_path_factory) -> None:
     """capacity_margin {p2020: -inf, p2025: 100} on the solve investing in p2020 and p2025: no p2020 capacityMargin
     rows and no p2020 slack; p2025 keeps both."""
     a = _steps(tmp_path_factory, "inf_cm_a", _two_invest_periods() + [
-        ["group", "capacity_margin", "capacity_margin", pmap({"p2020": -INF, "p2025": 100.0})]], CAPACITY_MARGIN_CHAIN)
+        ["group", "capacity_margin", "capacity_margin_absolute", pmap({"p2020": -INF, "p2025": 100.0})]], CAPACITY_MARGIN_CHAIN)
     b = _steps(tmp_path_factory, "inf_cm_b", _two_invest_periods() + [
-        ["group", "capacity_margin", "capacity_margin", pmap({"p2020": -1.0e3, "p2025": 100.0})]],
+        ["group", "capacity_margin", "capacity_margin_absolute", pmap({"p2020": -1.0e3, "p2025": 100.0})]],
         CAPACITY_MARGIN_CHAIN)
     _assert_lp_minus(a, b, ("capacityMargin[capacity_margin,p2020,",), ("vq_capacity_margin[capacity_margin,p2020]",))
 

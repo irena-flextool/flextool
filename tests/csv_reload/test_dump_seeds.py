@@ -108,7 +108,7 @@ SCENARIO_OF_FIELD: dict[str, str] = {
     "ed_divest_max_period": "invest_retire_limits_all",
     "e_invest_min_total": "invest_retire_limits_all",
     "e_divest_min_total": "invest_retire_limits_all",
-    # S4-4 group sets and min-load units.  capacity_margin: a manual capacity-margin group; coal_wind_inertia: an
+    # S4-4 group sets and min-load units.  capacity_margin: an absolute capacity-margin group; coal_wind_inertia: an
     # inertia group; nonsync_internal: the non-synchronous group, its flagged arcs and the internal line;
     # coal_min_load: coal_plant online with min_load.
     "groupCapacityMargin": "capacity_margin",

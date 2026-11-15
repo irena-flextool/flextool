@@ -28,15 +28,15 @@ GROUP_FAMILIES = ("non_sync_constraint", "capacityMargin")
 
 def _group(g: str, nodes: list[str], *, flagged: list[tuple[str, str]], capacity_margin: bool = True,
            extra_nodes: tuple[str, ...] = ()) -> tuple[list, list]:
-    """Group ``g`` with a non-synchronous limit 0.5 (and a manual capacity margin 0) on ``nodes``."""
+    """Group ``g`` with a non-synchronous limit 0.5 (and an absolute capacity margin 0) on ``nodes``."""
     ents = [["node", n, None] for n in extra_nodes]
     ents += [["group", g, None]] + [["group__node", [g, n], None] for n in nodes]
     vals = [["node", n, "node_type", b64("balance", "str")] for n in extra_nodes]
     vals += [["group", g, "has_non_synchronous", b64("yes", "str")],
              ["group", g, "non_synchronous_limit", b64(0.5, "float")]]
     if capacity_margin:
-        vals += [["group", g, "capacity_margin_method", b64("manual", "str")],
-                 ["group", g, "capacity_margin", b64(0.0, "float")]]
+        vals += [["group", g, "capacity_margin_method", b64("absolute", "str")],
+                 ["group", g, "capacity_margin_absolute", b64(0.0, "float")]]
     vals += [["unit__outputNode", [u, n], "is_non_synchronous", b64("yes", "str")] for u, n in flagged]
     return ents, vals
 

@@ -598,7 +598,7 @@ right-hand side wrecks the scaling).  Two ways to drop the no-limit rows:
 - Otherwise the Param keeps them and the consumer leaves the row out with `without_no_limit_rows(domain, param,
   side)` and passes `drop_no_limit_rows(param, side)` as the right-hand side — for a family whose row domain does
   not come from the Param (`co2_max_period` → `group_d_co2_capped`, the investment maxima behind FA-12,
-  `non_synchronous_limit` → `non_sync_rows`, `capacity_margin(_share)` → `capacity_margin_rows`, the user
+  `non_synchronous_limit` → `non_sync_rows`, `capacity_margin_absolute` / `capacity_margin_relative` → `capacity_margin_rows`, the user
   constraint constant → `cdt_le` / `cdt_ge`).  The variable bounds of an entity investment read an unlimited
   `invest_max_period` / `cumulative_max_capacity` period as the no-limit bound (`max_flow_for_unconstrained_variables`).
 

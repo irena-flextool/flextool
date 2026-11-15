@@ -630,8 +630,9 @@ _UNMAPPED: dict[tuple[str, str], str] = {
         "capacity margin, so the import leaves availability out: generation "
         "is as in FlexTool 2, but in the capacity margin these units count "
         "with their full capacity. This matters only when the capacity margin "
-        "is used; then raise the group's capacity_margin by the capacity the "
-        "availability took away, or lower the units' capacity by hand."
+        "is used; then raise the group's capacity_margin_absolute by the "
+        "capacity the availability took away, or lower the units' capacity by "
+        "hand."
     ),
     ("units", "use min online"): (
         "FlexTool 2 keeps at least the ts_unit 'min_online' share of the "

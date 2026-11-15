@@ -68,8 +68,8 @@ from flextool.engine.preprocess.params._existing import (
 from flextool.engine.preprocess.params._projection import (
     _CUMULATIVE_METHODS,
     group_entity,
-    groupCapacityMarginManual,
-    groupCapacityMarginShareOfPeak,
+    groupCapacityMarginAbsolute,
+    groupCapacityMarginRelative,
     groupInertia,
     groupNonSync,
     p_ramp_cost_arc_from_source,
@@ -1075,47 +1075,47 @@ def pdGroup_capacity_margin_from_source(source: "InputSource",
                                          *,
                                          need_periods: "PeriodNeed | None" = None,
                                          ) -> Param | None:
-    """``group.capacity_margin`` → ``Param(("g","d"))`` [MW]: the margin of the groups with
-    ``capacity_margin_method = manual``.
+    """``group.capacity_margin_absolute`` → ``Param(("g","d"))`` [MW]: the margin of the groups with
+    ``capacity_margin_method = absolute``.
 
     Δ.17c-Tier1 — uses :func:`._param_shapes.resolve_param_shape`.
     Allowed shapes: scalar / 1d_map[period].  CSV path drops zero
-    rows; we mirror via ``filter_zero=True``.  A period map of a manual group must cover ``need_periods`` (the
+    rows; we mirror via ``filter_zero=True``.  A period map of an absolute group must cover ``need_periods`` (the
     solve's investment periods; :func:`require_period_coverage`).  The value of a group with another method is
-    not the margin of a ``share_of_peak`` group (that is ``capacity_margin_share``; the validators warn that it is
+    not the margin of a ``relative_of_peak_demand`` group (that is ``capacity_margin_relative``; the validators warn that it is
     ignored), so those rows are left out.
     """
     resolved = resolve_param_shape(
-        source, "group", "capacity_margin", period_filter=period_filter)
+        source, "group", "capacity_margin_absolute", period_filter=period_filter)
     if resolved is None or resolved.frame is None:
         return None
-    active = _group_names(groupCapacityMarginManual(source)) if _gate_needed(need_periods, resolved) else None
+    active = _group_names(groupCapacityMarginAbsolute(source)) if _gate_needed(need_periods, resolved) else None
     out = require_period_coverage(
-        resolved, "g", period_filter, entity_class="group", parameter_name="capacity_margin",
+        resolved, "g", period_filter, entity_class="group", parameter_name="capacity_margin_absolute",
         need_periods=need_periods, active=active, filter_zero=True, limit_side="lower")
-    share = _group_names(groupCapacityMarginShareOfPeak(source))
+    share = _group_names(groupCapacityMarginRelative(source))
     return _only_groups(out, share, keep=False) if share else out
 
 
-def pdGroup_capacity_margin_share_from_source(source: "InputSource",
+def pdGroup_capacity_margin_relative_from_source(source: "InputSource",
                                                period_filter: pl.DataFrame | None = None,
                                                *,
                                                need_periods: "PeriodNeed | None" = None,
                                                ) -> Param | None:
-    """``group.capacity_margin_share`` → ``Param(("g","d"))`` [share] of the groups with ``capacity_margin_method =
-    share_of_peak``; the margin is the share times the group's peak demand
+    """``group.capacity_margin_relative`` → ``Param(("g","d"))`` [share] of the groups with ``capacity_margin_method =
+    relative_of_peak_demand``; the margin is the share times the group's peak demand
     (:func:`flextool.engine.model._group_slack.resolve_capacity_margin`).
 
     Scalar or 1d_map[period] (:func:`resolve_param_shape` / :func:`require_period_coverage`, invariant #2); zero
     rows dropped (margin 0).  A period map must cover ``need_periods`` (the solve's investment periods).
     """
     resolved = resolve_param_shape(
-        source, "group", "capacity_margin_share", period_filter=period_filter)
+        source, "group", "capacity_margin_relative", period_filter=period_filter)
     if resolved is None or resolved.frame is None:
         return None
-    share = _group_names(groupCapacityMarginShareOfPeak(source))
+    share = _group_names(groupCapacityMarginRelative(source))
     out = require_period_coverage(
-        resolved, "g", period_filter, entity_class="group", parameter_name="capacity_margin_share",
+        resolved, "g", period_filter, entity_class="group", parameter_name="capacity_margin_relative",
         need_periods=need_periods, active=share if _gate_needed(need_periods, resolved) else None,
         filter_zero=True, limit_side="lower")
     return _only_groups(out, share)
@@ -2957,13 +2957,13 @@ def apply_direct_params_b(source: "InputSource",
     need_margin = PeriodNeed(need_invest.periods & need_dispatch.periods, "invest", active_solve)
     need_online = None if _construction_lag_configured(source) else need_invest
 
-    # ─── Δ.4b — group capacity_margin (period) and the inertia / nonSync limits (period + time) ─
+    # ─── Δ.4b — group capacity_margin_absolute (period) and the inertia / nonSync limits (period + time) ─
     # Δ.12c-fix gap #3: pass ``dt`` as ``period_filter`` so the values restrict to the active solve's
-    # periods (capacity_margin: (g, d)); the inertia / non-synchronous limits keep their authored dims
+    # periods (capacity_margin_absolute: (g, d)); the inertia / non-synchronous limits keep their authored dims
     # ⊆ (g, d, t) (broadcast_to_period_time).
     for fn, field, need in (
         (pdGroup_capacity_margin_from_source, "pdGroup_capacity_margin", need_margin),
-        (pdGroup_capacity_margin_share_from_source, "pdGroup_capacity_margin_share", need_margin),
+        (pdGroup_capacity_margin_relative_from_source, "pdGroup_capacity_margin_relative", need_margin),
         (pdtGroup_inertia_limit_from_source, "pdtGroup_inertia_limit", need_dispatch),
         (pdtGroup_non_synchronous_limit_from_source,
             "pdtGroup_non_synchronous_limit", need_dispatch),

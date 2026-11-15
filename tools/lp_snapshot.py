@@ -865,8 +865,8 @@ def _patch_capacity_margin_stoch(data: dict) -> dict:
         data, name="capacity_margin_stoch", base="recourse",
         entities=[["group", "cm_g"],
                   ["group__node", ["cm_g", "elec"]]],
-        values=[["group", "cm_g", "capacity_margin", 1.0e5],
-                ["group", "cm_g", "capacity_margin_method", "manual"],
+        values=[["group", "cm_g", "capacity_margin_absolute", 1.0e5],
+                ["group", "cm_g", "capacity_margin_method", "absolute"],
                 ["group", "cm_g", "penalty_capacity_margin", 1.0]])
 
 
@@ -1712,16 +1712,24 @@ def _patch_nonsync_1var_dc(data: dict) -> dict:
 
 def _patch_nonsync_energy_margin(data: dict) -> dict:
     """Invest solve with an energy margin (inflow multiplier 1.1 on west) and a group {west} with a
-    non-synchronous limit and a manual capacity margin."""
+    non-synchronous limit and a absolute capacity margin."""
     ents = [["group", "gm"], ["group__node", ["gm", "west"]]]
     return _overlay(data, name="nonsync_energy_margin",
                     base=["init", "west", "wind", "battery", "battery_invest", "5weeks", "coal"],
                     entities=ents, values=[
                         ["group", "gm", "has_non_synchronous", "yes"], ["group", "gm", "non_synchronous_limit", 0.5],
-                        ["group", "gm", "capacity_margin_method", "manual"], ["group", "gm", "capacity_margin", 0.0],
+                        ["group", "gm", "capacity_margin_method", "absolute"], ["group", "gm", "capacity_margin_absolute", 0.0],
                         ["unit__outputNode", ["wind_plant", "west"], "is_non_synchronous", "yes"],
                         ["node", "west", "energy_margin_method", "inflow_multiplier"],
                         ["node", "west", "energy_margin_multiplier", 1.1]])
+
+
+def _patch_capacity_margin_relative(data: dict) -> dict:
+    """The capacity_margin scenario with its group's margin given as 10 % of the group's peak demand
+    (capacity_margin_method relative_of_peak_demand) instead of MW."""
+    return _overlay(data, name="capacity_margin_relative", base="capacity_margin", values=[
+        ["group", "capacity_margin", "capacity_margin_method", "relative_of_peak_demand"],
+        ["group", "capacity_margin", "capacity_margin_relative", 0.1]])
 
 
 def _patch_conn_reserve_uni(data: dict) -> dict:
@@ -1966,6 +1974,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "nonsync_internal_dc": _patch_nonsync_internal_dc,
     "nonsync_1var_dc": _patch_nonsync_1var_dc,
     "nonsync_energy_margin": _patch_nonsync_energy_margin,
+    "capacity_margin_relative": _patch_capacity_margin_relative,
     "conn_reserve_dc": _patch_conn_reserve_dc,
     "conn_online_roll": _patch_conn_online_roll,
     "conn_online_stoch": _patch_conn_online_stoch,
@@ -2179,6 +2188,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("nonsync_internal_dc", _T),
     ("nonsync_1var_dc", _T),
     ("nonsync_energy_margin", _T),
+    ("capacity_margin_relative", _T),
     ("conn_reserve_dc", _F + "case14_dc_power_flow.json"),
     ("conn_online_roll", _T),
     ("conn_online_stoch", _F + "stochastics.json"),

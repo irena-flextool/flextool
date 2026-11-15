@@ -67,7 +67,7 @@ SLACKS: tuple[Slack, ...] = (
           "solve's shortfall is shown under the solve that realizes the period; nodeGroup_capacity_margin_d_g has "
           "it per solve, with the requirement and what each class of units and connections counts at the binding "
           "step, and nodeGroup_capacity_margin_entity_d_g what each unit, connection and node counts.",
-          ("group.capacity_margin", "group.capacity_margin_share", "group.penalty_capacity_margin"),
+          ("group.capacity_margin_absolute", "group.capacity_margin_relative", "group.penalty_capacity_margin"),
           detail_tables=("nodeGroup_capacity_margin_d_g", "nodeGroup_capacity_margin_entity_d_g")),
 )
 

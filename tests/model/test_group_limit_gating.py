@@ -2,7 +2,7 @@
 
 The capacity margin, inertia and non-synchronous rows are built for
 
-    groupCapacityMargin = groups with capacity_margin_method = manual
+    groupCapacityMargin = groups with capacity_margin_method = absolute
     groupInertia        = groups with has_inertia = yes
     groupNonSync        = groups with has_non_synchronous = yes
 
@@ -40,8 +40,8 @@ STOCHASTICS_JSON = FIXTURES / "stochastics.json"
 
 ROWS = ("capacityMargin", "inertia_constraint", "non_sync_constraint")
 SLACKS = ("vq_capacity_margin", "vq_inertia", "vq_non_synchronous")
-FLAGS = (("capacity_margin_method", "manual"), ("has_inertia", "yes"), ("has_non_synchronous", "yes"))
-LIMITS = ("capacity_margin", "inertia_limit", "non_synchronous_limit")
+FLAGS = (("capacity_margin_method", "absolute"), ("has_inertia", "yes"), ("has_non_synchronous", "yes"))
+LIMITS = ("capacity_margin_absolute", "inertia_limit", "non_synchronous_limit")
 
 
 @pytest.fixture(autouse=True)
@@ -139,13 +139,13 @@ def _limits(veh: str, *, as_map: bool = False) -> list:
 
     def v(x):
         return pmap({p: x for p in periods}) if as_map else scalar(x)
-    return [["group", g_cm, "capacity_margin", v(cm)], ["group", g_in, "inertia_limit", v(inertia)],
+    return [["group", g_cm, "capacity_margin_absolute", v(cm)], ["group", g_in, "inertia_limit", v(inertia)],
             ["group", g_in, "non_synchronous_limit", v(ns)]]
 
 
 def _flags(veh: str, *, on: bool = True) -> list:
     _, _, _, g_cm, g_in, *_ = VEHICLES[veh]
-    vals = ("manual", "yes", "yes") if on else ("none", "no", "no")
+    vals = ("absolute", "yes", "yes") if on else ("none", "no", "no")
     return [["group", g_cm, "capacity_margin_method", s(vals[0])], ["group", g_in, "has_inertia", s(vals[1])],
             ["group", g_in, "has_non_synchronous", s(vals[2])]]
 
@@ -252,8 +252,8 @@ def test_flag_without_limit(tmp_path_factory) -> None:
 def test_only_flagged_group_counts(tmp_path_factory) -> None:
     """``capacity_margin`` has the method; ``electricity`` authors a margin without it and has inertia only."""
     steps = _run(tmp_path_factory, "single", _limits("single") + [
-        ["group", "capacity_margin", "capacity_margin_method", s("manual")],
-        ["group", "electricity", "capacity_margin", scalar(5.0)],
+        ["group", "capacity_margin", "capacity_margin_method", s("absolute")],
+        ["group", "electricity", "capacity_margin_absolute", scalar(5.0)],
         ["group", "electricity", "has_inertia", s("yes")]])
     st = list(steps.values())[-1]
     assert _groups(st, "groupCapacityMargin") == ["capacity_margin"]
@@ -309,7 +309,7 @@ def test_limit_without_flag_warns(tmp_path_factory, caplog) -> None:
         _run(tmp_path_factory, "single", _limits("single") + [["group", "heat", "inertia_limit", scalar(0.0)]],
              entities=None, warm=False)
     text = caplog.text
-    assert "Group 'capacity_margin' has capacity_margin but capacity_margin_method is not manual" in text
+    assert "Group 'capacity_margin' has capacity_margin_absolute but capacity_margin_method is not absolute" in text
     assert "Group 'electricity' has inertia_limit but has_inertia is not yes" in text
     assert "Group 'electricity' has non_synchronous_limit but has_non_synchronous is not yes" in text
     # An explicit 0 without the flag has no effect and is not reported.
@@ -321,13 +321,13 @@ def test_flag_without_limit_warns_only_when_absent(tmp_path_factory, caplog) -> 
     with caplog.at_level(logging.WARNING):
         _run(tmp_path_factory, "single", _flags("single"), warm=False)
     absent = caplog.text
-    assert "Group 'capacity_margin' has capacity_margin_method = manual but no capacity_margin" in absent
+    assert "Group 'capacity_margin' has capacity_margin_method = absolute but no capacity_margin_absolute" in absent
     assert "Group 'electricity' has has_inertia = yes but no inertia_limit" in absent
     assert "Group 'electricity' has has_non_synchronous = yes but no non_synchronous_limit" in absent
     caplog.clear()
     with caplog.at_level(logging.WARNING):
         steps = _run(tmp_path_factory, "single", _flags("single") + [
-            ["group", "capacity_margin", "capacity_margin", scalar(0.0)],
+            ["group", "capacity_margin", "capacity_margin_absolute", scalar(0.0)],
             ["group", "electricity", "inertia_limit", scalar(0.0)],
             ["group", "electricity", "non_synchronous_limit", scalar(0.0)]], warm=False)
     explicit = caplog.text

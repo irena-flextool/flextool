@@ -1340,27 +1340,27 @@ def _group_param_equals(
 
 
 def groupCapacityMargin(source: "InputSource") -> pl.DataFrame:
-    """Groups with a capacity margin: ``capacity_margin_method`` manual or share_of_peak.  Schema: ``[g]``."""
+    """Groups with a capacity margin: ``capacity_margin_method`` absolute or relative_of_peak_demand.  Schema: ``[g]``."""
     df = _try_param(source, "group", "capacity_margin_method")
     if df is None:
         return _empty({"g": pl.Utf8})
     return (df.lazy()
-              .filter(pl.col("value").is_in(["manual", "share_of_peak"]))
+              .filter(pl.col("value").is_in(["absolute", "relative_of_peak_demand"]))
               .select(alias_to_axis("name", "g"))
               .unique()
               .sort("g")
               .collect())
 
 
-def groupCapacityMarginManual(source: "InputSource") -> pl.DataFrame:
-    """Groups whose margin is ``capacity_margin`` MW (``capacity_margin_method = manual``).  Schema: ``[g]``."""
-    return _group_param_equals(source, "capacity_margin_method", "manual")
+def groupCapacityMarginAbsolute(source: "InputSource") -> pl.DataFrame:
+    """Groups whose margin is ``capacity_margin_absolute`` MW (``capacity_margin_method = absolute``).  Schema: ``[g]``."""
+    return _group_param_equals(source, "capacity_margin_method", "absolute")
 
 
-def groupCapacityMarginShareOfPeak(source: "InputSource") -> pl.DataFrame:
-    """Groups whose margin is ``capacity_margin_share`` times their peak demand (``capacity_margin_method =
-    share_of_peak``).  Schema: ``[g]``."""
-    return _group_param_equals(source, "capacity_margin_method", "share_of_peak")
+def groupCapacityMarginRelative(source: "InputSource") -> pl.DataFrame:
+    """Groups whose margin is ``capacity_margin_relative`` times their peak demand (``capacity_margin_method =
+    relative_of_peak_demand``).  Schema: ``[g]``."""
+    return _group_param_equals(source, "capacity_margin_method", "relative_of_peak_demand")
 
 
 def groupInertia(source: "InputSource") -> pl.DataFrame:

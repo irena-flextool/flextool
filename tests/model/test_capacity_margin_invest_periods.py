@@ -9,7 +9,7 @@ for ``d ∈ period_invest`` only.  Before the fix it was built in every period o
 rolling rolls, stochastic dispatch and look-ahead periods paid the margin penalty.  A period label has no dt,
 so a stochastic fan contributes its forecast branch periods, one row per forecast.
 
-Every case uses a manual margin of 100 000 MW (far above any capacity), so a built row always has a slack.
+Every case uses an absolute margin of 100 000 MW (far above any capacity), so a built row always has a slack.
 Databases are built from JSON (never a checked-in ``.sqlite``).
 """
 from __future__ import annotations
@@ -49,8 +49,8 @@ def periods_array(periods: list[str]) -> list:
 
 
 def margin(group: str) -> list:
-    return [["group", group, "capacity_margin", scalar(BIG)],
-            ["group", group, "capacity_margin_method", s("manual")]]
+    return [["group", group, "capacity_margin_absolute", scalar(BIG)],
+            ["group", group, "capacity_margin_method", s("absolute")]]
 
 
 def _chain(fixture_json: Path, scenario: str) -> list[str]:
@@ -200,8 +200,8 @@ def test_nested_chain_margin_in_invest_sub_solves_only(tmp_path_factory) -> None
     """Nested multi-invest chain: each ``invest_5weeks_<p>`` sub-solve keeps its rows for its own invest
     periods (20 rows per period); the storage and dispatch children have none."""
     steps = _run(tmp_path_factory, "nested",
-                 [["group", "capacity_margin", "capacity_margin", scalar(100.0)],
-                  ["group", "capacity_margin", "capacity_margin_method", s("manual")]])
+                 [["group", "capacity_margin", "capacity_margin_absolute", scalar(100.0)],
+                  ["group", "capacity_margin", "capacity_margin_method", s("absolute")]])
     invest = {n: st for n, st in steps.items() if n.startswith("invest_")}
     assert sorted(invest) == ["invest_5weeks_p2020", "invest_5weeks_p2025", "invest_5weeks_p2030",
                               "invest_5weeks_p2035"]
@@ -302,7 +302,7 @@ def test_outputs_recourse(tmp_path_factory, monkeypatch) -> None:
 
 @pytest.mark.parametrize("invest", [False, True], ids=["dispatch", "invest"])
 def test_rolling_margin_warm_equals_cold(tmp_path_factory, invest) -> None:
-    """Rolling solve with a manual margin group (with and without invest periods): warm rolls equal cold."""
+    """Rolling solve with an absolute margin group (with and without invest periods): warm rolls equal cold."""
     vals = margin("elec_g")
     if invest:
         vals = vals + [["solve", "1week_rolling", "invest_periods", periods_array(["period1"])]]

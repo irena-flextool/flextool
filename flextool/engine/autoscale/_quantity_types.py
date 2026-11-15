@@ -62,10 +62,14 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Benders in-out separation stabilization weight (lambda). Solver-algorithm knob, never an LP coefficient.
     ('candidate_precapacity_to_avoid_big_m', 'group'): QuantityType.POWER,
     # [MW] Small pre-existing capacity assigned to investment candidate connections in DC power flow groups that have zero existing capacity. This...
+    ('capacity_margin_absolute', 'group'): QuantityType.POWER,
+    # [MW] Capacity the group needs above its demand at every time step of an investment period (capacity_margin_method absolute).
+    ('capacity_margin_relative', 'group'): QuantityType.FRACTION,
+    # [-] Capacity margin as a share of the group's peak demand (capacity_margin_method relative_of_peak_demand).
     ('capacity_margin', 'group'): QuantityType.POWER,
-    # [MW] Capacity the group needs above its demand at every time step of an investment period (capacity_margin_method manual).
     ('capacity_margin_share', 'group'): QuantityType.FRACTION,
-    # [-] Capacity margin as a share of the group's peak demand (capacity_margin_method share_of_peak).
+    # Pre-v80 names of capacity_margin_absolute / capacity_margin_relative, carried during the migration window
+    # (renamed by db_migration v80).
     # Pre-v70 input-side names, carried during the migration window
     # (renamed to input_share_max / input_share_min by db_migration v70).
     ('capacity_max_coeff', 'unit__inputNode'): QuantityType.FRACTION,
@@ -242,7 +246,7 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('has_capacity_margin', 'group'): QuantityType.DIMENSIONLESS,
     # A flag whether the group of nodes has a capacity margin constraint in the investment mode.
     ('capacity_margin_method', 'group'): QuantityType.DIMENSIONLESS,
-    # Whether the group needs a capacity margin in investment solves, and how the margin is given (none, manual, share_of_peak).
+    # Whether the group needs a capacity margin in investment solves, and how the margin is given (none, absolute, relative_of_peak_demand).
     ('has_inertia', 'group'): QuantityType.DIMENSIONLESS,
     # Whether the group has an inertia constraint. Without yes, inertia_limit is ignored.
     ('has_non_synchronous', 'group'): QuantityType.DIMENSIONLESS,

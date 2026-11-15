@@ -791,7 +791,7 @@ def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] 
 
 
 def validate_capacity_margin_groups(db, logger: logging.Logger) -> None:
-    """The nodes of a capacity-margin group (``capacity_margin_method`` manual or share_of_peak).
+    """The nodes of a capacity-margin group (``capacity_margin_method`` absolute or relative_of_peak_demand).
 
     Storage nodes are left out of the group's demand, and the units fed from them count by their flow, so a group
     of storage nodes only has no demand to cover: an error.  A storage node of the group with demand (a negative
@@ -803,7 +803,7 @@ def validate_capacity_margin_groups(db, logger: logging.Logger) -> None:
     for pv in db.find_parameter_values(
         entity_class_name="group", parameter_definition_name="capacity_margin_method",
     ):
-        if pv["parsed_value"] in ("manual", "share_of_peak"):
+        if pv["parsed_value"] in ("absolute", "relative_of_peak_demand"):
             capacity_margin_groups[pv["entity_byname"][0]] = []
     if not capacity_margin_groups:
         return
@@ -871,16 +871,16 @@ def _entities_with_value(db, entity_class: str, parameter: str, value: str) -> s
 
 # (limit parameter, method/flag parameter, value that switches the limit on)
 _GROUP_LIMIT_FLAGS: tuple[tuple[str, str, str], ...] = (
-    ("capacity_margin", "capacity_margin_method", "manual"),
-    ("capacity_margin_share", "capacity_margin_method", "share_of_peak"),
+    ("capacity_margin_absolute", "capacity_margin_method", "absolute"),
+    ("capacity_margin_relative", "capacity_margin_method", "relative_of_peak_demand"),
     ("inertia_limit", "has_inertia", "yes"),
     ("non_synchronous_limit", "has_non_synchronous", "yes"),
 )
 
 # What a flagged group without the limit gets (the model reads the limit as 0).
 _GROUP_LIMIT_ABSENT: dict[str, str] = {
-    "capacity_margin": "its capacity must cover its demand (margin 0)",
-    "capacity_margin_share": "its capacity must cover its demand (margin 0)",
+    "capacity_margin_absolute": "its capacity must cover its demand (margin 0)",
+    "capacity_margin_relative": "its capacity must cover its demand (margin 0)",
     "inertia_limit": "it has no inertia requirement",
     "non_synchronous_limit": "it reads as 0, so no non-synchronous infeed is allowed (violations are penalised)",
 }
@@ -890,8 +890,8 @@ def validate_group_limit_flags(db, logger: logging.Logger) -> None:
     """Warn about group limits and their method / flag that do not go together.
 
     The capacity margin, inertia and non-synchronous constraints are built for the groups whose
-    ``capacity_margin_method`` is ``manual`` (``capacity_margin``) or ``share_of_peak``
-    (``capacity_margin_share``) / ``has_inertia`` is ``yes`` / ``has_non_synchronous`` is ``yes``, and
+    ``capacity_margin_method`` is ``absolute`` (``capacity_margin_absolute``) or ``relative_of_peak_demand``
+    (``capacity_margin_relative``) / ``has_inertia`` is ``yes`` / ``has_non_synchronous`` is ``yes``, and
     nowhere else.  Warnings (``db`` is scenario-filtered):
 
     * a non-zero limit on a group without its method / flag: the limit is ignored;
@@ -1465,7 +1465,7 @@ def validate_units_of_measure(db, logger: logging.Logger) -> None:
         power_groups.setdefault(ent["entity_byname"][2], []).append("reserves")
     for flag, on, feature in (("has_inertia", {"yes"}, "inertia"),
                               ("has_non_synchronous", {"yes"}, "the non-synchronous limit"),
-                              ("capacity_margin_method", {"manual", "share_of_peak"}, "the capacity margin")):
+                              ("capacity_margin_method", {"absolute", "relative_of_peak_demand"}, "the capacity margin")):
         for value in sorted(on):
             for name in _entities_with_value(db, "group", flag, value):
                 power_groups.setdefault(name, []).append(feature)

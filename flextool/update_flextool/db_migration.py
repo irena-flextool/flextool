@@ -1908,7 +1908,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
             elif next_version == 79:
                 _migrate_v79_schema_batch(db)
             elif next_version == 80:
-                _migrate_v80_limit_inf_descriptions(db)
+                _migrate_v80_schema_batch(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -10343,61 +10343,195 @@ def _migrate_v58_carve_flowgroup_out_of_group(db) -> None:
             raise SpineDBAPIError(f"v58: group.{old} not renamed")
 
 
-def _v80_suffixes() -> dict[tuple[str, str], str]:
-    """The sentence v80 appends to the description of each period-map limit: ``inf`` (``-inf`` for a lower limit)
-    means no limit in that period (the row of that period is left out)."""
+#: v80: the sentence that says a coarse ``new_stepduration`` step mixing no-limit and finite time steps has no limit.
+_V80_COARSE_STEP_MAX = (" With a solve's new_stepduration, a solve step that combines inf time steps with finite ones "
+                        "has no limit for the whole solve step (a warning says so).")
+_V80_COARSE_STEP_MIN = (" With a solve's new_stepduration, a solve step that combines -inf time steps with finite ones "
+                        "has no limit for the whole solve step (a warning says so).")
+
+
+def _v80_suffixes() -> dict[tuple[str, str], tuple[str, ...]]:
+    """The sentences v80 appends to the description of each period-map limit: ``inf`` (``-inf`` for a lower limit)
+    means no limit in that period (the row of that period is left out), and, for the four time-series limits, that a
+    solve step of ``new_stepduration`` that combines a no-limit time step with finite ones has no limit for the
+    whole step.  The capacity-margin limits get their whole v80 text instead (:func:`_v80_texts`)."""
     return {
-        ('connection', 'cumulative_max_capacity'): ' inf means no limit in that period.',
-        ('connection', 'cumulative_min_capacity'): ' 0 or -inf means no minimum in that period.',
-        ('connection', 'invest_max_period'): ' inf means no limit in that period.',
-        ('connection', 'invest_min_period'): ' 0 or -inf means no minimum in that period.',
-        ('connection', 'retire_max_period'): ' inf means no limit in that period.',
-        ('connection', 'retire_min_period'): ' 0 or -inf means no minimum in that period.',
-        ('constraint', 'constant'): ' inf (sense less_than) or -inf (greater_than) means no constraint in that period.',
-        ('flowGroup', 'max_cumulative_flow'): ' inf means no limit in that period.',
-        ('flowGroup', 'max_instant_flow'): ' inf means no limit in that period or time step.',
-        ('flowGroup', 'min_cumulative_flow'): ' -inf means no limit in that period.',
-        ('flowGroup', 'min_instant_flow'): ' -inf means no limit in that period or time step.',
-        ('group', 'capacity_margin'): ' -inf means no capacity-margin requirement in that period.',
-        ('group', 'capacity_margin_share'): ' -inf means no capacity-margin requirement in that period.',
-        ('group', 'co2_max_period'): ' inf means no limit in that period.',
-        ('group', 'cumulative_max_capacity'): ' inf means no limit in that period.',
-        ('group', 'cumulative_min_capacity'): ' 0 or -inf means no minimum in that period.',
-        ('group', 'inertia_limit'): ' -inf also means no requirement in that period or time step.',
-        ('group', 'invest_max_period'): ' inf means no limit in that period.',
-        ('group', 'invest_min_period'): ' 0 or -inf means no minimum in that period.',
-        ('group', 'non_synchronous_limit'): ' inf means no limit in that period or time step.',
-        ('group', 'retire_max_period'): ' inf means no limit in that period.',
-        ('group', 'retire_min_period'): ' 0 or -inf means no minimum in that period.',
-        ('node', 'cumulative_max_capacity'): ' inf means no limit in that period.',
-        ('node', 'cumulative_min_capacity'): ' 0 or -inf means no minimum in that period.',
-        ('node', 'invest_max_period'): ' inf means no limit in that period.',
-        ('node', 'invest_min_period'): ' 0 or -inf means no minimum in that period.',
-        ('node', 'retire_max_period'): ' inf means no limit in that period.',
-        ('node', 'retire_min_period'): ' 0 or -inf means no minimum in that period.',
-        ('unit', 'cumulative_max_capacity'): ' inf means no limit in that period.',
-        ('unit', 'cumulative_min_capacity'): ' 0 or -inf means no minimum in that period.',
-        ('unit', 'invest_max_period'): ' inf means no limit in that period.',
-        ('unit', 'invest_min_period'): ' 0 or -inf means no minimum in that period.',
-        ('unit', 'retire_max_period'): ' inf means no limit in that period.',
-        ('unit', 'retire_min_period'): ' 0 or -inf means no minimum in that period.',
+        ('connection', 'cumulative_max_capacity'): (' inf means no limit in that period.',),
+        ('connection', 'cumulative_min_capacity'): (' 0 or -inf means no minimum in that period.',),
+        ('connection', 'invest_max_period'): (' inf means no limit in that period.',),
+        ('connection', 'invest_min_period'): (' 0 or -inf means no minimum in that period.',),
+        ('connection', 'retire_max_period'): (' inf means no limit in that period.',),
+        ('connection', 'retire_min_period'): (' 0 or -inf means no minimum in that period.',),
+        ('constraint', 'constant'): (
+            ' inf (sense less_than) or -inf (greater_than) means no constraint in that period.',),
+        ('flowGroup', 'max_cumulative_flow'): (' inf means no limit in that period.',),
+        ('flowGroup', 'max_instant_flow'): (' inf means no limit in that period or time step.', _V80_COARSE_STEP_MAX),
+        ('flowGroup', 'min_cumulative_flow'): (' -inf means no limit in that period.',),
+        ('flowGroup', 'min_instant_flow'): (' -inf means no limit in that period or time step.', _V80_COARSE_STEP_MIN),
+        ('group', 'co2_max_period'): (' inf means no limit in that period.',),
+        ('group', 'cumulative_max_capacity'): (' inf means no limit in that period.',),
+        ('group', 'cumulative_min_capacity'): (' 0 or -inf means no minimum in that period.',),
+        ('group', 'inertia_limit'): (' -inf also means no requirement in that period or time step.',
+                                     " With a solve's new_stepduration, a solve step that combines -inf time steps "
+                                     "with finite ones has no requirement for the whole solve step (a warning says "
+                                     "so)."),
+        ('group', 'invest_max_period'): (' inf means no limit in that period.',),
+        ('group', 'invest_min_period'): (' 0 or -inf means no minimum in that period.',),
+        ('group', 'non_synchronous_limit'): (' inf means no limit in that period or time step.', _V80_COARSE_STEP_MAX),
+        ('group', 'retire_max_period'): (' inf means no limit in that period.',),
+        ('group', 'retire_min_period'): (' 0 or -inf means no minimum in that period.',),
+        ('node', 'cumulative_max_capacity'): (' inf means no limit in that period.',),
+        ('node', 'cumulative_min_capacity'): (' 0 or -inf means no minimum in that period.',),
+        ('node', 'invest_max_period'): (' inf means no limit in that period.',),
+        ('node', 'invest_min_period'): (' 0 or -inf means no minimum in that period.',),
+        ('node', 'retire_max_period'): (' inf means no limit in that period.',),
+        ('node', 'retire_min_period'): (' 0 or -inf means no minimum in that period.',),
+        ('unit', 'cumulative_max_capacity'): (' inf means no limit in that period.',),
+        ('unit', 'cumulative_min_capacity'): (' 0 or -inf means no minimum in that period.',),
+        ('unit', 'invest_max_period'): (' inf means no limit in that period.',),
+        ('unit', 'invest_min_period'): (' 0 or -inf means no minimum in that period.',),
+        ('unit', 'retire_max_period'): (' inf means no limit in that period.',),
+        ('unit', 'retire_min_period'): (' 0 or -inf means no minimum in that period.',),
     }
 
 
-def _migrate_v80_limit_inf_descriptions(db) -> None:
-    """Database version 80 (v79 -> v80): the description of each period-map limit gets the sentence of
-    :func:`_v80_suffixes` (``inf`` / ``-inf`` is no limit in that period) unless it already ends with it.  No value
-    is rewritten.  Idempotent."""
-    for (cls, name), suffix in _v80_suffixes().items():
+def _v80_append_sentences(description: str, sentences: tuple[str, ...]) -> str:
+    """``description`` ending with all of ``sentences``: a description that already ends with the first ``k`` of them
+    gets only the rest (so a rerun appends nothing)."""
+    description = description.rstrip()
+    for k in range(len(sentences), 0, -1):
+        if description.endswith("".join(sentences[:k])):
+            return description + "".join(sentences[k:])
+    return description + "".join(sentences)
+
+
+def _v80_limit_inf_descriptions(db) -> None:
+    """``inf`` / ``-inf`` in a period-map limit is no limit in that period (part of v80): each description gets the
+    sentences of :func:`_v80_suffixes` it does not end with yet.  No value is rewritten.  Idempotent."""
+    for (cls, name), sentences in _v80_suffixes().items():
         if not db.get_item("entity_class", name=cls):
             continue
         pdef = _pdef_or_none(db, cls, name)
         if pdef is None:
             continue
-        description = (pdef["description"] or "").rstrip()
-        if not description.endswith(suffix):
-            db.update_parameter_definition(id=pdef["id"], description=description + suffix)
-    _commit_step(db, "v80: inf / -inf in a period-map limit is no limit in that period (descriptions)")
+        description = _v80_append_sentences(pdef["description"] or "", sentences)
+        if description != (pdef["description"] or ""):
+            db.update_parameter_definition(id=pdef["id"], description=description)
+
+
+#: v80: ``group`` capacity-margin parameters renamed (old name -> new name).
+V80_CAPACITY_MARGIN_RENAMES: dict[str, str] = {
+    "capacity_margin": "capacity_margin_absolute",
+    "capacity_margin_share": "capacity_margin_relative",
+}
+#: v80: ``capacity_margin_methods`` members renamed (old -> new), in the list order.
+V80_CAPACITY_MARGIN_METHODS: dict[str, str] = {
+    "none": "none",
+    "manual": "absolute",
+    "share_of_peak": "relative_of_peak_demand",
+}
+
+
+def _v80_texts() -> dict[tuple[str, str], str]:
+    """The whole descriptions v80 writes (keyed by the v80 names)."""
+    return {
+        ("group", "capacity_margin_method"): (
+            "[choice] Whether the group needs a capacity margin in investment solves, and how the margin is given. "
+            "none (default): no margin. absolute: capacity_margin_absolute MW. relative_of_peak_demand: "
+            "capacity_margin_relative times the group's peak demand in the period. At every time step of an "
+            "investment period, the capacity of the group's firm units (capacity x availability x "
+            "capacity_max_coeff) and VRE units (capacity x profile x availability) must cover the group's demand "
+            "plus the margin. Units fed from a storage node, connections and the units consuming from the group "
+            "count by their actual flow, so exports add to the requirement; connections and lossy units inside the "
+            "group are left out (their losses are not required). Units fed from fuel or commodity nodes count at "
+            "capacity: the fuel is assumed to last."),
+        ("group", "capacity_margin_absolute"): (
+            "[MW] Capacity the group needs above its demand at every time step of an investment period. Used only "
+            "with capacity_margin_method absolute. No value means 0 (the demand must still be covered). Constant or "
+            "period. -inf means no capacity-margin requirement in that period."),
+        ("group", "capacity_margin_relative"): (
+            "[-] e.g. 0.15 means 15%. Capacity margin as a share of the group's peak demand: the largest sum of the "
+            "demand of the group's nodes over the period's full time series (before representative periods and "
+            "new_stepduration). Used only with capacity_margin_method relative_of_peak_demand. No value means 0. "
+            "Constant or period. -inf means no capacity-margin requirement in that period."),
+        ("solve", "solver_precommand"): (
+            "[text] Not used: FlexTool never runs this command. Set a solver wrapper on your computer instead (see "
+            "the solver documentation). Kept only so that older databases still read."),
+        ("solve", "solver_arguments"): (
+            "[text] Map of solver options (option name -> value), with the solver's own option names (e.g. presolve "
+            "for HiGHS, Presolve for Gurobi). They apply to whichever solver the solve uses (solver) and are checked "
+            "against FlexTool's list of that solver's options before the first solve: a name that is not one of "
+            "its options is refused. They override the same option in the solver's option file "
+            "(solver_config/<solver>.opt) and solver_mip_gap; the run's flags (e.g. --solver-time-limit) override "
+            "them."),
+    }
+
+
+def _v80_capacity_margin_rename(db) -> None:
+    """``group.capacity_margin`` -> ``capacity_margin_absolute``, ``capacity_margin_share`` ->
+    ``capacity_margin_relative`` and the ``capacity_margin_methods`` members ``manual`` -> ``absolute``,
+    ``share_of_peak`` -> ``relative_of_peak_demand`` (part of v80).
+
+    A definition rename keeps its values (they hang on the definition).  Each list member is renamed in place (its
+    index, so the list order, is kept), then every stored ``capacity_margin_method`` value (all alternatives) is
+    rewritten to the new name, so each value is a member of the list again; the default (``none``) is unchanged.
+    The values change only by name.  Idempotent: a rerun finds the new names.
+    """
+    if not db.get_item("entity_class", name="group"):
+        return
+    for old, new in V80_CAPACITY_MARGIN_RENAMES.items():
+        _rename_or_drop_parameter_definition(db, "group", old, new)
+    if db.get_item("parameter_value_list", name="capacity_margin_methods"):
+        for item in db.get_items("list_value", parameter_value_list_name="capacity_margin_methods"):
+            new = V80_CAPACITY_MARGIN_METHODS.get(item["parsed_value"], item["parsed_value"])
+            if new != item["parsed_value"]:
+                val, typ = to_database(new)
+                db.update_list_value(id=item["id"], value=val, type=typ)
+    renamed = []
+    for pv in db.find_parameter_values(entity_class_name="group", parameter_definition_name="capacity_margin_method"):
+        parsed = from_database(pv["value"], pv["type"])
+        new = V80_CAPACITY_MARGIN_METHODS.get(parsed, parsed) if isinstance(parsed, str) else parsed
+        if new != parsed:
+            val, typ = to_database(new)
+            db.update_parameter_value(id=pv["id"], value=val, type=typ)
+            renamed.append(f"group {'/'.join(pv['entity_byname'])} [{pv['alternative_name']}]: {parsed} -> {new}")
+    if renamed:
+        print("v80: capacity_margin_method values renamed (capacity_margin is now capacity_margin_absolute, "
+              "capacity_margin_share capacity_margin_relative): " + ", ".join(renamed))
+
+
+def _v80_descriptions(db) -> None:
+    """The whole descriptions of :func:`_v80_texts` (part of v80).  No value is rewritten.  Idempotent."""
+    for (cls, name), text in _v80_texts().items():
+        if not db.get_item("entity_class", name=cls):
+            continue
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is not None and (pdef["description"] or "") != text:
+            db.update_parameter_definition(id=pdef["id"], description=text)
+
+
+def _migrate_v80_schema_batch(db) -> None:
+    """All schema changes of database version 80 (v79 -> v80), in one step.
+
+    1. ``inf`` / ``-inf`` in a period-map limit is no limit in that period, and a ``new_stepduration`` solve step
+       that combines a no-limit time step with finite ones has no limit for the whole step: the limit descriptions
+       (:func:`_v80_limit_inf_descriptions`).
+    2. ``group.capacity_margin`` is ``capacity_margin_absolute`` and ``capacity_margin_share`` is
+       ``capacity_margin_relative``; the ``capacity_margin_method`` values ``manual`` / ``share_of_peak`` are
+       ``absolute`` / ``relative_of_peak_demand``, in the value list and in every stored value
+       (:func:`_v80_capacity_margin_rename`).
+    3. The descriptions of the capacity-margin parameters (new names), of ``solve.solver_precommand`` (never run;
+       use a solver wrapper) and of ``solve.solver_arguments`` (the solver's own option names, for whichever solver
+       the solve uses, checked, over the option file) (:func:`_v80_descriptions`).
+
+    Values change only by the renames of part 2.  Each part is idempotent, so a rerun of the step changes nothing.
+    """
+    _v80_limit_inf_descriptions(db)
+    _v80_capacity_margin_rename(db)
+    _v80_descriptions(db)
+    _commit_step(db, "v80: inf / -inf in a limit is no limit in that period, capacity_margin_absolute / "
+                     "capacity_margin_relative and the capacity_margin_method values absolute / "
+                     "relative_of_peak_demand, solver_precommand and solver_arguments descriptions")
 
 
 if __name__ == '__main__':

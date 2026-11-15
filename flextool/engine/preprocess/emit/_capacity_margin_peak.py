@@ -1,4 +1,4 @@
-"""Peak demand of the capacity-margin groups over each period's full time series (``share_of_peak``).
+"""Peak demand of the capacity-margin groups over each period's full time series (``relative_of_peak_demand``).
 
     P[g,d] = max(0, max_{t ∈ T(d)} Σ_{n ∈ N(g)} −inflow_real[n,d,t] / Δ[t])
     ∀ g ∈ groupCapacityMargin, d ∈ the solve's investment periods and their stochastic branch periods
@@ -12,8 +12,8 @@
       and the raw stochastic branch inflow (input/pbt_node_inflow); no energy margin
     N(g) = the group's nodes in nodeBalance without a storage state (the nodes whose demand the row covers)
 
-A branch period reads its anchor period's timeline and its own branch inflow.  ``capacity_margin_share`` times P
-is the margin of a ``share_of_peak`` group (:func:`flextool.engine.model._group_slack.resolve_capacity_margin`).
+A branch period reads its anchor period's timeline and its own branch inflow.  ``capacity_margin_relative`` times P
+is the margin of a ``relative_of_peak_demand`` group (:func:`flextool.engine.model._group_slack.resolve_capacity_margin`).
 The frame is ``solve_data/pdGroup_peak_demand.csv`` (``group, period, value``, MW); it is empty for a solve
 without capacity-margin groups or investment periods.
 """

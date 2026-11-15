@@ -257,7 +257,7 @@ def imported(imported_with_report: tuple[str, ImportReport]) -> str:
 #:   not the meaning of an input -> n/a.
 #: * acceptance_ceiling_follows_tolerance: solver acceptance -> n/a.
 #: * capacity_margin_counts_by_flow: written because the importer maps an FT2
-#:   capacity_margin_MW to capacity_margin_method manual (margin_group).  The
+#:   capacity_margin_MW to capacity_margin_method absolute (margin_group).  The
 #:   new counting is FT2's own (flexModel capacityMarginNodeGroup): units at
 #:   availability x capacity, the other units and transfers by their flow,
 #:   exports on the demand side.  It is the pre-v79 counting that differed
@@ -390,10 +390,12 @@ def test_must_run_and_generation_limits_become_profiles(imported: str) -> None:
 
 
 def test_sensitivity_survives_migration(imported: str) -> None:
-    # Written as v56 has_capacity_margin = yes, then migrated (v65 rename).
+    # Written as v56 has_capacity_margin = yes and capacity_margin, then migrated (v65 rename to
+    # capacity_margin_method manual, v80 to absolute and capacity_margin_absolute).
     methods = _values(imported, "group", "capacity_margin_method")
     assert (("margin_group",), "Margin") in methods
-    assert methods[(("margin_group",), "Margin")] == "manual"
+    assert methods[(("margin_group",), "Margin")] == "absolute"
+    assert (("margin_group",), "Margin") in _values(imported, "group", "capacity_margin_absolute")
 
 
 def test_existing_current_version_target_refused(imported: str, tmp_path: Path) -> None:

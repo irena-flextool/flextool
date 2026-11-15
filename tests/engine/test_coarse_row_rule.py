@@ -534,7 +534,7 @@ def test_user_constraint_mixing_coarse_and_fine_flows_stays_per_step(tmp_path_fa
 _INVEST = [["solve", "lh2_week", "invest_periods", b64({"value_type": "str", "data": ["y2030"]}, "array")],
            ["solve", "lh2_week", "realized_invest_periods", b64({"value_type": "str", "data": ["y2030"]}, "array")]]
 _CM_ENTS = _group("cm_h2", ["h2_A"])
-_CM = [["group", "cm_h2", "capacity_margin_method", _s("manual")], ["group", "cm_h2", "capacity_margin", _f(10.0)],
+_CM = [["group", "cm_h2", "capacity_margin_method", _s("absolute")], ["group", "cm_h2", "capacity_margin_absolute", _f(10.0)],
        ["group", "cm_h2", "penalty_capacity_margin", _f(100.0)]] + _INVEST
 _CM_SINK_ENTS = (_group("cm_sink", ["h2_sink"])
                  + [["node", "h2_sink", None], ["group__node", ["daily_group", "h2_sink"], None],
@@ -542,8 +542,8 @@ _CM_SINK_ENTS = (_group("cm_sink", ["h2_sink"])
 _CM_SINK = [["node", "h2_sink", "node_type", _s("balance")], ["node", "h2_sink", "inflow", _f(-5.0)],
             ["connection", "h2_link", "existing", _f(100.0)], ["connection", "h2_link", "efficiency", _f(1.0)],
             ["connection", "h2_link", "transfer_method", _s("regular")],
-            ["group", "cm_sink", "capacity_margin_method", _s("manual")],
-            ["group", "cm_sink", "capacity_margin", _f(10.0)],
+            ["group", "cm_sink", "capacity_margin_method", _s("absolute")],
+            ["group", "cm_sink", "capacity_margin_absolute", _f(10.0)],
             ["group", "cm_sink", "penalty_capacity_margin", _f(100.0)]] + _INVEST
 
 

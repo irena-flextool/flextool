@@ -46,7 +46,7 @@ FlexTool is a linear (or mixed-integer) optimisation model of an energy system. 
 - **The dispatch does not feed back into the investment.** An investment solve does not see the results of the dispatch solves that follow it.
 
     If a dispatch check shows unserved energy or reserve shortfall, change the investment solve by hand: a better
-    sample of representative periods, a `capacity_margin` or an energy margin, and run again; see
+    sample of representative periods, a capacity margin (`capacity_margin_method`) or an energy margin, and run again; see
     [Several milestones](how_to/solve_sequences.md#several-milestones-representative-period-investment-then-a-full-year-dispatch-of-each).
     The net-load re-selection of representative periods is the one loop that FlexTool runs for you.
 

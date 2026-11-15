@@ -124,7 +124,7 @@ _TOKEN = re.compile(r"(?<![A-Za-z0-9_])(kWh|MWh|kW|MW)(?![A-Za-z0-9_])")
 #: members of such groups).
 _POWER_FEATURES = frozenset({
     ("unit__inputNode", "inertia_constant"), ("unit__outputNode", "inertia_constant"),
-    ("group", "capacity_margin"), ("group", "penalty_capacity_margin"), ("group", "penalty_non_synchronous"),
+    ("group", "capacity_margin_absolute"), ("group", "penalty_capacity_margin"), ("group", "penalty_non_synchronous"),
     ("group", "candidate_precapacity_to_avoid_big_m"), ("model", "max_flow_for_unconstrained_variables"),
 })
 _POWER_CLASSES = frozenset({"reserve__upDown__group", "reserve__upDown__unit__node",

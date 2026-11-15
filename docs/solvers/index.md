@@ -42,7 +42,7 @@ The DB-level solver parameters are, with their per-solver defaults:
 | Parameter            | Default     | One-line description                                         |
 |----------------------|-------------|--------------------------------------------------------------|
 | `solver`             | `"highs"`   | Solver name from `[highs, gurobi, cplex, xpress, copt]`      |
-| `solver_arguments`   | empty Map   | Raw option name → value pairs forwarded verbatim to the solver |
+| `solver_arguments`   | empty Map   | Option name → value pairs with the solver's own option names, for whichever solver the solve uses; checked against FlexTool's list for that solver |
 | `solver_mip_gap`     | unset       | Relative MIP gap; normalised across solvers                  |
 | `solver_precommand`  | unset       | Not used: FlexTool never runs it (kept so older databases still read); a value gives a warning, see [Solver precommand](#solver-precommand-is-not-run) |
 
@@ -244,7 +244,7 @@ set the same program once per computer as the CPLEX wrapper instead:
 | Parameter            | Type   | Default     | Description                                                                                              |
 |----------------------|--------|-------------|----------------------------------------------------------------------------------------------------------|
 | `solver`             | str    | `"highs"`   | Solver name. Must be one of `highs`, `gurobi`, `cplex`, `xpress`, `copt`.                                |
-| `solver_arguments`   | map    | empty       | Map of option name → value passed verbatim to the underlying solver. Use this for any solver-native option that is not one of the convenience knobs below. Raw options always override the convenience knobs on key collision. |
+| `solver_arguments`   | map    | empty       | Map of option name → value with the solver's own option names (e.g. `presolve` for HiGHS, `Presolve` for Gurobi). The options apply to whichever solver the solve uses (`solver`) and are checked against FlexTool's list of that solver's options before the first solve (see [What the database may set](#what-the-database-may-set)). They override the same option in the solver's option file (`solver_config/<solver>.opt`) and `solver_mip_gap`; the run's flags override them. |
 | `solver_mip_gap`     | float  | unset       | Relative MIP optimality gap (e.g. `0.01` for 1 %). Translated to each solver's native parameter (`MIPGap` / `mip tolerances mipgap` / `MIPRELSTOP` / `RelGap` / `mip_rel_gap`). `--solver-mip-gap` wins over it. |
 | `solver_precommand`  | str    | unset       | Not used: FlexTool never runs this command (FlexTool 3 ran it in front of CPLEX). The parameter is kept only so that older databases still read; a value gives a warning once per solve. See [Solver precommand](#solver-precommand-is-not-run). |
 

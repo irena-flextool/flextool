@@ -292,8 +292,8 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     # MAP_PERIOD} ⇒ depth-1 silent default unambiguously resolves to
     # ``period``).  Cascade: pd → p (entity_period_calc_params:write_pdGroup
     # — same as ``co2_max_period``).
-    ("group", "capacity_margin"): {Shape.SCALAR, Shape.MAP_PERIOD},
-    ("group", "capacity_margin_share"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("group", "capacity_margin_absolute"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("group", "capacity_margin_relative"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "penalty_capacity_margin"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "penalty_inertia"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "penalty_non_synchronous"): {Shape.SCALAR, Shape.MAP_PERIOD},

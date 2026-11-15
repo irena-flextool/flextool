@@ -2075,14 +2075,14 @@
     [
       "capacity_margin_methods",
       [
-        "Im1hbnVhbCI=",
+        "ImFic29sdXRlIg==",
         "str"
       ]
     ],
     [
       "capacity_margin_methods",
       [
-        "InNoYXJlX29mX3BlYWsi",
+        "InJlbGF0aXZlX29mX3BlYWtfZGVtYW5kIg==",
         "str"
       ]
     ],
@@ -3983,7 +3983,7 @@
         null
       ],
       null,
-      "[MW] Maximum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time. inf means no limit in that period or time step.",
+      "[MW] Maximum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time. inf means no limit in that period or time step. With a solve's new_stepduration, a solve step that combines inf time steps with finite ones has no limit for the whole solve step (a warning says so).",
       "flow_limit"
     ],
     [
@@ -4005,7 +4005,7 @@
         null
       ],
       null,
-      "[MW] Minimum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time. -inf means no limit in that period or time step.",
+      "[MW] Minimum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time. -inf means no limit in that period or time step. With a solve's new_stepduration, a solve step that combines -inf time steps with finite ones has no limit for the whole solve step (a warning says so).",
       "flow_limit"
     ],
     [
@@ -4032,13 +4032,13 @@
     ],
     [
       "group",
-      "capacity_margin",
+      "capacity_margin_absolute",
       [
         null,
         null
       ],
       null,
-      "[MW] Capacity the group needs above its demand at every time step of an investment period. Used only with capacity_margin_method manual. No value means 0 (the demand must still be covered). Constant or period. -inf means no capacity-margin requirement in that period.",
+      "[MW] Capacity the group needs above its demand at every time step of an investment period. Used only with capacity_margin_method absolute. No value means 0 (the demand must still be covered). Constant or period. -inf means no capacity-margin requirement in that period.",
       "investment"
     ],
     [
@@ -4049,18 +4049,18 @@
         "str"
       ],
       "capacity_margin_methods",
-      "[choice] Whether the group needs a capacity margin in investment solves, and how the margin is given. none (default): no margin. manual: capacity_margin MW. share_of_peak: capacity_margin_share times the group's peak demand in the period. At every time step of an investment period, the capacity of the group's firm units (capacity x availability x capacity_max_coeff) and VRE units (capacity x profile x availability) must cover the group's demand plus the margin. Units fed from a storage node, connections and the units consuming from the group count by their actual flow, so exports add to the requirement; connections and lossy units inside the group are left out (their losses are not required). Units fed from fuel or commodity nodes count at capacity: the fuel is assumed to last.",
+      "[choice] Whether the group needs a capacity margin in investment solves, and how the margin is given. none (default): no margin. absolute: capacity_margin_absolute MW. relative_of_peak_demand: capacity_margin_relative times the group's peak demand in the period. At every time step of an investment period, the capacity of the group's firm units (capacity x availability x capacity_max_coeff) and VRE units (capacity x profile x availability) must cover the group's demand plus the margin. Units fed from a storage node, connections and the units consuming from the group count by their actual flow, so exports add to the requirement; connections and lossy units inside the group are left out (their losses are not required). Units fed from fuel or commodity nodes count at capacity: the fuel is assumed to last.",
       "investment"
     ],
     [
       "group",
-      "capacity_margin_share",
+      "capacity_margin_relative",
       [
         null,
         null
       ],
       null,
-      "[-] e.g. 0.15 means 15%. Capacity margin as a share of the group's peak demand: the largest sum of the demand of the group's nodes over the period's full time series (before representative periods and new_stepduration). Used only with capacity_margin_method share_of_peak. No value means 0. Constant or period. -inf means no capacity-margin requirement in that period.",
+      "[-] e.g. 0.15 means 15%. Capacity margin as a share of the group's peak demand: the largest sum of the demand of the group's nodes over the period's full time series (before representative periods and new_stepduration). Used only with capacity_margin_method relative_of_peak_demand. No value means 0. Constant or period. -inf means no capacity-margin requirement in that period.",
       "investment"
     ],
     [
@@ -4181,7 +4181,7 @@
         null
       ],
       null,
-      "[MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value (or 0) means no requirement. Constant, period, time or period+time. A time map must give a value for every time step of the solve (a missing time step is an error). Over a coarse time step the row uses the step mean. -inf also means no requirement in that period or time step.",
+      "[MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value (or 0) means no requirement. Constant, period, time or period+time. A time map must give a value for every time step of the solve (a missing time step is an error). Over a coarse time step the row uses the step mean. -inf also means no requirement in that period or time step. With a solve's new_stepduration, a solve step that combines -inf time steps with finite ones has no requirement for the whole solve step (a warning says so).",
       "network"
     ],
     [
@@ -4258,7 +4258,7 @@
         null
       ],
       null,
-      "[-] e.g. 0.8 means 80%. Largest share of non-synchronous supply in the group, measured against the real demand. Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no value means 0. Constant, period, time or period+time. A time map must give a value for every time step of the solve (a missing time step is an error). Over a coarse time step the row uses the step mean. inf means no limit in that period or time step.",
+      "[-] e.g. 0.8 means 80%. Largest share of non-synchronous supply in the group, measured against the real demand. Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no value means 0. Constant, period, time or period+time. A time map must give a value for every time step of the solve (a missing time step is an error). Over a coarse time step the row uses the step mean. inf means no limit in that period or time step. With a solve's new_stepduration, a solve step that combines inf time steps with finite ones has no limit for the whole solve step (a warning says so).",
       "network"
     ],
     [
@@ -5490,7 +5490,7 @@
         null
       ],
       null,
-      "[text] Map of HiGHS solver options (option name -> value), layered on top of the floor values in solver_config/highs.opt and below any CLI overrides (e.g. --solver-time-limit). Use this for ad-hoc HiGHS knobs that do not have a dedicated FlexTool parameter (solver_mip_gap).",
+      "[text] Map of solver options (option name -> value), with the solver's own option names (e.g. presolve for HiGHS, Presolve for Gurobi). They apply to whichever solver the solve uses (solver) and are checked against FlexTool's list of that solver's options before the first solve: a name that is not one of its options is refused. They override the same option in the solver's option file (solver_config/<solver>.opt) and solver_mip_gap; the run's flags (e.g. --solver-time-limit) override them.",
       "solve_advanced"
     ],
     [
@@ -5512,7 +5512,7 @@
         null
       ],
       null,
-      "[text] Not used: FlexTool never runs this command. Kept only so that older databases still read.",
+      "[text] Not used: FlexTool never runs this command. Set a solver wrapper on your computer instead (see the solver documentation). Kept only so that older databases still read.",
       "solve_advanced"
     ],
     [
@@ -6821,13 +6821,13 @@
     ],
     [
       "group",
-      "capacity_margin",
+      "capacity_margin_absolute",
       "float",
       0
     ],
     [
       "group",
-      "capacity_margin",
+      "capacity_margin_absolute",
       "map",
       1
     ],
@@ -6839,13 +6839,13 @@
     ],
     [
       "group",
-      "capacity_margin_share",
+      "capacity_margin_relative",
       "float",
       0
     ],
     [
       "group",
-      "capacity_margin_share",
+      "capacity_margin_relative",
       "map",
       1
     ],
@@ -9312,7 +9312,7 @@
     [
       "group",
       "capacity_margin",
-      "capacity_margin",
+      "capacity_margin_absolute",
       [
         "MTAw",
         "float"
@@ -9324,7 +9324,7 @@
       "capacity_margin",
       "capacity_margin_method",
       [
-        "Im1hbnVhbCI=",
+        "ImFic29sdXRlIg==",
         "str"
       ],
       "capacity_margin"

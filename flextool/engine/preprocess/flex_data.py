@@ -1584,8 +1584,8 @@ class FlexData:
     process_group_inside_nonSync: pl.DataFrame | None = None  # (p, g)
     p_inv_group_cap: Param | None = None                 # (g, d)
     p_group_capacity_for_scaling: Param | None = None    # (g, d)
-    pdGroup_capacity_margin: Param | None = None         # (g, d) MW: manual, and share_of_peak once resolved
-    pdGroup_capacity_margin_share: Param | None = None   # (g, d) share of the peak (share_of_peak groups)
+    pdGroup_capacity_margin: Param | None = None         # (g, d) MW: absolute, and relative_of_peak_demand once resolved
+    pdGroup_capacity_margin_relative: Param | None = None   # (g, d) share of the peak (relative_of_peak_demand groups)
     pdGroup_peak_demand: Param | None = None             # (g, d) MW: peak demand over the period's timeline
     pdGroup_penalty_capacity_margin: Param | None = None # (g, d)
     pdtGroup_inertia_limit: Param | None = None          # authored dims ⊆ (g, d, t)
@@ -5601,8 +5601,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # of the reserve sets and parameters, and of group_node.
         _reserve.drop_groups_without_nodes(flex_data)
 
-        # The margin of a share_of_peak capacity-margin group: capacity_margin_share times its peak demand, in
-        # pdGroup_capacity_margin with the manual groups' MW.  After the direct-parameter pass (the share) and
+        # The margin of a relative_of_peak_demand capacity-margin group: capacity_margin_relative times its peak demand, in
+        # pdGroup_capacity_margin with the absolute groups' MW.  After the direct-parameter pass (the share) and
         # load_data (the peak).
         if db_reader is not None:
             _group_slack.resolve_capacity_margin(flex_data)
