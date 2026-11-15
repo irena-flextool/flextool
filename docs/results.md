@@ -436,7 +436,8 @@ what the system can really do: the line cannot reach that edge. The line can be 
 
 **Ramp frequency.** The ramp frequency (histogram) of a node or node group shows, per period, how often the net
 load and the demand change how fast: the rate is *ramp_net_load* (or *ramp_demand*) ÷ *transition_hours* [MW/h],
-and each step weighs its *timestep_hours* [h/year], so the bars add up to the hours a year of the shown steps. One
+and each step weighs its *timestep_hours* [h/year], so the bars add up to the hours a year of the filled rows (empty
+rows, such as the last step of a block or period, are dropped). One
 set of bins serves every series of the plot (both rates, every compared scenario): from −M to +M, M the largest
 rate, the bin width the smallest of 1, 2 or 5 × 10ⁿ MW/h that gives at most about 40 bins, one bin centred on 0. The
 vertical lines are the smallest up room and the smallest down room over the shown steps, per transition divided by

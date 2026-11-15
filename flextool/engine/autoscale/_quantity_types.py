@@ -231,8 +231,6 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [MWh or count] Existing storage capacity or number of storage units. If virtual_unitsize is given, then existing is the number of units (cap...
     ('existing', 'unit'): QuantityType.POWER,
     # [MW or count] Existing capacity or number of units. If virtual_unitsize is given, then existing is the number of units (capacity = existing ...
-    ('exclude_entity_outputs', 'model'): QuantityType.DIMENSIONLESS,
-    # Boolean-style toggle: excludes node/unit/connection-level results while preserving group-level results.
     ('fix_storage_periods', 'solve'): QuantityType.DIMENSIONLESS,
     # Array of periods where the storage_values are fixed when the node has storage_include_solve_fix_method is set
     ('fixed_cost', 'connection'): QuantityType.PRICE_PER_CAPACITY,

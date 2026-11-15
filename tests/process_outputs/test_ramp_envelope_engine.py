@@ -398,14 +398,51 @@ def test_case8c_integers_ramps_drops_the_ramp_cap(tmp_path_factory) -> None:
 # ── A time-varying input given as a constant and as an equivalent time map ─────────────────────────────────────
 
 
-def test_constant_and_equivalent_map_efficiency_give_the_same_envelope(tmp_path_factory) -> None:
-    """Case 10 with HP's efficiency 2 given as a constant and as a time map of 2s: the same LP, so the same
-    envelope tables (both nodes, every band and row)."""
+def _case10_stochastic() -> tuple[list, list]:
+    """Case 10 in a stochastic solve (the scaffolding of Case 4b): trunk p2020 = {t1, t2}, fan p2025 = {t3, t4},
+    forecasts hi and lo of h's demand, the realized designation ``real`` with hi's data."""
     ents, vals = _case10()
+    ents = ents + [["group", "stoch", None], ["group__node", ["stoch", "h"], None],
+                   ["timeset", "trunk", None], ["timeset", "fan", None]]
+    branches = {"index_type": "str", "index_name": "period", "data": [["p2025", _map("branch", [
+        [b, _map("analysis_time", [["t0003", _map("realized", [[yes_no, 1.0]])]])]
+        for b, yes_no in (("real", "yes"), ("hi", "no"), ("lo", "no"))])]]}
+    vals = [v for v in vals if not (v[1] == "h" and v[2] == "inflow")] + [
+        ["node", "h", "inflow", _stochastic({"real": {"t0001": [-40, -60, -50, -30], "t0003": [-50, -30]},
+                                             "hi": {"t0003": [-50, -30]}, "lo": {"t0003": [-45, -25]}})],
+        ["group", "stoch", "include_stochastics", _str("yes")],
+        ["timeset", "trunk", "timeline", _str("y2020")], ["timeset", "fan", "timeline", _str("y2020")],
+        ["timeset", "trunk", "timeset_duration", b64({"index_type": "str", "data": [["t0001", 2.0]]}, "map")],
+        ["timeset", "fan", "timeset_duration", b64({"index_type": "str", "data": [["t0003", 2.0]]}, "map")],
+        ["solve", SOLVE, "period_timeset",
+         b64({"index_type": "str", "index_name": "period", "data": [["p2020", "trunk"], ["p2025", "fan"]]}, "map")],
+        ["solve", SOLVE, "realized_periods",
+         b64({"value_type": "str", "index_name": "period", "data": ["p2020", "p2025"]}, "array")],
+        ["solve", SOLVE, "stochastic_branches", b64(branches, "map")]]
+    return ents, vals
+
+
+@pytest.mark.parametrize("solve", ["single", "rolling", "stochastic"])
+def test_constant_and_equivalent_map_efficiency_give_the_same_envelope(tmp_path_factory, solve: str) -> None:
+    """Case 10 with HP's efficiency 2 given as a constant and as a time map of 2s: the same LP, so the same
+    envelope tables (both nodes, every band and row), in a single solve, a rolling solve (3-step horizon, 2-step
+    jump: a roll seam) and a stochastic solve."""
+    if solve == "stochastic":
+        ents, vals = _case10_stochastic()
+    else:
+        ents, vals = _case10()
+        if solve == "rolling":
+            vals = vals + _rolling(3, 2)
     const = [v for v in vals if v[2] != "efficiency"] + [["unit", "HP", "efficiency", _float(2.0)]]
     tmap = [v for v in vals if v[2] != "efficiency"] + [["unit", "HP", "efficiency", _series([2.0] * 4)]]
-    a = _envelope(tmp_path_factory, "re_eff_const", ents, const)["node_ramp_envelope_dt_ep"]
-    b = _envelope(tmp_path_factory, "re_eff_map", ents, tmap)["node_ramp_envelope_dt_ep"]
+    suffix = "" if solve == "single" else f"_{solve}"
+    steps, _, _ = _solve(tmp_path_factory, f"re_eff_const{suffix}", ents, const)
+    if solve == "rolling":
+        assert len(steps) > 1, list(steps)
+    if solve == "stochastic":
+        assert any(is_realization(name) for name in steps), list(steps)
+    a = _envelope(tmp_path_factory, f"re_eff_const{suffix}", ents, const)["node_ramp_envelope_dt_ep"]
+    b = _envelope(tmp_path_factory, f"re_eff_map{suffix}", ents, tmap)["node_ramp_envelope_dt_ep"]
     assert a.notna().to_numpy().any()
     pd.testing.assert_frame_equal(a, b, check_exact=False, rtol=1e-12, atol=1e-9)
 
@@ -482,13 +519,15 @@ def test_case4b_branch_point_row_reads_the_realized_branch(tmp_path_factory) -> 
 # ── The envelope holds the realized net-load ramp (spec §2.10, test 7) ─────────────────────────────────────────
 
 
-def _invariant(par, s, r, tol: float = 1e-6) -> tuple[int, list]:
+def _invariant(par, s, r, tol: float = 1e-6) -> tuple[int, list, dict]:
     """Check −Σdown ≤ ramp_net_load − Δslack ≤ Σup (Δslack = the change of unserved − excess energy, MW) on every
     filled row of every node and dispatch group, except where spec §2.10 does not promise it: rows with a start-up or
     a shut-down at t⁺ of a process with an arc at the entity, entities with an arc to a storage node that has an
-    inflow or a self-discharge, and groups with a process inside them (its arcs count 0, so the change of its
-    losses is in no band: ``network_coal_wind_reserve``'s group exceeds the envelope by exactly the change of the
-    internal connections' losses).  Returns ``(rows checked, violations)``; t⁺ is read from ``s.ramp_link`` here,
+    inflow or a self-discharge, and groups with a process inside them that does not convert 1:1 (efficiency ≠ 1 at
+    some step, or a min-load section): its arcs count 0, so the change of its losses is in no band
+    (``network_coal_wind_reserve``'s group exceeds the envelope by exactly the change of the internal connections'
+    losses).  A group whose internal processes are lossless is checked.  Returns ``(rows checked, violations,
+    {group: rows checked})``; t⁺ is read from ``s.ramp_link`` here,
     not from the envelope code."""
     rows = r.flow_dt.index
     link = s.ramp_link.to_frame(index=False)[["period", "time", "period_previous", "time_previous"]]
@@ -533,10 +572,17 @@ def _invariant(par, s, r, tol: float = 1e-6) -> tuple[int, list]:
     gn = s.group_node.to_frame(index=False)
     groups = {g: sorted(set(gn.loc[gn["group"] == g, "node"]) - storage) for g in s.nodeGroupDispatch}
     nodes_of = ends.groupby("process")["node"].agg(set)
+    lossy = set()
+    for name, neutral in (("process_slope", 1.0), ("process_section", 0.0)):
+        frame = getattr(par, name, None)
+        if frame is not None and frame.shape[1]:
+            cols = frame.columns.get_level_values(0)
+            off = ((frame - neutral).abs() > tol).any().to_numpy()
+            lossy |= {p for p, flag in zip(cols, off) if flag}
     groups = {g: members_g for g, members_g in groups.items()
-              if not any(len(ns) > 1 and ns <= set(members_g) for ns in nodes_of)}
+              if not any(len(ns) > 1 and ns <= set(members_g) and p in lossy for p, ns in nodes_of.items())}
     tables = [(r.node_ramp_envelope_dt_ep, members), (r.nodeGroup_ramp_envelope_dt_gp, groups)]
-    checked, bad = 0, []
+    checked, bad, group_rows = 0, [], {}
     for table, entities in tables:
         for entity, entity_nodes in entities.items():
             procs = set(ends.loc[ends["node"].isin(entity_nodes), "process"])
@@ -552,21 +598,26 @@ def _invariant(par, s, r, tol: float = 1e-6) -> tuple[int, list]:
             stops = moves_next.reindex(columns=sorted(procs), fill_value=0.0).abs().sum(axis=1).to_numpy() > tol
             keep = ~np.isnan(line) & ~stops
             checked += int(keep.sum())
+            if entities is groups:
+                group_rows[entity] = int(keep.sum())
             net = line - d_slack
             for i in np.flatnonzero(keep & ((net > up + tol) | (net < -down - tol))):
                 bad.append((entity, rows[i], -down[i], net[i], up[i]))
-    return checked, bad
+    return checked, bad, group_rows
 
 
 #: Engine cases of this module (``alt -> case builder, steps``) and existing ``tests.json`` scenarios.
 _SWEEP_CASES = {"re_case7": (_case7, 4), "re_case8a": (_case8a, 4), "re_case8b": (_case8b, 5),
                 "re_case9": (_case9, 4), "re_case10": (_case10, 4), "re_case4b": (_case4b, 4)}
 #: ``scenario -> (alternative chain, override values)``; the battery's self-discharge is set to 0 (§2.10 leaves a
-#: storage node with self-discharge out).
+#: storage node with self-discharge out); ``network_lossless`` is ``network_coal_wind_reserve`` with its three
+#: internal connections at efficiency 1, so its multi-node dispatch group is checked too.
+_LOSSLESS_NETWORK = [["connection", c, "efficiency", _float(1.0)] for c in ("east_north", "west_east", "west_north")]
 _SWEEP_SCENARIOS = {
     "coal_ramp_limit": (["init", "west", "coal", "coal_ramp"], []),
     "coal_min_load_wind": (["init", "west", "coal", "coal_min_load", "wind"], []),
     "network_coal_wind_reserve": (["init", "west", "coal", "wind", "network", "reserve"], []),
+    "network_lossless": (["init", "west", "coal", "wind", "network", "reserve"], _LOSSLESS_NETWORK),
     "wind_battery": (["init", "west", "wind", "battery"], [["node", "battery", "self_discharge_loss", _float(0.0)]]),
     "coal_chp": (["init", "west", "coal_chp", "heat"], []),
 }
@@ -579,7 +630,7 @@ def test_line_within_envelope_engine_cases(tmp_path_factory, alt: str) -> None:
     build, n = _SWEEP_CASES[alt]
     ents, vals = build()
     par, s, r = _results(tmp_path_factory, alt, ents, vals, n)
-    checked, bad = _invariant(par, s, r)
+    checked, bad, _ = _invariant(par, s, r)
     assert checked > 0
     assert not bad, bad
 
@@ -587,10 +638,15 @@ def test_line_within_envelope_engine_cases(tmp_path_factory, alt: str) -> None:
 @pytest.mark.parametrize("scenario", sorted(_SWEEP_SCENARIOS))
 def test_line_within_envelope_existing_fixtures(tmp_path_factory, scenario: str) -> None:
     """Spec §2.10 on existing ``tests.json`` scenarios (ramp limits, online units with min load and wind, a network
-    with reserves, a battery, a CHP), the 48-hour dispatch of each; the network's group is left out (internal lossy
-    connections, see :func:`_invariant`), its nodes are checked."""
+    with reserves, a battery, a CHP), the 48-hour dispatch of each; the network's group is left out where its
+    internal connections have losses (see :func:`_invariant`) and checked in the lossless variant."""
     chain, overrides = _SWEEP_SCENARIOS[scenario]
     par, s, r = _results(tmp_path_factory, f"re_sweep_{scenario}", [], overrides, None, base_chain=chain)
-    checked, bad = _invariant(par, s, r)
+    checked, bad, group_rows = _invariant(par, s, r)
     assert checked > 0
     assert not bad, bad[:10]
+    if scenario == "network_lossless":
+        # The multi-node dispatch group is checked, not skipped.
+        multi = {g for g in group_rows
+                 if len(set(s.group_node.to_frame(index=False).query("group == @g")["node"])) > 1}
+        assert multi and all(group_rows[g] > 0 for g in multi), group_rows
