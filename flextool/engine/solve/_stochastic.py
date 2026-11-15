@@ -25,10 +25,11 @@ Architecture notes
 Behavioural quirks
 ------------------
 
-* **Zero-weight branch**: excluded from ``new_active_time_list`` but
-  only excluded from ``solve_branch__time_branch_lists`` if both
-  ``branch != period`` AND the realized flag is not ``"yes"``.  Subtle
-  three-way condition.
+* **Zero-weight or realized branch**: not a member of the fan -- no
+  ``<period>_<branch>`` active time and no ``solve_branch__time_branch``
+  row.  (A branch named like the period where it fans out is refused at
+  input time, ``SolveConfig._check_branches_named_like_their_fan_period``;
+  the legacy ``branch != period`` exclusion is gone.)
 
 * **Continuation-after-branching**: every period after the branching
   period continues the fan.  Each non-realized nonzero-weight branch gets
@@ -458,7 +459,10 @@ class StochasticSolver:
         FlexTool allows it (a branch period is named ``period + "_" +
         branch``, so the names stay apart), but results and messages that name
         the branch and the period are hard to tell apart (owner decision
-        2026-11-15: a warning, not an error).  The periods of the run are the
+        2026-11-15: a warning, not an error).  A branch named like the period
+        where it fans out is an error, raised at input time
+        (``SolveConfig._check_branches_named_like_their_fan_period``), so it
+        does not reach this warning.  The periods of the run are the
         periods of every solve's and roll's active and realized time, and the
         periods named in ``stochastic_branches``."""
         periods: set[str] = set()
@@ -473,18 +477,13 @@ class StochasticSolver:
             colliding = sorted({str(row[1]) for row in stochastic_branches[c] if str(row[1]) in periods})
             for branch in colliding:
                 own = sorted({str(row[0]) for row in stochastic_branches[c] if str(row[1]) == branch})
-                note = (
-                    f" A branch named like the period where it fans out is not a member of the fan: FlexTool "
-                    f"makes no forecast {branch!r} in solve {c!r}."
-                    if branch in own else ""
-                )
                 _behaviour_changes.warn_once(
                     ("stochastic_branch_named_like_period", c, branch),
                     f"Warning: solve {c!r} has a stochastic forecast branch {branch!r} (stochastic_branches, "
                     f"in period(s) {', '.join(repr(p) for p in own)}), and {branch!r} is also the name of a "
                     f"period of the run. FlexTool keeps them apart (the branch's periods are named "
                     f"<period>_{branch}), but results and messages that name the branch or the period are easy "
-                    f"to confuse; give the branch a name that is not a period name." + note,
+                    f"to confuse; give the branch a name that is not a period name.",
                 )
 
     def _warn_unfanned_cohorts(
@@ -1068,13 +1067,14 @@ class StochasticSolver:
                                 branches.append(branch)
                                 solve_branch = period + "_" + branch
 
-                                # Zero-weight branch is excluded from
-                                # both active time AND
-                                # solve_branch__time_branch when the
-                                # three-way condition holds.
+                                # A zero-weight or realized branch is
+                                # excluded from both active time AND
+                                # solve_branch__time_branch.
+                                # (A branch named like its fan period is refused
+                                # at input time: SolveConfig.
+                                # _check_branches_named_like_their_fan_period.)
                                 if (
                                     float(branch__weight__real[1]) != 0.0
-                                    and branch != period
                                     and branch__weight__real[2] != "yes"
                                 ):
                                     active_branches.append(branch)

@@ -1,7 +1,9 @@
-"""A stochastic forecast branch with the name of a period: a warning, the run continues (item 267, owner 2026-11-15).
+"""A stochastic forecast branch with the name of a period (item 267, owner 2026-11-15).
 
-FlexTool allows a branch named like a period (a branch period is ``<period>_<branch>``, so the names stay apart),
-but results and messages that name the two are easy to confuse, so the run warns once per solve and branch.
+FlexTool allows a branch named like another period (a branch period is ``<period>_<branch>``, so the names stay
+apart), but results and messages that name the two are easy to confuse, so the run warns once per solve and branch.
+A branch named like the period where it fans out is an error at input time (before any solve), naming the solve,
+the branch and the period.
 
 Fixture (built from the schema JSON, never a checked-in sqlite): one node ``s`` (demand 1 per step), one unit
 ``src`` (10 MW), steps t0001..t0008, periods ``p1`` = t0001..t0004 and ``p2`` = t0005..t0008, one solve ``sol`` that
@@ -12,9 +14,11 @@ from __future__ import annotations
 import itertools
 from pathlib import Path
 
+import pytest
 import spinedb_api as api
 
 import flextool
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 SCHEMA_JSON = Path(flextool.__file__).parent / "schemas" / "spinedb_schema.json"
 _counter = itertools.count()
@@ -87,12 +91,14 @@ def test_branch_names_that_are_not_period_names_do_not_warn(tmp_path_factory, ca
     assert _warnings(capsys.readouterr().out) == []
 
 
-def test_branch_named_like_its_own_fan_period_warns_that_it_is_left_out(tmp_path_factory, capsys) -> None:
-    """Branch ``p1`` in the p1 fan: a branch named like the period where it fans out is not a member of the fan
-    (no ``p1_p1`` / ``p2_p1`` periods); the warning says so and the run solves with the other branch."""
-    steps = _run(tmp_path_factory, ("p1", "low"))
-    warned = _warnings(capsys.readouterr().out)
-    assert len(warned) == 1, warned
-    assert "makes no forecast 'p1'" in warned[0]
-    flow_periods = {str(d) for d in steps["sol"].solution.value("v_flow")["d"].to_list()}
-    assert flow_periods == {"p1_low", "p2_low"}
+def test_branch_named_like_its_own_fan_period_stops_before_any_solve(tmp_path_factory, capsys) -> None:
+    """Branch ``p1`` in the p1 fan: it would not be a member of the fan while the fan check counts it (its weight
+    would disappear), so loading the solves stops with an error naming the solve, the branch and the period."""
+    with pytest.raises(FlexToolConfigError) as err:
+        _run(tmp_path_factory, ("p1", "low"))
+    msg = str(err.value)
+    assert "solve 'sol'" in msg and "branch 'p1'" in msg and "period 'p1'" in msg
+    assert "where the branch fans out" in msg and "rename the branch 'p1'" in msg
+    # Raised while the solves are loaded from the database (input time), not mid-run.
+    assert any(e.name == "_check_branches_named_like_their_fan_period" for e in err.traceback)
+    assert _warnings(capsys.readouterr().out) == []

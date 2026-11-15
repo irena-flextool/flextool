@@ -884,6 +884,8 @@ class SolveConfig:
         obj.non_anticipativity_invest_periods = obj.periods_to_tuples(
             db=db, cl="solve", par="shared_invest_periods"
         )
+        # Before the 2-D map split, so the message names the solve of the database.
+        obj._check_branches_named_like_their_fan_period()
         obj._split_2d_period_maps()
         # After every period dict, so the 2D-map duplicate solves exist.
         obj._check_realized_invest_periods()
@@ -962,6 +964,29 @@ class SolveConfig:
     # ------------------------------------------------------------------
     # Methods
     # ------------------------------------------------------------------
+
+    def _check_branches_named_like_their_fan_period(self) -> None:
+        """Raise when a ``stochastic_branches`` branch has the name of the period where it fans out.
+
+        Owner decision 2026-11-15: such a branch would not be a member of the fan (it gets no periods) while the
+        fan check still counts it, so its weight would silently disappear.  Every row is checked (forecast,
+        zero-weight or realized), over the solves the model runs (:meth:`solves_in_run`).  A branch named like
+        some other period of the run only warns (``StochasticSolver._warn_branches_named_like_periods``).
+        """
+        problems: list[str] = []
+        for s in self.solves_in_run():
+            bad = list(dict.fromkeys(
+                (str(row[1]), str(row[0])) for row in (self.stochastic_branches.get(s) or [])
+                if str(row[1]) == str(row[0])
+            ))
+            for branch, period in bad:
+                problems.append(
+                    f"solve '{s}': stochastic_branches has a branch '{branch}' in period '{period}', the "
+                    "period where the branch fans out. A branch cannot have the name of the period where it fans "
+                    f"out: rename the branch '{branch}' (for example to a name that is not a period name)"
+                )
+        if problems:
+            raise FlexToolConfigError("; ".join(problems))
 
     def _check_realized_invest_periods(self) -> None:
         """Raise when a solve realizes investments in a period it does not invest in (#319).
