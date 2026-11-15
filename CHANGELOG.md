@@ -1,3 +1,97 @@
+## Unreleased (4.5.0, schema v80)
+
+Input databases move to data version 80. The FlexTool window, the Spine Toolbox workflow and `flextool-run
+--migrate` migrate them. FlexTool now needs polar-high 3.15.0 or newer (installed with FlexTool).
+
+### Behaviour changes — read before upgrading
+
+- **Capacity margin parameters renamed.** `group.capacity_margin` is now `capacity_margin_absolute` and
+  `group.capacity_margin_share` is now `capacity_margin_relative`; the `capacity_margin_method` values *manual* and
+  *share_of_peak* are now *absolute* and *relative_of_peak_demand* (*none* is unchanged). The migration renames the
+  parameters and every stored value in every alternative; the margins and the result tables do not change. Update
+  scripts and Excel workbooks that name these parameters or values.
+- **`inf` (`-inf` for a lower limit) in a period-map limit means no limit in that period.** The constraint of that
+  entity and period is left out (before, an infinite value could reach the solver as a free row or an infinite
+  right-hand side). This covers the flowGroup cumulative and instant flow limits, `co2_max_period`,
+  `inertia_limit`, `non_synchronous_limit`, the capacity margins, the invest / retire period limits and
+  `cumulative_max_capacity` / `cumulative_min_capacity` (an unlimited investment period is bounded like an
+  *_no_limit* method), and `constraint.constant` (`inf` for *less_than*, `-inf` for *greater_than*). The opposite
+  infinity (`-inf` on an upper limit, `inf` on a lower one) and an infinite constant of an *equal* constraint are
+  errors. A finite limit of 1e15 or more is kept but warned about: use `inf` instead of a huge stand-in number.
+- **A solve whose limits and bounds are too far apart for the solver stops before solving** (the scaling guard).
+  After FlexTool's scaling, the limits and bounds of every solve (each roll, each Benders region) must fit in 17
+  decades around the solver's feasibility tolerance; above that the run stops with a message naming the solve, the
+  smallest and largest values and where they come from, and how much the smallest limit could be violated. Above
+  13 decades it warns. Very small cost or matrix values only warn. Usually the cause is a huge stand-in limit:
+  replace it with `inf`. To solve anyway: `--scaling-guard warn` (or `off`), `FLEXTOOL_SCALING_GUARD`, or the FlexTool
+  window's Solver options → Scaling guard. Gurobi, CPLEX, Xpress and COPT runs only warn.
+- **HiGHS bound scaling now starts from the smallest limit**: when the limits span a wide range, FlexTool's
+  power-of-two bound scaling keeps the smallest meaningful limit just inside the solver's tolerance instead of
+  centring the range. Models with a wide range of limits can get slightly different solutions (within the
+  solver's tolerance).
+- **A forecast branch named like the period where it fans out is an error** (before, it was left out of the fan
+  without a message and its weight was lost). Rename the branch. A branch named like another period gets a warning.
+- **Gurobi settings-file options are refused from the database.** `InputFile`, `ConcurrentSettings`,
+  `MultiObjSettings`, `TuneBaseSettings`, `TuneIgnoreSettings` and `TuneParams` in `solver_arguments` (or an option
+  file FlexTool does not trust) stop the run before the first solve; put them in your own `gurobi.opt`.
+
+### New features
+
+- **Part-load efficiency curves (`conversion_method` *piecewise_linear*).** A unit can take its fuel use from
+  `piecewise_linear_efficiency`, a map from load share (0–1 of the capacity online, or built) to efficiency, one
+  curve or one per period; the fuel use is linear between the points and the model stays linear. The curve must end
+  at load 1 and be convex (an incremental heat rate that falls is an error that names the nearest accepted curve);
+  `efficiency` / `efficiency_at_min_load` are not used. A curve that burns fuel at zero output gives the unit linear
+  start-ups when it has none; with linear start-ups the fleet behaves like its best-efficiency envelope. A two-point
+  curve equals *min_load_efficiency*. A one-input unit keeps the meaning of its input-side ramps, ramp cost,
+  profiles, `constraint_flow_coeff` and `input_share_max` (they act on the output). Curves with two or more
+  segments set only a lower bound on the input, so the solver may report more input than the curve needs where
+  extra input pays: a warning before the solve names such setups (input reserves and minimums, negative prices or
+  CO2 content, inertia counted from flows), and a warning after the solve gives, per unit, the time steps with input
+  above the curve, the largest amount and the total (MWh). See units.md "Part-load efficiency curve" and the how-to
+  "How to give a unit a part-load efficiency curve".
+- **Ramp envelope (new output).** Every node and every node group with `print_dispatch` gets a ramp envelope: per
+  time step, how much the units, storages, VRE (curtailment release / extra curtailment) and connections could still
+  raise or lower the supply toward the next step (MW), next to the net-load and demand ramps
+  (`node_ramp_envelope_dt_ep` / `nodeGroup_ramp_envelope_dt_gp`, results database `node` / `group`
+  `ramp_envelope_t`), with `timestep_hours_dt` (h/year each step stands for; results database
+  `model.timestep_hours_t`) and `transition_hours_dt` (h; `model.transition_hours_t`). A VRE unit on a storage node
+  counts in the storage band and is left out of the net-load line. It replaces the old `node` `ramp_t` "ramp room"
+  description, whose table was no longer produced. In a node group with lossy internal units or connections, the
+  net-load line can exceed the envelope by the change of the internal losses (see results.md "Ramp envelope").
+- **Ramp envelope and ramp frequency plots (#25).** The Result viewer's Dispatch mode has a view selector
+  (Dispatch / Ramp envelope / Ramp frequency) for node groups and nodes; the scenario comparison with dispatch plots
+  writes `ramp_envelope_<nodeGroup|node>_<entity>_<scenario>.png` and `ramp_frequency_<nodeGroup|node>_<entity>.png`
+  (nodes with the all-nodes option), with CSV files under Write plotted data. Band colours: `categories:
+  ramp_envelope:` in `plot_settings.yaml`, editable in the colour picker.
+- **Scaling guard setting** in the FlexTool window's Solver options (Default (error) / Error / Warn / Off), saved in
+  the project's `settings.yaml`; `--scaling-guard error|warn|off` and `FLEXTOOL_SCALING_GUARD` on the command line.
+- **A `new_stepduration` step that mixes a no-limit time step with finite ones warns.** `max_instant_flow`,
+  `min_instant_flow`, `inertia_limit` and `non_synchronous_limit` take the mean over a solve's coarse step, so such
+  a step has no limit at all; the warning names the steps. A step mixing `inf` and `-inf` is an error.
+
+### Fixes
+
+- **`reduce_unit_detail_method` *online* gave folded *min_load_efficiency* indirect units a wrong fuel limit when
+  their outputs at full capacity do not add up to 1 per unit of capacity** (several outputs or a
+  `conversion_flow_coeff` other than 1): with more than 1 the unit could not reach its capacity (shortfall went to
+  slack), with less than 1 the limit was too loose. Results of such models change; rerun them. Direct units and
+  units with one output at coefficient 1 were right.
+- **Near-optimal solve acceptance judges the infeasibility count and the absolute check where HiGHS solved** (with
+  FlexTool's bound scaling): a solve that was feasible there could be rejected before. A rejected solve now names
+  the checks that failed (before, the message always quoted the relative check, also when it had passed).
+- **Benders regions no longer carry a 1e12 stand-in capacity on their cross-region flows**; the capacity is no
+  limit (`inf`) and the region has no row for it. This changed the regions' scaling, and the stand-in alone would
+  trip the scaling guard on every Benders run.
+- **Dead solver fields removed:** the per-solve time limit, threads and log level left the database in v56 and
+  were never used since. Give a time limit in `solver_arguments` (the solver's own option name) or with
+  `--solver-time-limit`.
+- **scipy is no longer a FlexTool dependency** (the PERT profile generator and the ramp envelope use numpy; profiles
+  from the same seed are unchanged). spinedb-api still installs it.
+- Parameter descriptions: the limits say that `inf` / `-inf` is no limit; `conversion_method` names its four
+  methods; `solver_precommand` points to the solver wrapper and `solver_arguments` says names are the solver's own.
+- The docs no longer mention `model.exclude_entity_outputs` (removed in v56).
+
 ## Release 4.4.0 (13.11.2026) — capacity margin, units of measure, start-up inputs, period-total constraints, FT2 import, stochastic input checks (no future information), per-project solver options, solver limits kept with warnings, Xpress MIPs, objective options in model units and many fixes (schema v79)
 
 Input databases move to data version 79. The FlexTool window, the Spine Toolbox workflow and `flextool-run
