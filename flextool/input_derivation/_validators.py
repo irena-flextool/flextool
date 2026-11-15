@@ -1143,24 +1143,39 @@ def validate_piecewise_linear_inputs(db, logger: logging.Logger) -> None:
             logger.warning("Unit '%s': %s %s not used by a piecewise_linear unit (its curve gives the efficiency)",
                            unit, " and ".join(params), "is" if len(params) == 1 else "are")
     by_unit = curves_by_unit(curves.frame)
-    min_load = _explicit_values(db, "unit", "min_load")
+    all_periods = _period_universe(db) | _branch_periods(db)
+    floors = {pv["entity_byname"][0]: _min_load_floors(pv["parsed_value"], all_periods)
+              for pv in db.find_parameter_values(entity_class_name="unit", parameter_definition_name="min_load")
+              if pv["type"] is not None}
     n_inputs = _arcs(db, "unit__inputNode")
     delayed = {pv["entity_byname"][0] for pv in db.find_parameter_values(
         entity_class_name="unit", parameter_definition_name="delay") if pv["type"] is not None}
     for unit in pw:
         by_d = by_unit.get(unit, {})
-        floor = min(min_load.get(unit) or [0.0])
+        unit_floors = floors.get(unit, {})
         for d in sorted(by_d, key=lambda x: (x is not None, x or "")):
             pts = by_d[d]
-            if not rises_first(pts) or floor >= pts[0][0]:
+            if not rises_first(pts):
                 continue
+            # Each period's curve against that period's min_load (W1): a curve per period meets the min_load of
+            # its period (0 where a min_load per period leaves it out); one curve for every period meets each
+            # period's min_load of a min_load per period, else the min_load.
+            if d is not None:
+                checks = [(d, unit_floors[d] if d in unit_floors else unit_floors.get(None, 0.0))]
+            elif unit_floors and None not in unit_floors:
+                checks = sorted(unit_floors.items())
+            else:
+                checks = [(None, unit_floors.get(None, 0.0))]
             alpha, beta = segment(pts[0], pts[1])
-            eta_floor = floor / (alpha * floor + beta)
-            logger.warning(
-                "Unit '%s': min_load %s is below the first point of its curve%s (load %s): between them the first "
-                "segment is extended (efficiency at min_load ≈ %.2g); without a higher min_load the unit can be "
-                "online at zero output, burning %.2g MW of fuel per MW online", unit, f"{floor:g}",
-                f" in period {d}" if d is not None else "", f"{pts[0][0]:g}", eta_floor, beta)
+            for period, floor in checks:
+                if floor >= pts[0][0]:
+                    continue
+                eta_floor = floor / (alpha * floor + beta)
+                logger.warning(
+                    "Unit '%s': min_load %s is below the first point of its curve%s (load %s): between them the "
+                    "first segment is extended (efficiency at min_load ≈ %.2g); without a higher min_load the unit "
+                    "can be online at zero output, burning %.2g MW of fuel per MW online", unit, f"{floor:g}",
+                    f" in period {period}" if period is not None else "", f"{pts[0][0]:g}", eta_floor, beta)
         if not by_d or not piecewise_unit_flags(by_d.values()).multi_line:
             continue
         remapped = (len(n_inputs.get(unit, [])) == 1 and len(outputs.get(unit, [])) == 1 and unit not in delayed)
@@ -1798,6 +1813,23 @@ def validate_group_increase_reserve_ratio(db, logger: logging.Logger) -> None:
             "(dynamic_only, timeseries_and_dynamic, dynamic_and_large_failure, all); it is ignored.",
             "__".join(key),
         )
+
+
+def _min_load_floors(parsed, periods: set[str]) -> dict[str | None, float]:
+    """The smallest ``min_load`` of a unit's parsed value per period: ``{period: smallest value}`` for a map whose
+    level-1 keys are all periods of ``periods`` (a period map, or a period map of time series), else
+    ``{None: smallest value}`` (a constant, a time map or a time series); ``{}`` without a numeric value."""
+    indexes = getattr(parsed, "indexes", None)
+    if isinstance(parsed, api.Map) and indexes is not None and len(indexes) > 0 \
+            and all(str(k) in periods for k in indexes):
+        out: dict[str | None, float] = {}
+        for key, sub in zip(indexes, parsed.values):
+            vals = _numeric_values(sub)
+            if vals:
+                out[str(key)] = min(vals)
+        return out
+    vals = _numeric_values(parsed)
+    return {None: min(vals)} if vals else {}
 
 
 def _numeric_values(parsed) -> list[float]:

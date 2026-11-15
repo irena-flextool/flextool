@@ -72,22 +72,28 @@ def _eff(x: float) -> str:
 
 
 def _curve_text(points: list[Point]) -> str:
-    return "{" + ", ".join(f"{float(load)!r}: {_eff(eff)}" for load, eff in points) + "}"
+    """A curve for a message, every point at full precision (``repr``), so a suggested curve pasted back into
+    the database is exactly the one checked here."""
+    return "{" + ", ".join(f"{float(load)!r}: {float(eff)!r}" for load, eff in points) + "}"
 
 
 def curve_problems(points: list[tuple[object, object]]) -> tuple[list[str], list[Point] | None]:
     """The problems of one curve (raw ``(key, efficiency)`` pairs in authored order) and its sorted points when it
     has none.  Check order: E3-E6 (keys and efficiencies), then E7 (fuel falling), then E8 (convexity; the hull
     only for a curve that passes E7).  The texts follow the ``unit 'U' (period P): `` prefix."""
+    if not points:
+        return ["the curve has no points (it must end at full load, load share 1)"], None
     problems: list[str] = []
     parsed: list[Point] = []
     seen: set[float] = set()
+    above_one = False
     for key, eff in points:
         try:
             load = float(key)
         except (TypeError, ValueError):
             load = math.nan
         if not (load > 0.0 and load <= 1.0 + LOAD_ONE_TOLERANCE):
+            above_one = above_one or load > 1.0 + LOAD_ONE_TOLERANCE
             problems.append(f"load share '{key}' must be a number above 0 and at most 1 (the efficiency at zero "
                             "output is not defined; the fuel at zero output follows from the first point)")
             continue
@@ -101,7 +107,8 @@ def curve_problems(points: list[tuple[object, object]]) -> tuple[list[str], list
             problems.append(f"efficiency at load {_g(load)} is {shown}; it must be above 0")
             continue
         parsed.append((load, float(eff)))
-    if seen and max(seen) != 1.0:
+    # A key above 1 was already refused (E3): the curve's end is that key, so E5 would name a wrong end.
+    if seen and max(seen) != 1.0 and not above_one:
         problems.append(f"the curve must end at full load (load share 1); it ends at {_g(max(seen))}")
     if problems:
         return problems, None
@@ -110,7 +117,7 @@ def curve_problems(points: list[tuple[object, object]]) -> tuple[list[str], list
     for k, (alpha, _beta) in enumerate(lines):
         if alpha <= 0.0:
             (l0, e0), (l1, e1) = pts[k], pts[k + 1]
-            return [f"the fuel use falls from load {_g(l0)} to {_g(l1)} (efficiency {_eff(e0)} → {_eff(e1)}): "
+            return [f"the fuel use falls from load {_g(l0)} to {_g(l1)} (efficiency {e0!r} → {e1!r}): "
                     "more output for less fuel"], None
     for k in range(1, len(lines)):
         if lines[k][0] < lines[k - 1][0] * (1.0 - CONVEX_RTOL):

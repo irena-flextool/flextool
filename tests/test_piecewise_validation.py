@@ -126,7 +126,7 @@ def test_E4_E5_E6(tmp_path, schema_db_url, caplog) -> None:
 
 def test_E7_fuel_falls(tmp_path, schema_db_url, caplog) -> None:
     error, _ = _check(tmp_path, schema_db_url, caplog, [_unit("G", curve=Map([0.4, 0.6, 1.0], [0.3, 0.5, 0.55]))])
-    assert ("unit 'G': the fuel use falls from load 0.4 to 0.6 (efficiency 0.30 → 0.50): more output for less "
+    assert ("unit 'G': the fuel use falls from load 0.4 to 0.6 (efficiency 0.3 → 0.5): more output for less "
             "fuel") in error
     assert "Nearest accepted curve" not in error
 
@@ -134,8 +134,41 @@ def test_E7_fuel_falls(tmp_path, schema_db_url, caplog) -> None:
 def test_E8_falling_incremental_heat_rate_with_hull(tmp_path, schema_db_url, caplog) -> None:
     error, _ = _check(tmp_path, schema_db_url, caplog, [_unit("U", curve=E8)])
     assert ("unit 'U': the extra fuel per extra output falls from 2.04 (load 0.4–0.7) to 1.46 (load 0.7–1) for the "
-            "curve {0.4: 0.30, 0.7: 0.36, 1.0: 0.42}; a linear model cannot use such a curve. Nearest accepted "
-            "curve: {0.4: 0.30, 1.0: 0.42} (it raises the efficiency at load 0.7 from 0.36 to 0.377)") in error
+            "curve {0.4: 0.3, 0.7: 0.36, 1.0: 0.42}; a linear model cannot use such a curve. Nearest accepted "
+            "curve: {0.4: 0.3, 1.0: 0.42} (it raises the efficiency at load 0.7 from 0.36 to 0.377)") in error
+
+
+def test_E8_suggested_curve_pasted_back_passes(tmp_path, schema_db_url, caplog) -> None:
+    """The points of the given and the suggested curve are printed at full precision, so the suggestion pasted
+    back into the database passes the convexity check (a 3-digit rounding of 0.3123456 would not be the hull)."""
+    import ast
+    import re
+
+    curve = Map([0.3, 0.5, 0.8, 1.0], [0.3123456789, 0.33, 0.4087654321, 0.41])
+    error, _ = _check(tmp_path, schema_db_url, caplog, [_unit("U", curve=curve)])
+    assert "for the curve {0.3: 0.3123456789, 0.5: 0.33, 0.8: 0.4087654321, 1.0: 0.41}" in error
+    suggested = ast.literal_eval(re.search(r"Nearest accepted curve: (\{[^}]*\})", error).group(1))
+    assert suggested == {0.3: 0.3123456789, 0.8: 0.4087654321, 1.0: 0.41}
+    (tmp_path / "back").mkdir()
+    error, _ = _check(tmp_path / "back", schema_db_url, caplog,
+                      [_unit("U", curve=Map(list(suggested), list(suggested.values())))])
+    assert error is None
+
+
+def test_empty_curve(tmp_path, schema_db_url, caplog) -> None:
+    error, _ = _check(tmp_path, schema_db_url, caplog, [
+        _unit("A", curve=Map([], [], index_type=float)),
+        _unit("B", curve=Map(["p2030", "p2035"], [O1, Map([], [], index_type=float)], **PERIOD))])
+    assert "unit 'A': the curve has no points (it must end at full load, load share 1)" in error
+    assert "unit 'B' (period p2035): the curve has no points (it must end at full load, load share 1)" in error
+    assert "p2030" not in error
+
+
+def test_E3_key_above_one_gives_no_E5(tmp_path, schema_db_url, caplog) -> None:
+    """A key just above the tolerance is refused (E3); E5 does not then name the first point as the curve's end."""
+    error, _ = _check(tmp_path, schema_db_url, caplog, [_unit("G", curve=Map([0.4, 1.000000002], [0.3, 0.42]))])
+    assert "unit 'G': load share '1.000000002' must be a number above 0 and at most 1" in error
+    assert "the curve must end at full load" not in error
 
 
 def test_E8_names_the_period(tmp_path, schema_db_url, caplog) -> None:
@@ -189,6 +222,21 @@ def test_W1_min_load_below_first_point(tmp_path, schema_db_url, caplog) -> None:
         "Unit 'U': min_load 0.2 is below the first point of its curve (load 0.4): between them the first segment is "
         "extended (efficiency at min_load ≈ 0.19); without a higher min_load the unit can be online at zero "
         "output, burning 0.78 MW of fuel per MW online"]
+
+
+def test_W1_compares_each_period_with_its_min_load(tmp_path, schema_db_url, caplog) -> None:
+    """min_load per period {p2030: 0.2, p2035: 0.5}: a curve per period meets its own period's min_load (p2030:
+    0.2 below the first point 0.4 warns; p2035: 0.5 does not), and one curve for every period meets each
+    period's min_load (only p2030 warns, naming it).  The smallest min_load over all periods (0.2) would warn for
+    both periods."""
+    min_load = Map(["p2030", "p2035"], [0.2, 0.5], **PERIOD)
+    _, warnings = _check(tmp_path, schema_db_url, caplog,
+                         [_unit("U", curve=Map(["p2030", "p2035"], [O1, O1], **PERIOD)), _unit("C")],
+                         extra_values=[("unit", ("U",), "min_load", min_load), ("unit", ("C",), "min_load", min_load)])
+    tail = ("(load 0.4): between them the first segment is extended (efficiency at min_load ≈ 0.19); without a "
+            "higher min_load the unit can be online at zero output, burning 0.78 MW of fuel per MW online")
+    assert sorted(warnings) == [f"Unit 'C': min_load 0.2 is below the first point of its curve in period p2030 {tail}",
+                                f"Unit 'U': min_load 0.2 is below the first point of its curve in period p2030 {tail}"]
 
 
 def test_W1_not_for_a_falling_curve_and_per_period(tmp_path, schema_db_url, caplog) -> None:
