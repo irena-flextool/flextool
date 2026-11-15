@@ -146,7 +146,8 @@ def _shipped() -> dict:
     later = {key: "".join(sentences)
              for key, sentences in {**m._v80_suffixes(), **m._v80_piecewise_sentences()}.items()}
     old_names = {("group", new): ("group", old) for old, new in m.V80_CAPACITY_MARGIN_RENAMES.items()}
-    v79_texts = {**m._V79_CAPACITY_MARGIN_DESCRIPTIONS, **m._v79_solver_precommand_texts()}
+    v79_texts = {**m._V79_CAPACITY_MARGIN_DESCRIPTIONS, **m._v79_solver_precommand_texts(),
+                 ("solve", "reduce_unit_detail_method"): m._V79_REDUCE_DESCRIPTIONS["reduce_unit_detail_method"]}
     out = {}
     for r in schema["parameter_definitions"]:
         key = (r[0], r[1])

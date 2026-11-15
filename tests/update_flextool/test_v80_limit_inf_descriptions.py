@@ -10,8 +10,8 @@ The step
   ``capacity_margin_relative`` (the values go with the definition, in every alternative, unchanged);
 * renames the ``capacity_margin_methods`` members ``manual`` -> ``absolute`` and ``share_of_peak`` ->
   ``relative_of_peak_demand`` (list order kept) and rewrites every stored ``capacity_margin_method`` value;
-* rewrites the capacity-margin, ``solve.solver_precommand``, ``solve.solver_arguments`` and
-  ``unit.conversion_method`` descriptions;
+* rewrites the capacity-margin, ``solve.solver_precommand``, ``solve.solver_arguments``,
+  ``unit.conversion_method`` and ``solve.reduce_unit_detail_method`` descriptions;
 * appends ``piecewise_linear`` to ``conversion_methods``, adds ``unit.piecewise_linear_efficiency`` (a curve, or a
   curve per period) and appends the piecewise_linear sentences to ``efficiency``, ``efficiency_at_min_load`` and
   ``min_load``.
@@ -167,6 +167,24 @@ def test_replaces_the_solver_descriptions(migrated) -> None:
     assert "solver's own option names" in arguments and "whichever solver the solve uses" in arguments
     assert "checked against FlexTool's list" in arguments and "solver_config/<solver>.opt" in arguments
     assert "HiGHS knobs" not in arguments
+
+
+def test_replaces_the_reduce_unit_detail_description(migrated) -> None:
+    """The full-load rule: min_load_efficiency and piecewise_linear units without online variables, and under the
+    min_limits levels a min_load_efficiency unit more efficient at min load, run at their full-load efficiency."""
+    before, after = migrated["before"]["defs"], migrated["after"]["defs"]
+    shipped, _ = _shipped()
+    key = ("solve", "reduce_unit_detail_method")
+    assert after[key][0] == shipped[key] == m._v80_texts()[key] != before[key][0]
+    assert before[key][0] == m._V79_REDUCE_DESCRIPTIONS["reduce_unit_detail_method"]
+    assert after[key][1:] == before[key][1:]
+    text = after[key][0]
+    assert "less fuel than the curve at part load" not in text
+    for words in ("min_load_efficiency and piecewise_linear units run at their full-load efficiency",
+                  "the same fuel at full output; at part load less or more fuel",
+                  "(efficiency_at_min_load above efficiency) then runs at its full-load efficiency",
+                  "piecewise_linear curve whose efficiency rises from its first point"):
+        assert words in text
 
 
 PIECEWISE = ("unit", "piecewise_linear_efficiency")

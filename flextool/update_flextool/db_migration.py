@@ -10470,6 +10470,24 @@ def _v80_texts() -> dict[tuple[str, str], str]:
             "to full load (efficiency); needs online variables. piecewise_linear: the fuel use follows the "
             "part-load curve piecewise_linear_efficiency; efficiency is not used. none: for a unit without inputs "
             "or without outputs (a unit with both converts as with constant_efficiency)."),
+        ("solve", "reduce_unit_detail_method"): (
+            "[choice] Detail of units and connections that this solve leaves out, to make it faster (typically an "
+            "investment solve). none (default): all detail. integers: binary startup_method is solved as "
+            "continuous and exact connections behave as regular. integers_ramps: integers, and no ramp limits or "
+            "ramp costs. integers_min_limits: integers, and no min_load, capacity_min_coeff floors or minimum up / "
+            "down times; a min_load_efficiency unit that is more efficient at min load than at full load "
+            "(efficiency_at_min_load above efficiency) then runs at its full-load efficiency. "
+            "integers_ramps_min_limits: integers, no ramps and no min limits. Under the integers levels, a unit or "
+            "connection whose online variables nothing in the solve still uses (no start-up cost, min_load, "
+            "capacity_min_coeff floor, minimum up / down time, min_load_efficiency curve, piecewise_linear curve "
+            "whose efficiency rises from its first point, constraint_online_coeff in a user constraint, reserve, "
+            "inertia or ramp limit left) has none, as with startup_method no_startup; the run log names them. "
+            "online: everything of integers_min_limits, and no online variables: no start-up costs, user "
+            "constraints that count units online are left out whole, min_load_efficiency and piecewise_linear "
+            "units run at their full-load efficiency (the same fuel at full output; at part load less or more fuel "
+            "than with their curve), and ramp limits apply to the capacity. Reserves are then limited by built "
+            "capacity, not online capacity, and inertia is counted from flows. online_ramps: online, and no ramp "
+            "limits or ramp costs. Never adds detail."),
     }
 
 
@@ -10601,8 +10619,10 @@ def _migrate_v80_schema_batch(db) -> None:
        (:func:`_v80_capacity_margin_rename`).
     3. The descriptions of the capacity-margin parameters (new names), of ``solve.solver_precommand`` (never run;
        use a solver wrapper) and of ``solve.solver_arguments`` (the solver's own option names, for whichever solver
-       the solve uses, checked, over the option file) and of ``unit.conversion_method`` (with piecewise_linear)
-       (:func:`_v80_descriptions`).
+       the solve uses, checked, over the option file), of ``unit.conversion_method`` (with piecewise_linear) and of
+       ``solve.reduce_unit_detail_method`` (min_load_efficiency and piecewise_linear units run at their full-load
+       efficiency without online variables, as do min_load_efficiency units more efficient at min load under the
+       min_limits levels) (:func:`_v80_descriptions`).
     4. ``conversion_method`` ``piecewise_linear``: the ``conversion_methods`` member, ``unit.piecewise_linear_efficiency``
        (a part-load curve, or a curve per period) and the sentences on ``efficiency``, ``efficiency_at_min_load`` and
        ``min_load`` (:func:`_v80_piecewise_linear`).
@@ -10616,7 +10636,8 @@ def _migrate_v80_schema_batch(db) -> None:
     _v80_piecewise_linear(db)
     _commit_step(db, "v80: inf / -inf in a limit is no limit in that period, capacity_margin_absolute / "
                      "capacity_margin_relative and the capacity_margin_method values absolute / "
-                     "relative_of_peak_demand, solver_precommand and solver_arguments descriptions, "
+                     "relative_of_peak_demand, solver_precommand, solver_arguments and "
+                     "reduce_unit_detail_method descriptions, "
                      "conversion_method piecewise_linear and unit.piecewise_linear_efficiency")
 
 
