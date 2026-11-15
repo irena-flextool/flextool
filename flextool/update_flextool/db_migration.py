@@ -1907,6 +1907,8 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 _migrate_v78_unit_prefixes(db)
             elif next_version == 79:
                 _migrate_v79_schema_batch(db)
+            elif next_version == 80:
+                _migrate_v80_limit_inf_descriptions(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -10346,3 +10348,60 @@ if __name__ == '__main__':
     parser.add_argument('filename',help= "The filepath of the database to be migrated")
     args = parser.parse_args()
     migrate_database(args.filename)
+
+
+def _v80_suffixes() -> dict[tuple[str, str], str]:
+    """The sentence v80 appends to the description of each period-map limit: ``inf`` (``-inf`` for a lower limit)
+    means no limit in that period (the row of that period is left out)."""
+    return {
+        ('connection', 'cumulative_max_capacity'): ' inf means no limit in that period.',
+        ('connection', 'cumulative_min_capacity'): ' 0 or -inf means no minimum in that period.',
+        ('connection', 'invest_max_period'): ' inf means no limit in that period.',
+        ('connection', 'invest_min_period'): ' 0 or -inf means no minimum in that period.',
+        ('connection', 'retire_max_period'): ' inf means no limit in that period.',
+        ('connection', 'retire_min_period'): ' 0 or -inf means no minimum in that period.',
+        ('constraint', 'constant'): ' inf (sense less_than) or -inf (greater_than) means no constraint in that period.',
+        ('flowGroup', 'max_cumulative_flow'): ' inf means no limit in that period.',
+        ('flowGroup', 'max_instant_flow'): ' inf means no limit in that period or time step.',
+        ('flowGroup', 'min_cumulative_flow'): ' -inf means no limit in that period.',
+        ('flowGroup', 'min_instant_flow'): ' -inf means no limit in that period or time step.',
+        ('group', 'capacity_margin'): ' -inf means no capacity-margin requirement in that period.',
+        ('group', 'capacity_margin_share'): ' -inf means no capacity-margin requirement in that period.',
+        ('group', 'co2_max_period'): ' inf means no limit in that period.',
+        ('group', 'cumulative_max_capacity'): ' inf means no limit in that period.',
+        ('group', 'cumulative_min_capacity'): ' 0 or -inf means no minimum in that period.',
+        ('group', 'inertia_limit'): ' -inf also means no requirement in that period or time step.',
+        ('group', 'invest_max_period'): ' inf means no limit in that period.',
+        ('group', 'invest_min_period'): ' 0 or -inf means no minimum in that period.',
+        ('group', 'non_synchronous_limit'): ' inf means no limit in that period or time step.',
+        ('group', 'retire_max_period'): ' inf means no limit in that period.',
+        ('group', 'retire_min_period'): ' 0 or -inf means no minimum in that period.',
+        ('node', 'cumulative_max_capacity'): ' inf means no limit in that period.',
+        ('node', 'cumulative_min_capacity'): ' 0 or -inf means no minimum in that period.',
+        ('node', 'invest_max_period'): ' inf means no limit in that period.',
+        ('node', 'invest_min_period'): ' 0 or -inf means no minimum in that period.',
+        ('node', 'retire_max_period'): ' inf means no limit in that period.',
+        ('node', 'retire_min_period'): ' 0 or -inf means no minimum in that period.',
+        ('unit', 'cumulative_max_capacity'): ' inf means no limit in that period.',
+        ('unit', 'cumulative_min_capacity'): ' 0 or -inf means no minimum in that period.',
+        ('unit', 'invest_max_period'): ' inf means no limit in that period.',
+        ('unit', 'invest_min_period'): ' 0 or -inf means no minimum in that period.',
+        ('unit', 'retire_max_period'): ' inf means no limit in that period.',
+        ('unit', 'retire_min_period'): ' 0 or -inf means no minimum in that period.',
+    }
+
+
+def _migrate_v80_limit_inf_descriptions(db) -> None:
+    """Database version 80 (v79 -> v80): the description of each period-map limit gets the sentence of
+    :func:`_v80_suffixes` (``inf`` / ``-inf`` is no limit in that period) unless it already ends with it.  No value
+    is rewritten.  Idempotent."""
+    for (cls, name), suffix in _v80_suffixes().items():
+        if not db.get_item("entity_class", name=cls):
+            continue
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is None:
+            continue
+        description = (pdef["description"] or "").rstrip()
+        if not description.endswith(suffix):
+            db.update_parameter_definition(id=pdef["id"], description=description + suffix)
+    _commit_step(db, "v80: inf / -inf in a period-map limit is no limit in that period (descriptions)")

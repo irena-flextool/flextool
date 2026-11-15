@@ -137,9 +137,16 @@ def _rerun_changes_nothing(db, step, monkeypatch) -> None:
 
 
 def _shipped() -> dict:
+    """The shipped descriptions as v79 left them: a later step's appended sentence (v80, ``inf`` is no limit) is
+    taken off again."""
     with open(package_data_path("schemas/spinedb_schema.json"), encoding="utf-8") as f:
         schema = json.load(f)
-    return {(r[0], r[1]): r[4] for r in schema["parameter_definitions"]}
+    later = m._v80_suffixes()
+    out = {}
+    for r in schema["parameter_definitions"]:
+        text, suffix = r[4], later.get((r[0], r[1]))
+        out[(r[0], r[1])] = text[:-len(suffix)] if suffix and text and text.endswith(suffix) else text
+    return out
 
 
 def _set(db, cls: str, name: str, param: str, value, alt: str) -> None:

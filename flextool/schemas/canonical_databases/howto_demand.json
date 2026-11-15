@@ -518,7 +518,7 @@
       "cumulative_max_capacity",
       null,
       null,
-      "[MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.",
+      "[MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period. inf means no limit in that period.",
       "investment"
     ],
     [
@@ -526,7 +526,7 @@
       "cumulative_min_capacity",
       null,
       null,
-      "[MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.",
+      "[MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period. 0 or -inf means no minimum in that period.",
       "investment"
     ],
     [
@@ -588,7 +588,7 @@
       "invest_max_period",
       null,
       null,
-      "[MW] Largest allowed capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period.",
+      "[MW] Largest allowed capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period. inf means no limit in that period.",
       "investment"
     ],
     [
@@ -615,7 +615,7 @@
       "invest_min_period",
       null,
       null,
-      "[MW] Smallest required capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period.",
+      "[MW] Smallest required capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period. 0 or -inf means no minimum in that period.",
       "investment"
     ],
     [
@@ -677,7 +677,7 @@
       "retire_max_period",
       null,
       null,
-      "[MW] Largest allowed retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period.",
+      "[MW] Largest allowed retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period. inf means no limit in that period.",
       "retirement"
     ],
     [
@@ -693,7 +693,7 @@
       "retire_min_period",
       null,
       null,
-      "[MW] Smallest required retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period.",
+      "[MW] Smallest required retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period. 0 or -inf means no minimum in that period.",
       "retirement"
     ],
     [
@@ -777,7 +777,7 @@
         "float"
       ],
       null,
-      "[the constraint's own unit] Right-hand side of the user constraint. A period map gives each period its own value; it must cover every period of the solve. Constant or period.",
+      "[the constraint's own unit] Right-hand side of the user constraint. A period map gives each period its own value; it must cover every period of the solve. Constant or period. inf (sense less_than) or -inf (greater_than) means no constraint in that period.",
       "constraint"
     ],
     [
@@ -829,7 +829,7 @@
       "max_cumulative_flow",
       null,
       null,
-      "[MW] Largest allowed average flow into the group. A constant gives one limit per solve; a period map gives one limit per period. Average flow times the weighted hours gives the energy limit. Constant or period.",
+      "[MW] Largest allowed average flow into the group. A constant gives one limit per solve; a period map gives one limit per period. Average flow times the weighted hours gives the energy limit. Constant or period. inf means no limit in that period.",
       "flow_limit"
     ],
     [
@@ -837,7 +837,7 @@
       "max_instant_flow",
       null,
       null,
-      "[MW] Maximum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.",
+      "[MW] Maximum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time. inf means no limit in that period or time step.",
       "flow_limit"
     ],
     [
@@ -845,7 +845,7 @@
       "min_cumulative_flow",
       null,
       null,
-      "[MW] Smallest required average flow into the group. A constant gives one limit per solve; a period map gives one limit per period. Average flow times the weighted hours gives the energy limit. Constant or period.",
+      "[MW] Smallest required average flow into the group. A constant gives one limit per solve; a period map gives one limit per period. Average flow times the weighted hours gives the energy limit. Constant or period. -inf means no limit in that period.",
       "flow_limit"
     ],
     [
@@ -853,7 +853,7 @@
       "min_instant_flow",
       null,
       null,
-      "[MW] Minimum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.",
+      "[MW] Minimum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time. -inf means no limit in that period or time step.",
       "flow_limit"
     ],
     [
@@ -877,7 +877,7 @@
       "capacity_margin",
       null,
       null,
-      "[MW] Capacity the group needs above its demand at every time step of an investment period. Used only with capacity_margin_method manual. No value means 0 (the demand must still be covered). Constant or period.",
+      "[MW] Capacity the group needs above its demand at every time step of an investment period. Used only with capacity_margin_method manual. No value means 0 (the demand must still be covered). Constant or period. -inf means no capacity-margin requirement in that period.",
       "investment"
     ],
     [
@@ -896,7 +896,7 @@
       "capacity_margin_share",
       null,
       null,
-      "[-] e.g. 0.15 means 15%. Capacity margin as a share of the group's peak demand: the largest sum of the demand of the group's nodes over the period's full time series (before representative periods and new_stepduration). Used only with capacity_margin_method share_of_peak. No value means 0. Constant or period.",
+      "[-] e.g. 0.15 means 15%. Capacity margin as a share of the group's peak demand: the largest sum of the demand of the group's nodes over the period's full time series (before representative periods and new_stepduration). Used only with capacity_margin_method share_of_peak. No value means 0. Constant or period. -inf means no capacity-margin requirement in that period.",
       "investment"
     ],
     [
@@ -904,7 +904,7 @@
       "co2_max_period",
       null,
       null,
-      "[tCO2/a] Largest annual CO2 emissions in each period. In a rolling solve, each roll may use the part of the limit its horizon reaches, minus what earlier rolls already emitted in that period. Constant or period.",
+      "[tCO2/a] Largest annual CO2 emissions in each period. In a rolling solve, each roll may use the part of the limit its horizon reaches, minus what earlier rolls already emitted in that period. Constant or period. inf means no limit in that period.",
       "emission"
     ],
     [
@@ -939,7 +939,7 @@
       "cumulative_max_capacity",
       null,
       null,
-      "[MW or MWh] Maximum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period.",
+      "[MW or MWh] Maximum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period. inf means no limit in that period.",
       "investment"
     ],
     [
@@ -947,7 +947,7 @@
       "cumulative_min_capacity",
       null,
       null,
-      "[MW or MWh] Minimum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period.",
+      "[MW or MWh] Minimum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period. 0 or -inf means no minimum in that period.",
       "investment"
     ],
     [
@@ -999,7 +999,7 @@
       "inertia_limit",
       null,
       null,
-      "[MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value (or 0) means no requirement. Constant, period, time or period+time. A time map must give a value for every time step of the solve (a missing time step is an error). Over a coarse time step the row uses the step mean.",
+      "[MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value (or 0) means no requirement. Constant, period, time or period+time. A time map must give a value for every time step of the solve (a missing time step is an error). Over a coarse time step the row uses the step mean. -inf also means no requirement in that period or time step.",
       "network"
     ],
     [
@@ -1007,7 +1007,7 @@
       "invest_max_period",
       null,
       null,
-      "[MW or MWh] Largest allowed capacity coming online in each period, summed over the group's units and connections (MW) and storage nodes (MWh). With a construction lead time, the investment is decided earlier. Constant or period.",
+      "[MW or MWh] Largest allowed capacity coming online in each period, summed over the group's units and connections (MW) and storage nodes (MWh). With a construction lead time, the investment is decided earlier. Constant or period. inf means no limit in that period.",
       "investment"
     ],
     [
@@ -1034,7 +1034,7 @@
       "invest_min_period",
       null,
       null,
-      "[MW or MWh] Smallest required capacity coming online in each period, summed over the group's units and connections (MW) and storage nodes (MWh). With a construction lead time, the investment is decided earlier. Constant or period.",
+      "[MW or MWh] Smallest required capacity coming online in each period, summed over the group's units and connections (MW) and storage nodes (MWh). With a construction lead time, the investment is decided earlier. Constant or period. 0 or -inf means no minimum in that period.",
       "investment"
     ],
     [
@@ -1058,7 +1058,7 @@
       "non_synchronous_limit",
       null,
       null,
-      "[-] e.g. 0.8 means 80%. Largest share of non-synchronous supply in the group, measured against the real demand. Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no value means 0. Constant, period, time or period+time. A time map must give a value for every time step of the solve (a missing time step is an error). Over a coarse time step the row uses the step mean.",
+      "[-] e.g. 0.8 means 80%. Largest share of non-synchronous supply in the group, measured against the real demand. Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no value means 0. Constant, period, time or period+time. A time map must give a value for every time step of the solve (a missing time step is an error). Over a coarse time step the row uses the step mean. inf means no limit in that period or time step.",
       "network"
     ],
     [
@@ -1123,7 +1123,7 @@
       "retire_max_period",
       null,
       null,
-      "[MW or MWh] Largest allowed retirement in each period, summed over the group's members. Needs a retire …_period option in the group's invest_method. Constant or period.",
+      "[MW or MWh] Largest allowed retirement in each period, summed over the group's members. Needs a retire …_period option in the group's invest_method. Constant or period. inf means no limit in that period.",
       "retirement"
     ],
     [
@@ -1139,7 +1139,7 @@
       "retire_min_period",
       null,
       null,
-      "[MW or MWh] Smallest required retirement in each period, summed over the group's members. Needs a retire …_period option in the group's invest_method. Constant or period.",
+      "[MW or MWh] Smallest required retirement in each period, summed over the group's members. Needs a retire …_period option in the group's invest_method. Constant or period. 0 or -inf means no minimum in that period.",
       "retirement"
     ],
     [
@@ -1266,7 +1266,7 @@
       "model",
       "version",
       [
-        "79.0",
+        "80.0",
         "float"
       ],
       null,
@@ -1361,7 +1361,7 @@
       "cumulative_max_capacity",
       null,
       null,
-      "[MWh] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.",
+      "[MWh] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period. inf means no limit in that period.",
       "investment"
     ],
     [
@@ -1369,7 +1369,7 @@
       "cumulative_min_capacity",
       null,
       null,
-      "[MWh] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.",
+      "[MWh] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period. 0 or -inf means no minimum in that period.",
       "investment"
     ],
     [
@@ -1472,7 +1472,7 @@
       "invest_max_period",
       null,
       null,
-      "[MWh] Largest allowed storage capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period.",
+      "[MWh] Largest allowed storage capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period. inf means no limit in that period.",
       "investment"
     ],
     [
@@ -1499,7 +1499,7 @@
       "invest_min_period",
       null,
       null,
-      "[MWh] Smallest required storage capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period.",
+      "[MWh] Smallest required storage capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period. 0 or -inf means no minimum in that period.",
       "investment"
     ],
     [
@@ -1586,7 +1586,7 @@
       "retire_max_period",
       null,
       null,
-      "[MWh] Largest allowed retirement of storage capacity in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period.",
+      "[MWh] Largest allowed retirement of storage capacity in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period. inf means no limit in that period.",
       "retirement"
     ],
     [
@@ -1602,7 +1602,7 @@
       "retire_min_period",
       null,
       null,
-      "[MWh] Smallest required retirement of storage capacity in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period.",
+      "[MWh] Smallest required retirement of storage capacity in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period. 0 or -inf means no minimum in that period.",
       "retirement"
     ],
     [
@@ -2280,7 +2280,7 @@
       "cumulative_max_capacity",
       null,
       null,
-      "[MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.",
+      "[MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period. inf means no limit in that period.",
       "investment"
     ],
     [
@@ -2288,7 +2288,7 @@
       "cumulative_min_capacity",
       null,
       null,
-      "[MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.",
+      "[MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period. 0 or -inf means no minimum in that period.",
       "investment"
     ],
     [
@@ -2358,7 +2358,7 @@
       "invest_max_period",
       null,
       null,
-      "[MW] Largest allowed capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period.",
+      "[MW] Largest allowed capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period. inf means no limit in that period.",
       "investment"
     ],
     [
@@ -2385,7 +2385,7 @@
       "invest_min_period",
       null,
       null,
-      "[MW] Smallest required capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period.",
+      "[MW] Smallest required capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period. 0 or -inf means no minimum in that period.",
       "investment"
     ],
     [
@@ -2452,7 +2452,7 @@
       "retire_max_period",
       null,
       null,
-      "[MW] Largest allowed retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period.",
+      "[MW] Largest allowed retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period. inf means no limit in that period.",
       "retirement"
     ],
     [
@@ -2468,7 +2468,7 @@
       "retire_min_period",
       null,
       null,
-      "[MW] Smallest required retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period.",
+      "[MW] Smallest required retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period. 0 or -inf means no minimum in that period.",
       "retirement"
     ],
     [
