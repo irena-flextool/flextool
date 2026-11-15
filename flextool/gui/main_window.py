@@ -25,6 +25,7 @@ from flextool.gui.project_utils import (
 from flextool.gui.settings_io import (
     PRESOLVE_CHOICES,
     SCALING_CHOICES,
+    SCALING_GUARD_CHOICES,
     load_global_settings,
     load_project_settings,
     save_global_settings,
@@ -487,11 +488,12 @@ class MainWindow(tk.Tk):
         self.solver_log_level_var = tk.StringVar(value="normal")
         self.solver_time_limit_var = tk.IntVar(value=0)
         self.scaling_var = tk.StringVar(value=_SOLVER_DEFAULT)
+        self.scaling_guard_var = tk.StringVar(value=_SOLVER_DEFAULT)
         self.presolve_var = tk.StringVar(value=_SOLVER_DEFAULT)
 
         for _v in (
             self.solver_log_level_var, self.solver_time_limit_var,
-            self.scaling_var, self.presolve_var,
+            self.scaling_var, self.scaling_guard_var, self.presolve_var,
         ):
             _v.trace_add("write", self._on_auto_gen_toggled)
 
@@ -5913,6 +5915,7 @@ class MainWindow(tk.Tk):
             self.solver_log_level_var.set(s.solver_log_level)
             self.solver_time_limit_var.set(s.solver_time_limit)
             self.scaling_var.set(_choice_to_var(s.scaling))
+            self.scaling_guard_var.set(_choice_to_var(s.scaling_guard))
             self.presolve_var.set(_choice_to_var(s.presolve))
         finally:
             self._suppress_auto_gen_save = False
@@ -5945,6 +5948,9 @@ class MainWindow(tk.Tk):
         except (TypeError, ValueError, tk.TclError):
             pass
         self.project_settings.scaling = _var_to_choice(self.scaling_var.get(), SCALING_CHOICES)
+        self.project_settings.scaling_guard = _var_to_choice(
+            self.scaling_guard_var.get(), SCALING_GUARD_CHOICES,
+        )
         self.project_settings.presolve = _var_to_choice(self.presolve_var.get(), PRESOLVE_CHOICES)
 
         if self.current_project:
@@ -5954,8 +5960,9 @@ class MainWindow(tk.Tk):
     def _open_solver_options_dialog(self) -> None:
         """Open the modal Solver options dialog.
 
-        Builds a ``tk.Toplevel`` parented to the main window with four
-        controls (Log level, Time limit, Scaling, Presolve), and a button
+        Builds a ``tk.Toplevel`` parented to the main window with five
+        controls (Log level, Time limit, Scaling, Scaling guard, Presolve),
+        and a button
         to this computer's solver settings
         (:mod:`flextool.gui.dialogs.local_solver_settings_dialog`).  Each control is bound to a *dialog-local* Tk var
         seeded from the corresponding main-window var so Cancel can
@@ -5976,6 +5983,7 @@ class MainWindow(tk.Tk):
         d_sll = tk.StringVar(value=self.solver_log_level_var.get())
         d_stl = tk.IntVar(value=self.solver_time_limit_var.get())
         d_scl = tk.StringVar(value=self.scaling_var.get())
+        d_sg = tk.StringVar(value=self.scaling_guard_var.get())
         d_ps = tk.StringVar(value=self.presolve_var.get())
 
         body = ttk.Frame(dlg, padding=12)
@@ -6079,6 +6087,34 @@ class MainWindow(tk.Tk):
         ))
         row += 1
 
+        # Scaling guard
+        ttk.Label(body, text="Scaling guard:").grid(
+            row=row, column=0, sticky="w", padx=(0, 8), pady=4,
+        )
+        sg_row = ttk.Frame(body)
+        sg_row.grid(row=row, column=1, sticky="w", pady=4)
+        for _t, _v in (
+            ("Default (error)", _SOLVER_DEFAULT), ("Error", "error"), ("Warn", "warn"),
+            ("Off", "off"),
+        ):
+            ttk.Radiobutton(
+                sg_row, text=_t, variable=d_sg, value=_v,
+            ).pack(side="left", padx=(0, 6))
+        _attach_tip(sg_row, (
+            "What a solve does when its limits and bounds are too far\n"
+            "apart for the solver to enforce accurately, even after\n"
+            "FlexTool's scaling (--scaling-guard).\n"
+            "  • Default  — nothing is sent: error, the same as a\n"
+            "                terminal or Spine Toolbox run.\n"
+            "  • error    — stop before the solve, naming the largest\n"
+            "                and smallest values.\n"
+            "  • warn     — print the same message and solve anyway.\n"
+            "  • off      — do not check.\n"
+            "Milder spreads, cost and coefficient problems, and any\n"
+            "problem with a commercial solver only warn."
+        ))
+        row += 1
+
         # Presolve
         ttk.Label(body, text="Presolve:").grid(
             row=row, column=0, sticky="w", padx=(0, 8), pady=4,
@@ -6169,6 +6205,9 @@ class MainWindow(tk.Tk):
             _v_scl = d_scl.get()
             if _v_scl == _SOLVER_DEFAULT or _v_scl in SCALING_CHOICES:
                 self.scaling_var.set(_v_scl)
+            _v_sg = d_sg.get()
+            if _v_sg == _SOLVER_DEFAULT or _v_sg in SCALING_GUARD_CHOICES:
+                self.scaling_guard_var.set(_v_sg)
             _v_ps = d_ps.get()
             if _v_ps == _SOLVER_DEFAULT or _v_ps in PRESOLVE_CHOICES:
                 self.presolve_var.set(_v_ps)

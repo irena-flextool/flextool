@@ -126,6 +126,11 @@ class ProjectSettings:
     # solves like a terminal run (presolve on); ``"on"`` | ``"off"`` | ``"choose"`` is sent.
     presolve: str | None = None
 
+    # Scaling guard (``--scaling-guard``): what a solve whose limits the solver cannot enforce accurately after
+    # scaling does.  ``None`` (the dialog's "Default (error)") sends nothing, so the run stops before such a
+    # solve, as a terminal run does; ``"error"`` | ``"warn"`` | ``"off"`` is sent.
+    scaling_guard: str | None = None
+
     # Revision of the solver settings above.  A settings.yaml without it (or with an older one) holds the
     # earlier GUI defaults, which ``settings_io.load_project_settings`` updates once
     # (see ``SOLVER_SETTINGS_REVISION``).

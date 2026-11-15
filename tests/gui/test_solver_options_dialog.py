@@ -28,6 +28,7 @@ def root():
     r.solver_log_level_var = tk.StringVar(master=r, value="normal")
     r.solver_time_limit_var = tk.IntVar(master=r, value=0)
     r.scaling_var = tk.StringVar(master=r, value="basic")
+    r.scaling_guard_var = tk.StringVar(master=r, value="warn")
     r.presolve_var = tk.StringVar(master=r, value="choose")
     yield r
     r.destroy()
@@ -62,6 +63,10 @@ def test_dialog_has_no_mip_gap_control_and_offers_default_entries(root):
     assert set(scaling.values()) == {mw._SOLVER_DEFAULT, "off", "solver_only", "basic", "full"}
     assert presolve["Default (on)"] == mw._SOLVER_DEFAULT
     assert set(presolve.values()) == {mw._SOLVER_DEFAULT, "on", "off", "choose"}
+    guard = next(v for v in by_var.values() if "Default (error)" in v)
+    assert guard == {"Default (error)": mw._SOLVER_DEFAULT, "Error": "error", "Warn": "warn", "Off": "off"}
+    labels = [str(w.cget("text")) for w in _widgets(dlg) if isinstance(w, ttk.Label)]
+    assert labels.index("Scaling:") < labels.index("Scaling guard:") < labels.index("Presolve:")
     dlg.destroy()
 
 
@@ -73,6 +78,32 @@ def test_choosing_default_and_ok_stores_no_value(root):
     (ok,) = [w for w in _widgets(dlg) if isinstance(w, ttk.Button) and str(w.cget("text")) == "OK"]
     ok.invoke()
     assert root.scaling_var.get() == mw._SOLVER_DEFAULT
+    assert root.scaling_guard_var.get() == mw._SOLVER_DEFAULT
+    assert mw._var_to_choice(root.scaling_guard_var.get(), mw.SCALING_GUARD_CHOICES) is None
     assert root.presolve_var.get() == mw._SOLVER_DEFAULT
     assert mw._var_to_choice(root.scaling_var.get(), mw.SCALING_CHOICES) is None
     assert mw._var_to_choice(root.presolve_var.get(), mw.PRESOLVE_CHOICES) is None
+
+
+@pytest.mark.parametrize("choice", ["error", "warn", "off"])
+def test_picking_a_scaling_guard_mode_and_ok_stores_it(root, choice):
+    dlg = _open_dialog(root)
+    radios = [w for w in _widgets(dlg) if isinstance(w, ttk.Radiobutton)]
+    guard_var = next(str(w.cget("variable")) for w in radios if str(w.cget("text")) == "Default (error)")
+    (pick,) = [w for w in radios if str(w.cget("variable")) == guard_var and str(w.cget("value")) == choice]
+    pick.invoke()
+    (ok,) = [w for w in _widgets(dlg) if isinstance(w, ttk.Button) and str(w.cget("text")) == "OK"]
+    ok.invoke()
+    assert mw._var_to_choice(root.scaling_guard_var.get(), mw.SCALING_GUARD_CHOICES) == choice
+    assert root.scaling_var.get() == "basic"  # the other settings are untouched
+
+
+def test_cancel_keeps_the_scaling_guard_mode(root):
+    dlg = _open_dialog(root)
+    radios = [w for w in _widgets(dlg) if isinstance(w, ttk.Radiobutton)]
+    guard_var = next(str(w.cget("variable")) for w in radios if str(w.cget("text")) == "Default (error)")
+    (off,) = [w for w in radios if str(w.cget("variable")) == guard_var and str(w.cget("value")) == "off"]
+    off.invoke()
+    (cancel,) = [w for w in _widgets(dlg) if isinstance(w, ttk.Button) and str(w.cget("text")) == "Cancel"]
+    cancel.invoke()
+    assert root.scaling_guard_var.get() == "warn"

@@ -39,6 +39,7 @@ def root(tmp_path, monkeypatch):
     r.solver_log_level_var = tk.StringVar(master=r, value="normal")
     r.solver_time_limit_var = tk.IntVar(master=r, value=0)
     r.scaling_var = tk.StringVar(master=r, value="basic")
+    r.scaling_guard_var = tk.StringVar(master=r, value="warn")
     r.presolve_var = tk.StringVar(master=r, value="choose")
     yield r
     r.destroy()
