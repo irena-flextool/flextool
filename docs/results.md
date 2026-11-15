@@ -289,6 +289,7 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
 
 - `group` entity `sum_flow_t` parameter — [MWh/step] dispatch decomposed by `(type, item)` where `type` is one of: *slack* (upward/downward), *from_unit*, *from_unitGroup*, *to_unit*, *to_unitGroup*, *from_connection*, *from_connectionGroup*, *to_connection*, *to_connectionGroup*, *inflow*, *internal_losses* (units/connections/storages)
 - `group` entity `sum_flow_annualized` parameter — [MWh] same decomposition, annualized period totals
+- `group` entity `ramp_envelope_t` parameter — [MW] the room of the group's flows to change toward the next step, next to the net-load ramp (see [Ramp envelope](#ramp-envelope))
 
 ## Flow group results
 
@@ -356,8 +357,7 @@ and output of every unit, whether or not the unit has ramp limits.
 | `unit_ramp__inputNode__dt`: each unit input | MW per time step (or the node's unit) | + the unit took more from the node, − less | as above |
 
 In a rolling solve, the first step of a window is compared with the last realized step of the previous window. No
-column is a sum of the others. Earlier versions also had a node-level "ramp room" table, `node` `ramp_t`, with
-stacked headroom levels. It is no longer produced.
+column is a sum of the others. The room the system has to ramp is in the [ramp envelope](#ramp-envelope) below.
 
 **From MW per step to the ramp speed.** `ramp_speed_up` and `ramp_speed_down` are a share of capacity per minute
 (see [Units](reference/units.md)). To compare, divide the ramp by the capacity of that input or output and by the
@@ -366,6 +366,94 @@ unit on hourly steps has `ramp_t` = −30 MW. That is 30 / 500 / (60 × 1) = 0.0
 its capacity per minute, or 30 / 60 = 0.5 MW per minute. With 3-hour steps the same −30 MW is
 30 / 500 / 180 ≈ 0.00033. The ramp limit also counts the reserve the unit holds in that direction, so a unit can be
 at its limit with a `ramp_t` smaller than its ramp speed allows.
+
+### Ramp envelope
+
+The ramp envelope shows how much each node, and each node group with `print_dispatch` *yes*, could still change its
+supply toward the next time step, next to how much the net load changes. It is written for every run; there is no
+option to turn it on.
+
+| Table | Results database | Rows and columns | Unit |
+|---|---|---|---|
+| `node_ramp_envelope_dt_ep` | `node` `ramp_envelope_t` | one column per node and band; every node with a balance, except storage nodes | MW (the node's rate unit, for example `m3/h` for a water node) |
+| `nodeGroup_ramp_envelope_dt_gp` | `group` `ramp_envelope_t` | one column per node group (`print_dispatch` *yes*) and band | MW (`Mixed units of measure!` over nodes of different units) |
+| `timestep_hours_dt` | `model` `timestep_hours_t` | one value per realized step: the hours a year the step stands for (step duration × timestep weight ÷ the share of the year the period covers) | h/year |
+| `transition_hours_dt` | `model` `transition_hours_t` | one value per realized step: the length of the transition to the next step, (duration of t + duration of t⁺) / 2 | h |
+
+**Row t is the change from step t toward the next realized step t⁺** (the values are not per hour: a change of
+30 MW between two 3-hour steps is 30). A row is empty when t has no single next step: the last step of the run, the
+last step before a gap in the timeline, the end of a representative period, the last step of a period that the next
+period does not continue, and a step that more than one shown step continues. In a rolling solve, the last realized
+step of a window is filled from the first step of the next window. In a stochastic solve the rows follow the realized
+results (the realization dispatch), so the step before the reveal is filled from the realized branch.
+
+The bands (the down bands are stored as negative numbers):
+
+- *ramp_net_load* — net load at t⁺ − net load at t, where net load = demand − the potential of the VRE units (the
+  output their profiles allow). Positive: the other units, storages and connections must supply more. The
+  potential of a VRE unit that also touches a storage node is not subtracted: that unit is in the storage band.
+- *ramp_demand* — the same for the demand alone (demand = −`inflow`).
+- *units_up* / *units_down* — how much the units with a flow at the node can raise / lower the supply at t⁺: up to
+  their capacity × availability at t⁺ and down to their minimum load, within their ramp limits, minus the reserve
+  they hold at t⁺ in that direction. A unit that takes from the node (an input) raises the supply by consuming less;
+  its input is converted with the efficiency of each step. Units with online variables count only the units online
+  in both steps: the output of a unit that starts at t⁺, and the drop of a unit that stops at t⁺, is forced
+  movement and in no band.
+- *storage_up* / *storage_down* — the same for the units and connections between a storage node and the node, also
+  limited by what the storage holds at the end of t (and the room left in it) over the duration of t⁺. Inflow,
+  self-discharge and state profiles of the storage node are not considered.
+- *vre_up* ("curtailment release") / *vre_down* ("extra curtailment") — the VRE units' room measured against their
+  potential, since the net-load line already holds the change of the potential. *vre_up* is the curtailed output
+  that can be taken back at t⁺: it is 0 on every step without curtailment, however much the weather rises (the
+  rise is in the net-load line). *vre_down* is how much less than the potential allows the VRE units can give at
+  t⁺; it can be larger than the VRE's own output, because it includes curtailing the coming rise of the potential.
+- *connections_up* / *connections_down* — how much the connections can raise / lower the flow into the node at
+  t⁺, within their capacity × availability at t⁺ in each direction (losses on the sending side: an export at full
+  capacity draws capacity ÷ efficiency), minus the reserve the connection holds at the node at t⁺. The far end of
+  the connection is not considered.
+
+Everything is measured at t⁺: the capacity, availability and efficiency of t⁺, the reserve held at t⁺ and the ramp
+limits of the solve that realized t⁺ (a solve that leaves the ramp limits out, `reduce_unit_detail_method`, has no
+ramp cap). A node group sums the bands of its member nodes; a unit or connection with all of its nodes in the group
+counts 0, and member storage nodes count as outside the group.
+
+**A band is never negative.** Each flow's room is clipped at 0 before the flows are added up: a forced movement
+shows 0 room, not a negative room, and one flow's forced movement does not take room from another. Examples: a
+unit that stops at t⁺, an availability or a potential that falls below the current flow, a reserve at t⁺ larger
+than the current flow allows, an efficiency change that raises a unit's consumption at the same output, curtailment
+that disappears at sunset.
+
+**Reading the plot.** The net-load ramp should lie inside the envelope: −(sum of the down bands) ≤ *ramp_net_load*
+≤ sum of the up bands, after the change of the node's slack (loss of load − excess load) is taken out. The room
+between the line and the edge is the spare ramping capability. Where a flow was clipped, the envelope is wider than
+what the system can really do: the line cannot reach that edge. The line can be outside the envelope when:
+
+- a unit with a flow at the node (or in the group) starts or stops at t⁺;
+- a storage node in the storage band has an inflow, a self-discharge or a state profile;
+- the node's slack (loss of load or excess load) changes between the two steps;
+- in a node group, a unit or connection inside the group has losses: it counts 0 in the bands, so the change of its
+  losses is in no band (a lossy connection between two member nodes, for example).
+
+**Ramp frequency.** The ramp frequency (histogram) of a node or node group shows, per period, how often the net
+load and the demand change how fast: the rate is *ramp_net_load* (or *ramp_demand*) ÷ *transition_hours* [MW/h],
+and each step weighs its *timestep_hours* [h/year], so the bars add up to the hours a year of the shown steps. One
+set of bins serves every series of the plot (both rates, every compared scenario): from −M to +M, M the largest
+rate, the bin width the smallest of 1, 2 or 5 × 10ⁿ MW/h that gives at most about 40 bins, one bin centred on 0. The
+vertical lines are the smallest up room and the smallest down room over the shown steps, per transition divided by
+its *transition_hours*: a net-load rate beyond them was close to the limit at least once.
+
+**Where to see it.** In the [Result viewer](flextool_gui_interface.md#result-viewer), Dispatch mode, the view
+selector next to the time range chooses *Dispatch*, *Ramp envelope* (the bands stacked over the Start / Duration
+window, up above zero and down below, the net-load ramp as a black line and the demand ramp as a grey one) or
+*Ramp frequency* (the histogram of the selected scenario, every period) for the selected node or node group. The
+scenario comparison with dispatch plots writes `ramp_envelope_nodeGroup_<group>_<scenario>.png` (one per scenario)
+and `ramp_frequency_nodeGroup_<group>.png` (every compared scenario in one histogram) to `output_plot_comparisons/`
+for every node group with `print_dispatch` *yes*, and `ramp_envelope_node_<node>_<scenario>.png` /
+`ramp_frequency_node_<node>.png` for every node when the GUI's **Debug** option is on (`--debug` of
+`flextool-scenario-results`), as for the per-node dispatch plots; with [Write plotted data](#plotted-data-as-csv)
+each comes with a CSV file. The band colours are `categories: ramp_envelope:` in the project's `plot_settings.yaml`
+(keys `units`, `storage`, `vre`, `connections`; the lines are always black and grey). The `debug` plot set of
+`default_plots.yaml` also has line plots of the two tables, *Node ramp envelope* and *NodeGroup ramp envelope*.
 
 ## DC power flow
 
@@ -414,6 +502,11 @@ default and then costs nothing.
   one after another), the flows, and the demand line as a `Demand` column, as in the legend (`Demand (line)` if a
   flow is already called `Demand`). `dispatch_data.xlsx` (scenario comparison with `--write-dispatch-xlsx`) has one
   sheet per dispatch plot with the same `period` and `time` columns, a value on every row.
+- A ramp envelope plot's CSV has the `period` and `time` columns of the plotted window, the eight bands (the down
+  bands negative) and `ramp_net_load` / `ramp_demand`. A ramp frequency plot's CSV has one row per bin
+  (`bin_from`, `bin_to`, MW/h), the hours a year of each `<scenario> | net load [h/year]` and
+  `<scenario> | demand [h/year]`, and the `smallest up room` / `smallest down room` lines, with a `subplot` column
+  (the period) when the run has several periods.
 - If a CSV cannot be written, the log has a warning naming the file, and the plots are still made.
 - In `plot_settings.yaml`, only `write_plot_data: true` (no quotes) turns this on; a quoted `"true"` or any value
   that is not `true` or `false` leaves it off with a warning.

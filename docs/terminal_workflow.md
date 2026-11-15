@@ -788,4 +788,4 @@ Output plots are controlled by YAML configuration files:
 
 The file defines which results to plot, plot types, layout, and styling. You can create custom configuration files and pass them via `--output-config` or `--output-config-path`. An old setting that points to `templates/default_plots.yaml` or `default_comparison_plots.yaml` uses the bundled file.
 
-Dispatch plot colors and stacking order are defined in the project's `plot_settings.yaml` (`projects/<Name>/plot_settings.yaml`), which is created from the bundled `flextool/schemas/default_plot_settings.yaml` and can be edited via the GUI or any text editor.
+Dispatch plot colors and stacking order are defined in the project's `plot_settings.yaml` (`projects/<Name>/plot_settings.yaml`), which is created from the bundled `flextool/schemas/default_plot_settings.yaml` and can be edited via the GUI or any text editor. The colours of the ramp envelope bands are under `categories: ramp_envelope:` (keys `units`, `storage`, `vre`, `connections`); see [Ramp envelope](results.md#ramp-envelope).

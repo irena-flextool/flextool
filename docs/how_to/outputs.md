@@ -37,7 +37,7 @@ FlexTool splits these two concerns across a node `group` and a separate `flowGro
 
 | Intent | Set this | Role | Members |
 |---|---|---|---|
-| Pick a set of nodes and get a per-timestep *decomposition* of every flow crossing them (one column per contributing process/connection) | `print_dispatch: yes` on `group` | the *decomposition* — produces `group_flow_t` | `group__node` |
+| Pick a set of nodes and get a per-timestep *decomposition* of every flow crossing them (one column per contributing process/connection) | `print_dispatch: yes` on `group` | the *decomposition* — produces `group_flow_t`, and the group's ramp envelope `ramp_envelope_t` | `group__node` |
 | Re-bucket a set of flows so they appear as a single aggregated band inside that dispatch output | `flow_aggregator: dispatch_plots_only` on `flowGroup` | a dispatch-band re-bucketer — no output on its own | `flowGroup__unit__node` or `flowGroup__connection__node` |
 
 Together they work like this: `print_dispatch` builds the dispatch table for its node group; while doing so it inspects every flow touching those nodes, and if any of those flows are in a `flowGroup` whose `flow_aggregator` is `dispatch_plots_only` (or `both`), their columns are collapsed into a single band named after the flowGroup. A `dispatch_plots_only` flowGroup produces no output of its own — it only reshapes a dispatch table that a node group is producing.
