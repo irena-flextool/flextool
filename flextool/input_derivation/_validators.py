@@ -1030,12 +1030,15 @@ def _has_time_level(parsed, timesteps: set[str]) -> bool:
     return False
 
 
-def _piecewise_w7_items(db, unit: str, inputs: list[str], remapped: bool) -> list[tuple[str, str]]:
+def _piecewise_w7_items(db, unit: str, inputs: list[str], remapped: bool,
+                        inertia_from_flow: bool = False) -> list[tuple[str, str]]:
     """``[(item, input node)]`` that a multi-line piecewise_linear unit's input can meet by burning above its curve
-    (W7): an enabled upward reserve at an input node; for a unit whose input items stay on its input (not a
-    one-input, one-output unit, whose items act on its output): a lower_limit / fixed profile on an input, a
-    flowGroup with a minimum flow through an input, a greater_than / equal user constraint with a coefficient on an
-    input, an input-side ramp limit."""
+    (W7): an enabled upward reserve at an input node, a flowGroup with a minimum flow through an input (flowGroup
+    membership stays on the input also for a one-input unit) and, when the unit's inertia counts from its flow
+    (``inertia_from_flow``: no online variables in some solve), an ``inertia_constant`` on an input whose node is in
+    a group with ``has_inertia`` yes; for a unit whose input items stay on its input (not a one-input, one-output
+    unit, whose items act on its output): a lower_limit / fixed profile on an input, a greater_than / equal user
+    constraint with a coefficient on an input, an input-side ramp limit."""
     items: list[tuple[str, str]] = []
     on = set(inputs)
     disabled = {k for k, v in _str_values(db, "reserve__upDown__unit__node", "is_enabled").items() if v == "no"}
@@ -1043,6 +1046,24 @@ def _piecewise_w7_items(db, unit: str, inputs: list[str], remapped: bool) -> lis
         r, ud, u, n = ent["entity_byname"][:4]
         if u == unit and ud == "up" and n in on and tuple(ent["entity_byname"]) not in disabled:
             items.append((f"upward reserve '{r}'", n))
+    minimum = {pv["entity_byname"][0] for par in ("min_instant_flow", "min_cumulative_flow")
+               for pv in db.find_parameter_values(entity_class_name="flowGroup", parameter_definition_name=par)
+               if pv["type"] is not None}
+    for ent in db.find_entities(entity_class_name="flowGroup__unit__node"):
+        g, u, n = ent["entity_byname"][:3]
+        if u == unit and n in on and g in minimum:
+            items.append((f"flowGroup '{g}' minimum", n))
+    if inertia_from_flow:
+        inertia_groups = {k[0] for k, v in _str_values(db, "group", "has_inertia").items() if v == "yes"}
+        node_groups: dict[str, list[str]] = {}
+        for ent in db.find_entities(entity_class_name="group__node"):
+            g, n = ent["entity_byname"][:2]
+            if g in inertia_groups:
+                node_groups.setdefault(n, []).append(g)
+        for (u, n), values in _arc_values(db, "unit__inputNode", "inertia_constant").items():
+            if u == unit and n in on and any(x != 0.0 for x in values):
+                for g in sorted(node_groups.get(n, [])):
+                    items.append((f"inertia for group '{g}'", n))
     if remapped:
         return items
     default_pm = str(_definition_default(db, "unit__node__profile", "profile_method") or "upper_limit")
@@ -1053,13 +1074,6 @@ def _piecewise_w7_items(db, unit: str, inputs: list[str], remapped: bool) -> lis
         method = pm.get(byname, default_pm)
         if u == unit and n in on and method in ("lower_limit", "fixed"):
             items.append((f"profile '{prof}' ({method})", n))
-    minimum = {pv["entity_byname"][0] for par in ("min_instant_flow", "min_cumulative_flow")
-               for pv in db.find_parameter_values(entity_class_name="flowGroup", parameter_definition_name=par)
-               if pv["type"] is not None}
-    for ent in db.find_entities(entity_class_name="flowGroup__unit__node"):
-        g, u, n = ent["entity_byname"][:3]
-        if u == unit and n in on and g in minimum:
-            items.append((f"flowGroup '{g}' minimum", n))
     default_sense = str(_definition_default(db, "constraint", "sense") or "equal")
     senses = {k[0]: v for k, v in _str_values(db, "constraint", "sense").items()}
     for pv in db.find_parameter_values(entity_class_name="unit__inputNode",
@@ -1074,6 +1088,27 @@ def _piecewise_w7_items(db, unit: str, inputs: list[str], remapped: bool) -> lis
         if u == unit and n in on and method in ("ramp_limit", "both"):
             items.append(("ramp limit", n))
     return items
+
+
+def _piecewise_w7_values(db, inputs: list[str]) -> list[tuple[str, str, str]]:
+    """``[(commodity, what, input node)]``: a commodity of an input node of a multi-line piecewise_linear unit with
+    a negative ``price`` or ``co2_content`` (a credit under a CO2 price) in some period or step (W7): where the
+    input has a negative value, burning it above the curve pays."""
+    on = set(inputs)
+    negative = {par: {pv["entity_byname"][0] for pv in db.find_parameter_values(
+        entity_class_name="commodity", parameter_definition_name=par)
+        if pv["type"] is not None and any(x < 0.0 for x in _numeric_values(pv["parsed_value"]))}
+        for par in ("price", "co2_content")}
+    out: list[tuple[str, str, str]] = []
+    for ent in db.find_entities(entity_class_name="commodity__node"):
+        c, n = ent["entity_byname"][:2]
+        if n not in on:
+            continue
+        if c in negative["price"]:
+            out.append((c, "a negative price", n))
+        if c in negative["co2_content"]:
+            out.append((c, "a negative co2_content (a credit under a CO2 price)", n))
+    return out
 
 
 def validate_piecewise_linear_inputs(db, logger: logging.Logger) -> None:
@@ -1093,7 +1128,8 @@ def validate_piecewise_linear_inputs(db, logger: logging.Logger) -> None:
     ``min_load`` below its first point (none = 0); W2 ``efficiency`` / ``efficiency_at_min_load`` without a time
     level on a piecewise_linear unit (not used); W6 ``piecewise_linear_efficiency`` on a unit of another
     conversion_method (not used); W7 a multi-line unit with an input item the input can meet by burning above the
-    curve (:func:`_piecewise_w7_items`).  W3 (auto start-ups) is the classifier's
+    curve (:func:`_piecewise_w7_items`) or an input commodity with a negative price or co2_content
+    (:func:`_piecewise_w7_values`).  W3 (auto start-ups) is the classifier's
     (``_process_method.derive_process_method``), W4 :func:`validate_startup_inputs`'.
     """
     from flextool.engine.input._piecewise_curve import curves_by_unit, piecewise_unit_flags, rises_first, segment
@@ -1150,6 +1186,13 @@ def validate_piecewise_linear_inputs(db, logger: logging.Logger) -> None:
     n_inputs = _arcs(db, "unit__inputNode")
     delayed = {pv["entity_byname"][0] for pv in db.find_parameter_values(
         entity_class_name="unit", parameter_definition_name="delay") if pv["type"] is not None}
+    # W7 inertia: a unit without online variables (or a solve that leaves them out) counts inertia from its flow.
+    startup = {k[0]: v for k, v in _str_values(db, "unit", "startup_method").items()}
+    min_time = {k[0]: v for k, v in _str_values(db, "unit", "minimum_time_method").items()}
+    default_startup = str(_definition_default(db, "unit", "startup_method") or "no_startup")
+    default_min_time = str(_definition_default(db, "unit", "minimum_time_method") or "none")
+    online_left_out = any(v in ("online", "online_ramps")
+                          for v in _str_values(db, "solve", "reduce_unit_detail_method").values())
     for unit in pw:
         by_d = by_unit.get(unit, {})
         unit_floors = floors.get(unit, {})
@@ -1179,9 +1222,16 @@ def validate_piecewise_linear_inputs(db, logger: logging.Logger) -> None:
         if not by_d or not piecewise_unit_flags(by_d.values()).multi_line:
             continue
         remapped = (len(n_inputs.get(unit, [])) == 1 and len(outputs.get(unit, [])) == 1 and unit not in delayed)
-        for item, node in _piecewise_w7_items(db, unit, inputs.get(unit, []), remapped):
+        has_online = (startup.get(unit, default_startup) != "no_startup" or min_time.get(unit, default_min_time) != "none"
+                      or piecewise_unit_flags(by_d.values()).needs_online)
+        for item, node in _piecewise_w7_items(db, unit, inputs.get(unit, []), remapped,
+                                              inertia_from_flow=not has_online or online_left_out):
             logger.warning("Unit '%s': its %s on input '%s' can be met by burning input above the part-load curve "
                            "(piecewise_linear rows are 'at least'); check the post-solve warning", unit, item, node)
+        for commodity, what, node in _piecewise_w7_values(db, inputs.get(unit, [])):
+            logger.warning("Unit '%s': commodity '%s' of input '%s' has %s: where the input pays, the unit can burn "
+                           "it above its part-load curve (piecewise_linear rows are 'at least'); check the post-solve "
+                           "warning", unit, commodity, node, what)
 
 
 def validate_ladder_methods(db, logger: logging.Logger) -> None:

@@ -359,3 +359,55 @@ def test_W4_only_startup_only_inputs(tmp_path, schema_db_url, caplog) -> None:
             validate_piecewise_linear_inputs(db, logger)
     assert ("unit 'U': piecewise_linear with only startup_only inputs: its part-load curve has no input to draw "
             "from.") in [r.getMessage() for r in caplog.records if r.name == logger.name]
+
+
+def test_W7_one_input_unit_flowgroup_inertia_and_negative_values(tmp_path, schema_db_url, caplog) -> None:
+    """A one-input, one-output unit keeps its flowGroup membership on its input (design §3.4, decisions): a
+    flowGroup minimum through the input warns.  Inertia counts from the input flow of a unit without online
+    variables (the electrolyser E, no start-ups) or of every unit in a solve whose reduce_unit_detail_method leaves
+    them out (G with the rising O1 curve gets start-ups, so only under reduce online).  A commodity of an input
+    with a negative price or co2_content warns for every multi-line unit."""
+    ents = [("flowGroup", ("fg",)), ("flowGroup__unit__node", ("fg", "E", "fuel")), ("group", ("ig",)),
+            ("group__node", ("ig", "fuel")), ("commodity", ("c",)), ("commodity__node", ("c", "fuel"))]
+    vals = [("flowGroup", ("fg",), "min_cumulative_flow", 10.0), ("group", ("ig",), "has_inertia", "yes"),
+            ("group", ("ig",), "inertia_limit", 100.0),
+            ("unit__inputNode", ("E", "fuel"), "inertia_constant", 2.0),
+            ("unit__inputNode", ("G", "fuel"), "inertia_constant", 2.0),
+            ("commodity", ("c",), "price", Map(["p2030", "p2035"], [10.0, -1.0], **PERIOD)),
+            ("commodity", ("c",), "co2_content", -0.1), ("unit", ("G",), "min_load", 0.4)]
+    tail = "can be met by burning input above the part-load curve (piecewise_linear rows are 'at least'); " \
+           "check the post-solve warning"
+    neg = "where the input pays, the unit can burn it above its part-load curve (piecewise_linear rows are " \
+          "'at least'); check the post-solve warning"
+    negatives = [f"Unit '{u}': commodity 'c' of input 'fuel' has {what}: {neg}" for u in ("E", "G")
+                 for what in ("a negative price", "a negative co2_content (a credit under a CO2 price)")]
+    _, warnings = _check(tmp_path, schema_db_url, caplog, [_unit("E", curve=ELECTROLYSER), _unit("G")],
+                         extra_values=vals, extra_entities=ents)
+    assert sorted(warnings) == sorted([f"Unit 'E': its flowGroup 'fg' minimum on input 'fuel' {tail}",
+                                       f"Unit 'E': its inertia for group 'ig' on input 'fuel' {tail}"] + negatives)
+    caplog.clear()
+    (tmp_path / "reduced").mkdir()
+    _, warnings = _check(tmp_path / "reduced", schema_db_url, caplog, [_unit("E", curve=ELECTROLYSER), _unit("G")],
+                         extra_values=vals + [("solve", ("s1",), "reduce_unit_detail_method", "online")],
+                         extra_entities=ents)
+    assert f"Unit 'G': its inertia for group 'ig' on input 'fuel' {tail}" in warnings
+
+
+def test_W7_not_for_items_that_cannot_pay(tmp_path, schema_db_url, caplog) -> None:
+    """No W7: a single-line unit (its conversion is an equality) with an upward reserve on its input; a downward
+    reserve, a disabled upward reserve, a less_than constraint, an upper_limit profile and an inertia_constant at a
+    node of a group without has_inertia on a multi-line unit with two inputs; a commodity with positive values."""
+    ents = [("reserve", ("r",)), ("profile", ("pr",)), ("constraint", ("c",)), ("group", ("g",)),
+            ("group__node", ("g", "gas")), ("commodity", ("k",)), ("commodity__node", ("k", "gas")),
+            ("reserve__upDown__unit__node", ("r", "up", "R", "fuel")),
+            ("reserve__upDown__unit__node", ("r", "down", "E", "fuel")),
+            ("reserve__upDown__unit__node", ("r", "up", "E", "gas")), ("unit__node__profile", ("E", "fuel", "pr"))]
+    vals = [("reserve__upDown__unit__node", ("r", "up", "E", "gas"), "is_enabled", "no"),
+            ("constraint", ("c",), "sense", "less_than"),
+            ("unit__inputNode", ("E", "gas"), "constraint_flow_coeff", Map(["c"], [1.0], index_name="constraint")),
+            ("unit__inputNode", ("E", "gas"), "inertia_constant", 2.0), ("commodity", ("k",), "price", 5.0),
+            ("commodity", ("k",), "co2_content", 0.2), ("unit", ("R",), "min_load", 0.4)]
+    _, warnings = _check(tmp_path, schema_db_url, caplog,
+                         [_unit("E", inputs=("fuel", "gas"), curve=ELECTROLYSER), _unit("R", curve=RISING)],
+                         extra_values=vals, extra_entities=ents)
+    assert warnings == []

@@ -1094,6 +1094,9 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
 
         # Pre-process results to be closer to what needed for output writing
         r = post_process_results(par, s, v)
+        # W5: input burnt above the part-load curve of a multi-line piecewise_linear unit (realized steps).
+        from flextool.process_outputs.calc_piecewise import warn_piecewise_excess
+        warn_piecewise_excess(par, s, unit_ctx.node_units)
         start = log_time("Post-processed outputs", start, timing_recorder)
 
         # The realized steps at which a time-series plot starts a new line (gaps in the timeline,

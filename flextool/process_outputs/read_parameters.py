@@ -37,6 +37,7 @@ from flextool.process_outputs._inmemory_helpers import (
     wide_per_entity,
     with_solve_column,
 )
+from flextool.process_outputs.calc_piecewise import piecewise_input_and_excess
 
 if TYPE_CHECKING:
     from polar_high import Solution
@@ -1576,6 +1577,15 @@ def read_parameters(
     p.entity_all_capacity = _entity_all_capacity(
         flex_data, solution, solve_name=solve_name,
     )
+
+    # process_piecewise_input_dt / process_piecewise_excess_dt — (solve, period, time) × process: the weighted
+    # input of each multi-line piecewise_linear unit and its part above the curve [MW], post-solve (calc_piecewise;
+    # the post-solve warning W5).  No columns without such a unit.
+    pw = piecewise_input_and_excess(flex_data, solution)
+    for attr, col in (("process_piecewise_input_dt", "input"), ("process_piecewise_excess_dt", "excess")):
+        setattr(p, attr, _pdt_long_multi_col(
+            None if pw is None else pw.select("p", "d", "t", pl.col(col).alias("value")),
+            solve_name=solve_name, col_dims=("p",), col_names=("process",)))
 
     # process_startup_cost — (solve, period) × process.
     p.process_startup_cost = _pdX_per_entity(

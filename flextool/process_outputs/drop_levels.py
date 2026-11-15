@@ -56,6 +56,9 @@ _PAR_DROP = [
     'step_duration', 'timestep_weight', 'flow_min', 'flow_max',
     'process_availability', 'process_source_sink_varCost',
     'process_slope', 'process_section',
+    # The weighted input of the multi-line piecewise_linear units and its part above the curve (W5): the
+    # realizing solve's values per step.
+    'process_piecewise_input_dt', 'process_piecewise_excess_dt',
     'node_self_discharge_loss', 'node_penalty_up', 'node_penalty_down',
     'node_inflow', 'commodity_price', 'group_co2_price', 'group_inertia_limit',
     # ladder_price_ann (commodity price ladder, #57): authored per period, invariant across rolls that
