@@ -16,12 +16,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tests.engine._unit_db import b64, make_db
+from tests.engine._unit_db import b64, is_realization, make_db
 
 pytestmark = pytest.mark.solver
 
 REPO = Path(__file__).resolve().parents[2]
-STEPS = ["t0001", "t0002", "t0003", "t0004"]
+SOLVE = "y2020_2day_dispatch"
 UP = ("units_up", "storage_up", "vre_up", "connections_up")
 DOWN = ("units_down", "storage_down", "vre_down", "connections_down")
 
@@ -31,8 +31,13 @@ def _strict_autoscale(monkeypatch):
     monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
 
 
+def _steps(n: int) -> list[str]:
+    return [f"t{i:04d}" for i in range(1, n + 1)]
+
+
 def _series(values: list[float]) -> list:
-    return b64({"index_type": "str", "index_name": "time", "data": [[t, x] for t, x in zip(STEPS, values)]}, "map")
+    return b64({"index_type": "str", "index_name": "time", "data": [[t, x] for t, x in zip(_steps(len(values)),
+                                                                                         values)]}, "map")
 
 
 def _float(x: float) -> list:
@@ -43,39 +48,86 @@ def _str(x: str) -> list:
     return b64(x, "str")
 
 
-def _four_steps() -> list:
-    return [["timeset", "2day", "timeset_duration", b64({"index_type": "str", "data": [["t0001", 4.0]]}, "map")]]
+def _n_steps(n: int) -> list:
+    """The ``2day`` timeset cut to its first ``n`` one-hour steps."""
+    return [["timeset", "2day", "timeset_duration", b64({"index_type": "str", "data": [["t0001", float(n)]]}, "map")]]
 
 
-def _envelope(tmp_path_factory, alt: str, entities: list, values: list) -> dict[str, pd.DataFrame]:
+def _rolling(horizon: float, jump: float) -> list:
+    return [["solve", SOLVE, "solve_mode", _str("rolling_window")],
+            ["solve", SOLVE, "rolling_solve_horizon", _float(horizon)],
+            ["solve", SOLVE, "rolling_solve_jump", _float(jump)]]
+
+
+#: Solved cases of this module: ``alt -> (steps, work folder, scenario)``; freed at module teardown.
+_RUNS: dict[str, tuple[dict, Path, str]] = {}
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _free_runs():
+    yield
+    _RUNS.clear()
+
+
+def _solve(tmp_path_factory, alt: str, entities: list, values: list, n_steps: "int | None" = 4,
+           fixture_json: "Path | None" = None, base_chain: "list[str] | None" = None) -> tuple[dict, Path, str]:
+    """Solve the case once per module (``_RUNS``), the solutions kept; ``n_steps`` None keeps the timesets of the
+    base chain."""
+    from flextool.engine import run_chain_from_db
+
+    if alt not in _RUNS:
+        extra = {} if fixture_json is None else {"fixture_json": fixture_json}
+        url, scen = make_db(tmp_path_factory, alt=alt, values=(_n_steps(n_steps) if n_steps else []) + values,
+                            base_chain=base_chain or ["init"], entities=entities, **extra)
+        work = tmp_path_factory.mktemp(f"{alt}_w")
+        with contextlib.redirect_stdout(io.StringIO()):
+            steps = run_chain_from_db(url, scen, work_folder=work, keep_solutions=True)
+        _RUNS[alt] = (steps, work, scen)
+    return _RUNS[alt]
+
+
+def _envelope(tmp_path_factory, alt: str, entities: list, values: list, n_steps: int = 4,
+              **kwargs) -> dict[str, pd.DataFrame]:
     """Solve the case and write the two envelope tables as parquet; ``{table: frame}`` with (period, time) rows and
     (entity, band) columns."""
-    from flextool.engine import run_chain_from_db
     from flextool.lean_parquet import read_lean_parquet
     from flextool.process_outputs.out_group import nodeGroup_ramp_envelope
     from flextool.process_outputs.out_node import node_ramp_envelope
     from flextool.process_outputs.write_outputs import write_outputs
 
-    url, scen = make_db(tmp_path_factory, alt=alt, values=_four_steps() + values, base_chain=["init"],
-                        entities=entities)
-    work = tmp_path_factory.mktemp(f"{alt}_w")
-    with contextlib.redirect_stdout(io.StringIO()):
-        steps = run_chain_from_db(url, scen, work_folder=work, keep_solutions=True)
-        last = next(reversed(steps.values()))
-        write_outputs(scen, output_location=str(work / "out"), subdir=scen,
-                      output_config_path=str(REPO / "flextool" / "schemas" / "default_plots.yaml"),
-                      output_funcs=[node_ramp_envelope, nodeGroup_ramp_envelope],
-                      write_methods=["parquet"], fallback_output_location=str(work),
-                      raw_output_dir=str(work / "output_raw"), solution=last.solution,
-                      solve_name=last.solve_name, flex_data=last.flex_data,
-                      flex_data_provider=last.flex_data_provider)
+    steps, work, scen = _solve(tmp_path_factory, alt, entities, values, n_steps, **kwargs)
+    last = next(reversed(steps.values()))
+    out_dir = work / "out"
+    if not (out_dir / "output_parquet" / scen).is_dir():
+        with contextlib.redirect_stdout(io.StringIO()):
+            write_outputs(scen, output_location=str(out_dir), subdir=scen,
+                          output_config_path=str(REPO / "flextool" / "schemas" / "default_plots.yaml"),
+                          output_funcs=[node_ramp_envelope, nodeGroup_ramp_envelope],
+                          write_methods=["parquet"], fallback_output_location=str(work),
+                          raw_output_dir=str(work / "output_raw"), solution=last.solution,
+                          solve_name=last.solve_name, flex_data=last.flex_data,
+                          flex_data_provider=last.flex_data_provider)
     out = {}
-    for path in (work / "out" / "output_parquet" / scen).glob("*.parquet"):
+    for path in (out_dir / "output_parquet" / scen).glob("*.parquet"):
         frame = read_lean_parquet(path)
         if isinstance(frame.columns, pd.MultiIndex) and "scenario" in frame.columns.names:
             frame = frame.droplevel("scenario", axis=1)
         out[path.stem] = frame
     return out
+
+
+def _results(tmp_path_factory, alt: str, entities: list, values: list, n_steps: int = 4, **kwargs):
+    """``(par, s, r)`` of the solved case, read and post-processed as the output writer does."""
+    from flextool.process_outputs.process_results import post_process_results
+    from flextool.process_outputs.write_outputs import _read_outputs
+
+    steps, work, _ = _solve(tmp_path_factory, alt, entities, values, n_steps, **kwargs)
+    last = next(reversed(steps.values()))
+    with contextlib.redirect_stdout(io.StringIO()):
+        par, s, v = _read_outputs(str(work / "output_raw"), flex_data=last.flex_data, solution=last.solution,
+                                  solve_name=last.solve_name, flex_data_provider=last.flex_data_provider)
+        r = post_process_results(par, s, v)
+    return par, s, r
 
 
 def _rows(frame: pd.DataFrame, entity: str) -> pd.DataFrame:
@@ -86,13 +138,17 @@ def _rows(frame: pd.DataFrame, entity: str) -> pd.DataFrame:
 
 
 def _check(frame: pd.DataFrame, entity: str, expected: dict[str, list[float]]) -> None:
-    """Rows t0001..t0003 equal ``expected`` (band -> three values; bands not given are 0), row t0004 empty."""
+    """Every row but the last equals ``expected`` (band -> values; bands not given are 0), the last row (no
+    successor) is empty."""
     sub = _rows(frame, entity)
+    n = len(next(iter(expected.values())))
+    steps = _steps(n + 1)
+    assert list(sub.index) == steps, (entity, list(sub.index))
     for band in ("ramp_net_load", "ramp_demand", *UP, *DOWN):
-        want = expected.get(band, [0.0, 0.0, 0.0])
-        got = sub.loc[STEPS[:3], band].to_numpy(dtype=float)
+        want = expected.get(band, [0.0] * n)
+        got = sub.loc[steps[:n], band].to_numpy(dtype=float)
         assert got == pytest.approx(want, abs=1e-6), (entity, band, list(got))
-    assert sub.loc[STEPS[3]].isna().all(), (entity, "the last step has no successor")
+    assert sub.loc[steps[n]].isna().all(), (entity, "the last step has no successor")
 
 
 # ── Case 9: a connection holding up and down reserve at the node (spec §2.5, CHG-13) ─────────────────────────
@@ -238,3 +294,303 @@ def test_case10_time_varying_efficiency_converts_each_step(tmp_path_factory) -> 
     _check(env, "e", {"units_up": [72.5, 65, 65], "units_down": [-40, -56, -60]})
     _check(env, "h", {"ramp_net_load": [20, -10, -20], "ramp_demand": [20, -10, -20],
                       "units_up": [30, 30, 30], "units_down": [-10, -10, -20]})
+
+
+# ── Case 8a: a connection with efficiency < 1 and an availability drop at t⁺ (CHG-2, CHG-4) ─────────────────
+
+
+def _case8a() -> tuple[list, list]:
+    ents = [["node", "n", None], ["node", "m", None],
+            ["unit", "A", None], ["unit", "E", None], ["unit", "Bm", None],
+            ["unit__outputNode", ["A", "n"], None], ["unit__outputNode", ["E", "n"], None],
+            ["unit__outputNode", ["Bm", "m"], None],
+            ["connection", "c", None], ["connection__node__node", ["c", "n", "m"], None]]
+    vals = [["node", "n", "node_type", _str("balance")], ["node", "n", "inflow", _series([-30, -80, -95, -60])],
+            ["node", "m", "node_type", _str("balance")], ["node", "m", "inflow", _series([-60, -30, -10, -20])],
+            ["unit", "A", "existing", _float(100.0)], ["unit", "A", "conversion_method", _str("none")],
+            ["unit", "A", "availability", _series([1.0, 1.0, 0.5, 1.0])],
+            ["unit__outputNode", ["A", "n"], "other_operational_cost", _float(10.0)],
+            ["unit", "E", "existing", _float(100.0)], ["unit", "E", "conversion_method", _str("none")],
+            ["unit__outputNode", ["E", "n"], "other_operational_cost", _float(100.0)],
+            ["unit", "Bm", "existing", _float(200.0)], ["unit", "Bm", "conversion_method", _str("none")],
+            ["unit__outputNode", ["Bm", "m"], "other_operational_cost", _float(50.0)],
+            ["connection", "c", "existing", _float(40.0)], ["connection", "c", "efficiency", _float(0.8)]]
+    return ents, vals
+
+
+#: Oracle Case 8a, both nodes (rows t1..t3; t4 empty).
+CASE_8A = {
+    "n": {"ramp_net_load": [50, 15, -35], "ramp_demand": [50, 15, -35],
+          "units_up": [120, 100, 145], "connections_up": [90, 60, 0],
+          "units_down": [-80, -100, -55], "connections_down": [0, -30, -90]},
+    "m": {"ramp_net_load": [-30, -20, 10], "ramp_demand": [-30, -20, 10],
+          "units_up": [180, 186, 140], "connections_up": [0, 24, 90],
+          "units_down": [-20, -14, -60], "connections_down": [-90, -66, 0]},
+}
+
+
+def test_case8a_lossy_connection_and_availability_drop(tmp_path_factory) -> None:
+    """Oracle Case 8a: the connection's node-side range is [−cap·slope, +cap] = [−50, +40] (losses on the drawing
+    side): n t1 exports 50 MW drawn → up 90, down 0; A's availability falls to 0.5 at t3, so n t2 A up raw
+    50 − 100 = −50 → 0 (forced movement)."""
+    ents, vals = _case8a()
+    env = _envelope(tmp_path_factory, "re_case8a", ents, vals)["node_ramp_envelope_dt_ep"]
+    for node, expected in CASE_8A.items():
+        _check(env, node, expected)
+
+
+def test_rolling_seam_row_reads_the_next_roll(tmp_path_factory) -> None:
+    """Case 8a as a rolling solve (horizon 3 h, jump 2 h: roll 0 realizes t1, t2, roll 1 t3, t4).  Every step's
+    optimum is independent of the others, so the dispatch is the single solve's, and the seam row t2 is filled from
+    roll 1's t3 (A's availability 0.5 at t3: n t2 units_up 100, the connection's flows at t2 and the range at t3)
+    with the Case 8a values; the last realized step t4 stays empty."""
+    ents, vals = _case8a()
+    steps, _, _ = _solve(tmp_path_factory, "re_case8a_roll", ents, vals + _rolling(3.0, 2.0))
+    assert len(steps) == 2, list(steps)
+    env = _envelope(tmp_path_factory, "re_case8a_roll", ents, vals + _rolling(3.0, 2.0))["node_ramp_envelope_dt_ep"]
+    for node, expected in CASE_8A.items():
+        _check(env, node, expected)
+
+
+# ── Cases 8b / 8c: ramp-limited wind; heavy curtailment then a large potential drop (CHG-5, CHG-6) ──────────
+
+
+def _case8b(reduce: "str | None" = None) -> tuple[list, list]:
+    ents = [["node", "n", None], ["unit", "W", None], ["unit", "G", None],
+            ["unit__outputNode", ["W", "n"], None], ["unit__outputNode", ["G", "n"], None],
+            ["profile", "wp", None], ["unit__node__profile", ["W", "n", "wp"], None]]
+    vals = [["node", "n", "node_type", _str("balance")], ["node", "n", "inflow", _float(-50.0)],
+            ["unit", "W", "existing", _float(100.0)], ["unit", "W", "conversion_method", _str("none")],
+            ["profile", "wp", "profile", _series([0.0, 0.6, 0.9, 0.2, 0.2])],
+            ["unit__node__profile", ["W", "n", "wp"], "profile_method", _str("upper_limit")],
+            ["unit__outputNode", ["W", "n"], "ramp_method", _str("ramp_limit")],
+            ["unit__outputNode", ["W", "n"], "ramp_speed_up", _float(0.005)],
+            ["unit__outputNode", ["W", "n"], "ramp_speed_down", _float(0.005)],
+            ["unit", "G", "existing", _float(100.0)], ["unit", "G", "conversion_method", _str("none")],
+            ["unit__outputNode", ["G", "n"], "other_operational_cost", _float(50.0)]]
+    if reduce is not None:
+        vals.append(["solve", SOLVE, "reduce_unit_detail_method", _str(reduce)])
+    return ents, vals
+
+
+def test_case8b_ramp_limited_wind(tmp_path_factory) -> None:
+    """Oracle Case 8b (W = 0, 30, 50, 20, 20; potential 0, 60, 90, 20, 20): the wind cannot follow the sunrise-like
+    rise at t1 (raw vre_up −30 → 0) and at t3 its 40 MW curtailment exceeds what the drop to 20 MW leaves (raw
+    vre_down −40 → 0); t3 vre_up 40 = the curtailment released."""
+    ents, vals = _case8b()
+    env = _envelope(tmp_path_factory, "re_case8b", ents, vals, n_steps=5)["node_ramp_envelope_dt_ep"]
+    _check(env, "n", {"ramp_net_load": [-60, -30, 70, 0], "ramp_demand": [0, 0, 0, 0],
+                      "units_up": [50, 80, 100, 70], "vre_up": [0, 0, 40, 0],
+                      "units_down": [-50, -20, 0, -30], "vre_down": [-60, -60, 0, -20]})
+
+
+def test_case8c_integers_ramps_drops_the_ramp_cap(tmp_path_factory) -> None:
+    """Oracle Case 8c: the same data in a solve with ``reduce_unit_detail_method = integers_ramps`` (the ramp limits
+    left out): W = min(pot, 50) = 0, 50, 50, 20, 20 and no ramp cap on the wind's room (t2 vre_up 10 = the
+    curtailment, vre_down 80)."""
+    ents, vals = _case8b("integers_ramps")
+    env = _envelope(tmp_path_factory, "re_case8c", ents, vals, n_steps=5)["node_ramp_envelope_dt_ep"]
+    _check(env, "n", {"ramp_net_load": [-60, -30, 70, 0], "ramp_demand": [0, 0, 0, 0],
+                      "units_up": [50, 100, 100, 70], "vre_up": [0, 10, 40, 0],
+                      "units_down": [-50, 0, 0, -30], "vre_down": [-60, -80, 0, -20]})
+
+
+# ── A time-varying input given as a constant and as an equivalent time map ─────────────────────────────────────
+
+
+def test_constant_and_equivalent_map_efficiency_give_the_same_envelope(tmp_path_factory) -> None:
+    """Case 10 with HP's efficiency 2 given as a constant and as a time map of 2s: the same LP, so the same
+    envelope tables (both nodes, every band and row)."""
+    ents, vals = _case10()
+    const = [v for v in vals if v[2] != "efficiency"] + [["unit", "HP", "efficiency", _float(2.0)]]
+    tmap = [v for v in vals if v[2] != "efficiency"] + [["unit", "HP", "efficiency", _series([2.0] * 4)]]
+    a = _envelope(tmp_path_factory, "re_eff_const", ents, const)["node_ramp_envelope_dt_ep"]
+    b = _envelope(tmp_path_factory, "re_eff_map", ents, tmap)["node_ramp_envelope_dt_ep"]
+    assert a.notna().to_numpy().any()
+    pd.testing.assert_frame_equal(a, b, check_exact=False, rtol=1e-12, atol=1e-9)
+
+
+# ── Case 4b: the step before a forecast fan (branch point), realized-branch output ───────────────────────────
+
+
+def _map(name: str, data: list) -> dict:
+    return {"type": "map", "index_type": "str", "index_name": name, "data": data}
+
+
+def _stochastic(series: dict[str, dict[str, list[float]]]) -> list:
+    """A stochastic-time map branch → analysis_time → time; ``series`` = {branch: {analysis time: values from that
+    step on}}."""
+    top = _map("branch", [[b, _map("analysis_time", [
+        [at, _map("time", [[f"t{int(at[1:]) + i:04d}", x] for i, x in enumerate(xs)])] for at, xs in ats.items()])]
+        for b, ats in series.items()])
+    top.pop("type")
+    return b64(top, "map")
+
+
+def _case4b() -> tuple[list, list]:
+    """Oracle Case 4b in FlexTool's stochastic form: trunk period p2020 = {t1, t2} and the fan at p2025 = {t3, t4}
+    (continuing p2020 on the same timeline), forecasts hi and lo, the realized designation ``real`` with hi's data.
+    The results hold the realization dispatch (p2020, then p2025 with the realized data), never the forecasts: the
+    oracle's variant B.  Variant A (both branches visible: two successors → empty) is not in the normal results
+    and stays pure-calc."""
+    ents = [["node", "n", None], ["unit", "G1", None], ["unit", "PV", None],
+            ["unit__outputNode", ["G1", "n"], None], ["unit__outputNode", ["PV", "n"], None],
+            ["profile", "pp", None], ["unit__node__profile", ["PV", "n", "pp"], None],
+            ["group", "stoch", None], ["group__node", ["stoch", "n"], None], ["group__unit", ["stoch", "PV"], None],
+            ["timeset", "trunk", None], ["timeset", "fan", None]]
+    branches = {"index_type": "str", "index_name": "period", "data": [["p2025", _map("branch", [
+        [b, _map("analysis_time", [["t0003", _map("realized", [[yes_no, 1.0]])]])]
+        for b, yes_no in (("real", "yes"), ("hi", "no"), ("lo", "no"))])]]}
+    # PV capacity 50 MW: potential trunk 0, 10; hi (= real) 20, 10; lo 0, 0.  Demand trunk 50, 60; hi 80, 90; lo 40, 50.
+    vals = [["node", "n", "node_type", _str("balance")],
+            ["node", "n", "inflow", _stochastic({"real": {"t0001": [-50, -60, -80, -90], "t0003": [-80, -90]},
+                                                 "hi": {"t0003": [-80, -90]}, "lo": {"t0003": [-40, -50]}})],
+            ["profile", "pp", "profile", _stochastic({"real": {"t0001": [0.0, 0.2, 0.4, 0.2], "t0003": [0.4, 0.2]},
+                                                      "hi": {"t0003": [0.4, 0.2]}, "lo": {"t0003": [0.0, 0.0]}})],
+            ["unit__node__profile", ["PV", "n", "pp"], "profile_method", _str("upper_limit")],
+            ["unit", "PV", "existing", _float(50.0)], ["unit", "PV", "conversion_method", _str("none")],
+            ["unit", "G1", "existing", _float(100.0)], ["unit", "G1", "conversion_method", _str("none")],
+            ["unit__outputNode", ["G1", "n"], "other_operational_cost", _float(50.0)],
+            ["unit__outputNode", ["G1", "n"], "ramp_method", _str("ramp_limit")],
+            ["unit__outputNode", ["G1", "n"], "ramp_speed_up", _float(0.005)],
+            ["unit__outputNode", ["G1", "n"], "ramp_speed_down", _float(0.005)],
+            ["group", "stoch", "include_stochastics", _str("yes")],
+            ["timeset", "trunk", "timeline", _str("y2020")], ["timeset", "fan", "timeline", _str("y2020")],
+            ["timeset", "trunk", "timeset_duration", b64({"index_type": "str", "data": [["t0001", 2.0]]}, "map")],
+            ["timeset", "fan", "timeset_duration", b64({"index_type": "str", "data": [["t0003", 2.0]]}, "map")],
+            ["solve", SOLVE, "period_timeset",
+             b64({"index_type": "str", "index_name": "period", "data": [["p2020", "trunk"], ["p2025", "fan"]]}, "map")],
+            ["solve", SOLVE, "realized_periods",
+             b64({"value_type": "str", "index_name": "period", "data": ["p2020", "p2025"]}, "array")],
+            ["solve", SOLVE, "stochastic_branches", b64(branches, "map")]]
+    return ents, vals
+
+
+def test_case4b_branch_point_row_reads_the_realized_branch(tmp_path_factory) -> None:
+    """Oracle Case 4b variant B: the last trunk step (p2020, t2) has one realized successor, the realization
+    dispatch's (p2025, t3), so its row is filled with the realized (hi) branch's t⁺ (PV potential 10 → 20, demand
+    60 → 80): rnl 10, rdem 20, vre_down −20; the fan's last step is empty."""
+    ents, vals = _case4b()
+    steps, _, _ = _solve(tmp_path_factory, "re_case4b", ents, vals)
+    assert any(is_realization(name) for name in steps), list(steps)
+    env = _envelope(tmp_path_factory, "re_case4b", ents, vals)["node_ramp_envelope_dt_ep"]
+    assert list(env.index) == [("p2020", "t0001"), ("p2020", "t0002"), ("p2025", "t0003"), ("p2025", "t0004")]
+    _check(env, "n", {"ramp_net_load": [0, 10, 20], "ramp_demand": [10, 20, 10],
+                      "units_up": [30, 30, 30], "units_down": [-30, -30, -30], "vre_down": [-10, -20, -10]})
+
+
+# ── The envelope holds the realized net-load ramp (spec §2.10, test 7) ─────────────────────────────────────────
+
+
+def _invariant(par, s, r, tol: float = 1e-6) -> tuple[int, list]:
+    """Check −Σdown ≤ ramp_net_load − Δslack ≤ Σup (Δslack = the change of unserved − excess energy, MW) on every
+    filled row of every node and dispatch group, except where spec §2.10 does not promise it: rows with a start-up or
+    a shut-down at t⁺ of a process with an arc at the entity, entities with an arc to a storage node that has an
+    inflow or a self-discharge, and groups with a process inside them (its arcs count 0, so the change of its
+    losses is in no band: ``network_coal_wind_reserve``'s group exceeds the envelope by exactly the change of the
+    internal connections' losses).  Returns ``(rows checked, violations)``; t⁺ is read from ``s.ramp_link`` here,
+    not from the envelope code."""
+    rows = r.flow_dt.index
+    link = s.ramp_link.to_frame(index=False)[["period", "time", "period_previous", "time_previous"]]
+    link = link[~link.duplicated(["period_previous", "time_previous"], keep=False)]
+    successor = pd.MultiIndex.from_frame(link[["period", "time"]])
+    predecessor = pd.MultiIndex.from_frame(link[["period_previous", "time_previous"]], names=["period", "time"])
+
+    def at_next(frame: pd.DataFrame) -> pd.DataFrame:
+        out = frame.reindex(successor)
+        out.index = predecessor
+        return out.reindex(rows)
+
+    def per_node(frame, columns) -> pd.DataFrame:
+        if frame is None or frame.shape[1] == 0:
+            return pd.DataFrame(0.0, index=rows, columns=pd.Index([]) if columns is None else columns)
+        out = frame.copy()
+        if isinstance(out.columns, pd.MultiIndex):
+            out.columns = out.columns.get_level_values(0)
+        out = out.T.groupby(level=0).sum().T
+        return out.reindex(index=rows, columns=out.columns if columns is None else columns, fill_value=0.0).fillna(0.0)
+
+    nodes = pd.Index(sorted(set(s.process_source_sink.get_level_values("source"))
+                            | set(s.process_source_sink.get_level_values("sink"))
+                            | set(s.node_balance) | set(s.node_balance_period)))
+    duration = par.step_duration.reindex(rows).to_numpy(dtype=float)[:, None]
+    slack = (per_node(r.upward_node_slack_dt, nodes) - per_node(r.downward_node_slack_dt, nodes)) / duration
+    moves = (per_node(r.process_startup_dt, None).add(per_node(r.process_shutdown_dt, None), fill_value=0.0))
+    moves_next = at_next(moves).fillna(0.0)
+    pss = s.process_source_sink.to_frame(index=False)
+    ends = pd.concat([pss[["process", "source"]].set_axis(["process", "node"], axis=1),
+                      pss[["process", "sink"]].set_axis(["process", "node"], axis=1)]).drop_duplicates()
+    ends = ends[ends["node"] != ends["process"]]
+    storage = set(s.node_state)
+    leaky = set()
+    for name in ("node_inflow", "node_self_discharge_loss"):
+        frame = getattr(par, name, None)
+        if frame is not None and frame.shape[1]:
+            cols = frame.columns.get_level_values(0)
+            leaky |= {n for n, nonzero in zip(cols, (frame.fillna(0.0).abs() > tol).any().to_numpy()) if nonzero}
+    leaky &= storage
+    members = {n: [n] for n in r.node_ramp_envelope_dt_ep.columns.get_level_values(0).unique()}
+    gn = s.group_node.to_frame(index=False)
+    groups = {g: sorted(set(gn.loc[gn["group"] == g, "node"]) - storage) for g in s.nodeGroupDispatch}
+    nodes_of = ends.groupby("process")["node"].agg(set)
+    groups = {g: members_g for g, members_g in groups.items()
+              if not any(len(ns) > 1 and ns <= set(members_g) for ns in nodes_of)}
+    tables = [(r.node_ramp_envelope_dt_ep, members), (r.nodeGroup_ramp_envelope_dt_gp, groups)]
+    checked, bad = 0, []
+    for table, entities in tables:
+        for entity, entity_nodes in entities.items():
+            procs = set(ends.loc[ends["node"].isin(entity_nodes), "process"])
+            touched = set(ends.loc[ends["process"].isin(procs), "node"])
+            if touched & leaky:
+                continue
+            env = table[entity]
+            line = env["ramp_net_load"].to_numpy(dtype=float)
+            up = env[list(UP)].sum(axis=1).to_numpy(dtype=float)
+            down = -env[list(DOWN)].sum(axis=1).to_numpy(dtype=float)
+            sl = slack.reindex(columns=entity_nodes, fill_value=0.0).sum(axis=1)
+            d_slack = (at_next(sl.to_frame()).iloc[:, 0] - sl).to_numpy(dtype=float)
+            stops = moves_next.reindex(columns=sorted(procs), fill_value=0.0).abs().sum(axis=1).to_numpy() > tol
+            keep = ~np.isnan(line) & ~stops
+            checked += int(keep.sum())
+            net = line - d_slack
+            for i in np.flatnonzero(keep & ((net > up + tol) | (net < -down - tol))):
+                bad.append((entity, rows[i], -down[i], net[i], up[i]))
+    return checked, bad
+
+
+#: Engine cases of this module (``alt -> case builder, steps``) and existing ``tests.json`` scenarios.
+_SWEEP_CASES = {"re_case7": (_case7, 4), "re_case8a": (_case8a, 4), "re_case8b": (_case8b, 5),
+                "re_case9": (_case9, 4), "re_case10": (_case10, 4), "re_case4b": (_case4b, 4)}
+#: ``scenario -> (alternative chain, override values)``; the battery's self-discharge is set to 0 (§2.10 leaves a
+#: storage node with self-discharge out).
+_SWEEP_SCENARIOS = {
+    "coal_ramp_limit": (["init", "west", "coal", "coal_ramp"], []),
+    "coal_min_load_wind": (["init", "west", "coal", "coal_min_load", "wind"], []),
+    "network_coal_wind_reserve": (["init", "west", "coal", "wind", "network", "reserve"], []),
+    "wind_battery": (["init", "west", "wind", "battery"], [["node", "battery", "self_discharge_loss", _float(0.0)]]),
+    "coal_chp": (["init", "west", "coal_chp", "heat"], []),
+}
+
+
+@pytest.mark.parametrize("alt", sorted(_SWEEP_CASES))
+def test_line_within_envelope_engine_cases(tmp_path_factory, alt: str) -> None:
+    """Spec §2.10 on the oracle's engine cases: the realized net-load ramp lies inside the envelope on every row
+    that meets the conditions (Case 7's start-up row t1 and shut-down row t3 are left out)."""
+    build, n = _SWEEP_CASES[alt]
+    ents, vals = build()
+    par, s, r = _results(tmp_path_factory, alt, ents, vals, n)
+    checked, bad = _invariant(par, s, r)
+    assert checked > 0
+    assert not bad, bad
+
+
+@pytest.mark.parametrize("scenario", sorted(_SWEEP_SCENARIOS))
+def test_line_within_envelope_existing_fixtures(tmp_path_factory, scenario: str) -> None:
+    """Spec §2.10 on existing ``tests.json`` scenarios (ramp limits, online units with min load and wind, a network
+    with reserves, a battery, a CHP), the 48-hour dispatch of each; the network's group is left out (internal lossy
+    connections, see :func:`_invariant`), its nodes are checked."""
+    chain, overrides = _SWEEP_SCENARIOS[scenario]
+    par, s, r = _results(tmp_path_factory, f"re_sweep_{scenario}", [], overrides, None, base_chain=chain)
+    checked, bad = _invariant(par, s, r)
+    assert checked > 0
+    assert not bad, bad[:10]
