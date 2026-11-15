@@ -435,6 +435,7 @@ def test_display_dispatch_iid_records_last_iid():
         _display_dispatch=lambda scen, label: rendered.append(("group", label)),
         _display_node_dispatch=lambda scen, node: rendered.append(("node", node)),
         _plot_canvas=types.SimpleNamespace(show_message=lambda m: None),
+        _offer_dispatch_views=lambda scen, kind, entity: "Dispatch",
     )
     route = types.MethodType(ResultViewer._display_dispatch_iid, stub)
 

@@ -180,3 +180,17 @@ def test_comparison_run_writes_png_and_csv(tmp_path) -> None:
     with_nodes = create_ramp_plots(_results(), tmp_path / "debug", ["S"], groups=["G"], nodes=["n"])
     assert sorted(p.name for p in with_nodes) == ["ramp_envelope_nodeGroup_G_S.png", "ramp_envelope_node_n_S.png",
                                                   "ramp_frequency_nodeGroup_G.png", "ramp_frequency_node_n.png"]
+
+
+def test_histogram_periods_in_first_seen_order() -> None:
+    """One histogram per period, in first-seen order over the scenarios' envelopes (p2 before p1 here; a period
+    only the second scenario has comes last)."""
+    def frame(periods):
+        rows = pd.MultiIndex.from_tuples([(d, "t1") for d in periods], names=["period", "time"])
+        env = pd.DataFrame(np.nan, index=rows, columns=BANDS)
+        env[["ramp_net_load", "ramp_demand"]] = 1.0
+        return env, pd.Series(1.0, index=rows)
+
+    (env_a, ones_a), (env_b, ones_b) = frame(["p2", "p1"]), frame(["p1", "p3"])
+    data = histogram_data({"A": env_a, "B": env_b}, {"A": ones_a, "B": ones_b}, {"A": ones_a, "B": ones_b})
+    assert list(data) == ["p2", "p1", "p3"]

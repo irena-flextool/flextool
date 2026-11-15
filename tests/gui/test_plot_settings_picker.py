@@ -77,6 +77,34 @@ _SAMPLE = {
 }
 
 
+def _bundled_categories() -> dict:
+    return yaml.safe_load(_bundled_default().read_text(encoding="utf-8"))["categories"]
+
+
+def _opened(data: dict) -> dict:
+    """*data* as the picker holds it after opening: every category section
+    the file lacks filled from the bundled default (add-only)."""
+    from flextool.gui.dialogs.plot_settings_picker import _CATEGORY_SECTIONS
+
+    out = {k: v for k, v in data.items()}
+    categories = dict(data.get("categories") or {})
+    for name in _CATEGORY_SECTIONS:
+        if name not in categories:
+            categories[name] = _bundled_categories()[name]
+    out["categories"] = categories
+    return out
+
+
+#: _SAMPLE after opening: costs + dispatch from the file, the other category
+#: sections from the bundled default.
+_SAMPLE_OPENED = _opened(_SAMPLE)
+#: The category tabs of _SAMPLE after opening, in display order.
+_SAMPLE_CATEGORY_TABS = [
+    "costs", "capacity", "node_flows", "nodegroup_flows", "dispatch",
+    "ramp_envelope",
+]
+
+
 def _make_picker(tk_root, tmp_path, data=None, on_apply=None):
     from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
 
@@ -112,11 +140,11 @@ class TestPickerBuild:
     ):
         picker, _ = _make_picker(tk_root, tmp_path)
         # All entity-class tabs always appear (even empty nodeGroup/flowGroup/
-        # connection), then present categories (costs, dispatch), then
-        # scenarios.
+        # connection), then the categories (costs, dispatch from the file,
+        # the rest filled from the bundled default), then scenarios.
         assert _tab_titles(picker) == [
             "nodeGroup", "flowGroup", "unit", "connection", "node",
-            "costs", "dispatch", "scenarios",
+            *_SAMPLE_CATEGORY_TABS, "scenarios",
         ]
 
     def test_entity_tabs_shown_even_when_empty(self, tk_root, tmp_path):
@@ -129,9 +157,12 @@ class TestPickerBuild:
         # Every entity class shows (so absent classes are visible); the
         # scenarios tab is always shown and last; empty category sections are
         # still skipped.  (tmp_path has no output_parquet, so scenarios stays
-        # empty.)
+        # empty.)  The sections the file lacks are filled from the bundled
+        # default; its explicitly empty costs section is kept (and skipped).
+        assert picker._data["categories"]["costs"] == {}
         assert _tab_titles(picker) == [
-            "nodeGroup", "flowGroup", "unit", "connection", "node", "scenarios",
+            "nodeGroup", "flowGroup", "unit", "connection", "node",
+            *[t for t in _SAMPLE_CATEGORY_TABS if t != "costs"], "scenarios",
         ]
 
     def test_scenarios_populated_from_output_folders(self, tk_root, tmp_path):
@@ -157,6 +188,40 @@ class TestPickerBuild:
         assert scen["base_1"] == "#123456"  # existing color preserved
         assert "new_1" in scen and scen["new_1"].startswith("#")
 
+    def test_missing_category_sections_filled_from_default(
+        self, tk_root, tmp_path,
+    ):
+        """A file seeded before a category section existed (here
+        ``ramp_envelope``) gets it from the bundled default on open, so its
+        colors are editable; add-only — a section the file has keeps its
+        colors and keys, and Cancel restores the file untouched."""
+        from flextool.gui.dialogs.plot_settings_picker import _CATEGORY_SECTIONS
+
+        bundled = _bundled_categories()
+        old = {name: dict(bundled[name]) for name in _CATEGORY_SECTIONS
+               if name != "ramp_envelope"}
+        old["costs"] = {"co2": "#010203"}  # an edited, partial section
+        picker, f = _make_picker(tk_root, tmp_path, data={"categories": old})
+        original = f.read_text(encoding="utf-8")
+        assert "ramp_envelope" in _tab_titles(picker)
+        assert picker._data["categories"]["ramp_envelope"] == bundled["ramp_envelope"]
+        tree = picker._category_trees["ramp_envelope"]
+        assert _row_names(tree) == ["units", "storage", "vre", "connections"]
+        # The file's sections are untouched (no keys added to the partial one).
+        assert picker._data["categories"]["costs"] == {"co2": "#010203"}
+        # A copy, not the cached bundled dict: an edit cannot leak into it.
+        picker._data["categories"]["ramp_envelope"]["vre"] = "#000000"
+        assert _bundled_categories()["ramp_envelope"]["vre"] != "#000000"
+        from flextool.plot_outputs.color_template import load_color_template
+        assert load_color_template()["categories"]["ramp_envelope"]["vre"] != "#000000"
+        picker._on_cancel()
+        assert f.read_text(encoding="utf-8") == original
+
+    def test_present_ramp_section_is_not_overwritten(self, tk_root, tmp_path):
+        data = {"categories": {"ramp_envelope": {"units": "#111111"}}}
+        picker, _ = _make_picker(tk_root, tmp_path, data=data)
+        assert picker._data["categories"]["ramp_envelope"] == {"units": "#111111"}
+
     def test_rows_populated_with_names(self, tk_root, tmp_path):
         picker, _ = _make_picker(tk_root, tmp_path)
         titles = _tab_titles(picker)
@@ -169,8 +234,13 @@ class TestPickerBuild:
 
     def test_swatches_created_and_referenced(self, tk_root, tmp_path):
         picker, _ = _make_picker(tk_root, tmp_path)
-        # One swatch per row: 2 unit + 1 node + 1 costs + 1 dispatch + 2 scen.
-        assert len(picker._swatches) == 7
+        # One swatch per row: 2 unit + 1 node + 1 costs + 1 dispatch + 2 scen,
+        # plus the rows of the category sections filled from the default.
+        filled = sum(
+            len(_SAMPLE_OPENED["categories"][t])
+            for t in _SAMPLE_CATEGORY_TABS if t not in ("costs", "dispatch")
+        )
+        assert len(picker._swatches) == 7 + filled
         # Every swatch is a live PhotoImage (not GC'd).
         for img in picker._swatches:
             assert isinstance(img, tk.PhotoImage)
@@ -243,7 +313,7 @@ class TestPickerTwoPaneLayout:
             == picker._category_order
             == [
                 "nodeGroup", "flowGroup", "unit", "connection", "node",
-                "costs", "dispatch", "scenarios",
+                *_SAMPLE_CATEGORY_TABS, "scenarios",
             ]
         )
 
@@ -565,7 +635,7 @@ class TestPickerButtons:
         assert picker.winfo_exists()
         # File round-trips equal to the working dict.
         assert yaml.safe_load(f.read_text(encoding="utf-8")) == picker._data
-        assert picker._data == _SAMPLE
+        assert picker._data == _SAMPLE_OPENED
 
     def test_flush_does_not_touch_cancel_baseline(self, tk_root, tmp_path):
         """A live flush must NOT move the on-open baseline: a later Cancel
@@ -591,7 +661,7 @@ class TestPickerButtons:
         picker._on_close()
         assert calls == [1]
         assert not picker.winfo_exists()
-        assert yaml.safe_load(f.read_text(encoding="utf-8")) == _SAMPLE
+        assert yaml.safe_load(f.read_text(encoding="utf-8")) == _SAMPLE_OPENED
 
     def test_cancel_restores_original_and_calls_on_apply(self, tk_root, tmp_path):
         calls = []
@@ -611,7 +681,7 @@ class TestPickerButtons:
         """Picker opened with no callback (PNG dialog) just writes on flush."""
         picker, f = _make_picker(tk_root, tmp_path, on_apply=None)
         picker._flush_live_update()  # must not raise
-        assert yaml.safe_load(f.read_text(encoding="utf-8")) == _SAMPLE
+        assert yaml.safe_load(f.read_text(encoding="utf-8")) == _SAMPLE_OPENED
 
     def test_close_keeps_edit(self, tk_root, tmp_path):
         """After an edit, Close writes the edited content and destroys; the
@@ -1087,7 +1157,7 @@ class TestPickerReorder:
         picker._key_move(scen, +1)
         # entities/categories untouched and identical to the input.
         assert picker._data["entities"] == _SAMPLE["entities"]
-        assert picker._data["categories"] == _SAMPLE["categories"]
+        assert picker._data["categories"] == _SAMPLE_OPENED["categories"]
         assert list(picker._data["scenarios"].keys()) == ["S2", "S1"]
 
 

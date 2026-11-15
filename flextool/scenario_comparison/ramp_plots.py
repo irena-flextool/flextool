@@ -73,29 +73,38 @@ def scenario_frame(results, name: str, scenario: str) -> pd.DataFrame | None:
     return df
 
 
+def entity_columns(frame: pd.DataFrame | None, entity: str) -> pd.DataFrame | None:
+    """The band columns of *entity* in a scenario's envelope *frame* (:func:`scenario_frame`); ``None`` when
+    the frame has no envelope for it."""
+    if frame is None or entity not in frame.columns.unique(level=0):
+        return None
+    return frame.xs(entity, axis=1, level=0)
+
+
 def entity_envelope(results, kind: str, entity: str, scenario: str) -> pd.DataFrame | None:
     """The envelope of one node / group in one scenario: ``(period, time)`` rows, the band columns; ``None``
-    when the scenario has no envelope for it."""
-    df = scenario_frame(results, entity_kind_table(kind), scenario)
-    if df is None or entity not in df.columns.get_level_values(0):
-        return None
-    return df.xs(entity, axis=1, level=0)
+    when the scenario has no envelope for it.  To read many entities, slice the scenario once
+    (:func:`scenario_frame`) and take each with :func:`entity_columns`."""
+    return entity_columns(scenario_frame(results, entity_kind_table(kind), scenario), entity)
+
+
+def hours_column(frame: pd.DataFrame | None, index: pd.Index) -> pd.Series:
+    """The first column of a scenario's ``transition_hours_dt`` / ``timestep_hours_dt`` *frame*
+    (:func:`scenario_frame`) on the rows of *index*; NaN where unknown (results written before the table
+    existed)."""
+    if frame is None or frame.shape[1] == 0:
+        return pd.Series(np.nan, index=index)
+    return frame.iloc[:, 0].reindex(index)
 
 
 def transition_hours(results, scenario: str, index: pd.Index) -> pd.Series:
     """(Δt + Δt⁺)/2 of each row of *index* (h); NaN where unknown (results written before the table existed)."""
-    df = scenario_frame(results, "transition_hours_dt", scenario)
-    if df is None or df.shape[1] == 0:
-        return pd.Series(np.nan, index=index)
-    return df.iloc[:, 0].reindex(index)
+    return hours_column(scenario_frame(results, "transition_hours_dt", scenario), index)
 
 
 def timestep_hours(results, scenario: str, index: pd.Index) -> pd.Series:
     """The hours a year of each row of *index* (the histogram weight); NaN where unknown."""
-    df = scenario_frame(results, "timestep_hours_dt", scenario)
-    if df is None or df.shape[1] == 0:
-        return pd.Series(np.nan, index=index)
-    return df.iloc[:, 0].reindex(index)
+    return hours_column(scenario_frame(results, "timestep_hours_dt", scenario), index)
 
 
 def ramp_rates(envelope: pd.DataFrame, transition: pd.Series) -> pd.DataFrame:
@@ -171,12 +180,10 @@ def histogram_data(envelopes: dict, transitions: dict, weights: dict) -> dict:
     """The histograms of one entity, per period: ``{period: {"edges", "hours" {(scenario, series): array},
     "room" (up, down)}}``.  *envelopes* / *transitions* / *weights* are keyed by scenario (one entity); a period
     without any rate gets no entry."""
-    periods: list = []
-    for env in envelopes.values():
-        if env is not None:
-            for d in env.index.get_level_values("period"):
-                if d not in periods:
-                    periods.append(d)
+    # The periods in first-seen order over the envelopes.
+    periods = pd.unique(np.concatenate(
+        [env.index.unique(level="period").to_numpy(dtype=object) for env in envelopes.values() if env is not None]
+        or [np.zeros(0, dtype=object)]))
     out = {}
     for period in periods:
         rates, envs, trans, wgts = {}, [], [], {}
@@ -396,16 +403,23 @@ def create_ramp_plots(
 
     scenario_colors = {s: resolve_label_color(s, template or {}, scenario=True) for s in scenarios}
     written: list[Path] = []
+    # Each scenario's slice of the combined frames is taken once, not per entity (a slice copies the scenario's
+    # whole envelope table).
+    trans_frames = {s: scenario_frame(results, "transition_hours_dt", s) for s in scenarios}
+    weight_frames = {s: scenario_frame(results, "timestep_hours_dt", s) for s in scenarios}
     for kind, entities, file_kind in (("group", groups, "nodeGroup"), ("node", nodes, "node")):
+        if not entities:
+            continue
+        env_frames = {s: scenario_frame(results, entity_kind_table(kind), s) for s in scenarios}
         for entity in entities:
             envelopes, trans, weights = {}, {}, {}
             for scenario in scenarios:
-                env = entity_envelope(results, kind, entity, scenario)
+                env = entity_columns(env_frames[scenario], entity)
                 if env is None:
                     continue
                 envelopes[scenario] = env
-                trans[scenario] = transition_hours(results, scenario, env.index)
-                weights[scenario] = timestep_hours(results, scenario, env.index)
+                trans[scenario] = hours_column(trans_frames[scenario], env.index)
+                weights[scenario] = hours_column(weight_frames[scenario], env.index)
                 ctx = (unit_ctx or {}).get(scenario)
                 unit = ramp_rate_unit(ctx, **{kind: entity})
                 breaks = break_times.get(scenario) if isinstance(break_times, dict) else break_times

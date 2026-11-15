@@ -675,21 +675,8 @@ class ResultViewer(tk.Toplevel):
         )
         self._duration_spin.grid(row=1, column=1, sticky="w")
 
-        self._change_colors_btn = ttk.Button(
-            time_frame, text="Colors, order...", command=self._on_change_colors,
-        )
-        self._change_colors_btn.grid(
-            row=2, column=0, columnspan=2, sticky="w", pady=(4, 0),
-        )
-
-        # Dispatch mode only: what the selected node / nodeGroup shows.
-        self._dispatch_view = tk.StringVar(value=_DISPATCH_VIEWS[0])
-        self._dispatch_view_combo = ttk.Combobox(
-            time_frame, textvariable=self._dispatch_view, values=_DISPATCH_VIEWS,
-            state="readonly", width=15,
-        )
-        self._dispatch_view_combo.grid(row=2, column=1, sticky="e", pady=(4, 0))
-        self._dispatch_view_combo.bind("<<ComboboxSelected>>", self._on_dispatch_view_changed)
+        button_row = self._build_colors_and_view_row(time_frame)
+        button_row.grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
         if self._mode.get() != "dispatch":
             self._dispatch_view_combo.grid_remove()
 
@@ -702,6 +689,24 @@ class ResultViewer(tk.Toplevel):
         self._plot_canvas._cache.max_gb = self._viewer_settings.cache_gb
         self._plot_canvas.grid(row=1, column=0, sticky="nsew")
         self._plot_canvas.show_message("Select a plot to display")
+
+    def _build_colors_and_view_row(self, parent) -> ttk.Frame:
+        """The row of the "Colors, order..." button and the dispatch view selector (Dispatch mode only), side
+        by side in their own frame and grid columns so they never overlap; the caller places the frame."""
+        row = ttk.Frame(parent)
+        self._change_colors_btn = ttk.Button(
+            row, text="Colors, order...", command=self._on_change_colors,
+        )
+        self._change_colors_btn.grid(row=0, column=0, sticky="w")
+        # Dispatch mode only: what the selected node / nodeGroup shows.
+        self._dispatch_view = tk.StringVar(row, value=_DISPATCH_VIEWS[0])
+        self._dispatch_view_combo = ttk.Combobox(
+            row, textvariable=self._dispatch_view, values=_DISPATCH_VIEWS,
+            state="readonly", width=15,
+        )
+        self._dispatch_view_combo.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        self._dispatch_view_combo.bind("<<ComboboxSelected>>", self._on_dispatch_view_changed)
+        return row
 
     # ------------------------------------------------------------------
     # Config path resolution
@@ -4121,11 +4126,11 @@ class ResultViewer(tk.Toplevel):
         "Ungrouped nodes" parent is a pure container with no plot of its
         own, so selecting it shows a hint.
         """
-        view = self._dispatch_view_name()
         if iid.startswith(_DISPATCH_NODE_PREFIX):
             node = self._dispatch_node_iids.get(iid)
             if node is not None:
                 self._last_dispatch_iid = iid
+                view = self._offer_dispatch_views(scenario, "node", node)
                 if view == _DISPATCH_VIEWS[0]:
                     self._display_node_dispatch(scenario, node)
                 else:
@@ -4140,19 +4145,61 @@ class ResultViewer(tk.Toplevel):
                 )
                 return
             self._last_dispatch_iid = iid
+            view = self._offer_dispatch_views(scenario, "group", label)
             if view == _DISPATCH_VIEWS[0]:
                 self._display_dispatch(scenario, label)
             else:
                 self._display_ramp(scenario, "group", label, view)
 
     def _dispatch_view_name(self) -> str:
-        """The view chosen for the dispatch-tree item (one of ``_DISPATCH_VIEWS``; Dispatch by default)."""
-        var = getattr(self, "_dispatch_view", None)
-        view = var.get() if var is not None else _DISPATCH_VIEWS[0]
+        """The view the user chose for the dispatch-tree items (one of ``_DISPATCH_VIEWS``; Dispatch by default).
+        It is kept while an item without the ramp views shows its dispatch (:meth:`_offer_dispatch_views`)."""
+        view = getattr(self, "_dispatch_view_choice", None)
+        if view is None:
+            var = getattr(self, "_dispatch_view", None)
+            view = var.get() if var is not None else _DISPATCH_VIEWS[0]
         return view if view in _DISPATCH_VIEWS else _DISPATCH_VIEWS[0]
+
+    def _offer_dispatch_views(self, scenario: str, kind: str, entity: str) -> str:
+        """Offer the views the node / nodeGroup *entity* has and return the one to show.
+
+        An entity the scenario's envelope table leaves out (a storage node, a node without a balance) has no
+        ramp views: the selector offers only Dispatch and shows it, and the user's choice
+        (:meth:`_dispatch_view_name`) comes back on the next item that has them.  Results without the table
+        (written before the ramp envelope existed) keep every view, and the ramp views say to run again."""
+        choice = self._dispatch_view_name()
+        views = _DISPATCH_VIEWS
+        if self._ramp_envelope_status(scenario, kind, entity) == "no_entity":
+            views = _DISPATCH_VIEWS[:1]
+        shown = choice if choice in views else views[0]
+        combo = getattr(self, "_dispatch_view_combo", None)
+        if combo is not None:
+            combo.configure(values=views)
+        var = getattr(self, "_dispatch_view", None)
+        if var is not None and var.get() != shown:
+            # The choice is kept apart, so setting the variable does not lose it.
+            self._dispatch_view_choice = choice
+            var.set(shown)
+        return shown
+
+    def _ramp_envelope_status(self, scenario: str, kind: str, entity: str) -> str:
+        """``"ok"`` (the scenario has an envelope for *entity*), ``"no_table"`` (the folder has no envelope
+        table: results written before it existed) or ``"no_entity"`` (the table leaves the entity out: a storage
+        node or a node without a balance).  ``"no_table"`` too when the dispatch data does not load."""
+        from flextool.scenario_comparison.ramp_plots import entity_columns, entity_kind_table, scenario_frame
+
+        if not self._load_dispatch_data(scenario):
+            return "no_table"
+        frame = scenario_frame(self._dispatch_results, entity_kind_table(kind), self._dispatch_data_tag)
+        if frame is None:
+            return "no_table"
+        return "ok" if entity_columns(frame, entity) is not None else "no_entity"
 
     def _on_dispatch_view_changed(self, _event=None) -> None:
         """Show the selected dispatch-tree item in the newly chosen view."""
+        var = getattr(self, "_dispatch_view", None)
+        if var is not None:
+            self._dispatch_view_choice = var.get()
         scenarios = self._get_selected_scenarios()
         iid = self._last_dispatch_iid
         if scenarios and iid and self._plot_tree.exists(iid):
@@ -4165,10 +4212,12 @@ class ResultViewer(tk.Toplevel):
         from flextool.scenario_comparison.ramp_plots import (
             build_ramp_envelope_figure,
             build_ramp_histogram_figure,
-            entity_envelope,
+            entity_columns,
+            entity_kind_table,
             histogram_data,
             ramp_band_colors,
             ramp_rate_unit,
+            scenario_frame,
             timestep_hours,
             transition_hours,
         )
@@ -4178,11 +4227,19 @@ class ResultViewer(tk.Toplevel):
             return
         results = self._dispatch_results
         tag = self._dispatch_data_tag
-        env = entity_envelope(results, kind, entity, tag)
-        if env is None:
+        frame = scenario_frame(results, entity_kind_table(kind), tag)
+        if frame is None:
             self._plot_canvas.show_message(
-                f"No ramp envelope for {entity} in {scenario} (results written before the ramp envelope "
-                "existed: run the scenario again)"
+                f"No ramp envelope in {scenario}: the results were written before the ramp envelope existed. "
+                "Run the scenario again."
+            )
+            return
+        env = entity_columns(frame, entity)
+        if env is None:
+            what = "node" if kind == "node" else "nodeGroup"
+            self._plot_canvas.show_message(
+                f"{entity} has no ramp envelope: the envelope is for {what}s with a balance, and a storage node "
+                "or a node without a balance has none."
             )
             return
         template = load_color_template(resolve_plot_settings_path(self._project_path))
@@ -4196,10 +4253,16 @@ class ResultViewer(tk.Toplevel):
                 break_times=self._load_break_times(scenario),
             )
         else:
-            data = histogram_data(
-                {tag: env}, {tag: transition_hours(results, tag, env.index)},
-                {tag: timestep_hours(results, tag, env.index)},
-            )
+            trans = transition_hours(results, tag, env.index)
+            if trans.isna().all():
+                self._plot_canvas.show_message(
+                    f"No transition hours in {scenario}, so no ramp frequency: "
+                    + ("the results were written before the transition hours existed. Run the scenario again."
+                       if scenario_frame(results, "transition_hours_dt", tag) is None
+                       else "no step of this folder has a single next step.")
+                )
+                return
+            data = histogram_data({tag: env}, {tag: trans}, {tag: timestep_hours(results, tag, env.index)})
             fig = build_ramp_histogram_figure(data, f"{entity} \u2014 {scenario}: ramp frequency", unit=unit)
         if fig is None:
             self._plot_canvas.show_message(f"No ramp data for {entity} in this window")

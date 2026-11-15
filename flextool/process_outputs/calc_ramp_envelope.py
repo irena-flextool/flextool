@@ -51,7 +51,8 @@ hold at the node::
     up = cap·avail(t⁺) − f_in(t) − R↑_c,n(t⁺),   down = f_in(t) + cap·avail(t⁺)·slope(t⁺) − R↓_c,n(t⁺)
 
 A coarse process (``processCoarse``) has one flow per coarse step: its room is 0 on the rows inside a coarse step,
-and at a coarse step's last fine row ρ̄ uses the coarse step durations, and κ, F and c are the coarse steps' means
+and at a coarse step's last fine row ρ̄ uses the coarse step durations (the fine Δt⁺ when t⁺ is in no coarse step
+of the process), and κ, F and c are the coarse steps' means
 (``_ramp_inputs`` writes them to every fine step of the coarse step).  Node groups (``print_dispatch``) sum the arcs
 at their non-storage members; a process with every node in the group is internal and counts 0; member storage
 nodes count as outside (§2.7).  The arcs are summed into the entities with one membership-map sum (``np.add.at``)
@@ -441,7 +442,9 @@ def _unit_contributions(par, s, r, nx: _Next, dur, dur_next, shared: _Shared):
         cdur_next = nx.frame(coarse_dur, columns=co_procs).to_numpy(dtype=float)
         last = par.process_coarse_step_last_dt.reindex(index=rows, columns=co_procs).to_numpy(dtype=float)
         coarse_cell = ~np.isnan(cdur_now)
-        coarse_rate = np.where(coarse_cell, 60.0 * (cdur_now + np.nan_to_num(cdur_next)) / 2.0, rate_row[:, None])
+        # A t⁺ outside every coarse step of the process (e.g. a solve that keeps it fine) counts its fine Δt⁺.
+        cdur_next = np.where(np.isnan(cdur_next), dur_next[:, None], cdur_next)
+        coarse_rate = np.where(coarse_cell, 60.0 * (cdur_now + cdur_next) / 2.0, rate_row[:, None])
         inside = coarse_cell & (last == 0.0)
         del cdur_now, cdur_next, last, coarse_cell
 

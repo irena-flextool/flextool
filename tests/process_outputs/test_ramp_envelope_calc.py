@@ -2,7 +2,7 @@
 
 The dispatches of these cases are hand-chosen (LP-feasible, not LP optima), so the frames are built directly in
 the post-``drop_levels`` shapes the calculation reads.  Every expected number is the hand-computed oracle of
-``specs/ramp_envelope_oracle_v2.md`` (Cases 1, 2, 3, 4, 4b, 6, 7c, 8c-seam, 11-14), never the code's output; each case also
+``specs/ramp_envelope_oracle_v2.md`` (Cases 1, 2, 3, 4, 4b, 6, 7c, 8c-seam, 11-14, 12c), never the code's output; each case also
 checks the oracle's realized decomposition (line = Σ of the realized changes, each inside its band).
 """
 from __future__ import annotations
@@ -545,6 +545,26 @@ def test_case12a_coarse_process_has_room_only_between_its_coarse_steps() -> None
     _assert_row(env, "n", T4[1], _row(30, 30, 60, 0, 0, 0, -40, 0, 0, 0))
     _assert_row(env, "n", T4[2], _row(0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
     _assert_empty(env, "n", T4[3])
+
+
+def test_case12c_coarse_step_followed_by_a_fine_step() -> None:
+    """Oracle Case 12c: G1 is coarse on b1 = {t1, t2} (Δ_b 2 h) only; t3, t4 are in no coarse step of G1 (1 h fine
+    steps).  Row t2 (b1's last fine row, t⁺ = t3): ρ̄ = 0.005·60·(Δ_b1 + Δt3)/2 = 0.005·60·(2 + 1)/2 = 0.45 → 45 MW
+    (reading the missing coarse Δ⁺ as 0 gives 0.3 → 30, below the realized +40), up = min(100 − 40, 45) = 45,
+    down = min(40, 45) = 40, lines 80 − 40 = 40.  Row t3 (fine): ρ̄ = 0.3 → 30, up min(100 − 80, 30) = 20, down
+    min(80, 30) = 30, lines 0.  Row t1 (inside b1): 0; row t4 empty."""
+    nan = np.nan
+    f = Frames(T4, LINKS4)
+    f.unit("G1", sink="n", flow=[40, 40, 80, 80], capacity=100.0, speed=0.005)
+    f.coarse("G1", duration=[2.0, 2.0, nan, nan], last=[0, 1, nan, nan])
+    f.demand("n", [40, 40, 80, 80])
+    env = _envelope(f).node_ramp_envelope_dt_ep
+    _assert_row(env, "n", T4[0], _row(0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+    _assert_row(env, "n", T4[1], _row(40, 40, 45, 0, 0, 0, -40, 0, 0, 0))
+    _assert_row(env, "n", T4[2], _row(0, 0, 20, 0, 0, 0, -30, 0, 0, 0))
+    _assert_empty(env, "n", T4[3])
+    # The realized change of G1 at row t2 (+40) is inside the band.
+    assert 40.0 <= env["n"].loc[T4[1], "units_up"]
 
 
 def test_case12b_coarse_process_takes_the_coarse_step_means_at_the_next_step() -> None:

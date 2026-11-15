@@ -392,7 +392,6 @@ def test_layer2_unscale_handle_gives_true_duals(three_col_families):
 
 def _random_lp(c: np.ndarray, A: np.ndarray, row_upper: np.ndarray, col_upper: np.ndarray):
     import highspy
-    import scipy.sparse as sp
 
     m, n = A.shape
     h = highspy.Highs()
@@ -407,11 +406,12 @@ def _random_lp(c: np.ndarray, A: np.ndarray, row_upper: np.ndarray, col_upper: n
     lp.col_upper_ = col_upper
     lp.row_lower_ = -np.inf * np.ones(m)
     lp.row_upper_ = row_upper
-    M = sp.csc_matrix(A)
+    # Column-wise (CSC) form of the dense A: per column its nonzero rows in order.
+    col, row = np.nonzero(A.T)
     lp.a_matrix_.format_ = highspy.MatrixFormat.kColwise
-    lp.a_matrix_.start_ = M.indptr
-    lp.a_matrix_.index_ = M.indices
-    lp.a_matrix_.value_ = M.data
+    lp.a_matrix_.start_ = np.concatenate(([0], np.cumsum(np.count_nonzero(A, axis=0)))).astype(np.int32)
+    lp.a_matrix_.index_ = row.astype(np.int32)
+    lp.a_matrix_.value_ = A[row, col]
     h.passModel(lp)
     return h
 

@@ -8,6 +8,7 @@ Must run under ``xvfb-run -a`` (creates a real Tk root).
 """
 import math
 import tkinter as tk
+from tkinter import ttk
 
 import numpy as np
 import pandas as pd
@@ -68,7 +69,9 @@ class _FakeViewer:
         self._start_var = tk.IntVar(root, value=0)
         self._duration_var = tk.IntVar(root, value=10)
         self._dispatch_view = tk.StringVar(root, value=view)
-        self._dispatch_node_iids = {f"{_DISPATCH_NODE_PREFIX}0_0_n": "n"}
+        self._dispatch_view_combo = ttk.Combobox(root, textvariable=self._dispatch_view, values=_DISPATCH_VIEWS)
+        # "st": a storage node of the dispatch tree (no envelope of its own).
+        self._dispatch_node_iids = {f"{_DISPATCH_NODE_PREFIX}0_0_n": "n", f"{_DISPATCH_NODE_PREFIX}0_1_st": "st"}
         self._last_dispatch_iid = None
         self._plot_canvas = _Canvas()
         self.time_range = None
@@ -79,6 +82,12 @@ class _FakeViewer:
 
     def _display_ramp(self, scenario, kind, entity, view):
         return ResultViewer._display_ramp(self, scenario, kind, entity, view)
+
+    def _offer_dispatch_views(self, scenario, kind, entity):
+        return ResultViewer._offer_dispatch_views(self, scenario, kind, entity)
+
+    def _ramp_envelope_status(self, scenario, kind, entity):
+        return ResultViewer._ramp_envelope_status(self, scenario, kind, entity)
 
     def _display_dispatch(self, scenario, group):
         self.dispatch_calls.append(("group", group))
@@ -110,7 +119,8 @@ def tk_root():
     root.destroy()
 
 
-IIDS = {"group": f"{_DISPATCH_GROUP_PREFIX}G", "node": f"{_DISPATCH_NODE_PREFIX}0_0_n"}
+IIDS = {"group": f"{_DISPATCH_GROUP_PREFIX}G", "node": f"{_DISPATCH_NODE_PREFIX}0_0_n",
+        "storage": f"{_DISPATCH_NODE_PREFIX}0_1_st"}
 
 
 @pytest.mark.parametrize("kind", ["group", "node"])
@@ -153,4 +163,72 @@ def test_missing_envelope_shows_a_message(tk_root, tmp_path):
     fake._dispatch_results.node_ramp_envelope_dt_ep = None
     ResultViewer._display_dispatch_iid(fake, SCEN, IIDS["node"])
     assert fake._plot_canvas.figure is None
-    assert "run the scenario again" in fake._plot_canvas.message
+    assert "Run the scenario again" in fake._plot_canvas.message
+
+
+def test_missing_table_keeps_the_views_and_says_run_again(tk_root, tmp_path):
+    """Results written before the ramp envelope existed: the views stay offered and say to run again."""
+    fake = _FakeViewer(tk_root, tmp_path, "Ramp frequency")
+    fake._dispatch_results.node_ramp_envelope_dt_ep = None
+    ResultViewer._display_dispatch_iid(fake, SCEN, IIDS["node"])
+    assert tuple(fake._dispatch_view_combo.cget("values")) == _DISPATCH_VIEWS
+    assert "written before the ramp envelope existed" in fake._plot_canvas.message
+
+
+def test_storage_node_is_offered_only_the_dispatch(tk_root, tmp_path):
+    """A node the envelope table leaves out (a storage node): the selector offers only Dispatch and shows it;
+    the chosen ramp view comes back on the next node that has an envelope."""
+    fake = _FakeViewer(tk_root, tmp_path, "Ramp envelope")
+    ResultViewer._display_dispatch_iid(fake, SCEN, IIDS["storage"])
+    assert fake.dispatch_calls == [("node", "st")]
+    assert tuple(fake._dispatch_view_combo.cget("values")) == _DISPATCH_VIEWS[:1]
+    assert fake._dispatch_view.get() == _DISPATCH_VIEWS[0]
+    ResultViewer._display_dispatch_iid(fake, SCEN, IIDS["node"])
+    assert tuple(fake._dispatch_view_combo.cget("values")) == _DISPATCH_VIEWS
+    assert fake._dispatch_view.get() == "Ramp envelope"
+    assert fake.dispatch_calls == [("node", "st")] and fake._plot_canvas.figure is not None
+
+
+def test_entity_without_envelope_message(tk_root, tmp_path):
+    """Reached directly, a storage node's ramp view says it has no envelope (not 'run again')."""
+    fake = _FakeViewer(tk_root, tmp_path, "Ramp envelope")
+    ResultViewer._display_ramp(fake, SCEN, "node", "st", "Ramp envelope")
+    assert fake._plot_canvas.figure is None
+    assert "st has no ramp envelope" in fake._plot_canvas.message
+    assert "storage node" in fake._plot_canvas.message
+    assert "again" not in fake._plot_canvas.message
+
+
+def test_frequency_without_transition_hours(tk_root, tmp_path):
+    """Ramp frequency: no transition_hours_dt in the folder → run again; a table with no transition (every row
+    empty) → no step has a single next step."""
+    fake = _FakeViewer(tk_root, tmp_path, "Ramp frequency")
+    fake._dispatch_results.transition_hours_dt = None
+    ResultViewer._display_dispatch_iid(fake, SCEN, IIDS["node"])
+    assert fake._plot_canvas.figure is None
+    assert "No transition hours" in fake._plot_canvas.message
+    assert "Run the scenario again" in fake._plot_canvas.message
+    fake._dispatch_results.transition_hours_dt = _param("transition_hours", [math.nan] * 4)
+    ResultViewer._display_dispatch_iid(fake, SCEN, IIDS["node"])
+    assert fake._plot_canvas.figure is None
+    assert "single next step" in fake._plot_canvas.message
+
+
+def test_colors_button_and_view_selector_do_not_overlap(tk_root):
+    """The "Colors, order..." button and the dispatch view selector sit side by side, also in a narrow
+    column (they used to share one grid cell)."""
+    import types
+
+    stub = types.SimpleNamespace(_on_change_colors=lambda: None, _on_dispatch_view_changed=lambda e=None: None)
+    for width in (60, 400):
+        outer = ttk.Frame(tk_root, width=width, height=80)
+        outer.grid_propagate(False)
+        outer.pack()
+        outer.columnconfigure(1, weight=1)
+        row = ResultViewer._build_colors_and_view_row(stub, outer)
+        row.grid(row=2, column=0, columnspan=2, sticky="w")
+        tk_root.update_idletasks()
+        button, combo = stub._change_colors_btn, stub._dispatch_view_combo
+        assert button.winfo_parent() == combo.winfo_parent() == str(row)
+        assert button.winfo_x() + button.winfo_reqwidth() <= combo.winfo_x()
+        outer.destroy()
