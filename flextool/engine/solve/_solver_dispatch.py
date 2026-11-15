@@ -284,11 +284,13 @@ def _catalogue_keys(solver: str, *classes: str, reason: str | None = None, kind:
     )
 
 
-#: The file, folder and path options of each solver (FlexTool's solver lists, item 240 B1: class ``file``, and
-#: Gurobi's ``ResultFile``), as :func:`commercial_option_key` forms.  The name rule (:data:`_PATH_NAME_WORDS`)
-#: and these lists are the rule for a name that is not listed, when this computer allows such names.
+#: The file, folder and path options of each solver (FlexTool's solver lists, item 240 B1: class ``file``,
+#: Gurobi's ``ResultFile`` and the setting-file options, class ``local_only`` with reason ``settings``), as
+#: :func:`commercial_option_key` forms.  The name rule (:data:`_PATH_NAME_WORDS`) and these lists are the rule for
+#: a name that is not listed, when this computer allows such names.
 _PATH_OPTIONS: dict[str, frozenset[str]] = {
-    s: _catalogue_keys(s, "file", "flextool") for s in _solver_catalogue.SOLVERS
+    s: _catalogue_keys(s, "file", "flextool") | _catalogue_keys(s, "local_only", reason="settings")
+    for s in _solver_catalogue.SOLVERS
 }
 #: HiGHS' options whose value is a file name (``log_file``, ``solution_file``, ...): a plain file name from the
 #: database becomes a path in the solve's work folder (the in-process HiGHS solve runs in the run's current folder).
@@ -522,7 +524,8 @@ def check_database_solver_option(
     switch; any solver: or allowed on this computer).  A ``file`` parameter takes a number, a boolean or a plain
     file name: ASCII, no ``/``, ``\\``, ``:`` or ``..``, not starting with ``.``, and not a file a solver reads by
     itself.  A ``local_only`` parameter (a server, cloud or licence setting; a text parameter nobody reviewed; a
-    console command) is refused.  Run :func:`validate_solver_option` first; this check adds the database's limits
+    console command; an option that makes the solver read a settings file, such as Gurobi's ``InputFile`` and
+    ``ConcurrentSettings``) is refused.  Run :func:`validate_solver_option` first; this check adds the database's limits
     only.  Raises :class:`FlexToolUserError` naming the option, its value and the source.
     """
     value_text = "" if value is None or isinstance(value, bool) else str(value)
@@ -536,6 +539,12 @@ def check_database_solver_option(
                 head + f"it comes from {origin}, and an option that connects the solver to another "
                 "computer (a server, cloud or licence service) or carries its credentials is not taken from there. "
                 + _remove(solver, untrusted)
+            )
+        if entry.reason == "settings":
+            raise FlexToolUserError(
+                head + f"it comes from {origin}, and it makes {_solver_catalogue.SOLVER_LABEL[solver]} read a file "
+                "of solver settings (a parameter file), which could set any parameter, those not taken from there "
+                "included. " + _remove(solver, untrusted)
             )
         if entry.reason == "command":
             raise FlexToolUserError(
@@ -884,9 +893,9 @@ def _resolve_effective_highs_options(
        via :func:`_parse_highs_opt_file`.  Project-level defaults the
        user has committed to disk.  Solution-file keys are dropped from
        this layer (:func:`_drop_solution_file_options`).
-    3. ``solver_config`` — the convenience knobs of the active solve
-       (``solve.solver_mip_gap`` → ``mip_rel_gap``; ``time_limit`` /
-       ``threads`` when set), translated through :data:`_PARAM_MAP`.
+    3. ``solver_config`` — the MIP gap of the active solve
+       (``solve.solver_mip_gap`` → ``mip_rel_gap``), translated through
+       :data:`_PARAM_MAP`.
     4. ``solver_arguments`` — the 1d-map authored on the active
        solve's ``solver_arguments`` parameter (Batch C.1+).  Raw
        options win over the convenience knobs.  From the input database:
@@ -920,9 +929,8 @@ def _resolve_effective_highs_options(
         ``None`` an empty dict is used (callers that want the
         determinism + scale floor pass it explicitly).
     solver_config
-        The active solve's :class:`SolverConfig`; only its ``time_limit``
-        / ``mip_gap`` / ``threads`` knobs are read (``None`` values and a
-        ``None`` config skip the layer).
+        The active solve's :class:`SolverConfig`; only its ``mip_gap`` is
+        read (a ``None`` value and a ``None`` config skip the layer).
     solve_name
         The solve, named in the message refusing an option
         (:func:`validate_solver_option`; every layer but *baseline* is checked).
@@ -974,14 +982,11 @@ def _resolve_effective_highs_options(
             for key, val in file_options.items()
         }
     options.update(file_options)
-    if solver_config is not None:
-        knobs = _PARAM_MAP["highs"]
-        for knob in ("time_limit", "mip_gap", "threads"):
-            value = getattr(solver_config, knob)
-            if value is not None:
-                validate_solver_option("highs", knobs[knob], value, f"solver_mip_gap{of_solve}")
-                check_database_solver_option("highs", knobs[knob], value, f"solver_mip_gap{of_solve}")
-                options[knobs[knob]] = typed_highs_option_value(knobs[knob], value, f"solver_mip_gap{of_solve}")
+    if solver_config is not None and solver_config.mip_gap is not None:
+        key, value, where = _PARAM_MAP["highs"]["mip_gap"], solver_config.mip_gap, f"solver_mip_gap{of_solve}"
+        validate_solver_option("highs", key, value, where)
+        check_database_solver_option("highs", key, value, where)
+        options[key] = typed_highs_option_value(key, value, where)
     if solver_arguments_map:
         for key, value in solver_arguments_map.items():
             validate_solver_option("highs", key, value, f"solver_arguments{of_solve}")
@@ -1234,7 +1239,7 @@ def resolve_commercial_options(
     instead (item 240 B3, a folder found outside a workspace this computer set
     up): each of its lines is then checked like ``solver_arguments``.  *is_mip*
     (the problem has an integer column): FlexTool's own Xpress time limit (the
-    solve's ``time_limit`` and the time-limit flag) is passed as a hard
+    time-limit flag or its environment variable) is passed as a hard
     ``MAXTIME -<limit>`` (:func:`_native_value`); a ``MAXTIME`` written in the
     option file or ``solver_arguments`` is passed as written.
     """
@@ -1265,15 +1270,11 @@ def resolve_commercial_options(
     entries += [CommercialOption(k, v, file_label) for k, v in file_options.items()]
     n_file_entries = len(entries)
     if solver_config is not None:
-        names = _PARAM_MAP[solver]
-        entries += [
-            CommercialOption(
-                names[knob], _native_value(solver, knob, getattr(solver_config, knob), is_mip=is_mip),
+        if solver_config.mip_gap is not None:
+            entries.append(CommercialOption(
+                _PARAM_MAP[solver]["mip_gap"], _native_value(solver, "mip_gap", solver_config.mip_gap),
                 f"solver_mip_gap{of_solve}",
-            )
-            for knob in ("time_limit", "mip_gap", "threads")
-            if getattr(solver_config, knob) is not None
-        ]
+            ))
         entries += [
             CommercialOption(str(k), _format_native_opt_value(v), f"solver_arguments{of_solve}")
             for k, v in solver_config.options.items()

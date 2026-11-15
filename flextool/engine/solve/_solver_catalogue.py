@@ -7,8 +7,9 @@ says what the input database may do with it:
 * ``plain``: taken (after the general check of :func:`._solver_dispatch.validate_solver_option`);
 * ``file``: a number, a switch or a plain file name, placed in the solve's work folder;
 * ``local_only``: refused from the database; ``reason`` says why: ``remote`` (another computer, a licence service
-  or its credentials), ``unreviewed`` (a text parameter nobody has classified) or ``command`` (a command of the
-  solver's console, not a parameter);
+  or its credentials), ``unreviewed`` (a text parameter nobody has classified), ``command`` (a command of the
+  solver's console, not a parameter) or ``settings`` (makes the solver read a file of solver settings: Gurobi's
+  ``InputFile`` and its ``.prm`` / ``.json`` setting-file lists; an option file on this computer may set them);
 * ``flextool``: FlexTool's own (Gurobi ``ResultFile``), dropped from every layer.
 
 The files are written by ``tools/solver_catalogue.py`` from the solver packages, with a reviewed class for every
@@ -31,7 +32,7 @@ SOLVERS = ("highs", "gurobi", "cplex", "xpress", "copt")
 #: The solver's name as its makers write it, for messages.
 SOLVER_LABEL = {"highs": "HiGHS", "gurobi": "Gurobi", "cplex": "CPLEX", "xpress": "Xpress", "copt": "COPT"}
 CLASSES = ("plain", "file", "local_only", "flextool")
-REASONS = ("remote", "unreviewed", "command")
+REASONS = ("remote", "unreviewed", "command", "settings")
 TYPES = ("bool", "int", "double", "string", "none", "unknown")
 #: The catalogue files, inside the ``flextool`` package.
 CATALOGUE_FOLDER = "engine/solve/solver_catalogue"

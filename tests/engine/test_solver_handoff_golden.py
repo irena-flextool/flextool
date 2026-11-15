@@ -51,8 +51,11 @@ _COMMERCIAL_CORPUS: list[tuple[str, str, str | None, dict, list[str]]] = [
     *[(f"{s}_template", s, _template(s), {}, []) for s in ("gurobi", "cplex", "xpress", "copt")],
     *[(f"{s}_nothing", s, None, {}, []) for s in ("gurobi", "cplex", "xpress", "copt")],
     *[(f"{s}_flags_only", s, None, {}, _FLAGS) for s in ("gurobi", "cplex", "xpress", "copt")],
-    *[(f"{s}_stacked", s, _template(s), {"mip_gap": 0.01, "time_limit": 600.0, "threads": 4,
-                                         "options": {"Presolve": 2}}, _FLAGS)
+    # The time limit and the thread count of a solve are solver_arguments under the solver's own names (item 265
+    # removed the solve's time_limit / threads knobs, which no database could set since v56).
+    *[(f"{s}_stacked", s, _template(s), {"mip_gap": 0.01, "options": {
+        _solver_dispatch._PARAM_MAP[s]["time_limit"]: 600.0, _solver_dispatch._PARAM_MAP[s]["threads"]: 4,
+        "Presolve": 2}}, _FLAGS)
       for s in ("gurobi", "cplex", "xpress", "copt")],
     ("gurobi_spellings", "gurobi", "Threads 0\nMIPGap 0.002\n",
      {"mip_gap": 0.01, "options": {"Mip_Gap": 0.005, "mipgap": "0.004", "Presolve": 2.0}}, ["--solver-mip-gap",
@@ -71,7 +74,7 @@ _COMMERCIAL_CORPUS: list[tuple[str, str, str | None, dict, list[str]]] = [
         "parallel": -1, "emphasis numerical": True, "lpmethod": "4.0",
     }}, ["--solver-time-limit", "100.5"]),
     ("xpress_names", "xpress", "THREADS 1\nXPRS_MIPRELSTOP 0.002\nxprs_maxtime 300\n",
-     {"mip_gap": 0.01, "time_limit": 99.2, "options": {"XPRS_PRESOLVE": 0, "maxtime": "120",
+     {"mip_gap": 0.01, "options": {"MAXTIME": 100, "XPRS_PRESOLVE": 0, "maxtime": "120",
                                                         "TUNEROUTPUTPATH": "tuner"}}, []),
     ("xpress_numbers", "xpress", None, {"options": {
         "MIPRELSTOP": 1e-4, "FEASTOL": "1e-9", "DEFAULTALG": 4.0, "OUTPUTLOG": True, "MAXNODE": "-1",

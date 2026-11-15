@@ -284,7 +284,7 @@ def test_highs_option_file_line_is_named_and_paths_pass_from_solver_config_only(
 
 #: One file / folder option per solver, as the database would spell it.
 _PATH_OPTION = {
-    "highs": "log_file", "gurobi": "InputFile", "cplex": "workdir", "xpress": "TUNEROUTPUTPATH", "copt": "LogFile",
+    "highs": "log_file", "gurobi": "LogFile", "cplex": "workdir", "xpress": "TUNEROUTPUTPATH", "copt": "LogFile",
 }
 #: (A name that is not ASCII is already refused from every source by the general check.)
 _PATH_VALUES = ["/tmp/x.log", "sub/x.log", "C:x.log", "..", "a..b", ".hidden", "-x", "x\\y", "C:\\x"]
@@ -566,7 +566,7 @@ def test_cplex_abbreviations_of_a_path_parameter_are_path_options(monkeypatch) -
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", ["Log_File", "LOG_FILE", "Sol_Files", "Input_File", "Nodefile_Dir", "result_file_"])
+@pytest.mark.parametrize("name", ["Log_File", "LOG_FILE", "Sol_Files", "Nodefile_Dir", "result_file_"])
 def test_gurobi_path_option_with_underscores_is_a_path_option(name, tmp_path) -> None:
     """The Gurobi library ignores case and ``_`` after the first character (``Log_File`` is ``LogFile``), so the
     database check does too; the option file (trusted) still passes the spelling on."""
@@ -983,12 +983,13 @@ def test_highs_whole_numbers_and_switches_from_the_database_reach_highs_in_its_t
     h = highspy.Highs()
     h.silent()
     assert all(h.setOptionValue(k, v) == highspy.HighsStatus.kOk for k, v in got.items())
-    # The knob layer (numbers) and an option-file line get the same treatment; an integer text is kept as it is.
+    # An option-file line gets the same treatment (``threads=2.0`` reaches HiGHS as ``"2"``), an integer text is
+    # kept as it is, and the knob layer (the solve's solver_mip_gap) gives a number.
     knobs = _resolve_effective_highs_options(
         solver_arguments_map=None, highs_opt_path=Path("cfg/highs.opt"), highs_opt_text="threads=2.0\nrandom_seed=7\n",
-        cli_overrides=None, solver_config=SolverConfig(name="highs", threads=3.0),
+        cli_overrides=None, solver_config=SolverConfig(name="highs", mip_gap=1.0),
     )
-    assert knobs == {"threads": 3, "random_seed": "7"}
+    assert knobs == {"threads": "2", "random_seed": "7", "mip_rel_gap": 1.0}
 
 
 @pytest.mark.parametrize("name, value, words", [

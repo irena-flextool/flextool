@@ -739,22 +739,21 @@ def test_xpress_mip_script_sets_back_the_log_flextool_reads(controls, appended) 
     assert lp.splitlines()[: len(user) + 1] == [*user, "readprob s.mps"]
 
 
-@pytest.mark.parametrize("is_mip, flags, cfg_limit, opt_text, expected", [
-    (True, ["--solver-time-limit", "59.5"], None, "", "-60"),   # rounded up, then negated: never -59
-    (False, ["--solver-time-limit", "59.5"], None, "", "60"),
-    (True, [], 30.2, "", "-31"),   # the solve's own time limit too
-    (True, [], None, "MAXTIME 100\n", "100"),   # written by the user: passed as written
-    (True, [], None, "MAXTIME -100\n", "-100"),
-    (True, ["--solver-time-limit", "45"], None, "MAXTIME 100\n", "-45"),
+@pytest.mark.parametrize("is_mip, flags, opt_text, expected", [
+    (True, ["--solver-time-limit", "59.5"], "", "-60"),   # rounded up, then negated: never -59
+    (False, ["--solver-time-limit", "59.5"], "", "60"),
+    (True, ["--solver-time-limit", "30.2"], "", "-31"),
+    (True, [], "MAXTIME 100\n", "100"),   # written by the user: passed as written
+    (True, [], "MAXTIME -100\n", "-100"),
+    (True, ["--solver-time-limit", "45"], "MAXTIME 100\n", "-45"),
 ])
-def test_xpress_mip_time_limit_is_a_hard_maxtime(is_mip, flags, cfg_limit, opt_text, expected, tmp_path) -> None:
-    """R3: FlexTool's own time limit (the flag, the solve's ``time_limit``) on an Xpress MIP is ``MAXTIME
-    -<limit>``, a hard limit (a positive MAXTIME stops a MIP only once it has a solution); the watchdog takes the
-    absolute value."""
+def test_xpress_mip_time_limit_is_a_hard_maxtime(is_mip, flags, opt_text, expected, tmp_path) -> None:
+    """R3: FlexTool's own time limit (the flag) on an Xpress MIP is ``MAXTIME -<limit>``, a hard limit (a
+    positive MAXTIME stops a MIP only once it has a solution); the watchdog takes the absolute value."""
     opt_file = tmp_path / "xpress.opt"
     opt_file.write_text(opt_text, encoding="utf-8")
     resolved = resolve_commercial_options("xpress", opt_file=opt_file, run_options=_options(flags), is_mip=is_mip,
-                                          solver_config=SolverConfig(name="xpress", time_limit=cfg_limit))
+                                          solver_config=SolverConfig(name="xpress"))
     assert [o.value for o in resolved if o.name == "MAXTIME"] == [expected]
     assert commercial_time_limit("xpress", resolved) == abs(float(expected))
 

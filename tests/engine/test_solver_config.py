@@ -131,9 +131,8 @@ def test_solve_config_solver_defaults(tmp_path: Path):
     default = SolverConfig()
     assert default.name == "highs"
     assert default.options == {}
-    assert default.time_limit is None
     assert default.mip_gap is None
-    assert default.threads is None
+    assert not hasattr(default, "time_limit") and not hasattr(default, "threads")  # item 265: removed
     assert default.log_level == "normal"
 
 
@@ -150,7 +149,7 @@ def test_solve_config_solver_explicit_highs(tmp_path: Path):
     assert cfg.name == "highs"
     # Other fields still default — only ``solver`` was authored.
     assert cfg.options == {}
-    assert cfg.time_limit is None
+    assert cfg.mip_gap is None
     assert cfg.log_level == "normal"
 
 
@@ -197,9 +196,6 @@ def test_solve_config_solver_convenience_knobs(tmp_path: Path):
     sc = _load_solve_config(url)
     cfg = sc.solver_configs[SOLVE_NAME]
     assert cfg.mip_gap == pytest.approx(0.01)
-    # The retired DB axes always resolve to None (CLI-flag-driven now).
-    assert cfg.time_limit is None
-    assert cfg.threads is None
     # Sanity: name still default — convenience knobs don't override solver
     assert cfg.name == "highs"
 
@@ -238,38 +234,27 @@ def test_solve_config_load_idempotent(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
-    "solver_name, time_native, time_value, gap_native, threads_native",
-    [
-        ("gurobi", "TimeLimit", "59.5", "MIPGap", "Threads"),
-        ("cplex", "timelimit", "59.5", "mip tolerances mipgap", "threads"),
-        # MAXTIME is an integer control: rounded up to whole seconds.
-        ("xpress", "MAXTIME", "60", "MIPRELSTOP", "THREADS"),
-        ("copt", "TimeLimit", "59.5", "RelGap", "Threads"),
-    ],
+    "solver_name, gap_native",
+    [("gurobi", "MIPGap"), ("cplex", "mip tolerances mipgap"), ("xpress", "MIPRELSTOP"), ("copt", "RelGap")],
 )
-def test_convenience_knobs_reach_each_commercial_solver_under_native_names(
-    solver_name: str, time_native: str, time_value: str, gap_native: str, threads_native: str,
-):
-    """The solve's ``time_limit`` / ``mip_gap`` / ``threads`` (the ``solver_mip_gap`` layer) are passed under
-    each solver's native parameter name, in that order, when no other layer sets them."""
-    cfg = SolverConfig(name=solver_name, time_limit=59.5, mip_gap=0.01, threads=4)
+def test_mip_gap_knob_reaches_each_commercial_solver_under_its_native_name(solver_name: str, gap_native: str):
+    """The solve's ``solver_mip_gap`` is passed under each solver's native parameter name when no other layer
+    sets it, labelled ``solver_mip_gap``; it is the only knob of the layer (item 265)."""
+    cfg = SolverConfig(name=solver_name, mip_gap=0.01)
     resolved = resolve_commercial_options(
         solver_name, opt_file=None, solver_config=cfg, run_options=RunOptions.from_env({}),
     )
-    assert [(o.name, o.value) for o in resolved] == [
-        (time_native, time_value), (gap_native, "0.01"), (threads_native, "4"),
-    ]
-    assert {o.layer for o in resolved} == {"solver_mip_gap"}
+    assert [(o.name, o.value, o.layer) for o in resolved] == [(gap_native, "0.01", "solver_mip_gap")]
 
 
-def test_solver_arguments_beat_the_time_limit_knob_case_insensitively():
+def test_solver_arguments_beat_the_mip_gap_knob_case_insensitively():
     """A ``solver_arguments`` entry for the same Gurobi parameter, in another spelling, wins over the
-    ``time_limit`` knob: one ``TimeLimit`` entry is passed, with the solver_arguments value and spelling."""
-    cfg = SolverConfig(name="gurobi", time_limit=60.0, options={"timelimit": 999})
+    ``solver_mip_gap`` knob: one ``MIPGap`` entry is passed, with the solver_arguments value and spelling."""
+    cfg = SolverConfig(name="gurobi", mip_gap=0.05, options={"mipgap": 0.001})
     resolved = resolve_commercial_options(
         "gurobi", opt_file=None, solver_config=cfg, run_options=RunOptions.from_env({}),
     )
-    assert [(o.name, o.value, o.layer) for o in resolved] == [("timelimit", "999", "solver_arguments")]
+    assert [(o.name, o.value, o.layer) for o in resolved] == [("mipgap", "0.001", "solver_arguments")]
 
 
 def test_a_copy_of_a_solve_keeps_its_solver_configuration(tmp_path: Path):

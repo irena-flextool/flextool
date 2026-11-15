@@ -86,10 +86,12 @@ def test_resolver_layer_order(tmp_path) -> None:
         solver_arguments_map=None, highs_opt_path=opt, cli_overrides=None, baseline=base,
         solver_config=SolverConfig())
     assert no_knob["mip_rel_gap"] == "0.002"
+    # The knob layer is the solve's solver_mip_gap only (item 265: the time limit and the thread count come from
+    # solver_arguments or the run's flags).
     knobs = _resolve_effective_highs_options(
         solver_arguments_map=None, highs_opt_path=None, cli_overrides=None,
-        solver_config=SolverConfig(time_limit=30.0, threads=3))
-    assert knobs == {"time_limit": 30.0, "threads": 3}
+        solver_config=SolverConfig(mip_gap=0.05))
+    assert knobs == {"mip_rel_gap": 0.05}
 
 
 def test_build_flextool_does_not_set_solver_options() -> None:

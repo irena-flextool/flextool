@@ -205,14 +205,15 @@ class SolverConfig:
         by default; user populates via the ``solver_arguments``
         1d-map parameter (Batch C.2: the legacy ``solver_options``
         Map was folded into ``solver_arguments`` and removed).
-    time_limit
-        Wall-clock seconds; ``None`` means no limit.  Translated to
-        each solver's native parameter name by
-        :func:`flextool.engine.solve._solver_dispatch.resolve_commercial_options`.
     mip_gap
-        Relative MIP gap; ``None`` means solver default.
-    threads
-        Worker thread cap; ``None`` means solver default.
+        Relative MIP gap (``solve.solver_mip_gap``); ``None`` means
+        solver default.  Translated to each solver's native parameter
+        name by
+        :func:`flextool.engine.solve._solver_dispatch.resolve_commercial_options`
+        and ``build_solver_options``.  A time limit or thread count comes
+        from ``solver_arguments`` (the solver's own name) or the run's
+        flags (``--solver-time-limit``, ``--threads``); the database's
+        ``solver_time_limit`` / ``solver_threads`` were removed in v56.
     log_level
         ``"silent"`` / ``"normal"`` / ``"verbose"``.  Default
         ``"normal"``.
@@ -220,9 +221,7 @@ class SolverConfig:
 
     name: str = "highs"
     options: dict[str, Any] = field(default_factory=dict)
-    time_limit: float | None = None
     mip_gap: float | None = None
-    threads: int | None = None
     log_level: str = "normal"
 
 
@@ -653,14 +652,13 @@ class SolveConfig:
         solver_log_level: dict = {}
         # solver_mip_gap comes back as the stringified float that
         # ``params_to_dict`` produces for scalar floats (see line
-        # ~141).  Batches C.6 and C.8 dropped the ``solver_threads``
-        # and ``solver_time_limit`` DB axes (use --highs-threads and
-        # --solver-time-limit CLI flags instead).
-        solver_time_limit_raw: dict = {}
+        # ~141).  Batches C.6 and C.8 (v56) dropped the ``solver_threads``
+        # and ``solver_time_limit`` DB parameters: a time limit or thread
+        # count goes in ``solver_arguments`` (the solver's own name) or the
+        # --solver-time-limit / --threads flags.
         solver_mip_gap_raw: dict = params_to_dict(
             db=db, cl="solve", par="solver_mip_gap", mode=DictMode.DICT
         )
-        solver_threads_raw: dict = {}
         # Batch C.2 — ``solver_options`` was folded into
         # ``solver_arguments`` (now the canonical 1d-map) and the
         # parameter_definition was removed.  ``SolverConfig.options``
@@ -810,9 +808,7 @@ class SolveConfig:
         solver_config_keys = (
             set(solvers)
             | set(solver_arguments)
-            | set(solver_time_limit_raw)
             | set(solver_mip_gap_raw)
-            | set(solver_threads_raw)
             | set(solver_log_level)
         )
 
@@ -820,18 +816,12 @@ class SolveConfig:
             v = raw.get(key)
             return float(v) if v is not None else None
 
-        def _opt_int(raw: dict, key: str) -> int | None:
-            v = raw.get(key)
-            return int(float(v)) if v is not None else None
-
         solver_configs: dict[str, SolverConfig] = {}
         for key in solver_config_keys:
             solver_configs[key] = SolverConfig(
                 name=solvers.get(key, "highs"),
                 options=dict(solver_arguments.get(key, {})),
-                time_limit=_opt_float(solver_time_limit_raw, key),
                 mip_gap=_opt_float(solver_mip_gap_raw, key),
-                threads=_opt_int(solver_threads_raw, key),
                 log_level=solver_log_level.get(key, "normal"),
             )
 

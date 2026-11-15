@@ -329,7 +329,7 @@ parameters; from the database:
   | Solver | File and folder parameters |
   |--------|----------------------------|
   | HiGHS  | `log_file`, `solution_file`, `read_solution_file`, `read_basis_file`, `write_basis_file`, `write_model_file`, `write_presolved_model_file`, `write_iis_model_file`, `mip_improving_solution_file` |
-  | Gurobi | `ResultFile`, `LogFile`, `SolFiles`, `NodefileDir`, `InputFile`, `ConcurrentSettings`, `MultiObjSettings`, `TuneBaseSettings`, `TuneIgnoreSettings`, `TuneParams` |
+  | Gurobi | `ResultFile`, `LogFile`, `SolFiles`, `NodefileDir` |
   | CPLEX  | `logfile`, `workdir`, `output intsolfileprefix` |
   | Xpress | `TUNERMETHODFILE`, `TUNEROUTPUTPATH`, `TUNERSESSIONNAME` |
   | COPT   | `LogFile` |
@@ -351,8 +351,13 @@ parameters; from the database:
   (`COMPUTEEXECSERVICE`, `COMPUTEJOBPRIORITY`, `COMPUTELOG`). CPLEX:
   `distmip config` (the machines of a distributed MIP solve).
 - **A few others are refused** as well: Gurobi's `JobID` and `Dummy` (text
-  parameters with no use from a database) and CPLEX's `defaults` (a command
-  that resets every parameter, not a parameter).
+  parameters with no use from a database), CPLEX's `defaults` (a command
+  that resets every parameter, not a parameter), and Gurobi's parameters
+  that make `gurobi_cl` read a file of solver settings, which could set any
+  parameter: `InputFile` (it can name a `.prm` parameter file) and the
+  setting-file lists `ConcurrentSettings`, `MultiObjSettings`,
+  `TuneBaseSettings`, `TuneIgnoreSettings` and `TuneParams`. `gurobi.opt`
+  may set them.
 - **FlexTool 3's HiGHS settings** in a solve that uses Gurobi, CPLEX, Xpress
   or COPT are left out with one warning per run: the database migration moved
   FlexTool 3's `highs_method`, `highs_parallel` and `highs_presolve` into
