@@ -403,6 +403,10 @@ def _pdt_long_multi_col(
         else:
             out.columns = pd.MultiIndex.from_arrays([[]] * len(col_names), names=list(col_names))
         return out
+    # The pivot keeps the columns in the order the keys first appear (pandas, more than one column key), and the
+    # producers (``_ramp_inputs``, ``calc_piecewise``) build their frames with joins whose row order changes from
+    # run to run: sort by the keys so the columns (and rows) come in the same order on every run.
+    frame = frame.sort([*col_dims, "d", "t"])
     out = wide_multi_col(
         with_solve_column(frame, solve_name),
         row_dims=("solve", "d", "t"),
@@ -432,6 +436,7 @@ def _solve_period_multi_col(
         out = pd.DataFrame(index=idx, dtype=float)
         out.columns = pd.MultiIndex.from_arrays([[]] * len(col_names), names=list(col_names))
         return out
+    frame = frame.sort(list(col_dims))  # the columns in the same order on every run (joins upstream)
     columns = pd.MultiIndex.from_frame(frame.select(col_dims).to_pandas(), names=list(col_names))
     values = frame.get_column("value").to_numpy().astype(float)
     index = pd.MultiIndex.from_arrays([[solve_name] * len(periods), periods], names=["solve", "period"])

@@ -106,7 +106,10 @@ def piecewise_input_and_excess(flex_data: "FlexData", solution: "Solution | None
     out_arcs = _utf8(flex_data.process_output_flows).select(keys).join(pw, on="p", how="semi")
     out = _with_coeff(flow.join(out_arcs, on=keys, how="semi"), flex_data.p_process_sink_conversion_flow_coeff,
                       "sink")
-    x = out.group_by("p", "d", "t").agg((pl.col("mw") * pl.col("k")).sum().alias("x"))
+    # Sorted so that each (p, d, t) sum adds its arcs in the same order on every run (the joins above do not keep
+    # a stable row order).
+    x = out.sort("p", "d", "t", "source", "sink").group_by("p", "d", "t").agg(
+        (pl.col("mw") * pl.col("k")).sum().alias("x"))
 
     # q: the weighted input; a delayed unit's inputs at the earlier source-side steps.
     in_arcs = _utf8(flex_data.process_input_flows).select(keys).join(pw, on="p", how="semi")
@@ -115,7 +118,8 @@ def piecewise_input_and_excess(flex_data: "FlexData", solution: "Solution | None
         in_arcs = in_arcs.join(delayed.select("p"), on="p", how="anti")
     inp = _with_coeff(flow.join(in_arcs, on=keys, how="semi"), flex_data.p_process_source_conversion_flow_coeff,
                       "source")
-    pieces = [inp.group_by("p", "d", "t").agg((pl.col("mw") * pl.col("k")).sum().alias("q"))]
+    pieces = [inp.sort("p", "d", "t", "source", "sink").group_by("p", "d", "t").agg(
+        (pl.col("mw") * pl.col("k")).sum().alias("q"))]
     if delayed is not None and delayed.height > 0:
         pieces.append(_delayed_input(flex_data, flow, delayed.select("p").join(pw, on="p", how="semi")))
     pieces = [f for f in pieces if f is not None and f.height > 0]
@@ -195,6 +199,7 @@ def _delayed_input(flex_data: "FlexData", flow: pl.DataFrame, units: pl.DataFram
           .join(weight, on=["p", "td"], how="inner"))
     f = _with_coeff(flow.rename({"t": "t_source"}), flex_data.p_process_source_conversion_flow_coeff, "source")
     return (at.join(f, on=["p", "source", "sink", "d", "t_source"], how="inner")
+            .sort("p", "d", "t_sink", "source", "td", "t_source")  # the same sum order on every run
             .group_by("p", "d", pl.col("t_sink").alias("t"))
             .agg((pl.col("mw") * pl.col("w") * pl.col("k")).sum().alias("q")))
 

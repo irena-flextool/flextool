@@ -147,9 +147,11 @@ def _coarse_mean(frame: pl.DataFrame, d: "FlexData", keys: list[str], *, default
     if coarse_keys.height == 0:
         return frame
     # Every fine step of every coarse step of the coarse keys, the missing ones at the default.
+    # Sorted so that each coarse step's weighted sum adds its fine steps in the same order on every run.
     dense = (coarse_keys.join(steps, on="p", how="inner")
              .join(frame, on=[*keys, "d", "t"], how="left")
-             .with_columns(pl.col("value").fill_null(default)))
+             .with_columns(pl.col("value").fill_null(default))
+             .sort([*keys, "d", "t"]))
     means = (dense.group_by(*keys, "d", "b_first")
              .agg((pl.col("value") * pl.col("w")).sum().alias("__mean")))
     coarse = (dense.select(*keys, "d", "b_first", "t")
@@ -210,7 +212,7 @@ def coarse_steps(d: "FlexData") -> "tuple[pl.DataFrame | None, pl.DataFrame | No
     with_dur = steps.join(dur, on=["d", "t"], how="inner")
     # Solve order of the fine steps (the coarse step's last fine step is its last in the solve's dt).
     order = _dt(d).with_row_index("__pos")
-    with_dur = with_dur.join(order, on=["d", "t"], how="inner")
+    with_dur = with_dur.join(order, on=["d", "t"], how="inner").sort("p", "__pos")  # same sum order every run
     agg = (with_dur.group_by("p", "d", "b_first")
            .agg(pl.col("value").sum().alias("__dur_b"), pl.col("__pos").max().alias("__last_pos")))
     full = with_dur.join(agg, on=["p", "d", "b_first"], how="left")
