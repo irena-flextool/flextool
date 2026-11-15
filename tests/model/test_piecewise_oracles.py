@@ -459,12 +459,9 @@ def test_T6_warm_rolling_equals_cold(tmp_path_factory) -> None:
         assert_outputs_equal(wfs[True], wfs[False], k)
 
 
-def test_T6_storage_backed_reserve_of_a_remapped_unit(tmp_path_factory) -> None:
-    """E (the O2a curve, 100 MW, no online variables) draws from the storage node ``st`` (500 MWh) and holds upward
-    reserve ``rs`` at elec with reserve_duration 2 h.  As the direct unit it would be without its curve, it is a
-    storage-backed provider: reserve_storage_up_floor of st has its reserve with the energy drawn per MW of
-    reserve at the largest slope of its lines, seg 2 α = 125/66 (oracle §5):
-    coefficient = −unitsize · duration · α = −100 · 2 · 125/66."""
+def _storage_reserve_case(e_params: dict, extra_solve: list | None = None) -> tuple:
+    """E (the O2a curve, 100 MW) draws from the storage node ``st`` (500 MWh) and holds upward reserve ``rs`` at elec
+    with reserve_duration 2 h."""
     grp, key = ["rs", "up", "elecg"], ["rs", "up", "E", "elec"]
     st = ([["node", "st", None]],
           [["node", "st", "node_type", text("storage")], ["node", "st", "existing", scalar(500.0)],
@@ -479,16 +476,40 @@ def test_T6_storage_backed_reserve_of_a_remapped_unit(tmp_path_factory) -> None:
             ["reserve__upDown__unit__node", key, "is_enabled", text("yes")],
             ["reserve__upDown__unit__node", key, "max_share", scalar(1.0)],
             ["reserve__upDown__unit__node", key, "reliability", scalar(1.0)]])
-    parts = merge(time_settings(3, ["p2030"]), st, balance_node("elec", -30.0), res,
-                  unit("E", ["st"], ["elec"], _pw(E_CURVE, existing=scalar(100.0))))
-    s = _solve(tmp_path_factory, "t6_storage_reserve", parts)
-    assert utf8(s.flex_data.process_piecewise_remap)["p"].to_list() == ["E"]
-    m = build(s.flex_data).canonicalise()
+    return merge(time_settings(3, ["p2030"], extra_solve=extra_solve), st, balance_node("elec", -30.0), res,
+                 unit("E", ["st"], ["elec"], _pw(E_CURVE, existing=scalar(100.0), **e_params)))
+
+
+def _reserve_energy_coefs(fd) -> list[float]:
+    """The v_reserve coefficients of the reserve_storage_up_floor rows, one per step."""
+    m = build(fd).canonicalise()
     coef = {}
     for c in range(m.n_cols):
         for k in range(m.col_ptr[c], m.col_ptr[c + 1]):
             row = m.row_names[m.row_idx[k]]
             if row.startswith("reserve_storage_up_floor[") and m.col_names[c].startswith("v_reserve["):
                 coef[row] = float(m.val[k])
-    assert len(coef) == 3, coef
-    _close(list(coef.values()), [-100 * 2 * Fr(125, 66)] * 3, what="reserve energy coefficient")
+    return list(coef.values())
+
+
+def test_T6_storage_backed_reserve_of_a_remapped_unit(tmp_path_factory) -> None:
+    """E (no online variables) as the direct unit it would be without its curve is a storage-backed provider:
+    reserve_storage_up_floor of st has its reserve with the energy drawn per MW of reserve at the largest slope of
+    its lines, seg 2 α = 125/66 (oracle §5): coefficient = −unitsize · duration · α = −100 · 2 · 125/66."""
+    s = _solve(tmp_path_factory, "t6_storage_reserve", _storage_reserve_case({}))
+    assert utf8(s.flex_data.process_piecewise_remap)["p"].to_list() == ["E"]
+    _close(_reserve_energy_coefs(s.flex_data), [-100 * 2 * Fr(125, 66)] * 3, what="reserve energy coefficient")
+
+
+def test_T6_storage_backed_reserve_of_a_reduced_remapped_unit(tmp_path_factory) -> None:
+    """E with linear start-ups under reduce_unit_detail_method online runs at its full-load efficiency 0.60 and
+    leaves its curve lines, but stays paired as a storage-backed provider: the energy drawn per MW of reserve is its
+    p_slope 1/η(1) = 5/3, coefficient = −100 · 2 · 5/3 = −1000/3."""
+    s = _solve(tmp_path_factory, "t6_storage_reserve_reduced", _storage_reserve_case(
+        {"startup_method": text("linear"), "startup_cost": scalar(0.0)},
+        extra_solve=[["solve", "s1", "reduce_unit_detail_method", text("online")]]))
+    fd = s.flex_data
+    assert fd.process_piecewise is None and fd.p_piecewise_slope is None
+    assert fd.process_online is None
+    assert utf8(fd.process_piecewise_remap)["p"].to_list() == ["E"]
+    _close(_reserve_energy_coefs(fd), [Fr(-1000, 3)] * 3, what="reserve energy coefficient")

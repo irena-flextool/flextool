@@ -81,6 +81,12 @@ Input databases move to data version 80. The FlexTool window, the Spine Toolbox 
   burnt more fuel than that at full output when the weighted output was above 1 (with several flows the unit could
   not reach its capacity and the shortfall went to slack) and less when it was below 1. Results of such reduced
   solves change; rerun them. Units whose outputs add up to their capacity at coefficient 1 are unchanged.
+- **`reduce_unit_detail_method` *integers_min_limits* / *integers_ramps_min_limits*: a *min_load_efficiency* unit
+  more efficient at min load (`efficiency_at_min_load` above `efficiency`) no longer gets fuel below zero.** Without
+  its min-load floor the solve kept all its units online and its curve gave less fuel than any point of the curve:
+  negative fuel at low output for a unit with one output, output without fuel for a unit with several. Such a unit
+  now runs at its full-load efficiency, as under *online*; its online variables go when nothing else uses them.
+  Units whose efficiency rises towards full load are unchanged.
 - **Near-optimal solve acceptance judges the infeasibility count and the absolute check where HiGHS solved** (with
   FlexTool's bound scaling): a solve that was feasible there could be rejected before. A rejected solve now names
   the checks that failed (before, the message always quoted the relative check, also when it had passed).

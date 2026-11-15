@@ -153,7 +153,7 @@ What each value removes:
 - `none` removes nothing.
 - `integers` removes: whole units online (they become continuous) and the `exact` connection method (those connections become *regular*).
 - `integers_ramps` removes: what `integers` removes, and the ramp limits and ramp costs.
-- `integers_min_limits` removes: what `integers` removes, and min load, the `capacity_min_coeff` floors and the minimum up and down times.
+- `integers_min_limits` removes: what `integers` removes, and min load, the `capacity_min_coeff` floors and the minimum up and down times. A `min_load_efficiency` unit more efficient at min load than at full load runs at its full-load efficiency.
 - `integers_ramps_min_limits` removes: what `integers` removes, the ramp limits and ramp costs, and the min limits.
 - `online` removes: what `integers_min_limits` removes, and the online variables: units online, start-ups, shut-downs, start-up costs, the user constraints with a `constraint_online_coeff` term and the part-load curve of `min_load_efficiency` and `piecewise_linear` units (they run at their full-load efficiency). Ramp limits stay and apply to the capacity.
 - `online_ramps` removes: what `online` removes, and the ramp limits and ramp costs.
@@ -178,7 +178,11 @@ The parts in detail:
 - **Min limits.** `min_load`, the `capacity_min_coeff` floors and the minimum up and down times (`min_uptime`, `min_downtime`).
 
     A unit with `min_load_efficiency` keeps its part-load curve. Without the min load floor its units online can
-    follow its output (units online ≈ output / capacity), so its fuel becomes close to linear in output.
+    follow its output (units online ≈ output / capacity), so its fuel becomes close to linear in output. A
+    `min_load_efficiency` unit that is more efficient at min load (`efficiency_at_min_load` above `efficiency`)
+    instead runs at its full-load efficiency, as under `online` (see *Online variables* below): without the floor
+    the model would keep all its units online, and its curve would then give less fuel than at any point of the
+    curve, below zero at low output.
 
 - **Online variables.** The units online of every unit and connection with a `startup_method`, and with them start-ups, shut-downs, start-up costs and the min limits.
 
@@ -268,7 +272,8 @@ run log says so in the solve's info line:
 - `integers*` with a `constraint_online_coeff` term: the user constraint counts fractional units online.
 
 **An approximation.** Every part only removes constraints or integer restrictions, except the full-load
-efficiency of `min_load_efficiency` and `piecewise_linear` units under `online*`. A unit whose efficiency rises
+efficiency of `min_load_efficiency` and `piecewise_linear` units under `online*` (and of `min_load_efficiency`
+units more efficient at min load under `*min_limits`). A unit whose efficiency rises
 towards full load uses less fuel at part load than with its curve, a unit that is more efficient at part load uses
 more; at full output the fuel is the same. CO2 limits read that fuel.
 

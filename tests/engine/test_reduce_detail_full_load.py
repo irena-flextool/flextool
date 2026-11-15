@@ -105,10 +105,10 @@ def _strict_autoscale(monkeypatch) -> None:
 
 
 def _case(conversion: dict, w: float, level: str | None, n_steps: int, rolling: bool, heat: bool,
-          min_load: float) -> tuple[list, list]:
+          min_load: float, demand: tuple[float, float] = DEMAND) -> tuple[list, list]:
     extra = [["solve", "s1", "reduce_unit_detail_method", text(level)]] if level else []
     names = [f"t{i:02d}" for i in range(1, n_steps + 1)]
-    elec = {t: -DEMAND[i % 2] for i, t in enumerate(names)}
+    elec = {t: -demand[i % 2] for i, t in enumerate(names)}
     ents, vals = merge(
         time_settings(n_steps, ["p2030"], extra_solve=extra, rolling=(2.0, 2.0) if rolling else None),
         commodity_node("gas", "gas_node", 20.0), balance_node("elec", elec),
@@ -123,13 +123,15 @@ def _case(conversion: dict, w: float, level: str | None, n_steps: int, rolling: 
 
 
 def _run(tmp_path_factory, name: str, conversion: dict, w: float, level: str | None, *, rolling: bool = False,
-         heat: bool = True, min_load: float = 0.3) -> dict:
+         heat: bool = True, min_load: float = 0.3, demand: tuple[float, float] = DEMAND) -> dict:
     from flextool.engine import run_chain_from_db
 
     name = f"{name}_w{str(w).replace('.', 'p')}_{level or 'none'}{'_roll' if rolling else ''}{'' if heat else '_1out'}"
+    if demand != DEMAND:
+        name += "_d" + "_".join(str(x).replace(".", "p") for x in demand)
     if name not in _RUNS:
         url, scen = make_oracle_db(tmp_path_factory, name,
-                                   *_case(conversion, w, level, 4 if rolling else 2, rolling, heat, min_load))
+                                   *_case(conversion, w, level, 4 if rolling else 2, rolling, heat, min_load, demand))
         _RUNS[name] = run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{name}_w"),
                                         keep_solutions=True)
     steps = _RUNS[name]
@@ -155,14 +157,14 @@ def _cells(param) -> pl.DataFrame:
     return utf8(param.frame).filter(pl.col("p") == "CHP").sort(pl.all())
 
 
-def _check_fuel(step, fuel: list, heat: bool) -> None:
+def _check_fuel(step, fuel: list, heat: bool, demand: tuple[float, float] = DEMAND) -> None:
     """Demand served without slack, the fuel and the objective of the hand values (the cost is fuel only).  With one
     output CHP is a direct unit: its flow is the arc gas_node -> elec."""
     if heat:
-        assert _mw(step, "CHP", "elec") == pytest.approx(list(DEMAND), rel=RTOL)
+        assert _mw(step, "CHP", "elec") == pytest.approx(list(demand), rel=RTOL)
         assert _mw(step, "gas_node", "CHP") == pytest.approx([float(f) for f in fuel], rel=RTOL)
     else:
-        assert _mw(step, "gas_node", "elec") == pytest.approx(list(DEMAND), rel=RTOL)
+        assert _mw(step, "gas_node", "elec") == pytest.approx(list(demand), rel=RTOL)
     assert _slack(step) == pytest.approx([0.0, 0.0], abs=1e-9)
     assert float(step.solution.obj) == pytest.approx(float(COST_PER_MW * sum(fuel)), rel=RTOL)
 
@@ -245,6 +247,9 @@ TWINS = {
     "pw_single_line": (_pw([(0.5, 0.4), (1.0, 0.5)]), 1.0, True, 0.5, 0.5, 2.0),
     "pw_rising": (_pw([(0.25, 0.25), (0.5, 0.4), (1.0, 0.5)]), 1.0, True, 0.25, 0.5, 2.0),
     "pw_peak_below_full_load": (_pw([(0.25, 0.4), (0.5, 0.5), (1.0, 0.4)]), 1.0, True, 0.25, 0.4, 2.5),
+    # Multi-line at W = 2 (elec coefficient 2, heat 0.2): F(2) = max(1·2 + 3/4, 3/2·2 + 1/2) = 7/2, slope' = 7/4,
+    # the slope of the W = 2 min_load_efficiency twin (efficiency 4/7); input limit F(2) = 7/2 = 2·7/4.
+    "pw_rising_w2": (_pw([(0.25, 0.25), (0.5, 0.4), (1.0, 0.5)]), 2.0, True, 0.25, 4.0 / 7.0, 1.75),
 }
 
 
@@ -272,3 +277,104 @@ def test_reduced_unit_is_the_constant_efficiency_unit(tmp_path_factory, tmp_path
         assert _mps(build(fd), tmp_path / f"{safe}_a.mps") == _mps(build(ref[name].flex_data),
                                                                     tmp_path / f"{safe}_b.mps"), name
         assert float(red[name].solution.obj) == float(ref[name].solution.obj), name
+
+
+# ---------------------------------------------------------------------------
+# integers_min_limits / integers_ramps_min_limits: a min_load_efficiency unit more efficient at min load runs at its
+# full-load efficiency (its continuous units online would otherwise rise to the units built without a floor).
+#
+# mle_neg (module docstring): s = −9/14, σ = 65/14.  Demand 10 and 5 MW, below min load: without the fold the LP sets
+# the unit online (units online ≤ 1, no floor) and the fuel is σ·Y + s·100 = 650/14 − 900/14 = −125/7 MW at 10 MW
+# and 325/14 − 900/14 = −575/14 MW at 5 MW.  With the fold slope' = σ + s = 4: fuel 40 and 20 MW, objective
+# 87600 × 60.  A rising unit (mle: 0.4 at full load, 0.25 at min load, s = 9/14) keeps its section and its units
+# online: with no floor they carry the output at the least units online, Y / 100, so the fuel is (σ + s)·Y = Y/0.4:
+# 250 and 125 MW at 100 and 50 MW.
+
+MIN_LIMITS_LEVELS = ["integers_min_limits", "integers_ramps_min_limits"]
+LOW_DEMAND = (10.0, 5.0)
+
+
+@pytest.mark.parametrize("heat", [True, False], ids=["indirect", "direct"])
+@pytest.mark.parametrize("level", MIN_LIMITS_LEVELS)
+def test_min_limits_falling_unit_runs_at_full_load(tmp_path_factory, level, heat) -> None:
+    red = _first(_run(tmp_path_factory, "mle_neg", CONVERSION["mle_neg"], 1.0, level, heat=heat, demand=LOW_DEMAND))
+    _check_fuel(red, [Fr(40), Fr(20)], heat, LOW_DEMAND)
+    fd = red.flex_data
+    assert fd.process_min_load_eff is None
+    assert fd.process_online is None or "CHP" not in set(utf8(fd.process_online)["p"].to_list())
+    assert _cells(fd.p_section)["value"].to_list() == [0.0, 0.0]
+    assert _cells(fd.p_slope)["value"].to_list() == pytest.approx([4.0, 4.0], rel=1e-15)
+
+
+@pytest.mark.parametrize("level", MIN_LIMITS_LEVELS)
+def test_min_limits_rising_unit_keeps_its_section(tmp_path_factory, level) -> None:
+    full = _first(_run(tmp_path_factory, "mle", CONVERSION["mle"], 1.0, None))
+    red = _first(_run(tmp_path_factory, "mle", CONVERSION["mle"], 1.0, level))
+    _check_fuel(red, [Fr(250), Fr(125)], True)
+    fd = red.flex_data
+    assert utf8(fd.process_min_load_eff)["p"].to_list() == ["CHP"]
+    assert "CHP" in set(utf8(fd.process_online)["p"].to_list())
+    for name in ("p_slope", "p_section"):
+        assert _cells(getattr(fd, name)).equals(_cells(getattr(full.flex_data, name))), name
+
+
+@pytest.mark.parametrize("rolling", [False, True], ids=["single", "rolling"])
+@pytest.mark.parametrize("level", MIN_LIMITS_LEVELS)
+@pytest.mark.parametrize("twin", ["mle_falling_one_output", "mle_falling_two_outputs"])
+def test_min_limits_falling_unit_is_the_constant_efficiency_unit(tmp_path_factory, tmp_path, twin, level,
+                                                                 rolling) -> None:
+    """The falling dyadic twins (efficiency 0.4, 0.5 at min load 0.5: slope' = 5/2) under the *_min_limits levels:
+    the written MPS of the constant_efficiency unit at 0.4 (whose online variables have no use either), byte for
+    byte, every sub-solve."""
+    conversion, w, heat, min_load, eff, slope = TWINS[twin]
+    red = _run(tmp_path_factory, twin, conversion, w, level, rolling=rolling, heat=heat, min_load=min_load)
+    ref = _run(tmp_path_factory, f"{twin}_const", {"conversion_method": text("constant_efficiency"),
+                                                   "efficiency": scalar(eff)},
+               w, level, rolling=rolling, heat=heat, min_load=min_load)
+    assert list(red) == list(ref) and len(red) == (2 if rolling else 1), list(red)
+    for name in red:
+        fd = red[name].flex_data
+        assert set(_cells(fd.p_slope)["value"].to_list()) == {slope}, name
+        assert fd.process_min_load_eff is None and fd.process_online is None, name
+        safe = name.replace("/", "_")
+        assert _mps(build(fd), tmp_path / f"{safe}_a.mps") == _mps(build(ref[name].flex_data),
+                                                                    tmp_path / f"{safe}_b.mps"), name
+        assert float(red[name].solution.obj) == float(ref[name].solution.obj), name
+
+
+# ---------------------------------------------------------------------------
+# A stochastic solve: coal_plant of stochastics.json (one input, one output: remapped, process_piecewise_remap) with
+# the rising curve {0.4: 0.30, 0.7: 0.40, 1.0: 0.42}, linear start-ups and min_load 0.4, under online.  Every
+# sub-solve (the stochastic solve over its branch periods and the realization solve) runs it as a constant_efficiency
+# unit at 0.42: p_slope 1/0.42 everywhere, no curve lines, and its fuel is its output / 0.42 in every step.
+
+STOCHASTICS_JSON = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "stochastics.json"
+STOCH_CHAIN = ["base", "init", "system", "2day"]
+
+
+def test_stochastic_reduced_curve_runs_at_full_load_efficiency(tmp_path_factory) -> None:
+    from tests.engine._unit_db import RunCache, b64
+
+    curve_value = b64({"index_type": "float", "data": [[0.4, 0.30], [0.7, 0.40], [1.0, 0.42]]}, "map")
+    values = [["unit", "coal_plant", "conversion_method", b64("piecewise_linear", "str")],
+              ["unit", "coal_plant", "piecewise_linear_efficiency", curve_value],
+              ["unit", "coal_plant", "min_load", b64(0.4, "float")],
+              ["unit", "coal_plant", "startup_method", b64("linear", "str")],
+              ["solve", "2day_dispatch", "reduce_unit_detail_method", b64("online", "str")]]
+    steps, _, _ = RunCache().get(tmp_path_factory, alt="stoch_reduce_online", values=values, base_chain=STOCH_CHAIN,
+                                 fixture_json=STOCHASTICS_JSON)
+    assert steps
+    for name, step in steps.items():
+        assert step.solution is not None, name
+        fd = step.flex_data
+        assert fd.process_piecewise is None and fd.p_piecewise_slope is None, name
+        assert utf8(fd.process_piecewise_remap)["p"].to_list() == ["coal_plant"], name
+        assert fd.process_online is None or "coal_plant" not in set(utf8(fd.process_online)["p"].to_list()), name
+        slope = utf8(fd.p_slope.frame).filter(pl.col("p") == "coal_plant")
+        assert slope.height == fd.dt.height and set(slope["value"].to_list()) == {1.0 / 0.42}, name
+        flow = utf8(step.solution.value("v_flow")).filter(pl.col("p") == "coal_plant")
+        fuel = flow.filter(pl.col("sink") == "coal_plant").select("d", "t", fuel="value")
+        out = flow.filter(pl.col("source") == "coal_plant").select("d", "t", out="value")
+        both = fuel.join(out, on=["d", "t"], how="inner")
+        assert both.height == fd.dt.height and both["out"].max() > 0.0, name
+        assert both["fuel"].to_list() == pytest.approx((both["out"] / 0.42).to_list(), rel=RTOL, abs=1e-9), name
