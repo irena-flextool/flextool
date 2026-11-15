@@ -325,6 +325,8 @@ CONSUMERS: dict[str, set[str]] = {
     "core:_ramp_family": {"ramp_limits"},
     "core:_online_ramp_rhs": {"ramp_limits"},
     "core:_eq_conversion": {"min_load_efficiency"},
+    # The zero-output fuel of a multi-line curve on the units online (U = v_online).
+    "core:_eq_conversion_piecewise": {"piecewise_linear"},
     "core:_eff_fuel_input": {"min_load_efficiency"},
     # The start-up input draw (startup_input_method): commodity cost, CO2 price and caps, ladder, balances.
     "core:_startup_draw": {"startup_energy"},

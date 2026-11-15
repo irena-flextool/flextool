@@ -306,9 +306,10 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     # Coarse processes — model/_coarse_flows.py add_cstr writes f"{name}_coarse" (and passes the fine family's
     # name as an argument, which the literal grep above cannot see either).
     "maxFlow", "maxFlow_negCap", "maxFlow_back", "maxOutputSum", "maxOutputSum_negCap", "conversion_indirect",
-    "minInputShare", "profile_flow_upper_limit", "profile_flow_lower_limit", "profile_flow_fixed",
+    "conversion_piecewise", "minInputShare", "profile_flow_upper_limit", "profile_flow_lower_limit", "profile_flow_fixed",
     "maxFlow_coarse", "maxFlow_negCap_coarse", "maxFlow_back_coarse", "maxOutputSum_coarse",
-    "maxOutputSum_negCap_coarse", "conversion_indirect_coarse", "minInputShare_coarse",
+    "maxOutputSum_negCap_coarse", "conversion_indirect_coarse", "conversion_piecewise_coarse",
+    "minInputShare_coarse",
     "profile_flow_upper_limit_coarse", "profile_flow_lower_limit_coarse", "profile_flow_fixed_coarse",
     # Coarse online processes — the same add_cstr with the UC class suffix before "_coarse".
     *(f"{fam}_{kind}_coarse" for fam in ("maxFlow_online", "maxFlow_back_online", "maxOutputSum_online",

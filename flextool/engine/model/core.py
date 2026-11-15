@@ -42,8 +42,8 @@ Equation families, in emit order (module in brackets when not model/core.py):
   Flows & capacity    maxFlow, maxFlow_negCap, maxFlow_back; maxOutputSum(_negCap);
                       dc_reference_angle_eq, dc_flow_eq [_dc_power_flow]
                       (the arc-local families of coarse processes — maxFlow, maxOutputSum, conversion_indirect,
-                      minInputShare and profile_flow_* — are written once per coarse step as <family>_coarse
-                      [_coarse_flows])
+                      conversion_piecewise, minInputShare and profile_flow_* — are written once per coarse step as
+                      <family>_coarse [_coarse_flows])
   Units               max{Online,Startup,Shutdown}, online_change, maxFlow_online[_shutdown[_branch]],
                       maxFlow_back_online, maxOutputSum_online, maxInputFlow_online[_shutdown[_branch]],
                       minimum_{uptime,downtime}, online_fix_eq [_online];
@@ -51,7 +51,8 @@ Equation families, in emit order (module in brackets when not model/core.py):
                       minFlow_{minload,output_floor,reserve,reserve_arc} [_unit_floors];
                       ramp_{sink,source}_{up,down}_constraint; ramp_change_eq (ramp cost)
   Investment          max{Invest,Divest}_var_bound[_n], _entity_period_{p,n}, _entity_total[_path][_n]
-  Conversion          conversion_indirect (delayed inputs from [_delay]); minInputShare
+  Conversion          conversion_indirect (delayed inputs from [_delay]); conversion_piecewise (part-load curves of
+                      piecewise_linear units); minInputShare
   Emissions & user    co2_max_period, co2_max_total; process_constraint_{equal,less_than,greater_than}[_period]
   Storage state       maxState; profile_state_{upper_limit,lower_limit,fixed};
                       storage_state_start_binding[_cyclic_period]; storage_within_solve_path_end,
@@ -165,6 +166,8 @@ PROCESSES: tuple[str, ...] = (
 INDIRECT: tuple[str, ...] = (
     "process_indirect", "process_input_flows", "process_output_flows",
 )
+# piecewise_linear units with two or more lines (conversion_piecewise; set at the load boundary, params/_piecewise).
+PIECEWISE: tuple[str, ...] = ("process_piecewise", "p_piecewise_slope", "p_piecewise_intercept")
 CO2_CAP:   tuple[str, ...]   = ("p_co2_content", "p_co2_max_period",
                                 "group_d_co2_capped", "p_window_fraction")
 CO2_CAP_TOTAL: tuple[str, ...] = ("p_co2_content", "p_co2_max_total",
@@ -332,6 +335,7 @@ class _Build:
     has_online_int: bool = False
     has_online: bool = False
     has_minload_eff: bool = False
+    has_piecewise: bool = False          # process_piecewise: conversion_piecewise rows (multi-line curves)
     has_startup_cost_lin: bool = False
     has_startup_cost_int: bool = False
     has_startup_draw: bool = False       # process_startup_node: start-up energy drawn from input nodes
@@ -477,6 +481,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _eq_invest_total_caps,
         _eq_retired_existing,
         _eq_conversion,
+        _eq_conversion_piecewise,
         _eq_min_input_share,
         _eq_co2_max_period,
         _eq_co2_max_total,
@@ -588,6 +593,7 @@ def _prepare(b: _Build) -> None:
     b.has_nsb = _has_rows(d.nodeStateBlock)
     b.has_coarse = _has_rows(getattr(d, "nodeCoarse", None)) and _has_rows(getattr(d, "node_coarse_step", None))
     b.has_minload_eff = _has_rows(d.process_min_load_eff)
+    b.has_piecewise = _has_rows(getattr(d, "process_piecewise", None))
     b.has_startup_cost_lin = _has_rows(d.pdt_online_linear)
     b.has_startup_cost_int = _has_rows(d.pdt_online_integer)
     b.has_ramp = any(_has_rows(getattr(d, f))
@@ -656,6 +662,8 @@ def _prepare(b: _Build) -> None:
             _check(d, MIN_LOAD, "min_load")
     if b.has_minload_eff:
         _check(d, MINLOAD_EFF, "min_load_efficiency")
+    if b.has_piecewise:
+        _check(d, PIECEWISE, "piecewise_linear")
     if b.has_startup_cost_lin:
         _check(d, STARTUP_COST_LINEAR, "startup_cost_linear")
     if b.has_startup_cost_int:
@@ -3317,10 +3325,143 @@ def _eq_conversion(b: _Build) -> None:
                 rhs["section_lin"] = Where(b.v_online_linear, ind_mle) * d.p_section * d.p_unitsize
             if b.has_online_int:
                 rhs["section_int"] = Where(b.v_online_integer, ind_mle) * d.p_section * d.p_unitsize
+    over = b.process_indirect_dt
+    if b.has_piecewise:
+        # Multi-line piecewise_linear units convert by conversion_piecewise instead.
+        over = (_utf8_keys(over.lazy(), ["p"])
+                .join(_utf8_keys(d.process_piecewise.lazy().select("p"), ["p"]).select("_p").unique(),
+                      on="_p", how="anti")
+                .select(over.columns).collect())
     _coarse_flows.add_cstr(
         b, "conversion_indirect",
-        over      = b.process_indirect_dt,
+        over      = over,
         sense     = "==",
+        lhs_terms = lhs,
+        rhs_terms = rhs,
+    )
+
+
+def _eq_conversion_piecewise(b: _Build) -> None:
+    """Part-load fuel curve of the piecewise_linear units with two or more lines."""
+    if not b.has_piecewise:
+        return
+    d = b.d
+    v_flow = b.v_flow
+    pw = d.process_piecewise.select("p").unique()
+    indirect = {str(x) for x in d.process_indirect.get_column("p").to_list()} if b.has_indirect else set()
+    outside = sorted({str(x) for x in pw.get_column("p").to_list()} - indirect)
+    if outside:
+        raise ValueError(f"conversion_piecewise: piecewise_linear unit(s) {outside} are not indirect (process_indirect); "
+                         "the load boundary forces their fork.")
+
+    # ─── EQ. ─── conversion_piecewise ────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{s ∈ in(p)} v_flow[p,s,p,d,t] · unitsize[p] · conv_in[p,s]
+    #   + Σ_s Σ_{(t_s,t,δ) ∈ delay} v_flow[p,s,p,d,t_s] · unitsize[p] · delay_weight[p,δ] · conv_in[p,s]
+    #   ≥ pw_slope[p,g,d] · Σ_{o ∈ out(p)} v_flow[p,p,o,d,t] · unitsize[p] · conv_out[p,o]
+    #     + pw_intercept[p,g,d] · unitsize[p] · U[p,d,t]
+    #   ∀ (p,g,d,t): p ∈ process_piecewise, (p,d,t) ∈ process_indirect_dt, g ∈ seg(p,d)
+    #   U[p,d,t] = v_online_linear[p,d,t] | v_online_integer[p,d,t]            p with online variables
+    #   U[p,d,t] = existing_count[p,d] + Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
+    #              − Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]          p without (existing_count → RHS)
+    #   pw_intercept[p,g,d] = ℓ_{g−1}·ℓ_g·(1/η_{g−1} − 1/η_g) / (ℓ_g − ℓ_{g−1}),  pw_slope[p,g,d] = 1/η_g − pw_intercept/ℓ_g
+    #     (ℓ_i, η_i: piecewise_linear_efficiency points, merged when collinear; origin line g = 0: 1/η₀, 0 when the
+    #     efficiency falls from the first point; without online variables: 1/max η, 0 and the falling segments)
+    # Part-load fuel curve of a piecewise_linear unit: its weighted input is at least each line of the curve,
+    # so the input follows the curve's upper envelope; the curve is convex (checked before the solve), so the
+    # cheapest feasible input lies on the curve.  Scaled by the units online (the perspective of the curve:
+    # a fleet at equal load), or by the units built for a unit without online variables.  conv_in / conv_out =
+    # conversion_flow_coeff (default 1); the load share is the weighted output per unit of U·unitsize, as the
+    # min_load_efficiency section.  An input without cost (or with a negative value) can be burnt above the
+    # curve; the post-solve check warns.
+    # A coarse process (processCoarse) has one row per line and coarse step (conversion_piecewise_coarse,
+    # _coarse_flows.add_cstr): the flows and v_online are one value per coarse step and the lines have no time
+    # axis, so the averaged row is the fine row at the coarse step.  A delayed unit's inputs are those at the
+    # earlier source-side steps t_s, as conversion_indirect.
+    pidt = b.process_indirect_dt
+    keys = ["p", "d"]
+    lines = d.p_piecewise_slope.frame
+    lines = lines.collect() if isinstance(lines, pl.LazyFrame) else lines
+    over = (_utf8_keys(pidt.lazy(), keys)
+            .join(_utf8_keys(lines.lazy().select("p", "seg", "d"), keys).select("_p", "_d", "seg"),
+                  on=["_p", "_d"], how="inner")
+            .select("p", "seg", "d", "t")
+            .collect())
+    if over.height == 0:
+        return
+
+    in_flows_undelayed = d.process_input_flows
+    if _has_rows(getattr(d, "process_delayed", None)):
+        in_flows_undelayed = in_flows_undelayed.join(d.process_delayed, on="p", how="anti")
+    input_expr = v_flow * d.p_unitsize
+    if d.p_process_source_conversion_flow_coeff is not None:
+        input_expr = input_expr * d.p_process_source_conversion_flow_coeff
+    output_expr = v_flow * d.p_unitsize
+    if d.p_process_sink_conversion_flow_coeff is not None:
+        output_expr = output_expr * d.p_process_sink_conversion_flow_coeff
+    output_expr = output_expr * d.p_piecewise_slope
+    pw_in = d.process_input_flows.join(pw, on="p", how="semi")
+    in_flows_undelayed = in_flows_undelayed.join(pw, on="p", how="semi")
+    pw_out = d.process_output_flows.join(pw, on="p", how="semi")
+
+    lhs: dict = {"input": Sum(Where(input_expr, in_flows_undelayed), over=("source", "sink"))}
+    delayed_term = _delay.delayed_input_expr(d, v_flow)
+    if delayed_term is not None and _has_rows(getattr(d, "process_delayed", None)):
+        if d.process_delayed.join(pw, on="p", how="semi").height > 0:
+            lhs["input_delayed"] = delayed_term
+    if pw_in.height == 0 or pw_out.height == 0:
+        raise ValueError("conversion_piecewise: piecewise_linear units need an input and an output arc.")
+    rhs: dict = {"output": Sum(Where(output_expr, pw_out), over=("source", "sink"))}
+
+    # U: the units online (units with online variables), else the units built.
+    intercept = d.p_piecewise_intercept
+    online_p: list[pl.DataFrame] = []
+    for kind, flag, online_set, var in (("lin", b.has_online_lin, d.process_online_linear, b.v_online_linear),
+                                        ("int", b.has_online_int, d.process_online_integer, b.v_online_integer)):
+        if not flag or not _has_rows(online_set):
+            continue
+        on_pw = pw.join(online_set.select(pl.col("p").cast(pw.schema["p"], strict=False)).unique(),
+                        on="p", how="semi")
+        if on_pw.height == 0:
+            continue
+        online_p.append(on_pw)
+        rhs[f"section_{kind}"] = Where(var, on_pw) * intercept * d.p_unitsize
+    built = pw.join(pl.concat(online_p).unique(), on="p", how="anti") if online_p else pw
+    if built.height > 0:
+        ic = intercept.frame
+        ic = ic.collect() if isinstance(ic, pl.LazyFrame) else ic
+        ic_built = (_utf8_keys(ic.lazy(), ["p"])
+                    .join(_utf8_keys(built.lazy(), ["p"]).select("_p"), on="_p", how="semi")
+                    .select("p", "seg", "d", "value").collect())
+        # intercept · unitsize per unit built, (p, seg, d).
+        us = d.p_unitsize.frame
+        us = us.collect() if isinstance(us, pl.LazyFrame) else us
+        per_unit = (_utf8_keys(ic_built.lazy(), ["p"])
+                    .join(_utf8_keys(us.lazy().select("p", pl.col("value").alias("__us")), ["p"])
+                          .select("_p", "__us"), on="_p", how="left")
+                    .select("p", "seg", "d", value=pl.col("value") * pl.col("__us").fill_null(1.0))
+                    .collect())
+        per_unit_p = Param(("p", "seg", "d"), per_unit)
+        ec = d.p_process_existing_count
+        if ec is not None:
+            ecf = ec.frame
+            ecf = ecf.collect() if isinstance(ecf, pl.LazyFrame) else ecf
+            existing = (_utf8_keys(per_unit.lazy(), keys)
+                        .join(_utf8_keys(ecf.lazy().select("p", "d", pl.col("value").alias("__n")), keys)
+                              .select("_p", "_d", "__n"), on=["_p", "_d"], how="inner")
+                        .select("p", "seg", "d", value=pl.col("value") * pl.col("__n"))
+                        .filter(pl.col("value") != 0.0)
+                        .collect())
+            if existing.height > 0:
+                rhs["cap_existing"] = Param(("p", "seg", "d"), existing)
+        if b.invest_in_dispatch_p is not None:
+            rhs["cap_invest"] = b.invest_in_dispatch_p * per_unit_p
+        if b.divest_in_dispatch_p is not None:
+            rhs["cap_divest"] = b.divest_in_dispatch_p * per_unit_p * -1.0
+    _coarse_flows.add_cstr(
+        b, "conversion_piecewise",
+        over      = over,
+        sense     = ">=",
         lhs_terms = lhs,
         rhs_terms = rhs,
     )

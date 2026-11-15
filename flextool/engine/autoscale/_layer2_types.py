@@ -480,6 +480,9 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "conversion_indirect": CstrFamily(QuantityType.ENERGY),
     # Coarse processes, averaged over each coarse step — flextool/engine/model/_coarse_flows.py add_cstr.
     "conversion_indirect_coarse": CstrFamily(QuantityType.ENERGY),
+    # Part-load curve of piecewise_linear units (input ≥ each line) — core.py _eq_conversion_piecewise.
+    "conversion_piecewise": CstrFamily(QuantityType.ENERGY),
+    "conversion_piecewise_coarse": CstrFamily(QuantityType.ENERGY),
 
     # ── CO2 caps — EMISSION_MASS.
     # flextool/engine/model/core.py _eq_co2_max_period

@@ -22,13 +22,17 @@ Unit detail (``reduce_unit_detail_method``; the parts each value takes are in :d
 * ``online`` — the online variables (every online set, start-up cost sets, the start-up input draws of
   ``startup_input_method`` with their sets (:data:`STARTUP_FIELDS`; an investment solve then under-counts the start-up
   input, as the start-up cost), the online carry and pin) and with them ``min_limits``; ``min_load_efficiency`` units of the online set run at their full-load efficiency
-  (``p_slope ← p_slope + p_section``, ``p_section ← 0``, ``process_min_load_eff`` cleared); user constraints with a
-  ``constraint_online_coeff`` term are left out whole (dropping only the term could tighten the row).
+  (``p_slope ← p_slope + p_section``, ``p_section ← 0``, ``process_min_load_eff`` cleared); ``piecewise_linear``
+  units with two or more lines (``process_piecewise``) of the online set get the lines of their curve without online
+  variables (:func:`_fold_piecewise`: the best-efficiency envelope, scaled by the units built); user constraints with
+  a ``constraint_online_coeff`` term are left out whole (dropping only the term could tighten the row).
 
 Under the ``integers*`` levels a unit or connection whose online variables have no remaining use after the level's
 removals loses them, as if its ``startup_method`` were ``no_startup`` (:func:`online_uses`, :data:`ONLINE_USES`;
 ``removed["online_unused"]``).  The online rows without a use only repeat the capacity limit, so the LP is the same
-up to the left-out columns.  ``online`` / ``online_ramps`` leave out every online variable anyway.
+up to the left-out columns.  A ``piecewise_linear`` unit among them switches to the lines of its curve without
+online variables (:func:`_fold_piecewise`; same optimum: its curve's efficiency falls from the first point, so the
+lines with and without online variables give the same least fuel).  ``online`` / ``online_ramps`` leave out every online variable anyway.
 
 The carried roll-end flow is kept under ``integers`` / ``online`` without ``ramps``: the ramp limits and the ramp
 cost still need it at a continuation roll's first step.
@@ -125,6 +129,8 @@ ONLINE_USES: dict[str, str] = {
     "ramp_limits": "ramp limits: the start-up and shut-down allowance reads the units started and stopped",
     "parent_commitment": "the pin to the parent solve's commitment (p_fix_online)",
     "startup_energy": "a start-up draw (process_startup_node with startup_energy not 0)",
+    "piecewise_linear": ("a part-load curve that burns fuel at zero output (process_piecewise with η₀ < η₁ in some "
+                         "period: process_piecewise_needs_online)"),
 }
 #: The fields :func:`_prune_online` filters to the processes that keep their online variables (``p`` column).
 PRUNE_FIELDS: tuple[str, ...] = tuple(f for f in ONLINE_FIELDS + MIN_TIME_FIELDS if f != "dt_online_carry") + (
@@ -169,7 +175,8 @@ class ReduceReport:
     ``ramp_costs``, ``min_load``, ``capacity_min_coeff``, ``min_up_down``, ``online``, ``startup_energy`` (units whose
     start-up input draw went with the online variables), ``online_unused`` (online
     variables without a use left out under ``integers*``), ``min_load_efficiency``
-    (folded to full-load efficiency), ``user_constraints`` (left out whole); system keys ``reserves`` (the reserve
+    (folded to full-load efficiency), ``piecewise_linear`` (curves folded to their best-efficiency envelope),
+    ``user_constraints`` (left out whole); system keys ``reserves`` (the reserve
     groups with a requirement as ``reserve__upDown__group``, or every reserve group when none has one),
     ``inertia`` / ``non_synchronous`` (the groups), ``dc_power_flow`` (the connections now lossless transport).  ``notes``: interaction facts for the run log, each present only when both
     sides are in the solve: ``fractional_online_constraints`` (user constraints that now count fractional units
@@ -303,6 +310,35 @@ def _fold_min_load_efficiency(d: "FlexData", procs: set[str]) -> tuple[Param, Pa
     return Param(slope.dims, new_slope, name=slope.name), Param(section.dims, new_section, name=section.name)
 
 
+def _fold_piecewise(d: "FlexData", procs: set[str]) -> tuple[Param, Param]:
+    """``(p_piecewise_slope, p_piecewise_intercept)`` with the lines of the ``piecewise_linear`` units ``procs``
+    rebuilt in the form without online variables from their points (``p_piecewise_points``,
+    :func:`flextool.engine.input._piecewise_curve.curve_lines`): the origin line through the best point
+    ``1/max η`` and the segments with a negative intercept, scaled in ``conversion_piecewise`` by the units built
+    instead of the units online.  The full-load fuel ``1/η(1)`` is the same in both forms, so the input limits
+    (``p_indirect_input_cap``) stay.  The rows of the other units are kept, in place; the new rows of ``procs``
+    follow in ``(p, d, seg)`` order of the curve functions."""
+    from flextool.engine.input._piecewise_curve import curve_lines
+
+    points = _frame(d.p_piecewise_points)
+    slope, intercept = d.p_piecewise_slope, d.p_piecewise_intercept
+    if points is None or slope is None or intercept is None:
+        raise ValueError(f"reduce_unit_detail_method: piecewise_linear unit(s) {', '.join(sorted(procs))} have no "
+                         "curve points / lines to fold.")
+    mine = points.with_columns(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)).filter(
+        pl.col("p").is_in(sorted(procs)))
+    lines = curve_lines(mine.select("p", "d", "load", "eff"), online=())
+    out = []
+    for prm, col in ((slope, "slope"), (intercept, "intercept")):
+        f = _frame(prm)
+        kept = f.filter(~pl.col("p").cast(pl.Utf8).is_in(sorted(procs)))
+        new = lines.select(*(pl.col(c).cast(f.schema[c]) for c in ("p", "seg", "d")),
+                           pl.col(col).cast(f.schema["value"]).alias("value"))
+        out.append(Param(prm.dims, pl.concat([kept.select("p", "seg", "d", "value"), new], how="vertical"),
+                         name=prm.name))
+    return out[0], out[1]
+
+
 def _online_constraints(d: "FlexData") -> list[str]:
     """User constraints of this solve with a ``constraint_online_coeff`` term of a process in the solve."""
     coef = _frame(d.p_process_constraint_online_coeff)
@@ -359,6 +395,7 @@ def online_uses(d: "FlexData", sparts: frozenset[str] = frozenset()) -> dict[str
                                      for k in ("sink_up", "sink_down", "source_up", "source_down"))),
         "parent_commitment": _names(d.p_fix_online),
         "startup_energy": _names(d.process_startup_node),
+        "piecewise_linear": _names(getattr(d, "process_piecewise_needs_online", None)),
     }
     coef = _frame(d.p_process_constraint_online_coeff)
     cns = set(_online_constraints(d))
@@ -460,6 +497,10 @@ def _reduce_unit(d: "FlexData", parts: frozenset[str], report: ReduceReport,
             removed["min_load_efficiency"] = sorted(folded)
         if d.process_min_load_eff is not None:
             new["process_min_load_eff"] = None
+        piecewise = _names(getattr(d, "process_piecewise", None)) & online
+        if piecewise:
+            new["p_piecewise_slope"], new["p_piecewise_intercept"] = _fold_piecewise(d, piecewise)
+            removed["piecewise_linear"] = sorted(piecewise)
         if online_cns:
             removed["user_constraints"] = list(online_cns)
             for f in ("cdt_eq", "cdt_le", "cdt_ge"):
@@ -479,6 +520,10 @@ def _reduce_unit(d: "FlexData", parts: frozenset[str], report: ReduceReport,
         if unused:
             removed["online_unused"] = sorted(unused)
             _prune_online(d, unused, new)
+            piecewise = _names(getattr(d, "process_piecewise", None)) & unused
+            if piecewise:
+                new["p_piecewise_slope"], new["p_piecewise_intercept"] = _fold_piecewise(d, piecewise)
+                removed["piecewise_linear"] = sorted(piecewise)
         kept_integer = _names(new.get("process_online_integer", d.process_online_integer))
         if kept_integer:
             new["relax_integrality"] = True
@@ -578,6 +623,7 @@ _REMOVED_TEXT: dict[str, str] = {
     "capacity_min_coeff": "capacity_min_coeff floors left out for {}",
     "min_up_down": "min up / down times left out for {}",
     "min_load_efficiency": "full-load efficiency (no part-load curve) for {}",
+    "piecewise_linear": "part-load curve folded to its best-efficiency envelope (no online variables) for {}",
     "user_constraints": "{} left out (they count units online)",
     "reserves": "reserves left out for {}",
     "inertia": "inertia limits left out for {}",
@@ -585,7 +631,7 @@ _REMOVED_TEXT: dict[str, str] = {
     "dc_power_flow": "DC power flow left out: lossless transport limited by capacity for {}",
 }
 _UNIT_KEYS = ("online", "integer_online", "online_unused", "exact", "ramp_limits", "ramp_costs", "min_load", "capacity_min_coeff",
-              "min_up_down", "min_load_efficiency", "user_constraints")
+              "min_up_down", "min_load_efficiency", "piecewise_linear", "user_constraints")
 _SYSTEM_KEYS = ("reserves", "inertia", "non_synchronous", "dc_power_flow")
 _NOTE_TEXT: dict[str, str] = {
     "reserves_from_capacity": "the reserves of {} now come from built capacity, not online capacity",

@@ -89,6 +89,8 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     # Indirect (CHP).
     "process_indirect", "process_input_flows",
     "process_output_flows", "process_indirect_dt",
+    # piecewise_linear units with two or more lines (conversion_piecewise).
+    "process_piecewise", "process_piecewise_needs_online", "process_piecewise_remap", "p_piecewise_points",
     # User constraints.
     "flow_constraint_idx", "cdt_eq", "cdt_le", "cdt_ge",
     # Profiles.
