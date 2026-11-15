@@ -663,6 +663,103 @@ def _ramp_limit_set(source: "InputSource",
     raise ValueError(f"_ramp_limit_set: unknown side {side!r}")
 
 
+def single_input_curve_arc_remap(source: "InputSource") -> pl.DataFrame:
+    """``(p, source, sink)`` (Utf8): the one-input, one-output ``piecewise_linear`` units with two or more lines
+    in some period (``process_piecewise_remap``, ``specs/piecewise_efficiency_final.md`` §3.4) — the units that
+    would be ``fork_no`` (one flow, measured at the output) without their curve — with their input node
+    ``source`` and output node ``sink``.  Memoised on the run's reader.
+
+    Their curve makes them indirect (an input and an output flow), but the items that act on the one flow of a
+    direct unit keep acting on the output flow, as if authored on ``unit__outputNode (p, sink)``: the input's
+    ramp limit, ramp cost, profile and ``constraint_flow_coeff`` (moved to the output arc at the load boundary,
+    ``params/_piecewise.remap_input_items``) and its ``input_share_max`` (an output cap
+    ``min(capacity_max_coeff, input_share_max)``; the input's own share is 1 —
+    ``_derived._arc_max_capacity_coef_lf`` and ``_direct._p_side_scalar`` read it so).  The rule for the arc
+    counts is the classifier's (``_derived._classify_process_method`` step 6)."""
+    from flextool.engine.input._param_shapes import _run_memo
+
+    return _run_memo(source, ("single_input_curve_arc_remap",), lambda: _single_input_curve_arcs(source))
+
+
+def _single_input_curve_arcs(source: "InputSource") -> pl.DataFrame:
+    empty = pl.DataFrame(schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8})
+    cm = _try_param(source, "unit", "conversion_method")
+    if cm is None or not (cm.get_column("value").cast(pl.Utf8) == "piecewise_linear").any():
+        return empty
+    from flextool.engine.preprocess.params._derived import _piecewise_flags
+
+    units = set(cm.filter(pl.col("value").cast(pl.Utf8) == "piecewise_linear")
+                .get_column("name").cast(pl.Utf8).to_list())
+    multi = set(_piecewise_flags(source).filter(pl.col("multi_line")).get_column("p").cast(pl.Utf8).to_list())
+    units &= multi
+    delay = _try_param(source, "unit", "delay")
+    if delay is not None:
+        units -= set(delay.get_column("name").cast(pl.Utf8).to_list())
+    uin, uout = _try_entities(source, "unit__inputNode"), _try_entities(source, "unit__outputNode")
+    if not units or uin is None or uout is None:
+        return empty
+
+    def one(df: pl.DataFrame, col: str) -> pl.DataFrame:
+        f = df.select(pl.col("unit").cast(pl.Utf8).alias("p"), pl.col("node").cast(pl.Utf8).alias(col))
+        n = f.group_by("p").len().filter(pl.col("len") == 1).select("p")
+        return f.join(n, on="p", how="semi")
+
+    return (one(uin, "source").join(one(uout, "sink"), on="p", how="inner")
+            .filter(pl.col("p").is_in(sorted(units)))
+            .select("p", "source", "sink").sort("p"))
+
+
+def remap_capacity_coef(source: "InputSource", frame: "pl.DataFrame | pl.LazyFrame", side: str,
+                        node_col: str, value_col: str) -> "pl.DataFrame | pl.LazyFrame":
+    """*frame* ``(p, <node_col>, <value_col>)`` — the per-arc ``unit__inputNode.input_share_max`` (*side*
+    ``source``) or ``unit__outputNode.capacity_max_coeff`` (*side* ``sink``) of the units — as the units of
+    :func:`single_input_curve_arc_remap` see it: their authored ``input_share_max`` becomes an output cap,
+
+        capacity_max_coeff'[p, o] = min(capacity_max_coeff[p, o], input_share_max[p, s])   (1 where not authored)
+        input_share_max'[p, s]    = absent (1)
+
+    and the other rows are unchanged.  The same type (lazy or not) and dtypes as *frame*."""
+    remap = single_input_curve_arc_remap(source)
+    if remap.height == 0:
+        return frame
+    lazy = isinstance(frame, pl.LazyFrame)
+    f = frame.collect() if lazy else frame
+    keys = ["p", node_col]
+    if side == "source":
+        drop = remap.select("p", pl.col("source").alias(node_col))
+        out = (f.with_columns(pl.col(k).cast(pl.Utf8).alias(f"__{k}") for k in keys)
+               .join(drop.rename({k: f"__{k}" for k in keys}), on=[f"__{k}" for k in keys], how="anti")
+               .select(f.columns))
+        return out.lazy() if lazy else out
+    from flextool.engine.preprocess.params._derived import _try_param_explicit
+
+    ism = _try_param_explicit(source, "unit__inputNode", "input_share_max")
+    if ism is None or ism.height == 0:
+        return frame
+    shares = (remap.join(ism.select(pl.col("unit").cast(pl.Utf8).alias("p"),
+                                    pl.col("node").cast(pl.Utf8).alias("source"),
+                                    pl.col("value").cast(pl.Float64).alias("__share")),
+                         on=["p", "source"], how="inner")
+              .select("p", pl.col("sink").alias(node_col), "__share"))
+    if shares.height == 0:
+        return frame
+    u = f.with_columns(pl.col(k).cast(pl.Utf8).alias(f"__{k}") for k in keys)
+    sh = shares.rename({k: f"__{k}" for k in keys})
+    kept = (u.join(sh, on=[f"__{k}" for k in keys], how="left")
+            .with_columns(pl.when(pl.col("__share").is_not_null())
+                          .then(pl.min_horizontal(pl.col(value_col).cast(pl.Float64), pl.col("__share")))
+                          .otherwise(pl.col(value_col)).cast(f.schema[value_col]).alias(value_col))
+            .select(f.columns))
+    added = (sh.join(u.select(f"__{k}" for k in keys), on=[f"__{k}" for k in keys], how="anti")
+             .select(*(pl.col(f"__{k}").cast(f.schema[k]).alias(k) for k in keys),
+                     pl.min_horizontal(pl.lit(1.0), pl.col("__share")).cast(f.schema[value_col]).alias(value_col)))
+    out = pl.concat([kept.select(*keys, value_col), added], how="vertical").select(f.columns) \
+        if set(f.columns) == {*keys, value_col} else kept
+    if added.height > 0 and set(f.columns) != {*keys, value_col}:
+        raise ValueError(f"remap_capacity_coef: cannot add rows to a frame with columns {f.columns}.")
+    return out.lazy() if lazy else out
+
+
 def process_source_sink_ramp_limit_source_up(
     source: "InputSource",
 ) -> pl.DataFrame:

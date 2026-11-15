@@ -24,7 +24,8 @@ values are overwritten here:
    ``p_indirect_input_cap`` and the indirect input-arc rows of ``p_flow_upper``
    (:func:`_recompute_input_caps`).
 
-The model has no rows for multi-line units yet: a solve with one stops here, after the steps above.
+Multi-line units are modelled by ``conversion_piecewise`` (``model/core._eq_conversion_piecewise``), on the
+parameters of step 4.
 """
 from __future__ import annotations
 
@@ -188,19 +189,11 @@ def single_line_values(lines: pl.DataFrame, ratio: pl.DataFrame) -> pl.DataFrame
 
 def _remap_units(db_reader: "InputSource", units: list[str]) -> list[str]:
     """The *units* that would be ``fork_no`` without their curve: one input arc, one output arc and not delayed
-    (the classifier's arc counts, ``_derived._classify_process_method`` step 6)."""
-    from flextool.engine.preprocess.params._derived import _try_entities, _try_param
+    (:func:`flextool.engine.preprocess.params._projection.single_input_curve_arc_remap`)."""
+    from flextool.engine.preprocess.params._projection import single_input_curve_arc_remap
 
-    def counts(cls: str) -> dict[str, int]:
-        df = _try_entities(db_reader, cls)
-        if df is None or df.height == 0:
-            return {}
-        return dict(df.group_by(pl.col("unit").cast(pl.Utf8)).len().iter_rows())
-
-    n_src, n_sink = counts("unit__inputNode"), counts("unit__outputNode")
-    delay = _try_param(db_reader, "unit", "delay")
-    delayed = set() if delay is None else set(delay.get_column("name").cast(pl.Utf8).to_list())
-    return [u for u in units if n_src.get(u, 0) == 1 and n_sink.get(u, 0) == 1 and u not in delayed]
+    remap = set(single_input_curve_arc_remap(db_reader).get_column("p").to_list())
+    return [u for u in units if u in remap]
 
 
 def _unit_set(names: list[str], like: "pl.DataFrame | None") -> pl.DataFrame:
@@ -289,6 +282,11 @@ def _recompute_input_caps(flex_data, db_reader: "InputSource", provider, units: 
                  .join(cpu.rename({"p": "__p", "d": "__d"}), on=["__p", "__d"], how="left")
                  .with_columns(value=pl.col("cpu").fill_null(0.0) * pl.col("value"))
                  .select("p", "source", "sink", "d", "t", "value"))
+        # The output arc of a one-input unit whose input_share_max is an output cap: cap_per_unit · its
+        # capacity_max_coeff as remapped (_projection.remap_capacity_coef; the emit's p_flow_max has the authored one).
+        out_rows = _remapped_output_upper(db_reader, pss, dt, cpu, indirect)
+        if out_rows is not None:
+            upper = pl.concat([upper, out_rows.select(upper.columns).cast(upper.schema)], how="vertical")
     else:
         full = _drv.p_flow_upper_from_source(
             db_reader, pss, dt, p_slope=flex_data.p_slope, p_section=flex_data.p_section,
@@ -316,10 +314,75 @@ def _recompute_input_caps(flex_data, db_reader: "InputSource", provider, units: 
     flex_data.p_flow_upper = Param(fu.dims, out, name=fu.name)
 
 
+def _remapped_output_upper(db_reader: "InputSource", pss: pl.DataFrame, dt: pl.DataFrame, cpu: pl.DataFrame,
+                           units: set[str]) -> "pl.DataFrame | None":
+    """``(p, source, sink, d, t, value)`` (Utf8 keys): the ``p_flow_upper`` of the output arcs ``(p, p, o)`` of the
+    one-input *units* with an authored ``input_share_max`` (a remapped output cap), ``cap_per_unit[p,d] ·
+    capacity_max_coeff'[p,o]`` (``derive_p_flow_max``'s formula with the remapped coefficient); None without
+    such arcs."""
+    from flextool.engine.preprocess.params._derived import _arc_max_capacity_coef_lf, _try_param_explicit
+    from flextool.engine.preprocess.params._projection import single_input_curve_arc_remap
+
+    remap = single_input_curve_arc_remap(db_reader).filter(pl.col("p").is_in(sorted(units)))
+    ism = _try_param_explicit(db_reader, "unit__inputNode", "input_share_max")
+    if remap.height == 0 or ism is None or ism.height == 0:
+        return None
+    capped = remap.join(ism.select(pl.col("unit").cast(pl.Utf8).alias("p"),
+                                   pl.col("node").cast(pl.Utf8).alias("source")), on=["p", "source"], how="semi")
+    if capped.height == 0:
+        return None
+    coef = (_arc_max_capacity_coef_lf(db_reader, "sink").collect()
+            .select(pl.col("p").cast(pl.Utf8), pl.col("sink").cast(pl.Utf8), pl.col("coef").cast(pl.Float64)))
+    arcs = (capped.select("p", pl.col("p").alias("source"), "sink")
+            .join(pss.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink"))),
+                  on=["p", "source", "sink"], how="semi")
+            .join(coef, on=["p", "sink"], how="left")
+            .with_columns(pl.col("coef").fill_null(1.0)))
+    steps = dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+    return (arcs.join(steps, how="cross")
+            .join(cpu, on=["p", "d"], how="left")
+            .select("p", "source", "sink", "d", "t", value=pl.col("cpu").fill_null(0.0) * pl.col("coef")))
+
+
+def _user_solve(db_reader: "InputSource", solve: "str | None") -> "str | None":
+    """The user's solve of the sub-solve *solve*: *solve* when it is a solve of the database, else the database
+    solve it was made from (a roll ``<solve>_roll_<k>``, a realization ``<solve>__realized_dispatch…``, a nested
+    ``<solve>_<period>``: :func:`_derived._resolve_synthetic_solve`)."""
+    from flextool.engine.preprocess.params import _derived as _drv
+
+    if solve is None or _drv._solve_in_spine(db_reader, solve):
+        return solve
+    resolved = _drv._resolve_synthetic_solve(db_reader, solve)
+    return resolved[0] if resolved is not None else solve
+
+
+def _check_user_solve_periods(db_reader: "InputSource", curves: pl.DataFrame, units: list[str],
+                              user_solve: str) -> None:
+    """E11 over the periods of the user's solve (the keys of its ``period_timeset``), once per run: every
+    piecewise unit with a curve per period has one for each of them (:func:`solve_points`).  Stochastic branch
+    periods are not keys of ``period_timeset``; they take their anchor's curve in each sub-solve."""
+    from flextool.engine.input._param_shapes import _run_memo
+    from flextool.engine.preprocess.params._derived import _try_param
+
+    def check() -> bool:
+        pt = _try_param(db_reader, "solve", "period_timeset")
+        if pt is None or pt.height == 0:
+            return True
+        keys = [c for c in pt.columns if c not in ("name", "value")]
+        if len(keys) != 1:
+            return True  # a 2-level period map: its sub-solves are solves of their own (checked as such)
+        periods = (pt.filter(pl.col("name").cast(pl.Utf8) == user_solve).get_column(keys[0]).cast(pl.Utf8)
+                   .unique(maintain_order=True).to_list())
+        if periods:
+            solve_points(curves, units, periods, None, user_solve)
+        return True
+
+    _run_memo(db_reader, ("piecewise_user_solve_periods", user_solve, tuple(units)), check)
+
+
 def apply_piecewise_curves(flex_data, db_reader: "InputSource", provider=None) -> None:
-    """The load-boundary step of the ``piecewise_linear`` units of the solve (module docstring, steps 1-5).  No-op
-    without such units.  A solve with a multi-line unit (two or more lines in some period) stops after the steps:
-    the model has no rows for it yet."""
+    """The load-boundary step of the ``piecewise_linear`` units of the solve (module docstring).  No-op without
+    such units."""
     from flextool.engine.input._param_shapes import piecewise_curve_frame
     from flextool.engine.input._piecewise_curve import curve_lines
     from flextool.engine.preprocess.params import _derived as _drv
@@ -332,7 +395,13 @@ def apply_piecewise_curves(flex_data, db_reader: "InputSource", provider=None) -
     periods = _solve_periods(dt)
     pairs = branch_anchor_pairs(provider, periods) if provider is not None else None
     solve = _drv._read_active_solve(Path("."), provider=provider) if provider is not None else None
-    points = solve_points(piecewise_curve_frame(db_reader), units, periods, pairs, solve)
+    user_solve = _user_solve(db_reader, solve)
+    curves = piecewise_curve_frame(db_reader)
+    if user_solve is not None and user_solve != solve:
+        # A roll (or another sub-solve the engine made): E11 is checked once over every period of the user's
+        # solve, at its first sub-solve, so a long run does not stop late.
+        _check_user_solve_periods(db_reader, curves, units, user_solve)
+    points = solve_points(curves, units, periods, pairs, user_solve)
     online = _names(getattr(flex_data, "process_online", None))
     lines = curve_lines(points, online)
 
@@ -375,10 +444,14 @@ def apply_piecewise_curves(flex_data, db_reader: "InputSource", provider=None) -
     # Step 5 — the capacity parameters derived from the seeded slope.
     _recompute_input_caps(flex_data, db_reader, provider, set(units), multi_lines)
 
+    # Step 6 — one-input units: the input's ramp limit, ramp cost, profile and user-constraint coefficient act on
+    # the output flow.
     if multi:
-        raise FlexToolConfigError(
-            f"piecewise_linear with more than one line is not implemented yet (unit "
-            f"{', '.join(repr(u) for u in multi)}).")
+        from flextool.engine.preprocess.params._projection import single_input_curve_arc_remap
+        remap = single_input_curve_arc_remap(db_reader).filter(pl.col("p").is_in(multi))
+        if remap.height > 0:
+            remap_input_items(flex_data, remap)
+
 
 
 def _set_sections(flex_data, values: pl.DataFrame, rising: set[str]) -> None:
@@ -409,3 +482,183 @@ def _set_sections(flex_data, values: pl.DataFrame, rising: set[str]) -> None:
     else:
         merged = add
     flex_data.process_min_load_eff = merged.unique().sort("p")
+
+
+# ---------------------------------------------------------------------------
+# Step 6: the one-input remap (design §3.4)
+
+_ARC = ("p", "source", "sink")
+
+
+def _frame_of(x) -> "pl.DataFrame | None":
+    if x is None:
+        return None
+    f = x.frame if isinstance(x, Param) else x
+    return f.collect() if isinstance(f, pl.LazyFrame) else f
+
+
+def _arc_map(remap: pl.DataFrame) -> pl.DataFrame:
+    """``(__p, __source, __sink, __to_source, __to_sink)`` Utf8: each remapped unit's input arc ``(p, s, p)`` and
+    its output arc ``(p, p, o)``."""
+    return remap.select(pl.col("p").alias("__p"), pl.col("source").alias("__source"), pl.col("p").alias("__sink"),
+                        pl.col("p").alias("__to_source"), pl.col("sink").alias("__to_sink"))
+
+
+def _move_arcs(frame: "pl.DataFrame | None", remap: pl.DataFrame,
+               like: "pl.DataFrame | None" = None) -> "tuple[pl.DataFrame | None, pl.DataFrame]":
+    """``(rest, moved)``: the rows of *frame* (arc columns ``p, source, sink`` + others) without the input arcs of
+    the remapped units, and those rows moved to their output arcs (in the dtypes of *like*, else of *frame*)."""
+    if frame is None or frame.height == 0:
+        return frame, pl.DataFrame()
+    u = frame.with_columns(pl.col(k).cast(pl.Utf8).alias(f"__{k}") for k in _ARC)
+    amap = _arc_map(remap)
+    on = ["__p", "__source", "__sink"]
+    hit = u.join(amap, on=on, how="inner")
+    if hit.height == 0:
+        return frame, pl.DataFrame()
+    rest = u.join(amap.select(on), on=on, how="anti").select(frame.columns)
+    target = like if like is not None and like.width > 0 else frame
+    moved = hit.with_columns(pl.col("__p").alias("p"), pl.col("__to_source").alias("source"),
+                             pl.col("__to_sink").alias("sink")).select(frame.columns)
+    moved = moved.with_columns(pl.col(k).cast(target.schema[k]) for k in _ARC if k in target.columns)
+    return rest, moved
+
+
+def _union(frame: "pl.DataFrame | None", rows: pl.DataFrame, keys: list[str]) -> pl.DataFrame:
+    """*frame* plus *rows* (same columns), unique on *keys*, sorted by *keys*."""
+    if frame is None or frame.height == 0:
+        return rows.unique(subset=keys, maintain_order=True).sort(keys)
+    rows = rows.select(frame.columns).with_columns(pl.col(c).cast(frame.schema[c]) for c in frame.columns)
+    return pl.concat([frame, rows], how="vertical").unique(subset=keys, maintain_order=True).sort(keys)
+
+
+def _none_if_empty(frame: "pl.DataFrame | None") -> "pl.DataFrame | None":
+    return None if frame is None or frame.height == 0 else frame
+
+
+def remap_input_items(flex_data, remap: pl.DataFrame) -> None:
+    """The input-side items of the one-input multi-line units *remap* ``(p, source, sink)`` moved from the input
+    arc ``(p, s, p)`` to the output arc ``(p, p, o)``, as if authored on ``unit__outputNode (p, o)``
+    (``specs/piecewise_efficiency_final.md`` §3.4; their ``input_share_max`` is remapped where it is read,
+    ``_projection.remap_capacity_coef``):
+
+    * ramp limits: the source-family arcs go to the sink family (``ramp_sink_{up,down}_constraint`` on the
+      output, scaled as the output's capacity); the speed is the input's, or the smaller of the two where the
+      output has a limit in that direction too;
+          ramp_speed_{dir}_sink'[p,o] = min(ramp_speed_{dir}_sink[p,o], ramp_speed_{dir}_source[p,s])
+    * ramp cost: the input arc's cost is added to the output arc's (``ramp_change_eq`` on the output flow);
+          p_ramp_cost_arc'[p,p,o] = p_ramp_cost_arc[p,p,o] + p_ramp_cost_arc[p,s,p]
+    * profiles (``unit__node__profile`` on the input node): the profile rows act on the output arc;
+    * ``constraint_flow_coeff`` on the input: the coefficient of the output arc in that constraint, added to an
+      output coefficient there.
+          p_flow_constraint_coef'[p,p,o,cn] = p_flow_constraint_coef[p,p,o,cn] + p_flow_constraint_coef[p,s,p,cn]
+
+    The other input-side items keep acting on the input flow: reserves at the input node, the input's operating
+    cost, commodity price and CO2, the start-up input, inertia / non-synchronous at the input node, and flowGroup
+    membership through the input node (a direct unit's flowGroup term at its input node is its fuel use, which is
+    the input flow of the curve unit).  Inertia at the input node of a unit without online variables is counted
+    from the flow of its input arc (``_group_slack._eq_inertia``): the actual input, where a direct unit's one flow
+    is its output.
+    """
+    remap = remap.select(*(pl.col(c).cast(pl.Utf8) for c in _ARC))
+    fd = flex_data
+    # Ramp limits and speeds.
+    for dir_ in ("up", "down"):
+        src_name, sink_name = (f"process_source_sink_ramp_limit_source_{dir_}",
+                               f"process_source_sink_ramp_limit_sink_{dir_}")
+        src_speed_name, sink_speed_name = f"p_ramp_speed_{dir_}_source", f"p_ramp_speed_{dir_}_sink"
+        src_set, sink_set = _frame_of(getattr(fd, src_name)), _frame_of(getattr(fd, sink_name))
+        rest, moved = _move_arcs(src_set, remap, sink_set)
+        src_speed = getattr(fd, src_speed_name)
+        sf = _frame_of(src_speed)
+        if sf is not None and sf.height > 0:
+            # The input's speed rows of the remapped units: moved to the output (below), the rest dropped.
+            mine = sf.with_columns(pl.col("p").cast(pl.Utf8).alias("__p"), pl.col("source").cast(pl.Utf8)
+                                   .alias("__s")).join(remap.select(pl.col("p").alias("__p"),
+                                                                    pl.col("source").alias("__s"),
+                                                                    pl.col("sink").alias("__o")),
+                                                       on=["__p", "__s"], how="left")
+            in_speed = mine.filter(pl.col("__o").is_not_null()).select(
+                "__p", "__o", pl.col("value").cast(pl.Float64).alias("__in"))
+            kept = mine.filter(pl.col("__o").is_null()).select(sf.columns)
+            setattr(fd, src_speed_name, None if kept.height == 0 else Param(src_speed.dims, kept,
+                                                                            name=src_speed.name))
+        else:
+            in_speed = pl.DataFrame(schema={"__p": pl.Utf8, "__o": pl.Utf8, "__in": pl.Float64})
+        if moved.height == 0:
+            continue
+        setattr(fd, src_name, _none_if_empty(rest))
+        had_limit = (pl.DataFrame(schema={"__p": pl.Utf8, "__o": pl.Utf8}) if sink_set is None else
+                     sink_set.select(pl.col("p").cast(pl.Utf8).alias("__p"),
+                                     pl.col("source").cast(pl.Utf8).alias("__s"),
+                                     pl.col("sink").cast(pl.Utf8).alias("__o"))
+                     .filter(pl.col("__s") == pl.col("__p")).select("__p", "__o").unique())
+        moved_u = moved.select(pl.col("p").cast(pl.Utf8).alias("__p"), pl.col("sink").cast(pl.Utf8).alias("__o"))
+        speeds = moved_u.join(in_speed, on=["__p", "__o"], how="left")
+        if speeds.filter(pl.col("__in").is_null()).height > 0:
+            raise ValueError(f"piecewise_linear: a ramp-limited input arc without a {src_speed_name} row: "
+                             f"{speeds.filter(pl.col('__in').is_null()).rows()}.")
+        sink_speed = getattr(fd, sink_speed_name)
+        kf = _frame_of(sink_speed)
+        if kf is not None and kf.height > 0:
+            old = kf.select(pl.col("p").cast(pl.Utf8).alias("__p"), pl.col("sink").cast(pl.Utf8).alias("__o"),
+                            pl.col("value").cast(pl.Float64).alias("__out"))
+            speeds = speeds.join(old, on=["__p", "__o"], how="left")
+        else:
+            speeds = speeds.with_columns(__out=pl.lit(None, pl.Float64))
+        speeds = (speeds.join(had_limit.with_columns(__lim=pl.lit(True)), on=["__p", "__o"], how="left")
+                  .with_columns(pl.col("__lim").fill_null(False)))
+        speeds = speeds.select("__p", "__o", value=pl.when(pl.col("__lim") & pl.col("__out").is_not_null())
+                               .then(pl.min_horizontal("__out", "__in")).otherwise(pl.col("__in")))
+        if kf is not None and kf.height > 0:
+            upd = (kf.with_columns(pl.col("p").cast(pl.Utf8).alias("__p"), pl.col("sink").cast(pl.Utf8).alias("__o"))
+                   .join(speeds.rename({"value": "__v"}), on=["__p", "__o"], how="left")
+                   .with_columns(pl.coalesce("__v", pl.col("value").cast(pl.Float64)).cast(kf.schema["value"])
+                                 .alias("value")))
+            new_rows = speeds.join(upd.select("__p", "__o"), on=["__p", "__o"], how="anti").select(
+                pl.col("__p").cast(kf.schema["p"]).alias("p"), pl.col("__o").cast(kf.schema["sink"]).alias("sink"),
+                pl.col("value").cast(kf.schema["value"]))
+            frame = pl.concat([upd.select(kf.columns), new_rows.select(kf.columns)], how="vertical")
+            setattr(fd, sink_speed_name, Param(sink_speed.dims, frame, name=sink_speed.name))
+        else:
+            setattr(fd, sink_speed_name, Param(("p", "sink"), speeds.select(
+                pl.col("__p").alias("p"), pl.col("__o").alias("sink"), "value")))
+        setattr(fd, sink_name, _union(sink_set, moved, list(_ARC)))
+
+    # Ramp cost.
+    cost = getattr(fd, "p_ramp_cost_arc", None)
+    cf = _frame_of(cost)
+    if cf is not None and cf.height > 0:
+        rest, moved = _move_arcs(cf, remap)
+        if moved.height > 0:
+            summed = (pl.concat([rest, moved], how="vertical")
+                      .group_by(list(_ARC), maintain_order=True).agg(pl.col("value").sum())
+                      .sort(list(_ARC)))
+            fd.p_ramp_cost_arc = Param(cost.dims, summed.select(cf.columns), name=cost.name)
+            arcs = summed.filter(pl.col("value") > 0.0).select(_ARC)
+            rc = _frame_of(getattr(fd, "process_source_sink_ramp_cost", None))
+            if rc is not None and rc.width > 0:
+                arcs = arcs.with_columns(pl.col(c).cast(rc.schema[c]) for c in _ARC)
+            fd.process_source_sink_ramp_cost = _none_if_empty(arcs)
+
+    # Profiles.
+    for name in ("process_profile_upper", "process_profile_lower", "process_profile_fixed"):
+        prof = _frame_of(getattr(fd, name))
+        rest, moved = _move_arcs(prof, remap)
+        if moved.height > 0:
+            setattr(fd, name, _union(rest, moved, [*_ARC, "f"]))
+
+    # User-constraint flow coefficients.
+    coef = getattr(fd, "p_flow_constraint_coef", None)
+    kf = _frame_of(coef)
+    if kf is not None and kf.height > 0:
+        rest, moved = _move_arcs(kf, remap)
+        if moved.height > 0:
+            summed = (pl.concat([rest, moved], how="vertical")
+                      .group_by([*_ARC, "cn"], maintain_order=True).agg(pl.col("value").sum())
+                      .sort([*_ARC, "cn"]))
+            fd.p_flow_constraint_coef = Param(coef.dims, summed.select(kf.columns), name=coef.name)
+    idx = _frame_of(getattr(fd, "flow_constraint_idx", None))
+    rest, moved = _move_arcs(idx, remap)
+    if moved.height > 0:
+        fd.flow_constraint_idx = _union(rest, moved, [*_ARC, "cn"])

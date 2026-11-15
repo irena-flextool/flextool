@@ -4481,10 +4481,11 @@ def _arc_max_capacity_coef_lf(source: "InputSource",
     df = (_try_param_explicit(source, ec, pname) if explicit
           else _try_param(source, ec, pname))
     if df is None or df.height == 0:
-        return pl.LazyFrame(
+        from flextool.engine.preprocess.params._projection import remap_capacity_coef
+        return remap_capacity_coef(source, pl.LazyFrame(
             schema={"p": schema_dtype(_enums, "p"),
                     node_alias: schema_dtype(_enums, node_alias),
-                    "coef": pl.Float64})
+                    "coef": pl.Float64}), side, node_alias, "coef")
     cols = df.columns
     rename: dict[str, str] = {}
     for c in cols:
@@ -4492,10 +4493,13 @@ def _arc_max_capacity_coef_lf(source: "InputSource",
             rename[c] = "p"
         elif c == "node":
             rename[c] = node_alias
-    return (df.lazy().pipe(rename_to_axis, rename)
-              .with_columns(pl.col("value").cast(pl.Float64).alias("coef"))
-              .select("p", node_alias, "coef")
-              .unique(subset=["p", node_alias], keep="last"))
+    out = (df.lazy().pipe(rename_to_axis, rename)
+             .with_columns(pl.col("value").cast(pl.Float64).alias("coef"))
+             .select("p", node_alias, "coef")
+             .unique(subset=["p", node_alias], keep="last"))
+    # One-input piecewise_linear units: their input_share_max is an output cap (_projection.remap_capacity_coef).
+    from flextool.engine.preprocess.params._projection import remap_capacity_coef
+    return remap_capacity_coef(source, out, side, node_alias, "coef")
 
 
 def _arc_conversion_coef_lf(source: "InputSource",

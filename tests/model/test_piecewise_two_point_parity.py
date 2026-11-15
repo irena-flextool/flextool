@@ -22,8 +22,8 @@ coefficient; the written MPS byte for byte), in
 
 A curve given once and the same curve per period (the stochastic branch periods inherit the anchor's) give the
 same LP in a single, a rolling and a stochastic solve (CLAUDE.md, a parameter with several shapes).  A solve
-period without a curve stops the run (E11).  A curve with two or more lines still stops at the load boundary,
-after the lines and the capacity parameters are set (checked here against the hand-derived O1 lines).
+period without a curve stops the run (E11).  A curve with two or more lines gets its lines and capacity
+parameters at the load boundary (checked here against the hand-derived O1 lines).
 
 Databases are built from JSON fixtures (``tests/fixtures/tests.json``, ``stochastics.json``), never a checked-in
 ``.sqlite``.  Every run has ``FLEXTOOL_AUTOSCALE_STRICT=1``.
@@ -280,6 +280,79 @@ def test_stochastic_two_point_curve_is_min_load_efficiency(tmp_path_factory, tmp
 
 
 # ---------------------------------------------------------------------------
+# An investment solve handing its capacity to a dispatch solve; the written outputs; a flat curve
+
+INVEST = "invest_1year_5weeks"
+
+
+def _chain_values(existing: float, unitsize: float | None) -> list:
+    """``invest_1year_5weeks`` (p2020 on the 2day timeset, coal_chp invests) before the dispatch solve."""
+    def arr(xs: list[str]) -> list:
+        return b64({"value_type": "str", "data": xs}, "array")
+
+    out = [["model", "flexTool", "solves", arr([INVEST, SOLVE])],
+           ["solve", INVEST, "invest_periods", arr(["p2020"])],
+           ["solve", INVEST, "realized_invest_periods", arr(["p2020"])],
+           ["solve", INVEST, "period_timeset", b64({"index_type": "str", "data": [["p2020", "2day"]]}, "map")],
+           ["solve", INVEST, "solve_mode", text("single_solve")],
+           ["unit", "coal_chp", "existing", scalar(existing)],
+           ["unit", "coal_chp", "invest_method", text("invest_total")],
+           ["unit", "coal_chp", "invest_cost", scalar(50.0)],
+           ["unit", "coal_chp", "invest_max_total", scalar(3000.0)],
+           ["unit", "coal_chp", "lifetime", scalar(30.0)],
+           ["unit", "coal_chp", "discount_rate", scalar(0.05)],
+           ["unit", "coal_chp", "fixed_cost", scalar(1.0)]]
+    return out + ([["unit", "coal_chp", "virtual_unitsize", scalar(unitsize)]] if unitsize else [])
+
+
+@pytest.mark.parametrize("existing, unitsize", [(0.0, None), (200.0, 100.0)])
+def test_invest_then_dispatch_chain(tmp_path_factory, tmp_path, existing, unitsize) -> None:
+    """The indirect two-output unit invested in by an investment solve and then dispatched: in both solves the
+    curve unit has the min_load_efficiency twin's parameters and LP (the dispatch solve's capacity comes from the
+    investment solve's handoff)."""
+    c = CASES["indirect_two_outputs"]
+    extra = _chain_values(existing, unitsize)
+    ref = _run(tmp_path_factory, f"chain_mle_{int(existing)}", c["chain"], _twin_values(c, "mle", extra))
+    steps = _run(tmp_path_factory, f"chain_pw_{int(existing)}", c["chain"], _twin_values(c, "pw", extra))
+    assert list(steps) == [INVEST, SOLVE]
+    _assert_same_model(steps, ref, f"chain {existing}", tmp_path)
+
+
+@pytest.mark.parametrize("case", ["direct_linear", "indirect_two_outputs"])
+def test_written_outputs_are_those_of_min_load_efficiency(tmp_path_factory, case) -> None:
+    """Every output file the runs write (parquet) is the same for the curve unit and its min_load_efficiency twin
+    (the reported input of a direct unit adds the section on the units online, process_min_load_eff)."""
+    c = CASES[case]
+    _, wa, _ = _RUNS.get(tmp_path_factory, alt=f"t1_{case}_mle", values=_twin_values(c, "mle"),
+                         base_chain=c["chain"], fixture_json=TESTS_JSON)
+    _, wb, _ = _RUNS.get(tmp_path_factory, alt=f"t1_{case}_pw", values=_twin_values(c, "pw"),
+                         base_chain=c["chain"], fixture_json=TESTS_JSON)
+    fa = {p.relative_to(wa): p for p in wa.rglob("*.parquet")}
+    fb = {p.relative_to(wb): p for p in wb.rglob("*.parquet")}
+    assert fa and set(fa) == set(fb), sorted(map(str, set(fa) ^ set(fb)))
+    diffs = [str(k) for k in sorted(fa) if not pl.read_parquet(fa[k]).equals(pl.read_parquet(fb[k]))]
+    assert not diffs, diffs
+
+
+@pytest.mark.parametrize("rolling", [False, True], ids=["single", "rolling"])
+def test_flat_multi_point_curve_is_constant_efficiency(tmp_path_factory, tmp_path, rolling) -> None:
+    """A three-point curve with one efficiency {0.3: 0.9, 0.6: 0.9, 1: 0.9} (merged to one line, intercept 0) is
+    coal_chp with constant_efficiency 0.9: the same LP, single and rolling."""
+    ex = ROLLING if rolling else []
+    ref = _run(tmp_path_factory, f"flat_ce_{rolling}", CHP, [
+        ["unit", "coal_chp", "conversion_method", text("constant_efficiency")],
+        ["unit", "coal_chp", "efficiency", scalar(0.9)]] + CHP_OUTPUTS + ex)
+    steps = _run(tmp_path_factory, f"flat_pw_{rolling}", CHP, [
+        ["unit", "coal_chp", "conversion_method", text("piecewise_linear")],
+        ["unit", "coal_chp", "piecewise_linear_efficiency", curve([(0.3, 0.9), (0.6, 0.9), (1.0, 0.9)])]]
+        + CHP_OUTPUTS + ex)
+    fd = list(steps.values())[-1].flex_data
+    assert fd.process_piecewise is None and (fd.process_min_load_eff is None
+                                             or "coal_chp" not in set(utf8(fd.process_min_load_eff)["p"].to_list()))
+    _assert_same_model(steps, ref, f"flat {rolling}", tmp_path)
+
+
+# ---------------------------------------------------------------------------
 # A curve given once vs the same curve per period
 
 
@@ -317,7 +390,7 @@ def test_constant_curve_equals_period_map_stochastic(tmp_path_factory, tmp_path)
 
 
 # ---------------------------------------------------------------------------
-# E11 and the multi-line guard
+# E11 and the multi-line parameters
 
 
 def test_E11_no_curve_for_a_solve_period(tmp_path_factory) -> None:
@@ -335,30 +408,50 @@ def test_E11_no_curve_for_a_solve_period(tmp_path_factory) -> None:
             "y2020_2day_dispatch") in str(err.value)
 
 
-def test_multi_line_curve_still_stops(tmp_path_factory, monkeypatch) -> None:
-    """The O1 curve {0.4: 0.30, 0.7: 0.40, 1: 0.42} on coal_plant (online, linear start-ups): the lines and the
-    capacity parameters are set, then the load stops ("not implemented yet").  Hand-derived (oracle §2):
-    seg 1 α = 25/18, β = 7/9; seg 2 α = 265/126, β = 5/18 (no origin line, the efficiency rises); p_slope =
-    1/η(1) = 50/21; the input-arc limit is the full-load fuel max_g(α_g·W + β_g) with W = 1, i.e. 265/126 + 5/18 =
-    50/21 (one input, conversion_flow_coeff 1, input_share_max 1); a one-input one-output unit is remapped."""
+def test_E11_rolling_names_the_user_solve_at_the_first_roll(tmp_path_factory, monkeypatch) -> None:
+    """A rolling solve over p2030 and p2035 whose curve per period has p2030 only: the run stops at the load of its
+    first roll (the periods of the user's solve are checked once), and the message names the user's solve s1,
+    not the roll."""
     from flextool.engine import run_chain_from_db
     from flextool.engine.preprocess.params import _piecewise
+    from tests.model._piecewise_oracle_db import (
+        balance_node, commodity_node, make_oracle_db, merge, scalar, time_settings, unit,
+    )
 
-    seen = {}
-    original = _piecewise._recompute_input_caps
+    from pathlib import Path as _Path
 
-    def spy(flex_data, *args, **kwargs):
-        original(flex_data, *args, **kwargs)
-        seen["fd"] = flex_data
+    from flextool.engine.preprocess.params import _derived
 
-    monkeypatch.setattr(_piecewise, "_recompute_input_caps", spy)
-    url, scen = make_db(tmp_path_factory, alt="multi", base_chain=PLANT, values=pw(
-        "coal_plant", 0.4, 0.30, 0.42, value=curve([(0.4, 0.30), (0.7, 0.40), (1.0, 0.42)])))
+    loads: list[str] = []
+    original = _piecewise.apply_piecewise_curves
+
+    def spy(flex_data, db_reader, provider=None):
+        loads.append(str(_derived._read_active_solve(_Path("."), provider=provider)))
+        return original(flex_data, db_reader, provider)
+
+    monkeypatch.setattr(_piecewise, "apply_piecewise_curves", spy)
+    ents, vals = merge(time_settings(3, ["p2030", "p2035"], rolling=(2.0, 1.0)),
+                       commodity_node("fuel", "fuel_node", 10.0), balance_node("elec", -40.0),
+                       unit("G", ["fuel_node"], ["elec"], {
+                           "conversion_method": text("piecewise_linear"), "existing": scalar(100.0),
+                           "piecewise_linear_efficiency": curve_per_period({"p2030": [(0.5, 0.4), (1.0, 0.5)]})}))
+    url, scen = make_oracle_db(tmp_path_factory, "e11_roll", ents, vals)
     with pytest.raises(FlexToolConfigError) as err:
-        run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("multi_w"))
-    assert str(err.value) == ("piecewise_linear with more than one line is not implemented yet (unit "
-                              "'coal_plant').")
-    fd = seen["fd"]
+        run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("e11_roll_w"))
+    assert str(err.value) == "unit 'G': piecewise_linear_efficiency has no curve for period p2035 of solve s1."
+    assert len(loads) == 1 and "_roll_" in loads[0], f"the run did not stop at the first roll: {loads}"
+
+
+def test_multi_line_curve_parameters(tmp_path_factory) -> None:
+    """The O1 curve {0.4: 0.30, 0.7: 0.40, 1: 0.42} on coal_plant (online, linear start-ups): the lines and the
+    capacity parameters at the load boundary.  Hand-derived (oracle §2): seg 1 α = 25/18, β = 7/9; seg 2 α =
+    265/126, β = 5/18 (no origin line, the efficiency rises); p_slope = 1/η(1) = 50/21; the input-arc limit is the
+    full-load fuel max_g(α_g·W + β_g) with W = 1, i.e. 265/126 + 5/18 = 50/21 (one input, conversion_flow_coeff 1,
+    input_share_max 1); a one-input one-output unit is remapped.  The solve runs (conversion_piecewise)."""
+    c = CASES["direct_linear"]
+    steps = _run(tmp_path_factory, "multi", c["chain"], pw(
+        "coal_plant", 0.4, 0.30, 0.42, value=curve([(0.4, 0.30), (0.7, 0.40), (1.0, 0.42)])))
+    fd = list(steps.values())[-1].flex_data
     lines = {(seg, d): (a, b) for (seg, d, a), b in zip(
         utf8(fd.p_piecewise_slope.frame).select("seg", "d", "value").iter_rows(),
         utf8(fd.p_piecewise_intercept.frame)["value"].to_list())}

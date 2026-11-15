@@ -1368,6 +1368,27 @@ def _storage_partition(b: "_Build", providers: pl.DataFrame, over: pl.DataFrame)
     return _coarse_flows.row_partition(b, members, over)
 
 
+def _single_input_curve_pairs(d) -> "pl.DataFrame | None":
+    """``(p, source, sink)`` in the dtypes of ``process_source_sink``: each one-input, one-output
+    ``piecewise_linear`` unit with two or more lines (``process_piecewise_remap``) as the one arc input node →
+    output node of the direct unit it would be without its curve; None without such units."""
+    remap = getattr(d, "process_piecewise_remap", None)
+    if not _has_rows(remap) or getattr(d, "p_piecewise_slope", None) is None:
+        return None
+    pss = d.process_source_sink
+    keys = ["p", "source", "sink"]
+    u = _utf8_keys(pss.lazy().select(keys), keys).join(
+        _utf8_keys(remap.lazy().select("p"), ["p"]).select("_p").unique(), on="_p", how="semi")
+    ins = u.filter((pl.col("_sink") == pl.col("_p")) & (pl.col("_source") != pl.col("_p"))).select(
+        "_p", pl.col("source"))
+    outs = u.filter((pl.col("_source") == pl.col("_p")) & (pl.col("_sink") != pl.col("_p"))).select(
+        "_p", "p", pl.col("sink"))
+    out = outs.join(ins, on="_p", how="inner").select(keys).collect()
+    if out.height == 0:
+        return None
+    return out.with_columns(pl.col(c).cast(pss.schema[c]) for c in keys)
+
+
 def _add_storage_energy_constraints(b: "_Build") -> None:
     """Storage-backed reserve providers hold the energy to sustain their reserve for reserve_duration."""
     d = b.d
@@ -1379,6 +1400,7 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
     us_n = d.p_state_unitsize
     dt = d.dt
     gn = d.group_node.pipe(rename_to_axis, {"n": "n"})     # (g, n), n cast to the node axis
+    paired = _single_input_curve_pairs(d)
     dur_set = dur.frame.select("r", "ud", "g")
 
     def _providers(ud_val: str, balance_side: str, storage_side: str) -> "pl.DataFrame | None":
@@ -1392,6 +1414,10 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
             return None
         parts = []
         orientations = [(d.process_source_sink, balance_side, storage_side, False)]
+        if paired is not None:
+            # A one-input piecewise_linear unit (two flows) provides as the direct unit it would be without its
+            # curve: its input node and output node paired into one arc.
+            orientations.append((paired, balance_side, storage_side, False))
         back = _back_arcs(d)
         if back is not None:
             # The reverse flow of a one-variable / DC arc runs from its sink to its source.
@@ -1420,13 +1446,25 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
 
     def _slope_factor(providers: pl.DataFrame, reciprocal: bool, back: "pl.DataFrame | None" = None) -> Param:
         """slope[p,d,t] over the providers × dt, 1.0 where p_slope has no value (noEff providers) and for the
-        providers in ``back`` (reverse flow of a one-variable / DC arc: lossless); 1 / slope when ``reciprocal``."""
+        providers in ``back`` (reverse flow of a one-variable / DC arc: lossless); 1 / slope when ``reciprocal``.
+        A paired one-input piecewise_linear unit takes the slope of its curve's lines that is safe for the row:
+        the largest (upward, energy drawn per MW of output) or the smallest (downward, ``reciprocal``: energy
+        stored per MW of input), ``max_g`` / ``min_g pw_slope[p,g,d]``."""
         grid = providers.join(dt, how="cross")
         if d.p_slope is not None:
             grid = grid.join(d.p_slope.frame, on=["p", "d", "t"], how="left")
             val = pl.col("value").fill_null(1.0)
         else:
             val = pl.lit(1.0)
+        if paired is not None:
+            agg = pl.col("value").min() if reciprocal else pl.col("value").max()
+            pw = (d.p_piecewise_slope.frame.lazy()
+                  .select(pl.col("p").cast(pl.Utf8).alias("__pp"), pl.col("d").cast(pl.Utf8).alias("__pd"),
+                          pl.col("value").cast(pl.Float64))
+                  .group_by("__pp", "__pd").agg(agg.alias("__pw")).collect())
+            grid = (grid.with_columns(pl.col("p").cast(pl.Utf8).alias("__pp"), pl.col("d").cast(pl.Utf8).alias("__pd"))
+                    .join(pw, on=["__pp", "__pd"], how="left", maintain_order="left"))
+            val = pl.when(pl.col("__pw").is_not_null()).then(pl.col("__pw")).otherwise(val)
         if back is not None and back.height > 0:
             grid = grid.with_columns(pl.col("p").is_in(back["p"].implode()).alias("__b"))
             val = pl.when(pl.col("__b")).then(pl.lit(1.0)).otherwise(val)

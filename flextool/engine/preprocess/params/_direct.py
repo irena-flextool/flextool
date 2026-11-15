@@ -1819,24 +1819,30 @@ def _p_side_scalar(source: "InputSource", entity_class: str,
     ``entity_col`` is the Spine column name for the unit ('unit' or
     'connection'); ``side_dim`` is 'source' or 'sink'.
     """
+    remapped = (entity_class, parameter_name) in (("unit__outputNode", "capacity_max_coeff"),
+                                                  ("unit__inputNode", "input_share_max"))
+    empty = pl.DataFrame(schema={"p": pl.Utf8, side_dim: pl.Utf8, "value": pl.Float64})
     try:
         df = source.parameter_explicit(entity_class, parameter_name)
     except (KeyError, AttributeError):
         try:
             df = source.parameter(entity_class, parameter_name)
         except KeyError:
-            return None
-    if df is None or df.height == 0:
-        return None
-    if "value" not in df.columns or entity_col not in df.columns \
+            df = None
+    if df is None or df.height == 0 or "value" not in df.columns or entity_col not in df.columns \
             or "node" not in df.columns:
-        return None
-    lf = (df.lazy()
-            .rename({entity_col: "p", "node": side_dim})
-            .filter(pl.col("value").is_not_null()))
-    if filter_zero:
-        lf = lf.filter(pl.col("value") != 0.0)
-    out = lf.select("p", side_dim, "value").collect()
+        out = empty
+    else:
+        lf = (df.lazy()
+                .rename({entity_col: "p", "node": side_dim})
+                .filter(pl.col("value").is_not_null()))
+        if filter_zero:
+            lf = lf.filter(pl.col("value") != 0.0)
+        out = lf.select("p", side_dim, "value").collect()
+    if remapped:
+        # One-input piecewise_linear units: their input_share_max is an output cap.
+        from flextool.engine.preprocess.params._projection import remap_capacity_coef
+        out = remap_capacity_coef(source, out, side_dim, side_dim, "value")
     if out.height == 0:
         return None
     return Param(("p", side_dim), out.lazy())

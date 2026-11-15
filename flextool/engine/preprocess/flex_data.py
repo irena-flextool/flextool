@@ -5058,7 +5058,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
             # The solve's new_stepduration steps (empty without one): the DB-direct readers combine a time
             # series to them by its TIME_AGGREGATION kind.
             _steps_key = _provider_key(Path("solve_data") / NEW_STEP_BASE_STEPS)
-            # A varying min_load is approximate only on the min_load_efficiency units (their curve).
+            # A varying min_load is approximate only on the min_load_efficiency units (their curve).  Not on
+            # piecewise_linear units: their curve (piecewise_linear_efficiency) does not read min_load, which only
+            # bounds the online flow there, where the step mean is exact.
             from flextool.engine.preprocess.params._direct import _names_with_method
 
             def _mle_units() -> "dict[tuple[str, str], frozenset[str]]":
