@@ -29,6 +29,11 @@ Usage::
     # restrict either tier to some fixture dirs (subset vs a full base)
     python tools/lp_snapshot.py compare BASE NEW --fixtures base,multi_year
 
+    # autoscale decisions too: OUT/<fixture>/autoscale_plan.json per solve
+    # (Layer 3 exponents + tag, scaling-guard verdict), diffed by compare
+    python tools/lp_snapshot.py snapshot OUT --autoscale-plan
+    python tools/lp_snapshot.py compare BASE NEW --autoscale-plan
+
     # constraint-family coverage of a snapshot (family -> fixtures)
     python tools/lp_snapshot.py coverage _audit_reports/lp_baseline
 
@@ -94,6 +99,16 @@ How it works
   ``FLEXTOOL_AXIS_ENUMS=1`` does), so ``--dirty-sqlite`` is a regression
   guard for that.  A target that fails under dirt is reported as FAILED
   like any other fixture.
+* ``--autoscale-plan`` (snapshot): after the run, every solve's
+  ``solve_data/autoscale_<solve>.yaml`` is read and its Layer 3 decision
+  (``user_bound_scale``, ``user_objective_scale``, ``simplex_scale_strategy``,
+  the bound tier tag) and scaling-guard verdict go to
+  ``<fixture>/autoscale_plan.json``.  The MPS files are written before
+  autoscale, so they cannot show a scaling change; this file can.
+  ``compare --autoscale-plan`` lists every solve whose decision differs
+  (exit 1).  A YAML without ``bound_tag`` (an older FlexTool) has the tag
+  read from its ``reasoning`` string; a missing guard verdict compares as
+  ``None``.
 * ``coverage`` greps every ``add_cstr`` name in COVERAGE_SOURCES (plus
   the hand-resolved dynamic names in DYNAMIC_CSTR_NAMES) and reports
   which fixtures emit rows of each family; UNREACHABLE lists families no
@@ -2336,9 +2351,51 @@ def _dirty_work_folder(dirtier: Fixture, tmp_path: Path, work: Path,
     last.flex_data_provider.snapshot_processed_inputs(work)
 
 
+def _bound_tag(layer3: dict) -> str | None:
+    """The Layer 3 bound tier tag of an autoscale YAML ``layer3`` section:
+    ``bound_tag`` when written, else parsed from ``reasoning``."""
+    tag = layer3.get("bound_tag")
+    if tag:
+        return str(tag)
+    reasoning = str(layer3.get("reasoning") or "")
+    m = re.search(r"bound_tag=([^,)]+)", reasoning) or re.search(
+        r"bound=([^,)]+)\)", reasoning)
+    return m.group(1).strip() if m else None
+
+
+def _collect_autoscale_plan(work: Path) -> list[dict]:
+    """Every solve's Layer 3 decision and scaling-guard verdict, read from
+    ``work/solve_data/autoscale_<solve>.yaml``, sorted by solve name."""
+    import yaml
+
+    out: list[dict] = []
+    for path in sorted((work / "solve_data").glob("autoscale_*.yaml")):
+        tree = yaml.safe_load(path.read_text()) or {}
+        layer3 = tree.get("layer3") or {}
+        guard = tree.get("guard") or {}
+        out.append({
+            "solve": path.stem[len("autoscale_"):],
+            "user_bound_scale": layer3.get("user_bound_scale"),
+            "user_objective_scale": layer3.get("user_objective_scale"),
+            "simplex_scale_strategy": layer3.get("simplex_scale_strategy"),
+            "bound_tag": _bound_tag(layer3) if layer3 else None,
+            "guard": guard.get("verdict"),
+            "layer3": layer3,
+            "guard_section": guard,
+        })
+    return out
+
+
+#: The fields ``compare --autoscale-plan`` compares (the decision; the
+#: full ``layer3`` / ``guard_section`` copies are for reading).
+PLAN_DECISION_KEYS = ("user_bound_scale", "user_objective_scale",
+                      "simplex_scale_strategy", "bound_tag", "guard")
+
+
 def _worker(json_name: str, scenario: str, patch: str, out_dir: Path, *,
             csv_dump: bool = False, dirty_with: str = "",
-            dirty_sqlite: str = "", axis_enums: bool = False) -> int:
+            dirty_sqlite: str = "", axis_enums: bool = False,
+            autoscale_plan: bool = False) -> int:
     os.environ.setdefault("FLEXTOOL_SKIP_SOLVER_PROBE", "1")
     sys.path.insert(0, str(TESTS_DIR))
     import warnings
@@ -2409,6 +2466,10 @@ def _worker(json_name: str, scenario: str, patch: str, out_dir: Path, *,
             csv_dump=csv_dump,
         )
         capture["on"] = False
+        if autoscale_plan:
+            (out_dir / "autoscale_plan.json").write_text(
+                json.dumps(_collect_autoscale_plan(work), indent=1,
+                           default=repr) + "\n")
         if csv_dump and steps:
             last = next(reversed(list(steps.values())))
             if last.flex_data_provider is not None:
@@ -2457,7 +2518,8 @@ class WorkMode:
 
 
 def _run_fixture(fx: Fixture, out_root: Path,
-                 mode: WorkMode = WorkMode()) -> tuple[str, int, float, str]:
+                 mode: WorkMode = WorkMode(),
+                 autoscale_plan: bool = False) -> tuple[str, int, float, str]:
     out_dir = out_root / fx.name
     if out_dir.exists():
         shutil.rmtree(out_dir)
@@ -2473,7 +2535,8 @@ def _run_fixture(fx: Fixture, out_root: Path,
     cmd = [sys.executable, str(Path(__file__).resolve()), "_worker",
            "--json", fx.json, "--scenario", fx.scenario,
            "--patch", fx.patch, "--out", str(out_dir),
-           *mode.worker_args(fx)]
+           *mode.worker_args(fx),
+           *(["--autoscale-plan"] if autoscale_plan else [])]
     t0 = time.monotonic()
     proc = subprocess.run(cmd, env=env, cwd=str(REPO),
                           capture_output=True, text=True)
@@ -2511,7 +2574,8 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
     t0 = time.monotonic()
     failed = []
     with cf.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futs = [pool.submit(_run_fixture, fx, out_root, mode)
+        futs = [pool.submit(_run_fixture, fx, out_root, mode,
+                            args.autoscale_plan)
                 for fx in fixtures]
         for fut in cf.as_completed(futs):
             name, rc, dt, tail = fut.result()
@@ -2793,7 +2857,49 @@ def cmd_compare(args: argparse.Namespace) -> int:
             print(f"equivalent  {rel}")
     label = "equivalent" if args.canonical else "identical"
     print(f"\n{n_same} {label}, {n_diff} different, {n_missing} missing")
-    return 0 if (n_diff == 0 and n_missing == 0) else 1
+    n_plan = _compare_autoscale_plans(base, new, args) if args.autoscale_plan else 0
+    return 0 if (n_diff == 0 and n_missing == 0 and n_plan == 0) else 1
+
+
+def _compare_autoscale_plans(base: Path, new: Path, args: argparse.Namespace) -> int:
+    """Print every solve whose autoscale decision (PLAN_DECISION_KEYS)
+    differs between the two snapshots; return the number of differences
+    (a missing plan file or solve counts as one)."""
+    wanted = ({n.strip() for n in args.fixtures.split(",") if n.strip()}
+              if args.fixtures else None)
+    names = sorted({p.parent.name for d in (base, new)
+                    for p in d.glob("*/autoscale_plan.json")})
+    if wanted is not None:
+        names = [n for n in names if n in wanted]
+    n_diff = n_same = 0
+    print("\nautoscale decisions:")
+    for name in names:
+        plans = []
+        for d in (base, new):
+            f = d / name / "autoscale_plan.json"
+            plans.append({e["solve"]: e for e in json.loads(f.read_text())}
+                         if f.is_file() else None)
+        if plans[0] is None or plans[1] is None:
+            print(f"PLAN MISSING in {'base' if plans[0] is None else 'new'}: {name}")
+            n_diff += 1
+            continue
+        for solve in sorted(set(plans[0]) | set(plans[1])):
+            a, b = plans[0].get(solve), plans[1].get(solve)
+            if a is None or b is None:
+                print(f"PLAN MISSING in {'base' if a is None else 'new'}: {name}/{solve}")
+                n_diff += 1
+                continue
+            changed = [f"{k} {a.get(k)!r} -> {b.get(k)!r}"
+                       for k in PLAN_DECISION_KEYS
+                       if a.get(k) != b.get(k)
+                       and not (k == "guard" and a.get(k) is None)]
+            if changed:
+                print(f"PLAN DIFFERENT  {name}/{solve}: " + "; ".join(changed))
+                n_diff += 1
+            else:
+                n_same += 1
+    print(f"{n_same} solves with the same decision, {n_diff} different")
+    return n_diff
 
 
 # ---------------------------------------------------------------------------
@@ -2998,6 +3104,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="copy FIXTURE's DB to work/tests.sqlite (no CSVs)")
     sp.add_argument("--axis-enums", action="store_true",
                     help="captured run with FLEXTOOL_AXIS_ENUMS=1 (axis-Enum mode)")
+    sp.add_argument("--autoscale-plan", action="store_true",
+                    help="also write <fixture>/autoscale_plan.json: each solve's "
+                         "Layer 3 decision and scaling-guard verdict")
     sp.set_defaults(func=cmd_snapshot)
 
     sp = sub.add_parser("compare", help="compare two snapshots")
@@ -3010,6 +3119,10 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--fixtures", default="",
                     help="comma-separated fixture dirs to compare (each must "
                          "exist in both)")
+    sp.add_argument("--autoscale-plan", action="store_true",
+                    help="also diff autoscale_plan.json (the Layer 3 decision and "
+                         "the scaling-guard verdict per solve; a base without a "
+                         "verdict matches any)")
     sp.set_defaults(func=cmd_compare)
 
     sp = sub.add_parser("coverage", help="constraint family -> fixtures")
@@ -3028,10 +3141,11 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--dirty-with", default="")
     sp.add_argument("--dirty-sqlite", default="")
     sp.add_argument("--axis-enums", action="store_true")
+    sp.add_argument("--autoscale-plan", action="store_true")
     sp.set_defaults(func=lambda a: _worker(
         a.json, a.scenario, a.patch, Path(a.out), csv_dump=a.csv_dump,
         dirty_with=a.dirty_with, dirty_sqlite=a.dirty_sqlite,
-        axis_enums=a.axis_enums))
+        axis_enums=a.axis_enums, autoscale_plan=a.autoscale_plan))
 
     args = ap.parse_args(argv)
     return int(args.func(args) or 0)

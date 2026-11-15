@@ -29,6 +29,7 @@ read (for example `FLEXTOOL_HIGHS_THREADS=many`) is ignored with one warning tha
 | `FLEXTOOL_HIGHS_MIP_GAP` | none | relative gap | The former name of `FLEXTOOL_SOLVER_MIP_GAP`, now for HiGHS only. The flag and `FLEXTOOL_SOLVER_MIP_GAP` win over it. |
 | `FLEXTOOL_SOLVER_LOG_LEVEL` | `--solver-log-level` | `silent` / `normal` / `verbose` | Solver log output (default `normal`); `silent` also hides a commercial solver's log (still saved as `solve_data/subprocess/<solve>.log`); `verbose` is HiGHS only. |
 | `FLEXTOOL_SCALING` | `--scaling` | `off` / `solver_only` / `basic` / `full` | Autoscaler strategy for every solve; overrides each solve's `scaling` (default `full`). See [LP scaling pipeline](dev/scaling.md). |
+| `FLEXTOOL_SCALING_GUARD` | `--scaling-guard` | `error` / `warn` / `off` | What a solve whose limits and bounds the solver cannot enforce accurately after scaling does: `error` (default) stops before the solve, `warn` prints the message and solves, `off` does not check. See [The scaling guard](dev/scaling.md#the-scaling-guard). |
 | `FLEXTOOL_USER_BOUND_SCALE` | `--user-bound-scale` | integer in `[-10, 0]` | Pins HiGHS' `user_bound_scale` exponent; unset lets the autoscaler choose. |
 | `FLEXTOOL_SAVE_MEMORY` | `--save-memory` | `1` | Solve each LP in a separate process to lower peak memory (slower). |
 | `FLEXTOOL_WARM_START` | `--warm-start` | `1` | Reuse a cached HiGHS basis for solves of the same model structure, both in-process and with `--save-memory` (not for Benders solves). |

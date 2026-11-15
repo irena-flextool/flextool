@@ -1541,22 +1541,35 @@ slack semantics.
      tests with `FLEXTOOL_AUTOSCALE_STRICT=1` to turn the silent degrade
      into a loud failure (off in production so a gap never blocks a user
      solve).
-   - **Layer 3 — HiGHS native + bound-scale folding** (`_layer3.py`).
-     Picks an integer `user_bound_scale` exponent (within HiGHS's safe
-     range) and folds D's escape-tier valve into the same pass, so the
-     LP arriving at HiGHS is comfortably within the solver's
-     conditioning sweet spot.
-5. **YAML audit** (`engine/autoscale/_report.py`). After every
-   solve, writes `solve_data/autoscale_<solve>.yaml` covering Layer 1
-   ranges, the Layer 2 plan (per-type exponents + post-L2 ranges),
-   and the Layer 3 plan (`user_bound_scale`, escape-tier).
+   - **Layer 3 — HiGHS native** (polar-high `_layer3.py`). Picks the
+     power-of-two `user_bound_scale` / `user_objective_scale` exponents
+     from the post-Layer-2 readout (the *meaningful* bound / RHS pool:
+     continuous-column bounds and row bounds below HiGHS' `infinite_bound`,
+     float residue below 10 × the primal tolerance left out). The tier
+     exponent is clipped into the tolerance window `[10·tol, 1e18·tol]`;
+     where the range forces a choice (the former escape tier, now
+     `smallest-side`) the small end aims at 100 × tol, else at 10 × tol, and
+     the large end takes the excess ("scale from the smallest side"). So
+     the exponent there depends on `primal_feasibility_tolerance`. When no
+     exponent fits, the tag is `unscalable+smallest-side` and the scaling
+     guard decides. When Layer 2 did not run, Layer 3 reuses the Layer 1
+     readout instead of walking the LP again.
+5. **YAML audit** (`engine/autoscale/_report.py`). Written before the
+   solve (at decision time, so it exists when the guard stops a solve and
+   on the `--save-memory` path) and again after it:
+   `solve_data/autoscale_<solve>.yaml` covers Layer 1 ranges, the Layer 2
+   plan (per-type exponents + post-L2 ranges), the Layer 3 plan
+   (`user_bound_scale`, tier tag, tolerance window) and the scaling guard's
+   `guard:` section (verdict, tolerances, every finding with its numbers,
+   the families at each end and the entries named there).
    A 1-line console summary echoes via `format_console_summary`; the
    non-optimal hint (`format_nonoptimal_hint`) fires only when a *rejected*
    solve's **post-autoscale** LP is still wide-ranged (i.e. the autoscaler
    could not tame the spread), and even then it is framed as a possibility
    — never as the certified cause. Accept/reject itself is decided by
    `engine/solve/_acceptance.py` from the solver's own diagnostics
-   (see "Solve acceptance" below), not by the range report.
+   (see "Solve acceptance" below), not by the range report.  The summary
+   line ends with `guard=ok|warn|error` (`off` when not checked).
 6. **Manual override.** `--user-bound-scale N` (or
    `FLEXTOOL_USER_BOUND_SCALE`) pins Layer 3's bound-scale exponent and
    disables the auto-pick. Useful when the audit hints at a value the
@@ -1565,6 +1578,51 @@ slack semantics.
    Every `VariableSpec` carries an `unscale_by` field; the Layer 2 +
    Layer 3 reverse maps are applied in the writer so downstream
    consumers see absolute units regardless of which layers fired.
+
+### Scaling range guard
+
+`engine/autoscale/_guard.py` judges, before any solver runs, whether the
+LP the solver gets can be solved accurately after Layers 2 and 3
+(polar-high `assess_scaling`, a pure verdict; FlexTool holds the policy):
+
+| group | warning | error |
+|---|---|---|
+| bound / RHS | spread above 13 decades | no power-of-two exponent puts every meaningful limit inside `[10·tol, 1e18·tol]` (17 decades), or a manual / external exponent leaves that window |
+| cost | spread above 13 decades, or smallest scaled cost below 10 × dual tolerance | — |
+| matrix | a coefficient term HiGHS drops (≤ 1e-9) or refuses (≥ 1e15); the spread is reported only | — |
+
+* `--scaling-guard error|warn|off` (`FLEXTOOL_SCALING_GUARD`, default
+  `error`, no database tier): an error raises `ScalingRangeError` (a
+  `FlexToolConfigError`, so `cmd_run_flextool` prints it without a
+  traceback); `warn` prints it and solves; `off` checks nothing (Layer 3's
+  window clip still applies).  Warnings print once per run, keyed by base
+  solve, Benders region and group (`_behaviour_changes.warn_once`).
+* The message names the solve (and roll / region), the spread and window
+  at the solve's `primal_feasibility_tolerance`, the family and up to five
+  entries at each end (polar-high `locate_extremes`, warning / error only),
+  the violation HiGHS would accept in model units, whether Layer 2 widened
+  the span, and the override.
+* Commercial solvers get no `user_*_scale`: judged at `N = 0` with the
+  solver's own feasibility parameter (Gurobi `FeasibilityTol`, CPLEX
+  `simplex tolerances feasibility`, Xpress `FEASTOL`, COPT `FeasTol`;
+  default 1e-6), and every error only warns.
+* `FLEXTOOL_AUTOSCALE_STRICT=1` raises also under `warn` / `off`, but only
+  for an error Layer 2 caused (the pre-Layer-2 pool fitted).  A failure of
+  the check itself is logged once and the solve goes on (re-raised under
+  strict).
+* Where it runs: after Layer 3 on the first solve of each LP shape (cold
+  and warm paths; the verdict is cached in `_AutoscaleShapeCacheEntry` and
+  replayed on a hit without a walk), and on every later roll that is built
+  again, from the ranges of the LP actually built: polar-high's
+  `pre_run_check` (`Problem.solve`, the first `WarmProblem.solve`, and
+  `Problem.write_mps` on the `--save-memory` path, whose returned options
+  go into the child's option file).  A roll whose smallest limit leaves the
+  cached exponent's window gets its own exponent (Layer 3 on its ranges);
+  when none fits the policy applies, with the roll named.  A WarmProblem
+  reuse solves the LP already checked and is not rechecked.  Each Benders
+  region subproblem is judged after its Layer 3, outside the best-effort
+  `except` around it.  `--scaling off|solver_only` runs no autoscaler and
+  therefore no guard.
 
 ### Solve acceptance
 

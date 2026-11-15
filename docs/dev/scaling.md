@@ -39,9 +39,19 @@ the autoscale peak working set roughly in half. There is no longer a
 size cap that skips very large families: every family's coefficients are
 read and folded into the scaling decision, so no family is silently
 left out.
-3. **Layer 3 — HiGHS native + escape-tier folding.** Picks an integer
-   `user_bound_scale` exponent (within HiGHS's safe range) and folds
-   the unbounded-slack escape valve into the same pass.
+3. **Layer 3 — HiGHS native.** Picks power-of-two `user_bound_scale` and
+   `user_objective_scale` exponents.  The bound exponent keeps every
+   meaningful limit inside `[10 × tol, 1e18 × tol]` (`tol` = the solve's
+   primal feasibility tolerance): when the limits are so far apart that
+   their small end would leave HiGHS' comfort zone, Layer 3 scales from the
+   smallest side — the smallest limit lands at 100 × tol (10 × tol when the
+   large end needs the room) and the large end takes the rest.  The exponent
+   chosen there therefore depends on the tolerance.  Values at or above
+   HiGHS' `infinite_bound` (1e20) are "no limit" to HiGHS and are not
+   limits here either; float residue below 10 × tol is left out of the small
+   end.
+4. **Scaling guard.** Before the solver runs, FlexTool checks that the
+   result fits (see [The scaling guard](#the-scaling-guard)).
 
 The autoscaler never changes the LP optimum — every transform is
 reversible and the reverse is wired into the output writer.
@@ -83,18 +93,67 @@ Or per-solve in the DB via `solve.user_bound_scale`. A non-zero
 integer disables the auto-pick and the value is clamped to the
 HiGHS-safe range.
 
+## The scaling guard
+
+After FlexTool's scaling, some models still have limits too far apart for
+the solver: a period CO2 cap of `1e18` used as "no limit" next to a
+capacity of `0.5` spans 18 decades, and no single scale lets HiGHS enforce
+the small one while it still reads the large one accurately.  The solve
+would then return a result that silently breaks the small limits (or fail
+with a numerical status).  The guard stops such a solve before it starts:
+
+```
+Solve y2030 cannot be scaled into a range the solver handles accurately.
+  Limits and bounds span 18.3 decades after FlexTool's scaling (0.5 … 1e+18); at most 17 fit (primal feasibility tolerance 1e-07, HiGHS default).
+  Largest:  1e+18 (model units) in co2_max_period (constraint right-hand side) at g=co2_cap, d=y2030 — a stand-in for "no limit"? Use inf
+  Smallest: 0.5 (model units) in maxFlow (constraint right-hand side), 412 values within 10x of it, e.g. at:
+      p=..., source=..., sink=..., d=y2030, t=t0001
+  Fitting the largest value would let a limit be violated by up to 1.68 (model units), 3.36x the smallest limit.
+  To solve anyway: --scaling-guard warn (FLEXTOOL_SCALING_GUARD=warn).
+```
+
+| What | Warning | Stop (error) |
+|---|---|---|
+| Limits and bounds (variable bounds, constraint right-hand sides) | span more than 13 decades | no scale fits them into the 17 decades the solver handles at its tolerance, or a `--user-bound-scale` / `highs.opt` scale puts them outside it |
+| Objective costs | span more than 13 decades, or the smallest is below 10 × the dual tolerance | never |
+| Constraint coefficients | a term the solver drops (≤ 1e-9) or refuses (≥ 1e15) | never |
+
+How to fix the model, in order of preference:
+
+1. **A placeholder for "no limit"** (`1e18`, `1e30`, …): give `inf` instead —
+   an `inf` limit has no row at all.
+2. **Tiny values that are really zero** (`1e-12` capacities, availabilities):
+   give `0`, or leave the parameter out.
+3. **Genuinely different scales**: change units (MWh → GWh for one
+   commodity), or split the model (invest → dispatch handoff).
+4. **A Layer 2 widening** (the message says "Layer 2 widened the span"):
+   `--scaling basic` runs without Layer 2.
+
+To run anyway: `--scaling-guard warn` (or `FLEXTOOL_SCALING_GUARD=warn`)
+prints the same message as a warning and solves; `--scaling-guard off`
+does not check.  A commercial solver (Gurobi, CPLEX, Xpress, COPT) gets no
+FlexTool scaling, so the guard only warns there, judged at that solver's
+own feasibility tolerance.  A rolling solve is checked on its first roll
+and again on every later roll; a roll whose smallest limit no longer fits
+the first roll's scale gets a scale of its own (logged), and a roll that
+cannot be scaled stops the run with the roll named.  `--scaling off` and
+`--scaling solver_only` run no autoscaler and so no guard.
+
 ## The YAML audit
 
-Every solve writes `solve_data/autoscale_<solve>.yaml`. Three top-level
+Every solve writes `solve_data/autoscale_<solve>.yaml`, before the solve
+(so it is there when the guard stops it) and again after it.  Top-level
 sections:
 
 | Section | Contents |
 |---|---|
 | `layer1` | matrix / cost / bound / RHS log10 ranges; `cross_group_max_ratio`; `trigger` flag (whether Layers 2/3 fired). |
 | `layer2` | per-quantity-type power-of-2 exponents; post-Layer-2 ranges per type; list of quantity-types actually present in the LP. |
-| `layer3` | `user_bound_scale` exponent applied to HiGHS; escape-tier plan. |
+| `layer3` | `user_bound_scale` / `user_objective_scale` exponents applied to HiGHS; `bound_tag` (the tier: `in-zone`, `clamp-large`, `clamp-small`, `smallest-side`, `refuse`, with `+raised` / `+lowered` when the tolerance window moved it, `unscalable+smallest-side` when nothing fits); `bound_source` (`auto` / `manual` / `external`); the tolerance window. |
+| `guard` | the scaling guard: `verdict` (`ok` / `warn` / `error` / `off`), the tolerances and where they came from, the window, every finding (`bound_rhs`, `cost`, `matrix`) with its numbers (spread `decades`, before Layer 2 `decades_pre`, scaled ends `s_lo` / `s_hi`, `r_lo` = the fraction of the smallest limit the solver may violate, `violation_model`), the family at each end and the entries named there; `info` counts residue and values at or above the solver infinity; `roll_user_bound_scale` when a later roll got its own exponent. |
 
-A single-line console summary echoes after each solve. When a solve is
+A single-line console summary echoes after each solve; it ends with
+`guard=ok|warn|error`. When a solve is
 *rejected* and its **post-autoscale** LP is still wide-ranged, a hint also
 prints — framed as a possibility, since a wide range does not by itself
 explain a non-optimal status; the YAML shows which layer (or which
@@ -117,6 +176,12 @@ The autoscaler is a numerical tool, not a model fixer. Some things it
   buildings as one), or run the two subsystems as sequential models
   (invest → dispatch handoff). The Layer 1 ranges will flag this; the
   YAML's quantity-type sections will show the wide pre-/post-L2 range.
+- **Fit limits more than 17 decades apart.** The tolerance window HiGHS
+  handles accurately is 17 decades wide at any tolerance; a wider spread
+  stops the solve (the scaling guard) unless `--scaling-guard warn` lets it
+  run.  The guard reads the LP as built: a later roll of a rolling solve
+  is rechecked, but a solve that reuses an already built LP (warm reuse)
+  is not.
 - **Help when the Rivendell guard fires.** Layer 2 has a guard that
   refuses to over-shrink columns carrying mixed-magnitude coefficients
   on a single row (the *Rivendell case*). When the guard activates,
@@ -181,6 +246,10 @@ significant figures, but it never reached a normal run; it was removed.)
 - **"My objective doesn't match a pre-scaling reference."** Compare
   with `--scaling=off`: the scaled and unscaled solves agree within the
   solver tolerance, not bit for bit.
+- **"Solve … cannot be scaled into a range the solver handles
+  accurately."** The scaling guard stopped the solve before it ran; see
+  [The scaling guard](#the-scaling-guard) for the usual causes (a
+  placeholder for "no limit") and `--scaling-guard warn` to run anyway.
 - **"HiGHS reports non-optimal."** Read the console hint and open
   `solve_data/autoscale_<solve>.yaml`. The post-Layer-2 ranges show
   whether Layer 2 compressed the spread; the `layer3` section shows

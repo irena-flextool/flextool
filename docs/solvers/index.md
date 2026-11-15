@@ -59,6 +59,21 @@ solve):
 | `--highs-threads`      | `solver_threads`         | HiGHS only: integer thread count (default 1); `>1` enables HiGHS parallel mode |
 | `--solver-log-level`   | `solver_log_level`       | `silent` hides the log of every solver; `normal` (default) shows it; `verbose` is HiGHS only |
 
+**Scaling guard.** Before each solve FlexTool checks that the model's
+limits and bounds fit the range the solver enforces accurately after
+FlexTool's scaling (17 decades for HiGHS, at the solve's
+`primal_feasibility_tolerance`).  A model that does not fit — typically a
+placeholder like `1e18` for "no limit" next to small capacities — stops
+before the solver runs, with a message naming the largest and smallest
+values and where they are; give `inf` for "no limit", or run anyway with
+`--scaling-guard warn` (`FLEXTOOL_SCALING_GUARD=warn`; `off` does not
+check).  A commercial solver gets none of FlexTool's HiGHS scaling
+options, so for Gurobi, CPLEX, Xpress and COPT the guard judges the LP as
+written, at the solver's own feasibility tolerance (Gurobi
+`FeasibilityTol`, CPLEX `simplex tolerances feasibility`, Xpress `FEASTOL`,
+COPT `FeasTol`, set in the option file or `solver_arguments`; default
+1e-6), and only warns.  See [The scaling guard](../dev/scaling.md#the-scaling-guard).
+
 `--presolve`, `--highs-threads`, `--user-bound-scale` and
 `--solver-log-level verbose` are HiGHS options. When one of them is given and a solve runs on a commercial
 solver, the run warns once: set the solver's own parameter in the solve's

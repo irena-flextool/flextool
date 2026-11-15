@@ -51,7 +51,7 @@ Read by `engine/solve/_benders.py`. A malformed value is ignored with a warning.
 
 | Variable | Default | Set to | What it does |
 |---|---|---|---|
-| `FLEXTOOL_AUTOSCALE_STRICT` | unset (off) | `1` | A variable, constraint or parameter missing from the autoscale registries raises instead of the solve silently falling back to an unscaled LP. Set it in tests that exercise autoscale (CLAUDE.md invariant 1). |
+| `FLEXTOOL_AUTOSCALE_STRICT` | unset (off) | `1` | A variable, constraint or parameter missing from the autoscale registries raises instead of the solve silently falling back to an unscaled LP. Set it in tests that exercise autoscale (CLAUDE.md invariant 1). It also makes the scaling guard raise `ScalingRangeError` under `--scaling-guard warn` / `off` when Layer 2 caused the error (the limits fitted before Layer 2; a warning Layer 2 caused does not raise), and re-raises a failure of the guard's own check instead of logging it. |
 | `FLEXTOOL_AXIS_ENUMS` | unset (off) | `1` | Experimental axis-Enum mode for the whole run (axes typed as polars Enums instead of Utf8). Development and tests only. |
 | `FLEXTOOL_FORCE_ROW_SCALING` | unset | `1` / `true` / `yes` / `on` | Turn on the legacy node / group balance row scaling (`p_use_row_scaling=1`); every solve has it off otherwise. Used by the un-scaling benchmark. |
 | `FLEXTOOL_SKIP_SOLVER_PROBE` | unset | `1` | Skip the start-up probe of commercial solver licences (avoids the FICO Xpress Community licence warning). The test conftest sets it. |
