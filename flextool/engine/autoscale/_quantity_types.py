@@ -421,8 +421,6 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Creates the timewise flow output for this node group (node-group dispatch table). Renamed from output_nodeGroup_dispatch.
     ('print_indicators', 'group'): QuantityType.DIMENSIONLESS,
     # Flag to output node-group indicator results for groups whose members are nodes (group__node). Renamed from output_nodeGroup_indicators.
-    ('output_ramp_envelope', 'model'): QuantityType.DIMENSIONLESS,
-    # Boolean output toggle: include the seven-parameter ramp-envelope diagnostic outputs. Flag.
     ('output_unit__node_flow_t', 'model'): QuantityType.DIMENSIONLESS,
     # Boolean output toggle: per-timestep unit→node flows. Flag.
     ('output_unit__node_ramp_t', 'model'): QuantityType.DIMENSIONLESS,
