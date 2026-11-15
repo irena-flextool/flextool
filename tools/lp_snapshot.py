@@ -1950,9 +1950,38 @@ def _patch_piecewise_single_line(data: dict) -> dict:
                 ["solve", "y2020_2day_dispatch", "rolling_solve_jump", 12.0]])
 
 
+def _patch_piecewise_multi_line(data: dict) -> dict:
+    """piecewise_linear units with two or more lines (conversion_piecewise, model/core.py): the direct coal_plant
+    with a rising three-point curve (online form, linear start-ups; one input, one output: remapped, with a ramp
+    limit and a ramp cost on its input acting on the output) and the two-output coal_chp with a falling
+    three-point curve (capacity form: no online variables), in a rolling solve."""
+    def curve(points: list[tuple[float, float]]) -> dict:
+        return {"index_type": "float", "data": [[k, v] for k, v in points]}
+
+    inp = ["coal_plant", "coal_market"]
+    return _overlay(
+        data, name="piecewise_multi_line", base=["init", "west", "coal", "coal_chp", "heat", "coal_min_load"],
+        values=[["unit", "coal_plant", "conversion_method", "piecewise_linear"],
+                ["unit", "coal_plant", "piecewise_linear_efficiency",
+                 curve([(0.4, 0.30), (0.7, 0.40), (1.0, 0.42)])],
+                ["unit__inputNode", inp, "ramp_method", "both"],
+                ["unit__inputNode", inp, "ramp_speed_up", 0.01],
+                ["unit__inputNode", inp, "ramp_speed_down", 0.01],
+                ["unit__inputNode", inp, "ramp_cost", 2.0],
+                ["unit", "coal_chp", "conversion_method", "piecewise_linear"],
+                ["unit", "coal_chp", "piecewise_linear_efficiency",
+                 curve([(0.2, 0.92), (0.6, 0.9), (1.0, 0.85)])],
+                ["unit__outputNode", ["coal_chp", "west"], "conversion_flow_coeff", 1.0],
+                ["unit__outputNode", ["coal_chp", "heat"], "conversion_flow_coeff", 2.0],
+                ["solve", "y2020_2day_dispatch", "solve_mode", "rolling_window"],
+                ["solve", "y2020_2day_dispatch", "rolling_solve_horizon", 24.0],
+                ["solve", "y2020_2day_dispatch", "rolling_solve_jump", 12.0]])
+
+
 PATCHES: dict[str, Callable[[dict], dict]] = {
     "none": _no_patch,
     "piecewise_single_line": _patch_piecewise_single_line,
+    "piecewise_multi_line": _patch_piecewise_multi_line,
     "invest_limits": _patch_invest_limits,
     "cumulative_capacity": _patch_cumulative_capacity,
     "stoch_invest_storage": _patch_stoch_invest_storage,
@@ -2171,6 +2200,7 @@ _PLAIN: tuple[tuple[str, str, str], ...] = (
 _PATCHED: tuple[tuple[str, str], ...] = (
     ("invest_limits", _T),
     ("piecewise_single_line", _T),
+    ("piecewise_multi_line", _T),
     ("cumulative_capacity", _T),
     ("stoch_invest_storage", _F + "stoch_two_period_hedge.json"),
     ("multi_year_reinvest_choice", _T),
