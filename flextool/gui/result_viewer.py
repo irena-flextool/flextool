@@ -80,6 +80,9 @@ def _scenario_unit_context(viewer, scenario: str):
 _DISPATCH_GROUP_PREFIX = "dispatch_"
 _DISPATCH_NODE_PREFIX = "dispatchnode_"
 _DISPATCH_UNGROUPED_LABEL = "Ungrouped nodes"
+#: The views of a dispatch-tree item (node or nodeGroup): the dispatch, the ramp envelope over time and the ramp
+#: histogram (frequency of the net-load and demand ramp rates).
+_DISPATCH_VIEWS = ("Dispatch", "Ramp envelope", "Ramp frequency")
 
 
 def _is_dispatch_iid(iid: str) -> bool:
@@ -678,6 +681,17 @@ class ResultViewer(tk.Toplevel):
         self._change_colors_btn.grid(
             row=2, column=0, columnspan=2, sticky="w", pady=(4, 0),
         )
+
+        # Dispatch mode only: what the selected node / nodeGroup shows.
+        self._dispatch_view = tk.StringVar(value=_DISPATCH_VIEWS[0])
+        self._dispatch_view_combo = ttk.Combobox(
+            time_frame, textvariable=self._dispatch_view, values=_DISPATCH_VIEWS,
+            state="readonly", width=15,
+        )
+        self._dispatch_view_combo.grid(row=2, column=1, sticky="e", pady=(4, 0))
+        self._dispatch_view_combo.bind("<<ComboboxSelected>>", self._on_dispatch_view_changed)
+        if self._mode.get() != "dispatch":
+            self._dispatch_view_combo.grid_remove()
 
         # Bind changes to trigger replot
         self._start_var.trace_add("write", self._on_time_range_changed)
@@ -1951,6 +1965,10 @@ class ResultViewer(tk.Toplevel):
         """Handle mode radio button change."""
         mode = self._mode.get()
         self._viewer_settings.last_mode = mode
+        if mode == "dispatch":
+            self._dispatch_view_combo.grid()
+        else:
+            self._dispatch_view_combo.grid_remove()
 
         if mode == "comparison":
             # Show comparison checkboxes, hide scenario listbox.
@@ -4103,11 +4121,15 @@ class ResultViewer(tk.Toplevel):
         "Ungrouped nodes" parent is a pure container with no plot of its
         own, so selecting it shows a hint.
         """
+        view = self._dispatch_view_name()
         if iid.startswith(_DISPATCH_NODE_PREFIX):
             node = self._dispatch_node_iids.get(iid)
             if node is not None:
                 self._last_dispatch_iid = iid
-                self._display_node_dispatch(scenario, node)
+                if view == _DISPATCH_VIEWS[0]:
+                    self._display_node_dispatch(scenario, node)
+                else:
+                    self._display_ramp(scenario, "node", node, view)
             return
         if iid.startswith(_DISPATCH_GROUP_PREFIX):
             label = iid[len(_DISPATCH_GROUP_PREFIX):]
@@ -4118,7 +4140,74 @@ class ResultViewer(tk.Toplevel):
                 )
                 return
             self._last_dispatch_iid = iid
-            self._display_dispatch(scenario, label)
+            if view == _DISPATCH_VIEWS[0]:
+                self._display_dispatch(scenario, label)
+            else:
+                self._display_ramp(scenario, "group", label, view)
+
+    def _dispatch_view_name(self) -> str:
+        """The view chosen for the dispatch-tree item (one of ``_DISPATCH_VIEWS``; Dispatch by default)."""
+        var = getattr(self, "_dispatch_view", None)
+        view = var.get() if var is not None else _DISPATCH_VIEWS[0]
+        return view if view in _DISPATCH_VIEWS else _DISPATCH_VIEWS[0]
+
+    def _on_dispatch_view_changed(self, _event=None) -> None:
+        """Show the selected dispatch-tree item in the newly chosen view."""
+        scenarios = self._get_selected_scenarios()
+        iid = self._last_dispatch_iid
+        if scenarios and iid and self._plot_tree.exists(iid):
+            self._display_dispatch_iid(scenarios[0], iid)
+
+    def _display_ramp(self, scenario: str, kind: str, entity: str, view: str) -> None:
+        """Render the ramp envelope (over the Start / Duration window) or the ramp frequency (every period) of
+        the node or nodeGroup *entity* (*kind* ``"node"`` / ``"group"``)."""
+        from flextool.plot_outputs.color_template import load_color_template
+        from flextool.scenario_comparison.ramp_plots import (
+            build_ramp_envelope_figure,
+            build_ramp_histogram_figure,
+            entity_envelope,
+            histogram_data,
+            ramp_band_colors,
+            ramp_rate_unit,
+            timestep_hours,
+            transition_hours,
+        )
+
+        if not self._load_dispatch_data(scenario):
+            self._plot_canvas.show_message(f"Could not load dispatch data for {scenario}")
+            return
+        results = self._dispatch_results
+        tag = self._dispatch_data_tag
+        env = entity_envelope(results, kind, entity, tag)
+        if env is None:
+            self._plot_canvas.show_message(
+                f"No ramp envelope for {entity} in {scenario} (results written before the ramp envelope "
+                "existed: run the scenario again)"
+            )
+            return
+        template = load_color_template(resolve_plot_settings_path(self._project_path))
+        unit = ramp_rate_unit(_scenario_unit_context(self, scenario), **{kind: entity})
+        if view == _DISPATCH_VIEWS[1]:
+            self._update_time_range(len(env))
+            start = self._start_var.get()
+            fig = build_ramp_envelope_figure(
+                env, f"{entity} \u2014 {scenario}: ramp envelope", unit=unit,
+                colors=ramp_band_colors(template), timeline=(start, start + self._duration_var.get()),
+                break_times=self._load_break_times(scenario),
+            )
+        else:
+            data = histogram_data(
+                {tag: env}, {tag: transition_hours(results, tag, env.index)},
+                {tag: timestep_hours(results, tag, env.index)},
+            )
+            fig = build_ramp_histogram_figure(data, f"{entity} \u2014 {scenario}: ramp frequency", unit=unit)
+        if fig is None:
+            self._plot_canvas.show_message(f"No ramp data for {entity} in this window")
+            return
+        self._file_count = 1
+        self._file_index = 0
+        self._update_file_nav()
+        self._plot_canvas.display_figure(fig)
 
     def _resolve_dispatch_template(self):
         """Load the project plot-settings template + entity stacking order.

@@ -209,6 +209,8 @@ def node_additional_results(par, s, v, r, debug):
 def node_ramp_envelope(par, s, v, r, debug):
     """Ramp envelope of each node (``calc_ramp_envelope``): per transition t → t⁺ the net-load and demand ramps
     and the room of the units, storages, VRE and connections to move the node's supply up and down (down bands
-    negative, MW); and the hours a year each step stands for (the weight of the ramp histogram)."""
+    negative, MW); the hours a year each step stands for (the weight of the ramp histogram) and the length of
+    each transition (Δt + Δt⁺)/2 (the ramp histogram's rate is the change over it)."""
     return [(r.node_ramp_envelope_dt_ep, 'node_ramp_envelope_dt_ep'),
-            (r.timestep_hours_dt, 'timestep_hours_dt')]
+            (r.timestep_hours_dt, 'timestep_hours_dt'),
+            (r.transition_hours_dt, 'transition_hours_dt')]

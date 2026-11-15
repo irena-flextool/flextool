@@ -320,6 +320,7 @@ for _key, _producer, _note in (
     ("node_slack_down_d_e",        "out_ancillary.slack_variables",    "Per-period node down-slack."),
     ("node_ramp_envelope_dt_ep",   "out_node.node_ramp_envelope",      "Per-(period,time) node ramp envelope: net-load / demand ramps and the up / down room by band toward the next step."),
     ("timestep_hours_dt",          "out_node.node_ramp_envelope",      "Per-(period,time) hours a year each step stands for (the ramp histogram weight)."),
+    ("transition_hours_dt",        "out_node.node_ramp_envelope",      "Per-(period,time) length (dt + dt+)/2 of the transition to the next realized step, h (the ramp histogram rate's divisor)."),
 ):
     REGISTRY[_key] = _proc(
         _key, note=_note, producer=f"flextool.process_outputs.{_producer}",

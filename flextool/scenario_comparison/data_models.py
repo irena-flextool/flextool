@@ -96,6 +96,7 @@ class TimeSeriesResults:
     node_dt_ep: pd.DataFrame | None = None
     node_ramp_envelope_dt_ep: pd.DataFrame | None = None
     timestep_hours_dt: pd.DataFrame | None = None
+    transition_hours_dt: pd.DataFrame | None = None
     node_inflow__dt: pd.DataFrame | None = None
     node_prices_dt_e: pd.DataFrame | None = None
     node_state_dt_e: pd.DataFrame | None = None

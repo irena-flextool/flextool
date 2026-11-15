@@ -122,6 +122,8 @@ OLD_LABELS = {
     ('unit_outputNode_dt_ee', 'default', '', 'ylabel'): 'MWh/h',
     ('unit_outputNode_dt_ee', 'default', 'comparison', 'ylabel'): 'MWh',
     ('unit_outputNode_dt_ee', 'time_plots', '', 'ylabel'): 'MWh/h',
+    ('node_ramp_envelope_dt_ep', 'debug', '', 'ylabel'): 'MW, change toward the next step',
+    ('nodeGroup_ramp_envelope_dt_gp', 'debug', '', 'ylabel'): 'MW, change toward the next step',
     ('unit_ramp_inputs_dt_ee', 'chunks', '', 'ylabel'): 'MW/h',
     ('unit_ramp_inputs_dt_ee', 'debug', '', 'ylabel'): 'MW/h',
     ('unit_ramp_outputs_dt_ee', 'chunks', '', 'ylabel'): 'MW/h',

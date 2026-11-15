@@ -444,6 +444,14 @@
       null
     ],
     [
+      "model",
+      "transition_hours_t",
+      null,
+      null,
+      "[h] Length of the transition from each realized time step t to the next realized step t+: (duration of t + duration of t+) / 2, the divisor of the ramp histogram's rate (MW/h); empty where the ramp envelope row is empty.",
+      null
+    ],
+    [
       "node",
       "balance",
       null,

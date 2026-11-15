@@ -230,6 +230,9 @@ SPINEDB_OUTPUT_SPEC: dict[str, dict[str, Any]] = {
     # The hours a year each realized step stands for (the ramp histogram weight); one value column.
     "timestep_hours_dt": dict(ec="model", param="timestep_hours_t", entity_dims=0,
                               fixed_entity=("model",), has_time=True, category=None),
+    # The length (dt + dt+)/2 of each transition to the next realized step (the ramp histogram rate's divisor).
+    "transition_hours_dt": dict(ec="model", param="transition_hours_t", entity_dims=0,
+                                fixed_entity=("model",), has_time=True, category=None),
     "costs_dt_p": dict(ec="model", param="cost_t", entity_dims=0,
                        fixed_entity=("cost",), has_time=True,
                        category="header"),

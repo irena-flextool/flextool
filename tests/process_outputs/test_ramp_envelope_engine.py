@@ -147,6 +147,9 @@ def test_case9_connection_reserve_at_the_node(tmp_path_factory) -> None:
                       "units_down": [-10, 0, -10], "connections_down": [-100, -80, -80]})
     hours = tables["timestep_hours_dt"]
     assert hours.to_numpy(dtype=float).ravel() == pytest.approx(np.full(4, 1.0 / (4.0 / 8760.0)))
+    # One-hour steps: each transition is (1 + 1)/2 = 1 h; the last step has none.
+    trans = tables["transition_hours_dt"].to_numpy(dtype=float).ravel()
+    assert trans[:3].tolist() == [1.0, 1.0, 1.0] and np.isnan(trans[3])
 
 
 # ── Case 7: start-up and shut-down at t⁺, reserve at t⁺, availability at t⁺, input-side reserve (φ) ──────────

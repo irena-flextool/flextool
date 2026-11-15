@@ -210,6 +210,12 @@ TIMESTEP_HOURS = Transform(
     "period's share of a year (the weight of the ramp histogram).",
     algebra="step_duration · timestep_weight / period_share",
 )
+TRANSITION_HOURS = Transform(
+    "h", Semantics.LEVEL,
+    "Length of the transition from each time step to the next realized step: the mean of the two step "
+    "durations (the ramp histogram's rate is the change toward the next step divided by it).",
+    algebra="(step_duration[t] + step_duration[t+]) / 2",
+)
 CAPACITY_FACTOR = Transform(
     "", Semantics.RATIO,
     "Capacity factor (a fraction): the period's flow divided by the capacity and the period's hours.",
@@ -595,6 +601,7 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "node_ramp_envelope_dt_ep": RAMP_ROOM,
     "nodeGroup_ramp_envelope_dt_gp": RAMP_ROOM,
     "timestep_hours_dt": TIMESTEP_HOURS,
+    "transition_hours_dt": TRANSITION_HOURS,
     # Mixed-unit tables — per-column transform maps.
     "nodeGroup_gdt_p": _NODEGROUP_GDT_P,
     "nodeGroup_gd_p": _NODEGROUP_GD_P,
@@ -782,6 +789,9 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
                                      "group's non-storage members, with the processes inside the group left out.",
     "timestep_hours_dt": "Hours a year each realized time step stands for (the step duration times the timestep "
                          "weight divided by the period's share of a year), the weight of the ramp histogram.",
+    "transition_hours_dt": "Length of the transition from each realized time step to the next realized step (the "
+                           "mean of the two step durations), the divisor of the ramp histogram's rate; empty "
+                           "where the ramp envelope row is empty.",
     "node_state_dt_e": "Stored energy of each storage node at each time step.",
     "node_inflow__dt": "Inflow of each node in each time step as given to the model (demand is negative).",
     "node_prices_dt_e": "Price of energy at each balanced node and time step: the cost of one more unit of demand "
@@ -969,6 +979,7 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "node_ramp_envelope_dt_ep": OutputDims(_DT, ("node", "band"), kinds=_BAND_QUANTITY),
     "nodeGroup_ramp_envelope_dt_gp": OutputDims(_DT, ("group", "band"), kinds=_BAND_QUANTITY),
     "timestep_hours_dt": OutputDims(_DT, ("param",), kinds=_PARAM_QUANTITY),
+    "transition_hours_dt": OutputDims(_DT, ("param",), kinds=_PARAM_QUANTITY),
     "node_d_ep": OutputDims(_D, ("node", "category"), "node_dt_ep", _NODE_CATEGORY),
     "node_state_dt_e": OutputDims(_DT, ("node",)),
     "node_inflow__dt": OutputDims(_DT, ("node",)),

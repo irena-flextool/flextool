@@ -529,7 +529,8 @@ def create_dispatch_plots(
     write_plot_data: bool = False,
     unit_ctx: dict | None = None,
 ) -> None:
-    """Create dispatch plots for all nodeGroups (and, in debug, all nodes).
+    """Create dispatch plots for all nodeGroups (and, in debug, all nodes), and their ramp envelope and ramp
+    frequency plots (:func:`~flextool.scenario_comparison.ramp_plots.create_ramp_plots`).
 
     *unit_ctx* (``{scenario: UnitContext}``) gives each plot's y-axis the unit of its node or the nodeGroup's
     members (:func:`~flextool.plot_outputs.unit_labels.dispatch_ylabel`; ``MWh/h`` for MWh nodes).
@@ -790,6 +791,15 @@ def create_dispatch_plots(
                     excel_data[f"node_{node}_{scenario}"] = df_node
             else:
                 print(f"  No dispatch data for node {node}")
+
+    # Ramp envelope and ramp frequency plots of the same nodeGroups (and, in debug, nodes).
+    from flextool.scenario_comparison.ramp_plots import create_ramp_plots
+
+    create_ramp_plots(
+        results, plot_dir, scenarios, groups=node_groups, nodes=nodes,
+        plot_rows=plot_rows, break_times=break_times, template=template,
+        write_plot_data=write_plot_data, unit_ctx=unit_ctx,
+    )
 
     # Write Excel file
     if write_xlsx and excel_data:

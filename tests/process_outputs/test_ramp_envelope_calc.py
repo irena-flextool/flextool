@@ -331,6 +331,10 @@ def test_case6_timestep_hours_with_block_weights() -> None:
     assert env.loc[[T4[0], T4[2]], "ramp_demand"].tolist() == pytest.approx([20.0, -20.0])
     assert env.loc[[T4[0], T4[2]], "ramp_net_load"].tolist() == pytest.approx([35.0, -50.0])
     assert env.loc[[T4[1], T4[3]]].isna().all().all()
+    # One-hour steps: each filled row's transition is (1 + 1)/2 = 1 h; the block ends have none.
+    trans = r.transition_hours_dt["transition_hours"]
+    assert trans.loc[[T4[0], T4[2]]].tolist() == [1.0, 1.0]
+    assert trans.loc[[T4[1], T4[3]]].isna().all()
 
 
 # ── Case 3: node group ───────────────────────────────────────────────────────────────────────────────────────
@@ -387,6 +391,18 @@ def _g1_only(speed: float, dur: dict) -> pd.Series:
     f.unit("G1", sink="n", flow=[40, 50], capacity=100.0, speed=speed)
     f.demand("n", [40, 50])
     return _envelope(f).node_ramp_envelope_dt_ep["n"].loc[rows[0]]
+
+
+def test_case4_unequal_steps_transition_hours() -> None:
+    """Oracle Case 4 unequal steps: Δt = 1, Δt⁺ = 3 → the transition t1 → t2 is (1 + 3)/2 = 2 h; t2 has no t⁺."""
+    rows = [("p", "t1"), ("p", "t2")]
+    f = Frames(rows, [(rows[1], rows[0])], dur={rows[1]: 3.0})
+    f.unit("G1", sink="n", flow=[40, 50], capacity=100.0)
+    f.demand("n", [40, 50])
+    trans = _envelope(f).transition_hours_dt
+    assert list(trans.columns) == ["transition_hours"]
+    assert trans["transition_hours"].iloc[0] == 2.0
+    assert np.isnan(trans["transition_hours"].iloc[1])
 
 
 def test_case4_unequal_steps_and_ramp_room_at_least_one() -> None:

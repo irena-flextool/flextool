@@ -213,8 +213,9 @@ def _clip0(values: np.ndarray) -> np.ndarray:
 
 
 def compute_ramp_envelope(par, s, v, r) -> None:
-    """``r.node_ramp_envelope_dt_ep`` (node, band), ``r.nodeGroup_ramp_envelope_dt_gp`` (group, band) and
-    ``r.timestep_hours_dt`` (the hours a year each step stands for: Δt · timestep_weight / period share)."""
+    """``r.node_ramp_envelope_dt_ep`` (node, band), ``r.nodeGroup_ramp_envelope_dt_gp`` (group, band),
+    ``r.timestep_hours_dt`` (the hours a year each step stands for: Δt · timestep_weight / period share) and
+    ``r.transition_hours_dt`` (the length (Δt + Δt⁺)/2 of each row's transition, h; empty without t⁺)."""
     rows = r.flow_dt.index
     nx_all = _Next(rows, s.ramp_link, getattr(s, "ramp_carry", None), s.solve_period_time)
     dur_all = par.step_duration.reindex(rows).to_numpy(dtype=float)
@@ -277,6 +278,11 @@ def compute_ramp_envelope(par, s, v, r) -> None:
     hours = pd.DataFrame({"timestep_hours": dur_all * weight / share}, index=rows)
     hours.columns.name = "param"
     r.timestep_hours_dt = hours
+    # The length of each row's transition, (Δt + Δt⁺)/2 (the ramp histogram's rate is the line over it).
+    transition = pd.DataFrame(
+        {"transition_hours": np.where(nx_all.has, (dur_all + dur_next_all) / 2.0, np.nan)}, index=rows)
+    transition.columns.name = "param"
+    r.transition_hours_dt = transition
 
 
 class _Shared:

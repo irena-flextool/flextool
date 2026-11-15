@@ -179,6 +179,29 @@ class TestCreateDispatchPlotsDebugGating(unittest.TestCase):
         # longer any curated node selection to override it).
         self.assertEqual(set(node_calls), {"n1", "n2"})
 
+    def _ramp_call(self, debug: bool) -> dict:
+        """The arguments ``create_dispatch_plots`` hands to the ramp envelope / frequency plots."""
+        from flextool.scenario_comparison import dispatch_plots, ramp_plots
+
+        with (
+            patch.object(dispatch_plots, "prepare_node_dispatch_data", return_value=(None, None)),
+            patch.object(dispatch_plots, "prepare_dispatch_data", return_value=(None, None)),
+            patch.object(dispatch_plots, "plot_dispatch_area"),
+            patch.object(ramp_plots, "create_ramp_plots") as ramp,
+        ):
+            dispatch_plots.create_dispatch_plots(
+                self.results, self.mappings, self.plot_dir, scenarios=["scen"], debug=debug,
+            )
+        self.assertEqual(ramp.call_count, 1)
+        return ramp.call_args.kwargs
+
+    def test_ramp_plots_per_group_and_nodes_only_in_debug(self) -> None:
+        """The ramp plots cover the dispatch nodeGroups always and every node only with the debug option."""
+        off = self._ramp_call(debug=False)
+        self.assertEqual((off["groups"], off["nodes"]), (["G1"], []))
+        on = self._ramp_call(debug=True)
+        self.assertEqual((on["groups"], on["nodes"]), (["G1"], ["n1", "n2"]))
+
 
 if __name__ == "__main__":
     unittest.main()
