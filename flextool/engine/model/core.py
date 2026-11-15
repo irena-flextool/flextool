@@ -3294,6 +3294,9 @@ def _eq_conversion(b: _Build) -> None:
     #     for min_load_efficiency units (eta = efficiency, default 1; min_load = 0 where not authored;
     #     eta_min = efficiency_at_min_load, else efficiency); slope = 1/eta and no section for the other units
     #     (indirect units never fold conv_in/conv_out into slope/section themselves — see conv_in/conv_out below)
+    #   reduce_unit_detail_method online*: slope' = slope + section / M, section' = 0, M = W·max(1, availability)
+    #     (W: weighted output per unit online at full output; section < 0: M = min_load · min conv_out, slope' ≥ 0),
+    #     never more input than the row above at any feasible output and v_online (_reduce_detail module docstring)
     # Energy balance of an indirect (multi-flow) unit: weighted input equals weighted output times the slope.
     # conv_in / conv_out = source / sink conversion_flow_coeff (default 1); unequal sink coefficients express
     # e.g. the heat/electricity trade-off of an extraction CHP.  The first input sum covers undelayed units;
@@ -3366,7 +3369,9 @@ def _eq_conversion_piecewise(b: _Build) -> None:
     #              − Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]          p without (existing_count → RHS)
     #   pw_intercept[p,g,d] = ℓ_{g−1}·ℓ_g·(1/η_{g−1} − 1/η_g) / (ℓ_g − ℓ_{g−1}),  pw_slope[p,g,d] = 1/η_g − pw_intercept/ℓ_g
     #     (ℓ_i, η_i: piecewise_linear_efficiency points, merged when collinear; origin line g = 0: 1/η₀, 0 when the
-    #     efficiency falls from the first point; without online variables: 1/max η, 0 and the falling segments)
+    #     efficiency falls from the first point; without online variables: 1/max η, 0 and the falling segments;
+    #     reduce_unit_detail_method online*: the origin line through the best efficiency up to the reach
+    #     W·max(1, availability) of one unit online, _reduce_detail._fold_piecewise)
     # Part-load fuel curve of a piecewise_linear unit: its weighted input is at least each line of the curve,
     # so the input follows the curve's upper envelope; the curve is convex (checked before the solve), so the
     # cheapest feasible input lies on the curve.  Scaled by the units online (the perspective of the curve:

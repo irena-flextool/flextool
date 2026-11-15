@@ -18,15 +18,16 @@ two segments have the same slope (relative 1e-9):
 
 * online form (the unit has online variables): the segments, plus the origin line ``α = 1/η₀, β = 0`` when the
   efficiency falls from the first point to the second (``η₀ > η₁``);
-* capacity form (no online variables): the origin line through the best point ``α = 1/max η, β = 0``, plus the
-  segments with ``β < 0``.
+* capacity form (no online variables): the origin line through the best point ``α = 1/max η, β = 0`` (the best
+  efficiency up to a ``reach``, :func:`capacity_lines`; ``1/max η`` at the default reach 1), plus the segments
+  with ``β < 0``.
 
 The functions take the long frame ``(p, d, load, eff)`` (``d`` null for a curve without a period level) that the
 input derivation and the engine reader both build, so both classify a unit the same way.
 """
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 import polars as pl
@@ -101,11 +102,25 @@ def online_lines(points: Sequence[Point]) -> list[Line]:
     return out
 
 
-def capacity_lines(points: Sequence[Point]) -> list[Line]:
-    """The capacity-form lines of a sorted curve (module docstring), after merging."""
+def capacity_lines(points: Sequence[Point], reach: float = 1.0) -> list[Line]:
+    """The capacity-form lines of a sorted curve (module docstring), after merging.
+
+    ``reach`` is the largest load share a unit online can run at: its weighted output per unit online
+    (``preprocess._reduce_detail``: ``W · max(1, availability)``, 1 for a unit whose outputs add up to its
+    capacity).  The origin line goes through the best efficiency up to it::
+
+        α₀ = min( {1/η_i : ℓ_i ≤ reach} ∪ {F(reach)/reach} )      F(ℓ) = max over the online-form lines (α·ℓ + β)
+
+    the second term only when ``reach`` is not a point (above 1 the curve's last segment continues; below the first
+    point its first line).  With ``reach = 1`` this is ``1/max η`` (``1/x`` is monotone, so the bits are those of
+    ``1 / max η``)."""
+    if not reach > 0.0:
+        raise ValueError(f"capacity_lines: reach {reach} must be above 0.")
     kept = merge_points(points)
-    best = max(e for _l, e in kept)
-    out = [Line(ORIGIN, 1.0 / best, 0.0)]
+    slopes = [1.0 / e for load, e in kept if load <= reach]
+    if not any(load == reach for load, _e in kept):
+        slopes.append(max(ln.slope * reach + ln.intercept for ln in online_lines(points)) / reach)
+    out = [Line(ORIGIN, min(slopes), 0.0)]
     out += [Line(str(k + 1), a, b) for k, (a, b) in enumerate(segments(kept)) if b < 0.0]
     return out
 
@@ -219,15 +234,19 @@ def unit_flags_frame(frame: pl.DataFrame) -> pl.DataFrame:
                "single_line_rising": pl.Boolean, "single_line_flat": pl.Boolean, "auto_startup": pl.Boolean})
 
 
-def curve_lines(frame: pl.DataFrame, online: Iterable[str]) -> pl.DataFrame:
+def curve_lines(frame: pl.DataFrame, online: Iterable[str],
+                reach: Mapping[tuple[str, str | None], float] | None = None) -> pl.DataFrame:
     """The lines ``(p, d, seg, slope, intercept)`` of every curve of a long curve frame: the online form for the
-    units in *online*, the capacity form for the others; in ``(p, d)`` order of the frame's sorted keys, each
-    curve's lines in ``seg`` order of :func:`online_lines` / :func:`capacity_lines`."""
+    units in *online*, the capacity form for the others (with ``reach[(p, d)]``, default 1, see
+    :func:`capacity_lines`); in ``(p, d)`` order of the frame's sorted keys, each curve's lines in ``seg`` order of
+    :func:`online_lines` / :func:`capacity_lines`."""
     online = set(online)
+    reach = reach or {}
     rows: list[tuple[str, str | None, str, float, float]] = []
     for p, by_d in sorted(curves_by_unit(frame).items()):
-        form = online_lines if p in online else capacity_lines
         for d in sorted(by_d, key=lambda x: (x is not None, x or "")):
-            rows.extend((p, d, ln.seg, ln.slope, ln.intercept) for ln in form(by_d[d]))
+            lines = (online_lines(by_d[d]) if p in online
+                     else capacity_lines(by_d[d], reach.get((p, d), 1.0)))
+            rows.extend((p, d, ln.seg, ln.slope, ln.intercept) for ln in lines)
     return pl.DataFrame(rows, schema={"p": pl.Utf8, "d": pl.Utf8, "seg": pl.Utf8, "slope": pl.Float64,
                                       "intercept": pl.Float64}, orient="row")

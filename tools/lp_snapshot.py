@@ -1978,8 +1978,37 @@ def _patch_piecewise_multi_line(data: dict) -> dict:
                 ["solve", "y2020_2day_dispatch", "rolling_solve_jump", 12.0]])
 
 
+def _reduce_online(data: dict, name: str, heat_coeff: float) -> dict:
+    """``reduce_unit_detail_method`` *online* on the 2-day dispatch: the direct min_load_efficiency coal_plant
+    (coal_min_load; capacity_max_coeff 1, so M = 1) and the two-output coal_chp made a min_load_efficiency unit
+    (efficiency 0.9, efficiency_at_min_load 0.6, min_load 0.3, linear start-ups) whose heat output has
+    conversion_flow_coeff ``heat_coeff``: the weighted output per unit online W = max(1, heat_coeff) (the outputs
+    filled in descending coefficient order up to the sum cap 1).  The fold (``_reduce_detail``) adds
+    section / W to the slope."""
+    return _overlay(
+        data, name=name, base=["init", "west", "coal", "coal_chp", "heat", "coal_min_load"],
+        values=[["unit", "coal_chp", "conversion_method", "min_load_efficiency"],
+                ["unit", "coal_chp", "efficiency_at_min_load", 0.6],
+                ["unit", "coal_chp", "min_load", 0.3],
+                ["unit", "coal_chp", "startup_method", "linear"],
+                ["unit__outputNode", ["coal_chp", "heat"], "conversion_flow_coeff", heat_coeff],
+                ["solve", "y2020_2day_dispatch", "reduce_unit_detail_method", "online"]])
+
+
+def _patch_reduce_online_w1(data: dict) -> dict:
+    """:func:`_reduce_online` with W = 1 (both outputs weighted 1): the same LP as the fold slope + section."""
+    return _reduce_online(data, "reduce_online_w1", 1.0)
+
+
+def _patch_reduce_online_w2(data: dict) -> dict:
+    """:func:`_reduce_online` with W = 2 (heat weighted 2): slope + section / 2 on coal_chp."""
+    return _reduce_online(data, "reduce_online_w2", 2.0)
+
+
 PATCHES: dict[str, Callable[[dict], dict]] = {
     "none": _no_patch,
+    "reduce_online_w1": _patch_reduce_online_w1,
+    "reduce_online_w2": _patch_reduce_online_w2,
     "piecewise_single_line": _patch_piecewise_single_line,
     "piecewise_multi_line": _patch_piecewise_multi_line,
     "invest_limits": _patch_invest_limits,
@@ -2201,6 +2230,8 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("invest_limits", _T),
     ("piecewise_single_line", _T),
     ("piecewise_multi_line", _T),
+    ("reduce_online_w1", _T),
+    ("reduce_online_w2", _T),
     ("cumulative_capacity", _T),
     ("stoch_invest_storage", _F + "stoch_two_period_hedge.json"),
     ("multi_year_reinvest_choice", _T),

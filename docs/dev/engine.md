@@ -73,7 +73,7 @@ warm build, the handoff and the per-roll outputs. The per-roll emit and the inpu
     from its fields only and drop them. Unchanged frames are shared. A level that changes nothing returns the
     same object, so the LP is byte-identical.
 
-- **Only clears, prunes, relaxes or folds.** Each part sets its fields to `None` (the field lists `RAMP_FIELDS`, `ONLINE_FIELDS`, `RESERVE_FIELDS`, ... in `_reduce_detail.py`), except `relax_integrality` (integer online columns continuous), the `min_load_efficiency` fold (`p_slope + p_section`, `p_section = 0`; the input limits of a folded indirect unit are recomputed from the folded slope, `_refold_input_caps`) and the pruning of online variables without a use.
+- **Only clears, prunes, relaxes or folds.** Each part sets its fields to `None` (the field lists `RAMP_FIELDS`, `ONLINE_FIELDS`, `RESERVE_FIELDS`, ... in `_reduce_detail.py`), except `relax_integrality` (integer online columns continuous), the `min_load_efficiency` fold (`p_slope + p_section / M`, `p_section = 0`, `M` the weighted output one unit online can give, `_unit_widths`; a relaxation for every `M` with the full-load fuel and the input limits of the full model, proof in the module docstring) and the pruning of online variables without a use.
 
     Under the `integers*` levels, `online_uses` lists, on the data after the level's removals, the uses of each
     process's online variables (`ONLINE_USES`: start-up cost, min load / capacity_min_coeff floors, min up / down
@@ -395,9 +395,10 @@ heat rate) is checked before the solve, so the curve is the upper envelope of it
   invested − divested) without online variables; `conversion_indirect` skips these units. The rows are `≥`, so the
   input can exceed the curve where that costs nothing or pays (the over-burn cases, units.md "Input above the
   curve"). Part-load measures of the reserve sizing use the lines (`_online._fuel_share`).
-- **Detail reduction** (`_reduce_detail._fold_piecewise`): `online*` rebuilds the lines in the capacity form
-  and recomputes the unit's input limits from them (`_refold_input_caps`: with a weighted output at full
-  capacity `W ≠ 1` the capacity-form fuel at full output differs from the online form's); under `integers*` the curve is an online use when its efficiency rises from the first point
+- **Detail reduction** (`_reduce_detail._fold_piecewise`): `online*` rebuilds the lines in the capacity form,
+  the origin line through the best efficiency up to the reach `W · max(1, availability)` of one unit online
+  (`capacity_lines(reach=)`: above load share 1 the last segment continues), so the folded lines never need more
+  fuel than the online form and the same at full output; the input limits stay. Under `integers*` the curve is an online use when its efficiency rises from the first point
   (`process_piecewise_needs_online`).
 - **Checks.** Before the solve: `input_derivation/_validators.validate_piecewise_linear_inputs` (E1–E10, E12; E11 in the reader; the
   warnings W1–W7, W7 = setups that invite input above the curve). After the solve:

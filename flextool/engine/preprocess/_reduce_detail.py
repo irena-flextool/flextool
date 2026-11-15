@@ -5,9 +5,9 @@ reduced data the rest of the cascade sees (the build, warm-start reuse, Benders,
 outputs).  It only removes or relaxes detail that the cascade produced from the entity data; it never adds any.
 Every operation is one of: clear a set (its rows go), filter the rows of the online fields to the processes that
 keep their online variables (:func:`_prune_online`, :data:`PRUNE_FIELDS`), make the integer online columns
-continuous, or fold the ``min_load_efficiency`` section into the slope (an approximation: at part load less fuel
-than the curve, at a weighted output of 1 per unit of capacity the same; the input limits of the folded units
-follow the folded conversion, :func:`_refold_input_caps`).  A level that finds nothing to reduce returns the data unchanged, so the LP is byte-identical.
+continuous, or fold the ``min_load_efficiency`` section into the slope (a relaxation: never more fuel than the curve
+at any feasible output and units online, the same at full output; see "Why the folds are relaxations" below).  A
+level that finds nothing to reduce returns the data unchanged, so the LP is byte-identical.
 
 Unit detail (``reduce_unit_detail_method``; the parts each value takes are in :data:`UNIT_PARTS`):
 
@@ -23,9 +23,11 @@ Unit detail (``reduce_unit_detail_method``; the parts each value takes are in :d
 * ``online`` — the online variables (every online set, start-up cost sets, the start-up input draws of
   ``startup_input_method`` with their sets (:data:`STARTUP_FIELDS`; an investment solve then under-counts the start-up
   input, as the start-up cost), the online carry and pin) and with them ``min_limits``; ``min_load_efficiency`` units of the online set run at their full-load efficiency
-  (``p_slope ← p_slope + p_section``, ``p_section ← 0``, ``process_min_load_eff`` cleared); ``piecewise_linear``
-  units with two or more lines (``process_piecewise``) of the online set get the lines of their curve without online
-  variables (:func:`_fold_piecewise`: the best-efficiency envelope, scaled by the units built); user constraints with
+  (:func:`_fold_min_load_efficiency`: ``p_slope ← p_slope + p_section / M``, ``p_section ← 0``,
+  ``process_min_load_eff`` cleared; ``M`` the weighted output of one unit online at full output, 1 for a unit whose
+  outputs add up to its capacity); ``piecewise_linear`` units with two or more lines (``process_piecewise``) of the
+  online set get the lines of their curve without online variables (:func:`_fold_piecewise`: the best-efficiency
+  envelope within the reach of one unit online, scaled by the units built); user constraints with
   a ``constraint_online_coeff`` term are left out whole (dropping only the term could tighten the row).
 
 Under the ``integers*`` levels a unit or connection whose online variables have no remaining use after the level's
@@ -34,6 +36,32 @@ removals loses them, as if its ``startup_method`` were ``no_startup`` (:func:`on
 up to the left-out columns.  A ``piecewise_linear`` unit among them switches to the lines of its curve without
 online variables (:func:`_fold_piecewise`; same optimum: its curve's efficiency falls from the first point, so the
 lines with and without online variables give the same least fuel).  ``online`` / ``online_ramps`` leave out every online variable anyway.
+
+Why the folds are relaxations.  Per (p, d, t), in the full model, with u the units online (0 ≤ u ≤ C, C the
+units built) and Y the weighted output (indirect: Y = Σ_k conv_k·out_k over the outputs, conv_k =
+conversion_flow_coeff; direct: the arc flow), all per unitsize:
+
+* maxFlow_online (out_k ≤ κ_k·a·u, κ = capacity_max_coeff, a = availability) and maxOutputSum_online
+  (Σ_k out_k ≤ a·u) give Y ≤ a·W·u ≤ L·u with L = W·max(1, a), W from :func:`_unit_widths` (reserve and
+  start-up / shut-down terms only lower these bounds);
+* minFlow_minload (Σ_{A_p} out_k ≥ ml·u) and Y ≥ conv_min·Σ_{A_p} out_k give u ≤ Y / (ml·conv_min).
+
+``min_load_efficiency``: fuel = slope·Y + section·u.  With section ≥ 0, u ≥ Y/L (also for Y ≤ 0, as u ≥ 0), so
+fuel ≥ (slope + section/L)·Y, the folded fuel.  With section < 0 (efficiency_at_min_load above efficiency),
+u ≤ Y/(ml·conv_min), so fuel ≥ (slope + section/(ml·conv_min))·Y, and fuel ≥ 0.  At full output (u = C, Y = a·W·C, a ≤ 1) the
+folded fuel is slope·a·W·C + section·a·C, at a = 1 the full model's; the full model's input limit
+input_share_max·(slope·W + section)·a·C covers it, so the input limits are kept.
+
+``piecewise_linear``: fuel ≥ max_g(α_g·Y + β_g·u) = u·F(Y/u), F(ℓ) = max_g(α_g·ℓ + β_g) the online-form lines
+(convex, F(0) ≥ 0), ℓ = Y/u ≤ L.  The folded lines: a kept segment with β_g < 0 gives α_g·Y + β_g·C ≤
+α_g·Y + β_g·u (u ≤ C); the origin line α₀·Y with α₀ = min_{0<ℓ≤L} F(ℓ)/ℓ gives α₀·Y ≤ u·F(Y/u) (for ℓ ≤ 0 by the
+convexity of F and F(0) ≥ 0).  At full output (ℓ = L, u = C): if the line active at L has β < 0 it is kept, else
+F(ℓ)/ℓ falls up to L and α₀ = F(L)/L; either way the folded fuel is C·F(L), the full model's, so the input limit
+max_g(α_g·W + β_g) is kept.
+
+Every other row reading the fuel (node balance, commodity cost, CO2) only gains room from less fuel.  The earlier fold
+(slope + section; the best efficiency up to ℓ = 1) is the same for W = 1 and availability ≤ 1; for W > 1
+it burnt more fuel than the full model at full output (a tighter model), for W < 1 it was looser than needed.
 
 The carried roll-end flow is kept under ``integers`` / ``online`` without ``ramps``: the ramp limits and the ramp
 cost still need it at a continuation roll's first step.
@@ -69,7 +97,6 @@ from flextool.engine.input._solve_config import REDUCE_SYSTEM_DETAIL_METHODS, RE
 from flextool.engine.input._solve_state import FlexToolConfigError
 
 if TYPE_CHECKING:
-    from flextool.engine.input._input_source import InputSource
     from flextool.engine.preprocess.flex_data import FlexData
 
 _LOG = logging.getLogger(__name__)
@@ -267,21 +294,102 @@ def _positive_names(param, col: str = "p") -> set[str]:
     return {str(v) for v in f.filter(pl.col("value") > 0).get_column(col).cast(pl.Utf8).unique().to_list()}
 
 
+def _unit_widths(d: "FlexData", procs: set[str]) -> pl.DataFrame:
+    """``(p, width, conv_min)`` (``p`` Utf8, one row per unit of ``procs``): how much weighted output one unit
+    online can give in the full model, and the smallest output weight of its measured arcs (module docstring,
+    "Why the folds are relaxations").
+
+    * indirect unit (``process_indirect``): ``width = W = max Σ_k conv_k·x_k`` s.t. ``Σ_k x_k ≤ 1``
+      (maxOutputSum_online) and ``0 ≤ x_k ≤ κ_k`` (maxFlow_online) over its output arcs with
+      conversion_flow_coeff ≠ 0 (``_indirect_sum_arcs``, the min-load measure A_p): the outputs with conv > 0
+      filled in descending conv order, each up to min(κ_k, the rest), as ``_derived._indirect_fuel_width_lf``
+      computes the width of the input limits, here from the FlexData the LP reads.  ``conv_min`` = the smallest
+      conv_k over A_p;
+    * direct unit: ``width = K``, the largest κ over its capped arcs (maxFlow_online: flow ≤ κ·availability·online);
+      ``conv_min = 1`` (the arc flow is the conversion's measure).
+
+    κ = ``p_arc_max_cap_coef`` (capacity_max_coeff; 1 where absent, clipped at 0), conv =
+    ``p_process_sink_conversion_flow_coeff`` (1 where absent).  A unit without such arcs has width 0 and
+    ``conv_min`` null."""
+    from flextool.engine.model._common import _capped_arcs, _indirect_sum_arcs
+
+    keys = ["p", "source", "sink"]
+    u8 = [pl.col(k).cast(pl.Utf8) for k in keys]
+    kap = _frame(d.p_arc_max_cap_coef)
+    kap = (kap.select(*u8, pl.col("value").cast(pl.Float64).alias("cap")) if kap is not None and kap.height > 0
+           else pl.DataFrame(schema={"p": pl.Utf8, "source": pl.Utf8, "sink": pl.Utf8, "cap": pl.Float64}))
+    conv = _frame(d.p_process_sink_conversion_flow_coeff)
+    conv = (conv.select(pl.col("p").cast(pl.Utf8), pl.col("sink").cast(pl.Utf8),
+                        pl.col("value").cast(pl.Float64).alias("conv"))
+            if conv is not None and conv.height > 0
+            else pl.DataFrame(schema={"p": pl.Utf8, "sink": pl.Utf8, "conv": pl.Float64}))
+    indirect = _names(getattr(d, "process_indirect", None)) & procs
+    parts: list[pl.DataFrame] = []
+    sum_arcs = _indirect_sum_arcs(d) if indirect else None
+    if sum_arcs is not None:
+        arcs = (sum_arcs.select(*u8).filter(pl.col("p").is_in(sorted(indirect)))
+                .join(kap, on=keys, how="left").join(conv, on=["p", "sink"], how="left")
+                .with_columns(cap=pl.col("cap").fill_null(1.0).clip(lower_bound=0.0),
+                              conv=pl.col("conv").fill_null(1.0)))
+        width = (arcs.filter(pl.col("conv") > 0.0)
+                 .sort(["p", "conv", "sink"], descending=[False, True, False])
+                 .with_columns(_prev=pl.col("cap").cum_sum().over("p") - pl.col("cap"))
+                 .with_columns(_fill=pl.min_horizontal(pl.col("cap"), (1.0 - pl.col("_prev")).clip(lower_bound=0.0)))
+                 .group_by("p").agg(width=(pl.col("conv") * pl.col("_fill")).sum()))
+        parts.append(arcs.group_by("p").agg(conv_min=pl.col("conv").min())
+                     .join(width, on="p", how="left").select("p", "width", "conv_min"))
+    direct = procs - indirect
+    pss = getattr(d, "process_source_sink", None)
+    if direct and pss is not None and pss.height > 0:
+        darcs = _capped_arcs(d, pss.filter(pl.col("p").cast(pl.Utf8).is_in(sorted(direct))))
+        if darcs.height > 0:
+            parts.append(darcs.select(*u8).join(kap, on=keys, how="left")
+                         .group_by("p").agg(width=pl.col("cap").fill_null(1.0).clip(lower_bound=0.0).max())
+                         .select("p", "width", pl.lit(1.0).alias("conv_min")))
+    out = pl.DataFrame({"p": sorted(procs)}, schema={"p": pl.Utf8})
+    if not parts:
+        return out.with_columns(width=pl.lit(0.0), conv_min=pl.lit(None, dtype=pl.Float64))
+    return (out.join(pl.concat(parts, how="vertical"), on="p", how="left")
+            .with_columns(pl.col("width").fill_null(0.0)))
+
+
+def _availability_dt(d: "FlexData", procs: set[str]) -> pl.DataFrame:
+    """``(p, d, t, avail)`` (Utf8 keys) of ``procs`` over the solve's steps: ``p_process_availability``, 1 where
+    absent (``_common._availability_factor``)."""
+    from flextool.engine.model._common import _availability_factor
+
+    members = pl.DataFrame({"p": sorted(procs)}, schema={"p": pl.Utf8})
+    if d.p_process_availability is None:
+        return (members.join(d.dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)), how="cross")
+                .with_columns(avail=pl.lit(1.0)))
+    f = _availability_factor(d, members).frame
+    return f.select(*(pl.col(k).cast(pl.Utf8) for k in ("p", "d", "t")), pl.col("value").cast(pl.Float64).alias("avail"))
+
+
 def _fold_min_load_efficiency(d: "FlexData", procs: set[str]) -> tuple[Param, Param]:
-    """``(p_slope, p_section)`` with the section of ``procs`` folded into their slope.
+    """``(p_slope, p_section)`` with the section of ``procs`` folded into their slope per unit of the output
+    measure one unit online can reach (proof in the module docstring, "Why the folds are relaxations")::
 
-        p_slope'[p,d,t]   = p_slope[p,d,t] + p_section[p,d,t]   p ∈ procs
-        p_section'[p,d,t] = 0                                     p ∈ procs
+        p_slope'[p,d,t]   = p_slope[p,d,t] + p_section[p,d,t] / M[p,d,t]     p ∈ procs, section ≥ 0 (+ 0 where M = 0)
+        p_slope'[p,d,t]   = max(0, p_slope[p,d,t] + p_section[p,d,t] / M[p,d,t])          section < 0
+        p_section'[p,d,t] = 0                                                 p ∈ procs
+        M[p,d,t] = width[p] · max(1, availability[p,d,t])                     section ≥ 0
+        M[p,d,t] = min_load[p,d,t] · conv_min[p]                              section < 0
 
-    The fuel of such a unit becomes output × (slope + section): the full-load input per unit of output, so the
-    same fuel as the curve at full load and less at part load.  Both already carry a direct unit's
-    conversion_flow_coeff fold (slope⁰·k_sink/k_src, section⁰/k_src), and the full-load input of the
-    conversion equation is (slope⁰·k_sink + section⁰)/k_src = slope + section, so the fold keeps full load for
-    every coefficient of a direct unit.  An indirect unit's weighted output at full capacity is its fuel width
-    ``W`` (``_derived._indirect_fuel_width_lf``), so its full-load fuel goes from slope·W + section to
-    (slope + section)·W: the same only for W = 1.  Its input limits follow (:func:`_refold_input_caps`).  Rows of
-    other processes are unchanged; row order is kept.
+    ``width`` / ``conv_min``: :func:`_unit_widths` (an indirect unit's ``W``, a direct unit's largest
+    capacity_max_coeff).  The fuel becomes output × slope', never more than the curve's at any feasible output and
+    units online; with ``section ≥ 0`` and availability ≤ 1 it is the curve's at full output (``Y = W`` per unit of
+    capacity at availability 1), so the input limits (``p_indirect_input_cap``, the full model's) are kept.  Both
+    already carry a direct unit's conversion_flow_coeff fold (slope⁰·k_sink/k_src, section⁰/k_src).  ``M = 1``
+    (``W = 1``, availability ≤ 1, the common case and every direct unit with capacity_max_coeff 1) gives
+    ``slope + section`` bit for bit.  ``section < 0`` (``efficiency_at_min_load`` above ``efficiency``) needs an
+    output weight above 0 on every measured output (``conv_min > 0``), else :class:`FlexToolConfigError`; a unit
+    with one output then runs at ``efficiency_at_min_load`` (slope' = 1/η_min), one with several at the bound
+    their smallest weight allows, at least 0 (the full model's fuel is never below 0: its input flows are not).
+    Rows of other processes are unchanged; row order is kept.
     """
+    from flextool.engine.input._param_shapes import promote_param_to_dt
+
     slope, section = d.p_slope, d.p_section
     for name, prm in (("p_slope", slope), ("p_section", section)):
         if tuple(prm.dims) != ("p", "d", "t"):
@@ -296,8 +404,27 @@ def _fold_min_load_efficiency(d: "FlexData", procs: set[str]) -> tuple[Param, Pa
     if dup.height > 0:
         raise ValueError("reduce_unit_detail_method online: p_section has duplicate (p, d, t) cells: "
                          f"{dup.select(uk).head(5).rows()}.")
+    widths = _unit_widths(d, procs).select(pl.col("p").alias("__p"), pl.col("width").alias("__w"),
+                                           pl.col("conv_min").alias("__cmin"))
+    avail = _availability_dt(d, procs).select(*(pl.col(k).alias(f"__{k}") for k in keys), pl.col("avail").alias("__a"))
+    ml = (promote_param_to_dt(d.p_min_load, d.dt).collect() if d.p_min_load is not None
+          else pl.DataFrame(schema={"p": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "value": pl.Float64}))
+    ml = ml.select(*u, pl.col("value").cast(pl.Float64).alias("__ml"))
+    sec = (sec.join(widths, on="__p", how="left").join(avail, on=uk, how="left").join(ml, on=uk, how="left")
+           .with_columns(__M=pl.when(pl.col("__sec") >= 0.0)
+                         .then(pl.col("__w") * pl.max_horizontal(pl.lit(1.0), pl.col("__a").fill_null(1.0)))
+                         .otherwise(pl.col("__ml").fill_null(0.0) * pl.col("__cmin"))))
+    bad = sec.filter((pl.col("__sec") < 0.0) & ~(pl.col("__M") > 0.0))
+    if bad.height > 0:
+        raise FlexToolConfigError(
+            "reduce_unit_detail_method online: the min_load_efficiency unit(s) "
+            f"{', '.join(sorted(set(bad.get_column('__p').to_list())))} are more efficient at minimum load than at "
+            "full load, and their fuel cannot be folded without the units online: the minimum load does not bound "
+            "the units online by the output (an output with a conversion_flow_coeff below 0, or no minimum load). "
+            "Keep the online variables (an integers level) for them.")
+    sec = sec.with_columns(__add=pl.when(pl.col("__M") > 0.0).then(pl.col("__sec") / pl.col("__M")).otherwise(0.0))
     joined = (sf.with_row_index("__row").with_columns(*u)
-              .join(sec, on=uk, how="left").sort("__row"))
+              .join(sec.select(*uk, "__add", "__sec"), on=uk, how="left").sort("__row"))
     if joined.height != sf.height:
         raise ValueError(f"reduce_unit_detail_method online: folding the section changed the p_slope rows "
                          f"({sf.height} -> {joined.height}).")
@@ -305,10 +432,11 @@ def _fold_min_load_efficiency(d: "FlexData", procs: set[str]) -> tuple[Param, Pa
     if missing.height > 0:
         raise ValueError("reduce_unit_detail_method online: min_load_efficiency cells with a section but no "
                          f"slope: {missing.select(uk).head(5).rows()}.")
+    folded = pl.col("value") + pl.col("__add").fill_null(0.0)
     new_slope = joined.with_columns(
-        pl.when(pl.col("__p").is_in(sorted(procs)))
-        .then(pl.col("value") + pl.col("__sec").fill_null(0.0))
-        .otherwise(pl.col("value")).cast(sf.schema["value"]).alias("value")).select(sf.columns)
+        pl.when(~pl.col("__p").is_in(sorted(procs))).then(pl.col("value"))
+        .when(pl.col("__sec") < 0.0).then(pl.max_horizontal(folded, pl.lit(0.0)))
+        .otherwise(folded).cast(sf.schema["value"]).alias("value")).select(sf.columns)
     new_section = ef.with_columns(
         pl.when(pl.col("p").cast(pl.Utf8).is_in(sorted(procs))).then(0.0).otherwise(pl.col("value"))
         .cast(ef.schema["value"]).alias("value"))
@@ -318,11 +446,18 @@ def _fold_min_load_efficiency(d: "FlexData", procs: set[str]) -> tuple[Param, Pa
 def _fold_piecewise(d: "FlexData", procs: set[str]) -> tuple[Param, Param]:
     """``(p_piecewise_slope, p_piecewise_intercept)`` with the lines of the ``piecewise_linear`` units ``procs``
     rebuilt in the form without online variables from their points (``p_piecewise_points``,
-    :func:`flextool.engine.input._piecewise_curve.curve_lines`): the origin line through the best point
-    ``1/max η`` and the segments with a negative intercept, scaled in ``conversion_piecewise`` by the units built
-    instead of the units online.  The rows of the other units are kept, in place; the new rows of ``procs``
-    follow in ``(p, d, seg)`` order of the curve functions.  The input limits of the units follow the new lines
-    (:func:`_refold_input_caps`)."""
+    :func:`flextool.engine.input._piecewise_curve.curve_lines`): the origin line through the best efficiency
+    within the reach of one unit online and the segments with a negative intercept, scaled in
+    ``conversion_piecewise`` by the units built instead of the units online::
+
+        reach[p,d] = W[p] · max(1, max_t availability[p,d,t])       (W: :func:`_unit_widths`, the weighted output
+                                                                     per unit online at full output)
+        origin line: α₀ = min(1/η_i for ℓ_i ≤ reach, F(reach)/reach), β₀ = 0   (``capacity_lines``)
+
+    Never more fuel than the online-form lines at any feasible output and units online, and the same at full
+    output (availability ≤ 1, at 1), so the input limits are kept (module docstring, "Why the folds are
+    relaxations").  ``reach = 1`` (W = 1) gives the lines of the capacity form bit for bit.  The rows of the other
+    units are kept, in place; the new rows of ``procs`` follow in ``(p, d, seg)`` order of the curve functions."""
     from flextool.engine.input._piecewise_curve import curve_lines
 
     points = _frame(d.p_piecewise_points)
@@ -332,7 +467,19 @@ def _fold_piecewise(d: "FlexData", procs: set[str]) -> tuple[Param, Param]:
                          "curve points / lines to fold.")
     mine = points.with_columns(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)).filter(
         pl.col("p").is_in(sorted(procs)))
-    lines = curve_lines(mine.select("p", "d", "load", "eff"), online=())
+    widths = dict(_unit_widths(d, procs).select("p", "width").iter_rows())
+    flat = sorted(p for p, w in widths.items() if not w > 0.0)
+    if flat:
+        raise ValueError(f"reduce_unit_detail_method: piecewise_linear unit(s) {', '.join(flat)} have no output "
+                         "with a conversion_flow_coeff above 0; their curve cannot be folded.")
+    avail = _availability_dt(d, procs)
+    by_d = {(p, dd): a for p, dd, a in avail.group_by("p", "d").agg(pl.col("avail").max()).iter_rows()}
+    by_p = {p: a for p, a in avail.group_by("p").agg(pl.col("avail").max()).iter_rows()}
+    reach = {}
+    for p, dd in mine.select("p", "d").unique().iter_rows():
+        a = by_d.get((p, dd), by_p.get(p, 1.0)) if dd is not None else by_p.get(p, 1.0)
+        reach[(p, dd)] = widths[p] * max(1.0, a)
+    lines = curve_lines(mine.select("p", "d", "load", "eff"), online=(), reach=reach)
     out = []
     for prm, col in ((slope, "slope"), (intercept, "intercept")):
         f = _frame(prm)
@@ -342,83 +489,6 @@ def _fold_piecewise(d: "FlexData", procs: set[str]) -> tuple[Param, Param]:
         out.append(Param(prm.dims, pl.concat([kept.select("p", "seg", "d", "value"), new], how="vertical"),
                          name=prm.name))
     return out[0], out[1]
-
-
-def _refold_input_caps(d: "FlexData", new: dict, procs: set[str], db_reader: "InputSource | None") -> None:
-    """``new["p_indirect_input_cap"]`` / ``new["p_flow_upper"]``: the input limits of the indirect units of
-    ``procs`` whose conversion was folded into ``new`` (``p_slope`` / ``p_section``, ``p_piecewise_slope`` /
-    ``p_piecewise_intercept``), recomputed from the folded conversion by the producer of the cascade
-    (``_derived.p_indirect_input_cap_from_source``)::
-
-        p_indirect_input_cap'[p,s,p,d,t] = input_share_max · fuel'[p,d,t] · delay_factor / conversion_flow_coeff_s
-        fuel'[p,d,t]  = max_g(pw_slope'[p,g,d] · W[p] + pw_intercept'[p,g,d])   folded piecewise_linear units
-        fuel'[p,d,t]  = slope'[p,d,t] · W[p]  (slope' = slope + section)       folded min_load_efficiency units
-        p_flow_upper'[p,s,p,d,t] = p_flow_upper[p,s,p,d,t] / p_indirect_input_cap[p,s,p,d,t]
-                                   · p_indirect_input_cap'[p,s,p,d,t]           (where the limit changes)
-
-    ``W`` is the weighted output at full capacity (``_derived._indirect_fuel_width_lf``).  The fold keeps the
-    fuel at a weighted output of 1 per unit of capacity, not at ``W``: with ``W ≠ 1`` and a rising curve the
-    folded lines need more fuel at full capacity than the unfolded ones, and the old limit would cap the unit
-    below its capacity.  ``p_flow_upper / p_indirect_input_cap`` is the capacity per unit of the arc's row
-    (the factor its producer multiplied the limit by).  The rows (keys, order, dtypes) stay; a row whose limit
-    is unchanged keeps its value bit for bit.  Other units' rows are unchanged."""
-    from flextool.engine.preprocess.params import _derived as _drv
-
-    cap = d.p_indirect_input_cap
-    units = _names(getattr(d, "process_indirect", None)) & procs
-    if not units or cap is None:
-        return
-    if db_reader is None:
-        raise ValueError(f"reduce_unit_detail_method: the input limits of {', '.join(sorted(units))} follow the "
-                         "folded conversion and need the input source (apply_reduce_detail(db_reader=...)).")
-    lines = None
-    pw_slope, pw_intercept = new.get("p_piecewise_slope"), new.get("p_piecewise_intercept")
-    if pw_slope is not None and pw_intercept is not None:
-        lk = ["p", "seg", "d"]
-        lines = (_frame(pw_slope).select(*(pl.col(k).cast(pl.Utf8) for k in lk), pl.col("value").alias("slope"))
-                 .join(_frame(pw_intercept).select(*(pl.col(k).cast(pl.Utf8) for k in lk),
-                                                   pl.col("value").alias("intercept")), on=lk, how="inner")
-                 .filter(pl.col("p").is_in(sorted(units))))
-        lines = lines if lines.height > 0 else None
-    recomputed = _drv.p_indirect_input_cap_from_source(
-        db_reader, d.process_source_sink, d.dt, new.get("p_slope", d.p_slope), new.get("p_section", d.p_section),
-        _drv._classify_process_method(db_reader), lines)
-    keys = ("p", "source", "sink", "d", "t")
-    uk = [f"__{k}" for k in keys]
-    u8 = [pl.col(k).cast(pl.Utf8).alias(f"__{k}") for k in keys]
-    if recomputed is None:
-        raise ValueError(f"reduce_unit_detail_method: no input limits recomputed for {', '.join(sorted(units))}.")
-    fresh = (recomputed.frame.select(*u8, pl.col("value").cast(pl.Float64).alias("__new"))
-             .filter(pl.col("__p").is_in(sorted(units))))
-    old = (_frame(cap).with_row_index("__row").with_columns(*u8)
-           .join(fresh, on=uk, how="left").sort("__row"))
-    mine = pl.col("__p").is_in(sorted(units))
-    lost = old.filter(mine & pl.col("__new").is_null())
-    if lost.height > 0:
-        raise ValueError("reduce_unit_detail_method: input-limit rows without a recomputed value: "
-                         f"{lost.select(uk).head(5).rows()}.")
-    changed = old.filter(mine & (pl.col("__new") != pl.col("value")))
-    if changed.height == 0:
-        return
-    new["p_indirect_input_cap"] = Param(cap.dims, old.with_columns(
-        pl.when(mine).then(pl.col("__new")).otherwise(pl.col("value")).cast(cap.frame.schema["value"])
-        .alias("value")).select(cap.frame.columns), name=cap.name)
-    fu = new.get("p_flow_upper", d.p_flow_upper)
-    if fu is None:
-        return
-    if tuple(fu.dims) != keys:
-        raise ValueError(f"reduce_unit_detail_method: p_flow_upper has dims {fu.dims}, expected {keys}.")
-    if changed.filter(pl.col("value") == 0.0).height > 0:
-        raise ValueError("reduce_unit_detail_method: an input limit of 0 changes with the fold, so p_flow_upper "
-                         f"cannot be rescaled: {changed.filter(pl.col('value') == 0.0).select(uk).head(5).rows()}.")
-    ratio = changed.select(*uk, pl.col("value").cast(pl.Float64).alias("__old"), "__new")
-    upper = (_frame(fu).with_row_index("__row").with_columns(*u8)
-             .join(ratio, on=uk, how="left").sort("__row"))
-    new["p_flow_upper"] = Param(fu.dims, upper.with_columns(
-        pl.when(pl.col("__new").is_not_null())
-        .then(pl.col("value") / pl.col("__old") * pl.col("__new"))
-        .otherwise(pl.col("value")).cast(fu.frame.schema["value"]).alias("value")).select(fu.frame.columns),
-        name=fu.name)
 
 
 def _online_constraints(d: "FlexData") -> list[str]:
@@ -515,10 +585,9 @@ def _prune_online(d: "FlexData", procs: set[str], new: dict) -> None:
 
 
 def _reduce_unit(d: "FlexData", parts: frozenset[str], report: ReduceReport,
-                 sparts: frozenset[str] = frozenset(), db_reader: "InputSource | None" = None) -> dict:
+                 sparts: frozenset[str] = frozenset()) -> dict:
     """The changed fields of the unit parts ``parts`` (field -> new value); fills ``report``.  ``sparts``: the
-    system parts the solve leaves out (no use of online variables).  ``db_reader``: the input source the input
-    limits of folded units are recomputed from (:func:`_refold_input_caps`)."""
+    system parts the solve leaves out (no use of online variables)."""
     new: dict = {}
     removed = report.removed
 
@@ -616,9 +685,6 @@ def _reduce_unit(d: "FlexData", parts: frozenset[str], report: ReduceReport,
             removed.pop("integer_online", None)
         if online_cns and kept_integer:
             report.notes["fractional_online_constraints"] = list(online_cns)
-    folded = set(removed.get("piecewise_linear", ())) | set(removed.get("min_load_efficiency", ()))
-    if folded:
-        _refold_input_caps(d, new, folded, db_reader)
     return new
 
 
@@ -666,23 +732,20 @@ def _interaction_notes(d: "FlexData", uparts: frozenset[str], sparts: frozenset[
             report.notes["inertia_from_flows"] = hit
 
 
-def apply_reduce_detail(d: "FlexData", unit: str = "none", system: str = "none", *,
-                        db_reader: "InputSource | None" = None) -> tuple["FlexData", ReduceReport]:
+def apply_reduce_detail(d: "FlexData", unit: str = "none", system: str = "none") -> tuple["FlexData", ReduceReport]:
     """The reduced data of one sub-solve and what was left out.
 
     ``unit`` / ``system`` are the resolved values (``SolveConfig.reduce_unit_detail_for`` /
     ``reduce_system_detail_for``).  Returns ``d`` itself when nothing is reduced; otherwise a shallow copy (frames
     not changed are shared, extra attributes such as the axis vocabulary are kept) with the changed fields replaced.
-    An unknown value raises :class:`FlexToolConfigError`.  ``db_reader`` (the sub-solve's input source) is needed
-    when the level folds the conversion of an indirect unit: its input limits are recomputed from the folded
-    conversion (:func:`_refold_input_caps`).
+    An unknown value raises :class:`FlexToolConfigError`.
     """
     report = ReduceReport(unit=unit, system=system)
     uparts = unit_parts(unit)
     sparts = system_parts(system)
     if not uparts and not sparts:
         return d, report
-    new = _reduce_unit(d, uparts, report, sparts, db_reader) if uparts else {}
+    new = _reduce_unit(d, uparts, report, sparts) if uparts else {}
     new.update(_reduce_system(d, sparts, report))
     _interaction_notes(d, uparts, sparts, report)
     if not new:

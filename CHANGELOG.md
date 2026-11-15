@@ -72,11 +72,17 @@ Input databases move to data version 80. The FlexTool window, the Spine Toolbox 
 
 ### Fixes
 
-- **`reduce_unit_detail_method` *online* gave folded *min_load_efficiency* indirect units a wrong fuel limit when
-  their outputs at full capacity do not add up to 1 per unit of capacity** (several outputs or a
-  `conversion_flow_coeff` other than 1): with more than 1 the unit could not reach its capacity (shortfall went to
-  slack), with less than 1 the limit was too loose. Results of such models change; rerun them. Direct units and
-  units with one output at coefficient 1 were right.
+- **`reduce_unit_detail_method` *online* now stays a relaxation for indirect *min_load_efficiency* units whose
+  weighted output at full capacity is not 1 per unit of capacity** (several outputs or a `conversion_flow_coeff`
+  other than 1). The part-load fuel is now folded per unit of that weighted output, so the reduced solve never
+  burns more fuel than the full model and the same at full output, within the unit's input limits. Before, the
+  fold was too tight when the weighted output was above 1 (more fuel than the full model at full output; with
+  several flows the unit could not reach its capacity and the shortfall went to slack) and too loose when it was
+  below 1. The same holds for `piecewise_linear` units under *online*, for an output `capacity_max_coeff` above 1
+  and for a *min_load_efficiency* unit more efficient at minimum load than at full load (with one output it now
+  uses its minimum-load efficiency). Results of such reduced solves change; rerun them. Units whose outputs add up
+  to their capacity at coefficient 1 (`availability` at most 1) and that are not more efficient at minimum load
+  are unchanged.
 - **Near-optimal solve acceptance judges the infeasibility count and the absolute check where HiGHS solved** (with
   FlexTool's bound scaling): a solve that was feasible there could be rejected before. A rejected solve now names
   the checks that failed (before, the message always quoted the relative check, also when it had passed).

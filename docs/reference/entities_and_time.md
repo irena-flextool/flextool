@@ -186,7 +186,12 @@ The parts in detail:
     fuel at full load and less at part load. A unit with `conversion_method` *piecewise_linear* uses its curve
     scaled by its built capacity: below the load share of its best efficiency its fuel is output / best efficiency,
     above it the curve applies (for the usual thermal curve, whose best efficiency is at full load, that is output /
-    full-load efficiency). A user constraint with a `constraint_online_coeff` term is left out of
+    full-load efficiency). "Full load" is the most output, weighted by `conversion_flow_coeff`, that one unit online
+    can give (its outputs filled in descending `conversion_flow_coeff` order up to their `capacity_max_coeff` and
+    the capacity): for a unit whose weighted outputs add up to more or less than its capacity (for example one
+    output with `conversion_flow_coeff` 2), the full-load fuel is spread over that output, so the fuel at full output
+    is the same as with the online variables. A *min_load_efficiency* unit that is more efficient at its minimum
+    load than at full load (`efficiency_at_min_load` above `efficiency`) uses its minimum-load efficiency instead. A user constraint with a `constraint_online_coeff` term is left out of
     the solve whole, with a warning that names it. Ramp limits that are kept apply to the capacity, so a unit that
     starts from zero ramps up at its ramp speed (there is no start-up allowance). `online` contains every effect of
     `integers`, so the solve is an LP.
@@ -261,8 +266,10 @@ run log says so in the solve's info line:
 
 **An approximation, never tighter.** Every part only removes constraints or integer restrictions, except the
 full-load efficiency of `min_load_efficiency` units and the best-efficiency envelope of `piecewise_linear` units
-under `online*`, which use less fuel than the part-load curve. CO2 limits read that fuel, so they relax as well. The reduced solve is therefore never more constrained than
-the full one.
+under `online*`. These never use more fuel than the part-load curve at any output and number of units online, and
+at most the same fuel at full output (the same at `availability` 1), so the unit keeps its input limits and
+reaches its full capacity. CO2 limits read
+that fuel, so they relax as well. The reduced solve is therefore never more constrained than the full one.
 
 **Across solves.** Every roll of a rolling solve uses the solve's levels. A nested solve uses its own levels, not
 its parent's. A Benders decomposition can split connections whose reserves, online variables or `exact` method
@@ -288,7 +295,7 @@ have no entity columns.
 feature out. A period shared with a solve that kept the feature keeps its per-period value, in which the time
 steps of the solve that left it out count as 0. Its row is labelled with the last solve that realized the period,
 which may be the one that left the feature out. The costs stay: a left-out feature costs nothing in the solve.
-The fuel of a `min_load_efficiency` unit under `online*` is its output divided by its full-load efficiency; that of a `piecewise_linear` unit follows its best-efficiency envelope. The input limit of a unit with several flows (`input_share_max`) follows the reduced fuel use, so the unit still reaches its full capacity.
+The fuel of a `min_load_efficiency` unit under `online*` is its output divided by its full-load efficiency; that of a `piecewise_linear` unit follows its best-efficiency envelope (see "Online variables" above for full load).
 
 ### Time structure assumptions
 
