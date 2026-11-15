@@ -214,15 +214,13 @@ class SolverConfig:
         from ``solver_arguments`` (the solver's own name) or the run's
         flags (``--solver-time-limit``, ``--threads``); the database's
         ``solver_time_limit`` / ``solver_threads`` were removed in v56.
-    log_level
-        ``"silent"`` / ``"normal"`` / ``"verbose"``.  Default
-        ``"normal"``.
+        The solver's log level comes from the run's ``--solver-log-level``
+        flag; the database's ``solver_log_level`` was removed in v56.
     """
 
     name: str = "highs"
     options: dict[str, Any] = field(default_factory=dict)
     mip_gap: float | None = None
-    log_level: str = "normal"
 
 
 # ---------------------------------------------------------------------------
@@ -646,10 +644,9 @@ class SolveConfig:
         # variable above for the legacy :class:`SolverSettings` dataclass
         # (which downstream callers still consume); we reuse that dict
         # here rather than re-querying.
-        # Batch C.7 — ``solver_log_level`` shortcut removed; use the
-        # --solver-log-level CLI flag (silent / normal / verbose →
-        # HiGHS output_flag + log_dev_level).
-        solver_log_level: dict = {}
+        # Batch C.7 (v56) dropped the ``solver_log_level`` DB parameter:
+        # the --solver-log-level CLI flag sets it (silent / normal /
+        # verbose).
         # solver_mip_gap comes back as the stringified float that
         # ``params_to_dict`` produces for scalar floats (see line
         # ~141).  Batches C.6 and C.8 (v56) dropped the ``solver_threads``
@@ -809,7 +806,6 @@ class SolveConfig:
             set(solvers)
             | set(solver_arguments)
             | set(solver_mip_gap_raw)
-            | set(solver_log_level)
         )
 
         def _opt_float(raw: dict, key: str) -> float | None:
@@ -822,7 +818,6 @@ class SolveConfig:
                 name=solvers.get(key, "highs"),
                 options=dict(solver_arguments.get(key, {})),
                 mip_gap=_opt_float(solver_mip_gap_raw, key),
-                log_level=solver_log_level.get(key, "normal"),
             )
 
         obj = cls(

@@ -133,7 +133,7 @@ def test_solve_config_solver_defaults(tmp_path: Path):
     assert default.options == {}
     assert default.mip_gap is None
     assert not hasattr(default, "time_limit") and not hasattr(default, "threads")  # item 265: removed
-    assert default.log_level == "normal"
+    assert not hasattr(default, "log_level")  # the run's --solver-log-level sets it
 
 
 def test_solve_config_solver_explicit_highs(tmp_path: Path):
@@ -150,7 +150,6 @@ def test_solve_config_solver_explicit_highs(tmp_path: Path):
     # Other fields still default — only ``solver`` was authored.
     assert cfg.options == {}
     assert cfg.mip_gap is None
-    assert cfg.log_level == "normal"
 
 
 def test_solve_config_solver_options_map(tmp_path: Path):
