@@ -72,21 +72,15 @@ Input databases move to data version 80. The FlexTool window, the Spine Toolbox 
 
 ### Fixes
 
-- **`reduce_unit_detail_method` *online* now stays a relaxation for indirect *min_load_efficiency* units whose
-  weighted output at full capacity is not 1 per unit of capacity** (several outputs or a `conversion_flow_coeff`
-  other than 1). The part-load fuel is now folded per unit of that weighted output, so the reduced solve never
-  burns more fuel than the full model and the same at full output, within the unit's input limits. Before, the
-  fold was too tight when the weighted output was above 1 (more fuel than the full model at full output; with
-  several flows the unit could not reach its capacity and the shortfall went to slack) and too loose when it was
-  below 1. The same holds for `piecewise_linear` units under *online*, for an output `capacity_max_coeff` above 1
-  and for a *min_load_efficiency* unit more efficient at minimum load than at full load (with one output it now
-  uses its minimum-load efficiency). Results of such reduced solves change; rerun them. A *min_load_efficiency*
-  unit more efficient at minimum load than at full load with several outputs, whose smallest
-  `conversion_flow_coeff` is so far below the others that the reduced unit would produce without fuel, now stops
-  the run before the solve with an error naming the solve and the unit (before, it ran at its full-load efficiency): keep its
-  online variables (an `integers*` level) or change its efficiency shape. Units whose outputs add up
-  to their capacity at coefficient 1 (`availability` at most 1) and that are not more efficient at minimum load
-  are unchanged.
+- **`reduce_unit_detail_method` *online* runs *min_load_efficiency* and *piecewise_linear* units at their
+  full-load efficiency** (`efficiency`, or the curve's point at load share 1), as *constant_efficiency* units, also
+  when they are more efficient at part load. For indirect units whose weighted output at full capacity is not 1 per
+  unit of capacity (several outputs or a `conversion_flow_coeff` other than 1), and for an output
+  `capacity_max_coeff` above 1, this corrects the previous fold: the full-load fuel is now spread over that weighted
+  output, so the reduced unit burns the full model's fuel at full output and keeps its input limits. Before, it
+  burnt more fuel than that at full output when the weighted output was above 1 (with several flows the unit could
+  not reach its capacity and the shortfall went to slack) and less when it was below 1. Results of such reduced
+  solves change; rerun them. Units whose outputs add up to their capacity at coefficient 1 are unchanged.
 - **Near-optimal solve acceptance judges the infeasibility count and the absolute check where HiGHS solved** (with
   FlexTool's bound scaling): a solve that was feasible there could be rejected before. A rejected solve now names
   the checks that failed (before, the message always quoted the relative check, also when it had passed).

@@ -1371,9 +1371,10 @@ def _storage_partition(b: "_Build", providers: pl.DataFrame, over: pl.DataFrame)
 def _single_input_curve_pairs(d) -> "pl.DataFrame | None":
     """``(p, source, sink)`` in the dtypes of ``process_source_sink``: each one-input, one-output
     ``piecewise_linear`` unit with two or more lines (``process_piecewise_remap``) as the one arc input node →
-    output node of the direct unit it would be without its curve; None without such units."""
+    output node of the direct unit it would be without its curve (also when ``reduce_unit_detail_method`` online*
+    left its lines out: it then runs at its full-load ``p_slope``); None without such units."""
     remap = getattr(d, "process_piecewise_remap", None)
-    if not _has_rows(remap) or getattr(d, "p_piecewise_slope", None) is None:
+    if not _has_rows(remap):
         return None
     pss = d.process_source_sink
     keys = ["p", "source", "sink"]
@@ -1456,7 +1457,7 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
             val = pl.col("value").fill_null(1.0)
         else:
             val = pl.lit(1.0)
-        if paired is not None:
+        if paired is not None and getattr(d, "p_piecewise_slope", None) is not None:
             agg = pl.col("value").min() if reciprocal else pl.col("value").max()
             pw = (d.p_piecewise_slope.frame.lazy()
                   .select(pl.col("p").cast(pl.Utf8).alias("__pp"), pl.col("d").cast(pl.Utf8).alias("__pd"),

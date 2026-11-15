@@ -216,16 +216,20 @@ def test_O1_L_linear_online_sticky_commitment(tmp_path_factory) -> None:
     _obj(s, Fr(1422040000, 21))
 
 
-def test_O1_R_reduce_online_capacity_form(tmp_path_factory) -> None:
-    """No online variables: the capacity form, one origin line 1/0.42 scaled by the 2 units built."""
+def test_O1_R_reduce_online_full_load_efficiency(tmp_path_factory) -> None:
+    """No online variables: G runs as a constant_efficiency unit at its full-load efficiency 0.42 (slope 50/21 in
+    conversion_indirect, no curve lines, no conversion_piecewise row)."""
     s = _case(tmp_path_factory, "O1-R")
-    assert s.flex_data.process_online is None or "G" not in set(utf8(s.flex_data.process_online)["p"].to_list())
+    fd = s.flex_data
+    assert fd.process_online is None or "G" not in set(utf8(fd.process_online)["p"].to_list())
     _close(_flow(s, "G", "fuel_node", "G"), [Fr(10000, 21), Fr(1000, 7), Fr(10000, 21)], what="fuel")
     _obj(s, Fr(1343200000, 21))
-    lines = utf8(s.flex_data.p_piecewise_slope.frame).filter(pl.col("p") == "G")
-    assert lines["seg"].to_list() == ["0"]
-    _close(lines["value"].to_list(), [Fr(50, 21)], what="origin slope")
-    _close(utf8(s.flex_data.p_piecewise_intercept.frame)["value"].to_list(), [0], what="origin intercept")
+    assert fd.process_piecewise is None and fd.p_piecewise_slope is None
+    _close(sorted(set(utf8(fd.p_slope.frame).filter(pl.col("p") == "G")["value"].to_list())), [Fr(50, 21)],
+           what="full-load slope")
+    pb = build(fd)
+    assert cstr_over(pb, "conversion_piecewise") is None
+    assert cstr_over(pb, "conversion_indirect").filter(pl.col("p") == "G").height == 3
 
 
 # ---------------------------------------------------------------------------

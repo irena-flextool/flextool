@@ -3468,13 +3468,12 @@ def _drive_cascade(
             from flextool.engine.preprocess.params._ramp_links import check_online_ramp_carry
             _unit_level = self.state.solve.reduce_unit_detail_for(complete_solve_name)
             _unreduced = data
-            _reduce_base = re.sub(r"_roll_\d+$", "", complete_solve_name)
             data, _reduce_report = apply_reduce_detail(
                 data,
                 _unit_level,
                 self.state.solve.reduce_system_detail_for(complete_solve_name),
-                solve=_reduce_base,
             )
+            _reduce_base = re.sub(r"_roll_\d+$", "", complete_solve_name)
             if _reduce_report.warnings:
                 _warned = self.__dict__.setdefault("_reduce_detail_warned", set())
                 # One warning per chain: a realization solve repeats its parent's.
