@@ -106,6 +106,19 @@
       "note": "Integer tier indices serialised as strings ('1', '2', …, 'N'). N discovered from max map depth across commodity.price_ladder_* parameters. Phase 1 build_axis_enums must inspect the runtime depth and emit a fixed-N enum."
     },
     {
+      "name": "seg",
+      "label": "curve_line",
+      "source_type": "parameter_keys",
+      "source": {
+        "entity_class": "unit",
+        "parameter": "piecewise_linear_efficiency",
+        "depth": "discover",
+        "key_kind": "point_count"
+      },
+      "filter": null,
+      "note": "Lines of a piecewise_linear unit's part-load fuel curve: string tokens '0'..'K' ('0' = the origin line, 'k' = segment k), K = the largest number of points of a curve (map over load shares) in unit.piecewise_linear_efficiency, over every unit and period. Discovered size like the tier axis 'i'; the authored load level itself is the non-dim Float64 column 'load', not an axis."
+    },
+    {
       "name": "branch",
       "label": "stochastic_branch",
       "source_type": "parameter_value_list",
@@ -208,8 +221,8 @@
     "pending_audit": []
   },
   "non_dim_columns": {
-    "_comment": "String columns that look like dim columns by name but hold data values (method discriminators, scenario labels, etc). Leave as pl.Utf8 — do NOT cast.",
-    "confirmed": ["method", "scenario", "model", "solve", "value", "paramName", "class", "ts", "default_value"]
+    "_comment": "String columns that look like dim columns by name but hold data values (method discriminators, scenario labels, etc). Leave as pl.Utf8 — do NOT cast. 'load' / 'eff' hold the load shares and efficiencies of a part-load curve (unit.piecewise_linear_efficiency, Float64).",
+    "confirmed": ["method", "scenario", "model", "solve", "value", "paramName", "class", "ts", "default_value", "load", "eff"]
   },
   "parameter_value_dtypes": {
     "_comment": "Inner-leaf dtype for Map/Array parameter VALUES. SpineDB does not enforce types inside Maps (e.g. a numeric coefficient may be authored as the string '1' instead of 1.0). This registry pins the expected leaf dtype per (entity_class, parameter) so SpineDBReader._unroll_rows casts the value column to a stable dtype instead of sniffing the first sample. Lenient cast (strict=False) parses 'looks-numeric' strings; values that fail to parse become null and are surfaced as FlexDataIntegrityError with an entity/index breadcrumb. Default = Float64; overrides list only parameters whose leaf is genuinely non-numeric.",

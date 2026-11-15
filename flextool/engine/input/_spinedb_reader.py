@@ -91,6 +91,13 @@ def _coerce_value(v: Any) -> Any:
 # is empty / generic.  Probed in order of nesting depth so the topmost
 # (period) gets the first slot.
 _DEFAULT_INDEX_NAMES = ("period", "tier", "branch", "t", "sub_index")
+#: Index columns of a parameter whose levels are read under fixed names whatever the authored ``index_name`` (by
+#: depth): the part-load curve's load level is the non-dim float column ``load`` (never an axis column, so a float
+#: key is never cast or trimmed against an axis vocabulary); level 1 of a curve per period is ``period``.  The
+#: authored names are checked first (``_param_shapes._label_path_problem``).
+_FIXED_INDEX_COLS: dict[str, dict[int, tuple[str, ...]]] = {
+    "piecewise_linear_efficiency": {1: ("load",), 2: ("period", "load")},
+}
 
 
 # ---------------------------------------------------------------------------
@@ -1473,7 +1480,8 @@ class SpineDbReader:
                 cols.append("_array_index")
                 break
             break
-        return cols
+        fixed = _FIXED_INDEX_COLS.get(parameter_name, {}).get(len(cols))
+        return list(fixed) if fixed is not None else cols
 
     def _unroll_value(self, v: Any, index_cols: list[str],
                        columns: dict[str, list],

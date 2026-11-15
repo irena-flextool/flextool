@@ -138,6 +138,10 @@ class AxisName(Enum):
     D = "d"     # period
     T = "t"     # time
     I = "i"     # tier (price-ladder)  # noqa: E741 — axis name from contract
+    # Load share of a part-load curve (``unit.piecewise_linear_efficiency``).  A shape-level label only: the
+    # authored load level is a float, read into the non-dim ``Float64`` column ``load`` (no enum is built for
+    # it; ``flextool_axis_contract.json`` lists ``load`` / ``eff`` as non-dim columns).
+    L = "load"
 
 
 class LeafKind(Enum):
@@ -215,6 +219,8 @@ class Shape(Enum):
     MAP_TIME_PERIOD = "2d_map[time,period]"
     MAP_TIER_FACET = "2d_map[tier,facet{price,quantity}]"
     MAP_PERIOD_TIER_FACET = "3d_map[period,tier,facet{price,quantity}]"
+    MAP_LOAD = "1d_map[load]"
+    MAP_PERIOD_LOAD = "2d_map[period,load]"
 
 
 @dataclass(frozen=True)
@@ -512,6 +518,13 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     # ``p_years_represented``.  Before this entry the readers tested for a ``period`` column, so a map without an
     # index name gave investments one year per period.
     ("solve", "years_represented"): {Shape.MAP_PERIOD},
+    # ─── unit: part-load curve of a piecewise_linear unit ───────────────
+    # ``unit.piecewise_linear_efficiency`` — a 1-D Map load share -> efficiency (one curve for every period) or a
+    # 2-D Map period -> load share -> efficiency (schema: map rank 1 and 2).  No constant and no time level.  The
+    # load level may have any index name except ``period`` / ``time``; level 1 of a 2-level value is the period
+    # (named ``period`` or unnamed).  The load keys are floats, read into the non-dim column ``load``
+    # (:func:`piecewise_curve_frame`).
+    ("unit", "piecewise_linear_efficiency"): {Shape.MAP_LOAD, Shape.MAP_PERIOD_LOAD},
 }
 
 
@@ -614,6 +627,9 @@ _SHAPE_AXES: "dict[Shape, ParamAxes]" = {
                                           LeafKind.FACET_PRICE_QUANTITY),
     Shape.MAP_PERIOD_TIER_FACET: ParamAxes(
         (AxisName.D, AxisName.I), LeafKind.FACET_PRICE_QUANTITY),
+    Shape.MAP_LOAD:             ParamAxes((AxisName.L,), LeafKind.NUMERIC),
+    Shape.MAP_PERIOD_LOAD:      ParamAxes((AxisName.D, AxisName.L),
+                                          LeafKind.NUMERIC),
 }
 
 
@@ -755,6 +771,9 @@ _SHAPE_LABELS: "dict[Shape, tuple[str | None, ...]]" = {
     Shape.MAP_TIME_PERIOD:          ("time", "period"),
     Shape.MAP_TIER_FACET:           (None, None),
     Shape.MAP_PERIOD_TIER_FACET:    (None, None, None),
+    # The load level of a part-load curve: any name except ``period`` / ``time`` (label-agnostic, like a tier).
+    Shape.MAP_LOAD:                 (None,),
+    Shape.MAP_PERIOD_LOAD:          ("period", None),
 }
 
 
@@ -915,7 +934,14 @@ _SHAPE_WORDS: "dict[Shape, str]" = {
     Shape.MAP_TIER_FACET: "tiers and price / quantity",
     Shape.MAP_PERIOD_TIER_FACET: "periods, tiers and price / quantity",
 }
+#: A shape said as a whole in user words (:func:`allowed_shapes_in_words`), instead of "a map over ...".
+_SHAPE_PHRASES: "dict[Shape, str]" = {
+    Shape.MAP_LOAD: "a curve (map over load shares)",
+    Shape.MAP_PERIOD_LOAD: "a curve per period (map over periods of maps over load shares)",
+}
 _FACET_SHAPES: "frozenset[Shape]" = frozenset((Shape.MAP_TIER_FACET, Shape.MAP_PERIOD_TIER_FACET))
+#: Part-load curve shapes: the load level is a float level with any name except ``period`` / ``time``.
+_CURVE_SHAPES: "frozenset[Shape]" = frozenset((Shape.MAP_LOAD, Shape.MAP_PERIOD_LOAD))
 
 
 def _levels(n: int) -> str:
@@ -927,9 +953,11 @@ def allowed_shapes_in_words(allowed: "set[Shape]") -> str:
     parts: list[str] = []
     if allowed & {Shape.SCALAR, Shape.SCALAR_STR}:
         parts.append("a constant")
+    for shape in sorted(allowed & set(_SHAPE_PHRASES), key=shape_rank):
+        parts.append(_SHAPE_PHRASES[shape])
     by_rank: "dict[int, list[Shape]]" = {}
     for shape in allowed:
-        if shape_rank(shape):
+        if shape_rank(shape) and shape not in _SHAPE_PHRASES:
             by_rank.setdefault(shape_rank(shape), []).append(shape)
     for rank in sorted(by_rank):
         over = " or over ".join(_SHAPE_WORDS[s] for s in sorted(by_rank[rank], key=lambda s: s.value))
@@ -949,7 +977,9 @@ def _label_path_problem(path: "tuple[str | None, ...]", allowed: "set[Shape]",
     that depth has at that level (a period / time parameter places its levels by label, so there the order of
     ``period`` and ``time`` is free).  Silent labels (``x`` / empty) are accepted: their axis is decided from
     the value's keys later.  Price-ladder levels: level 1 of a 3-level ladder is the period (named ``period``
-    or unnamed); the tier and price / quantity levels may have any name except ``period`` / ``time``.
+    or unnamed); the tier and price / quantity levels may have any name except ``period`` / ``time``.  Part-load
+    curve levels: level 1 of a 2-level curve is the period (named ``period`` or unnamed); the load level may have
+    any name except ``period`` / ``time``.
     """
     norm = ["time" if n == "t" else n for n in (_normalise_label(lbl) for lbl in path)]
     depth = len(norm)
@@ -970,6 +1000,16 @@ def _label_path_problem(path: "tuple[str | None, ...]", allowed: "set[Shape]",
             if n in ("period", "time"):
                 return (f"level {pos + 1} of the value is named {path[pos]!r}, but that is a tier or a "
                         "price / quantity level")
+        return None
+    if all(s in _CURVE_SHAPES for s in candidates):
+        for pos, n in explicit:
+            if depth == 2 and pos == 0:
+                if n != "period":
+                    return (f"level 1 of the value is named {path[pos]!r}; level 1 of a 2-level curve is the "
+                            "period (name it 'period' or leave it unnamed)")
+                continue
+            if n in ("period", "time"):
+                return f"level {pos + 1} of the value is named {path[pos]!r}, but that is the load share level"
         return None
     for shape in candidates:
         labels = _SHAPE_LABELS[shape]
@@ -998,21 +1038,39 @@ def _check_entity_label_paths(source: "InputSource", entity_class: str, paramete
             paths = fn(entity_class, parameter_name)
         except KeyError:
             return True
-        pt = (entity_class, parameter_name) in PERIOD_TIME_PARAMS
-        problems = []
-        for entity, path in sorted(paths.items()):
-            problem = _label_path_problem(tuple(path), allowed, pt)
-            if problem is not None:
-                problems.append(f"{entity_class} {_entity_text(entity)!r}, parameter {parameter_name!r}: "
-                                f"{problem}")
-        if problems:
-            more = f" (and {len(problems) - 5} more)" if len(problems) > 5 else ""
-            raise FlexToolConfigError(
-                f"{'; '.join(problems[:5])}{more}. This parameter takes {allowed_shapes_in_words(allowed)}. "
-                "Name the map's index levels 'period' / 'time' as the parameter expects, or leave them unnamed.")
+        message = entity_label_path_error(entity_class, parameter_name, paths, allowed)
+        if message is not None:
+            raise FlexToolConfigError(message)
         return True
 
     _run_memo(source, ("entity_label_path_check", entity_class, parameter_name), check)
+
+
+def entity_label_path_error(entity_class: str, parameter_name: str,
+                            paths: "dict[tuple[str, ...], tuple[str | None, ...]]",
+                            allowed: "set[Shape] | None" = None) -> "str | None":
+    """The error message for the entities whose raw label path (``{entity: path}``, ``()`` for a constant) cannot
+    be one of the *allowed* shapes (default: the parameter's :data:`PARAM_ALLOWED_SHAPES` entry), or ``None``.
+
+    Shared by the reader's check (:func:`_check_entity_label_paths`) and the input derivation's checks of the raw
+    database values (``input_derivation._validators``), so both give the same message."""
+    if allowed is None:
+        allowed = PARAM_ALLOWED_SHAPES[(entity_class, parameter_name)]
+    pt = (entity_class, parameter_name) in PERIOD_TIME_PARAMS
+    problems = []
+    for entity, path in sorted(paths.items()):
+        problem = _label_path_problem(tuple(path), allowed, pt)
+        if problem is not None:
+            problems.append(f"{entity_class} {_entity_text(entity)!r}, parameter {parameter_name!r}: {problem}")
+    if not problems:
+        return None
+    more = f" (and {len(problems) - 5} more)" if len(problems) > 5 else ""
+    if allowed <= _CURVE_SHAPES:
+        hint = "Name level 1 of a curve per period 'period' or leave it unnamed."
+    else:
+        hint = "Name the map's index levels 'period' / 'time' as the parameter expects, or leave them unnamed."
+    return (f"{'; '.join(problems[:5])}{more}. This parameter takes {allowed_shapes_in_words(allowed)}. "
+            f"{hint}")
 
 
 class _UnrecognisedIndex(Exception):
@@ -2493,6 +2551,78 @@ def facet_long_frame(
 
     raise FlexToolConfigError(
         f"facet_long_frame: unsupported shape {resolved.shape!r} (expected a facet-leaf shape).")
+
+
+# ---------------------------------------------------------------------------
+# Part-load curves (unit.piecewise_linear_efficiency)
+# ---------------------------------------------------------------------------
+
+
+def _float_key(value) -> float:
+    """A load key read with Python ``float()`` on the stored value (a float index stays the same float; a
+    string key is parsed once, never through a polars Float -> Utf8 -> Float round trip)."""
+    return float(value)
+
+
+def piecewise_curve_frame(source: "InputSource", entity_class: str = "unit",
+                          parameter_name: str = "piecewise_linear_efficiency") -> pl.DataFrame:
+    """The whole authored part-load curves ``(p, d, load, eff)`` of ``entity_class.parameter_name`` (Utf8 ``p`` /
+    ``d``, Float64 ``load`` / ``eff``): ``d`` is the period of a curve per period (:data:`Shape.MAP_PERIOD_LOAD`)
+    and null for one curve for every period (:data:`Shape.MAP_LOAD`); the load keys go through
+    :func:`flextool.engine.input._piecewise_curve.normalise_load`.  Every period of the value is kept (the
+    classifiers read the whole curve); a solve's periods are not applied here.
+
+    Each entity's raw label path is checked first (:func:`_check_entity_label_paths`: a constant or a 3-level
+    value, a period / time name on the load level, or a level 1 of a 2-level value named other than ``period``
+    raises :class:`FlexToolConfigError` naming the entity).  Entities of the two depths are read from separate
+    views of the source (:func:`_view_without`), so a 1-level curve's keys are never placed into the period
+    column of a 2-level one.  The index columns are taken by position.  Empty when no entity has a curve.
+    """
+    from flextool.engine.input._piecewise_curve import CURVE_SCHEMA, normalise_load
+
+    empty = pl.DataFrame(schema=CURVE_SCHEMA)
+    fn = getattr(source, "parameter_entity_label_paths", None)
+    try:
+        paths = fn(entity_class, parameter_name) if fn is not None else None
+    except KeyError:
+        return empty
+    allowed = PARAM_ALLOWED_SHAPES[(entity_class, parameter_name)]
+    if paths is not None:
+        if not paths:
+            return empty
+        _check_entity_label_paths(source, entity_class, parameter_name, allowed)
+        by_depth: "dict[int, list[tuple[str, ...]]]" = {}
+        for ent, path in paths.items():
+            by_depth.setdefault(len(path), []).append(ent)
+        views = []
+        for depth in sorted(by_depth):
+            others = frozenset(e for dd, ents in by_depth.items() if dd != depth for e in ents)
+            views.append(_view_without(source, entity_class, parameter_name, others, "curve_depth")
+                         if others else source)
+    else:
+        views = [source]
+    rows: list[tuple[str, "str | None", float, float]] = []
+    for view in views:
+        df = _try_parameter_frame(view, entity_class, parameter_name)
+        if df is None or df.height == 0:
+            continue
+        ent_col = "name" if "name" in df.columns else df.columns[0]
+        idx_cols = [c for c in df.columns if c not in (ent_col, "value")]
+        if len(idx_cols) not in (1, 2):
+            raise FlexToolConfigError(
+                f"piecewise_curve_frame: internal error -- a {entity_class}.{parameter_name} frame has "
+                f"{len(idx_cols)} index column(s) (expected 1: load, or 2: period, load); columns={df.columns!r}.")
+        period_col = idx_cols[0] if len(idx_cols) == 2 else None
+        cols = [ent_col] + ([period_col] if period_col else []) + [idx_cols[-1], "value"]
+        for row in df.select(*(pl.col(c) if c in (idx_cols[-1], "value") else pl.col(c).cast(pl.Utf8)
+                               for c in cols)).iter_rows():
+            if row[-1] is None or row[-2] is None:
+                continue
+            d = row[1] if period_col else None
+            rows.append((row[0], d, normalise_load(_float_key(row[-2])), float(row[-1])))
+    if not rows:
+        return empty
+    return pl.DataFrame(rows, schema=CURVE_SCHEMA, orient="row").sort("p", "d", "load", nulls_last=False)
 
 
 # ---------------------------------------------------------------------------
