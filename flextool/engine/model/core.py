@@ -1860,7 +1860,9 @@ def _eq_node_balance_period(b: _Build) -> None:
            for key, term in b.node_balance_flow_terms.items()}
     inflow_period = Param(("n", "d"), ((d.p_inflow * d.p_timestep_weight).frame.lazy()
                                        .join(d.nodeBalancePeriod.select("n").lazy(), on="n", how="inner")
-                                       .group_by("n", "d")
+                                       # Fixed summation order (the join leaves row order unspecified).
+                                       .sort("n", "d", "t")
+                                       .group_by("n", "d", maintain_order=True)
                                        .agg(pl.col("value").sum())
                                        .select("n", "d", "value")
                                        .collect()))
@@ -1894,7 +1896,9 @@ def _fix_quantity_target(b: _Build) -> "pl.DataFrame | None":
               .join(d.dtt_timeline_matching, on=["d", "t_upper"], how="inner")
               .join(d.period_last, on="d", how="inner")
               .join(d.nodeState_last_dt, on=["n", "d", "t"], how="inner")
-              .group_by(["n", "d", "t"])
+              # Fixed summation order: the joins above leave row order unspecified.
+              .sort(["n", "d", "t", "d_upper", "t_upper"])
+              .group_by(["n", "d", "t"], maintain_order=True)
               .agg(pl.col("value").sum())
               .select("n", "d", "t", "value"))
     return target if target.height > 0 else None
@@ -1950,7 +1954,7 @@ def _fix_usage_target(b: _Build) -> "pl.DataFrame | None":
               # Fixed summation order: the joins above leave row order
               # hash-dependent, which changes the float sum in the last bit.
               .sort(["n", "d", "t", "d_upper", "t_upper"])
-              .group_by(["n", "d", "t"])
+              .group_by(["n", "d", "t"], maintain_order=True)
               .agg(pl.col("value").sum())
               .select("n", "d", "t", "value"))
     return target if target.height > 0 else None
@@ -4247,7 +4251,7 @@ def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_ter
     _check_covers_dt(d, "p_timestep_weight", feature)
     _check_covers_dt(d, "p_step_duration", feature)
     w = d.p_step_duration * d.p_timestep_weight / d.p_period_share
-    w_frame = _collected(w.frame)
+    w_frame = _collected(w.frame).sort("d", "t")
     hours = Param(("d",), w_frame.group_by("d", maintain_order=True).agg(pl.col("value").sum()))
     # The periods the solve holds whole (window_fraction 1); the others have no row.
     whole = None
@@ -4399,7 +4403,8 @@ def _user_constraint_carried(d, coef: "Param | None", kind: str, *, node: bool, 
     carried, coef_frame = align_join_dtypes(carried, coef.frame.rename({"value": "coef"}), [axis])
     frame = (carried.join(coef_frame, on=axis, how="inner")
              .with_columns(value=pl.col("value") * pl.col("coef") * sign))
-    frame = _collected(frame.group_by(["cn", "d"]).agg(pl.col("value").sum()).select("cn", "d", "value"))
+    frame = _collected(frame.sort("cn", "d", axis).group_by(["cn", "d"], maintain_order=True)
+                       .agg(pl.col("value").sum()).select("cn", "d", "value"))
     return Param(("cn", "d"), frame) if frame.height > 0 else None
 
 
@@ -4421,7 +4426,9 @@ def _user_constraint_existing(d, coef: "Param | None", *, node: bool) -> "Param 
                  .with_columns(cap=pl.col("ec") * pl.col("us"))
                  .join(coef.frame.rename({"value": "coef"}), on="p", how="inner")
                  .with_columns(value=pl.col("cap") * pl.col("coef")))
-    frame = _collected(frame.group_by(["cn", "d"]).agg(pl.col("value").sum()).select("cn", "d", "value"))
+    # Fixed summation order over the members (the joins leave row order unspecified).
+    frame = _collected(frame.sort("cn", "d", "n" if node else "p").group_by(["cn", "d"], maintain_order=True)
+                       .agg(pl.col("value").sum()).select("cn", "d", "value"))
     return Param(("cn", "d"), frame) if frame.height > 0 else None
 
 
