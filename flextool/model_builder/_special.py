@@ -1,7 +1,7 @@
 """Numpy/stdlib special functions used by the profile generator.
 
-FlexTool does not depend on scipy.  The synthetic-profile generator
-(:mod:`flextool.model_builder.profiles`) needs only two special functions
+The synthetic-profile generator (:mod:`flextool.model_builder.profiles`)
+does not need scipy: it needs only two special functions
 to map an AR(1) standard-normal series to a PERT (beta) range:
 
 * :func:`norm_cdf` -- the standard normal CDF Phi(x);
@@ -93,7 +93,7 @@ def betainc(x: np.ndarray | float, a: float, b: float) -> np.ndarray:
     if a <= 0.0 or b <= 0.0:
         raise ValueError(f"betainc needs a, b > 0 (got a={a}, b={b})")
     xa = np.clip(np.asarray(x, dtype=float), 0.0, 1.0)
-    out = np.empty_like(xa)
+    out = np.full_like(xa, np.nan)
     out[xa <= 0.0] = 0.0
     out[xa >= 1.0] = 1.0
     inner = (xa > 0.0) & (xa < 1.0)
@@ -152,7 +152,7 @@ def beta_ppf(u: np.ndarray | float, a: float, b: float) -> np.ndarray:
     ua = np.asarray(u, dtype=float)
     shape = ua.shape
     uf = ua.ravel()
-    out = np.where(uf >= 1.0, 1.0, 0.0)
+    out = np.where(np.isnan(uf), np.nan, np.where(uf >= 1.0, 1.0, 0.0))
     active_idx = np.nonzero((uf > 0.0) & (uf < 1.0))[0]
     if active_idx.size == 0:
         return out.reshape(shape)
