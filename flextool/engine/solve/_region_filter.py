@@ -39,6 +39,7 @@ Public surface
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 import dataclasses
@@ -1175,17 +1176,15 @@ def _build_region_data(
     return new
 
 
-#: Benders mode sentinel for the cross-region half-flow ``maxFlow``
-#: capacity.  The real ``f ≤ C·unitsize`` limit lives in the master, so
-#: the per-region half-flow must be effectively uncapped.  The largest
-#: achievable physical flow is bounded by the connection's
-#: ``invest_max_total · unitsize`` (and ``v_flow`` is normalised by
-#: unitsize, so in solver units it is bounded by ``invest_max_total``);
-#: 1e12 is comfortably ≫ any realistic ``invest_max_total``, so the
-#: half-flow's ``maxFlow`` row is structurally slack for any flow the
-#: master could pin — it can never bind and therefore cannot leak a dual
-#: into the per-region subproblem (Phase-1 Claim 4).
-_BENDERS_UNCAP_SENTINEL: float = 1e12
+#: Benders mode capacity of the cross-region half-flow ``maxFlow``.  The
+#: real ``f ≤ C·unitsize`` limit lives in the master, so the per-region
+#: half-flow is uncapped: an existing capacity of ``inf`` is no limit, and
+#: the model leaves such a ``maxFlow`` row out (``core._without_no_limit_rows``)
+#: — it cannot bind or leak a dual into the per-region subproblem (Phase-1
+#: Claim 4).  A finite stand-in (formerly 1e12) would instead be a real
+#: limit 12 decades above the flows: it widened the region's bound / RHS
+#: range for the autoscaler and the scaling guard for nothing.
+_BENDERS_UNCAP_SENTINEL: float = math.inf
 
 
 def _inject_half_flows(

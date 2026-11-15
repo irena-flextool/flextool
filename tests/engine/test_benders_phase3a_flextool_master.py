@@ -268,17 +268,27 @@ def test_region_layer2_fires_and_matches_unscaled(
     seen = {"regions": 0, "with_plan": 0}
     _real_apply = _b._apply_region_autoscale
 
-    def _spy_apply(pb, cfg, name):
-        plan = _real_apply(pb, cfg, name)
+    def _spy_apply(pb, cfg, name, **kwargs):
+        plan = _real_apply(pb, cfg, name, **kwargs)
         seen["regions"] += 1
         seen["with_plan"] += int(plan is not None)
         return plan
 
     monkeypatch.setattr(_b, "_apply_region_autoscale", _spy_apply)
     monkeypatch.setenv("FLEXTOOL_SCALING", "full")
+    # The regions' own spread does not reach the default 6-decade trigger
+    # since the cross-region half-flows carry an inf capacity (no limit, no
+    # row) instead of the former 1e12 stand-in, which alone tripped it.  A
+    # 1-decade trigger keeps Layer 2 firing here, so this still guards the
+    # region pin / unscale sharp edges.
+    import dataclasses
+
+    from flextool.engine.autoscale import resolve_scaling_config
+
+    low_trigger = dataclasses.replace(resolve_scaling_config(None), threshold_decades=1.0)
     scaled = solve_benders(
         ti_data, _REGIONS, max_iters=20, tol=1e-4,
-        monolith_objective=M, master="flextool",
+        monolith_objective=M, master="flextool", scaling_config=low_trigger,
     )
 
     assert seen["regions"] == len(_REGIONS)

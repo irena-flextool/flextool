@@ -1153,6 +1153,23 @@ def _arcs_semi(frame: pl.DataFrame, arcs: pl.DataFrame) -> pl.DataFrame:
             .select(frame.columns).collect())
 
 
+def _without_no_limit_rows(over: pl.DataFrame, rhs: "Param | None") -> pl.DataFrame:
+    """``over`` without the rows whose ``rhs`` is +inf: a capacity of inf is no limit, so such a row is left
+    out (the Benders splitter gives a cross-region half-flow an inf capacity; the master holds the real one).
+    Keys are matched as Utf8 on the dims ``rhs`` and ``over`` share; ``over`` comes back unchanged (same object)
+    when ``rhs`` has no inf value."""
+    if rhs is None or over.height == 0:
+        return over
+    inf = rhs.frame.filter(pl.col("value") == float("inf"))
+    if inf.height == 0:
+        return over
+    keys = [k for k in rhs.dims if k in over.columns]
+    return (_utf8_keys(over.lazy(), keys)
+            .join(_utf8_keys(inf.lazy().select(keys), keys).select([f"_{k}" for k in keys]).unique(),
+                  on=[f"_{k}" for k in keys], how="anti")
+            .select(over.columns).collect())
+
+
 def _source_reserve_arcs(unit_arcs: pl.DataFrame, sel: pl.DataFrame, *, direct: bool) -> pl.DataFrame:
     """The unit arcs ``(p, source, sink)`` of the class of ``sel`` (direct input→output arcs, or arcs whose
     v_flow is the input) whose ``(p, source)`` carries a reserve of ``sel``."""
@@ -2147,6 +2164,8 @@ def _eq_max_flow(b: _Build) -> None:
     # when it carries such a reserve (its v_flow bound stays, redundant).
     # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
     #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # A row whose RHS is inf (existing capacity inf: no limit; the Benders splitter's cross-region half-flows)
+    #   is left out, here and in maxFlow_back.
     lhs: dict = {"flow": b.v_flow}
     if b.reserve_up_to_sink_units is not None:
         lhs["reserve_up"] = b.reserve_up_to_sink_units
@@ -2161,6 +2180,7 @@ def _eq_max_flow(b: _Build) -> None:
         bound_with_reserve = _arcs_semi(b.flow_bound_arcs, b.reserve_down_input_arcs)
         if bound_with_reserve.height > 0:
             over = pl.concat([over, _arcs_semi(pss_dt, bound_with_reserve)])
+    over = _without_no_limit_rows(over, b.flow_upper_rhs)
     if over.height > 0:
         _coarse_flows.add_cstr(
             b, "maxFlow",
@@ -2199,7 +2219,8 @@ def _eq_max_flow(b: _Build) -> None:
     # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
     #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
     if b.v_flow_back is not None and b.twoway1var_arcs is not None:
-        back_over = pss_dt.join(b.twoway1var_arcs, on=("p", "source", "sink"), how="inner")
+        back_over = _without_no_limit_rows(
+            pss_dt.join(b.twoway1var_arcs, on=("p", "source", "sink"), how="inner"), b.flow_upper_rhs)
         if back_over.height > 0:
             back_lhs: dict = {"flow_back": b.v_flow_back}
             back_lhs.update({k: lhs[k] for k in ("invest_neg", "divest") if k in lhs})

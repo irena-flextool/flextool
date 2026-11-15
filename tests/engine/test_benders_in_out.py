@@ -302,7 +302,15 @@ def test_in_out_on_converges_to_same_optimum(
     the loop converges to the SAME monolith optimum with a valid lower bound —
     the optimum is unchanged, only the cut-generation point moves (plan §5)."""
     monkeypatch.setenv(_BENDERS_IN_OUT_WEIGHT_ENV, weight)
-    res = _solve(retuned_data, retuned_monolith)
+    # At the production objective scale (the legacy 1e-6 every solve gets):
+    # the Benders master is not autoscaled, and with the raw ~1e9 objective
+    # λ=0.7 ran into a HiGHS kSolveError on the master at iteration 11 (λ 0.65
+    # and 0.75 converge) once the region subproblems lost the 1e12 half-flow
+    # stand-in that had changed their Layer 3 exponents.
+    res = solve_benders(
+        retuned_data, _REGIONS, max_iters=20, tol=1e-4,
+        monolith_objective=retuned_monolith, scale_the_objective=1e-6,
+    )
     assert res.converged, (
         f"in-out (λ={weight}) did not converge: gap={res.gap:.3e} after "
         f"{res.iterations} iters"
