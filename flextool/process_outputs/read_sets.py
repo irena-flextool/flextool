@@ -469,6 +469,13 @@ def read_sets(
         names=["process", "source", "sink"],
     )
 
+    # process_source_sink_uncapped: the conversion_flow_coeff = 0 arcs (no per-arc capacity, ramp or min-load
+    # row in the model); the ramp envelope leaves them out.
+    s.process_source_sink_uncapped = _multi_index_or_empty(
+        getattr(flex_data, "process_source_sink_uncapped", None), dims=("p", "source", "sink"),
+        names=["process", "source", "sink"],
+    )
+
     # process_method_sources_sinks — derived (method/orig_source/orig_sink/
     # always_source/always_sink).  FlexData doesn't carry these explicit
     # fields, so we run a 3-way join.
@@ -920,6 +927,27 @@ def read_sets(
             pdf, names=["solve", "period", "time", "period_previous", "time_previous"])
     else:
         s.ramp_link = empty_multi_index(["solve", "period", "time", "period_previous", "time_previous"])
+
+    # ramp_carry — the ramp_link rows of a continuation roll's first step that continue from the previous roll's
+    # last realized step (dt_ramp_carry, without the steps that also have an adjacent link): the model builds
+    # their ramp rows whatever the ramp room (``core._ramp_rows``); the ramp envelope reads them for the same rule.
+    carry = getattr(flex_data, "dt_ramp_carry", None)
+    if carry is not None and carry.height > 0:
+        cols = ("d", "t", "d_previous", "t_previous")
+        carry_u = carry.select(pl.col(c).cast(pl.Utf8) for c in cols)
+        linked = getattr(flex_data, "dt_ramp_link", None)
+        if linked is not None and linked.height > 0:
+            carry_u = carry_u.join(linked.select(pl.col(c).cast(pl.Utf8) for c in ("d", "t")),
+                                   on=["d", "t"], how="anti")
+        pdf = (carry_u.unique()
+               .with_columns(pl.lit(solve_name).alias("solve"))
+               .select("solve", *cols)
+               .sort(["solve", "d", "t"])
+               .to_pandas())
+        s.ramp_carry = pd.MultiIndex.from_frame(
+            pdf, names=["solve", "period", "time", "period_previous", "time_previous"])
+    else:
+        s.ramp_carry = empty_multi_index(["solve", "period", "time", "period_previous", "time_previous"])
 
     s.period__time_first = empty_multi_index(["solve", "period", "time"])
     s.period_first_of_solve = empty_multi_index(["solve", "period"])

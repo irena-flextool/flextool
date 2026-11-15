@@ -383,6 +383,37 @@ def _pdtX_multi_col(
     return out
 
 
+def _pdt_long_multi_col(
+    frame: "pl.DataFrame | None",
+    *,
+    solve_name: str,
+    col_dims: tuple[str, ...],
+    col_names: tuple[str, ...],
+) -> pd.DataFrame:
+    """A long polars frame ``(*col_dims, d, t, value)`` → wide pandas with row ``(solve, period, time)`` × column
+    (Multi)Index over ``col_dims`` (a plain ``Index`` for one dim); no rows and no columns when ``frame`` is
+    ``None`` / empty.  Cells without a row are NaN."""
+    if frame is None or frame.height == 0:
+        idx = pd.MultiIndex.from_arrays([[], [], []], names=["solve", "period", "time"])
+        out = pd.DataFrame(index=idx, dtype=float)
+        if len(col_names) == 1:
+            out.columns = pd.Index([], dtype="object", name=col_names[0])
+        else:
+            out.columns = pd.MultiIndex.from_arrays([[]] * len(col_names), names=list(col_names))
+        return out
+    out = wide_multi_col(
+        with_solve_column(frame, solve_name),
+        row_dims=("solve", "d", "t"),
+        col_dims=col_dims,
+        row_names=("solve", "period", "time"),
+        col_names=col_names,
+    )
+    if len(col_names) == 1 and isinstance(out.columns, pd.MultiIndex):
+        out.columns = out.columns.get_level_values(0)
+        out.columns.name = col_names[0]
+    return out
+
+
 def _build_pssdt_varCost_alwaysProcess(
     flex_data: "FlexData",
     *,
@@ -1261,6 +1292,29 @@ def read_parameters(
         flex_data.p_process_availability, solve_name=solve_name,
         entity_dim="p", col_name="process", flex_data=flex_data,
     )
+
+    # The per-solve inputs of the ramp envelope (calc_ramp_envelope, _ramp_inputs): the capacity multiplier of
+    # each unit arc's maxFlow row, its floor per unit online, the ramp-limit speeds and the ramp row's capacity
+    # factor c of this solve's ramp-limit sets, and the coarse steps of the coarse processes.  Solve-keyed, so
+    # after the union each step carries the values of the solve that realized it.
+    from flextool.process_outputs import _ramp_inputs
+    _arc = ("process", "source", "sink")
+    p.process_arc_cap_coef_dt = _pdt_long_multi_col(
+        _ramp_inputs.arc_capacity_factor(flex_data), solve_name=solve_name,
+        col_dims=("p", "source", "sink"), col_names=_arc)
+    p.process_arc_floor_share_dt = _pdt_long_multi_col(
+        _ramp_inputs.arc_floor_share(flex_data), solve_name=solve_name,
+        col_dims=("p", "source", "sink"), col_names=_arc)
+    _speed, _coef = _ramp_inputs.ramp_limits(flex_data)
+    p.process_ramp_limit_dt = _pdt_long_multi_col(
+        _speed, solve_name=solve_name, col_dims=("p", "source", "sink", "limit"), col_names=(*_arc, "limit"))
+    p.process_ramp_cap_coef_dt = _pdt_long_multi_col(
+        _coef, solve_name=solve_name, col_dims=("p", "source", "sink", "limit"), col_names=(*_arc, "limit"))
+    _coarse_dur, _coarse_last = _ramp_inputs.coarse_steps(flex_data)
+    p.process_coarse_step_duration_dt = _pdt_long_multi_col(
+        _coarse_dur, solve_name=solve_name, col_dims=("p",), col_names=("process",))
+    p.process_coarse_step_last_dt = _pdt_long_multi_col(
+        _coarse_last, solve_name=solve_name, col_dims=("p",), col_names=("process",))
 
     # process_source_sink_varCost — (solve, period, time) × (process, source, sink).
     #

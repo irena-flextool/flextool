@@ -63,6 +63,9 @@ _PAR_DROP = [
     'ladder_price_ann',
     'reserve_upDown_group_reservation',
     'reserve_upDown_group_shortfall_scale', 'profile',
+    # The per-solve inputs of the ramp envelope (calc_ramp_envelope): the realizing solve's values per step.
+    'process_arc_cap_coef_dt', 'process_arc_floor_share_dt', 'process_ramp_limit_dt', 'process_ramp_cap_coef_dt',
+    'process_coarse_step_duration_dt', 'process_coarse_step_last_dt',
     # The invest / divest lumps come from the solve that realizes the
     # decision period only (persist_realized_slice); keep='last' ties the
     # rolls of one solve.
@@ -363,6 +366,9 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
     s.ramp_link = s.ramp_link.droplevel('solve')
     ramp_pt = s.ramp_link.droplevel(['period_previous', 'time_previous'])
     s.ramp_link = s.ramp_link[ramp_pt.isin(s.dt_realize_dispatch) & ~ramp_pt.duplicated(keep='last')]
+    s.ramp_carry = s.ramp_carry.droplevel('solve')
+    carry_pt = s.ramp_carry.droplevel(['period_previous', 'time_previous'])
+    s.ramp_carry = s.ramp_carry[carry_pt.isin(s.dt_realize_dispatch) & ~carry_pt.duplicated(keep='last')]
     s.dtttdt = s.dtttdt.droplevel('solve')
     dtttdt_pt = s.dtttdt.droplevel(['t_previous', 't_previous_within_timeset', 'd_previous', 't_previous_within_solve'])
     s.dtttdt = s.dtttdt[dtttdt_pt.isin(s.dt_realize_dispatch) & ~dtttdt_pt.duplicated(keep='last')]
