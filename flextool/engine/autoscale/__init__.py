@@ -69,6 +69,7 @@ from ._guard import (
     run_guard,
 )
 from ._guard import enforce as enforce_scaling_guard
+from ._guard import warn_could_not_run as warn_guard_could_not_run
 from ._quantity_types import QuantityType, lookup, resolve_group_capacity_type
 from ._report import format_console_summary, format_nonoptimal_hint, render_guard, write_report
 
@@ -116,5 +117,6 @@ __all__ = [
     "resolve_user_bound_scale_override",
     "run_guard",
     "unscale_solution",
+    "warn_guard_could_not_run",
     "write_report",
 ]

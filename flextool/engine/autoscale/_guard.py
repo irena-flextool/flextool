@@ -81,8 +81,16 @@ COMMERCIAL_TOLERANCE_PARAMETERS: dict[str, tuple[str, str]] = {
 }
 COMMERCIAL_DEFAULT_TOLERANCE = 1e-6
 
-_OVERRIDE_ERROR = "To solve anyway: --scaling-guard warn (FLEXTOOL_SCALING_GUARD=warn)."
-_OVERRIDE_WARN = "The solve continues; --scaling-guard off (FLEXTOOL_SCALING_GUARD=off) hides this check."
+#: The override hints name the terminal flag, its environment variable and
+#: the GUI setting (Solver options → Scaling guard), so the same text serves
+#: every way of starting a run.
+_OVERRIDE_ERROR = ("To solve anyway: --scaling-guard warn (FLEXTOOL_SCALING_GUARD=warn; in the GUI: "
+                   "Solver options, Scaling guard: Warn).")
+_OVERRIDE_WARN = ("The solve continues; --scaling-guard off (FLEXTOOL_SCALING_GUARD=off; in the GUI: "
+                  "Solver options, Scaling guard: Off) hides this check.")
+#: A pre-Layer-2 bound / RHS spread above this many decades does not fit the
+#: tolerance window (17 decades), so ``--scaling basic`` (no Layer 2) stops.
+_BASIC_STOP_DECADES = 17.0
 
 
 def resolve_guard_mode(run_options: "RunOptions | None") -> str:
@@ -309,11 +317,12 @@ def _dims(entry: Mapping[str, Any]) -> str:
 
 
 def _end_line(label: str, side: str, finding: Finding, located: Mapping[str, list],
-              suffix: str = "") -> str | None:
-    """``"  Largest:  1e+18 (model units) in <family> (<kind>) at <dims>"``, or
-    with several entries one ``dims`` line each (at most :data:`LOCATE_K`) and
-    the count of the family's values within 10x of the end.  ``suffix`` is
-    added to the first line."""
+              hint: str = "") -> str | None:
+    """``"  Largest:  1e+18 (model units) in <family> (<kind>) at <dims>"``.
+    When more than one value of the family lies within 10x of the end, the
+    count follows with one ``dims`` line for each of those named (at most
+    :data:`LOCATE_K`; entries farther than 10x are not listed).  ``hint`` (a
+    sentence) closes the single line, or follows the list on its own line."""
     ext = (finding.extremes or {}).get(side)
     entries = located.get(side) or []
     if ext is None and not entries:
@@ -327,20 +336,28 @@ def _end_line(label: str, side: str, finding: Finding, located: Mapping[str, lis
         value = ext.post
     head = f"  {label} {_g(abs(value))} (model units) in {family} ({kind})"
     if not entries:
-        return head + suffix
+        return f"{head} — {hint}" if hint else head
     count = int(entries[0].get("count_within_factor") or 0)
-    if len(entries) == 1 and count <= 1:
-        return f"{head} at {_dims(entries[0]) or '(no dimensions)'}{suffix}"
+    if count <= 1:
+        single = f"{head} at {_where(entries[0])}"
+        return f"{single} — {hint}" if hint else single
     factor = entries[0].get("factor", 10.0)
-    lines = [f"{head}{suffix}, {count} values within {factor:g}x of it, e.g. at:"]
-    for e in entries:
-        where = _dims(e) or "(no dimensions)"
-        column = e.get("column")
-        if column:
-            cdims = ", ".join(f"{k}={v}" for k, v in (column.get("dims") or {}).items())
-            where += f"  (column {column.get('family')}: {cdims})"
-        lines.append(f"      {where}")
+    lines = [f"{head}, {count} values within {factor:g}x of it, e.g. at:"]
+    lines.extend(f"      {_where(e)}" for e in entries[:count])
+    if hint:
+        lines.append(f"      {hint[:1].upper()}{hint[1:]}")
     return "\n".join(lines)
+
+
+def _where(entry: Mapping[str, Any]) -> str:
+    """The dimensions of one located entry (and of its column, for a
+    coefficient)."""
+    where = _dims(entry) or "(no dimensions)"
+    column = entry.get("column")
+    if column:
+        cdims = ", ".join(f"{k}={v}" for k, v in (column.get("dims") or {}).items())
+        where += f"  (column {column.get('family')}: {cdims})"
+    return where
 
 
 def format_finding(
@@ -446,33 +463,37 @@ def _format_bound_rhs(
     ext = (f.extremes or {}).get("max")
     model = located.get("max", [{}])[0].get("model") if located.get("max") else (
         ext.model if ext is not None else math.nan)
-    hint = (' — a stand-in for "no limit"? Use inf'
+    hint = ('a stand-in for "no limit"? Use inf.'
             if isinstance(model, float) and math.isfinite(model) and model >= 1e10 else "")
-    big = _end_line("Largest: ", "max", f, located, suffix=hint)
+    big = _end_line("Largest: ", "max", f, located, hint=hint)
     if big:
         lines.append(big)
     small = _end_line("Smallest:", "min", f, located)
     if small:
         lines.append(small)
     if f.level == "error" and not fits:
-        lines.append(f"  Fitting the largest value would let a limit be violated by up to "
+        lines.append(f"  Fitting the largest value, the smallest limit could be violated by up to "
                      f"{_g(n['fit_large_violation_model'])} (model units), "
-                     f"{_g(n['fit_large_violation_ratio'])}x the smallest limit.")
+                     f"{_g(n['fit_large_violation_ratio'])}x its size.")
         if plan.bound_tag.startswith("unscalable") and not commercial:
             lines.append(f"  FlexTool keeps the smallest limit enforceable (user_bound_scale "
                          f"{int(n.get('n_used', 0))}): the largest values, at {_g(n['s_hi'])} after "
                          f"scaling, are then beyond {_g(n['window_hi'])}.")
     else:
-        scale = "" if commercial else f"With user_bound_scale {int(n.get('n_used', 0))} the "
-        lines.append(f"  {scale or 'The '}solver may violate a limit by up to "
-                     f"{_g(n['violation_model'])} (model units), {100 * n['r_lo']:.3g} % of the "
-                     f"smallest limit.")
+        scale = "" if commercial else f"With user_bound_scale {int(n.get('n_used', 0))}, the"
+        lines.append(f"  {scale or 'The'} smallest limit could be violated by up to "
+                     f"{_g(n['violation_model'])} (model units); every limit by at most "
+                     f"{100 * n['r_lo']:.3g} %.")
     if adjusted_from is not None:
         lines.append(f"  This roll uses user_bound_scale {int(n.get('n_used', 0))} instead of "
                      f"{adjusted_from} (the exponent of the first roll).")
     pre = n.get("decades_pre")
     if layer2_applied and pre is not None and decades > pre + 0.05:
         lines.append(f"  Layer 2 widened the span from {pre:.1f} decades: --scaling basic avoids that.")
+    elif (layer2_applied and pre is not None and f.level != "error" and not commercial
+          and pre > _BASIC_STOP_DECADES):
+        lines.append(f"  Layer 2 narrowed the span from {pre:.1f} decades; under --scaling basic this "
+                     f"would stop.")
     if commercial and f.level == "error":
         lines.append(f"  {solver} gets no FlexTool scaling, so this is a warning only.")
         override = _OVERRIDE_WARN
@@ -507,7 +528,30 @@ def enforce(outcome: GuardOutcome | None, *, base_solve: str) -> None:
         return
     for m in outcome.messages:
         prefix = "Warning: " if not m.text.startswith("Warning") else ""
-        warn_once(("scaling_guard", base_solve, outcome.region, m.group), prefix + m.text)
+        warn_once(_warn_key(base_solve, outcome.region, m.group, m.level,
+                            outcome.adjusted_bound_scale), prefix + m.text)
+
+
+def _warn_key(base_solve: str, region: str | None, group: str, level: str,
+              adjusted: int | None) -> tuple:
+    """The once-per-run key of a guard message: a later roll whose finding
+    turns into an error, or that gets an exponent of its own (``adjusted``,
+    the exponent; ``None`` when the roll kept the cached one), prints
+    again."""
+    return ("scaling_guard", base_solve, region, group, level, adjusted)
+
+
+def warn_could_not_run(*, readout_failed: bool) -> bool:
+    """Print, once per run, that the guard could not judge a solve (the
+    monolith and every Benders region print the same text, under one key).
+    ``readout_failed``: the Layer 3 range readout was missing; otherwise the
+    check itself failed.  Returns True when it printed (the caller then logs
+    the details)."""
+    from flextool.engine._behaviour_changes import warn_once
+
+    why = " (the range readout failed)" if readout_failed else ""
+    return warn_once(("scaling_guard_failed",), f"Warning: the scaling guard could not run{why}; "
+                     "the solves go on unchecked (details in the log).")
 
 
 # ---------------------------------------------------------------------------
@@ -548,13 +592,11 @@ def report_from_hook_ranges(ranges: Mapping[str, Any]) -> RangeReport:
     )
 
 
-_adjust_logged: set = set()
-
-
-def _will_report(verdict: ScalingVerdict, mode: str, base_solve: str, region: str | None) -> bool:
+def _will_report(verdict: ScalingVerdict, mode: str, base_solve: str, region: str | None,
+                 adjusted: int | None = None) -> bool:
     """Whether :func:`enforce` would print or raise something new for
     ``verdict`` (an error under ``error``, or a finding whose warning this run
-    has not printed yet)."""
+    has not printed yet, keyed as :func:`enforce` keys it)."""
     from flextool.engine._behaviour_changes import already_warned
 
     if mode == "off":
@@ -564,7 +606,7 @@ def _will_report(verdict: ScalingVerdict, mode: str, base_solve: str, region: st
             continue
         if f.level == "error" and mode == "error":
             return True
-        if not already_warned(("scaling_guard", base_solve, region, f.group)):
+        if not already_warned(_warn_key(base_solve, region, f.group, f.level, adjusted)):
             return True
     return False
 
@@ -608,6 +650,8 @@ class RollRecheck:
         self.called = False
 
     def __call__(self, ranges: Mapping[str, Any], highs: Any) -> dict[str, Any] | None:
+        from flextool.engine._behaviour_changes import mark_once
+
         self.called = True
         if self.mode == "off" and not _strict() and self.plan.bound_source != "auto":
             return None
@@ -629,9 +673,8 @@ class RollRecheck:
                                          f"({again.bound_tag})")
                 verdict = assess_scaling(report, plan, primal_tol=tol_p, dual_tol=tol_d,
                                          warn_decades=WARN_DECADES)
-                key = ("scaling_guard_roll", self.base_solve)
-                if key not in _adjust_logged:
-                    _adjust_logged.add(key)
+                # Logged once per run and base solve (``start_run`` resets it).
+                if mark_once(("scaling_guard_roll", self.base_solve)):
                     _logger.info(
                         "scaling guard [%s]: the cached user_bound_scale %d leaves the tolerance "
                         "window of this roll; using %d (%s)", self.solve_name, adjusted_from,
@@ -641,7 +684,8 @@ class RollRecheck:
         # Name the entries only when something new is printed or raised: a
         # warning the first roll printed is not printed again, and the walk
         # would cost every roll what the shape cache saves.
-        name_them = _will_report(verdict, self.mode, self.base_solve, None)
+        name_them = _will_report(verdict, self.mode, self.base_solve, None,
+                                 plan.user_bound_scale if adjusted_from is not None else None)
         if name_them:
             report = self._with_extremes(report)
             verdict = assess_scaling(report, plan, primal_tol=tol_p, dual_tol=tol_d,
@@ -697,4 +741,5 @@ __all__ = [
     "report_from_hook_ranges",
     "resolve_guard_mode",
     "run_guard",
+    "warn_could_not_run",
 ]

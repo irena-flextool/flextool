@@ -276,7 +276,7 @@ def test_region_layer2_fires_and_matches_unscaled(
 
     monkeypatch.setattr(_b, "_apply_region_autoscale", _spy_apply)
     monkeypatch.setenv("FLEXTOOL_SCALING", "full")
-    # The regions' own spread does not reach the default 6-decade trigger
+    # The regions' own spread does not reach the default 9-decade trigger
     # since the cross-region half-flows carry an inf capacity (no limit, no
     # row) instead of the former 1e12 stand-in, which alone tripped it.  A
     # 1-decade trigger keeps Layer 2 firing here, so this still guards the

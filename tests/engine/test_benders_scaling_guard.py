@@ -76,6 +76,23 @@ def test_region_warning_under_warn_once_per_region(capsys):
     assert printed.count("Benders region region_Y cannot be scaled") == 1
 
 
+def test_a_region_whose_readout_fails_says_the_guard_could_not_run(monkeypatch, capsys):
+    """As the monolith: one warning per run (two regions here), and both regions go on unscaled."""
+    monkeypatch.delenv("FLEXTOOL_AUTOSCALE_STRICT", raising=False)
+
+    def broken(*a, **k):
+        raise RuntimeError("readout failed")
+
+    monkeypatch.setattr(_benders, "detect_ranges", broken)
+    guard = {"solve_name": "invest_2030", "run_options": RunOptions.from_env({})}
+    for region in ("region_X", "region_Y"):
+        assert _benders._apply_region_autoscale(_wide_region(), _BASIC, region, guard=guard) is None
+    printed = capsys.readouterr().out
+    assert printed.count("Warning: the scaling guard could not run (the range readout failed); the solves "
+                         "go on unchecked (details in the log).") == 1
+    assert "cannot be scaled" not in printed
+
+
 def test_direct_call_without_guard_context_runs_no_guard():
     assert _benders._apply_region_autoscale(_wide_region(), _BASIC, "region_X") is None
 

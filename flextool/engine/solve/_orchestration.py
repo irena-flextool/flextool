@@ -582,6 +582,31 @@ def _autoscale_write_presolve_report(
         logger.exception("autoscale pre-solve report write failed (%s)", yaml_path)
 
 
+def _autoscale_report_recheck_stop(
+    hook: "_AutoscaleRollRecheck | None",
+    *,
+    solve_name: str,
+    logger: logging.Logger,
+    work_folder: "str | os.PathLike | None",
+    ranges: "_AutoscaleRangeReport | None",
+    layer2_plan: "_AutoscaleLayer2Plan | None",
+    scaling_config: "ScalingConfig",
+) -> None:
+    """Rewrite the pre-solve autoscale YAML with the verdict of a roll
+    recheck that stopped the solve call (``ScalingRangeError`` from the
+    ``pre_run_check``, or a later failure in the warm build / ``write_mps``):
+    the file written before the call holds the first roll's replayed
+    verdict, and no post-solve report follows.  No-op when the hook did not
+    reach a verdict."""
+    if hook is None or not hook.called or hook.outcome is None:
+        return
+    _autoscale_write_presolve_report(
+        solve_name=solve_name, logger=logger, work_folder=work_folder, ranges=ranges,
+        layer2_plan=layer2_plan, layer3_plan=hook.plan, guard=hook.outcome,
+        scaling_config=scaling_config,
+    )
+
+
 def _roll_label(complete_solve_name: str, roll_index: "int | str | None") -> str:
     """``"<solve>, roll <k>"`` (1-based) for the scaling guard's messages
     about a roll after the first; the solve name otherwise."""
@@ -613,11 +638,10 @@ def _autoscale_guard_check(
     :func:`_autoscale_enforce_guard`, called outside every ``except``."""
     if not _autoscale_mode_enables_layer3(scaling_config.mode):
         return None
-    from flextool.engine._behaviour_changes import warn_once as _warn_once
+    from flextool.engine.autoscale import warn_guard_could_not_run as _could_not_run
     if ranges is None:
         # The Layer 3 readout failed (logged there; re-raised under strict).
-        _warn_once(("scaling_guard_failed",), "Warning: the scaling guard could not run (the range "
-                   "readout failed); the solves go on unchecked (details in the log).")
+        _could_not_run(readout_failed=True)
         return None
     try:
         return _autoscale_run_guard(
@@ -629,8 +653,7 @@ def _autoscale_guard_check(
     except Exception:
         if os.environ.get("FLEXTOOL_AUTOSCALE_STRICT") == "1":
             raise
-        if _warn_once(("scaling_guard_failed",), "Warning: the scaling guard could not run; "
-                      "the solves go on unchecked (details in the log)."):
+        if _could_not_run(readout_failed=False):
             logger.exception("scaling guard failed for %s", solve_name)
         return None
 
@@ -4087,7 +4110,20 @@ def _drive_cascade(
                 # a reuse solves the LP already checked).
                 _warm_hook = locals().get("_autoscale_hook") if did_fresh_build else None
                 if _warm_hook is not None:
-                    sol = self._warm_problem.solve(pre_run_check=_warm_hook)
+                    try:
+                        sol = self._warm_problem.solve(pre_run_check=_warm_hook)
+                    except BaseException:
+                        # The recheck (or the build after it) stopped the
+                        # solve: the YAML gets this roll's own verdict.
+                        _autoscale_report_recheck_stop(
+                            _warm_hook, solve_name=complete_solve_name,
+                            logger=self.state.logger,
+                            work_folder=self.state.paths.work_folder,
+                            ranges=_autoscale_ranges_post or _autoscale_ranges_pre,
+                            layer2_plan=self._autoscale_warm_layer2_plan,
+                            scaling_config=_scaling_cfg,
+                        )
+                        raise
                     if _warm_hook.called:
                         _autoscale_layer3_plan = _warm_hook.plan
                         if _warm_hook.outcome is not None:
@@ -4544,17 +4580,30 @@ def _drive_cascade(
                 if _horizon_on:
                     # Before the solve: it releases ``pb._cstrs``.
                     _horizon_keys = snapshot_cstr_keys(pb)
-                sol = run_one_solve(
-                    pb, _active_solver_cfg, logger=state.logger,
-                    save_memory=_save_memory,
-                    solve_name=complete_solve_name,
-                    work_folder=state.paths.work_folder,
-                    run_options=run_options,
-                    solver_config_dir=state.paths.solver_config_dir,
-                    commercial_options=_commercial_opts,
-                    solver_option_files=state.paths.solver_option_files,
-                    pre_run_check=_autoscale_hook,
-                )
+                try:
+                    sol = run_one_solve(
+                        pb, _active_solver_cfg, logger=state.logger,
+                        save_memory=_save_memory,
+                        solve_name=complete_solve_name,
+                        work_folder=state.paths.work_folder,
+                        run_options=run_options,
+                        solver_config_dir=state.paths.solver_config_dir,
+                        commercial_options=_commercial_opts,
+                        solver_option_files=state.paths.solver_option_files,
+                        pre_run_check=_autoscale_hook,
+                    )
+                except BaseException:
+                    # The roll recheck (in ``Problem.solve`` or the
+                    # --save-memory ``write_mps``) or the solve after it
+                    # stopped: the YAML gets this roll's own verdict.
+                    _autoscale_report_recheck_stop(
+                        _autoscale_hook, solve_name=complete_solve_name,
+                        logger=self.state.logger,
+                        work_folder=self.state.paths.work_folder,
+                        ranges=_ranges_for_l1, layer2_plan=_autoscale_layer2_plan,
+                        scaling_config=_scaling_cfg,
+                    )
+                    raise
                 if _autoscale_hook is not None and _autoscale_hook.called:
                     # The roll's own recheck: report what it used.
                     _autoscale_layer3_plan = _autoscale_hook.plan
@@ -4606,7 +4655,12 @@ def _drive_cascade(
                 logger=self.state.logger,
                 work_folder=self.state.paths.work_folder
                 if self.state.paths is not None else None,
-                layer2_plan=locals().get("_autoscale_layer2_plan"),
+                # The warm path keeps its Layer 2 plan on the runner (it
+                # outlives the first build), the cold path in a local.
+                layer2_plan=(
+                    self._autoscale_warm_layer2_plan if warm_active
+                    else locals().get("_autoscale_layer2_plan")
+                ),
                 layer3_plan=locals().get("_autoscale_layer3_plan"),
                 scaling_config=_scaling_cfg,
                 guard=locals().get("_autoscale_guard"),

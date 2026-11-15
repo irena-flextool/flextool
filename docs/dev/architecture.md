@@ -1591,12 +1591,23 @@ LP the solver gets can be solved accurately after Layers 2 and 3
 | cost | spread above 13 decades, or smallest scaled cost below 10 × dual tolerance | — |
 | matrix | a coefficient term HiGHS drops (≤ 1e-9) or refuses (≥ 1e15); the spread is reported only | — |
 
+* The verdict is taken after Layer 2.  In full mode a lone placeholder
+  (`1e18` next to `0.5`, 18.3 decades) is usually shrunk by Layer 2 to
+  about 13 decades, so it only **warns** and Layer 3 keeps the small
+  limits enforceable; it **stops** under `--scaling basic` (no Layer 2) or
+  when Layer 2 cannot shrink it.  A warning whose pre-Layer-2 spread
+  (`decades_pre`) exceeds 17 decades adds "under --scaling basic this would
+  stop".
 * `--scaling-guard error|warn|off` (`FLEXTOOL_SCALING_GUARD`, default
-  `error`, no database tier): an error raises `ScalingRangeError` (a
+  `error`, no database tier; the GUI's Solver options → Scaling guard sends
+  the flag): an error raises `ScalingRangeError` (a
   `FlexToolConfigError`, so `cmd_run_flextool` prints it without a
   traceback); `warn` prints it and solves; `off` checks nothing (Layer 3's
   window clip still applies).  Warnings print once per run, keyed by base
-  solve, Benders region and group (`_behaviour_changes.warn_once`).
+  solve, Benders region, group, level and the roll's own exponent (if a
+  recheck set one), so a later roll's error or new exponent still prints
+  (`_behaviour_changes.warn_once`; the once-per-run log of an adjusted
+  exponent uses `mark_once`, also reset by `start_run`).
 * The message names the solve (and roll / region), the spread and window
   at the solve's `primal_feasibility_tolerance`, the family and up to five
   entries at each end (polar-high `locate_extremes`, warning / error only),
@@ -1608,15 +1619,18 @@ LP the solver gets can be solved accurately after Layers 2 and 3
   default 1e-6), and every error only warns.
 * `FLEXTOOL_AUTOSCALE_STRICT=1` raises also under `warn` / `off`, but only
   for an error Layer 2 caused (the pre-Layer-2 pool fitted).  A failure of
-  the check itself is logged once and the solve goes on (re-raised under
-  strict).
+  the check itself (or of the range readout, monolith or Benders region)
+  prints "the scaling guard could not run" once per run and the solve goes
+  on (re-raised under strict).
 * Where it runs: after Layer 3 on the first solve of each LP shape (cold
   and warm paths; the verdict is cached in `_AutoscaleShapeCacheEntry` and
   replayed on a hit without a walk), and on every later roll that is built
   again, from the ranges of the LP actually built: polar-high's
   `pre_run_check` (`Problem.solve`, the first `WarmProblem.solve`, and
   `Problem.write_mps` on the `--save-memory` path, whose returned options
-  go into the child's option file).  A roll whose smallest limit leaves the
+  go into the child's option file; when the hook or the call after it
+  raises, the pre-solve YAML is rewritten with that roll's verdict).  A
+  roll whose smallest limit leaves the
   cached exponent's window gets its own exponent (Layer 3 on its ranges);
   when none fits the policy applies, with the roll named.  A WarmProblem
   reuse solves the LP already checked and is not rechecked.  Each Benders

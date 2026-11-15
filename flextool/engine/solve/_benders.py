@@ -121,6 +121,7 @@ from flextool.engine.autoscale import (
     resolve_scaling_config,
     run_guard,
     unscale_solution,
+    warn_guard_could_not_run,
 )
 from flextool.engine.solve._region_filter import HalfFlow, RegionSplit
 from flextool.engine.input._solve_state import FlexToolConfigError
@@ -586,7 +587,11 @@ def _apply_region_autoscale(
             )
     # --- Scaling guard (outside every ``except``: its error must stop the
     # loop, never be swallowed by the best-effort Layer 3 handling above).
-    if guard is not None and ranges_post is not None:
+    # A region whose readout failed (logged above) says so as the monolith
+    # does: once per run, the same text.
+    if guard is not None and mode_enables_layer3(cfg.mode) and ranges_post is None:
+        warn_guard_could_not_run(readout_failed=True)
+    elif guard is not None and ranges_post is not None:
         outcome = None
         try:
             outcome = run_guard(
@@ -598,6 +603,7 @@ def _apply_region_autoscale(
         except Exception:  # noqa: BLE001 — a failed check must not stop the solve
             if os.environ.get("FLEXTOOL_AUTOSCALE_STRICT") == "1":
                 raise
+            warn_guard_could_not_run(readout_failed=False)
             _logger.exception("Benders: scaling guard could not run for region %r", region_name)
         enforce_scaling_guard(outcome, base_solve=guard.get("solve_name") or "benders")
     return plan

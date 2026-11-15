@@ -79,9 +79,12 @@ def test_unscalable_spread_is_an_error_with_numbers_and_override():
     assert out.level == "error" and out.verdict.window == pytest.approx((1e-6, 1e11))
     text = _text(out)
     for part in ("Solve s1 cannot be scaled", "span 18.3 decades", "(0.5 … 1e+18)", "at most 17 fit",
-                 "primal feasibility tolerance 1e-07, HiGHS default", "up to 1.68 (model units), 3.36x",
+                 "primal feasibility tolerance 1e-07, HiGHS default",
+                 "Fitting the largest value, the smallest limit could be violated by up to 1.68 (model "
+                 "units), 3.36x its size.",
                  "user_bound_scale -18", "3.81e+12",
-                 "To solve anyway: --scaling-guard warn (FLEXTOOL_SCALING_GUARD=warn)."):
+                 "To solve anyway: --scaling-guard warn (FLEXTOOL_SCALING_GUARD=warn; in the GUI: Solver "
+                 "options, Scaling guard: Warn)."):
         assert part in text, part
     with pytest.raises(ScalingRangeError) as exc:
         _guard.enforce(out, base_solve="s1")
@@ -342,3 +345,119 @@ def test_in_process_dispatch_stops_before_highs_runs():
                               solve_name="s1, roll 2", base_solve="s1", layer2_applied=False)
     with pytest.raises(ScalingRangeError, match="Solve s1, roll 2 cannot be scaled"):
         run_one_solve(pb, SolverConfig(), pre_run_check=hook)
+
+
+# --------------------------------------------------------------------- message details
+
+
+def test_warning_states_the_violation_of_the_smallest_and_of_every_limit():
+    """B at tol 1e-7: Layer 3 aims the small end at 100·tol = 1e-5: N = ceil(log2(1e-5/1.6e-5)) = 0, and
+    the large end fits (1.3e9 ≤ 1e11).  At N = 0 the solver may miss a limit by tol = 1e-7 (model units),
+    1e-7 / 1.6e-5 = 0.625 % of the smallest one and less of every larger one."""
+    plan, out = _guard_of(_report(1.6e-5, 1.3e9))
+    assert plan.user_bound_scale == 0
+    assert ("With user_bound_scale 0, the smallest limit could be violated by up to 1e-07 (model units); "
+            "every limit by at most 0.625 %.") in _text(out)
+
+
+def _entry(model: float, count: int, i: int) -> dict:
+    return {"family": "cap", "component": "rhs", "model": model, "post": model, "dims": {"i": i},
+            "count_within_factor": count, "factor": 10.0}
+
+
+def _located_text(monkeypatch, located: dict) -> str:
+    monkeypatch.setattr(_guard, "_locate", lambda _pb, f: located if f.group == "bound_rhs" else {})
+    _plan, out = _guard_of(_report(0.5, 1e18))
+    return _text(out)
+
+
+def test_extremes_list_only_the_entries_within_10x(monkeypatch):
+    """Five entries named at the small end, two of them within 10x: only those two are listed; the large
+    end with one value within 10x reads as one line and ends with the hint."""
+    text = _located_text(monkeypatch, {
+        "max": [_entry(1e18, 1, 0), _entry(1e3, 1, 1)],
+        "min": [_entry(0.5, 2, 10), _entry(0.6, 2, 11), _entry(9.0, 2, 12), _entry(20.0, 2, 13),
+                _entry(40.0, 2, 14)],
+    })
+    lines = text.splitlines()
+    (big,) = [ln for ln in lines if ln.startswith("  Largest:")]
+    assert big == ('  Largest:  1e+18 (model units) in cap (constraint right-hand side) at i=0 — '
+                   'a stand-in for "no limit"? Use inf.')
+    k = next(n for n, ln in enumerate(lines) if ln.startswith("  Smallest:"))
+    assert lines[k] == ("  Smallest: 0.5 (model units) in cap (constraint right-hand side), "
+                        "2 values within 10x of it, e.g. at:")
+    assert lines[k + 1:k + 3] == ["      i=10", "      i=11"]
+    assert not lines[k + 3].startswith("      i=")
+
+
+def test_a_single_value_within_10x_reads_as_one_line(monkeypatch):
+    text = _located_text(monkeypatch, {"min": [_entry(0.5, 1, 10), _entry(30.0, 1, 11)]})
+    (small,) = [ln for ln in text.splitlines() if ln.startswith("  Smallest:")]
+    assert small == "  Smallest: 0.5 (model units) in cap (constraint right-hand side) at i=10"
+    assert "i=11" not in text and "values within" not in text
+
+
+def test_the_no_limit_hint_follows_a_list_on_its_own_line(monkeypatch):
+    text = _located_text(monkeypatch, {"max": [_entry(1e18, 3, 0), _entry(5e17, 3, 1), _entry(2e17, 3, 2)]})
+    lines = text.splitlines()
+    k = next(n for n, ln in enumerate(lines) if ln.startswith("  Largest:"))
+    assert lines[k] == ("  Largest:  1e+18 (model units) in cap (constraint right-hand side), "
+                        "3 values within 10x of it, e.g. at:")
+    assert lines[k + 1:k + 5] == ["      i=0", "      i=1", "      i=2",
+                                  '      A stand-in for "no limit"? Use inf.']
+
+
+def test_a_warning_layer2_narrowed_from_beyond_17_decades_says_basic_would_stop():
+    """Before Layer 2: 0.5 … 1e18 = 18.3 decades (> 17, so --scaling basic stops); after it 13.9 → warn."""
+    pb = _problem()
+    report = _report(1.6e-5, 1.3e9)
+    plan = recommend_scaling(report, ScalingConfig(), primal_feasibility_tolerance=1e-7)
+
+    def text_with(pre):
+        out = _guard.run_guard(pb, ranges=report, ranges_pre=pre, plan=plan, solve_name="s1", mode="error",
+                               layer2_applied=True)
+        assert out.level == "warn"
+        return _text(out)
+
+    assert ("Layer 2 narrowed the span from 18.3 decades; under --scaling basic this would stop."
+            in text_with(_report(0.5, 1e18)))
+    # 1e-3 … 1e12 = 15 decades before Layer 2: basic would fit them, so no such line.
+    assert "--scaling basic" not in text_with(_report(1e-3, 1e12))
+
+
+# --------------------------------------------------------------------- once-per-run keys
+
+
+def test_a_later_error_or_new_exponent_is_not_silenced_under_warn(capsys):
+    from dataclasses import replace
+
+    _plan, warn = _guard_of(_report(1.6e-5, 1.3e9), mode="warn")
+    _plan, error = _guard_of(_report(0.5, 1e18), mode="warn")
+    _guard.enforce(warn, base_solve="s1")
+    _guard.enforce(error, base_solve="s1")  # same solve and group, now an error: printed
+    _guard.enforce(replace(warn, adjusted_bound_scale=-9), base_solve="s1")  # a roll's own exponent
+    _guard.enforce(replace(warn, adjusted_bound_scale=-9), base_solve="s1")  # the same again: silent
+    _guard.enforce(warn, base_solve="s1")
+    printed = capsys.readouterr().out
+    assert printed.count("Warning: Solve s1: limits and bounds span 13.9 decades") == 2
+    assert printed.count("Warning: Solve s1 cannot be scaled") == 1
+
+
+def test_the_adjusted_exponent_log_is_once_per_run(caplog):
+    import logging
+
+    tol = 1e-8
+
+    def adjust():
+        hook = _guard.RollRecheck(_problem(tol), plan=_first_roll_plan(tol), config=ScalingConfig(),
+                                  mode="off", solve_name="s1, roll 2", base_solve="s1",
+                                  layer2_applied=False)
+        assert hook(_hook_ranges(1e-3, 1e12, tol), None) == {"user_bound_scale": -9}
+
+    with caplog.at_level(logging.INFO, logger=_guard.__name__):
+        adjust()
+        adjust()
+        _behaviour_changes.start_run(None)  # a new run logs it again
+        adjust()
+    logged = [r for r in caplog.records if "leaves the tolerance window" in r.getMessage()]
+    assert len(logged) == 2

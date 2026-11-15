@@ -100,17 +100,33 @@ the solver: a period CO2 cap of `1e18` used as "no limit" next to a
 capacity of `0.5` spans 18 decades, and no single scale lets HiGHS enforce
 the small one while it still reads the large one accurately.  The solve
 would then return a result that silently breaks the small limits (or fail
-with a numerical status).  The guard stops such a solve before it starts:
+with a numerical status).  The guard checks the LP the solver gets, after
+FlexTool's scaling, before the solve starts.
+
+In full mode (the default) such a lone `1e18` usually only **warns**:
+Layer 2 shrinks the quantity type it belongs to, the span drops to about
+13 decades, and Layer 3 then picks a scale that keeps the small limits
+enforceable.  The warning says so ("Layer 2 narrowed the span from 18.3
+decades; under --scaling basic this would stop") whenever the span before
+Layer 2 was more than 17 decades.  The solve **stops** under `--scaling
+basic` (no Layer 2), or in full mode when Layer 2 cannot shrink the value
+(for example when it shares a quantity type with the small limits):
 
 ```
 Solve y2030 cannot be scaled into a range the solver handles accurately.
   Limits and bounds span 18.3 decades after FlexTool's scaling (0.5 … 1e+18); at most 17 fit (primal feasibility tolerance 1e-07, HiGHS default).
-  Largest:  1e+18 (model units) in co2_max_period (constraint right-hand side) at g=co2_cap, d=y2030 — a stand-in for "no limit"? Use inf
+  Largest:  1e+18 (model units) in co2_max_period (constraint right-hand side) at g=co2_cap, d=y2030 — a stand-in for "no limit"? Use inf.
   Smallest: 0.5 (model units) in maxFlow (constraint right-hand side), 412 values within 10x of it, e.g. at:
       p=..., source=..., sink=..., d=y2030, t=t0001
-  Fitting the largest value would let a limit be violated by up to 1.68 (model units), 3.36x the smallest limit.
-  To solve anyway: --scaling-guard warn (FLEXTOOL_SCALING_GUARD=warn).
+      ...
+  Fitting the largest value, the smallest limit could be violated by up to 1.68 (model units), 3.36x its size.
+  To solve anyway: --scaling-guard warn (FLEXTOOL_SCALING_GUARD=warn; in the GUI: Solver options, Scaling guard: Warn).
 ```
+
+At most five entries are listed at each end, and only those within 10x of
+it.  A warning ends with what the solver may accept: "With
+user_bound_scale N, the smallest limit could be violated by up to X (model
+units); every limit by at most r %."
 
 | What | Warning | Stop (error) |
 |---|---|---|
@@ -129,9 +145,12 @@ How to fix the model, in order of preference:
 4. **A Layer 2 widening** (the message says "Layer 2 widened the span"):
    `--scaling basic` runs without Layer 2.
 
-To run anyway: `--scaling-guard warn` (or `FLEXTOOL_SCALING_GUARD=warn`)
-prints the same message as a warning and solves; `--scaling-guard off`
-does not check.  A commercial solver (Gurobi, CPLEX, Xpress, COPT) gets no
+To run anyway: `--scaling-guard warn` (or `FLEXTOOL_SCALING_GUARD=warn`,
+or in the GUI Solver options → Scaling guard → Warn) prints the same
+message as a warning and solves; `--scaling-guard off` does not check.  A
+warning prints once per run for each solve, Benders region and kind of
+finding; a later roll whose finding becomes an error, or that gets a scale
+of its own, prints again.  A commercial solver (Gurobi, CPLEX, Xpress, COPT) gets no
 FlexTool scaling, so the guard only warns there, judged at that solver's
 own feasibility tolerance.  A rolling solve is checked on its first roll
 and again on every later roll; a roll whose smallest limit no longer fits

@@ -187,8 +187,8 @@ def test_error_stops_before_any_solver_runs(dbs, tmp_path, monkeypatch):
                  "g=co2_limit, d=p2020", 'a stand-in for "no limit"? Use inf',
                  "Smallest: 1 (model units) in maxFlow (constraint right-hand side)",
                  "p=coal_plant, source=coal_market, sink=west, d=p2020",
-                 "up to 1.34 (model units), 1.34x the smallest limit",
-                 "--scaling-guard warn (FLEXTOOL_SCALING_GUARD=warn)"):
+                 "the smallest limit could be violated by up to 1.34 (model units), 1.34x its size",
+                 "--scaling-guard warn (FLEXTOOL_SCALING_GUARD=warn; in the GUI: Solver options, Scaling guard: Warn)"):
         assert part in text, part
     # The pre-solve report is written before the stop.
     tree = _yaml(tmp_path)
@@ -239,14 +239,19 @@ def test_cli_prints_the_error_without_a_traceback(dbs, tmp_path):
 
 def test_warning_prints_once_across_rolls_without_naming_walks_on_hits(
         dbs, tmp_path, monkeypatch, capsys):
-    """Full mode: Layer 2 brings the 1e18 placeholder to 1.5e13 (13.5 decades with the 0.5 of maxFlow):
-    a warning, and both rolls solve."""
+    """Full mode: each 24 h roll carries half of the 48 h period's CO2 cap, 5e17 (model units), next to
+    maxFlow 1: 1 … 5e17 = log10(5e17) = 17.7 decades before Layer 2 (> 17, so --scaling basic would stop,
+    and the warning says so).  Layer 2 brings the pool to 0.5 … 7.6e12 (13.2 decades): a warning, and both
+    rolls solve.  The warm path's post-solve YAML keeps the Layer 2 plan."""
     located = _Count(monkeypatch, _guard, "locate_extremes")
     runs = _count_highs_runs(monkeypatch)
     steps = _run(dbs["roll_placeholder"], "roll_placeholder", tmp_path)
     assert steps and len(runs) == 2  # both rolls solved
     printed = capsys.readouterr().out
     assert printed.count(f"Warning: Solve {SOLVE}: limits and bounds span") == 1
+    assert "Layer 2 narrowed the span from 17.7 decades; under --scaling basic this would stop." in printed
+    tree = _yaml(tmp_path)
+    assert tree["layer2"] and tree["guard"]["verdict"] == "warn"
     # Named once, on the first roll (both ends); the cache hit of roll 2 does no naming walk.
     assert len(located.calls) == 2
 
@@ -304,6 +309,10 @@ def test_later_roll_error_names_the_roll(dbs, tmp_path, monkeypatch, warm):
     assert (len(runs), len(children.calls)) == ((1, 0) if warm else (0, 1))
     assert f"Solve {SOLVE}, roll 2 cannot be scaled" in str(exc.value)
     assert "span 18.0 decades" in str(exc.value)
+    # The YAML holds roll 2's own verdict (written before the roll it was roll 1's warning: 1 … 1e14).
+    guard = _yaml(tmp_path)["guard"]
+    assert guard["verdict"] == "error"
+    assert guard["findings"]["bound_rhs"]["numbers"]["b_lo"] == pytest.approx(1e-4)
 
 
 # --------------------------------------------------------------------- strict mode
