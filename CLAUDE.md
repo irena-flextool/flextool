@@ -45,12 +45,19 @@ the authoritative sources before non-trivial work:
 3. **Tests build their DB from JSON/schema; never read a checked-in
    `.sqlite`.** Checked-in DBs (`templates/*.sqlite`) lag the schema and
    silently under-cover. Use a `tmp_path_factory` fixture (`json_to_db`,
-   or the session-scoped `schema_db_url`).
+   or the session-scoped `schema_db_url`). A test that must read one
+   (e.g. `templates/examples.sqlite`) opens it read-only or from a
+   `tmp_path` copy: concurrent xdist opens of a shared SQLite file can
+   hang a Windows CI shard until the job cap.
    → architecture.md "JSON-fixture single source of truth".
 
 4. **After a schema rename**, update the engine readers, `PARAMETER_TYPES`
    (carry old + new during the migration window), and the migration code
-   in `flextool/update_flextool/db_migration.py`.
+   in `flextool/update_flextool/db_migration.py`. A new or renamed
+   parameter on an exported class also goes in `split_params` of
+   `flextool/export_to_tabular/export_settings.yaml` (or its exempt
+   list); `TestSplitParamsSchemaSync` catches drift only in the full
+   `tests/` sweep.
 
 5. **Vectorized per-roll emit must stay byte-parity.** Render value
    columns with the `repr()` loop (`_render_value_column`), never
