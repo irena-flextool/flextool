@@ -15,7 +15,8 @@ Outputs (all written under ``solve_data/``):
 
 ``ed_entity_annual_discounted.csv`` and ``ed_lifetime_fixed_cost.csv`` are not emitted here: their windows start
 at the start of operation of a decision (construction lead time) and the annuity window runs over the payback time
-in exact years, which only :mod:`..params._npv` derives; ``_npv.apply_npv`` registers its values under these keys.
+in exact years, which only :mod:`..params._npv` derives; ``_npv.apply_invest_lumps`` registers its values under
+these keys (for a Spine solve and a synthetic sub-solve alike).
 
 Method-enum constants mirror flextool/flextool_base.dat:184 and
 :211-212.  ``PdLookup`` is the native 4-branch resolver from

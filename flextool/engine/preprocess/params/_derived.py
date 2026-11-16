@@ -9519,12 +9519,11 @@ def apply_synthetic_invest_sets(flex_data: object,
         for ``period_with_history.csv`` + ``period_in_use_set.csv``).
 
     The per-period cap subsets (``ed_invest_period_set`` /
-    ``ed_divest_period_set``) and the NPV cost cascade
-    (``ed_lifetime_fixed_cost`` etc.) are NOT touched — they stay on
-    the ``_invest_seeds.py`` / ``_load_invest`` CSV-seed path because
-    those values bake in multi-year discounting and the per-sub-solve
-    filter doesn't compose cleanly with the existing derivation
-    (deferred per the Gap D dispatch).
+    ``ed_divest_period_set``) stay on the ``_invest_seeds.py`` CSV-seed
+    path.  The NPV cost lumps are not set here: the investment annuity and
+    lifetime fixed cost come from :func:`._npv.apply_invest_lumps` (called
+    by :func:`._npv.apply_run_fields_of_synthetic_solve`), the divest lumps
+    from their emitted ``solve_data`` frames.
     """
     base, anchor = synthetic
     # Slice D §4 — arm the per-period anchor-map scope (no-op flag-off).
@@ -9538,9 +9537,8 @@ def apply_synthetic_invest_sets(flex_data: object,
     # model horizon (with a warning) before every set below is built from ed_invest_set.
     synth_commission_lf = None
     # A synthetic sub-solve (a roll, a nested solve renamed for its period; the solves of a 2-D period map are
-    # real solves of the reader and never come here) counts one year per period on its own calendar and takes its
-    # costs from the emitted seeds, so the start of operation and the cost window of a construction lead time
-    # cannot be placed in it.
+    # real solves of the reader and never come here) counts one year per period on its own calendar, so the start
+    # of operation and the cost window of a construction lead time cannot be placed in it.
     from flextool.engine.preprocess.params._existing import (
         _construction_lag_configured as _lag_configured,
         lead_time_decisions as _lead_time_decisions,

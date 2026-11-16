@@ -2884,8 +2884,9 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     ``pd_invest``, ``pd_divest``, ``nd_invest``, ``nd_divest``,
     ``edd_invest``) are skipped — :func:`apply_synthetic_invest_sets`
     populates these fields from Spine during ``_apply_db_overrides``.
-    The cost-param seeds (``ed_lifetime_fixed_cost`` etc.) and the per-
-    period cap sets (``ed_*_period_set``) remain on the CSV path.  The cap
+    The cost-param frames (``ed_lifetime_fixed_cost`` etc.) are read here
+    when the Provider has them (see the comment above ``_read_e_d``), and
+    the per-period cap sets (``ed_*_period_set``) remain on the CSV path.  The cap
     values (``e_*_max_total``, ``ed_*_max_period``) are not seeded: the DB
     overlay writes them on every path (a reader-less reload seeds them in
     ``_csv_reload._field_seeds``).
@@ -2995,17 +2996,18 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
                 provider, "solve_data/p_entity_max_units",
                 sd / "p_entity_max_units.csv") else None
 
-    # Δ.18 — CSV-fallback seeds for the lifetime / NPV
-    # cost cascade.  These were dropped in Δ.12-drop / Δ.17 because the
-    # override chain (``apply_derived_f`` / ``apply_direct_params`` /
-    # ``apply_projection_params``) is authoritative.  But for synthetic
-    # per-sub-solve fixtures (e.g. ``invest_5weeks_p2020`` — an artefact of
-    # flextool's per-period sub-solving that doesn't exist as a row in
-    # Spine), the override returns None for every field that depends on
-    # ``solve.invest_periods`` / ``solve.realized_periods`` lookups.  The
-    # seed CSV is the snapshot canonical and the only available source.
-    # The override chain runs after ``_load_invest`` and overlays its
-    # values when it has data; when it returns None, the seed persists.
+    # The lifetime / NPV cost frames as the Provider holds them.  The divest
+    # lumps (``ed_lifetime_fixed_cost_divest`` /
+    # ``ed_entity_annual_divest_discounted``) are emitted per solve and are
+    # the coefficients of a synthetic sub-solve (``apply_npv`` does not run
+    # for it).  ``ed_entity_annual_discounted`` / ``ed_lifetime_fixed_cost``
+    # are not emitted: ``_npv.apply_invest_lumps`` derives them for every
+    # solve that invests (Spine solve and synthetic sub-solve alike), after
+    # this load, and registers its frames: what is read here is a reader-less
+    # reload's frame of a dumped workdir, or the frame an earlier solve
+    # sharing the Provider registered (replaced when this solve invests).
+    # A solve with invest variables and neither frame fails in the objective
+    # instead of investing for free.
     def _read_e_d(name: str) -> "Param | None":
         f = sd / f"{name}.csv"
         if not _provider_has(provider, f"solve_data/{name}", f):
@@ -3071,9 +3073,8 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         edd_divest_active=edd_div if edd_div.height > 0 else None,
         ndd_divest_active=ndd_div if ndd_div.height > 0 else None,
         p_entity_max_units=p_max_units,
-        # Δ.18 — CSV-fallback seeds (override chain overlays when it has
-        # data; for synthetic per-sub-solve fixtures the snapshot CSV is
-        # the only source).
+        # The cost frames the Provider holds (see ``_read_e_d`` above); the
+        # override chain overlays them.
         ed_lifetime_fixed_cost=ed_lifetime_fc_seed,
         ed_lifetime_fixed_cost_divest=ed_lifetime_fc_div_seed,
         ed_entity_annual_discounted=ed_annual_disc_seed,
@@ -5863,11 +5864,10 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # filtered to the anchor's period subset (see
     # :func:`_derived._resolve_synthetic_solve` and
     # :func:`_derived.apply_synthetic_invest_sets`).  This cuts the
-    # 8 invest-set disk reads in ``_invest_seeds.py``.  The cost cascade
-    # (``apply_derived_f`` NPV / fixed-cost) and per-period caps remain
-    # on the CSV-seed path because those bake in multi-year discounting
-    # that the per-sub-solve filter doesn't compose cleanly with —
-    # deferred to a future dispatch.
+    # 8 invest-set disk reads in ``_invest_seeds.py``.  The investment
+    # annuity and lifetime fixed cost come from ``_npv.apply_invest_lumps``
+    # (in ``apply_run_fields_of_synthetic_solve`` below); the divest lumps
+    # and the per-period caps stay on the CSV-seed path.
     active_solve = _drv._read_active_solve(workdir_path, provider=provider)
     if active_solve is not None and not _drv._solve_in_spine(db_reader,
                                                                   active_solve):
@@ -6144,9 +6144,9 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         _loadflex_prof("apply_db_overrides:pass_synthetic_blocks")
         _timed("c.synth blocks", _wire_blocks_for_synthetic_solve)
 
-        # The run-level fields of the reported costs (outputs only): ``apply_derived_f`` (``apply_npv``) is
-        # skipped, so the sub-solve's own cost fields are its seeds; the run fields discount from the start of
-        # the run over the periods of the whole run.
+        # ``apply_derived_f`` (``apply_npv``) is skipped: the investment annuity and lifetime fixed cost of a
+        # sub-solve that invests are derived here by the same ``_npv`` rule over its own periods, and the run-level
+        # fields of the reported costs (outputs only) discount from the start of the run over the whole run.
         from flextool.engine.preprocess.params._npv import apply_run_fields_of_synthetic_solve
         _timed("c.synth run costs", apply_run_fields_of_synthetic_solve, flex_data, db_reader, workdir_path,
                provider=provider)

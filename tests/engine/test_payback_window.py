@@ -21,14 +21,16 @@ p2035, payback 12     15 … 19             A12 · S(16, 20)               uncha
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
 import polars as pl
 import pytest
 
-from tests.engine._unit_db import PLANT, RunCache, b64, utf8
+from tests.engine._unit_db import BASE_FIXTURE_JSON, PLANT, RunCache, b64, utf8
 from tests.engine.test_chain_costs import MEGA, _no_battery_invest, _results
+from tests.engine.test_intraperiod_blocks import _chain
 from tests.engine.test_user_constraint_capacity_terms import CHAIN, SINGLE
 
 PERIODS = ["p2020", "p2025", "p2030", "p2035"]
@@ -204,6 +206,59 @@ def test_solve_frames_of_the_lumps_are_the_objective_coefficients(tmp_path_facto
             assert got[d] == pytest.approx(v, rel=1e-12, abs=1e-9), (name, d)
 
 
+NESTED = "multi_fullYear_battery_nested_multi_invest"
+
+
+def _child_invests() -> list:
+    """``storage_fullYear_6h`` (the child of ``invest_5weeks``) gets ``invest_5weeks``'s array invest periods: each
+    nested anchor ``storage_fullYear_6h_<period>`` (not a Spine solve) then invests in its own period."""
+    data = json.loads(BASE_FIXTURE_JSON.read_text())
+    return [["solve", "storage_fullYear_6h", pv[2], pv[3]] for pv in data["parameter_values"]
+            if pv[:2] == ["solve", "invest_5weeks"] and pv[2] in ("invest_periods", "realized_invest_periods")
+            and pv[4] == "invest_oneYear4Times_5weeks"]
+
+
+def _all_ed(param) -> dict[tuple[str, str], float]:
+    frame = utf8(param.frame)
+    return {(e, d): float(v) for e, d, v in frame.select("e", "d", "value").iter_rows()}
+
+
+@pytest.mark.solver
+def test_nested_sub_solve_pays_for_its_investments(tmp_path_factory) -> None:
+    """A nested sub-solve that invests (``storage_fullYear_6h_<P>``, one period P, no Spine solve) prices its
+    investments by the rule of a Spine solve.  Oracle: the split solves ``invest_5weeks_<P>`` (Spine solves of the
+    reader, periods P and the next) over the same run calendar.  A decision in the last period of such a solve pays
+    over that one period, the window of the child's decision; for P = p2020 the window additivity gives it (the p2020
+    decision pays over p2020 and p2025, the p2025 decision over p2025; the costs are constant).  The payback times
+    (10, 25, 30) end on period boundaries or after the horizon, so these windows are whole periods.  The
+    sub-solve's ``solve_data`` frames are its coefficients.  Before: the sub-solve had neither lump, so its investments were
+    free in the objective."""
+    steps, _, _ = _RUNS.get(tmp_path_factory, alt="pb_nested_child", values=_child_invests(),
+                            base_chain=_chain(NESTED))
+    nxt = dict(zip(PERIODS, PERIODS[1:]))
+    prev = {b: a for a, b in nxt.items()}
+    for P in PERIODS:
+        child = steps[f"storage_fullYear_6h_{P}"]
+        decisions = sorted((e, d) for e, d in utf8(child.flex_data.ed_invest_set).select("e", "d").iter_rows())
+        assert decisions and {d for _, d in decisions} == {P}, (P, decisions)
+        for name in ("ed_entity_annual_discounted", "ed_lifetime_fixed_cost"):
+            param = getattr(child.flex_data, name)
+            assert param is not None, (P, name)
+            got = _all_ed(param)
+            if P == "p2020":
+                spine = _all_ed(getattr(steps["invest_5weeks_p2020"].flex_data, name))
+                want = {(e, d): spine[(e, "p2020")] - spine[(e, "p2025")] for e, d in decisions}
+            else:
+                spine = _all_ed(getattr(steps[f"invest_5weeks_{prev[P]}"].flex_data, name))
+                want = {k: spine[k] for k in decisions}
+            for k, v in want.items():
+                assert got[k] == pytest.approx(v, rel=1e-12, abs=1e-6), (P, name, k)
+            assert any(got[k] > 0.0 for k in decisions), (P, name)
+            if P == PERIODS[-1]:
+                # The anchors of one level share a Provider: after the run its frames are the last anchor's.
+                assert _seed(child, name)[P] == pytest.approx(got[(PLANT, P)], rel=1e-12), (P, name)
+
+
 PIN_100_IN_P2020 = {"p2020": 100.0, "p2025": 0.0, "p2030": 0.0, "p2035": 0.0}
 
 
@@ -279,10 +334,14 @@ def _notice_lines(tmp_path_factory, capsys, alt: str, values: list) -> list[str]
 @pytest.mark.solver
 def test_notice_names_entities_whose_annuity_changes(tmp_path_factory, capsys) -> None:
     """With the upgrade's marker, coal_plant (payback time 12 ending inside p2030) is named once; with a payback
-    time ending on a period boundary (10) nothing changes for it and no notice is printed."""
+    time ending on a period boundary (10) nothing changes for it and no notice is printed.  Nor for
+    reinvest_automatic, whose annuity is paid to the horizon whatever the payback time (here 12 against a technical
+    lifetime of 30)."""
     lines = _notice_lines(tmp_path_factory, capsys, "pb_notice", _economics())
     assert len(lines) == 1 and "coal_plant" in lines[0]
     assert _notice_lines(tmp_path_factory, capsys, "pb_notice_seam", _economics(technical=10.0, payback=10.0)) == []
+    assert _notice_lines(tmp_path_factory, capsys, "pb_notice_automatic",
+                         _economics(method="reinvest_automatic", technical=30.0)) == []
 
 
 def test_notice_is_registered() -> None:

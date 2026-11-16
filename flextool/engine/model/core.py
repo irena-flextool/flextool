@@ -5421,6 +5421,19 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
              .drop("w"))
         return Param(cost.dims, f)
 
+    def _costs(var: str, *fields: str) -> list["Param | None"]:
+        """The cost frames ``fields`` of a solve that has ``var`` investment variables.  The preprocessing gives
+        each of them (zero rows where no cost is authored); none at all means the cost derivation did not run for
+        the solve, which would leave the investments free in the objective, so it is an error.  (A retirement
+        without its frames only loses its saving: no check.)"""
+        params = [getattr(d, f, None) for f in fields]
+        if all(p is None for p in params):
+            raise FlexToolConfigError(
+                f"The solve has {var} variables but none of the cost coefficients {', '.join(fields)}: the "
+                "decisions would be free in the objective. The cost derivation did not run for this solve; please "
+                "report it as a FlexTool bug.")
+        return params
+
     # ─── OBJ. ─── invest_cost_p ──────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{(p,d) ∈ pd_invest_set} v_invest_p[p,d]·unitsize[p] · annual_discounted[p,d] · bw[d]
@@ -5441,10 +5454,11 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     # cost over the periods of its technical lifetime.  With a construction lead time the capacity operates from
     # its start of operation c(d): both windows start there, and the invest cost, interest rate, payback time,
     # lifetime and fixed cost are those of c(d) (invest_cost is an overnight cost); without one c(d) = d.  No w_op:
-    # both factors are already per period.
+    # both factors are already per period.  A solve with invest variables and neither cost frame is an error, not
+    # a free investment.
     if b.has_invest_p:
-        annu = _cost(d.ed_entity_annual_discounted, "p")
-        lf = _cost(d.ed_lifetime_fixed_cost, "p")
+        annu, lf = (_cost(p, "p") for p in _costs("v_invest_p", "ed_entity_annual_discounted",
+                                                    "ed_lifetime_fixed_cost"))
         if annu is not None:
             terms.append(Sum(b.v_invest_p * d.p_unitsize * annu))
         if lf is not None:
@@ -5479,8 +5493,8 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     # As invest_cost_p for storage capacity, currency/MWh of storage.
     if b.has_invest_n:
         us_n = Param(("n",), d.p_state_unitsize.frame)
-        annu_n = _cost(d.ed_entity_annual_discounted, "n")
-        lf_n = _cost(d.ed_lifetime_fixed_cost, "n")
+        annu_n, lf_n = (_cost(p, "n") for p in _costs("v_invest_n", "ed_entity_annual_discounted",
+                                                        "ed_lifetime_fixed_cost"))
         if annu_n is not None:
             terms.append(Sum(b.v_invest_n * us_n * annu_n))
         if lf_n is not None:

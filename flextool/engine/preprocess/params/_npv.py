@@ -745,7 +745,8 @@ ANNUITY_OVER_PAYBACK_TIME = "annuity_over_payback_time"
 def _notice_annuity_over_payback_time(paid: pl.LazyFrame, before) -> None:
     """The ``annuity_over_payback_time`` notice for the entities its marker names (an upgraded database whose
     reinvest_choice / no_reinvestment annuity was paid for every period that started before the end of the
-    lifetime) whose annuity window now sums differently: ``paid`` (``[e, d, factor]``, the payback window) against
+    lifetime) whose annuity window now sums differently: ``paid`` (``[e, d, factor]``, the payback window of the
+    entities with reinvest_choice / no_reinvestment in this solve) against
     ``before()`` (the same, whole periods over lifetime_technical).  Built only while the marker names entities."""
     from flextool.engine import _behaviour_changes as bc
 
@@ -956,10 +957,13 @@ def npv_invest_discounted_lf(
         period_in_use, period_universe,
         bounded=False, life_lf=life_lf, factor_side="inv",
         lineage=lineage, commission_lf=commission_lf, year_rows=year_rows)
-    _notice_annuity_over_payback_time(bounded, lambda: period_walk_iterator(
-        source, active_solve, ed_anchor_lf, period_in_use, period_universe,
-        bounded=True, life_lf=life_of(LIFETIME_TECHNICAL), factor_side="inv",
-        lineage=lineage, commission_lf=commission_lf, year_rows=year_rows))
+    # Only the entities whose annuity takes the bounded window in this solve (the reinvest_automatic sum is
+    # unchanged).
+    _notice_annuity_over_payback_time(bounded.join(has_choice_or_no.select("e"), on="e", how="semi"),
+                                      lambda: period_walk_iterator(
+                                          source, active_solve, ed_anchor_lf, period_in_use, period_universe,
+                                          bounded=True, life_lf=life_of(LIFETIME_TECHNICAL), factor_side="inv",
+                                          lineage=lineage, commission_lf=commission_lf, year_rows=year_rows))
 
     # Combine.
     bounded = bounded.rename({"factor": "factor_b"})
@@ -2145,16 +2149,23 @@ def apply_run_fields_of_synthetic_solve(flex_data: object,
                                         *,
                                         provider: "object | None" = None,
                                         ) -> None:
-    """The run-level fields of a synthetic sub-solve (a roll of a rolling solve, a nested ``<solve>_<period>``
-    sub-solve), whose own cost fields are the per-solve seeds emitted for it (``apply_npv`` does not run).
-    Without run years the run fields are those seeds."""
+    """The investment lumps and the run-level fields of a synthetic sub-solve (a roll of a rolling solve, a nested
+    ``<solve>_<period>`` sub-solve), for which ``apply_npv`` does not run.
+
+    A sub-solve with an invest set gets its annuity and lifetime fixed cost from
+    :func:`apply_invest_lumps` over its own periods, as a Spine solve does (the CSV emitter derives neither); its
+    divest lumps and its own discount factors stay the loaded ``solve_data`` frames.  Without run years the run
+    fields are the sub-solve's own fields."""
     from flextool.engine.preprocess.params._branch import annuity_window_lineage_df
     from flextool.engine.preprocess.params._derived import (
+        _expand_invest_branch_periods,
         _period_in_use_set,
+        _periodAll_from_source,
         _provider_has_key,
         _provider_read,
         _read_active_solve,
         _read_period_with_history,
+        _solve_periods,
     )
     active_solve = _read_active_solve(workdir, provider=provider)
     period_in_use = list(_period_in_use_set(source, active_solve, workdir, provider=provider))
@@ -2183,10 +2194,19 @@ def apply_run_fields_of_synthetic_solve(flex_data: object,
     pi = getattr(flex_data, "period_invest", None)
     period_invest = [] if pi is None or pi.height == 0 else [str(d) for d in pi[pi.columns[0]].to_list()]
     period_with_history = _read_period_with_history(workdir, provider=provider) or list(period_in_use)
+    lineage = annuity_window_lineage_df(workdir, source, active_solve, provider=provider)
+    if ed_invest is not None and ed_invest.height > 0:
+        # The decision periods as apply_npv and ed_invest_set read them (the sub-solve's own invest periods).
+        decision_periods = _expand_invest_branch_periods(
+            _solve_periods(source, active_solve, "invest_periods"), workdir, provider=provider) or []
+        period_universe = list(_periodAll_from_source(source, active_solve, workdir=workdir, provider=provider))
+        year_rows = solve_year_rows(workdir, provider, source, active_solve, period_universe)
+        if year_rows is not None:
+            notice_discount_from_run_start(active_solve, _solve_inflation_scalars(source)[0])
+        apply_invest_lumps(flex_data, source, active_solve, decision_periods, period_in_use, period_universe,
+                           period_with_history, lineage=lineage, year_rows=year_rows, provider=provider)
     apply_run_cost_fields(flex_data, source, active_solve, period_in_use, period_invest, period_with_history,
-                          workdir, lineage=annuity_window_lineage_df(workdir, source, active_solve,
-                                                                      provider=provider),
-                          years=years, provider=provider)
+                          workdir, lineage=lineage, years=years, provider=provider)
 
 
 # ---------------------------------------------------------------------------
@@ -2293,21 +2313,15 @@ def apply_npv(flex_data: object,
             _run_lumps_are_the_solves(flex_data)
         return
 
-    # Δ.18 — when the override returns None (e.g. synthetic per-sub-solve
-    # ``active_solve`` whose ``invest_periods`` is empty in Spine), preserve
-    # the seed-loaded snapshot CSV value rather than overwriting it.  The
-    # override remains authoritative when it returns a non-None Param.
+    # A helper returns None only when its feature is inactive (no period, no entity row); the field then keeps
+    # its loaded value (the divest lumps' emitted ``solve_data`` frames).
     def _set_if(field: str, value):
         if value is not None:
             setattr(flex_data, field, value)
 
-    # Construction lead time: the decisions' start of operation (apply_derived_c, which runs before).
-    commission = getattr(flex_data, "ed_invest_commission", None)
-    _set_if("ed_entity_annual_discounted",
-            ed_entity_annual_discounted_from_source(
-                source, active_solve,
-                period_invest, period_in_use, period_universe,
-                lineage=_npv_lineage, commission=commission, year_rows=year_rows))
+    apply_invest_lumps(flex_data, source, active_solve, list(period_invest), list(period_in_use),
+                       list(period_universe), list(period_with_history), lineage=_npv_lineage,
+                       year_rows=year_rows, provider=provider)
 
     _set_if("ed_entity_annual_divest_discounted",
             ed_entity_annual_divest_discounted_from_source(
@@ -2315,19 +2329,11 @@ def apply_npv(flex_data: object,
                 period_invest, period_in_use, period_universe,
                 lineage=_npv_lineage, year_rows=year_rows))
 
-    _set_if("ed_lifetime_fixed_cost",
-            ed_lifetime_fixed_cost_from_source(
-                source, active_solve,
-                period_with_history, period_in_use, period_universe,
-                lineage=_npv_lineage, commission=commission, year_rows=year_rows))
-
     _set_if("ed_lifetime_fixed_cost_divest",
             ed_lifetime_fixed_cost_divest_from_source(
                 source, active_solve,
                 period_invest, period_in_use, period_universe,
                 lineage=_npv_lineage, workdir=workdir, provider=provider, year_rows=year_rows))
-
-    _register_invest_lumps(flex_data, provider)
 
     # Reported costs: the lumps from the start of the run over the run's periods, and the windows (outputs only).
     apply_run_cost_fields(flex_data, source, active_solve, list(period_in_use), list(period_invest),
@@ -2337,6 +2343,38 @@ def apply_npv(flex_data: object,
 
 #: The investment lumps whose ``solve_data`` frames are the values set here (the CSV emitter does not derive them).
 _REGISTERED_LUMPS = ("ed_entity_annual_discounted", "ed_lifetime_fixed_cost")
+
+
+def apply_invest_lumps(flex_data: object,
+                       source: "InputSource",
+                       active_solve: str,
+                       period_invest: list[str],
+                       period_in_use: list[str],
+                       period_universe: list[str],
+                       period_with_history: list[str],
+                       *,
+                       lineage: pl.DataFrame | None,
+                       year_rows: pl.DataFrame | None,
+                       provider: "object | None" = None,
+                       ) -> None:
+    """Set the objective's investment lumps ``ed_entity_annual_discounted`` (the annuity over the payback window)
+    and ``ed_lifetime_fixed_cost`` (the fixed cost over the technical lifetime) of ``active_solve`` and register
+    their ``solve_data`` frames (:func:`_register_invest_lumps`).  These are the only derivation of both lumps: a
+    Spine solve (:func:`apply_npv`) and a synthetic sub-solve (:func:`apply_run_fields_of_synthetic_solve`) call it
+    alike.  The start of operation of a construction lead time is ``flex_data.ed_invest_commission``.  A helper
+    that returns None (no invest period, no entity row) leaves the field as it is."""
+    commission = getattr(flex_data, "ed_invest_commission", None)
+    annuity = ed_entity_annual_discounted_from_source(
+        source, active_solve, period_invest, period_in_use, period_universe,
+        lineage=lineage, commission=commission, year_rows=year_rows)
+    if annuity is not None:
+        flex_data.ed_entity_annual_discounted = annuity
+    fixed = ed_lifetime_fixed_cost_from_source(
+        source, active_solve, period_with_history, period_in_use, period_universe,
+        lineage=lineage, commission=commission, year_rows=year_rows)
+    if fixed is not None:
+        flex_data.ed_lifetime_fixed_cost = fixed
+    _register_invest_lumps(flex_data, provider)
 
 
 def _register_invest_lumps(flex_data: object, provider: "object | None") -> None:
@@ -2367,6 +2405,7 @@ __all__ = [
     "ed_lifetime_fixed_cost_from_source",
     "ed_lifetime_fixed_cost_divest_from_source",
     "apply_npv",
+    "apply_invest_lumps",
     "apply_run_cost_fields",
     "apply_run_factors",
     "apply_run_fields_of_synthetic_solve",
