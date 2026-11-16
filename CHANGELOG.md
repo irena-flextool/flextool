@@ -1,4 +1,4 @@
-## Unreleased (4.5.0, schema v80)
+## Release 4.5.0 (16.11.2026) — inf as no limit, scaling guard, ramp envelope and ramp frequency plots, piecewise linear efficiency, full-load efficiency in reduced unit detail, capacity margin renames and many fixes (schema v80)
 
 Input databases move to data version 80. The FlexTool window, the Spine Toolbox workflow and `flextool-run
 --migrate` migrate them. FlexTool now needs polar-high 3.15.0 or newer (installed with FlexTool).
