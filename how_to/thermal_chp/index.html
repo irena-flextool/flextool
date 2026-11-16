@@ -1115,6 +1115,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#how-to-give-a-unit-a-part-load-efficiency-curve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to give a unit a part-load efficiency curve
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-to-give-a-unit-a-start-up-fuel-or-start-up-heat" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2766,6 +2777,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#how-to-give-a-unit-a-part-load-efficiency-curve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How to give a unit a part-load efficiency curve
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-to-give-a-unit-a-start-up-fuel-or-start-up-heat" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3247,6 +3269,48 @@ where   slope = 1 / efficiency - section
 <li><code>ramp_cost</code>: The cost of changing the flow [CUR/MW]: every MW of change from the previous time step costs this much, up and down alike, whatever the length of the steps (a change is an event, like a start-up). It uses the same previous step as the ramp limit above, so there is no cost at the first step of a solve, after a gap or at the start of a representative period, and a rolling window is charged once for the change from the previous window's realized flow. A start-up from zero pays both the startup cost and the ramp cost. The cost is reported in the cost category <em>ramps</em>. With a ramp cost, the price at a node where a ramp-costed unit sets the price and its flow does not change is not unique: it can lie up to 2 × <code>ramp_cost</code> / step duration [CUR/MWh] above or below that unit's marginal cost.</li>
 </ul>
 <p><img alt="Add min_load" src="../../img/tutorial/coal_min_load.png" /></p>
+<h2 id="how-to-give-a-unit-a-part-load-efficiency-curve">How to give a unit a part-load efficiency curve</h2>
+<p>A thermal unit is usually least efficient at low load. <em>min_load_efficiency</em> (above) gives the fuel use as one straight line between minimum load and full load. For a curve with more points, set <code>conversion_method</code> to <em>piecewise_linear</em> and give the curve as <code>piecewise_linear_efficiency</code>: a map from load share (0–1 of the capacity online) to the efficiency at that load. The fuel use is linear between the points. <code>efficiency</code> and <code>efficiency_at_min_load</code> are not used.</p>
+<p><strong>A thermal unit.</strong> A 100 MW <em>coal_plant</em> (<code>virtual_unitsize</code> 100) with the curve <code>{0.4: 0.30, 0.7: 0.40, 1.0: 0.42}</code> and <code>min_load</code> 0.4. Per 100 MW online:</p>
+<table>
+<thead>
+<tr>
+<th>load share</th>
+<th>output [MW]</th>
+<th>efficiency</th>
+<th>heat rate = 1 / efficiency [MWh fuel / MWh]</th>
+<th>fuel [MW]</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0.4</td>
+<td>40</td>
+<td>0.30</td>
+<td>3.333</td>
+<td>133.3</td>
+</tr>
+<tr>
+<td>0.7</td>
+<td>70</td>
+<td>0.40</td>
+<td>2.500</td>
+<td>175.0</td>
+</tr>
+<tr>
+<td>1.0</td>
+<td>100</td>
+<td>0.42</td>
+<td>2.381</td>
+<td>238.1</td>
+</tr>
+</tbody>
+</table>
+<p>Between the points the slope of the fuel use is the incremental heat rate: (175.0 − 133.3) / 30 = 1.389 from 40 to 70 MW and (238.1 − 175.0) / 30 = 2.103 from 70 to 100 MW. It must not fall from one segment to the next (the curve must be convex); a curve where it falls is an error, and the message gives the nearest curve that is accepted. Extended down to zero output, the first segment reaches 133.3 − 1.389 × 40 = 77.8 MW: the fuel the unit burns per 100 MW online even at zero output. So the unit needs online variables. Without a <code>startup_method</code> it gets <em>linear</em> start-ups (an info line says so); with <code>startup_method</code> <em>binary</em> it commits whole 100 MW units, as assumed below. One unit online at 60 MW (load share 0.6) burns 77.8 + 1.389 × 60 = 161.1 MW of fuel (efficiency 0.372); two units at 130 MW (load share 0.65 each) burn 2 × 77.8 + 1.389 × 130 = 336.1 MW.</p>
+<p><strong>From heat rates.</strong> Data sheets often give heat rates. The efficiency at a load is 1 / heat rate (3.333 → 0.30). When the data gives a full-load heat rate and incremental heat rates, compute the fuel use at each point from the full-load point backwards (fuel = output × heat rate at full load, then subtract incremental heat rate × the output step of each segment) and take efficiency = output / fuel at each point.</p>
+<p><strong>min_load.</strong> <code>min_load</code> does not move the curve. Set it to the first point's load share (0.4 here): with a lower <code>min_load</code> the first segment is extended below the first point, and without any the unit could be online at zero output burning 77.8 MW of fuel per 100 MW (a warning says so). On a unit with several outputs, the curve's load share is the output weighted by <code>conversion_flow_coeff</code>, while <code>min_load</code> is on the plain sum of the outputs.</p>
+<p><strong>An electrolyser.</strong> An electrolyser is most efficient at low load. The 100 MW <em>electrolyser</em> with <code>{0.2: 0.70, 0.6: 0.66, 1.0: 0.60}</code> (no <code>startup_method</code>) needs no online variables: its curve is scaled by its built capacity. At 30 MW of hydrogen (load share 0.3) it takes 100 × (0.2 / 0.70 + 0.1 × 1.558) = 44.2 MW of power. In hours when power is free (curtailment) or the input node has a surplus, the model may take more power than the curve needs: the input can only be at least the curve's fuel use. A warning after the solve gives the amount; see <em>Input above the curve</em> in <a href="../../reference/units/#part-load-efficiency-curve-piecewise_linear">Units</a>.</p>
+<p><strong>A curve per period.</strong> A map from period to a curve gives each period its own curve (e.g. an ageing unit). The curve cannot vary in time.</p>
 <h2 id="how-to-give-a-unit-a-start-up-fuel-or-start-up-heat">How to give a unit a start-up fuel or start-up heat</h2>
 <p>A start-up can use energy that the running unit does not: a coal unit is started on oil, a gas turbine burns gas to warm up, a CSP turbine takes steam from its tank before it delivers power. The input arc of the unit (<code>unit__inputNode</code>) says what it supplies, with <code>startup_input_method</code>:</p>
 <ul>

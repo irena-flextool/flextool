@@ -3123,7 +3123,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>investment</td>
-<td>Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.</td>
+<td>Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period. inf means no limit in that period.</td>
 </tr>
 <tr>
 <td><code>cumulative_min_capacity</code></td>
@@ -3132,7 +3132,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>investment</td>
-<td>Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.</td>
+<td>Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period. 0 or -inf means no minimum in that period.</td>
 </tr>
 <tr>
 <td><code>delay</code></td>
@@ -3195,7 +3195,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>investment</td>
-<td>Largest allowed capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period.</td>
+<td>Largest allowed capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period. inf means no limit in that period.</td>
 </tr>
 <tr>
 <td><code>invest_max_total</code></td>
@@ -3222,7 +3222,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>investment</td>
-<td>Smallest required capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period.</td>
+<td>Smallest required capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period. 0 or -inf means no minimum in that period.</td>
 </tr>
 <tr>
 <td><code>invest_min_total</code></td>
@@ -3285,7 +3285,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>retirement</td>
-<td>Largest allowed retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period.</td>
+<td>Largest allowed retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period. inf means no limit in that period.</td>
 </tr>
 <tr>
 <td><code>retire_max_total</code></td>
@@ -3303,7 +3303,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>retirement</td>
-<td>Smallest required retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period.</td>
+<td>Smallest required retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period. 0 or -inf means no minimum in that period.</td>
 </tr>
 <tr>
 <td><code>retire_min_total</code></td>
@@ -3383,7 +3383,7 @@ group labels.</p>
 <td>0</td>
 <td></td>
 <td>constraint</td>
-<td>Right-hand side of the user constraint. A period map gives each period its own value; it must cover every period of the solve. Constant or period.</td>
+<td>Right-hand side of the user constraint. A period map gives each period its own value; it must cover every period of the solve. Constant or period. inf (sense less_than) or -inf (greater_than) means no constraint in that period.</td>
 </tr>
 <tr>
 <td><code>constraint_period_method</code></td>
@@ -3445,7 +3445,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>flow_limit</td>
-<td>Largest allowed average flow into the group. A constant gives one limit per solve; a period map gives one limit per period. Average flow times the weighted hours gives the energy limit. Constant or period.</td>
+<td>Largest allowed average flow into the group. A constant gives one limit per solve; a period map gives one limit per period. Average flow times the weighted hours gives the energy limit. Constant or period. inf means no limit in that period.</td>
 </tr>
 <tr>
 <td><code>max_instant_flow</code></td>
@@ -3454,7 +3454,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>flow_limit</td>
-<td>Maximum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.</td>
+<td>Maximum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time. inf means no limit in that period or time step. With a solve's new_stepduration, a solve step that combines inf time steps with finite ones has no limit for the whole solve step (a warning says so).</td>
 </tr>
 <tr>
 <td><code>min_cumulative_flow</code></td>
@@ -3463,7 +3463,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>flow_limit</td>
-<td>Smallest required average flow into the group. A constant gives one limit per solve; a period map gives one limit per period. Average flow times the weighted hours gives the energy limit. Constant or period.</td>
+<td>Smallest required average flow into the group. A constant gives one limit per solve; a period map gives one limit per period. Average flow times the weighted hours gives the energy limit. Constant or period. -inf means no limit in that period.</td>
 </tr>
 <tr>
 <td><code>min_instant_flow</code></td>
@@ -3472,7 +3472,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>flow_limit</td>
-<td>Minimum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.</td>
+<td>Minimum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time. -inf means no limit in that period or time step. With a solve's new_stepduration, a solve step that combines -inf time steps with finite ones has no limit for the whole solve step (a warning says so).</td>
 </tr>
 </tbody>
 </table>
@@ -3510,31 +3510,31 @@ group labels.</p>
 <td>Small pre-existing capacity assigned to investment candidate connections in DC power flow groups that have zero existing capacity. This avoids the need for big-M / MIP constraints by ensuring the angle constraint is always active. Default 0.1 MW. The value should be small enough to not affect results but large enough for numerical stability.</td>
 </tr>
 <tr>
-<td><code>capacity_margin</code></td>
+<td><code>capacity_margin_absolute</code></td>
 <td>MW</td>
 <td>a constant, or a map over periods (1 level)</td>
 <td></td>
 <td></td>
 <td>investment</td>
-<td>Capacity the group needs above its demand at every time step of an investment period. Used only with capacity_margin_method manual. No value means 0 (the demand must still be covered). Constant or period.</td>
+<td>Capacity the group needs above its demand at every time step of an investment period. Used only with capacity_margin_method absolute. No value means 0 (the demand must still be covered). Constant or period. -inf means no capacity-margin requirement in that period.</td>
 </tr>
 <tr>
 <td><code>capacity_margin_method</code></td>
 <td></td>
 <td>a constant</td>
 <td>none</td>
-<td>none, manual, share_of_peak</td>
+<td>none, absolute, relative_of_peak_demand</td>
 <td>investment</td>
-<td>Whether the group needs a capacity margin in investment solves, and how the margin is given. none (default): no margin. manual: capacity_margin MW. share_of_peak: capacity_margin_share times the group's peak demand in the period. At every time step of an investment period, the capacity of the group's firm units (capacity x availability x capacity_max_coeff) and VRE units (capacity x profile x availability) must cover the group's demand plus the margin. Units fed from a storage node, connections and the units consuming from the group count by their actual flow, so exports add to the requirement; connections and lossy units inside the group are left out (their losses are not required). Units fed from fuel or commodity nodes count at capacity: the fuel is assumed to last.</td>
+<td>Whether the group needs a capacity margin in investment solves, and how the margin is given. none (default): no margin. absolute: capacity_margin_absolute MW. relative_of_peak_demand: capacity_margin_relative times the group's peak demand in the period. At every time step of an investment period, the capacity of the group's firm units (capacity x availability x capacity_max_coeff) and VRE units (capacity x profile x availability) must cover the group's demand plus the margin. Units fed from a storage node, connections and the units consuming from the group count by their actual flow, so exports add to the requirement; connections and lossy units inside the group are left out (their losses are not required). Units fed from fuel or commodity nodes count at capacity: the fuel is assumed to last.</td>
 </tr>
 <tr>
-<td><code>capacity_margin_share</code></td>
+<td><code>capacity_margin_relative</code></td>
 <td>dimensionless</td>
 <td>a constant, or a map over periods (1 level)</td>
 <td></td>
 <td></td>
 <td>investment</td>
-<td>e.g. 0.15 means 15%. Capacity margin as a share of the group's peak demand: the largest sum of the demand of the group's nodes over the period's full time series (before representative periods and new_stepduration). Used only with capacity_margin_method share_of_peak. No value means 0. Constant or period.</td>
+<td>e.g. 0.15 means 15%. Capacity margin as a share of the group's peak demand: the largest sum of the demand of the group's nodes over the period's full time series (before representative periods and new_stepduration). Used only with capacity_margin_method relative_of_peak_demand. No value means 0. Constant or period. -inf means no capacity-margin requirement in that period.</td>
 </tr>
 <tr>
 <td><code>co2_max_period</code></td>
@@ -3543,7 +3543,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>emission</td>
-<td>Largest annual CO2 emissions in each period. In a rolling solve, each roll may use the part of the limit its horizon reaches, minus what earlier rolls already emitted in that period. Constant or period.</td>
+<td>Largest annual CO2 emissions in each period. In a rolling solve, each roll may use the part of the limit its horizon reaches, minus what earlier rolls already emitted in that period. Constant or period. inf means no limit in that period.</td>
 </tr>
 <tr>
 <td><code>co2_max_total</code></td>
@@ -3579,7 +3579,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>investment</td>
-<td>Maximum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period.</td>
+<td>Maximum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period. inf means no limit in that period.</td>
 </tr>
 <tr>
 <td><code>cumulative_min_capacity</code></td>
@@ -3588,7 +3588,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>investment</td>
-<td>Minimum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period.</td>
+<td>Minimum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period. 0 or -inf means no minimum in that period.</td>
 </tr>
 <tr>
 <td><code>decomposition_method</code></td>
@@ -3633,7 +3633,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>network</td>
-<td>Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value (or 0) means no requirement. Constant, period, time or period+time. A time map must give a value for every time step of the solve (a missing time step is an error). Over a coarse time step the row uses the step mean.</td>
+<td>Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value (or 0) means no requirement. Constant, period, time or period+time. A time map must give a value for every time step of the solve (a missing time step is an error). Over a coarse time step the row uses the step mean. -inf also means no requirement in that period or time step. With a solve's new_stepduration, a solve step that combines -inf time steps with finite ones has no requirement for the whole solve step (a warning says so).</td>
 </tr>
 <tr>
 <td><code>invest_max_period</code></td>
@@ -3642,7 +3642,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>investment</td>
-<td>Largest allowed capacity coming online in each period, summed over the group's units and connections (MW) and storage nodes (MWh). With a construction lead time, the investment is decided earlier. Constant or period.</td>
+<td>Largest allowed capacity coming online in each period, summed over the group's units and connections (MW) and storage nodes (MWh). With a construction lead time, the investment is decided earlier. Constant or period. inf means no limit in that period.</td>
 </tr>
 <tr>
 <td><code>invest_max_total</code></td>
@@ -3669,7 +3669,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>investment</td>
-<td>Smallest required capacity coming online in each period, summed over the group's units and connections (MW) and storage nodes (MWh). With a construction lead time, the investment is decided earlier. Constant or period.</td>
+<td>Smallest required capacity coming online in each period, summed over the group's units and connections (MW) and storage nodes (MWh). With a construction lead time, the investment is decided earlier. Constant or period. 0 or -inf means no minimum in that period.</td>
 </tr>
 <tr>
 <td><code>invest_min_total</code></td>
@@ -3696,7 +3696,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>network</td>
-<td>e.g. 0.8 means 80%. Largest share of non-synchronous supply in the group, measured against the real demand. Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no value means 0. Constant, period, time or period+time. A time map must give a value for every time step of the solve (a missing time step is an error). Over a coarse time step the row uses the step mean.</td>
+<td>e.g. 0.8 means 80%. Largest share of non-synchronous supply in the group, measured against the real demand. Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no value means 0. Constant, period, time or period+time. A time map must give a value for every time step of the solve (a missing time step is an error). Over a coarse time step the row uses the step mean. inf means no limit in that period or time step. With a solve's new_stepduration, a solve step that combines inf time steps with finite ones has no limit for the whole solve step (a warning says so).</td>
 </tr>
 <tr>
 <td><code>penalty_capacity_margin</code></td>
@@ -3732,7 +3732,7 @@ group labels.</p>
 <td></td>
 <td>yes, no</td>
 <td>output</td>
-<td>Combines unit/connection flows, flowGroup aggregated flows, and other balance elements (slack, demand, internal_losses, etc.) into a set of timeseries and a preconfigured plot per group.</td>
+<td>Combines unit/connection flows, flowGroup aggregated flows, and other balance elements (slack, demand, internal_losses, etc.) into a set of timeseries and a preconfigured plot per group. Also gives the group's ramp envelope (ramp_envelope_t: how much the flows at its member nodes could still change toward the next step, next to the net-load ramp) and its Ramp envelope and Ramp frequency plots.</td>
 </tr>
 <tr>
 <td><code>print_indicators</code></td>
@@ -3759,7 +3759,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>retirement</td>
-<td>Largest allowed retirement in each period, summed over the group's members. Needs a retire …_period option in the group's invest_method. Constant or period.</td>
+<td>Largest allowed retirement in each period, summed over the group's members. Needs a retire …_period option in the group's invest_method. Constant or period. inf means no limit in that period.</td>
 </tr>
 <tr>
 <td><code>retire_max_total</code></td>
@@ -3777,7 +3777,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>retirement</td>
-<td>Smallest required retirement in each period, summed over the group's members. Needs a retire …_period option in the group's invest_method. Constant or period.</td>
+<td>Smallest required retirement in each period, summed over the group's members. Needs a retire …_period option in the group's invest_method. Constant or period. 0 or -inf means no minimum in that period.</td>
 </tr>
 <tr>
 <td><code>retire_min_total</code></td>
@@ -3908,7 +3908,7 @@ group labels.</p>
 <td><code>version</code></td>
 <td></td>
 <td>a constant</td>
-<td>79</td>
+<td>80</td>
 <td></td>
 <td>model</td>
 <td>Contains database version information.</td>
@@ -4027,7 +4027,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>investment</td>
-<td>Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.</td>
+<td>Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period. inf means no limit in that period.</td>
 </tr>
 <tr>
 <td><code>cumulative_min_capacity</code></td>
@@ -4036,7 +4036,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>investment</td>
-<td>Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.</td>
+<td>Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period. 0 or -inf means no minimum in that period.</td>
 </tr>
 <tr>
 <td><code>discount_rate</code></td>
@@ -4135,7 +4135,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>investment</td>
-<td>Largest allowed storage capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period.</td>
+<td>Largest allowed storage capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period. inf means no limit in that period.</td>
 </tr>
 <tr>
 <td><code>invest_max_total</code></td>
@@ -4162,7 +4162,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>investment</td>
-<td>Smallest required storage capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period.</td>
+<td>Smallest required storage capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period. 0 or -inf means no minimum in that period.</td>
 </tr>
 <tr>
 <td><code>invest_min_total</code></td>
@@ -4243,7 +4243,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>retirement</td>
-<td>Largest allowed retirement of storage capacity in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period.</td>
+<td>Largest allowed retirement of storage capacity in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period. inf means no limit in that period.</td>
 </tr>
 <tr>
 <td><code>retire_max_total</code></td>
@@ -4261,7 +4261,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>retirement</td>
-<td>Smallest required retirement of storage capacity in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period.</td>
+<td>Smallest required retirement of storage capacity in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period. 0 or -inf means no minimum in that period.</td>
 </tr>
 <tr>
 <td><code>retire_min_total</code></td>
@@ -4547,7 +4547,7 @@ group labels.</p>
 <td>none</td>
 <td>none, integers, integers_ramps, integers_min_limits, integers_ramps_min_limits, online, online_ramps</td>
 <td>solve_advanced</td>
-<td>Detail of units and connections that this solve leaves out, to make it faster (typically an investment solve). none (default): all detail. integers: binary startup_method is solved as continuous and exact connections behave as regular. integers_ramps: integers, and no ramp limits or ramp costs. integers_min_limits: integers, and no min_load, capacity_min_coeff floors or minimum up / down times. integers_ramps_min_limits: integers, no ramps and no min limits. Under the integers levels, a unit or connection whose online variables nothing in the solve still uses (no start-up cost, min_load, capacity_min_coeff floor, minimum up / down time, min_load_efficiency curve, constraint_online_coeff in a user constraint, reserve, inertia or ramp limit left) has none, as with startup_method no_startup; the run log names them. online: everything of integers_min_limits, and no online variables: no start-up costs, user constraints that count units online are left out whole, min_load_efficiency units use their full-load efficiency (less fuel than the curve at part load), and ramp limits apply to the capacity. Reserves are then limited by built capacity, not online capacity, and inertia is counted from flows. online_ramps: online, and no ramp limits or ramp costs. Never adds detail.</td>
+<td>Detail of units and connections that this solve leaves out, to make it faster (typically an investment solve). none (default): all detail. integers: binary startup_method is solved as continuous and exact connections behave as regular. integers_ramps: integers, and no ramp limits or ramp costs. integers_min_limits: integers, and no min_load, capacity_min_coeff floors or minimum up / down times; a min_load_efficiency unit that is more efficient at min load than at full load (efficiency_at_min_load above efficiency) then runs at its full-load efficiency. integers_ramps_min_limits: integers, no ramps and no min limits. Under the integers levels, a unit or connection whose online variables nothing in the solve still uses (no start-up cost, min_load, capacity_min_coeff floor, minimum up / down time, min_load_efficiency curve, piecewise_linear curve whose efficiency rises from its first point, constraint_online_coeff in a user constraint, reserve, inertia or ramp limit left) has none, as with startup_method no_startup; the run log names them. online: everything of integers_min_limits, and no online variables: no start-up costs, user constraints that count units online are left out whole, min_load_efficiency and piecewise_linear units run at their full-load efficiency (the same fuel at full output; at part load less or more fuel than with their curve), and ramp limits apply to the capacity. Reserves are then limited by built capacity, not online capacity, and inertia is counted from flows. online_ramps: online, and no ramp limits or ramp costs. Never adds detail.</td>
 </tr>
 <tr>
 <td><code>rolling_duration</code></td>
@@ -4628,7 +4628,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>solve_advanced</td>
-<td>Map of HiGHS solver options (option name -&gt; value), layered on top of the floor values in solver_config/highs.opt and below any CLI overrides (e.g. --solver-time-limit). Use this for ad-hoc HiGHS knobs that do not have a dedicated FlexTool parameter (solver_mip_gap).</td>
+<td>Map of solver options (option name -&gt; value), with the solver's own option names (e.g. presolve for HiGHS, Presolve for Gurobi). They apply to whichever solver the solve uses (solver) and are checked against FlexTool's list of that solver's options before the first solve: a name that is not one of its options is refused. They override the same option in the solver's option file (solver_config/<solver>.opt) and solver_mip_gap; the run's flags (e.g. --solver-time-limit) override them.</td>
 </tr>
 <tr>
 <td><code>solver_mip_gap</code></td>
@@ -4646,7 +4646,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>solve_advanced</td>
-<td>Not used: FlexTool never runs this command. Kept only so that older databases still read.</td>
+<td>Not used: FlexTool never runs this command. Set a solver wrapper on your computer instead (see the solver documentation). Kept only so that older databases still read.</td>
 </tr>
 <tr>
 <td><code>stochastic_branches</code></td>
@@ -4866,9 +4866,9 @@ group labels.</p>
 <td></td>
 <td>a constant</td>
 <td>constant_efficiency</td>
-<td>constant_efficiency, min_load_efficiency, none</td>
+<td>constant_efficiency, min_load_efficiency, none, piecewise_linear</td>
 <td>basics</td>
-<td>Choice of conversion method.</td>
+<td>How the unit converts inputs to outputs. constant_efficiency (default): output = efficiency × input. min_load_efficiency: the fuel use is a straight line from min_load (efficiency_at_min_load) to full load (efficiency); needs online variables. piecewise_linear: the fuel use follows the part-load curve piecewise_linear_efficiency; efficiency is not used. none: for a unit without inputs or without outputs (a unit with both converts as with constant_efficiency).</td>
 </tr>
 <tr>
 <td><code>cumulative_max_capacity</code></td>
@@ -4877,7 +4877,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>investment</td>
-<td>Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.</td>
+<td>Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period. inf means no limit in that period.</td>
 </tr>
 <tr>
 <td><code>cumulative_min_capacity</code></td>
@@ -4886,7 +4886,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>investment</td>
-<td>Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.</td>
+<td>Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period. 0 or -inf means no minimum in that period.</td>
 </tr>
 <tr>
 <td><code>delay</code></td>
@@ -4913,7 +4913,7 @@ group labels.</p>
 <td>1</td>
 <td></td>
 <td>basics</td>
-<td>Efficiency of the unit at full load: outputs / inputs, each flow weighted by its conversion_flow_coeff (default 1, giving plain sum of outputs / sum of inputs). May be above 1: a heat pump with COP 3 has 3; a unit whose output is measured in another unit of measure (e.g. m³ of water per MWh of electricity) uses that ratio. A min_load_efficiency unit can have different efficiency below full load (see efficiency_at_min_load). No effect on a unit without inputs or without outputs. Constant, period, time, period+time or stochastic time.</td>
+<td>Efficiency of the unit at full load: outputs / inputs, each flow weighted by its conversion_flow_coeff (default 1, giving plain sum of outputs / sum of inputs). May be above 1: a heat pump with COP 3 has 3; a unit whose output is measured in another unit of measure (e.g. m³ of water per MWh of electricity) uses that ratio. A min_load_efficiency unit can have different efficiency below full load (see efficiency_at_min_load). No effect on a unit without inputs or without outputs. Constant, period, time, period+time or stochastic time. Not used by a piecewise_linear unit: the point at load 1 of its piecewise_linear_efficiency is its full-load efficiency.</td>
 </tr>
 <tr>
 <td><code>efficiency_at_min_load</code></td>
@@ -4922,7 +4922,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>basics</td>
-<td>Output / input at minimum load, like efficiency (e.g. 0.4; may be above 1). Efficiency of a min_load_efficiency unit at its minimum load. Fuel use is a straight line from minimum load (this efficiency) to full load (efficiency). Has no effect when min_load is 0: the efficiency at zero output is not defined. No value: efficiency applies at minimum load too. Constant, period, time or period+time.</td>
+<td>Output / input at minimum load, like efficiency (e.g. 0.4; may be above 1). Efficiency of a min_load_efficiency unit at its minimum load. Fuel use is a straight line from minimum load (this efficiency) to full load (efficiency). Has no effect when min_load is 0: the efficiency at zero output is not defined. No value: efficiency applies at minimum load too. Constant, period, time or period+time. Used by min_load_efficiency units only.</td>
 </tr>
 <tr>
 <td><code>existing</code></td>
@@ -4958,7 +4958,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>investment</td>
-<td>Largest allowed capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period.</td>
+<td>Largest allowed capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period. inf means no limit in that period.</td>
 </tr>
 <tr>
 <td><code>invest_max_total</code></td>
@@ -4985,7 +4985,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>investment</td>
-<td>Smallest required capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period.</td>
+<td>Smallest required capacity coming online in each period. Existing capacity and retirements do not change it. With a construction lead time, the investment is decided earlier. Constant or period. 0 or -inf means no minimum in that period.</td>
 </tr>
 <tr>
 <td><code>invest_min_total</code></td>
@@ -5030,7 +5030,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>basics</td>
-<td>0-1, share of the online capacity. Minimum load of the unit as a share of its online capacity. Applies only if the unit has online variables. No value means 0. Constant, period, time, period+time or stochastic time.</td>
+<td>0-1, share of the online capacity. Minimum load of the unit as a share of its online capacity. Applies only if the unit has online variables. No value means 0. Constant, period, time, period+time or stochastic time. For a piecewise_linear unit, min_load is separate from the first point of its curve.</td>
 </tr>
 <tr>
 <td><code>min_uptime</code></td>
@@ -5051,13 +5051,22 @@ group labels.</p>
 <td>Choice between minimum up- and downtimes (none, min_downtime, min_uptime, both). Setting this to anything other than 'none' will activate online variables (at least linear) for the unit. Default: none (no minimum time constraints).</td>
 </tr>
 <tr>
+<td><code>piecewise_linear_efficiency</code></td>
+<td>dimensionless</td>
+<td>a curve (map over load shares), or a curve per period (map over periods of maps over load shares)</td>
+<td></td>
+<td></td>
+<td>basics</td>
+<td>Part-load efficiency curve of a piecewise_linear unit: a map from load share (0–1 of the unit's online capacity; of its built capacity when it has no online variables) to the efficiency at that load (output / input, each flow weighted by its conversion_flow_coeff, like efficiency; may be above 1). The last point must be at load 1 (full load). Fuel use is linear between the points. The extra input per extra output (the incremental heat rate) must not fall from one segment to the next: such a curve is an error, and the message gives the nearest curve that is accepted. When the efficiency rises from the first point to the second (the usual thermal curve), the unit burns fuel at zero output and needs online variables: a unit without startup_method gets linear start-ups (an info line says so). Below the first point the first segment is extended down to min_load; when the efficiency falls from the first point to the second (e.g. an electrolyser), the first point's efficiency applies below it instead. min_load is set separately and does not move the curve. A piecewise_linear unit does not use efficiency or efficiency_at_min_load, and its efficiency must not vary in time. One curve (map: load share → efficiency) or a curve per period (map: period → load share → efficiency).</td>
+</tr>
+<tr>
 <td><code>retire_max_period</code></td>
 <td>MW</td>
 <td>a constant, or a map over periods (1 level)</td>
 <td></td>
 <td></td>
 <td>retirement</td>
-<td>Largest allowed retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period.</td>
+<td>Largest allowed retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period. inf means no limit in that period.</td>
 </tr>
 <tr>
 <td><code>retire_max_total</code></td>
@@ -5075,7 +5084,7 @@ group labels.</p>
 <td></td>
 <td></td>
 <td>retirement</td>
-<td>Smallest required retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period.</td>
+<td>Smallest required retirement in each period. Counts only what is retired in that period; existing capacity and investments do not change it. Constant or period. 0 or -inf means no minimum in that period.</td>
 </tr>
 <tr>
 <td><code>retire_min_total</code></td>

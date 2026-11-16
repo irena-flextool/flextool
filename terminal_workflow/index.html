@@ -3971,6 +3971,10 @@ script); a given flag wins over the variable, and the variable over the solve's 
 <td>FlexTool autoscaler strategy (see <a href="../dev/scaling/">scaling.md</a>). <code>off</code> disables all scaling including HiGHS' internal equilibration; <code>solver_only</code> keeps only HiGHS' default matrix scaling; <code>basic</code> adds FlexTool's Layer-1 range detection and Layer-3 <code>user_*_scale</code> recommendation without LP mutation; <code>full</code> (default) adds Layer-2 semantic per-type column/row/cost scaling. Env fallback: <code>FLEXTOOL_SCALING</code></td>
 </tr>
 <tr>
+<td><code>--scaling-guard {error,warn,off}</code></td>
+<td>What to do when a solve's limits and bounds span more than the solver enforces accurately after FlexTool's scaling (more than 17 decades for HiGHS): <code>error</code> (default) stops before the solve with a message naming the largest and smallest values; <code>warn</code> prints it and solves; <code>off</code> does not check. Spreads above 13 decades and cost / coefficient problems only warn, and so does everything for a commercial solver. See <a href="../dev/scaling/#the-scaling-guard">The scaling guard</a>. Env fallback: <code>FLEXTOOL_SCALING_GUARD</code></td>
+</tr>
+<tr>
 <td><code>--user-bound-scale N</code></td>
 <td>Pin HiGHS' <code>user_bound_scale</code> exponent (multiplies all column bounds and RHS by <code>2**N</code>). Use the value HiGHS suggests in its scaling warning; clamped to <code>[-10, 0]</code>. Overrides the Layer-3 auto-pick. Env fallback: <code>FLEXTOOL_USER_BOUND_SCALE</code></td>
 </tr>
@@ -4818,7 +4822,7 @@ choose other folders.</p>
 <li><code>flextool/schemas/default_plots.yaml</code> &mdash; the bundled plot configuration, for single-scenario plots and cross-scenario comparison plots alike (each plot's <code>scenario_rule</code> decides where it is drawn)</li>
 </ul>
 <p>The file defines which results to plot, plot types, layout, and styling. You can create custom configuration files and pass them via <code>--output-config</code> or <code>--output-config-path</code>. An old setting that points to <code>templates/default_plots.yaml</code> or <code>default_comparison_plots.yaml</code> uses the bundled file.</p>
-<p>Dispatch plot colors and stacking order are defined in the project's <code>plot_settings.yaml</code> (<code>projects/&lt;Name&gt;/plot_settings.yaml</code>), which is created from the bundled <code>flextool/schemas/default_plot_settings.yaml</code> and can be edited via the GUI or any text editor.</p>
+<p>Dispatch plot colors and stacking order are defined in the project's <code>plot_settings.yaml</code> (<code>projects/&lt;Name&gt;/plot_settings.yaml</code>), which is created from the bundled <code>flextool/schemas/default_plot_settings.yaml</code> and can be edited via the GUI or any text editor. The colours of the ramp envelope bands are under <code>categories: ramp_envelope:</code> (keys <code>units</code>, <code>storage</code>, <code>vre</code>, <code>connections</code>); see <a href="../results/#ramp-envelope">Ramp envelope</a>.</p>
 
 
 

@@ -1503,6 +1503,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Ramps">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ramp-envelope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ramp envelope
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2923,6 +2940,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Ramps">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ramp-envelope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ramp envelope
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3285,6 +3319,7 @@ investment, retirement and fixed costs of new and retired capacity are 0 (a warn
 <ul>
 <li><code>group</code> entity <code>sum_flow_t</code> parameter — [MWh/step] dispatch decomposed by <code>(type, item)</code> where <code>type</code> is one of: <em>slack</em> (upward/downward), <em>from_unit</em>, <em>from_unitGroup</em>, <em>to_unit</em>, <em>to_unitGroup</em>, <em>from_connection</em>, <em>from_connectionGroup</em>, <em>to_connection</em>, <em>to_connectionGroup</em>, <em>inflow</em>, <em>internal_losses</em> (units/connections/storages)</li>
 <li><code>group</code> entity <code>sum_flow_annualized</code> parameter — [MWh] same decomposition, annualized period totals</li>
+<li><code>group</code> entity <code>ramp_envelope_t</code> parameter — [MW] the room of the group's flows to change toward the next step, next to the net-load ramp (see <a href="#ramp-envelope">Ramp envelope</a>)</li>
 </ul>
 <h2 id="flow-group-results">Flow group results</h2>
 <p><code>flowGroup</code> entities whose <code>flow_aggregator</code> is <code>standalone_aggregator_only</code> or <code>both</code> produce aggregate flow statistics over their member <code>(process, node)</code> legs (listed via <code>flowGroup__unit__node</code> / <code>flowGroup__connection__node</code>):</p>
@@ -3373,8 +3408,7 @@ and output of every unit, whether or not the unit has ramp limits.</p>
 </tbody>
 </table>
 <p>In a rolling solve, the first step of a window is compared with the last realized step of the previous window. No
-column is a sum of the others. Earlier versions also had a node-level "ramp room" table, <code>node</code> <code>ramp_t</code>, with
-stacked headroom levels. It is no longer produced.</p>
+column is a sum of the others. The room the system has to ramp is in the <a href="#ramp-envelope">ramp envelope</a> below.</p>
 <p><strong>From MW per step to the ramp speed.</strong> <code>ramp_speed_up</code> and <code>ramp_speed_down</code> are a share of capacity per minute
 (see <a href="../reference/units/">Units</a>). To compare, divide the ramp by the capacity of that input or output and by the
 minutes between the two step centres (60 × the average of the two step durations in hours). Example: a 500 MW
@@ -3382,6 +3416,117 @@ unit on hourly steps has <code>ramp_t</code> = −30 MW. That is 30 / 500 / (60 
 its capacity per minute, or 30 / 60 = 0.5 MW per minute. With 3-hour steps the same −30 MW is
 30 / 500 / 180 ≈ 0.00033. The ramp limit also counts the reserve the unit holds in that direction, so a unit can be
 at its limit with a <code>ramp_t</code> smaller than its ramp speed allows.</p>
+<h3 id="ramp-envelope">Ramp envelope</h3>
+<p>The ramp envelope shows how much each node, and each node group with <code>print_dispatch</code> <em>yes</em>, could still change its
+supply toward the next time step, next to how much the net load changes. It is written for every run; there is no
+option to turn it on.</p>
+<table>
+<thead>
+<tr>
+<th>Table</th>
+<th>Results database</th>
+<th>Rows and columns</th>
+<th>Unit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>node_ramp_envelope_dt_ep</code></td>
+<td><code>node</code> <code>ramp_envelope_t</code></td>
+<td>one column per node and band; every node with a balance, except storage nodes</td>
+<td>MW (the node's rate unit, for example <code>m3/h</code> for a water node)</td>
+</tr>
+<tr>
+<td><code>nodeGroup_ramp_envelope_dt_gp</code></td>
+<td><code>group</code> <code>ramp_envelope_t</code></td>
+<td>one column per node group (<code>print_dispatch</code> <em>yes</em>) and band</td>
+<td>MW (<code>Mixed units of measure!</code> over nodes of different units)</td>
+</tr>
+<tr>
+<td><code>timestep_hours_dt</code></td>
+<td><code>model</code> <code>timestep_hours_t</code></td>
+<td>one value per realized step: the hours a year the step stands for (step duration × timestep weight ÷ the share of the year the period covers)</td>
+<td>h/year</td>
+</tr>
+<tr>
+<td><code>transition_hours_dt</code></td>
+<td><code>model</code> <code>transition_hours_t</code></td>
+<td>one value per realized step: the length of the transition to the next step, (duration of t + duration of t⁺) / 2</td>
+<td>h</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Row t is the change from step t toward the next realized step t⁺</strong> (the values are not per hour: a change of
+30 MW between two 3-hour steps is 30). A row is empty when t has no single next step: the last step of the run, the
+last step before a gap in the timeline, the end of a representative period, the last step of a period that the next
+period does not continue, and a step that more than one shown step continues. In a rolling solve, the last realized
+step of a window is filled from the first step of the next window. In a stochastic solve the rows follow the realized
+results (the realization dispatch), so the step before the reveal is filled from the realized branch.</p>
+<p>The bands (the down bands are stored as negative numbers):</p>
+<ul>
+<li><em>ramp_net_load</em> — net load at t⁺ − net load at t, where net load = demand − the potential of the VRE units (the
+  output their profiles allow). Positive: the other units, storages and connections must supply more. The
+  potential of a VRE unit that also touches a storage node is not subtracted: that unit is in the storage band.</li>
+<li><em>ramp_demand</em> — the same for the demand alone (demand = −<code>inflow</code>).</li>
+<li><em>units_up</em> / <em>units_down</em> — how much the units with a flow at the node can raise / lower the supply at t⁺: up to
+  their capacity × availability at t⁺ and down to their minimum load, within their ramp limits, minus the reserve
+  they hold at t⁺ in that direction. A unit that takes from the node (an input) raises the supply by consuming less;
+  its input is converted with the efficiency of each step. Units with online variables count only the units online
+  in both steps: the output of a unit that starts at t⁺, and the drop of a unit that stops at t⁺, is forced
+  movement and in no band.</li>
+<li><em>storage_up</em> / <em>storage_down</em> — the same for the units and connections between a storage node and the node, also
+  limited by what the storage holds at the end of t (and the room left in it) over the duration of t⁺. Inflow,
+  self-discharge and state profiles of the storage node are not considered.</li>
+<li><em>vre_up</em> ("curtailment release") / <em>vre_down</em> ("extra curtailment") — the VRE units' room measured against their
+  potential, since the net-load line already holds the change of the potential. <em>vre_up</em> is the curtailed output
+  that can be taken back at t⁺: it is 0 on every step without curtailment, however much the weather rises (the
+  rise is in the net-load line). <em>vre_down</em> is how much less than the potential allows the VRE units can give at
+  t⁺; it can be larger than the VRE's own output, because it includes curtailing the coming rise of the potential.</li>
+<li><em>connections_up</em> / <em>connections_down</em> — how much the connections can raise / lower the flow into the node at
+  t⁺, within their capacity × availability at t⁺ in each direction (losses on the sending side: an export at full
+  capacity draws capacity ÷ efficiency), minus the reserve the connection holds at the node at t⁺. The far end of
+  the connection is not considered.</li>
+</ul>
+<p>Everything is measured at t⁺: the capacity, availability and efficiency of t⁺, the reserve held at t⁺ and the ramp
+limits of the solve that realized t⁺ (a solve that leaves the ramp limits out, <code>reduce_unit_detail_method</code>, has no
+ramp cap). A node group sums the bands of its member nodes; a unit or connection with all of its nodes in the group
+counts 0, and member storage nodes count as outside the group.</p>
+<p><strong>A band is never negative.</strong> Each flow's room is clipped at 0 before the flows are added up: a forced movement
+shows 0 room, not a negative room, and one flow's forced movement does not take room from another. Examples: a
+unit that stops at t⁺, an availability or a potential that falls below the current flow, a reserve at t⁺ larger
+than the current flow allows, an efficiency change that raises a unit's consumption at the same output, curtailment
+that disappears at sunset.</p>
+<p><strong>Reading the plot.</strong> The net-load ramp should lie inside the envelope: −(sum of the down bands) ≤ <em>ramp_net_load</em>
+≤ sum of the up bands, after the change of the node's slack (loss of load − excess load) is taken out. The room
+between the line and the edge is the spare ramping capability. Where a flow was clipped, the envelope is wider than
+what the system can really do: the line cannot reach that edge. The line can be outside the envelope when:</p>
+<ul>
+<li>a unit with a flow at the node (or in the group) starts or stops at t⁺;</li>
+<li>a storage node in the storage band has an inflow, a self-discharge or a state profile;</li>
+<li>the node's slack (loss of load or excess load) changes between the two steps;</li>
+<li>in a node group, a unit or connection inside the group has losses: it counts 0 in the bands, so the change of its
+  losses is in no band (a lossy connection between two member nodes, for example).</li>
+</ul>
+<p><strong>Ramp frequency.</strong> The ramp frequency (histogram) of a node or node group shows, per period, how often the net
+load and the demand change how fast: the rate is <em>ramp_net_load</em> (or <em>ramp_demand</em>) ÷ <em>transition_hours</em> [MW/h],
+and each step weighs its <em>timestep_hours</em> [h/year], so the bars add up to the hours a year of the filled rows (empty
+rows, such as the last step of a block or period, are dropped). One
+set of bins serves every series of the plot (both rates, every compared scenario): from −M to +M, M the largest
+rate, the bin width the smallest of 1, 2 or 5 × 10ⁿ MW/h that gives at most about 40 bins, one bin centred on 0. The
+vertical lines are the smallest up room and the smallest down room over the shown steps, per transition divided by
+its <em>transition_hours</em>: a net-load rate beyond them was close to the limit at least once.</p>
+<p><strong>Where to see it.</strong> In the <a href="../flextool_gui_interface/#result-viewer">Result viewer</a>, Dispatch mode, the view
+selector next to the time range chooses <em>Dispatch</em>, <em>Ramp envelope</em> (the bands stacked over the Start / Duration
+window, up above zero and down below, the net-load ramp as a black line and the demand ramp as a grey one) or
+<em>Ramp frequency</em> (the histogram of the selected scenario, every period) for the selected node or node group. The
+scenario comparison with dispatch plots writes <code>ramp_envelope_nodeGroup_&lt;group&gt;_&lt;scenario&gt;.png</code> (one per scenario)
+and <code>ramp_frequency_nodeGroup_&lt;group&gt;.png</code> (every compared scenario in one histogram) to <code>output_plot_comparisons/</code>
+for every node group with <code>print_dispatch</code> <em>yes</em>, and <code>ramp_envelope_node_&lt;node&gt;_&lt;scenario&gt;.png</code> /
+<code>ramp_frequency_node_&lt;node&gt;.png</code> for every node when the GUI's <strong>Debug</strong> option is on (<code>--debug</code> of
+<code>flextool-scenario-results</code>), as for the per-node dispatch plots; with <a href="#plotted-data-as-csv">Write plotted data</a>
+each comes with a CSV file. The band colours are <code>categories: ramp_envelope:</code> in the project's <code>plot_settings.yaml</code>
+(keys <code>units</code>, <code>storage</code>, <code>vre</code>, <code>connections</code>; the lines are always black and grey). The <code>debug</code> plot set of
+<code>default_plots.yaml</code> also has line plots of the two tables, <em>Node ramp envelope</em> and <em>NodeGroup ramp envelope</em>.</p>
 <h2 id="dc-power-flow">DC power flow</h2>
 <p>When the network contains DC-power-flow connections / nodes (<code>is_dc_power_flow = yes</code>):</p>
 <ul>
@@ -3392,7 +3537,7 @@ at its limit with a <code>ramp_t</code> smaller than its ramp speed allows.</p>
 <p>Slack uses are listed in the <a href="#energy-balance-in-nodes">Energy balance in nodes</a> section (<code>Loss of load</code>, <code>Excess load</code> and per-node <code>slack_up</code> / <code>slack_down</code> parameters with <code>_t</code> and annualized variants) and aggregated in <a href="#costs">Costs</a>. Group-level slack tables:</p>
 <ul>
 <li><code>group</code> entity <code>slack_capacity_margin</code> parameter — [MW] capacity-margin shortfall in investment periods. It is the shortfall of the solve that decided the investments: in an investment → dispatch chain it is the investment solve's, shown under the investment solve, and its penalty is in the costs (<em>capacity margin penalty</em>). The forecast branch periods of a stochastic fan are not realized, so this table and the costs leave out their shortfalls; <code>capacity_margin__d</code> has them.</li>
-<li><code>group</code> entity <code>capacity_margin</code> parameter — the capacity margin of every solve with investment periods (<code>capacity_margin__d</code>, table <code>nodeGroup_capacity_margin_d_g</code>), per solve, group and investment period (look-ahead and forecast branch periods included, not only realized ones) at the binding step <code>binding_time</code>, the time step with the largest deficit (requirement − counted; on a group whose row is averaged over coarse steps, the first time step of the coarse step): <em>margin</em> [MW] (the <code>capacity_margin</code>, or <code>capacity_margin_share</code> × the peak), <em>peak_demand</em> [MW] (the peak demand of the group's nodes over the period's original timeline), <em>demand</em> [MW] (at the binding step), <em>requirement</em> [MW] (margin + demand), <em>firm</em> and <em>vre</em> [MW] (the counted capacity of firm units and of VRE units at their profile, with availability), <em>storage_flow</em>, <em>unit_flow</em>, <em>connections_net</em> and <em>consumption</em> [MW] (the flows of storage-backed units minus the slack energy of the storage nodes feeding the group, of the other units counted by their flow, of connections and of the group's consumption, signed as in the node balance), <em>dumped</em> [MW] (minus the downward slack), <em>counted</em> [MW] (their sum), <em>shortfall</em> [MW] (max(0, requirement − counted) at the binding step: 0 when the margin holds), <em>penalty_cost</em> [M CUR] (shortfall × <code>penalty_capacity_margin</code> × 1000 × inflation, as in the costs) and <em>capacity_price</em> [CUR/kW/a] (the shadow price of the margin: what one more kW of margin would cost; it equals <code>penalty_capacity_margin</code> while there is a shortfall, and is empty for a MIP). In the results database the binding step is not carried (the value is category → solve → period); it is in the CSV and parquet tables.</li>
+<li><code>group</code> entity <code>capacity_margin</code> parameter — the capacity margin of every solve with investment periods (<code>capacity_margin__d</code>, table <code>nodeGroup_capacity_margin_d_g</code>), per solve, group and investment period (look-ahead and forecast branch periods included, not only realized ones) at the binding step <code>binding_time</code>, the time step with the largest deficit (requirement − counted; on a group whose row is averaged over coarse steps, the first time step of the coarse step): <em>margin</em> [MW] (the <code>capacity_margin_absolute</code>, or <code>capacity_margin_relative</code> × the peak), <em>peak_demand</em> [MW] (the peak demand of the group's nodes over the period's original timeline), <em>demand</em> [MW] (at the binding step), <em>requirement</em> [MW] (margin + demand), <em>firm</em> and <em>vre</em> [MW] (the counted capacity of firm units and of VRE units at their profile, with availability), <em>storage_flow</em>, <em>unit_flow</em>, <em>connections_net</em> and <em>consumption</em> [MW] (the flows of storage-backed units minus the slack energy of the storage nodes feeding the group, of the other units counted by their flow, of connections and of the group's consumption, signed as in the node balance), <em>dumped</em> [MW] (minus the downward slack), <em>counted</em> [MW] (their sum), <em>shortfall</em> [MW] (max(0, requirement − counted) at the binding step: 0 when the margin holds), <em>penalty_cost</em> [M CUR] (shortfall × <code>penalty_capacity_margin</code> × 1000 × inflation, as in the costs) and <em>capacity_price</em> [CUR/kW/a] (the shadow price of the margin: what one more kW of margin would cost; it equals <code>penalty_capacity_margin</code> while there is a shortfall, and is empty for a MIP). In the results database the binding step is not carried (the value is category → solve → period); it is in the CSV and parquet tables.</li>
 <li><code>group</code> entity <code>capacity_margin_contribution</code> parameter — [MW] what each unit, connection and node counts in the group's capacity margin at its binding step (<code>capacity_margin_entity__d</code>, table <code>nodeGroup_capacity_margin_entity_d_g</code>), by class: <em>firm</em>, <em>vre</em>, <em>storage</em>, <em>storage_slack</em> (minus the slack energy of a storage node feeding the group, per hour of the step), <em>unit_by_flow</em>, <em>connection</em>, <em>consumption</em> and <em>dumped</em> (a node's downward slack; a node that dumped nothing is left out). They add up to the columns of <code>capacity_margin__d</code>: <em>firm</em> → <em>firm</em>, <em>vre</em> → <em>vre</em>, <em>storage</em> and <em>storage_slack</em> → <em>storage_flow</em>, <em>unit_by_flow</em> → <em>unit_flow</em>, <em>connection</em> → <em>connections_net</em>, <em>consumption</em> → <em>consumption</em>, <em>dumped</em> → <em>dumped</em>. A row sums to <em>counted</em>. A unit that you expect to count but that is missing, or counts by its flow, shows which rule of the <a href="../reference/groups/#the-capacity-margin">capacity margin</a> applies to it.</li>
 <li><code>group</code> entity <code>slack_inertia_t</code> / <code>slack_inertia</code> — [MWs] inertia shortfall, timestep / annualized</li>
 <li><code>group</code> entity <code>slack_nonsync_t</code> / <code>slack_nonsync</code> — [MW] non-synchronous-share shortfall, timestep / annualized</li>
@@ -3425,6 +3570,11 @@ default and then costs nothing.</p>
   one after another), the flows, and the demand line as a <code>Demand</code> column, as in the legend (<code>Demand (line)</code> if a
   flow is already called <code>Demand</code>). <code>dispatch_data.xlsx</code> (scenario comparison with <code>--write-dispatch-xlsx</code>) has one
   sheet per dispatch plot with the same <code>period</code> and <code>time</code> columns, a value on every row.</li>
+<li>A ramp envelope plot's CSV has the <code>period</code> and <code>time</code> columns of the plotted window, the eight bands (the down
+  bands negative) and <code>ramp_net_load</code> / <code>ramp_demand</code>. A ramp frequency plot's CSV has one row per bin
+  (<code>bin_from</code>, <code>bin_to</code>, MW/h), the hours a year of each <code>&lt;scenario&gt; | net load [h/year]</code> and
+  <code>&lt;scenario&gt; | demand [h/year]</code>, and the <code>smallest up room</code> / <code>smallest down room</code> lines, with a <code>subplot</code> column
+  (the period) when the run has several periods.</li>
 <li>If a CSV cannot be written, the log has a warning naming the file, and the plots are still made.</li>
 <li>In <code>plot_settings.yaml</code>, only <code>write_plot_data: true</code> (no quotes) turns this on; a quoted <code>"true"</code> or any value
   that is not <code>true</code> or <code>false</code> leaves it off with a warning.</li>

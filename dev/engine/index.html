@@ -969,6 +969,15 @@
 </a>
 </li>
 <li class="md-nav__item">
+<a class="md-nav__link" href="#part-load-curves-piecewise_linear">
+<span class="md-ellipsis">
+      
+        Part-load curves (piecewise_linear)
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="#rp-blended-weights-inter-period-coupling">
 <span class="md-ellipsis">
       
@@ -1521,6 +1530,15 @@
 </a>
 </li>
 <li class="md-nav__item">
+<a class="md-nav__link" href="#part-load-curves-piecewise_linear">
+<span class="md-ellipsis">
+      
+        Part-load curves (piecewise_linear)
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="#rp-blended-weights-inter-period-coupling">
 <span class="md-ellipsis">
       
@@ -1872,7 +1890,7 @@ from its fields only and drop them. Unchanged frames are shared. A level that ch
 same object, so the LP is byte-identical.</p>
 </li>
 <li>
-<p><strong>Only clears, prunes, relaxes or folds.</strong> Each part sets its fields to <code>None</code> (the field lists <code>RAMP_FIELDS</code>, <code>ONLINE_FIELDS</code>, <code>RESERVE_FIELDS</code>, ... in <code>_reduce_detail.py</code>), except <code>relax_integrality</code> (integer online columns continuous), the <code>min_load_efficiency</code> fold (<code>p_slope + p_section</code>, <code>p_section = 0</code>) and the pruning of online variables without a use.</p>
+<p><strong>Only clears, prunes, relaxes or folds to full load.</strong> Each part sets its fields to <code>None</code> (the field lists <code>RAMP_FIELDS</code>, <code>ONLINE_FIELDS</code>, <code>RESERVE_FIELDS</code>, ... in <code>_reduce_detail.py</code>), except <code>relax_integrality</code> (integer online columns continuous), the full-load efficiency of <code>min_load_efficiency</code> and multi-line <code>piecewise_linear</code> units under <code>online*</code> (a constant_efficiency unit: <code>p_slope + p_section / W</code>, <code>p_section = 0</code>, <code>W</code> the weighted output one unit online gives at full output, <code>_unit_widths</code>; a multi-line unit leaves <code>process_piecewise</code> and its lines with <code>p_slope = 1/η(1)</code> (<code>W = 1</code>) or <code>max_g(α_g·W + β_g) / W</code>, <code>_full_load_piecewise</code>; the full model's fuel at full output and its input limits; module docstring "Full-load efficiency"; under <code>*_min_limits</code> the same fold for the <code>min_load_efficiency</code> units with a negative <code>p_section</code>, <code>_falling_min_load_eff</code>, which also leave <code>process_min_load_eff</code>) and the pruning of online variables without a use.</p>
 <p>Under the <code>integers*</code> levels, <code>online_uses</code> lists, on the data after the level's removals, the uses of each
 process's online variables (<code>ONLINE_USES</code>: start-up cost, min load / capacity_min_coeff floors, min up / down
 times, the min_load_efficiency section, a written user constraint with <code>constraint_online_coeff</code>, a reserve,
@@ -2159,6 +2177,49 @@ the LP itself.</p>
 walks straight back to <code>_state_change_terms</code> and the frames it reads:
 most often <code>dtttdt</code> or <code>storage_bind_forward_only</code>, both populated by
 the loader.</p>
+<h3 id="part-load-curves-piecewise_linear">Part-load curves (<code>piecewise_linear</code>)</h3>
+<p>User docs: units.md "Part-load efficiency curve". A unit with <code>conversion_method</code> <em>piecewise_linear</em> has a curve
+<code>piecewise_linear_efficiency</code> (load share ℓ → efficiency η; one curve, or one per period; no time level). Its
+fuel use per unit of capacity is <code>F(ℓ) = ℓ/η(ℓ)</code>, linear between the points; convexity (non-falling incremental
+heat rate) is checked before the solve, so the curve is the upper envelope of its segment lines.</p>
+<ul>
+<li><strong>Curve → lines</strong> (<code>engine/input/_piecewise_curve.py</code>, no FlexData dependency, shared by both classifiers and the
+  load boundary so they cannot drift): segment <code>k</code> has intercept <code>β_k = ℓ_{k−1}ℓ_k(1/η_{k−1} − 1/η_k)/(ℓ_k −
+  ℓ_{k−1})</code> (input per unit of capacity at zero output) and slope <code>α_k = 1/η_k − β_k/ℓ_k</code>; collinear points
+  merge. <em>Online form</em> (the unit has online variables): the segments, plus an origin line <code>(1/η₀, 0)</code> when the
+  efficiency falls from the first point. <em>Capacity form</em> (no online variables): the origin line through the best
+  point <code>(1/max η, 0)</code> plus the segments with <code>β &lt; 0</code>, exact for a capacity used as a fleet (<code>min_U U·f(x/U)</code> with
+  <code>U ≤ built</code>). Both forms give the same full-load fuel <code>F(1)</code>.</li>
+<li><strong>Classes</strong> (whole authored curve): one flat line → constant efficiency (<code>p_slope = 1/η</code>); one rising line →
+  a <code>process_min_load_eff</code> member (<code>p_slope = α</code>, <code>p_section = β</code>; byte-identical to <em>min_load_efficiency</em>);
+  two or more lines in some period → <code>process_piecewise</code> (fork forced, so the input has its own <code>v_flow</code>).
+  A rising first segment gives automatic <em>linear</em> start-ups in both classifiers.</li>
+<li><strong>Load boundary</strong> (<code>preprocess/params/_piecewise.apply_piecewise_curves</code>, in <code>load_flextool</code> after the DB
+  overrides, on every path: single, rolling, synthetic, nested, stochastic): reads the points through
+  <code>_param_shapes</code> (<code>MAP_LOAD</code> / <code>MAP_PERIOD_LOAD</code>; branch periods inherit the anchor's curve; a solve period without
+  a curve raises), writes <code>p_piecewise_slope</code> / <code>p_piecewise_intercept</code> <code>(p, seg, d)</code> and <code>p_piecewise_points</code>,
+  overwrites the seeded <code>p_slope</code> / <code>p_section</code> in place and recomputes the input capacity Params derived from them.
+  One-input, one-output multi-line units (<code>process_piecewise_remap</code>) keep their input-side items on the output
+  (<code>_projection.single_input_curve_arc_remap</code>); reserves, operating cost, start-up input, commodity / CO2,
+  flowGroup membership and inertia stay on the input.</li>
+<li><strong>Model</strong> (<code>core._eq_conversion_piecewise</code>, rows <code>conversion_piecewise</code> and the coarse twin): weighted input ≥
+  <code>pw_slope·x + pw_intercept·unitsize·U</code> for every line, <code>U</code> = units online, or the units built (existing count +
+  invested − divested) without online variables; <code>conversion_indirect</code> skips these units. The rows are <code>≥</code>, so the
+  input can exceed the curve where that costs nothing or pays (the over-burn cases, units.md "Input above the
+  curve"). Part-load measures of the reserve sizing use the lines (<code>_online._fuel_share</code>).</li>
+<li><strong>Detail reduction</strong> (<code>_reduce_detail._full_load_piecewise</code>): <code>online*</code> runs the unit as a constant_efficiency
+  unit at its full-load efficiency (it leaves <code>process_piecewise</code> and the line fields; <code>p_slope</code> is the full-load
+  fuel per weighted output, <code>1/η(1)</code> at <code>W = 1</code>; the input limits stay; <code>process_piecewise_remap</code> stays, so a
+  one-input unit keeps its reserve pairing at <code>p_slope</code>). Under <code>integers*</code> the curve is an online use when its
+  efficiency rises from the first point (<code>process_piecewise_needs_online</code>); a unit without that use gets the
+  capacity-form lines (<code>_fold_piecewise</code>, the same least fuel).</li>
+<li><strong>Checks.</strong> Before the solve: <code>input_derivation/_validators.validate_piecewise_linear_inputs</code> (E1–E10, E12; E11 in the reader; the
+  warnings W1–W7, W7 = setups that invite input above the curve). After the solve:
+  <code>process_outputs/calc_piecewise</code> measures per solve, in <code>read_parameters</code>, the weighted input and its part above
+  the curve (<code>process_piecewise_input_dt</code> / <code>process_piecewise_excess_dt</code>, solve-keyed, persisted per roll and
+  unioned like the other parameters) and <code>write_outputs</code> logs W5 per unit (steps with
+  <code>excess &gt; 1e-5·max(1, q)</code>, the largest and the total). No result table.</li>
+</ul>
 <h3 id="rp-blended-weights-inter-period-coupling">RP-blended-weights inter-period coupling</h3>
 <p>Representative-period storage (<code>b.has_rp</code>, set when <code>d.nodeState_rp</code>
 has rows — the union of nodes whose <code>storage_binding_method</code> selects one

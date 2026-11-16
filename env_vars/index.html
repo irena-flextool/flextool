@@ -2617,6 +2617,12 @@ read (for example <code>FLEXTOOL_HIGHS_THREADS=many</code>) is ignored with one 
 <td>Autoscaler strategy for every solve; overrides each solve's <code>scaling</code> (default <code>full</code>). See <a href="../dev/scaling/">LP scaling pipeline</a>.</td>
 </tr>
 <tr>
+<td><code>FLEXTOOL_SCALING_GUARD</code></td>
+<td><code>--scaling-guard</code></td>
+<td><code>error</code> / <code>warn</code> / <code>off</code></td>
+<td>What a solve whose limits and bounds the solver cannot enforce accurately after scaling does: <code>error</code> (default) stops before the solve, <code>warn</code> prints the message and solves, <code>off</code> does not check. See <a href="../dev/scaling/#the-scaling-guard">The scaling guard</a>.</td>
+</tr>
+<tr>
 <td><code>FLEXTOOL_USER_BOUND_SCALE</code></td>
 <td><code>--user-bound-scale</code></td>
 <td>integer in <code>[-10, 0]</code></td>

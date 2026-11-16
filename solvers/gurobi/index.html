@@ -2689,10 +2689,14 @@ the FlexTool log.</p>
   that as a warning naming where the parameter was set. Fix the name. With console logging off
   (<code>LogToConsole 0</code>) Gurobi prints no such line, and there is no warning.</li>
 <li><strong>File parameters.</strong> Parameters that name a file or folder (<code>LogFile</code>,
-  <code>SolFiles</code>, <code>NodefileDir</code>, <code>InputFile</code>, the <code>.prm</code> / <code>.json</code> file lists of
-  tuning, concurrent and multi-objective runs) take a full path in
-  <code>gurobi.opt</code>; in the database's <code>solver_arguments</code> they take only a plain
-  file name, written in the solve's work folder, and a path is refused. See
+  <code>SolFiles</code>, <code>NodefileDir</code>) take a full path in <code>gurobi.opt</code>; in the
+  database's <code>solver_arguments</code> they take only a plain file name, written in
+  the solve's work folder, and a path is refused. <code>InputFile</code> and the <code>.prm</code> /
+  <code>.json</code> setting-file lists of tuning, concurrent and multi-objective runs
+  (<code>ConcurrentSettings</code>, <code>MultiObjSettings</code>, <code>TuneBaseSettings</code>,
+  <code>TuneIgnoreSettings</code>, <code>TuneParams</code>) make Gurobi read a file of solver
+  settings: they are taken from <code>gurobi.opt</code> only, and the run stops before
+  its first solve when <code>solver_arguments</code> sets one. See
   <a href="../#what-the-database-may-set">What the database may set</a>.
   <code>ResultFile</code> is ignored everywhere (with a warning): FlexTool names its own
   result file and reads the solution from it.</li>

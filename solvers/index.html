@@ -2662,7 +2662,7 @@ they did before this feature was added.</p>
 <tr>
 <td><code>solver_arguments</code></td>
 <td>empty Map</td>
-<td>Raw option name → value pairs forwarded verbatim to the solver</td>
+<td>Option name → value pairs with the solver's own option names, for whichever solver the solve uses; checked against FlexTool's list for that solver</td>
 </tr>
 <tr>
 <td><code>solver_mip_gap</code></td>
@@ -2720,6 +2720,20 @@ solve):</p>
 </tr>
 </tbody>
 </table>
+<p><strong>Scaling guard.</strong> Before each solve FlexTool checks that the model's
+limits and bounds fit the range the solver enforces accurately after
+FlexTool's scaling (17 decades for HiGHS, at the solve's
+<code>primal_feasibility_tolerance</code>).  A model that does not fit — typically a
+placeholder like <code>1e18</code> for "no limit" next to small capacities — stops
+before the solver runs, with a message naming the largest and smallest
+values and where they are; give <code>inf</code> for "no limit", or run anyway with
+<code>--scaling-guard warn</code> (<code>FLEXTOOL_SCALING_GUARD=warn</code>; <code>off</code> does not
+check).  A commercial solver gets none of FlexTool's HiGHS scaling
+options, so for Gurobi, CPLEX, Xpress and COPT the guard judges the LP as
+written, at the solver's own feasibility tolerance (Gurobi
+<code>FeasibilityTol</code>, CPLEX <code>simplex tolerances feasibility</code>, Xpress <code>FEASTOL</code>,
+COPT <code>FeasTol</code>, set in the option file or <code>solver_arguments</code>; default
+1e-6), and only warns.  See <a href="../dev/scaling/#the-scaling-guard">The scaling guard</a>.</p>
 <p><code>--presolve</code>, <code>--highs-threads</code>, <code>--user-bound-scale</code> and
 <code>--solver-log-level verbose</code> are HiGHS options. When one of them is given and a solve runs on a commercial
 solver, the run warns once: set the solver's own parameter in the solve's
@@ -2895,7 +2909,7 @@ set the same program once per computer as the CPLEX wrapper instead:</p>
 <td><code>solver_arguments</code></td>
 <td>map</td>
 <td>empty</td>
-<td>Map of option name → value passed verbatim to the underlying solver. Use this for any solver-native option that is not one of the convenience knobs below. Raw options always override the convenience knobs on key collision.</td>
+<td>Map of option name → value with the solver's own option names (e.g. <code>presolve</code> for HiGHS, <code>Presolve</code> for Gurobi). The options apply to whichever solver the solve uses (<code>solver</code>) and are checked against FlexTool's list of that solver's options before the first solve (see <a href="#what-the-database-may-set">What the database may set</a>). They override the same option in the solver's option file (<code>solver_config/&lt;solver&gt;.opt</code>) and <code>solver_mip_gap</code>; the run's flags override them.</td>
 </tr>
 <tr>
 <td><code>solver_mip_gap</code></td>
@@ -3015,7 +3029,7 @@ parameters; from the database:</p>
 </tr>
 <tr>
 <td>Gurobi</td>
-<td><code>ResultFile</code>, <code>LogFile</code>, <code>SolFiles</code>, <code>NodefileDir</code>, <code>InputFile</code>, <code>ConcurrentSettings</code>, <code>MultiObjSettings</code>, <code>TuneBaseSettings</code>, <code>TuneIgnoreSettings</code>, <code>TuneParams</code></td>
+<td><code>ResultFile</code>, <code>LogFile</code>, <code>SolFiles</code>, <code>NodefileDir</code></td>
 </tr>
 <tr>
 <td>CPLEX</td>
@@ -3048,8 +3062,13 @@ parameters; from the database:</p>
   (<code>COMPUTEEXECSERVICE</code>, <code>COMPUTEJOBPRIORITY</code>, <code>COMPUTELOG</code>). CPLEX:
   <code>distmip config</code> (the machines of a distributed MIP solve).
 - <strong>A few others are refused</strong> as well: Gurobi's <code>JobID</code> and <code>Dummy</code> (text
-  parameters with no use from a database) and CPLEX's <code>defaults</code> (a command
-  that resets every parameter, not a parameter).
+  parameters with no use from a database), CPLEX's <code>defaults</code> (a command
+  that resets every parameter, not a parameter), and Gurobi's parameters
+  that make <code>gurobi_cl</code> read a file of solver settings, which could set any
+  parameter: <code>InputFile</code> (it can name a <code>.prm</code> parameter file) and the
+  setting-file lists <code>ConcurrentSettings</code>, <code>MultiObjSettings</code>,
+  <code>TuneBaseSettings</code>, <code>TuneIgnoreSettings</code> and <code>TuneParams</code>. <code>gurobi.opt</code>
+  may set them.
 - <strong>FlexTool 3's HiGHS settings</strong> in a solve that uses Gurobi, CPLEX, Xpress
   or COPT are left out with one warning per run: the database migration moved
   FlexTool 3's <code>highs_method</code>, <code>highs_parallel</code> and <code>highs_presolve</code> into

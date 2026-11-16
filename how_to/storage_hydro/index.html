@@ -2734,7 +2734,7 @@ This spill unit has to be in entities:</p>
 <p>And parameters:</p>
 <ul>
 <li><code>efficiency</code>: 1</li>
-<li><code>existing</code>: A large enough number to not be a limit</li>
+<li><code>existing</code>: The largest flow the spill may need to carry, e.g. the peak inflow into the reservoir. The spill is then not limited in practice. Do not use a very large number instead (such as 1e9): the capacity scales the spill unit's flow, and a number far above the system's other flows makes the solve numerically unstable.</li>
 </ul>
 <p><img alt="Hydro reservoir with downriver" src="../../img/concept/hydro_reservoir_with_downriver.png" /></p>
 <p>The database also includes an example of a river system with two additional reservoirs and plants. Both of them flow to the reservoir already made in this how to. These two are created the exact same way as above, but with just different values and the relation <code>unit_outputNode</code>: (hydro_plant_2| reservoir) and <code>unit_outputNode</code>: (hydro_plant_3| reservoir).</p>

@@ -2673,7 +2673,7 @@ environment) is in <a href="../architecture/#runtime-options">architecture.md, "
 <td><code>FLEXTOOL_ACCEPT_PRIMAL_ABS_MARGIN</code></td>
 <td><code>10</code></td>
 <td>positive float</td>
-<td>Absolute primal infeasibility allowed, as a multiple of HiGHS' primal feasibility tolerance (HiGHS checks feasibility on the scaled LP, so the unscaled slack can exceed it).</td>
+<td>Absolute primal infeasibility allowed, as a multiple of HiGHS' primal feasibility tolerance. With HiGHS user scaling (<code>user_bound_scale</code>, set by autoscale Layer 3) it is checked in the scaled problem HiGHS solved, where HiGHS applies that tolerance, so it then mirrors HiGHS's own check; the relative check (<code>FLEXTOOL_ACCEPT_PRIMAL_REL</code>) is the guard in unscaled units.</td>
 </tr>
 </tbody>
 </table>
@@ -2772,7 +2772,7 @@ environment) is in <a href="../architecture/#runtime-options">architecture.md, "
 <td><code>FLEXTOOL_AUTOSCALE_STRICT</code></td>
 <td>unset (off)</td>
 <td><code>1</code></td>
-<td>A variable, constraint or parameter missing from the autoscale registries raises instead of the solve silently falling back to an unscaled LP. Set it in tests that exercise autoscale (CLAUDE.md invariant 1).</td>
+<td>A variable, constraint or parameter missing from the autoscale registries raises instead of the solve silently falling back to an unscaled LP. Set it in tests that exercise autoscale (CLAUDE.md invariant 1). It also makes the scaling guard raise <code>ScalingRangeError</code> under <code>--scaling-guard warn</code> / <code>off</code> when Layer 2 caused the error (the limits fitted before Layer 2; a warning Layer 2 caused does not raise), and re-raises a failure of the guard's own check instead of logging it.</td>
 </tr>
 <tr>
 <td><code>FLEXTOOL_AXIS_ENUMS</code></td>

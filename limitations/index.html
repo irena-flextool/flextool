@@ -2717,7 +2717,8 @@ cheaper to cycle than it is. <em>binary</em> commits whole units (a mixed-intege
 <li>
 <p><strong>No start-up fuel.</strong> A start-up costs only <code>startup_cost</code> [CUR/MW]: it uses no fuel or heat, and there is no shut-down cost and no hot, warm or cold start.</p>
 </li>
-<li><strong>Fuel use is linear in the output.</strong> With <code>conversion_method</code> <em>min_load_efficiency</em>, the fuel use is a straight line from minimum load to full load; there are no curved efficiency curves.</li>
+<li><strong>Fuel use is piecewise linear and convex.</strong> With <code>conversion_method</code> <em>min_load_efficiency</em> the fuel use is a straight line from minimum load to full load; with <em>piecewise_linear</em> it is linear between the points of a part-load curve. A curve whose incremental heat rate falls from one segment to the next (a non-convex curve) is not accepted, and the curve cannot vary in time.</li>
+<li><strong>A part-load curve is a lower bound on the input.</strong> A <em>piecewise_linear</em> curve with two or more segments requires the input to be at least the curve's fuel use. Where extra input costs nothing or pays (a surplus or free input, a negative price or CO2 credit, a reserve or a minimum on the input), the input can be above the curve; a warning after the solve gives the amount. See <a href="../reference/units/#part-load-efficiency-curve-piecewise_linear">Part-load efficiency curve</a>.</li>
 <li>
 <p><strong>No parameter that keeps a unit online.</strong> A unit can be made to produce (a profile, a flow group floor), but there is no parameter that fixes its online status alone.</p>
 <p>A user constraint on the units online (<code>constraint_online_coeff</code>) sets a minimum number of units online; see
@@ -2742,7 +2743,7 @@ the capacity online; see <a href="../how_to/emissions/#how-to-set-a-minimum-iner
 <li>
 <p><strong>The dispatch does not feed back into the investment.</strong> An investment solve does not see the results of the dispatch solves that follow it.</p>
 <p>If a dispatch check shows unserved energy or reserve shortfall, change the investment solve by hand: a better
-sample of representative periods, a <code>capacity_margin</code> or an energy margin, and run again; see
+sample of representative periods, a capacity margin (<code>capacity_margin_method</code>) or an energy margin, and run again; see
 <a href="../how_to/solve_sequences/#several-milestones-representative-period-investment-then-a-full-year-dispatch-of-each">Several milestones</a>.
 The net-load re-selection of representative periods is the one loop that FlexTool runs for you.</p>
 </li>

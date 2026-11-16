@@ -2143,6 +2143,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#nodegroup_ramp_envelope_dt_gp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_ramp_envelope_dt_gp
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2731,6 +2742,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#node_ramp_envelope_dt_ep" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_ramp_envelope_dt_ep
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#node_slack_down_d_e" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2779,6 +2801,28 @@
     <span class="md-ellipsis">
       
         timeline_breaks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#timestep_hours_dt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        timestep_hours_dt
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#transition_hours_dt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        transition_hours_dt
       
     </span>
   </a>
@@ -4725,6 +4769,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#nodegroup_ramp_envelope_dt_gp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_ramp_envelope_dt_gp
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5313,6 +5368,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#node_ramp_envelope_dt_ep" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_ramp_envelope_dt_ep
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#node_slack_down_d_e" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5361,6 +5427,28 @@
     <span class="md-ellipsis">
       
         timeline_breaks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#timestep_hours_dt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        timestep_hours_dt
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#transition_hours_dt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        transition_hours_dt
       
     </span>
   </a>
@@ -5956,6 +6044,14 @@ see <a href="../results/">Model outputs</a> for what the results mean and how th
 <li>Results database: not written there</li>
 <li>Counterpart at the other time resolution: <code>nodeGroup_gd_p</code></li>
 </ul>
+<h3 id="nodegroup_ramp_envelope_dt_gp"><code>nodeGroup_ramp_envelope_dt_gp</code></h3>
+<p>Ramp envelope of each dispatch node group: the node bands summed over the group's non-storage members, with the processes inside the group left out.</p>
+<ul>
+<li>Files: <code>nodeGroup_ramp_envelope_dt_gp.parquet</code>, <code>group_ramp_envelope__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>group</code>, <code>band</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: <code>group</code> entity <code>ramp_envelope_t</code> parameter</li>
+</ul>
 <h2 id="flow-group-results">Flow group results</h2>
 <p>See <a href="../results/#flow-group-results">Flow group results</a> in Model outputs.</p>
 <h3 id="flowgroup_gd_p"><code>flowGroup_gd_p</code></h3>
@@ -6311,6 +6407,14 @@ see <a href="../results/">Model outputs</a> for what the results mean and how th
 <li>every column: MWh, per_step</li>
 <li>Results database: not written there</li>
 </ul>
+<h3 id="node_ramp_envelope_dt_ep"><code>node_ramp_envelope_dt_ep</code></h3>
+<p>Ramp envelope of each node for the transition from each time step to the next realized one: the net-load and demand changes toward the next step and the room of the units, storages, VRE and connections to move the node's supply up and down (down bands negative, empty rows without a single next step).</p>
+<ul>
+<li>Files: <code>node_ramp_envelope_dt_ep.parquet</code>, <code>node_ramp_envelope__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>node</code>, <code>band</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: <code>node</code> entity <code>ramp_envelope_t</code> parameter</li>
+</ul>
 <h3 id="node_slack_down_d_e"><code>node_slack_down_d_e</code></h3>
 <p>Downward slack (excess load) of each balanced node summed over the period and scaled to a full year.</p>
 <ul>
@@ -6353,6 +6457,22 @@ see <a href="../results/">Model outputs</a> for what the results mean and how th
 <li>Files: <code>timeline_breaks.parquet</code>, <code>timeline_breaks.csv</code></li>
 <li>Membership set; its columns: <code>period</code>, <code>time</code></li>
 <li>Results database: not written there</li>
+</ul>
+<h3 id="timestep_hours_dt"><code>timestep_hours_dt</code></h3>
+<p>Hours a year each realized time step stands for (the step duration times the timestep weight divided by the period's share of a year), the weight of the ramp histogram.</p>
+<ul>
+<li>Files: <code>timestep_hours_dt.parquet</code>, <code>timestep_hours__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>param</code></li>
+<li>every column: h/a, annualized</li>
+<li>Results database: <code>model</code> entity <code>timestep_hours_t</code> parameter</li>
+</ul>
+<h3 id="transition_hours_dt"><code>transition_hours_dt</code></h3>
+<p>Length of the transition from each realized time step to the next realized step (the mean of the two step durations), the divisor of the ramp histogram's rate; empty where the ramp envelope row is empty.</p>
+<ul>
+<li>Files: <code>transition_hours_dt.parquet</code>, <code>transition_hours__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>param</code></li>
+<li>every column: h, level</li>
+<li>Results database: <code>model</code> entity <code>transition_hours_t</code> parameter</li>
 </ul>
 <h3 id="unit_ramp_inputs_dt_ee"><code>unit_ramp_inputs_dt_ee</code></h3>
 <p>Change of each unit's input flow from the previous time step.</p>
