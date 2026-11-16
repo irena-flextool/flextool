@@ -64,8 +64,9 @@ def default_discount_rate(source=None) -> float:
     return DEFAULT_DISCOUNT_RATE
 
 
-def require_lifetime(missing: Iterable[tuple[str, str]], cost_param: str) -> None:
-    """Raise when an entity has a non-zero ``cost_param`` in a period but no positive ``lifetime`` there.
+def require_lifetime(missing: Iterable[tuple[str, str]], cost_param: str, lifetime_param: str = "lifetime") -> None:
+    """Raise when an entity has a non-zero ``cost_param`` in a period but no positive ``lifetime_param`` (the
+    payback time of the annuity, under the name the database gives it) there.
 
     ``missing``: ``(entity, period)`` pairs (the first few are named).  ``validate_basic_sanity`` stops an entity
     without any lifetime earlier; this catches a period map that lacks the period."""
@@ -74,6 +75,6 @@ def require_lifetime(missing: Iterable[tuple[str, str]], cost_param: str) -> Non
         return
     shown = ", ".join(f"'{e}' in period {d}" for e, d in pairs[:5])
     raise FlexToolConfigError(
-        f"lifetime is missing or not above 0 where {cost_param} is not 0: {shown}. The annuity needs the "
-        "lifetime in years for every period the entity can invest or retire in; give lifetime a value for "
-        "these periods (or a constant).")
+        f"{lifetime_param} is missing or not above 0 where {cost_param} is not 0: {shown}. The annuity needs the "
+        f"{lifetime_param} in years for every period the entity can invest or retire in; give {lifetime_param} a "
+        "value for these periods (or a constant).")

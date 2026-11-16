@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from flextool.engine.input._legacy_names import NO_REINVESTMENT
 from flextool.engine.preprocess._provider_io import (
     _emit,
     _provider_key,
@@ -267,7 +268,7 @@ def _end_of_life(solve_data_dir: Path, *, provider) -> tuple[dict[str, str], dic
             continue
     d0 = run_start_period(p_years_d)
     end_of_life = {e: (0.0 if d0 is None else p_years_d.get(d0, 0.0) + ed_lifetime.get((e, d0), 0.0))
-                   for e, m in lifetime_method.items() if m in ("reinvest_choice", "no_investment")}
+                   for e, m in lifetime_method.items() if m in ("reinvest_choice", NO_REINVESTMENT)}
     return lifetime_method, p_years_d, end_of_life
 
 
@@ -353,7 +354,7 @@ def derive_p_entity_pre_existing(
         gate_sum = end_of_life.get(e)
         for d in period_in_use:
             v: float = 0.0
-            if method in ("reinvest_automatic", "reinvest_choice", "no_investment"):
+            if method in ("reinvest_automatic", "reinvest_choice", NO_REINVESTMENT):
                 gate_passes = method == "reinvest_automatic" or (
                     gate_sum is not None and p_years_d.get(d, 0.0) < gate_sum
                 )

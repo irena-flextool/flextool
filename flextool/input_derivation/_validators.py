@@ -36,6 +36,17 @@ from dataclasses import dataclass
 import numpy as np
 import spinedb_api as api
 
+from flextool.engine.input._legacy_names import (
+    LIFETIME_METHOD_LEGACY,
+    LIFETIME_TECHNICAL,
+    NET_SALVAGE_VALUE,
+    NO_REINVESTMENT,
+    PAYBACK_TIME,
+    ROLE_CHAIN,
+    canonical_lifetime_method,
+    physical_name,
+    role_sources,
+)
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess._co2_methods import CO2_MAX_PERIOD_METHODS, CO2_MAX_TOTAL_METHODS
 from flextool.engine.preprocess.params._existing import DIVEST_NOT_ALLOWED, INVEST_NOT_ALLOWED
@@ -2617,7 +2628,7 @@ _NEGATIVE_EXISTING = {
 # invest_method values that forbid investing / retiring: the one definition in preprocess/params/_existing.py.
 _NO_INVEST = INVEST_NOT_ALLOWED
 _NO_RETIRE = DIVEST_NOT_ALLOWED
-_BOUNDED_LIFETIME = frozenset(("reinvest_choice", "no_investment"))
+_BOUNDED_LIFETIME = frozenset(("reinvest_choice", NO_REINVESTMENT, *LIFETIME_METHOD_LEGACY))
 
 
 def _nonzero_names(src, cls: str, param: str, bad=lambda v: v != 0.0) -> set[str]:
@@ -2631,39 +2642,60 @@ def _nonzero_names(src, cls: str, param: str, bad=lambda v: v != 0.0) -> set[str
     return out
 
 
-def _missing_lifetime(src, cls: str, methods: dict[str, str]) -> list[str]:
-    """Errors for the ``cls`` entities that need a ``lifetime`` and have none.
+def _entities_with(src, cls: str):
+    """``entities_with`` of :func:`role_sources` for ``cls`` in the validator source ``src``: the entities with an
+    explicit value of a parameter (none when the parameter is not defined)."""
+    def entities_with(name: str) -> set[str]:
+        return {pv["entity_byname"][0] for pv in _pv_rows(src, cls, name) if pv["type"] is not None}
 
-    A lifetime is needed when the annuity uses it (investing with a non-zero ``invest_cost``, retiring with a
-    non-zero ``salvage_value``) and when the lifetime window does: ``lifetime_method`` ``reinvest_choice`` /
-    ``no_investment`` on an entity that invests or retires, or has ``existing`` capacity (its end of life is
-    start + lifetime).  The default ``reinvest_automatic`` without investment needs none.
+    return entities_with
+
+
+def _missing_lifetime(src, cls: str, methods: dict[str, str]) -> list[str]:
+    """Errors for the ``cls`` entities that need a lifetime and have none.
+
+    The payback time (``payback_time``, else the technical lifetime) is needed when the annuity uses it (investing
+    with a non-zero ``invest_cost``, retiring with a non-zero net salvage value); the technical lifetime
+    (``lifetime_technical``) when the lifetime window does: ``lifetime_method`` ``reinvest_choice`` /
+    ``no_reinvestment`` on an entity that invests or retires, or has ``existing`` capacity (its end of life is
+    start + lifetime).  The default ``reinvest_automatic`` without investment needs none.  Each role is read under
+    the name the entity gives it (:func:`role_sources`; ``lifetime`` and ``salvage_value`` in an older database).
     """
-    with_life = {pv["entity_byname"][0] for pv in _pv_rows(src, cls, "lifetime") if pv["type"] is not None}
+    entities_with = _entities_with(src, cls)
+    with_payback = set(role_sources(PAYBACK_TIME, entities_with, where=cls))
+    with_technical = set(role_sources(LIFETIME_TECHNICAL, entities_with, where=cls))
     db = getattr(src, "_db", src)
-    default_method = str(_definition_default(db, cls, "lifetime_method") or "reinvest_automatic")
-    life_methods = {k[0]: v for k, v in _str_values(src, cls, "lifetime_method").items()}
+
+    def defined(name: str) -> bool:
+        return bool(db.find_parameter_definitions(entity_class_name=cls, name=name))
+
+    payback_name = physical_name(PAYBACK_TIME, defined)
+    technical_name = physical_name(LIFETIME_TECHNICAL, defined)
+    salvage_name = physical_name(NET_SALVAGE_VALUE, defined)
+    default_method = canonical_lifetime_method(
+        str(_definition_default(db, cls, "lifetime_method") or "reinvest_automatic"))
+    life_methods = {k[0]: canonical_lifetime_method(v) for k, v in _str_values(src, cls, "lifetime_method").items()}
     invest_cost = _nonzero_names(src, cls, "invest_cost")
-    salvage = _nonzero_names(src, cls, "salvage_value")
+    salvage = {e for e, name in role_sources(NET_SALVAGE_VALUE, entities_with, where=cls).items()
+               if e in _nonzero_names(src, cls, name)}
     bounded = {e for e in set(methods) | set(life_methods)
                if life_methods.get(e, default_method) in _BOUNDED_LIFETIME}
     existing = _nonzero_names(src, cls, "existing", lambda v: v > 0.0) & bounded if bounded else set()
     errors: list[str] = []
     for ent in sorted(set(methods) | existing):
-        if ent in with_life:
-            continue
         method = methods.get(ent, "not_allowed")
         why = None
-        if method not in _NO_INVEST and ent in invest_cost:
-            why = f"it can invest (invest_method {method}) and has an invest_cost"
-        elif method not in _NO_RETIRE and ent in salvage:
-            why = f"it can retire (invest_method {method}) and has a salvage_value"
-        elif ent in bounded and (method != "not_allowed" or ent in existing):
+        if ent not in with_payback and method not in _NO_INVEST and ent in invest_cost:
+            why, name = f"it can invest (invest_method {method}) and has an invest_cost", payback_name
+        elif ent not in with_payback and method not in _NO_RETIRE and ent in salvage:
+            why, name = f"it can retire (invest_method {method}) and has a {salvage_name}", payback_name
+        elif ent not in with_technical and ent in bounded and (method != "not_allowed" or ent in existing):
             what = "invests or retires" if method != "not_allowed" else "has existing capacity"
             why = (f"its lifetime_method is {life_methods.get(ent, default_method)} and it {what}, so its capacity "
                    "ends after the lifetime")
+            name = technical_name
         if why is not None:
-            errors.append(f"{cls} '{ent}' has no lifetime, but {why}. Give the lifetime in years.")
+            errors.append(f"{cls} '{ent}' has no {name}, but {why}. Give the {name} in years.")
     return errors
 
 
@@ -2772,9 +2804,11 @@ def validate_basic_sanity(src) -> None:
 
     for cls in ("unit", "connection", "node"):
         investing = {e for e, m in methods[cls].items() if m != "not_allowed"}
-        scan(cls, "lifetime", [(lambda v: v <= 0.0,
-             f"lifetime must be above 0 when the {cls} can invest or retire; with 0 the investment is charged for "
-             "no years. Give the lifetime in years.", errors)], only=investing)
+        for name in dict.fromkeys(n for chain in (ROLE_CHAIN[LIFETIME_TECHNICAL], ROLE_CHAIN[PAYBACK_TIME])
+                                  for n in chain):
+            scan(cls, name, [(lambda v: v <= 0.0,
+                 f"{name} must be above 0 when the {cls} can invest or retire; with 0 the investment is charged for "
+                 f"no years. Give the {name} in years.", errors)], only=investing)
         scan(cls, "discount_rate", [(lambda v: v < 0.0,
              "discount_rate must be 0 or above (0 gives the straight-line annuity invest_cost / lifetime).",
              errors)])

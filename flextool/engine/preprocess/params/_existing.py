@@ -80,6 +80,7 @@ from flextool.engine.input._axis_enums import (
     schema_dtype,
 )
 from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
+from flextool.engine.input._legacy_names import LIFETIME_TECHNICAL, NO_REINVESTMENT, canonical_method_expr
 from flextool.engine.preprocess.params._period_values import ed_values_on
 from flextool.engine.preprocess.params._walks import period_walk_iterator, WindowMethod
 
@@ -149,7 +150,7 @@ _DIVEST_PERIOD_METHODS: frozenset[str] = frozenset((
 # preprocessing/method_with_fallback_sets.py::_LIFETIME_METHOD_DEFAULT
 _LIFETIME_METHOD_DEFAULT = "reinvest_automatic"
 _LIFETIME_BOUNDED_METHODS: frozenset[str] = frozenset((
-    "reinvest_choice", "no_investment",
+    "reinvest_choice", NO_REINVESTMENT,
 ))
 _LIFETIME_UNBOUNDED_METHODS: frozenset[str] = frozenset((
     "reinvest_automatic",
@@ -210,7 +211,7 @@ def _entity_method_lf(source: "InputSource",
             continue
         parts.append(df.lazy().select(
             alias_to_axis("name", "e"),
-            pl.col("value").cast(pl.Utf8, strict=False).alias("method"),
+            canonical_method_expr(pl.col("value").cast(pl.Utf8, strict=False), parameter_name).alias("method"),
         ))
     if not parts:
         return pl.LazyFrame(schema={
@@ -940,7 +941,7 @@ def edd_history_no_investment_lf(source: "InputSource",
     """
     return _edd_history_lf_for(
         source, active_solve, period_with_history, period_in_use,
-        method="no_investment", bounded=True, workdir=workdir,
+        method=NO_REINVESTMENT, bounded=True, workdir=workdir,
         lineage=lineage, commission_lf=commission_lf)
 
 
@@ -985,7 +986,7 @@ def _edd_history_lf_for(source: "InputSource",
         })
 
     if bounded:
-        life_lf = (ed_values_on(source, "lifetime", anchor, fill=0.0)
+        life_lf = (ed_values_on(source, LIFETIME_TECHNICAL, anchor, fill=0.0)
                        .rename({"value": "life"})
                        .select("e", "d", "life"))
         walk = period_walk_iterator(
@@ -1255,8 +1256,8 @@ def edd_invest_lookback_set_lf(source: "InputSource",
 
     The strict-lookback variant of :func:`edd_invest_set_lf`: tuples
     where ``yr[d_invest] < yr[d]`` (strict) and, for entities in the
-    bounded lifetime cohort (``reinvest_choice`` / ``no_investment``),
-    ``yr[d] < yr[d_invest] + lifetime[e, d_invest]``.
+    bounded lifetime cohort (``reinvest_choice`` / ``no_reinvestment``),
+    ``yr[d] < yr[d_invest] + lifetime_technical[e, d_invest]``.
 
     Mirror of ``invest_divest_sets.py:227-262`` filtered with the
     strict-lookback predicate.  Used by the prebuilt-capacity LHS in
@@ -1327,7 +1328,7 @@ def edd_invest_lookback_set_lf(source: "InputSource",
                                 extra={"d_all": anchor_lf.collect_schema().get("d", pl.Utf8)},
                                 lazy=True)
     if bounded_anchor.collect().height > 0:
-        life_lf = (ed_values_on(source, "lifetime", bounded_anchor, fill=0.0)
+        life_lf = (ed_values_on(source, LIFETIME_TECHNICAL, bounded_anchor, fill=0.0)
                        .rename({"value": "life"})
                        .select("e", "d", "life"))
         bounded_walk = period_walk_iterator(

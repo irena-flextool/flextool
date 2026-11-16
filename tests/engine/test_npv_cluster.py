@@ -338,7 +338,7 @@ ANN_R5 = 80_242.58719
 
 
 class _Lookup:
-    """Duck-typed ``PdLookup`` (``get`` / ``has``) over a ``{(e, param): value}`` dict."""
+    """Duck-typed ``PdLookup`` (``get`` / ``has`` / ``explicit_rows``) over a ``{(e, param): value}`` dict."""
 
     def __init__(self, values: dict[tuple[str, str], float]) -> None:
         self._v = values
@@ -348,6 +348,9 @@ class _Lookup:
 
     def has(self, e: str, param: str, d: str) -> bool:
         return (e, param) in self._v
+
+    def explicit_rows(self, param: str) -> list[tuple[str, float]]:
+        return [(e, v) for (e, prm), v in self._v.items() if prm == param]
 
 
 def _lazy_annuity(disc: float | None, life: float | None, cost: float = 1000.0) -> float:
@@ -370,6 +373,7 @@ def _lazy_annuity(disc: float | None, life: float | None, cost: float = 1000.0) 
 
 
 def _emit_annuity(disc: float | None, life: float | None, cost: float = 1000.0) -> float:
+    from flextool.engine.input._legacy_names import lookup_roles
     from flextool.engine.preprocess.emit._entity_annual import _annuity
 
     values = {("u", "invest_cost"): cost}
@@ -377,7 +381,8 @@ def _emit_annuity(disc: float | None, life: float | None, cost: float = 1000.0) 
         values[("u", "discount_rate")] = disc
     if life is not None:
         values[("u", "lifetime")] = life
-    return _annuity(_Lookup(values), "u", "p2020", "invest_cost")
+    lookup = _Lookup(values)
+    return _annuity({"pp": lookup, "roles": {"pp": lookup_roles(lookup, "unit")}}, "pp", "u", "p2020", "invest_cost")
 
 
 @pytest.mark.parametrize("path", [_lazy_annuity, _emit_annuity], ids=["lazy", "emit"])

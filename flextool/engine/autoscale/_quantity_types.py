@@ -353,6 +353,11 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [years] Used to calculate annuity together with interest rate. Constant or period.
     ('lifetime', 'unit'): QuantityType.DURATION,
     # [years] Used to calculate annuity together with interest rate. Constant or period.
+    # The technical lifetime and the payback time that replace ``lifetime`` (both kept while a database can carry the
+    # old name).
+    ('lifetime_technical', 'connection'): QuantityType.DURATION,
+    ('lifetime_technical', 'node'): QuantityType.DURATION,
+    ('lifetime_technical', 'unit'): QuantityType.DURATION,
     ('lifetime_method', 'connection'): QuantityType.DIMENSIONLESS,
     # Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the en...
     ('lifetime_method', 'node'): QuantityType.DIMENSIONLESS,
@@ -525,6 +530,13 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Hours (Required if rolling_window solve). How long into the future the roll sees
     ('rolling_solve_jump', 'solve'): QuantityType.DURATION,
     # Hours, (Required if rolling_window solve). Interval between the start points of the rolls. Should be smaller than the horizon
+    # The net salvage value that replaces ``salvage_value`` (both kept while a database can carry the old name).
+    ('net_salvage_value', 'connection'): QuantityType.PRICE_PER_CAPACITY,
+    ('net_salvage_value', 'node'): QuantityType.PRICE_PER_STORAGE,
+    ('net_salvage_value', 'unit'): QuantityType.PRICE_PER_CAPACITY,
+    ('payback_time', 'connection'): QuantityType.DURATION,
+    ('payback_time', 'node'): QuantityType.DURATION,
+    ('payback_time', 'unit'): QuantityType.DURATION,
     ('salvage_value', 'connection'): QuantityType.PRICE_PER_CAPACITY,
     # [CUR/kW] Salvage value for retiring capacity. Constant or period.
     ('salvage_value', 'node'): QuantityType.PRICE_PER_STORAGE,

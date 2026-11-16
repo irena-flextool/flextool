@@ -1,7 +1,9 @@
 """Per-(entity, period) values of the period-valued entity parameters, read through the shape resolver.
 
-``lifetime``, ``invest_cost``, ``salvage_value`` and ``discount_rate`` of units, nodes and connections are a
-constant or a period map (``PARAM_ALLOWED_SHAPES``).  Every reader of them goes through
+The lifetimes, ``invest_cost``, the salvage value and ``discount_rate`` of units, nodes and connections are a
+constant or a period map (``PARAM_ALLOWED_SHAPES``).  A lifetime or the salvage value is asked for by its role
+(``lifetime_technical``, ``payback_time``, ``net_salvage_value``): each entity is read under the name it gives the
+role (:mod:`flextool.engine.input._legacy_names`).  Every reader of them goes through
 :func:`_ed_period_param_lf`, so a constant, a ``period`` map and a map with the unnamed ``x`` index read alike, a
 map with another index is an error naming the entity, and a stochastic branch period inherits its anchor's value.
 
@@ -15,12 +17,11 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from flextool.engine.input._axis_enums import align_join_dtypes, axis_lazyframe
+from flextool.engine.input._legacy_names import ENTITY_CLASSES, ROLE_CHAIN, source_role_sources
 from flextool.engine.preprocess.params._branch import active_branch_anchor_pairs, inherit_active_branch_periods
 
 if TYPE_CHECKING:
     from flextool.engine.input._input_source import InputSource
-
-ENTITY_CLASSES = ("unit", "node", "connection")
 
 
 def _ed_period_param_lf(source: "InputSource",
@@ -50,10 +51,16 @@ def _ed_period_param_lf(source: "InputSource",
     period_filter = axis_lazyframe({"d": list(periods) + anchors}).collect()
     parts = []
     for cls in ENTITY_CLASSES:
-        param = _e_period_param_union(source, parameter_name, classes=(cls,), period_filter=period_filter)
-        if param is not None:
+        for name, entities in _names_of(source, cls, parameter_name):
+            param = _e_period_param_union(source, name, classes=(cls,), period_filter=period_filter)
+            if param is None:
+                continue
             frame = param.frame if isinstance(param.frame, pl.LazyFrame) else param.frame.lazy()
-            parts.append(frame.select("e", "d", pl.col("value").cast(pl.Float64)))
+            frame = frame.select("e", "d", pl.col("value").cast(pl.Float64))
+            if entities is not None:
+                frame, keep = align_join_dtypes(frame, pl.LazyFrame({"e": entities}), ["e"])
+                frame = frame.join(keep, on="e", how="semi")
+            parts.append(frame)
     if not parts:
         return None
     lf = pl.concat(parts).collect()
@@ -62,6 +69,22 @@ def _ed_period_param_lf(source: "InputSource",
     periods_d = axis_lazyframe({"d": list(periods)})
     lf, periods_d = align_join_dtypes(lf, periods_d, ["d"])
     return lf.join(periods_d, on="d", how="semi")
+
+
+def _names_of(source: "InputSource", entity_class: str,
+              parameter_name: str) -> list[tuple[str, "list[str] | None"]]:
+    """``[(name, entities)]`` to read ``parameter_name`` of ``entity_class`` from: the parameter itself (entities
+    None: all), or for a role of :data:`ROLE_CHAIN` the names its entities take it from
+    (:func:`source_role_sources`), each with its entities when the class reads more than one name."""
+    if parameter_name not in ROLE_CHAIN:
+        return [(parameter_name, None)]
+    sources = source_role_sources(source, entity_class, parameter_name)
+    by_name: dict[str, list[str]] = {}
+    for e, name in sources.items():
+        by_name.setdefault(name, []).append(e)
+    if len(by_name) <= 1:
+        return [(name, None) for name in by_name]
+    return [(name, sorted(by_name[name])) for name in ROLE_CHAIN[parameter_name] if name in by_name]
 
 
 def _ed_period_value_map(source: "InputSource", parameter_name: str,

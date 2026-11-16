@@ -25,6 +25,7 @@ from pathlib import Path
 
 import polars as pl
 
+from flextool.engine.input._legacy_names import NO_REINVESTMENT
 from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine.preprocess._provider_io import _emit
 from flextool.engine.preprocess.params._branch import fan_period_labels
@@ -709,7 +710,7 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
         e_lm = lm_for_e.get(e, set())
         is_choice = "reinvest_choice" in e_lm
         is_auto = "reinvest_automatic" in e_lm
-        is_noinv = "no_investment" in e_lm
+        is_noinv = NO_REINVESTMENT in e_lm
         if not (is_choice or is_auto or is_noinv):
             continue
         for d_h in period_with_history:
@@ -816,7 +817,7 @@ def emit_ed_invest_forbidden_no_investment(
     del input_dir  # legacy signature parity; no input/ reads here.
     ed_invest_pairs = _read_pairs(solve_data_dir / "ed_invest.csv", provider=provider)
     elm = _read_pairs(solve_data_dir / "entity__lifetime_method.csv", provider=provider)
-    no_invest_set = frozenset(e for e, m in elm if m == "no_investment")
+    no_invest_set = frozenset(e for e, m in elm if m == NO_REINVESTMENT)
 
     p_years_d: dict[str, float] = {}
     pyd_df = _read_csv(solve_data_dir / "p_years_d.csv",

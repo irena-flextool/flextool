@@ -3237,7 +3237,8 @@ def _eq_retired_existing(b: _Build) -> None:
     # Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′] · state_unitsize[n]  ≤  pre_existing[n,d] − retired_carried[n,d]
     #   ∀ (n,d) with some (n,d′,d) ∈ ndd_divest_active, n ∈ nodeState
     #   edd_divest_active = {(e,d′,d) : (e,d′) ∈ ed_divest_set, yr[d′] ≤ yr[d] < EOL[e]}, EOL[e] the end of
-    #     life of the entity's pre-existing capacity (from the start of the run; none for reinvest_automatic)
+    #     life of the entity's pre-existing capacity: EOL[e] = yr[d0] + lifetime_technical[e,d0], d0 the run's first
+    #     period (none for reinvest_automatic)
     #   pre_existing = p_entity_pre_existing (the user's existing × unitsize, lifetime-gated: MW, MWh)
     #   retired_carried = p_entity_retired_carried (retirements of earlier solves of a chain still counting in d)
     # Only capacity that existed before the run can be retired: the capacity retired so far and still counting in
@@ -5424,6 +5425,11 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{(p,d) ∈ pd_invest_set} v_invest_p[p,d]·unitsize[p] · annual_discounted[p,d] · bw[d]
     #   + Σ_{(p,d) ∈ pd_invest_set} v_invest_p[p,d]·unitsize[p] · lifetime_fixed_cost[p,d] · bw[d]
+    #   annual_discounted[p,d] = ann(invest_cost[p,d], discount_rate[p,d], payback_time[p,d]) · Σ_{d′ ∈ L(p,d)} inflation_inv[d′]
+    #   L(p,d) = the solve's periods d′ with yr[d] ≤ yr[d′] < yr[d] + lifetime_technical[p,d] (reinvest_choice /
+    #     no_reinvestment; no upper end for reinvest_automatic)
+    #   ann(c, r, n) = c·1000·r / (1 − (1+r)^−n) (c·1000 / n for r = 0); payback_time is the entity's
+    #     lifetime_technical where it has none
     # Cost of process capacity decided in period d, currency/MW: the investment annuity summed over the
     # discounted years it operates within the horizon, and the inflation-adjusted fixed cost over the same
     # years of its lifetime.  With a construction lead time the capacity operates from its start of operation
@@ -5443,13 +5449,13 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     # − Σ_{(p,d) ∈ pd_divest_set} v_divest_p[p,d]·unitsize[p] · lifetime_fixed_cost_divest[p,d] · bw[d]
     #   − Σ_{(p,d) ∈ pd_divest_set} v_divest_p[p,d]·unitsize[p] · annual_divest_discounted[p,d] · bw[d]
     #   lifetime_fixed_cost_divest[p,d] = Σ_{d′ ∈ W(p,d)} fixed_cost[p,d′]·1000·inflation_op[d′]
-    #   annual_divest_discounted[p,d] = ann(salvage_value[p,d], discount_rate[p,d], lifetime[p,d])
+    #   annual_divest_discounted[p,d] = ann(net_salvage_value[p,d], discount_rate[p,d], payback_time[p,d])
     #                                   · Σ_{d′ ∈ S(p,d)} inflation_inv[d′]
     #   W(p,d) = the solve's periods d′ with yr[d] ≤ yr[d′] < EOL[p] (the window of edd_divest_active: until the
     #     end of life of p's pre-existing capacity, the end of the horizon for reinvest_automatic)
-    #   S(p,d) = the solve's periods d′ with yr[d] ≤ yr[d′] < yr[d] + lifetime[p,d] (raw lifetime)
+    #   S(p,d) = the solve's periods d′ with yr[d] ≤ yr[d′] < yr[d] + lifetime_technical[p,d]
     # Saving from process capacity retired in period d, currency/MW: the fixed cost of the existing capacity it no
-    # longer pays (each period's, with the factor the existing fixed cost has), and the salvage-value annuity over
+    # longer pays (each period's, with the factor the existing fixed cost has), and the net-salvage-value annuity over
     # the discounted years of lifetime inside the horizon, the basis of an investment's annuity (so retiring
     # existing capacity and building identical new capacity gains nothing).
     if b.has_divest_p:

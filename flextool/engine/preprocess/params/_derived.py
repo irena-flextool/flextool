@@ -69,6 +69,13 @@ from flextool.engine.preprocess.params._branch import (
 from flextool.engine.preprocess.params._direct import (
     pdtReserve_upDown_group_reservation_from_source,
 )
+from flextool.engine.input._legacy_names import (
+    LIFETIME_TECHNICAL,
+    NET_SALVAGE_VALUE,
+    NO_REINVESTMENT,
+    canonical_lifetime_method,
+    source_physical_name,
+)
 from flextool.engine.preprocess.params._period_values import _ed_period_value_map
 from flextool.engine.preprocess.params._per_solve_sets import (
     solve_period_timeset_frame,
@@ -3294,7 +3301,7 @@ def _lifetime_gate_sums(source: "InputSource",
     """Per-entity end of life ``life_sum`` (a year of :func:`_lifetime_years`) of the pre-existing capacity of
     the ``reinvest_choice`` / ``no_investment`` entities::
 
-        life_sum(e) = p_years_d[d0] + lifetime[e, d0],   d0 = run_start_period(p_years_d)
+        life_sum(e) = p_years_d[d0] + lifetime_technical[e, d0],   d0 = run_start_period(p_years_d)
 
     One value per entity, counted from the start of the run (not from the solve's own first period, and not
     once per branch of a fan in the first period).  Other methods are not returned (no expiry gate); a
@@ -3304,7 +3311,7 @@ def _lifetime_gate_sums(source: "InputSource",
     start = run_start_period(pyd)
     if start is None:
         return {}
-    lifetime = _ed_period_value_map(source, "lifetime", [start])
+    lifetime = _ed_period_value_map(source, LIFETIME_TECHNICAL, [start])
     process_set, node_set, _ = _entity_classes_lookup(source)
     all_e = _all_entities(source)
     elm = _entity_lifetime_methods(source, all_e)
@@ -3312,7 +3319,7 @@ def _lifetime_gate_sums(source: "InputSource",
     out: dict[str, float] = {}
     for e, methods in elm.items():
         if not (("reinvest_choice" in methods)
-                or ("no_investment" in methods)):
+                or (NO_REINVESTMENT in methods)):
             continue
         if e not in process_set and e not in node_set:
             # Connection without is_DC / non-process — no lifetime.
@@ -3326,7 +3333,7 @@ def _lifetime_expired_pairs(source: "InputSource",
                                 active_solve: str | None,
                                 workdir: Path | None,
                                 methods: tuple[str, ...] = (
-                                    "reinvest_choice", "no_investment"),
+                                    "reinvest_choice", NO_REINVESTMENT),
                                 *,
                                 provider: "object | None" = None,
                                 periods: "list[str] | None" = None,
@@ -3339,7 +3346,7 @@ def _lifetime_expired_pairs(source: "InputSource",
 
       * ``p_entity_pre_existing[e, d]`` should evaluate to 0.
       * a ``no_investment`` entity may not invest any more: callers filtering ``ed_invest_set`` pass
-        ``methods=("no_investment",)`` (the gate is shared with ``reinvest_choice`` for the existing-capacity
+        ``methods=(NO_REINVESTMENT,)`` (the gate is shared with ``reinvest_choice`` for the existing-capacity
         cascade).
     """
     pyd = _lifetime_years(source, active_solve, workdir, provider=provider)
@@ -3405,7 +3412,7 @@ def ed_invest_set_from_source(source: "InputSource",
               .collect())
     # Γ.6.D: drop pairs forbidden by the no_investment lifetime gate.
     forbidden = _lifetime_expired_pairs(
-        source, active_solve, workdir, methods=("no_investment",), provider=provider)
+        source, active_solve, workdir, methods=(NO_REINVESTMENT,), provider=provider)
     if forbidden and out.height > 0:
         keep = [(e, d) for (e, d) in out.iter_rows()
                   if (e, d) not in forbidden]
@@ -3641,7 +3648,7 @@ def edd_invest_lookback_set_from_source(source: "InputSource",
                     (e, d_invest) ∈ ed_invest,
                     d in dt periods,
                     yr[d_invest] < yr[d],
-                    yr[d] < yr[d_invest] + lifetime[e, d_invest]   (Γ.6.D)
+                    yr[d] < yr[d_invest] + lifetime_technical[e, d_invest]   (Γ.6.D)
                                             (only when entity's
                                              lifetime_method limits the
                                              window — reinvest_choice /
@@ -5706,7 +5713,7 @@ def _fan_branch_years_notice(source: "InputSource",
             for e in frame["e"].cast(pl.Utf8).unique().sort().to_list():
                 names.setdefault(str(e), None)
     for e, methods in _entity_lifetime_methods(source, _all_entities(source)).items():
-        if "reinvest_choice" in methods or "no_investment" in methods:
+        if "reinvest_choice" in methods or NO_REINVESTMENT in methods:
             names.setdefault(e, None)
     if names:
         from flextool.engine import _behaviour_changes
@@ -5854,7 +5861,7 @@ def zero_cost_invest_notice(source: "InputSource", ed_invest: "pl.DataFrame | No
     if not _behaviour_changes.has_marker("invest_without_cost_offered"):
         return
     invest = _zero_cost_pairs(source, ed_invest, "invest_cost", _OLD_RULE_INVEST_COEFFS)
-    divest = _zero_cost_pairs(source, ed_divest, "salvage_value", _OLD_RULE_DIVEST_COEFFS)
+    divest = _zero_cost_pairs(source, ed_divest, NET_SALVAGE_VALUE, _OLD_RULE_DIVEST_COEFFS)
     # A later solve of a multi-solve / rolling run lists only the entities not yet announced.
     fresh = set(_behaviour_changes.unannounced("invest_without_cost_offered", sorted(set(invest) | set(divest))))
     invest = {e: ds for e, ds in invest.items() if e in fresh}
@@ -5867,7 +5874,8 @@ def zero_cost_invest_notice(source: "InputSource", ed_invest: "pl.DataFrame | No
     if invest:
         detail.append("Investment without invest_cost (entity, periods): " + _listed(invest) + ".")
     if divest:
-        detail.append("Retirement without salvage_value (entity, periods): " + _listed(divest) + ".")
+        detail.append(f"Retirement without {source_physical_name(source, NET_SALVAGE_VALUE)} (entity, periods): "
+                      + _listed(divest) + ".")
     _behaviour_changes.notice("invest_without_cost_offered", "entities", sorted(set(invest) | set(divest)),
                               " ".join(detail))
 
@@ -8874,7 +8882,7 @@ def _entity_lifetime_methods(source: "InputSource",
         if df is None:
             continue
         for r in df.iter_rows(named=True):
-            explicit.setdefault(str(r["name"]), []).append(str(r["value"]))
+            explicit.setdefault(str(r["name"]), []).append(canonical_lifetime_method(str(r["value"])))
 
     out: dict[str, list[str]] = {}
     for e in all_entities:

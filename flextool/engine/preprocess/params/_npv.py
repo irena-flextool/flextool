@@ -55,14 +55,15 @@ Algorithm:
 
   * ``annuity`` = sum-over-allowed-methods of
     ``invest_value × 1000 × annuity_factor(r, n)`` (:mod:`.._annuity`:
-    ``r / (1 - (1+r)^-n)``, ``1/n`` at ``r = 0``).  A missing ``r`` takes
-    the schema default (0.05); a missing lifetime where the cost is not 0
-    is an error.
+    ``r / (1 - (1+r)^-n)``, ``1/n`` at ``r = 0``), ``n`` the payback time
+    (``payback_time``, else the entity's ``lifetime_technical``).  A missing
+    ``r`` takes the schema default (0.05); a missing payback time where the
+    cost is not 0 is an error.
   * ``window(d, d_all, e)``:
-      - ``reinvest_choice`` / ``no_investment``:
-        ``pdy[d_all] ∈ [pdy[d], pdy[d] + lifetime[e, d])``.
+      - ``reinvest_choice`` / ``no_reinvestment``:
+        ``pdy[d_all] ∈ [pdy[d], pdy[d] + lifetime_technical[e, d])``.
       - ``reinvest_automatic``: ``pdy[d_all] ≥ pdy[d]``.
-      - divest side: always the bounded form using raw ``lifetime``.
+      - divest side: always the bounded form using ``lifetime_technical``.
   * ``inflation_factor[d_all]``:
       - investment side → ``p_inflation_factor_investment_yearly[d_all]``.
       - operations side (``ed_lifetime_fixed_cost`` only) →
@@ -104,6 +105,15 @@ from flextool.engine.preprocess._annuity import (
     require_lifetime,
 )
 from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
+from flextool.engine.input._legacy_names import (
+    LIFETIME_TECHNICAL,
+    NET_SALVAGE_VALUE,
+    NO_REINVESTMENT,
+    PAYBACK_TIME,
+    ROLE_LEGACY,
+    canonical_method_expr,
+    source_physical_name,
+)
 from flextool.engine.preprocess.params._period_values import ed_values_on
 from flextool.engine.preprocess.params._existing import (
     DIVEST_NOT_ALLOWED as _DIVEST_NOT_ALLOWED,
@@ -316,7 +326,7 @@ def _entity_method_lf(source: "InputSource",
             continue
         parts.append(df.lazy().select(
             alias_to_axis("name", "e"),
-            pl.col("value").cast(pl.Utf8, strict=False).alias("method"),
+            canonical_method_expr(pl.col("value").cast(pl.Utf8, strict=False), parameter_name).alias("method"),
         ))
     if not parts:
         return pl.LazyFrame(schema={"e": schema_dtype(_enums, "e"),
@@ -637,7 +647,7 @@ def _ed_lifetime_lf(source: "InputSource",
     # Restrict to processes + nodes — other classes get life=0.
     ed_lf = ed_lf.join(cls_lf, on="e", how="left")
     in_class = pl.col("is_process").fill_null(False) | pl.col("is_node").fill_null(False)
-    resolved = ed_values_on(source, "lifetime", ed_lf, fill=0.0)
+    resolved = ed_values_on(source, LIFETIME_TECHNICAL, ed_lf, fill=0.0)
     return (resolved
               .with_columns(
                   life=pl.when(in_class).then(pl.col("value")).otherwise(0.0),
@@ -649,7 +659,8 @@ def _ed_lifetime_on_lf(source: "InputSource", ed_lf: pl.LazyFrame) -> pl.LazyFra
     """Lazy ``(e, d, life)`` of :func:`_ed_lifetime_lf` over the given ``(e, d)`` pairs."""
     cls_lf = _entity_class_lookup_lf(_entity_class_lf(source))
     in_class = pl.col("is_process").fill_null(False) | pl.col("is_node").fill_null(False)
-    resolved = ed_values_on(source, "lifetime", ed_lf.select("e", "d").join(cls_lf, on="e", how="left"), fill=0.0)
+    resolved = ed_values_on(source, LIFETIME_TECHNICAL, ed_lf.select("e", "d").join(cls_lf, on="e", how="left"),
+                            fill=0.0)
     return (resolved
               .with_columns(life=pl.when(in_class).then(pl.col("value")).otherwise(0.0))
               .select("e", "d", "life"))
@@ -663,7 +674,7 @@ def _raw_lifetime_on_lf(source: "InputSource", ed_lf: pl.LazyFrame) -> pl.LazyFr
     in_class = (pl.col("is_process").fill_null(False)
                 | pl.col("is_node").fill_null(False))
     ed_with_class = ed_lf.join(cls_lf, on="e", how="left")
-    return (ed_values_on(source, "lifetime", ed_with_class, fill=0.0)
+    return (ed_values_on(source, LIFETIME_TECHNICAL, ed_with_class, fill=0.0)
               .with_columns(
                   life=pl.when(in_class).then(pl.col("value")).otherwise(0.0),
               )
@@ -734,7 +745,7 @@ def _per_method_annuity_lf(
 
       For each (e, d) ∈ ed_lf:
         ann[e, d] = Σ_{m ∈ invest_methods[e] \\ disallowed}
-                       cost[e, d] · 1000 · annuity_factor(discount_rate[e, d], lifetime[e, d])
+                       cost[e, d] · 1000 · annuity_factor(discount_rate[e, d], payback_time[e, d])
         (when e ∈ unit ∪ connection ∪ node)
 
     The inner computation does NOT depend on ``m`` — every allowed
@@ -766,7 +777,7 @@ def _per_method_annuity_lf(
     # No lifetime default: a null (or ≤ 0) lifetime where the cost is not 0 is an input error.  Checked here,
     # not only in the validator: a period map can lack a period, and the lead-time path calls this again at the
     # commissioning period.
-    ed_with_life = (ed_values_on(source, "lifetime", ed_with_disc, fill=None)
+    ed_with_life = (ed_values_on(source, PAYBACK_TIME, ed_with_disc, fill=None)
                        .rename({"value": "life"}))
     bad = (ed_with_life
               .join(method_count_lf, on="e", how="inner")
@@ -775,7 +786,9 @@ def _per_method_annuity_lf(
               .select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8))
               .head(5)
               .collect())
-    require_lifetime(bad.iter_rows(), cost_param_name)
+    require_lifetime(bad.iter_rows(), source_physical_name(source, cost_param_name)
+                     if cost_param_name in ROLE_LEGACY else cost_param_name,
+                     source_physical_name(source, PAYBACK_TIME))
     _notice_discount_rate_zero()
 
     # Annuity: cost [CUR/kW] × 1000 × annuity_factor(r, n).
@@ -884,7 +897,7 @@ def npv_invest_discounted_lf(
     # the if/if structure at L237/244).
     has_choice_or_no = (elm_lf
                           .filter(pl.col("method").is_in(
-                              ["reinvest_choice", "no_investment"]))
+                              ["reinvest_choice", NO_REINVESTMENT]))
                           .select("e").unique()
                           .with_columns(has_choice=pl.lit(True)))
     has_automatic = (elm_lf
@@ -1031,7 +1044,7 @@ def npv_divest_discounted_lf(
     ed_anchor_lf = entity_divest_set.join(pi_lf, how="cross")
 
     ann_lf = _per_method_annuity_lf(
-        source, ed_anchor_lf, "salvage_value", _DIVEST_NOT_ALLOWED)
+        source, ed_anchor_lf, NET_SALVAGE_VALUE, _DIVEST_NOT_ALLOWED)
 
     # Use raw lifetime (per L271-284), not edEntity_lifetime.
     life_lf = _raw_lifetime_on_lf(source, ed_anchor_lf)
@@ -1127,7 +1140,7 @@ def lifetime_fixed_cost_invest_lf(
     elm_lf = _lifetime_method_with_default_lf(source, all_e_lf)
     has_choice_or_no = (elm_lf
                           .filter(pl.col("method").is_in(
-                              ["reinvest_choice", "no_investment"]))
+                              ["reinvest_choice", NO_REINVESTMENT]))
                           .select("e").unique()
                           .with_columns(has_choice=pl.lit(True)))
     has_automatic = (elm_lf
@@ -1485,15 +1498,15 @@ def ed_lifetime_fixed_cost_divest_from_source(
 #   yr_run, pyr: the solve's own periods from its period_with_history and years_represented, the other run
 #   periods from the run calendar.
 # OUT. edd_operating_window[e,d_invest,d] — run periods d in which the capacity of decision (e, d_invest)
-#   operates: yr_run[d] ≥ yr_run[c(d_invest)], and < yr_run[c(d_invest)] + lifetime[e, c(d_invest)] for
-#   reinvest_choice / no_investment (unbounded for reinvest_automatic); c(d) is the start of operation (d without
+#   operates: yr_run[d] ≥ yr_run[c(d_invest)], and < yr_run[c(d_invest)] + lifetime_technical[e, c(d_invest)] for
+#   reinvest_choice / no_reinvestment (unbounded for reinvest_automatic); c(d) is the start of operation (d without
 #   a construction lead time).  edd_retire_window[e,d_divest,d]: yr_run[d_divest] ≤ yr_run[d] < EOL[e] (the end
 #   of life of the pre-existing capacity, from the start of the run; the end of the run for reinvest_automatic),
 #   the window of edd_divest_active.  edd_salvage_window[e,d_divest,d]: yr_run[d] ∈ [yr_run[d_divest],
-#   yr_run[d_divest] + lifetime[e, d_divest]) (raw lifetime), the window the salvage value is spread over.  In a
+#   yr_run[d_divest] + lifetime_technical[e, d_divest]), the window the net salvage value is spread over.  In a
 #   stochastic fan only the pairs of the walk lineage (each calendar period once).
-# OUT. ed_annuity[e,d] = annuity (CUR/MW/yr, undiscounted) of invest_cost at c(d); ed_divest_annuity[e,d] the same
-#   of salvage_value at d.
+# OUT. ed_annuity[e,d] = annuity (CUR/MW/yr, undiscounted) of invest_cost at c(d) over payback_time; ed_divest_annuity
+#   [e,d] the same of net_salvage_value at d.
 # OUT. ed_entity_annual_discounted_run[e,d] = ed_annuity[e,d]·Σ_{(e,d,d') ∈ edd_operating_window} p_inflation_inv_run[d']
 #      ed_lifetime_fixed_cost_run[e,d] = Σ_{(e,d,d') ∈ edd_operating_window} fc[e,c(d)]·p_inflation_op_run[d']
 #      ed_entity_annual_divest_discounted_run[e,d] = ed_divest_annuity[e,d]·Σ_{edd_salvage_window} p_inflation_inv_run[d']
@@ -1508,7 +1521,7 @@ def ed_lifetime_fixed_cost_divest_from_source(
 #   built.  An entity with both a bounded and an unbounded lifetime method adds both sums, as the per-solve lumps
 #   do; edd_operating_window then holds the union of the two windows.
 
-_RUN_BOUNDED_METHODS = ("reinvest_choice", "no_investment")
+_RUN_BOUNDED_METHODS = ("reinvest_choice", NO_REINVESTMENT)
 
 
 def _period_history_years(workdir: Path | None, provider: "object | None") -> dict[str, float] | None:
@@ -1959,7 +1972,7 @@ def apply_run_cost_fields(flex_data: object,
                                    .with_columns(life=pl.col("life").fill_null(0.0), kind=pl.lit("bounded")),
                                    yr, lineage, period_in_use)
         flex_data.edd_salvage_window = _window_frame(salvage_walk, "d_divest")
-        ann = _utf8_ed(_per_method_annuity_lf(source, div_lf, "salvage_value", _DIVEST_NOT_ALLOWED)
+        ann = _utf8_ed(_per_method_annuity_lf(source, div_lf, NET_SALVAGE_VALUE, _DIVEST_NOT_ALLOWED)
                        ).rename({"ann": "coef"})
         flex_data.ed_divest_annuity = _ed_param(div.join(ann, on=["e", "d"], how="left")
                                                    .select("e", "d", value=pl.col("coef").fill_null(0.0)))
