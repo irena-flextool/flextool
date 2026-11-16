@@ -19,7 +19,7 @@ Investment solve requires the parameters:
 - `period_timeset`: Uses the *5weeks* as the timeset 
 
 Note that the `realized_invest_periods` is used instead of `realized_periods`, because we want the investment solve to only output investments.
-Additionally some of the units, connections or storages will need investment parameters (`invest_cost`, `lifetime`...) see [How to make investments (storage/unit)](investment.md#how-to-make-investments-storageunit)
+Additionally some of the units, connections or storages will need investment parameters (`invest_cost`, `lifetime_technical`...) see [How to make investments (storage/unit)](investment.md#how-to-make-investments-storageunit)
 
 The dispatch solve requires the parameters:
 

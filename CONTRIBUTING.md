@@ -127,6 +127,8 @@ When the FlexTool database schema needs to change (new parameters, renamed entit
 
 1. **Edit `flextool/update_flextool/db_migration.py`** — add a new migration step at the end of the `migrate_database()` function. Increment the version number in `flextool/update_flextool/__init__.py`.
 
+   While a version is unreleased, schema entries (definitions, value lists and members, descriptions) may be appended to the tables of its step instead of a new version: `sync_master_json_template` reruns the step of the current version (`RERUNNABLE_HEAD_STEP`), and a database already at that version gets the missing definitions and list members when it is next opened for migration (`_refresh_head_schema`; `materialize` rebuilds such a canonical file). A value move or a list-member rename never reaches a database already at that version, so it needs a new version.
+
 2. **Regenerate the master template** — this ensures `schemas/spinedb_schema.json` matches the latest schema:
    ```bash
    python -m flextool.update_flextool.sync_master_json_template

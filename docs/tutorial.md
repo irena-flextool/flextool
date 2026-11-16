@@ -223,10 +223,12 @@ Add alternative *wind_invest*. On *wind_plant* (under *wind_invest*):
 
 - `invest_method` = *invest_no_limit* — the model may build any amount of new capacity.
 - `invest_cost` = `1000` — the overnight cost of new capacity [CUR/kW].
-- `lifetime` = `25` — years.
+- `lifetime_technical` = `25` — years the new capacity operates. Without a `payback_time`, the investment is also
+  paid back over these years.
 - `discount_rate` = `0.04` — the cost of capital, 4 %.
 
-The model turns the investment cost into a yearly payment (an annuity) over the lifetime:
+The model turns the investment cost into a yearly payment (an annuity) over the payback time, here the technical
+lifetime:
 1000 × 0.04 / (1 − 1.04^−25) ≈ 64 CUR/kW per year.
 
 On the solve *2day-dispatch* (under *wind_invest*):

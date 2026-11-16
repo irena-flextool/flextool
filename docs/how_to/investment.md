@@ -27,16 +27,18 @@ First, the investment parameters need to be included both for the *battery_inver
  
 - `invest_cost` - overnight investment cost new capacity [currency/kW] for the *battery_inverter* and [currency/kWh] for the *battery*. Other one can be left empty or zero, since they will be tied together in the next phase. Here we will assume a fixed relation between kW and kWh for this battery technology, but for example flow batteries could have separate investments for storage and charging capacities.
 - `discount_rate` - discount rate (WACC) [e.g. 0.05 means 5%] for the technology that reflects the financing cost and risk. Should be nominal when model `inflation_rate` > 0, real when `inflation_rate` = 0.
-- `lifetime` - technical lifetime of the technology to calculate investment annuity (together with the discount rate)
+- `lifetime_technical` - technical lifetime of the technology: how long new capacity operates [years]
+- `payback_time` - years over which the investment cost is annualized (together with the discount rate). Without it,
+  the investment is paid back over `lifetime_technical`.
 
 Additional parameters:
 
-- `lifetime_method`: Model can either be forced to reinvest when the lifetime ends (`reinvest_automatic`), have a choice (`reinvest_choice`), or be restricted to a one-shot build that retires after its lifetime without rebuild (`no_investment` — for physical one-off additions like plant refurbishments).
+- `lifetime_method`: Model can either be forced to reinvest when the technical lifetime ends (`reinvest_automatic`), have a choice (`reinvest_choice`), or be restricted to a one-shot build that retires after its technical lifetime without rebuild (`no_reinvestment` — for physical one-off additions like plant refurbishments).
 - `construction_lead_time` [years]: time from the investment decision until the capacity starts to operate. The start is rounded to the start of a period by `construction_lead_time_method` (below), on the periods of the whole model (all its solves). Constant or period (a map may set a different lead time per decision period). Default 0. Applies to `unit`, `connection` and `node` investments, deterministic and stochastic alike.
   - **Terms.** The *investment decision* is taken in a period of the solve's `invest_periods`. The capacity is *in construction* from the decision period until it *comes online* at the *start of operation*; from then on it is in service. Without a lead time, the capacity comes online in the decision period.
   - **Results.** In the capacity results (`unit_capacity__d`, `connection_capacity__d`, `node_capacity__d`) *invested* is the capacity that comes online in the period and *in_construction* the capacity decided but not yet operating (empty without a lead time); *total* is the capacity in service and does not include capacity in construction. Over combined solves (a chain of solves, invest then dispatch) every realized investment is counted once, in the period it comes online.
   - **Limits.** `invest_max_period` / `invest_min_period` (also of groups) count the capacity coming online in the period; the investment is decided earlier. `invest_max_total` / `invest_min_total` count every investment decision.
-  - **Costs.** `invest_cost` is the overnight cost: construction time costs with their interest must be included in it. The annuity and the `fixed_cost` of new capacity are paid only over the years it operates within the model horizon, and the `invest_cost` (and `lifetime`, `discount_rate`) of the period it comes online is used. The `lifetime` starts when the capacity comes online.
+  - **Costs.** `invest_cost` is the overnight cost: construction time costs with their interest must be included in it. The annuity and the `fixed_cost` of new capacity are paid only over the years it operates within the model horizon, and the `invest_cost` (and `lifetime_technical`, `payback_time`, `discount_rate`) of the period it comes online is used. The `lifetime_technical` starts when the capacity comes online.
   - **Horizon.** An investment whose rounded start of operation is after the end of the solve (including its look-ahead periods) or after the model horizon is not offered, with a warning naming the entity, the lead time and the solve. A chain of myopic solves whose horizon is not longer than the lead time therefore never invests in that technology: use a longer solve horizon or `construction_lead_time_method = immediate`.
 - `construction_lead_time_method`: how the start of operation (decision year plus `construction_lead_time`) is rounded to the start of a period:
   - `immediate` — no lead time; the capacity operates from the decision period. This is also the effective default when no lead time is set.
@@ -46,7 +48,7 @@ Additional parameters:
 
     **Construction lead time and stochastics compose automatically.** Under recourse (`stochastic_invest_method = recourse`) with an invest non-anticipativity window (`shared_invest_periods`, see the stochastics how-to), a long-lead technology that must be online *after* the branch reveal has to be *ordered* before it — in a pre-reveal, tied period — so its investment is a single shared here-and-now decision, while a short-lead technology can be ordered at/after the reveal and react per scenario. This staging is emergent (no extra parameter): set the window to the pre-reveal periods and the lead time stages the technologies for you. Note the two knobs stay orthogonal — the window is the *information* boundary (which order periods are shared), the lead time is the *physics* (how early you must order); you need both, set consistently, for staging.
 
-- `salvage_value`: Sets the extra value that can be gained for retiring [CUR/kW]. Only capacity that existed before the model run (`existing`) can be retired, until its end of life; the retirement saves its fixed cost over the periods it counts in and earns the salvage value as an annuity over `lifetime` (see [retirements](../reference/units.md#retirements)).
+- `net_salvage_value`: Sets the extra value that can be gained for retiring [CUR/kW]: scrap value minus decommissioning cost (negative when decommissioning costs more). Only capacity that existed before the model run (`existing`) can be retired, until its end of life; the retirement saves its fixed cost over the periods it counts in and earns the net salvage value as an annuity over the payback time (see [retirements](../reference/units.md#retirements)).
 - `fixed_cost`: Annual cost for capacity [CUR/kW]
 
 In many cases some of the investment decisions are tied to each other. Here the battery capacity and the connection capacity of the *battery_inverter* will be tied as they are simultaneously limited by the choice of the battery technology to be invested in.
@@ -201,7 +203,7 @@ In the examples.sqlite, the solve entities can carry solver options in the `solv
 **(examples.sqlite scenario: csp_fixed_design)**
 ***init - west - coal - csp_system - csp_plant - csp_invest_common - csp_fixed_design***
 
-**Investment data.** *csp_invest_common* sets `invest_periods` [*p2020*] on the solve *y2020_2day_dispatch*, and on each of the three entities `existing` 0, `invest_method` *invest_total*, `lifetime` 25 and `discount_rate` 0.07:
+**Investment data.** *csp_invest_common* sets `invest_periods` [*p2020*] on the solve *y2020_2day_dispatch*, and on each of the three entities `existing` 0, `invest_method` *invest_total*, `lifetime_technical` and `payback_time` 25 and `discount_rate` 0.07:
 
 | Entity | `invest_max_total` | `invest_cost` |
 |---|---|---|
