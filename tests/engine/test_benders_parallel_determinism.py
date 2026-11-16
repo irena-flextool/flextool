@@ -179,6 +179,7 @@ from polar_high import Problem
 from flextool.engine import build_flextool
 from flextool.engine.solve import _region_filter
 from flextool.engine.solve._benders import solve_benders
+from flextool.engine.solve._orchestration import _LEGACY_DEFAULT_OBJECTIVE_SCALE
 from flextool.engine.input._axis_enums import set_global_axis_enums
 from tests._support.load import load_saved
 
@@ -196,8 +197,11 @@ for s in _region_filter.split(data, regions=regions, benders_uncap_cross_region=
     lps[s.region] = hashlib.sha256(
         "\n".join(list(sol.col_names) + list(sol.row_names)).encode()).hexdigest()
 out = {"lps": lps}
+# The objective scale of a FlexTool solve: at scale 1 the hand master's cut rows (right-hand sides near
+# 1e10) sit below double precision for the 1e-7 primal tolerance, and HiGHS can return kUnknown there.
 for master in ("hand", "flextool"):
-    res = solve_benders(data, regions, max_iters=20, tol=1e-4, master=master)
+    res = solve_benders(data, regions, max_iters=20, tol=1e-4, master=master,
+                        scale_the_objective=_LEGACY_DEFAULT_OBJECTIVE_SCALE)
     out[master] = {
         "iterations": res.iterations, "lb": repr(res.lower_bound), "ub": repr(res.upper_bound),
         "invest": {k: repr(v) for k, v in sorted(res.invest.items())},
