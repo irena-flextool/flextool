@@ -20,7 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from spinedb_api import DatabaseMapping, to_database
+from spinedb_api import to_database
 
 from flextool.scenario_comparison.input_entity_colors import (
     RELEVANT_ENTITY_CLASSES,
@@ -28,6 +28,7 @@ from flextool.scenario_comparison.input_entity_colors import (
     fetch_flow_aggregator_flowgroups,
     seed_input_entity_colors,
 )
+from flextool.update_flextool.db_handle import open_database_mapping
 
 # --------------------------------------------------------------------------
 # Helpers
@@ -54,7 +55,7 @@ def _build_input_db(
     """
     memberships = memberships or {}
     url = "sqlite:///" + str(path)
-    with DatabaseMapping(url, create=True) as db:
+    with open_database_mapping(url, create=True) as db:
         # 0-dimensional element classes first…
         base_classes = (
             set(entities) | {"unit", "connection", "node", "group", "commodity"}
@@ -93,7 +94,7 @@ def _build_flow_aggregator_db(
     exercises the real decode path.
     """
     url = "sqlite:///" + str(path)
-    with DatabaseMapping(url, create=True) as db:
+    with open_database_mapping(url, create=True) as db:
         db.add_update_item("entity_class", name="flowGroup")
         db.add_update_item(
             "parameter_definition",
@@ -152,6 +153,8 @@ def test_fetch_flow_aggregator_unopenable_db_returns_empty(tmp_path):
     # A nonexistent DB (create=False) never raises — just contributes nothing.
     url = "sqlite:///" + str(tmp_path / "does_not_exist.sqlite")
     assert fetch_flow_aggregator_flowgroups(url) == set()
+    # Nor does it leave an empty file behind (a connect would create one).
+    assert not (tmp_path / "does_not_exist.sqlite").exists()
 
 
 # A structured project plot_settings.yaml with one pre-existing user entry to
