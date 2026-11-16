@@ -22,7 +22,10 @@ def _configure_logging(log_dir: Path) -> None:
 
     stream = sys.stderr or sys.stdout  # both None under pythonw.exe
     if stream is not None:
-        handlers.append(logging.StreamHandler(stream))
+        console = logging.StreamHandler(stream)
+        # Diagnostics meant for the log file only (e.g. the start-up DPI line) stay off the console.
+        console.addFilter(lambda record: not getattr(record, "file_only", False))
+        handlers.append(console)
 
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
