@@ -555,7 +555,9 @@ def _group_period_limit_online(b: _Build, name: str, axis: str, var, unitsize, m
     car = _lead_time.carried(d, "commission", axis, members.select(axis).unique())
     if car is not None:
         car, mem = align_join_dtypes(car, members.select("g", axis), [axis])
-        car_g = (car.join(mem, on=axis, how="inner").group_by("g", "d").agg(pl.col("value").sum()))
+        # Fixed summation order over the members (the join leaves row order unspecified).
+        car_g = (car.join(mem, on=axis, how="inner").sort("g", "d", axis)
+                 .group_by("g", "d", maintain_order=True).agg(pl.col("value").sum()))
         car_g, over_k = align_join_dtypes(car_g, over, ["g", "d"])
         car_g = car_g.join(over_k, on=["g", "d"], how="semi")
         if car_g.height > 0:
@@ -781,7 +783,9 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
         if d.p_entity_all_existing is not None:
             group_existing = (d.p_entity_all_existing.frame
                               .join(group_entity, on="e", how="inner")
-                              .group_by(["g", "d"]).agg(pl.col("value").sum())
+                              # Fixed summation order over the members.
+                              .sort("g", "d", "e")
+                              .group_by(["g", "d"], maintain_order=True).agg(pl.col("value").sum())
                               .filter(in_groups))
             if group_existing.height > 0:
                 rhs["minus_existing"] = -Param(("g", "d"), group_existing.select("g", "d", "value"))
@@ -853,7 +857,9 @@ def _eq_cumulative_flow_solve(b: _Build) -> None:
         leaf_cols = ["g", "leaf"] if is_path else ["g"]
         mask_cols = ["g", "d", "leaf"] if is_path else ["g", "d"]
         rhs_hours = (mask.select(mask_cols).join(w_y_frame, on="d", how="inner")
-                     .group_by(leaf_cols).agg(pl.col("value").sum()))
+                     # Fixed summation order (the join leaves row order unspecified).
+                     .sort(*mask_cols, "t")
+                     .group_by(leaf_cols, maintain_order=True).agg(pl.col("value").sum()))
         cap_rhs = Param(
             tuple(leaf_cols),
             cap.frame.select("g", "value").rename({"value": "cap_v"})
@@ -887,7 +893,9 @@ def _eq_cumulative_flow_period(b: _Build) -> None:
 
     hours_in_period = (d.p_step_duration.frame.rename({"value": "sd"})
                        .join(d.p_timestep_weight.frame.rename({"value": "tw"}), on=["d", "t"], how="inner")
-                       .group_by("d").agg((pl.col("sd") * pl.col("tw")).sum().alias("hours_in_period")))
+                       .sort("d", "t")  # fixed summation order
+                       .group_by("d", maintain_order=True)
+                       .agg((pl.col("sd") * pl.col("tw")).sum().alias("hours_in_period")))
 
     # ─── EQ. ─── {max,min}Cumulative_flow_period ─────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────

@@ -479,7 +479,7 @@ def capacity_margin_unit_arcs(d) -> pl.DataFrame | None:
                               on=["p", "source"], how="left")
                   .with_columns(pl.col("share").fill_null(1.0)))
     is_state = pl.col("source").is_in(state)
-    storage_backed = (shares.group_by("p")
+    storage_backed = (shares.sort("p", "source").group_by("p", maintain_order=True)  # fixed summation order
                       .agg(is_state.any().alias("has_state"),
                            pl.col("share").filter(~is_state).sum().alias("other"))
                       .filter(pl.col("has_state") & (pl.col("other") < 1.0))
@@ -787,8 +787,10 @@ def _eq_capacity_margin(b: _Build) -> None:
               .join(kappa.frame.rename({"value": "kappa"}), on=["g", "p", "source", "sink", "d"], how="inner")
               .join(invc.frame.rename({"value": "inv"}), on=["g", "d"], how="inner")
               .with_columns(value=-(pl.col("exist") * pl.col("us") * pl.col("kappa") * pl.col("inv")))
-              .group_by(["g", "d", "t"]).agg(pl.col("value").sum())
-              .select("g", "d", "t", "value").sort("g", "d", "t"))
+              # Fixed summation order over the arcs (the joins leave row order unspecified).
+              .sort("g", "d", "t", "p", "source", "sink")
+              .group_by(["g", "d", "t"], maintain_order=True).agg(pl.col("value").sum())
+              .select("g", "d", "t", "value"))
         if ex.height > 0:
             rhs["existing_neg"] = Param(("g", "d", "t"), ex)
 
@@ -810,8 +812,9 @@ def _eq_capacity_margin(b: _Build) -> None:
         rhs_inflow = (join_aligned(gn, inflow_per.frame.rename({"value": "inflow"}), on="n", how="inner")
                       .join(invc.frame.rename({"value": "inv"}), on=["g", "d"], how="inner")
                       .with_columns(value=-pl.col("inflow") * pl.col("inv"))
-                      .group_by(["g", "d", "t"]).agg(pl.col("value").sum())
-                      .select("g", "d", "t", "value").sort("g", "d", "t"))
+                      .sort("g", "d", "t", "n")  # fixed summation order over the nodes
+                      .group_by(["g", "d", "t"], maintain_order=True).agg(pl.col("value").sum())
+                      .select("g", "d", "t", "value"))
         if rhs_inflow.height > 0:
             rhs["inflow_neg"] = Param(("g", "d", "t"), rhs_inflow)
 
@@ -1038,7 +1041,8 @@ def _invest_units(d, sol, var: str, edd: "pl.DataFrame | None", d_col: str) -> "
     edd = _as_utf8(edd.rename({"e": "p"}) if "e" in edd.columns else edd)
     val = _as_utf8(sol.value(var)).rename({"d": d_col})
     out = (edd.join(val, on=["p", d_col], how="inner")
-           .group_by("p", "d").agg(pl.col("value").cast(pl.Float64).sum()))
+           .sort("p", "d", d_col)  # fixed summation order (the join leaves row order unspecified)
+           .group_by("p", "d", maintain_order=True).agg(pl.col("value").cast(pl.Float64).sum()))
     return out if out.height > 0 else None
 
 
@@ -1159,8 +1163,11 @@ def capacity_margin_report(d, sol, *, scale_the_objective: "float | None" = None
                                  (0.0 - pl.col("energy") / pl.col("dt")).alias("value")))
     contrib_df = (pl.concat([c.select(cols) for c in contrib]) if contrib
                   else pl.DataFrame(schema={**{c: pl.Utf8 for c in cols[:-1]}, "value": pl.Float64}))
+    # Fixed summation order: an entity's rows (several arcs / terms) carry nothing beyond the value to
+    # order them by, so the value itself breaks the tie (equal rows add the same whatever their order).
     contrib_df = (contrib_df.join(groups, on="g", how="semi")
-                  .group_by("g", "d", "t", "cls", "entity").agg(pl.col("value").sum()))
+                  .sort("g", "d", "t", "cls", "entity", "value")
+                  .group_by("g", "d", "t", "cls", "entity", maintain_order=True).agg(pl.col("value").sum()))
 
     # The requirement per step: M + the real demand of N(g); a (g, d) without a row (margin -inf) is not reported.
     base = groups.join(steps, how="cross")
@@ -1174,7 +1181,8 @@ def capacity_margin_report(d, sol, *, scale_the_objective: "float | None" = None
     base = base.with_columns(pl.col("margin").fill_null(0.0))
     inflow = _param_utf8(getattr(d, "pdtNodeInflow_per_step", None), ("n", "d", "t"), "inflow")
     if inflow is not None and gn_u.height > 0:
-        dem = (gn_u.join(inflow, on="n", how="inner").group_by("g", "d", "t")
+        dem = (gn_u.join(inflow, on="n", how="inner").sort("g", "d", "t", "n")
+               .group_by("g", "d", "t", maintain_order=True)
                .agg((-pl.col("inflow")).sum().alias("demand")))
         base = base.join(dem, on=["g", "d", "t"], how="left")
     else:
@@ -1194,7 +1202,8 @@ def capacity_margin_report(d, sol, *, scale_the_objective: "float | None" = None
             j = frame.join(part, on=["g", "d", "t"], how="left")
             fine = j.filter(pl.col("b_first").is_null()).select(frame.columns)
             agg = (j.filter(pl.col("b_first").is_not_null())
-                   .group_by(*[k for k in keys if k != "t"], "b_first")
+                   .sort(*keys)  # unique per row: a fixed summation order over the fine steps
+                   .group_by(*[k for k in keys if k != "t"], "b_first", maintain_order=True)
                    .agg(*((pl.col(v) * pl.col("w")).sum().alias(v) for v in values))
                    .rename({"b_first": "t"}))
             return pl.concat([fine, agg.select(frame.columns)])
@@ -1203,7 +1212,8 @@ def capacity_margin_report(d, sol, *, scale_the_objective: "float | None" = None
         base = coarse(base, ["g", "d", "t"], ["margin", "demand"]).join(steps, on=["d", "t"], how="left")
 
     sums = (contrib_df.with_columns(col=pl.col("cls").replace_strict(CAPACITY_MARGIN_CLASSES, default=None))
-            .group_by("g", "d", "t", "col").agg(pl.col("value").sum()))
+            .sort("g", "d", "t", "col", "cls", "entity")  # fixed summation order
+            .group_by("g", "d", "t", "col", maintain_order=True).agg(pl.col("value").sum()))
     wide = base.with_columns(requirement=pl.col("margin") + pl.col("demand"))
     class_cols = list(dict.fromkeys(CAPACITY_MARGIN_CLASSES.values()))
     for col in class_cols:
@@ -1242,7 +1252,8 @@ def capacity_margin_report(d, sol, *, scale_the_objective: "float | None" = None
                     else pl.DataFrame(schema={"d": pl.Utf8, "bw": pl.Float64}))
             icap = _param_utf8(d.p_inv_group_cap, ("g", "d"), "icap")
             s_obj = 1.0 if scale_the_objective is None or scale_the_objective <= 0 else float(scale_the_objective)
-            price = (pl.concat(duals).group_by("g", "d").agg(pl.col("dual").sum())
+            price = (pl.concat(duals).sort("g", "d", "t", "dual")  # fixed summation order
+                     .group_by("g", "d", maintain_order=True).agg(pl.col("dual").sum())
                      .join(icap, on=["g", "d"], how="left").join(infl, on="d", how="left")
                      .join(bw_u, on="d", how="left")
                      .with_columns(capacity_price=pl.col("dual") * pl.col("icap") / s_obj
@@ -1403,7 +1414,8 @@ def _eq_non_sync(b: _Build) -> None:
         exo_in = (gn_in_gns.join(p_pos.frame.rename({"value": "v"}), on="n", how="inner")
                   .join(invc.frame.rename({"value": "iv"}), on=["g", "d"], how="inner")
                   .with_columns(value=pl.col("v") * pl.col("iv"))
-                  .group_by(["g", "d", "t"]).agg(pl.col("value").sum())
+                  .sort("g", "d", "t", "n")  # fixed summation order over the nodes
+                  .group_by(["g", "d", "t"], maintain_order=True).agg(pl.col("value").sum())
                   .select("g", "d", "t", "value"))
         if exo_in.height > 0:
             lhs["exo_inflow"] = Param(("g", "d", "t"), exo_in)
@@ -1461,7 +1473,8 @@ def _eq_non_sync(b: _Build) -> None:
                    .join(invc.frame.rename({"value": "iv"}), on=["g", "d"], how="inner")
                    .join(lim.select("g", "d", "t", "lim"), on=["g", "d", "t"], how="inner")
                    .with_columns(value=-pl.col("v") * pl.col("iv") * pl.col("lim"))
-                   .group_by(["g", "d", "t"]).agg(pl.col("value").sum())
+                   .sort("g", "d", "t", "n")  # fixed summation order over the nodes
+                   .group_by(["g", "d", "t"], maintain_order=True).agg(pl.col("value").sum())
                    .select("g", "d", "t", "value"))
         if exo_out.height > 0:
             rhs["exo_demand"] = Param(("g", "d", "t"), exo_out)

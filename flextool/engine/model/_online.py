@@ -926,7 +926,10 @@ def _fuel_share(d, levels: "pl.LazyFrame", online_p: "pl.LazyFrame | None" = Non
         return (rows.select("_p", "_d", "_t", y).unique().join(k, on="_p", how="inner")
                 .with_columns(__fill=pl.min_horizontal(pl.col("__cap"),
                                                        (pl.col(y) - pl.col("__prev")).clip(lower_bound=0.0)))
-                .group_by("_p", "_d", "_t").agg((pl.col("__conv") * pl.col("__fill")).sum().alias(out)))
+                # Fixed summation order over the outputs (the unique / join undo the sort of k).
+                .sort("_p", "_d", "_t", "_k", y)
+                .group_by("_p", "_d", "_t", maintain_order=True)
+                .agg((pl.col("__conv") * pl.col("__fill")).sum().alias(out)))
 
     w = _width("__y", "__w_y").join(_width("__one", "__w_full"), on=["_p", "_d", "_t"], how="inner")
 

@@ -228,10 +228,13 @@ def _flow_requirement_bound(d, ratio_set, ratio_param, rug_sel, side: str, *,
                    .join(us_lf, on="p", how="inner")
                    .with_columns((pl.col("value") * pl.col("__us") * pl.col("__ratio")).abs().alias("value")))
         bound = pl.concat([bound, b_bound.select(bound.collect_schema().names())])
+    # Fixed summation order over the arcs (the joins leave row order unspecified); a forward and a reverse
+    # arc of one process at one node differ only in n, the value breaks any remaining tie.
+    bound = bound.sort("r", "ud", "g", "d", "t", "p", "source", "sink", "n", "value")
     if per_process_max:
-        return (bound.group_by("r", "ud", "g", "p", "d", "t").agg(pl.col("value").sum())
+        return (bound.group_by("r", "ud", "g", "p", "d", "t", maintain_order=True).agg(pl.col("value").sum())
                 .group_by("r", "ud", "g", "d", "t").agg(pl.col("value").max()))
-    return bound.group_by("r", "ud", "g", "d", "t").agg(pl.col("value").sum())
+    return bound.group_by("r", "ud", "g", "d", "t", maintain_order=True).agg(pl.col("value").sum())
 
 
 def _back_arcs(d) -> "pl.DataFrame | None":
@@ -298,7 +301,8 @@ def group_demand_requirement(d) -> "Param | None":
               .with_columns((-pl.col("value")).clip(lower_bound=0.0).alias("__dem")))
     step_lf = _u8(step.frame.lazy().select("d", "t", pl.col("value").alias("__dt")), ["d", "t"])
     comp = (sel.join(demand, on="n", how="inner")
-            .group_by("r", "ud", "g", "d", "t", "__ratio").agg(pl.col("__dem").sum())
+            .sort("r", "ud", "g", "d", "t", "n")  # fixed summation order over the nodes
+            .group_by("r", "ud", "g", "d", "t", "__ratio", maintain_order=True).agg(pl.col("__dem").sum())
             .join(step_lf, on=["d", "t"], how="inner")
             .select("r", "ud", "g", "d", "t", value=pl.col("__ratio") * pl.col("__dem") / pl.col("__dt"))
             .filter(pl.col("value") != 0.0))
@@ -365,8 +369,11 @@ def reserve_shortfall_scale(d) -> "Param | None":
     keys = ["r", "ud", "g", "d", "t"]
     if res is not None and res.frame.height > 0:
         parts.append(_u8(promote_param_to_dt(res, d.dt).select(*keys, "value"), keys))
-    comp = (pl.concat([p.select(*keys, pl.col("value").cast(pl.Float64)) for p in parts])
-            .group_by(keys).agg(pl.col("value").sum()))
+    # Fixed summation order: the parts in list order within each key.
+    comp = (pl.concat([p.select(*keys, pl.col("value").cast(pl.Float64), pl.lit(i).alias("__part"))
+                       for i, p in enumerate(parts)])
+            .sort(*keys, "__part")
+            .group_by(keys, maintain_order=True).agg(pl.col("value").sum()))
     base = rug.select("r", "ud", "g").join(d.dt.select("d", "t"), how="cross")
     frame = (_u8(base.lazy(), ["r", "ud", "g"])
              .with_columns(pl.col("d").cast(pl.Utf8).alias("__d"), pl.col("t").cast(pl.Utf8).alias("__t"))
@@ -1674,8 +1681,10 @@ def _flows_at_nodes(d, sol, processes: list[str]) -> pl.DataFrame:
                                    pl.col("__mw").alias("value")))
     if not parts:
         return pl.DataFrame(schema={**{c: pl.Utf8 for c in cols[:-1]}, "value": pl.Float64})
-    return (pl.concat([p.select(cols) for p in parts])
-            .group_by("p", "n", "kind", "d", "t").agg(pl.col("value").sum()))
+    # Fixed summation order: the parts in list order, and within a part (two arcs of p at n) the value.
+    return (pl.concat([p.select(cols).with_columns(__part=pl.lit(i)) for i, p in enumerate(parts)])
+            .sort("p", "n", "kind", "d", "t", "__part", "value")
+            .group_by("p", "n", "kind", "d", "t", maintain_order=True).agg(pl.col("value").sum()))
 
 
 def _ratio_flows(flows: pl.DataFrame, rel: pl.DataFrame, ratio, kinds: tuple[str, ...]) -> "pl.DataFrame | None":
@@ -1686,7 +1695,9 @@ def _ratio_flows(flows: pl.DataFrame, rel: pl.DataFrame, ratio, kinds: tuple[str
     ratio_u = _frame_u8(ratio.frame).select("p", "r", "ud", "n", pl.col("value").alias("__ratio"))
     return (_frame_u8(rel.select("p", "r", "ud", "n", "g")).join(ratio_u, on=["p", "r", "ud", "n"], how="inner")
             .join(flows.filter(pl.col("kind").is_in(list(kinds))), on=["p", "n"], how="inner")
-            .group_by("r", "ud", "g", "p", "d", "t").agg((pl.col("value") * pl.col("__ratio")).sum()))
+            .sort("r", "ud", "g", "p", "d", "t", "n", "kind")  # fixed summation order
+            .group_by("r", "ud", "g", "p", "d", "t", maintain_order=True)
+            .agg((pl.col("value") * pl.col("__ratio")).sum()))
 
 
 def reserve_requirement_rows(d, sol) -> "pl.DataFrame | None":
@@ -1740,7 +1751,8 @@ def reserve_requirement_rows(d, sol) -> "pl.DataFrame | None":
             by_flow = _ratio_flows(flows, irr_g, getattr(d, "p_process_reserve_upDown_node_increase_reserve_ratio_value",
                                                          None), ("into", "drawn"))
             if by_flow is not None:
-                dyn = _plus(dyn, by_flow.group_by(_GROUP_STEP).agg(pl.col("value").sum()), _GROUP_STEP)
+                dyn = _plus(dyn, by_flow.sort(*_GROUP_STEP, "p").group_by(_GROUP_STEP, maintain_order=True)
+                            .agg(pl.col("value").sum()), _GROUP_STEP)
         demand = group_demand_requirement(d)
         if demand is not None:
             dyn = _plus(dyn, _frame_u8(demand.frame), _GROUP_STEP)
@@ -1811,8 +1823,11 @@ def reserve_requirement_report(d, sol) -> "tuple[pl.DataFrame, pl.DataFrame, pl.
                     .select(prov_cols))
     else:
         provider = pl.DataFrame(schema={**{c: pl.Utf8 for c in prov_cols[:-1]}, "value": pl.Float64})
-    provided = provider.group_by(_GROUP_STEP).agg(pl.col("value").sum().alias("provided"))
-    own = provider.group_by("r", "ud", "g", "p", "d", "t").agg(pl.col("value").sum().alias("__own")).rename({"p": "f"})
+    # Fixed summation order over the providers (the joins leave row order unspecified).
+    prov_sorted = provider.sort(*_GROUP_STEP, "p", "n")
+    provided = prov_sorted.group_by(_GROUP_STEP, maintain_order=True).agg(pl.col("value").sum().alias("provided"))
+    own = (prov_sorted.group_by("r", "ud", "g", "p", "d", "t", maintain_order=True)
+           .agg(pl.col("value").sum().alias("__own")).rename({"p": "f"}))
     req = (req.join(provided, on=_GROUP_STEP, how="left")
            .join(own, on=[*_GROUP_STEP, "f"], how="left")
            .with_columns(counted=pl.col("provided").fill_null(0.0) - pl.col("__own").fill_null(0.0),

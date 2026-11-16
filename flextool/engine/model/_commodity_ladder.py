@@ -207,7 +207,8 @@ def load_data(inp_dir: str | Path, sd_dir: str | Path, *, provider=None) -> dict
         years_by_d = (pyr_raw.select("period", "p_years_represented")
                       .rename({"period": "d"})
                       .with_columns(pl.col("p_years_represented").cast(pl.Float64))
-                      .group_by("d").agg(pl.col("p_years_represented").sum().alias("years")))
+                      .sort("d", "p_years_represented")  # fixed summation order
+                      .group_by("d", maintain_order=True).agg(pl.col("p_years_represented").sum().alias("years")))
         prior_hours: dict[str, float] = {}
         prior = read_handoff_frame(provider, K.HANDOFF_CUM_SIM_HOURS)
         if prior is not None and "period" in prior.columns:
@@ -483,7 +484,8 @@ def _eq_tier_cap_cumulative(b: _Build) -> None:
 
     if d.p_ladder_cum_realized_mwh is not None:
         realized_ci = (d.p_ladder_cum_realized_mwh.frame
-                       .group_by(["c", "i"]).agg(pl.col("value").sum().alias("realized")))
+                       .sort("c", "i", "d")  # fixed summation order over the periods
+                       .group_by(["c", "i"], maintain_order=True).agg(pl.col("value").sum().alias("realized")))
     else:
         realized_ci = None
 
@@ -513,7 +515,7 @@ def _eq_tier_cap_cumulative(b: _Build) -> None:
         # derived-param pass) the weight is Σ f_d_k over the path's periods, fan labels left out (a member's
         # f_d_k holds its period's realized hours), the pre-years_represented-fix formula; realized = tier
         # MWh bought by earlier solves (0 when absent).  Unlimited tiers get no row.
-        sum_weight = float(weight_frame["value"].sum()) if weight_frame is not None else 1.0
+        sum_weight = float(weight_frame.sort("d")["value"].sum()) if weight_frame is not None else 1.0
         cap_df = (ci_cum_finite.join(d.p_ladder_cum_quantity.frame, on=["c", "i"], how="left")
                   .select("c", "i", cap=pl.col("value") * sum_weight))
         if realized_ci is not None:
@@ -553,7 +555,8 @@ def _eq_tier_cap_cumulative(b: _Build) -> None:
     over = ci_cum_finite.join(leaves_list, how="cross")
     if weight_frame is not None:
         per_leaf_weight = (weight_frame.join(leaf_pairs, on="d", how="inner")
-                           .group_by("leaf").agg(pl.col("value").sum().alias("weight")))
+                           .sort("leaf", "d")  # fixed summation order over the periods
+                           .group_by("leaf", maintain_order=True).agg(pl.col("value").sum().alias("weight")))
         if in_use is not None:
             weights_utf8 = weight_frame.select(pl.col("d").cast(pl.Utf8), pl.col("value").cast(pl.Float64))
             on_leaf = d_leaf["d"].cast(pl.Utf8).unique()
@@ -564,7 +567,7 @@ def _eq_tier_cap_cumulative(b: _Build) -> None:
                 raise ValueError(
                     f"_commodity_ladder: period(s) {off_path} of period_in_use carry a cumulative ladder "
                     "weight but lie on no scenario path (d_leaf); the lineage frames are incomplete.")
-            w_hist = float(weights_utf8.filter(~pl.col("d").is_in(in_use.implode()))["value"].sum())
+            w_hist = float(weights_utf8.filter(~pl.col("d").is_in(in_use.implode())).sort("d")["value"].sum())
             if w_hist != 0.0:
                 per_leaf_weight = per_leaf_weight.with_columns(pl.col("weight") + w_hist)
     else:

@@ -3551,7 +3551,7 @@ def _validate_min_input_shares(rows: pl.DataFrame) -> None:
     (``input_derivation._validators.validate_unit_input_shares``); this guards hand-built data.
     """
     bad = rows.filter(pl.col("value") > 1.0)
-    sums = (rows.group_by("p").agg(pl.col("value").sum().alias("s"))
+    sums = (rows.sort("p", "source").group_by("p", maintain_order=True).agg(pl.col("value").sum().alias("s"))
             .filter(pl.col("s") > 1.0 + 1e-9))
     if bad.height > 0 or sums.height > 0:
         raise FlexToolConfigError(
@@ -3796,7 +3796,8 @@ def _co2_total_cap_with_carry(d) -> Param:
                 f"for {sorted(missing.select(pl.format('{},{}', 'g', 'd')).to_series().cast(pl.Utf8).to_list())}"
                 "; the carried budget cannot be computed.  The carrier comes from the realizing solve's "
                 "extraction (cumulative_co2 'represented' column).")
-        realized_g = rows.group_by("g").agg(pl.col("value").sum().alias("realized"))
+        # Fixed summation order over the periods (the semi join leaves row order unspecified).
+        realized_g = rows.sort("g", "d").group_by("g", maintain_order=True).agg(pl.col("value").sum().alias("realized"))
         cap = cap.join(realized_g, on="g", how="left").with_columns(pl.col("realized").fill_null(0.0))
     else:
         cap = cap.with_columns(realized=pl.lit(0.0))
@@ -5519,7 +5520,7 @@ def _obj_existing_fixed_cost(b: _Build) -> None:
     else:
         fc_frame = fc_frame.with_columns(
             contrib=pl.col("exist") * pl.col("fc") * pl.col("infl"))
-    fc_const = fc_frame["contrib"].sum()
+    fc_const = fc_frame.sort("e", "d")["contrib"].sum()  # fixed summation order (the joins leave it unspecified)
     if fc_const:
         b.m.add_obj_constant(float(fc_const) * b.scale_the_objective)
 
