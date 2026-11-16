@@ -483,9 +483,8 @@ relevant key families are declared in `engine/preprocess/_provider_keys.py`:
 
 - `HANDOFF_*` — quantities the just-solved problem produces for the next
   iteration (`fix_storage_quantity/price/usage`, `roll_end_state`,
-  `realized_invest`, `realized_existing`, `divest_cumulative`,
-  `cumulative_co2`, `commodity_ladder_cumulative`, `cum_sim_hours`,
-  `ed_history_realized_first`, `edd_history`).
+  `realized_cohort`, `realized_retire`, `realized_commission`, `divest_cumulative`,
+  `cumulative_co2`, `commodity_ladder_cumulative`, `cum_sim_hours`).
 - `INPUT_*` — backend-derived rows the cascade re-reads each iteration.
 - `SOLVE_DATA_*` — per-solve sets and parameters that the derivation
   layer produces.
@@ -500,8 +499,8 @@ The output cascade (`flextool/process_outputs/`) has the same contract as the lo
 values from the sub-solve's `FlexData`, `FlexDataProvider` or `OutputWriterState`, never from `input/` or
 `solve_data/` on the work folder (item 163, `specs/bugfix/c24/design_163.md`;
 `test_output_writers_read_no_work_folder_inputs` in `tests/engine/test_meta_provider_invariants.py`, Rule 5). The
-five handoff-mirror CSVs under `solve_data/` (`p_entity_divested`, `fix_storage_quantity`, `fix_storage_usage`,
-`p_roll_continue_state`, `p_entity_period_existing_capacity`) are write-only `--csv-dump` debug output with no
+four handoff-mirror CSVs under `solve_data/` (`p_entity_divested`, `fix_storage_quantity`, `fix_storage_usage`,
+`p_roll_continue_state`) are write-only `--csv-dump` debug output with no
 reader anywhere in the engine; `period_capacity.csv` is the one mirror still written on every run (vestigial,
 always header-only).
 
@@ -1416,8 +1415,9 @@ names as before for debug inspection:
 
 | Carrier (`SolveHandoff` field) | Debug-mirror file | Meaning |
 |---|---|---|
-| `realized_invest` | `p_entity_period_existing_capacity.csv` (period column) | New capacity built this solve, in absolute units. |
-| `realized_existing` | `p_entity_period_existing_capacity.csv` (existing column) | Cumulative existing capacity history per `(entity, period)`. |
+| `realized_cohort` | `produced_handoff/realized_cohort.csv` | The investments realised by the run so far, one row per cohort (investment decision): its start of operation and end of life in years of the run (placed once, by the deciding solve) and its size. A later solve's capacity is its existing cohort (the user's `existing` of each of its periods) plus the carried cohorts in service, minus the carried retirements (`_cohorts.existing_capacity`). |
+| `realized_retire` | `produced_handoff/realized_retire.csv` | Retired capacity per cohort and realised decision period; counts while the cohort is in service. |
+| `realized_commission` | *(in-memory only)* | Realised investments with a construction lead time: coming online / in construction in a later solve. |
 | `divest_cumulative` | `p_entity_divested.csv` | Cumulative divest per entity carried forward. |
 | `roll_end_state` / `upward_roll_end_state` | `p_roll_continue_state.csv` | `v_state` at the end of the realized window; the start state of the sub-solves that continue from it, routed by `solve/_carry_routing.py` (the latest realised state at the sub-solve's nesting level or deeper; engine.md "Storage carry routing"). |
 | `roll_end_online` | *(in-memory only)* | Committed jump-end `v_online` per online process (OC1 Carrier 1); the next roll's `online_change` first step (`dt_online_carry`) sees the prior commitment instead of the within-roll cyclic wrap, so a unit that stays committed is not re-charged a startup across the boundary. |
@@ -1459,6 +1459,10 @@ used to be `SolveHandoff` fields too, populated only by the now-removed
 `capture_post_solve()` disk-read constructor. They were retired when the
 cascade fell through to Provider/CSV reads in all production paths; see
 the docstring of `solve/_handoff.py` for the history.
+`realized_invest`, `realized_existing` and `realized_divest` (capacity keyed
+by period: the existing capacity entered once, at the first solve's first
+period, so a period-varying `existing` was lost in later solves) were replaced
+by `realized_cohort` / `realized_retire`.
 
 ## Solution extraction
 

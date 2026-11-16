@@ -31,15 +31,9 @@ Cluster B fields (per
 * The periods each investment and each retirement counts in are views of the cohort table
   (:mod:`._cohorts`: ``invest_alive``, ``invest_prebuilt``, ``retire_active``), built for the model by
   ``model/_capacity.py``.
-* ``p_entity_all_existing`` — per-(e, d) lifetime-cumulative existing
-  capacity.  Algorithm:
-    * solve-first: pre-existing[e, d] (lifetime-gated entity.existing).
-    * later-solves: Σ_{d_history ∈ edd_history(e, d) ∧ realized}
-        p_entity_period_existing_capacity[e, d_history]
-        − p_entity_divested[e]  (when e ∈ entityDivest).
-* ``p_entity_period_existing_capacity`` — handoff carrier read from
-  ``flex_data.p_entity_period_existing_capacity`` (already populated
-  by the CSV-side handoff loader); the lazy path doesn't recompute it.
+* ``p_entity_all_existing`` / ``p_entity_retired_carried`` — the capacity a solve starts from and the carried
+  retirements of the existing cohort are emitted per solve from the cohorts
+  (``emit/_chain_params.emit_existing_capacity``); preprocess reads them (:func:`apply_existing_chain`).
 * ``p_entity_max_units`` — per-(e, d) max unit count via the
   unitsize cascade × the max_capacity branch fork.
 
@@ -988,259 +982,21 @@ def ed_divest_period_set_lf(source: "InputSource",
 # ---------------------------------------------------------------------------
 
 
-def p_entity_retired_carried_from_handoff(source: "InputSource",
-                                          active_solve: str | None,
-                                          period_in_use: list[str],
-                                          workdir: Path | None,
-                                          *,
-                                          provider: "object | None" = None,
-                                          ) -> "Param | None":
-    """``p_entity_retired_carried`` Param ``[e, d]`` (MW, MWh for storage): the capacity earlier solves of a chain
-    retired (handoff ``realized_divest``, per decision period) that still counts in the solve's periods, from the
-    decision period until the end of life of the entity's pre-existing capacity
-    (:func:`._retire_existing.retired_carried`).  ``None`` without carried retirements in these periods."""
-    from flextool.engine.preprocess import _provider_keys as K
-    from flextool.engine.preprocess._provider_translators import read_handoff_frame
-    from flextool.engine.preprocess.params._cohorts import cohort_years, existing_cohorts, existing_expired
-    from flextool.engine.preprocess.params._retire_existing import retired_carried
-    frame = read_handoff_frame(provider, K.HANDOFF_REALIZED_DIVEST) if provider is not None else None
-    if frame is None or frame.height == 0 or not period_in_use:
+def p_entity_retired_carried_from_provider(workdir: Path | None,
+                                           *,
+                                           provider: "object | None" = None,
+                                           ) -> "Param | None":
+    """``p_entity_retired_carried`` Param ``[e, d]`` (MW, MWh for storage): the retirements of the existing cohort
+    that earlier solves of a chain realized and that still count in the solve's periods, as the solve emitted them
+    (``solve_data/p_entity_retired_carried``, ``_chain_params.emit_existing_capacity``), sorted.  ``None`` without
+    carried retirements (or without the frame: a solve built on its own)."""
+    from flextool.engine.preprocess.params._derived import _read_handoff_e_d_from_workdir
+    if workdir is None:
         return None
-    rows = [(str(e), str(d), float(v)) for e, d, v in frame.select(
-        pl.col("entity").cast(pl.Utf8), pl.col("period").cast(pl.Utf8),
-        pl.col("value").cast(pl.Utf8).cast(pl.Float64, strict=False).fill_null(0.0)).iter_rows()]
-    periods = [str(d) for d in period_in_use]
-    years = cohort_years(source, active_solve, workdir, provider=provider)
-    expired = existing_expired(existing_cohorts(source, active_solve, workdir, provider=provider, years=years),
-                               years, periods)
-    carried = retired_carried(rows, years, periods, expired)
-    if not carried:
+    param = _read_handoff_e_d_from_workdir(workdir, "p_entity_retired_carried", provider=provider)
+    if param is None:
         return None
-    out = (pl.DataFrame({"e": [e for e, _ in carried], "d": [d for _, d in carried],
-                         "value": list(carried.values())},
-                        schema={"e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64})
-             .lazy().select(alias_to_axis("e", "e"), alias_to_axis("d", "d"), "value")
-             .sort("e", "d").collect())
-    return Param(("e", "d"), out)
-
-
-def p_entity_all_existing_from_handoff(
-        source: "InputSource",
-        active_solve: str | None,
-        period_with_history: list[str],  # noqa: ARG001 — kept for symmetry
-        period_in_use: list[str],
-        *,
-        p_entity_period_existing_capacity: "Param | None" = None,
-        p_entity_previously_invested_capacity: "Param | None" = None,
-        p_entity_retired_carried: "Param | None" = None,
-        solve_first: bool = True,
-        edd_history: "pl.DataFrame | None" = None,
-        workdir: Path | None = None,
-        provider: "object | None" = None,
-        ) -> "Param | None":
-    """Lazy port of flextool's
-    ``write_p_entity_existing_chain`` algorithm
-    (``entity_period_calc_params.py:1381-1591``).
-
-    Per flextool's writer (lines 1554-1568):
-
-      * ``solve_first`` →
-            ``all_existing[e, d] = pre_existing[e, d]``  (no divest applied)
-      * later solves →
-            ``all_existing[e, d] = later_existing[e, d]``
-            ``                    − retired_carried[e, d]   (if e ∈ entityDivest)``
-
-    where ``retired_carried[e, d]`` (:func:`p_entity_retired_carried_from_handoff`) is the capacity earlier
-    solves retired that still counts in d: a retirement removes pre-existing capacity until its end of life,
-    after which the aged ``later_existing`` has dropped it already.
-
-    where ``later_existing[e, d]`` for the chain-runner case is the
-    chain-summed prior-solve existing per current period — already
-    integrated by flextool's preprocessing into
-    ``p_entity_previously_invested_capacity[e, d]`` (the
-    ``later_invested`` shape) ⊕ ``pre_existing[e, d]``.  Δ.11 — we rebuild
-    the result from the in-memory handoff carriers via
-    ``pre + ppic − divest`` which matches the canonical flextool CSV
-    (verified per-fixture in ``test_existing_chain_cluster_parity.py``).
-
-    Parameters
-    ----------
-    p_entity_period_existing_capacity
-        Δ.11 — in-memory handoff carrier ``[entity, period, value]``
-        (the SolveHandoff ``realized_existing`` shape).  When supplied,
-        the helper switches into the ``later_existing`` chain-summation
-        branch: ``later_existing[e, d] = Σ_{(e, d_h, d) ∈ edd_history ∧
-        (e, d_h) realized} ppec[(e, d_h)]`` (mirrors flextool's
-        ``write_p_entity_existing_chain`` lines 1530-1543).  Required for
-        lifetime-renew chains where the chain-summed existing isn't
-        recoverable from ``ppic + pre_existing`` alone.
-    p_entity_previously_invested_capacity
-        In-memory handoff Param ``[e, d, value]`` — chain-summed prior
-        invest at d.  Used only when ``p_entity_period_existing_capacity``
-        is None (the simple-baseline branch); the chain-summation
-        branch derives both terms from ``ppec``.
-    p_entity_retired_carried
-        Param ``[e, d, value]`` — prior solves' retirements still counting in d.
-    solve_first
-        Δ.11 — flextool's ``solveFirst`` flag.  When True, divest is
-        NOT subtracted (mirrors the writer's solve-first branch); when
-        False, ``e ∈ entityDivest`` triggers a per-entity divest
-        subtraction.  Default True (single-solve / cold-start).
-    edd_history
-        Δ.11 — ``[entity, period_history, period]`` triple-set used by
-        the chain-summation branch.  When None, the helper falls back
-        to the simple ``pre + ppic − divest`` formula (which is exact
-        for non-renew chains).
-
-    Returns Param ``[e, d, value]`` or None when no entities exist.
-    """
-    if not period_in_use:
-        return None
-    all_e_collected = _all_entities_lf(source).collect()
-    if all_e_collected.height == 0:
-        return None
-    all_e_lf = _all_entities_lf(source)
-    piu_lf = (pl.LazyFrame({"d": period_in_use})
-                .with_columns(pl.col("d").cast(schema_dtype(_enums, "d"),
-                                                  strict=False)))
-    grid_lf = all_e_lf.join(piu_lf, how="cross")
-
-    pre_existing_lf = p_entity_pre_existing_lf(
-        source, active_solve, period_in_use, workdir=workdir, provider=provider)
-
-    # entityDivest set + p_entity_divested scalar.  Shared by both
-    # branches; the divest subtraction is gated on solve_first below.
-    div_set_lf = entity_divest_set_lf(source).with_columns(
-        is_divest=pl.lit(True))
-    if (p_entity_retired_carried is not None
-            and p_entity_retired_carried.frame.height > 0):
-        ped_lf = (p_entity_retired_carried.frame.lazy()
-                     .select("e", "d", pl.col("value").alias("divested")))
-    else:
-        ped_lf = pl.LazyFrame(schema={
-            "e": schema_dtype(_enums, "e"),
-            "d": schema_dtype(_enums, "d"),
-            "divested": pl.Float64,
-        })
-
-    # ---------------------------------------------------------------
-    # Δ.11 — chain-summation branch: later_existing[e, d] from
-    # edd_history × ppec.  Activates when the caller supplies the
-    # ``p_entity_period_existing_capacity`` carrier (the SolveHandoff
-    # ``realized_existing`` shape) AND the ``edd_history`` triple-set
-    # AND solve_first is False.  Mirrors flextool's writer at
-    # ``entity_period_calc_params.py:1530-1568``.
-    # ---------------------------------------------------------------
-    if (not solve_first
-            and p_entity_period_existing_capacity is not None
-            and p_entity_period_existing_capacity.frame.height > 0
-            and edd_history is not None and edd_history.height > 0):
-        ppec_lf = (p_entity_period_existing_capacity.frame.lazy()
-                       .select(alias_to_axis("e", "e"),
-                                alias_to_axis("d", "d_h"),
-                                pl.col("value").alias("ppec")))
-        edd_lf = edd_history.lazy()
-        if {"entity", "period_history", "period"}.issubset(set(edd_history.columns)):
-            edd_lf = edd_lf.pipe(rename_to_axis, {"entity": "e",
-                                       "period_history": "d_h",
-                                       "period": "d"})
-        # later_existing[e, d] = Σ_{d_h: (e, d_h, d) ∈ edd_history ∧
-        #                              (e, d_h) ∈ realized} ppec[(e, d_h)].
-        # (e, d_h) is "realized" iff ppec carries a row for it.
-        from flextool.engine.input._axis_enums import align_join_dtypes
-        edd_lf, ppec_lf = align_join_dtypes(edd_lf, ppec_lf, ["e", "d_h"])
-        later_lf = (edd_lf
-                       .join(ppec_lf, on=["e", "d_h"], how="inner")
-                       .group_by(["e", "d"])
-                       .agg(pl.col("ppec").sum().alias("later")))
-        grid_lf, later_lf = align_join_dtypes(grid_lf, later_lf, ["e", "d"])
-        grid_lf, div_set_lf = align_join_dtypes(grid_lf, div_set_lf, ["e"])
-        grid_lf, ped_lf = align_join_dtypes(grid_lf, ped_lf, ["e", "d"])
-        out = (grid_lf
-                  .join(later_lf, on=["e", "d"], how="left")
-                  .join(div_set_lf, on="e", how="left")
-                  .join(ped_lf, on=["e", "d"], how="left")
-                  .with_columns(
-                      later=pl.col("later").fill_null(0.0),
-                      is_divest=pl.col("is_divest").fill_null(False),
-                      divested=pl.col("divested").fill_null(0.0),
-                  )
-                  .with_columns(
-                      value=pl.col("later")
-                      - pl.when(pl.col("is_divest"))
-                              .then(pl.col("divested"))
-                              .otherwise(0.0),
-                  )
-                  .select("e", "d", "value")
-                  .sort("e", "d")
-                  .collect())
-        if out.height == 0:
-            return None
-        return Param(("e", "d"), out)
-
-    # ---------------------------------------------------------------
-    # Simple-baseline branch (single-solve / non-renew chains):
-    #   pae[e, d] = pre_existing[e, d]
-    #             + p_entity_previously_invested_capacity[e, d]
-    #             − retired_carried[e, d]   (if e ∈ entityDivest, later solves)
-    # ---------------------------------------------------------------
-
-    # Previously-invested overlay (in-memory handoff carrier).
-    if (p_entity_previously_invested_capacity is not None
-            and p_entity_previously_invested_capacity.frame.height > 0):
-        ppic_frame = p_entity_previously_invested_capacity.frame
-        ppic_lf = (ppic_frame.lazy()
-                      .select("e", "d", pl.col("value").alias("ppic")))
-    else:
-        ppic_lf = pl.LazyFrame(schema={
-            "e": pl.Utf8, "d": pl.Utf8, "ppic": pl.Float64,
-        })
-
-    # Align grid_lf's String dim columns with any Enum-typed inputs
-    # (ppic_lf / ped_lf come from FlexData Params that have been
-    # cast).  Two passes — the first lifts grid_lf to the widest dtype
-    # available from any input, the second pulls every other input
-    # back up to grid_lf's promoted dtype.
-    from flextool.engine.input._axis_enums import align_join_dtypes
-    pre_renamed = pre_existing_lf.rename({"value": "pre"})
-    grid_lf, ppic_lf = align_join_dtypes(grid_lf, ppic_lf, ["e", "d"])
-    grid_lf, ped_lf = align_join_dtypes(grid_lf, ped_lf, ["e", "d"])
-    grid_lf, pre_renamed = align_join_dtypes(grid_lf, pre_renamed, ["e", "d"])
-    grid_lf, div_set_lf = align_join_dtypes(grid_lf, div_set_lf, ["e"])
-    # Second pass: now grid_lf carries the widest dtype on each axis,
-    # pull every input up.
-    grid_lf, ppic_lf = align_join_dtypes(grid_lf, ppic_lf, ["e", "d"])
-    grid_lf, ped_lf = align_join_dtypes(grid_lf, ped_lf, ["e", "d"])
-    grid_lf, pre_renamed = align_join_dtypes(grid_lf, pre_renamed, ["e", "d"])
-    grid_lf, div_set_lf = align_join_dtypes(grid_lf, div_set_lf, ["e"])
-    out = (grid_lf
-              .join(pre_renamed,
-                      on=["e", "d"], how="left")
-              .join(ppic_lf, on=["e", "d"], how="left")
-              .join(div_set_lf, on="e", how="left")
-              .join(ped_lf, on=["e", "d"], how="left")
-              .with_columns(
-                  pre=pl.col("pre").fill_null(0.0),
-                  ppic=pl.col("ppic").fill_null(0.0),
-                  is_divest=pl.col("is_divest").fill_null(False),
-                  divested=pl.col("divested").fill_null(0.0),
-              )
-              .with_columns(
-                  # Δ.11 — divest subtraction is applied only on later
-                  # solves (solve_first=False); flextool's writer skips it
-                  # on the first solve in the chain.
-                  value=pl.col("pre") + pl.col("ppic")
-                  - (pl.when(pl.col("is_divest"))
-                          .then(pl.col("divested"))
-                          .otherwise(0.0)
-                     if not solve_first else pl.lit(0.0)),
-              )
-              .select("e", "d", "value")
-              .sort("e", "d")
-              .collect())
-    if out.height == 0:
-        return None
-    return Param(("e", "d"), out)
+    return Param(("e", "d"), param.frame.sort("e", "d"))
 
 
 def p_entity_pre_existing_lf(source: "InputSource",
@@ -1341,116 +1097,22 @@ def apply_existing_chain(flex_data: object,
                               handoff: object | None = None,
                               ctx: "SolveContext | None" = None,
                               provider: "object | None" = None) -> None:
-    """Apply Cluster B helpers to ``flex_data`` (mutates in place).
+    """Set the chain-carried constants of ``flex_data`` (mutates in place):
 
-    Wired-in fields:
-
-    * ``p_entity_all_existing`` — chained existing capacity (replacing
-      the workdir CSV read of ``solve_data/p_entity_all_existing.csv``
-      and the cascade in :func:`._derived.p_entity_all_existing_from_source`).
-
-    Order:
-      1. Resolve the per-solve scope (active_solve, periods, etc.).
-      2. Pull the in-memory handoff carriers off ``flex_data``
-         (``p_entity_period_existing_capacity``, ``p_entity_divested``)
-         — these are populated by the CSV-side handoff loader / by
-         :func:`apply_derived_f`'s handoff overlay.
-      3. Compute ``p_entity_all_existing`` via the lazy chain.
-      4. Overwrite ``flex_data.p_entity_all_existing`` only when the
-         lazy result is non-None (mirrors the eager helper's gate).
-
-    Notes
-    -----
-    Cluster B is parity-bound to the eager
-    ``p_entity_all_existing_from_source`` helper which the per-fixture
-    sweep validates.  When parity drifts, the test surfaces the
-    fixture and the diff frame.
+    * ``p_entity_retired_carried`` — the carried retirements of the existing cohort, as the solve emitted them
+      (:func:`p_entity_retired_carried_from_provider`).  ``p_entity_all_existing`` itself is read from the
+      emitted ``solve_data/p_entity_all_existing`` (``_derived.p_entity_all_existing_from_source`` and the
+      synthetic sub-solves' seed), the one value every consumer reads.
+    * ``p_entity_carried_commission`` / ``p_entity_carried_in_construction`` — the investments earlier solves
+      realized with a construction lead time, coming online / in construction in the solve's periods (handoff
+      ``realized_commission``; ``handoff`` is the fallback when the Provider has none).
     """
-    from flextool.engine.preprocess.params._derived import (
-        _read_active_solve, _period_in_use_set,
-        _read_period_with_history,
-    )
-    from flextool.engine.preprocess.flex_data import _read_solve_first
-    from flextool.engine.preprocess._provider_io import _provider_key
-    from polar_high import Param as _Param
+    from flextool.engine.preprocess.params._derived import _read_active_solve, _period_in_use_set
 
-    def _provider_get(p):
-        if provider is None:
-            return None
-        key = _provider_key(p)
-        if not provider.has(key):
-            return None
-        return provider.get(key)
+    active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir, provider=provider)
+    period_in_use = _period_in_use_set(source, active_solve, workdir, ctx=ctx, provider=provider)
+    flex_data.p_entity_retired_carried = p_entity_retired_carried_from_provider(workdir, provider=provider)
 
-    # Δ.12a — prefer the typed SolveContext fields (zero physical IO)
-    # when the caller supplied one; fall back to direct workdir reads
-    # for back-compat with callers that haven't been wired up.
-    if ctx is not None:
-        active_solve = ctx.solve_name
-        solve_first = ctx.solveFirst
-        edd_hist_df_raw = ctx.edd_history
-    else:
-        active_solve = _read_active_solve(workdir, provider=provider)
-        solve_first = _read_solve_first(workdir, provider=provider)
-        edd_hist_df_raw = None
-    period_in_use = _period_in_use_set(source, active_solve, workdir,
-                                         ctx=ctx, provider=provider)
-    period_with_history = (_read_period_with_history(workdir, provider=provider)
-                              or list(period_in_use))
-
-    ppic = getattr(flex_data, "p_entity_previously_invested_capacity", None)
-    # The capacity earlier solves retired that still counts in this solve's periods (until the end of life).
-    retired = p_entity_retired_carried_from_handoff(source, active_solve, period_in_use, workdir,
-                                                    provider=provider)
-    flex_data.p_entity_retired_carried = retired
-
-    # Δ.11 / Phase 4.2-1e — chain-summation inputs.  The in-memory
-    # handoff ``realized_existing`` carrier is the sole source for the
-    # cumulative realized-existing capacity; the workdir CSV fallback
-    # was retired once the handoff translator started populating the
-    # carrier at iteration start.  ``edd_history.csv`` is still sourced
-    # from the workdir.
-    ppec_param: "Param | None" = None
-    if handoff is not None and getattr(handoff, "realized_existing", None) is not None:
-        re_frame = handoff.realized_existing
-        if re_frame.height > 0:
-            ppec_param = _Param(("e", "d"),
-                                  re_frame.pipe(rename_to_axis, {"entity": "e",
-                                                       "period": "d"})
-                                          .select("e", "d", "value"))
-    # Phase 4.2-1e — the handoff/realized_existing branch above is the
-    # sole source of the cumulative realized-existing capacity now that
-    # the handoff translator always populates the carrier at iteration
-    # start.  When the handoff is absent or empty, ``ppec_param`` stays
-    # None and the helper returns None (no-existing-capacity outcome).
-
-    edd_hist_df: "pl.DataFrame | None" = None
-    if ctx is not None:
-        if edd_hist_df_raw is not None and edd_hist_df_raw.height > 0:
-            edd_hist_df = edd_hist_df_raw
-    else:
-        edd_path = workdir / "solve_data" / "edd_history.csv"
-        edd_hist_df = _provider_get(edd_path)
-        if edd_hist_df is not None and edd_hist_df.height == 0:
-            edd_hist_df = None
-
-    # Δ.12b — assign unconditionally.  The helper returns ``None`` only
-    # when there's no entity_invest_method-eligible row in the source,
-    # which is a legitimate "no-existing-capacity-to-track" outcome
-    # (matches the eager helper's empty-frame skip).  Hard errors
-    # propagate (no defensive try/except).
-    flex_data.p_entity_all_existing = p_entity_all_existing_from_handoff(
-        source, active_solve,
-        period_with_history, period_in_use,
-        p_entity_period_existing_capacity=ppec_param,
-        p_entity_previously_invested_capacity=ppic,
-        p_entity_retired_carried=retired,
-        solve_first=solve_first,
-        edd_history=edd_hist_df,
-        workdir=workdir, provider=provider)
-
-    # Investments that earlier solves realized with a construction lead time: the capacity coming online and in
-    # construction in this solve's periods (constants of the per-period invest limits and user constraints).
     realized_commission = None
     if provider is not None:
         from flextool.engine.preprocess import _provider_keys as K
@@ -1481,6 +1143,6 @@ __all__ = [
     "pd_divest_set_lf", "nd_divest_set_lf",
     "ed_invest_period_set_lf", "ed_divest_period_set_lf",
     # Public lazy helpers — existing chain.
-    "p_entity_all_existing_from_handoff", "p_entity_pre_existing_lf",
+    "p_entity_pre_existing_lf", "p_entity_retired_carried_from_provider",
     "apply_existing_chain",
 ]

@@ -142,7 +142,7 @@ def test_invest_dispatch_chain_handoff_reaches_dispatch(tmp_path) -> None:
 
     1. completes both solves without error;
     2. the Lagrangian invest step carries a non-empty
-       ``handoff.realized_invest`` (orchestrator deposit works);
+       ``handoff.realized_cohort`` (orchestrator deposit works);
     3. the downstream dispatch step completed (real Solution, optimal);
     4. the dispatch consumed the invested capacity — its FlexData carries
        non-null ``p_entity_invested`` for the invested wind units.
@@ -177,9 +177,9 @@ def test_invest_dispatch_chain_handoff_reaches_dispatch(tmp_path) -> None:
     assert not invest_step.handoff.is_empty(), (
         "invest step handoff is empty despite a real investing solve"
     )
-    ri = invest_step.handoff.realized_invest
+    ri = invest_step.handoff.realized_cohort
     assert ri is not None and ri.height > 0, (
-        "invest step handoff.realized_invest is empty/None"
+        "invest step handoff.realized_cohort is empty/None"
     )
     val_col = ri.columns[-1]
     invested = ri.filter(pl.col(val_col) > 1.0)

@@ -14,7 +14,6 @@ From ``process_arc_unions.py``:
 * ``write_process_source_delayed_partition``                         (~18 LOC)
 * ``write_process_source_sink_profile_method_connection``            (~35 LOC)
 * ``write_process_method_sources_sinks``                             (~56 LOC)
-* ``write_ed_history_realized_first``                                (~56 LOC)
 * ``write_process_source_sink_ramp_method``                          (~32 LOC)
 * ``write_process_source_sink_coeff_zero``                           (~24 LOC)
 * ``write_process_source_sink_delayed_partition``                    (~18 LOC)
@@ -349,104 +348,6 @@ def emit_process_source_sink_profile_method_connection(
             input_dir, solve_data_dir, provider=provider,
         ),
     )
-
-
-# ---- ed_history_realized_first (mod L993) ---------------------------------
-
-def derive_ed_history_realized_first(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> pl.DataFrame:
-    """entity × realized periods, but only on the first solve.
-
-    Honours the ``solveFirst`` flag on ``p_model``: non-first solves
-    emit an empty frame.
-    """
-    # solveFirst gate: short-circuit to empty.
-    solve_first = False
-    pm = _read_csv(
-        solve_data_dir / "p_model.csv", ["key", "value"], provider=provider,
-    )
-    if pm.height > 0:
-        row = pm.filter(pl.col("key") == "solveFirst")
-        if row.height > 0:
-            try:
-                solve_first = bool(int(row.get_column("value")[0]))
-            except (ValueError, TypeError):
-                solve_first = False
-    if not solve_first:
-        return pl.DataFrame(
-            {"entity": [], "period": []},
-            schema={"entity": pl.Utf8, "period": pl.Utf8},
-        )
-
-    entities = (
-        _drop_blank_rows(
-            _read_csv(input_dir / "entity.csv", ["entity"], provider=provider),
-            ["entity"],
-        ).get_column("entity").to_list()
-    )
-    d_realize_invest = frozenset(
-        _drop_blank_rows(
-            _read_csv(
-                solve_data_dir / "realized_invest_periods_of_current_solve.csv",
-                ["period"],
-                provider=provider,
-            ),
-            ["period"],
-        ).get_column("period").to_list()
-    )
-    d_fix_storage = frozenset(
-        _drop_blank_rows(
-            _read_csv(
-                solve_data_dir / "d_fix_storage_period_set.csv", ["period"],
-                provider=provider,
-            ),
-            ["period"],
-        ).get_column("period").to_list()
-    )
-    d_realized = frozenset(
-        _drop_blank_rows(
-            _read_csv(
-                solve_data_dir / "d_realized_period_set.csv", ["period"],
-                provider=provider,
-            ),
-            ["period"],
-        ).get_column("period").to_list()
-    )
-    realized_periods = d_realize_invest | d_fix_storage | d_realized
-
-    pb = _drop_blank_rows(
-        _read_csv(
-            solve_data_dir / "period__branch.csv", ["period", "branch"],
-            provider=provider,
-        ),
-        ["period", "branch"],
-    )
-    diag_periods = frozenset(
-        d for d, b in pb.iter_rows() if d == b
-    )
-
-    rows: list[tuple[str, str]] = [
-        (e, d) for e in entities
-        for d in realized_periods if d in diag_periods
-    ]
-    return pl.DataFrame(
-        {"entity": [r[0] for r in rows], "period": [r[1] for r in rows]},
-        schema={"entity": pl.Utf8, "period": pl.Utf8},
-    )
-
-
-def emit_ed_history_realized_first(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider,
-) -> None:
-    """Emit ``ed_history_realized_first`` to the Provider."""
-    _emit(provider, "solve_data/ed_history_realized_first.csv",
-          derive_ed_history_realized_first(
-              input_dir, solve_data_dir, provider=provider,
-          ))
 
 
 # ---- process_source_sink_coeff_zero (mod L1973) ---------------------------

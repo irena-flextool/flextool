@@ -201,18 +201,19 @@ def ed_values(param) -> dict[tuple[str, str], float]:
     return _ed_values(param)
 
 
-def retired_carried(rows: Iterable[tuple[str, str, float]],
+def retired_carried(rows: Iterable[tuple[str, str, str, float]],
                     years: Mapping[str, float],
                     periods: Iterable[str],
-                    expired: "set[tuple[str, str]]",
+                    dead: "set[tuple[str, str, str]]",
                     ) -> dict[tuple[str, str], float]:
-    """``{(e, d): MW}`` of the retirements earlier solves of a chain realized (``rows``: entity, decision period
-    d′, capacity) that still count in the solve's periods: Σ_{d′ : yr[d′] ≤ yr[d], (e, d) not past the end of
-    life of e's pre-existing capacity} retired[e, d′] (``expired``: the (e, d) pairs past it).  A decision period
-    without a year in ``years`` lies before the solve (its history), so it counts."""
+    """``{(e, d): MW}`` of the retirements earlier solves of a chain realized (``rows``: entity, cohort, decision
+    period d′, capacity; the handoff ``realized_retire``) that still count in the solve's periods:
+    Σ_{c, d′ : yr[d′] ≤ yr[d], cohort c of e in service in d} retired[e, c, d′] (``dead``: the (e, c, d) where the
+    cohort is not in service).  A decision period without a year in ``years`` lies before the solve (its history),
+    so it counts."""
     from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
-    retired = (pl.DataFrame([(str(e), str(d_r), float(v or 0.0)) for e, d_r, v in rows],
-                            schema={"e": pl.Utf8, "d_r": pl.Utf8, "v": pl.Float64}, orient="row")
+    retired = (pl.DataFrame([(str(e), str(c), str(d_r), float(v or 0.0)) for e, c, d_r, v in rows],
+                            schema={"e": pl.Utf8, "c": pl.Utf8, "d_r": pl.Utf8, "v": pl.Float64}, orient="row")
                  .with_row_index("_row").filter(pl.col("v") != 0.0))
     periods = [str(d) for d in periods]
     if retired.height == 0 or not periods:
@@ -221,12 +222,12 @@ def retired_carried(rows: Iterable[tuple[str, str, float]],
                            schema={"d_r": pl.Utf8, "y_r": pl.Float64})
     counted = pl.DataFrame({"d": periods, "y": [float(years.get(d, 0.0)) for d in periods]},
                            schema={"d": pl.Utf8, "y": pl.Float64}).with_row_index("_col")
-    past = pl.DataFrame(sorted((str(e), str(d)) for e, d in expired), schema={"e": pl.Utf8, "d": pl.Utf8},
-                        orient="row")
+    past = pl.DataFrame(sorted((str(e), str(c), str(d)) for e, c, d in dead),
+                        schema={"e": pl.Utf8, "c": pl.Utf8, "d": pl.Utf8}, orient="row")
     out = (retired.join(decided, on="d_r", how="left")
                   .join(counted, how="cross")
                   .filter(pl.col("y_r").is_null() | (pl.col("y_r") <= pl.col("y") + YEAR_TOL))
-                  .join(past, on=["e", "d"], how="anti")
+                  .join(past, on=["e", "c", "d"], how="anti")
                   .sort("_row", "_col")  # the rows' order, then the periods' (the sums add in that order)
                   .group_by("e", "d", maintain_order=True).agg(pl.col("v").sum()))
     return {(e, d): v for e, d, v in out.iter_rows()}

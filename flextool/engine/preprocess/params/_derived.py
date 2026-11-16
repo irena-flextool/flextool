@@ -5510,7 +5510,7 @@ def _check_retirement_minimums(flex_data: object,
         e_divest_total_lf,
         ed_divest_period_set_lf,
         p_entity_pre_existing_lf,
-        p_entity_retired_carried_from_handoff,
+        p_entity_retired_carried_from_provider,
     )
     from flextool.engine.preprocess.params._retire_existing import (
         active_windows,
@@ -5529,8 +5529,7 @@ def _check_retirement_minimums(flex_data: object,
         min_period=getattr(flex_data, "ed_divest_min_period", None),
         min_total=getattr(flex_data, "e_divest_min_total", None),
         prior=p_entity_divested_from_handoff(provider=provider),
-        carried=ed_values(p_entity_retired_carried_from_handoff(source, active_solve, list(period_in_use), workdir,
-                                                                provider=provider)),
+        carried=ed_values(p_entity_retired_carried_from_provider(workdir, provider=provider)),
         eol=existing_eol(existing_cohorts(source, active_solve, workdir, provider=provider)))
 
 
@@ -5943,13 +5942,9 @@ def p_entity_all_existing_from_source(source: "InputSource",
         only while ``p_years_d[d] < life_sum(e)``; 0 thereafter.
       * Any other ``lifetime_method`` → 0.
 
-    Chain-run handoff (Γ.6.D): when ``solve_data/p_entity_period_existing_capacity.csv``
-    is present in ``workdir`` it carries the chained existing capacity
-    summed across the entity's history (see
-    ``entity_period_calc_params.py:1463-1543``).  We prefer that CSV
-    when it has explicit non-zero rows for ``period_in_use`` periods
-    that aren't covered by ``entity.existing`` — captures the
-    multi-solve state passed via ``apply_handoff``.
+    In a run the solve emits ``solve_data/p_entity_all_existing`` (``_chain_params.emit_existing_capacity``: the
+    existing cohort with the user's ``existing`` of each period, plus the investments earlier solves realized,
+    minus the carried retirements); that frame is read when present, so every consumer reads one value.
     """
     piu = _period_in_use_set(source, active_solve, workdir, ctx=ctx, provider=provider)
     if not piu:
@@ -8479,35 +8474,15 @@ def p_entity_previously_invested_capacity_from_workdir(
         workdir, "p_entity_previously_invested_capacity", provider=provider)
 
 
-def p_entity_invested_from_handoff(
+def p_entity_invested_from_workdir(
+        workdir: Path,
         *,
         provider: "object | None" = None,
         ) -> "Param | None":
-    """Per-entity scalar of cumulative prior-solve invest (§3.7.8).
-
-    Phase 4.2-1a — read the realized-invest carrier from the canonical
-    ``handoff/realized_invest`` Provider key (schema
-    ``[entity, period, value]``) and sum over period to produce the
-    per-entity scalar ``Param(("e",), [(e, value)])``.  The translator
-    populates this key from :pyattr:`SolveHandoff.realized_invest` at
-    iteration start; absent / header-only / all-zero collapses to
-    ``None``.  Mirrors the overlay logic at ``flex_data.py:5464-5476``.
-    """
-    from flextool.engine.preprocess import _provider_keys as K
-    from flextool.engine.preprocess._provider_translators import read_handoff_frame
-    df = read_handoff_frame(provider, K.HANDOFF_REALIZED_INVEST)
-    if df is None or df.height == 0:
-        return None
-    df = (df
-          .with_columns(value=pl.col("value").cast(pl.Float64, strict=False)
-                                .fill_null(0.0))
-          .group_by("entity").agg(pl.col("value").sum())
-          .pipe(rename_to_axis, {"entity": "e"})
-          .filter(pl.col("value") != 0.0)
-          .select("e", "value"))
-    if df.height == 0:
-        return None
-    return Param(("e",), df)
+    """Per-entity scalar of cumulative prior-solve invest (§3.7.8): every investment earlier solves of the run
+    realized (the carried cohorts), as the solve emitted it (``solve_data/p_entity_invested``,
+    ``_chain_params.emit_existing_capacity``).  Absent / header-only / all-zero collapses to ``None``."""
+    return _read_handoff_e_from_workdir(workdir, "p_entity_invested", provider=provider)
 
 
 def p_entity_divested_from_handoff(
@@ -8687,8 +8662,8 @@ def apply_derived_f(
     flex_data.p_entity_previously_invested_capacity = (
         p_entity_previously_invested_capacity_from_workdir(
             workdir, provider=provider))
-    flex_data.p_entity_invested = p_entity_invested_from_handoff(
-        provider=provider)
+    flex_data.p_entity_invested = p_entity_invested_from_workdir(
+        workdir, provider=provider)
     flex_data.p_entity_divested = p_entity_divested_from_handoff(
         provider=provider)
 

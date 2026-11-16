@@ -22,11 +22,8 @@ Carrier schemas (each is the on-disk equivalent's columns, renamed
 for in-memory uniformity — string keys + ``value`` for single-value
 carriers, named metric columns for multi-value):
 
-    realized_invest        [entity, period, value]
-    realized_existing      [entity, period, value]
     realized_commission    [entity, period, commission_period, value]
     divest_cumulative      [entity, value]
-    realized_divest        [entity, period, value]
     realized_cohort        [entity, cohort, kind, method, period_decided, period_online, y_on, y_life, y_end,
                             y_first_life_end, y_eol, period_eol, size]
     realized_retire        [entity, cohort, period, value]
@@ -57,12 +54,10 @@ single wide ``fix_storage`` field (retired in Phase 4.1l).  Each
 metric is independent, so a separate per-metric carrier matches the
 producer/consumer reality without NULL-padding columns.
 
-``realized_invest`` and ``realized_existing`` together cover the two
-columns of ``solve_data/p_entity_period_existing_capacity.csv``:
-``realized_invest`` is what was *built this solve*, ``realized_existing``
-is the resolved existing-capacity history (pre-existing decay +
-divest enter this column and aren't reconstructible from
-``realized_invest`` alone).
+``realized_cohort`` / ``realized_retire`` carry the capacity a later solve starts from: each investment realized
+by the run as a cohort (its start of operation and end of life placed once, by the deciding solve) and the
+retirements per cohort; the existing capacity is the run's existing cohort with the user's ``existing`` of each
+period (``_cohorts.existing_capacity``).
 """
 from __future__ import annotations
 
@@ -83,24 +78,10 @@ class SolveHandoff:
     to its dependent (child / next-roll) solves.
     """
 
-    # Realized invest *built this solve* in absolute units (post-unitsize).
-    # Producer: any solve with v_invest > 0.
-    # Consumer: subsequent solves' preprocessing.
-    # File equivalent: ``p_entity_period_invested_capacity`` column of
-    #   solve_data/p_entity_period_existing_capacity.csv.
-    realized_invest: pl.DataFrame | None = None
-
-    # Realized existing-capacity history per (entity, period) — captures
-    # pre-existing decay + divest that ``realized_invest`` doesn't.
-    # File equivalent: ``p_entity_period_existing_capacity`` column of
-    #   solve_data/p_entity_period_existing_capacity.csv.
-    realized_existing: pl.DataFrame | None = None
-
     # Realized investments with a construction lead time, chain-cumulative: decision period, the period the
     # capacity starts to operate in (found by the deciding solve on the run calendar) and the capacity
-    # (post-unitsize).  ``realized_invest`` / ``realized_existing`` key these by the start of operation; this
-    # carrier keeps the decision period, so a later solve knows what comes online and what is in construction in
-    # its periods.  Producer: ``build_handoff_from_solution``.  Consumer: ``apply_existing_chain``
+    # (post-unitsize): a later solve knows what comes online and what is in construction in its periods.
+    # Producer: ``build_handoff_from_solution``.  Consumer: ``apply_existing_chain``
     # (``p_entity_carried_commission`` / ``p_entity_carried_in_construction``).  In-memory only.
     realized_commission: pl.DataFrame | None = None
 
@@ -108,13 +89,6 @@ class SolveHandoff:
     # Carries pre-existing decay forward across solves.
     # File equivalent: solve_data/p_entity_divested.csv.
     divest_cumulative: pl.DataFrame | None = None
-
-    # Capacity retired (post-unitsize) per realized, non-branch decision period, chain-cumulative.  A later solve
-    # subtracts a retirement from the periods it still counts in (from its decision period until the end of life
-    # of the entity's pre-existing capacity), not from every period.  Producer: ``build_handoff_from_solution``.
-    # Consumers: ``apply_existing_chain`` (``p_entity_retired_carried``) and the emitted
-    # ``p_entity_all_existing``.
-    realized_divest: pl.DataFrame | None = None
 
     # The investments realized by this solve and the earlier solves of the run, one row per cohort (an investment
     # decision), chain-cumulative: the cohort's row of the cohort table of the solve that decided it (run years,
@@ -256,8 +230,7 @@ class SolveHandoff:
     online_left_out: frozenset = frozenset()
 
     _FIELDS = (
-        "realized_invest", "realized_existing", "realized_commission", "divest_cumulative", "realized_divest",
-        "realized_cohort", "realized_retire",
+        "realized_commission", "divest_cumulative", "realized_cohort", "realized_retire",
         "roll_end_state", "upward_roll_end_state", "roll_end_online", "roll_end_flow",
         "roll_end_step", "online_history", "fix_online", "fix_reserve",
         "fix_storage_quantity", "fix_storage_price", "fix_storage_usage",

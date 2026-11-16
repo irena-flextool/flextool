@@ -19,7 +19,7 @@ of going through this object is:
    provider in one place and cached on the context.
 2. **Typed entry points** — the most-consumed metadata
    (``solveFirst``, ``realized_periods``, ``period_in_use``,
-   ``period_branch``, ``edd_history``, etc.) is parsed once into typed
+   ``period_branch``, etc.) is parsed once into typed
    Python state and exposed as named attributes.  Helpers that today
    re-derive these from raw CSVs each call (e.g.
    ``_read_active_solve``, ``_read_realize_invest_periods``) consume the
@@ -88,14 +88,6 @@ class SolveContext:
     period_branch : pl.DataFrame
         ``[d_anchor, b]`` from ``period__branch.csv`` — full unfiltered
         anchor → sibling map.  Empty frame when the file is missing.
-    edd_history : pl.DataFrame
-        ``[entity, d_decided, d_apply]`` from ``edd_history.csv`` — the
-        invest-decision-date → apply-date map used by handoff-derived
-        ``p_entity_previously_invested_capacity``.  Empty frame when the
-        file is missing.
-    p_entity_pre_existing : pl.DataFrame
-        ``[entity, period, value]`` from ``p_entity_pre_existing.csv``.
-        Empty when missing.
 
     The remaining per-solve frames (block-layout, dtttdt, etc.) are read
     from the provider by their own helpers (:class:`BlockLayout`,
@@ -111,8 +103,7 @@ class SolveContext:
     # loaders can consult it without re-plumbing the kwarg through every
     # caller.  Required: a lazy loader raises ``ValueError`` on None.
     provider: "object | None" = field(default=None, repr=False)
-    # ``period_in_use`` / ``period_branch`` / ``edd_history`` /
-    # ``p_entity_pre_existing`` are populated on first access via the
+    # ``period_in_use`` / ``period_branch`` are populated on first access via the
     # descriptor machinery below — they're DataFrame-shaped fields and
     # each needs a provider fetch + rename.  Most consumers use only one
     # or two of them, so the work is deferred until an attribute access
@@ -133,14 +124,6 @@ class SolveContext:
             }
         ),
         repr=False,
-    )
-    _edd_history_loaded: bool = field(default=False, repr=False)
-    _edd_history: pl.DataFrame = field(
-        default_factory=lambda: pl.DataFrame(schema={}), repr=False,
-    )
-    _ppe_loaded: bool = field(default=False, repr=False)
-    _ppe: pl.DataFrame = field(
-        default_factory=lambda: pl.DataFrame(schema={}), repr=False,
     )
 
     # ── Path B Cat B (WriterSnapshot top-7) extensions ──────────────────
@@ -208,7 +191,7 @@ class SolveContext:
         rest of the cascade.
 
         The DataFrame-shaped fields (``period_in_use``, ``period_branch``,
-        ``edd_history``, ``p_entity_pre_existing``) are loaded **lazily**
+        and the other frames) are loaded **lazily**
         on first attribute access.
 
         *provider* (the sub-solve's :class:`FlexDataProvider`) is
@@ -253,26 +236,6 @@ class SolveContext:
             )
             self._period_branch_loaded = True
         return self._period_branch
-
-    @property
-    def edd_history(self) -> pl.DataFrame:
-        if not self._edd_history_loaded:
-            self._edd_history = _load_edd_history(
-                self.solve_data_dir / "edd_history.csv",
-                provider=self.provider,
-            )
-            self._edd_history_loaded = True
-        return self._edd_history
-
-    @property
-    def p_entity_pre_existing(self) -> pl.DataFrame:
-        if not self._ppe_loaded:
-            self._ppe = _maybe_read(
-                self.solve_data_dir / "p_entity_pre_existing.csv",
-                provider=self.provider,
-            )
-            self._ppe_loaded = True
-        return self._ppe
 
     # ── Path B Cat B (WriterSnapshot top-7) accessors ─────────────────
     @property
@@ -482,7 +445,7 @@ def _read_active_solve(workdir: Path,
 
 def _read_solve_first(work_folder: Path,
                        *, provider: "object | None" = None) -> bool:
-    """Mirror of ``flex_data._read_solve_first``.
+    """The ``solveFirst`` flag of ``p_model.csv`` (the run's first sub-solve).
 
     Reads ``modelParam == 'solveFirst'`` from ``p_model.csv``.  Resolves
     in order: ``solve_data/p_model.csv`` → ``input/p_model.csv`` → True.
@@ -648,16 +611,6 @@ def _load_period_branch(path: Path,
                     "every period, so every label here should be a period of the scenario."
                 )
         df = cast
-    return df
-
-
-def _load_edd_history(path: Path,
-                       *, provider: "object | None" = None) -> pl.DataFrame:
-    """Load ``edd_history.csv`` — schema preserved as-is."""
-    df = _read_frame(path, provider=provider,
-                      consumer="SolveContext.edd_history")
-    if df is None:
-        return pl.DataFrame()
     return df
 
 

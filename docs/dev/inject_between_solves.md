@@ -19,7 +19,7 @@ Python wrapper substitute values for any of those handoff carriers
 Typical wrappers:
 
 - An outer model in a bi-level setup writes a Parquet file with target
-  capacities; the wrapper reads it and overrides `realized_invest`.
+  capacities; the wrapper reads it and overrides `realized_cohort`.
 - A market simulator runs between two operational solves; the wrapper
   feeds an updated `cumulative_co2` or `cumulative_commodity` ladder
   into the second solve.
@@ -59,15 +59,18 @@ Full source: `flextool/engine/solve/_orchestration.py` (entry point),
 
 ## Whitelisted handoff keys
 
-Only the 11 keys below are overridable. Supplying any other key raises
-`ValueError` in `translate_overrides_to_provider`. The constants live
+Only the keys below are overridable. Supplying any other key raises
+`ValueError` in `translate_overrides_to_provider`; so do the retired keys
+`handoff/realized_invest` / `handoff/realized_existing` (the message names
+`K.HANDOFF_REALIZED_COHORT`) and `handoff/realized_divest` (it names
+`K.HANDOFF_REALIZED_RETIRE`). The constants live
 in `flextool.engine.preprocess._provider_keys`; import as
 `from flextool.engine.preprocess import _provider_keys as K`.
 
 | Key constant | What it overrides | Required columns |
 |---|---|---|
-| `K.HANDOFF_REALIZED_INVEST` | Realised investment decisions carried into the next solve's "previously invested capacity" | `entity, period, value` |
-| `K.HANDOFF_REALIZED_EXISTING` | Realised existing (non-decision) capacity adjustments | `entity, period, value` |
+| `K.HANDOFF_REALIZED_COHORT` | The investments realised by the earlier solves, one row per cohort (investment decision): its start of operation and end of life (years of the run) and its size. The next solve's capacity is the user's `existing` of each period plus the cohorts in service there | `entity, cohort, kind, method, period_decided, period_online, y_on, y_life, y_end, y_first_life_end, y_eol, period_eol, size` |
+| `K.HANDOFF_REALIZED_RETIRE` | Retired capacity per cohort and decision period (counts while the cohort is in service) | `entity, cohort, period, value` |
 | `K.HANDOFF_DIVEST_CUMULATIVE` | Cumulative divestments carried forward | `entity, value` |
 | `K.HANDOFF_ROLL_END_STATE` | End-of-horizon storage state (downward roll) | `node, value` |
 | `K.HANDOFF_UPWARD_ROLL_END_STATE` | End-of-horizon storage state (upward roll) | `node, value` |
@@ -145,7 +148,7 @@ configuration is the same (`_reuse_blocker` in `solve/_warm.py`).
 Concretely:
 
 - An override that changes anything preprocessing computes (for example
-  `K.HANDOFF_REALIZED_INVEST` at iteration N changes
+  `K.HANDOFF_REALIZED_COHORT` at iteration N changes
   `p_entity_previously_invested_capacity`) makes iteration N's `FlexData`
   differ, so iteration N builds its own LP: the override always reaches
   the LP matrix, the objective and the right-hand sides.
@@ -171,11 +174,11 @@ it was meant to (and didn't fire on the ones it wasn't).
 
 A wrapper script that reads override frames from a directory of
 Parquet files. Each file is named `<scenario>__<solve_name>.parquet`
-and contains a single override frame for `realized_invest`. Files that
+and contains a single override frame for `realized_cohort`. Files that
 don't exist are treated as "no override for that iteration".
 
 ```python
-"""Run a FlexTool cascade with realized_invest overrides supplied
+"""Run a FlexTool cascade with realized_cohort overrides supplied
 by an external tool that drops Parquet files into a watch directory.
 
 Usage:
@@ -224,16 +227,18 @@ def _make_override_callback(scenario: str, solve_order: list[str]):
             return {}
 
         frame = pl.read_parquet(parquet)
-        # Ensure the schema matches what the handoff translator wrote
-        # for an empty realized_invest carrier:
-        #     (entity, period, value).  Cast value to Utf8 to match
-        # the CSV-roundtrip contract (polars also accepts Float64).
+        # One row per investment cohort, the columns of the
+        # realized_cohort carrier (start from a captured
+        # SolveHandoff.realized_cohort and change its sizes): the
+        # cohort id ``invest:<decision period>``, the start of operation
+        # ``y_on`` and end of life ``y_eol`` in years of the run, and
+        # ``size`` in MW (MWh for storage).
         frame = frame.select(
-            pl.col("entity").cast(pl.Utf8),
-            pl.col("period").cast(pl.Utf8),
-            pl.col("value").cast(pl.Utf8),
+            "entity", "cohort", "kind", "method", "period_decided",
+            "period_online", "y_on", "y_life", "y_end",
+            "y_first_life_end", "y_eol", "period_eol", "size",
         )
-        return {K.HANDOFF_REALIZED_INVEST: frame}
+        return {K.HANDOFF_REALIZED_COHORT: frame}
 
     return fetch_override
 
@@ -277,7 +282,7 @@ The override callable is arbitrary Python supplied by the wrapper
 author. Whoever invokes `run_chain_from_db` already has full Python
 execution privileges in the same process, so the override hook
 introduces no new injection surface — anything the callable could do,
-the wrapper script itself could already do. The 11-key whitelist
+the wrapper script itself could already do. The key whitelist
 constrains *what cascade state* the returned dict can substitute, not
 *what code can run inside the callable*. No `eval` / `exec` /
 `importlib` machinery is involved on the FlexTool side; the callable

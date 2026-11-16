@@ -318,6 +318,18 @@ For a unit, connection or storage node `e` in period `d`:
     and the existing cohort of `e` is still in service in `d` (none for
     `reinvest_automatic`, which has no end of life);
   - `cap[e,d] = existing[e,d] + invested[e,d] − retired[e,d]`.
+- `existing_mw[e,d]` (`p_entity_all_existing`, MW or MWh; the `existing` of
+  `cap` is `existing_mw / unitsize`) — the capacity a solve starts from, from
+  the cohorts (`_cohorts.existing_capacity`, emitted per solve by
+  `_chain_params.emit_existing_capacity`):
+  `existing_mw[e,d] = pre[e,d] + carried[e,d] − retired_carried[e,d]`, with
+  `pre[e,d] = capacity[e,d]` while the existing cohort (counted from the start
+  of the run) is in service in `d`, `carried[e,d]` the cohorts earlier solves
+  of the run realised (handoff `realized_cohort`) in service in `d`, and
+  `retired_carried[e,d]` their realised retirements still counting in `d`
+  (handoff `realized_retire`).  The same formula in every solve: the first,
+  a chained, a roll, a nested sub-solve; the user's `existing` is read for
+  each period of each solve.
 
 ### Required fields
 
@@ -605,8 +617,8 @@ for the handoff-key family.
 
 ### Topological ordering
 
-Emitters have dependencies — `_existing` reads
-`realized_invest` from prior solves' handoffs and `pd_invest_set`
+Emitters have dependencies — `_chain_params.emit_existing_capacity` reads
+`realized_cohort` from prior solves' handoffs, `_existing` reads `pd_invest_set`
 from `_period_params`; `_npv` reads
 `ed_lifetime_fixed_cost` which depends on `p_entity_all_existing`;
 `_block`'s overlap sets feed the arc-side block aggregation
@@ -623,7 +635,7 @@ typically means appending one call to the right phase.
 is the in-memory dict-of-frames that every cascade module reads from
 and writes to. Keys are declared in `_provider_keys.py`; the
 convention is `<parent>/<basename>` (e.g. `solve_data/foo`,
-`input/bar`, `handoff/realized_invest`). Bare-basename consumer
+`input/bar`, `handoff/realized_cohort`). Bare-basename consumer
 lookups are resolved against the parent-qualified key, so a single
 `put` registers the frame under one canonical name.
 
@@ -869,13 +881,14 @@ user-facing story and the parameters that gate this path.
 When a solve is part of a cascade (rolling-window, nested, or stochastic
 sub-solves), each completed solve produces a `SolveHandoff` that seeds
 the next solve's preprocessing. The dataclass is in
-`solve/_handoff.py`; its eleven optional carriers are all
+`solve/_handoff.py`; its optional carriers are all
 `pl.DataFrame | None`:
 
 | Field | Shape | Meaning |
 |---|---|---|
-| `realized_invest` | `[entity, period, value]` | Capacity built in *this* solve, in absolute units. |
-| `realized_existing` | `[entity, period, value]` | Resolved existing-capacity history per `(entity, period)`. Captures pre-existing decay + divest that `realized_invest` doesn't. |
+| `realized_cohort` | `[entity, cohort, kind, method, period_decided, period_online, y_on, y_life, y_end, y_first_life_end, y_eol, period_eol, size]` | The investments realised by the run so far, one row per cohort (investment decision), chain-cumulative: the cohort-table row of the deciding solve (years of the run; a later solve compares its periods' run years with `y_on` / `y_eol`, no rounding repeated) and the size (MW, MWh). |
+| `realized_retire` | `[entity, cohort, period, value]` | Retired capacity per cohort and realised decision period, chain-cumulative; counts while the cohort is in service. |
+| `realized_commission` | `[entity, period, commission_period, value]` | Realised investments with a construction lead time (coming online / in construction in a later solve). |
 | `divest_cumulative` | `[entity, value]` | Cumulative divest per entity. |
 | `roll_end_state` | `[node, value]` | `v_state` × unitsize at the last realised step; the start of the sub-solves that continue from it (routed, see [Storage carry routing](#storage-carry-routing-where-a-sub-solves-storage-starts)). |
 | `upward_roll_end_state` | `[node, value]` | Same shape as `roll_end_state`; dispatch→storage upward feedback in nested cascades. |
@@ -1125,8 +1138,8 @@ empty because the thing they read was a file no normal run writes):
   `solve_data/group_entity` ⋉ `solve_data/group_invest`, replacing a disk read of
   `input/group_entity_invest.csv` — a file only the retired GMPL model ever wrote.
 
-The five `solve_data/` handoff-mirror CSVs (`p_entity_divested`, `fix_storage_quantity`,
-`fix_storage_usage`, `p_roll_continue_state`, `p_entity_period_existing_capacity`) are write-only
+The four `solve_data/` handoff-mirror CSVs (`p_entity_divested`, `fix_storage_quantity`,
+`fix_storage_usage`, `p_roll_continue_state`) are write-only
 debug output for `--csv-dump`, never read back by anything (`handoff_writers.py`'s module
 docstring); a plain run computes and writes none of them. `period_capacity.csv` is the one
 exception — written every run, unconditionally, always header-only (the per-period capacity dumps

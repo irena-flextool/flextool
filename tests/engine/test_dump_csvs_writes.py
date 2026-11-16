@@ -63,9 +63,8 @@ def test_dump_csvs_writes_input_entity_set_csvs(tmp_path, scenario_run):
 
 def test_dump_csvs_writes_solve_data_pre_existing_stub(tmp_path, scenario_run):
     """Δ.30 — ``dump_csvs`` writes a header-only stub for
-    ``solve_data/solve__p_entity_pre_existing.csv`` so
-    ``handoff_writers.write_p_entity_period_existing_capacity`` reads
-    an empty frame instead of crashing on the fast path.
+    ``solve_data/solve__p_entity_pre_existing.csv`` (the dumped folder's
+    wide pre-existing file is present, empty, on the fast path).
     """
     run = scenario_run("base")
     out_dir = tmp_path / "dumped_pre_existing"

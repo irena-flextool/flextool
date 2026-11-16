@@ -508,7 +508,7 @@ Engine wiring:
   ``define_solve_recursive`` time and threads `ParentSolveInfo` into
   nested children.
 - The parent's realised capacity / storage state rides
-  `SolveHandoff.realized_invest` / `realized_existing` /
+  `SolveHandoff.realized_cohort` / `realized_retire` /
   `fix_storage` / `fix_storage_timesteps`.
 - The child's preprocessing reads from `state.handoffs[parent_name]`
   (in memory; there is no disk fallback).

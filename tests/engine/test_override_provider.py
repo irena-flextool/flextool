@@ -14,11 +14,11 @@ Strategy
 ========
 
 1. Run the 4-solve invest+lifetime-renew cascade once unmodified.
-   Capture solve 1 (``y2020_5week``)'s post-solve ``handoff.realized_invest``
+   Capture solve 1 (``y2020_5week``)'s post-solve ``handoff.realized_cohort``
    — this is the natural ``prior_handoff`` solve 2+ would consume.
 
 2. Run the cascade again with ``override_provider`` returning a SCALED
-   copy of that frame (×1e3) keyed by ``K.HANDOFF_REALIZED_INVEST``.
+   copy of that frame (sizes ×1e3) keyed by ``K.HANDOFF_REALIZED_COHORT``.
    The override fires for every iteration after the first; on the
    first sub-solve it returns ``{}`` so behaviour matches baseline.
 
@@ -28,11 +28,11 @@ Strategy
    reflects the inflated values, NOT the natural handoff values.
 
 The assertion target — ``p_entity_previously_invested_capacity`` — is
-the CSV emitted by ``_chain_params.emit_p_entity_existing_chain``
+the frame emitted by ``_chain_params.emit_existing_capacity``
 after reading the handoff via ``read_handoff_frame``.  This proves the
 full Phase 5a + 5b chain: external dict → ``translate_overrides_to_provider``
-→ ``override/realized_invest`` Provider key → ``read_handoff_frame``
-shadow lookup → ``_load_realized_from_handoff`` → preprocessing emit
+→ ``override/realized_cohort`` Provider key → ``read_handoff_frame``
+shadow lookup → ``_chain_params.compute_existing_capacity`` → preprocessing emit
 → Provider's ``solve_data/p_entity_previously_invested_capacity``.
 
 Why this assertion shape (vs. comparing objectives)
@@ -62,7 +62,7 @@ pytestmark = pytest.mark.solver
 SCENARIO_NAME = "wind_battery_invest_lifetime_renew_4solve"
 SECOND_SOLVE = "y2025_5week"
 
-# Scale factor applied to the natural ``realized_invest`` to produce the
+# Scale factor applied to the natural ``realized_cohort`` sizes to produce the
 # override frame.  Large enough that the resulting
 # ``p_entity_previously_invested_capacity`` is unambiguously distinct
 # from the natural value but small enough not to overflow / produce
@@ -98,7 +98,7 @@ def _read_prev_inv(step) -> dict[tuple[str, str], float]:
     return out
 
 
-def test_external_override_shadows_handoff_realized_invest(
+def test_external_override_shadows_handoff_realized_cohort(
     tmp_path, scenario_workdir
 ) -> None:
     work = scenario_workdir(SCENARIO_NAME)
@@ -118,10 +118,10 @@ def test_external_override_shadows_handoff_realized_invest(
         "y2020_5week", "y2025_5week", "y2030_5week", "y2035_5week",
     ], f"chain order changed unexpectedly: {chain_order}"
 
-    # Solve 1's natural realized_invest carrier — the override base.
-    solve1_natural = baseline["y2020_5week"].handoff.realized_invest
+    # Solve 1's natural realized_cohort carrier — the override base.
+    solve1_natural = baseline["y2020_5week"].handoff.realized_cohort
     assert solve1_natural is not None and solve1_natural.height > 0, (
-        "fixture invariant: y2020_5week handoff.realized_invest should be "
+        "fixture invariant: y2020_5week handoff.realized_cohort should be "
         "populated; the override test depends on a non-empty prior carrier."
     )
 
@@ -140,9 +140,9 @@ def test_external_override_shadows_handoff_realized_invest(
         f"realised in solve 1); got all-zeros."
     )
 
-    # ── Override frame: scale realized_invest values by OVERRIDE_SCALE ──
+    # ── Override frame: scale realized_cohort sizes by OVERRIDE_SCALE ──
     scaled = solve1_natural.with_columns(
-        (pl.col("value") * OVERRIDE_SCALE).alias("value")
+        (pl.col("size") * OVERRIDE_SCALE).alias("size")
     )
 
     # ── Override provider — captures invocations + returns the scaled
@@ -155,7 +155,7 @@ def test_external_override_shadows_handoff_realized_invest(
         if call_idx == 0:
             # First sub-solve has no prior carrier; skip the override.
             return {}
-        return {K.HANDOFF_REALIZED_INVEST: scaled}
+        return {K.HANDOFF_REALIZED_COHORT: scaled}
 
     # ── Run 2: with override ────────────────────────────────────────────
     override_work = tmp_path / "override"
@@ -185,8 +185,8 @@ def test_external_override_shadows_handoff_realized_invest(
 
     # ── Assertion 3: override propagated to solve 2's preprocessing ────
     # ``p_entity_previously_invested_capacity`` is emitted by
-    # ``_chain_params.emit_p_entity_existing_chain``, which reads
-    # ``realized_invest`` via ``read_handoff_frame`` — i.e. the Phase 5a
+    # ``_chain_params.emit_existing_capacity``, which reads
+    # ``realized_cohort`` via ``read_handoff_frame`` — i.e. the Phase 5a
     # override-aware lookup.  Inflating the override by OVERRIDE_SCALE
     # should produce a proportionally inflated capacity row for the
     # entities the override touched.
@@ -201,7 +201,7 @@ def test_external_override_shadows_handoff_realized_invest(
             f"p_entity_previously_invested_capacity by ×{OVERRIDE_SCALE}; "
             f"baseline={baseline_v}, expected_override={expected}, "
             f"observed_override={override_v}.  Either the override did "
-            f"not reach _chain_params._load_realized_from_handoff "
+            f"not reach _chain_params.compute_existing_capacity "
             f"(Phase 5a/5b plumbing gap) or the scale was lost in "
             f"transit."
         )
@@ -224,7 +224,7 @@ def test_audit_sources_dump_records_external_override(
     * The log file exists in the work folder.
     * It contains at least one row tagged ``external_override``.
     * The tagged key is the override slot for
-      ``K.HANDOFF_REALIZED_INVEST`` (``K.OVERRIDE_REALIZED_INVEST``).
+      ``K.HANDOFF_REALIZED_COHORT`` (``K.OVERRIDE_REALIZED_COHORT``).
     * The ``solve_name`` column matches one of the post-first sub-solves
       (the first iteration has no prior carrier and the override
       provider returned ``{}``).
@@ -237,7 +237,7 @@ def test_audit_sources_dump_records_external_override(
 
     monkeypatch.setenv("FLEXTOOL_AUDIT_SOURCES", "1")
 
-    # Run 1 just to capture a real realized_invest frame to override
+    # Run 1 just to capture a real realized_cohort frame to override
     # with (mirrors the strategy of the shadow test above).  Keep this
     # small — we don't need to assert anything on the baseline cascade
     # here.
@@ -249,11 +249,11 @@ def test_audit_sources_dump_records_external_override(
         work_folder=baseline_work,
         keep_solutions=True,
     )
-    solve1_natural = baseline["y2020_5week"].handoff.realized_invest
+    solve1_natural = baseline["y2020_5week"].handoff.realized_cohort
     assert solve1_natural is not None and solve1_natural.height > 0
 
     scaled = solve1_natural.with_columns(
-        (pl.col("value") * OVERRIDE_SCALE).alias("value")
+        (pl.col("size") * OVERRIDE_SCALE).alias("size")
     )
 
     invocations: list[int] = []
@@ -263,7 +263,7 @@ def test_audit_sources_dump_records_external_override(
         invocations.append(call_idx)
         if call_idx == 0:
             return {}
-        return {K.HANDOFF_REALIZED_INVEST: scaled}
+        return {K.HANDOFF_REALIZED_COHORT: scaled}
 
     audit_work = tmp_path / "audit"
     audit_work.mkdir()
@@ -297,11 +297,11 @@ def test_audit_sources_dump_records_external_override(
 
     override_rows = [
         r for r in rows
-        if r[1] == K.OVERRIDE_REALIZED_INVEST and r[2] == "external_override"
+        if r[1] == K.OVERRIDE_REALIZED_COHORT and r[2] == "external_override"
     ]
     assert override_rows, (
         f"expected at least one row tagged external_override under "
-        f"key {K.OVERRIDE_REALIZED_INVEST!r}; observed rows: {rows!r}."
+        f"key {K.OVERRIDE_REALIZED_COHORT!r}; observed rows: {rows!r}."
     )
 
     # The override returns {} on the first call, so the first sub-solve

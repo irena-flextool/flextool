@@ -2099,6 +2099,9 @@ def _eq_max_flow(b: _Build) -> None:
     #   φ = 1 where v_flow is the input (k = p), 1/slope[p,d,t] on a direct unit's input→output arc
     #       (s ≠ p ≠ k); both reserve terms only for units (connections: connection_reserve_*, _reserve)
     # Caps every flow by the built capacity of its process (units of unitsize).
+    # existing_count[p,d] = existing_mw[p,d] / unitsize[p]: existing_mw from the cohorts (engine.md "Capacity
+    # symbols": the existing cohort with the user's existing of d, the investments earlier solves realized, minus
+    # their carried retirements).
     # On indirect-unit input arcs M = input_share_max · full-load input · a, a = x(availability) =
     # (slope·W(a₀) + section)/(slope·W(1) + section) (a₀ = availability, W(y) the output-side fuel width
     # filled to y, section only for a unit with an online variable); a ≥ availability (never tighter than
@@ -3177,7 +3180,8 @@ def _eq_retired_existing(b: _Build) -> None:
     #     reinvest_automatic)
     #   pre_existing = p_entity_pre_existing (the existing cohort's size: the user's existing × unitsize,
     #     lifetime-gated, MW, MWh)
-    #   retired_carried = p_entity_retired_carried (retirements of earlier solves of a chain still counting in d)
+    #   retired_carried = p_entity_retired_carried (the existing cohort's retirements that earlier solves of a
+    #     chain realized and that still count in d; handoff realized_retire, engine.md "Capacity symbols")
     # Only capacity that existed before the run can be retired: the capacity retired so far and still counting in
     # d stays within the pre-existing capacity of d (a declining existing map, or an entity that also invests,
     # cannot retire more than was there).  A retirement option exists only where pre_existing > 0.

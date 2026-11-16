@@ -2363,7 +2363,7 @@ def _benders_consume_guard_message(
     """Loud guard for the cross-scheme handoff (v60/v62, narrowed for TIER 1).
 
     A Benders *investment* solve now deposits a real ``SolveHandoff``
-    (``realized_invest`` / ``realized_existing`` / ``divest_cumulative``)
+    (``realized_cohort`` / ``realized_retire`` / ``divest_cumulative``)
     so a downstream rolling-dispatch solve can consume its invested
     capacity — that path is SUPPORTED and must NOT fire the guard.
 
@@ -2371,7 +2371,7 @@ def _benders_consume_guard_message(
     Benders predecessor that deposited **no usable investment handoff**
     — i.e. the predecessor is in *benders_solve_names* but NOT in
     *benders_invest_handoff_names* (its handoff carries no
-    ``realized_invest`` / ``divest_cumulative`` to hand forward, so the
+    ``realized_cohort`` / ``divest_cumulative`` to hand forward, so the
     downstream solve would silently load nothing investy from it).
 
     Returns ``None`` when the situation is safe:
@@ -2390,7 +2390,7 @@ def _benders_consume_guard_message(
     return (
         f"Solve '{base_solve_name}' follows '{prev_captured}', which ran "
         f"under decomposition=benders but produced NO invested/divested "
-        f"capacity to hand forward (its handoff carries no realized_invest "
+        f"capacity to hand forward (its handoff carries no realized_cohort "
         f"/ divest_cumulative). Consuming it would silently load nothing "
         f"from that solve. Make the downstream solve benders too, order "
         f"the chain so the Benders solve is terminal, or ensure the "
@@ -2750,6 +2750,8 @@ def _drive_cascade(
             "cascade_spinedb_reader_constructed", _drive_logger,
             user_label="Inputs prepared",
         )
+    # The run's existing cohorts are built from this reader once the run calendar is known (``_run_model``).
+    runner.state.input_source = cascade_db_reader
     # The solves of a 2-D period map are solves of the reader too (before any reader-side lookup).
     from flextool.engine.input._solve_config import register_solve_copies
     register_solve_copies(runner.state.solve, cascade_db_reader)
@@ -2922,7 +2924,7 @@ def _drive_cascade(
             self._benders_solve_names: set[str] = set()
             # TIER 1 — complete-solve names whose Benders solve deposited a
             # USABLE investment handoff (non-empty
-            # ``result.invest_solution_vars`` → ``realized_invest`` /
+            # ``result.invest_solution_vars`` → ``realized_cohort`` /
             # ``divest_cumulative`` carriers).  A downstream solve may
             # consume these; the consume-side guard fires only for Benders
             # predecessors NOT in this set.

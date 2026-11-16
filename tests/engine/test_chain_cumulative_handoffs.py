@@ -5,8 +5,8 @@ Exercises the chain-cumulative carrier SHAPE — state passed solve-to-
 solve — on the carriers the 4-solve invest+lifetime-renew fixture
 actually populates:
 
-* ``realized_invest`` / ``realized_existing`` — per-(entity, period)
-  chain-cumulative invest history (grow by 4 rows per realised period).
+* ``realized_cohort`` — the chain-cumulative realized investments, one row per
+  cohort (an investment decision); every carried cohort persists with its size.
 * ``roll_end_state`` — per-node end-of-roll storage state (battery).
 * ``cum_sim_hours`` — per-period simulated-hour totals (grows by one
   row per realised period).
@@ -46,17 +46,14 @@ def test_chain_cumulative_handoffs_accumulate_monotonically(
         "y2020_5week", "y2025_5week", "y2030_5week", "y2035_5week",
     ], f"chain order changed unexpectedly: {chain_order}"
 
-    prev_keys: set[tuple[str, str]] = set()
-    prev_height = 0
+    prev: dict[tuple[str, str], float] = {}
     prev_csh_height = 0
     for sub in chain_order:
         h = sols[sub].handoff
 
         # Populated-by-design carriers.
-        assert h.realized_invest is not None, (
-            f"{sub}: realized_invest unexpectedly None")
-        assert h.realized_existing is not None, (
-            f"{sub}: realized_existing unexpectedly None")
+        assert h.realized_cohort is not None, (
+            f"{sub}: realized_cohort unexpectedly None")
         assert h.roll_end_state is not None, (
             f"{sub}: roll_end_state unexpectedly None (battery storage)")
         assert h.cum_sim_hours is not None, (
@@ -79,32 +76,24 @@ def test_chain_cumulative_handoffs_accumulate_monotonically(
             f"Phase 4.1l retired it; data now flows via the three narrow "
             f"fix_storage_{{quantity,price,usage}} fields")
 
-        ri = h.realized_invest
-        re = h.realized_existing
+        rc = h.realized_cohort
 
-        # Unique (entity, period) keys — no duplicate-row leakage from
+        # Unique (entity, cohort) keys — no duplicate-row leakage from
         # the chain-cumulation step.
-        assert ri.unique(["entity", "period"]).height == ri.height, (
-            f"{sub}: realized_invest has duplicate (entity, period) rows")
-        assert re.unique(["entity", "period"]).height == re.height, (
-            f"{sub}: realized_existing has duplicate (entity, period) rows")
+        assert rc.unique(["entity", "cohort"]).height == rc.height, (
+            f"{sub}: realized_cohort has duplicate (entity, cohort) rows")
 
-        # Strict-growth invariant: each subsequent solve adds rows.
-        assert ri.height > prev_height, (
-            f"{sub}: realized_invest height {ri.height} did not exceed "
-            f"prior solve's {prev_height} — chain-cumulative state should "
-            f"strictly grow as more periods are realised.")
-
-        # Cross-solve carryover: every (entity, period) from the prior
-        # solve's handoff persists in this solve's handoff.
-        cur_keys = {(r["entity"], r["period"]) for r in ri.iter_rows(named=True)}
-        missing = prev_keys - cur_keys
+        # Cross-solve carryover: every cohort of the prior solve's handoff
+        # persists in this solve's handoff, its size never smaller.
+        cur = {(r["entity"], r["cohort"]): r["size"] for r in rc.iter_rows(named=True)}
+        missing = set(prev) - set(cur)
         assert not missing, (
-            f"{sub}: prior-solve realized_invest keys missing from current "
-            f"handoff: {sorted(missing)[:5]} ... — chain-cumulative carrier "
-            f"must persist all earlier contributions.")
-        prev_keys = cur_keys
-        prev_height = ri.height
+            f"{sub}: prior-solve cohorts missing from current handoff: "
+            f"{sorted(missing)[:5]} — the chain-cumulative carrier must persist "
+            f"all earlier investments.")
+        assert all(cur[k] >= v for k, v in prev.items()), (
+            f"{sub}: a carried cohort's size shrank")
+        prev = cur
 
         # roll_end_state — battery node only, per-roll v_state at last (d, t).
         rs = h.roll_end_state

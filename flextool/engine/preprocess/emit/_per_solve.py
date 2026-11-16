@@ -8,7 +8,7 @@ Two preprocessing families called per-solve (not per-write-input):
   the small storage-fix / online sets.
 * ``invest_divest_sets.write_invest_divest_sets`` +
   ``write_ed_invest_forbidden_no_investment`` — the
-  ed_invest / ed_divest / edd_history family + the gd_* group
+  ed_invest / ed_divest / edd_invest family + the gd_* group
   projections + the no-investment-lifetime gate.
 
 Style mirrors :mod:`._leaf_sets` / :mod:`._mid_sets`:
@@ -609,9 +609,9 @@ def _read_pdv(path: Path,
 
 def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
                              *, provider) -> None:
-    """Emit ``invest_divest_sets`` to the Provider.
-    Emits the same 15 frames under ``solve_data/<basename>`` keys via
-    :func:`_emit` (dual-key registration).
+    """Emit the investment and retirement sets to the Provider (``ed_invest`` / ``ed_divest`` and their per-period,
+    cumulative and process / node subsets, ``edd_invest``, the ``gd_*`` group sets) under ``solve_data/<basename>``
+    keys via :func:`_emit` (dual-key registration).
     """
     entityInvest = _read_singles(solve_data_dir / "entityInvest.csv", provider=provider)
     entityDivest = _read_singles(solve_data_dir / "entityDivest.csv", provider=provider)
@@ -724,27 +724,14 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
                     edd_auto.append((e, d_h, d))
                 if is_noinv and pdy_d >= pdy_dh and pdy_d < pdy_dh + life:
                     edd_noinv.append((e, d_h, d))
-    _emit_tuples(provider, "solve_data/edd_history_choice.csv",
-                 ("entity", "period_history", "period"), edd_choice)
-    _emit_tuples(provider, "solve_data/edd_history_automatic.csv",
-                 ("entity", "period_history", "period"), edd_auto)
-    _emit_tuples(provider, "solve_data/edd_history_no_investment.csv",
-                 ("entity", "period_history", "period"), edd_noinv)
-
     edd_seen: dict[tuple[str, str, str], None] = {}
     for r in edd_choice + edd_auto + edd_noinv:
         if r not in edd_seen:
             edd_seen[r] = None
-    edd_history = list(edd_seen.keys())
-    _emit_tuples(provider, "solve_data/edd_history.csv",
-                 ("entity", "period_history", "period"), edd_history)
     invest_set = frozenset(entityInvest)
-    edd_history_invest = [r for r in edd_history if r[0] in invest_set]
-    _emit_tuples(provider, "solve_data/edd_history_invest.csv",
-                 ("entity", "period_history", "period"), edd_history_invest)
     edd_invest = [
-        (e, d_inv, d) for (e, d_inv, d) in edd_history_invest
-        if (e, d_inv) in ed_invest_set
+        (e, d_inv, d) for (e, d_inv, d) in edd_seen
+        if e in invest_set and (e, d_inv) in ed_invest_set
     ]
     _emit_tuples(provider, "solve_data/edd_invest.csv",
                  ("entity", "period_history", "period"), edd_invest)

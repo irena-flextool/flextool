@@ -173,7 +173,7 @@ def test_sibling_capacity_is_fixed_from_invest(chain) -> None:
     assert "peaker" in set(stoch.flex_data.pd_invest_set[pcol].to_list())
 
     assert stoch.handoff is not None and not stoch.handoff.is_empty()
-    ri = stoch.handoff.realized_invest
+    ri = stoch.handoff.realized_cohort
     assert ri is not None and ri.height > 0
     ent_col, val_col = ri.columns[0], ri.columns[-1]
     committed = {r[ent_col]: float(r[val_col]) for r in ri.iter_rows(named=True)}

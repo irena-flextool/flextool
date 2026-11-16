@@ -149,7 +149,7 @@ def test_build_handoff_from_solution_covers_eight_carriers(scenario_run)-> None:
     data is present.
 
     Pre-Γ.8.D, ``build_handoff_from_solution`` filled 3 of 8 carriers
-    (``realized_invest``, ``realized_existing``, ``divest_cumulative``).
+    (``realized_cohort``, ``realized_retire``, ``divest_cumulative``).
     The remaining 5 (``roll_end_state``, ``fix_storage``,
     ``cumulative_co2``, ``cumulative_commodity``, ``cum_sim_hours``)
     now also populate when their source files / variables are present.

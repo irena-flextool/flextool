@@ -61,7 +61,12 @@ from flextool.engine.preprocess import _provider_keys
 from flextool.engine.preprocess import _provider_translators
 
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-from flextool.engine.preprocess.params._run_calendar import RUN_CALENDAR_KEY, build_run_calendar
+from flextool.engine.preprocess.params._run_calendar import (
+    RUN_CALENDAR_KEY,
+    RUN_EXISTING_COHORT_KEY,
+    build_run_calendar,
+    run_calendar_from_frame,
+)
 from flextool.engine.solve._realized_overlap import (
     effective_realized_invest_periods,
     find_realized_invest_overlaps,
@@ -496,6 +501,24 @@ def run_time_steps(all_solves: list, active_time_lists: dict, complete_solve: di
             for cs, p in pairs.items()}
 
 
+def _run_existing_cohort(state, run_calendar: pl.DataFrame) -> pl.DataFrame:
+    """The existing cohorts of the run (:func:`._cohorts.run_existing_cohorts`) from the run's reader
+    (``state.input_source``) on the run calendar, in the cascade's axis vocabulary (as the per-solve loads)."""
+    from flextool.engine.input._axis_enums import reset_global_axis_enums, set_global_axis_enums
+    from flextool.engine.preprocess.params._cohorts import run_existing_cohorts
+    source = getattr(state, "input_source", None)
+    if source is None:
+        raise ValueError("native_run_model needs the run's input-database reader (state.input_source) to place "
+                         "the existing capacity of the run.")
+    enums = getattr(getattr(state, "cascade_input_provider", None), "axis_enums", None)
+    token = set_global_axis_enums(enums) if enums is not None else None
+    try:
+        return run_existing_cohorts(source, run_calendar_from_frame(run_calendar))
+    finally:
+        if token is not None:
+            reset_global_axis_enums(token)
+
+
 def native_run_model(state, solver) -> int:
     """Drive the per-solve cascade natively.
 
@@ -698,6 +721,9 @@ def native_run_model(state, solver) -> int:
     # The run calendar: the year of every period of the run (the start of operation of an investment with a
     # construction lead time is rounded on it).  The same frame goes to every sub-solve.
     run_calendar = build_run_calendar(solve_period_history, state.solve.real_solves)
+    # The existing cohorts of the run: fixed when the run starts (the run start, the lifetime there, the end of life
+    # rounded on the run calendar), the same frame for every sub-solve.
+    run_existing_cohort = _run_existing_cohort(state, run_calendar)
     # The reported costs of a run of several solves count from the start of the run, each once.
     if len(state.solve.real_solves) > 1:
         from flextool.engine import _behaviour_changes
@@ -1240,6 +1266,7 @@ def native_run_model(state, solver) -> int:
             else _roll_period_whole({}, {}, []))
         # Written for every sub-solve, as the level Provider is shared by the iters of a level.
         sub_solve_provider.put(RUN_CALENDAR_KEY, run_calendar)
+        sub_solve_provider.put(RUN_EXISTING_COHORT_KEY, run_existing_cohort)
         # Whether this sub-solve leaves the period_total user constraints out (a roll of a rolling solve that
         # does not realize whole periods in one roll); written for every sub-solve, the Provider is shared.
         sub_solve_provider.put(_provider_keys.SOLVE_DATA_USER_CONSTRAINT_PERIOD_TOTAL_OFF,

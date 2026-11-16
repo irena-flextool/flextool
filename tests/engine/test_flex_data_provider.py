@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import polars as pl
+import pytest
 
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
@@ -247,8 +248,8 @@ def test_translate_overrides_to_provider_tags_each_entry_external_override():
     )
 
     overrides = {
-        K.HANDOFF_REALIZED_INVEST: pl.DataFrame(
-            {"entity": ["e1"], "period": ["p1"], "value": ["1.0"]}
+        K.HANDOFF_REALIZED_COHORT: pl.DataFrame(
+            {"entity": ["e1"], "cohort": ["invest:p1"], "size": ["1.0"]}
         ),
         K.HANDOFF_DIVEST_CUMULATIVE: pl.DataFrame(
             {"entity": ["e1"], "value": ["2.0"]}
@@ -256,7 +257,18 @@ def test_translate_overrides_to_provider_tags_each_entry_external_override():
     }
     p = FlexDataProvider()
     translate_overrides_to_provider(overrides, p)
-    assert p.get_source(K.OVERRIDE_REALIZED_INVEST) == "external_override"
+    assert p.get_source(K.OVERRIDE_REALIZED_COHORT) == "external_override"
     assert p.get_source(K.OVERRIDE_DIVEST_CUMULATIVE) == "external_override"
     # Untouched keys remain untagged.
     assert p.get_source(K.OVERRIDE_ROLL_END_STATE) is None
+
+
+@pytest.mark.parametrize("old, new", [("handoff/realized_invest", "handoff/realized_cohort"),
+                                      ("handoff/realized_existing", "handoff/realized_cohort"),
+                                      ("handoff/realized_divest", "handoff/realized_retire")])
+def test_a_retired_override_key_raises_naming_its_replacement(old, new):
+    """The realized capacity is overridden per cohort: an override keyed by a retired carrier raises, naming the
+    key that replaces it."""
+    from flextool.engine.preprocess._provider_translators import translate_overrides_to_provider
+    with pytest.raises(ValueError, match=f"{old!r} is retired.*{new!r}"):
+        translate_overrides_to_provider({old: pl.DataFrame({"entity": ["e1"]})}, FlexDataProvider())

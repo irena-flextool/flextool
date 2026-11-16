@@ -25,6 +25,22 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
 
 ### Fixes
 
+- **A period-varying `existing` (a period map) is used in every solve of a run.** From the second solve of a
+  chained run, and in every roll after the first of a rolling solve (and in nested sub-solves), the existing
+  capacity was the map's first-period value in every period: a map {500, 300, 100, 0} gave 500 MW in each later
+  solve, and a rising map gave too little. Each solve now takes the user's `existing` of each of its periods, plus
+  the investments the earlier solves realized (each in service from its start of operation to its end of life,
+  as the deciding solve placed them), minus the carried retirements. Results of chained, rolling and nested runs
+  with an `existing` map change (capacity, flow bounds, dispatch, costs); a constant `existing` gives the same
+  results as before. Two investments decided in different periods that start to operate in the same period
+  (construction lead times) are carried separately, each with its own lifetime.
+- **Scripts that inject state between solves (`override_provider`)**: the realized capacity is now given per
+  investment cohort, `K.HANDOFF_REALIZED_COHORT` (one row per investment decision, with its start of operation, end
+  of life and size), and the retirements per cohort, `K.HANDOFF_REALIZED_RETIRE`. The old keys
+  `handoff/realized_invest`, `handoff/realized_existing` and `handoff/realized_divest` raise an error naming the new
+  key (`docs/dev/inject_between_solves.md`). The `--csv-dump` mirrors `solve_data/p_entity_period_existing_capacity.csv`
+  and `p_entity_divested_period.csv` are gone; the dump has the carriers themselves
+  (`produced_handoff/realized_cohort.csv`, `realized_retire.csv`).
 - **A chain of solves with a `no_reinvestment` entity no longer stops with a `p_entity_max_units` error** once the
   entity's investment window has closed in a later solve. The closed periods also no longer get an investment
   variable (held at zero) when another entity still invests in that solve; results are unchanged.

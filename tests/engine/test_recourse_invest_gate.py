@@ -249,12 +249,9 @@ def test_recourse_handoff_drops_non_realized(_resolved, recourse_run, caplog):
             prior_handoff=last.prior_handoff, flex_data=data,
             provider=provider)
     assert handoff is not None
-    ri = handoff.realized_invest
-    periods = {str(r["period"]) for r in ri.iter_rows(named=True)}
-    # Only real-named trunk periods survive the pre-filter — no branch rows.
-    assert periods == {"p2035", "p2040"}
-    assert not (periods & {"p2035_high", "p2040_high",
-                           "p2035_low", "p2040_low"})
+    # The carried cohorts are the realized trunk decisions only: none here (the committed real-named capacity is
+    # 0; the forecast branches' 210 MW are dropped), so no branch-named decision period is carried.
+    assert handoff.realized_cohort is None
     # The pre-filter debug-logged the dropped branch mass = 210 across all
     # four forecast branch periods.
     msgs = [r.getMessage() for r in caplog.records

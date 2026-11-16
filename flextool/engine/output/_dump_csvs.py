@@ -371,26 +371,6 @@ def dump_csvs(data: "FlexData", workdir: Path | str,
     _write_pd_sliced(data, sd_dir)
     _write_p_input_sliced(data, inp_dir)
 
-    # ─── Capacity / unitsize composites ───────────────────────────────
-    # p_entity_period_existing_capacity.csv has TWO value columns
-    # (existing + invested).  Our p_entity_all_existing carries
-    # the 'all_existing' column; for round-trip we recompute existing =
-    # all_existing - 0 (no prior invest) and invested = 0.  The reader
-    # prefers p_entity_all_existing.csv when it exists, so this is a
-    # stub for compatibility.
-    if data.p_entity_all_existing is not None:
-        f = _frame_of(data.p_entity_all_existing)
-        if f is not None:
-            stub = (f.pipe(rename_to_axis, {"e": "entity", "d": "period"})
-                     .with_columns(
-                         p_entity_period_existing_capacity=pl.col("value"),
-                         p_entity_period_invested_capacity=pl.lit(0.0),
-                     )
-                     .select("entity", "period",
-                             "p_entity_period_existing_capacity",
-                             "p_entity_period_invested_capacity"))
-            stub.write_csv(sd_dir / "p_entity_period_existing_capacity.csv")
-
     # ─── input/ entity-class set + wide-format unitsize  ────────
     # ``input/p_entity_unitsize.csv`` (wide-transposed: ``entity,<e1>,<e2>,…``
     # / ``value,<v1>,<v2>,…``) plus the entity-class set CSVs

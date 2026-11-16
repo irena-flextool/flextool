@@ -251,18 +251,14 @@ def _read_unitsize(path: Path,
               .with_columns(value=pl.col("value").cast(pl.Float64)))
 
 
-def _read_capacity(path: Path,
-                    previously_invested_path: Path | None = None,
-                    all_existing_path: Path | None = None,
+def _read_capacity(all_existing_path: Path,
                     *,
                     provider: "object | None" = None) -> pl.DataFrame:
-    # ``p_entity_all_existing`` is the cumulative existing capacity per
-    # period (reflecting lifetime, carried over across periods within a
-    # solve), which is what the .mod's ``p_entity_dispatch_capacity_max``
-    # formula uses.  ``_chain_params.emit_p_entity_existing_chain``
-    # (called per-iter by ``_solve_time.run`` batch 59,
-    # unconditionally) populates ``solve_data/p_entity_all_existing`` in
-    # the Provider, so the cascade always has this key available.
+    # ``p_entity_all_existing`` is the capacity in service at the start of the solve per period (the existing
+    # cohort and the investments earlier solves realized, minus the carried retirements), which is what the
+    # ``p_entity_dispatch_capacity_max`` formula uses.  ``_chain_params.emit_existing_capacity`` (called for
+    # every sub-solve by ``_solve_time.run`` batch 26) populates ``solve_data/p_entity_all_existing`` in the
+    # Provider, so the cascade always has this key available.
     df = _provider_read(
         provider, "solve_data/p_entity_all_existing", all_existing_path)
     if "solve" in df.columns:
@@ -1275,8 +1271,8 @@ class FlexData:
     # operate in d / are in construction in d (apply_existing_chain, from the handoff realized_commission).
     p_entity_carried_commission: Param | None = None
     p_entity_carried_in_construction: Param | None = None
-    # (e, d) MW (MWh): capacity earlier solves of a chain retired that still counts in d (until the end of life of
-    # the pre-existing capacity; apply_existing_chain, from the handoff realized_divest).
+    # (e, d) MW (MWh): existing capacity earlier solves of a chain retired that still counts in d (while the existing
+    # cohort is in service; emitted from the handoff realized_retire, read by apply_existing_chain).
     p_entity_retired_carried: Param | None = None
     p_entity_max_units: Param | None = None          # (e, d)
     ed_lifetime_fixed_cost: Param | None = None      # (e, d)
@@ -3728,10 +3724,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # is the only source.  When the override does run, it overlays
     # these via ``setattr`` so the seed becomes inert.
     if unitsize is not None and cap_pd is not None and nodeState is not None:
-        cap_long = _read_capacity(sd / "p_entity_period_existing_capacity.csv",
-                                   sd / "p_entity_previously_invested_capacity.csv",
-                                   sd / "p_entity_all_existing.csv",
-                                   provider=provider)
+        cap_long = _read_capacity(sd / "p_entity_all_existing.csv", provider=provider)
         unitsize_long = _read_unitsize(sd / "p_entity_unitsize.csv", provider=provider)
         state_existing = (cap_long.pipe(rename_to_axis, {"e": "n", "value": "cap"})
             .filter(pl.col("n").is_in(nodeState["n"]))
@@ -4924,9 +4917,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
     handoff-derived FlexData fields directly during the build (replacing
     the previous post-load :func:`apply_handoff` call):
 
-      * ``p_entity_previously_invested_capacity`` ← ``realized_invest``
-        × ``edd_history`` (read from ``solve_data/edd_history.csv``).
-      * ``p_entity_invested`` ← ``realized_invest`` summed over period.
+      * ``p_entity_previously_invested_capacity`` / ``p_entity_invested`` ← the frames the solve emitted from
+        ``realized_cohort`` (``_chain_params.emit_existing_capacity``).
       * ``p_entity_divested`` ← ``divest_cumulative``.
       * ``p_roll_continue_state`` ← ``roll_end_state``.
       * ``p_fix_storage_quantity`` ← ``fix_storage_quantity``.
@@ -5114,10 +5106,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         pd_neg_cap = None
         all_entity_unitsize_param = None
         if proc["pss"] is not None:
-            cap_long = _read_capacity(sd / "p_entity_period_existing_capacity.csv",
-                                       sd / "p_entity_previously_invested_capacity.csv",
-                                       sd / "p_entity_all_existing.csv",
-                                       provider=provider)
+            cap_long = _read_capacity(sd / "p_entity_all_existing.csv", provider=provider)
             unitsize_long = _read_unitsize(sd / "p_entity_unitsize.csv", provider=provider)
             # p_all_entity_unitsize: unfiltered — covers processes, connections AND nodes.
             # Used by the scaling analyzer to compute the full entity-unitsize spread.
@@ -5558,23 +5547,14 @@ def load_flextool(source: "Path | str | FlexInputSource",
             # Reader-less CSV reload: the reload's own seeds of the fields the overlay above writes.
             _dump_hooks.field_seeds(flex_data, sd, inp, provider)
 
-        # Δ.11 — overlay in-memory handoff carriers onto the FlexData
-        # built so far.  Replaces the previous post-load ``apply_handoff``
-        # call: the handoff is now an input to the build, not a separate
-        # overlay step.  ``solve_data_dir`` (if known) is consulted only for
-        # ``edd_history.csv`` — used by the
-        # ``p_entity_previously_invested_capacity`` derivation.  Cluster B
-        # chained-handoff state (``p_entity_all_existing``) is rebuilt from
-        # the now-populated carriers via :func:`apply_existing_chain` (called
-        # below — db_reader is required for that path).
+        # Δ.11 — overlay in-memory handoff carriers onto the FlexData built so far (the handoff is an input to
+        # the build, not a separate overlay step), then the chain-carried constants of :func:`apply_existing_chain`
+        # (db_reader is required for that path).
         if handoff is not None:
             sd_dir = workdir_for_db / "solve_data" if workdir_for_db is not None else None
             flex_data = _overlay_handoff(flex_data, handoff, sd_dir, ctx=ctx,
                                             provider=provider)
             _loadflex_prof("after_overlay_handoff")
-            # Re-apply the cluster B chained-existing helper so
-            # ``p_entity_all_existing`` reflects the in-memory handoff
-            # carriers (rather than the workdir's pre-handoff CSV value).
             if db_reader is not None and workdir_for_db is not None:
                 from flextool.engine.preprocess.params import _existing as _ex
                 _ex.apply_existing_chain(flex_data, db_reader, workdir_for_db,
@@ -6175,13 +6155,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     _loadflex_prof("apply_db_overrides:pass_derived_g")
     _timed("9  derived_g", _drv.apply_derived_g, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
 
-    # Δ.12c — ``apply_existing_chain`` runs LAST (after ``apply_derived_f``)
-    # so that the handoff carriers ``p_entity_previously_invested_capacity``
-    # and ``p_entity_divested`` are populated before the chain summation
-    # consumes them.  Previously this was inside ``apply_derived_d``, which
-    # forced the call site to depend on a pre-seeded CSV value for those
-    # carriers.  Now that ``apply_derived_f`` is the authoritative producer
-    # of the carriers, the seed in ``_load_invest`` becomes redundant.
+    # The chain-carried constants (the carried retirements, the lead-time capacity) last.
     from flextool.engine.preprocess.params import _existing as _ex
     _loadflex_prof("apply_db_overrides:pass_existing_chain")
     _timed("10 existing_chain", _ex.apply_existing_chain, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)
@@ -6248,82 +6222,6 @@ def _read_realize_invest_periods(path: Path,
     return _read_period_set(path, provider=provider)
 
 
-def _read_realized_dispatch_periods(path: Path,
-                                       *,
-                                       provider: "object | None" = None) -> set[str]:
-    """Read distinct periods from ``realized_dispatch.csv`` (cols include ``period``)."""
-    def _cell_str(value: "object | None") -> str:
-        return "" if value is None else str(value)
-
-    name = _provider_key(path)
-    if not _provider_has(provider, name, path):
-        return set()
-    try:
-        df = _provider_read(provider, name, path)
-    except pl.exceptions.NoDataError:
-        return set()
-    if "period" not in df.columns:
-        return set()
-    out: set[str] = set()
-    for value in df.get_column("period"):
-        c = _cell_str(value)
-        if c:
-            out.add(c)
-    return out
-
-
-def _read_solve_first(work_folder: Path,
-                        *,
-                        provider: "object | None" = None) -> bool:
-    """Read ``p_model.csv``'s ``solveFirst`` flag.
-
-    flextool's per-solve preprocessing writes ``solve_data/p_model.csv``
-    with the chain-position flag (``solveFirst=1`` only for the first
-    sub-solve in the multi-solve cascade, ``0`` for the rest).  The
-    static ``input/p_model.csv`` does not exist in DB-driven fixtures —
-    the file is purely a preprocessing-derived artifact.
-
-    Resolution order:
-    1. ``solve_data/p_model.csv`` — preferred (chain-aware).
-    2. ``input/p_model.csv`` — legacy fallback when a fixture predates
-       the preprocessing rewrite.
-    3. Default ``True`` when neither exists.
-
-    Bug-fix anchor: prior to Γ.8.E this only consulted ``input/`` which
-    in the native cascade path produced ``solveFirst=True`` for every
-    sub-solve, causing ``build_handoff_from_solution`` to add
-    ``pre_existing`` to ``realized_existing`` on every iteration —
-    inflating the chain's cumulative ``p_entity_period_existing_capacity``
-    by ``Σ pre_existing`` per extra sub-solve and zeroing out demand on
-    sub-solves 3+ of fixtures like ``wind_battery_invest_lifetime_renew_4solve``.
-    """
-    def _cell_str(value: "object | None") -> str:
-        return "" if value is None else str(value)
-
-    for cand in ("solve_data/p_model.csv", "input/p_model.csv"):
-        path = work_folder / cand
-        # cand already has the parent prefix and the suffix; pass as-is
-        # (suffix stripped by Provider via _provider_key).
-        name = _provider_key(path)
-        if not _provider_has(provider, name, path):
-            continue
-        try:
-            df = _provider_read(provider, name, path)
-        except pl.exceptions.NoDataError:
-            return True
-        if "modelParam" not in df.columns or "p_model" not in df.columns:
-            return True
-        for r in df.iter_rows(named=True):
-            if _cell_str(r["modelParam"]) == "solveFirst":
-                try:
-                    return bool(int(_cell_str(r["p_model"])))
-                except (ValueError, TypeError):
-                    return True
-        # File existed but didn't contain the flag — treat as default.
-        return True
-    return True
-
-
 def _read_unitsize_long(work_folder: Path,
                          *,
                          provider: "object | None" = None) -> dict[str, float]:
@@ -6351,39 +6249,6 @@ def _read_unitsize_long(work_folder: Path,
             out[str(r["e"])] = float(r["value"])
         except (TypeError, ValueError):
             continue
-    return out
-
-
-def _read_pre_existing_long(work_folder: Path,
-                              *,
-                              provider: "object | None" = None) -> dict[tuple[str, str], float]:
-    """Read ``solve_data/p_entity_pre_existing.csv`` (long: entity, period, value).
-
-    Returns ``{(period, entity): value}`` to match
-    flextool's ``_load_pre_existing`` key order (``[d, e]`` lookup).
-    """
-    def _cell_str(value: "object | None") -> str:
-        return "" if value is None else str(value)
-
-    path = work_folder / "solve_data" / "p_entity_pre_existing.csv"
-    name = "solve_data/p_entity_pre_existing"
-    if not _provider_has(provider, name, path):
-        return {}
-    try:
-        df = _provider_read(provider, name, path)
-    except pl.exceptions.NoDataError:
-        return {}
-    out: dict[tuple[str, str], float] = {}
-    if df.width < 3:
-        return out
-    c0, c1, c2 = df.columns[0], df.columns[1], df.columns[2]
-    for r in df.iter_rows(named=True):
-        e0, e1, v2 = _cell_str(r[c0]), _cell_str(r[c1]), r[c2]
-        if e0 and e1:
-            try:
-                out[(str(e1), str(e0))] = float(v2)
-            except (ValueError, TypeError):
-                continue
     return out
 
 
@@ -6878,17 +6743,16 @@ def build_handoff_from_solution(
     cohort: "pl.DataFrame | None" = None,
 ):
     """Build a ``SolveHandoff`` from a polar_high ``Solution`` + the work
-    folder's per-solve metadata, mirroring flextool's post-solve
-    ``write_p_entity_period_existing_capacity`` + ``write_p_entity_divested``
-    logic but in-memory.
+    folder's per-solve metadata, in memory.
 
-    Covers all 9 carriers (Γ.8.D extension — was 3 of 9 before the
-    Γ.8.D port):
+    Carriers:
 
-    * ``realized_invest`` — per-(entity, period) chain-cumulative invest.
-    * ``realized_existing`` — per-(entity, period) chain-cumulative existing.
+    * ``realized_cohort`` — the realized investments as cohorts (decision period, start of operation, end of life,
+      size), chain-cumulative.
+    * ``realized_retire`` — per-(entity, cohort, decision period) chain-cumulative retirements (realized periods
+      only).
+    * ``realized_commission`` — the realized investments with a construction lead time, chain-cumulative.
     * ``divest_cumulative`` — per-entity chain-cumulative divest.
-    * ``realized_divest`` — per-(entity, decision period) chain-cumulative divest (realized periods only).
     * ``roll_end_state`` — last-step v_state per nodeState node.
     * ``fix_storage`` — wide [node, period, time, quantity, price, usage]
       with NULL columns for inactive metrics.  ``quantity`` is populated
@@ -6938,33 +6802,18 @@ def build_handoff_from_solution(
             "it never reads the work folder on disk."
         )
     sd = work_folder / "solve_data"
-    first_solve = _read_solve_first(work_folder, provider=provider)
     unitsize = _read_unitsize_long(work_folder, provider=provider)
-    pre_existing = _read_pre_existing_long(work_folder, provider=provider) if first_solve else {}
 
     # Prior solve's accumulators — sourced from the in-memory handoff
     # carriers when supplied, else empty (multi-solve cascade always
     # passes the parent handoff).
-    prior_existing: dict[tuple[str, str], float] = {}
-    prior_invested: dict[tuple[str, str], float] = {}
     prior_divested: dict[str, float] = {}
-    prior_divest_period: dict[tuple[str, str], float] = {}
     prior_commission: list[tuple[str, str, str, float]] = []
     if prior_handoff is not None:
-        if getattr(prior_handoff, "realized_divest", None) is not None:
-            for r in prior_handoff.realized_divest.iter_rows(named=True):
-                key = (str(r["entity"]), str(r["period"]))
-                prior_divest_period[key] = prior_divest_period.get(key, 0.0) + float(r["value"])
         if getattr(prior_handoff, "realized_commission", None) is not None:
             for r in prior_handoff.realized_commission.iter_rows(named=True):
                 prior_commission.append((str(r["entity"]), str(r["period"]), str(r["commission_period"]),
                                          float(r["value"])))
-        if prior_handoff.realized_existing is not None:
-            for r in prior_handoff.realized_existing.iter_rows(named=True):
-                prior_existing[(str(r["entity"]), str(r["period"]))] = float(r["value"])
-        if prior_handoff.realized_invest is not None:
-            for r in prior_handoff.realized_invest.iter_rows(named=True):
-                prior_invested[(str(r["entity"]), str(r["period"]))] = float(r["value"])
         if prior_handoff.divest_cumulative is not None:
             for r in prior_handoff.divest_cumulative.iter_rows(named=True):
                 prior_divested[str(r["entity"])] = float(r["value"])
@@ -7027,12 +6876,11 @@ def build_handoff_from_solution(
         divest_by_ed = {k: v for k, v in divest_by_ed.items()
                         if k[1] not in _synth_handoff}
 
-    # ---- iteration set: prior keys ∪ entity × iteration_periods ----
+    # ---- the realized decision periods of this solve ----
     realize_invest = _read_realize_invest_periods(
         sd / "realized_invest_periods_of_current_solve.csv",
         provider=provider,
     )
-    period_first = _read_period_set(sd / "period_first.csv", provider=provider)
 
     # ---- divest_cumulative input: count only realized periods (mirrors the
     # ``d in realize_invest`` invest gate above) — v_divest
@@ -7044,28 +6892,10 @@ def build_handoff_from_solution(
         if _d in realize_invest:
             divest_by_e[_e] = divest_by_e.get(_e, 0.0) + _v
             realized_divest_by_ed[(_e, _d)] = _v
-    if first_solve:
-        realized_periods = _read_realized_dispatch_periods(
-            sd / "realized_dispatch.csv", provider=provider)
-        fix_storage_periods = _read_realized_dispatch_periods(
-            sd / "fix_storage_timesteps.csv", provider=provider)
-        iter_periods = realize_invest | realized_periods | fix_storage_periods
-    else:
-        iter_periods = set(realize_invest)
 
-    iter_keys: set[tuple[str, str]] = set(prior_existing.keys())
-    entities = _read_singles_csv(sd / "entity.csv", provider=provider)
-    if not entities:
-        entities = _read_singles_csv(work_folder / "input" / "entity.csv",
-                                       provider=provider)
-    for e in entities:
-        for d in iter_periods:
-            iter_keys.add((e, d))
-
-    # ---- this solve's realized investments, keyed by the period they start to operate ----
-    # Without a construction lead time that is the decision period.  With one it is the start of operation
-    # (``ed_invest_commission``, found by this solve on the run calendar), so a later solve counts the
-    # capacity, and its lifetime, from there.
+    # ---- the realized investments with a construction lead time, by decision period and the period they start
+    # to operate in (``ed_invest_commission``, found by this solve on the run calendar): a later solve counts them
+    # as coming online / in construction (``realized_commission``, chain-cumulative) ----
     commission_of: dict[tuple[str, str], str] = {}
     _commission = getattr(flex_data, "ed_invest_commission", None)
     if _commission is not None and _commission.height > 0:
@@ -7073,50 +6903,12 @@ def build_handoff_from_solution(
                 pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("d_c").cast(pl.Utf8)).iter_rows():
             if _dc is not None:
                 commission_of[(_e, _o)] = _dc
-    realized_by_ed: dict[tuple[str, str], float] = {}
-    # The realized investments with a lead time, also by decision period: a later solve counts them as
-    # coming online / in construction (``realized_commission``, chain-cumulative).
     commission_rows: list[tuple[str, str, str, float]] = list(prior_commission)
     for (_e, _o), _v in invest_by_ed.items():
-        if _o not in realize_invest:
-            continue
-        _key = (_e, commission_of.get((_e, _o), _o))
-        realized_by_ed[_key] = realized_by_ed.get(_key, 0.0) + _v
-        if (_e, _o) in commission_of:
+        if _o in realize_invest and (_e, _o) in commission_of:
             commission_rows.append((_e, _o, commission_of[(_e, _o)], _v * unitsize.get(_e, 1.0)))
-    iter_keys.update(realized_by_ed)
 
-    # ---- compute realized_invest + realized_existing per (e, d) ----
-    # The handoff is a CHAIN-CUMULATIVE record: every solve carries
-    # forward prior solves' (e, d) contributions and ADDS its own.
-    # ``first_solve`` (the .mod's solveFirst flag) means the SOLVE
-    # treats itself as fresh on the LP side (no roll-state subtraction)
-    # — but the OUTPUT handoff still has to cumulate, otherwise downstream
-    # solves lose history.  So prior_existing / prior_invested are added
-    # for every key, regardless of first_solve.
-    inv_rows: list[tuple[str, str, float]] = []
-    exist_rows: list[tuple[str, str, float]] = []
-    for e, d in sorted(iter_keys):
-        existing = 0.0
-        invested = 0.0
-        # Carry prior solves' contributions forward unconditionally.
-        existing += prior_existing.get((e, d), 0.0)
-        invested += prior_invested.get((e, d), 0.0)
-        # First-solve seed: the user-defined pre-existing capacity becomes
-        # part of ``realized_existing`` only on the first solve in the chain,
-        # at periods belonging to that solve's period_first set.
-        if first_solve and d in period_first:
-            existing += pre_existing.get((d, e), 0.0)
-        # This solve's invest contribution starting to operate at (e, d).
-        if (e, d) in realized_by_ed:
-            v = realized_by_ed[(e, d)]
-            us = unitsize.get(e, 1.0)
-            existing += v * us
-            invested += v * us
-        inv_rows.append((e, d, invested))
-        exist_rows.append((e, d, existing))
-
-    # ---- Slice C Guard 3: no committed realized_invest period may be a
+    # ---- Slice C Guard 3: no realized investment may be decided in a
     #      synthetic stochastic-branch fan member (recourse plan §3.3).
     #      The token set is the BROAD d != b b-token set of
     #      period_branch_full (shared idiom ``synthetic_branch_tokens``) —
@@ -7126,12 +6918,10 @@ def build_handoff_from_solution(
     #      rolling metadata tokens never legitimately appear in
     #      realized_invest.  None-degrade: when flex_data /
     #      period_branch_full is unavailable (the Benders TIER-1 snapshot
-    #      call passes flex_data=None by design, :2278-2290) the check is a
+    #      call passes flex_data=None by design) the check is a
     #      no-op — that path is a Benders invest solve, which Guard 2
     #      already forbids for stochastic models, so no synthetic token can
-    #      reach it.  On today's (flag-off) code both branches are empty
-    #      (realized branch keeps real names end-to-end), so the guard is
-    #      inert and adds no golden change.
+    #      reach it.  Check (a) here, (b) on the carried cohorts below.
     _pbf = getattr(flex_data, "period_branch_full", None)
     _synth = synthetic_branch_tokens(_pbf)
     if _synth:
@@ -7144,17 +6934,6 @@ def build_handoff_from_solution(
                 f"Only real (realized-branch) period names may be "
                 f"realized for investment."
             )
-        # (b) committed rows carry no synthetic period.
-        _bad_commit = sorted({
-            d for (e, d, v) in inv_rows if v != 0.0 and d in _synth
-        })
-        if _bad_commit:
-            raise FlexToolConfigError(
-                f"Solve '{solve_name}': handoff would commit investment "
-                f"at synthetic stochastic-branch period(s) {_bad_commit} "
-                f"— these belong to a non-realized scenario and must not "
-                f"enter the committed capacity chain (recourse plan §3.3)."
-            )
 
     # ---- divest_cumulative: prior + sum_d v_divest * unitsize ----
     entity_divest = set(_read_singles_csv(sd / "entityDivest.csv",
@@ -7163,12 +6942,6 @@ def build_handoff_from_solution(
     for e in sorted(entity_divest):
         cum = prior_divested.get(e, 0.0) + divest_by_e.get(e, 0.0) * unitsize.get(e, 1.0)
         div_rows.append((e, cum))
-    # ---- realized_divest: prior rows + this solve's realized retirements, per decision period ----
-    divest_period = dict(prior_divest_period)
-    for (e, d), v in realized_divest_by_ed.items():
-        if e in entity_divest and v != 0.0:
-            divest_period[(e, d)] = divest_period.get((e, d), 0.0) + v * unitsize.get(e, 1.0)
-    divest_period_rows = [(e, d, v) for (e, d), v in sorted(divest_period.items()) if v != 0.0]
 
     # ---- realized_cohort / realized_retire: the realized investments as cohorts (their rows of the cohort table,
     # placed once by this solve) and the retirements per cohort, chain-cumulative ----
@@ -7181,7 +6954,7 @@ def build_handoff_from_solution(
         {(e, o): v for (e, o), v in invest_by_ed.items() if o in realize_invest},
         {(e, d): v for (e, d), v in realized_divest_by_ed.items() if e in entity_divest and v != 0.0},
         unitsize)
-    # Slice C Guard 3 on the carried cohorts: no realized cohort is decided in a synthetic branch period.
+    # Slice C Guard 3 (b): no carried cohort is decided in a synthetic branch period.
     if _synth and realized_cohort_df is not None:
         _bad_cohort = sorted(set(realized_cohort_df["period_decided"].drop_nulls().to_list()) & _synth)
         if _bad_cohort:
@@ -8085,21 +7858,12 @@ def build_handoff_from_solution(
                     fix_storage_usage_df = weighted
 
     return SolveHandoff(
-        realized_invest=pl.DataFrame(
-            inv_rows, schema=["entity", "period", "value"], orient="row",
-        ) if inv_rows else None,
-        realized_existing=pl.DataFrame(
-            exist_rows, schema=["entity", "period", "value"], orient="row",
-        ) if exist_rows else None,
         realized_commission=pl.DataFrame(
             commission_rows, schema=["entity", "period", "commission_period", "value"], orient="row",
         ) if commission_rows else None,
         divest_cumulative=pl.DataFrame(
             div_rows, schema=["entity", "value"], orient="row",
         ) if div_rows else None,
-        realized_divest=pl.DataFrame(
-            divest_period_rows, schema=["entity", "period", "value"], orient="row",
-        ) if divest_period_rows else None,
         realized_cohort=realized_cohort_df,
         realized_retire=realized_retire_df,
         roll_end_state=roll_end_state_df,
@@ -8136,13 +7900,9 @@ def _overlay_handoff(flex_data: "FlexData", handoff,
 
     Carriers overlaid (target FlexData fields):
 
-    * ``p_entity_previously_invested_capacity (e, d)``  ← derived from
-      ``realized_invest`` summed over historical periods using
-      ``solve_data/edd_history.csv``.  This mirrors flextool's
-      ``write_p_entity_previously_invested_capacity`` (see
-      ``preprocessing/entity_period_calc_params.py:1584``):
-      ``v[e, d] = Σ_{(e, d_h, d) ∈ edd_history ∧ (e, d_h) realized}  realized_invest[(e, d_h)]``.
-    * ``p_entity_invested (e,)``  ← ``realized_invest`` summed over period.
+    * ``p_entity_previously_invested_capacity (e, d)`` / ``p_entity_invested (e,)`` ← the frames the solve emitted
+      from ``realized_cohort`` (``solve_data/p_entity_previously_invested_capacity`` /
+      ``solve_data/p_entity_invested``).
     * ``p_entity_divested (e,)``  ← ``divest_cumulative``.
     * ``p_fix_storage_quantity (n, d, t)``  ← ``fix_storage_quantity``.
 
@@ -8165,76 +7925,23 @@ def _overlay_handoff(flex_data: "FlexData", handoff,
         Carrier set built by :func:`build_handoff_from_solution` from the
         prior sub-solve's polar_high solution.
     solve_data_dir : Path, optional
-        Path to the current sub-solve's ``solve_data/`` directory.
-        Required for the ``p_entity_previously_invested_capacity``
-        overlay (it reads ``edd_history.csv`` to know which prior
-        invest periods feed each current period).  ``None`` skips that
-        carrier; the snapshot's pre-written value is then used as-is.
+        Path to the current sub-solve's ``solve_data/`` directory (the keys of the emitted frames).  ``None`` skips
+        ``p_entity_previously_invested_capacity`` / ``p_entity_invested``; the snapshot's value is used as-is.
     """
     from dataclasses import replace
     overrides: dict = {}
 
-    # --- p_entity_previously_invested_capacity (e, d): realized_invest
-    # summed over the historical d_h that feed each current d, per
-    # solve_data/edd_history.csv ∩ ed_history_realized.
-    # Mirrors flextool/preprocessing/entity_period_calc_params.py:1525-1543.
-    # Phase E-g — seed-aware existence check so the overlay still fires
-    # when the cascade runs under ``the in-memory cascade`` (the per-
-    # sub-solve accumulator carries ``edd_history.csv`` in memory even
-    # when the disk file is suppressed).
-    if (handoff.realized_invest is not None
-            and solve_data_dir is not None
-            and _provider_has(provider, "solve_data/edd_history",
-                                solve_data_dir / "edd_history.csv")):
-        # Build the (e, d_h) → realized_invest dict.
-        ppic: dict[tuple[str, str], float] = {}
-        for r in handoff.realized_invest.iter_rows(named=True):
-            ppic[(str(r["entity"]), str(r["period"]))] = float(r["value"])
-        # ed_history_realized = keys(ppic) ∪ ed_history_realized_first.csv.
-        ed_realized: set[tuple[str, str]] = set(ppic.keys())
-        ehrf_path = solve_data_dir / "ed_history_realized_first.csv"
-        if _provider_has(provider, "solve_data/ed_history_realized_first", ehrf_path):
-            ehrf = _provider_read(provider, "solve_data/ed_history_realized_first", ehrf_path)
-            if ehrf.height > 0:
-                for r in ehrf.iter_rows(named=True):
-                    ed_realized.add((str(r["entity"]), str(r["period"])))
-        # Sum realized_invest over historical d_h per (e, d).
-        edd_hist = _provider_read(provider, "solve_data/edd_history",
-                                    solve_data_dir / "edd_history.csv")
-        prev_inv: dict[tuple[str, str], float] = {}
-        if edd_hist.height > 0:
-            for r in edd_hist.iter_rows(named=True):
-                e = str(r["entity"])
-                d_h = str(r["period_history"])
-                d = str(r["period"])
-                if (e, d_h) in ed_realized:
-                    prev_inv[(e, d)] = prev_inv.get((e, d), 0.0) \
-                                       + ppic.get((e, d_h), 0.0)
-        if prev_inv:
-            rows = [(e, d, v) for (e, d), v in prev_inv.items() if v != 0.0]
-            if rows:
-                df = pl.DataFrame(rows,
-                                    schema=["e", "d", "value"], orient="row")
-                overrides["p_entity_previously_invested_capacity"] = \
-                    Param(("e", "d"), df)
-            else:
-                overrides["p_entity_previously_invested_capacity"] = None
-        else:
-            overrides["p_entity_previously_invested_capacity"] = None
-
-    # --- realized_invest → p_entity_invested (e,)  (sum over period) ---
-    # ``p_entity_invested`` is a per-entity scalar (cumulative prior-solve
-    # invest), the sum of ``realized_invest`` rows for that entity.
-    if handoff.realized_invest is not None:
-        df = (handoff.realized_invest
-            .with_columns(value=pl.col("value").cast(pl.Float64, strict=False)
-                                 .fill_null(0.0))
-            .group_by("entity").agg(pl.col("value").sum())
-            .pipe(rename_to_axis, {"entity": "e"})
-            .filter(pl.col("value") != 0.0)
-            .select("e", "value"))
-        overrides["p_entity_invested"] = (
-            Param(("e",), df) if df.height > 0 else None)
+    # --- p_entity_previously_invested_capacity (e, d) / p_entity_invested (e,): the carried cohorts in service and
+    # all of them, as the solve emitted them from the handoff ``realized_cohort``
+    # (``_chain_params.emit_existing_capacity``): the values every other consumer reads.
+    if solve_data_dir is not None:
+        from flextool.engine.preprocess.params._derived import (
+            p_entity_invested_from_workdir,
+            p_entity_previously_invested_capacity_from_workdir,
+        )
+        overrides["p_entity_previously_invested_capacity"] = p_entity_previously_invested_capacity_from_workdir(
+            solve_data_dir.parent, provider=provider)
+        overrides["p_entity_invested"] = p_entity_invested_from_workdir(solve_data_dir.parent, provider=provider)
 
     # --- divest_cumulative → p_entity_divested (e,) ---
     if handoff.divest_cumulative is not None:

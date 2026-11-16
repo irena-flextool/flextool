@@ -32,7 +32,7 @@ Naming convention
   suffix on disk dump.
 * Constant names are uppercased, underscore-separated, prefixed with
   the parent: ``SOLVE_DATA_ACTIVE_TIMELINES``, ``INPUT_TIMELINE``,
-  ``DERIVED_CT_METHOD_OVERRIDES``, ``HANDOFF_REALIZED_INVEST``.
+  ``DERIVED_CT_METHOD_OVERRIDES``, ``HANDOFF_REALIZED_COHORT``.
 * Group constants by parent dir, then alphabetically within the group.
 * New keys: add the constant here first, then use it from the call sites.
 
@@ -60,9 +60,6 @@ SOLVE_DATA_FIX_STORAGE_USAGE = "solve_data/fix_storage_usage"
 SOLVE_DATA_P_ENTITY_PRE_EXISTING = "solve_data/p_entity_pre_existing"
 SOLVE_DATA_P_ENTITY_INVESTED = "solve_data/p_entity_invested"
 SOLVE_DATA_P_ENTITY_DIVESTED = "solve_data/p_entity_divested"
-SOLVE_DATA_P_ENTITY_PERIOD_EXISTING_CAPACITY = (
-    "solve_data/p_entity_period_existing_capacity"
-)
 SOLVE_DATA_P_ROLL_CONTINUE_STATE = "solve_data/p_roll_continue_state"
 # (period, whole) of a rolling_window sub-solve: whether the roll holds every step the complete solve has in the
 # period (_run_model); header-only for a sub-solve that is not a roll.  The bind_intraperiod_blocks blocks of a
@@ -80,9 +77,6 @@ SOLVE_DATA_TIMELINE_MATCHING_MAP = "solve_data/timeline_matching_map"
 SOLVE_DATA_CO2_CUM_REALIZED_TONNES = "solve_data/co2_cum_realized_tonnes"
 SOLVE_DATA_LADDER_CUM_SIM_HOURS = "solve_data/ladder_cum_sim_hours"
 SOLVE_DATA_LADDER_CUM_REALIZED_MWH = "solve_data/ladder_cum_realized_mwh"
-SOLVE_DATA_ED_HISTORY_REALIZED = "solve_data/ed_history_realized"
-SOLVE_DATA_ED_HISTORY_REALIZED_FIRST = "solve_data/ed_history_realized_first"
-SOLVE_DATA_EDD_HISTORY = "solve_data/edd_history"
 
 
 # ---------------------------------------------------------------------------
@@ -154,11 +148,8 @@ DERIVED_CT_METHOD_OVERRIDES = "derived/ct_method_overrides"
 # signal instead of checking the SolveHandoff object directly.
 # ---------------------------------------------------------------------------
 
-HANDOFF_REALIZED_INVEST = "handoff/realized_invest"
-HANDOFF_REALIZED_EXISTING = "handoff/realized_existing"
 HANDOFF_REALIZED_COMMISSION = "handoff/realized_commission"
 HANDOFF_DIVEST_CUMULATIVE = "handoff/divest_cumulative"
-HANDOFF_REALIZED_DIVEST = "handoff/realized_divest"
 HANDOFF_REALIZED_COHORT = "handoff/realized_cohort"
 HANDOFF_REALIZED_RETIRE = "handoff/realized_retire"
 HANDOFF_ROLL_END_STATE = "handoff/roll_end_state"
@@ -204,10 +195,7 @@ def produced_handoff_key(handoff_key: str) -> str:
 # carriers are overridable.
 # ---------------------------------------------------------------------------
 
-OVERRIDE_REALIZED_INVEST = "override/realized_invest"
-OVERRIDE_REALIZED_EXISTING = "override/realized_existing"
 OVERRIDE_DIVEST_CUMULATIVE = "override/divest_cumulative"
-OVERRIDE_REALIZED_DIVEST = "override/realized_divest"
 OVERRIDE_REALIZED_COHORT = "override/realized_cohort"
 OVERRIDE_REALIZED_RETIRE = "override/realized_retire"
 OVERRIDE_ROLL_END_STATE = "override/roll_end_state"
