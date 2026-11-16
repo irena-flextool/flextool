@@ -184,6 +184,31 @@ def test_kunknown_abs_infeasibility_over_margin_rejected() -> None:
     assert not acc.accepted
 
 
+def test_reject_message_names_the_failing_checks_not_the_passing_one() -> None:
+    """Relative 4e-7 <= 1e-6 passes, but 12 rows and absolute 2.5 >
+    1e-7 x 10 = 1e-6 fail.  The message must not claim 4e-7 > 1e-6."""
+    acc = classify_acceptance(
+        _StubSolution(
+            optimal=False,
+            diagnostics=_diag(
+                status_name="kUnknown",
+                primal_feasible=False,
+                num_primal_infeasibilities=12,
+                max_primal_infeasibility=2.5,
+                max_relative_primal_infeasibility=4e-7,
+            ),
+            primal_feasibility_tolerance=1e-7,
+        ),
+        ranges_post=None,
+        solve_name="s",
+    )
+    assert not acc.accepted
+    assert "4.00e-07 > " not in acc.message
+    assert "max relative primal infeasibility 4.00e-07 <= 1.0e-06 passes" in acc.message
+    assert "12 infeasibilities" in acc.message
+    assert "max absolute primal infeasibility 2.5 > 1.0e-06" in acc.message
+
+
 @pytest.mark.parametrize(
     "status_name,needle",
     [
@@ -812,3 +837,197 @@ def test_highs_mip_with_an_objective_bound_warns_that_optimal_may_not_be_optimal
         assert highs_objective_bound_warning(sol, "s", no_bound) is None
     lp = _stopped(mip=False)
     assert highs_objective_bound_warning(lp, "s", {"objective_bound": -1760.0}) is None
+
+
+# --- user scaling: count and absolute check in the space HiGHS solved ----------------------------------------
+#
+# HiGHS reports its counters after removing ``user_bound_scale = N`` without rescaling its tolerance; polar-high
+# >= 3.15.0 adds the solved-space counters (``user_scaled_*``).  Built as a namespace so the tests run against an
+# older polar-high whose SolveDiagnostics lacks those fields.  Synthetic numbers.
+
+
+def _user_scaled_diag(status_name: str = "kUnknown", **fields) -> types.SimpleNamespace:
+    d = dataclasses.asdict(_diag(status_name=status_name))
+    d.update(fields)
+    return types.SimpleNamespace(**d)
+
+
+# user_bound_scale -20: a residual r in the solved problem reads r * 2**20 after unscaling.  The solved problem's
+# largest residual 4.76837158203125e-08 (= 0.05 / 2**20) is within 1e-7 there, and reads 0.05 afterwards, where
+# 40 entries exceed 1e-7 and HiGHS calls the solution infeasible.
+_SCALED_FEASIBLE = dict(
+    user_bound_scale=-20,
+    user_objective_scale=0,
+    primal_feasible=False,
+    num_primal_infeasibilities=40,
+    max_primal_infeasibility=0.05,
+    max_relative_primal_infeasibility=3e-7,
+    user_scaled_num_primal_infeasibilities=0,
+    user_scaled_max_primal_infeasibility=4.76837158203125e-08,
+    dual_feasible=False,
+    num_dual_infeasibilities=7,
+    user_scaled_num_dual_infeasibilities=0,
+    user_scaled_max_dual_infeasibility=2e-8,
+    primal_dual_objective_error=0.002,
+)
+
+
+def test_user_scaled_feasible_solve_is_accepted_although_the_unscaled_count_is_not_zero() -> None:
+    """Solved space: 0 infeasibilities, max 4.77e-8 <= 10 x 1e-7 = 1e-6; relative 3e-7 <= 1e-6; gap 0.2% <= 1%
+    -> accepted, although after unscaling 40 entries exceed the tolerance and the maximum is 0.05."""
+    acc = classify_acceptance(
+        _StubSolution(optimal=False, diagnostics=_user_scaled_diag(**_SCALED_FEASIBLE)),
+        ranges_post=None, solve_name="s",
+    )
+    assert acc.accepted and acc.near_optimal, acc.message
+    assert "max relative primal infeasibility (unscaled) 3.00e-07 <= 1.0e-06" in acc.message
+    assert "; 0 infeasibilities in the scaled problem HiGHS solved (user_bound_scale -20))" in acc.message
+    # The dual counters are read in the same space: 0 there.
+    assert "dual solution is also feasible" in acc.message
+
+
+def test_user_scaled_infeasible_solve_is_rejected() -> None:
+    """Solved space: 3 entries over 1e-7, max 2e-6 > 1e-6 -> rejected; the message says which space each number
+    is in, and does not cite HiGHS's unscaled verdict."""
+    fields = dict(
+        _SCALED_FEASIBLE,
+        user_scaled_num_primal_infeasibilities=3,
+        user_scaled_max_primal_infeasibility=2e-6,
+    )
+    acc = classify_acceptance(
+        _StubSolution(optimal=False, diagnostics=_user_scaled_diag(**fields)), ranges_post=None, solve_name="s",
+    )
+    assert not acc.accepted
+    assert acc.message == (
+        "non-optimal solve for s: the solver could not certify optimality and the returned primal solution is "
+        "NOT feasible (3 infeasibilities in the scaled problem HiGHS solved (user_bound_scale -20); max absolute "
+        "primal infeasibility 2e-06 > 1.0e-06 (10 x the solver tolerance 1e-07) in the scaled problem HiGHS "
+        "solved (user_bound_scale -20); max relative primal infeasibility (unscaled) 3.00e-07 <= 1.0e-06 passes). "
+        "The solution cannot be used"
+    )
+
+
+def test_user_scaled_count_alone_rejects() -> None:
+    """One solved-space entry over the tolerance, its maximum 5e-7 within 1e-6: the count still rejects."""
+    fields = dict(
+        _SCALED_FEASIBLE,
+        user_scaled_num_primal_infeasibilities=1,
+        user_scaled_max_primal_infeasibility=5e-7,
+    )
+    acc = classify_acceptance(
+        _StubSolution(optimal=False, diagnostics=_user_scaled_diag(**fields)), ranges_post=None, solve_name="s",
+    )
+    assert not acc.accepted
+    assert "(1 infeasibilities in the scaled problem HiGHS solved (user_bound_scale -20); max relative" in (
+        acc.message
+    )
+    assert "max absolute" not in acc.message
+
+
+def test_without_user_scaling_the_plain_counters_decide() -> None:
+    """No user scaling (exponents 0): HiGHS's own counters and verdict decide, as before, and the message names
+    no space.  The user-scaled fields are set to different values here only to show they are not read."""
+    fields = dict(
+        _SCALED_FEASIBLE,
+        user_bound_scale=0,
+        user_objective_scale=0,
+        num_primal_infeasibilities=5,
+        max_primal_infeasibility=2.5,
+    )
+    acc = classify_acceptance(
+        _StubSolution(optimal=False, diagnostics=_user_scaled_diag(**fields)), ranges_post=None, solve_name="s",
+    )
+    assert not acc.accepted
+    assert acc.message == (
+        "non-optimal solve for s: the solver could not certify optimality and the returned primal solution is "
+        "NOT feasible (5 infeasibilities; max absolute primal infeasibility 2.5 > 1.0e-06 (10 x the solver "
+        "tolerance 1e-07); the solver reports the primal solution infeasible; max relative primal infeasibility "
+        "3.00e-07 <= 1.0e-06 passes). The solution cannot be used"
+    )
+
+
+def test_user_scaling_without_solved_space_counters_keeps_the_unscaled_check() -> None:
+    """A polar-high that reports the exponent but no solved-space counters: the unscaled counters decide."""
+    fields = dict(
+        _SCALED_FEASIBLE,
+        user_scaled_num_primal_infeasibilities=None,
+        user_scaled_max_primal_infeasibility=None,
+    )
+    acc = classify_acceptance(
+        _StubSolution(optimal=False, diagnostics=_user_scaled_diag(**fields)), ranges_post=None, solve_name="s",
+    )
+    assert not acc.accepted
+    assert "(40 infeasibilities; max absolute primal infeasibility 0.05 > 1.0e-06" in acc.message
+
+
+def test_user_scaled_limit_stopped_mip_is_kept() -> None:
+    """A time-limited MIP whose incumbent is feasible in the solved space (0 entries over the tolerance there)
+    but not after unscaling: kept with the warning, as HiGHS judged it."""
+    diag = _user_scaled_diag("kTimeLimit", **_SCALED_FEASIBLE, mip_gap=0.002286)
+    acc = classify_acceptance(_time_limited(mip=True, diagnostics=diag), ranges_post=None, solve_name="s")
+    assert acc.accepted and acc.limit_stopped
+    infeasible = _user_scaled_diag(
+        "kTimeLimit", **dict(_SCALED_FEASIBLE, user_scaled_num_primal_infeasibilities=2), mip_gap=0.002286
+    )
+    acc = classify_acceptance(_time_limited(mip=True, diagnostics=infeasible), ranges_post=None, solve_name="s")
+    assert not acc.accepted
+
+
+# --- the --save-memory HiGHS child: the limit-stop verdict in the space HiGHS solved ---------------------------
+
+
+def _child_highs(col_value: list[float], user_bound_scale: int):
+    """A HiGHS handle holding x0 (continuous) + x1 (integer) = 5, 0 <= x <= 10, and the given column values
+    (HiGHS computes the row value)."""
+    import highspy
+    import numpy as np
+
+    h = highspy.Highs()
+    h.setOptionValue("output_flag", False)
+    lp = highspy.HighsLp()
+    lp.num_col_, lp.num_row_ = 2, 1
+    lp.col_cost_ = np.array([1.0, 1.0])
+    lp.col_lower_, lp.col_upper_ = np.array([0.0, 0.0]), np.array([10.0, 10.0])
+    lp.row_lower_, lp.row_upper_ = np.array([5.0]), np.array([5.0])
+    lp.a_matrix_.format_ = highspy.MatrixFormat.kColwise
+    lp.a_matrix_.start_ = np.array([0, 1, 2], dtype=np.int32)
+    lp.a_matrix_.index_ = np.array([0, 0], dtype=np.int32)
+    lp.a_matrix_.value_ = np.array([1.0, 1.0])
+    lp.integrality_ = [highspy.HighsVarType.kContinuous, highspy.HighsVarType.kInteger]
+    h.passModel(lp)
+    h.setOptionValue("user_bound_scale", user_bound_scale)
+    solution = highspy.HighsSolution()
+    solution.col_value = col_value
+    solution.value_valid = True
+    h.setSolution(solution)
+    return h, highspy
+
+
+@pytest.mark.parametrize(("col_value", "user_bound_scale", "expected"), [
+    # x0 10.5 > 10: x 1/4 -> 2.625 > 2.5 by 0.125 > 1e-7.
+    ([10.5, 0.0], -2, False),
+    # Row 5 + 2e-7 vs 5: 2e-7 > 1e-7 unscaled, but x 1/4 -> 5e-8 <= 1e-7 in the solved problem.
+    ([5.0 + 2e-7, 0.0], -2, True),
+    # The integer x1 keeps its scale: -3e-7 is 3e-7 > 1e-7 below 0 in both spaces.
+    ([5.0 + 3e-7, -3e-7], -2, False),
+    # No user scaling: HiGHS's own verdict is already in the solved space.
+    ([10.5, 0.0], 0, None),
+])
+def test_child_solved_space_primal_feasible(col_value, user_bound_scale, expected) -> None:
+    from flextool.cli.cmd_solve_mps import solved_space_primal_feasible
+
+    h, highspy = _child_highs(col_value, user_bound_scale)
+    assert solved_space_primal_feasible(h, highspy) is expected
+
+
+def test_parent_reads_the_child_verdict(tmp_path) -> None:
+    from flextool.engine.solve._subprocess_solve import _read_highs_primal_feasible
+
+    path = tmp_path / "s.primalfeasible"
+    assert _read_highs_primal_feasible(path) is None  # not written
+    path.write_text("1")
+    assert _read_highs_primal_feasible(path) is True
+    path.write_text("0")
+    assert _read_highs_primal_feasible(path) is False
+    path.write_text("garbled")
+    assert _read_highs_primal_feasible(path) is None

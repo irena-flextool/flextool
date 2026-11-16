@@ -100,7 +100,7 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
   
   - Stochastic parameters:
 
-    - *stochastic_branches*: 4D-map defining the solve's **forecast branches** — the probability-weighted possible futures. Index columns: *period*, *branch*, *analysis_time* (the branch's start timestep), *realized* (yes/no), and the value is the branch's **probability weight**. The weights are normalized to sum to one across the forecast branches at each start time. The *realized* flag is an **optional designation** (at most one branch per start time) marking which branch's data are treated as the actuals for the committed / realized-dispatch results; a realized-flagged branch is **not** a weighted member of the forecast fan. A period-indexed value (a map keyed by period, e.g. efficiency, startup cost, commodity price, availability, variable cost or a per-period limit) also applies to that period's forecast branches; a value authored for a branch period itself takes precedence. See 'How to use stochastics' for more information.
+    - *stochastic_branches*: 4D-map defining the solve's **forecast branches** — the probability-weighted possible futures. Index columns: *period*, *branch*, *analysis_time* (the branch's start timestep), *realized* (yes/no), and the value is the branch's **probability weight**. The weights are normalized to sum to one across the forecast branches at each start time. The *realized* flag is an **optional designation** (at most one branch per start time) marking which branch's data are treated as the actuals for the committed / realized-dispatch results; a realized-flagged branch is **not** a weighted member of the forecast fan. A period-indexed value (a map keyed by period, e.g. efficiency, startup cost, commodity price, availability, variable cost or a per-period limit) also applies to that period's forecast branches; a value authored for a branch period itself takes precedence. A branch may have the name of another period, but FlexTool warns: the two are easy to confuse in the results; a branch named like the period where it fans out is an error (rename the branch). See 'How to use stochastics' for more information.
     - *stochastic_invest_method*: `none` (default) or `recourse`. `none` makes a single shared here-and-now investment plan across all forecast branches (operations still fan per branch). `recourse` gives per-branch (wait-and-see) investment: each forecast branch invests on its own data at and after the branching period, with probability-weighted investment costs and per-branch investment limits, and reports EVPI/VSS-style stochastic value. Forecast-branch (unrealized) investments are not in the normal outputs, only in the raw dump of `model.output_horizon` (a debug flag). Incompatible with Benders decomposition. See 'How to use stochastics' for the interpretation caveats.
   
   - Detail reduction parameters (see [Leaving out detail in a solve](#leaving-out-detail-in-a-solve)):
@@ -153,9 +153,9 @@ What each value removes:
 - `none` removes nothing.
 - `integers` removes: whole units online (they become continuous) and the `exact` connection method (those connections become *regular*).
 - `integers_ramps` removes: what `integers` removes, and the ramp limits and ramp costs.
-- `integers_min_limits` removes: what `integers` removes, and min load, the `capacity_min_coeff` floors and the minimum up and down times.
+- `integers_min_limits` removes: what `integers` removes, and min load, the `capacity_min_coeff` floors and the minimum up and down times. A `min_load_efficiency` unit more efficient at min load than at full load runs at its full-load efficiency.
 - `integers_ramps_min_limits` removes: what `integers` removes, the ramp limits and ramp costs, and the min limits.
-- `online` removes: what `integers_min_limits` removes, and the online variables: units online, start-ups, shut-downs, start-up costs, the user constraints with a `constraint_online_coeff` term and the part-load curve of `min_load_efficiency` units. Ramp limits stay and apply to the capacity.
+- `online` removes: what `integers_min_limits` removes, and the online variables: units online, start-ups, shut-downs, start-up costs, the user constraints with a `constraint_online_coeff` term and the part-load curve of `min_load_efficiency` and `piecewise_linear` units (they run at their full-load efficiency). Ramp limits stay and apply to the capacity.
 - `online_ramps` removes: what `online` removes, and the ramp limits and ramp costs.
 
 Each `integers*` level also removes the online variables that nothing in the solve uses any more (see
@@ -178,12 +178,27 @@ The parts in detail:
 - **Min limits.** `min_load`, the `capacity_min_coeff` floors and the minimum up and down times (`min_uptime`, `min_downtime`).
 
     A unit with `min_load_efficiency` keeps its part-load curve. Without the min load floor its units online can
-    follow its output (units online ≈ output / capacity), so its fuel becomes close to linear in output.
+    follow its output (units online ≈ output / capacity), so its fuel becomes close to linear in output. A
+    `min_load_efficiency` unit that is more efficient at min load (`efficiency_at_min_load` above `efficiency`)
+    instead runs at its full-load efficiency, as under `online` (see *Online variables* below): without the floor
+    the model would keep all its units online, and its curve would then give less fuel than at any point of the
+    curve, below zero at low output.
 
 - **Online variables.** The units online of every unit and connection with a `startup_method`, and with them start-ups, shut-downs, start-up costs and the min limits.
 
-    A unit with `conversion_method` *min_load_efficiency* uses its full-load efficiency at every output: the same
-    fuel at full load and less at part load. A user constraint with a `constraint_online_coeff` term is left out of
+    A unit with `conversion_method` *min_load_efficiency* or *piecewise_linear* runs as a *constant_efficiency*
+    unit at its full-load efficiency: `efficiency` for *min_load_efficiency*, the curve's point at load share 1
+    for *piecewise_linear*. Its fuel is its output divided by that efficiency at every output, the same fuel as with
+    the online variables at full load. "Full load" is the most output, weighted by `conversion_flow_coeff`, that one
+    unit online can give (its outputs filled in descending `conversion_flow_coeff` order up to their
+    `capacity_max_coeff` and the capacity): for a unit whose weighted outputs add up to more or less than its
+    capacity (for example one output with `conversion_flow_coeff` 2), the full-load fuel is spread over that
+    output, so the fuel at full output is still the same as with the online variables and the unit keeps its input
+    limits. Why full load: without online variables (typically in an investment solve) the investment cost stops
+    the model from building more than it needs, so the units mostly run at full capacity or not at all, and the
+    full-load efficiency is the one that matters most. This applies also to a unit that is more efficient at part
+    load (`efficiency_at_min_load` above `efficiency`, or a curve whose best efficiency is below full load): it gets
+    the poorer full-load efficiency and so uses more fuel at part load than with the online variables. A user constraint with a `constraint_online_coeff` term is left out of
     the solve whole, with a warning that names it. Ramp limits that are kept apply to the capacity, so a unit that
     starts from zero ramps up at its ramp speed (there is no start-up allowance). `online` contains every effect of
     `integers`, so the solve is an LP.
@@ -193,7 +208,8 @@ The parts in detail:
   were *no_startup*.
 
     The online variables are used by: a start-up cost (`startup_cost`), `min_load` and the `capacity_min_coeff`
-    floors, the minimum up and down times, the part-load curve of a *min_load_efficiency* unit, a
+    floors, the minimum up and down times, the part-load curve of a *min_load_efficiency* unit or of a
+    *piecewise_linear* unit whose efficiency rises from the first point of its curve to the second, a
     `constraint_online_coeff` term in a user constraint of the solve, a reserve that the unit or connection holds,
     inertia (an `inertia_constant` at a node of a group with `has_inertia`), ramp limits (their start-up and
     shut-down allowance) and, in a realization solve, the units online it takes from its parent solve. A reserve or
@@ -255,10 +271,11 @@ run log says so in the solve's info line:
 - `*min_limits` or `online*` with downward reserves kept: the downward reserve can reach down to zero flow, not only to min load.
 - `integers*` with a `constraint_online_coeff` term: the user constraint counts fractional units online.
 
-**An approximation, never tighter.** Every part only removes constraints or integer restrictions, except the
-full-load efficiency of `min_load_efficiency` units under `online*`, which uses less fuel than the part-load
-curve. CO2 limits read that fuel, so they relax as well. The reduced solve is therefore never more constrained than
-the full one.
+**An approximation.** Every part only removes constraints or integer restrictions, except the full-load
+efficiency of `min_load_efficiency` and `piecewise_linear` units under `online*` (and of `min_load_efficiency`
+units more efficient at min load under `*min_limits`). A unit whose efficiency rises
+towards full load uses less fuel at part load than with its curve, a unit that is more efficient at part load uses
+more; at full output the fuel is the same. CO2 limits read that fuel.
 
 **Across solves.** Every roll of a rolling solve uses the solve's levels. A nested solve uses its own levels, not
 its parent's. A Benders decomposition can split connections whose reserves, online variables or `exact` method
@@ -284,7 +301,7 @@ have no entity columns.
 feature out. A period shared with a solve that kept the feature keeps its per-period value, in which the time
 steps of the solve that left it out count as 0. Its row is labelled with the last solve that realized the period,
 which may be the one that left the feature out. The costs stay: a left-out feature costs nothing in the solve.
-The fuel of a `min_load_efficiency` unit under `online*` is its output divided by its full-load efficiency.
+The fuel of a `min_load_efficiency` or `piecewise_linear` unit under `online*` is its output divided by its full-load efficiency (see "Online variables" above for full load).
 
 ### Time structure assumptions
 

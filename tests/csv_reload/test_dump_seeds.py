@@ -99,16 +99,17 @@ SCENARIO_OF_FIELD: dict[str, str] = {
     "pssdt_varCost_eff_connection": "hyphenated_entity_names",
     "p_pssdt_varCost": "fusion",
     # S4-3 direct parameters.  coal_co2_price: coal co2_content on a CO2-priced node; multi_year: coal_plant
-    # invest_max_total / invest_max_period and a divest cap; invest_retire_limits_all: the minimum totals and
+    # invest_max_total / invest_max_period; invest_retire_limits_all: the divest cap (multi_year's
+    # invest_period_total / invest_total units cannot retire, so it has no divest entity), the minimum totals and
     # retire_max_period, which no tests.json scenario authors.
     "p_co2_content": "coal_co2_price",
     "e_invest_max_total": "multi_year",
-    "e_divest_max_total": "multi_year",
+    "e_divest_max_total": "invest_retire_limits_all",
     "ed_invest_max_period": "multi_year",
     "ed_divest_max_period": "invest_retire_limits_all",
     "e_invest_min_total": "invest_retire_limits_all",
     "e_divest_min_total": "invest_retire_limits_all",
-    # S4-4 group sets and min-load units.  capacity_margin: a manual capacity-margin group; coal_wind_inertia: an
+    # S4-4 group sets and min-load units.  capacity_margin: an absolute capacity-margin group; coal_wind_inertia: an
     # inertia group; nonsync_internal: the non-synchronous group, its flagged arcs and the internal line;
     # coal_min_load: coal_plant online with min_load.
     "groupCapacityMargin": "capacity_margin",

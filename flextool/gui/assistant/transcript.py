@@ -35,6 +35,7 @@ from tkinter import ttk
 from typing import TYPE_CHECKING
 
 from flextool.assistant.chat_cli import args_text
+from flextool.gui._menus import popup_at_pointer
 from flextool.gui.assistant import strings
 from flextool.gui.assistant.fonts import CHAT_FONT, sync_fonts
 from flextool.gui.assistant.markdown_stream import Line, MarkdownStream
@@ -374,7 +375,7 @@ class Transcript(ttk.Frame):
                          command=lambda: self._question_action(AGAIN, line))
         menu.add_command(label=strings.EDIT_QUESTION, accelerator=strings.EDIT_KEY,
                          command=lambda: self._question_action(EDIT, line))
-        menu.tk_popup(event.x_root, event.y_root)
+        popup_at_pointer(menu, event)
         return "break"
 
     # --- writing --------------------------------------------------------------------------------------------

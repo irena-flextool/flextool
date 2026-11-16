@@ -495,6 +495,32 @@ def _discover_tier_vocabulary(
         return unique
 
 
+def _discover_curve_line_vocabulary(backend: Any, entity_class: str, parameter: str) -> list[str]:
+    """The ``seg`` (curve line) vocabulary: ``"0"`` .. ``"K"``, K = the largest number of points of one curve
+    (a map over load shares) in *entity_class*.*parameter* (``unit.piecewise_linear_efficiency``), over every
+    entity and every period of a curve per period.  ``"0"`` is the origin line, ``"k"`` segment k.  Empty when no
+    entity has a curve."""
+    if getattr(backend, "_db", None) is None:  # pragma: no cover — backend lifecycle
+        return []
+    rows = backend.find_parameter_values(entity_class_name=entity_class, parameter_definition_name=parameter)
+    most = 0
+
+    def walk(node) -> None:
+        nonlocal most
+        values = list(getattr(node, "values", []))
+        if values and all(hasattr(v, "values") for v in values):
+            for v in values:
+                walk(v)
+        else:
+            most = max(most, len(values))
+
+    for row in rows:
+        pv = row.get("parsed_value")
+        if pv is not None and hasattr(pv, "values"):
+            walk(pv)
+    return [str(k) for k in range(most + 1)] if most else []
+
+
 def _collect_stochastic_branch_period_tokens(backend: Any) -> list[str]:
     """Enumerate forecast-branch period tokens from
     ``solve.stochastic_branches``.
@@ -699,6 +725,8 @@ def build_axis_enums(
           parameters (see :func:`_build_period_vocab`).
         - ``i``: integers ``"1"..."N"`` where N is the max map depth
           across ``commodity.price_ladder_*`` parameters.
+        - ``seg``: ``"0"``...``"K"``, K = the most points of one
+          ``unit.piecewise_linear_efficiency`` curve.
         - ``block``: keys of ``group.new_stepduration`` maps.
         - ``d_anchor``: the ``d`` vocabulary (anchors are periods).
       * ``parameter_value_list`` — scalar values of the named parameter
@@ -754,6 +782,12 @@ def build_axis_enums(
                     backend,
                     spec_src.get("entity_class", "commodity"),
                     spec_src.get("parameter_prefix", "price_ladder_"),
+                )
+            elif axis.name == "seg":
+                vocab = _discover_curve_line_vocabulary(
+                    backend,
+                    spec_src.get("entity_class", "unit"),
+                    spec_src.get("parameter", "piecewise_linear_efficiency"),
                 )
             elif axis.name == "block":
                 vocab = _build_block_vocab(backend, spec_src)

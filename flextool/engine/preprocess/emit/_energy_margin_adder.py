@@ -95,7 +95,7 @@ demand of the dynamic reserve requirement (``_group_slack.py``,
 from ``solve_data/pdtNodeInflow_unmargined``, recorded here before the adder
 is applied), by design: the energy margin is an adequacy device and not
 load, so the added demand never enters them, on any node type.  A capacity
-surplus for a group is the ``capacity_margin`` parameter.
+surplus for a group is the ``capacity_margin_absolute`` parameter.
 """
 from __future__ import annotations
 

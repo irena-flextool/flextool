@@ -62,10 +62,14 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Benders in-out separation stabilization weight (lambda). Solver-algorithm knob, never an LP coefficient.
     ('candidate_precapacity_to_avoid_big_m', 'group'): QuantityType.POWER,
     # [MW] Small pre-existing capacity assigned to investment candidate connections in DC power flow groups that have zero existing capacity. This...
+    ('capacity_margin_absolute', 'group'): QuantityType.POWER,
+    # [MW] Capacity the group needs above its demand at every time step of an investment period (capacity_margin_method absolute).
+    ('capacity_margin_relative', 'group'): QuantityType.FRACTION,
+    # [-] Capacity margin as a share of the group's peak demand (capacity_margin_method relative_of_peak_demand).
     ('capacity_margin', 'group'): QuantityType.POWER,
-    # [MW] Capacity the group needs above its demand at every time step of an investment period (capacity_margin_method manual).
     ('capacity_margin_share', 'group'): QuantityType.FRACTION,
-    # [-] Capacity margin as a share of the group's peak demand (capacity_margin_method share_of_peak).
+    # Pre-v80 names of capacity_margin_absolute / capacity_margin_relative, carried during the migration window
+    # (renamed by db_migration v80).
     # Pre-v70 input-side names, carried during the migration window
     # (renamed to input_share_max / input_share_min by db_migration v70).
     ('capacity_max_coeff', 'unit__inputNode'): QuantityType.FRACTION,
@@ -227,8 +231,6 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [MWh or count] Existing storage capacity or number of storage units. If virtual_unitsize is given, then existing is the number of units (cap...
     ('existing', 'unit'): QuantityType.POWER,
     # [MW or count] Existing capacity or number of units. If virtual_unitsize is given, then existing is the number of units (capacity = existing ...
-    ('exclude_entity_outputs', 'model'): QuantityType.DIMENSIONLESS,
-    # Boolean-style toggle: excludes node/unit/connection-level results while preserving group-level results.
     ('fix_storage_periods', 'solve'): QuantityType.DIMENSIONLESS,
     # Array of periods where the storage_values are fixed when the node has storage_include_solve_fix_method is set
     ('fixed_cost', 'connection'): QuantityType.PRICE_PER_CAPACITY,
@@ -242,7 +244,7 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('has_capacity_margin', 'group'): QuantityType.DIMENSIONLESS,
     # A flag whether the group of nodes has a capacity margin constraint in the investment mode.
     ('capacity_margin_method', 'group'): QuantityType.DIMENSIONLESS,
-    # Whether the group needs a capacity margin in investment solves, and how the margin is given (none, manual, share_of_peak).
+    # Whether the group needs a capacity margin in investment solves, and how the margin is given (none, absolute, relative_of_peak_demand).
     ('has_inertia', 'group'): QuantityType.DIMENSIONLESS,
     # Whether the group has an inertia constraint. Without yes, inertia_limit is ignored.
     ('has_non_synchronous', 'group'): QuantityType.DIMENSIONLESS,
@@ -417,8 +419,6 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Creates the timewise flow output for this node group (node-group dispatch table). Renamed from output_nodeGroup_dispatch.
     ('print_indicators', 'group'): QuantityType.DIMENSIONLESS,
     # Flag to output node-group indicator results for groups whose members are nodes (group__node). Renamed from output_nodeGroup_indicators.
-    ('output_ramp_envelope', 'model'): QuantityType.DIMENSIONLESS,
-    # Boolean output toggle: include the seven-parameter ramp-envelope diagnostic outputs. Flag.
     ('output_unit__node_flow_t', 'model'): QuantityType.DIMENSIONLESS,
     # Boolean output toggle: per-timestep unit→node flows. Flag.
     ('output_unit__node_ramp_t', 'model'): QuantityType.DIMENSIONLESS,
@@ -443,6 +443,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Map of periods with associated timesets that will be included in the solve. Index: period name, value: timeset name.
     ('periods_available', 'model'): QuantityType.DIMENSIONLESS,
     # (Optional) Array of periods available for the model. Periods that are in the data, but are not in period_timeset.
+    ('piecewise_linear_efficiency', 'unit'): QuantityType.FRACTION,
+    # [-] Part-load efficiency curve of a piecewise_linear unit: a map from load share to the efficiency at that load (output / input). Load...
     ('price', 'commodity'): QuantityType.PRICE_PER_ENERGY,
     # [CUR/MWh or other unit] Price of the commodity. Constant, period or time.
     ('price_ladder_annual', 'commodity'): QuantityType.DIMENSIONLESS,

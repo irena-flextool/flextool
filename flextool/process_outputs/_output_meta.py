@@ -53,7 +53,7 @@ class Semantics(str, Enum):
 DIMENSION_COLUMNS: frozenset[str] = frozenset(
     {"solve", "period", "time", "scenario", "step", "year", "group", "node",
      "unit", "connection", "process", "source", "sink", "commodity", "reserve",
-     "upDown", "category"}
+     "upDown", "category", "band"}
 )
 
 
@@ -179,6 +179,42 @@ RAMP = Transform(
     "Change in flow between consecutive timesteps (a ramp).",
     algebra="flow[t] − flow[t-1]",
     template="{R}",
+)
+RAMP_ROOM = Transform(
+    "MW", Semantics.INSTANTANEOUS,
+    "Ramp envelope: the change toward the next step of the net load and the demand, and the room the units, "
+    "storages, VRE and connections have to move the supply up and down (down bands negative).",
+    description="Row t is the transition from step t to the next realized step t+ (the change toward the next "
+                "step); a row without exactly one next step (the last step, a block end before a gap, a branch "
+                "point) is empty.  ramp_net_load = net load(t+) - net load(t), net load = demand - VRE potential "
+                "(positive: more supply needed; a VRE unit that also touches a storage node is in the storage "
+                "band and its potential is left out of the net load); ramp_demand the same for the demand alone.  units_up / "
+                "units_down: the room of the unit flows at the node (units online in both steps; the output of "
+                "units starting or stopping at t+ is forced movement, in no band); storage_up / storage_down: "
+                "the flows between a storage node and the node, also limited by the state of charge; vre_up "
+                "(curtailment release: curtailed energy that can be taken back at t+) / vre_down (extra "
+                "curtailment: how much less than the weather-followed output the VRE can give at t+), both "
+                "measured against the potential, so vre_up is 0 on every uncurtailed step however much the "
+                "weather rises (the rise is in the net-load line) and vre_down can exceed the VRE's own output; "
+                "connections_up / connections_down: the room of the connection flows into the node within their "
+                "capacity at t+.  Every band subtracts the reserve held at t+ and the ramp limits of the solve "
+                "that realized t+, and is clipped at 0 per flow (a forced movement shows 0, never a negative "
+                "room), so the up bands summed, plus the change of the slack, bound the net-load ramp from above "
+                "and the down bands from below except at a start-up or shut-down at t+.",
+    algebra="per flow: min(capacity(t+) - flow(t), ramp room) - reserve(t+), clipped at 0, summed per band",
+    template="{R}",
+)
+TIMESTEP_HOURS = Transform(
+    "h/a", Semantics.ANNUALIZED,
+    "Hours a year each time step stands for: the step duration times the timestep weight divided by the "
+    "period's share of a year (the weight of the ramp histogram).",
+    algebra="step_duration · timestep_weight / period_share",
+)
+TRANSITION_HOURS = Transform(
+    "h", Semantics.LEVEL,
+    "Length of the transition from each time step to the next realized step: the mean of the two step "
+    "durations (the ramp histogram's rate is the change toward the next step divided by it).",
+    algebra="(step_duration[t] + step_duration[t+]) / 2",
 )
 CAPACITY_FACTOR = Transform(
     "", Semantics.RATIO,
@@ -561,6 +597,11 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     # group flows); _d_ep integrates + annualizes to MWh/a.
     "node_dt_ep": RATE,
     "node_d_ep": ENERGY_ANNUAL,
+    # Ramp envelope (calc_ramp_envelope) and the hours a year of each step (the ramp histogram weight).
+    "node_ramp_envelope_dt_ep": RAMP_ROOM,
+    "nodeGroup_ramp_envelope_dt_gp": RAMP_ROOM,
+    "timestep_hours_dt": TIMESTEP_HOURS,
+    "transition_hours_dt": TRANSITION_HOURS,
     # Mixed-unit tables — per-column transform maps.
     "nodeGroup_gdt_p": _NODEGROUP_GDT_P,
     "nodeGroup_gd_p": _NODEGROUP_GD_P,
@@ -673,6 +714,7 @@ _PARAM_QUANTITY = (("param", "quantity"),)
 _RESERVE_QUANTITY = (("reserve", "quantity"), ("updown", "quantity"))
 _NODE_CATEGORY = (("category", "quantity"),)              # signed balance terms: their sum is the net (about 0)
 _GROUP_FLOW_KINDS = (("type", "quantity"), ("item", "entity"))
+_BAND_QUANTITY = (("band", "quantity"),)                 # the ramp lines and the up / down room of each band
 
 # One sentence per result table: what it holds.  Table names are the parquet stems
 # (``output_parquet/<scenario>/<stem>.parquet``); every key of OUTPUT_TRANSFORM and of the
@@ -739,6 +781,17 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
     "node_dt_ep": "Energy balance of each node in each time step by category: flows from and to units and "
                   "connections, self-discharge, loss of load, excess load and inflow.",
     "node_d_ep": "Energy balance of each node by category, summed over the period and scaled to a full year.",
+    "node_ramp_envelope_dt_ep": "Ramp envelope of each node for the transition from each time step to the next "
+                                "realized one: the net-load and demand changes toward the next step and the room "
+                                "of the units, storages, VRE and connections to move the node's supply up and "
+                                "down (down bands negative, empty rows without a single next step).",
+    "nodeGroup_ramp_envelope_dt_gp": "Ramp envelope of each dispatch node group: the node bands summed over the "
+                                     "group's non-storage members, with the processes inside the group left out.",
+    "timestep_hours_dt": "Hours a year each realized time step stands for (the step duration times the timestep "
+                         "weight divided by the period's share of a year), the weight of the ramp histogram.",
+    "transition_hours_dt": "Length of the transition from each realized time step to the next realized step (the "
+                           "mean of the two step durations), the divisor of the ramp histogram's rate; empty "
+                           "where the ramp envelope row is empty.",
     "node_state_dt_e": "Stored energy of each storage node at each time step.",
     "node_inflow__dt": "Inflow of each node in each time step as given to the model (demand is negative).",
     "node_prices_dt_e": "Price of energy at each balanced node and time step: the cost of one more unit of demand "
@@ -923,6 +976,10 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "CO2_d_g": OutputDims(_D, ("group",)),
     "process_co2_d_eee": OutputDims(_D, ("type", "process", "commodity", "node"), kinds=(("type", "entity"),)),
     "node_dt_ep": OutputDims(_DT, ("node", "category"), "node_d_ep", _NODE_CATEGORY),
+    "node_ramp_envelope_dt_ep": OutputDims(_DT, ("node", "band"), kinds=_BAND_QUANTITY),
+    "nodeGroup_ramp_envelope_dt_gp": OutputDims(_DT, ("group", "band"), kinds=_BAND_QUANTITY),
+    "timestep_hours_dt": OutputDims(_DT, ("param",), kinds=_PARAM_QUANTITY),
+    "transition_hours_dt": OutputDims(_DT, ("param",), kinds=_PARAM_QUANTITY),
     "node_d_ep": OutputDims(_D, ("node", "category"), "node_dt_ep", _NODE_CATEGORY),
     "node_state_dt_e": OutputDims(_DT, ("node",)),
     "node_inflow__dt": OutputDims(_DT, ("node",)),
@@ -1461,6 +1518,8 @@ UNIT_SOURCE: dict[str, UnitSource] = {
     "connection_losses_dt_eee": UnitSource("process", _U.CONNECTION_ENDS),
     "connection_losses_d_eee": UnitSource("process", _U.CONNECTION_ENDS),
     "node_dt_ep": UnitSource("node", _U.NODE),
+    "node_ramp_envelope_dt_ep": UnitSource("node", _U.NODE),
+    "nodeGroup_ramp_envelope_dt_gp": UnitSource("group", _U.GROUP_MEMBERS),
     "node_d_ep": UnitSource("node", _U.NODE),
     "node_state_dt_e": UnitSource("node", _U.NODE),
     "node_inflow__dt": UnitSource("node", _U.NODE),

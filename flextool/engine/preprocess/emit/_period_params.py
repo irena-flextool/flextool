@@ -1260,7 +1260,7 @@ def emit_pdtConversion_rate_section_slope(
 
 # flextool_base.dat L196-201 — group period param taxonomies.
 _GROUP_PERIOD_PARAM: frozenset[str] = frozenset((
-    "capacity_margin", "capacity_margin_share", "co2_price", "co2_max_period", "co2_max_total",
+    "capacity_margin_absolute", "capacity_margin_relative", "co2_price", "co2_max_period", "co2_max_total",
     "inertia_limit", "invest_max_period", "invest_min_period",
     "max_cumulative_flow", "min_cumulative_flow", "non_synchronous_limit",
     "penalty_inertia", "penalty_non_synchronous",

@@ -168,3 +168,100 @@ class TestWheelRouting:
         monkeypatch.setattr(canvas._scroll_canvas, "yview_scroll", lambda n, _what: scrolled.append(n))
         canvas._on_mousewheel(SimpleNamespace(num="??", delta=delta, x_root=0, y_root=0))
         assert scrolled == [units]
+
+
+class TestFigureDpiFollowsTreeFont:
+    """The figure DPI sizes the plot text to ~1.1 x the plot tree's font em, whatever DPI the X server reports.
+
+    ``tk scaling`` stands in for the screen DPI (Tk derives ``winfo_fpixels('1i')`` from it), so one display
+    covers 96, 144 and 208 DPI.  sv_ttk's fonts are given in pixels (-14), so their em does not follow the DPI.
+    """
+
+    @staticmethod
+    def _set_tree_font(root, size):
+        import tkinter.font as tkfont
+        from tkinter import ttk
+
+        font = tkfont.Font(root=root, name="TestPlotTreeFont", family="DejaVu Sans", size=size)
+        ttk.Style(root).configure("PlotTree.Treeview", font=str(font))
+        return font
+
+    @pytest.mark.parametrize("screen_dpi", [96, 144, 208])
+    @pytest.mark.parametrize("font_size", [-14, 10])
+    def test_plot_text_is_one_size_bigger_than_the_tree(self, tk_root, tmp_path, screen_dpi, font_size):
+        from flextool.gui.plot_canvas import PlotCanvas
+
+        tk_root.tk.call("tk", "scaling", screen_dpi / 72.0)
+        assert abs(tk_root.winfo_fpixels("1i") - screen_dpi) < 0.5
+        font = self._set_tree_font(tk_root, font_size)  # noqa: F841 — keep the named font alive
+        # Tk keeps the scaling as whole screen millimetres: read back what it took.
+        em_px = -font_size if font_size < 0 else font_size * float(tk_root.tk.call("tk", "scaling"))
+
+        pc = PlotCanvas(tk_root)
+        pc.pack(fill="both", expand=True)
+        tk_root.update_idletasks()
+        default_dpi = matplotlib.rcParams["figure.dpi"]
+
+        fig = Figure(figsize=(4.0, 3.0))
+        text = fig.text(0.5, 0.5, "Hg", fontsize=matplotlib.rcParams["font.size"])
+        pc.display_figure(fig)
+
+        dpi = fig.get_dpi()
+        # The plot text's em on the canvas is 1.1 x the tree font's em ...
+        assert matplotlib.rcParams["font.size"] * dpi / 72.0 == pytest.approx(1.1 * em_px, rel=1e-9)
+        # ... and its drawn height (the "Hg" ink box, ~0.94 em in whole pixels) matches that, not the
+        # ~2x of the X server DPI (29 px at 208 DPI against a 14 px tree font before the fix).
+        drawn = text.get_window_extent(pc._canvas.get_renderer()).height
+        assert abs(drawn - 1.1 * em_px) <= max(1.0, 0.1 * em_px)
+        # The figure keeps its inches; its pixel size scales with the DPI.
+        assert tuple(fig.get_size_inches()) == pytest.approx((4.0, 3.0))
+        assert int(pc._canvas_widget.cget("width")) == int(4.0 * dpi)
+        assert int(pc._canvas_widget.cget("height")) == int(3.0 * dpi)
+        # Nothing global changed, and a saved PNG keeps the DPI it is saved with.
+        assert matplotlib.rcParams["figure.dpi"] == default_dpi
+        png = tmp_path / "saved.png"
+        fig.savefig(png, dpi=150)
+        import matplotlib.image as mpimage
+
+        h, w = mpimage.imread(str(png)).shape[:2]
+        assert (w, h) == (600, 450)
+
+    def test_dpi_follows_a_font_change_on_resize(self, tk_root):
+        from flextool.gui.plot_canvas import PlotCanvas
+
+        tk_root.tk.call("tk", "scaling", 96 / 72.0)
+        font = self._set_tree_font(tk_root, -14)
+        pc = PlotCanvas(tk_root)
+        pc.pack(fill="both", expand=True)
+        tk_root.geometry("400x300")
+        tk_root.deiconify()  # a withdrawn window has no size, and _do_resize skips it
+        tk_root.update()
+        fig = Figure(figsize=(4.0, 3.0))
+        pc.display_figure(fig)
+        assert fig.get_dpi() == pytest.approx(72.0 * 14 * 1.1 / matplotlib.rcParams["font.size"])
+
+        font.configure(size=-20)
+        pc._do_resize()
+        assert fig.get_dpi() == pytest.approx(72.0 * 20 * 1.1 / matplotlib.rcParams["font.size"])
+
+    def test_png_is_shown_one_to_one_after_a_dpi_change(self, tk_root, tmp_path):
+        from flextool.gui.plot_canvas import PlotCanvas
+
+        font = self._set_tree_font(tk_root, -14)
+        pc = PlotCanvas(tk_root)
+        pc.pack(fill="both", expand=True)
+        tk_root.geometry("400x300")
+        tk_root.deiconify()  # a withdrawn window has no size, and _do_resize skips it
+        tk_root.update()
+        src = Figure(figsize=(3.0, 2.0), dpi=100)
+        src.add_subplot(111).plot([0, 1], [0, 1])
+        png = tmp_path / "p.png"
+        src.savefig(png, dpi=100)
+
+        pc.display_png(png)
+        assert int(pc._canvas_widget.cget("width")) == 300
+        assert int(pc._canvas_widget.cget("height")) == 200
+        font.configure(size=-22)
+        pc._do_resize()
+        assert int(pc._canvas_widget.cget("width")) == 300
+        assert int(pc._canvas_widget.cget("height")) == 200

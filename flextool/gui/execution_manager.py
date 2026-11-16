@@ -1556,6 +1556,9 @@ class ExecutionManager:
         _ps = getattr(settings, "presolve", None)
         if _ps is not None:
             cmd.append(f"--presolve={_ps}")
+        _sg = getattr(settings, "scaling_guard", None)
+        if _sg is not None:
+            cmd.append(f"--scaling-guard={_sg}")
 
         return cmd
 

@@ -300,18 +300,18 @@ CAPACITY_MARGIN_CHAIN = MULTI_YEAR_CHAIN + ["network", "capacity_margin"]
 
 
 def test_capacity_margin_covers_the_investment_periods_only(tmp_path_factory) -> None:
-    """``capacity_margin = {p2020: 100, p2025: 100}`` (method manual) on the solve investing in p2020 and p2025:
+    """``capacity_margin = {p2020: 100, p2025: 100}`` (method absolute) on the solve investing in p2020 and p2025:
     the margin applies to the investment periods, so the dispatch-only p2030 / p2035 need no value."""
     values = _two_invest_periods() + [
-        ["group", "capacity_margin", "capacity_margin", pmap({"p2020": 100.0, "p2025": 100.0})]]
+        ["group", "capacity_margin", "capacity_margin_absolute", pmap({"p2020": 100.0, "p2025": 100.0})]]
     assert _run(tmp_path_factory, "c1_margin_ok", values, CAPACITY_MARGIN_CHAIN)
 
 
 def test_capacity_margin_missing_an_investment_period_is_an_error(tmp_path_factory) -> None:
     """``capacity_margin = {p2020: 100}``: the investment period p2025 is missing (before: a margin of 0)."""
-    values = _two_invest_periods() + [["group", "capacity_margin", "capacity_margin", pmap({"p2020": 100.0})]]
+    values = _two_invest_periods() + [["group", "capacity_margin", "capacity_margin_absolute", pmap({"p2020": 100.0})]]
     with pytest.raises(FlexToolConfigError,
-                       match=r"group 'capacity_margin', parameter 'capacity_margin': the period map has no value "
+                       match=r"group 'capacity_margin', parameter 'capacity_margin_absolute': the period map has no value "
                              r"for investment period\(s\) p2025 of solve 'y2020_2035_5week'\."):
         _run(tmp_path_factory, "c1_margin_gap", values, CAPACITY_MARGIN_CHAIN)
 

@@ -19,7 +19,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from urllib.parse import urlencode
 
-from spinedb_api import DatabaseMapping
+from spinedb_api import DatabaseMapping, SpineDBAPIError
 from spinedb_api.filters.tools import FILTER_IDENTIFIER, apply_filter_stack, load_filters, pop_filter_configs
 from sqlalchemy.engine import URL
 
@@ -42,6 +42,7 @@ def database_mapping(url: str | os.PathLike[str] | URL, **kwargs) -> DatabaseMap
         configs, _ = pop_filter_configs(SQLITE_PREFIX + "x?" + urlencode([(FILTER_IDENTIFIER, value) for value in values]))
         target = target.difference_update_query([FILTER_IDENTIFIER])
     apply_filters = kwargs.get("apply_filters", True)
+    _refuse_missing_sqlite_file(target, create=bool(kwargs.get("create", False)))
     db = DatabaseMapping(target, **kwargs)
     if configs and apply_filters:
         try:
@@ -50,6 +51,21 @@ def database_mapping(url: str | os.PathLike[str] | URL, **kwargs) -> DatabaseMap
             db.close()
             raise
     return db
+
+
+def _refuse_missing_sqlite_file(target: str | URL, *, create: bool) -> None:
+    """Raise :class:`SpineDBAPIError` for a SQLite file that does not exist when *create* is false.
+
+    ``DatabaseMapping`` would connect first: SQLite then creates an empty file at the path, and the
+    error raised on the empty file leaves the engine's connection open (spinedb-api does not dispose
+    the engine of a failed open), to be closed only by the garbage collector."""
+    if create or not isinstance(target, URL) or target.drivername != "sqlite":
+        return
+    database = target.database
+    if not database or database == ":memory:" or database.startswith("file:"):
+        return
+    if not os.path.exists(database):
+        raise SpineDBAPIError(f"Could not open '{database}': the database file does not exist.")
 
 
 @contextmanager

@@ -113,11 +113,15 @@ from flextool.engine.autoscale import (
     apply_layer2,
     apply_scaling,
     detect_ranges,
+    enforce_scaling_guard,
     mode_enables_layer1,
     mode_enables_layer3,
     recommend_scaling,
+    resolve_guard_mode,
     resolve_scaling_config,
+    run_guard,
     unscale_solution,
+    warn_guard_could_not_run,
 )
 from flextool.engine.solve._region_filter import HalfFlow, RegionSplit
 from flextool.engine.input._solve_state import FlexToolConfigError
@@ -470,7 +474,9 @@ def _resolve_benders_region_duals() -> str:
     return mode
 
 
-def _apply_region_autoscale(pb: Problem, cfg, region_name: str) -> "Layer2Plan | None":
+def _apply_region_autoscale(
+    pb: Problem, cfg, region_name: str, *, guard: "dict | None" = None,
+) -> "Layer2Plan | None":
     """Apply the monolith's full autoscale (Layer-2 + Layer-3) to a Benders
     region subproblem ``pb``, in place, and return the Layer-2 inverse
     :class:`Layer2Plan` (or ``None`` when Layer-2 was skipped/failed).
@@ -501,8 +507,17 @@ def _apply_region_autoscale(pb: Problem, cfg, region_name: str) -> "Layer2Plan |
     otherwise be swallowed here and silently revert the region to an un-scaled
     LP, defeating the fix.  Layer 3, like the monolith, is best-effort (a
     failure just leaves HiGHS' own equilibration to fill in) and never fatal.
+
+    ``guard`` (``{"solve_name", "run_options"}``) runs the scaling guard on
+    the region after its Layer 3 (as the monolith,
+    :mod:`flextool.engine.autoscale._guard`), keyed per region: a warning
+    prints once per run and region, an error under ``--scaling-guard error``
+    raises :class:`ScalingRangeError` naming the region.  The guard acts
+    outside every ``except`` here, so the best-effort handling of Layer 3
+    never swallows it.  ``None`` (a direct call) skips the guard.
     """
     plan: "Layer2Plan | None" = None
+    ranges_pre = None
     # --- Layer 2 (FULL mode + Layer-1 trigger). ----------------------------
     if mode_enables_layer1(cfg.mode):
         try:
@@ -531,11 +546,9 @@ def _apply_region_autoscale(pb: Problem, cfg, region_name: str) -> "Layer2Plan |
                 )
                 plan = None
             else:
-                # Log the chosen per-type exponents.  The Benders splitter
-                # builds the cross-region half-flows with a 1e12 uncap sentinel
-                # (a bound the monolith LP never carries); this line lets us
-                # confirm on the benchmark that the sentinel is not hijacking
-                # the BOUND-range decision away from physical flows.
+                # Log the chosen per-type exponents.  (The cross-region
+                # half-flows carry no capacity row: their existing capacity is
+                # inf, so they do not enter the bound range.)
                 _logger.info(
                     "Benders Layer-2 [region %s]: exponents=%s, rows=%d, "
                     "skipped_rows=%d, integer_cols=%d",
@@ -547,10 +560,17 @@ def _apply_region_autoscale(pb: Problem, cfg, region_name: str) -> "Layer2Plan |
                 )
     # --- Layer 3 (HiGHS-native top-up; unconditional when enabled). --------
     # Derived from POST-Layer-2 ranges (the residual spread after Layer 2's
-    # per-type rescale) — so this re-reads the ranges off the now-mutated ``pb``.
+    # per-type rescale) — so this re-reads the ranges off the now-mutated
+    # ``pb``, unless Layer 2 was not attempted (the LP is unchanged: reuse
+    # the pre-Layer-2 readout, as the monolith does).
+    ranges_post = None
+    l3 = None
     if mode_enables_layer3(cfg.mode):
+        l2_attempted = (ranges_pre is not None and cfg.mode is ScalingMode.FULL
+                        and ranges_pre.trigger)
         try:
-            ranges_post = detect_ranges(pb, cfg)
+            ranges_post = (ranges_pre if plan is None and ranges_pre is not None and not l2_attempted
+                           else detect_ranges(pb, cfg))
             l3 = recommend_scaling(ranges_post, cfg, problem=pb)
             apply_scaling(pb, l3)
         except Exception:  # pragma: no cover — best-effort, mirrors monolith
@@ -565,6 +585,27 @@ def _apply_region_autoscale(pb: Problem, cfg, region_name: str) -> "Layer2Plan |
                 region_name, l3.user_objective_scale, l3.user_bound_scale,
                 l3.simplex_scale_strategy,
             )
+    # --- Scaling guard (outside every ``except``: its error must stop the
+    # loop, never be swallowed by the best-effort Layer 3 handling above).
+    # A region whose readout failed (logged above) says so as the monolith
+    # does: once per run, the same text.
+    if guard is not None and mode_enables_layer3(cfg.mode) and ranges_post is None:
+        warn_guard_could_not_run(readout_failed=True)
+    elif guard is not None and ranges_post is not None:
+        outcome = None
+        try:
+            outcome = run_guard(
+                pb, ranges=ranges_post, ranges_pre=ranges_pre, plan=l3,
+                solve_name=guard.get("solve_name") or "benders",
+                mode=resolve_guard_mode(guard.get("run_options")),
+                region=region_name, layer2_applied=plan is not None,
+            )
+        except Exception:  # noqa: BLE001 — a failed check must not stop the solve
+            if os.environ.get("FLEXTOOL_AUTOSCALE_STRICT") == "1":
+                raise
+            warn_guard_could_not_run(readout_failed=False)
+            _logger.exception("Benders: scaling guard could not run for region %r", region_name)
+        enforce_scaling_guard(outcome, base_solve=guard.get("solve_name") or "benders")
     return plan
 
 
@@ -2035,6 +2076,7 @@ def solve_benders(
     run_options: RunOptions | None = None,
     solver_options: dict | None = None,
     scaling_config: ScalingConfig | None = None,
+    solve_name: str | None = None,
 ) -> BendersResult:
     """Run the multi-cut Benders loop on the regional decomposition of
     ``data``.
@@ -2129,6 +2171,11 @@ def solve_benders(
         ``FLEXTOOL_SCALING`` over the solve's ``solve.scaling``), applied to
         every region subproblem.  ``None`` resolves it from the environment
         (:func:`resolve_scaling_config`), the form of a direct call.
+    solve_name
+        The solve's name, used by the scaling guard's messages (each region
+        subproblem is judged after its Layer 3, ``--scaling-guard`` from
+        ``run_options``; an error stops the loop before any region solves).
+        ``None`` names it ``benders``.
 
     Returns
     -------
@@ -2167,6 +2214,7 @@ def solve_benders(
             subsolve_callback=subsolve_callback, workers=workers,
             run_options=run_options,
             solver_options=solver_options, scaling_config=scaling_config,
+            solve_name=solve_name,
         )
     finally:
         if _enums_token is not None:
@@ -2360,7 +2408,8 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
                          progress_callback=None, subsolve_callback=None,
                          workers=None, run_options: RunOptions | None = None,
                          solver_options=None,
-                         scaling_config: ScalingConfig | None = None) -> BendersResult:
+                         scaling_config: ScalingConfig | None = None,
+                         solve_name: str | None = None) -> BendersResult:
     # --- master-hosted node set (plan §3 membership rule): every balance/
     # state node in NO region group is hosted natively in the MASTER.
     # Empty on every all-nodes-grouped model ⇒ every branch below keyed on
@@ -2438,7 +2487,10 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         # The solve's user options, merged (set_solver_option) under the region autoscale and the pins below.
         for key, value in region_options.items():
             pb.set_solver_option(key, value)
-        region_plans.append(_apply_region_autoscale(pb, _scale_cfg, s.region))
+        region_plans.append(_apply_region_autoscale(
+            pb, _scale_cfg, s.region,
+            guard={"solve_name": solve_name or "benders", "run_options": run_options},
+        ))
         # PIN ``run_crossover=on`` on every region subproblem.  The Benders cut
         # slope is the reduced cost of the pinned boundary-flow column, which is
         # only a well-defined *basic* dual when the solve ends on a simplex basis.

@@ -41,6 +41,7 @@ from pathlib import Path
 from tkinter import ttk
 from typing import TYPE_CHECKING, Any
 
+from flextool.gui._menus import popup_at_pointer
 from flextool.gui.assistant import strings
 from flextool.gui.assistant.chat_tab import ChatTab, run_in_thread
 from flextool.gui.assistant.gate import PROCESS_GATE, ProviderGate
@@ -145,7 +146,7 @@ def styled_menu(parent: tk.Misc) -> tk.Menu:
     bg = style.lookup("TFrame", "background") or parent.cget("background")
     fg = style.lookup("TLabel", "foreground") or "#000000"
     return tk.Menu(parent, tearoff=0, background=bg, foreground=fg, activebackground=fg, activeforeground=bg,
-                   selectcolor=fg, font="TkDefaultFont", borderwidth=0)
+                   selectcolor=fg, font="TkDefaultFont", borderwidth=1, relief="flat")   # 1px: see _styled_popup_menu
 
 
 class ConsentQueue:
@@ -1037,10 +1038,11 @@ class ChatWindow(tk.Toplevel):
         tab = self._tab_at(event.x, event.y)
         if tab is None:
             return None
-        self._post_tab_menu(tab, (event.x_root, event.y_root))
+        self._post_tab_menu(tab, event)
         return "break"
 
-    def _post_tab_menu(self, tab: ChatTab, where: tuple[int, int] | None) -> None:
+    def _post_tab_menu(self, tab: ChatTab, event: tk.Event | None) -> None:  # type: ignore[type-arg]
+        """Post the tab menu at the pointer of the click *event*, or near the tabs' corner from the keyboard."""
         if tab.is_new:
             return
         menu = self.tab_menu
@@ -1049,10 +1051,11 @@ class ChatWindow(tk.Toplevel):
         menu.add_command(label=strings.CLOSE_CHAT, command=lambda: self.close_chat(tab))
         menu.add_command(label=strings.CLOSE_OTHER_CHATS, command=lambda: self.close_others(tab),
                          state="normal" if len(self.tabs) > 1 else "disabled")
-        if where is None:
-            nb = self.notebook
-            where = (nb.winfo_rootx() + 20, nb.winfo_rooty() + 20)
-        menu.tk_popup(*where)   # no grab_release: the grab closes the menu on a click elsewhere (OR-1)
+        if event is not None:
+            popup_at_pointer(menu, event)
+            return
+        nb = self.notebook
+        menu.tk_popup(nb.winfo_rootx() + 20, nb.winfo_rooty() + 20)   # no grab_release: it closes the menu (OR-1)
 
     def _on_middle_click(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
         tab = self._tab_at(event.x, event.y)

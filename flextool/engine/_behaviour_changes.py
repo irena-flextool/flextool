@@ -388,6 +388,15 @@ def warn_once_each(kind: str, names: list[str], text_of) -> bool:
     return True
 
 
+def mark_once(key) -> bool:
+    """Record *key* for this run without printing (a message that goes to the log, once per run).  Returns True
+    the first time in a run, False after that; :func:`start_run` forgets it."""
+    if key in _warned:
+        return False
+    _warned.add(key)
+    return True
+
+
 def already_warned(key) -> bool:
     """Whether :func:`warn_once` printed a message with *key* earlier in this run."""
     return key in _warned

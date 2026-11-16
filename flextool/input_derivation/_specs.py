@@ -148,7 +148,7 @@ _PARAMETER_SPECS: list[dict] = [
         "cl_pars": [("group", "capacity_margin_method")],
         "header": "groupCapacityMargin",
         "filename": "input/groupCapacityMargin.csv",
-        "filter_in_value": {"manual", "share_of_peak"},
+        "filter_in_value": {"absolute", "relative_of_peak_demand"},
         "no_value": True,
     },
     {
@@ -895,8 +895,8 @@ _PARAMETER_SPECS: list[dict] = [
     # --- p_group (scalars) ---
     {
         "cl_pars": [("group", "groupParam"),
-                    ("group", "capacity_margin"),
-                    ("group", "capacity_margin_share"),
+                    ("group", "capacity_margin_absolute"),
+                    ("group", "capacity_margin_relative"),
                     ("group", "co2_max_total"),
                     ("group", "co2_price"),
                     ("group", "inertia_limit"),
@@ -1162,6 +1162,12 @@ METHODS_MAPPING: dict[tuple[str, str, str], str] = {
     ("min_load_efficiency", "linear", "fork_yes"): "method_1way_nvar_LP",
     ("min_load_efficiency", "binary", "fork_no"): "method_1way_1var_MIP",
     ("min_load_efficiency", "binary", "fork_yes"): "method_1way_nvar_MIP",
+    ("piecewise_linear", "no_startup", "fork_no"): "method_1way_1var_off",
+    ("piecewise_linear", "no_startup", "fork_yes"): "method_1way_nvar_off",
+    ("piecewise_linear", "linear", "fork_no"): "method_1way_1var_LP",
+    ("piecewise_linear", "linear", "fork_yes"): "method_1way_nvar_LP",
+    ("piecewise_linear", "binary", "fork_no"): "method_1way_1var_MIP",
+    ("piecewise_linear", "binary", "fork_yes"): "method_1way_nvar_MIP",
     ("none", "no_startup", "fork_no"): "method_1way_1var_off",
     ("none", "no_startup", "fork_yes"): "method_1way_nvar_off",
     ("none", "linear", "fork_no"): "method_1way_1var_LP",

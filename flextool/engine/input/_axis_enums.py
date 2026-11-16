@@ -125,7 +125,7 @@ _AXIS_SYNONYMS: dict[str, str] = {
 # membership tests can ask "is this name axis-aware?" via
 # ``is_axis_aware(name)`` below.
 _CANONICAL_AXES: frozenset[str] = frozenset({
-    "n", "p", "c", "g", "f", "d", "e", "t", "i",
+    "n", "p", "c", "g", "f", "d", "e", "t", "i", "seg",
     "branch", "block", "constraint", "side", "klass", "ud", "r",
     "d_anchor",
 })

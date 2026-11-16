@@ -226,6 +226,24 @@ def _apply_delay_seeds(flex_data: object, provider: object) -> None:
         flex_data.process_delayed__duration = process_delayed__duration_from_weight(flex_data.p_process_delay_weight)
 
 
+def _refuse_piecewise_units(provider: object) -> None:
+    """A dump with ``piecewise_linear`` units (``input/process__ct_method``) cannot be reloaded without a database:
+    their curve lines, section and capacity parameters are set at the load boundary from the database's curves
+    (``params/_piecewise.py``), which a reader-less reload does not run (a ``min_load_efficiency`` unit's section
+    is not dumped either and stops such a reload in the model build).  Raise naming the units."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    frame = _frame_or_none(provider, "input/process__ct_method")
+    if frame is None or frame.width < 2:
+        return
+    units = sorted(frame.filter(pl.col(frame.columns[1]).cast(pl.Utf8) == "piecewise_linear")
+                   .get_column(frame.columns[0]).cast(pl.Utf8).unique().to_list())
+    if units:
+        raise FlexToolConfigError(
+            f"the dump has piecewise_linear unit(s) {', '.join(repr(u) for u in units)}: their part-load curves "
+            "are read from the database, so reload the dump with db_url and scenario.")
+
+
 def apply_dump_field_seeds(flex_data: object, sd: Path, inp: Path, provider: object) -> None:
     """Seed :data:`SEEDED_FIELDS` on ``flex_data`` from the seeded ``provider``.
 
@@ -252,8 +270,10 @@ def apply_dump_field_seeds(flex_data: object, sd: Path, inp: Path, provider: obj
       the emitted CSVs and ``process_delayed__duration`` derived from the weights, when a process is delayed.
       ``p_profile_value`` is not seeded here: the production loader's own ``pdtProfile.csv`` read
       (``flex_data.py::_load_profiles``) covers the reload too.
+    * A dump with ``piecewise_linear`` units is refused (:func:`_refuse_piecewise_units`).
     """
     del inp
+    _refuse_piecewise_units(provider)
     _apply_co2_and_invest_seeds(flex_data, sd, provider)
     _apply_group_and_minload_seeds(flex_data, provider)
     _apply_delay_seeds(flex_data, provider)

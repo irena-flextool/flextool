@@ -29,6 +29,11 @@ Usage::
     # restrict either tier to some fixture dirs (subset vs a full base)
     python tools/lp_snapshot.py compare BASE NEW --fixtures base,multi_year
 
+    # autoscale decisions too: OUT/<fixture>/autoscale_plan.json per solve
+    # (Layer 3 exponents + tag, scaling-guard verdict), diffed by compare
+    python tools/lp_snapshot.py snapshot OUT --autoscale-plan
+    python tools/lp_snapshot.py compare BASE NEW --autoscale-plan
+
     # constraint-family coverage of a snapshot (family -> fixtures)
     python tools/lp_snapshot.py coverage _audit_reports/lp_baseline
 
@@ -94,6 +99,16 @@ How it works
   ``FLEXTOOL_AXIS_ENUMS=1`` does), so ``--dirty-sqlite`` is a regression
   guard for that.  A target that fails under dirt is reported as FAILED
   like any other fixture.
+* ``--autoscale-plan`` (snapshot): after the run, every solve's
+  ``solve_data/autoscale_<solve>.yaml`` is read and its Layer 3 decision
+  (``user_bound_scale``, ``user_objective_scale``, ``simplex_scale_strategy``,
+  the bound tier tag) and scaling-guard verdict go to
+  ``<fixture>/autoscale_plan.json``.  The MPS files are written before
+  autoscale, so they cannot show a scaling change; this file can.
+  ``compare --autoscale-plan`` lists every solve whose decision differs
+  (exit 1).  A YAML without ``bound_tag`` (an older FlexTool) has the tag
+  read from its ``reasoning`` string; a missing guard verdict compares as
+  ``None``.
 * ``coverage`` greps every ``add_cstr`` name in COVERAGE_SOURCES (plus
   the hand-resolved dynamic names in DYNAMIC_CSTR_NAMES) and reports
   which fixtures emit rows of each family; UNREACHABLE lists families no
@@ -865,8 +880,8 @@ def _patch_capacity_margin_stoch(data: dict) -> dict:
         data, name="capacity_margin_stoch", base="recourse",
         entities=[["group", "cm_g"],
                   ["group__node", ["cm_g", "elec"]]],
-        values=[["group", "cm_g", "capacity_margin", 1.0e5],
-                ["group", "cm_g", "capacity_margin_method", "manual"],
+        values=[["group", "cm_g", "capacity_margin_absolute", 1.0e5],
+                ["group", "cm_g", "capacity_margin_method", "absolute"],
                 ["group", "cm_g", "penalty_capacity_margin", 1.0]])
 
 
@@ -1712,16 +1727,24 @@ def _patch_nonsync_1var_dc(data: dict) -> dict:
 
 def _patch_nonsync_energy_margin(data: dict) -> dict:
     """Invest solve with an energy margin (inflow multiplier 1.1 on west) and a group {west} with a
-    non-synchronous limit and a manual capacity margin."""
+    non-synchronous limit and a absolute capacity margin."""
     ents = [["group", "gm"], ["group__node", ["gm", "west"]]]
     return _overlay(data, name="nonsync_energy_margin",
                     base=["init", "west", "wind", "battery", "battery_invest", "5weeks", "coal"],
                     entities=ents, values=[
                         ["group", "gm", "has_non_synchronous", "yes"], ["group", "gm", "non_synchronous_limit", 0.5],
-                        ["group", "gm", "capacity_margin_method", "manual"], ["group", "gm", "capacity_margin", 0.0],
+                        ["group", "gm", "capacity_margin_method", "absolute"], ["group", "gm", "capacity_margin_absolute", 0.0],
                         ["unit__outputNode", ["wind_plant", "west"], "is_non_synchronous", "yes"],
                         ["node", "west", "energy_margin_method", "inflow_multiplier"],
                         ["node", "west", "energy_margin_multiplier", 1.1]])
+
+
+def _patch_capacity_margin_relative(data: dict) -> dict:
+    """The capacity_margin scenario with its group's margin given as 10 % of the group's peak demand
+    (capacity_margin_method relative_of_peak_demand) instead of MW."""
+    return _overlay(data, name="capacity_margin_relative", base="capacity_margin", values=[
+        ["group", "capacity_margin", "capacity_margin_method", "relative_of_peak_demand"],
+        ["group", "capacity_margin", "capacity_margin_relative", 0.1]])
 
 
 def _patch_conn_reserve_uni(data: dict) -> dict:
@@ -1904,8 +1927,90 @@ def _patch_ladder_cum_silent(data: dict) -> dict:
                     values=[["commodity", "coal", "price_ladder_cumulative", ladder]])
 
 
+def _patch_piecewise_single_line(data: dict) -> dict:
+    """piecewise_linear units with one line (handled as min_load_efficiency units, params/_piecewise.py): the
+    two-output coal_chp (outputs weighted 1 and 2) with a rising two-point curve and its automatic linear
+    start-ups, and the direct coal_plant with a flat three-point curve (one line, constant efficiency), in a
+    rolling solve (the rolls' slope and p_flow_max are overwritten at the load boundary)."""
+    def curve(points: list[tuple[float, float]]) -> dict:
+        return {"index_type": "float", "data": [[k, v] for k, v in points]}
+
+    return _overlay(
+        data, name="piecewise_single_line", base=["init", "west", "coal", "coal_chp", "heat"],
+        values=[["unit", "coal_chp", "conversion_method", "piecewise_linear"],
+                ["unit", "coal_chp", "piecewise_linear_efficiency", curve([(0.3, 0.6), (1.0, 0.9)])],
+                ["unit", "coal_chp", "min_load", 0.3],
+                ["unit__outputNode", ["coal_chp", "west"], "conversion_flow_coeff", 1.0],
+                ["unit__outputNode", ["coal_chp", "heat"], "conversion_flow_coeff", 2.0],
+                ["unit", "coal_plant", "conversion_method", "piecewise_linear"],
+                ["unit", "coal_plant", "piecewise_linear_efficiency",
+                 curve([(0.2, 0.4), (0.6, 0.4), (1.0, 0.4)])],
+                ["solve", "y2020_2day_dispatch", "solve_mode", "rolling_window"],
+                ["solve", "y2020_2day_dispatch", "rolling_solve_horizon", 24.0],
+                ["solve", "y2020_2day_dispatch", "rolling_solve_jump", 12.0]])
+
+
+def _patch_piecewise_multi_line(data: dict) -> dict:
+    """piecewise_linear units with two or more lines (conversion_piecewise, model/core.py): the direct coal_plant
+    with a rising three-point curve (online form, linear start-ups; one input, one output: remapped, with a ramp
+    limit and a ramp cost on its input acting on the output) and the two-output coal_chp with a falling
+    three-point curve (capacity form: no online variables), in a rolling solve."""
+    def curve(points: list[tuple[float, float]]) -> dict:
+        return {"index_type": "float", "data": [[k, v] for k, v in points]}
+
+    inp = ["coal_plant", "coal_market"]
+    return _overlay(
+        data, name="piecewise_multi_line", base=["init", "west", "coal", "coal_chp", "heat", "coal_min_load"],
+        values=[["unit", "coal_plant", "conversion_method", "piecewise_linear"],
+                ["unit", "coal_plant", "piecewise_linear_efficiency",
+                 curve([(0.4, 0.30), (0.7, 0.40), (1.0, 0.42)])],
+                ["unit__inputNode", inp, "ramp_method", "both"],
+                ["unit__inputNode", inp, "ramp_speed_up", 0.01],
+                ["unit__inputNode", inp, "ramp_speed_down", 0.01],
+                ["unit__inputNode", inp, "ramp_cost", 2.0],
+                ["unit", "coal_chp", "conversion_method", "piecewise_linear"],
+                ["unit", "coal_chp", "piecewise_linear_efficiency",
+                 curve([(0.2, 0.92), (0.6, 0.9), (1.0, 0.85)])],
+                ["unit__outputNode", ["coal_chp", "west"], "conversion_flow_coeff", 1.0],
+                ["unit__outputNode", ["coal_chp", "heat"], "conversion_flow_coeff", 2.0],
+                ["solve", "y2020_2day_dispatch", "solve_mode", "rolling_window"],
+                ["solve", "y2020_2day_dispatch", "rolling_solve_horizon", 24.0],
+                ["solve", "y2020_2day_dispatch", "rolling_solve_jump", 12.0]])
+
+
+def _reduce_online(data: dict, name: str, heat_coeff: float) -> dict:
+    """``reduce_unit_detail_method`` *online* on the 2-day dispatch: the direct min_load_efficiency coal_plant
+    (coal_min_load; capacity_max_coeff 1, so M = 1) and the two-output coal_chp made a min_load_efficiency unit
+    (efficiency 0.9, efficiency_at_min_load 0.6, min_load 0.3, linear start-ups) whose heat output has
+    conversion_flow_coeff ``heat_coeff``: the weighted output per unit online W = max(1, heat_coeff) (the outputs
+    filled in descending coefficient order up to the sum cap 1).  The fold (``_reduce_detail``) adds
+    section / W to the slope."""
+    return _overlay(
+        data, name=name, base=["init", "west", "coal", "coal_chp", "heat", "coal_min_load"],
+        values=[["unit", "coal_chp", "conversion_method", "min_load_efficiency"],
+                ["unit", "coal_chp", "efficiency_at_min_load", 0.6],
+                ["unit", "coal_chp", "min_load", 0.3],
+                ["unit", "coal_chp", "startup_method", "linear"],
+                ["unit__outputNode", ["coal_chp", "heat"], "conversion_flow_coeff", heat_coeff],
+                ["solve", "y2020_2day_dispatch", "reduce_unit_detail_method", "online"]])
+
+
+def _patch_reduce_online_w1(data: dict) -> dict:
+    """:func:`_reduce_online` with W = 1 (both outputs weighted 1): the same LP as the fold slope + section."""
+    return _reduce_online(data, "reduce_online_w1", 1.0)
+
+
+def _patch_reduce_online_w2(data: dict) -> dict:
+    """:func:`_reduce_online` with W = 2 (heat weighted 2): slope + section / 2 on coal_chp."""
+    return _reduce_online(data, "reduce_online_w2", 2.0)
+
+
 PATCHES: dict[str, Callable[[dict], dict]] = {
     "none": _no_patch,
+    "reduce_online_w1": _patch_reduce_online_w1,
+    "reduce_online_w2": _patch_reduce_online_w2,
+    "piecewise_single_line": _patch_piecewise_single_line,
+    "piecewise_multi_line": _patch_piecewise_multi_line,
     "invest_limits": _patch_invest_limits,
     "cumulative_capacity": _patch_cumulative_capacity,
     "stoch_invest_storage": _patch_stoch_invest_storage,
@@ -1966,6 +2071,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "nonsync_internal_dc": _patch_nonsync_internal_dc,
     "nonsync_1var_dc": _patch_nonsync_1var_dc,
     "nonsync_energy_margin": _patch_nonsync_energy_margin,
+    "capacity_margin_relative": _patch_capacity_margin_relative,
     "conn_reserve_dc": _patch_conn_reserve_dc,
     "conn_online_roll": _patch_conn_online_roll,
     "conn_online_stoch": _patch_conn_online_stoch,
@@ -2122,6 +2228,10 @@ _PLAIN: tuple[tuple[str, str, str], ...] = (
 # a fixture scenario's alternative chain, registered as scenario ``name``.
 _PATCHED: tuple[tuple[str, str], ...] = (
     ("invest_limits", _T),
+    ("piecewise_single_line", _T),
+    ("piecewise_multi_line", _T),
+    ("reduce_online_w1", _T),
+    ("reduce_online_w2", _T),
     ("cumulative_capacity", _T),
     ("stoch_invest_storage", _F + "stoch_two_period_hedge.json"),
     ("multi_year_reinvest_choice", _T),
@@ -2179,6 +2289,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("nonsync_internal_dc", _T),
     ("nonsync_1var_dc", _T),
     ("nonsync_energy_margin", _T),
+    ("capacity_margin_relative", _T),
     ("conn_reserve_dc", _F + "case14_dc_power_flow.json"),
     ("conn_online_roll", _T),
     ("conn_online_stoch", _F + "stochastics.json"),
@@ -2326,9 +2437,51 @@ def _dirty_work_folder(dirtier: Fixture, tmp_path: Path, work: Path,
     last.flex_data_provider.snapshot_processed_inputs(work)
 
 
+def _bound_tag(layer3: dict) -> str | None:
+    """The Layer 3 bound tier tag of an autoscale YAML ``layer3`` section:
+    ``bound_tag`` when written, else parsed from ``reasoning``."""
+    tag = layer3.get("bound_tag")
+    if tag:
+        return str(tag)
+    reasoning = str(layer3.get("reasoning") or "")
+    m = re.search(r"bound_tag=([^,)]+)", reasoning) or re.search(
+        r"bound=([^,)]+)\)", reasoning)
+    return m.group(1).strip() if m else None
+
+
+def _collect_autoscale_plan(work: Path) -> list[dict]:
+    """Every solve's Layer 3 decision and scaling-guard verdict, read from
+    ``work/solve_data/autoscale_<solve>.yaml``, sorted by solve name."""
+    import yaml
+
+    out: list[dict] = []
+    for path in sorted((work / "solve_data").glob("autoscale_*.yaml")):
+        tree = yaml.safe_load(path.read_text()) or {}
+        layer3 = tree.get("layer3") or {}
+        guard = tree.get("guard") or {}
+        out.append({
+            "solve": path.stem[len("autoscale_"):],
+            "user_bound_scale": layer3.get("user_bound_scale"),
+            "user_objective_scale": layer3.get("user_objective_scale"),
+            "simplex_scale_strategy": layer3.get("simplex_scale_strategy"),
+            "bound_tag": _bound_tag(layer3) if layer3 else None,
+            "guard": guard.get("verdict"),
+            "layer3": layer3,
+            "guard_section": guard,
+        })
+    return out
+
+
+#: The fields ``compare --autoscale-plan`` compares (the decision; the
+#: full ``layer3`` / ``guard_section`` copies are for reading).
+PLAN_DECISION_KEYS = ("user_bound_scale", "user_objective_scale",
+                      "simplex_scale_strategy", "bound_tag", "guard")
+
+
 def _worker(json_name: str, scenario: str, patch: str, out_dir: Path, *,
             csv_dump: bool = False, dirty_with: str = "",
-            dirty_sqlite: str = "", axis_enums: bool = False) -> int:
+            dirty_sqlite: str = "", axis_enums: bool = False,
+            autoscale_plan: bool = False) -> int:
     os.environ.setdefault("FLEXTOOL_SKIP_SOLVER_PROBE", "1")
     sys.path.insert(0, str(TESTS_DIR))
     import warnings
@@ -2399,6 +2552,10 @@ def _worker(json_name: str, scenario: str, patch: str, out_dir: Path, *,
             csv_dump=csv_dump,
         )
         capture["on"] = False
+        if autoscale_plan:
+            (out_dir / "autoscale_plan.json").write_text(
+                json.dumps(_collect_autoscale_plan(work), indent=1,
+                           default=repr) + "\n")
         if csv_dump and steps:
             last = next(reversed(list(steps.values())))
             if last.flex_data_provider is not None:
@@ -2447,7 +2604,8 @@ class WorkMode:
 
 
 def _run_fixture(fx: Fixture, out_root: Path,
-                 mode: WorkMode = WorkMode()) -> tuple[str, int, float, str]:
+                 mode: WorkMode = WorkMode(),
+                 autoscale_plan: bool = False) -> tuple[str, int, float, str]:
     out_dir = out_root / fx.name
     if out_dir.exists():
         shutil.rmtree(out_dir)
@@ -2463,7 +2621,8 @@ def _run_fixture(fx: Fixture, out_root: Path,
     cmd = [sys.executable, str(Path(__file__).resolve()), "_worker",
            "--json", fx.json, "--scenario", fx.scenario,
            "--patch", fx.patch, "--out", str(out_dir),
-           *mode.worker_args(fx)]
+           *mode.worker_args(fx),
+           *(["--autoscale-plan"] if autoscale_plan else [])]
     t0 = time.monotonic()
     proc = subprocess.run(cmd, env=env, cwd=str(REPO),
                           capture_output=True, text=True)
@@ -2501,7 +2660,8 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
     t0 = time.monotonic()
     failed = []
     with cf.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futs = [pool.submit(_run_fixture, fx, out_root, mode)
+        futs = [pool.submit(_run_fixture, fx, out_root, mode,
+                            args.autoscale_plan)
                 for fx in fixtures]
         for fut in cf.as_completed(futs):
             name, rc, dt, tail = fut.result()
@@ -2783,7 +2943,49 @@ def cmd_compare(args: argparse.Namespace) -> int:
             print(f"equivalent  {rel}")
     label = "equivalent" if args.canonical else "identical"
     print(f"\n{n_same} {label}, {n_diff} different, {n_missing} missing")
-    return 0 if (n_diff == 0 and n_missing == 0) else 1
+    n_plan = _compare_autoscale_plans(base, new, args) if args.autoscale_plan else 0
+    return 0 if (n_diff == 0 and n_missing == 0 and n_plan == 0) else 1
+
+
+def _compare_autoscale_plans(base: Path, new: Path, args: argparse.Namespace) -> int:
+    """Print every solve whose autoscale decision (PLAN_DECISION_KEYS)
+    differs between the two snapshots; return the number of differences
+    (a missing plan file or solve counts as one)."""
+    wanted = ({n.strip() for n in args.fixtures.split(",") if n.strip()}
+              if args.fixtures else None)
+    names = sorted({p.parent.name for d in (base, new)
+                    for p in d.glob("*/autoscale_plan.json")})
+    if wanted is not None:
+        names = [n for n in names if n in wanted]
+    n_diff = n_same = 0
+    print("\nautoscale decisions:")
+    for name in names:
+        plans = []
+        for d in (base, new):
+            f = d / name / "autoscale_plan.json"
+            plans.append({e["solve"]: e for e in json.loads(f.read_text())}
+                         if f.is_file() else None)
+        if plans[0] is None or plans[1] is None:
+            print(f"PLAN MISSING in {'base' if plans[0] is None else 'new'}: {name}")
+            n_diff += 1
+            continue
+        for solve in sorted(set(plans[0]) | set(plans[1])):
+            a, b = plans[0].get(solve), plans[1].get(solve)
+            if a is None or b is None:
+                print(f"PLAN MISSING in {'base' if a is None else 'new'}: {name}/{solve}")
+                n_diff += 1
+                continue
+            changed = [f"{k} {a.get(k)!r} -> {b.get(k)!r}"
+                       for k in PLAN_DECISION_KEYS
+                       if a.get(k) != b.get(k)
+                       and not (k == "guard" and a.get(k) is None)]
+            if changed:
+                print(f"PLAN DIFFERENT  {name}/{solve}: " + "; ".join(changed))
+                n_diff += 1
+            else:
+                n_same += 1
+    print(f"{n_same} solves with the same decision, {n_diff} different")
+    return n_diff
 
 
 # ---------------------------------------------------------------------------
@@ -2988,6 +3190,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="copy FIXTURE's DB to work/tests.sqlite (no CSVs)")
     sp.add_argument("--axis-enums", action="store_true",
                     help="captured run with FLEXTOOL_AXIS_ENUMS=1 (axis-Enum mode)")
+    sp.add_argument("--autoscale-plan", action="store_true",
+                    help="also write <fixture>/autoscale_plan.json: each solve's "
+                         "Layer 3 decision and scaling-guard verdict")
     sp.set_defaults(func=cmd_snapshot)
 
     sp = sub.add_parser("compare", help="compare two snapshots")
@@ -3000,6 +3205,10 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--fixtures", default="",
                     help="comma-separated fixture dirs to compare (each must "
                          "exist in both)")
+    sp.add_argument("--autoscale-plan", action="store_true",
+                    help="also diff autoscale_plan.json (the Layer 3 decision and "
+                         "the scaling-guard verdict per solve; a base without a "
+                         "verdict matches any)")
     sp.set_defaults(func=cmd_compare)
 
     sp = sub.add_parser("coverage", help="constraint family -> fixtures")
@@ -3018,10 +3227,11 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--dirty-with", default="")
     sp.add_argument("--dirty-sqlite", default="")
     sp.add_argument("--axis-enums", action="store_true")
+    sp.add_argument("--autoscale-plan", action="store_true")
     sp.set_defaults(func=lambda a: _worker(
         a.json, a.scenario, a.patch, Path(a.out), csv_dump=a.csv_dump,
         dirty_with=a.dirty_with, dirty_sqlite=a.dirty_sqlite,
-        axis_enums=a.axis_enums))
+        axis_enums=a.axis_enums, autoscale_plan=a.autoscale_plan))
 
     args = ap.parse_args(argv)
     return int(args.func(args) or 0)

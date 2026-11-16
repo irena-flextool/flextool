@@ -24,7 +24,8 @@ FlexTool is a linear (or mixed-integer) optimisation model of an energy system. 
     `virtual_unitsize` splits a fleet into smaller units to keep a *binary* model fast.
 
 - **No start-up fuel.** A start-up costs only `startup_cost` [CUR/MW]: it uses no fuel or heat, and there is no shut-down cost and no hot, warm or cold start.
-- **Fuel use is linear in the output.** With `conversion_method` *min_load_efficiency*, the fuel use is a straight line from minimum load to full load; there are no curved efficiency curves.
+- **Fuel use is piecewise linear and convex.** With `conversion_method` *min_load_efficiency* the fuel use is a straight line from minimum load to full load; with *piecewise_linear* it is linear between the points of a part-load curve. A curve whose incremental heat rate falls from one segment to the next (a non-convex curve) is not accepted, and the curve cannot vary in time.
+- **A part-load curve is a lower bound on the input.** A *piecewise_linear* curve with two or more segments requires the input to be at least the curve's fuel use. Where extra input costs nothing or pays (a surplus or free input, a negative price or CO2 credit, a reserve or a minimum on the input), the input can be above the curve; a warning after the solve gives the amount. See [Part-load efficiency curve](reference/units.md#part-load-efficiency-curve-piecewise_linear).
 - **No parameter that keeps a unit online.** A unit can be made to produce (a profile, a flow group floor), but there is no parameter that fixes its online status alone.
 
     A user constraint on the units online (`constraint_online_coeff`) sets a minimum number of units online; see
@@ -46,7 +47,7 @@ FlexTool is a linear (or mixed-integer) optimisation model of an energy system. 
 - **The dispatch does not feed back into the investment.** An investment solve does not see the results of the dispatch solves that follow it.
 
     If a dispatch check shows unserved energy or reserve shortfall, change the investment solve by hand: a better
-    sample of representative periods, a `capacity_margin` or an energy margin, and run again; see
+    sample of representative periods, a capacity margin (`capacity_margin_method`) or an energy margin, and run again; see
     [Several milestones](how_to/solve_sequences.md#several-milestones-representative-period-investment-then-a-full-year-dispatch-of-each).
     The net-load re-selection of representative periods is the one loop that FlexTool runs for you.
 

@@ -415,6 +415,9 @@ def compute_costs(par, s, v, r) -> None:
     # × timestep_weight × inflation / period_share × pdt_branch_weight.
     # No step_duration: startup is a per-event (not per-hour) cost.
     r.process_startup_dt = v.startup_linear.add(v.startup_integer, fill_value=0)
+    # Shut-downs per step (unit counts, relative to the step's ramp predecessor as the start-ups): read by the
+    # ramp envelope (the output that the stopping units give is forced movement, not ramp room).
+    r.process_shutdown_dt = v.shutdown_linear.add(v.shutdown_integer, fill_value=0)
     r.cost_startup_dt = pd.DataFrame(0.0, index=r.process_startup_dt.index, columns=s.process_online, dtype=float)
     valid_processes = s.process_online.intersection(r.process_startup_dt.columns).intersection(par.process_startup_cost.columns)
     if len(valid_processes) > 0:

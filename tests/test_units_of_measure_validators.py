@@ -101,7 +101,7 @@ def test_flow_group_across_units(tmp_path, schema_db_url, caplog) -> None:
 @pytest.mark.parametrize("flag,value,feature", [
     ("has_inertia", "yes", "inertia"),
     ("has_non_synchronous", "yes", "the non-synchronous limit"),
-    ("capacity_margin_method", "manual", "the capacity margin"),
+    ("capacity_margin_method", "absolute", "the capacity margin"),
 ])
 def test_power_feature_group_with_a_non_power_node(tmp_path, schema_db_url, caplog, flag, value, feature) -> None:
     entities = [("group", ("g",)), ("group__node", ("g", "water"))]

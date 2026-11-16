@@ -281,7 +281,11 @@ def test_one_notice_at_a_time_and_an_accepted_key_answers_the_others(windows, ba
     dialog.send_button.invoke()
     wait_idle(window, first)
     wait_idle(window, second)
-    assert "one" in first.transcript.contents() and "two" in second.transcript.contents()
+    # Both chats start their workers at once, so which chat gets which scripted backend is not fixed: each gets one.
+    replies = {reply for reply in ("one", "two")
+               for tab in (first, second) if reply in tab.transcript.contents()}
+    assert replies == {"one", "two"}
+    assert not ("one" in first.transcript.contents() and "two" in first.transcript.contents())
     assert _dialogs(window, ConsentDialog) == []
     # A later request with the same key (a chat prepared before the acceptance was written) is answered at once.
     answers = []

@@ -205,25 +205,22 @@ class SolverConfig:
         by default; user populates via the ``solver_arguments``
         1d-map parameter (Batch C.2: the legacy ``solver_options``
         Map was folded into ``solver_arguments`` and removed).
-    time_limit
-        Wall-clock seconds; ``None`` means no limit.  Translated to
-        each solver's native parameter name by
-        :func:`flextool.engine.solve._solver_dispatch.resolve_commercial_options`.
     mip_gap
-        Relative MIP gap; ``None`` means solver default.
-    threads
-        Worker thread cap; ``None`` means solver default.
-    log_level
-        ``"silent"`` / ``"normal"`` / ``"verbose"``.  Default
-        ``"normal"``.
+        Relative MIP gap (``solve.solver_mip_gap``); ``None`` means
+        solver default.  Translated to each solver's native parameter
+        name by
+        :func:`flextool.engine.solve._solver_dispatch.resolve_commercial_options`
+        and ``build_solver_options``.  A time limit or thread count comes
+        from ``solver_arguments`` (the solver's own name) or the run's
+        flags (``--solver-time-limit``, ``--threads``); the database's
+        ``solver_time_limit`` / ``solver_threads`` were removed in v56.
+        The solver's log level comes from the run's ``--solver-log-level``
+        flag; the database's ``solver_log_level`` was removed in v56.
     """
 
     name: str = "highs"
     options: dict[str, Any] = field(default_factory=dict)
-    time_limit: float | None = None
     mip_gap: float | None = None
-    threads: int | None = None
-    log_level: str = "normal"
 
 
 # ---------------------------------------------------------------------------
@@ -647,20 +644,18 @@ class SolveConfig:
         # variable above for the legacy :class:`SolverSettings` dataclass
         # (which downstream callers still consume); we reuse that dict
         # here rather than re-querying.
-        # Batch C.7 — ``solver_log_level`` shortcut removed; use the
-        # --solver-log-level CLI flag (silent / normal / verbose →
-        # HiGHS output_flag + log_dev_level).
-        solver_log_level: dict = {}
+        # Batch C.7 (v56) dropped the ``solver_log_level`` DB parameter:
+        # the --solver-log-level CLI flag sets it (silent / normal /
+        # verbose).
         # solver_mip_gap comes back as the stringified float that
         # ``params_to_dict`` produces for scalar floats (see line
-        # ~141).  Batches C.6 and C.8 dropped the ``solver_threads``
-        # and ``solver_time_limit`` DB axes (use --highs-threads and
-        # --solver-time-limit CLI flags instead).
-        solver_time_limit_raw: dict = {}
+        # ~141).  Batches C.6 and C.8 (v56) dropped the ``solver_threads``
+        # and ``solver_time_limit`` DB parameters: a time limit or thread
+        # count goes in ``solver_arguments`` (the solver's own name) or the
+        # --solver-time-limit / --threads flags.
         solver_mip_gap_raw: dict = params_to_dict(
             db=db, cl="solve", par="solver_mip_gap", mode=DictMode.DICT
         )
-        solver_threads_raw: dict = {}
         # Batch C.2 — ``solver_options`` was folded into
         # ``solver_arguments`` (now the canonical 1d-map) and the
         # parameter_definition was removed.  ``SolverConfig.options``
@@ -810,29 +805,19 @@ class SolveConfig:
         solver_config_keys = (
             set(solvers)
             | set(solver_arguments)
-            | set(solver_time_limit_raw)
             | set(solver_mip_gap_raw)
-            | set(solver_threads_raw)
-            | set(solver_log_level)
         )
 
         def _opt_float(raw: dict, key: str) -> float | None:
             v = raw.get(key)
             return float(v) if v is not None else None
 
-        def _opt_int(raw: dict, key: str) -> int | None:
-            v = raw.get(key)
-            return int(float(v)) if v is not None else None
-
         solver_configs: dict[str, SolverConfig] = {}
         for key in solver_config_keys:
             solver_configs[key] = SolverConfig(
                 name=solvers.get(key, "highs"),
                 options=dict(solver_arguments.get(key, {})),
-                time_limit=_opt_float(solver_time_limit_raw, key),
                 mip_gap=_opt_float(solver_mip_gap_raw, key),
-                threads=_opt_int(solver_threads_raw, key),
-                log_level=solver_log_level.get(key, "normal"),
             )
 
         obj = cls(
@@ -899,6 +884,8 @@ class SolveConfig:
         obj.non_anticipativity_invest_periods = obj.periods_to_tuples(
             db=db, cl="solve", par="shared_invest_periods"
         )
+        # Before the 2-D map split, so the message names the solve of the database.
+        obj._check_branches_named_like_their_fan_period()
         obj._split_2d_period_maps()
         # After every period dict, so the 2D-map duplicate solves exist.
         obj._check_realized_invest_periods()
@@ -977,6 +964,29 @@ class SolveConfig:
     # ------------------------------------------------------------------
     # Methods
     # ------------------------------------------------------------------
+
+    def _check_branches_named_like_their_fan_period(self) -> None:
+        """Raise when a ``stochastic_branches`` branch has the name of the period where it fans out.
+
+        Owner decision 2026-11-15: such a branch would not be a member of the fan (it gets no periods) while the
+        fan check still counts it, so its weight would silently disappear.  Every row is checked (forecast,
+        zero-weight or realized), over the solves the model runs (:meth:`solves_in_run`).  A branch named like
+        some other period of the run only warns (``StochasticSolver._warn_branches_named_like_periods``).
+        """
+        problems: list[str] = []
+        for s in self.solves_in_run():
+            bad = list(dict.fromkeys(
+                (str(row[1]), str(row[0])) for row in (self.stochastic_branches.get(s) or [])
+                if str(row[1]) == str(row[0])
+            ))
+            for branch, period in bad:
+                problems.append(
+                    f"solve '{s}': stochastic_branches has a branch '{branch}' in period '{period}', the "
+                    "period where the branch fans out. A branch cannot have the name of the period where it fans "
+                    f"out: rename the branch '{branch}' (for example to a name that is not a period name)"
+                )
+        if problems:
+            raise FlexToolConfigError("; ".join(problems))
 
     def _check_realized_invest_periods(self) -> None:
         """Raise when a solve realizes investments in a period it does not invest in (#319).

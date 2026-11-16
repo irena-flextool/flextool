@@ -178,6 +178,18 @@ categories:
   # so a project with no per-entity dispatch colors renders exactly as before.
   # (The dashed ``Curtailed`` line and the solid ``Demand`` line are drawn
   # with fixed red / black and are not configured here.)
+  # Ramp envelope bands (scenario_comparison/ramp_plots.py, the Result viewer's
+  # "Ramp envelope" view and the comparison run's ramp_envelope_* plots): one
+  # color per band, the up part stacked above zero and the down part below it
+  # in the same color.  The net-load ramp is drawn black and the demand ramp
+  # gray (fixed).  Keys are exact; the stacking order is fixed (units nearest
+  # the zero axis, then storage, VRE, connections).
+  ramp_envelope:
+    units:        '#4e79a7'   # steel blue — unit flows
+    storage:      '#76b7b2'   # teal — flows from / to storages
+    vre:          '#edc948'   # yellow — VRE curtailment release / extra curtailment
+    connections:  '#b07aa1'   # purple — connection flows
+
   dispatch:
     # Positive side, visual top-to-bottom (top of the stacked area / legend)
     LossOfLoad:      crimson     # upward slack — unmet demand

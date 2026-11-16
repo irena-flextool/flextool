@@ -26,6 +26,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 import polars as pl
 
@@ -36,6 +37,7 @@ from flextool.process_outputs._inmemory_helpers import (
     wide_per_entity,
     with_solve_column,
 )
+from flextool.process_outputs.calc_piecewise import piecewise_input_and_excess
 
 if TYPE_CHECKING:
     from polar_high import Solution
@@ -380,6 +382,107 @@ def _pdtX_multi_col(
     ordered = list(gate_tuples) + [c for c in existing if c not in gate_tuples]
     full_cols = pd.MultiIndex.from_tuples(ordered, names=list(col_names))
     out = out.reindex(columns=full_cols, fill_value=0.0)
+    return out
+
+
+def _pdt_long_multi_col(
+    frame: "pl.DataFrame | None",
+    *,
+    solve_name: str,
+    col_dims: tuple[str, ...],
+    col_names: tuple[str, ...],
+) -> pd.DataFrame:
+    """A long polars frame ``(*col_dims, d, t, value)`` → wide pandas with row ``(solve, period, time)`` × column
+    (Multi)Index over ``col_dims`` (a plain ``Index`` for one dim); no rows and no columns when ``frame`` is
+    ``None`` / empty.  Cells without a row are NaN."""
+    if frame is None or frame.height == 0:
+        idx = pd.MultiIndex.from_arrays([[], [], []], names=["solve", "period", "time"])
+        out = pd.DataFrame(index=idx, dtype=float)
+        if len(col_names) == 1:
+            out.columns = pd.Index([], dtype="object", name=col_names[0])
+        else:
+            out.columns = pd.MultiIndex.from_arrays([[]] * len(col_names), names=list(col_names))
+        return out
+    # The pivot keeps the columns in the order the keys first appear (pandas, more than one column key), and the
+    # producers (``_ramp_inputs``, ``calc_piecewise``) build their frames with joins whose row order changes from
+    # run to run: sort by the keys so the columns (and rows) come in the same order on every run.
+    frame = frame.sort([*col_dims, "d", "t"])
+    out = wide_multi_col(
+        with_solve_column(frame, solve_name),
+        row_dims=("solve", "d", "t"),
+        col_dims=col_dims,
+        row_names=("solve", "period", "time"),
+        col_names=col_names,
+    )
+    if len(col_names) == 1 and isinstance(out.columns, pd.MultiIndex):
+        out.columns = out.columns.get_level_values(0)
+        out.columns.name = col_names[0]
+    return out
+
+
+def _solve_period_multi_col(
+    frame: "pl.DataFrame | None",
+    periods: list[str],
+    *,
+    solve_name: str,
+    col_dims: tuple[str, ...],
+    col_names: tuple[str, ...],
+) -> pd.DataFrame:
+    """A long polars frame ``(*col_dims, value)`` without a period / time axis → wide pandas with one row per
+    ``(solve, period)`` of ``periods`` (the same values in every row) × column MultiIndex over ``col_dims``; no
+    rows and no columns when ``frame`` is ``None`` / empty."""
+    if frame is None or frame.height == 0 or not periods:
+        idx = pd.MultiIndex.from_arrays([[], []], names=["solve", "period"])
+        out = pd.DataFrame(index=idx, dtype=float)
+        out.columns = pd.MultiIndex.from_arrays([[]] * len(col_names), names=list(col_names))
+        return out
+    frame = frame.sort(list(col_dims))  # the columns in the same order on every run (joins upstream)
+    columns = pd.MultiIndex.from_frame(frame.select(col_dims).to_pandas(), names=list(col_names))
+    values = frame.get_column("value").to_numpy().astype(float)
+    index = pd.MultiIndex.from_arrays([[solve_name] * len(periods), periods], names=["solve", "period"])
+    return pd.DataFrame(np.tile(values, (len(periods), 1)), index=index, columns=columns)
+
+
+def ramp_envelope_params(flex_data: "FlexData", solve_name: str) -> dict[str, pd.DataFrame]:
+    """The per-solve inputs of the ramp envelope (``calc_ramp_envelope``, ``_ramp_inputs``), solve-keyed so that
+    the per-roll realized slices carry, after the union, the values of the solve that realized each step:
+
+    * ``process_arc_cap_coef_dt`` / ``process_arc_floor_share_dt`` ``(solve, period, time)`` × ``(process,
+      source, sink)``: the capacity multiplier of each unit arc's maxFlow row and its floor per unit online (the
+      cells that differ from 1 / 0);
+    * ``process_ramp_limit`` ``(solve, period)`` × ``(process, source, sink, limit)``: the ramp speeds of the
+      solve's ramp-limit sets (no time axis: one row per period of the solve, the same values); the envelope
+      reads the row of the solve that realized each step;
+    * ``process_ramp_cap_coef_dt`` ``(solve, period, time)`` × ``(process, source, sink, limit)``: the ramp row's
+      capacity factor c (the cells that differ from 1);
+    * ``process_coarse_step_duration_dt`` / ``process_coarse_step_last_dt`` ``(solve, period, time)`` ×
+      ``process``: the coarse steps of the coarse processes.
+    """
+    from flextool.process_outputs import _ramp_inputs
+
+    arc = ("process", "source", "sink")
+    out = {
+        "process_arc_cap_coef_dt": _pdt_long_multi_col(
+            _ramp_inputs.arc_capacity_factor(flex_data), solve_name=solve_name,
+            col_dims=("p", "source", "sink"), col_names=arc),
+        "process_arc_floor_share_dt": _pdt_long_multi_col(
+            _ramp_inputs.arc_floor_share(flex_data), solve_name=solve_name,
+            col_dims=("p", "source", "sink"), col_names=arc),
+    }
+    speed, coef = _ramp_inputs.ramp_limits(flex_data)
+    dt = getattr(flex_data, "dt", None)
+    periods = ([] if dt is None or dt.height == 0
+               else dt.select(pl.col("d").cast(pl.Utf8)).unique(maintain_order=True).to_series().to_list())
+    out["process_ramp_limit"] = _solve_period_multi_col(
+        speed, periods, solve_name=solve_name, col_dims=("p", "source", "sink", "limit"),
+        col_names=(*arc, "limit"))
+    out["process_ramp_cap_coef_dt"] = _pdt_long_multi_col(
+        coef, solve_name=solve_name, col_dims=("p", "source", "sink", "limit"), col_names=(*arc, "limit"))
+    coarse_dur, coarse_last = _ramp_inputs.coarse_steps(flex_data)
+    out["process_coarse_step_duration_dt"] = _pdt_long_multi_col(
+        coarse_dur, solve_name=solve_name, col_dims=("p",), col_names=("process",))
+    out["process_coarse_step_last_dt"] = _pdt_long_multi_col(
+        coarse_last, solve_name=solve_name, col_dims=("p",), col_names=("process",))
     return out
 
 
@@ -1262,6 +1365,10 @@ def read_parameters(
         entity_dim="p", col_name="process", flex_data=flex_data,
     )
 
+    # The per-solve inputs of the ramp envelope (calc_ramp_envelope, _ramp_inputs).
+    for attr, frame in ramp_envelope_params(flex_data, solve_name).items():
+        setattr(p, attr, frame)
+
     # process_source_sink_varCost — (solve, period, time) × (process, source, sink).
     #
     # The post-processing in calc_costs.py multiplies this against
@@ -1475,6 +1582,15 @@ def read_parameters(
     p.entity_all_capacity = _entity_all_capacity(
         flex_data, solution, solve_name=solve_name,
     )
+
+    # process_piecewise_input_dt / process_piecewise_excess_dt — (solve, period, time) × process: the weighted
+    # input of each multi-line piecewise_linear unit and its part above the curve [MW], post-solve (calc_piecewise;
+    # the post-solve warning W5).  No columns without such a unit.
+    pw = piecewise_input_and_excess(flex_data, solution)
+    for attr, col in (("process_piecewise_input_dt", "input"), ("process_piecewise_excess_dt", "excess")):
+        setattr(p, attr, _pdt_long_multi_col(
+            None if pw is None else pw.select("p", "d", "t", pl.col(col).alias("value")),
+            solve_name=solve_name, col_dims=("p",), col_names=("process",)))
 
     # process_startup_cost — (solve, period) × process.
     p.process_startup_cost = _pdX_per_entity(

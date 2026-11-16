@@ -92,6 +92,8 @@ SPINEDB_OUTPUT_SPEC: dict[str, dict[str, Any]] = {
                        has_time=True, category="header"),
     "node_d_ep": dict(ec="node", param="balance", entity_dims=1,
                       has_time=False, category="header"),
+    "node_ramp_envelope_dt_ep": dict(ec="node", param="ramp_envelope_t", entity_dims=1,
+                                     has_time=True, category="header"),
     "node_state_dt_e": dict(ec="node", param="state_t", entity_dims=1,
                             has_time=True, category=None),
     "node_prices_dt_e": dict(ec="node", param="price_t", entity_dims=1,
@@ -225,6 +227,12 @@ SPINEDB_OUTPUT_SPEC: dict[str, dict[str, Any]] = {
                                       entity_dims=1, has_time=False,
                                       category="header", entity_index="node"),
     # --- model (cost) -----------------------------------------------------
+    # The hours a year each realized step stands for (the ramp histogram weight); one value column.
+    "timestep_hours_dt": dict(ec="model", param="timestep_hours_t", entity_dims=0,
+                              fixed_entity=("model",), has_time=True, category=None),
+    # The length (dt + dt+)/2 of each transition to the next realized step (the ramp histogram rate's divisor).
+    "transition_hours_dt": dict(ec="model", param="transition_hours_t", entity_dims=0,
+                                fixed_entity=("model",), has_time=True, category=None),
     "costs_dt_p": dict(ec="model", param="cost_t", entity_dims=0,
                        fixed_entity=("cost",), has_time=True,
                        category="header"),
@@ -244,6 +252,9 @@ SPINEDB_OUTPUT_SPEC: dict[str, dict[str, Any]] = {
                                  has_time=True, category=None),
     "nodeGroup_flows_d_g": dict(ec="group", param="flow_annualized",
                                 entity_dims=1, has_time=False, category=None),
+    "nodeGroup_ramp_envelope_dt_gp": dict(ec="group", param="ramp_envelope_t",
+                                          entity_dims=1, has_time=True,
+                                          category="header"),
     "nodeGroup_flows_dt_gpe": dict(ec="group", param="sum_flow_t",
                                    entity_dims=1, has_time=True,
                                    category="header"),

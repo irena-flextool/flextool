@@ -469,6 +469,13 @@ def read_sets(
         names=["process", "source", "sink"],
     )
 
+    # process_source_sink_uncapped: the conversion_flow_coeff = 0 arcs (no per-arc capacity, ramp or min-load
+    # row in the model); the ramp envelope leaves them out.
+    s.process_source_sink_uncapped = _multi_index_or_empty(
+        getattr(flex_data, "process_source_sink_uncapped", None), dims=("p", "source", "sink"),
+        names=["process", "source", "sink"],
+    )
+
     # process_method_sources_sinks — derived (method/orig_source/orig_sink/
     # always_source/always_sink).  FlexData doesn't carry these explicit
     # fields, so we run a 3-way join.
@@ -920,6 +927,52 @@ def read_sets(
             pdf, names=["solve", "period", "time", "period_previous", "time_previous"])
     else:
         s.ramp_link = empty_multi_index(["solve", "period", "time", "period_previous", "time_previous"])
+
+    # ramp_carry — the ramp_link rows of a continuation roll's first step that continue from the previous roll's
+    # last realized step (dt_ramp_carry, without the steps that also have an adjacent link): the model builds
+    # their ramp rows whatever the ramp room (``core._ramp_rows``); the ramp envelope reads them for the same rule.
+    carry = getattr(flex_data, "dt_ramp_carry", None)
+    if carry is not None and carry.height > 0:
+        cols = ("d", "t", "d_previous", "t_previous")
+        carry_u = carry.select(pl.col(c).cast(pl.Utf8) for c in cols)
+        linked = getattr(flex_data, "dt_ramp_link", None)
+        if linked is not None and linked.height > 0:
+            carry_u = carry_u.join(linked.select(pl.col(c).cast(pl.Utf8) for c in ("d", "t")),
+                                   on=["d", "t"], how="anti")
+        pdf = (carry_u.unique()
+               .with_columns(pl.lit(solve_name).alias("solve"))
+               .select("solve", *cols)
+               .sort(["solve", "d", "t"])
+               .to_pandas())
+        s.ramp_carry = pd.MultiIndex.from_frame(
+            pdf, names=["solve", "period", "time", "period_previous", "time_previous"])
+    else:
+        s.ramp_carry = empty_multi_index(["solve", "period", "time", "period_previous", "time_previous"])
+
+    # node_state_prev — (solve, node, period, time, period_prev, time_prev): the step whose state each storage
+    # step starts from in the storage balance (_self_discharge.state_links / previous_steps, the lags of
+    # core._state_change_terms): the chronological predecessor, or the step a binding method relinks it to
+    # (bind_within_timeblock wraps the first step of a timeblock to the timeblock's last step).  A step without a
+    # row starts from a fixed / carried state or the free state of a representative block.  The ramp envelope
+    # caps the storage room toward a step with the state that step starts from.
+    from flextool.engine.model._common import _has_rows
+    from flextool.engine.model._self_discharge import previous_steps, state_links
+
+    prev_names = ["solve", "node", "period", "time", "period_prev", "time_prev"]
+    prev = None
+    if _has_rows(getattr(flex_data, "nodeState", None)) or _has_rows(getattr(flex_data, "nodeState_rp", None)):
+        prev = previous_steps(state_links(
+            flex_data, has_rp=_has_rows(getattr(flex_data, "nodeState_rp", None)),
+            has_nsb=_has_rows(getattr(flex_data, "nodeStateBlock", None))))
+    if prev is not None and prev.height > 0:
+        pdf = (prev.unique()
+               .with_columns(pl.lit(solve_name).alias("solve"))
+               .select("solve", "n", "d", "t", "d_prev", "t_prev")
+               .sort(["solve", "n", "d", "t"])
+               .to_pandas())
+        s.node_state_prev = pd.MultiIndex.from_frame(pdf, names=prev_names)
+    else:
+        s.node_state_prev = empty_multi_index(prev_names)
 
     s.period__time_first = empty_multi_index(["solve", "period", "time"])
     s.period_first_of_solve = empty_multi_index(["solve", "period"])

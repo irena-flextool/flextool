@@ -434,6 +434,7 @@ its flag is off. Required-field lists are module-level tuples in
 | `has_coarse` | `nodeCoarse` + `node_coarse_step` | — | Nodes of coarse `new_stepduration` groups: `nodeBalanceCoarse_eq` (the summed `nodeBalance_eq` terms per coarse step), `stateConstantCoarse_eq`. |
 | `has_online_{lin,int}` | `process_online_{linear,integer}` | `ONLINE` | `_online`: `v_online`, startup / shutdown, uptime / downtime; `_unit_floors`: min-load floors. |
 | `has_minload_eff` | `process_min_load_eff` | `MINLOAD_EFF` | min_load_efficiency section terms. |
+| `has_piecewise` | `process_piecewise` | `PIECEWISE` | `conversion_piecewise` (multi-line `piecewise_linear` units; `conversion_indirect` skips them). |
 | `has_startup_cost_{lin,int}` | `pdt_online_{linear,integer}` | `STARTUP_COST_*` | Startup-cost objective term. |
 | `has_ramp` | any `process_source_sink_ramp_limit_*` | `RAMP` | Ramp-up / ramp-down constraints. |
 | `has_{invest,divest}_{p,n}` | `pd_{invest,divest}_set` / `nd_{invest,divest}_set` | `INVEST` / `DIVEST` | `v_invest` / `v_divest`, investment maxima, annuities. |
@@ -583,6 +584,36 @@ time variation via a downstream `unique([...])`. Both bit us (the
 cross-product) → `promote_param_to_dt` (narrowing inner-join on the
 carried axis). A new parameter that needs this must be added to
 `PARAM_ALLOWED_SHAPES`.
+
+##### Limits: `inf` is "no limit", a missing period is an error
+
+A period-map limit read through `require_period_coverage` / `require_period_coverage_time` must cover every period
+it applies to; a gap raises.  "No limit in this period" is written as `inf` (`-inf` for a lower limit).  The readers
+pass `limit_side` (`"upper"` / `"lower"`): `check_limit_values` refuses the opposite infinity and warns, once per
+(parameter, entity) and run, about a finite value of `HUGE_LIMIT_VALUE` (1e15) or more (kept as given: a huge
+right-hand side wrecks the scaling).  Two ways to drop the no-limit rows:
+
+- `drop_no_limit=True` drops them at the reader, for a limit whose missing row already means no limit (the flow
+  group limits, whose rows come from the Param; a minimum whose 0 sets no floor: `inertia_limit`,
+  `invest_min_period`, `retire_min_period`, `cumulative_min_capacity`).
+- Otherwise the Param keeps them and the consumer leaves the row out with `without_no_limit_rows(domain, param,
+  side)` and passes `drop_no_limit_rows(param, side)` as the right-hand side — for a family whose row domain does
+  not come from the Param (`co2_max_period` → `group_d_co2_capped`, the investment maxima behind FA-12,
+  `non_synchronous_limit` → `non_sync_rows`, `capacity_margin_absolute` / `capacity_margin_relative` → `capacity_margin_rows`, the user
+  constraint constant → `cdt_le` / `cdt_ge`).  The variable bounds of an entity investment read an unlimited
+  `invest_max_period` / `cumulative_max_capacity` period as the no-limit bound (`max_flow_for_unconstrained_variables`).
+
+A solve with `new_stepduration` aggregates a time map before these checks (`broadcast_to_period_time` →
+`aggregate_if_active`), and the four time-series limits (`_solve_step_aggregation.NO_LIMIT_SIDE`:
+`max_instant_flow`, `min_instant_flow`, `inertia_limit`, `non_synchronous_limit`) are MEANs: a solve step that
+combines a no-limit time step with finite ones is itself `inf` (`-inf`), so the limit is dropped for the whole solve
+step.  That is kept on purpose (a partial limit has no single step value that is right); `_warn_mixed_no_limit_steps`
+warns once per (parameter, entity) and run, naming the `period/step`s (5 shown, then "and N more"), and refuses a step
+that combines `inf` and `-inf` (its mean would be NaN, which `check_limit_values` cannot see).  No SUM, HARMONIC or
+LAST series is a limit, so no other aggregation kind meets this.
+
+Gated by `tests/engine/test_limit_inf_no_limit.py` (LP with `inf` = LP with a non-binding value minus that period's
+rows, single / rolling / stochastic).
 
 ##### Silent-label Maps are resolved per entity, not per parameter
 
@@ -1511,22 +1542,35 @@ slack semantics.
      tests with `FLEXTOOL_AUTOSCALE_STRICT=1` to turn the silent degrade
      into a loud failure (off in production so a gap never blocks a user
      solve).
-   - **Layer 3 — HiGHS native + bound-scale folding** (`_layer3.py`).
-     Picks an integer `user_bound_scale` exponent (within HiGHS's safe
-     range) and folds D's escape-tier valve into the same pass, so the
-     LP arriving at HiGHS is comfortably within the solver's
-     conditioning sweet spot.
-5. **YAML audit** (`engine/autoscale/_report.py`). After every
-   solve, writes `solve_data/autoscale_<solve>.yaml` covering Layer 1
-   ranges, the Layer 2 plan (per-type exponents + post-L2 ranges),
-   and the Layer 3 plan (`user_bound_scale`, escape-tier).
+   - **Layer 3 — HiGHS native** (polar-high `_layer3.py`). Picks the
+     power-of-two `user_bound_scale` / `user_objective_scale` exponents
+     from the post-Layer-2 readout (the *meaningful* bound / RHS pool:
+     continuous-column bounds and row bounds below HiGHS' `infinite_bound`,
+     float residue below 10 × the primal tolerance left out). The tier
+     exponent is clipped into the tolerance window `[10·tol, 1e18·tol]`;
+     where the range forces a choice (the former escape tier, now
+     `smallest-side`) the small end aims at 100 × tol, else at 10 × tol, and
+     the large end takes the excess ("scale from the smallest side"). So
+     the exponent there depends on `primal_feasibility_tolerance`. When no
+     exponent fits, the tag is `unscalable+smallest-side` and the scaling
+     guard decides. When Layer 2 did not run, Layer 3 reuses the Layer 1
+     readout instead of walking the LP again.
+5. **YAML audit** (`engine/autoscale/_report.py`). Written before the
+   solve (at decision time, so it exists when the guard stops a solve and
+   on the `--save-memory` path) and again after it:
+   `solve_data/autoscale_<solve>.yaml` covers Layer 1 ranges, the Layer 2
+   plan (per-type exponents + post-L2 ranges), the Layer 3 plan
+   (`user_bound_scale`, tier tag, tolerance window) and the scaling guard's
+   `guard:` section (verdict, tolerances, every finding with its numbers,
+   the families at each end and the entries named there).
    A 1-line console summary echoes via `format_console_summary`; the
    non-optimal hint (`format_nonoptimal_hint`) fires only when a *rejected*
    solve's **post-autoscale** LP is still wide-ranged (i.e. the autoscaler
    could not tame the spread), and even then it is framed as a possibility
    — never as the certified cause. Accept/reject itself is decided by
    `engine/solve/_acceptance.py` from the solver's own diagnostics
-   (see "Solve acceptance" below), not by the range report.
+   (see "Solve acceptance" below), not by the range report.  The summary
+   line ends with `guard=ok|warn|error` (`off` when not checked).
 6. **Manual override.** `--user-bound-scale N` (or
    `FLEXTOOL_USER_BOUND_SCALE`) pins Layer 3's bound-scale exponent and
    disables the auto-pick. Useful when the audit hints at a value the
@@ -1535,6 +1579,65 @@ slack semantics.
    Every `VariableSpec` carries an `unscale_by` field; the Layer 2 +
    Layer 3 reverse maps are applied in the writer so downstream
    consumers see absolute units regardless of which layers fired.
+
+### Scaling range guard
+
+`engine/autoscale/_guard.py` judges, before any solver runs, whether the
+LP the solver gets can be solved accurately after Layers 2 and 3
+(polar-high `assess_scaling`, a pure verdict; FlexTool holds the policy):
+
+| group | warning | error |
+|---|---|---|
+| bound / RHS | spread above 13 decades | no power-of-two exponent puts every meaningful limit inside `[10·tol, 1e18·tol]` (17 decades), or a manual / external exponent leaves that window |
+| cost | spread above 13 decades, or smallest scaled cost below 10 × dual tolerance | — |
+| matrix | a coefficient term HiGHS drops (≤ 1e-9) or refuses (≥ 1e15); the spread is reported only | — |
+
+* The verdict is taken after Layer 2.  In full mode a lone placeholder
+  (`1e18` next to `0.5`, 18.3 decades) is usually shrunk by Layer 2 to
+  about 13 decades, so it only **warns** and Layer 3 keeps the small
+  limits enforceable; it **stops** under `--scaling basic` (no Layer 2) or
+  when Layer 2 cannot shrink it.  A warning whose pre-Layer-2 spread
+  (`decades_pre`) exceeds 17 decades adds "under --scaling basic this would
+  stop".
+* `--scaling-guard error|warn|off` (`FLEXTOOL_SCALING_GUARD`, default
+  `error`, no database tier; the GUI's Solver options → Scaling guard sends
+  the flag): an error raises `ScalingRangeError` (a
+  `FlexToolConfigError`, so `cmd_run_flextool` prints it without a
+  traceback); `warn` prints it and solves; `off` checks nothing (Layer 3's
+  window clip still applies).  Warnings print once per run, keyed by base
+  solve, Benders region, group, level and the roll's own exponent (if a
+  recheck set one), so a later roll's error or new exponent still prints
+  (`_behaviour_changes.warn_once`; the once-per-run log of an adjusted
+  exponent uses `mark_once`, also reset by `start_run`).
+* The message names the solve (and roll / region), the spread and window
+  at the solve's `primal_feasibility_tolerance`, the family and up to five
+  entries at each end (polar-high `locate_extremes`, warning / error only),
+  the violation HiGHS would accept in model units, whether Layer 2 widened
+  the span, and the override.
+* Commercial solvers get no `user_*_scale`: judged at `N = 0` with the
+  solver's own feasibility parameter (Gurobi `FeasibilityTol`, CPLEX
+  `simplex tolerances feasibility`, Xpress `FEASTOL`, COPT `FeasTol`;
+  default 1e-6), and every error only warns.
+* `FLEXTOOL_AUTOSCALE_STRICT=1` raises also under `warn` / `off`, but only
+  for an error Layer 2 caused (the pre-Layer-2 pool fitted).  A failure of
+  the check itself (or of the range readout, monolith or Benders region)
+  prints "the scaling guard could not run" once per run and the solve goes
+  on (re-raised under strict).
+* Where it runs: after Layer 3 on the first solve of each LP shape (cold
+  and warm paths; the verdict is cached in `_AutoscaleShapeCacheEntry` and
+  replayed on a hit without a walk), and on every later roll that is built
+  again, from the ranges of the LP actually built: polar-high's
+  `pre_run_check` (`Problem.solve`, the first `WarmProblem.solve`, and
+  `Problem.write_mps` on the `--save-memory` path, whose returned options
+  go into the child's option file; when the hook or the call after it
+  raises, the pre-solve YAML is rewritten with that roll's verdict).  A
+  roll whose smallest limit leaves the
+  cached exponent's window gets its own exponent (Layer 3 on its ranges);
+  when none fits the policy applies, with the roll named.  A WarmProblem
+  reuse solves the LP already checked and is not rechecked.  Each Benders
+  region subproblem is judged after its Layer 3, outside the best-effort
+  `except` around it.  `--scaling off|solver_only` runs no autoscaler and
+  therefore no guard.
 
 ### Solve acceptance
 
@@ -1563,6 +1666,29 @@ unscale resets status and info, not options): primal-relative ceiling
 `max(1e-6, 10 × tolerance)`, absolute margin `10×` the tolerance, and P-D
 gap `1e-2` (the same order as the `mip_rel_gap` models routinely accept).
 The dual side is judged by the P-D gap only, so there is no dual ceiling.
+
+The infeasibility count and the absolute check are made in the space HiGHS
+solved. Autoscale Layer 3's `user_bound_scale = N` makes HiGHS solve a
+problem whose bounds are `2^N` times the ones it was given and judge
+feasibility there; it then removes the scaling and recomputes its info
+counters without rescaling its tolerance, so with `N = -26` a residual of
+`1e-7` in the solved problem reads `6.7` afterwards and is counted as an
+infeasibility (and HiGHS's feasible/infeasible verdict, then just "count is
+zero", flips with it). With user scaling applied, the count, the absolute
+maximum and the verdict therefore come from polar-high's solved-space
+counters (`SolveDiagnostics.user_scaled_*`, polar-high >= 3.15.0: rebuilt
+exactly from the unscaled solution, as the scaling is by powers of two);
+the relative check stays on HiGHS's unscaled numbers. The trade-off: the
+absolute check now mirrors HiGHS's own tolerance and no longer limits the
+residual in the units of the problem passed to HiGHS (with `N = -26`, up to
+`2^26 × 10 × tolerance` there); the relative check is the guard in those
+units. Without user scaling, or with an older polar-high, the unscaled
+counters decide as before. The messages say which space each number is in.
+A MIP stopped by a limit is kept on the same solved-space verdict, also from
+the `--save-memory` HiGHS child (`cmd_solve_mps --primal-feasible`, read in
+place of the solution file's Feasible line). Commercial solvers never get
+the HiGHS user-scaling options.
+
 Each has a `FLEXTOOL_ACCEPT_*` env override; a set (positive)
 `FLEXTOOL_ACCEPT_PRIMAL_REL` replaces the derived relative ceiling outright.
 `FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0` restores the legacy hard-fail (a MIP kept at

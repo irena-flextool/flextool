@@ -127,7 +127,7 @@ def test_ensure_results_db_creates_schema(tmp_path):
     ensure_results_db(url)
     with DatabaseMapping(url) as db:
         assert len(db.get_entity_class_items()) == 12
-        assert len(db.get_parameter_definition_items()) == 67
+        assert len(db.get_parameter_definition_items()) == 70
         assert [a["name"] for a in db.get_alternative_items()] == ["Base"]
     # idempotent: second call is a no-op and does not raise
     ensure_results_db(url)
@@ -240,6 +240,51 @@ def test_capacity_margin_tables_round_trip(tmp_path):
         contribution = _read_value(db, "group", ("g1",), "capacity_margin_contribution", "scenCM")
         assert set(contribution.indexes) == {"firm__u1", "connection__c1"}
         assert contribution.get_value("connection__c1").get_value("s1").get_value("p2020") == -20.0
+
+
+def test_ramp_envelope_tables_round_trip(tmp_path):
+    """``node.ramp_envelope_t`` / ``group.ramp_envelope_t`` are Map(band -> solve -> period -> time) (category =
+    band); the down bands stay negative."""
+    url = "sqlite:///" + str(tmp_path / "results.sqlite")
+    bands = ["ramp_net_load", "units_up", "units_down"]
+    node = pd.DataFrame([[10.0, 30.0, -20.0], [5.0, 25.0, -15.0]], index=_dt_index(),
+                        columns=pd.MultiIndex.from_product([["n1"], bands], names=["node", "band"]))
+    group = pd.DataFrame([[11.0, 31.0, -21.0], [6.0, 26.0, -16.0]], index=_dt_index(),
+                         columns=pd.MultiIndex.from_product([["g1"], bands], names=["group", "band"]))
+    results = {"node_ramp_envelope_dt_ep": node, "nodeGroup_ramp_envelope_dt_gp": group}
+    assert write_spinedb(results, StubS(), url, "scenRE", "s1") > 0
+    with DatabaseMapping(url) as db:
+        at_node = _read_value(db, "node", ("n1",), "ramp_envelope_t", "scenRE")
+        assert set(at_node.indexes) == set(bands)
+        assert at_node.get_value("units_down").get_value("s1").get_value("p2020").get_value("t01") == -20.0
+        at_group = _read_value(db, "group", ("g1",), "ramp_envelope_t", "scenRE")
+        assert at_group.get_value("units_up").get_value("s1").get_value("p2020").get_value("t02") == 26.0
+
+
+def test_timestep_hours_round_trip(tmp_path):
+    """``model.timestep_hours_t`` (entity ``model``) is Map(solve -> period -> time) of the hours a year of each
+    step (the ramp histogram weight), one value column, no category level."""
+    url = "sqlite:///" + str(tmp_path / "results.sqlite")
+    hours = pd.DataFrame({"timestep_hours": [100.0, 50.0]}, index=_dt_index())
+    hours.columns.name = "param"
+    assert write_spinedb({"timestep_hours_dt": hours}, StubS(), url, "scenTH", "s1") > 0
+    with DatabaseMapping(url) as db:
+        value = _read_value(db, "model", ("model",), "timestep_hours_t", "scenTH")
+        assert list(value.indexes) == ["s1"]
+        assert value.get_value("s1").get_value("p2020").get_value("t01") == 100.0
+        assert value.get_value("s1").get_value("p2020").get_value("t02") == 50.0
+
+
+def test_transition_hours_round_trip(tmp_path):
+    """``model.transition_hours_t``: Map(solve -> period -> time) of the transition length (dt + dt+)/2, h."""
+    url = "sqlite:///" + str(tmp_path / "results.sqlite")
+    hours = pd.DataFrame({"transition_hours": [2.0, 1.5]}, index=_dt_index())
+    hours.columns.name = "param"
+    assert write_spinedb({"transition_hours_dt": hours}, StubS(), url, "scenTR", "s1") > 0
+    with DatabaseMapping(url) as db:
+        value = _read_value(db, "model", ("model",), "transition_hours_t", "scenTR")
+        assert value.get_value("s1").get_value("p2020").get_value("t01") == 2.0
+        assert value.get_value("s1").get_value("p2020").get_value("t02") == 1.5
 
 
 def test_reserve_requirement_tables_round_trip(tmp_path):
@@ -455,7 +500,7 @@ def test_concurrent_cold_start_creates_one_valid_db(tmp_path):
     assert not leftovers, f"leftover temp DBs: {leftovers}"
     with DatabaseMapping(url) as db:
         assert len(db.get_entity_class_items()) == 12
-        assert len(db.get_parameter_definition_items()) == 67
+        assert len(db.get_parameter_definition_items()) == 70
 
     # The DB stays usable for an append after the concurrent create.
     write_spinedb({"unit_outputNode_dt_ee": _flow_df()}, StubS(), url,
@@ -605,7 +650,7 @@ def test_top_up_restores_missing_param_def(tmp_path):
         assert it["description"].startswith(expected_unit), (
             f"restored description missing derived unit {expected_unit!r}: "
             f"{it['description']!r}")
-        assert len(db.get_parameter_definition_items()) == 67
+        assert len(db.get_parameter_definition_items()) == 70
 
     # End-to-end: the previously-crashing write now round-trips.
     s = StubS()
@@ -662,7 +707,7 @@ def test_top_up_restores_missing_entity_class(tmp_path):
         assert any(p["entity_class_name"] == "group"
                    for p in db.get_parameter_definition_items())
         assert len(db.get_entity_class_items()) == 12
-        assert len(db.get_parameter_definition_items()) == 67
+        assert len(db.get_parameter_definition_items()) == 70
 
 
 def test_top_up_excludes_alternatives(tmp_path):
@@ -695,7 +740,7 @@ def test_concurrent_top_up_on_stale_shared_db(tmp_path):
     ensure_results_db(url)
     _remove_param_def(url, "node", "cost_annualized")
     with DatabaseMapping(url) as db:
-        assert len(db.get_parameter_definition_items()) == 66
+        assert len(db.get_parameter_definition_items()) == 69
 
     ctx = mp.get_context("spawn")
     n = 6
@@ -707,7 +752,7 @@ def test_concurrent_top_up_on_stale_shared_db(tmp_path):
         defs = db.get_parameter_definition_items(
             entity_class_name="node", name="cost_annualized")
         assert len(defs) == 1, f"expected exactly one def, got {len(defs)}"
-        assert len(db.get_parameter_definition_items()) == 67
+        assert len(db.get_parameter_definition_items()) == 70
         assert len(db.get_entity_class_items()) == 12
 
     # No leftover temp DBs; the sidecar lock (if present) is not held.

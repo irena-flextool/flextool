@@ -1744,6 +1744,19 @@ plots:
         comparison_overrides:
           map_dimensions_for_plots: [dt_sg, ti_lu]
           max_subplots_per_file: 6
+  'NodeGroup ramp envelope':
+    group: 6
+    order: 7
+    nodeGroup_ramp_envelope_dt_gp:
+      debug:
+        variant: h
+        map_dimensions_for_plots: [dt_gp, tt_ul]
+        subplots_per_row: 2
+        max_items_per_plot: 10
+        max_subplots_per_file: 4
+        legend: all
+        ylabel: '{R}, change toward the next step'
+        scenario_rule: u
   'Node':
     group: 7
     order: 0
@@ -1861,6 +1874,19 @@ plots:
           map_dimensions_for_plots: [dt_se, ti_lu]
           skip_data_with_only_zeroes: true
           legend: shared
+  'Node ramp envelope':
+    group: 7
+    order: 3
+    node_ramp_envelope_dt_ep:
+      debug:
+        variant: h
+        map_dimensions_for_plots: [dt_ep, tt_ul]
+        subplots_per_row: 2
+        max_items_per_plot: 10
+        max_subplots_per_file: 4
+        legend: all
+        ylabel: '{R}, change toward the next step'
+        scenario_rule: u
   'Unit cf for inputs':
     group: 8
     order: 0
@@ -2354,6 +2380,7 @@ rename:
   nodeGroup_flows_dt_g: [group_total_inflow__dt, true]
   nodeGroup_flows_d_gpe: [group_flows__d, true]
   nodeGroup_flows_dt_gpe: [group_flows__dt, true]
+  nodeGroup_ramp_envelope_dt_gp: [group_ramp_envelope__dt, true]
   nodeGroup_inertia_dt_g: [group_inertia__dt, true]
   nodeGroup_inertia_largest_flow_dt_g: [group_inertia_largest_flow__dt, true]
   nodeGroup_gdt_p: [group_node__dt, true]
@@ -2369,6 +2396,9 @@ rename:
   co2_price_total_d_g: [group_CO2_price_total__d, true]
   node_d_ep: [node__d, true]
   node_dt_ep: [node__dt, true]
+  node_ramp_envelope_dt_ep: [node_ramp_envelope__dt, true]
+  timestep_hours_dt: [timestep_hours__dt, false]
+  transition_hours_dt: [transition_hours__dt, false]
   node_capacity_ed_p: [node_capacity__d, true]
   node_prices_dt_e: [node_prices__dt, true]
   node_state_dt_e: [node_state__dt, true]

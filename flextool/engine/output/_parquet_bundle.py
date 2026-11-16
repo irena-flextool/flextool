@@ -318,6 +318,9 @@ for _key, _producer, _note in (
     ("node_slack_down_dt_e",       "out_ancillary.slack_variables",    "Per-(period,time) node down-slack."),
     ("node_slack_up_d_e",          "out_ancillary.slack_variables",    "Per-period node up-slack."),
     ("node_slack_down_d_e",        "out_ancillary.slack_variables",    "Per-period node down-slack."),
+    ("node_ramp_envelope_dt_ep",   "out_node.node_ramp_envelope",      "Per-(period,time) node ramp envelope: net-load / demand ramps and the up / down room by band toward the next step."),
+    ("timestep_hours_dt",          "out_node.node_ramp_envelope",      "Per-(period,time) hours a year each step stands for (the ramp histogram weight)."),
+    ("transition_hours_dt",        "out_node.node_ramp_envelope",      "Per-(period,time) length (dt + dt+)/2 of the transition to the next realized step, h (the ramp histogram rate's divisor)."),
 ):
     REGISTRY[_key] = _proc(
         _key, note=_note, producer=f"flextool.process_outputs.{_producer}",
@@ -412,6 +415,7 @@ for _key, _producer, _note in (
     ("nodeGroup_flows_d_g",              "out_group.nodeGroup_flows",        "Per-period group net flow."),
     ("nodeGroup_flows_dt_gpe",           "out_group.nodeGroup_flows",        "Per-(period,time) group flow by participant."),
     ("nodeGroup_flows_d_gpe",            "out_group.nodeGroup_flows",        "Per-period group flow by participant."),
+    ("nodeGroup_ramp_envelope_dt_gp",    "out_group.nodeGroup_ramp_envelope", "Per-(period,time) ramp envelope of each dispatch group; only with print_dispatch groups."),
     ("nodeGroup_inertia_dt_g",           "out_ancillary.inertia_results",    "Per-(period,time) group inertia; only with inertia constraint active."),
     ("nodeGroup_inertia_largest_flow_dt_g",        "out_ancillary.inertia_results", "Largest-flow inertia decomposition; only with N-1 / dynamic reserves."),
     ("nodeGroup_unit_node_inertia_dt_gee",         "out_ancillary.inertia_results", "Per-unit inertia contribution; only with inertia constraint."),

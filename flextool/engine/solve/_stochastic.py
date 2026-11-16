@@ -25,10 +25,11 @@ Architecture notes
 Behavioural quirks
 ------------------
 
-* **Zero-weight branch**: excluded from ``new_active_time_list`` but
-  only excluded from ``solve_branch__time_branch_lists`` if both
-  ``branch != period`` AND the realized flag is not ``"yes"``.  Subtle
-  three-way condition.
+* **Zero-weight or realized branch**: not a member of the fan -- no
+  ``<period>_<branch>`` active time and no ``solve_branch__time_branch``
+  row.  (A branch named like the period where it fans out is refused at
+  input time, ``SolveConfig._check_branches_named_like_their_fan_period``;
+  the legacy ``branch != period`` exclusion is gone.)
 
 * **Continuation-after-branching**: every period after the branching
   period continues the fan.  Each non-realized nonzero-weight branch gets
@@ -444,6 +445,47 @@ class StochasticSolver:
                 triggers[complete_solves[x]].add(tuple(branch_start_time_lists[x]))
         return triggers
 
+    @staticmethod
+    def _warn_branches_named_like_periods(
+        stochastic_branches: dict[str, Any],
+        solves: list[str],
+        complete_solves: dict[str, str],
+        active_time_lists: dict[str, dict],
+        realized_time_lists: dict[str, dict],
+    ) -> None:
+        """Warn (once per run per solve and branch) when a forecast branch of
+        ``stochastic_branches`` has the name of a period of the run.
+
+        FlexTool allows it (a branch period is named ``period + "_" +
+        branch``, so the names stay apart), but results and messages that name
+        the branch and the period are hard to tell apart (owner decision
+        2026-11-15: a warning, not an error).  A branch named like the period
+        where it fans out is an error, raised at input time
+        (``SolveConfig._check_branches_named_like_their_fan_period``), so it
+        does not reach this warning.  The periods of the run are the
+        periods of every solve's and roll's active and realized time, and the
+        periods named in ``stochastic_branches``."""
+        periods: set[str] = set()
+        for solve in solves:
+            periods.update(str(p) for p in active_time_lists.get(solve, {}))
+            periods.update(str(p) for p in realized_time_lists.get(solve, {}))
+        complete = sorted({complete_solves[s] for s in solves if complete_solves[s] in stochastic_branches})
+        for c in complete:
+            periods.update(str(row[0]) for row in stochastic_branches[c])
+        from flextool.engine import _behaviour_changes
+        for c in complete:
+            colliding = sorted({str(row[1]) for row in stochastic_branches[c] if str(row[1]) in periods})
+            for branch in colliding:
+                own = sorted({str(row[0]) for row in stochastic_branches[c] if str(row[1]) == branch})
+                _behaviour_changes.warn_once(
+                    ("stochastic_branch_named_like_period", c, branch),
+                    f"Warning: solve {c!r} has a stochastic forecast branch {branch!r} (stochastic_branches, "
+                    f"in period(s) {', '.join(repr(p) for p in own)}), and {branch!r} is also the name of a "
+                    f"period of the run. FlexTool keeps them apart (the branch's periods are named "
+                    f"<period>_{branch}), but results and messages that name the branch or the period are easy "
+                    f"to confuse; give the branch a name that is not a period name.",
+                )
+
     def _warn_unfanned_cohorts(
         self,
         unfanned: dict[str, tuple[str, str, bool, list]],
@@ -729,6 +771,8 @@ class StochasticSolver:
         cohort_rows: dict[str, dict[tuple[str, str], list]] = dict()
         cohort_forecasts: dict[str, dict[tuple[str, str], list[str]]] = dict()
         cohort_realized: dict[str, dict[tuple[str, str], list[str]]] = dict()
+        self._warn_branches_named_like_periods(
+            stochastic_branches, solves, complete_solves, active_time_lists, realized_time_lists)
 
         for solve in solves:
             new_realized_time_list: dict = dict()
@@ -1023,13 +1067,14 @@ class StochasticSolver:
                                 branches.append(branch)
                                 solve_branch = period + "_" + branch
 
-                                # Zero-weight branch is excluded from
-                                # both active time AND
-                                # solve_branch__time_branch when the
-                                # three-way condition holds.
+                                # A zero-weight or realized branch is
+                                # excluded from both active time AND
+                                # solve_branch__time_branch.
+                                # (A branch named like its fan period is refused
+                                # at input time: SolveConfig.
+                                # _check_branches_named_like_their_fan_period.)
                                 if (
                                     float(branch__weight__real[1]) != 0.0
-                                    and branch != period
                                     and branch__weight__real[2] != "yes"
                                 ):
                                     active_branches.append(branch)

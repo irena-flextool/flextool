@@ -56,7 +56,7 @@ _RUNS: dict = {}
 
 
 def _shortfall(tmp_path_factory, name: str, chain: list[str], values: list, entities: list, nodes: list[str], *,
-               margin: float | None = 100.0, method: str = "manual",
+               margin: float | None = 100.0, method: str = "absolute",
                penalty: float = 1000.0) -> tuple[float, object]:
     """``(shortfall MW of group cm in p2020, the solve's step)``."""
     from flextool.engine import run_chain_from_db
@@ -71,7 +71,7 @@ def _shortfall(tmp_path_factory, name: str, chain: list[str], values: list, enti
     own = {tuple(v[:3]) if isinstance(v[1], str) else (v[0], tuple(v[1]), v[2]) for v in values}
     vals = [v for v in vals if (v[0], v[1], v[2]) not in own] + values
     if margin is not None:
-        vals.append(["group", "cm", "capacity_margin", sc(margin)])
+        vals.append(["group", "cm", "capacity_margin_absolute", sc(margin)])
     url, scen = make_db(tmp_path_factory, alt=f"cmf_{name}", values=vals, base_chain=chain, entities=ents)
     steps = run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"cmf_{name}_w"), keep_solutions=True)
     step = list(steps.values())[-1]
@@ -167,48 +167,48 @@ def test_battery_connection_counts_by_flow_F(tmp_path_factory) -> None:
     assert short == pytest.approx(462.0, abs=1e-4)
 
 
-# ─── P: share_of_peak ────────────────────────────────────────────────────
+# ─── P: relative_of_peak_demand ────────────────────────────────────────────────────
 
 
-def test_share_of_peak_P(tmp_path_factory) -> None:
-    """P: ``share_of_peak`` with ``capacity_margin_share`` 0.1: M = 0.1 · 872 = 87.2, so 872 + 87.2 − 500 = 459.2.
+def test_relative_of_peak_demand_P(tmp_path_factory) -> None:
+    """P: ``relative_of_peak_demand`` with ``capacity_margin_relative`` 0.1: M = 0.1 · 872 = 87.2, so 872 + 87.2 − 500 = 459.2.
     The peak is over the period's original timeline (72 steps; its peak 872 is at t0043)."""
-    vals = [["group", "cm", "capacity_margin_share", sc(0.1)]]
-    short, step = _shortfall(tmp_path_factory, "P", BASE, vals, [], ["west"], margin=None, method="share_of_peak")
+    vals = [["group", "cm", "capacity_margin_relative", sc(0.1)]]
+    short, step = _shortfall(tmp_path_factory, "P", BASE, vals, [], ["west"], margin=None, method="relative_of_peak_demand")
     assert short == pytest.approx(459.2, abs=1e-4)
     peak = utf8(step.flex_data.pdGroup_peak_demand.frame).filter(pl.col("g") == "cm")
     assert peak["value"].to_list() == [pytest.approx(max(DEMAND.values()))]
 
 
-def test_share_of_peak_takes_the_peak_outside_the_solve(tmp_path_factory) -> None:
+def test_relative_of_peak_demand_takes_the_peak_outside_the_solve(tmp_path_factory) -> None:
     """P with west's demand 1000 MW at t0060, a step of the timeline (72 steps) outside the solve's 48 steps: the
     peak is 1000, so M = 100, and the solve's own peak step (t0043) gives 872 + 100 − 500 = 472 (a peak over the
     solve's steps would give M = 87.2 and 459.2)."""
     data = [[t, -1000.0 if t == "t0060" else v] for t, v in _fixture_value("west", "west", "inflow")["data"]]
     inflow = b64({"index_type": "str", "rank": 1, "index_name": "time", "type": "map", "data": data}, "map")
-    vals = [["group", "cm", "capacity_margin_share", sc(0.1)], ["node", "west", "inflow", inflow]]
+    vals = [["group", "cm", "capacity_margin_relative", sc(0.1)], ["node", "west", "inflow", inflow]]
     short, step = _shortfall(tmp_path_factory, "P_out", BASE, vals, [], ["west"], margin=None,
-                             method="share_of_peak")
+                             method="relative_of_peak_demand")
     peak = utf8(step.flex_data.pdGroup_peak_demand.frame).filter(pl.col("g") == "cm")
     assert peak["value"].to_list() == [pytest.approx(1000.0)]
     assert short == pytest.approx(472.0, abs=1e-4)
 
 
-def test_share_of_peak_ignores_capacity_margin(tmp_path_factory) -> None:
-    """A ``capacity_margin`` value on a share_of_peak group is not its margin: still 459.2."""
-    vals = [["group", "cm", "capacity_margin_share", sc(0.1)]]
-    short, _ = _shortfall(tmp_path_factory, "P_mw", BASE, vals, [], ["west"], margin=300.0, method="share_of_peak")
+def test_relative_of_peak_demand_ignores_capacity_margin(tmp_path_factory) -> None:
+    """A ``capacity_margin`` value on a relative_of_peak_demand group is not its margin: still 459.2."""
+    vals = [["group", "cm", "capacity_margin_relative", sc(0.1)]]
+    short, _ = _shortfall(tmp_path_factory, "P_mw", BASE, vals, [], ["west"], margin=300.0, method="relative_of_peak_demand")
     assert short == pytest.approx(459.2, abs=1e-4)
 
 
-def test_share_of_peak_constant_equals_period_map(tmp_path_factory) -> None:
-    """A constant ``capacity_margin_share`` and the same value as a period map give the same LP result."""
-    vals = [["group", "cm", "capacity_margin_share",
+def test_relative_of_peak_demand_constant_equals_period_map(tmp_path_factory) -> None:
+    """A constant ``capacity_margin_relative`` and the same value as a period map give the same LP result."""
+    vals = [["group", "cm", "capacity_margin_relative",
              b64({"index_type": "str", "index_name": "period", "data": [["p2020", 0.1]]}, "map")]]
-    short, _ = _shortfall(tmp_path_factory, "P_map", BASE, vals, [], ["west"], margin=None, method="share_of_peak")
-    assert short == pytest.approx(_shortfall(tmp_path_factory, "P", BASE, [["group", "cm", "capacity_margin_share",
+    short, _ = _shortfall(tmp_path_factory, "P_map", BASE, vals, [], ["west"], margin=None, method="relative_of_peak_demand")
+    assert short == pytest.approx(_shortfall(tmp_path_factory, "P", BASE, [["group", "cm", "capacity_margin_relative",
                                                                              sc(0.1)]], [], ["west"], margin=None,
-                                             method="share_of_peak")[0], abs=1e-9)
+                                             method="relative_of_peak_demand")[0], abs=1e-9)
 
 
 # ─── X, L: exports and internal losses ───────────────────────────────────
@@ -313,12 +313,12 @@ def test_storage_slack_energy_does_not_count(tmp_path_factory) -> None:
     assert short == pytest.approx(472.0, abs=1e-4)
 
 
-# ─── share_of_peak in rolling and stochastic solves; the peak per period ──
+# ─── relative_of_peak_demand in rolling and stochastic solves; the peak per period ──
 
 
 def _share(group: str, value) -> list:
-    return [["group", group, "capacity_margin_method", st("share_of_peak")],
-            ["group", group, "capacity_margin_share", value]]
+    return [["group", group, "capacity_margin_method", st("relative_of_peak_demand")],
+            ["group", group, "capacity_margin_relative", value]]
 
 
 def _period_map(periods: list[str], value: float) -> list:
@@ -354,7 +354,7 @@ def _margins(step) -> dict[str, float]:
                                                ("stoch", "cm_g", ["p2035", "p2040"])])
 def test_share_constant_equals_period_map_in_rolling_and_stochastic_solves(tmp_path_factory, veh, group,
                                                                            periods) -> None:
-    """A constant ``capacity_margin_share`` and the same value as a period map give the same margin and the same
+    """A constant ``capacity_margin_relative`` and the same value as a period map give the same margin and the same
     objective in every roll of a rolling investment solve and in a stochastic (recourse) fan.  The margin is the
     share of the peak over the period's original timeline, so every roll has the same margin, and each forecast
     branch period has a margin of its own peak."""
@@ -377,14 +377,14 @@ def test_share_constant_equals_period_map_in_rolling_and_stochastic_solves(tmp_p
 # ─── input checks ────────────────────────────────────────────────────────
 
 
-def test_capacity_margin_on_a_share_of_peak_group_is_reported_ignored(tmp_path_factory, caplog) -> None:
-    """``capacity_margin`` on a share_of_peak group is not its margin; the run says so."""
+def test_capacity_margin_on_a_relative_of_peak_demand_group_is_reported_ignored(tmp_path_factory, caplog) -> None:
+    """``capacity_margin`` on a relative_of_peak_demand group is not its margin; the run says so."""
     import logging
 
     with caplog.at_level(logging.WARNING):
-        _shortfall(tmp_path_factory, "P_warn", BASE, [["group", "cm", "capacity_margin_share", sc(0.1)]], [],
-                   ["west"], margin=300.0, method="share_of_peak")
-    assert ("Group 'cm' has capacity_margin but capacity_margin_method is not manual: the limit is ignored."
+        _shortfall(tmp_path_factory, "P_warn", BASE, [["group", "cm", "capacity_margin_relative", sc(0.1)]], [],
+                   ["west"], margin=300.0, method="relative_of_peak_demand")
+    assert ("Group 'cm' has capacity_margin_absolute but capacity_margin_method is not absolute: the limit is ignored."
             in caplog.text)
 
 
@@ -410,7 +410,7 @@ def test_storage_node_with_demand_in_a_capacity_margin_group_is_reported(tmp_pat
     assert "Capacity margin group 'cm': the storage node(s) bat have demand" in caplog.text
 
 
-def test_share_of_peak_per_period_on_a_shared_timeline(tmp_path_factory) -> None:
+def test_relative_of_peak_demand_per_period_on_a_shared_timeline(tmp_path_factory) -> None:
     """Two investment periods take different blocks of one timeline (p2020 t0001-t0024, p2025 t0025-t0072), and
     west's demand is 1000 MW at t0060: each period's peak is over its own part of the timeline, so p2020 has the
     peak of t0001-t0024 (from the fixture JSON) and p2025 has 1000."""
@@ -418,7 +418,7 @@ def test_share_of_peak_per_period_on_a_shared_timeline(tmp_path_factory) -> None
     inflow = b64({"index_type": "str", "rank": 1, "index_name": "time", "type": "map", "data": data}, "map")
     periods = b64({"value_type": "str", "data": ["p2020", "p2025"], "index_name": "period"}, "array")
     ents = [["timeset", "first_day", None], ["timeset", "rest", None]]
-    vals = [["group", "cm", "capacity_margin_share", sc(0.1)], ["node", "west", "inflow", inflow],
+    vals = [["group", "cm", "capacity_margin_relative", sc(0.1)], ["node", "west", "inflow", inflow],
             ["timeset", "first_day", "timeline", st("y2020")], ["timeset", "rest", "timeline", st("y2020")],
             ["timeset", "first_day", "timeset_duration", b64({"index_type": "str", "index_name": "timestep",
                                                               "data": [["t0001", 24.0]]}, "map")],
@@ -430,7 +430,7 @@ def test_share_of_peak_per_period_on_a_shared_timeline(tmp_path_factory) -> None
             ["solve", "y2020_2day_dispatch", "realized_periods", periods],
             ["solve", "y2020_2day_dispatch", "invest_periods", periods]]
     _, step = _shortfall(tmp_path_factory, "P_shared", BASE, vals, ents, ["west"], margin=None,
-                         method="share_of_peak")
+                         method="relative_of_peak_demand")
     peak = {d: v for g, d, v in utf8(step.flex_data.pdGroup_peak_demand.frame).iter_rows() if g == "cm"}
     first = max(DEMAND[f"t{i:04d}"] for i in range(1, 25))
     assert peak == {"p2020": pytest.approx(first), "p2025": pytest.approx(1000.0)}

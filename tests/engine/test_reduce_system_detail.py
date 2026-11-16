@@ -9,7 +9,7 @@ timeset ``2day`` cut to two 1-h steps of period p2020:
 * ``sys_full``: node ``elec`` (demand 80 MW) in group ``electricity``; commodity node ``fuel`` at 20 CUR/MWh;
   unit ``g1`` fuel -> elec (100 MW, efficiency 0.5, linear startup, min_load 0.5, inertia_constant 2) holding the
   upward and downward reserve ``rsv`` of ``electricity``; unit ``w1`` -> elec (50 MW, non-synchronous);
-  ``electricity`` with an inertia limit and a non-synchronous limit; group ``cm`` (elec) with a manual capacity
+  ``electricity`` with an inertia limit and a non-synchronous limit; group ``cm`` (elec) with an absolute capacity
   margin in an investment solve.
 * ``dc_triangle``: nodes n1, n2, n3 in group ``ac`` (``dc_power_flow_with_angles``), lines c12, c23, c13 of
   100 MW and equal reactance; supply only at n1 (unit g, 300 MW), demand 180 MW at n3 (penalty 10000 CUR/MWh).
@@ -109,7 +109,7 @@ def _sys_full(system: str | None = None) -> tuple[list, list]:
         ["group", "electricity", "has_non_synchronous", _s("yes")],
         ["group", "electricity", "non_synchronous_limit", _f(0.5)],
         ["group", "electricity", "penalty_non_synchronous", _f(10.0)],
-        ["group", "cm", "capacity_margin_method", _s("manual")], ["group", "cm", "capacity_margin", _f(10.0)],
+        ["group", "cm", "capacity_margin_method", _s("absolute")], ["group", "cm", "capacity_margin_absolute", _f(10.0)],
         ["group", "cm", "penalty_capacity_margin", _f(1000.0)],
         ["solve", SOLVE, "invest_periods", b64({"value_type": "str", "data": ["p2020"], "index_name": "period"},
                                                "array")]]

@@ -148,7 +148,7 @@ The **Png settings** dialog has separate sections for **scenario** and **scenari
 - **Duration** — number of timesteps to plot (0 = until the end of the data).
 - **Plot config file** — YAML config defining what plots to render and how. The shipped default is the bundled `flextool/schemas/default_plots.yaml`.
 - **Active configs** — checkbox list of named configurations from the chosen file. Only checked configs are rendered.
-- **Dispatch plots** *(comparison section only)* — toggle whether dispatch time-series plots are included in comparisons. In a multi-period scenario the periods follow one another along the time axis (the period names below the time steps), with a gap where a period does not continue the previous one; *Start timestep* and *Duration* count the time steps across the periods, so the default window shows only the start of the first period of a long run. The companion **Edit dispatch plots…** button opens a YAML editor for the dispatch config.
+- **Dispatch plots** *(comparison section only)* — toggle whether dispatch time-series plots are included in comparisons. In a multi-period scenario the periods follow one another along the time axis (the period names below the time steps), with a gap where a period does not continue the previous one; *Start timestep* and *Duration* count the time steps across the periods, so the default window shows only the start of the first period of a long run. The companion **Edit dispatch plots…** button opens a YAML editor for the dispatch config. With dispatch plots on, the comparison also draws the ramp envelope and ramp frequency plots of the same node groups (and, with **Debug**, nodes); see [Ramp envelope](results.md#ramp-envelope).
 - **Just one file per plot** — render only the first file of a plot that is split into several files (a quick overview).
 - **Write plotted data (CSV)** — also write the data drawn in each plot as a CSV file next to its image, with the same name (see [Plotted data as CSV](results.md#plotted-data-as-csv)). A `write_plot_data: true` in the project's `plot_settings.yaml` turns this on whatever the checkbox says; the checkbox then shows as checked and greyed out, with "on in plot_settings.yaml" next to it.
 
@@ -156,7 +156,7 @@ The dialog is purely a configuration step; rendering happens via the Status cell
 
 ### Solver options → On this computer
 
-The **Solver options…** dialog sets the log level, the time limit, the scaling and HiGHS' presolve of the project's runs (saved in the project's `settings.yaml`). Its **On this computer…** button opens the solver settings of this computer, which are saved in `solver_settings.json` in FlexTool's user settings folder and never travel with a project, a workspace or a database:
+The **Solver options…** dialog sets the log level, the time limit, the scaling, the scaling guard and HiGHS' presolve of the project's runs (saved in the project's `settings.yaml`). **Scaling guard** (`--scaling-guard`) decides what a solve does when its limits and bounds are too far apart for the solver even after FlexTool's scaling: *Default (error)* sends nothing and stops before such a solve, as a terminal run does; *Warn* prints the message and solves; *Off* does not check (see [The scaling guard](dev/scaling.md#the-scaling-guard)). Its **On this computer…** button opens the solver settings of this computer, which are saved in `solver_settings.json` in FlexTool's user settings folder and never travel with a project, a workspace or a database:
 
 - **Solver wrapper** of Gurobi, CPLEX, Xpress and COPT: the full path of a program that starts in front of the solver (for example to hold a floating licence), and its arguments, one per line. OK checks each program and shows what is wrong (a missing file, a relative path, a `.bat` / `.cmd` or PowerShell script). A wrapper set by its environment variable (`FLEXTOOL_SOLVER_WRAPPER_GUROBI`, `FLEXTOOL_SOLVER_WRAPPER_CPLEX`, ...) is shown greyed out: the variable wins. See [Running a solver through a wrapper](solvers/index.md#running-a-solver-through-a-wrapper).
 - **Allow solver parameter names that are not in FlexTool's list from input databases** (off by default; greyed out when `FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS` is set). See [What the database may set](solvers/index.md#what-the-database-may-set).
@@ -217,6 +217,8 @@ The **Result viewer** is its own window. It reads scenarios directly from parque
 | Ctrl-A | Select all comparison rows |
 | Alt-↑ / Alt-↓ | Reorder comparison rows |
 | Tab | Cycle focus between the three panes |
+
+In **Dispatch** mode a selector next to the time range chooses what the selected node or node group shows: **Dispatch** (the stacked flows), **Ramp envelope** (how much the flows could still change toward the next step, over the Start / Duration window, with the net-load and demand ramps as lines) or **Ramp frequency** (a histogram of how fast the net load and the demand change, over every period of the selected scenario). See [Ramp envelope](results.md#ramp-envelope).
 
 Click the **Results viewer** button in the side menu, or **View results** in the right-click menu of an executed scenario, to open it. Closing the main window also closes the viewer.
 

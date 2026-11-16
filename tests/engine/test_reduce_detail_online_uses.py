@@ -325,6 +325,8 @@ CONSUMERS: dict[str, set[str]] = {
     "core:_ramp_family": {"ramp_limits"},
     "core:_online_ramp_rhs": {"ramp_limits"},
     "core:_eq_conversion": {"min_load_efficiency"},
+    # The zero-output fuel of a multi-line curve on the units online (U = v_online).
+    "core:_eq_conversion_piecewise": {"piecewise_linear"},
     "core:_eff_fuel_input": {"min_load_efficiency"},
     # The start-up input draw (startup_input_method): commodity cost, CO2 price and caps, ladder, balances.
     "core:_startup_draw": {"startup_energy"},
@@ -383,7 +385,7 @@ def test_every_online_row_family_is_classified() -> None:
 
 
 def _margin_step(tmp_path_factory):
-    """``elec`` (150 MW) in group ``electricity`` with a manual capacity margin of 10 MW in an investment solve;
+    """``elec`` (150 MW) in group ``electricity`` with an absolute capacity margin of 10 MW in an investment solve;
     ``gf`` fuel -> elec (200 MW, counted at capacity) and ``gb`` elec -> ``h2`` (100 MW, h2 demand 50 MW; a unit
     consuming from the group, counted by its input flow), startup_method binary; ``gb`` has min_load_efficiency
     (min_load 0.5, efficiency 0.4 at min load).  Neither has another use of its online variables."""
@@ -396,8 +398,8 @@ def _margin_step(tmp_path_factory):
             ["node", "elec", "node_type", _s("balance")], ["node", "elec", "inflow", _f(-150.0)],
             ["node", "h2", "node_type", _s("balance")], ["node", "h2", "inflow", _f(-50.0)],
             ["node", "fuel", "node_type", _s("commodity")], ["commodity", "fuelc", "price", _f(20.0)],
-            ["group", "electricity", "capacity_margin_method", _s("manual")],
-            ["group", "electricity", "capacity_margin", _f(10.0)],
+            ["group", "electricity", "capacity_margin_method", _s("absolute")],
+            ["group", "electricity", "capacity_margin_absolute", _f(10.0)],
             ["group", "electricity", "penalty_capacity_margin", _f(1000.0)],
             ["unit", "gb", "conversion_method", _s("min_load_efficiency")], ["unit", "gb", "min_load", _f(0.5)],
             ["unit", "gb", "efficiency_at_min_load", _f(0.4)]]

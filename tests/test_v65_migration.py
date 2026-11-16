@@ -195,47 +195,50 @@ def _build_v64_group_flag_db(url: str) -> None:
         db.commit_session("Seed v64 DB with has_capacity_margin flag")
 
 
+def _capacity_margin_methods(url: str) -> tuple[bool, dict]:
+    """(has_capacity_margin still defined, {(entity_byname, alternative): capacity_margin_method})."""
+    db = DatabaseMapping(url, create=False)
+    try:
+        db.fetch_all()
+        has_flag = any(
+            p["entity_class_name"] == "group" and p["name"] == "has_capacity_margin"
+            for p in db.get_parameter_definition_items()
+        )
+        by_entity = {
+            (pv["entity_byname"], pv["alternative_name"]): from_database(pv["value"], pv["type"])
+            for pv in db.get_parameter_value_items()
+            if pv["entity_class_name"] == "group"
+            and pv["parameter_definition_name"] == "capacity_margin_method"
+        }
+    finally:
+        db.close()
+    return has_flag, by_entity
+
+
 def test_value_conversion_yes_to_manual(tmp_path: Path) -> None:
     """``has_capacity_margin='yes'`` becomes ``capacity_margin_method='manual'``
-    in the same alternative; a ``'no'`` group gets no row (defaults to none).
+    in the same alternative at v65; a ``'no'`` group gets no row (defaults to
+    none).  The rest of the chain renames ``manual`` -> ``absolute`` (v80).
     """
     db_path = tmp_path / "v64_flags.sqlite"
     url = f"sqlite:///{db_path.resolve()}"
     _build_v64_group_flag_db(url)
 
+    migrate_database(url, up_to=65)
+    has_flag, by_entity = _capacity_margin_methods(url)
+    # The old flag definition is gone.
+    assert not has_flag
+    # g_yes converted to 'manual' in the SAME alternative (scen_a).
+    assert by_entity.get((("g_yes",), "scen_a")) == "manual"
+    # g_no has NO capacity_margin_method row (defaults to none).
+    assert not any(ent == ("g_no",) for (ent, _alt) in by_entity)
+
     migrate_database(url)
-
-    db = DatabaseMapping(url, create=False)
-    try:
-        db.fetch_all()
-        # The old flag definition is gone.
-        assert not [
-            p
-            for p in db.get_parameter_definition_items()
-            if p["entity_class_name"] == "group"
-            and p["name"] == "has_capacity_margin"
-        ]
-
-        cm_rows = [
-            pv
-            for pv in db.get_parameter_value_items()
-            if pv["entity_class_name"] == "group"
-            and pv["parameter_definition_name"] == "capacity_margin_method"
-        ]
-        by_entity = {
-            (pv["entity_byname"], pv["alternative_name"]): from_database(
-                pv["value"], pv["type"]
-            )
-            for pv in cm_rows
-        }
-        # g_yes converted to 'manual' in the SAME alternative (scen_a).
-        assert by_entity.get((("g_yes",), "scen_a")) == "manual"
-        # g_no has NO capacity_margin_method row (defaults to none).
-        assert not any(
-            ent == ("g_no",) for (ent, _alt) in by_entity
-        )
-    finally:
-        db.close()
+    has_flag, by_entity = _capacity_margin_methods(url)
+    assert not has_flag
+    # End of the chain: v80 renamed 'manual' to 'absolute'.
+    assert by_entity.get((("g_yes",), "scen_a")) == "absolute"
+    assert not any(ent == ("g_no",) for (ent, _alt) in by_entity)
 
 
 def test_migration_is_idempotent(tmp_path: Path) -> None:

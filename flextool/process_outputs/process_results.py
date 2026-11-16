@@ -7,6 +7,7 @@ from flextool.process_outputs.calc_storage_vre import compute_storage_and_vre
 from flextool.process_outputs.calc_slacks import compute_slacks
 from flextool.process_outputs.calc_costs import compute_costs
 from flextool.process_outputs.calc_group_flows import compute_group_flows
+from flextool.process_outputs.calc_ramp_envelope import compute_ramp_envelope
 
 
 def post_process_results(par, s, v):
@@ -20,5 +21,6 @@ def post_process_results(par, s, v):
     compute_slacks(par, s, v, r)
     compute_costs(par, s, v, r)
     compute_group_flows(par, s, v, r)
+    compute_ramp_envelope(par, s, v, r)
 
     return r

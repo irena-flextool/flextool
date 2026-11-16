@@ -3,6 +3,8 @@
 import numpy as np
 from numpy.random import Generator
 
+from flextool.model_builder._special import beta_ppf, norm_cdf
+
 
 def pert_sample(rng: Generator, min_val: float, mode_val: float, max_val: float, size: int = 1) -> np.ndarray:
     """Sample from a PERT distribution using Beta distribution transformation.
@@ -97,9 +99,7 @@ def generate_autocorrelated_series(
     # Transform from standard normal to target PERT range
     # Use CDF-based approach: map percentiles to PERT distribution
     # First, convert to uniform [0,1] via normal CDF
-    from scipy.stats import norm
-
-    uniform = norm.cdf(series)
+    uniform = norm_cdf(series)
 
     # Map uniform to PERT range using inverse PERT CDF (via beta)
     lam = 4.0
@@ -114,9 +114,7 @@ def generate_autocorrelated_series(
     alpha = max(alpha, 0.1)
     beta_param = max(beta_param, 0.1)
 
-    from scipy.stats import beta as beta_dist
-
-    result = beta_dist.ppf(uniform, alpha, beta_param) * range_val + dist_min
+    result = beta_ppf(uniform, alpha, beta_param) * range_val + dist_min
 
     # Soft clipping: allow ~5% of values outside range, clip the rest
     result = np.clip(result, dist_min, dist_max)

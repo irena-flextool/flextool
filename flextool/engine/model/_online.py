@@ -890,7 +890,9 @@ def _input_availability_share(b: "_Build", arcs: "pl.DataFrame") -> "pl.DataFram
 def _fuel_share(d, levels: "pl.LazyFrame", online_p: "pl.LazyFrame | None" = None) -> "pl.LazyFrame":
     """``(_p, _d, _t, __x)`` for ``levels`` ``(_p, _d, _t, __y)`` (Utf8 keys): the input an indirect unit
     draws at output level y per unit of its full-load input,
-    ``x(y) = (slope · W(y) + section) / (slope · W(1) + section)``, ``W(y)`` the output-side fuel width filled up to
+    ``x(y) = (slope · W(y) + section) / (slope · W(1) + section)`` (a ``piecewise_linear`` unit with two or more
+    lines: ``fuel(W) = max_g(pw_slope_g · W + pw_intercept_g)`` in place of ``slope · W + section``, with or without
+    online variables), ``W(y)`` the output-side fuel width filled up to
     y (outputs in descending conversion_flow_coeff order, each up to its capacity_max_coeff — the most fuel the
     outputs can draw at that output level, as in ``p_indirect_input_cap``), section only for a
     ``min_load_efficiency`` unit that also has an online variable — its balance equation applies no section
@@ -924,7 +926,10 @@ def _fuel_share(d, levels: "pl.LazyFrame", online_p: "pl.LazyFrame | None" = Non
         return (rows.select("_p", "_d", "_t", y).unique().join(k, on="_p", how="inner")
                 .with_columns(__fill=pl.min_horizontal(pl.col("__cap"),
                                                        (pl.col(y) - pl.col("__prev")).clip(lower_bound=0.0)))
-                .group_by("_p", "_d", "_t").agg((pl.col("__conv") * pl.col("__fill")).sum().alias(out)))
+                # Fixed summation order over the outputs (the unique / join undo the sort of k).
+                .sort("_p", "_d", "_t", "_k", y)
+                .group_by("_p", "_d", "_t", maintain_order=True)
+                .agg((pl.col("__conv") * pl.col("__fill")).sum().alias(out)))
 
     w = _width("__y", "__w_y").join(_width("__one", "__w_full"), on=["_p", "_d", "_t"], how="inner")
 
@@ -948,11 +953,35 @@ def _fuel_share(d, levels: "pl.LazyFrame", online_p: "pl.LazyFrame | None" = Non
     else:
         w = w.with_columns(__sec=pl.lit(0.0))
     w = w.with_columns(pl.col("__slope").cast(pl.Float64).fill_null(0.0))
-    return w.select("_p", "_d", "_t",
-                    __x=pl.when(pl.col("__slope") * pl.col("__w_full") + pl.col("__sec") > 0.0)
-                    .then((pl.col("__slope") * pl.col("__w_y") + pl.col("__sec"))
-                          / (pl.col("__slope") * pl.col("__w_full") + pl.col("__sec")))
-                    .otherwise(None))
+    out = w.select("_p", "_d", "_t",
+                   __x=pl.when(pl.col("__slope") * pl.col("__w_full") + pl.col("__sec") > 0.0)
+                   .then((pl.col("__slope") * pl.col("__w_y") + pl.col("__sec"))
+                         / (pl.col("__slope") * pl.col("__w_full") + pl.col("__sec")))
+                   .otherwise(None))
+    if not _has_rows(getattr(d, "process_piecewise", None)) or getattr(d, "p_piecewise_slope", None) is None:
+        return out
+    # piecewise_linear units with two or more lines: fuel(W) = max_g(pw_slope[p,g,d]·W + pw_intercept[p,g,d]) (the
+    # curve's envelope, conversion_piecewise; the intercept applies with U = units online or built alike), and
+    # x(y) = fuel(W(y)) / fuel(W(1)).
+    def _lines(param, col: str) -> "pl.LazyFrame":
+        return param.frame.lazy().select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("seg").cast(pl.Utf8),
+                                         pl.col("d").cast(pl.Utf8).alias("_d"),
+                                         pl.col("value").cast(pl.Float64).alias(col))
+
+    lines = _lines(d.p_piecewise_slope, "__a").join(_lines(d.p_piecewise_intercept, "__b"),
+                                                     on=["_p", "seg", "_d"], how="inner")
+    pw = (w.select("_p", "_d", "_t", "__w_y", "__w_full").join(lines, on=["_p", "_d"], how="inner")
+          .group_by("_p", "_d", "_t")
+          .agg((pl.col("__a") * pl.col("__w_y") + pl.col("__b")).max().alias("__fy"),
+               (pl.col("__a") * pl.col("__w_full") + pl.col("__b")).max().alias("__ff"))
+          .select("_p", "_d", "_t", __xpw=pl.when(pl.col("__ff") > 0.0).then(pl.col("__fy") / pl.col("__ff"))
+                  .otherwise(None)))
+    is_pw = d.process_piecewise.lazy().select(pl.col("p").cast(pl.Utf8).alias("_p")).unique().with_columns(
+        __pw=pl.lit(True))
+    return (out.join(is_pw, on="_p", how="left")
+            .join(pw, on=["_p", "_d", "_t"], how="left")
+            .select("_p", "_d", "_t", __x=pl.when(pl.col("__pw").fill_null(False)).then(pl.col("__xpw"))
+                    .otherwise(pl.col("__x"))))
 
 
 def _reduction_terms(red: "pl.DataFrame", kappa: "pl.DataFrame", v_startup, v_shutdown, sfx: str, *,

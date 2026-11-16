@@ -10,6 +10,16 @@ The derivation reads raw input through
 * ``input/process_min_uptime``     (process_min_uptime,)
 * ``input/process_min_downtime``   (process_min_downtime,)
 
+and adds the automatic start-ups of ``piecewise_linear`` units to ``input/process__startup_method``.
+
+``piecewise_linear`` units (``specs/piecewise_efficiency_final.md`` §2.2): a unit whose curve
+(``unit.piecewise_linear_efficiency``) burns fuel at zero output -- the efficiency rises from the first point
+to the second in some period -- and has no start-ups (after the ``minimum_time_method`` promotion) gets
+``linear`` start-ups (an info line says so, W3); a unit with two or more lines in some period is
+``fork_yes`` (as a delayed unit).  The flags come from
+:func:`flextool.engine.input._piecewise_curve.unit_flags`, the function the engine classifier
+(``params/_derived._classify_process_method``) calls too.
+
 Cross-derivation input
 ----------------------
 
@@ -31,6 +41,8 @@ from collections.abc import Mapping
 
 import polars as pl
 
+from flextool.engine.input._piecewise_curve import curves_by_unit, rises_first, unit_flags
+from flextool.input_derivation._piecewise import parse_piecewise_curves
 from flextool.input_derivation._specs import METHODS_MAPPING
 
 
@@ -128,6 +140,38 @@ def derive_process_method(
                     process_name, mtm,
                 )
 
+    # --- piecewise_linear: automatic linear start-ups (W3) and the forced fork of multi-line curves ---
+    piecewise = sorted(p for p, ct in ct_method_map.items() if ct == "piecewise_linear")
+    multi_line: set[str] = set()
+    promoted: list[str] = []
+    if piecewise:
+        curves = parse_piecewise_curves(backend).frame
+        flags = unit_flags(curves)
+        by_unit = curves_by_unit(curves)
+        for process_name in piecewise:
+            f = flags.get(process_name)
+            if f is None:
+                continue
+            if f.multi_line:
+                multi_line.add(process_name)
+            if f.auto_startup and startup_method_map.get(process_name, "no_startup") == "no_startup":
+                startup_method_map[process_name] = "linear"
+                promoted.append(process_name)
+                by_d = by_unit[process_name]
+                d = next(d for d in sorted(by_d, key=lambda x: (x is not None, x or "")) if rises_first(by_d[d]))
+                pts = by_d[d]
+                logger.info(
+                    "Unit '%s': startup_method set to linear: its piecewise_linear_efficiency curve burns fuel at "
+                    "zero output (efficiency rises from load %s to %s%s), which needs online variables",
+                    process_name, f"{pts[0][0]:g}", f"{pts[1][0]:g}", f" in period {d}" if d is not None else "")
+    if promoted and provider.has("input/process__startup_method"):
+        sm = provider.get("input/process__startup_method")
+        if sm is not None:
+            add = pl.DataFrame({"process": promoted, "startup_method": ["linear"] * len(promoted)})
+            sm = pl.concat([sm.filter(~pl.col("process").cast(pl.Utf8).is_in(promoted)),
+                            add.select(pl.col(c).cast(sm.schema[c]) for c in sm.columns)])
+            provider.put("input/process__startup_method", sm)
+
     # --- Collect sources and sinks per process ---
     source_counts: dict[str, int] = {}
     for ent_class, dim_idx in [
@@ -187,7 +231,8 @@ def derive_process_method(
         n_sources = source_counts.get(process_name, 0)
         n_sinks = sink_counts.get(process_name, 0)
         is_delayed = process_name in delayed_processes
-        fork = "fork_yes" if (n_sources > 1 or n_sinks > 1 or is_delayed) else "fork_no"
+        is_multi_line = process_class == "unit" and process_name in multi_line
+        fork = "fork_yes" if (n_sources > 1 or n_sinks > 1 or is_delayed or is_multi_line) else "fork_no"
 
         key = (ct, startup, fork)
         method = METHODS_MAPPING.get(key)

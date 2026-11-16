@@ -43,7 +43,7 @@ The objectives below assume no `inflation_rate` (0).
 | *co2_existing_measures* | 2.0 Mt | 1.8 Mt | 1.6 Mt | 1.4 Mt |
 | *co2_additional_measures* | 2.0 Mt | 1.5 Mt | 1.0 Mt | 0.5 Mt |
 
-**No limit is a large value.** The system alternative sets `co2_method` *period*, and a group with that method must have a `co2_max_period`: no value is an error, and so is a period missing from a map. The scenario without measures therefore gives a value that never binds; a constant is enough (the example uses a map with the same value in each period). Coal alone would emit 300 MW × 0.85 t/MWh × 8760 h = 2 233 800 t/a, so 3.0 Mt/a does not bind. Another way is to set `co2_method` in the trajectory alternatives only.
+**No limit is `inf`.** The system alternative sets `co2_method` *period*, and a group with that method must have a `co2_max_period`: no value is an error, and so is a period missing from a map. For no limit in a period, give `inf` there (a constant `inf` limits no period): that period then has no CO2 limit row. Do not use a very large number such as 1e18 instead: it is used as a limit, and a number that large makes the solve numerically unstable (FlexTool warns about values of 1e15 or more). The example's scenario without measures gives 3.0 Mt/a, a limit that does not bind: coal alone would emit 300 MW × 0.85 t/MWh × 8760 h = 2 233 800 t/a. Another way is to set `co2_method` in the trajectory alternatives only.
 
 **The scenarios.** Each scenario is *init*, *west*, *coal*, *co2_trajectory_system* and one trajectory, with the trajectory ranked last so that it overrides the others (see [the tutorial on alternative order](../tutorial.md#step-1-a-node-with-no-units)).
 

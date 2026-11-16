@@ -56,6 +56,9 @@ _PAR_DROP = [
     'step_duration', 'timestep_weight', 'flow_min', 'flow_max',
     'process_availability', 'process_source_sink_varCost',
     'process_slope', 'process_section',
+    # The weighted input of the multi-line piecewise_linear units and its part above the curve (W5): the
+    # realizing solve's values per step.
+    'process_piecewise_input_dt', 'process_piecewise_excess_dt',
     'node_self_discharge_loss', 'node_penalty_up', 'node_penalty_down',
     'node_inflow', 'commodity_price', 'group_co2_price', 'group_inertia_limit',
     # ladder_price_ann (commodity price ladder, #57): authored per period, invariant across rolls that
@@ -63,6 +66,9 @@ _PAR_DROP = [
     'ladder_price_ann',
     'reserve_upDown_group_reservation',
     'reserve_upDown_group_shortfall_scale', 'profile',
+    # The per-solve inputs of the ramp envelope (calc_ramp_envelope): the realizing solve's values per step.
+    'process_arc_cap_coef_dt', 'process_arc_floor_share_dt', 'process_ramp_cap_coef_dt',
+    'process_coarse_step_duration_dt', 'process_coarse_step_last_dt',
     # The invest / divest lumps come from the solve that realizes the
     # decision period only (persist_realized_slice); keep='last' ties the
     # rolls of one solve.
@@ -320,6 +326,13 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
         obj = obj.droplevel('solve')
         setattr(par, attr, obj[~obj.index.duplicated(keep='first')])
 
+    # process_ramp_limit (solve, period): the ramp speeds of each solve's ramp-limit sets; the solve level stays (the
+    # ramp envelope reads the row of the solve that realized each step, s.solve_period_time), the rows of a solve
+    # that several rolls persist for one period are one.
+    rl = par.process_ramp_limit
+    if rl.index.duplicated().any():
+        par.process_ramp_limit = rl[~rl.index.duplicated(keep='last')]
+
     # process_node_startup_energy is the same in every solve that has it; a solve whose reduce_unit_detail_method
     # left out the start-ups has no value (NaN): the first value per period and (process, node).
     se = getattr(par, 'process_node_startup_energy', None)
@@ -363,6 +376,15 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
     s.ramp_link = s.ramp_link.droplevel('solve')
     ramp_pt = s.ramp_link.droplevel(['period_previous', 'time_previous'])
     s.ramp_link = s.ramp_link[ramp_pt.isin(s.dt_realize_dispatch) & ~ramp_pt.duplicated(keep='last')]
+    s.ramp_carry = s.ramp_carry.droplevel('solve')
+    carry_pt = s.ramp_carry.droplevel(['period_previous', 'time_previous'])
+    s.ramp_carry = s.ramp_carry[carry_pt.isin(s.dt_realize_dispatch) & ~carry_pt.duplicated(keep='last')]
+    # node_state_prev (node, period, time, period_prev, time_prev): the step whose state each storage step starts
+    # from in the storage balance; the realized steps, the last solve's link per (node, period, time).
+    s.node_state_prev = s.node_state_prev.droplevel('solve')
+    prev_npt = s.node_state_prev.droplevel(['period_prev', 'time_prev'])
+    prev_pt = prev_npt.droplevel('node')
+    s.node_state_prev = s.node_state_prev[prev_pt.isin(s.dt_realize_dispatch) & ~prev_npt.duplicated(keep='last')]
     s.dtttdt = s.dtttdt.droplevel('solve')
     dtttdt_pt = s.dtttdt.droplevel(['t_previous', 't_previous_within_timeset', 'd_previous', 't_previous_within_solve'])
     s.dtttdt = s.dtttdt[dtttdt_pt.isin(s.dt_realize_dispatch) & ~dtttdt_pt.duplicated(keep='last')]

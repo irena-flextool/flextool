@@ -23,6 +23,7 @@ GLOBAL_SETTINGS_FILENAME = "projects.yaml"
 # Values the Solver options dialog can store; ``None`` (not in the tuples) is the dialog's "Default" entry.
 PRESOLVE_CHOICES = ("on", "off", "choose")
 SCALING_CHOICES = ("off", "solver_only", "basic", "full")
+SCALING_GUARD_CHOICES = ("error", "warn", "off")
 
 
 def _as_geometry_map(raw: object) -> dict[str, str]:
@@ -153,6 +154,9 @@ def load_project_settings(
     _ps = data.get("presolve")
     if _ps in PRESOLVE_CHOICES:
         settings.presolve = _ps
+    _sg = data.get("scaling_guard")
+    if _sg in SCALING_GUARD_CHOICES:
+        settings.scaling_guard = _sg
     if _upgrade_solver_settings(data, settings) and on_solver_defaults_reset is not None:
         on_solver_defaults_reset()
 

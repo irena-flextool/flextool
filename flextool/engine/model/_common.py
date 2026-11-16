@@ -126,7 +126,8 @@ def group_prior(group_entity: pl.DataFrame, prior: "pl.DataFrame | None", d, axi
     if prior.schema["e"] != dtype:
         prior = prior.with_columns(pl.col("e").cast(dtype, strict=False))
     out = (members.join(prior, on="e", how="inner")
-           .group_by("g").agg(pl.col("value").sum()))
+           .sort("g", "e")  # fixed summation order over the members
+           .group_by("g", maintain_order=True).agg(pl.col("value").sum()))
     return out if out.height > 0 else pl.DataFrame(schema=out_schema)
 
 

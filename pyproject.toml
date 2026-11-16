@@ -86,7 +86,12 @@ dependencies = [
     # run, whatever the thread count or polars engine.
     # 3.14.0 maps objective-valued solver options (targets, bounds, cutoffs,
     # absolute gaps) from unscaled currency to the objective the solver sees.
-    "polar-high>=3.14.0",
+    # 3.15.0 adds the scaling-check readout (meaningful bound / RHS pool,
+    # residue floor, integer split, extremes), assess_scaling, locate_extremes,
+    # the pre_run_check hook (Problem.solve, WarmProblem, write_mps), the
+    # tolerance-window Layer 3 and the user-scaled KKT counters — required by
+    # the scaling guard and by the solve acceptance in the space HiGHS solved.
+    "polar-high>=3.15.0",
     # Autoscale Layer 3 drives HiGHS' power-of-two objective conditioning
     # through the ``user_objective_scale`` option.  HiGHS renamed the older
     # ``user_cost_scale`` to ``user_objective_scale`` after 1.10.0, so older

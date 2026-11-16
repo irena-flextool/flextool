@@ -41,6 +41,13 @@ class FlexToolSolveError(FlexToolError):
     """Raised for solver execution errors."""
 
 
+class ScalingRangeError(FlexToolConfigError):
+    """Raised before a solve when its limits and bounds span more than the
+    solver can enforce accurately after scaling (the scaling guard,
+    ``--scaling-guard error``).  A configuration error: the CLI prints the
+    message without a traceback."""
+
+
 class LineageFilterError(ValueError):
     """Raised when the recourse scenario-lineage filter cannot be applied
     soundly (Slice D §6).
@@ -283,6 +290,7 @@ __all__ = [
     "FlexToolError",
     "FlexToolConfigError",
     "FlexToolSolveError",
+    "ScalingRangeError",
     "ActiveTimeEntry",
     "SolveResult",
     "PathConfig",

@@ -18,3 +18,13 @@ POSITIVE_SPECIAL = ['LossOfLoad', 'Discharge', 'Import']
 NEGATIVE_SPECIAL = ['Charge', 'Export', 'internal_losses']
 # Columns plotted as lines, not stacked areas
 LINE_COLUMNS = ['Curtailed', 'Demand']
+
+# Ramp envelope band colours (one per band, up and down alike), the fallback of ``categories.ramp_envelope`` in
+# plot_settings.yaml (scenario_comparison/ramp_plots.py).  Plots are drawn on a white background in light and
+# dark GUI themes alike.
+DEFAULT_RAMP_BAND_COLORS = {
+    'units': '#4e79a7',        # steel blue — unit flows
+    'storage': '#76b7b2',      # teal — flows from / to storages (the dispatch Discharge family)
+    'vre': '#edc948',          # yellow — VRE curtailment release / extra curtailment
+    'connections': '#b07aa1',  # purple — connection flows (the dispatch Import / Export family)
+}

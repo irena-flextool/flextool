@@ -300,7 +300,8 @@ def log_dpi_diagnostics(root: tk.Tk) -> None:
 
     Call this once at startup AFTER the theme and fonts are configured (so
     the theme's own fonts exist). Emitted at WARNING so the single line lands
-    in ``flextool_gui.log`` regardless of the configured level.
+    in ``flextool_gui.log`` regardless of the configured level; marked
+    ``file_only`` so the console handler does not print it at every start.
 
     The point is to stop guessing: it reveals the real display DPI, whether
     the process is genuinely DPI-aware, the effective ``tk scaling``, and —
@@ -354,7 +355,7 @@ def log_dpi_diagnostics(root: tk.Tk) -> None:
         parts.append("SunValleyBodyFont=absent")
 
     parts.append(f"FLEXTOOL_DPI={os.environ.get('FLEXTOOL_DPI', '<auto>')}")
-    logger.warning("DPI-DIAG: %s", " ".join(parts))
+    logger.warning("DPI-DIAG: %s", " ".join(parts), extra={"file_only": True})
 
 
 def _xrandr_monitors() -> list[dict]:

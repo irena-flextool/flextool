@@ -27,7 +27,7 @@ For polar-high's own variables (`POLAR_HIGH_WRITE_MPS_PROFILE`, ...), see the
 | `FLEXTOOL_ACCEPT_NEAR_OPTIMAL` | on | `0` | `0` rejects every solver status other than optimal (the old hard failure), a MIP stopped by a limit included, e.g. for strict test runs. On by default: an interior-point solve stopped without crossover (status Unknown) is accepted when the checks below pass. |
 | `FLEXTOOL_ACCEPT_PD_GAP` | `1e-2` | positive float | Largest relative primal-dual gap of an accepted near-optimal solve. |
 | `FLEXTOOL_ACCEPT_PRIMAL_REL` | `max(1e-6, 10 × primal_feasibility_tolerance)` | positive float | Largest relative primal infeasibility of an accepted near-optimal solve. Unset, it follows the tolerance the solve ran with; a set value replaces that derived ceiling (tighter or looser). |
-| `FLEXTOOL_ACCEPT_PRIMAL_ABS_MARGIN` | `10` | positive float | Absolute primal infeasibility allowed, as a multiple of HiGHS' primal feasibility tolerance (HiGHS checks feasibility on the scaled LP, so the unscaled slack can exceed it). |
+| `FLEXTOOL_ACCEPT_PRIMAL_ABS_MARGIN` | `10` | positive float | Absolute primal infeasibility allowed, as a multiple of HiGHS' primal feasibility tolerance. With HiGHS user scaling (`user_bound_scale`, set by autoscale Layer 3) it is checked in the scaled problem HiGHS solved, where HiGHS applies that tolerance, so it then mirrors HiGHS's own check; the relative check (`FLEXTOOL_ACCEPT_PRIMAL_REL`) is the guard in unscaled units. |
 
 ## Benders
 
@@ -51,7 +51,7 @@ Read by `engine/solve/_benders.py`. A malformed value is ignored with a warning.
 
 | Variable | Default | Set to | What it does |
 |---|---|---|---|
-| `FLEXTOOL_AUTOSCALE_STRICT` | unset (off) | `1` | A variable, constraint or parameter missing from the autoscale registries raises instead of the solve silently falling back to an unscaled LP. Set it in tests that exercise autoscale (CLAUDE.md invariant 1). |
+| `FLEXTOOL_AUTOSCALE_STRICT` | unset (off) | `1` | A variable, constraint or parameter missing from the autoscale registries raises instead of the solve silently falling back to an unscaled LP. Set it in tests that exercise autoscale (CLAUDE.md invariant 1). It also makes the scaling guard raise `ScalingRangeError` under `--scaling-guard warn` / `off` when Layer 2 caused the error (the limits fitted before Layer 2; a warning Layer 2 caused does not raise), and re-raises a failure of the guard's own check instead of logging it. |
 | `FLEXTOOL_AXIS_ENUMS` | unset (off) | `1` | Experimental axis-Enum mode for the whole run (axes typed as polars Enums instead of Utf8). Development and tests only. |
 | `FLEXTOOL_FORCE_ROW_SCALING` | unset | `1` / `true` / `yes` / `on` | Turn on the legacy node / group balance row scaling (`p_use_row_scaling=1`); every solve has it off otherwise. Used by the un-scaling benchmark. |
 | `FLEXTOOL_SKIP_SOLVER_PROBE` | unset | `1` | Skip the start-up probe of commercial solver licences (avoids the FICO Xpress Community licence warning). The test conftest sets it. |

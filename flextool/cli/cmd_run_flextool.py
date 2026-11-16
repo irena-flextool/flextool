@@ -795,6 +795,21 @@ def build_parser() -> argparse.ArgumentParser:
                              'unset, the autoscaler chooses.  Environment '
                              'variable: FLEXTOOL_USER_BOUND_SCALE; the flag '
                              'wins.')
+    parser.add_argument('--scaling-guard', choices=['error', 'warn', 'off'],
+                        default=None,
+                        help='What to do when a solve\'s limits and bounds '
+                             'span more than the solver can enforce '
+                             'accurately after FlexTool\'s scaling (more '
+                             'than 17 decades for HiGHS at its default '
+                             'tolerance).  error (default) stops before the '
+                             'solve and names the largest and smallest '
+                             'values; warn prints the same and solves; off '
+                             'does not check.  Spreads above 13 decades, '
+                             'cost and coefficient problems only warn, and '
+                             'so does every finding for a commercial solver '
+                             '(it gets no FlexTool scaling).  Environment '
+                             'variable: FLEXTOOL_SCALING_GUARD; the flag '
+                             'wins.')
     parser.add_argument('--presolve', choices=['on', 'off', 'choose'],
                         default=None,
                         help='HiGHS ``presolve`` override.  Default '

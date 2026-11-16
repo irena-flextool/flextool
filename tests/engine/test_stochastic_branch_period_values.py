@@ -172,7 +172,7 @@ def _values_2day(as_map: bool) -> list:
         ["unit", "gas_plant", "availability", gas_avail],
         ["group", "add_stochastics", "co2_price", v(50.0)],
         ["group", "add_stochastics", "co2_max_period", v(1e6)],
-        ["group", "add_stochastics", "capacity_margin", v(10.0)],
+        ["group", "add_stochastics", "capacity_margin_absolute", v(10.0)],
         ["group", "add_stochastics", "inertia_limit", v(11.0)],
         ["group", "add_stochastics", "non_synchronous_limit", v(0.9)],
         ["group", "add_stochastics", "penalty_non_synchronous", v(77.0)],

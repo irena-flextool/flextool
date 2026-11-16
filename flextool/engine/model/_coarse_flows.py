@@ -234,7 +234,8 @@ def add_cstr(b: "_Build", name: str, *, over: pl.DataFrame, sense: str, lhs_term
     if fine.height > 0:
         m.add_cstr(name, over=fine, sense=sense, lhs_terms=lhs_terms, rhs_terms={**rhs_terms, **(fine_rhs or {})})
     # ─── EQ. ─── <family>_coarse: maxFlow_coarse, maxFlow_negCap_coarse, maxFlow_back_coarse, maxOutputSum_coarse,
-    #             maxOutputSum_negCap_coarse, conversion_indirect_coarse, minInputShare_coarse,
+    #             maxOutputSum_negCap_coarse, conversion_indirect_coarse,
+    #             conversion_piecewise_coarse, minInputShare_coarse,
     #             profile_flow_{upper_limit,lower_limit,fixed}_coarse, maxFlow_online{sfx}_coarse,
     #             maxFlow_online_shutdown{sfx}_coarse, maxFlow_online_shutdown_branch{sfx}_coarse,
     #             maxFlow_back_online{sfx}_coarse, maxInputFlow_online{sfx}_coarse,

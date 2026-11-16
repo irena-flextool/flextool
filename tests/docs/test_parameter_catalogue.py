@@ -17,6 +17,7 @@ from flextool.assistant import docs_store
 from flextool.docs_build import render_pages, scope
 from flextool.docs_build.__main__ import main as docs_build_main
 from flextool.docs_build.parameters import STOCHASTIC_TIME_WORDS, escape_cell, parameter_record
+from flextool.update_flextool import FLEXTOOL_DB_VERSION
 
 REPO = Path(__file__).resolve().parents[2]
 DOCS = REPO / "docs"
@@ -138,7 +139,7 @@ def test_xlsx_catalogue_with_input_db(examples_db_url, examples_db_path, tmp_pat
     assert book.sheetnames == ["Read me", "parameters", "classes"]
     readme = {r[0]: r[1] for r in book["Read me"].iter_rows(values_only=True) if r[0]}
     assert set(head) <= set(readme)                       # one line per column
-    assert readme["Input database"] == examples_db_url and readme["Database version"] == "79"
+    assert readme["Input database"] == examples_db_url and readme["Database version"] == str(FLEXTOOL_DB_VERSION)
     assert readme["Web version"].endswith("/parameter_catalogue/")
     classes = {r[0]: r[1] for r in book["classes"].iter_rows(min_row=2, values_only=True)}
     assert set(classes) >= {k[0] for k in rows} and classes["unit"]

@@ -42,8 +42,8 @@ Equation families, in emit order (module in brackets when not model/core.py):
   Flows & capacity    maxFlow, maxFlow_negCap, maxFlow_back; maxOutputSum(_negCap);
                       dc_reference_angle_eq, dc_flow_eq [_dc_power_flow]
                       (the arc-local families of coarse processes — maxFlow, maxOutputSum, conversion_indirect,
-                      minInputShare and profile_flow_* — are written once per coarse step as <family>_coarse
-                      [_coarse_flows])
+                      conversion_piecewise, minInputShare and profile_flow_* — are written once per coarse step as
+                      <family>_coarse [_coarse_flows])
   Units               max{Online,Startup,Shutdown}, online_change, maxFlow_online[_shutdown[_branch]],
                       maxFlow_back_online, maxOutputSum_online, maxInputFlow_online[_shutdown[_branch]],
                       minimum_{uptime,downtime}, online_fix_eq [_online];
@@ -51,7 +51,8 @@ Equation families, in emit order (module in brackets when not model/core.py):
                       minFlow_{minload,output_floor,reserve,reserve_arc} [_unit_floors];
                       ramp_{sink,source}_{up,down}_constraint; ramp_change_eq (ramp cost)
   Investment          max{Invest,Divest}_var_bound[_n], _entity_period_{p,n}, _entity_total[_path][_n]
-  Conversion          conversion_indirect (delayed inputs from [_delay]); minInputShare
+  Conversion          conversion_indirect (delayed inputs from [_delay]); conversion_piecewise (part-load curves of
+                      piecewise_linear units); minInputShare
   Emissions & user    co2_max_period, co2_max_total; process_constraint_{equal,less_than,greater_than}[_period]
   Storage state       maxState; profile_state_{upper_limit,lower_limit,fixed};
                       storage_state_start_binding[_cyclic_period]; storage_within_solve_path_end,
@@ -109,7 +110,7 @@ from flextool.engine.model._common import (
     leaf_rows,
     minus_prior,
 )
-from flextool.engine.input._param_shapes import promote_param_to_dt
+from flextool.engine.input._param_shapes import drop_no_limit_rows, promote_param_to_dt, without_no_limit_rows
 from flextool.engine.model._pdt_join import (
     compute_pss_dt,
     compute_nodeBalance_dt,
@@ -165,6 +166,8 @@ PROCESSES: tuple[str, ...] = (
 INDIRECT: tuple[str, ...] = (
     "process_indirect", "process_input_flows", "process_output_flows",
 )
+# piecewise_linear units with two or more lines (conversion_piecewise; set at the load boundary, params/_piecewise).
+PIECEWISE: tuple[str, ...] = ("process_piecewise", "p_piecewise_slope", "p_piecewise_intercept")
 CO2_CAP:   tuple[str, ...]   = ("p_co2_content", "p_co2_max_period",
                                 "group_d_co2_capped", "p_window_fraction")
 CO2_CAP_TOTAL: tuple[str, ...] = ("p_co2_content", "p_co2_max_total",
@@ -188,7 +191,7 @@ STARTUP_COST_INTEGER: tuple[str, ...] = ("p_startup_cost", "pdt_online_integer")
 RAMP: tuple[str, ...] = ("dt_ramp_link", "p_step_duration", "p_process_existing_count")
 # The ramp cost needs no dt_ramp_link: a solve with only carried rows, or none, builds what it has.
 RAMP_COST: tuple[str, ...] = ("p_unitsize", "p_ramp_cost_arc")
-# Checked whenever a group has capacity_margin_method = manual: without period_invest or the group scaling the
+# Checked whenever a group has capacity_margin_method = absolute: without period_invest or the group scaling the
 # capacity margin would be skipped without a word.
 CAPACITY_MARGIN: tuple[str, ...] = ("period_invest", "p_inv_group_cap")
 # Investment adds the units of the earlier investment periods still in service (edd_invest_set, processes and
@@ -332,6 +335,7 @@ class _Build:
     has_online_int: bool = False
     has_online: bool = False
     has_minload_eff: bool = False
+    has_piecewise: bool = False          # process_piecewise: conversion_piecewise rows (multi-line curves)
     has_startup_cost_lin: bool = False
     has_startup_cost_int: bool = False
     has_startup_draw: bool = False       # process_startup_node: start-up energy drawn from input nodes
@@ -477,6 +481,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _eq_invest_total_caps,
         _eq_retired_existing,
         _eq_conversion,
+        _eq_conversion_piecewise,
         _eq_min_input_share,
         _eq_co2_max_period,
         _eq_co2_max_total,
@@ -588,6 +593,7 @@ def _prepare(b: _Build) -> None:
     b.has_nsb = _has_rows(d.nodeStateBlock)
     b.has_coarse = _has_rows(getattr(d, "nodeCoarse", None)) and _has_rows(getattr(d, "node_coarse_step", None))
     b.has_minload_eff = _has_rows(d.process_min_load_eff)
+    b.has_piecewise = _has_rows(getattr(d, "process_piecewise", None))
     b.has_startup_cost_lin = _has_rows(d.pdt_online_linear)
     b.has_startup_cost_int = _has_rows(d.pdt_online_integer)
     b.has_ramp = any(_has_rows(getattr(d, f))
@@ -656,6 +662,8 @@ def _prepare(b: _Build) -> None:
             _check(d, MIN_LOAD, "min_load")
     if b.has_minload_eff:
         _check(d, MINLOAD_EFF, "min_load_efficiency")
+    if b.has_piecewise:
+        _check(d, PIECEWISE, "piecewise_linear")
     if b.has_startup_cost_lin:
         _check(d, STARTUP_COST_LINEAR, "startup_cost_linear")
     if b.has_startup_cost_int:
@@ -1151,6 +1159,23 @@ def _arcs_semi(frame: pl.DataFrame, arcs: pl.DataFrame) -> pl.DataFrame:
             .join(_utf8_keys(arcs.lazy().select(keys), keys).select([f"_{k}" for k in keys]).unique(),
                   on=[f"_{k}" for k in keys], how="semi")
             .select(frame.columns).collect())
+
+
+def _without_no_limit_rows(over: pl.DataFrame, rhs: "Param | None") -> pl.DataFrame:
+    """``over`` without the rows whose ``rhs`` is +inf: a capacity of inf is no limit, so such a row is left
+    out (the Benders splitter gives a cross-region half-flow an inf capacity; the master holds the real one).
+    Keys are matched as Utf8 on the dims ``rhs`` and ``over`` share; ``over`` comes back unchanged (same object)
+    when ``rhs`` has no inf value."""
+    if rhs is None or over.height == 0:
+        return over
+    inf = rhs.frame.filter(pl.col("value") == float("inf"))
+    if inf.height == 0:
+        return over
+    keys = [k for k in rhs.dims if k in over.columns]
+    return (_utf8_keys(over.lazy(), keys)
+            .join(_utf8_keys(inf.lazy().select(keys), keys).select([f"_{k}" for k in keys]).unique(),
+                  on=[f"_{k}" for k in keys], how="anti")
+            .select(over.columns).collect())
 
 
 def _source_reserve_arcs(unit_arcs: pl.DataFrame, sel: pl.DataFrame, *, direct: bool) -> pl.DataFrame:
@@ -1835,7 +1860,9 @@ def _eq_node_balance_period(b: _Build) -> None:
            for key, term in b.node_balance_flow_terms.items()}
     inflow_period = Param(("n", "d"), ((d.p_inflow * d.p_timestep_weight).frame.lazy()
                                        .join(d.nodeBalancePeriod.select("n").lazy(), on="n", how="inner")
-                                       .group_by("n", "d")
+                                       # Fixed summation order (the join leaves row order unspecified).
+                                       .sort("n", "d", "t")
+                                       .group_by("n", "d", maintain_order=True)
                                        .agg(pl.col("value").sum())
                                        .select("n", "d", "value")
                                        .collect()))
@@ -1869,7 +1896,9 @@ def _fix_quantity_target(b: _Build) -> "pl.DataFrame | None":
               .join(d.dtt_timeline_matching, on=["d", "t_upper"], how="inner")
               .join(d.period_last, on="d", how="inner")
               .join(d.nodeState_last_dt, on=["n", "d", "t"], how="inner")
-              .group_by(["n", "d", "t"])
+              # Fixed summation order: the joins above leave row order unspecified.
+              .sort(["n", "d", "t", "d_upper", "t_upper"])
+              .group_by(["n", "d", "t"], maintain_order=True)
               .agg(pl.col("value").sum())
               .select("n", "d", "t", "value"))
     return target if target.height > 0 else None
@@ -1925,7 +1954,7 @@ def _fix_usage_target(b: _Build) -> "pl.DataFrame | None":
               # Fixed summation order: the joins above leave row order
               # hash-dependent, which changes the float sum in the last bit.
               .sort(["n", "d", "t", "d_upper", "t_upper"])
-              .group_by(["n", "d", "t"])
+              .group_by(["n", "d", "t"], maintain_order=True)
               .agg(pl.col("value").sum())
               .select("n", "d", "t", "value"))
     return target if target.height > 0 else None
@@ -2147,6 +2176,8 @@ def _eq_max_flow(b: _Build) -> None:
     # when it carries such a reserve (its v_flow bound stays, redundant).
     # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
     #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # A row whose RHS is inf (existing capacity inf: no limit; the Benders splitter's cross-region half-flows)
+    #   is left out, here and in maxFlow_back.
     lhs: dict = {"flow": b.v_flow}
     if b.reserve_up_to_sink_units is not None:
         lhs["reserve_up"] = b.reserve_up_to_sink_units
@@ -2161,6 +2192,7 @@ def _eq_max_flow(b: _Build) -> None:
         bound_with_reserve = _arcs_semi(b.flow_bound_arcs, b.reserve_down_input_arcs)
         if bound_with_reserve.height > 0:
             over = pl.concat([over, _arcs_semi(pss_dt, bound_with_reserve)])
+    over = _without_no_limit_rows(over, b.flow_upper_rhs)
     if over.height > 0:
         _coarse_flows.add_cstr(
             b, "maxFlow",
@@ -2199,7 +2231,8 @@ def _eq_max_flow(b: _Build) -> None:
     # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
     #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
     if b.v_flow_back is not None and b.twoway1var_arcs is not None:
-        back_over = pss_dt.join(b.twoway1var_arcs, on=("p", "source", "sink"), how="inner")
+        back_over = _without_no_limit_rows(
+            pss_dt.join(b.twoway1var_arcs, on=("p", "source", "sink"), how="inner"), b.flow_upper_rhs)
         if back_over.height > 0:
             back_lhs: dict = {"flow_back": b.v_flow_back}
             back_lhs.update({k: lhs[k] for k in ("invest_neg", "divest") if k in lhs})
@@ -3069,6 +3102,7 @@ def _eq_invest_period_caps(b: _Build) -> None:
     # (n: v_invest_n with state_unitsize[n], n ∈ ed_invest_period_set ∩ nd_invest_set)
     # v_divest_p[p,d] · unitsize[p]        ≤ divest_max_period[p,d]   ∀ (p,d) ∈ ed_divest_period_set ∩ pd_divest_set
     # v_divest_n[n,d] · state_unitsize[n]  ≤ divest_max_period[n,d]   ∀ (n,d) ∈ ed_divest_period_set ∩ nd_divest_set
+    #   (p,d) and (n,d) whose invest_max_period / retire_max_period is inf have no row (no limit in that period)
     # Caps the capacity coming online or retired in one period for entities with a per-period limit
     # (e.g. invest_method = invest_period_total).  An investment decided in o comes online in d = c(o)
     # (construction lead time); without a lead time c(o) = o and the row is v_invest_p[p,d] · unitsize[p] ≤
@@ -3105,12 +3139,16 @@ def _eq_invest_period_caps(b: _Build) -> None:
         cap_frame = cap.frame.pipe(rename_to_axis, {"e": axis})
         check_max_cap(over, cap_frame, axis, True, param_name=param_name)  # FA-12
         cap_param = Param((axis, "d"), cap_frame.select(axis, "d", "value"))
+        # A period with the limit inf has no row (no limit there).
+        over = without_no_limit_rows(over, cap_param, "upper")
+        if over.height == 0:
+            continue
         m.add_cstr(
             name,
             over      = over,
             sense     = "<=",
             lhs_terms = {kind:  var * unitsize},
-            rhs_terms = {"cap": cap_param},
+            rhs_terms = {"cap": drop_no_limit_rows(cap_param, "upper")},
         )
 
 
@@ -3260,6 +3298,10 @@ def _eq_conversion(b: _Build) -> None:
     #     for min_load_efficiency units (eta = efficiency, default 1; min_load = 0 where not authored;
     #     eta_min = efficiency_at_min_load, else efficiency); slope = 1/eta and no section for the other units
     #     (indirect units never fold conv_in/conv_out into slope/section themselves — see conv_in/conv_out below)
+    #   reduce_unit_detail_method online*: constant efficiency at full load, slope' = slope + section / W,
+    #     section' = 0 (W: weighted output of one unit online at full output; W = 1: 1/eta); a multi-line
+    #     piecewise_linear unit joins this row with slope' = 1/η(1) (W = 1), else max_g(pw_slope·W + pw_intercept) / W
+    #     (_reduce_detail module docstring, "Full-load efficiency")
     # Energy balance of an indirect (multi-flow) unit: weighted input equals weighted output times the slope.
     # conv_in / conv_out = source / sink conversion_flow_coeff (default 1); unequal sink coefficients express
     # e.g. the heat/electricity trade-off of an extraction CHP.  The first input sum covers undelayed units;
@@ -3291,10 +3333,145 @@ def _eq_conversion(b: _Build) -> None:
                 rhs["section_lin"] = Where(b.v_online_linear, ind_mle) * d.p_section * d.p_unitsize
             if b.has_online_int:
                 rhs["section_int"] = Where(b.v_online_integer, ind_mle) * d.p_section * d.p_unitsize
+    over = b.process_indirect_dt
+    if b.has_piecewise:
+        # Multi-line piecewise_linear units convert by conversion_piecewise instead.
+        over = (_utf8_keys(over.lazy(), ["p"])
+                .join(_utf8_keys(d.process_piecewise.lazy().select("p"), ["p"]).select("_p").unique(),
+                      on="_p", how="anti")
+                .select(over.columns).collect())
     _coarse_flows.add_cstr(
         b, "conversion_indirect",
-        over      = b.process_indirect_dt,
+        over      = over,
         sense     = "==",
+        lhs_terms = lhs,
+        rhs_terms = rhs,
+    )
+
+
+def _eq_conversion_piecewise(b: _Build) -> None:
+    """Part-load fuel curve of the piecewise_linear units with two or more lines."""
+    if not b.has_piecewise:
+        return
+    d = b.d
+    v_flow = b.v_flow
+    pw = d.process_piecewise.select("p").unique()
+    indirect = {str(x) for x in d.process_indirect.get_column("p").to_list()} if b.has_indirect else set()
+    outside = sorted({str(x) for x in pw.get_column("p").to_list()} - indirect)
+    if outside:
+        raise ValueError(f"conversion_piecewise: piecewise_linear unit(s) {outside} are not indirect (process_indirect); "
+                         "the load boundary forces their fork.")
+
+    # ─── EQ. ─── conversion_piecewise ────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{s ∈ in(p)} v_flow[p,s,p,d,t] · unitsize[p] · conv_in[p,s]
+    #   + Σ_s Σ_{(t_s,t,δ) ∈ delay} v_flow[p,s,p,d,t_s] · unitsize[p] · delay_weight[p,δ] · conv_in[p,s]
+    #   ≥ pw_slope[p,g,d] · Σ_{o ∈ out(p)} v_flow[p,p,o,d,t] · unitsize[p] · conv_out[p,o]
+    #     + pw_intercept[p,g,d] · unitsize[p] · U[p,d,t]
+    #   ∀ (p,g,d,t): p ∈ process_piecewise, (p,d,t) ∈ process_indirect_dt, g ∈ seg(p,d)
+    #   U[p,d,t] = v_online_linear[p,d,t] | v_online_integer[p,d,t]            p with online variables
+    #   U[p,d,t] = existing_count[p,d] + Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
+    #              − Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]          p without (existing_count → RHS)
+    #   pw_intercept[p,g,d] = ℓ_{g−1}·ℓ_g·(1/η_{g−1} − 1/η_g) / (ℓ_g − ℓ_{g−1}),  pw_slope[p,g,d] = 1/η_g − pw_intercept/ℓ_g
+    #     (ℓ_i, η_i: piecewise_linear_efficiency points, merged when collinear; origin line g = 0: 1/η₀, 0 when the
+    #     efficiency falls from the first point; without online variables: 1/max η, 0 and the falling segments;
+    #     reduce_unit_detail_method online*: no row, the unit runs at its full-load efficiency in
+    #     conversion_indirect, _reduce_detail._full_load_piecewise)
+    # Part-load fuel curve of a piecewise_linear unit: its weighted input is at least each line of the curve,
+    # so the input follows the curve's upper envelope; the curve is convex (checked before the solve), so the
+    # cheapest feasible input lies on the curve.  Scaled by the units online (the perspective of the curve:
+    # a fleet at equal load), or by the units built for a unit without online variables.  conv_in / conv_out =
+    # conversion_flow_coeff (default 1); the load share is the weighted output per unit of U·unitsize, as the
+    # min_load_efficiency section.  An input without cost (or with a negative value) can be burnt above the
+    # curve; the post-solve check warns.
+    # A coarse process (processCoarse) has one row per line and coarse step (conversion_piecewise_coarse,
+    # _coarse_flows.add_cstr): the flows and v_online are one value per coarse step and the lines have no time
+    # axis, so the averaged row is the fine row at the coarse step.  A delayed unit's inputs are those at the
+    # earlier source-side steps t_s, as conversion_indirect.
+    pidt = b.process_indirect_dt
+    keys = ["p", "d"]
+    lines = d.p_piecewise_slope.frame
+    lines = lines.collect() if isinstance(lines, pl.LazyFrame) else lines
+    over = (_utf8_keys(pidt.lazy(), keys)
+            .join(_utf8_keys(lines.lazy().select("p", "seg", "d"), keys).select("_p", "_d", "seg"),
+                  on=["_p", "_d"], how="inner")
+            .select("p", "seg", "d", "t")
+            .collect())
+    if over.height == 0:
+        return
+
+    in_flows_undelayed = d.process_input_flows
+    if _has_rows(getattr(d, "process_delayed", None)):
+        in_flows_undelayed = in_flows_undelayed.join(d.process_delayed, on="p", how="anti")
+    input_expr = v_flow * d.p_unitsize
+    if d.p_process_source_conversion_flow_coeff is not None:
+        input_expr = input_expr * d.p_process_source_conversion_flow_coeff
+    output_expr = v_flow * d.p_unitsize
+    if d.p_process_sink_conversion_flow_coeff is not None:
+        output_expr = output_expr * d.p_process_sink_conversion_flow_coeff
+    output_expr = output_expr * d.p_piecewise_slope
+    pw_in = d.process_input_flows.join(pw, on="p", how="semi")
+    in_flows_undelayed = in_flows_undelayed.join(pw, on="p", how="semi")
+    pw_out = d.process_output_flows.join(pw, on="p", how="semi")
+
+    lhs: dict = {"input": Sum(Where(input_expr, in_flows_undelayed), over=("source", "sink"))}
+    delayed_term = _delay.delayed_input_expr(d, v_flow)
+    if delayed_term is not None and _has_rows(getattr(d, "process_delayed", None)):
+        if d.process_delayed.join(pw, on="p", how="semi").height > 0:
+            lhs["input_delayed"] = delayed_term
+    if pw_in.height == 0 or pw_out.height == 0:
+        raise ValueError("conversion_piecewise: piecewise_linear units need an input and an output arc.")
+    rhs: dict = {"output": Sum(Where(output_expr, pw_out), over=("source", "sink"))}
+
+    # U: the units online (units with online variables), else the units built.
+    intercept = d.p_piecewise_intercept
+    online_p: list[pl.DataFrame] = []
+    for kind, flag, online_set, var in (("lin", b.has_online_lin, d.process_online_linear, b.v_online_linear),
+                                        ("int", b.has_online_int, d.process_online_integer, b.v_online_integer)):
+        if not flag or not _has_rows(online_set):
+            continue
+        on_pw = pw.join(online_set.select(pl.col("p").cast(pw.schema["p"], strict=False)).unique(),
+                        on="p", how="semi")
+        if on_pw.height == 0:
+            continue
+        online_p.append(on_pw)
+        rhs[f"section_{kind}"] = Where(var, on_pw) * intercept * d.p_unitsize
+    built = pw.join(pl.concat(online_p).unique(), on="p", how="anti") if online_p else pw
+    if built.height > 0:
+        ic = intercept.frame
+        ic = ic.collect() if isinstance(ic, pl.LazyFrame) else ic
+        ic_built = (_utf8_keys(ic.lazy(), ["p"])
+                    .join(_utf8_keys(built.lazy(), ["p"]).select("_p"), on="_p", how="semi")
+                    .select("p", "seg", "d", "value").collect())
+        # intercept · unitsize per unit built, (p, seg, d).
+        us = d.p_unitsize.frame
+        us = us.collect() if isinstance(us, pl.LazyFrame) else us
+        per_unit = (_utf8_keys(ic_built.lazy(), ["p"])
+                    .join(_utf8_keys(us.lazy().select("p", pl.col("value").alias("__us")), ["p"])
+                          .select("_p", "__us"), on="_p", how="left")
+                    .select("p", "seg", "d", value=pl.col("value") * pl.col("__us").fill_null(1.0))
+                    .collect())
+        per_unit_p = Param(("p", "seg", "d"), per_unit)
+        ec = d.p_process_existing_count
+        if ec is not None:
+            ecf = ec.frame
+            ecf = ecf.collect() if isinstance(ecf, pl.LazyFrame) else ecf
+            existing = (_utf8_keys(per_unit.lazy(), keys)
+                        .join(_utf8_keys(ecf.lazy().select("p", "d", pl.col("value").alias("__n")), keys)
+                              .select("_p", "_d", "__n"), on=["_p", "_d"], how="inner")
+                        .select("p", "seg", "d", value=pl.col("value") * pl.col("__n"))
+                        .filter(pl.col("value") != 0.0)
+                        .collect())
+            if existing.height > 0:
+                rhs["cap_existing"] = Param(("p", "seg", "d"), existing)
+        if b.invest_in_dispatch_p is not None:
+            rhs["cap_invest"] = b.invest_in_dispatch_p * per_unit_p
+        if b.divest_in_dispatch_p is not None:
+            rhs["cap_divest"] = b.divest_in_dispatch_p * per_unit_p * -1.0
+    _coarse_flows.add_cstr(
+        b, "conversion_piecewise",
+        over      = over,
+        sense     = ">=",
         lhs_terms = lhs,
         rhs_terms = rhs,
     )
@@ -3374,7 +3551,7 @@ def _validate_min_input_shares(rows: pl.DataFrame) -> None:
     (``input_derivation._validators.validate_unit_input_shares``); this guards hand-built data.
     """
     bad = rows.filter(pl.col("value") > 1.0)
-    sums = (rows.group_by("p").agg(pl.col("value").sum().alias("s"))
+    sums = (rows.sort("p", "source").group_by("p", maintain_order=True).agg(pl.col("value").sum().alias("s"))
             .filter(pl.col("s") > 1.0 + 1e-9))
     if bad.height > 0 or sums.height > 0:
         raise FlexToolConfigError(
@@ -3505,7 +3682,9 @@ def _co2_period_cap_with_carry(d) -> Param:
 
 def _eq_co2_max_period(b: _Build) -> None:
     """CO2 emission cap per period."""
-    if not b.has_co2_cap:
+    # A group whose co2_max_period is inf in every period of the solve has no (g, d) left (_direct: an inf period
+    # leaves group_d_co2_capped).
+    if not b.has_co2_cap or not _has_rows(b.d.group_d_co2_capped):
         return
     m, d = b.m, b.d
     v_flow = b.v_flow
@@ -3521,6 +3700,8 @@ def _eq_co2_max_period(b: _Build) -> None:
     #       · co2_content[c]·w[d,t]/step_duration[d,t]   (start-up energy: an event, no step_duration)
     #   ≤ co2_max_period[g,d] · f_d_k[d]  −  co2_cum_realized_tonnes[g,α(d)] / period_share[d]
     #   ∀ (g,d) ∈ group_d_co2_capped;   w = step_duration · timestep_weight / period_share
+    #   group_d_co2_capped = the capped groups × the periods of dt, without the (g,d) where co2_max_period = inf
+    #   (no cap in that period: no row and no carry)
     #   f_d_k[d] = (realized hours of α(d) from earlier solves + this solve's hours of d) / complete hours of α(d)
     #   α(d) = the period label of a forecast branch period d, d itself otherwise; period_share, f_d_k and the
     #   realized carry of a forecast come from α(d) unless it has its own row: every forecast continues from
@@ -3615,7 +3796,8 @@ def _co2_total_cap_with_carry(d) -> Param:
                 f"for {sorted(missing.select(pl.format('{},{}', 'g', 'd')).to_series().cast(pl.Utf8).to_list())}"
                 "; the carried budget cannot be computed.  The carrier comes from the realizing solve's "
                 "extraction (cumulative_co2 'represented' column).")
-        realized_g = rows.group_by("g").agg(pl.col("value").sum().alias("realized"))
+        # Fixed summation order over the periods (the semi join leaves row order unspecified).
+        realized_g = rows.sort("g", "d").group_by("g", maintain_order=True).agg(pl.col("value").sum().alias("realized"))
         cap = cap.join(realized_g, on="g", how="left").with_columns(pl.col("realized").fill_null(0.0))
     else:
         cap = cap.with_columns(realized=pl.lit(0.0))
@@ -3754,6 +3936,8 @@ def _eq_user_constraints(b: _Build) -> None:
     #   = / ≤ / ≥  constant[cn] (or constant[cn,d] for a period map)
     #   ∀ (cn,d,t) ∈ cdt_{eq,le,ge} with a flow, state or online coefficient   (process_constraint_*)
     #   ∀ (cn,d) of the other constraints of cdt_{eq,le,ge}             (process_constraint_*_period)
+    #   cdt_le / cdt_ge leave out the (cn,d) whose constant is inf (less_than) / −inf (greater_than): no
+    #   constraint in that period (_direct.apply_constraint_no_limit)
     # where, for e a process p (us = unitsize, existing = capacity = existing_count·unitsize) or a storage node n
     # (us = state_unitsize, existing = capacity, the storage capacity), MW (MWh):
     #   inv[e,d] = Σ_{(e,o,d) ∈ edd_invest_commission} v_invest[e,o]·us[e] + carried_commission[e,d]
@@ -4068,7 +4252,7 @@ def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_ter
     _check_covers_dt(d, "p_timestep_weight", feature)
     _check_covers_dt(d, "p_step_duration", feature)
     w = d.p_step_duration * d.p_timestep_weight / d.p_period_share
-    w_frame = _collected(w.frame)
+    w_frame = _collected(w.frame).sort("d", "t")
     hours = Param(("d",), w_frame.group_by("d", maintain_order=True).agg(pl.col("value").sum()))
     # The periods the solve holds whole (window_fraction 1); the others have no row.
     whole = None
@@ -4220,7 +4404,8 @@ def _user_constraint_carried(d, coef: "Param | None", kind: str, *, node: bool, 
     carried, coef_frame = align_join_dtypes(carried, coef.frame.rename({"value": "coef"}), [axis])
     frame = (carried.join(coef_frame, on=axis, how="inner")
              .with_columns(value=pl.col("value") * pl.col("coef") * sign))
-    frame = _collected(frame.group_by(["cn", "d"]).agg(pl.col("value").sum()).select("cn", "d", "value"))
+    frame = _collected(frame.sort("cn", "d", axis).group_by(["cn", "d"], maintain_order=True)
+                       .agg(pl.col("value").sum()).select("cn", "d", "value"))
     return Param(("cn", "d"), frame) if frame.height > 0 else None
 
 
@@ -4242,7 +4427,9 @@ def _user_constraint_existing(d, coef: "Param | None", *, node: bool) -> "Param 
                  .with_columns(cap=pl.col("ec") * pl.col("us"))
                  .join(coef.frame.rename({"value": "coef"}), on="p", how="inner")
                  .with_columns(value=pl.col("cap") * pl.col("coef")))
-    frame = _collected(frame.group_by(["cn", "d"]).agg(pl.col("value").sum()).select("cn", "d", "value"))
+    # Fixed summation order over the members (the joins leave row order unspecified).
+    frame = _collected(frame.sort("cn", "d", "n" if node else "p").group_by(["cn", "d"], maintain_order=True)
+                       .agg(pl.col("value").sum()).select("cn", "d", "value"))
     return Param(("cn", "d"), frame) if frame.height > 0 else None
 
 
@@ -5333,7 +5520,7 @@ def _obj_existing_fixed_cost(b: _Build) -> None:
     else:
         fc_frame = fc_frame.with_columns(
             contrib=pl.col("exist") * pl.col("fc") * pl.col("infl"))
-    fc_const = fc_frame["contrib"].sum()
+    fc_const = fc_frame.sort("e", "d")["contrib"].sum()  # fixed summation order (the joins leave it unspecified)
     if fc_const:
         b.m.add_obj_constant(float(fc_const) * b.scale_the_objective)
 

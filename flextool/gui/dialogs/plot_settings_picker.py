@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 # Entity classes, in the order they should appear as tabs.
 _ENTITY_CLASSES = ("nodeGroup", "flowGroup", "unit", "connection", "node")
 # Category subsections, in tab order.
-_CATEGORY_SECTIONS = ("costs", "capacity", "node_flows", "nodegroup_flows", "dispatch")
+_CATEGORY_SECTIONS = ("costs", "capacity", "node_flows", "nodegroup_flows", "dispatch", "ramp_envelope")
 
 # The ``("categories", "dispatch")`` category is ENGINE-FIXED order (see the
 # module docstring for the stack): its special columns are pinned by the
@@ -682,6 +682,10 @@ class PlotSettingsPicker(tk.Toplevel):
         # the always-shown scenarios tab is useful before any comparison run.
         # Add-only; Cancel still restores the on-disk text untouched.
         self._merge_scenarios_from_folders()
+        # Fill the category sections the project file lacks (a file seeded
+        # before e.g. ``ramp_envelope`` existed) from the bundled default, so
+        # their colors are editable.  Add-only; Cancel restores the file.
+        self._merge_categories_from_default()
         # Populate the entity sections from the input DB(s) ∪ the dispatch
         # output aggregates so every drawn entity — including processGroup
         # aggregates that live only in solved output (e.g. ``Fossil``) — is
@@ -1799,6 +1803,32 @@ class PlotSettingsPicker(tk.Toplevel):
         for name, color in assign_palette_colors(new_names).items():
             scenarios[name] = color
         self._data["scenarios"] = scenarios
+
+    def _merge_categories_from_default(self) -> None:
+        """Add every category section of :data:`_CATEGORY_SECTIONS` that the
+        working ``categories`` lacks, copied from the bundled
+        ``schemas/default_plot_settings.yaml`` (add-only — a section the file
+        has, even an empty one, and its colors are never touched).  Called on
+        open, like :meth:`_merge_scenarios_from_folders`, so a project whose
+        file predates a section (e.g. ``ramp_envelope``) can edit its colors.
+        """
+        from flextool.plot_outputs.color_template import load_color_template
+
+        # No path = the bundled default (cached; deep-copied below).
+        default = load_color_template().get("categories")
+        if not isinstance(default, dict):
+            return
+        categories = self._data.get("categories")
+        categories = categories if isinstance(categories, dict) else {}
+        missing = [
+            name for name in _CATEGORY_SECTIONS
+            if name not in categories and isinstance(default.get(name), dict)
+        ]
+        if not missing:
+            return
+        for name in missing:
+            categories[name] = copy.deepcopy(default[name])
+        self._data["categories"] = categories
 
     def _discover_dispatch_sources(
         self,

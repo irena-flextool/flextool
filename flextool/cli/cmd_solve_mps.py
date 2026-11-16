@@ -44,6 +44,72 @@ def apply_option_pairs(h: object, path: Path, ok) -> str | None:
     return None
 
 
+#: HiGHS model statuses of a solve stopped by a limit or at an objective target or bound: the ones whose
+#: primal feasibility the parent's acceptance check reads (it keeps such a MIP when its incumbent is feasible).
+_LIMIT_MODEL_STATUS_NAMES = frozenset(
+    {"kTimeLimit", "kSolutionLimit", "kIterationLimit", "kObjectiveTarget", "kObjectiveBound"}
+)
+
+
+def _option_value(h: object, name: str, default: object) -> object:
+    """The value of HiGHS option *name* on *h* (``default`` when the HiGHS build does not know it)."""
+    try:
+        got = h.getOptionValue(name)
+    except Exception:  # an older HiGHS without the option
+        return default
+    return got[1] if isinstance(got, tuple) else got
+
+
+def solved_space_primal_feasible(h: object, highspy: object) -> bool | None:
+    """Whether the primal solution on *h* is feasible in the user-scaled problem HiGHS solved: no column or row
+    is further than the primal feasibility tolerance outside its bounds there.  ``None`` when HiGHS applied no
+    user scaling (its own verdict is then in that space already) or there is no primal solution.
+
+    HiGHS's ``user_bound_scale = N`` multiplies the bounds and values of the continuous columns and of every
+    row by ``2**N``; after the solve it divides them back and judges feasibility again with the same tolerance,
+    so with ``N < 0`` a residual within the tolerance in the solved problem can read as an infeasibility.
+    Multiplying by a power of two is exact, so the solved-space residuals are rebuilt exactly from the
+    unscaled model and solution, and tested as HiGHS counts an infeasibility (its ``infeasibility()``: outside
+    the bound by more than the tolerance).  The in-process counterpart is polar-high's ``user_scaled_kkt_failures``; this
+    child imports only highspy and numpy.
+    """
+    import numpy as np
+
+    bound_scale = int(_option_value(h, "user_bound_scale", 0) or 0)
+    objective_scale = int(_option_value(h, "user_objective_scale", 0) or 0)
+    if bound_scale == 0 and objective_scale == 0:
+        return None
+    solution = h.getSolution()
+    if not solution.value_valid:
+        return None
+    tolerance = float(_option_value(h, "primal_feasibility_tolerance", 1e-7))
+    kkt_tolerance = float(_option_value(h, "kkt_tolerance", 1e-7))
+    if kkt_tolerance != 1e-7:  # HiGHS: a non-default kkt_tolerance replaces the feasibility tolerances
+        tolerance = kkt_tolerance
+    lp = h.getLp()
+    factor = 2.0**bound_scale
+    col_factor = np.full(int(lp.num_col_), factor)
+    if len(lp.integrality_):
+        kinds = lp.integrality_
+        semi = (highspy.HighsVarType.kSemiContinuous, highspy.HighsVarType.kSemiInteger)
+        if any(t in semi for t in kinds):
+            return None  # HiGHS judges semi-variables by their own rule; keep its verdict
+        continuous = np.array([t == highspy.HighsVarType.kContinuous for t in kinds], dtype=bool)
+        col_factor = np.where(continuous, factor, 1.0)
+    for lower, upper, value, scale in (
+        (lp.col_lower_, lp.col_upper_, solution.col_value, col_factor),
+        (lp.row_lower_, lp.row_upper_, solution.row_value, factor),
+    ):
+        lo = np.asarray(lower, dtype=np.float64) * scale
+        up = np.asarray(upper, dtype=np.float64) * scale
+        val = np.asarray(value, dtype=np.float64) * scale
+        outside = (val < lo - tolerance) | (val > up + tolerance)
+        residual = np.where(val > up, val - up, np.where(val < lo, lo - val, 0.0))
+        if np.any(outside & (residual > tolerance)):
+            return False
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Solve an MPS file with HiGHS in a subprocess.",
@@ -68,6 +134,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--mip-gap", type=Path, default=None,
         help="Optional output text file with HiGHS' relative MIP gap (info.mip_gap; inf for an LP)",
+    )
+    parser.add_argument(
+        "--primal-feasible", type=Path, default=None,
+        help="Optional output text file: 1 or 0, whether a solve stopped by a limit has a primal solution "
+             "feasible in the user-scaled problem HiGHS solved; written only when user scaling was applied",
     )
     options = parser.add_mutually_exclusive_group()
     options.add_argument(
@@ -173,6 +244,17 @@ def main(argv: list[str] | None = None) -> int:
             args.mip_gap.write_text(repr(float(h.getInfo().mip_gap)))
         except Exception as exc:
             print(f"WARNING: mip-gap write failed: {exc}", file=sys.stderr)
+
+    if args.primal_feasible is not None and model_status.name in _LIMIT_MODEL_STATUS_NAMES:
+        # The solution file's Feasible / Infeasible line is HiGHS's verdict after removing user scaling;
+        # the parent keeps a limit-stopped MIP on the verdict in the space HiGHS solved.  Best-effort: without
+        # the file the parent uses the solution file's line.
+        try:
+            feasible = solved_space_primal_feasible(h, highspy)
+            if feasible is not None:
+                args.primal_feasible.write_text("1" if feasible else "0")
+        except Exception as exc:
+            print(f"WARNING: primal-feasible write failed: {exc}", file=sys.stderr)
 
     if args.basis is not None:
         # Best-effort: basis write isn't critical for the parent's

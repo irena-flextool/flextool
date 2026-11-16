@@ -176,6 +176,7 @@ def run(
         validate_group_limit_flags,
         validate_non_sync_one_variable_connections,
         validate_min_load_efficiency_inputs,
+        validate_piecewise_linear_inputs,
         validate_connection_node_memberships,
         warn_node_connections,
         validate_node_invest_without_storage,
@@ -299,6 +300,7 @@ def run(
         validate_unit_input_shares(db, provider, logger)
         validate_startup_inputs(db, provider, logger)
         validate_min_load_efficiency_inputs(db, logger)
+        validate_piecewise_linear_inputs(db, logger)
         validate_output_min_coeff(db, provider, logger)
         validate_ladder_methods(db, logger)
         validate_connection_delay(db, logger)

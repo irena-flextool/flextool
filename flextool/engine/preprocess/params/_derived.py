@@ -36,6 +36,8 @@ solve, mirroring the established hand-off used by the CSV path.
 """
 from __future__ import annotations
 
+import math
+
 import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1728,6 +1730,12 @@ _METHODS_MAPPING: dict[tuple[str, str, str], str] = {
     ("min_load_efficiency", "linear", "fork_yes"): "method_1way_nvar_LP",
     ("min_load_efficiency", "binary", "fork_no"): "method_1way_1var_MIP",
     ("min_load_efficiency", "binary", "fork_yes"): "method_1way_nvar_MIP",
+    ("piecewise_linear", "no_startup", "fork_no"): "method_1way_1var_off",
+    ("piecewise_linear", "no_startup", "fork_yes"): "method_1way_nvar_off",
+    ("piecewise_linear", "linear", "fork_no"): "method_1way_1var_LP",
+    ("piecewise_linear", "linear", "fork_yes"): "method_1way_nvar_LP",
+    ("piecewise_linear", "binary", "fork_no"): "method_1way_1var_MIP",
+    ("piecewise_linear", "binary", "fork_yes"): "method_1way_nvar_MIP",
     ("none", "no_startup", "fork_no"): "method_1way_1var_off",
     ("none", "no_startup", "fork_yes"): "method_1way_nvar_off",
     ("none", "linear", "fork_no"): "method_1way_1var_LP",
@@ -1820,6 +1828,17 @@ def _group_transfer_method_overrides(source: "InputSource") -> "pl.LazyFrame | N
     return out.lazy().select(pl.col("p").alias("_pk"), "ct_override")
 
 
+def _piecewise_flags(source: "InputSource") -> pl.DataFrame:
+    """``(p, multi_line, needs_online, single_line_rising, single_line_flat, auto_startup)`` of the units with a
+    ``piecewise_linear_efficiency`` curve, from the whole authored curve (every period;
+    :func:`flextool.engine.input._piecewise_curve.unit_flags_frame` -- the same function the input derivation's
+    classifier calls).  Memoised on the run's reader (data only)."""
+    from flextool.engine.input._param_shapes import _run_memo, piecewise_curve_frame
+    from flextool.engine.input._piecewise_curve import unit_flags_frame
+    return _run_memo(source, ("piecewise_unit_flags",),
+                     lambda: unit_flags_frame(piecewise_curve_frame(source)))
+
+
 def _classify_process_method(source: "InputSource") -> pl.DataFrame:
     """Build the per-process internal-method classification.
 
@@ -1851,8 +1870,14 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
          ``transfer_method`` overrides
          (:func:`_group_transfer_method_overrides`, as the input
          derivation's ``derived/ct_method_overrides``).
-      5. Apply minimum_time → linear-startup override.
-      6. Resolve fork from arc counts + delayed-set membership.
+      5. Apply minimum_time → linear-startup override, then the
+         piecewise_linear one: a ``piecewise_linear`` unit whose curve
+         burns fuel at zero output (the efficiency rises from the first
+         point to the second in some period) and has no start-ups gets
+         ``linear`` (:func:`_piecewise_flags`).
+      6. Resolve fork from arc counts + delayed-set membership; a
+         ``piecewise_linear`` unit with two or more lines in some period
+         is ``fork_yes`` (as a delayed unit).
       7. Map ``(ct, startup, fork) → method`` via the polars when/then
          chain built from :data:`_METHODS_MAPPING`.
       8. Drop ``not_applicable`` rows; ``not_applicable`` is also returned
@@ -1991,6 +2016,22 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
             ).then(pl.lit("linear"))
              .otherwise(pl.col("startup"))
         ).drop("mtm")
+    # Step 5b — piecewise_linear: auto linear start-ups and the forced fork of multi-line curves.
+    pw_flags = _piecewise_flags(source) if cm_unit is not None and (
+        cm_unit.get_column("value").cast(pl.Utf8) == "piecewise_linear").any() else None
+    if pw_flags is not None:
+        lf = (lf.with_columns(_pk=pl.col("p").cast(pl.Utf8))
+                .join(pw_flags.lazy().select(pl.col("p").alias("_pk"), "auto_startup", "multi_line"),
+                      on="_pk", how="left")
+                .with_columns(pw=(pl.col("ct") == "piecewise_linear") & (pl.col("klass") == "unit"))
+                .with_columns(
+                    startup=pl.when(pl.col("pw") & (pl.col("startup") == "no_startup")
+                                    & pl.col("auto_startup").fill_null(False))
+                              .then(pl.lit("linear")).otherwise(pl.col("startup")),
+                    pw_multi=pl.col("pw") & pl.col("multi_line").fill_null(False))
+                .drop("_pk", "auto_startup", "multi_line", "pw"))
+    else:
+        lf = lf.with_columns(pw_multi=pl.lit(False))
     # Step 6 — fork resolution.
     if src_counts is not None:
         lf = lf.join(src_counts, on="p", how="left")
@@ -2012,10 +2053,10 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
         lf = lf.with_columns(is_delayed=pl.lit(False))
     lf = lf.with_columns(
         fork=pl.when((pl.col("n_src") > 1) | (pl.col("n_sink") > 1)
-                      | pl.col("is_delayed"))
+                      | pl.col("is_delayed") | pl.col("pw_multi"))
               .then(pl.lit("fork_yes"))
               .otherwise(pl.lit("fork_no"))
-    )
+    ).drop("pw_multi")
 
     # Step 7 — map (ct, startup, fork) → method via when/then chain.
     expr = pl.lit("not_applicable")
@@ -4121,6 +4162,8 @@ def p_entity_max_units_from_source(source: "InputSource",
     #                                   + eim[e]                        if e ∈ e_invest_total, (e,d) ∉ ed_invest_period
     #                                   + max(imp[e,d], eim[e])         if both
     #                                   + max_flow_for_unconstrained    if invest_method ∈ *_no_limit
+    #   cmc[e,d] = inf (no limit in d): existing[e,d] + max_flow_for_unconstrained;  imp[e,d] = inf: imp :=
+    #   max_flow_for_unconstrained (the bound of a *_no_limit method)
     # imp[e,d] / cmc[e,d] = authored[e,d]  (period map)
     #                     | authored[e]    (constant)
     #                     | authored[e, anchor(d)]  (recourse branch period without its own value)
@@ -4164,6 +4207,11 @@ def p_entity_max_units_from_source(source: "InputSource",
             p_unc = float(df_unc["value"].max())
         except Exception:
             pass
+    # invest_max_period = inf is no limit in that period: the variable takes the no-limit bound
+    # (max_flow_for_unconstrained_variables), as under an *_no_limit method; the per-period row is left out
+    # (core._eq_invest_period_caps).  cumulative_max_capacity = inf likewise: existing + the no-limit bound.
+    imp_map = {k: (p_unc if math.isinf(v) and v > 0 else v) for k, v in imp_map.items()}
+    cmc_unlimited = {k for k, v in cmc_map.items() if math.isinf(v) and v > 0}
 
     # Compute max_capacity per (e, d in period_in_use) and divide by unitsize.
     rows: list[tuple[str, str, float]] = []
@@ -4179,7 +4227,8 @@ def p_entity_max_units_from_source(source: "InputSource",
                     # A period map that leaves out an investment period of the solve never gets here:
                     # pass 1b refuses it (``require_period_coverage``).  The 0.0 is only reached for
                     # a period the solve does not invest in.
-                    v = cmc_map.get((e, d), 0.0)
+                    v = (existing_map.get((e, d), 0.0) + p_unc if (e, d) in cmc_unlimited
+                         else cmc_map.get((e, d), 0.0))
                 else:
                     # A cumulative_limits entity that never authors
                     # cumulative_max_capacity (e.g. only cumulative_min_capacity, a floor with no
@@ -4432,10 +4481,11 @@ def _arc_max_capacity_coef_lf(source: "InputSource",
     df = (_try_param_explicit(source, ec, pname) if explicit
           else _try_param(source, ec, pname))
     if df is None or df.height == 0:
-        return pl.LazyFrame(
+        from flextool.engine.preprocess.params._projection import remap_capacity_coef
+        return remap_capacity_coef(source, pl.LazyFrame(
             schema={"p": schema_dtype(_enums, "p"),
                     node_alias: schema_dtype(_enums, node_alias),
-                    "coef": pl.Float64})
+                    "coef": pl.Float64}), side, node_alias, "coef")
     cols = df.columns
     rename: dict[str, str] = {}
     for c in cols:
@@ -4443,10 +4493,13 @@ def _arc_max_capacity_coef_lf(source: "InputSource",
             rename[c] = "p"
         elif c == "node":
             rename[c] = node_alias
-    return (df.lazy().pipe(rename_to_axis, rename)
-              .with_columns(pl.col("value").cast(pl.Float64).alias("coef"))
-              .select("p", node_alias, "coef")
-              .unique(subset=["p", node_alias], keep="last"))
+    out = (df.lazy().pipe(rename_to_axis, rename)
+             .with_columns(pl.col("value").cast(pl.Float64).alias("coef"))
+             .select("p", node_alias, "coef")
+             .unique(subset=["p", node_alias], keep="last"))
+    # One-input piecewise_linear units: their input_share_max is an output cap (_projection.remap_capacity_coef).
+    from flextool.engine.preprocess.params._projection import remap_capacity_coef
+    return remap_capacity_coef(source, out, side, node_alias, "coef")
 
 
 def _arc_conversion_coef_lf(source: "InputSource",
@@ -4762,6 +4815,7 @@ def p_flow_upper_from_source(source: "InputSource",
                                 p_entity_max_units: "Param | None",
                                 p_entity_all_existing: "Param | None",
                                 classified: pl.DataFrame | None = None,
+                                piecewise_lines: pl.DataFrame | None = None,
                                 ) -> "Param | None":
     """§3.3.5 — per-(p, source, sink, d, t) structural max flow.
 
@@ -4789,6 +4843,10 @@ def p_flow_upper_from_source(source: "InputSource",
     :func:`p_entity_max_units_from_source`.  Provides
     ``p_entity_dispatch_capacity_max[p, d] / p_entity_unitsize[p]``
     directly, so we don't need to recompute the dispatch cap inline.
+
+    ``piecewise_lines`` — the lines ``(p, d, seg, slope, intercept)`` of the
+    multi-line ``piecewise_linear`` units (see :func:`_indirect_input_cap_lf`);
+    None without such units.
 
     ``p_entity_all_existing`` — fallback when ``p_entity_max_units`` is
     absent (no invest configured); when both invest sets are empty
@@ -4851,7 +4909,7 @@ def p_flow_upper_from_source(source: "InputSource",
     if classified is None:
         classified = _classify_process_method(source)
     in_cap_lf = _indirect_input_cap_lf(source, pss, dt, p_slope, p_section,
-                                       classified)
+                                       classified, piecewise_lines)
     process_sink_lf = _process_sink_pairs_lf(source)
 
     # ── 3. Coefficient frames ───────────────────────────────────────
@@ -4987,6 +5045,7 @@ def _indirect_input_cap_lf(source: "InputSource",
                            p_slope: "Param | None",
                            p_section: "Param | None",
                            classified: pl.DataFrame,
+                           piecewise_lines: pl.DataFrame | None = None,
                            ) -> pl.LazyFrame:
     """Input-arc limit per unit of capacity for indirect (multi-flow) units.
 
@@ -5002,7 +5061,14 @@ def _indirect_input_cap_lf(source: "InputSource",
     that runs the unit at full output from input ``s`` alone: ``W`` is
     :func:`_indirect_fuel_width_lf`; ``section`` (the min-load-efficiency
     term, per unit online ≤ capacity) only for ``min_load_efficiency``
-    processes; ``delay_factor = 1/max(delay weight)`` for delayed
+    processes and the single-line ``piecewise_linear`` units with a
+    section (``single_line_rising`` of :func:`_piecewise_flags`: their
+    ``p_section`` is the curve's intercept, set at the load boundary,
+    ``params/_piecewise.py``); a multi-line ``piecewise_linear`` unit
+    (``piecewise_lines``: its lines ``(p, d, seg, slope, intercept)``)
+    needs at full output the most fuel of its lines,
+    ``max_g(slope_g · W + intercept_g)``, in place of ``slope · W +
+    section``; ``delay_factor = 1/max(delay weight)`` for delayed
     processes (one input step can feed a heavier-weighted output step);
     ``src_div_s`` is the input's ``conversion_flow_coeff`` (``1`` when
     ``≤ 0``), for delayed processes too: their delayed conversion term
@@ -5022,8 +5088,16 @@ def _indirect_input_cap_lf(source: "InputSource",
                             & pl.col("method").is_in(list(_METHOD_INDIRECT)))
                     .select("p")
                     .unique())
+    # The section term: min_load_efficiency units, and the single-line piecewise_linear units whose curve has an
+    # intercept (handled as min_load_efficiency units; their p_section is the curve's intercept).
+    section_gate = pl.col("ct") == "min_load_efficiency"
+    if (classified.get_column("ct").cast(pl.Utf8) == "piecewise_linear").any():
+        rising = (_piecewise_flags(source).filter(pl.col("single_line_rising"))
+                  .get_column("p").to_list())
+        section_gate = section_gate | ((pl.col("ct") == "piecewise_linear")
+                                       & pl.col("p").cast(pl.Utf8).is_in(rising))
     min_load_p = (classified.lazy()
-                    .filter(pl.col("ct") == "min_load_efficiency")
+                    .filter(section_gate)
                     .select("p")
                     .unique()
                     .with_columns(_has_min_load=pl.lit(True)))
@@ -5069,12 +5143,31 @@ def _indirect_input_cap_lf(source: "InputSource",
             on=["p", "d", "t"], how="left")
     else:
         base = base.with_columns(section=pl.lit(None, dtype=pl.Float64))
+    #   fuel[p,d,t] = slope·W + section                       (section only behind the gate above)
+    #   fuel[p,d,t] = max_g(pw_slope[p,g,d]·W + pw_intercept[p,g,d])   multi-line piecewise_linear units
+    if piecewise_lines is not None and piecewise_lines.height > 0:
+        pw_fuel = (piecewise_lines.lazy()
+                   .select(pl.col("p").cast(pl.Utf8).alias("_pu"), pl.col("d").cast(pl.Utf8).alias("_du"),
+                           pl.col("slope").cast(pl.Float64), pl.col("intercept").cast(pl.Float64))
+                   .join(_indirect_fuel_width_lf(source)
+                         .select(pl.col("p").cast(pl.Utf8).alias("_pu"), "fuel_width"),
+                         on="_pu", how="left")
+                   .with_columns(fuel_width=pl.col("fuel_width").fill_null(0.0))
+                   .group_by("_pu", "_du")
+                   .agg(_pw_fuel=(pl.col("slope") * pl.col("fuel_width") + pl.col("intercept")).max()))
+        base = (base.with_columns(_pu=pl.col("p").cast(pl.Utf8), _du=pl.col("d").cast(pl.Utf8))
+                .join(pw_fuel, on=["_pu", "_du"], how="left", maintain_order="left")
+                .drop("_pu", "_du"))
+    else:
+        base = base.with_columns(_pw_fuel=pl.lit(None, dtype=pl.Float64))
     return (base
         .with_columns(
-            _fuel=(pl.col("slope").fill_null(0.0) * pl.col("fuel_width")
-                   + pl.when(pl.col("_has_min_load"))
-                       .then(pl.col("section").fill_null(0.0))
-                       .otherwise(0.0)),
+            _fuel=pl.when(pl.col("_pw_fuel").is_not_null())
+                    .then(pl.col("_pw_fuel"))
+                    .otherwise(pl.col("slope").fill_null(0.0) * pl.col("fuel_width")
+                               + pl.when(pl.col("_has_min_load"))
+                                   .then(pl.col("section").fill_null(0.0))
+                                   .otherwise(0.0)),
             # src_conv ≤ 0 inputs would feed the conversion negatively
             # (not tied to the fuel need): keep a finite limit with a
             # unit divisor.  Delayed and undelayed inputs alike enter the
@@ -5093,6 +5186,7 @@ def p_indirect_input_cap_from_source(source: "InputSource",
                                      p_slope: "Param | None",
                                      p_section: "Param | None",
                                      classified: pl.DataFrame | None = None,
+                                     piecewise_lines: pl.DataFrame | None = None,
                                      ) -> "Param | None":
     """``Param((p, source, sink, d, t))`` — the input-arc limit of indirect
     units per unit of capacity (:func:`_indirect_input_cap_lf`):
@@ -5115,7 +5209,7 @@ def p_indirect_input_cap_from_source(source: "InputSource",
     if classified is None:
         classified = _classify_process_method(source)
     out = (_indirect_input_cap_lf(source, pss, dt, p_slope, p_section,
-                                  classified)
+                                  classified, piecewise_lines)
            .sort("p", "source", "sink", "d", "t")
            .collect())
     if out.height == 0:

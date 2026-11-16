@@ -18,11 +18,13 @@ RESULTS_SCHEMA = package_data_path("schemas") / "spinedb_results_schema.json"
 # Post-trim ground truth (measured from the legacy results template after the
 # .1/.2/.3 reserve-class trim).
 EXPECTED_ENTITY_CLASSES = 12
-EXPECTED_PARAMETER_DEFINITIONS = 67  # 52 base + 6 per-entity cost break-down + 3 connection online
+EXPECTED_PARAMETER_DEFINITIONS = 70  # 52 base + 6 per-entity cost break-down + 3 connection online
+#   (unit/connection/node × cost_annualized/cost_discounted)
 #   + 2 capacity margin (capacity_margin, capacity_margin_contribution)
 #   + 2 reserve requirement (group__reserve__upDown requirement_t, requirement)
 #   + 2 start-up input (unit__node startup_energy_t, startup_energy_annualized)
-#   (unit/connection/node × cost_annualized/cost_discounted)
+#   + 3 ramp envelope: node ramp_t -> node ramp_envelope_t (renamed), + group ramp_envelope_t,
+#     + model timestep_hours_t, + model transition_hours_t
 
 TRIMMED_CLASSES = {
     "unit__reserve__upDown__node.1",
@@ -54,6 +56,10 @@ def test_results_schema_roundtrip(tmp_path):
     with DatabaseMapping(db_url) as db:
         class_names = {ec["name"] for ec in db.find_entity_classes()}
         param_defs = list(db.find_parameter_definitions())
+    defined = {(d["entity_class_name"], d["name"]) for d in param_defs}
+    assert {("node", "ramp_envelope_t"), ("group", "ramp_envelope_t"), ("model", "timestep_hours_t"),
+            ("model", "transition_hours_t")} <= defined
+    assert ("node", "ramp_t") not in defined
 
     assert len(class_names) == EXPECTED_ENTITY_CLASSES
     assert len(param_defs) == EXPECTED_PARAMETER_DEFINITIONS

@@ -643,6 +643,17 @@ def _read_highs_mip_gap(gap_path: Path) -> float | None:
         return None
 
 
+def _read_highs_primal_feasible(path: Path) -> bool | None:
+    """The HiGHS child's primal-feasibility verdict in the user-scaled problem it solved (``--primal-feasible``),
+    else ``None`` when the child wrote none (no user scaling, not a limit stop, or the best-effort write
+    failed)."""
+    try:
+        text = path.read_text().strip()
+    except OSError:
+        return None
+    return {"1": True, "0": False}.get(text)
+
+
 class _SolHighsShim:
     """Duck-typed stand-in for ``highspy.Highs`` for the cold-path writers.
 
@@ -2024,6 +2035,7 @@ def solve_via_subprocess(
     work_folder: Path | None = None,
     run_options: "RunOptions | None" = None,
     option_layers: Mapping[str, str] | None = None,
+    pre_run_check: Any = None,
 ) -> "Solution":
     """Solve *problem* via the appropriate CLI subprocess; return a Solution.
 
@@ -2066,6 +2078,11 @@ def solve_via_subprocess(
         Commercial solvers: parameter name -> the layer that set it (option
         file path, ``solver_arguments of solve X``, a flag), named in the
         warning about a parameter the solver does not know.
+    pre_run_check
+        HiGHS only: polar-high's ``pre_run_check``, run by
+        :meth:`Problem.write_mps` on the LP before the file is written (a raise
+        leaves no file and no child); the options it returns are added to the
+        child's option file.
 
     Returns
     -------
@@ -2091,6 +2108,7 @@ def solve_via_subprocess(
         return _solve_highs_subprocess(
             problem, options, solve_name=solve_name, logger=logger,
             work_folder=work_folder, run_options=run_options,
+            pre_run_check=pre_run_check,
         )
     if solver_name in _SCRIPTS:
         return _solve_commercial_subprocess(
@@ -2117,6 +2135,7 @@ def _solve_highs_subprocess(
     logger: logging.Logger | None,
     work_folder: Path | None,
     run_options: "RunOptions | None" = None,
+    pre_run_check: Any = None,
 ) -> "Solution":
     """HiGHS-specific subprocess path (unchanged contract).
 
@@ -2188,6 +2207,7 @@ def _solve_highs_subprocess(
     opts_path = out_dir / f"{safe_name}.opt"
     options_json = out_dir / f"{safe_name}.options.json"
     gap_path = out_dir / f"{safe_name}.mipgap"
+    feasible_path = out_dir / f"{safe_name}.primalfeasible"
 
     # Warm-start basis-cache slots (populated only with warm start on;
     # declared here so the ``finally`` cleanup can reference them safely).
@@ -2205,8 +2225,6 @@ def _solve_highs_subprocess(
     warm_run_time: float | None = None
 
     try:
-        _write_highs_option_files(_highs_option_pairs(options), opts_path, options_json)
-
         if logger is not None:
             logger.info(
                 "save_memory: building LP for %r, writing MPS to %s",
@@ -2231,7 +2249,15 @@ def _solve_highs_subprocess(
         # The MPS file carries no objective constant (``add_obj_constant``);
         # the solver's objective leaves it out and the Solution adds it back.
         obj_offset = float(getattr(problem, "_obj_offset", 0.0) or 0.0)
-        problem.write_mps(str(mps_path), release=True, emit_names=False)
+        # The scaling guard's roll recheck (``pre_run_check``) runs inside the
+        # write, on the LP the file will hold, before anything is written; the
+        # options it returns (a per-roll ``user_bound_scale``) join the child's
+        # option file, written after it.
+        hook_options = problem.write_mps(
+            str(mps_path), release=True, emit_names=False, pre_run_check=pre_run_check,
+        ) or {}
+        child_options = {**dict(options or {}), **hook_options}
+        _write_highs_option_files(_highs_option_pairs(child_options), opts_path, options_json)
 
         cmd = [
             *python_module_argv("flextool.cli.cmd_solve_mps"),
@@ -2239,6 +2265,7 @@ def _solve_highs_subprocess(
             "--solution", str(sol_path),
             "--options-json", str(options_json),
             "--mip-gap", str(gap_path),
+            "--primal-feasible", str(feasible_path),
             # The run's thread budget sizes the child's polars pool (read before polars is imported); the
             # child's HiGHS threads come from the options.
             "--threads", str(child_threads),
@@ -2340,7 +2367,7 @@ def _solve_highs_subprocess(
         # The work folder persists across runs and same-named solves: a solution, gap or stats file left by an
         # earlier one must not be read as this solve's when the child writes none (killed, crashed; the gap
         # write is best-effort).
-        _remove_old_results([sol_path, gap_path, warm_stats_path])
+        _remove_old_results([sol_path, gap_path, feasible_path, warm_stats_path])
         cp = subprocess.run(cmd, env=child_env())
         # Exit 0 is optimal and 1 not optimal (``cmd_solve_mps``); any other code is a crash or a signal
         # (POSIX: negative).  Exit 1 is also an uncaught exception in the child, and on Windows a
@@ -2526,6 +2553,12 @@ def _solve_highs_subprocess(
             sol.shim_status, sol.shim_primal_feasible = "OPTIMAL", True
         else:
             sol.shim_status, sol.shim_primal_feasible = _highs_sol_status(sol_path)
+            if sol.shim_status in LIMIT_SHIM_STATUSES:
+                # With user scaling, the verdict in the space HiGHS solved (the child's sidecar); the solution
+                # file's line is HiGHS's verdict after removing that scaling.
+                solved_space = _read_highs_primal_feasible(feasible_path)
+                if solved_space is not None:
+                    sol.shim_primal_feasible = solved_space
         sol.shim_solver = "highs"
         # The gap HiGHS stopped at, named in the limit warning.
         sol.shim_mip_gap = (
@@ -2534,7 +2567,7 @@ def _solve_highs_subprocess(
         return sol
     finally:
         if cleanup:
-            paths = [mps_path, sol_path, opts_path, options_json, gap_path]
+            paths = [mps_path, sol_path, opts_path, options_json, gap_path, feasible_path]
             # The warm-start stats sidecar and A/B probe throwaways live
             # inside ``out_dir`` — sweep them too so the ``rmdir`` below
             # succeeds.  The cache itself (``warm_cached`` / ``warm_tmp_bas``)

@@ -376,8 +376,9 @@ jobs:
           & $py -c "import sys; print(sys.version); assert sys.version_info[:2] == tuple(map(int, '$Env:PYTHON_MINOR'.split('.'))), sys.version"
           & $py -c "import flextool, polars, highspy, polar_high, pandas, pyarrow, spinedb_api, odf, ipykernel, win32api; from importlib.metadata import version; print({p: version(p) for p in ('flextool', 'polars', 'highspy', 'polar-high', 'spinedb-api', 'pandas')})"
           # What the slimming kept: the pyarrow, scipy, matplotlib and pywin32
-          # parts FlexTool, spinedb_api and the Jupyter kernel use.
-          & $py -c "import pyarrow.parquet, pyarrow.dataset, pyarrow.compute, pyarrow.fs, scipy.stats, scipy.optimize, matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt; import io; plt.figure().savefig(io.BytesIO(), format='png'); import win32api, win32security, win32clipboard, pythoncom, jupyter_core.paths, jedi, setuptools, pip; print('slimmed imports ok')"
+          # parts FlexTool, spinedb_api and the Jupyter kernel use (FlexTool
+          # itself imports no scipy; spinedb_api imports scipy.sparse.csgraph).
+          & $py -c "import pyarrow.parquet, pyarrow.dataset, pyarrow.compute, pyarrow.fs, scipy.sparse.csgraph, matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt; import io; plt.figure().savefig(io.BytesIO(), format='png'); import win32api, win32security, win32clipboard, pythoncom, jupyter_core.paths, jedi, setuptools, pip; print('slimmed imports ok')"
           # pip check: the only allowed problem is the debugpy removed above.
           $PSNativeCommandUseErrorActionPreference = $false
           $check = & $py -m pip check 2>&1 | ForEach-Object { "$_" }

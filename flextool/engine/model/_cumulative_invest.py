@@ -17,6 +17,7 @@ from polar_high import Param, Sum, Where
 from polar_high.engine import Expr, Var
 
 from flextool.engine.input._axis_enums import align_join_dtypes, rename_to_axis
+from flextool.engine.input._param_shapes import drop_no_limit_rows, without_no_limit_rows
 from flextool.engine.model import _coarse_flows, _lead_time
 from flextool.engine.model._common import (
     _entities_of_kind,
@@ -374,7 +375,8 @@ def _eq_cumulative_capacity(b: _Build) -> None:
     #   ≤ cumulative_max_capacity[p,d] − existing[p,d]        (maxCumulative_capacity_p)
     #   ≥ cumulative_min_capacity[p,d] − existing[p,d]        (minCumulative_capacity_p)
     #   max: ∀ (p,d) ∈ ed_invest_cumulative ∩ v_invest_p entities, p ∈ authors(cumulative_max_capacity) —
-    #        a period the author's own map leaves out is a configuration error (FA-12), not "no limit"
+    #        a period the author's own map leaves out is a configuration error (FA-12), not "no limit";
+    #        a period whose cumulative_max_capacity is inf has no row (no limit there)
     #       
     #   min: ∀ (p,d) ∈ ed_invest_cumulative ∩ v_invest_p entities ∩ cumulative_min_capacity.frame
     #   _n: the node analogue with v_invest_n / v_divest_n, state_unitsize[n] and ``ndd_divest_active``.
@@ -407,6 +409,10 @@ def _eq_cumulative_capacity(b: _Build) -> None:
             if rows.height == 0:
                 continue
             check_max_cap(rows, cap_dt, axis, True, param_name=param_name)
+            # A period with cumulative_max_capacity = inf has no row (no limit there).
+            rows = without_no_limit_rows(rows, Param((axis, "d"), cap_frame), "upper")
+            if rows.height == 0:
+                continue
         else:
             # Min rows: the periods with a value other than 0 (a min of 0 is no floor).  A period
             # map that leaves out an investment period never gets here: pass 1b refuses it
@@ -430,7 +436,7 @@ def _eq_cumulative_capacity(b: _Build) -> None:
                 lhs["divest"] = -Sum(Where(view * unitsize, active), over=("d_divest",))
             else:
                 lhs["divest"] = -Where(divest * unitsize, rows)
-        rhs: dict = {"cap": Param((axis, "d"), cap_frame)}
+        rhs: dict = {"cap": drop_no_limit_rows(Param((axis, "d"), cap_frame), "upper")}
         if existing is not None:
             rhs["minus_existing"] = -Param((axis, "d"), existing.frame.rename({"e": axis}))
         b.m.add_cstr(
@@ -453,7 +459,8 @@ def _eq_group_entity_period(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{p : (g,p) ∈ group_entity} v_invest_p[p,d] · unitsize[p]  ≤ group_invest_max_period[g,d]   (max…_p)
     #                                                             ≥ group_invest_min_period[g,d]   (min…_p)
-    #   ∀ (g,d) ∈ gd_invest_period, restricted to the (g,d) some member actually has the variable for
+    #   ∀ (g,d) ∈ gd_invest_period, restricted to the (g,d) some member actually has the variable for; a max row
+    #   is left out where the group's limit is inf (no limit in that period)
     #   Divest: v_divest_p with group_retire_{max,min}_period over gd_divest_period (same restriction)
     #   _n: the node analogues with v_invest_n / v_divest_n and state_unitsize[n]
     # With a construction lead time the invest rows count capacity coming online in d:
@@ -508,12 +515,16 @@ def _eq_group_entity_period(b: _Build) -> None:
                 # FA-12: only on (g, d) whose members have the variable.
                 check_max_cap(terms.select("g", "d").unique(), cap.frame, "g", True,
                               param_name=param_name)
+                # A period with the group limit inf has no row (no limit there).
+                terms = without_no_limit_rows(terms, cap, "upper")
+                if terms.height == 0:
+                    continue
             b.m.add_cstr(
                 name,
                 over      = terms.select("g", "d").unique(),
                 sense     = sense,
                 lhs_terms = {kind:  Sum(Where(var * unitsize, terms.select("g", axis, "d")), over=(axis,))},
-                rhs_terms = {"cap": cap},
+                rhs_terms = {"cap": drop_no_limit_rows(cap, "upper")},
             )
 
 
@@ -535,12 +546,18 @@ def _group_period_limit_online(b: _Build, name: str, axis: str, var, unitsize, m
     over = rows.select("g", "d").unique().sort("g", "d")
     if sense == "<=":
         check_max_cap(over, cap.frame, "g", True, param_name=param_name)  # FA-12
+        over = without_no_limit_rows(over, cap, "upper")
+        if over.height == 0:
+            return
+        cap = drop_no_limit_rows(cap, "upper")
     lhs: dict = {"invest": _lead_time.decided_sum(var, unitsize, rows.select("g", axis, "d_invest", "d"),
                                                   "__at_online_g", (axis, "d_invest"))}
     car = _lead_time.carried(d, "commission", axis, members.select(axis).unique())
     if car is not None:
         car, mem = align_join_dtypes(car, members.select("g", axis), [axis])
-        car_g = (car.join(mem, on=axis, how="inner").group_by("g", "d").agg(pl.col("value").sum()))
+        # Fixed summation order over the members (the join leaves row order unspecified).
+        car_g = (car.join(mem, on=axis, how="inner").sort("g", "d", axis)
+                 .group_by("g", "d", maintain_order=True).agg(pl.col("value").sum()))
         car_g, over_k = align_join_dtypes(car_g, over, ["g", "d"])
         car_g = car_g.join(over_k, on=["g", "d"], how="semi")
         if car_g.height > 0:
@@ -703,7 +720,8 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
     #   ≤ cumulative_max_capacity[g,d] − Σ_{e : (g,e) ∈ group_entity} existing[e,d]   (max…)
     #   ≥ cumulative_min_capacity[g,d] − Σ_{e : (g,e) ∈ group_entity} existing[e,d]   (min…)
     #   ∀ g ∈ g_invest_cumulative (invest_method = cumulative_limits, #5/B-Q3), d with a cap value
-    #   and some member alive (invest) or retirable (divest) in d
+    #   and some member alive (invest) or retirable (divest) in d; a max row is left out where
+    #   cumulative_max_capacity is inf (no limit in that period)
     # Keeps the capacity of a group in a period (existing + invested and still alive − every
     # retirement up to and including d, #30b) within its cumulative limits (schema
     # "[MW or MWh]"); processes and storage nodes share one row.  Max rows: groups that author
@@ -730,6 +748,11 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
             if over.height == 0:
                 continue
             check_max_cap(over, cap_frame, "g", True, param_name=param_name)
+            # A period with cumulative_max_capacity = inf has no row (no limit there).
+            over = without_no_limit_rows(over, cap, "upper")
+            if over.height == 0:
+                continue
+            cap = drop_no_limit_rows(cap, "upper")
         else:
             over = over.join(cap_frame.select("g", "d").unique(), on=["g", "d"], how="semi")
             if over.height == 0:
@@ -760,7 +783,9 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
         if d.p_entity_all_existing is not None:
             group_existing = (d.p_entity_all_existing.frame
                               .join(group_entity, on="e", how="inner")
-                              .group_by(["g", "d"]).agg(pl.col("value").sum())
+                              # Fixed summation order over the members.
+                              .sort("g", "d", "e")
+                              .group_by(["g", "d"], maintain_order=True).agg(pl.col("value").sum())
                               .filter(in_groups))
             if group_existing.height > 0:
                 rhs["minus_existing"] = -Param(("g", "d"), group_existing.select("g", "d", "value"))
@@ -814,7 +839,7 @@ def _eq_cumulative_flow_solve(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{d,t} F[g,d,t]·w_y[d,t]  ≤ max_cumulative_flow[g] · Σ_{d,t} w_y[d,t]   (max…)
     #                            ≥ min_cumulative_flow[g] · Σ_{d,t} w_y[d,t]   (min…)
-    #   ∀ g with a max / min_cumulative_flow (, per leaf under recourse)
+    #   ∀ g with a max / min_cumulative_flow (, per leaf under recourse) — an inf max / −inf min is no limit (no row)
     #   F = net flow into the group (_group_flow)
     #   w_y[d,t] = step_duration[d,t]·timestep_weight[d,t]·r[d]
     #   r[d] = (years_represented[d]/period_share[d]) / max_d′(years_represented[d′]/period_share[d′])
@@ -832,7 +857,9 @@ def _eq_cumulative_flow_solve(b: _Build) -> None:
         leaf_cols = ["g", "leaf"] if is_path else ["g"]
         mask_cols = ["g", "d", "leaf"] if is_path else ["g", "d"]
         rhs_hours = (mask.select(mask_cols).join(w_y_frame, on="d", how="inner")
-                     .group_by(leaf_cols).agg(pl.col("value").sum()))
+                     # Fixed summation order (the join leaves row order unspecified).
+                     .sort(*mask_cols, "t")
+                     .group_by(leaf_cols, maintain_order=True).agg(pl.col("value").sum()))
         cap_rhs = Param(
             tuple(leaf_cols),
             cap.frame.select("g", "value").rename({"value": "cap_v"})
@@ -866,13 +893,15 @@ def _eq_cumulative_flow_period(b: _Build) -> None:
 
     hours_in_period = (d.p_step_duration.frame.rename({"value": "sd"})
                        .join(d.p_timestep_weight.frame.rename({"value": "tw"}), on=["d", "t"], how="inner")
-                       .group_by("d").agg((pl.col("sd") * pl.col("tw")).sum().alias("hours_in_period")))
+                       .sort("d", "t")  # fixed summation order
+                       .group_by("d", maintain_order=True)
+                       .agg((pl.col("sd") * pl.col("tw")).sum().alias("hours_in_period")))
 
     # ─── EQ. ─── {max,min}Cumulative_flow_period ─────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_t F[g,d,t]·sd[d,t]·tw[d,t]  ≤ max_cumulative_flow[g,d] · Σ_t sd[d,t]·tw[d,t]   (max…)
     #                               ≥ min_cumulative_flow[g,d] · Σ_t sd[d,t]·tw[d,t]   (min…)
-    #   ∀ (g,d) with a max / min_cumulative_flow
+    #   ∀ (g,d) with a max / min_cumulative_flow (the reader leaves out an inf max / −inf min: no limit in d)
     #   F = net flow into the group (_group_flow); sd = step_duration, tw = timestep_weight
     # Limits the energy flowing into a flow group in each period to an average power times the
     # weighted hours of the period — the same timestep_weight every operational cost term already
@@ -910,7 +939,7 @@ def _eq_instant_flow(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # F[g,d,t]  ≤ max_instant_flow[g,d,t]   (maxInstant_flow)
     #           ≥ min_instant_flow[g,d,t]   (minInstant_flow)
-    #   ∀ (g,d,t) ∈ _instant_flow_support(cap, dt)
+    #   ∀ (g,d,t) ∈ _instant_flow_support(cap, dt); the reader leaves out an inf max / −inf min (no limit there)
     #   F = net flow into the group (_group_flow), MW
     # Limits the net power flowing into a flow group in every step.  The cap may be authored as a
     # scalar, period map, time map or period-time map; the rows cover every active step of its shape.

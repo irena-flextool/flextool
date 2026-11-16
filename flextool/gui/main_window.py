@@ -25,6 +25,7 @@ from flextool.gui.project_utils import (
 from flextool.gui.settings_io import (
     PRESOLVE_CHOICES,
     SCALING_CHOICES,
+    SCALING_GUARD_CHOICES,
     load_global_settings,
     load_project_settings,
     save_global_settings,
@@ -34,6 +35,7 @@ from flextool.gui.settings_io import (
 )
 from flextool.gui.assistant.entry import AssistantEntry
 from flextool.gui.assistant.strings import PROJECT_STILL_FINISHING as ASSISTANT_STILL_FINISHING
+from flextool.gui._menus import popup_at_pointer
 from flextool.gui.check_tree import CheckTreeController
 from flextool.gui.data_models import ExecutedScenarioInfo, GlobalSettings, ProjectSettings, ScenarioInfo
 from flextool.gui.input_sources import InputSourceManager
@@ -487,11 +489,12 @@ class MainWindow(tk.Tk):
         self.solver_log_level_var = tk.StringVar(value="normal")
         self.solver_time_limit_var = tk.IntVar(value=0)
         self.scaling_var = tk.StringVar(value=_SOLVER_DEFAULT)
+        self.scaling_guard_var = tk.StringVar(value=_SOLVER_DEFAULT)
         self.presolve_var = tk.StringVar(value=_SOLVER_DEFAULT)
 
         for _v in (
             self.solver_log_level_var, self.solver_time_limit_var,
-            self.scaling_var, self.presolve_var,
+            self.scaling_var, self.scaling_guard_var, self.presolve_var,
         ):
             _v.trace_add("write", self._on_auto_gen_toggled)
 
@@ -1541,7 +1544,10 @@ class MainWindow(tk.Tk):
             activeforeground=bg,
             selectcolor=fg,
             font="TkDefaultFont",
-            borderwidth=0,
+            # A 1px border in the menu's own colour (flat: looks as borderless as before) keeps
+            # entry 0 off the posting point: a quick right-click's release must not run it.
+            borderwidth=1,
+            relief="flat",
         )
 
     def _on_ui_settings_btn(self) -> None:
@@ -2564,7 +2570,7 @@ class MainWindow(tk.Tk):
                 tree.selection_set(item)
 
         if item and _is_ghost_iid(item):
-            self._show_ghost_source_menu(item, event.x_root, event.y_root)
+            self._show_ghost_source_menu(item, event)
             return
 
         menu = self._styled_popup_menu(self)
@@ -2592,7 +2598,7 @@ class MainWindow(tk.Tk):
         menu.add_command(label="Delete", command=self._on_delete_source)
         menu.add_separator()
         menu.add_command(label="Refresh", command=self._on_refresh_sources)
-        menu.tk_popup(event.x_root, event.y_root)
+        popup_at_pointer(menu, event)
 
     def _frozen_menu_source(self, item: str):
         """The live sqlite source of a right-clicked row, for the Freeze / Unfreeze actions (else ``None``)."""
@@ -2675,7 +2681,7 @@ class MainWindow(tk.Tk):
         self.input_source_mgr.undecline_frozen(path)
         self._refresh_input_sources()
 
-    def _show_ghost_source_menu(self, item: str, x_root: int, y_root: int) -> None:
+    def _show_ghost_source_menu(self, item: str, event: tk.Event) -> None:  # type: ignore[type-arg]
         """Context menu for a retired ghost row (deleted file, results remain).
 
         Offers re-linking the orphaned result folders to a live source
@@ -2711,7 +2717,7 @@ class MainWindow(tk.Tk):
         )
         menu.add_separator()
         menu.add_command(label="Refresh", command=self._on_refresh_sources)
-        menu.tk_popup(x_root, y_root)
+        popup_at_pointer(menu, event)
 
     def _delete_ghost_results(self, number: int) -> None:
         """Delete the orphaned result folders behind a retired ghost row."""
@@ -2873,7 +2879,7 @@ class MainWindow(tk.Tk):
             label="Add selected to execution jobs",
             command=self._on_add_selected_to_execution,
         )
-        menu.tk_popup(event.x_root, event.y_root)
+        popup_at_pointer(menu, event)
 
     def _on_executed_right_click(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         """Show context menu for executed scenarios tree."""
@@ -2902,7 +2908,7 @@ class MainWindow(tk.Tk):
             label="Delete irrevocably",
             command=self._on_delete_results,
         )
-        menu.tk_popup(event.x_root, event.y_root)
+        popup_at_pointer(menu, event)
 
     def _on_executed_space_from_menu(self) -> None:
         """Toggle checkboxes for selected items in executed_tree (from context menu)."""
@@ -5913,6 +5919,7 @@ class MainWindow(tk.Tk):
             self.solver_log_level_var.set(s.solver_log_level)
             self.solver_time_limit_var.set(s.solver_time_limit)
             self.scaling_var.set(_choice_to_var(s.scaling))
+            self.scaling_guard_var.set(_choice_to_var(s.scaling_guard))
             self.presolve_var.set(_choice_to_var(s.presolve))
         finally:
             self._suppress_auto_gen_save = False
@@ -5945,6 +5952,9 @@ class MainWindow(tk.Tk):
         except (TypeError, ValueError, tk.TclError):
             pass
         self.project_settings.scaling = _var_to_choice(self.scaling_var.get(), SCALING_CHOICES)
+        self.project_settings.scaling_guard = _var_to_choice(
+            self.scaling_guard_var.get(), SCALING_GUARD_CHOICES,
+        )
         self.project_settings.presolve = _var_to_choice(self.presolve_var.get(), PRESOLVE_CHOICES)
 
         if self.current_project:
@@ -5954,8 +5964,9 @@ class MainWindow(tk.Tk):
     def _open_solver_options_dialog(self) -> None:
         """Open the modal Solver options dialog.
 
-        Builds a ``tk.Toplevel`` parented to the main window with four
-        controls (Log level, Time limit, Scaling, Presolve), and a button
+        Builds a ``tk.Toplevel`` parented to the main window with five
+        controls (Log level, Time limit, Scaling, Scaling guard, Presolve),
+        and a button
         to this computer's solver settings
         (:mod:`flextool.gui.dialogs.local_solver_settings_dialog`).  Each control is bound to a *dialog-local* Tk var
         seeded from the corresponding main-window var so Cancel can
@@ -5976,6 +5987,7 @@ class MainWindow(tk.Tk):
         d_sll = tk.StringVar(value=self.solver_log_level_var.get())
         d_stl = tk.IntVar(value=self.solver_time_limit_var.get())
         d_scl = tk.StringVar(value=self.scaling_var.get())
+        d_sg = tk.StringVar(value=self.scaling_guard_var.get())
         d_ps = tk.StringVar(value=self.presolve_var.get())
 
         body = ttk.Frame(dlg, padding=12)
@@ -6079,6 +6091,34 @@ class MainWindow(tk.Tk):
         ))
         row += 1
 
+        # Scaling guard
+        ttk.Label(body, text="Scaling guard:").grid(
+            row=row, column=0, sticky="w", padx=(0, 8), pady=4,
+        )
+        sg_row = ttk.Frame(body)
+        sg_row.grid(row=row, column=1, sticky="w", pady=4)
+        for _t, _v in (
+            ("Default (error)", _SOLVER_DEFAULT), ("Error", "error"), ("Warn", "warn"),
+            ("Off", "off"),
+        ):
+            ttk.Radiobutton(
+                sg_row, text=_t, variable=d_sg, value=_v,
+            ).pack(side="left", padx=(0, 6))
+        _attach_tip(sg_row, (
+            "What a solve does when its limits and bounds are too far\n"
+            "apart for the solver to enforce accurately, even after\n"
+            "FlexTool's scaling (--scaling-guard).\n"
+            "  • Default  — nothing is sent: error, the same as a\n"
+            "                terminal or Spine Toolbox run.\n"
+            "  • error    — stop before the solve, naming the largest\n"
+            "                and smallest values.\n"
+            "  • warn     — print the same message and solve anyway.\n"
+            "  • off      — do not check.\n"
+            "Milder spreads, cost and coefficient problems, and any\n"
+            "problem with a commercial solver only warn."
+        ))
+        row += 1
+
         # Presolve
         ttk.Label(body, text="Presolve:").grid(
             row=row, column=0, sticky="w", padx=(0, 8), pady=4,
@@ -6169,6 +6209,9 @@ class MainWindow(tk.Tk):
             _v_scl = d_scl.get()
             if _v_scl == _SOLVER_DEFAULT or _v_scl in SCALING_CHOICES:
                 self.scaling_var.set(_v_scl)
+            _v_sg = d_sg.get()
+            if _v_sg == _SOLVER_DEFAULT or _v_sg in SCALING_GUARD_CHOICES:
+                self.scaling_guard_var.set(_v_sg)
             _v_ps = d_ps.get()
             if _v_ps == _SOLVER_DEFAULT or _v_ps in PRESOLVE_CHOICES:
                 self.presolve_var.set(_v_ps)

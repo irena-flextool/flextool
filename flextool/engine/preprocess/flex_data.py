@@ -1367,7 +1367,14 @@ class FlexData:
     # their direction switch v_exact_forward (model/_exact.py).
     process_exact: pl.DataFrame | None = None                 # set: (p,)
     process_minload: pl.DataFrame | None = None              # set: (p,)
-    process_min_load_eff: pl.DataFrame | None = None  # (p,) where ct_method=min_load_efficiency
+    process_min_load_eff: pl.DataFrame | None = None  # (p,) where ct_method=min_load_efficiency (+ single-line piecewise_linear units with an intercept)
+    # piecewise_linear units with two or more lines in some period (params/_piecewise.py, the load boundary):
+    process_piecewise: pl.DataFrame | None = None                 # set: (p,) — conversion_piecewise rows
+    process_piecewise_needs_online: pl.DataFrame | None = None    # set: (p,) — efficiency rises from the first point
+    process_piecewise_remap: pl.DataFrame | None = None           # set: (p,) — one input, one output, not delayed
+    p_piecewise_slope: Param | None = None       # (p, seg, d) — input per output of each line (online / capacity form)
+    p_piecewise_intercept: Param | None = None   # (p, seg, d) — input per unit of capacity at zero output of each line
+    p_piecewise_points: pl.DataFrame | None = None  # (p, d, load, eff) — the solve's curve points (load / eff non-dim)
     p_online_dt: pl.DataFrame | None = None                  # set: (p, d, t) — UC var domain
     pdt_online_linear: pl.DataFrame | None = None  # (p, d, t) — startup-cost obj index, linear
     pdt_online_integer: pl.DataFrame | None = None # (p, d, t) — startup-cost obj index, integer
@@ -1584,8 +1591,8 @@ class FlexData:
     process_group_inside_nonSync: pl.DataFrame | None = None  # (p, g)
     p_inv_group_cap: Param | None = None                 # (g, d)
     p_group_capacity_for_scaling: Param | None = None    # (g, d)
-    pdGroup_capacity_margin: Param | None = None         # (g, d) MW: manual, and share_of_peak once resolved
-    pdGroup_capacity_margin_share: Param | None = None   # (g, d) share of the peak (share_of_peak groups)
+    pdGroup_capacity_margin: Param | None = None         # (g, d) MW: absolute, and relative_of_peak_demand once resolved
+    pdGroup_capacity_margin_relative: Param | None = None   # (g, d) share of the peak (relative_of_peak_demand groups)
     pdGroup_peak_demand: Param | None = None             # (g, d) MW: peak demand over the period's timeline
     pdGroup_penalty_capacity_margin: Param | None = None # (g, d)
     pdtGroup_inertia_limit: Param | None = None          # authored dims ⊆ (g, d, t)
@@ -5051,7 +5058,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
             # The solve's new_stepduration steps (empty without one): the DB-direct readers combine a time
             # series to them by its TIME_AGGREGATION kind.
             _steps_key = _provider_key(Path("solve_data") / NEW_STEP_BASE_STEPS)
-            # A varying min_load is approximate only on the min_load_efficiency units (their curve).
+            # A varying min_load is approximate only on the min_load_efficiency units (their curve).  Not on
+            # piecewise_linear units: their curve (piecewise_linear_efficiency) does not read min_load, which only
+            # bounds the online flow there, where the step mean is exact.
             from flextool.engine.preprocess.params._direct import _names_with_method
 
             def _mle_units() -> "dict[tuple[str, str], frozenset[str]]":
@@ -5541,6 +5550,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
                     _wd_yr = None
                 flex_data.p_years_represented_d = _years_represented_boundary(
                     getattr(flex_data, "dt", None), db_reader, provider, _wd_yr)
+            # piecewise_linear units: the load-boundary step (one authority on every path).
+            from flextool.engine.preprocess.params._piecewise import apply_piecewise_curves
+            apply_piecewise_curves(flex_data, db_reader, provider)
         elif _dump_hooks is not None:
             # Reader-less CSV reload: the reload's own seeds of the fields the overlay above writes.
             _dump_hooks.field_seeds(flex_data, sd, inp, provider)
@@ -5601,8 +5613,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # of the reserve sets and parameters, and of group_node.
         _reserve.drop_groups_without_nodes(flex_data)
 
-        # The margin of a share_of_peak capacity-margin group: capacity_margin_share times its peak demand, in
-        # pdGroup_capacity_margin with the manual groups' MW.  After the direct-parameter pass (the share) and
+        # The margin of a relative_of_peak_demand capacity-margin group: capacity_margin_relative times its peak demand, in
+        # pdGroup_capacity_margin with the absolute groups' MW.  After the direct-parameter pass (the share) and
         # load_data (the peak).
         if db_reader is not None:
             _group_slack.resolve_capacity_margin(flex_data)

@@ -114,6 +114,9 @@ def test_the_project_option_folder_comes_first(tmp_path: Path, monkeypatch):
         ("scaling", "off", "scaling", "off"),
         ("solver_log_level", "verbose", "solver_log_level", "verbose"),
         ("solver_time_limit", 600, "solver_time_limit", 600.0),
+        ("scaling_guard", "error", "scaling_guard", "error"),
+        ("scaling_guard", "warn", "scaling_guard", "warn"),
+        ("scaling_guard", "off", "scaling_guard", "off"),
     ],
 )
 def test_a_changed_setting_sends_exactly_its_flag(tmp_path: Path, field, value, key, expected, monkeypatch):
@@ -287,3 +290,13 @@ def test_a_stored_matrix_file_format_is_ignored(tmp_path: Path):
     assert not any(tok.startswith("--matrix-file-format") for tok in _cmd_for(tmp_path, settings))
     save_project_settings(project, settings)
     assert "matrix_file_format" not in _read_settings(project)
+
+
+def test_the_scaling_guard_setting_round_trips_and_a_bad_value_is_the_default(tmp_path: Path):
+    save_project_settings(tmp_path, ProjectSettings(scaling_guard="warn"))
+    assert load_project_settings(tmp_path).scaling_guard == "warn"
+    data = yaml.safe_load((tmp_path / SETTINGS_FILENAME).read_text())
+    data["scaling_guard"] = "loud"
+    (tmp_path / SETTINGS_FILENAME).write_text(yaml.safe_dump(data))
+    assert load_project_settings(tmp_path).scaling_guard is None
+    assert ProjectSettings().scaling_guard is None  # the default sends nothing

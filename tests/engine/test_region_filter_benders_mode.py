@@ -13,8 +13,9 @@ These tests pin both halves of the contract on the
 
 * WITHOUT ``benders_uncap_cross_region`` the half-flow's
   ``p_flow_upper_existing`` resolves to ~0 (today's behaviour — the bug);
-* WITH the mode it resolves to the large sentinel so a positive flow pin
-  would be feasible (the master then owns the real cap).
+* WITH the mode it resolves to ``inf`` (no limit: the region LP has no
+  ``maxFlow`` row for it) so a positive flow pin is feasible (the master
+  then owns the real cap).
 """
 from __future__ import annotations
 
@@ -106,21 +107,41 @@ class TestBendersModeUncaps:
         assert caps
         assert all(c == _BENDERS_UNCAP_SENTINEL for c in caps)
 
-    def test_sentinel_exceeds_max_achievable_flow(
-        self, ti_splits_benders, ti_data
-    ) -> None:
-        """The sentinel must be ≫ the largest physically achievable flow
-        so the half-flow's ``maxFlow`` row can never bind (Phase-1
-        Claim 4).  The physical flow is bounded by
-        ``invest_max_total · unitsize``; ``v_flow`` is normalised by
-        unitsize, so in solver units the bound is ``invest_max_total``.
-        Use the connection's unitsize as a generous proxy and assert the
-        sentinel dwarfs it by many orders of magnitude."""
-        us = float(ti_data.p_unitsize.frame.filter(
-            pl.col("p") == "pipe_AB")["value"][0])
-        # Even a wildly large invest_max_total (say 1e6 units) times the
-        # unitsize stays far below the sentinel.
-        assert _BENDERS_UNCAP_SENTINEL > 1e6 * us * 100
+    def test_half_flow_capacity_is_no_limit(self, ti_splits_benders) -> None:
+        """The half-flow's existing capacity is ``inf`` (no limit), not a
+        finite stand-in: the master owns the real cap."""
+        import math
+
+        assert math.isinf(_BENDERS_UNCAP_SENTINEL) and _BENDERS_UNCAP_SENTINEL > 0
+        for region_idx, pipe in ((0, "pipe_AB"), (1, "pipe_BC")):
+            s, hf = _export_hf(ti_splits_benders, region_idx, pipe)
+            assert all(math.isinf(c) for c in _hf_existing_cap(s.data, hf.virtual_p))
+
+    def test_region_lp_has_no_max_flow_row_for_half_flows(self, ti_splits_benders) -> None:
+        """An inf capacity is no limit: the region LP has no ``maxFlow`` row
+        for any half-flow (only for its own arcs), and its bound / RHS pool
+        holds no 1e12-class stand-in."""
+        import math
+
+        from polar_high import Problem
+        from polar_high.autoscale import ScalingConfig, detect_ranges
+
+        from flextool.engine.model.core import build_flextool
+
+        for s in ti_splits_benders:
+            virtual = {hf.virtual_p for hf in s.half_flows}
+            assert virtual
+            pb = Problem()
+            build_flextool(pb, s.data)
+            for name, _proto, over in pb._cstrs:
+                if name.startswith("maxFlow") and over is not None and "p" in over.columns:
+                    ps = set(over["p"].cast(pl.Utf8).to_list())
+                    assert not (ps & virtual), (s.region, name, sorted(ps & virtual))
+            rep = detect_ranges(pb, ScalingConfig())
+            assert rep.bound_rhs_meaningful is not None
+            assert rep.bound_rhs_meaningful[1] < 1e12, (s.region, rep.bound_rhs_meaningful)
+            for hi in (rep.rhs[1], rep.bound[1]):  # nan: no entry of that kind
+                assert math.isnan(hi) or hi < 1e12, (s.region, rep.rhs, rep.bound)
 
 
 def test_default_is_byte_identical_to_today(

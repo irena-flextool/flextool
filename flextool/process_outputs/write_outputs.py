@@ -56,9 +56,9 @@ from flextool.process_outputs.out_flows import (
 )
 from flextool.process_outputs.out_group import (
     nodeGroup_indicators, nodeGroup_VRE_share,
-    nodeGroup_total_inflow, nodeGroup_flows,
+    nodeGroup_total_inflow, nodeGroup_flows, nodeGroup_ramp_envelope,
 )
-from flextool.process_outputs.out_node import node_summary, node_additional_results
+from flextool.process_outputs.out_node import node_summary, node_additional_results, node_ramp_envelope
 from flextool.process_outputs.process_results import post_process_results
 from flextool.process_outputs.read_parameters import (
     read_parameters_multi,
@@ -714,6 +714,8 @@ ALL_OUTPUTS = [
     unit_cf_inputNode,
     unit_VRE_curtailment_and_potential,
     unit_ramps,
+    node_ramp_envelope,
+    nodeGroup_ramp_envelope,
     dc_power_flow,
 ]
 
@@ -1092,6 +1094,9 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
 
         # Pre-process results to be closer to what needed for output writing
         r = post_process_results(par, s, v)
+        # W5: input burnt above the part-load curve of a multi-line piecewise_linear unit (realized steps).
+        from flextool.process_outputs.calc_piecewise import warn_piecewise_excess
+        warn_piecewise_excess(par, s, unit_ctx.node_units)
         start = log_time("Post-processed outputs", start, timing_recorder)
 
         # The realized steps at which a time-series plot starts a new line (gaps in the timeline,

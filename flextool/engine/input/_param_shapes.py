@@ -138,6 +138,10 @@ class AxisName(Enum):
     D = "d"     # period
     T = "t"     # time
     I = "i"     # tier (price-ladder)  # noqa: E741 — axis name from contract
+    # Load share of a part-load curve (``unit.piecewise_linear_efficiency``).  A shape-level label only: the
+    # authored load level is a float, read into the non-dim ``Float64`` column ``load`` (no enum is built for
+    # it; ``flextool_axis_contract.json`` lists ``load`` / ``eff`` as non-dim columns).
+    L = "load"
 
 
 class LeafKind(Enum):
@@ -215,6 +219,8 @@ class Shape(Enum):
     MAP_TIME_PERIOD = "2d_map[time,period]"
     MAP_TIER_FACET = "2d_map[tier,facet{price,quantity}]"
     MAP_PERIOD_TIER_FACET = "3d_map[period,tier,facet{price,quantity}]"
+    MAP_LOAD = "1d_map[load]"
+    MAP_PERIOD_LOAD = "2d_map[period,load]"
 
 
 @dataclass(frozen=True)
@@ -292,8 +298,8 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     # MAP_PERIOD} ⇒ depth-1 silent default unambiguously resolves to
     # ``period``).  Cascade: pd → p (entity_period_calc_params:write_pdGroup
     # — same as ``co2_max_period``).
-    ("group", "capacity_margin"): {Shape.SCALAR, Shape.MAP_PERIOD},
-    ("group", "capacity_margin_share"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("group", "capacity_margin_absolute"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("group", "capacity_margin_relative"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "penalty_capacity_margin"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "penalty_inertia"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "penalty_non_synchronous"): {Shape.SCALAR, Shape.MAP_PERIOD},
@@ -512,6 +518,13 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     # ``p_years_represented``.  Before this entry the readers tested for a ``period`` column, so a map without an
     # index name gave investments one year per period.
     ("solve", "years_represented"): {Shape.MAP_PERIOD},
+    # ─── unit: part-load curve of a piecewise_linear unit ───────────────
+    # ``unit.piecewise_linear_efficiency`` — a 1-D Map load share -> efficiency (one curve for every period) or a
+    # 2-D Map period -> load share -> efficiency (schema: map rank 1 and 2).  No constant and no time level.  The
+    # load level may have any index name except ``period`` / ``time``; level 1 of a 2-level value is the period
+    # (named ``period`` or unnamed).  The load keys are floats, read into the non-dim column ``load``
+    # (:func:`piecewise_curve_frame`).
+    ("unit", "piecewise_linear_efficiency"): {Shape.MAP_LOAD, Shape.MAP_PERIOD_LOAD},
 }
 
 
@@ -614,6 +627,9 @@ _SHAPE_AXES: "dict[Shape, ParamAxes]" = {
                                           LeafKind.FACET_PRICE_QUANTITY),
     Shape.MAP_PERIOD_TIER_FACET: ParamAxes(
         (AxisName.D, AxisName.I), LeafKind.FACET_PRICE_QUANTITY),
+    Shape.MAP_LOAD:             ParamAxes((AxisName.L,), LeafKind.NUMERIC),
+    Shape.MAP_PERIOD_LOAD:      ParamAxes((AxisName.D, AxisName.L),
+                                          LeafKind.NUMERIC),
 }
 
 
@@ -755,6 +771,9 @@ _SHAPE_LABELS: "dict[Shape, tuple[str | None, ...]]" = {
     Shape.MAP_TIME_PERIOD:          ("time", "period"),
     Shape.MAP_TIER_FACET:           (None, None),
     Shape.MAP_PERIOD_TIER_FACET:    (None, None, None),
+    # The load level of a part-load curve: any name except ``period`` / ``time`` (label-agnostic, like a tier).
+    Shape.MAP_LOAD:                 (None,),
+    Shape.MAP_PERIOD_LOAD:          ("period", None),
 }
 
 
@@ -915,7 +934,14 @@ _SHAPE_WORDS: "dict[Shape, str]" = {
     Shape.MAP_TIER_FACET: "tiers and price / quantity",
     Shape.MAP_PERIOD_TIER_FACET: "periods, tiers and price / quantity",
 }
+#: A shape said as a whole in user words (:func:`allowed_shapes_in_words`), instead of "a map over ...".
+_SHAPE_PHRASES: "dict[Shape, str]" = {
+    Shape.MAP_LOAD: "a curve (map over load shares)",
+    Shape.MAP_PERIOD_LOAD: "a curve per period (map over periods of maps over load shares)",
+}
 _FACET_SHAPES: "frozenset[Shape]" = frozenset((Shape.MAP_TIER_FACET, Shape.MAP_PERIOD_TIER_FACET))
+#: Part-load curve shapes: the load level is a float level with any name except ``period`` / ``time``.
+_CURVE_SHAPES: "frozenset[Shape]" = frozenset((Shape.MAP_LOAD, Shape.MAP_PERIOD_LOAD))
 
 
 def _levels(n: int) -> str:
@@ -927,9 +953,11 @@ def allowed_shapes_in_words(allowed: "set[Shape]") -> str:
     parts: list[str] = []
     if allowed & {Shape.SCALAR, Shape.SCALAR_STR}:
         parts.append("a constant")
+    for shape in sorted(allowed & set(_SHAPE_PHRASES), key=shape_rank):
+        parts.append(_SHAPE_PHRASES[shape])
     by_rank: "dict[int, list[Shape]]" = {}
     for shape in allowed:
-        if shape_rank(shape):
+        if shape_rank(shape) and shape not in _SHAPE_PHRASES:
             by_rank.setdefault(shape_rank(shape), []).append(shape)
     for rank in sorted(by_rank):
         over = " or over ".join(_SHAPE_WORDS[s] for s in sorted(by_rank[rank], key=lambda s: s.value))
@@ -949,7 +977,9 @@ def _label_path_problem(path: "tuple[str | None, ...]", allowed: "set[Shape]",
     that depth has at that level (a period / time parameter places its levels by label, so there the order of
     ``period`` and ``time`` is free).  Silent labels (``x`` / empty) are accepted: their axis is decided from
     the value's keys later.  Price-ladder levels: level 1 of a 3-level ladder is the period (named ``period``
-    or unnamed); the tier and price / quantity levels may have any name except ``period`` / ``time``.
+    or unnamed); the tier and price / quantity levels may have any name except ``period`` / ``time``.  Part-load
+    curve levels: level 1 of a 2-level curve is the period (named ``period`` or unnamed); the load level may have
+    any name except ``period`` / ``time``.
     """
     norm = ["time" if n == "t" else n for n in (_normalise_label(lbl) for lbl in path)]
     depth = len(norm)
@@ -970,6 +1000,16 @@ def _label_path_problem(path: "tuple[str | None, ...]", allowed: "set[Shape]",
             if n in ("period", "time"):
                 return (f"level {pos + 1} of the value is named {path[pos]!r}, but that is a tier or a "
                         "price / quantity level")
+        return None
+    if all(s in _CURVE_SHAPES for s in candidates):
+        for pos, n in explicit:
+            if depth == 2 and pos == 0:
+                if n != "period":
+                    return (f"level 1 of the value is named {path[pos]!r}; level 1 of a 2-level curve is the "
+                            "period (name it 'period' or leave it unnamed)")
+                continue
+            if n in ("period", "time"):
+                return f"level {pos + 1} of the value is named {path[pos]!r}, but that is the load share level"
         return None
     for shape in candidates:
         labels = _SHAPE_LABELS[shape]
@@ -998,21 +1038,39 @@ def _check_entity_label_paths(source: "InputSource", entity_class: str, paramete
             paths = fn(entity_class, parameter_name)
         except KeyError:
             return True
-        pt = (entity_class, parameter_name) in PERIOD_TIME_PARAMS
-        problems = []
-        for entity, path in sorted(paths.items()):
-            problem = _label_path_problem(tuple(path), allowed, pt)
-            if problem is not None:
-                problems.append(f"{entity_class} {_entity_text(entity)!r}, parameter {parameter_name!r}: "
-                                f"{problem}")
-        if problems:
-            more = f" (and {len(problems) - 5} more)" if len(problems) > 5 else ""
-            raise FlexToolConfigError(
-                f"{'; '.join(problems[:5])}{more}. This parameter takes {allowed_shapes_in_words(allowed)}. "
-                "Name the map's index levels 'period' / 'time' as the parameter expects, or leave them unnamed.")
+        message = entity_label_path_error(entity_class, parameter_name, paths, allowed)
+        if message is not None:
+            raise FlexToolConfigError(message)
         return True
 
     _run_memo(source, ("entity_label_path_check", entity_class, parameter_name), check)
+
+
+def entity_label_path_error(entity_class: str, parameter_name: str,
+                            paths: "dict[tuple[str, ...], tuple[str | None, ...]]",
+                            allowed: "set[Shape] | None" = None) -> "str | None":
+    """The error message for the entities whose raw label path (``{entity: path}``, ``()`` for a constant) cannot
+    be one of the *allowed* shapes (default: the parameter's :data:`PARAM_ALLOWED_SHAPES` entry), or ``None``.
+
+    Shared by the reader's check (:func:`_check_entity_label_paths`) and the input derivation's checks of the raw
+    database values (``input_derivation._validators``), so both give the same message."""
+    if allowed is None:
+        allowed = PARAM_ALLOWED_SHAPES[(entity_class, parameter_name)]
+    pt = (entity_class, parameter_name) in PERIOD_TIME_PARAMS
+    problems = []
+    for entity, path in sorted(paths.items()):
+        problem = _label_path_problem(tuple(path), allowed, pt)
+        if problem is not None:
+            problems.append(f"{entity_class} {_entity_text(entity)!r}, parameter {parameter_name!r}: {problem}")
+    if not problems:
+        return None
+    more = f" (and {len(problems) - 5} more)" if len(problems) > 5 else ""
+    if allowed <= _CURVE_SHAPES:
+        hint = "Name level 1 of a curve per period 'period' or leave it unnamed."
+    else:
+        hint = "Name the map's index levels 'period' / 'time' as the parameter expects, or leave them unnamed."
+    return (f"{'; '.join(problems[:5])}{more}. This parameter takes {allowed_shapes_in_words(allowed)}. "
+            f"{hint}")
 
 
 class _UnrecognisedIndex(Exception):
@@ -2496,6 +2554,78 @@ def facet_long_frame(
 
 
 # ---------------------------------------------------------------------------
+# Part-load curves (unit.piecewise_linear_efficiency)
+# ---------------------------------------------------------------------------
+
+
+def _float_key(value) -> float:
+    """A load key read with Python ``float()`` on the stored value (a float index stays the same float; a
+    string key is parsed once, never through a polars Float -> Utf8 -> Float round trip)."""
+    return float(value)
+
+
+def piecewise_curve_frame(source: "InputSource", entity_class: str = "unit",
+                          parameter_name: str = "piecewise_linear_efficiency") -> pl.DataFrame:
+    """The whole authored part-load curves ``(p, d, load, eff)`` of ``entity_class.parameter_name`` (Utf8 ``p`` /
+    ``d``, Float64 ``load`` / ``eff``): ``d`` is the period of a curve per period (:data:`Shape.MAP_PERIOD_LOAD`)
+    and null for one curve for every period (:data:`Shape.MAP_LOAD`); the load keys go through
+    :func:`flextool.engine.input._piecewise_curve.normalise_load`.  Every period of the value is kept (the
+    classifiers read the whole curve); a solve's periods are not applied here.
+
+    Each entity's raw label path is checked first (:func:`_check_entity_label_paths`: a constant or a 3-level
+    value, a period / time name on the load level, or a level 1 of a 2-level value named other than ``period``
+    raises :class:`FlexToolConfigError` naming the entity).  Entities of the two depths are read from separate
+    views of the source (:func:`_view_without`), so a 1-level curve's keys are never placed into the period
+    column of a 2-level one.  The index columns are taken by position.  Empty when no entity has a curve.
+    """
+    from flextool.engine.input._piecewise_curve import CURVE_SCHEMA, normalise_load
+
+    empty = pl.DataFrame(schema=CURVE_SCHEMA)
+    fn = getattr(source, "parameter_entity_label_paths", None)
+    try:
+        paths = fn(entity_class, parameter_name) if fn is not None else None
+    except KeyError:
+        return empty
+    allowed = PARAM_ALLOWED_SHAPES[(entity_class, parameter_name)]
+    if paths is not None:
+        if not paths:
+            return empty
+        _check_entity_label_paths(source, entity_class, parameter_name, allowed)
+        by_depth: "dict[int, list[tuple[str, ...]]]" = {}
+        for ent, path in paths.items():
+            by_depth.setdefault(len(path), []).append(ent)
+        views = []
+        for depth in sorted(by_depth):
+            others = frozenset(e for dd, ents in by_depth.items() if dd != depth for e in ents)
+            views.append(_view_without(source, entity_class, parameter_name, others, "curve_depth")
+                         if others else source)
+    else:
+        views = [source]
+    rows: list[tuple[str, "str | None", float, float]] = []
+    for view in views:
+        df = _try_parameter_frame(view, entity_class, parameter_name)
+        if df is None or df.height == 0:
+            continue
+        ent_col = "name" if "name" in df.columns else df.columns[0]
+        idx_cols = [c for c in df.columns if c not in (ent_col, "value")]
+        if len(idx_cols) not in (1, 2):
+            raise FlexToolConfigError(
+                f"piecewise_curve_frame: internal error -- a {entity_class}.{parameter_name} frame has "
+                f"{len(idx_cols)} index column(s) (expected 1: load, or 2: period, load); columns={df.columns!r}.")
+        period_col = idx_cols[0] if len(idx_cols) == 2 else None
+        cols = [ent_col] + ([period_col] if period_col else []) + [idx_cols[-1], "value"]
+        for row in df.select(*(pl.col(c) if c in (idx_cols[-1], "value") else pl.col(c).cast(pl.Utf8)
+                               for c in cols)).iter_rows():
+            if row[-1] is None or row[-2] is None:
+                continue
+            d = row[1] if period_col else None
+            rows.append((row[0], d, normalise_load(_float_key(row[-2])), float(row[-1])))
+    if not rows:
+        return empty
+    return pl.DataFrame(rows, schema=CURVE_SCHEMA, orient="row").sort("p", "d", "load", nulls_last=False)
+
+
+# ---------------------------------------------------------------------------
 # Broadcast helpers — produce per-(entity, d, t) and per-(entity, d) frames
 # ---------------------------------------------------------------------------
 
@@ -2681,7 +2811,8 @@ def broadcast_to_period_time(
     # Only the steps of this solve's dt are aggregated (a roll pays for its own steps).
     if resolved.time_index_column is not None and active_base_steps() is not None:
         lf = aggregate_if_active(lf.collect(), resolved.key, time_col=resolved.time_index_column,
-                                 steps=period_filter.get_column("t")).lazy()
+                                 steps=period_filter.get_column("t"), period_col=resolved.period_index_column,
+                                 step_periods=period_filter).lazy()
     if filter_zero:
         lf = lf.filter(pl.col("value") != 0.0)
     # Phase 4 — align producer-side dim dtypes to the canonical Enum
@@ -3353,6 +3484,146 @@ def _drop_zero_rows(out: "Param | None") -> "Param | None":
     return Param(out.dims, out.lazy.filter(pl.col("value") != 0.0))
 
 
+# ---------------------------------------------------------------------------
+# Limit values — ``inf`` is "no limit", a huge finite stand-in is warned about
+# ---------------------------------------------------------------------------
+
+#: A finite limit value at least this large in absolute value looks like a stand-in for "no limit" (e.g. 1e18): it
+#: reaches the LP as a right-hand side and spoils the scaling, so the reader warns and suggests ``inf``.
+HUGE_LIMIT_VALUE = 1e15
+
+#: How many periods (or time steps) a limit-value message names.
+_LIMIT_VALUES_SHOWN = 5
+
+
+def no_limit_value(side: str) -> float:
+    """The value that means "no limit": ``inf`` for an upper limit (``side = "upper"``), ``-inf`` for a lower one."""
+    if side not in ("upper", "lower"):
+        raise ValueError(f"limit side must be 'upper' or 'lower', not {side!r}")
+    return float("inf") if side == "upper" else float("-inf")
+
+
+def _limit_rows(out: "Param", entity_keys: "tuple[str, ...]", condition: pl.Expr) -> "dict[str, list[str]]":
+    """``{entity label: [period(/time) labels]}`` of the rows of ``out`` where ``condition`` holds (on the Float64
+    ``value``), in first-appearance order; the label is ``period``, ``period/time`` or ``time`` by the dims of
+    ``out``, ``constant`` without either."""
+    place = [c for c in ("d", "t") if c in out.dims]
+    rows = (out.lazy
+            .filter(condition)
+            .select(pl.concat_str([pl.col(c).cast(pl.Utf8) for c in entity_keys], separator=", ").alias("__k"),
+                    (pl.concat_str([pl.col(c).cast(pl.Utf8).fill_null("") for c in place], separator="/")
+                     if place else pl.lit("constant")).alias("__at"),
+                    pl.col("value").cast(pl.Float64).alias("__v"))
+            .collect())
+    found: dict[str, list[str]] = {}
+    for k, at, v in rows.iter_rows():
+        found.setdefault(k, []).append(f"{at.strip('/') or 'constant'} ({v:g})")
+    return found
+
+
+def check_limit_values(out: "Param | None", entity_keys: "tuple[str, ...]", *, entity_class: str,
+                       parameter_name: str, side: str) -> None:
+    """Refuse an infinite limit on the wrong side and warn about a huge finite one.
+
+        v = out[k, d(, t)]                                       ∀ row of out
+        raise FlexToolConfigError   if v = −inf and side = upper, or v = +inf and side = lower
+        warn once per (entity_class, parameter_name, k)          if v is finite and |v| ≥ HUGE_LIMIT_VALUE
+
+    ``inf`` on an upper limit (``-inf`` on a lower one) means no limit in that period; the opposite infinity is a
+    limit no solution can meet.  A finite value of 1e15 or more is kept as given (the limit applies), but such a
+    value is mostly meant as "no limit" and, as a right-hand side, spoils the numerical scaling: the warning names
+    the parameter, the entity, the periods and the value and suggests ``inf``.  Rolls and repeated solves of a run
+    warn once per entity and parameter (:func:`_behaviour_changes.warn_once`).
+    """
+    if out is None:
+        return
+    value = pl.col("value").cast(pl.Float64, strict=False)
+    wrong = no_limit_value("lower" if side == "upper" else "upper")
+    bad = _limit_rows(out, entity_keys, value == wrong)
+    if bad:
+        what, use = (("an upper limit of -inf", "inf") if side == "upper"
+                     else ("a lower limit of inf", "-inf"))
+        parts = [f"{entity_class} '{k}', parameter '{parameter_name}': "
+                 + ", ".join(at[:_LIMIT_VALUES_SHOWN]) + (" …" if len(at) > _LIMIT_VALUES_SHOWN else "")
+                 for k, at in sorted(bad.items())]
+        raise FlexToolConfigError(
+            "; ".join(parts) + f". This is {what}, which no solution can meet. For no limit in a period, give "
+            f"{use} there.")
+    huge = _limit_rows(out, entity_keys, value.is_finite() & (value.abs() >= HUGE_LIMIT_VALUE))
+    if not huge:
+        return
+    from flextool.engine import _behaviour_changes
+
+    use = "inf" if side == "upper" else "-inf"
+    for k, at in sorted(huge.items()):
+        shown = ", ".join(at[:_LIMIT_VALUES_SHOWN]) + (f" and {len(at) - _LIMIT_VALUES_SHOWN} more"
+                                                         if len(at) > _LIMIT_VALUES_SHOWN else "")
+        _behaviour_changes.warn_once(
+            ("huge_limit_value", entity_class, parameter_name, k),
+            f"Warning: {entity_class} '{k}', parameter '{parameter_name}' has a very large value: {shown}. It is "
+            f"used as a limit, and a number this large makes the solve numerically unstable. If no limit is meant "
+            f"in a period, give {use} there.")
+
+
+def drop_no_limit_rows(out: "Param | None", side: str) -> "Param | None":
+    """``out`` without its rows of value :func:`no_limit_value` (``inf`` / ``-inf``); None stays None."""
+    if out is None:
+        return None
+    return Param(out.dims, out.lazy.filter(pl.col("value").cast(pl.Float64, strict=False) != no_limit_value(side)))
+
+
+def no_limit_keys(param: "Param | None", side: str) -> "pl.DataFrame | None":
+    """The dims of the rows of ``param`` whose value is :func:`no_limit_value` (``inf`` for ``side = "upper"``,
+    ``-inf`` for ``"lower"``), as Utf8 columns; None when there are none."""
+    if param is None:
+        return None
+    keys = (param.lazy
+            .filter(pl.col("value").cast(pl.Float64, strict=False) == no_limit_value(side))
+            .select(*(pl.col(c).cast(pl.Utf8) for c in param.dims))
+            .unique(maintain_order=True)
+            .collect())
+    return keys if keys.height > 0 else None
+
+
+def without_no_limit_rows(frame: "pl.DataFrame", param: "Param | None", side: str) -> "pl.DataFrame":
+    """``frame`` (a row domain) without the rows a no-limit value of ``param`` covers.
+
+        drop = { r ∈ frame : ∃ k ∈ no_limit_keys(param, side), r[c] = k[c] ∀ c ∈ dims(param) ∩ columns(frame) }
+
+    A dim of ``param`` that ``frame`` lacks is not compared (a constant ``inf`` covers every period of the entity;
+    a ``(g, t)`` limit every period of that time step).  Order and dtypes of ``frame`` are kept; without any no-limit
+    row ``frame`` is returned as is."""
+    keys = no_limit_keys(param, side)
+    if keys is None or frame is None or frame.height == 0:
+        return frame
+    on = [c for c in keys.columns if c in frame.columns]
+    if not on:
+        return frame
+    sep = "\x1f"
+    key_of = pl.concat_str([pl.col(c).cast(pl.Utf8) for c in on], separator=sep)
+    drop = keys.select(key_of.alias("__k")).get_column("__k").unique()
+    return frame.filter(~key_of.is_in(drop.implode()))
+
+
+def _limit_tail(out: "Param | None", resolved: "ResolvedShape | None", entity_dim_aliases, helper: str, *,
+                entity_class: str, parameter_name: str, limit_side: "str | None", filter_zero: bool,
+                drop_no_limit: bool) -> "Param | None":
+    """The common end of :func:`require_period_coverage` / :func:`require_period_coverage_time`: the limit-value
+    check (:func:`check_limit_values`, with ``limit_side``) on the unfiltered broadcast, then the zero filter, then
+    the no-limit filter (``drop_no_limit``: a ``inf`` / ``-inf`` row is left out, for a limit whose missing row
+    already means no limit)."""
+    if limit_side is not None and out is not None and resolved is not None and resolved.frame is not None:
+        _rename, keys = _resolve_entity_dim_aliases(resolved, entity_dim_aliases, helper)
+        check_limit_values(out, keys, entity_class=entity_class, parameter_name=parameter_name, side=limit_side)
+    if filter_zero:
+        out = _drop_zero_rows(out)
+    if drop_no_limit:
+        if limit_side is None:
+            raise ValueError(f"{helper}: drop_no_limit needs limit_side")
+        out = drop_no_limit_rows(out, limit_side)
+    return out
+
+
 def require_period_coverage(
     resolved: "ResolvedShape | None",
     entity_dim_aliases: "str | dict[str, str]",
@@ -3363,6 +3634,8 @@ def require_period_coverage(
     need_periods: "PeriodNeed | None",
     active: "set[str] | None" = None,
     filter_zero: bool = False,
+    limit_side: "str | None" = None,
+    drop_no_limit: bool = False,
 ) -> "Param | None":
     """:func:`broadcast_to_period`, after checking that every period map covers the periods it must.
 
@@ -3382,16 +3655,23 @@ def require_period_coverage(
     (e.g. a solve with no investment periods).  ``active`` (entity labels, see
     :func:`_period_coverage_problems`) limits the check to the entities whose limit is switched on; None
     checks every entity.  Pure: the caller works out the period sets, the gate and the solve name.
+
+    ``limit_side`` (``"upper"`` / ``"lower"``) marks a limit: ``inf`` (``-inf`` for a lower limit) means no limit in
+    that period and passes the check, the opposite infinity is refused and a huge finite value is warned about
+    (:func:`check_limit_values`).  ``drop_no_limit`` then leaves the no-limit rows out, for a limit whose missing
+    row already means no limit; without it they stay, and the consumer leaves the row of that period out.
     """
-    if not need_periods or period_filter is None or period_filter.height == 0:
-        return broadcast_to_period(resolved, entity_dim_aliases, period_filter, filter_zero=filter_zero)
-    out = broadcast_to_period(resolved, entity_dim_aliases, period_filter, filter_zero=False)
-    if resolved is not None and resolved.frame is not None:
+    checked = bool(need_periods) and period_filter is not None and period_filter.height > 0
+    # Without a check the zero filter runs in the broadcast (an authored 0 needs no telling apart from a gap).
+    out = broadcast_to_period(resolved, entity_dim_aliases, period_filter, filter_zero=filter_zero and not checked)
+    if checked and resolved is not None and resolved.frame is not None:
         _rename, keys = _resolve_entity_dim_aliases(resolved, entity_dim_aliases, "require_period_coverage")
         _raise_period_coverage(
             _period_coverage_problems(resolved, out, keys, period_filter, need=need_periods, active=active),
             entity_class=entity_class, parameter_name=parameter_name, need=need_periods)
-    return _drop_zero_rows(out) if filter_zero else out
+    return _limit_tail(out, resolved, entity_dim_aliases, "require_period_coverage", entity_class=entity_class,
+                       parameter_name=parameter_name, limit_side=limit_side, filter_zero=filter_zero and checked,
+                       drop_no_limit=drop_no_limit)
 
 
 def require_period_coverage_time(
@@ -3404,23 +3684,28 @@ def require_period_coverage_time(
     need_periods: "PeriodNeed | None",
     active: "set[str] | None" = None,
     filter_zero: bool = False,
+    limit_side: "str | None" = None,
+    drop_no_limit: bool = False,
 ) -> "Param | None":
     """:func:`broadcast_to_period_time` with the period check of :func:`require_period_coverage`.
 
     Only the entities with a period level (a period map, or the period level of a period + time map) are
     checked, and only against the periods: a time map, a constant and the time steps inside a period are
     not.  The value of a (period, time) map covers a period when it has at least one number in it; a period
-    the map gives but with none of the solve's time steps is reported as such.
+    the map gives but with none of the solve's time steps is reported as such.  ``limit_side`` /
+    ``drop_no_limit`` as in :func:`require_period_coverage`, per (period, time) row.
     """
-    if not need_periods or period_filter is None or period_filter.height == 0:
-        return broadcast_to_period_time(resolved, entity_dim_aliases, period_filter, filter_zero=filter_zero)
-    out = broadcast_to_period_time(resolved, entity_dim_aliases, period_filter, filter_zero=False)
-    if resolved is not None and resolved.frame is not None:
+    checked = bool(need_periods) and period_filter is not None and period_filter.height > 0
+    out = broadcast_to_period_time(resolved, entity_dim_aliases, period_filter,
+                                   filter_zero=filter_zero and not checked)
+    if checked and resolved is not None and resolved.frame is not None:
         _rename, keys = _resolve_entity_dim_aliases(resolved, entity_dim_aliases, "require_period_coverage_time")
         _raise_period_coverage(
             _period_coverage_problems(resolved, out, keys, period_filter, need=need_periods, active=active),
             entity_class=entity_class, parameter_name=parameter_name, need=need_periods)
-    return _drop_zero_rows(out) if filter_zero else out
+    return _limit_tail(out, resolved, entity_dim_aliases, "require_period_coverage_time",
+                       entity_class=entity_class, parameter_name=parameter_name, limit_side=limit_side,
+                       filter_zero=filter_zero and checked, drop_no_limit=drop_no_limit)
 
 
 # ---------------------------------------------------------------------------

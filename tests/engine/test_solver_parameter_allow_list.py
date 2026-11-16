@@ -121,6 +121,29 @@ def test_listed_local_only_names_are_refused(solver, name, value, words) -> None
         _db(solver, {name: value})
 
 
+_GUROBI_SETTINGS_FILE_OPTIONS = ["InputFile", "ConcurrentSettings", "MultiObjSettings", "TuneBaseSettings",
+                                 "TuneIgnoreSettings", "TuneParams",
+                                 "Input_File", "concurrent_settings"]  # spelt as the Gurobi library reads them too
+
+
+@pytest.mark.parametrize("name", _GUROBI_SETTINGS_FILE_OPTIONS)
+def test_gurobi_settings_file_options_are_refused_from_the_database_only(name) -> None:
+    """Item 265: an option that makes ``gurobi_cl`` read a file of solver settings (``InputFile`` can name a .prm
+    parameter file; the setting-file lists name .prm / .json files) could set any parameter, so the database may
+    not give one, even as a plain file name in the work folder.  The trusted option file may, with a full path."""
+    with pytest.raises(FlexToolUserError) as err:
+        _db("gurobi", {name: "base.prm"})
+    message = str(err.value)
+    assert f"gurobi option {name!r}" in message and "solver_arguments of solve invest" in message
+    assert "read a file of solver settings" in message and "solver_config/gurobi.opt" in message
+    assert _db("gurobi", {}, opt_text=f"{name} /home/me/base.prm\n") == {name: "/home/me/base.prm"}
+    # An option file that gets the database's rules (found outside a trusted workspace) is refused too.
+    with pytest.raises(FlexToolUserError, match="read a file of solver settings.*trust the folder"):
+        resolve_commercial_options(
+            "gurobi", opt_file="cfg/gurobi.opt", opt_text=f"{name} base.prm\n", opt_untrusted="trust the folder",
+            solver_config=SolverConfig(name="gurobi"), run_options=_NO_FLAGS, solve_name="invest")
+
+
 @pytest.mark.parametrize("solver, name, value", [
     ("cplex", "read fileencoding", "/tmp/evil"), ("cplex", "cpumask", "C:x"), ("xpress", "MPSRHSNAME", r"..\x"),
 ])
@@ -412,7 +435,8 @@ def two_solve_db(tmp_path_factory) -> str:
     * ``second_refused``: ``model.solves`` = [``y2020_2day_dispatch`` on Gurobi, ``y2020_fullYear_dispatch``],
       the second with ``solver_arguments`` ``MIPGap`` (not a HiGHS name);
     * ``unused_refused``: the model runs ``y2020_2day_dispatch`` only; ``y2020_fullYear_dispatch``, which it does
-      not run, has the same ``MIPGap``."""
+      not run, has the same ``MIPGap``;
+    * ``settings_file_refused``: ``y2020_2day_dispatch`` on Gurobi with ``solver_arguments`` ``InputFile``."""
     import importlib.util
     import sys
 
@@ -432,6 +456,10 @@ def two_solve_db(tmp_path_factory) -> str:
         ["model", "flexTool", "solves", {"type": "array", "value_type": "str", "data": [_CHECK_SOLVE, _OTHER_SOLVE]}],
         ["solve", _CHECK_SOLVE, "solver", "gurobi"], bad])
     data = lps._overlay(data, name="unused_refused", base=base, values=[bad])
+    data = lps._overlay(data, name="settings_file_refused", base=base, values=[
+        ["solve", _CHECK_SOLVE, "solver", "gurobi"],
+        ["solve", _CHECK_SOLVE, "solver_arguments",
+         {"index_type": "str", "index_name": "x", "data": [["InputFile", "start.prm"]]}]])
     folder = tmp_path_factory.mktemp("upfront_check")
     json_path = folder / "db.json"
     json_path.write_text(json.dumps(data), encoding="utf-8")
@@ -456,3 +484,14 @@ def test_an_option_of_a_solve_the_model_does_not_run_does_not_stop_it(two_solve_
 
     steps = run_chain_from_db(input_db_url=two_solve_db, scenario_name="unused_refused", work_folder=tmp_path / "w")
     assert list(steps) == [_CHECK_SOLVE] and steps[_CHECK_SOLVE].optimal
+
+
+def test_a_gurobi_settings_file_option_from_the_database_stops_the_run_before_solving(two_solve_db, tmp_path) -> None:
+    """Item 265: ``InputFile`` in a solve's ``solver_arguments`` stops the run before its first solve writes a
+    model, with a message that names the option, the solve and the option file to use instead."""
+    from flextool.engine import run_chain_from_db
+
+    with pytest.raises(FlexToolUserError, match=f"gurobi option 'InputFile'.*solver_arguments of solve {_CHECK_SOLVE}"
+                       ".*read a file of solver settings.*solver_config/gurobi.opt"):
+        run_chain_from_db(input_db_url=two_solve_db, scenario_name="settings_file_refused", work_folder=tmp_path / "w")
+    assert not list((tmp_path / "w").rglob("*.mps"))
