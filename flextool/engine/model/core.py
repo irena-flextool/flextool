@@ -4935,20 +4935,16 @@ def _eq_profiles(b: _Build) -> None:
     # reserve term.  The invest/divest terms are restricted to the (p,f) pairs of the method's set.
     # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
     # existing capacity counting until its end of life (none for reinvest_automatic).
+    # The cached sums of _capacity, present only where a period is in service (no term over an empty domain).
     invested = divested = None
-    if b.has_invest_p:
-        alive = _entity_rows(b.cap.alive, "e", d.process_source_sink, "p")
-        if alive.height > 0:
-            invest_view = _var_view(b.v_invest_p, "__at_invest_prof", {"d": "d_invest"}, to_axis=True)
-            invested = Sum(Where(invest_view, alive), over=("d_invest",))
+    if b.has_invest_p and _entity_rows(b.cap.alive, "e", d.process_source_sink, "p").height > 0:
+        invested = b.cap.invested_p
     if b.has_divest_p:
         # The retirements and process_source_sink carry different p vocabularies: cast to the former.
         retired_p = b.cap.retired_frame("p")
         procs = d.process_source_sink.select(pl.col("p").cast(retired_p.schema["p"], strict=False)).unique()
-        active = retired_p.join(procs, on="p", how="semi")
-        if active.height > 0:
-            divest_view = _var_view(b.v_divest_p, "__at_divest_prof", {"d": "d_divest"}, to_axis=True)
-            divested = Sum(Where(divest_view, active), over=("d_divest",))
+        if retired_p.join(procs, on="p", how="semi").height > 0:
+            divested = b.cap.retired_p
     reserve_down = -b.reserve_down_to_sink if b.reserve_down_to_sink is not None else None
     source_terms = {
         "profile_flow_upper_limit": dict(b.reserve_down_at_source),
