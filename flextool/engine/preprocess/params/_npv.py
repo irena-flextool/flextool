@@ -3,7 +3,7 @@
 Lazy-polars port of flextool's NPV / lifetime-fixed-cost / inflation
 cascade.  Replaces the eager-Python implementation that previously lived
 in :mod:`._derived` (``ed_entity_annual_family_from_source`` plus
-its supporting ``_resolve_pdX`` helper).
+its supporting per-(entity, period) lookup).
 
 The cluster covers six FlexData fields:
 
@@ -104,6 +104,7 @@ from flextool.engine.preprocess._annuity import (
     require_lifetime,
 )
 from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
+from flextool.engine.preprocess.params._period_values import ed_values_on
 from flextool.engine.preprocess.params._existing import (
     DIVEST_NOT_ALLOWED as _DIVEST_NOT_ALLOWED,
     INVEST_NOT_ALLOWED as _INVEST_NOT_ALLOWED,
@@ -144,8 +145,8 @@ def _entity_class_lf(source: "InputSource") -> pl.LazyFrame:
 
     Entity classes: ``unit``, ``node``, ``connection``.  ``unit ∪
     connection`` forms flextool's ``process_set``; ``node`` is its own
-    class.  The frame supports the per-entity-class branching that
-    ``_resolve_pdX`` does in eager Python.
+    class.  The frame supports the per-entity-class gates of the
+    lifetime and annuity readers.
     """
     parts: list[pl.LazyFrame] = []
     for ec in ("unit", "node", "connection"):
@@ -187,7 +188,9 @@ def _per_entity_param_lf(source: "InputSource",
                             ) -> pl.LazyFrame:
     """Lazy ``(e, d, value)`` frame from ``unit/node/connection.<param>``.
 
-    Mirrors :func:`._derived._resolve_pdX` semantics in lazy form:
+    The per-(entity, period) cascade in lazy form (used for ``fixed_cost``;
+    lifetime, investment cost, salvage value and interest rate are read
+    through :func:`._period_values.ed_values_on`):
 
     * Per-period (Map) rows produce ``(e, d, value)`` rows directly.
     * Scalar rows produce ``(e, value)`` rows with ``d`` null;
@@ -260,7 +263,7 @@ def _resolve_per_period_lf(per_param: pl.LazyFrame,
                               ) -> pl.LazyFrame:
     """Resolve ``pdX[e, param, d]`` cascade in lazy form.
 
-    Order (mirrors :func:`._derived._resolve_pdX`):
+    Order:
       1. Explicit ``(e, d)`` row → take that ``value``.
       2. Else scalar ``(e, ·)`` row → broadcast across ``ed_lf``.
       3. Else → ``fill``.
@@ -625,17 +628,16 @@ def _ed_lifetime_lf(source: "InputSource",
     """Lazy ``(e, d, life)`` mirroring ``edEntity_lifetime`` semantics.
 
     Mirrors :func:`._derived._ed_lifetime_mapping`: for each
-    (e, d) ∈ entities × periods, emit ``unit/node/connection.lifetime``
-    cascaded via ``_resolve_pdX``.  Non-process / non-node entities
-    get 0 (mirrors flextool's class-gated branch).
+    (e, d) ∈ entities × periods, ``unit/node/connection.lifetime`` read by
+    :func:`._period_values.ed_values_on` (0 where absent).  Non-process /
+    non-node entities get 0 (mirrors flextool's class-gated branch).
     """
     ed_lf = all_entities_lf.join(periods_lf, how="cross")
     cls_lf = _entity_class_lookup_lf(_entity_class_lf(source))
     # Restrict to processes + nodes — other classes get life=0.
     ed_lf = ed_lf.join(cls_lf, on="e", how="left")
     in_class = pl.col("is_process").fill_null(False) | pl.col("is_node").fill_null(False)
-    life_per = _per_entity_param_lf(source, "lifetime")
-    resolved = _resolve_per_period_lf(life_per, ed_lf, fill=0.0)
+    resolved = ed_values_on(source, "lifetime", ed_lf, fill=0.0)
     return (resolved
               .with_columns(
                   life=pl.when(in_class).then(pl.col("value")).otherwise(0.0),
@@ -647,22 +649,21 @@ def _ed_lifetime_on_lf(source: "InputSource", ed_lf: pl.LazyFrame) -> pl.LazyFra
     """Lazy ``(e, d, life)`` of :func:`_ed_lifetime_lf` over the given ``(e, d)`` pairs."""
     cls_lf = _entity_class_lookup_lf(_entity_class_lf(source))
     in_class = pl.col("is_process").fill_null(False) | pl.col("is_node").fill_null(False)
-    resolved = _resolve_per_period_lf(_per_entity_param_lf(source, "lifetime"),
-                                      ed_lf.select("e", "d").join(cls_lf, on="e", how="left"), fill=0.0)
+    resolved = ed_values_on(source, "lifetime", ed_lf.select("e", "d").join(cls_lf, on="e", how="left"), fill=0.0)
     return (resolved
               .with_columns(life=pl.when(in_class).then(pl.col("value")).otherwise(0.0))
               .select("e", "d", "life"))
 
 
 def _raw_lifetime_on_lf(source: "InputSource", ed_lf: pl.LazyFrame) -> pl.LazyFrame:
-    """Lazy ``(e, d, life)``: the raw ``lifetime`` (not edEntity_lifetime) over the given ``(e, d)`` pairs, resolved
-    via ``_resolve_pdX`` with the class gate (only nodes and processes; others 0).  The divest-side window."""
+    """Lazy ``(e, d, life)``: the raw ``lifetime`` (not edEntity_lifetime) over the given ``(e, d)`` pairs, read by
+    :func:`._period_values.ed_values_on` with the class gate (only nodes and processes; others 0).  The divest-side
+    window."""
     cls_lf = _entity_class_lookup_lf(_entity_class_lf(source))
     in_class = (pl.col("is_process").fill_null(False)
                 | pl.col("is_node").fill_null(False))
-    life_per = _per_entity_param_lf(source, "lifetime")
     ed_with_class = ed_lf.join(cls_lf, on="e", how="left")
-    return (_resolve_per_period_lf(life_per, ed_with_class, fill=0.0)
+    return (ed_values_on(source, "lifetime", ed_with_class, fill=0.0)
               .with_columns(
                   life=pl.when(in_class).then(pl.col("value")).otherwise(0.0),
               )
@@ -755,22 +756,17 @@ def _per_method_annuity_lf(
     in_class = (pl.col("is_process").fill_null(False)
                 | pl.col("is_node").fill_null(False))
 
-    # Per-(e, d) cost / discount_rate / lifetime via _resolve_pdX.
-    cost_per = _per_entity_param_lf(source, cost_param_name)
-    disc_per = _per_entity_param_lf(source, "discount_rate")
-    life_per = _per_entity_param_lf(source, "lifetime")
-
+    # Per-(e, d) cost / discount_rate / lifetime, read through the shape resolver.
     ed_with_class = ed_lf.join(cls_lf, on="e", how="left")
-    ed_with_cost = (_resolve_per_period_lf(cost_per, ed_with_class, fill=0.0)
+    ed_with_cost = (ed_values_on(source, cost_param_name, ed_with_class, fill=0.0)
                        .rename({"value": "cost"}))
     # A missing discount_rate is the schema default (0.05); an explicit 0 stays 0 (straight-line annuity).
-    ed_with_disc = (_resolve_per_period_lf(disc_per, ed_with_cost,
-                                           fill=default_discount_rate(source))
+    ed_with_disc = (ed_values_on(source, "discount_rate", ed_with_cost, fill=default_discount_rate(source))
                        .rename({"value": "disc"}))
     # No lifetime default: a null (or ≤ 0) lifetime where the cost is not 0 is an input error.  Checked here,
     # not only in the validator: a period map can lack a period, and the lead-time path calls this again at the
     # commissioning period.
-    ed_with_life = (_resolve_per_period_lf(life_per, ed_with_disc, fill=None)
+    ed_with_life = (ed_values_on(source, "lifetime", ed_with_disc, fill=None)
                        .rename({"value": "life"}))
     bad = (ed_with_life
               .join(method_count_lf, on="e", how="inner")

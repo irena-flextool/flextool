@@ -80,6 +80,7 @@ from flextool.engine.input._axis_enums import (
     schema_dtype,
 )
 from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
+from flextool.engine.preprocess.params._period_values import ed_values_on
 from flextool.engine.preprocess.params._walks import period_walk_iterator, WindowMethod
 
 
@@ -256,7 +257,7 @@ def _per_entity_param_lf(source: "InputSource",
     A stochastic branch period inherits its anchor's explicit row here
     (unconditionally, not only under recourse — #63): a branch period is
     never itself authored, so without this every per-period ``existing``
-    / ``lifetime`` / ``virtual_unitsize`` row is invisible in every
+    / ``construction_lead_time`` / ``virtual_unitsize`` row is invisible in every
     branch and falls back to ``fill=0.0`` in :func:`_resolve_per_period_lf`.
     """
     parts: list[pl.LazyFrame] = []
@@ -984,8 +985,7 @@ def _edd_history_lf_for(source: "InputSource",
         })
 
     if bounded:
-        life_per = _per_entity_param_lf(source, "lifetime")
-        life_lf = (_resolve_per_period_lf(life_per, anchor, fill=0.0)
+        life_lf = (ed_values_on(source, "lifetime", anchor, fill=0.0)
                        .rename({"value": "life"})
                        .select("e", "d", "life"))
         walk = period_walk_iterator(
@@ -1327,8 +1327,7 @@ def edd_invest_lookback_set_lf(source: "InputSource",
                                 extra={"d_all": anchor_lf.collect_schema().get("d", pl.Utf8)},
                                 lazy=True)
     if bounded_anchor.collect().height > 0:
-        life_per = _per_entity_param_lf(source, "lifetime")
-        life_lf = (_resolve_per_period_lf(life_per, bounded_anchor, fill=0.0)
+        life_lf = (ed_values_on(source, "lifetime", bounded_anchor, fill=0.0)
                        .rename({"value": "life"})
                        .select("e", "d", "life"))
         bounded_walk = period_walk_iterator(
@@ -1663,7 +1662,7 @@ def p_entity_pre_existing_lf(source: "InputSource",
                                                   strict=False)))
     grid_lf = all_e_lf.join(piu_lf, how="cross")
 
-    # Resolve existing per (e, d) via _resolve_pdX cascade.
+    # Resolve existing per (e, d): explicit row, else the entity's constant, else 0.
     ex_per = _per_entity_param_lf(source, "existing")
     grid_with_ex = (_resolve_per_period_lf(ex_per, grid_lf, fill=0.0)
                        .rename({"value": "ex"}))

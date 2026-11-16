@@ -362,6 +362,15 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("unit",       "salvage_value"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("node",       "salvage_value"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("connection", "salvage_value"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    # Lifetime and interest rate: constant or 1d_map(period); read through _e_period_param_union
+    # (``_period_values``: the annuities, the investment and retirement windows, the end of life of existing
+    # capacity), so an unnamed ``x`` map is a period map and any other index is an error.
+    ("unit",       "lifetime"):      {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("node",       "lifetime"):      {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("connection", "lifetime"):      {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("unit",       "discount_rate"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("node",       "discount_rate"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("connection", "discount_rate"): {Shape.SCALAR, Shape.MAP_PERIOD},
     # ─── node: (period, time) Params ─────────────────────────────────────
     # NODE_TIME_PARAM ⊇ {availability, storage_state_reference_value, self_discharge_loss}.
     # Cascade: pbt → pt → pd → p (write_pdtNode, time_first_priority=True).

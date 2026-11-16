@@ -5,6 +5,10 @@
 - **A chain of solves with a `no_investment` entity no longer stops with a `p_entity_max_units` error** once the
   entity's investment window has closed in a later solve. The closed periods also no longer get an investment
   variable (held at zero) when another entity still invests in that solve; results are unchanged.
+- **A `lifetime` map with the unnamed index (`x`) gives each period its own value** in the end of life of existing
+  capacity (`reinvest_choice`, `no_investment`). Before, that check read the map's last value, so a map such as
+  {10, 10, 10, 40} kept the existing capacity to the end of the horizon. `lifetime` and `discount_rate` are now read
+  like `invest_cost` and `salvage_value`: a constant or a period map.
 
 ## Release 4.5.0 (16.11.2026) — inf as no limit, scaling guard, ramp envelope and ramp frequency plots, piecewise linear efficiency, full-load efficiency in reduced unit detail, capacity margin renames and many fixes (schema v80)
 

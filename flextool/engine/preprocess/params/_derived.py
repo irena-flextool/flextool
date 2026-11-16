@@ -60,7 +60,6 @@ from flextool.engine.input._axis_enums import (
 from flextool.engine.input._constants import HOURS_PER_YEAR
 from flextool.engine.preprocess._provider_io import _provider_key
 from flextool.engine.preprocess.params._branch import (
-    active_branch_anchor_pairs,
     branch_periods_inherit_carry,
     fan_period_labels,
     inherit_active_branch_periods,
@@ -68,9 +67,9 @@ from flextool.engine.preprocess.params._branch import (
     period_in_use_set_lf,
 )
 from flextool.engine.preprocess.params._direct import (
-    _e_period_param_union,
     pdtReserve_upDown_group_reservation_from_source,
 )
+from flextool.engine.preprocess.params._period_values import _ed_period_value_map
 from flextool.engine.preprocess.params._per_solve_sets import (
     solve_period_timeset_frame,
     timeset_duration_lf,
@@ -163,7 +162,8 @@ def _recourse_invest_active(
 # (``apply_derived_c`` / ``apply_npv`` / ``apply_synthetic_invest_sets``)
 # to the recourse pairs, or ``None`` when the flag is off / deterministic.
 # Read by the explicit-per-period producers (_resolve_per_period_lf and
-# _ed_period_param_lf, which serves the zero-cost investment notice and
+# _period_values._ed_period_param_lf, which serves the lifetime, cost and
+# interest-rate readers, the zero-cost investment notice and
 # p_entity_max_units_from_source) to inherit each
 # anchor's per-(e,d) value onto its branch periods (§4.1).  ``None`` ==
 # no-op == flag-off byte-parity.  The set-at-boundary-top invariant means
@@ -3208,45 +3208,6 @@ def _entity_invest_filter(source: "InputSource",
                 .select("e").unique())
 
 
-def _ed_period_param_lf(source: "InputSource",
-                        parameter_name: str,
-                        periods: list[str]) -> pl.LazyFrame | None:
-    """``unit/node/connection.<parameter_name>`` as ``(e, d, value)`` over ``periods``.
-
-    Read through the shape resolver (:func:`._direct._e_period_param_union` →
-    ``resolve_param_shape`` → ``broadcast_to_period``): a constant is broadcast over the
-    periods, a period map keeps its own per-period values (also when authored with the
-    silent ``x`` index, and also next to a constant on another entity of the same class),
-    and map keys outside ``periods`` are dropped.  Every anchor period's explicit value is
-    inherited by its stochastic branch periods (:func:`._branch.inherit_active_branch_periods`
-    — unconditionally, not only under recourse, #63) before the final restriction to
-    ``periods``.
-
-    Zero values are kept (``filter_zero=False``) so that a branch-native explicit 0 wins over
-    its anchor's non-zero value in the expansion (the value only: whether an investment or
-    retirement variable exists does not depend on the cost).  Anchor periods are added to the period
-    filter so that their explicit rows survive the resolver's inner join until the expansion
-    has used them.  ``None`` when no entity authors the parameter.
-    """
-    pairs = active_branch_anchor_pairs()
-    anchors = ([] if pairs is None
-               else [a for a in pairs["anchor"].unique(maintain_order=True).to_list()
-                     if a not in periods])
-    period_filter = axis_lazyframe({"d": list(periods) + anchors}).collect()
-    param = _e_period_param_union(source, parameter_name, period_filter=period_filter)
-    if param is None:
-        return None
-    frame = param.frame if isinstance(param.frame, pl.LazyFrame) else param.frame.lazy()
-    lf = frame.select("e", "d", pl.col("value").cast(pl.Float64))
-    lf = inherit_active_branch_periods(lf.collect(), group_keys=("e",), period_col="d").lazy()
-    # Restrict to ``periods``: semi-join in the frame's own d dtype.
-    periods_d = axis_lazyframe({"d": list(periods)})
-    d_dtype = lf.collect_schema().get("d")
-    if periods_d.collect_schema().get("d") != d_dtype:
-        periods_d = periods_d.with_columns(pl.col("d").cast(d_dtype))
-    return lf.join(periods_d, on="d", how="semi")
-
-
 # ---------------------------------------------------------------------------
 # §3.7.1 — ed_invest_set / ed_divest_set
 # ---------------------------------------------------------------------------
@@ -3343,8 +3304,7 @@ def _lifetime_gate_sums(source: "InputSource",
     start = run_start_period(pyd)
     if start is None:
         return {}
-    per_p = _per_entity_period_value(source, "lifetime") or {}
-    scalar = _per_entity_scalar(source, "lifetime")
+    lifetime = _ed_period_value_map(source, "lifetime", [start])
     process_set, node_set, _ = _entity_classes_lookup(source)
     all_e = _all_entities(source)
     elm = _entity_lifetime_methods(source, all_e)
@@ -3358,7 +3318,7 @@ def _lifetime_gate_sums(source: "InputSource",
             # Connection without is_DC / non-process — no lifetime.
             out[e] = 0.0
             continue
-        out[e] = pyd[start] + _resolve_pdX(per_p, scalar, e, start)
+        out[e] = pyd[start] + lifetime.get((e, start), 0.0)
     return out
 
 
@@ -4054,15 +4014,6 @@ def _e_explicit_param(source: "InputSource", parameter_name: str
         return pl.LazyFrame(schema={"e": schema_dtype(_enums, "e"),
                                      "value": pl.Float64})
     return pl.concat(parts).unique(subset=["e"], keep="last")
-
-
-def _ed_period_value_map(source: "InputSource", parameter_name: str,
-                         periods: list[str]) -> dict[tuple[str, str], float]:
-    """:func:`_ed_period_param_lf` as a ``{(e, d): value}`` dict (``{}`` when not authored)."""
-    lf = _ed_period_param_lf(source, parameter_name, periods)
-    if lf is None:
-        return {}
-    return {(e, d): v for e, d, v in lf.collect().iter_rows()}
 
 
 def p_entity_max_units_from_source(source: "InputSource",
@@ -8963,59 +8914,6 @@ def _entity_classes_lookup(source: "InputSource"
     return process_s, _set("node"), conn_s
 
 
-def _per_entity_period_value(source: "InputSource",
-                                  parameter_name: str,
-                                  ) -> dict[tuple[str, str], float] | None:
-    """Read ``unit/node/connection.<parameter_name>`` and return a
-    ``(entity, period) → value`` dict.  Scalar shapes broadcast to all
-    periods downstream; this helper itself only emits explicit rows.
-
-    A separate ``_get_value(e, d)`` helper layers the broadcast.  A
-    stochastic branch period inherits its anchor's explicit row here
-    (unconditionally, not only under recourse — #63); without it
-    ``_lifetime_gate_sums`` sees a ``lifetime`` of 0 (not the anchor's)
-    in every branch period.
-    """
-    out: dict[tuple[str, str], float] = {}
-    for ec in ("unit", "node", "connection"):
-        df = _try_param(source, ec, parameter_name)
-        if df is None:
-            continue
-        cols = df.columns
-        if "period" in cols:
-            df = inherit_active_branch_periods(
-                df, group_keys=("name",), period_col="period")
-            for r in df.iter_rows(named=True):
-                try:
-                    out[(str(r["name"]), str(r["period"]))] = \
-                        float(r["value"])
-                except Exception:
-                    continue
-    return out if out else None
-
-
-def _per_entity_scalar(source: "InputSource",
-                          parameter_name: str,
-                          ) -> dict[str, float]:
-    """Per-entity scalar (no period dim) from
-    unit/node/connection.<parameter_name>.  Returns ``{}`` when none.
-    """
-    out: dict[str, float] = {}
-    for ec in ("unit", "node", "connection"):
-        df = _try_param(source, ec, parameter_name)
-        if df is None:
-            continue
-        cols = df.columns
-        if "period" in cols:
-            continue
-        for r in df.iter_rows(named=True):
-            try:
-                out[str(r["name"])] = float(r["value"])
-            except Exception:
-                continue
-    return out
-
-
 def _entity_invest_methods(source: "InputSource"
                               ) -> dict[str, list[str]]:
     """Return ``entity → [invest_method, ...]`` from
@@ -9072,22 +8970,6 @@ def _all_entities(source: "InputSource") -> list[str]:
         for n in df["name"].to_list():
             seen.setdefault(str(n), None)
     return list(seen.keys())
-
-
-def _resolve_pdX(per_period: dict[tuple[str, str], float] | None,
-                    scalar: dict[str, float],
-                    e: str,
-                    d: str) -> float:
-    """Resolve `pdX[e, param, d]` mirroring flextool's PdLookup:
-       1. (e, d) explicit row → that value.
-       2. else (e, ·) scalar  → broadcast.
-       3. else                → 0.0 (mod default).
-    """
-    if per_period is not None:
-        v = per_period.get((e, d))
-        if v is not None:
-            return v
-    return scalar.get(e, 0.0)
 
 
 def _p_discount_years_from_source(source: "InputSource",
