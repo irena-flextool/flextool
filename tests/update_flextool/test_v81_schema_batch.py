@@ -3,14 +3,16 @@
 A v80 database (built from the v75 seed JSON and migrated up to 80, never a checked-in ``.sqlite``) carries
 ``lifetime`` (a constant, a ``period`` map, an unnamed ``x`` map and a ``time``-labelled map on a unit, constants on a
 connection and a node), ``salvage_value`` (a constant and a ``period`` map) and ``lifetime_method`` values
-``no_investment`` (two alternatives) and ``reinvest_choice``.  The step to 81
+``no_investment`` (two alternatives) and ``reinvest_choice``; the ``node.lifetime_method`` default is
+``no_investment``.  The step to 81
 
 * adds ``lifetime_technical`` and ``payback_time`` (group ``investment``) and ``net_salvage_value`` (group
   ``retirement``) on unit, connection and node: a constant or a period map, no default, the shipped description;
 * copies every ``lifetime`` value, as stored, to both ``lifetime_technical`` and ``payback_time``, and every
   ``salvage_value`` value to ``net_salvage_value``, then removes the old definitions;
 * renames the ``lifetime_methods`` member ``no_investment`` to ``no_reinvestment`` (list order kept) and rewrites
-  every stored value; the default ``reinvest_automatic`` is unchanged;
+  every stored value (each one printed) and the node default; the default ``reinvest_automatic`` of unit and
+  connection is unchanged;
 * rewrites the descriptions of ``lifetime_method``, ``discount_rate``, ``invest_cost``, ``node.unit_of_measure``
   and ``group.penalty_capacity_margin``;
 * writes the behaviour-change marker ``annuity_over_payback_time`` naming the entities with ``reinvest_choice`` /
@@ -18,16 +20,18 @@ connection and a node), ``salvage_value`` (a constant and a ``period`` map) and 
   invest_cost 0; not c1: a non-zero invest_cost without a lifetime_method).
 
 Nothing else changes, and a rerun commits nothing.  Where a database already has a value under a new name, that
-value is kept.  A database already at 81 that lacks a definition of the step gets it without a migration of its
+value is kept (and printed).  A database already at 81 that lacks a definition of the step gets it without a migration of its
 values, and its own descriptions are kept.
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 from pathlib import Path
 
 import pytest
-from spinedb_api import DatabaseMapping, Map, to_database
+from spinedb_api import DatabaseMapping, Map, from_database, to_database
 from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
@@ -106,13 +110,18 @@ def migrated(tmp_path_factory: pytest.TempPathFactory) -> dict:
             val, typ = to_database(value)
             db.add_parameter_value(entity_class_name=cls, entity_byname=(entity,), parameter_definition_name=param,
                                    alternative_name=alts[i], value=val, type=typ)
-        db.commit_session("v80 lifetime, salvage and lifetime_method values")
+        node_method = db.get_item("parameter_definition", entity_class_name="node", name="lifetime_method")
+        val, typ = to_database("no_investment")
+        db.update_parameter_definition(id=node_method["id"], default_value=val, default_type=typ)
+        db.commit_session("v80 lifetime, salvage and lifetime_method values, a no_investment default")
         before = {"defs": _defs(db), "lists": _lists(db), "values": _values(db)}
-    migrate_database(url, up_to=81)
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        migrate_database(url, up_to=81)
     with DatabaseMapping(url) as db:
         after = {"defs": _defs(db), "lists": _lists(db), "values": _values(db),
                  "markers": {md["name"]: md["value"] for md in db.get_items("metadata")}}
-    return {"url": url, "alts": alts, "before": before, "after": after}
+    return {"url": url, "alts": alts, "before": before, "after": after, "printed": printed.getvalue()}
 
 
 def test_lifetime_values_go_to_both_new_names(migrated) -> None:
@@ -171,7 +180,20 @@ def test_no_investment_is_no_reinvestment(migrated) -> None:
     assert {k: v for k, v in after["values"].items() if k[2] == "lifetime_method"} == {
         k: v for k, v in expected.items() if k[2] == "lifetime_method"}
     for cls in CLASSES:
-        assert after["defs"][(cls, "lifetime_method")][1:] == before["defs"][(cls, "lifetime_method")][1:]
+        assert after["defs"][(cls, "lifetime_method")][1:4] == before["defs"][(cls, "lifetime_method")][1:4]
+    for cls in ("unit", "connection"):
+        assert after["defs"][(cls, "lifetime_method")][4:] == before["defs"][(cls, "lifetime_method")][4:]
+    assert from_database(*before["defs"][("node", "lifetime_method")][4:]) == "no_investment"
+    assert from_database(*after["defs"][("node", "lifetime_method")][4:]) == "no_reinvestment"
+
+
+def test_renamed_values_are_printed(migrated) -> None:
+    """Each stored ``no_investment`` value is named in the message (the values follow the renamed member)."""
+    alts = migrated["alts"]
+    lines = [x for x in migrated["printed"].splitlines() if x.startswith("v81: value names changed: ")]
+    assert len(lines) == 1
+    assert sorted(lines[0].removeprefix("v81: value names changed: ").split(", ")) == sorted(
+        f"unit wind lifetime_method [{alt}]: no_investment -> no_reinvestment" for alt in alts[:2])
 
 
 def test_annuity_marker_names_bounded_entities_with_an_invest_cost(migrated) -> None:
@@ -187,7 +209,9 @@ def test_descriptions_are_the_shipped_ones(migrated) -> None:
     assert set(texts) == NEW_DEFINITIONS | REWRITTEN
     for key in REWRITTEN:
         assert after[key][0] == shipped[key] == texts[key] != before[key][0], key
-        assert after[key][1:] == before[key][1:], key
+        # The node.lifetime_method default is renamed (test_no_investment_is_no_reinvestment).
+        fields = slice(1, 4) if key == ("node", "lifetime_method") else slice(1, None)
+        assert after[key][fields] == before[key][fields], key
     assert "(1 + r)^-payback_time" in after[("unit", "discount_rate")][0]
     assert "net_salvage_value" in after[("node", "unit_of_measure")][0]
     assert "no_reinvestment" in after[("connection", "lifetime_method")][0]
@@ -249,7 +273,7 @@ def _tests_json_at(tmp_path_factory, tag: str, version: int) -> str:
     return json_to_db(work / "f.json", work / "f.sqlite")
 
 
-def test_collision_keeps_the_new_value(tmp_path_factory) -> None:
+def test_collision_keeps_the_new_value(tmp_path_factory, capsys) -> None:
     """A database built from the current template but stamped 80, with a ``lifetime`` definition (values on
     coal_plant, which has lifetime_technical / payback_time values in the same alternative, and on csp_field, which
     has none in it) and a ``no_investment`` member beside ``no_reinvestment``: the old value is copied only where
@@ -274,7 +298,12 @@ def test_collision_keeps_the_new_value(tmp_path_factory) -> None:
         db.add_list_value(parameter_value_list_name="lifetime_methods", value=val, type=typ,
                           index=max(x["index"] for x in items) + 1)
         db.commit_session("an old lifetime beside the new names")
+    capsys.readouterr()
     migrate_database(url, up_to=81)
+    printed = capsys.readouterr().out
+    for name in ("lifetime_technical", "payback_time"):
+        assert (f"v81: unit {name} already had a value where lifetime had one; kept the {name} value, the lifetime "
+                f"value was not copied to {name}:\n  unit coal_plant [coal_invest] = 99.0\n") in printed
     _, shipped_lists = _shipped()
     with DatabaseMapping(url) as db:
         assert not db.get_items("parameter_definition", entity_class_name="unit", name="lifetime")

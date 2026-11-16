@@ -10818,8 +10818,8 @@ def _v81_move_values(db) -> None:
                     db.add_parameter_value(entity_class_name=cls, entity_byname=key[0], parameter_definition_name=new,
                                            alternative_name=key[1], value=pv["value"], type=pv["type"])
                 if kept:
-                    print(f"v81: {cls} {new} already had a value where {old} had one; kept the {new} value, dropped "
-                          f"the {old} value:")
+                    print(f"v81: {cls} {new} already had a value where {old} had one; kept the {new} value, the "
+                          f"{old} value was not copied to {new}:")
                     for pv in kept:
                         print("  " + _describe_pv(pv))
             db.remove_parameter_definition(id=pdef["id"])
@@ -10830,12 +10830,31 @@ def _v81_list_member_renames(db) -> None:
 
     Each member is renamed in place (its index, so the list order, is kept); when the new name is already a member
     (a database built from the current template but stamped with an older version), the old member is removed
-    instead (never a duplicate).  Then every stored value, and a default, of every definition that uses the list is
-    rewritten to the new name.  Idempotent: a rerun finds the new names.
+    instead (never a duplicate).  Every stored value, and a default, of every definition that uses the list then
+    reads the new name; each renamed stored value is printed.  Idempotent: a rerun finds the new names.
+
+    A stored value and a default refer to their list member, so a value follows the in-place rename on its own and
+    is found by its old name only before it.  A default that still refers to the old member makes every later update
+    of its definition fail ("not in the list"), so it is cleared before the members change and set to the new name
+    after.
     """
     for list_name, renames in V81_LIST_MEMBER_RENAMES.items():
         if not db.get_item("parameter_value_list", name=list_name):
             continue
+        pdefs = [d for d in db.get_items("parameter_definition") if d["parameter_value_list_name"] == list_name]
+        new_defaults = []
+        renamed = []
+        for pdef in pdefs:
+            default = from_database(pdef["default_value"], pdef["default_type"])
+            if isinstance(default, str) and default in renames:
+                db.update_parameter_definition(id=pdef["id"], default_value=None, default_type=None)
+                new_defaults.append((pdef["id"], renames[default]))
+            for pv in db.find_parameter_values(entity_class_name=pdef["entity_class_name"],
+                                               parameter_definition_name=pdef["name"]):
+                parsed = from_database(pv["value"], pv["type"])
+                if isinstance(parsed, str) and parsed in renames:
+                    renamed.append(f"{pv['entity_class_name']} {'/'.join(pv['entity_byname'])} "
+                                   f"{pdef['name']} [{pv['alternative_name']}]: {parsed} -> {renames[parsed]}")
         items = db.get_items("list_value", parameter_value_list_name=list_name)
         members = {x["parsed_value"] for x in items}
         for item in sorted(items, key=lambda x: x["index"]):
@@ -10848,20 +10867,17 @@ def _v81_list_member_renames(db) -> None:
                 val, typ = to_database(new)
                 db.update_list_value(id=item["id"], value=val, type=typ)
                 members.add(new)
-        renamed = []
-        for pdef in [d for d in db.get_items("parameter_definition") if d["parameter_value_list_name"] == list_name]:
-            default = from_database(pdef["default_value"], pdef["default_type"])
-            if isinstance(default, str) and default in renames:
-                val, typ = to_database(renames[default])
-                db.update_parameter_definition(id=pdef["id"], default_value=val, default_type=typ)
+        for pdef in pdefs:
+            # A value of a removed old member (the new name was already a member) still reads the old name.
             for pv in db.find_parameter_values(entity_class_name=pdef["entity_class_name"],
                                                parameter_definition_name=pdef["name"]):
                 parsed = from_database(pv["value"], pv["type"])
                 if isinstance(parsed, str) and parsed in renames:
                     val, typ = to_database(renames[parsed])
                     db.update_parameter_value(id=pv["id"], value=val, type=typ)
-                    renamed.append(f"{pv['entity_class_name']} {'/'.join(pv['entity_byname'])} "
-                                   f"{pdef['name']} [{pv['alternative_name']}]: {parsed} -> {renames[parsed]}")
+        for pdef_id, new in new_defaults:
+            val, typ = to_database(new)
+            db.update_parameter_definition(id=pdef_id, default_value=val, default_type=typ)
         if renamed:
             print("v81: value names changed: " + ", ".join(renamed))
 
