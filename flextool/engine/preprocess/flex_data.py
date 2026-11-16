@@ -1253,6 +1253,13 @@ class FlexData:
     pd_divest_set: pl.DataFrame | None = None        # (p, d)
     nd_invest_set: pl.DataFrame | None = None        # (n, d) — node-side
     nd_divest_set: pl.DataFrame | None = None        # (n, d)
+    # The cohort table (preprocess/params/_cohorts.py; apply_derived_c / apply_synthetic_invest_sets, None in a
+    # solve without investment or retirement): one row per block of capacity (the existing capacity of an entity,
+    # each investment decision) with its start of operation and end of life; the periods each cohort is in
+    # service; (d_retire, d) the periods a retirement decided in d_retire counts in.
+    cohort: pl.DataFrame | None = None
+    cohort_alive: pl.DataFrame | None = None
+    dd_forward: pl.DataFrame | None = None
     edd_invest_set: pl.DataFrame | None = None       # (e, d_invest, d)
     edd_invest_lookback_set: pl.DataFrame | None = None  # (e, d_invest, d) strict d_invest<d
     # (e, d, d_c, yr_c) — start of operation d_c (a run period; yr_c its year on the solve calendar) of each

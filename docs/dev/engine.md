@@ -494,6 +494,7 @@ Representative entries:
 |---|---|
 | `_block.py` | `BlockLayout` fan-out — per-entity blocks, overlap sets, block step durations. |
 | `_branch.py` | `period_branch`, `pdt_branch_weight`, `pd_branch_weight` — stochastic branch weighting. |
+| `_cohorts.py` | The cohort table (`cohort`, `cohort_alive`, `dd_forward`): the start of operation and end of life of the existing capacity and of each investment, the periods each is in service, the reach of a retirement; its views are the only lifetime gate (end of life, expired periods, investment alive / pre-built, retirement reach). |
 | `_existing.py` | `p_entity_all_existing`, `p_entity_previously_invested_capacity` — cross-solve existing-capacity composition. |
 | `_npv.py` | Annualized investment / divestment carriers feeding the objective. |
 | `_profiles.py` | `p_profile_value` and the `p_process_existing_count` factor used by profile-bound constraints. |

@@ -991,21 +991,6 @@ def npv_invest_discounted_lf(
     return combined
 
 
-def _retirement_expired(source: "InputSource",
-                        active_solve: str | None,
-                        periods: list[str],
-                        workdir: Path | None,
-                        provider: "object | None",
-                        ) -> pl.DataFrame:
-    """``[e, d]`` (Utf8) of ``periods`` past the end of life of the entity's pre-existing capacity
-    (:func:`._derived._lifetime_expired_pairs`): a retirement no longer counts there."""
-    from flextool.engine.preprocess.params._derived import _lifetime_expired_pairs
-    pairs = sorted(_lifetime_expired_pairs(source, active_solve, workdir, provider=provider,
-                                           periods=[str(d) for d in periods]))
-    return pl.DataFrame({"e": [e for e, _ in pairs], "d_all": [d for _, d in pairs]},
-                        schema={"e": pl.Utf8, "d_all": pl.Utf8})
-
-
 def _retire_window_lf(source: "InputSource",
                       active_solve: str | None,
                       ed_anchor_lf: pl.LazyFrame,
@@ -1017,11 +1002,17 @@ def _retire_window_lf(source: "InputSource",
                       provider: "object | None",
                       ) -> pl.LazyFrame:
     """``[e, d, d_all]`` (Utf8): the solve's periods d_all a retirement decided in d counts in,
-    yr[d] ≤ yr[d_all] < EOL[e] (the window of ``edd_divest_active``), along the walk lineage of a fan."""
+    yr[d] ≤ yr[d_all] < EOL[e] (the retirement reach of :func:`._cohorts.retire_active`), along the walk lineage of a fan."""
     walk = period_walk_iterator(source, active_solve, ed_anchor_lf, period_in_use, period_universe,
                                 bounded=False, life_lf=None, factor_side=None, lineage=lineage)
     walk = walk.select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("d_all").cast(pl.Utf8))
-    expired = _retirement_expired(source, active_solve, period_in_use, workdir, provider)
+    # The periods past the end of life of the entity's existing capacity: a retirement no longer counts there.
+    from flextool.engine.preprocess.params._cohorts import cohort_years, existing_cohorts, existing_expired
+    years = cohort_years(source, active_solve, workdir, provider=provider)
+    pairs = sorted(existing_expired(existing_cohorts(source, active_solve, workdir, provider=provider, years=years),
+                                    years, [str(d) for d in period_in_use]))
+    expired = pl.DataFrame({"e": [e for e, _ in pairs], "d_all": [d for _, d in pairs]},
+                           schema={"e": pl.Utf8, "d_all": pl.Utf8})
     return walk.join(expired.lazy(), on=["e", "d_all"], how="anti")
 
 
@@ -2059,13 +2050,13 @@ def apply_run_cost_fields(flex_data: object,
     # run for reinvest_automatic), the window of edd_divest_active on the run calendar.
     div = anchors_of("ed_divest_set", _DIVEST_NOT_ALLOWED, period_invest)
     if div.height > 0:
-        from flextool.engine.preprocess.params._derived import _lifetime_gate_sums
+        from flextool.engine.preprocess.params._cohorts import existing_cohorts, existing_eol
         from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
         div_lf = _anchor_lf(div)
         anchors = (year_of_start(div, False)
                      .with_columns(life=pl.lit(0.0), kind=pl.lit("unbounded")))
         walk = _run_window(anchors, yr, lineage, period_in_use)
-        eol = _lifetime_gate_sums(source, active_solve, workdir, provider=provider)
+        eol = existing_eol(existing_cohorts(source, active_solve, workdir, provider=provider))
         if eol:
             ends = pl.DataFrame({"e": list(eol), "end": [float(v) for v in eol.values()]},
                                 schema={"e": pl.Utf8, "end": pl.Float64})

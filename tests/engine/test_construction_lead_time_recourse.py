@@ -17,10 +17,8 @@ from __future__ import annotations
 
 import polars as pl
 
-from flextool.engine.preprocess.params._existing import (
-    commissioning_year_lf,
-    edd_invest_set_lf,
-)
+from flextool.engine.preprocess.params._cohorts import invest_alive, invest_cohorts
+from flextool.engine.preprocess.params._existing import commissioning_year_lf
 
 # h2020 is HISTORY (not in period_in_use); the two p2035 siblings share
 # year 15, the two p2040 siblings share year 20 (branch byte-copies).
@@ -75,10 +73,10 @@ def _yr_c(src, order):
 
 
 def _alive(src, order):
-    ed = pl.LazyFrame({"e": ["nuke"], "d": [order]})
-    commission_lf = commissioning_year_lf(src, "s", ed, PIU)
-    edd = edd_invest_set_lf(
-        src, "s", ed, PIU, PIU, commission_lf=commission_lf).collect()
+    ed = pl.DataFrame({"e": ["nuke"], "d": [order]})
+    commission_lf = commissioning_year_lf(src, "s", ed.lazy(), PIU)
+    _, alive = invest_cohorts(src, "s", ed, PIU, commission_lf=commission_lf)
+    edd = invest_alive(alive)
     return sorted(edd.filter(pl.col("d_invest") == order)["d"].to_list())
 
 

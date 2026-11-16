@@ -34,10 +34,12 @@ from flextool.engine.preprocess.params import _npv as npv
 from flextool.engine.preprocess.params._branch import (
     check_recourse_npv_preconditions,
 )
-from flextool.engine.preprocess.params._existing import (
-    edd_history_lf,
-    edd_invest_lookback_set_lf,
-    edd_invest_set_lf,
+from flextool.engine.preprocess.params._cohorts import (
+    build_cohort_frames,
+    invest_alive,
+    invest_cohorts,
+    invest_prebuilt,
+    retire_active,
 )
 from flextool.engine.preprocess.params._derived import (
     _enter_recourse_anchor_scope,
@@ -46,7 +48,6 @@ from flextool.engine.preprocess.params._derived import (
     _periodAll_from_source,
     _read_active_solve,
     _read_period_with_history,
-    edd_divest_active_from_source,
 )
 from flextool.engine.preprocess.params._walks import (
     WindowMethod,
@@ -162,7 +163,7 @@ def _lineage(d_dtype: pl.DataType | None = None,
 def _walk_set(source, lineage=None):
     return (period_walk_iterator(
                 source, "s", _ed_lf(), PIU, VOCAB,
-                window_method=WindowMethod.BOUNDED_INCLUSIVE_LOOKBACK,
+                window_method=WindowMethod.BOUNDED,
                 life_lf=_life_lf(), factor_side=None, lineage=lineage)
             .collect().sort("e", "d", "d_all"))
 
@@ -170,7 +171,7 @@ def _walk_set(source, lineage=None):
 def _walk_factor(source, lineage=None):
     return (period_walk_iterator(
                 source, "s", _ed_lf(), PIU, VOCAB,
-                window_method=WindowMethod.BOUNDED_INCLUSIVE_LOOKBACK,
+                window_method=WindowMethod.BOUNDED,
                 life_lf=_life_lf(), factor_side="inv", lineage=lineage)
             .collect().sort("e", "d"))
 
@@ -331,7 +332,7 @@ def test_w5b_uncastable_token_raises() -> None:
     with pytest.raises(ValueError, match="p9999"):
         period_walk_iterator(
             _stub_set(), "s", _ed_lf(enum_d), PIU, VOCAB,
-            window_method=WindowMethod.BOUNDED_INCLUSIVE_LOOKBACK,
+            window_method=WindowMethod.BOUNDED,
             life_lf=_life_lf(enum_d), factor_side=None,
             lineage=bad).collect()
 
@@ -354,7 +355,7 @@ def test_w5c_enum_x_enum_missing_token_raises() -> None:
     with pytest.raises(ValueError, match="zzz"):
         period_walk_iterator(
             _stub_set(), "s", _ed_lf(enum_d), PIU, VOCAB,
-            window_method=WindowMethod.BOUNDED_INCLUSIVE_LOOKBACK,
+            window_method=WindowMethod.BOUNDED,
             life_lf=_life_lf(enum_d), factor_side=None,
             lineage=bad).collect()
 
@@ -367,7 +368,7 @@ def test_w5c_enum_x_enum_all_present_identical() -> None:
     lin_enum = pl.Enum(["p2035", "p2035_low", "p2040", "p2040_low"])
     out = (period_walk_iterator(
                 _stub_set(), "s", _ed_lf(enum_d), PIU, VOCAB,
-                window_method=WindowMethod.BOUNDED_INCLUSIVE_LOOKBACK,
+                window_method=WindowMethod.BOUNDED,
                 life_lf=_life_lf(enum_d), factor_side=None,
                 lineage=_lineage(lin_enum))
            .collect().sort("e", "d", "d_all"))
@@ -436,7 +437,7 @@ def _period_lists(wf: Path, reader, provider):
 
 
 def test_w6_edd_invest_set_branch_periods_take_label_years(stoch_wf) -> None:
-    """W6 (§9.2): call ``edd_invest_set_lf`` with hand ed_invest
+    """W6 (§9.2): build the investment cohorts of hand ed_invest
     anchors ``[(wind, p2035), (wind, p2040)]`` on the real stoch
     cascade inputs (no recourse), inside the boundary scope the cascade
     arms for a solve with branch periods.  wind's ``lifetime_method``
@@ -451,13 +452,12 @@ def test_w6_edd_invest_set_branch_periods_take_label_years(stoch_wf) -> None:
     wf = stoch_wf
     reader = _reader(wf)
     provider = _provider(wf)
-    _, piu, pwh, _ = _period_lists(wf, reader, provider)
-    ed_invest_lf = pl.LazyFrame({
+    _, piu, _, _ = _period_lists(wf, reader, provider)
+    ed_invest = pl.DataFrame({
         "e": [WIND, WIND], "d": ["p2035", "p2040"]})
     _enter_recourse_anchor_scope(wf, provider=provider)
-    out = (edd_invest_set_lf(reader, STOCH_SOLVE, ed_invest_lf,
-                             pwh, piu, wf)
-           .collect())
+    _, alive = invest_cohorts(reader, STOCH_SOLVE, ed_invest, piu, wf, provider=provider)
+    out = invest_alive(alive)
     got = {(str(e), str(di), str(d)) for e, di, d in
            out.select(["e", "d_invest", "d"]).rows()}
     expected = {
@@ -493,30 +493,26 @@ def test_w7_edd_families_nonvacuous_deterministic(stoch_wf) -> None:
     def _sorted(df: pl.DataFrame) -> pl.DataFrame:
         return df.sort(df.columns)
 
-    hist1 = edd_history_lf(reader, STOCH_SOLVE, pwh, piu, wf).collect()
-    hist2 = edd_history_lf(reader, STOCH_SOLVE, pwh, piu, wf).collect()
-    assert hist1.height > 0
-    assert _sorted(hist1).equals(_sorted(hist2))
-
-    ed_invest_lf = pl.LazyFrame({
+    ed_invest = pl.DataFrame({
         "e": [WIND, WIND], "d": ["p2035", "p2040"]})
-    inv1 = edd_invest_set_lf(reader, STOCH_SOLVE, ed_invest_lf,
-                             pwh, piu, wf).collect()
-    inv2 = edd_invest_set_lf(reader, STOCH_SOLVE, ed_invest_lf,
-                             pwh, piu, wf).collect()
+    frames1 = build_cohort_frames(reader, STOCH_SOLVE, ed_invest, piu, wf, provider=provider)
+    frames2 = build_cohort_frames(reader, STOCH_SOLVE, ed_invest, piu, wf, provider=provider)
+    assert frames1.cohort_alive.height > 0
+    assert _sorted(frames1.cohort_alive).equals(_sorted(frames2.cohort_alive))
+
+    inv1 = invest_alive(frames1.cohort_alive)
+    inv2 = invest_alive(frames2.cohort_alive)
     assert inv1.height > 0
     assert _sorted(inv1).equals(_sorted(inv2))
 
-    lb1 = edd_invest_lookback_set_lf(
-        reader, STOCH_SOLVE, ed_invest_lf, piu, wf).collect()
-    lb2 = edd_invest_lookback_set_lf(
-        reader, STOCH_SOLVE, ed_invest_lf, piu, wf).collect()
+    lb1 = invest_prebuilt(frames1.cohort, frames1.cohort_alive)
+    lb2 = invest_prebuilt(frames2.cohort, frames2.cohort_alive)
     assert _sorted(lb1).equals(_sorted(lb2))  # may be empty, but stable
 
     # #18 divest pair-former with a hand pd_divest frame.
     pd_divest = pl.DataFrame({"p": [WIND, WIND], "d": ["p2035", "p2040"]})
-    dv1 = edd_divest_active_from_source(reader, STOCH_SOLVE, pd_divest)
-    dv2 = edd_divest_active_from_source(reader, STOCH_SOLVE, pd_divest)
+    dv1 = retire_active(pd_divest, frames1.cohort_alive, frames1.dd_forward, "p")
+    dv2 = retire_active(pd_divest, frames2.cohort_alive, frames2.dd_forward, "p")
     assert dv1.height > 0
     assert _sorted(dv1).equals(_sorted(dv2))
 

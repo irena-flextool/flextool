@@ -23,8 +23,8 @@ Algorithm
 ---------
 
 The walk implements the per-(e, d) "integrate over lifetime window"
-pattern shared by Cluster A (NPV / lifetime fixed cost) and Cluster B
-(``edd_history`` / ``edd_invest_set``) derivations.
+pattern shared by Cluster A (NPV / lifetime fixed cost), the cohort table
+(:mod:`._cohorts`) and the construction lead time.
 
 For each (e, d) anchor pair, walk every ``d_all`` ∈ ``period_in_use``
 and collect those that match the window predicate:
@@ -34,14 +34,7 @@ and collect those that match the window predicate:
 * :data:`WindowMethod.PAYBACK_YEARS` — the periods of ``BOUNDED`` (``life`` the payback time), the period the
   window ends in counted only for its represented years before the end (:func:`payback_share`).
 * :data:`WindowMethod.UNBOUNDED_FORWARD` —
-  ``pdy[d_all] ≥ pdy[d]``.
-* :data:`WindowMethod.STRICT_LOOKBACK_BOUNDED` —
-  ``pdy[d_all] > pdy[d]`` AND ``pdy[d_all] < pdy[d] + life[e, d]``
-  (used by Cluster B's ``edd_invest_lookback_set`` for bounded
-  ``reinvest_choice`` / ``no_reinvestment`` entities).
-* :data:`WindowMethod.STRICT_LOOKBACK_UNBOUNDED` —
-  ``pdy[d_all] > pdy[d]`` (no lifetime cap; for unbounded
-  ``reinvest_automatic`` entities in Cluster B's lookback walk).
+  ``pdy[d_all] ≥ pdy[d]`` (also the start of the window of an investment cohort, :mod:`._cohorts`).
 
 The aggregation is configurable: callers can either pass a per-d_all
 weight column to sum (``factor_side``: ``"inv"`` / ``"ops"`` →
@@ -91,27 +84,13 @@ class WindowMethod(enum.Enum):
       Cluster A's ``reinvest_choice`` / ``no_reinvestment`` investment
       annuity: it is paid for the payback time, in exact years.
     * ``UNBOUNDED_FORWARD`` — ``pdy[d_all] ≥ pdy[d]``.  Used by
-      Cluster A's ``reinvest_automatic`` cohort.
-    * ``STRICT_LOOKBACK_BOUNDED`` — ``pdy[d] < pdy[d_all] < pdy[d] +
-      life[e, d]``.  Used by Cluster B's
-      ``edd_invest_lookback_set`` walk where the invest is treated as
-      having taken effect strictly *before* the dispatch period.
-    * ``BOUNDED_INCLUSIVE_LOOKBACK`` — ``pdy[d_all] >= pdy[d]`` AND
-      ``pdy[d_all] < pdy[d] + life[e, d]``.  Used by Cluster B's
-      ``edd_history`` triple set: the (e, d_history, d) triple is
-      kept when ``d_history`` ≤ ``d`` and within the lifetime window
-      (the "history → current" cascade in
-      ``invest_divest_sets.py:241-248``).  Note: this is the same as
-      :data:`BOUNDED` semantically; we expose it as a separate name so
-      that the call site is self-documenting.
+      Cluster A's ``reinvest_automatic`` cohort and by the investment
+      cohorts of :mod:`._cohorts` (the start of their window).
     """
 
     BOUNDED = "bounded"
     PAYBACK_YEARS = "payback_years"
     UNBOUNDED_FORWARD = "unbounded_forward"
-    STRICT_LOOKBACK_BOUNDED = "strict_lookback_bounded"
-    STRICT_LOOKBACK_UNBOUNDED = "strict_lookback_unbounded"
-    BOUNDED_INCLUSIVE_LOOKBACK = "bounded_inclusive_lookback"
 
 
 def payback_share(end: pl.Expr, start: pl.Expr, width: pl.Expr) -> pl.Expr:
@@ -203,7 +182,7 @@ def _apply_lineage_filter(
 
     ``anchor_col`` / ``dall_col`` parametrise the walk-side column
     names so the one helper also serves the non-walker pair-former
-    ``edd_divest_active_from_source`` (``(d_divest, d)`` frame —
+    :func:`._cohorts.forward_pairs` (``(d_retire, d)`` frame —
     Slice B design §7.0); both resolve to the d-axis vocabulary.
     """
     lin = (lineage.lazy()
@@ -359,18 +338,10 @@ def period_walk_iterator(
 
     if window_method == WindowMethod.PAYBACK_YEARS and factor_side != "inv":
         raise ValueError("window_method=payback_years sums the investment factor (factor_side='inv')")
-    bounded_methods = {
-        WindowMethod.BOUNDED,
-        WindowMethod.PAYBACK_YEARS,
-        WindowMethod.STRICT_LOOKBACK_BOUNDED,
-        WindowMethod.BOUNDED_INCLUSIVE_LOOKBACK,
-    }
-    if window_method in bounded_methods and life_lf is None:
+    if window_method != WindowMethod.UNBOUNDED_FORWARD and life_lf is None:
         raise ValueError(
             f"life_lf is required for window_method={window_method.value}"
         )
-    # STRICT_LOOKBACK_UNBOUNDED is permitted with life_lf=None
-    # (the strict-lookback predicate doesn't reference lifetime).
 
     # Anchor years.
     pyd_anchor = pyd_lf.pipe(rename_to_axis, {"d": "d", "yr": "yr_d"})
@@ -463,22 +434,7 @@ def period_walk_iterator(
 
     if window_method == WindowMethod.UNBOUNDED_FORWARD:
         walk = walk.filter(pl.col("yr_dall") >= pl.col("yr_avail"))
-    elif window_method == WindowMethod.STRICT_LOOKBACK_UNBOUNDED:
-        walk = walk.filter(pl.col("yr_dall") > pl.col("yr_avail"))
-    elif window_method == WindowMethod.STRICT_LOOKBACK_BOUNDED:
-        # Align life_lf's dim-column dtypes to walk's before joining.
-        walk_schema = walk.collect_schema()
-        life_lf = life_lf.with_columns(
-            pl.col("e").cast(walk_schema.get("e", pl.Utf8), strict=False),
-            pl.col("d").cast(walk_schema.get("d", pl.Utf8), strict=False))
-        walk = (walk
-                  .join(life_lf, on=["e", "d"], how="left")
-                  .with_columns(life=pl.col("life").fill_null(0.0))
-                  .filter(pl.col("yr_dall") > pl.col("yr_avail"))
-                  .filter(pl.col("yr_dall")
-                          < pl.col("yr_avail") + pl.col("life"))
-                )
-    else:  # BOUNDED / PAYBACK_YEARS / BOUNDED_INCLUSIVE_LOOKBACK
+    else:  # BOUNDED / PAYBACK_YEARS
         walk_schema = walk.collect_schema()
         life_lf = life_lf.with_columns(
             pl.col("e").cast(walk_schema.get("e", pl.Utf8), strict=False),

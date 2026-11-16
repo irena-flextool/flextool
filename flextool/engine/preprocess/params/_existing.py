@@ -4,7 +4,6 @@ Lazy-polars port of flextool's existing-capacity cascade and the
 invest/divest set family.  Replaces the eager-Python helpers spread
 across :mod:`._derived` (``p_entity_all_existing_from_source``,
 ``ed_invest_set_from_source`` / ``ed_divest_set_from_source``,
-``edd_invest_lookback_set_from_source``,
 ``p_entity_max_units_from_source``, etc.) and the workdir-CSV reads
 they currently depend on.
 
@@ -29,23 +28,9 @@ Cluster B fields (per
   ``nd_divest_set`` — partitions of ``ed_invest_set`` / ``ed_divest_set``
   by entity-class (``unit ∪ connection`` → process-side; ``node`` →
   node-side).
-* ``edd_history`` (and its ``_choice`` / ``_automatic`` / ``_no_invest``
-  components) — the (e, d_history, d) triple-set encoding the
-  lifetime-window walk:
-  ``pdy[d] >= pdy[d_history]`` with optional bounded gate
-  ``pdy[d] < pdy[d_history] + edEntity_lifetime[e, d_history]``.
-  Filtered to entities whose ``lifetime_method`` is in
-  {``reinvest_choice``, ``reinvest_automatic``, ``no_reinvestment``}.
-* ``edd_invest_set`` — ``edd_history`` ∩ ``ed_invest_set`` on
-  ``(e, d_history)`` (i.e. the history rows that correspond to a
-  current-solve invest decision).
-* ``edd_invest_lookback_set`` — strict-lookback variant
-  (``yr[d_invest] < yr[d]``) used by the prebuilt-capacity LHS.
-* ``edd_divest_active`` / ``ndd_divest_active`` — ``pd_divest`` /
-  ``nd_divest_set`` × period grid filtered to ``yr[d_divest] <= yr[d] < EOL[e]``
-  (EOL the end of life of the pre-existing capacity)
-  (process and storage-node capacity history: storage state limits,
-  cumulative capacity limits, and the cap-margin user constraint).
+* The periods each investment and each retirement counts in (``edd_invest_set``,
+  ``edd_invest_lookback_set``, ``edd_divest_active`` / ``ndd_divest_active``) are views of the cohort
+  table (:mod:`._cohorts`).
 * ``p_entity_all_existing`` — per-(e, d) lifetime-cumulative existing
   capacity.  Algorithm:
     * solve-first: pre-existing[e, d] (lifetime-gated entity.existing).
@@ -76,12 +61,11 @@ from polar_high import Param
 
 from flextool.engine.input._axis_enums import (
     alias_to_axis,
+    align_join_dtypes,
     rename_to_axis,
     schema_dtype,
 )
 from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
-from flextool.engine.input._lifetime_roles import LIFETIME_TECHNICAL, NO_REINVESTMENT
-from flextool.engine.preprocess.params._period_values import ed_values_on
 from flextool.engine.preprocess.params._walks import period_walk_iterator, WindowMethod
 
 
@@ -149,12 +133,6 @@ _DIVEST_PERIOD_METHODS: frozenset[str] = frozenset((
 
 # preprocessing/method_with_fallback_sets.py::_LIFETIME_METHOD_DEFAULT
 _LIFETIME_METHOD_DEFAULT = "reinvest_automatic"
-_LIFETIME_BOUNDED_METHODS: frozenset[str] = frozenset((
-    "reinvest_choice", NO_REINVESTMENT,
-))
-_LIFETIME_UNBOUNDED_METHODS: frozenset[str] = frozenset((
-    "reinvest_automatic",
-))
 
 
 # ---------------------------------------------------------------------------
@@ -417,24 +395,6 @@ def _solve_years_represented(source: "InputSource", active_solve: str | None) ->
     return out
 
 
-def _snap_start(t_star: float, method: str, seams: list[float]) -> float:
-    """The period start (or the end of the horizon) that ``t_star`` rounds to with ``method``; ``+inf`` when
-    ``next_seam`` finds no seam at or after ``t_star``."""
-    from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
-    lo = max((s for s in seams if s <= t_star + YEAR_TOL), default=None)
-    hi = min((s for s in seams if s >= t_star - YEAR_TOL), default=None)
-    if method == "previous_seam":
-        return lo if lo is not None else float("inf")
-    if method == "next_seam":
-        return hi if hi is not None else float("inf")
-    # closest_seam: the nearer one; a tie goes to the later seam.
-    if hi is None:
-        return lo if lo is not None else float("inf")
-    if lo is None:
-        return hi
-    return lo if (t_star - lo) < (hi - t_star) - YEAR_TOL else hi
-
-
 def lead_time_decisions(source: "InputSource", anchor_ed_lf: pl.LazyFrame) -> pl.DataFrame:
     """``[e, d, L, method]`` (Utf8 keys): the decisions of ``anchor_ed_lf`` with a construction lead time > 0 and a
     method other than ``immediate``."""
@@ -513,7 +473,12 @@ def commissioning_year_lf(source: "InputSource",
     a period different years, raises :class:`CommissioningLagError` on a model with a lead time.
     """
     from flextool.engine.input._solve_state import CommissioningLagError
-    from flextool.engine.preprocess.params._run_calendar import YEAR_TOL, solve_calendar
+    from flextool.engine.preprocess.params._run_calendar import (
+        YEAR_TOL,
+        snap_to_seam,
+        solve_calendar,
+        solve_year_offset,
+    )
 
     if not period_in_use:
         return None
@@ -549,17 +514,15 @@ def commissioning_year_lf(source: "InputSource",
             f"Construction lead times need one year for each period, but solve '{s_a}' puts period '{period}' "
             f"{y_a:g} years and solve '{s_b}' {y_b:g} years from the start of the model.  Give the solves the "
             f"same years_represented for the periods they share.")
-    offsets = {d: rc.years[d] - y for d, y in in_use_yr.items() if d in rc.years}
-    if not offsets:
+    offset, mismatch = solve_year_offset(rc, in_use_yr)
+    if mismatch is not None:
+        raise CommissioningLagError(
+            f"Solve '{active_solve}' puts period '{mismatch}' {in_use_yr[mismatch]:g} years after its start, which "
+            "does not match the run calendar.  Construction lead times need one year for each period.")
+    if offset is None:
         raise CommissioningLagError(
             f"The periods of solve '{active_solve}' are not on the run calendar; the start of operation of "
             "investments with a construction_lead_time cannot be found.")
-    offset = next(iter(offsets.values()))
-    for d, off in offsets.items():
-        if abs(off - offset) > YEAR_TOL:
-            raise CommissioningLagError(
-                f"Solve '{active_solve}' puts period '{d}' {in_use_yr[d]:g} years after its start, which does "
-                "not match the run calendar.  Construction lead times need one year for each period.")
     seams = rc.seams()
     horizon_end = rc.horizon_end
     inf = float("inf")
@@ -567,7 +530,7 @@ def commissioning_year_lf(source: "InputSource",
     rows: list[tuple[str, str, float, str | None, float, float]] = []
     for e, o, lead, method in lead_df.iter_rows():
         yr_o_run = walk_yr.get(o, 0.0) + offset
-        yr_c_run = _snap_start(yr_o_run + float(lead), str(method), seams)
+        yr_c_run = snap_to_seam(yr_o_run + float(lead), str(method), seams)
         if abs(yr_c_run - yr_o_run) <= YEAR_TOL:
             continue  # rounds back onto the decision period: no lag
         if horizon_end is not None and yr_c_run >= horizon_end - YEAR_TOL:
@@ -867,186 +830,6 @@ def e_divest_total_lf(source: "InputSource") -> pl.LazyFrame:
     return divest_universe.join(has_total, on="e", how="inner")
 
 
-# ---------------------------------------------------------------------------
-# §3.7.2 — edd_history triple-set walk + variants
-# ---------------------------------------------------------------------------
-
-
-def edd_history_choice_lf(source: "InputSource",
-                                  active_solve: str | None,
-                                  period_with_history: list[str],
-                                  period_in_use: list[str],
-                                  workdir: Path | None = None,
-                                  *,
-                                  lineage: pl.DataFrame | None = None,
-                                  commission_lf: pl.LazyFrame | None = None,
-                                  ) -> pl.LazyFrame:
-    """Lazy ``[e, d_history, d]`` for ``edd_history_choice``.
-
-    Mirror of ``invest_divest_sets.py:228-244`` for entities whose
-    ``lifetime_method = reinvest_choice``::
-
-        keep iff pdy[d] >= pdy[d_h] AND pdy[d] < pdy[d_h] + life[e, d_h]
-
-    ``lineage`` / ``commission_lf`` — see
-    :func:`._walks.period_walk_iterator`.
-    """
-    return _edd_history_lf_for(
-        source, active_solve, period_with_history, period_in_use,
-        method="reinvest_choice", bounded=True, workdir=workdir,
-        lineage=lineage, commission_lf=commission_lf)
-
-
-def edd_history_automatic_lf(source: "InputSource",
-                                       active_solve: str | None,
-                                       period_with_history: list[str],
-                                       period_in_use: list[str],
-                                       workdir: Path | None = None,
-                                       *,
-                                       lineage: pl.DataFrame | None = None,
-                                       commission_lf: pl.LazyFrame | None = None,
-                                       ) -> pl.LazyFrame:
-    """Lazy ``[e, d_history, d]`` for ``edd_history_automatic`` —
-    entities with ``lifetime_method = reinvest_automatic``.
-
-    Mirror of ``invest_divest_sets.py:245-246``::
-
-        keep iff pdy[d] >= pdy[d_h]
-
-    ``lineage`` / ``commission_lf`` — see
-    :func:`._walks.period_walk_iterator`.
-    """
-    return _edd_history_lf_for(
-        source, active_solve, period_with_history, period_in_use,
-        method="reinvest_automatic", bounded=False, workdir=workdir,
-        lineage=lineage, commission_lf=commission_lf)
-
-
-def edd_history_no_investment_lf(source: "InputSource",
-                                            active_solve: str | None,
-                                            period_with_history: list[str],
-                                            period_in_use: list[str],
-                                            workdir: Path | None = None,
-                                            *,
-                                            lineage: pl.DataFrame | None = None,
-                                            commission_lf: pl.LazyFrame | None = None,
-                                            ) -> pl.LazyFrame:
-    """Lazy ``[e, d_history, d]`` for ``edd_history_no_investment``.
-
-    Mirror of ``invest_divest_sets.py:247-248``: same predicate as
-    ``edd_history_choice`` but for the ``no_reinvestment`` cohort.
-
-    ``lineage`` / ``commission_lf`` — see
-    :func:`._walks.period_walk_iterator`.
-    """
-    return _edd_history_lf_for(
-        source, active_solve, period_with_history, period_in_use,
-        method=NO_REINVESTMENT, bounded=True, workdir=workdir,
-        lineage=lineage, commission_lf=commission_lf)
-
-
-def _edd_history_lf_for(source: "InputSource",
-                              active_solve: str | None,
-                              period_with_history: list[str],
-                              period_in_use: list[str],
-                              *,
-                              method: str,
-                              bounded: bool,
-                              workdir: Path | None = None,
-                              lineage: pl.DataFrame | None = None,
-                              commission_lf: pl.LazyFrame | None = None,
-                              ) -> pl.LazyFrame:
-    """Internal helper: build edd_history sub-set for a single
-    lifetime_method cohort.
-
-    ``lineage`` / ``commission_lf`` — see
-    :func:`._walks.period_walk_iterator`.  ``commission_lf`` shifts
-    this cohort's availability window to the commissioning year (Slice H).
-    """
-    if not period_with_history or not period_in_use:
-        return pl.LazyFrame(schema={
-            "e": schema_dtype(_enums, "e"),
-            "d_history": schema_dtype(_enums, "d"),
-            "d": schema_dtype(_enums, "d"),
-        })
-    all_e_lf = _all_entities_lf(source)
-    elm_lf = _lifetime_method_with_default_lf(source, all_e_lf)
-    cohort_e = (elm_lf
-                   .filter(pl.col("method") == method)
-                   .select("e").unique())
-    pwh_lf = (pl.LazyFrame({"d": period_with_history})
-                .with_columns(pl.col("d").cast(schema_dtype(_enums, "d"),
-                                                  strict=False)))
-    anchor = cohort_e.join(pwh_lf, how="cross")
-    if anchor.collect().height == 0:
-        return pl.LazyFrame(schema={
-            "e": schema_dtype(_enums, "e"),
-            "d_history": schema_dtype(_enums, "d"),
-            "d": schema_dtype(_enums, "d"),
-        })
-
-    if bounded:
-        life_lf = (ed_values_on(source, LIFETIME_TECHNICAL, anchor, fill=0.0)
-                       .rename({"value": "life"})
-                       .select("e", "d", "life"))
-        walk = period_walk_iterator(
-            source, active_solve, anchor,
-            period_in_use, period_in_use,
-            window_method=WindowMethod.BOUNDED_INCLUSIVE_LOOKBACK,
-            life_lf=life_lf, factor_side=None,
-            workdir=workdir, lineage=lineage, commission_lf=commission_lf)
-    else:
-        walk = period_walk_iterator(
-            source, active_solve, anchor,
-            period_in_use, period_in_use,
-            window_method=WindowMethod.UNBOUNDED_FORWARD,
-            life_lf=None, factor_side=None,
-            workdir=workdir, lineage=lineage, commission_lf=commission_lf)
-    return walk.pipe(rename_to_axis, {"d": "d_history", "d_all": "d"})
-
-
-def edd_history_lf(source: "InputSource",
-                       active_solve: str | None,
-                       period_with_history: list[str],
-                       period_in_use: list[str],
-                       workdir: Path | None = None,
-                       *,
-                       lineage: pl.DataFrame | None = None,
-                       commission_lf: pl.LazyFrame | None = None,
-                       ) -> pl.LazyFrame:
-    """Lazy ``[e, d_history, d]`` for the union ``edd_history`` set.
-
-    Algorithm (mirror of
-    ``invest_divest_sets.py:227-262``): union of the three cohort
-    walks (:func:`edd_history_choice_lf`,
-    :func:`edd_history_automatic_lf`,
-    :func:`edd_history_no_investment_lf`).
-
-    ``lineage`` / ``commission_lf`` — see
-    :func:`._walks.period_walk_iterator`.
-    """
-    if not period_with_history or not period_in_use:
-        return pl.LazyFrame(schema={
-            "e": schema_dtype(_enums, "e"),
-            "d_history": schema_dtype(_enums, "d"),
-            "d": schema_dtype(_enums, "d"),
-        })
-    parts = [
-        edd_history_choice_lf(source, active_solve,
-                                  period_with_history, period_in_use,
-                                  workdir, lineage=lineage,
-                                  commission_lf=commission_lf),
-        edd_history_automatic_lf(source, active_solve,
-                                       period_with_history, period_in_use,
-                                       workdir, lineage=lineage,
-                                       commission_lf=commission_lf),
-        edd_history_no_investment_lf(source, active_solve,
-                                            period_with_history, period_in_use,
-                                            workdir, lineage=lineage,
-                                            commission_lf=commission_lf),
-    ]
-    return pl.concat(parts, how="vertical").unique()
-
 
 # ---------------------------------------------------------------------------
 # §3.7.1 — pd_invest_set / nd_invest_set partitions
@@ -1201,165 +984,6 @@ def ed_divest_period_set_lf(source: "InputSource",
 
 
 # ---------------------------------------------------------------------------
-# §3.7.3 — edd_invest_set + edd_invest_lookback_set
-# ---------------------------------------------------------------------------
-
-
-def edd_invest_set_lf(source: "InputSource",
-                              active_solve: str | None,
-                              ed_invest_lf: pl.LazyFrame,
-                              period_with_history: list[str],
-                              period_in_use: list[str],
-                              workdir: Path | None = None,
-                              *,
-                              lineage: pl.DataFrame | None = None,
-                              commission_lf: pl.LazyFrame | None = None,
-                              ) -> pl.LazyFrame:
-    """Lazy ``[e, d_invest, d]`` — ``edd_history_invest`` filtered to
-    ``(e, d_invest) ∈ ed_invest``.
-
-    Mirror of ``invest_divest_sets.py:267-270``::
-
-        edd_invest = { (e, d_inv, d) : (e, d_inv, d) ∈ edd_history,
-                                          (e, d_inv) ∈ ed_invest }
-
-    The ``edd_history`` triple-set carries history-period entries for
-    every entity with a recognised lifetime_method; this helper filters
-    to those whose ``d_history`` (renamed ``d_invest``) is also a
-    valid invest decision in the current solve.
-
-    ``lineage`` — see :func:`._walks.period_walk_iterator`;
-    always ``None`` until the recourse flag lands (Slice C/D).
-    """
-    edd = edd_history_lf(source, active_solve,
-                              period_with_history, period_in_use,
-                              workdir, lineage=lineage,
-                              commission_lf=commission_lf)
-    inv_pairs = ed_invest_lf.pipe(rename_to_axis, {"d": "d_history"})
-    return (edd
-              .join(inv_pairs, on=["e", "d_history"], how="inner")
-              .pipe(rename_to_axis, {"d_history": "d_invest"})
-              .select("e", "d_invest", "d")
-              .sort("e", "d_invest", "d"))  # the join's row order varies run to run
-
-
-def edd_invest_lookback_set_lf(source: "InputSource",
-                                       active_solve: str | None,
-                                       ed_invest_lf: pl.LazyFrame,
-                                       period_in_use: list[str],
-                                       workdir: Path | None = None,
-                                       *,
-                                       lineage: pl.DataFrame | None = None,
-                                       commission_lf: pl.LazyFrame | None = None,
-                                       ) -> pl.LazyFrame:
-    """Lazy ``[e, d_invest, d]`` — ``edd_invest_lookback_set``.
-
-    The strict-lookback variant of :func:`edd_invest_set_lf`: tuples
-    where ``yr[d_invest] < yr[d]`` (strict) and, for entities in the
-    bounded lifetime cohort (``reinvest_choice`` / ``no_reinvestment``),
-    ``yr[d] < yr[d_invest] + lifetime_technical[e, d_invest]``.
-
-    Mirror of ``invest_divest_sets.py:227-262`` filtered with the
-    strict-lookback predicate.  Used by the prebuilt-capacity LHS in
-    user-constraint expressions (mod L2885-2898).
-
-    Δ.7 consolidation: the eager
-    :func:`._derived.edd_invest_lookback_set_from_source`
-    pre-dates the shared :func:`._walks.period_walk_iterator`;
-    Δ.7 wraps the shared walker with the
-    :data:`._walks.WindowMethod.STRICT_LOOKBACK_BOUNDED` /
-    :data:`._walks.WindowMethod.STRICT_LOOKBACK_UNBOUNDED`
-    modes for bounded / unbounded entity cohorts respectively, then
-    unions the results.
-
-    The eager helper now delegates to this lazy port — the previous
-    Python ``for r in out.iter_rows`` lifetime gate is replaced with
-    a fully lazy join + filter on the shared walker.
-
-    ``lineage`` — see :func:`._walks.period_walk_iterator`;
-    always ``None`` until the recourse flag lands (Slice C/D).
-    """
-    if not period_in_use:
-        return pl.LazyFrame(schema={
-            "e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8,
-        })
-    inv_anchor = ed_invest_lf.select("e", alias_to_axis("d", "d_invest"))
-    if inv_anchor.collect().height == 0:
-        return pl.LazyFrame(schema={
-            "e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8,
-        })
-
-    all_e_lf = _all_entities_lf(source)
-    elm_lf = _lifetime_method_with_default_lf(source, all_e_lf)
-    bounded_e = (elm_lf
-                    .filter(pl.col("method").is_in(
-                        list(_LIFETIME_BOUNDED_METHODS)))
-                    .select("e").unique())
-    unbounded_e = (elm_lf
-                      .filter(~pl.col("method").is_in(
-                          list(_LIFETIME_BOUNDED_METHODS)))
-                      .select("e").unique())
-
-    # Shape the anchor as ``[e, d]`` for the shared walker (it expects
-    # the anchor period column to be named ``d``).
-    anchor_lf = inv_anchor.pipe(rename_to_axis, {"d_invest": "d"})
-
-    # The source-driven ``_all_entities_lf`` reads raw CSV — String
-    # ``e``.  ``anchor_lf.e`` carries whatever dtype the caller passed
-    # (Enum-e when called from the post-load test path).  Align so the
-    # join below works.
-    anchor_e_dtype = anchor_lf.collect_schema().get("e", pl.Utf8)
-    if anchor_e_dtype != pl.Utf8:
-        bounded_e = bounded_e.with_columns(
-            pl.col("e").cast(anchor_e_dtype, strict=False))
-        unbounded_e = unbounded_e.with_columns(
-            pl.col("e").cast(anchor_e_dtype, strict=False))
-
-    # Bounded cohort.
-    bounded_anchor = anchor_lf.join(bounded_e, on="e", how="inner")
-    # Scratch frame for the cohort with no rows: must match the dtypes
-    # of the upstream Enum-cast inputs to be ``vstack``-compatible at
-    # the bottom-of-function ``pl.concat``.  ``empty_like`` reads the
-    # input frame's schema for the requested columns and uses
-    # ``pl.Utf8`` as the fall-back when the column is absent.
-    from flextool.engine.input._axis_enums import empty_like
-    bounded_walk = empty_like(anchor_lf,
-                                ["e", "d"],
-                                extra={"d_all": anchor_lf.collect_schema().get("d", pl.Utf8)},
-                                lazy=True)
-    if bounded_anchor.collect().height > 0:
-        life_lf = (ed_values_on(source, LIFETIME_TECHNICAL, bounded_anchor, fill=0.0)
-                       .rename({"value": "life"})
-                       .select("e", "d", "life"))
-        bounded_walk = period_walk_iterator(
-            source, active_solve, bounded_anchor,
-            period_in_use, period_in_use,
-            window_method=WindowMethod.STRICT_LOOKBACK_BOUNDED,
-            life_lf=life_lf, factor_side=None,
-            workdir=workdir, lineage=lineage, commission_lf=commission_lf)
-
-    # Unbounded cohort — strict-lookback only, no lifetime cap.
-    unbounded_anchor = anchor_lf.join(unbounded_e, on="e", how="inner")
-    unbounded_walk = empty_like(anchor_lf,
-                                  ["e", "d"],
-                                  extra={"d_all": anchor_lf.collect_schema().get("d", pl.Utf8)},
-                                  lazy=True)
-    if unbounded_anchor.collect().height > 0:
-        unbounded_walk = period_walk_iterator(
-            source, active_solve, unbounded_anchor,
-            period_in_use, period_in_use,
-            window_method=WindowMethod.STRICT_LOOKBACK_UNBOUNDED,
-            life_lf=None, factor_side=None,
-            workdir=workdir, lineage=lineage, commission_lf=commission_lf)
-
-    return (pl.concat([bounded_walk, unbounded_walk], how="vertical")
-              .pipe(rename_to_axis, {"d": "d_invest", "d_all": "d"})
-              .select("e", "d_invest", "d")
-              .unique()
-              .sort("e", "d_invest", "d"))
-
-
-# ---------------------------------------------------------------------------
 # §3.11 — p_entity_all_existing (existing-chain walk)
 # ---------------------------------------------------------------------------
 
@@ -1377,7 +1001,7 @@ def p_entity_retired_carried_from_handoff(source: "InputSource",
     (:func:`._retire_existing.retired_carried`).  ``None`` without carried retirements in these periods."""
     from flextool.engine.preprocess import _provider_keys as K
     from flextool.engine.preprocess._provider_translators import read_handoff_frame
-    from flextool.engine.preprocess.params._derived import _lifetime_expired_pairs, _lifetime_years
+    from flextool.engine.preprocess.params._cohorts import cohort_years, existing_cohorts, existing_expired
     from flextool.engine.preprocess.params._retire_existing import retired_carried
     frame = read_handoff_frame(provider, K.HANDOFF_REALIZED_DIVEST) if provider is not None else None
     if frame is None or frame.height == 0 or not period_in_use:
@@ -1386,9 +1010,10 @@ def p_entity_retired_carried_from_handoff(source: "InputSource",
         pl.col("entity").cast(pl.Utf8), pl.col("period").cast(pl.Utf8),
         pl.col("value").cast(pl.Utf8).cast(pl.Float64, strict=False).fill_null(0.0)).iter_rows()]
     periods = [str(d) for d in period_in_use]
-    carried = retired_carried(
-        rows, _lifetime_years(source, active_solve, workdir, provider=provider), periods,
-        _lifetime_expired_pairs(source, active_solve, workdir, provider=provider, periods=periods))
+    years = cohort_years(source, active_solve, workdir, provider=provider)
+    expired = existing_expired(existing_cohorts(source, active_solve, workdir, provider=provider, years=years),
+                               years, periods)
+    carried = retired_carried(rows, years, periods, expired)
     if not carried:
         return None
     out = (pl.DataFrame({"e": [e for e, _ in carried], "d": [d for _, d in carried],
@@ -1638,12 +1263,10 @@ def p_entity_pre_existing_lf(source: "InputSource",
         v_unit = p_process[e, 'virtual_unitsize'] (if e ∈ process)
                  else p_node[e, 'virtual_unitsize'] (if e ∈ node)
                  else 0
-        if lifetime_method = reinvest_automatic →
-            v = v_existing * v_unit  if v_unit > 0 else v_existing
-        if lifetime_method ∈ {reinvest_choice, no_reinvestment} →
-            v = (v_existing * v_unit if v_unit > 0 else v_existing)
-                while pdy[d] < life_sum(e); 0 thereafter.
-        else → 0.
+        v = v_existing * v_unit  if v_unit > 0 else v_existing
+            in the periods its existing cohort is in service (y[d] < y_eol, :mod:`._cohorts`:
+            always for reinvest_automatic; until the end of life counted from the start of the run for
+            reinvest_choice / no_reinvestment); 0 thereafter, and for an entity without a lifetime_method.
 
     The ``v_existing × v_unit`` term is the canonical capacity (a
     counted entity's ``existing`` is the count, not the capacity).
@@ -1681,69 +1304,29 @@ def p_entity_pre_existing_lf(source: "InputSource",
                        .join(vu_scalar, on="e", how="left")
                        .with_columns(vu=pl.col("vu").fill_null(0.0)))
 
-    # Lifetime methods (with default).
-    elm_lf = _lifetime_method_with_default_lf(source, all_e_lf)
-    is_auto = (elm_lf
-                  .filter(pl.col("method") == "reinvest_automatic")
-                  .select("e").unique()
-                  .with_columns(is_auto=pl.lit(True)))
-    is_bounded = (elm_lf
-                     .filter(pl.col("method").is_in(list(_LIFETIME_BOUNDED_METHODS)))
-                     .select("e").unique()
-                     .with_columns(is_bounded=pl.lit(True)))
+    # The existing cohort of each entity: in service while y[d] < y_eol.
+    from flextool.engine.preprocess.params._cohorts import cohort_years, existing_cohorts
+    years = cohort_years(source, active_solve, workdir, provider=provider)
+    ends = existing_cohorts(source, active_solve, workdir, provider=provider, years=years).lazy().select("e", "y_eol")
+    periods = list(dict.fromkeys(str(d) for d in period_in_use))
+    period_years = (pl.LazyFrame({"d": periods, "y": [float(years.get(d, 0.0)) for d in periods]},
+                                 schema={"d": pl.Utf8, "y": pl.Float64})
+                      .with_columns(pl.col("d").cast(schema_dtype(_enums, "d"), strict=False)))
+    grid_with_vu, ends = align_join_dtypes(grid_with_vu, ends, ["e"])
 
-    # Lifetime gate: zero out existing past life_sum expiry for bounded.
-    expired_lf = _lifetime_expired_pairs_lf(
-        source, active_solve, period_in_use, methods=_LIFETIME_BOUNDED_METHODS,
-        workdir=workdir, provider=provider)
-    expired_marked = expired_lf.with_columns(_expired=pl.lit(True))
-
-    # Compose: value = ex × vu (or ex if vu ≤ 0: ignored) if alive; 0 else.
+    # Compose: value = ex × vu (or ex if vu ≤ 0: ignored) while in service; 0 else.
     capacity_expr = (pl.when(pl.col("vu") > 0.0)
                           .then(pl.col("ex") * pl.col("vu"))
                           .otherwise(pl.col("ex")))
     return (grid_with_vu
-              .join(is_auto, on="e", how="left")
-              .join(is_bounded, on="e", how="left")
-              .join(expired_marked, on=["e", "d"], how="left")
+              .join(period_years, on="d", how="left", maintain_order="left")
+              .join(ends, on="e", how="left", maintain_order="left")
               .with_columns(
-                  is_auto=pl.col("is_auto").fill_null(False),
-                  is_bounded=pl.col("is_bounded").fill_null(False),
-                  _expired=pl.col("_expired").fill_null(False),
-                  cap=capacity_expr,
-              )
-              .with_columns(
-                  value=pl.when(pl.col("is_auto"))
-                              .then(pl.col("cap"))
-                              .when(pl.col("is_bounded") & ~pl.col("_expired"))
-                              .then(pl.col("cap"))
+                  value=pl.when(pl.col("y") < pl.col("y_eol"))
+                              .then(capacity_expr)
                               .otherwise(0.0),
               )
               .select("e", "d", "value"))
-
-
-def _lifetime_expired_pairs_lf(source: "InputSource",
-                                    active_solve: str | None,
-                                    period_in_use: list[str],
-                                    *,
-                                    methods: frozenset[str],
-                                    workdir: Path | None = None,
-                                    provider: "object | None" = None,
-                                    ) -> pl.LazyFrame:
-    """Lazy ``[e, d]`` of pairs whose pre-existing capacity has expired: the
-    periods ``d`` of ``period_in_use`` with ``p_years_d[d] >= life_sum(e)``
-    for the entities whose ``lifetime_method ∈ methods``, ``life_sum`` one
-    end of life per entity counted from the start of the run
-    (:func:`._derived._lifetime_expired_pairs`, the same gate).
-    """
-    from flextool.engine.preprocess.params._derived import _lifetime_expired_pairs
-    pairs = sorted(_lifetime_expired_pairs(
-        source, active_solve, workdir, tuple(sorted(methods)),
-        provider=provider, periods=[str(d) for d in period_in_use]))
-    return (pl.LazyFrame({"e": [e for e, _ in pairs], "d": [d for _, d in pairs]},
-                         schema={"e": pl.Utf8, "d": pl.Utf8})
-              .with_columns(pl.col("e").cast(schema_dtype(_enums, "e"), strict=False),
-                            pl.col("d").cast(schema_dtype(_enums, "d"), strict=False)))
 
 
 # ---------------------------------------------------------------------------
@@ -1893,10 +1476,6 @@ __all__ = [
     # Public lazy helpers — entity sets.
     "entity_invest_set_lf", "entity_divest_set_lf",
     "e_invest_total_lf", "e_divest_total_lf",
-    # Public lazy helpers — edd_history triple-set family.
-    "edd_history_lf", "edd_history_choice_lf",
-    "edd_history_automatic_lf", "edd_history_no_investment_lf",
-    "edd_invest_set_lf", "edd_invest_lookback_set_lf",
     # Public lazy helpers — partitions.
     "pd_invest_set_lf", "nd_invest_set_lf",
     "pd_divest_set_lf", "nd_divest_set_lf",

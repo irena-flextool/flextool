@@ -2046,6 +2046,8 @@ def master_network_data(
     new.pd_divest_set = _keep_proc(data.pd_divest_set)
     new.ed_invest_set = _keep_entity_frame(data.ed_invest_set)
     new.ed_divest_set = _keep_entity_frame(data.ed_divest_set)
+    new.cohort = _keep_entity_frame(getattr(data, "cohort", None))
+    new.cohort_alive = _keep_entity_frame(getattr(data, "cohort_alive", None))
     new.edd_invest_set = _keep_entity_frame(data.edd_invest_set)
     new.edd_invest_lookback_set = _keep_entity_frame(data.edd_invest_lookback_set)
     new.ed_invest_commission = _keep_entity_frame(getattr(data, "ed_invest_commission", None))
