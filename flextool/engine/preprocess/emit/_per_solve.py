@@ -29,7 +29,9 @@ from flextool.engine.input._lifetime_roles import NO_REINVESTMENT
 from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine.preprocess._provider_io import _emit
 from flextool.engine.preprocess.params._branch import fan_period_labels
+from flextool.engine.preprocess.params._cohorts import cohort_calendar, window_end
 from flextool.engine.preprocess.params._derived import _expand_invest_branch_periods, run_start_period
+from flextool.engine.preprocess.params._run_calendar import read_run_calendar, run_years, solve_calendar
 
 
 # ---------------------------------------------------------------------------
@@ -703,38 +705,28 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
     _emit_tuples(provider, "solve_data/nd_divest.csv", ("node", "period"),
                  [(e, d) for e, d in ed_divest_pairs if e in node_set])
 
-    edd_choice: list[tuple[str, str, str]] = []
-    edd_auto: list[tuple[str, str, str]] = []
-    edd_noinv: list[tuple[str, str, str]] = []
-    for e in entity_set:
-        e_lm = lm_for_e.get(e, set())
-        is_choice = "reinvest_choice" in e_lm
-        is_auto = "reinvest_automatic" in e_lm
-        is_noinv = NO_REINVESTMENT in e_lm
-        if not (is_choice or is_auto or is_noinv):
-            continue
-        for d_h in period_with_history:
-            life = edEntity_lifetime.get((e, d_h), 0.0)
-            pdy_dh = p_years_d.get(d_h, 0.0)
-            for d in period_in_use:
-                pdy_d = p_years_d.get(d, 0.0)
-                if is_choice and pdy_d >= pdy_dh and pdy_d < pdy_dh + life:
-                    edd_choice.append((e, d_h, d))
-                if is_auto and pdy_d >= pdy_dh:
-                    edd_auto.append((e, d_h, d))
-                if is_noinv and pdy_d >= pdy_dh and pdy_d < pdy_dh + life:
-                    edd_noinv.append((e, d_h, d))
-    edd_seen: dict[tuple[str, str, str], None] = {}
-    for r in edd_choice + edd_auto + edd_noinv:
-        if r not in edd_seen:
-            edd_seen[r] = None
+    # edd_invest [entity, period_history, period]: the periods d of period_in_use each investment decision
+    # (e, d_inv) of ed_invest is in service in, by the cohorts' window rule (_cohorts.window_end, from the decision
+    # year; a construction lead time is not applied here): y[d_inv] <= y[d] < y_eol, years of the run.  Grouped by
+    # lifetime_method (reinvest_choice, reinvest_automatic, no_reinvestment), then entity, decision and period.
+    rc = read_run_calendar(provider)
+    years = run_years(p_years_d, rc)
+    cal = cohort_calendar(rc if rc is not None else solve_calendar(years, None), years)
     invest_set = frozenset(entityInvest)
-    edd_invest = [
-        (e, d_inv, d) for (e, d_inv, d) in edd_seen
-        if e in invest_set and (e, d_inv) in ed_invest_set
-    ]
+    edd_invest: list[tuple[str, str, str]] = []
+    for method in ("reinvest_choice", "reinvest_automatic", NO_REINVESTMENT):
+        for e in entity_set:
+            if method not in lm_for_e.get(e, set()) or e not in invest_set:
+                continue
+            for d_inv in period_with_history:
+                if (e, d_inv) not in ed_invest_set:
+                    continue
+                y_on = years.get(d_inv, 0.0)
+                _life, _end, y_eol = window_end(y_on, edEntity_lifetime.get((e, d_inv), 0.0), method, cal)
+                edd_invest.extend((e, d_inv, d) for d in period_in_use
+                                  if y_on <= years.get(d, 0.0) < y_eol)
     _emit_tuples(provider, "solve_data/edd_invest.csv",
-                 ("entity", "period_history", "period"), edd_invest)
+                 ("entity", "period_history", "period"), list(dict.fromkeys(edd_invest)))
     _ = ed_divest_set
 
     gd_invest_pairs: list[tuple[str, str]] = []

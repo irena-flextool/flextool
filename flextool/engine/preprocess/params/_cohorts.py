@@ -161,7 +161,7 @@ def cohort_years(source: "InputSource",
     return run_years(own, read_run_calendar(provider))
 
 
-def _calendar(rc: "RunCalendar", years: Mapping[str, float]) -> _Calendar:
+def cohort_calendar(rc: "RunCalendar", years: Mapping[str, float]) -> _Calendar:
     """The seams of the run: the years ``years``, the start of the run (0) and the run calendar's period starts and
     horizon end (a run seam within ``YEAR_TOL`` of a year of ``years`` is that year).  ``label(y)`` is the run
     period that starts at the seam ``y`` (``None`` at ``+inf`` and where no period starts)."""
@@ -195,6 +195,17 @@ def _years_frame(years: Mapping[str, float]) -> pl.LazyFrame:
             .with_columns(y=pl.Series("y", [float(v) for v in years.values()], dtype=pl.Float64)))
 
 
+def window_end(y_on: float, y_life: float, method: str, cal: _Calendar) -> tuple[float, float, float]:
+    """``(y_life, y_end, y_eol)`` of capacity starting to operate at ``y_on`` with the lifetime ``y_life`` under
+    ``lifetime_method`` ``method``: ``reinvest_automatic`` capacity is renewed (``+inf`` each); otherwise
+    ``y_end = y_on + y_life`` and ``y_eol = next_seam(y_end)``.  The one lifetime-window rule: the capacity is in
+    service in the periods with ``y_on <= y[d] < y_eol``."""
+    if method == REINVEST_AUTOMATIC:
+        return _INF, _INF, cal.eol(_INF)
+    y_end = y_on + y_life
+    return y_life, y_end, cal.eol(y_end)
+
+
 def _existing_rows(source: "InputSource", years: Mapping[str, float], cal: _Calendar) -> list[tuple]:
     """The rows (:func:`_cohort_schema` order, Utf8 labels) of the existing cohorts on the years ``years``."""
     from flextool.engine.preprocess.params._derived import _entity_classes_lookup, run_start_period
@@ -209,14 +220,10 @@ def _existing_rows(source: "InputSource", years: Mapping[str, float], cal: _Cale
     for e, method in _entity_methods(source).items():
         if method not in LIFETIME_METHODS:
             continue
-        if method == REINVEST_AUTOMATIC:
-            y_life, y_end = _INF, _INF
-        elif e not in process_set and e not in node_set:
-            y_life, y_end = 0.0, 0.0
+        if method != REINVEST_AUTOMATIC and e not in process_set and e not in node_set:
+            y_life, y_end, y_eol = 0.0, 0.0, cal.eol(0.0)
         else:
-            y_life = lifetime.get((e, start), 0.0)
-            y_end = y_on + y_life
-        y_eol = cal.eol(y_end)
+            y_life, y_end, y_eol = window_end(y_on, lifetime.get((e, start), 0.0), method, cal)
         rows.append((f"{KIND_EXISTING}:{start}", e, KIND_EXISTING, method, None, start, y_on, y_life, y_end, y_end,
                      y_eol, cal.label(y_eol)))
     return rows
@@ -236,7 +243,7 @@ def run_existing_cohorts(source: "InputSource", rc: "RunCalendar | None") -> pl.
     (``rc`` ``None`` or empty) the end of life cannot be placed: every row has the cohort id ``existing``, null
     years and ``y_eol = +inf`` (in service in every period, no end of life)."""
     years = dict(rc.years) if rc is not None else {}
-    cal = _calendar(rc, years) if rc is not None else None
+    cal = cohort_calendar(rc, years) if rc is not None else None
     return _utf8_cohort_frame(_existing_rows(source, years, cal))
 
 
@@ -254,7 +261,7 @@ def existing_cohorts(source: "InputSource",
     if provider is not None and provider.has(RUN_EXISTING_COHORT_KEY):
         return cohort_frame_from_utf8(provider.get(RUN_EXISTING_COHORT_KEY))
     years = dict(years) if years is not None else cohort_years(source, active_solve, workdir, provider=provider)
-    cal = _calendar(_run_calendar_of(source, active_solve, years, provider), years) if years else None
+    cal = cohort_calendar(_run_calendar_of(source, active_solve, years, provider), years) if years else None
     return _cohort_frame(_existing_rows(source, years, cal))
 
 
@@ -330,7 +337,7 @@ def invest_cohorts(source: "InputSource",
     if ed_invest is None or ed_invest.height == 0 or not period_in_use:
         return empty
     years = dict(years) if years is not None else cohort_years(source, active_solve, workdir, provider=provider)
-    cal = _calendar(_run_calendar_of(source, active_solve, years, provider), years)
+    cal = cohort_calendar(_run_calendar_of(source, active_solve, years, provider), years)
     methods = _entity_methods(source)
     with_life = axis_lazyframe({"e": [e for e, m in methods.items() if m in LIFETIME_METHODS]})
     anchor, with_life = align_join_dtypes(ed_invest.lazy().select("e", "d"), with_life, ["e"])
@@ -353,12 +360,7 @@ def invest_cohorts(source: "InputSource",
                 f"Investment of {e!r} decided in period {d!r} starts to operate in period {d_on!r}, which has no "
                 f"year in the solve {active_solve!r}: its end of life cannot be placed.")
         y_on = float(years[d_on])
-        if method == REINVEST_AUTOMATIC:
-            y_life, y_end = _INF, _INF
-        else:
-            y_life = float(life_v)
-            y_end = y_on + y_life
-        y_eol = cal.eol(y_end)
+        y_life, y_end, y_eol = window_end(y_on, float(life_v), method, cal)
         rows.append((f"{KIND_INVEST}:{d}", e, KIND_INVEST, method, d, d_on, y_on, y_life, y_end, None, y_eol,
                      cal.label(y_eol)))
     cohort = _cohort_frame(rows)
@@ -789,6 +791,7 @@ __all__ = [
     "REALIZED_RETIRE_SCHEMA",
     "YEAR_COLUMNS",
     "build_cohort_frames",
+    "cohort_calendar",
     "cohort_frame_from_utf8",
     "cohort_years",
     "existing_cohorts",
@@ -807,4 +810,5 @@ __all__ = [
     "retire_active",
     "run_existing_cohorts",
     "seed_cohorts",
+    "window_end",
 ]
