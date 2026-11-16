@@ -5981,6 +5981,17 @@ def zero_cost_invest_notice(source: "InputSource", ed_invest: "pl.DataFrame | No
                               " ".join(detail))
 
 
+def _class_partitions(source: "InputSource", ed_set: "pl.DataFrame | None",
+                      partition_fns: tuple) -> tuple["pl.DataFrame | None", ...]:
+    """The class partitions of the (e, d) set *ed_set*, one frame (None when empty) per function of
+    *partition_fns* (each ``fn(source, ed_lf) -> LazyFrame``); all None when *ed_set* is None or empty."""
+    if ed_set is None or ed_set.height == 0:
+        return tuple(None for _ in partition_fns)
+    ed_lf = ed_set.lazy()
+    frames = (fn(source, ed_lf).collect() for fn in partition_fns)
+    return tuple(frame if frame.height > 0 else None for frame in frames)
+
+
 def apply_derived_c(
     flex_data: object,
     source: "InputSource",
@@ -6135,16 +6146,17 @@ def apply_derived_c(
             flex_data.pd_divest_set = flex_data.nd_divest_set = flex_data.ed_divest_period_set = None
     zero_cost_invest_notice(source, ed_inv_db, ed_div_db)
 
-    # Δ.17c Gap D — pd/nd_invest_set, pd/nd_divest_set, edd_invest_set:
-    # partition the (e, d) frames to (process, d) / (node, d) by
-    # entity-class membership.  Mirrors the user's MathProg snippets
-    # for ``e_invest_total`` / ``e_divest_total`` (already wired in
-    # apply_projection_params) and ``invest_divest_sets.py:215-217``.
-    #
-    # We use the ed_*_set values just produced (or, when this run
-    # contributes nothing, fall back to the seed-loaded ed_*_set on
-    # flex_data).  The partition helpers are pure projections; they're
-    # cheap so re-running on every invocation is fine.
+    # pd/nd_invest_set, pd/nd_divest_set, ed_invest/divest_period_set: the
+    # class partitions of the effective ed_*_set (the one just produced,
+    # or the seed-loaded one when this run contributes nothing, the
+    # synthetic-name case).  A partition is always rebuilt from that set
+    # and never kept from its seed: the seeds are partitions of the
+    # unfiltered ``entityInvest × period_invest`` (``emit/_per_solve``),
+    # so a kept seed would hold the (entity, period) pairs the
+    # ``no_investment`` filter removed from ``ed_invest_set`` (an
+    # investment variable for a closed window, or ``p_entity_max_units``
+    # missing for an investment the model still builds).  With no
+    # ed_*_set row there is no partition.
     from flextool.engine.preprocess.params._existing import (
         pd_invest_set_lf as _pd_invest_lf,
         nd_invest_set_lf as _nd_invest_lf,
@@ -6159,30 +6171,10 @@ def apply_derived_c(
     ed_div_for_partition = (
         ed_div_db if (ed_div_db is not None and ed_div_db.height > 0)
         else getattr(flex_data, "ed_divest_set", None))
-    if ed_inv_for_partition is not None and ed_inv_for_partition.height > 0:
-        ed_inv_lf = ed_inv_for_partition.lazy()
-        pd_inv_db = _pd_invest_lf(source, ed_inv_lf).collect()
-        if pd_inv_db.height > 0:
-            flex_data.pd_invest_set = pd_inv_db
-        nd_inv_db = _nd_invest_lf(source, ed_inv_lf).collect()
-        if nd_inv_db.height > 0:
-            flex_data.nd_invest_set = nd_inv_db
-        # Per-period invest cap subset — entities whose invest_method
-        # carries a period cap (``maxInvest_entity_period`` index).
-        ed_inv_period_db = _ed_invest_period_lf(source, ed_inv_lf).collect()
-        if ed_inv_period_db.height > 0:
-            flex_data.ed_invest_period_set = ed_inv_period_db
-    if ed_div_for_partition is not None and ed_div_for_partition.height > 0:
-        ed_div_lf = ed_div_for_partition.lazy()
-        pd_div_db = _pd_divest_lf(source, ed_div_lf).collect()
-        if pd_div_db.height > 0:
-            flex_data.pd_divest_set = pd_div_db
-        nd_div_db = _nd_divest_lf(source, ed_div_lf).collect()
-        if nd_div_db.height > 0:
-            flex_data.nd_divest_set = nd_div_db
-        ed_div_period_db = _ed_divest_period_lf(source, ed_div_lf).collect()
-        if ed_div_period_db.height > 0:
-            flex_data.ed_divest_period_set = ed_div_period_db
+    flex_data.pd_invest_set, flex_data.nd_invest_set, flex_data.ed_invest_period_set = _class_partitions(
+        source, ed_inv_for_partition, (_pd_invest_lf, _nd_invest_lf, _ed_invest_period_lf))
+    flex_data.pd_divest_set, flex_data.nd_divest_set, flex_data.ed_divest_period_set = _class_partitions(
+        source, ed_div_for_partition, (_pd_divest_lf, _nd_divest_lf, _ed_divest_period_lf))
 
     # Γ.6.D — ed_invest_forbidden_no_investment.  Built off the
     # (possibly-overridden) ed_invest_set so the helper sees the same
@@ -6222,6 +6214,9 @@ def apply_derived_c(
             "p_entity_max_units",
             "ed_invest_period_set", "ed_divest_period_set",
             "ed_invest_max_period", "ed_divest_max_period",
+            # Read only where an investment variable exists; nulled so no
+            # seed outlives the empty investment set.
+            "edd_invest_set", "edd_invest_lookback_set",
         ):
             setattr(flex_data, blank_field, None)
         return
@@ -10052,21 +10047,11 @@ def apply_synthetic_invest_sets(flex_data: object,
         edd_invest_set_lf as _edd_invest_lf,
     )
     if ed_inv is not None and ed_inv.height > 0:
-        ed_inv_lf = ed_inv.lazy()
-        pd_inv = _pd_invest_lf(source, ed_inv_lf).collect()
-        if pd_inv.height > 0:
-            flex_data.pd_invest_set = pd_inv
-        nd_inv = _nd_invest_lf(source, ed_inv_lf).collect()
-        if nd_inv.height > 0:
-            flex_data.nd_invest_set = nd_inv
+        flex_data.pd_invest_set, flex_data.nd_invest_set = _class_partitions(
+            source, ed_inv, (_pd_invest_lf, _nd_invest_lf))
     if ed_div is not None and ed_div.height > 0:
-        ed_div_lf = ed_div.lazy()
-        pd_div = _pd_divest_lf(source, ed_div_lf).collect()
-        if pd_div.height > 0:
-            flex_data.pd_divest_set = pd_div
-        nd_div = _nd_divest_lf(source, ed_div_lf).collect()
-        if nd_div.height > 0:
-            flex_data.nd_divest_set = nd_div
+        flex_data.pd_divest_set, flex_data.nd_divest_set = _class_partitions(
+            source, ed_div, (_pd_divest_lf, _nd_divest_lf))
 
     # edd_invest_set — history-extended triple.  Uses workdir CSV for
     # period_with_history + period_in_use_set (both anchor-specific in
