@@ -20,6 +20,9 @@ import polars as pl
 
 #: Provider key of the run calendar frame ``[solve, period, yr, years_represented]``.
 RUN_CALENDAR_KEY = "solve_data/run_period_calendar"
+#: Provider key of the existing cohorts of the run (:func:`._cohorts.run_existing_cohorts`: Utf8 labels, run
+#: years), built once when the run starts and put on every sub-solve's Provider beside the run calendar.
+RUN_EXISTING_COHORT_KEY = "solve_data/run_existing_cohort"
 
 _SCHEMA = {"solve": pl.Utf8, "period": pl.Utf8, "yr": pl.Float64, "years_represented": pl.Float64}
 
@@ -98,6 +101,28 @@ def solve_year_offset(rc: RunCalendar, years: Mapping[str, float]) -> tuple[floa
     return offset, None
 
 
+def run_years(years: Mapping[str, float], rc: RunCalendar | None) -> dict[str, float]:
+    """``{period: run year}`` of a solve's periods ``years`` (``{period: year}`` on the solve's own calendar).
+
+    A period on the run calendar ``rc`` takes its run year.  A period that is not (a branch period of a stochastic
+    fan) takes the run year of a period of ``years`` that is on the run calendar and has the same solve year within
+    :data:`YEAR_TOL` (its anchor period); a period with no such match keeps its own year.  No year is shifted by an
+    offset, so a run year compares exactly with the run-calendar seams.  Without a run calendar the solve is the
+    run: ``years`` unchanged."""
+    if rc is None:
+        return {str(d): float(y) for d, y in years.items()}
+    on_rc = [(float(y), rc.years[str(d)]) for d, y in years.items() if str(d) in rc.years]
+    out: dict[str, float] = {}
+    for d, y in years.items():
+        d = str(d)
+        if d in rc.years:
+            out[d] = rc.years[d]
+            continue
+        match = next((ry for ys, ry in on_rc if abs(ys - float(y)) <= YEAR_TOL), None)
+        out[d] = float(y) if match is None else match
+    return out
+
+
 def build_run_calendar(period_history: Mapping[str, list], solves: Iterable[str]) -> pl.DataFrame:
     """``[solve, period, yr, years_represented]`` of every period of every solve in ``solves``.
 
@@ -170,11 +195,13 @@ def solve_calendar(years: Mapping[str, float], years_represented: Mapping[str, f
 
 __all__ = [
     "RUN_CALENDAR_KEY",
+    "RUN_EXISTING_COHORT_KEY",
     "RunCalendar",
     "YEAR_TOL",
     "build_run_calendar",
     "read_run_calendar",
     "run_calendar_from_frame",
+    "run_years",
     "snap_to_seam",
     "solve_calendar",
     "solve_year_offset",

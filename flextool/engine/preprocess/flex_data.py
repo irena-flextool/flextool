@@ -6875,6 +6875,7 @@ def build_handoff_from_solution(
     provider: "object | None" = None,
     realized_dispatch_parents: "set[str] | None" = None,
     scale_the_objective: float | None = None,
+    cohort: "pl.DataFrame | None" = None,
 ):
     """Build a ``SolveHandoff`` from a polar_high ``Solution`` + the work
     folder's per-solve metadata, mirroring flextool's post-solve
@@ -6909,6 +6910,11 @@ def build_handoff_from_solution(
 
     ``scale_the_objective`` is the objective scale this solve was built with (None = 1.0, as
     ``build_flextool``); the ``fix_price`` carrier divides it out of the duals.
+
+    ``cohort`` is the solve's cohort table when ``flex_data`` is ``None`` (the Benders invest solve hands its
+    undecomposed ``FlexData.cohort``); with ``flex_data`` its ``cohort`` is used.  ``realized_cohort`` /
+    ``realized_retire`` (:func:`._cohorts.realized_cohorts`) carry the realized investments as cohorts and the
+    retirements per cohort.
 
     *provider* (the sub-solve's :class:`FlexDataProvider`) is required:
     ``None`` raises ``ValueError``.  It must already carry the per-solve
@@ -7163,6 +7169,26 @@ def build_handoff_from_solution(
         if e in entity_divest and v != 0.0:
             divest_period[(e, d)] = divest_period.get((e, d), 0.0) + v * unitsize.get(e, 1.0)
     divest_period_rows = [(e, d, v) for (e, d), v in sorted(divest_period.items()) if v != 0.0]
+
+    # ---- realized_cohort / realized_retire: the realized investments as cohorts (their rows of the cohort table,
+    # placed once by this solve) and the retirements per cohort, chain-cumulative ----
+    from flextool.engine.preprocess.params._cohorts import realized_cohorts
+    _cohort_table = getattr(flex_data, "cohort", None) if flex_data is not None else cohort
+    realized_cohort_df, realized_retire_df = realized_cohorts(
+        getattr(prior_handoff, "realized_cohort", None) if prior_handoff is not None else None,
+        getattr(prior_handoff, "realized_retire", None) if prior_handoff is not None else None,
+        _cohort_table,
+        {(e, o): v for (e, o), v in invest_by_ed.items() if o in realize_invest},
+        {(e, d): v for (e, d), v in realized_divest_by_ed.items() if e in entity_divest and v != 0.0},
+        unitsize)
+    # Slice C Guard 3 on the carried cohorts: no realized cohort is decided in a synthetic branch period.
+    if _synth and realized_cohort_df is not None:
+        _bad_cohort = sorted(set(realized_cohort_df["period_decided"].drop_nulls().to_list()) & _synth)
+        if _bad_cohort:
+            raise FlexToolConfigError(
+                f"Solve '{solve_name}': handoff would carry investment cohorts decided in synthetic stochastic-branch "
+                f"period(s) {_bad_cohort} — these belong to a non-realized scenario and must not enter the "
+                f"committed capacity chain (recourse plan §3.3).")
 
     # ---- roll_end_state: v_state[n, last_t] * unitsize per nodeState node ----
     # Mirrors flextool's ``write_p_roll_continue_state``: takes v_state at
@@ -8074,6 +8100,8 @@ def build_handoff_from_solution(
         realized_divest=pl.DataFrame(
             divest_period_rows, schema=["entity", "period", "value"], orient="row",
         ) if divest_period_rows else None,
+        realized_cohort=realized_cohort_df,
+        realized_retire=realized_retire_df,
         roll_end_state=roll_end_state_df,
         upward_roll_end_state=upward_roll_end_state_df,
         roll_end_online=roll_end_online_df,

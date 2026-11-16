@@ -29,6 +29,11 @@ if TYPE_CHECKING:
     from flextool.engine.solve._handoff import SolveHandoff
 
 
+def _cohort_carrier_columns() -> list[str]:
+    from flextool.engine.preprocess.params._cohorts import realized_cohort_schema
+    return list(realized_cohort_schema())
+
+
 # Schemas for each handoff carrier's empty-frame fallback.  Column names
 # match what consumers iter_rows(named=True) keys; Utf8 dtype matches
 # the canonical CSV-roundtrip shape (consumers cast to float on read).
@@ -38,6 +43,8 @@ _HANDOFF_EMPTY_SCHEMAS: dict[str, tuple[str, ...]] = {
     K.HANDOFF_REALIZED_COMMISSION: ("entity", "period", "commission_period", "value"),
     K.HANDOFF_DIVEST_CUMULATIVE:  ("entity", "value"),
     K.HANDOFF_REALIZED_DIVEST:    ("entity", "period", "value"),
+    K.HANDOFF_REALIZED_COHORT:    tuple(_cohort_carrier_columns()),
+    K.HANDOFF_REALIZED_RETIRE:    ("entity", "cohort", "period", "value"),
     K.HANDOFF_ROLL_END_STATE:     ("node", "value"),
     K.HANDOFF_UPWARD_ROLL_END_STATE: ("node", "value"),
     K.HANDOFF_ROLL_END_ONLINE:    ("process", "value"),
@@ -79,7 +86,7 @@ ROLL_FORWARD_FIELDS: frozenset = frozenset((
 ))
 PIN_FIELDS: frozenset = frozenset((
     "realized_invest", "realized_existing", "realized_commission", "divest_cumulative", "realized_divest",
-    "fix_online", "fix_reserve", "fix_storage_quantity", "fix_storage_price",
+    "realized_cohort", "realized_retire", "fix_online", "fix_reserve", "fix_storage_quantity", "fix_storage_price",
     "fix_storage_usage",
 ))
 
@@ -91,6 +98,8 @@ _FIELD_TO_KEY: tuple[tuple[str, str], ...] = (
     ("realized_commission", K.HANDOFF_REALIZED_COMMISSION),
     ("divest_cumulative",   K.HANDOFF_DIVEST_CUMULATIVE),
     ("realized_divest",     K.HANDOFF_REALIZED_DIVEST),
+    ("realized_cohort",     K.HANDOFF_REALIZED_COHORT),
+    ("realized_retire",     K.HANDOFF_REALIZED_RETIRE),
     ("roll_end_state",      K.HANDOFF_ROLL_END_STATE),
     ("upward_roll_end_state", K.HANDOFF_UPWARD_ROLL_END_STATE),
     ("roll_end_online",     K.HANDOFF_ROLL_END_ONLINE),
@@ -168,6 +177,8 @@ _HANDOFF_TO_OVERRIDE: dict[str, str] = {
     K.HANDOFF_REALIZED_EXISTING:    K.OVERRIDE_REALIZED_EXISTING,
     K.HANDOFF_DIVEST_CUMULATIVE:    K.OVERRIDE_DIVEST_CUMULATIVE,
     K.HANDOFF_REALIZED_DIVEST:      K.OVERRIDE_REALIZED_DIVEST,
+    K.HANDOFF_REALIZED_COHORT:      K.OVERRIDE_REALIZED_COHORT,
+    K.HANDOFF_REALIZED_RETIRE:      K.OVERRIDE_REALIZED_RETIRE,
     K.HANDOFF_ROLL_END_STATE:       K.OVERRIDE_ROLL_END_STATE,
     K.HANDOFF_UPWARD_ROLL_END_STATE: K.OVERRIDE_UPWARD_ROLL_END_STATE,
     K.HANDOFF_ROLL_END_ONLINE:      K.OVERRIDE_ROLL_END_ONLINE,

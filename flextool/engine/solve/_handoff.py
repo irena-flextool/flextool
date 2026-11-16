@@ -27,6 +27,9 @@ carriers, named metric columns for multi-value):
     realized_commission    [entity, period, commission_period, value]
     divest_cumulative      [entity, value]
     realized_divest        [entity, period, value]
+    realized_cohort        [entity, cohort, kind, method, period_decided, period_online, y_on, y_life, y_end,
+                            y_first_life_end, y_eol, period_eol, size]
+    realized_retire        [entity, cohort, period, value]
     roll_end_state         [node, value]
     roll_end_online        [process, value]
     roll_end_flow          [process, source, sink, period, step, duration, value]
@@ -112,6 +115,19 @@ class SolveHandoff:
     # Consumers: ``apply_existing_chain`` (``p_entity_retired_carried``) and the emitted
     # ``p_entity_all_existing``.
     realized_divest: pl.DataFrame | None = None
+
+    # The investments realized by this solve and the earlier solves of the run, one row per cohort (an investment
+    # decision), chain-cumulative: the cohort's row of the cohort table of the solve that decided it (run years,
+    # never recomputed: ``y_on`` / ``y_eol`` place it in a later solve's periods) and its ``size`` (MW, MWh for
+    # storage).  Columns: ``_cohorts.realized_cohort_schema``.  Producer: ``build_handoff_from_solution``
+    # (``_cohorts.realized_cohorts``).  Consumer: the later solves' existing capacity (emit
+    # ``_chain_params.emit_existing_capacity``).  In-memory only.
+    realized_cohort: pl.DataFrame | None = None
+
+    # Capacity retired (post-unitsize) per cohort and realized, non-branch decision period, chain-cumulative
+    # ``[entity, cohort, period, value]``: a later solve subtracts a retirement from the periods it still counts in
+    # (from its decision period while the cohort is in service).  Producer / consumer as ``realized_cohort``.
+    realized_retire: pl.DataFrame | None = None
 
     # End-of-roll storage state for ``bind_forward_only`` carry-over.
     # Producer: prior roll's v_state at its last (d, t).
@@ -241,6 +257,7 @@ class SolveHandoff:
 
     _FIELDS = (
         "realized_invest", "realized_existing", "realized_commission", "divest_cumulative", "realized_divest",
+        "realized_cohort", "realized_retire",
         "roll_end_state", "upward_roll_end_state", "roll_end_online", "roll_end_flow",
         "roll_end_step", "online_history", "fix_online", "fix_reserve",
         "fix_storage_quantity", "fix_storage_price", "fix_storage_usage",

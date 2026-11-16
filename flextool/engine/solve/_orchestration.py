@@ -3260,6 +3260,9 @@ def _drive_cascade(
                         self.state, "current_provider", None,
                     ),
                     scale_the_objective=obj_scale,
+                    # The undecomposed solve's cohort table: the realized
+                    # investments are carried as its cohorts.
+                    cohort=getattr(data, "cohort", None),
                 )
                 # Deposit so the next solve's load picks it up via the
                 # ``last_captured_solve`` translation in _run_model
