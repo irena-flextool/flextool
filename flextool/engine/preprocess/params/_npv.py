@@ -429,14 +429,16 @@ def _years_for_period_lf(source: "InputSource",
         alias_to_axis("d", "d"))
 
 
-def _inflation_factors_lf(source: "InputSource",
-                                active_solve: str | None,
-                                period_universe: list[str],
-                                *,
-                                provider: "object | None" = None,
-                                year_rows: pl.DataFrame | None = None,
-                                ) -> pl.LazyFrame:
-    """Lazy ``(d, inv_factor, ops_factor)`` frame.
+def _inflation_year_rows_lf(source: "InputSource",
+                           active_solve: str | None,
+                           period_universe: list[str],
+                           *,
+                           provider: "object | None" = None,
+                           year_rows: pl.DataFrame | None = None,
+                           ) -> pl.LazyFrame | None:
+    """Lazy ``[d, off, width, inv_contrib, ops_contrib]``: one row per represented year of a period of
+    ``period_universe`` (``d`` on the period axis), ``off`` the years of the period before it, ``width`` its width and
+    ``inv_contrib`` / ``ops_contrib`` its discounted width (the terms of :func:`_inflation_factors_lf`).
 
     Algorithm — port of ``preprocessing/period_calculated_params.py:230-322``:
 
@@ -445,9 +447,7 @@ def _inflation_factors_lf(source: "InputSource",
            ``base[d, y] = Σ_{y' ∈ global, y' < y} pyr[d, y']``  (default 1)
            ``until_inv[d, y] = base + pyr × offset_invest``
            ``until_ops[d, y] = base + pyr × offset_operations``
-      3. ``inv_factor[d] = Σ_y pyr[d, y] × (1+rate)^(-until_inv[d, y])``
-         ``ops_factor[d] = Σ_y pyr[d, y] × (1+rate)^(-until_ops[d, y])``.
-         When ``Σ_y pyr[d, y] == 0`` → 1.0.
+           ``inv_contrib[d, y] = pyr[d, y] × (1+rate)^(-until_inv[d, y])`` (``ops_contrib`` likewise).
 
     The cumulative-base computation (step 2) is per-period over the
     GLOBAL year set, so it's shaped naturally as a polars window:
@@ -455,39 +455,29 @@ def _inflation_factors_lf(source: "InputSource",
       base[d, y] = Σ_{y'<y in global order} pyr[d, y']
                  = (cumulative_sum of pyr[d, y'] over y'<y, partitioned by d)
 
-    where unbound (d, y) pairs contribute 1 (default ``years_represented``).
+    where unbound (d, y) pairs contribute 1 (default ``years_represented``).  ``off`` counts only the period's own
+    rows.
 
     ``year_rows`` (``[d, width, base]``, one row per represented year of a period): the years given explicitly
     instead of from ``years_for_period``; ``base`` is the number of years from the discount base to the start of
-    that year, so ``until = base + width × offset``.  A period without rows (or with zero total width) gets 1.0.
+    that year, so ``until = base + width × offset``.
+
+    ``None`` when there are no year rows (every period has the factor 1).  The rows keep the order the factor sums
+    take them in (the order of ``year_rows`` / of ``years_for_period``).
     """
-    if not period_universe:
-        return pl.LazyFrame(schema={
-            "d": schema_dtype(_enums, "d"),
-            "inv_factor": pl.Float64, "ops_factor": pl.Float64,
-        })
     rate, off_inv, off_ops = _solve_inflation_scalars(source)
     one_plus_inv = (1.0 / (1.0 + rate)) if rate != -1.0 else 1.0
     if year_rows is not None:
-        explicit = (year_rows.lazy()
-                      .select(pl.col("d").cast(pl.Utf8), pl.col("width").cast(pl.Float64),
-                              pl.col("base").cast(pl.Float64))
-                      .with_columns(
-                          inv_contrib=pl.col("width") * (one_plus_inv ** (pl.col("base")
-                                                                          + pl.col("width") * off_inv)),
-                          ops_contrib=pl.col("width") * (one_plus_inv ** (pl.col("base")
-                                                                          + pl.col("width") * off_ops)))
-                      .group_by("d")
-                      .agg(pl.col("inv_contrib").sum().alias("inv_factor"),
-                           pl.col("ops_contrib").sum().alias("ops_factor"),
-                           pl.col("width").sum().alias("sum_pyr"))
-                      .filter(pl.col("sum_pyr") > 0)
-                      .select("d", "inv_factor", "ops_factor"))
-        return (pl.LazyFrame({"d": [str(d) for d in period_universe]})
-                  .join(explicit, on="d", how="left")
-                  .with_columns(alias_to_axis("d", "d"),
-                                inv_factor=pl.col("inv_factor").fill_null(1.0),
-                                ops_factor=pl.col("ops_factor").fill_null(1.0)))
+        return (year_rows.lazy()
+                  .select(alias_to_axis(pl.col("d").cast(pl.Utf8), "d"), pl.col("width").cast(pl.Float64),
+                          pl.col("base").cast(pl.Float64))
+                  .with_columns(
+                      off=(pl.col("width").cum_sum() - pl.col("width")).over("d", order_by="base"),
+                      inv_contrib=pl.col("width") * (one_plus_inv ** (pl.col("base")
+                                                                      + pl.col("width") * off_inv)),
+                      ops_contrib=pl.col("width") * (one_plus_inv ** (pl.col("base")
+                                                                      + pl.col("width") * off_ops)))
+                  .select("d", "off", "width", "inv_contrib", "ops_contrib"))
     yfp_lf = _years_for_period_lf(
         source, active_solve, period_universe, provider=provider)
 
@@ -495,17 +485,12 @@ def _inflation_factors_lf(source: "InputSource",
     # ≤ 100 (d, y) rows even for 50-year horizon × 20 representative years),
     # so collecting once is cheap; the rest stays lazy.
     yfp_eager = yfp_lf.collect()
-    period_lf = pl.LazyFrame({"d": period_universe}).with_columns(
-        alias_to_axis("d", "d"))
-
     if yfp_eager.height == 0:
         # No years_represented data — every period gets the trivial 1.0
         # factor (mirrors period_calculated_params.py:300).
-        return (period_lf
-                  .with_columns(
-                      inv_factor=pl.lit(1.0, dtype=pl.Float64),
-                      ops_factor=pl.lit(1.0, dtype=pl.Float64),
-                  ))
+        return None
+    period_lf = pl.LazyFrame({"d": period_universe}).with_columns(
+        alias_to_axis("d", "d"))
 
     # Build the global year set with numerical sort when possible.
     try:
@@ -540,40 +525,53 @@ def _inflation_factors_lf(source: "InputSource",
                 .join(full, on=["d", "y"], how="inner"))
 
     # Per-(d, y) factor contributions.
-    bound = bound.with_columns(
-        until_inv=pl.col("base") + pl.col("pyr") * off_inv,
-        until_ops=pl.col("base") + pl.col("pyr") * off_ops,
-    ).with_columns(
-        inv_contrib=pl.col("pyr") * (one_plus_inv ** pl.col("until_inv")),
-        ops_contrib=pl.col("pyr") * (one_plus_inv ** pl.col("until_ops")),
-    )
+    return (bound
+              .with_columns(
+                  until_inv=pl.col("base") + pl.col("pyr") * off_inv,
+                  until_ops=pl.col("base") + pl.col("pyr") * off_ops,
+                  off=(pl.col("pyr").cum_sum() - pl.col("pyr")).over("d", order_by="y_idx"),
+              ).with_columns(
+                  inv_contrib=pl.col("pyr") * (one_plus_inv ** pl.col("until_inv")),
+                  ops_contrib=pl.col("pyr") * (one_plus_inv ** pl.col("until_ops")),
+              )
+              .select("d", "off", pl.col("pyr").alias("width"), "inv_contrib", "ops_contrib"))
 
-    factor_per_d = (bound
+
+def _inflation_factors_lf(source: "InputSource",
+                                active_solve: str | None,
+                                period_universe: list[str],
+                                *,
+                                provider: "object | None" = None,
+                                year_rows: pl.DataFrame | None = None,
+                                ) -> pl.LazyFrame:
+    """Lazy ``(d, inv_factor, ops_factor)`` frame: per period the sum of its year rows
+    (:func:`_inflation_year_rows_lf`), ``inv_factor[d] = Σ_y inv_contrib[d, y]`` and ``ops_factor[d] = Σ_y
+    ops_contrib[d, y]``.  A period without rows (or with zero total width) gets 1.0.
+    """
+    if not period_universe:
+        return pl.LazyFrame(schema={
+            "d": schema_dtype(_enums, "d"),
+            "inv_factor": pl.Float64, "ops_factor": pl.Float64,
+        })
+    period_lf = pl.LazyFrame({"d": [str(d) for d in period_universe]}).with_columns(alias_to_axis("d", "d"))
+    rows = _inflation_year_rows_lf(source, active_solve, period_universe, provider=provider, year_rows=year_rows)
+    if rows is None:
+        return period_lf.with_columns(inv_factor=pl.lit(1.0, dtype=pl.Float64),
+                                      ops_factor=pl.lit(1.0, dtype=pl.Float64))
+    factor_per_d = (rows
                       .group_by("d")
-                      .agg(
-                          pl.col("inv_contrib").sum().alias("inv_factor"),
-                          pl.col("ops_contrib").sum().alias("ops_factor"),
-                          pl.col("pyr").sum().alias("sum_pyr"),
-                      ))
-
-    # Sum-pyr == 0 → factor = 1.0 (period_calculated_params.py:299-301).
-    factor_per_d = factor_per_d.with_columns(
-        inv_factor=pl.when(pl.col("sum_pyr") > 0)
-                       .then(pl.col("inv_factor"))
-                       .otherwise(1.0),
-        ops_factor=pl.when(pl.col("sum_pyr") > 0)
-                       .then(pl.col("ops_factor"))
-                       .otherwise(1.0),
-    ).select("d", "inv_factor", "ops_factor")
-
+                      .agg(pl.col("inv_contrib").sum().alias("inv_factor"),
+                           pl.col("ops_contrib").sum().alias("ops_factor"),
+                           pl.col("width").sum().alias("sum_pyr"))
+                      # Sum-pyr == 0 → factor = 1.0 (period_calculated_params.py:299-301).
+                      .filter(pl.col("sum_pyr") > 0)
+                      .select("d", "inv_factor", "ops_factor"))
     # Periods absent from years_represented (or with R=0) get 1.0
     # (mirrors flextool's writer default of 1.0).
     return (period_lf
               .join(factor_per_d, on="d", how="left")
-              .with_columns(
-                  inv_factor=pl.col("inv_factor").fill_null(1.0),
-                  ops_factor=pl.col("ops_factor").fill_null(1.0),
-              ))
+              .with_columns(inv_factor=pl.col("inv_factor").fill_null(1.0),
+                            ops_factor=pl.col("ops_factor").fill_null(1.0)))
 
 
 # ---------------------------------------------------------------------------
