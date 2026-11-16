@@ -134,16 +134,17 @@ def migrate_database(
 def _current_version_ro(path, up_to: int | None) -> int | None:
     """The data version of *path* when it has nothing to migrate or refresh (read read-only), else ``None``.
 
-    Nothing to do means: the current data version (and not below *up_to*), a current SpineDB schema revision and no
-    superseded unit-count description (:func:`_refresh_unit_count_texts` would rewrite one).  Anything that cannot be
-    read gives ``None``: it is decided under the lock.
+    Nothing to do means: the current data version (and not below *up_to*), a current SpineDB schema revision, no
+    superseded unit-count description (:func:`_refresh_unit_count_texts` would rewrite one) and every definition and
+    list member the current version's schema step adds (:func:`_refresh_head_schema` would add one).  Anything that
+    cannot be read gives ``None``: it is decided under the lock.
     """
     from flextool.update_flextool.frozen import read_db_version_ro, schema_outdated_ro
 
     version = read_db_version_ro(path)
     if version != FLEXTOOL_DB_VERSION or (up_to is not None and up_to > version):
         return None
-    if schema_outdated_ro(path) or _unit_count_texts_stale_ro(path):
+    if schema_outdated_ro(path) or _unit_count_texts_stale_ro(path) or _head_schema_missing_ro(path):
         return None
     return version
 
@@ -1909,6 +1910,8 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 _migrate_v79_schema_batch(db)
             elif next_version == 80:
                 _migrate_v80_schema_batch(db)
+            elif next_version == 81:
+                _migrate_v81_schema_batch(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -1925,7 +1928,9 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
         else:
             if int(version) == FLEXTOOL_DB_VERSION:
                 _refresh_unit_count_texts(db)
-                _commit_step(db, "Refreshed existing / virtual_unitsize descriptions")
+                _refresh_head_schema(db)
+                _commit_step(db, "Refreshed existing / virtual_unitsize descriptions and added the current "
+                                 "version's new definitions")
             print(database_path+ " already up-to-date at version "+ str(version))
 
 def _rename_or_drop_parameter_definition(db, entity_class_name, old_name, new_name, description=None):
@@ -10650,6 +10655,303 @@ def _migrate_v80_schema_batch(db) -> None:
                      "relative_of_peak_demand, solver_precommand, solver_arguments, "
                      "reduce_unit_detail_method and print_dispatch descriptions, "
                      "conversion_method piecewise_linear and unit.piecewise_linear_efficiency")
+
+
+# ─── v81: technical lifetime and payback time, net salvage value, no_reinvestment ───
+#
+# The step is table-driven: the tables below say what it adds, moves, renames and rewrites.  While 81 is the current
+# data version, schema entries (definitions, value lists, list members, descriptions) may be appended to these
+# tables; :func:`_refresh_head_schema` adds the missing definitions and list members to a database already at 81, and
+# the template sync reruns the whole step (:data:`RERUNNABLE_HEAD_STEP`).  A value move or a list-member rename never
+# reaches a database already at 81 (fixture and example data included), so a later one needs a new version.
+
+#: v81: parameters whose values move to new names (old name -> the new names that each get a copy of every value).
+V81_VALUE_MOVES: dict[str, tuple[str, ...]] = {
+    "lifetime": ("lifetime_technical", "payback_time"),
+    "salvage_value": ("net_salvage_value",),
+}
+#: v81: value-list members renamed (list -> {old member: new member}); every stored value is rewritten.
+V81_LIST_MEMBER_RENAMES: dict[str, dict[str, str]] = {
+    "lifetime_methods": {"no_investment": "no_reinvestment"},
+}
+#: v81: value lists to create (when absent) with these members, or to complete with the members they lack (appended
+#: in this order).
+V81_NEW_VALUE_LISTS: dict[str, tuple[str, ...]] = {}
+
+_V81_CAPACITY = {"unit": ("capacity", "unit", "kW"), "connection": ("capacity", "connection", "kW"),
+                 "node": ("storage capacity", "node", "kWh")}
+
+
+def _v81_texts() -> dict[tuple[str, str], str]:
+    """The whole descriptions v81 writes: those of its new definitions and of the existing definitions whose text
+    names a renamed parameter or value."""
+    t: dict[tuple[str, str], str] = {}
+    for cls, (cap, what, per) in _V81_CAPACITY.items():
+        t[(cls, "lifetime_technical")] = (
+            f"[years] Technical lifetime: how long the {cap} operates. It starts when the {cap} starts to operate: "
+            "with a construction lead time, after the construction. What happens at its end depends on "
+            f"lifetime_method: reinvest_automatic keeps the {cap} to the end of the model horizon, reinvest_choice "
+            "retires it, no_reinvestment retires it and allows investment only during the first technical lifetime "
+            "from the model start. Without payback_time, invest_cost is annualized over it. Required when the "
+            f"{what} invests or retires with a cost (invest_cost, net_salvage_value) and has no payback_time, and "
+            "when lifetime_method is reinvest_choice or no_reinvestment (also for existing capacity without "
+            f"investment). Constant or period: the value of the period when the {cap} comes online is used.")
+        t[(cls, "payback_time")] = (
+            "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor). No value: "
+            "lifetime_technical. Must be above 0. Constant or period: the value of the period when the "
+            f"{cap} comes online is used.")
+        t[(cls, "net_salvage_value")] = (
+            f"[CUR/{per}] Net salvage value: scrap value minus decommissioning cost, received once when {cap} is "
+            "retired (at end of life or earlier). Negative when decommissioning costs more than the scrap is worth. "
+            "Does not depend on age. Constant or period.")
+        t[(cls, "lifetime_method")] = (
+            "[choice] What happens when capacity reaches the end of its lifetime_technical. reinvest_automatic "
+            "(default): the capacity is kept to the end of the model horizon and the annualized investment cost is "
+            "paid on, without a model choice. reinvest_choice: the capacity retires at the end of its "
+            "lifetime_technical and the model decides how much new capacity to build. no_reinvestment: the "
+            "capacity retires at the end of its lifetime_technical; investment is possible only during the first "
+            "technical lifetime from the model start, and the capacity is not rebuilt.")
+        t[(cls, "discount_rate")] = (
+            "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and "
+            "risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. "
+            "When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the "
+            "payback time: annuity = invest_cost x r / (1 - (1 + r)^-payback_time). 0 gives the straight-line "
+            "annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.")
+        t[(cls, "invest_cost")] = (
+            f"[CUR/{per}] Overnight investment cost of new {cap}. It is annualized over payback_time with "
+            f"discount_rate, and the annuity is paid in each year the {cap} operates. Construction time costs with "
+            f"their interest must be included here. Constant or period: the value of the period when the {cap} is "
+            "built (comes online) is used.")
+    t[("node", "unit_of_measure")] = V79_NODE_UNIT_OF_MEASURE_DESCRIPTION.replace(
+        "(invest_cost, fixed_cost, salvage_value)", "(invest_cost, fixed_cost, net_salvage_value)")
+    t[("group", "penalty_capacity_margin")] = (
+        "[CUR/kW/a] Penalty for violating the capacity margin constraint. Uses operational discounting (not "
+        "annualized over a payback time like investment costs), so the value is not directly comparable to "
+        "annualized investment costs. Constant or period.")
+    return t
+
+
+def _v81_definitions() -> dict[tuple[str, str], dict]:
+    """The definitions v81 adds, with the fields it gives them (types, group, default, value list, description)."""
+    texts = _v81_texts()
+    out: dict[tuple[str, str], dict] = {}
+    for cls in _V81_CAPACITY:
+        for name, group in (("lifetime_technical", "investment"), ("payback_time", "investment"),
+                            ("net_salvage_value", "retirement")):
+            out[(cls, name)] = {"parameter_type_list": ("float", "1d_map"), "parameter_group_name": group,
+                                "default_value": None, "default_type": None, "parameter_value_list_name": None,
+                                "description": texts[(cls, name)]}
+    return out
+
+
+#: Colour and priority of the parameter groups v81 definitions use (as v44 / v45 create them), for a database built
+#: without the standard groups.
+_V81_GROUPS = {"investment": ("7fb095", 20), "retirement": ("a3b08c", 25)}
+
+
+def _v81_value_lists(db) -> None:
+    """Part 1 of v81: each list of :data:`V81_NEW_VALUE_LISTS` exists and has its members (the missing ones are
+    appended in the table's order).  Idempotent."""
+    for name, members in V81_NEW_VALUE_LISTS.items():
+        if not db.get_item("parameter_value_list", name=name):
+            db.add_parameter_value_list(name=name)
+        items = db.get_items("list_value", parameter_value_list_name=name)
+        have = {x["parsed_value"] for x in items}
+        index = max((x["index"] for x in items), default=-1)
+        for member in members:
+            if member in have:
+                continue
+            index += 1
+            val, typ = to_database(member)
+            db.add_list_value(parameter_value_list_name=name, value=val, type=typ, index=index)
+            have.add(member)
+
+
+def _v81_definitions_part(db, *, update: bool = True) -> None:
+    """Part 2 of v81: each definition of :func:`_v81_definitions` on an existing class is added, or (``update``)
+    set to the given fields.  ``update=False`` only adds the missing ones (an existing one keeps its own fields,
+    e.g. a description the user edited).  Idempotent."""
+    for (cls, name), fields in _v81_definitions().items():
+        if not db.get_item("entity_class", name=cls):
+            continue
+        group = fields["parameter_group_name"]
+        if group is not None:
+            _ensure_parameter_group(db, group, *_V81_GROUPS[group])
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is None:
+            db.add_parameter_definition(entity_class_name=cls, name=name,
+                                        **{k: v for k, v in fields.items() if v is not None})
+        elif update and any((tuple(pdef[k] or ()) if k == "parameter_type_list" else pdef[k]) != v
+                            for k, v in fields.items()):
+            db.update_parameter_definition(id=pdef["id"], **fields)
+
+
+def _v81_move_values(db) -> None:
+    """Part 3 of v81: the values of each old parameter of :data:`V81_VALUE_MOVES` are copied to each of its new
+    names, then the old definition (and so its values) is removed.
+
+    Every value is copied as it is stored (its bytes and type: a constant, a map with any index, every alternative),
+    on each class that defines the old name, to each new name where that (entity, alternative) has no value yet; a
+    value already there is kept, and the old one it would have replaced is printed.  Without the old definition the
+    part does nothing, so a rerun never brings back a value.
+    """
+    for old, news in V81_VALUE_MOVES.items():
+        for pdef in [d for d in db.get_items("parameter_definition") if d["name"] == old]:
+            cls = pdef["entity_class_name"]
+            values = list(db.find_parameter_values(entity_class_name=cls, parameter_definition_name=old))
+            for new in news:
+                if _pdef_or_none(db, cls, new) is None:
+                    continue
+                taken = {(tuple(pv["entity_byname"]), pv["alternative_name"])
+                         for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name=new)}
+                kept = []
+                for pv in values:
+                    key = (tuple(pv["entity_byname"]), pv["alternative_name"])
+                    if key in taken:
+                        kept.append(pv)
+                        continue
+                    db.add_parameter_value(entity_class_name=cls, entity_byname=key[0], parameter_definition_name=new,
+                                           alternative_name=key[1], value=pv["value"], type=pv["type"])
+                if kept:
+                    print(f"v81: {cls} {new} already had a value where {old} had one; kept the {new} value, dropped "
+                          f"the {old} value:")
+                    for pv in kept:
+                        print("  " + _describe_pv(pv))
+            db.remove_parameter_definition(id=pdef["id"])
+
+
+def _v81_list_member_renames(db) -> None:
+    """Part 4 of v81: the value-list members of :data:`V81_LIST_MEMBER_RENAMES` are renamed.
+
+    Each member is renamed in place (its index, so the list order, is kept); when the new name is already a member
+    (a database built from the current template but stamped with an older version), the old member is removed
+    instead (never a duplicate).  Then every stored value, and a default, of every definition that uses the list is
+    rewritten to the new name.  Idempotent: a rerun finds the new names.
+    """
+    for list_name, renames in V81_LIST_MEMBER_RENAMES.items():
+        if not db.get_item("parameter_value_list", name=list_name):
+            continue
+        items = db.get_items("list_value", parameter_value_list_name=list_name)
+        members = {x["parsed_value"] for x in items}
+        for item in sorted(items, key=lambda x: x["index"]):
+            new = renames.get(item["parsed_value"])
+            if new is None:
+                continue
+            if new in members:
+                db.remove_item("list_value", item["id"])
+            else:
+                val, typ = to_database(new)
+                db.update_list_value(id=item["id"], value=val, type=typ)
+                members.add(new)
+        renamed = []
+        for pdef in [d for d in db.get_items("parameter_definition") if d["parameter_value_list_name"] == list_name]:
+            default = from_database(pdef["default_value"], pdef["default_type"])
+            if isinstance(default, str) and default in renames:
+                val, typ = to_database(renames[default])
+                db.update_parameter_definition(id=pdef["id"], default_value=val, default_type=typ)
+            for pv in db.find_parameter_values(entity_class_name=pdef["entity_class_name"],
+                                               parameter_definition_name=pdef["name"]):
+                parsed = from_database(pv["value"], pv["type"])
+                if isinstance(parsed, str) and parsed in renames:
+                    val, typ = to_database(renames[parsed])
+                    db.update_parameter_value(id=pv["id"], value=val, type=typ)
+                    renamed.append(f"{pv['entity_class_name']} {'/'.join(pv['entity_byname'])} "
+                                   f"{pdef['name']} [{pv['alternative_name']}]: {parsed} -> {renames[parsed]}")
+        if renamed:
+            print("v81: value names changed: " + ", ".join(renamed))
+
+
+def _v81_descriptions(db) -> None:
+    """Part 5 of v81: the whole descriptions of :func:`_v81_texts`.  No value is rewritten.  Idempotent."""
+    for (cls, name), text in _v81_texts().items():
+        if not db.get_item("entity_class", name=cls):
+            continue
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is not None and (pdef["description"] or "") != text:
+            db.update_parameter_definition(id=pdef["id"], description=text)
+
+
+def _migrate_v81_schema_batch(db) -> None:
+    """All schema changes of database version 81 (v80 -> v81), in one step.
+
+    1. The value lists of :data:`V81_NEW_VALUE_LISTS` and their members (:func:`_v81_value_lists`).
+    2. ``lifetime_technical`` and ``payback_time`` (group ``investment``) and ``net_salvage_value`` (group
+       ``retirement``) on unit, connection and node: a constant or a period map, no default
+       (:func:`_v81_definitions_part`).
+    3. ``lifetime`` is split: every value is copied to both ``lifetime_technical`` (how long the capacity operates)
+       and ``payback_time`` (the years of the annuity); ``salvage_value`` values go to ``net_salvage_value``; the old
+       definitions are removed (:func:`_v81_move_values`).
+    4. The ``lifetime_method`` value ``no_investment`` is ``no_reinvestment``, in the value list and in every stored
+       value (:func:`_v81_list_member_renames`).
+    5. The descriptions of the new definitions and of ``lifetime_method``, ``discount_rate``, ``invest_cost``,
+       ``node.unit_of_measure`` and ``group.penalty_capacity_margin`` (:func:`_v81_descriptions`).
+
+    Values change only by the moves of part 3 and the renames of part 4.  Each part is idempotent, so a rerun of the
+    step changes nothing.
+    """
+    _v81_value_lists(db)
+    _v81_definitions_part(db)
+    _v81_move_values(db)
+    _v81_list_member_renames(db)
+    _v81_descriptions(db)
+    _commit_step(db, "v81: lifetime split into lifetime_technical and payback_time, salvage_value is "
+                     "net_salvage_value, the lifetime_method value no_investment is no_reinvestment")
+
+
+#: The schema step of the current data version.  The template sync reruns it on the master template, so that schema
+#: entries appended to its tables after the version was first stamped reach the shipped schema (a database at the
+#: current version is otherwise not migrated again).
+RERUNNABLE_HEAD_STEP: dict[int, Callable] = {81: _migrate_v81_schema_batch}
+
+
+def _head_schema_additions() -> tuple[set[tuple[str, str]], dict[str, tuple[str, ...]]]:
+    """``(definitions, list members)`` the schema step of the current data version adds: what a database at that
+    version must have (on the classes it has)."""
+    if FLEXTOOL_DB_VERSION != 81:
+        return set(), {}
+    return set(_v81_definitions()), dict(V81_NEW_VALUE_LISTS)
+
+
+def _head_schema_missing_ro(path) -> bool:
+    """Whether the database *path* (read read-only) lacks a definition or a list member that the schema step of the
+    current data version adds (``True`` when it cannot be read)."""
+    import sqlite3
+
+    from flextool.update_flextool.frozen import _connect_ro
+
+    definitions, lists = _head_schema_additions()
+    if not definitions and not lists:
+        return False
+    try:
+        con = _connect_ro(path)
+    except sqlite3.Error:
+        return True
+    try:
+        classes = {r[0] for r in con.execute("SELECT name FROM entity_class").fetchall()}
+        have = set(con.execute(
+            "SELECT ec.name, pd.name FROM parameter_definition pd "
+            "JOIN entity_class ec ON pd.entity_class_id = ec.id").fetchall())
+        members: dict[str, set] = {}
+        for name, value, typ in con.execute(
+                "SELECT pvl.name, lv.value, lv.type FROM list_value lv "
+                "JOIN parameter_value_list pvl ON lv.parameter_value_list_id = pvl.id").fetchall():
+            members.setdefault(name, set()).add(from_database(value, typ))
+    except sqlite3.Error:
+        return True
+    finally:
+        con.close()
+    if any(cls in classes and (cls, name) not in have for cls, name in definitions):
+        return True
+    return any(not set(wanted) <= members.get(name, set()) for name, wanted in lists.items())
+
+
+def _refresh_head_schema(db) -> None:
+    """Add to a database at the current data version the definitions and list members of its schema step that it
+    lacks (parts 1 and 2 of the step; an existing definition keeps its fields, a description is never rewritten).
+    Idempotent."""
+    if FLEXTOOL_DB_VERSION == 81:
+        _v81_value_lists(db)
+        _v81_definitions_part(db, update=False)
 
 
 if __name__ == '__main__':

@@ -5,17 +5,18 @@ Formula::
     annuity_factor(r, n) = r / (1 − (1 + r)^−n)      r ≠ 0
                          = 1 / n                     r = 0 (|r| < 1e-9)
 
-    annualised cost [CUR/MW/a] = invest_cost [CUR/kW] · 1000 · annuity_factor(discount_rate, lifetime)
+    annualised cost [CUR/MW/a] = invest_cost [CUR/kW] · 1000 · annuity_factor(discount_rate, payback_time)
 
-What it does: spreads an investment (or a retirement's salvage value) over ``lifetime`` years at the interest
-``discount_rate``.  ``r = 0`` is the straight-line limit of the formula: the annuity is ``cost / lifetime``.
+What it does: spreads an investment (or a retirement's net salvage value) over ``payback_time`` years at the
+interest ``discount_rate``.  ``r = 0`` is the straight-line limit of the formula: the annuity is
+``cost / payback_time``.  An entity without ``payback_time`` pays back over its ``lifetime_technical``.
 
 Notes:
 
 * A missing ``discount_rate`` takes the schema default (0.05, ``DEFAULT_DISCOUNT_RATE`` when the source has no
   default); an explicit 0 stays 0.  Before schema v79 any value ≤ 0 became 5 % (the ``discount_rate_zero_is_zero``
   behaviour change); a negative value is now an input error (``validate_basic_sanity``).
-* ``lifetime`` has no default: a missing or non-positive lifetime where the cost is non-zero is an error
+* The payback time has no default: a missing or non-positive one where the cost is non-zero is an error
   (:func:`require_lifetime`), never a silent 20 years.
 * ``|r| < 1e-9`` takes ``1/n``: the closed form loses precision there (at ``r = 1e-12`` it is 9e-5 relative
   off), so both helpers agree to rounding.
@@ -64,9 +65,9 @@ def default_discount_rate(source=None) -> float:
     return DEFAULT_DISCOUNT_RATE
 
 
-def require_lifetime(missing: Iterable[tuple[str, str]], cost_param: str, lifetime_param: str = "lifetime") -> None:
+def require_lifetime(missing: Iterable[tuple[str, str]], cost_param: str, lifetime_param: str) -> None:
     """Raise when an entity has a non-zero ``cost_param`` in a period but no positive ``lifetime_param`` (the
-    payback time of the annuity, under the name the database gives it) there.
+    payback time of the annuity) there.
 
     ``missing``: ``(entity, period)`` pairs (the first few are named).  ``validate_basic_sanity`` stops an entity
     without any lifetime earlier; this catches a period map that lacks the period."""

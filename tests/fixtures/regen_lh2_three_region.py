@@ -356,7 +356,8 @@ def _build_invest_overlay(base_entities: list[tuple]) -> dict[str, list]:
             # unserved energy whenever capacity is short.
             ("unit", wind, "invest_method", "invest_no_limit", INVEST_ALT),
             ("unit", wind, "invest_cost", 50.0, INVEST_ALT),
-            ("unit", wind, "lifetime", 25.0, INVEST_ALT),
+            ("unit", wind, "lifetime_technical", 25.0, INVEST_ALT),
+            ("unit", wind, "payback_time", 25.0, INVEST_ALT),
             ("unit", wind, "discount_rate", 0.05, INVEST_ALT),
             # Tighten the dispatchable thermal so each region faces a
             # genuine in-region capacity shortage that wind investment
@@ -444,7 +445,8 @@ def _build_trade_invest_overlay(
             ("connection", pipe, "invest_cost", 10.0, TRADE_INVEST_ALT),
             ("connection", pipe, "invest_max_total", 5000.0,
              TRADE_INVEST_ALT),
-            ("connection", pipe, "lifetime", 25.0, TRADE_INVEST_ALT),
+            ("connection", pipe, "lifetime_technical", 25.0, TRADE_INVEST_ALT),
+            ("connection", pipe, "payback_time", 25.0, TRADE_INVEST_ALT),
             ("connection", pipe, "discount_rate", 0.05, TRADE_INVEST_ALT),
             # efficiency 0.95 inherited from base.
         ])
@@ -673,7 +675,8 @@ def _build_rp_invest_overlay(
                  alt_name),
                 ("connection", pipe, "invest_cost", 10.0, alt_name),
                 ("connection", pipe, "invest_max_total", 5000.0, alt_name),
-                ("connection", pipe, "lifetime", 25.0, alt_name),
+                ("connection", pipe, "lifetime_technical", 25.0, alt_name),
+                ("connection", pipe, "payback_time", 25.0, alt_name),
                 ("connection", pipe, "discount_rate", 0.05, alt_name),
                 ("connection", pipe, "other_operational_cost", 2.0,
                  alt_name),

@@ -96,7 +96,8 @@ def test_invest_min_period_above_a_constant_max_is_an_error_per_period(tmp_path_
     url, scen = make_db(tmp_path_factory, alt="b170_period", base_chain=PLANT_CHAIN, values=[
         ["unit", "coal_plant", "invest_method", b64("invest_period", "str")],
         ["unit", "coal_plant", "invest_cost", _f(400.0)],
-        ["unit", "coal_plant", "lifetime", _f(30.0)],
+        ["unit", "coal_plant", "lifetime_technical", _f(30.0)],
+        ["unit", "coal_plant", "payback_time", _f(30.0)],
         ["unit", "coal_plant", "invest_min_period", _map([["p2020", 200.0]])],
         ["unit", "coal_plant", "invest_max_period", _f(100.0)]])
     with pytest.raises(FlexToolConfigError) as err:
@@ -130,31 +131,34 @@ def test_cumulative_min_above_max_in_a_shared_period_is_an_error(tmp_path_factor
         "problem is infeasible. Lower cumulative_min_capacity or raise cumulative_max_capacity."), msg
 
 
-def test_zero_lifetime_of_an_investing_unit_is_an_error(tmp_path_factory) -> None:
-    msg = _error(tmp_path_factory, "b170_life", [
+@pytest.mark.parametrize("name", ["lifetime_technical", "payback_time"])
+def test_zero_lifetime_of_an_investing_unit_is_an_error(tmp_path_factory, name) -> None:
+    msg = _error(tmp_path_factory, f"b170_life_{name}", [
         ["unit", "coal_plant", "invest_method", b64("invest_no_limit", "str")],
-        ["unit", "coal_plant", "lifetime", _f(0.0)]])
-    assert ("unit 'coal_plant' lifetime = 0 (alternative 'b170_life'): lifetime must be above 0 when the unit can "
-            "invest or retire; with 0 the investment is charged for no years. Give the lifetime in years.") in msg
+        ["unit", "coal_plant", name, _f(0.0)]])
+    assert (f"unit 'coal_plant' {name} = 0 (alternative 'b170_life_{name}'): {name} must be above 0 when the unit "
+            f"can invest or retire; with 0 the investment is charged for no years. Give the {name} in years.") in msg
 
 
-def test_zero_lifetime_without_investment_is_silent(tmp_path_factory) -> None:
-    _validate(*make_db(tmp_path_factory, alt="b170_life_off", base_chain=PLANT_CHAIN,
-                       values=[["unit", "coal_plant", "lifetime", _f(0.0)]]))
+@pytest.mark.parametrize("name", ["lifetime_technical", "payback_time"])
+def test_zero_lifetime_without_investment_is_silent(tmp_path_factory, name) -> None:
+    _validate(*make_db(tmp_path_factory, alt=f"b170_life_off_{name}", base_chain=PLANT_CHAIN,
+                       values=[["unit", "coal_plant", name, _f(0.0)]]))
 
 
 def test_negative_discount_rate_is_an_error(tmp_path_factory) -> None:
     """Before v79 a discount_rate ≤ 0 was read as 5 %; 0 is now 0 % and a negative rate is refused."""
     msg = _error(tmp_path_factory, "le_disc_neg", [["unit", "coal_plant", "discount_rate", _f(-0.01)]])
     assert ("unit 'coal_plant' discount_rate = -0.01 (alternative 'le_disc_neg'): discount_rate must be 0 or above "
-            "(0 gives the straight-line annuity invest_cost / lifetime).") in msg, msg
+            "(0 gives the straight-line annuity invest_cost / payback_time).") in msg, msg
 
 
 def test_zero_discount_rate_is_silent(tmp_path_factory) -> None:
     _validate(*make_db(tmp_path_factory, alt="le_disc_zero", base_chain=PLANT_CHAIN, values=[
         ["unit", "coal_plant", "invest_method", b64("invest_no_limit", "str")],
         ["unit", "coal_plant", "invest_cost", _f(400.0)],
-        ["unit", "coal_plant", "lifetime", _f(30.0)],
+        ["unit", "coal_plant", "lifetime_technical", _f(30.0)],
+        ["unit", "coal_plant", "payback_time", _f(30.0)],
         ["unit", "coal_plant", "discount_rate", _f(0.0)]]))
 
 
@@ -162,8 +166,8 @@ def test_investing_unit_with_a_cost_needs_a_lifetime(tmp_path_factory) -> None:
     msg = _error(tmp_path_factory, "le_life_missing", [
         ["unit", "coal_plant", "invest_method", b64("invest_no_limit", "str")],
         ["unit", "coal_plant", "invest_cost", _f(400.0)]])
-    assert ("unit 'coal_plant' has no lifetime, but it can invest (invest_method invest_no_limit) and has an "
-            "invest_cost. Give the lifetime in years.") in msg, msg
+    assert ("unit 'coal_plant' has no lifetime_technical, but it can invest (invest_method invest_no_limit) and has "
+            "an invest_cost. Give the lifetime_technical in years.") in msg, msg
 
 
 def test_bounded_lifetime_method_with_existing_needs_a_lifetime(tmp_path_factory) -> None:
@@ -171,8 +175,9 @@ def test_bounded_lifetime_method_with_existing_needs_a_lifetime(tmp_path_factory
     the capacity would be gone in every period."""
     msg = _error(tmp_path_factory, "le_life_bounded", [
         ["unit", "coal_plant", "lifetime_method", b64("reinvest_choice", "str")]])
-    assert ("unit 'coal_plant' has no lifetime, but its lifetime_method is reinvest_choice and it has existing "
-            "capacity, so its capacity ends after the lifetime. Give the lifetime in years.") in msg, msg
+    assert ("unit 'coal_plant' has no lifetime_technical, but its lifetime_method is reinvest_choice and it has "
+            "existing capacity, so its capacity ends after the lifetime. Give the lifetime_technical in "
+            "years.") in msg, msg
 
 
 @pytest.mark.parametrize("alt, values", [
@@ -181,12 +186,12 @@ def test_bounded_lifetime_method_with_existing_needs_a_lifetime(tmp_path_factory
                                    ["unit", "coal_plant", "invest_cost", _f(400.0)]]),
     ("le_life_invest_period_total_salvage", [
         ["unit", "coal_plant", "invest_method", b64("invest_period_total", "str")],
-        ["unit", "coal_plant", "salvage_value", _f(100.0)]]),
+        ["unit", "coal_plant", "net_salvage_value", _f(100.0)]]),
 ])
 def test_lifetime_not_needed_is_silent(tmp_path_factory, alt, values) -> None:
     """The default reinvest_automatic without investment, a retiring unit with a stray invest_cost (its
-    annuity uses salvage_value), and an invest_period_total unit with existing capacity and a stray
-    salvage_value (it cannot retire) need no lifetime."""
+    annuity uses net_salvage_value), and an invest_period_total unit with existing capacity and a stray
+    net_salvage_value (it cannot retire) need no lifetime."""
     _validate(*make_db(tmp_path_factory, alt=alt, base_chain=PLANT_CHAIN,
                        values=values or [["unit", "coal_plant", "efficiency", _f(0.4)]]))
 

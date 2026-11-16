@@ -1,13 +1,13 @@
-"""A chain of solves with an entity whose investment window closes at its end of life (``no_investment``).
+"""A chain of solves with an entity whose investment window closes at its end of life (``no_reinvestment``).
 
 Fixture ``tests.json`` (built from JSON), the chain ``invest_solveSequence_5weeks`` (``CHAIN``): the solves
 y2020 … y2035 each invest in their own period and the next one (y2035 in p2035 only).  Run years: p2020 0,
-p2025 5, p2030 10, p2035 15.  coal_plant has ``lifetime_method = no_investment``: its end of life is
+p2025 5, p2030 10, p2035 15.  coal_plant has ``lifetime_method = no_reinvestment``: its end of life is
 EOL = yr[p2020] + lifetime = lifetime, and a period d is closed to investment iff yr[d] ≥ EOL.
 
 The class partitions of the investment set (``pd_invest_set`` for units and connections, ``nd_invest_set`` for
 storage nodes) are what the model builds its investment variables over; they must hold exactly the
-(entity, period) pairs of ``ed_invest_set``, which the ``no_investment`` window filters.
+(entity, period) pairs of ``ed_invest_set``, which the ``no_reinvestment`` window filters.
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def test_chain_runs_after_the_window_closes(tmp_path_factory, life) -> None:
     periods with yr < EOL = ``life``.  Hand: life 10 → y2020 {p2020, p2025}, y2025 {p2025}, y2030 and y2035
     none; life 15 → y2020 {p2020, p2025}, y2025 {p2025, p2030}, y2030 {p2030}, y2035 none.  (Before: once every
     coal period of a solve was closed, the solve stopped with a ``p_entity_max_units`` error.)"""
-    url, scen = make_db(tmp_path_factory, alt=f"noinv_chain_{int(life)}", values=_lifetime("no_investment", life),
+    url, scen = make_db(tmp_path_factory, alt=f"noinv_chain_{int(life)}", values=_lifetime("no_reinvestment", life),
                         base_chain=_no_battery_invest(CHAIN))
     steps = run(tmp_path_factory, url, scen)
     assert {_solve_of(name) for name in steps} == set(INVEST_PERIODS)
@@ -56,11 +56,11 @@ def test_chain_runs_after_the_window_closes(tmp_path_factory, life) -> None:
 
 @pytest.mark.solver
 def test_partitions_follow_the_filtered_invest_set(tmp_path_factory) -> None:
-    """coal_plant ``no_investment`` with lifetime 10 beside a storage node that still invests
+    """coal_plant ``no_reinvestment`` with lifetime 10 beside a storage node that still invests
     (``battery_inverter`` not allowed to invest): in every solve the union of the class partitions equals
     ``ed_invest_set``, and the LP of y2030 and y2035 (where coal's window is closed, yr ≥ 10) has no coal
     investment variable.  (Before: the partitions kept coal's closed periods from the unfiltered seed.)"""
-    values = _lifetime("no_investment", 10.0) + [
+    values = _lifetime("no_reinvestment", 10.0) + [
         ["connection", "battery_inverter", "invest_method", b64("not_allowed", "str")]]
     url, scen = make_db(tmp_path_factory, alt="noinv_partitions", values=values, base_chain=CHAIN)
     steps = run(tmp_path_factory, url, scen)

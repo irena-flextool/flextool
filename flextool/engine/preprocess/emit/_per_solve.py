@@ -25,7 +25,7 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine.input._legacy_names import NO_REINVESTMENT
+from flextool.engine.input._lifetime_roles import NO_REINVESTMENT
 from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine.preprocess._provider_io import _emit
 from flextool.engine.preprocess.params._branch import fan_period_labels

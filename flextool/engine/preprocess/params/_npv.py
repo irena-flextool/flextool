@@ -105,14 +105,11 @@ from flextool.engine.preprocess._annuity import (
     require_lifetime,
 )
 from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
-from flextool.engine.input._legacy_names import (
+from flextool.engine.input._lifetime_roles import (
     LIFETIME_TECHNICAL,
     NET_SALVAGE_VALUE,
     NO_REINVESTMENT,
     PAYBACK_TIME,
-    ROLE_LEGACY,
-    canonical_method_expr,
-    source_physical_name,
 )
 from flextool.engine.preprocess.params._period_values import ed_values_on
 from flextool.engine.preprocess.params._existing import (
@@ -326,7 +323,7 @@ def _entity_method_lf(source: "InputSource",
             continue
         parts.append(df.lazy().select(
             alias_to_axis("name", "e"),
-            canonical_method_expr(pl.col("value").cast(pl.Utf8, strict=False), parameter_name).alias("method"),
+            pl.col("value").cast(pl.Utf8, strict=False).alias("method"),
         ))
     if not parts:
         return pl.LazyFrame(schema={"e": schema_dtype(_enums, "e"),
@@ -638,7 +635,7 @@ def _ed_lifetime_lf(source: "InputSource",
     """Lazy ``(e, d, life)`` mirroring ``edEntity_lifetime`` semantics.
 
     Mirrors :func:`._derived._ed_lifetime_mapping`: for each
-    (e, d) ∈ entities × periods, ``unit/node/connection.lifetime`` read by
+    (e, d) ∈ entities × periods, ``unit/node/connection.lifetime_technical`` read by
     :func:`._period_values.ed_values_on` (0 where absent).  Non-process /
     non-node entities get 0 (mirrors flextool's class-gated branch).
     """
@@ -667,7 +664,7 @@ def _ed_lifetime_on_lf(source: "InputSource", ed_lf: pl.LazyFrame) -> pl.LazyFra
 
 
 def _raw_lifetime_on_lf(source: "InputSource", ed_lf: pl.LazyFrame) -> pl.LazyFrame:
-    """Lazy ``(e, d, life)``: the raw ``lifetime`` (not edEntity_lifetime) over the given ``(e, d)`` pairs, read by
+    """Lazy ``(e, d, life)``: ``lifetime_technical`` (not edEntity_lifetime) over the given ``(e, d)`` pairs, read by
     :func:`._period_values.ed_values_on` with the class gate (only nodes and processes; others 0).  The divest-side
     window."""
     cls_lf = _entity_class_lookup_lf(_entity_class_lf(source))
@@ -786,9 +783,7 @@ def _per_method_annuity_lf(
               .select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8))
               .head(5)
               .collect())
-    require_lifetime(bad.iter_rows(), source_physical_name(source, cost_param_name)
-                     if cost_param_name in ROLE_LEGACY else cost_param_name,
-                     source_physical_name(source, PAYBACK_TIME))
+    require_lifetime(bad.iter_rows(), cost_param_name, PAYBACK_TIME)
     _notice_discount_rate_zero()
 
     # Annuity: cost [CUR/kW] × 1000 × annuity_factor(r, n).
@@ -860,7 +855,7 @@ def npv_invest_discounted_lf(
     starts at ``yr_c``, so it is paid only over the years the capacity operates within the solve.
 
     where ``window`` switches between bounded / unbounded based on
-    ``e``'s lifetime_method (``reinvest_choice`` / ``no_investment`` →
+    ``e``'s lifetime_method (``reinvest_choice`` / ``no_reinvestment`` →
     bounded; ``reinvest_automatic`` → unbounded).  An entity may have
     multiple methods; each contributes a separate sum.  See
     ``entity_annual_calc_params.py:222-251``.
@@ -892,7 +887,7 @@ def npv_invest_discounted_lf(
     # Lifetime methods: per-entity dispatch.
     all_e_lf = ed_anchor_lf.select("e").unique()
     elm_lf = _lifetime_method_with_default_lf(source, all_e_lf)
-    # Choice/no_investment → bounded; automatic → unbounded.  An entity
+    # Choice/no_reinvestment → bounded; automatic → unbounded.  An entity
     # may have multiple methods; each contributes additively (mirrors
     # the if/if structure at L237/244).
     has_choice_or_no = (elm_lf
@@ -1023,7 +1018,7 @@ def npv_divest_discounted_lf(
 
         ann[e, d] × Σ_{d_all : pdy ∈ [pdy_d, pdy_d + life)} inv_factor[d_all]
 
-    where ``life`` is the **raw** ``lifetime`` value (not edEntity_lifetime),
+    where ``life`` is the **raw** ``lifetime_technical`` value (not edEntity_lifetime),
     and the gate is restricted to e ∈ node ∪ process (mirrors
     L266-285 — no fallback for unclassified entities).
 
@@ -1804,7 +1799,7 @@ def _run_window(anchors: pl.DataFrame,
 
 
 def _lifetime_kinds(source: "InputSource", entities: pl.DataFrame) -> pl.DataFrame:
-    """``[e, kind]``: ``bounded`` for an entity with a reinvest_choice / no_investment lifetime method, ``unbounded``
+    """``[e, kind]``: ``bounded`` for an entity with a reinvest_choice / no_reinvestment lifetime method, ``unbounded``
     for one with reinvest_automatic (the default); both for an entity with both."""
     elm = _utf8_ed(_lifetime_method_with_default_lf(
         source, entities.lazy().select(alias_to_axis("e", "e"))), ("e",))

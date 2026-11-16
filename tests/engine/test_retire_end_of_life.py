@@ -5,9 +5,9 @@ existing (one unit of 500 MW), fixed_cost 100 CUR/kW/yr, discount_rate 0.05; fou
 years each, so the run years are Y = 0, 5, 10, 15 and the horizon ends at 20.  SINGLE solves all four periods at
 once, CHAIN (``invest_solveSequence_5weeks``) solves y2020 … y2035, each its own period and the next one.
 
-End of life (``reinvest_choice`` / ``no_investment``): the run year of the run's first period plus ``lifetime``,
-one value per entity, in every solve of the run.  Lifetime 15: EOL = 0 + 15 = 15, so the existing 500 MW operate
-in p2020, p2025, p2030 (Y < 15) and are gone in p2035 (Y = 15 ≥ 15).
+End of life (``reinvest_choice`` / ``no_reinvestment``): the run year of the run's first period plus
+``lifetime_technical``, one value per entity, in every solve of the run.  Lifetime 15: EOL = 0 + 15 = 15, so the
+existing 500 MW operate in p2020, p2025, p2030 (Y < 15) and are gone in p2035 (Y = 15 ≥ 15).
 """
 from __future__ import annotations
 
@@ -35,7 +35,8 @@ def _ed(param, entity: str = PLANT) -> dict[str, float]:
 
 
 def _lifetime(method: str, lifetime: float, entity: str = PLANT) -> list:
-    return [["unit", entity, "lifetime", b64(lifetime, "float")],
+    return [["unit", entity, "lifetime_technical", b64(lifetime, "float")],
+            ["unit", entity, "payback_time", b64(lifetime, "float")],
             ["unit", entity, "lifetime_method", b64(method, "str")]]
 
 
@@ -108,7 +109,7 @@ def test_fan_in_the_first_period_counts_the_end_of_life_once(tmp_path_factory, c
 # ---------------------------------------------------------------------------
 #
 # coal_plant retires exactly 100 MW (retire_min_period = retire_max_period = 100 in p2025, 0 elsewhere,
-# invest_method retire_period, salvage_value 200 so that it has a retirement option).  The retirement removes
+# invest_method retire_period, net_salvage_value 200 so that it has a retirement option).  The retirement removes
 # the 100 MW from p2025 until the end of life of the existing capacity; there the whole 500 MW are gone.
 
 SALVAGE = 200.0
@@ -126,7 +127,7 @@ def _retire(mw: float = 100.0, period: str = "p2025", *, pinned: bool = True, en
     return [[cls, entity, "invest_method", b64("retire_period", "str")],
             [cls, entity, "retire_min_period", low],
             [cls, entity, "retire_max_period", _pins(period, mw)],
-            [cls, entity, "salvage_value", b64(salvage, "float")]]
+            [cls, entity, "net_salvage_value", b64(salvage, "float")]]
 
 
 def _divest_mw(step, entity: str = PLANT, var: str = "v_divest_p", col: str = "p") -> dict[str, float]:
@@ -195,11 +196,11 @@ def test_retirement_counts_until_the_end_of_life(tmp_path_factory) -> None:
 
 
 @pytest.mark.solver
-def test_no_investment_lifetime_ends_the_retirement(tmp_path_factory) -> None:
-    """no_investment, lifetime 10 (EOL year 10 = p2030): 100 MW retired in p2025 leave 400 MW in p2025 and nothing
+def test_no_reinvestment_lifetime_ends_the_retirement(tmp_path_factory) -> None:
+    """no_reinvestment, lifetime 10 (EOL year 10 = p2030): 100 MW retired in p2025 leave 400 MW in p2025 and nothing
     from p2030 on; (coal, p2030) and (coal, p2035) are no retirement options (before: infeasible)."""
     from tests.engine._unit_db import build
-    step = _single(tmp_path_factory, "ret_noinv", _lifetime("no_investment", 10.0) + _retire())
+    step = _single(tmp_path_factory, "ret_noinv", _lifetime("no_reinvestment", 10.0) + _retire())
     assert step.optimal
     retired = _divest_mw(step)
     assert sorted(retired) == ["p2020", "p2025"]
@@ -237,7 +238,7 @@ def test_entity_without_existing_capacity_has_no_retirement(tmp_path_factory, ca
     be retired, so it has investment variables but no retirement variable, and a warning names it."""
     values = [["unit", PLANT, "existing", b64(0.0, "float")],
               ["unit", PLANT, "invest_method", b64("invest_retire_no_limit", "str")],
-              ["unit", PLANT, "salvage_value", b64(SALVAGE, "float")]]
+              ["unit", PLANT, "net_salvage_value", b64(SALVAGE, "float")]]
     step = _single(tmp_path_factory, "ret_none", values)
     assert step.optimal
     assert utf8(step.solution.value("v_invest_p")).filter(pl.col("p") == PLANT).height == len(PERIODS)
@@ -278,7 +279,7 @@ def test_minimum_total_retirement_above_what_the_window_allows_is_an_error(tmp_p
               ["unit", PLANT, "invest_method", b64("retire_total", "str")],
               ["unit", PLANT, "retire_min_total", b64(300.0, "float")],
               ["unit", PLANT, "retire_max_total", b64(1000.0, "float")],
-              ["unit", PLANT, "salvage_value", b64(SALVAGE, "float")]]
+              ["unit", PLANT, "net_salvage_value", b64(SALVAGE, "float")]]
     msg = _config_error(tmp_path_factory, "ret_err_total", values)
     assert PLANT in msg and "retire_min_total" in msg and "at most 200" in msg
 
@@ -408,7 +409,7 @@ def test_fan_retirement_ends_with_the_existing_capacity(tmp_path_factory, chain)
     values = (_lifetime("reinvest_choice", 1.0, "wind")
               + [["unit", "wind", "invest_method", b64("retire_period", "str")],
                  ["unit", "wind", "retire_min_period", pins], ["unit", "wind", "retire_max_period", pins],
-                 ["unit", "wind", "salvage_value", b64(SALVAGE, "float")]])
+                 ["unit", "wind", "net_salvage_value", b64(SALVAGE, "float")]])
     url, scen = make_db(tmp_path_factory, alt=f"ret_fan_{len(chain)}", values=values, base_chain=chain,
                         fixture_json=FAN)
     step = list(without_realization(run(tmp_path_factory, url, scen)).values())[-1]
@@ -523,14 +524,14 @@ def _swap_values(no_retirement_in: str | None = None) -> list:
     return [["unit", PLANT, "invest_method", b64("invest_retire_period", "str")],
             ["unit", PLANT, "invest_max_period", b64(500.0, "float")],
             ["unit", PLANT, "retire_max_period", retire_max],
-            ["unit", PLANT, "salvage_value", b64(SALVAGE, "float")]]
+            ["unit", PLANT, "net_salvage_value", b64(SALVAGE, "float")]]
 
 
 @pytest.mark.solver
 @pytest.mark.parametrize("kind", ["single", "chain"])
 def test_retiring_and_rebuilding_identical_capacity_earns_nothing(tmp_path_factory, kind) -> None:
     """coal_plant may invest and retire up to 500 MW in every period (invest_retire_period; invest_cost 400 CUR/kW,
-    lifetime 30, reinvest_automatic; salvage_value 200).  A new MW costs its annuity A(400, 30) over the window
+    lifetime 30, reinvest_automatic; net_salvage_value 200).  A new MW costs its annuity A(400, 30) over the window
     [yr, yr + 30), inside the horizon; a retired MW earns A(200, 30) over the same window, and both save / pay the
     same fixed cost.  Retiring existing capacity and building identical new capacity in p2035 so loses
     (A(400, 30) − A(200, 30)) · F_inv(p2035) per MW: no retirement in p2035, and the solves equal the twin
@@ -573,7 +574,7 @@ def test_retirement_option_without_existing_capacity_warns_once_per_run(tmp_path
     it once in the run, not once per solve."""
     values = [["unit", PLANT, "existing", b64(0.0, "float")],
               ["unit", PLANT, "invest_method", b64("invest_retire_no_limit", "str")],
-              ["unit", PLANT, "salvage_value", b64(SALVAGE, "float")]]
+              ["unit", PLANT, "net_salvage_value", b64(SALVAGE, "float")]]
     url, scen = make_db(tmp_path_factory, alt="ret_warn_once", values=values, base_chain=_no_battery_invest(CHAIN))
     capsys.readouterr()
     steps = run(tmp_path_factory, url, scen)
@@ -582,21 +583,21 @@ def test_retirement_option_without_existing_capacity_warns_once_per_run(tmp_path
 
 
 # ---------------------------------------------------------------------------
-# lifetime as a constant or as a period map; the behaviour-change notice
+# the lifetimes as a constant or as a period map; the behaviour-change notice
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.solver
 @pytest.mark.parametrize("kind", ["single", "chain"])
 def test_lifetime_constant_equals_map(tmp_path_factory, kind) -> None:
-    """lifetime 15 as a constant and as the period map {p2020 … p2035: 15}: the same solves (objective and
-    retirement in every solve; the end of life counts from the run's first period in both)."""
+    """lifetime_technical and payback_time 15 as constants and as the period maps {p2020 … p2035: 15}: the same
+    solves (objective and retirement in every solve; the end of life counts from the run's first period in both)."""
     from tests.engine.test_chain_costs import _period_map
     chain = _no_battery_invest(SINGLE if kind == "single" else CHAIN)
     outcomes = []
     for shape, life in (("const", b64(15.0, "float")), ("map", _period_map(dict.fromkeys(PERIODS, 15.0)))):
-        values = ([["unit", PLANT, "lifetime", life], ["unit", PLANT, "lifetime_method", b64("reinvest_choice", "str")]]
-                  + _retire())
+        values = ([["unit", PLANT, "lifetime_technical", life], ["unit", PLANT, "payback_time", life],
+                   ["unit", PLANT, "lifetime_method", b64("reinvest_choice", "str")]] + _retire())
         url, scen = make_db(tmp_path_factory, alt=f"life_{shape}_{kind}", values=values, base_chain=chain)
         steps = run(tmp_path_factory, url, scen)
         outcomes.append({name: (step.solution.obj, _divest_mw(step)) for name, step in steps.items()})

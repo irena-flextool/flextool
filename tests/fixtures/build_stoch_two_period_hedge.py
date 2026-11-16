@@ -295,7 +295,8 @@ def build() -> dict:
          _pack("invest_total", "str"), "base"],
         ["unit", "base", "invest_cost", _pack(invest_cost, "map"), "base"],
         ["unit", "base", "discount_rate", _pack(0.05, "float"), "base"],
-        ["unit", "base", "lifetime", _pack(1.0, "float"), "base"],
+        ["unit", "base", "lifetime_technical", _pack(1.0, "float"), "base"],
+        ["unit", "base", "payback_time", _pack(1.0, "float"), "base"],
         ["unit", "base", "invest_max_total", _pack(150.0, "float"),
          "base"],
         ["unit__outputNode", ["base", "elec"], "other_operational_cost",
@@ -337,7 +338,7 @@ def build() -> dict:
         ["unit", "base", "invest_method",
          _pack("invest_retire_total", "str"), "divest"],
         ["unit", "base", "existing", _pack(50.0, "float"), "divest"],
-        ["unit", "base", "salvage_value", _pack(1.0, "float"), "divest"],
+        ["unit", "base", "net_salvage_value", _pack(1.0, "float"), "divest"],
         # ---- invest_none: none composition (T-None) --------------------
         ["solve", "stoch_2p_hedge", "stochastic_invest_method",
          _pack("none", "str"), "invest_none"],

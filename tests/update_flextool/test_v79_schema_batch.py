@@ -140,12 +140,18 @@ def _shipped() -> dict:
     """The shipped descriptions as v79 left them, under the v79 names.  What v80 changed is undone: its appended
     sentences (``inf`` is no limit, a coarse step mixing no-limit and finite time steps) are taken off, the
     capacity-margin renames are mapped back, a description v80 replaced as a whole is the v79 text, and the
-    piecewise_linear sentences of v80 part 4 are taken off (its new definition is left in: no v79 test reads it)."""
+    piecewise_linear sentences of v80 part 4 are taken off (its new definition is left in: no v79 test reads it).
+    What v81 changed is undone where a v79 test reads it: ``lifetime_technical`` is ``lifetime`` with its v79 text,
+    and the ``discount_rate`` and ``node.unit_of_measure`` texts are the v79 ones."""
     with open(package_data_path("schemas/spinedb_schema.json"), encoding="utf-8") as f:
         schema = json.load(f)
     later = {key: "".join(sentences)
              for key, sentences in {**m._v80_suffixes(), **m._v80_piecewise_sentences()}.items()}
     old_names = {("group", new): ("group", old) for old, new in m.V80_CAPACITY_MARGIN_RENAMES.items()}
+    old_names.update({(cls, "lifetime_technical"): (cls, "lifetime") for cls in m._V79_LIFETIME_DESCRIPTIONS})
+    v81_back = {**{(cls, "lifetime"): text for cls, text in m._V79_LIFETIME_DESCRIPTIONS.items()},
+                **{(cls, "discount_rate"): m._V79_DISCOUNT_RATE_DESCRIPTION for cls in m._V79_LIFETIME_DESCRIPTIONS},
+                ("node", "unit_of_measure"): m.V79_NODE_UNIT_OF_MEASURE_DESCRIPTION}
     v79_texts = {**m._V79_CAPACITY_MARGIN_DESCRIPTIONS, **m._v79_solver_precommand_texts(),
                  ("solve", "reduce_unit_detail_method"): m._V79_REDUCE_DESCRIPTIONS["reduce_unit_detail_method"],
                  ("group", "print_dispatch"): (m._V78_UNIT_PREFIXES[("group", "print_dispatch")] + " "
@@ -155,7 +161,10 @@ def _shipped() -> dict:
         key = (r[0], r[1])
         text, suffix = r[4], later.get(key)
         key = old_names.get(key, key)
-        if key in v79_texts:
+        if key in v81_back:
+            assert key in m._v81_texts() or (key[0], "lifetime_technical") in m._v81_texts(), key
+            text = v81_back[key]
+        elif key in v79_texts:
             assert (key[0], m.V80_CAPACITY_MARGIN_RENAMES.get(key[1], key[1])) in m._v80_texts(), key
             text = v79_texts[key]
         elif suffix and text and text.endswith(suffix):

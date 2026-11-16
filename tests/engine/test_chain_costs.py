@@ -468,14 +468,15 @@ SALVAGE = 200.0
 
 
 def _retire_values(lifetime: float) -> list:
-    """coal_plant (existing 500 MW, fixed_cost 100, salvage_value 200, discount_rate 0.05) retires exactly 100
+    """coal_plant (existing 500 MW, fixed_cost 100, net_salvage_value 200, discount_rate 0.05) retires exactly 100
     MW in p2025 and invests nothing."""
     pins = _period_map({d: (100.0 if d == "p2025" else 0.0) for d in PERIODS})
     values = [["unit", PLANT, "invest_method", b64("retire_period", "str")],
               ["unit", PLANT, "retire_min_period", pins],
               ["unit", PLANT, "retire_max_period", pins],
-              ["unit", PLANT, "salvage_value", b64(SALVAGE, "float")],
-              ["unit", PLANT, "lifetime", b64(lifetime, "float")]]
+              ["unit", PLANT, "net_salvage_value", b64(SALVAGE, "float")],
+              ["unit", PLANT, "lifetime_technical", b64(lifetime, "float")],
+              ["unit", PLANT, "payback_time", b64(lifetime, "float")]]
     return values
 
 
@@ -614,7 +615,8 @@ def _realized_fan_chain_db(tmp_path_factory) -> tuple[str, str]:
         ("node", "elec", "penalty_up", 10000.0), ("node", "elec", "penalty_down", 10000.0),
         ("unit", "wind", "existing", 0.0), ("unit", "wind", "efficiency", 1.0),
         ("unit", "wind", "virtual_unitsize", 1.0), ("unit", "wind", "invest_method", "invest_total"),
-        ("unit", "wind", "invest_cost", 1000.0), ("unit", "wind", "lifetime", 30.0),
+        ("unit", "wind", "invest_cost", 1000.0), ("unit", "wind", "lifetime_technical", 30.0),
+        ("unit", "wind", "payback_time", 30.0),
         ("unit", "wind", "discount_rate", 0.05), ("unit", "wind", "invest_max_total", 1000.0),
         ("unit", "wind", "fixed_cost", 10.0),
         ("unit__outputNode", ("wind", "elec"), "other_operational_cost", 1.0),

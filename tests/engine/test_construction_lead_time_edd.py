@@ -74,7 +74,7 @@ def _source(*, entity="nuke", lifetime_method="reinvest_automatic",
             {"name": [entity], "value": [lifetime_method]}),
     }
     if life is not None:
-        params[("unit", "lifetime")] = pl.DataFrame(
+        params[("unit", "lifetime_technical")] = pl.DataFrame(
             {"name": [entity], "value": [float(life)]})
     if lead is not None:
         params[("unit", "construction_lead_time")] = pl.DataFrame(

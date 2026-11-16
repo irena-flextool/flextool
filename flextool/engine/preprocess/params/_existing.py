@@ -22,7 +22,7 @@ Cluster B fields (per
   filtered by INVEST_TOTAL / RETIRE_TOTAL methods
   (``preprocessing/invest_total_sets.py``).
 * ``ed_invest_set`` / ``ed_divest_set`` — (e, d) cross-product
-  entityInvest (entityDivest) × period_invest, minus the no_investment
+  entityInvest (entityDivest) × period_invest, minus the no_reinvestment
   lifetime-expiry forbidden set (retirement: only with pre-existing
   capacity); the cost does not gate it (#218).
 * ``pd_invest_set`` / ``nd_invest_set`` / ``pd_divest_set`` /
@@ -35,7 +35,7 @@ Cluster B fields (per
   ``pdy[d] >= pdy[d_history]`` with optional bounded gate
   ``pdy[d] < pdy[d_history] + edEntity_lifetime[e, d_history]``.
   Filtered to entities whose ``lifetime_method`` is in
-  {``reinvest_choice``, ``reinvest_automatic``, ``no_investment``}.
+  {``reinvest_choice``, ``reinvest_automatic``, ``no_reinvestment``}.
 * ``edd_invest_set`` — ``edd_history`` ∩ ``ed_invest_set`` on
   ``(e, d_history)`` (i.e. the history rows that correspond to a
   current-solve invest decision).
@@ -80,7 +80,7 @@ from flextool.engine.input._axis_enums import (
     schema_dtype,
 )
 from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
-from flextool.engine.input._legacy_names import LIFETIME_TECHNICAL, NO_REINVESTMENT, canonical_method_expr
+from flextool.engine.input._lifetime_roles import LIFETIME_TECHNICAL, NO_REINVESTMENT
 from flextool.engine.preprocess.params._period_values import ed_values_on
 from flextool.engine.preprocess.params._walks import period_walk_iterator, WindowMethod
 
@@ -211,7 +211,7 @@ def _entity_method_lf(source: "InputSource",
             continue
         parts.append(df.lazy().select(
             alias_to_axis("name", "e"),
-            canonical_method_expr(pl.col("value").cast(pl.Utf8, strict=False), parameter_name).alias("method"),
+            pl.col("value").cast(pl.Utf8, strict=False).alias("method"),
         ))
     if not parts:
         return pl.LazyFrame(schema={
@@ -815,7 +815,7 @@ def entity_invest_set_lf(source: "InputSource") -> pl.LazyFrame:
 
     The Δ.5 ``ed_*``-derivation trap: an entity may have an
     ``invest_method`` row but no ``ed_invest_set`` row (e.g. its
-    no_investment window has ended, or the solve has no investment
+    no_reinvestment window has ended, or the solve has no investment
     period).  Such an entity is in ``entityInvest`` but not in any
     ``ed_invest`` (e, d) pair.  Cluster A's
     ``ed_lifetime_fixed_cost_divest`` produces rows for these entities;
@@ -934,7 +934,7 @@ def edd_history_no_investment_lf(source: "InputSource",
     """Lazy ``[e, d_history, d]`` for ``edd_history_no_investment``.
 
     Mirror of ``invest_divest_sets.py:247-248``: same predicate as
-    ``edd_history_choice`` but for the ``no_investment`` cohort.
+    ``edd_history_choice`` but for the ``no_reinvestment`` cohort.
 
     ``lineage`` / ``commission_lf`` — see
     :func:`._walks.period_walk_iterator`.
@@ -1640,7 +1640,7 @@ def p_entity_pre_existing_lf(source: "InputSource",
                  else 0
         if lifetime_method = reinvest_automatic →
             v = v_existing * v_unit  if v_unit > 0 else v_existing
-        if lifetime_method ∈ {reinvest_choice, no_investment} →
+        if lifetime_method ∈ {reinvest_choice, no_reinvestment} →
             v = (v_existing * v_unit if v_unit > 0 else v_existing)
                 while pdy[d] < life_sum(e); 0 thereafter.
         else → 0.

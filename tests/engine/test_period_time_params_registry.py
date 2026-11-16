@@ -28,8 +28,8 @@ def test_derivation_rule_matches_registry():
     assert set(PERIOD_TIME_PARAMS) == expected
 
 
-def test_count_is_72_split_22_dual_1_time_only_48_period_only_1_period_map_only():
-    assert len(PERIOD_TIME_PARAMS) == 72
+def test_count_is_75_split_22_dual_1_time_only_51_period_only_1_period_map_only():
+    assert len(PERIOD_TIME_PARAMS) == 75
     # 22 dual-axis: 21 with the full 2-D shape (incl. node.energy_margin_adder, which has no time-only map) +
     # commodity.price (two 1-D).
     dual_2d = {k for k, v in PARAM_ALLOWED_SHAPES.items()
@@ -44,14 +44,14 @@ def test_count_is_72_split_22_dual_1_time_only_48_period_only_1_period_map_only(
     # 1 time-only: the per-timestep weight map of a timeset.
     time_only = {k for k, v in PARAM_ALLOWED_SHAPES.items() if set(v) == {Shape.MAP_TIME}}
     assert time_only == {("timeset", "timeset_weights")}
-    # 48 period-only (incl. group cumulative_{max,min}_capacity, capacity_margin_relative, the user-constraint
-    # constant, unit__inputNode.startup_energy and the entities' lifetime / discount_rate): exactly
-    # {SCALAR, MAP_PERIOD}.
+    # 51 period-only (incl. group cumulative_{max,min}_capacity, capacity_margin_relative, the user-constraint
+    # constant, unit__inputNode.startup_energy and the entities' lifetime_technical / payback_time /
+    # discount_rate): exactly {SCALAR, MAP_PERIOD}.
     period_only = {k for k, v in PARAM_ALLOWED_SHAPES.items()
                    if set(v) == {Shape.SCALAR, Shape.MAP_PERIOD}}
-    assert len(period_only) == 48
+    assert len(period_only) == 51
     for cls in ("unit", "node", "connection"):
-        assert {(cls, "lifetime"), (cls, "discount_rate")} <= period_only
+        assert {(cls, "lifetime_technical"), (cls, "payback_time"), (cls, "discount_rate")} <= period_only
     assert ("group", "capacity_margin_relative") in period_only
     assert ("unit__inputNode", "startup_energy") in period_only
     # 1 period map only (no constant): the years each period of a solve represents.
@@ -113,8 +113,8 @@ def test_known_dual_axis_members_present():
         ("unit", "invest_cost"),
         ("node", "invest_cost"),
         ("connection", "invest_cost"),
-        ("unit", "salvage_value"),
-        ("node", "salvage_value"),
-        ("connection", "salvage_value"),
+        ("unit", "net_salvage_value"),
+        ("node", "net_salvage_value"),
+        ("connection", "net_salvage_value"),
     ]:
         assert key in PERIOD_TIME_PARAMS

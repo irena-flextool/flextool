@@ -63,7 +63,7 @@ def _overlay(data: dict, extra: tuple = ()) -> tuple[dict, str]:
             ["node", "battery", "invest_method", "retire_period"],
             ["node", "battery", "retire_min_period", retire],
             ["node", "battery", "retire_max_period", retire],
-            ["node", "battery", "salvage_value", 1000.0],
+            ["node", "battery", "net_salvage_value", 1000.0],
             ["node", "battery", "discount_rate", 0.05],
             *extra,
         ])

@@ -30,7 +30,7 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine.input._legacy_names import LIFETIME_TECHNICAL, lookup_roles, role_param
+from flextool.engine.input._lifetime_roles import LIFETIME_TECHNICAL
 from flextool.engine.preprocess._provider_io import (
     _emit,
     _provider_key,
@@ -587,15 +587,14 @@ def _compute_edEntity_lifetime(inp: dict) -> pl.DataFrame:
     pn = inp["pn"]
     process_set = inp["process_set"]
     node_set = inp["node_set"]
-    # The technical lifetime (the end of life and the windows), under the name each entity gives it.
-    pp_roles, pn_roles = lookup_roles(pp, "unit / connection"), lookup_roles(pn, "node")
+    # The technical lifetime (the end of life and the windows).
     rows: list[tuple[str, str, str]] = []
     for e in inp["entities"]:
         for d in inp["period_with_history"]:
             if e in process_set:
-                v = pp.get(e, role_param(pp_roles, e, LIFETIME_TECHNICAL), d)
+                v = pp.get(e, LIFETIME_TECHNICAL, d)
             elif e in node_set:
-                v = pn.get(e, role_param(pn_roles, e, LIFETIME_TECHNICAL), d)
+                v = pn.get(e, LIFETIME_TECHNICAL, d)
             else:
                 v = 0.0
             rows.append((e, d, repr(v)))

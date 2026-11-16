@@ -247,7 +247,8 @@ def test_online_term_makes_a_capacity_constraint_per_step(tmp_path_factory) -> N
     on g1 makes it a row per step that holds both terms."""
     invest = [["solve", SOLVE, "invest_periods", b64({"value_type": "str", "data": ["p2020"]}, "array")],
               ["unit", "g3", "invest_method", _s("invest_no_limit")], ["unit", "g3", "invest_cost", _f(1000.0)],
-              ["unit", "g3", "lifetime", _f(20.0)], ["unit", "g3", "discount_rate", _f(0.05)],
+              ["unit", "g3", "lifetime_technical", _f(20.0)], ["unit", "g3", "payback_time", _f(20.0)],
+              ["unit", "g3", "discount_rate", _f(0.05)],
               ["unit", "g3", "constraint_invested_capacity_coeff", _map({"c_cap": 1.0})],
               ["constraint", "c_cap", "sense", _s("greater_than")], ["constraint", "c_cap", "constant", _f(0.0)]]
     base = _values(dict.fromkeys(UNITS, "binary")) + invest

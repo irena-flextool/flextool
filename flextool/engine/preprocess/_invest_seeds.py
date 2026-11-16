@@ -93,7 +93,7 @@ def read_forbidden_no_investment(workdir_solve_data: Path,
     """Read ``ed_invest_forbidden_no_investment.csv``.
 
     Entities that may NOT invest in specified periods
-    (lifetime_method=no_investment at periods where the lifetime window
+    (lifetime_method=no_reinvestment at periods where the lifetime window
     disallows new build).  The seed loader removes these (entity,
     period) pairs from ``ed_invest_set``, and every other investment set
     is a partition of that set (``apply_derived_c``), so no investment

@@ -36,15 +36,11 @@ from dataclasses import dataclass
 import numpy as np
 import spinedb_api as api
 
-from flextool.engine.input._legacy_names import (
-    LIFETIME_METHOD_LEGACY,
+from flextool.engine.input._lifetime_roles import (
     LIFETIME_TECHNICAL,
     NET_SALVAGE_VALUE,
     NO_REINVESTMENT,
     PAYBACK_TIME,
-    ROLE_CHAIN,
-    canonical_lifetime_method,
-    physical_name,
     role_sources,
 )
 from flextool.engine.input._solve_state import FlexToolConfigError
@@ -2628,7 +2624,7 @@ _NEGATIVE_EXISTING = {
 # invest_method values that forbid investing / retiring: the one definition in preprocess/params/_existing.py.
 _NO_INVEST = INVEST_NOT_ALLOWED
 _NO_RETIRE = DIVEST_NOT_ALLOWED
-_BOUNDED_LIFETIME = frozenset(("reinvest_choice", NO_REINVESTMENT, *LIFETIME_METHOD_LEGACY))
+_BOUNDED_LIFETIME = frozenset(("reinvest_choice", NO_REINVESTMENT))
 
 
 def _nonzero_names(src, cls: str, param: str, bad=lambda v: v != 0.0) -> set[str]:
@@ -2658,26 +2654,17 @@ def _missing_lifetime(src, cls: str, methods: dict[str, str]) -> list[str]:
     with a non-zero ``invest_cost``, retiring with a non-zero net salvage value); the technical lifetime
     (``lifetime_technical``) when the lifetime window does: ``lifetime_method`` ``reinvest_choice`` /
     ``no_reinvestment`` on an entity that invests or retires, or has ``existing`` capacity (its end of life is
-    start + lifetime).  The default ``reinvest_automatic`` without investment needs none.  Each role is read under
-    the name the entity gives it (:func:`role_sources`; ``lifetime`` and ``salvage_value`` in an older database).
+    start + lifetime).  The default ``reinvest_automatic`` without investment needs none.  The payback time is read
+    under the name the entity gives it (:func:`role_sources`).
     """
     entities_with = _entities_with(src, cls)
-    with_payback = set(role_sources(PAYBACK_TIME, entities_with, where=cls))
-    with_technical = set(role_sources(LIFETIME_TECHNICAL, entities_with, where=cls))
+    with_payback = set(role_sources(PAYBACK_TIME, entities_with))
+    with_technical = set(entities_with(LIFETIME_TECHNICAL))
     db = getattr(src, "_db", src)
-
-    def defined(name: str) -> bool:
-        return bool(db.find_parameter_definitions(entity_class_name=cls, name=name))
-
-    payback_name = physical_name(PAYBACK_TIME, defined)
-    technical_name = physical_name(LIFETIME_TECHNICAL, defined)
-    salvage_name = physical_name(NET_SALVAGE_VALUE, defined)
-    default_method = canonical_lifetime_method(
-        str(_definition_default(db, cls, "lifetime_method") or "reinvest_automatic"))
-    life_methods = {k[0]: canonical_lifetime_method(v) for k, v in _str_values(src, cls, "lifetime_method").items()}
+    default_method = str(_definition_default(db, cls, "lifetime_method") or "reinvest_automatic")
+    life_methods = {k[0]: v for k, v in _str_values(src, cls, "lifetime_method").items()}
     invest_cost = _nonzero_names(src, cls, "invest_cost")
-    salvage = {e for e, name in role_sources(NET_SALVAGE_VALUE, entities_with, where=cls).items()
-               if e in _nonzero_names(src, cls, name)}
+    salvage = _nonzero_names(src, cls, NET_SALVAGE_VALUE)
     bounded = {e for e in set(methods) | set(life_methods)
                if life_methods.get(e, default_method) in _BOUNDED_LIFETIME}
     existing = _nonzero_names(src, cls, "existing", lambda v: v > 0.0) & bounded if bounded else set()
@@ -2686,14 +2673,14 @@ def _missing_lifetime(src, cls: str, methods: dict[str, str]) -> list[str]:
         method = methods.get(ent, "not_allowed")
         why = None
         if ent not in with_payback and method not in _NO_INVEST and ent in invest_cost:
-            why, name = f"it can invest (invest_method {method}) and has an invest_cost", payback_name
+            why, name = f"it can invest (invest_method {method}) and has an invest_cost", LIFETIME_TECHNICAL
         elif ent not in with_payback and method not in _NO_RETIRE and ent in salvage:
-            why, name = f"it can retire (invest_method {method}) and has a {salvage_name}", payback_name
+            why, name = f"it can retire (invest_method {method}) and has a {NET_SALVAGE_VALUE}", LIFETIME_TECHNICAL
         elif ent not in with_technical and ent in bounded and (method != "not_allowed" or ent in existing):
             what = "invests or retires" if method != "not_allowed" else "has existing capacity"
             why = (f"its lifetime_method is {life_methods.get(ent, default_method)} and it {what}, so its capacity "
                    "ends after the lifetime")
-            name = technical_name
+            name = LIFETIME_TECHNICAL
         if why is not None:
             errors.append(f"{cls} '{ent}' has no {name}, but {why}. Give the {name} in years.")
     return errors
@@ -2714,11 +2701,12 @@ def validate_basic_sanity(src) -> None:
       ``invest_min/max_period``, ``retire_min/max_period``, ``cumulative_min/max_capacity`` (per period: a constant
       applies to every period, a period that only one of the two names is not compared), ``invest_min/max_total``,
       ``retire_min/max_total`` (unit, connection, node, group); the problem would be infeasible;
-    * ``lifetime`` ≤ 0 on a unit / connection / node that can invest or retire (``invest_method`` other than
-      ``not_allowed``): the investment would be charged for no years.
-    * no ``lifetime`` on a unit / connection / node whose annuity or lifetime window needs it
-      (:func:`_missing_lifetime`): investing with an ``invest_cost``, retiring with a ``salvage_value``, or a
-      ``lifetime_method`` ``reinvest_choice`` / ``no_investment`` with investment, retirement or ``existing``;
+    * ``lifetime_technical`` or ``payback_time`` ≤ 0 on a unit / connection / node that can invest or retire
+      (``invest_method`` other than ``not_allowed``): the investment would be charged for no years.
+    * no ``lifetime_technical`` on a unit / connection / node whose annuity or lifetime window needs it
+      (:func:`_missing_lifetime`): investing with an ``invest_cost`` or retiring with a ``net_salvage_value``
+      (without ``payback_time``), or a ``lifetime_method`` ``reinvest_choice`` / ``no_reinvestment`` with
+      investment, retirement or ``existing``;
     * ``discount_rate`` < 0 (unit / connection / node); 0 is the straight-line annuity.
 
     ``existing`` as a time series, keyed by time steps or by numbers is :func:`validate_period_keys`'.
@@ -2804,13 +2792,12 @@ def validate_basic_sanity(src) -> None:
 
     for cls in ("unit", "connection", "node"):
         investing = {e for e, m in methods[cls].items() if m != "not_allowed"}
-        for name in dict.fromkeys(n for chain in (ROLE_CHAIN[LIFETIME_TECHNICAL], ROLE_CHAIN[PAYBACK_TIME])
-                                  for n in chain):
+        for name in (LIFETIME_TECHNICAL, PAYBACK_TIME):
             scan(cls, name, [(lambda v: v <= 0.0,
                  f"{name} must be above 0 when the {cls} can invest or retire; with 0 the investment is charged for "
                  f"no years. Give the {name} in years.", errors)], only=investing)
         scan(cls, "discount_rate", [(lambda v: v < 0.0,
-             "discount_rate must be 0 or above (0 gives the straight-line annuity invest_cost / lifetime).",
+             "discount_rate must be 0 or above (0 gives the straight-line annuity invest_cost / payback_time).",
              errors)])
         errors.extend(_missing_lifetime(src, cls, methods[cls]))
 
@@ -2983,8 +2970,9 @@ def database_time_facts(db) -> DatabaseTimeFacts:
 @functools.lru_cache(maxsize=1)
 def _period_axis_params() -> dict[tuple[str, str], bool]:
     """``{(class, parameter): takes a time map}`` of the parameters with a period axis: ``PERIOD_TIME_PARAMS`` and
-    every parameter of a ``_PARAMETER_SPECS`` entry with a ``period`` column (``existing``, ``lifetime``, ...),
-    except the ``solve`` / ``model`` time structure and the time-only ``timeset_weights``.  A parameter takes a time map when its allowed shapes have
+    every parameter of a ``_PARAMETER_SPECS`` entry with a ``period`` column (``existing``,
+    ``lifetime_technical``, ...), except the ``solve`` / ``model`` time structure and the time-only
+    ``timeset_weights``.  A parameter takes a time map when its allowed shapes have
     one, or (spec-only parameters) when a spec without a ``period`` column reads it by ``time``.  Maps keyed by
     something else (``constraint_flow_coeff`` by constraint, ``delay`` by hours) are not in the list."""
     from flextool.engine.input._param_shapes import PARAM_ALLOWED_SHAPES, PERIOD_TIME_PARAMS, Shape
@@ -3204,9 +3192,9 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
     every ``timestep_duration`` key of the whole database.  Rules:
 
     * a level labelled ``period``: every key not in the universe → error;
-    * a silent (``x``) rank-1 map of a parameter that cannot vary over time (``existing``, ``lifetime``, ...): a
-      time-step key that is no period → error (a name that is both a period and a time step is a period, #76), any
-      other key not in the universe → error;
+    * a silent (``x``) rank-1 map of a parameter that cannot vary over time (``existing``, ``lifetime_technical``,
+      ...): a time-step key that is no period → error (a name that is both a period and a time step is a period,
+      #76), any other key not in the universe → error;
     * a silent map of a parameter that takes a time map: a key that is a time step makes it a time series (not
       checked here); else keys hitting the periods make it a period map (the other keys → error); no key a period
       → error, unless the keys look like time steps (:func:`_looks_like_time_keys`: ``t0099``, a date-time stamp;

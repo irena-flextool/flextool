@@ -36,7 +36,7 @@ and collect those that match the window predicate:
 * :data:`WindowMethod.STRICT_LOOKBACK_BOUNDED` —
   ``pdy[d_all] > pdy[d]`` AND ``pdy[d_all] < pdy[d] + life[e, d]``
   (used by Cluster B's ``edd_invest_lookback_set`` for bounded
-  ``reinvest_choice`` / ``no_investment`` entities).
+  ``reinvest_choice`` / ``no_reinvestment`` entities).
 * :data:`WindowMethod.STRICT_LOOKBACK_UNBOUNDED` —
   ``pdy[d_all] > pdy[d]`` (no lifetime cap; for unbounded
   ``reinvest_automatic`` entities in Cluster B's lookback walk).
@@ -79,7 +79,7 @@ class WindowMethod(enum.Enum):
     Members:
 
     * ``BOUNDED`` — ``pdy[d_all] ∈ [pdy[d], pdy[d] + life[e, d])``.
-      Used by Cluster A's ``reinvest_choice`` / ``no_investment`` cohort
+      Used by Cluster A's ``reinvest_choice`` / ``no_reinvestment`` cohort
       and by Cluster A's divest-side NPV (always bounded, raw lifetime).
     * ``UNBOUNDED_FORWARD`` — ``pdy[d_all] ≥ pdy[d]``.  Used by
       Cluster A's ``reinvest_automatic`` cohort.

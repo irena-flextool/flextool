@@ -60,7 +60,8 @@ def _add_two_solve_scenario(db_url: str, *, no_p2040_invest: bool = False) -> No
         db.add_entity_item(entity_class_name="solve", name=S2)
         put(db, "model", "flextool", "solves", Array([S1, S2]))
         put(db, "unit", "base", "invest_cost", Map(["p2035", "p2040", "p2045"], [3.0, 1.0, 1.0]))
-        put(db, "unit", "base", "lifetime", 30.0)
+        put(db, "unit", "base", "lifetime_technical", 30.0)
+        put(db, "unit", "base", "payback_time", 30.0)
         put(db, "solve", S1, "realized_periods", Array(["p2035"]))
         # The no-p2040-invest chain: every period on ts1 (residual 60 MW) and 70 MW of existing base capacity.
         p2040_timeset = "ts1" if no_p2040_invest else "ts2"

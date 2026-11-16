@@ -7145,7 +7145,7 @@
     [
       "lifetime_methods",
       [
-        "Im5vX2ludmVzdG1lbnQi",
+        "Im5vX3JlaW52ZXN0bWVudCI=",
         "str"
       ]
     ],
@@ -8218,7 +8218,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / lifetime. No value means 0.05. Must be 0 or above. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time: annuity = invest_cost x r / (1 - (1 + r)^-payback_time). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -8262,7 +8262,7 @@
         null
       ],
       null,
-      "[CUR/kW] Overnight investment cost of new capacity. It is paid as an annuity over the years the capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the capacity is built (comes online) is used.",
+      "[CUR/kW] Overnight investment cost of new capacity. It is annualized over payback_time with discount_rate, and the annuity is paid in each year the capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the capacity is built (comes online) is used.",
       "investment"
     ],
     [
@@ -8333,25 +8333,36 @@
     ],
     [
       "connection",
-      "lifetime",
-      [
-        null,
-        null
-      ],
-      null,
-      "[years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Required when the connection invests or retires with a cost (invest_cost, salvage_value), and when lifetime_method is reinvest_choice or no_investment (also for existing capacity without investment). Constant or period.",
-      "investment"
-    ],
-    [
-      "connection",
       "lifetime_method",
       [
         "InJlaW52ZXN0X2F1dG9tYXRpYyI=",
         "str"
       ],
       "lifetime_methods",
-      "[choice] Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built.",
+      "[choice] What happens when capacity reaches the end of its lifetime_technical. reinvest_automatic (default): the capacity is kept to the end of the model horizon and the annualized investment cost is paid on, without a model choice. reinvest_choice: the capacity retires at the end of its lifetime_technical and the model decides how much new capacity to build. no_reinvestment: the capacity retires at the end of its lifetime_technical; investment is possible only during the first technical lifetime from the model start, and the capacity is not rebuilt.",
       "investment"
+    ],
+    [
+      "connection",
+      "lifetime_technical",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Technical lifetime: how long the capacity operates. It starts when the capacity starts to operate: with a construction lead time, after the construction. What happens at its end depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_reinvestment retires it and allows investment only during the first technical lifetime from the model start. Without payback_time, invest_cost is annualized over it. Required when the connection invests or retires with a cost (invest_cost, net_salvage_value) and has no payback_time, and when lifetime_method is reinvest_choice or no_reinvestment (also for existing capacity without investment). Constant or period: the value of the period when the capacity comes online is used.",
+      "investment"
+    ],
+    [
+      "connection",
+      "net_salvage_value",
+      [
+        null,
+        null
+      ],
+      null,
+      "[CUR/kW] Net salvage value: scrap value minus decommissioning cost, received once when capacity is retired (at end of life or earlier). Negative when decommissioning costs more than the scrap is worth. Does not depend on age. Constant or period.",
+      "retirement"
     ],
     [
       "connection",
@@ -8363,6 +8374,17 @@
       null,
       "[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, period, time or period+time.",
       "basics"
+    ],
+    [
+      "connection",
+      "payback_time",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor). No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the capacity comes online is used.",
+      "investment"
     ],
     [
       "connection",
@@ -8417,17 +8439,6 @@
       ],
       null,
       "[MW] Smallest required total retirement over all solves. Investments and existing capacity do not change it. Constant.",
-      "retirement"
-    ],
-    [
-      "connection",
-      "salvage_value",
-      [
-        null,
-        null
-      ],
-      null,
-      "[CUR/kW] Salvage value for retiring capacity. Constant or period.",
       "retirement"
     ],
     [
@@ -8856,7 +8867,7 @@
         "float"
       ],
       null,
-      "[CUR/kW/a] Penalty for violating the capacity margin constraint. Uses operational discounting (not annualized over lifetime like investment costs), so the value is not directly comparable to annualized investment costs. Constant or period.",
+      "[CUR/kW/a] Penalty for violating the capacity margin constraint. Uses operational discounting (not annualized over a payback time like investment costs), so the value is not directly comparable to annualized investment costs. Constant or period.",
       "investment"
     ],
     [
@@ -9083,7 +9094,7 @@
       "model",
       "version",
       [
-        "ODAuMA==",
+        "ODEuMA==",
         "float"
       ],
       null,
@@ -9230,7 +9241,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / lifetime. No value means 0.05. Must be 0 or above. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time: annuity = invest_cost x r / (1 - (1 + r)^-payback_time). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -9318,7 +9329,7 @@
         null
       ],
       null,
-      "[CUR/kWh] Overnight investment cost of new storage capacity. It is paid as an annuity over the years the storage capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the storage capacity is built (comes online) is used.",
+      "[CUR/kWh] Overnight investment cost of new storage capacity. It is annualized over payback_time with discount_rate, and the annuity is paid in each year the storage capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the storage capacity is built (comes online) is used.",
       "investment"
     ],
     [
@@ -9389,25 +9400,36 @@
     ],
     [
       "node",
-      "lifetime",
-      [
-        null,
-        null
-      ],
-      null,
-      "[years] Operating lifetime. It starts when the storage capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the storage capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Required when the node invests or retires with a cost (invest_cost, salvage_value), and when lifetime_method is reinvest_choice or no_investment (also for existing capacity without investment). Constant or period.",
-      "investment"
-    ],
-    [
-      "node",
       "lifetime_method",
       [
         "InJlaW52ZXN0X2F1dG9tYXRpYyI=",
         "str"
       ],
       "lifetime_methods",
-      "[choice] Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built.",
+      "[choice] What happens when capacity reaches the end of its lifetime_technical. reinvest_automatic (default): the capacity is kept to the end of the model horizon and the annualized investment cost is paid on, without a model choice. reinvest_choice: the capacity retires at the end of its lifetime_technical and the model decides how much new capacity to build. no_reinvestment: the capacity retires at the end of its lifetime_technical; investment is possible only during the first technical lifetime from the model start, and the capacity is not rebuilt.",
       "investment"
+    ],
+    [
+      "node",
+      "lifetime_technical",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Technical lifetime: how long the storage capacity operates. It starts when the storage capacity starts to operate: with a construction lead time, after the construction. What happens at its end depends on lifetime_method: reinvest_automatic keeps the storage capacity to the end of the model horizon, reinvest_choice retires it, no_reinvestment retires it and allows investment only during the first technical lifetime from the model start. Without payback_time, invest_cost is annualized over it. Required when the node invests or retires with a cost (invest_cost, net_salvage_value) and has no payback_time, and when lifetime_method is reinvest_choice or no_reinvestment (also for existing capacity without investment). Constant or period: the value of the period when the storage capacity comes online is used.",
+      "investment"
+    ],
+    [
+      "node",
+      "net_salvage_value",
+      [
+        null,
+        null
+      ],
+      null,
+      "[CUR/kWh] Net salvage value: scrap value minus decommissioning cost, received once when storage capacity is retired (at end of life or earlier). Negative when decommissioning costs more than the scrap is worth. Does not depend on age. Constant or period.",
+      "retirement"
     ],
     [
       "node",
@@ -9419,6 +9441,17 @@
       "node_type",
       "[choice] Role of this node in the LP.  'commodity' = price-exposed source/sink with no balance constraint (e.g. fuel imports, no storage); 'balance' = energy balance maintained every timestep (default); 'storage' = balance plus a state variable (battery, reservoir); 'balance_within_period' = balance aggregated over the whole period (e.g. an annual gas budget).",
       "basics"
+    ],
+    [
+      "node",
+      "payback_time",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor). No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the storage capacity comes online is used.",
+      "investment"
     ],
     [
       "node",
@@ -9506,17 +9539,6 @@
       ],
       null,
       "[MWh] Smallest required total retirement over all solves. Investments and existing capacity do not change it. Constant.",
-      "retirement"
-    ],
-    [
-      "node",
-      "salvage_value",
-      [
-        null,
-        null
-      ],
-      null,
-      "[CUR/kWh] Salvage value of the storage. Constant or period.",
       "retirement"
     ],
     [
@@ -9626,7 +9648,7 @@
         "str"
       ],
       null,
-      "[text] Unit of measure of this node's amounts, e.g. m3, t, MWh_th (default MWh). A label only: FlexTool converts nothing. Flows into and out of the node, and the capacity of a unit whose output is this node (of a connection when both of its nodes have this unit), are rates in this unit per hour (MWh \u2192 MW, m3 \u2192 m3/h); storage state, storage capacity and inflow per time step are amounts (m3); annual results are per year (m3/a); prices and penalty_up/down are CUR per this unit. The per-kW costs (invest_cost, fixed_cost, salvage_value) of a unit whose capacity is in this unit, and the per-kWh costs of this node's storage, are per 0.001 of the rate or amount: 500 CUR per m3/h of capacity is entered as 0.5, and 20 CUR per m3 of storage as 0.02. An efficiency into or out of this node is output units per input unit (e.g. m3/MWh).",
+      "[text] Unit of measure of this node's amounts, e.g. m3, t, MWh_th (default MWh). A label only: FlexTool converts nothing. Flows into and out of the node, and the capacity of a unit whose output is this node (of a connection when both of its nodes have this unit), are rates in this unit per hour (MWh \u2192 MW, m3 \u2192 m3/h); storage state, storage capacity and inflow per time step are amounts (m3); annual results are per year (m3/a); prices and penalty_up/down are CUR per this unit. The per-kW costs (invest_cost, fixed_cost, net_salvage_value) of a unit whose capacity is in this unit, and the per-kWh costs of this node's storage, are per 0.001 of the rate or amount: 500 CUR per m3/h of capacity is entered as 0.5, and 20 CUR per m3 of storage as 0.02. An efficiency into or out of this node is output units per input unit (e.g. m3/MWh).",
       "basics"
     ],
     [
@@ -10352,7 +10374,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / lifetime. No value means 0.05. Must be 0 or above. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time: annuity = invest_cost x r / (1 - (1 + r)^-payback_time). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -10407,7 +10429,7 @@
         null
       ],
       null,
-      "[CUR/kW] Overnight investment cost of new capacity. It is paid as an annuity over the years the capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the capacity is built (comes online) is used.",
+      "[CUR/kW] Overnight investment cost of new capacity. It is annualized over payback_time with discount_rate, and the annuity is paid in each year the capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the capacity is built (comes online) is used.",
       "investment"
     ],
     [
@@ -10467,24 +10489,24 @@
     ],
     [
       "unit",
-      "lifetime",
-      [
-        null,
-        null
-      ],
-      null,
-      "[years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Required when the unit invests or retires with a cost (invest_cost, salvage_value), and when lifetime_method is reinvest_choice or no_investment (also for existing capacity without investment). Constant or period.",
-      "investment"
-    ],
-    [
-      "unit",
       "lifetime_method",
       [
         "InJlaW52ZXN0X2F1dG9tYXRpYyI=",
         "str"
       ],
       "lifetime_methods",
-      "[choice] Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built.",
+      "[choice] What happens when capacity reaches the end of its lifetime_technical. reinvest_automatic (default): the capacity is kept to the end of the model horizon and the annualized investment cost is paid on, without a model choice. reinvest_choice: the capacity retires at the end of its lifetime_technical and the model decides how much new capacity to build. no_reinvestment: the capacity retires at the end of its lifetime_technical; investment is possible only during the first technical lifetime from the model start, and the capacity is not rebuilt.",
+      "investment"
+    ],
+    [
+      "unit",
+      "lifetime_technical",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Technical lifetime: how long the capacity operates. It starts when the capacity starts to operate: with a construction lead time, after the construction. What happens at its end depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_reinvestment retires it and allows investment only during the first technical lifetime from the model start. Without payback_time, invest_cost is annualized over it. Required when the unit invests or retires with a cost (invest_cost, net_salvage_value) and has no payback_time, and when lifetime_method is reinvest_choice or no_reinvestment (also for existing capacity without investment). Constant or period: the value of the period when the capacity comes online is used.",
       "investment"
     ],
     [
@@ -10530,6 +10552,28 @@
       "minimum_time_methods",
       "[choice] Choice between minimum up- and downtimes (none, min_downtime, min_uptime, both). Setting this to anything other than 'none' will activate online variables (at least linear) for the unit. Default: none (no minimum time constraints).",
       "tech_advanced"
+    ],
+    [
+      "unit",
+      "net_salvage_value",
+      [
+        null,
+        null
+      ],
+      null,
+      "[CUR/kW] Net salvage value: scrap value minus decommissioning cost, received once when capacity is retired (at end of life or earlier). Negative when decommissioning costs more than the scrap is worth. Does not depend on age. Constant or period.",
+      "retirement"
+    ],
+    [
+      "unit",
+      "payback_time",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor). No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the capacity comes online is used.",
+      "investment"
     ],
     [
       "unit",
@@ -10584,17 +10628,6 @@
       ],
       null,
       "[MW] Smallest required total retirement over all solves. Investments and existing capacity do not change it. Constant.",
-      "retirement"
-    ],
-    [
-      "unit",
-      "salvage_value",
-      [
-        null,
-        null
-      ],
-      null,
-      "[CUR/kW] Salvage value of the unit. Constant or period.",
       "retirement"
     ],
     [
@@ -11179,21 +11212,33 @@
     ],
     [
       "connection",
-      "lifetime",
+      "lifetime_method",
+      "str",
+      0
+    ],
+    [
+      "connection",
+      "lifetime_technical",
       "float",
       0
     ],
     [
       "connection",
-      "lifetime",
+      "lifetime_technical",
       "map",
       1
     ],
     [
       "connection",
-      "lifetime_method",
-      "str",
+      "net_salvage_value",
+      "float",
       0
+    ],
+    [
+      "connection",
+      "net_salvage_value",
+      "map",
+      1
     ],
     [
       "connection",
@@ -11212,6 +11257,18 @@
       "other_operational_cost",
       "map",
       2
+    ],
+    [
+      "connection",
+      "payback_time",
+      "float",
+      0
+    ],
+    [
+      "connection",
+      "payback_time",
+      "map",
+      1
     ],
     [
       "connection",
@@ -11254,18 +11311,6 @@
       "retire_min_total",
       "float",
       0
-    ],
-    [
-      "connection",
-      "salvage_value",
-      "float",
-      0
-    ],
-    [
-      "connection",
-      "salvage_value",
-      "map",
-      1
     ],
     [
       "connection",
@@ -12055,27 +12100,51 @@
     ],
     [
       "node",
-      "lifetime",
-      "float",
-      0
-    ],
-    [
-      "node",
-      "lifetime",
-      "map",
-      1
-    ],
-    [
-      "node",
       "lifetime_method",
       "str",
       0
     ],
     [
       "node",
+      "lifetime_technical",
+      "float",
+      0
+    ],
+    [
+      "node",
+      "lifetime_technical",
+      "map",
+      1
+    ],
+    [
+      "node",
+      "net_salvage_value",
+      "float",
+      0
+    ],
+    [
+      "node",
+      "net_salvage_value",
+      "map",
+      1
+    ],
+    [
+      "node",
       "node_type",
       "str",
       0
+    ],
+    [
+      "node",
+      "payback_time",
+      "float",
+      0
+    ],
+    [
+      "node",
+      "payback_time",
+      "map",
+      1
     ],
     [
       "node",
@@ -12178,18 +12247,6 @@
       "retire_min_total",
       "float",
       0
-    ],
-    [
-      "node",
-      "salvage_value",
-      "float",
-      0
-    ],
-    [
-      "node",
-      "salvage_value",
-      "map",
-      1
     ],
     [
       "node",
@@ -12913,21 +12970,21 @@
     ],
     [
       "unit",
-      "lifetime",
+      "lifetime_method",
+      "str",
+      0
+    ],
+    [
+      "unit",
+      "lifetime_technical",
       "float",
       0
     ],
     [
       "unit",
-      "lifetime",
+      "lifetime_technical",
       "map",
       1
-    ],
-    [
-      "unit",
-      "lifetime_method",
-      "str",
-      0
     ],
     [
       "unit",
@@ -12970,6 +13027,30 @@
       "minimum_time_method",
       "str",
       0
+    ],
+    [
+      "unit",
+      "net_salvage_value",
+      "float",
+      0
+    ],
+    [
+      "unit",
+      "net_salvage_value",
+      "map",
+      1
+    ],
+    [
+      "unit",
+      "payback_time",
+      "float",
+      0
+    ],
+    [
+      "unit",
+      "payback_time",
+      "map",
+      1
     ],
     [
       "unit",
@@ -13018,18 +13099,6 @@
       "retire_min_total",
       "float",
       0
-    ],
-    [
-      "unit",
-      "salvage_value",
-      "float",
-      0
-    ],
-    [
-      "unit",
-      "salvage_value",
-      "map",
-      1
     ],
     [
       "unit",
@@ -13472,7 +13541,17 @@
     [
       "connection",
       "ARG_Battery_Connection",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjAuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "connection",
+      "ARG_Battery_Connection",
+      "payback_time",
       [
         "MjAuMA==",
         "float"
@@ -13562,7 +13641,7 @@
     [
       "connection",
       "ARG_CHI_LH2",
-      "lifetime",
+      "lifetime_technical",
       [
         "MzAuMA==",
         "float"
@@ -13575,6 +13654,16 @@
       "other_operational_cost",
       [
         "MjY4Ljc2MjA0Ng==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "connection",
+      "ARG_CHI_LH2",
+      "payback_time",
+      [
+        "MzAuMA==",
         "float"
       ],
       "shared"
@@ -13652,7 +13741,7 @@
     [
       "connection",
       "ARG_CHI_LOHC",
-      "lifetime",
+      "lifetime_technical",
       [
         "MzAuMA==",
         "float"
@@ -13665,6 +13754,16 @@
       "other_operational_cost",
       [
         "NzQ4LjAwNzMwOQ==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "connection",
+      "ARG_CHI_LOHC",
+      "payback_time",
+      [
+        "MzAuMA==",
         "float"
       ],
       "shared"
@@ -13742,7 +13841,7 @@
     [
       "connection",
       "ARG_CHI_MeOH",
-      "lifetime",
+      "lifetime_technical",
       [
         "MzAuMA==",
         "float"
@@ -13755,6 +13854,16 @@
       "other_operational_cost",
       [
         "MjM2LjU0OTMxMjAwMDAwMDAx",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "connection",
+      "ARG_CHI_MeOH",
+      "payback_time",
+      [
+        "MzAuMA==",
         "float"
       ],
       "shared"
@@ -13832,7 +13941,7 @@
     [
       "connection",
       "ARG_CHI_NH3",
-      "lifetime",
+      "lifetime_technical",
       [
         "MzAuMA==",
         "float"
@@ -13845,6 +13954,16 @@
       "other_operational_cost",
       [
         "MTkwLjE5NzU4Mg==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "connection",
+      "ARG_CHI_NH3",
+      "payback_time",
+      [
+        "MzAuMA==",
         "float"
       ],
       "shared"
@@ -13932,7 +14051,17 @@
     [
       "connection",
       "AUS_Battery_Connection",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjAuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "connection",
+      "AUS_Battery_Connection",
+      "payback_time",
       [
         "MjAuMA==",
         "float"
@@ -14022,7 +14151,7 @@
     [
       "connection",
       "AUS_CHI_HBI",
-      "lifetime",
+      "lifetime_technical",
       [
         "MzAuMA==",
         "float"
@@ -14035,6 +14164,16 @@
       "other_operational_cost",
       [
         "Ni4yMzI3MzI=",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "connection",
+      "AUS_CHI_HBI",
+      "payback_time",
+      [
+        "MzAuMA==",
         "float"
       ],
       "shared"
@@ -14112,7 +14251,7 @@
     [
       "connection",
       "AUS_CHI_LH2",
-      "lifetime",
+      "lifetime_technical",
       [
         "MzAuMA==",
         "float"
@@ -14125,6 +14264,16 @@
       "other_operational_cost",
       [
         "MTM3Ljk5OTY0",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "connection",
+      "AUS_CHI_LH2",
+      "payback_time",
+      [
+        "MzAuMA==",
         "float"
       ],
       "shared"
@@ -14202,7 +14351,7 @@
     [
       "connection",
       "AUS_CHI_LOHC",
-      "lifetime",
+      "lifetime_technical",
       [
         "MzAuMA==",
         "float"
@@ -14215,6 +14364,16 @@
       "other_operational_cost",
       [
         "Mzg4LjIxMTE1MDAwMDAwMDAz",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "connection",
+      "AUS_CHI_LOHC",
+      "payback_time",
+      [
+        "MzAuMA==",
         "float"
       ],
       "shared"
@@ -14292,7 +14451,7 @@
     [
       "connection",
       "AUS_CHI_NH3",
-      "lifetime",
+      "lifetime_technical",
       [
         "MzAuMA==",
         "float"
@@ -14305,6 +14464,16 @@
       "other_operational_cost",
       [
         "OTcuMDcyMTE2",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "connection",
+      "AUS_CHI_NH3",
+      "payback_time",
+      [
+        "MzAuMA==",
         "float"
       ],
       "shared"
@@ -14382,7 +14551,7 @@
     [
       "connection",
       "AUS_CHI_Ore",
-      "lifetime",
+      "lifetime_technical",
       [
         "MzAuMA==",
         "float"
@@ -14395,6 +14564,16 @@
       "other_operational_cost",
       [
         "Ni4yMzI3MzI=",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "connection",
+      "AUS_CHI_Ore",
+      "payback_time",
+      [
+        "MzAuMA==",
         "float"
       ],
       "shared"
@@ -14482,7 +14661,17 @@
     [
       "connection",
       "CHI_Battery_Connection",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjAuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "connection",
+      "CHI_Battery_Connection",
+      "payback_time",
       [
         "MjAuMA==",
         "float"
@@ -15042,7 +15231,7 @@
     [
       "node",
       "ARG_Battery",
-      "lifetime",
+      "lifetime_technical",
       [
         "MjAuMA==",
         "float"
@@ -15056,6 +15245,16 @@
       [
         "InN0b3JhZ2Ui",
         "str"
+      ],
+      "shared"
+    ],
+    [
+      "node",
+      "ARG_Battery",
+      "payback_time",
+      [
+        "MjAuMA==",
+        "float"
       ],
       "shared"
     ],
@@ -15182,7 +15381,7 @@
     [
       "node",
       "ARG_H2",
-      "lifetime",
+      "lifetime_technical",
       [
         "MzAuMA==",
         "float"
@@ -15196,6 +15395,16 @@
       [
         "InN0b3JhZ2Ui",
         "str"
+      ],
+      "shared"
+    ],
+    [
+      "node",
+      "ARG_H2",
+      "payback_time",
+      [
+        "MzAuMA==",
+        "float"
       ],
       "shared"
     ],
@@ -15382,7 +15591,7 @@
     [
       "node",
       "AUS_Battery",
-      "lifetime",
+      "lifetime_technical",
       [
         "MjAuMA==",
         "float"
@@ -15396,6 +15605,16 @@
       [
         "InN0b3JhZ2Ui",
         "str"
+      ],
+      "shared"
+    ],
+    [
+      "node",
+      "AUS_Battery",
+      "payback_time",
+      [
+        "MjAuMA==",
+        "float"
       ],
       "shared"
     ],
@@ -15522,7 +15741,7 @@
     [
       "node",
       "AUS_H2",
-      "lifetime",
+      "lifetime_technical",
       [
         "MzAuMA==",
         "float"
@@ -15536,6 +15755,16 @@
       [
         "InN0b3JhZ2Ui",
         "str"
+      ],
+      "shared"
+    ],
+    [
+      "node",
+      "AUS_H2",
+      "payback_time",
+      [
+        "MzAuMA==",
+        "float"
       ],
       "shared"
     ],
@@ -15732,7 +15961,7 @@
     [
       "node",
       "CHI_Battery",
-      "lifetime",
+      "lifetime_technical",
       [
         "MjAuMA==",
         "float"
@@ -15746,6 +15975,16 @@
       [
         "InN0b3JhZ2Ui",
         "str"
+      ],
+      "shared"
+    ],
+    [
+      "node",
+      "CHI_Battery",
+      "payback_time",
+      [
+        "MjAuMA==",
+        "float"
       ],
       "shared"
     ],
@@ -15872,7 +16111,7 @@
     [
       "node",
       "CHI_H2",
-      "lifetime",
+      "lifetime_technical",
       [
         "MzAuMA==",
         "float"
@@ -15886,6 +16125,16 @@
       [
         "InN0b3JhZ2Ui",
         "str"
+      ],
+      "shared"
+    ],
+    [
+      "node",
+      "CHI_H2",
+      "payback_time",
+      [
+        "MzAuMA==",
+        "float"
       ],
       "shared"
     ],
@@ -17642,7 +17891,17 @@
     [
       "unit",
       "ARG_H2toLH2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_H2toLH2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -17722,7 +17981,17 @@
     [
       "unit",
       "ARG_H2toLOHC",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_H2toLOHC",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -17802,7 +18071,17 @@
     [
       "unit",
       "ARG_H2toMeOH",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_H2toMeOH",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -17882,7 +18161,17 @@
     [
       "unit",
       "ARG_H2toNH3",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_H2toNH3",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -17962,7 +18251,17 @@
     [
       "unit",
       "ARG_LH2toH2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_LH2toH2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -18042,7 +18341,17 @@
     [
       "unit",
       "ARG_LOHCtoH2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_LOHCtoH2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -18122,7 +18431,17 @@
     [
       "unit",
       "ARG_NH3toH2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_NH3toH2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -18202,7 +18521,17 @@
     [
       "unit",
       "ARG_PV_CL1",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_PV_CL1",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -18282,7 +18611,17 @@
     [
       "unit",
       "ARG_PV_CL2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_PV_CL2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -18362,7 +18701,17 @@
     [
       "unit",
       "ARG_PV_CL3",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_PV_CL3",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -18442,7 +18791,17 @@
     [
       "unit",
       "ARG_PV_CL4",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_PV_CL4",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -18522,7 +18881,17 @@
     [
       "unit",
       "ARG_W_Offshore_CL1",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_W_Offshore_CL1",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -18602,7 +18971,17 @@
     [
       "unit",
       "ARG_W_Offshore_CL2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_W_Offshore_CL2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -18682,7 +19061,17 @@
     [
       "unit",
       "ARG_W_Offshore_CL3",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_W_Offshore_CL3",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -18762,7 +19151,17 @@
     [
       "unit",
       "ARG_W_Offshore_CL4",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_W_Offshore_CL4",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -18842,7 +19241,17 @@
     [
       "unit",
       "ARG_W_Offshore_CL5",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_W_Offshore_CL5",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -18902,7 +19311,17 @@
     [
       "unit",
       "ARG_W_Onshore_CL1",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_W_Onshore_CL1",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -18982,7 +19401,17 @@
     [
       "unit",
       "ARG_W_Onshore_CL2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_W_Onshore_CL2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -19062,7 +19491,17 @@
     [
       "unit",
       "ARG_W_Onshore_CL3",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_W_Onshore_CL3",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -19142,7 +19581,17 @@
     [
       "unit",
       "ARG_W_Onshore_CL4",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_W_Onshore_CL4",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -19222,7 +19671,17 @@
     [
       "unit",
       "ARG_W_Onshore_CL5",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_W_Onshore_CL5",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -19302,7 +19761,17 @@
     [
       "unit",
       "ARG_electrolyser",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "ARG_electrolyser",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -19422,7 +19891,17 @@
     [
       "unit",
       "AUS_H2toLH2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_H2toLH2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -19502,7 +19981,17 @@
     [
       "unit",
       "AUS_H2toLOHC",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_H2toLOHC",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -19582,7 +20071,17 @@
     [
       "unit",
       "AUS_H2toMeOH",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_H2toMeOH",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -19662,7 +20161,17 @@
     [
       "unit",
       "AUS_H2toNH3",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_H2toNH3",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -19742,7 +20251,17 @@
     [
       "unit",
       "AUS_LH2toH2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_LH2toH2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -19822,7 +20341,17 @@
     [
       "unit",
       "AUS_LOHCtoH2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_LOHCtoH2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -19902,7 +20431,17 @@
     [
       "unit",
       "AUS_NH3toH2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_NH3toH2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -19982,7 +20521,17 @@
     [
       "unit",
       "AUS_PV_CL1",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_PV_CL1",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -20062,7 +20611,17 @@
     [
       "unit",
       "AUS_PV_CL2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_PV_CL2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -20142,7 +20701,17 @@
     [
       "unit",
       "AUS_PV_CL3",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_PV_CL3",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -20222,7 +20791,17 @@
     [
       "unit",
       "AUS_PV_CL4",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_PV_CL4",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -20302,7 +20881,17 @@
     [
       "unit",
       "AUS_W_Offshore_CL2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_W_Offshore_CL2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -20382,7 +20971,17 @@
     [
       "unit",
       "AUS_W_Offshore_CL3",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_W_Offshore_CL3",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -20462,7 +21061,17 @@
     [
       "unit",
       "AUS_W_Offshore_CL4",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_W_Offshore_CL4",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -20542,7 +21151,17 @@
     [
       "unit",
       "AUS_W_Offshore_CL5",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_W_Offshore_CL5",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -20602,7 +21221,17 @@
     [
       "unit",
       "AUS_W_Onshore_CL2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_W_Onshore_CL2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -20682,7 +21311,17 @@
     [
       "unit",
       "AUS_W_Onshore_CL3",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_W_Onshore_CL3",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -20762,7 +21401,17 @@
     [
       "unit",
       "AUS_W_Onshore_CL4",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_W_Onshore_CL4",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -20842,7 +21491,17 @@
     [
       "unit",
       "AUS_W_Onshore_CL5",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_W_Onshore_CL5",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -20922,7 +21581,17 @@
     [
       "unit",
       "AUS_electrolyser",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_electrolyser",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -21002,7 +21671,17 @@
     [
       "unit",
       "AUS_oretoHBI",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "AUS_oretoHBI",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -21122,7 +21801,17 @@
     [
       "unit",
       "CHI_H2toLH2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_H2toLH2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -21202,7 +21891,17 @@
     [
       "unit",
       "CHI_H2toLOHC",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_H2toLOHC",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -21282,7 +21981,17 @@
     [
       "unit",
       "CHI_H2toMeOH",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_H2toMeOH",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -21362,7 +22071,17 @@
     [
       "unit",
       "CHI_H2toNH3",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_H2toNH3",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -21442,7 +22161,17 @@
     [
       "unit",
       "CHI_LH2toH2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_LH2toH2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -21522,7 +22251,17 @@
     [
       "unit",
       "CHI_LOHCtoH2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_LOHCtoH2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -21602,7 +22341,17 @@
     [
       "unit",
       "CHI_NH3toH2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_NH3toH2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -21682,7 +22431,17 @@
     [
       "unit",
       "CHI_PV_CL1",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_PV_CL1",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -21762,7 +22521,17 @@
     [
       "unit",
       "CHI_PV_CL2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_PV_CL2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -21842,7 +22611,17 @@
     [
       "unit",
       "CHI_PV_CL3",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_PV_CL3",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -21922,7 +22701,17 @@
     [
       "unit",
       "CHI_PV_CL4",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_PV_CL4",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -22002,7 +22791,17 @@
     [
       "unit",
       "CHI_PV_CL5",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_PV_CL5",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -22062,7 +22861,17 @@
     [
       "unit",
       "CHI_W_Offshore_CL2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_W_Offshore_CL2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -22142,7 +22951,17 @@
     [
       "unit",
       "CHI_W_Offshore_CL3",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_W_Offshore_CL3",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -22222,7 +23041,17 @@
     [
       "unit",
       "CHI_W_Offshore_CL4",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_W_Offshore_CL4",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -22302,7 +23131,17 @@
     [
       "unit",
       "CHI_W_Offshore_CL5",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_W_Offshore_CL5",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -22362,7 +23201,17 @@
     [
       "unit",
       "CHI_W_Onshore_CL2",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_W_Onshore_CL2",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -22422,7 +23271,17 @@
     [
       "unit",
       "CHI_W_Onshore_CL3",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_W_Onshore_CL3",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -22502,7 +23361,17 @@
     [
       "unit",
       "CHI_W_Onshore_CL4",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_W_Onshore_CL4",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -22582,7 +23451,17 @@
     [
       "unit",
       "CHI_W_Onshore_CL5",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_W_Onshore_CL5",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -22662,7 +23541,17 @@
     [
       "unit",
       "CHI_electrolyser",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_electrolyser",
+      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -22742,7 +23631,17 @@
     [
       "unit",
       "CHI_oretoHBI",
-      "lifetime",
+      "lifetime_technical",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "shared"
+    ],
+    [
+      "unit",
+      "CHI_oretoHBI",
+      "payback_time",
       [
         "MjUuMA==",
         "float"

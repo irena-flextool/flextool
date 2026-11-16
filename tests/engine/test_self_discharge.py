@@ -201,7 +201,8 @@ def test_fix_start_with_investment(tmp_path_factory):
         ["node", "battery", "invest_max_total", b64(1000.0, "float")],
         ["node", "battery", "invest_min_total", b64(200.0, "float")],
         ["node", "battery", "invest_cost", b64(1.0, "float")],
-        ["node", "battery", "lifetime", b64(10.0, "float")],
+        ["node", "battery", "lifetime_technical", b64(10.0, "float")],
+        ["node", "battery", "payback_time", b64(10.0, "float")],
         ["node", "battery", "virtual_unitsize", b64(100.0, "float")]]
     step = _solve(tmp_path_factory, "sd_inv", vals, chain=CHAIN + ["battery_invest", "5weeks"])
     fd = step.flex_data

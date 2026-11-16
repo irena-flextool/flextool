@@ -1,12 +1,13 @@
-"""``lifetime``, ``invest_cost``, ``salvage_value`` and ``discount_rate`` of an entity: a constant, a ``period`` map
-and a map with the unnamed ``x`` index give the same LP when they give every period the same value.
+"""``lifetime_technical``, ``payback_time``, ``invest_cost``, ``net_salvage_value`` and ``discount_rate`` of an entity:
+a constant, a ``period`` map and a map with the unnamed ``x`` index give the same LP when they give every period the
+same value.
 
 Fixtures (built from JSON):
 
 * single: ``tests.json``, the four periods p2020 … p2035 (run years 0, 5, 10, 15) in one solve (``SINGLE``);
   coal_plant has 500 MW existing, ``lifetime_method = reinvest_choice`` and may invest and retire
-  (``invest_retire_no_limit``), so its lifetime sets the end of life of the existing capacity and the windows of
-  the investment and retirement annuities.
+  (``invest_retire_no_limit``), so its technical lifetime sets the end of life of the existing capacity and the
+  windows of the investment and retirement annuities, and its payback time their annuity factors.
 * rolling: ``tests.json`` ``dispatch_fullYear_roll`` with a 48 h horizon and a 36 h jump (8 rolls over
   p2020 … p2035) and coal_plant's 500 MW existing (``reinvest_choice``, no investment): the end of life in every
   roll.
@@ -69,9 +70,11 @@ def _lp(fd) -> tuple[dict, dict]:
 
 
 # The constant of each parameter in each case; a map variant gives every period this value.
-SINGLE_BASE = {"lifetime": 10.0, "discount_rate": 0.05, "invest_cost": 400.0, "salvage_value": 50.0}
-STOCH_BASE = {"lifetime": 1.0, "discount_rate": 0.05, "invest_cost": 1.0, "salvage_value": 0.1}
-ROLL_BASE = {"lifetime": 10.0}
+SINGLE_BASE = {"lifetime_technical": 10.0, "payback_time": 10.0, "discount_rate": 0.05, "invest_cost": 400.0,
+               "net_salvage_value": 50.0}
+STOCH_BASE = {"lifetime_technical": 1.0, "payback_time": 1.0, "discount_rate": 0.05, "invest_cost": 1.0,
+              "net_salvage_value": 0.1}
+ROLL_BASE = {"lifetime_technical": 10.0, "payback_time": 10.0}
 
 CASES = {
     # case: (entity, base values, extra fixed values, chain, periods, fixture json)
@@ -102,10 +105,11 @@ def _steps(tmp_path_factory, case: str, shaped: str | None = None, shape: str = 
 
 @pytest.mark.solver
 @pytest.mark.parametrize(("case", "parameter"), [
-    ("single", "lifetime"), ("single", "discount_rate"), ("single", "invest_cost"), ("single", "salvage_value"),
-    ("rolling", "lifetime"),
-    ("stochastic", "lifetime"), ("stochastic", "discount_rate"), ("stochastic", "invest_cost"),
-    ("stochastic", "salvage_value"),
+    ("single", "lifetime_technical"), ("single", "payback_time"), ("single", "discount_rate"),
+    ("single", "invest_cost"), ("single", "net_salvage_value"),
+    ("rolling", "lifetime_technical"), ("rolling", "payback_time"),
+    ("stochastic", "lifetime_technical"), ("stochastic", "payback_time"), ("stochastic", "discount_rate"),
+    ("stochastic", "invest_cost"), ("stochastic", "net_salvage_value"),
 ])
 @pytest.mark.parametrize("shape", ["period", "x"])
 def test_lifetime_constant_equals_maps(tmp_path_factory, case, parameter, shape) -> None:
@@ -139,12 +143,13 @@ def test_unnamed_lifetime_map_reads_each_period(tmp_path_factory) -> None:
     runs = {}
     for shape in ("period", "x"):
         steps, _, _ = _RUNS.get(tmp_path_factory, alt=f"life_eol_{shape}",
-                                values=NO_INVEST + [["unit", PLANT, "lifetime", _map(lifetimes, shape)]],
+                                values=NO_INVEST + [["unit", PLANT, "lifetime_technical", _map(lifetimes, shape)]],
                                 base_chain=_no_battery_invest(SINGLE))
         runs[shape] = list(steps.values())[-1]
     want = {"p2020": 500.0, "p2025": 500.0, "p2030": 0.0, "p2035": 0.0}
     for shape, step in runs.items():
         got = _all_existing(step)
-        assert got == {d: want[d] for d in got} and got, shape
+        assert {"p2020", "p2025"} <= set(got), shape
+        assert {d: got.get(d, 0.0) for d in want} == want, shape
     assert _lp(runs["x"].flex_data) == _lp(runs["period"].flex_data)
 

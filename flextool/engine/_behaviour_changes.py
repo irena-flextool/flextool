@@ -182,16 +182,17 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
         BehaviourChange(
             id="retirement_of_existing_capacity_only",
             summary=("Only capacity that existed before the run can be retired, and a retirement counts until that "
-                     "capacity's end of life (reinvest_choice / no_investment: the run's first year plus lifetime, "
+                     "capacity's end of life (reinvest_choice / no_reinvestment: the run's first year plus "
+                     "lifetime_technical, "
                      "in every solve of a chain and once with stochastic branches in the first period; before, "
                      "a later solve counted it from its own first period and branches multiplied it; "
                      "reinvest_automatic: the end of the run). It saves each "
                      "period's fixed cost of the existing capacity in that window, with the factor that fixed cost "
-                     "is charged with (its salvage value is unchanged: an annuity over lifetime). Periods without "
-                     "existing capacity have no retirement option. Before, a retirement counted in every later "
+                     "is charged with (its net salvage value is unchanged: an annuity over payback_time). Periods "
+                     "without existing capacity have no retirement option. Before, a retirement counted in every later "
                      "period (past the end of life the capacity went negative: an infeasible or zero retirement), "
                      "chained solves subtracted it from every period, and its fixed-cost saving was counted over "
-                     "the lifetime from the retirement (results change)."),
+                     "the technical lifetime from the retirement (results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "retirement_of_existing_capacity_only"),
             since="4.2.0",
             published="7.11.2026",
@@ -250,11 +251,11 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
         ),
         BehaviourChange(
             id="discount_rate_zero_is_zero",
-            summary=("A discount_rate of 0 is now 0 %: the annuity of an investment is invest_cost / lifetime "
-                     "(salvage_value / lifetime for a retirement). Before, a discount_rate of 0 or below was "
+            summary=("A discount_rate of 0 is now 0 %: the annuity of an investment is invest_cost / payback_time "
+                     "(net_salvage_value / payback_time for a retirement). Before, a discount_rate of 0 or below was "
                      "read as 5 %, so these investments cost more per year (results change). A negative "
                      "discount_rate is now an input error, and an investing or retiring entity with a cost "
-                     "needs a lifetime (before: 20 years)."),
+                     "needs a lifetime_technical or payback_time (before: 20 years)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "discount_rate_zero_is_zero"),
             since="4.4.0",
             published="13.11.2026",
@@ -262,7 +263,7 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
         BehaviourChange(
             id="invest_without_cost_offered",
             summary=("An invest_method that allows investing (retiring) now offers the investment (retirement) "
-                     "in every investment period, also where invest_cost (salvage_value) is missing or 0: that "
+                     "in every investment period, also where invest_cost (net_salvage_value) is missing or 0: that "
                      "capacity has no annuity, its fixed_cost still counts. Before, such a period had no "
                      "investment (retirement) variable unless a user constraint had a capacity coefficient on "
                      "the entity, so a 0 in an invest_cost map blocked investment in that period (results "

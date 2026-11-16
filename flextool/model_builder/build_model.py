@@ -229,7 +229,7 @@ class ModelBuilder:
         self._add_param("connection", conn_name, "invest_cost", invest_cost)
         self._add_param("connection", conn_name, "invest_method", "invest_no_limit")
         self._add_param("connection", conn_name, "transfer_method", "regular")
-        self._add_param("connection", conn_name, "lifetime", 40)
+        self._add_param("connection", conn_name, "lifetime_technical", 40)
         self._add_param("connection", conn_name, "discount_rate", 0.05)
 
         if loss_per_100km > 0 and dist_km > 0:
@@ -355,7 +355,7 @@ class ModelBuilder:
                     self._add_param("node", storage_node_name, "node_type", "storage")
                     self._add_invest_method("node", storage_node_name, storage_params)
                     self._add_param("node", storage_node_name, "storage_binding_method", "bind_within_solve")
-                    self._add_param("node", storage_node_name, "lifetime", storage_params.get("lifetime", 20))
+                    self._add_param("node", storage_node_name, "lifetime_technical", storage_params.get("lifetime", 20))
                     self._add_param("node", storage_node_name, "discount_rate", storage_params.get("discount_rate", 0.05))
                     if "invest_cost" in storage_params:
                         self._add_param("node", storage_node_name, "invest_cost", storage_params["invest_cost"])
@@ -365,7 +365,7 @@ class ModelBuilder:
                     self._add_entity("connection__node__node", [conn_name, grid_node, storage_node_name])
                     self._add_invest_method("connection", conn_name, conn_params)
                     self._add_param("connection", conn_name, "transfer_method", "regular")
-                    self._add_param("connection", conn_name, "lifetime", conn_params.get("lifetime", 20))
+                    self._add_param("connection", conn_name, "lifetime_technical", conn_params.get("lifetime", 20))
                     self._add_param("connection", conn_name, "discount_rate", conn_params.get("discount_rate", 0.05))
                     if "invest_cost" in conn_params:
                         self._add_param("connection", conn_name, "invest_cost", conn_params["invest_cost"])
@@ -436,7 +436,7 @@ class ModelBuilder:
 
             # Unit parameters
             self._add_invest_method("unit", unit_name, tech_spec)
-            self._add_param("unit", unit_name, "lifetime", tech_spec.get("lifetime", 20))
+            self._add_param("unit", unit_name, "lifetime_technical", tech_spec.get("lifetime", 20))
             self._add_param("unit", unit_name, "discount_rate", tech_spec.get("discount_rate", 0.05))
             if "conversion_method" in tech_spec:
                 self._add_param("unit", unit_name, "conversion_method", tech_spec["conversion_method"])

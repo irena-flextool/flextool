@@ -1,7 +1,7 @@
-"""Investment and retirement are offered without ``invest_cost`` / ``salvage_value`` (#218).
+"""Investment and retirement are offered without ``invest_cost`` / ``net_salvage_value`` (#218).
 
 An ``invest_method`` that allows investing (retiring) gives the entity its ``v_invest`` (``v_divest``) in every
-investment period of the solve, also where ``invest_cost`` (``salvage_value``) is missing or 0.  Before, such a
+investment period of the solve, also where ``invest_cost`` (``net_salvage_value``) is missing or 0.  Before, such a
 pair needed a non-zero annuity or a user-constraint capacity coefficient, so an ``invest_method`` without a cost
 silently offered nothing.  The capacity has no annuity; its ``fixed_cost`` still counts.
 
@@ -131,11 +131,11 @@ def test_b_reinvest_choice_without_lifetime_is_an_error(tmp_path_factory) -> Non
     ])
     with pytest.raises(FlexToolConfigError) as err:
         run(tmp_path_factory, url, scen)
-    assert ("unit 'g' has no lifetime, but its lifetime_method is reinvest_choice and it invests or retires"
+    assert ("unit 'g' has no lifetime_technical, but its lifetime_method is reinvest_choice and it invests or retires"
             in str(err.value)), str(err.value)
 
 
-def test_c_retirement_without_salvage_value(tmp_path_factory, monkeypatch) -> None:
+def test_c_retirement_without_net_salvage_value(tmp_path_factory, monkeypatch) -> None:
     steps, work = _solve(tmp_path_factory, "i218_c", [
         ["unit", "r", "existing", _f(100.0)],
         ["unit", "r", "invest_method", _s("retire_no_limit")],
@@ -166,14 +166,16 @@ def test_d_period_total_methods_are_one_sided(tmp_path_factory) -> None:
     invest, divest = _sets(tmp_path_factory, "i218_d", [
         ["unit", "ipt", "existing", _f(50.0)],
         ["unit", "ipt", "invest_method", _s("invest_period_total")],
-        ["unit", "ipt", "salvage_value", _f(100.0)],
+        ["unit", "ipt", "net_salvage_value", _f(100.0)],
         ["unit", "ipt", "invest_cost", _f(1000.0)],
-        ["unit", "ipt", "lifetime", _f(20.0)],
+        ["unit", "ipt", "lifetime_technical", _f(20.0)],
+        ["unit", "ipt", "payback_time", _f(20.0)],
         ["unit", "rpt", "existing", _f(50.0)],
         ["unit", "rpt", "invest_method", _s("retire_period_total")],
         ["unit", "rpt", "invest_cost", _f(1000.0)],
-        ["unit", "rpt", "salvage_value", _f(100.0)],
-        ["unit", "rpt", "lifetime", _f(20.0)],
+        ["unit", "rpt", "net_salvage_value", _f(100.0)],
+        ["unit", "rpt", "lifetime_technical", _f(20.0)],
+        ["unit", "rpt", "payback_time", _f(20.0)],
     ], _unit("ipt") + _unit("rpt"))
     assert ("ipt", "p2020") in invest and ("ipt", "p2020") not in divest
     assert ("rpt", "p2020") in divest and ("rpt", "p2020") not in invest
@@ -192,7 +194,7 @@ def test_e_capacity_coefficient_entity_still_offered(tmp_path_factory) -> None:
 
 def test_notice_names_the_newly_offered_pairs(tmp_path_factory, capsys) -> None:
     """With the database's ``invest_without_cost_offered`` marker, the run names the entities offered without a
-    cost (``g``: no invest_cost; ``r``: no salvage_value), not those the old rule offered too (``c``: a non-zero
+    cost (``g``: no invest_cost; ``r``: no net_salvage_value), not those the old rule offered too (``c``: a non-zero
     invest_cost; ``k``: a user-constraint capacity coefficient)."""
     from spinedb_api import DatabaseMapping
 
@@ -201,7 +203,8 @@ def test_notice_names_the_newly_offered_pairs(tmp_path_factory, capsys) -> None:
         ["unit", "g", "invest_method", _s("invest_no_limit")],
         ["unit", "c", "invest_method", _s("invest_no_limit")],
         ["unit", "c", "invest_cost", _f(1000.0)],
-        ["unit", "c", "lifetime", _f(20.0)],
+        ["unit", "c", "lifetime_technical", _f(20.0)],
+        ["unit", "c", "payback_time", _f(20.0)],
         ["unit", "k", "invest_method", _s("invest_no_limit")],
         ["unit", "k", "constraint_capacity_coeff", coeff],
         ["constraint", "cap_c", "sense", _s("less_than")],
@@ -217,7 +220,7 @@ def test_notice_names_the_newly_offered_pairs(tmp_path_factory, capsys) -> None:
     assert len(lines) == 1, lines
     assert "Affected entities: g, r." in lines[0], lines[0]
     assert "Investment without invest_cost (entity, periods): g (p2020)." in lines[0], lines[0]
-    assert "Retirement without salvage_value (entity, periods): r (p2020)." in lines[0], lines[0]
+    assert "Retirement without net_salvage_value (entity, periods): r (p2020)." in lines[0], lines[0]
     assert "invest_max_period 0" in lines[0]
 
 

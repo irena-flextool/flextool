@@ -367,7 +367,8 @@ def _desalination_data() -> dict[str, list]:
         ["unit", "ro_desal", "invest_method", "invest_total", ro_alt],
         ["unit", "ro_desal", "invest_max_total", 2000.0, ro_alt],
         ["unit", "ro_desal", "invest_cost", 30.0, ro_alt],
-        ["unit", "ro_desal", "lifetime", 20.0, ro_alt],
+        ["unit", "ro_desal", "lifetime_technical", 20.0, ro_alt],
+        ["unit", "ro_desal", "payback_time", 20.0, ro_alt],
         ["unit", "ro_desal", "discount_rate", 0.05, ro_alt],
         ["solve", DISPATCH_SOLVE, "invest_periods", _invest_periods(), ro_alt],
         # desal_water_storage
@@ -500,7 +501,8 @@ def _csp_data() -> dict[str, list]:
             [cls, name, "invest_method", "invest_total", inv_alt],
             [cls, name, "invest_max_total", bound, inv_alt],
             [cls, name, "invest_cost", cost, inv_alt],
-            [cls, name, "lifetime", 25.0, inv_alt],
+            [cls, name, "lifetime_technical", 25.0, inv_alt],
+            [cls, name, "payback_time", 25.0, inv_alt],
             [cls, name, "discount_rate", 0.07, inv_alt],
         ]
     base = ["init", "west", "coal", sys_alt]

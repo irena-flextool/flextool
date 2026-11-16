@@ -45,8 +45,8 @@ ALWAYS_SHOWN = ("invest_method", "existing")
 NOT_SET = "not set"
 DEFAULT = "default"
 #: The parameters kept by the cut step "investment-relevant inputs only".
-INVESTMENT_PREFIXES = ("invest", "retire", "existing", "lifetime", "cumulative", "salvage", "fixed_cost",
-                       "discount_rate", "unitsize", "virtual_unitsize", "construction")
+INVESTMENT_PREFIXES = ("invest", "retire", "existing", "lifetime", "payback", "cumulative", "net_salvage",
+                       "fixed_cost", "discount_rate", "unitsize", "virtual_unitsize", "construction")
 #: |value| below this is zero (slack and investment-value readings).
 ZERO = 1e-6
 #: Relative tolerance of a hint's equality (a result equal to its limit).

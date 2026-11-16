@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flextool.engine.input._legacy_names import NO_REINVESTMENT
+from flextool.engine.input._lifetime_roles import NO_REINVESTMENT
 from flextool.engine.preprocess._provider_io import (
     _emit,
     _provider_key,
@@ -249,7 +249,7 @@ def _read_solve_first_flag(solve_data_dir: Path,
 def _end_of_life(solve_data_dir: Path, *, provider) -> tuple[dict[str, str], dict[str, float], dict[str, float]]:
     """``(lifetime_method, p_years_d, end_of_life)``: ``end_of_life[e]`` the year (of ``p_years_d``, which covers
     the period history: years from the start of the run) at which the pre-existing capacity of a reinvest_choice /
-    no_investment entity ends, counted from the start of the run::
+    no_reinvestment entity ends, counted from the start of the run::
 
         p_years_d[d0] + edEntity_lifetime[e, d0],   d0 = run_start_period(p_years_d)
     """
@@ -289,8 +289,8 @@ def derive_p_entity_pre_existing(
         v_unit     = p_process[e,'virtual_unitsize'] if e in process
                      else p_node[e,'virtual_unitsize'] if e in node
                      else 0
-        if method not in {reinvest_automatic, reinvest_choice, no_investment}: 0
-        elif method ∈ {reinvest_choice, no_investment}
+        if method not in {reinvest_automatic, reinvest_choice, no_reinvestment}: 0
+        elif method ∈ {reinvest_choice, no_reinvestment}
              and not (p_years_d[d] < p_years_d[d0] + edEntity_lifetime[e, d0]):
             0      (d0 = run_start_period(p_years_d): the end of life counts from the start of the run)
         else: v_existing * v_unit  if v_unit > 0  else  v_existing

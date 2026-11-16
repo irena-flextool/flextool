@@ -79,14 +79,18 @@ def _json_source(db: CanonicalDatabase) -> Path:
 def _stale_version(sqlite_abs: Path) -> int | None:
     """The FlexTool data version of a materialized file older than this FlexTool, else ``None``.
 
-    Read read-only.  A frozen file, or one whose version or marker cannot be read, is never stale: it is left as it
-    is.
+    A file at the current version that lacks a definition or list member of the current version's schema step (made
+    before that entry was added to the step) is stale too.  Read read-only.  A frozen file, or one whose version or
+    marker cannot be read, is never stale: it is left as it is.
     """
     from flextool.update_flextool import FLEXTOOL_DB_VERSION
+    from flextool.update_flextool.db_migration import _head_schema_missing_ro
     from flextool.update_flextool.frozen import FrozenCheckError, read_db_version_ro, read_frozen
 
     version = read_db_version_ro(sqlite_abs)
-    if version is None or version >= FLEXTOOL_DB_VERSION:
+    if version is None or version > FLEXTOOL_DB_VERSION:
+        return None
+    if version == FLEXTOOL_DB_VERSION and not _head_schema_missing_ro(sqlite_abs):
         return None
     try:
         if read_frozen(sqlite_abs) is not None:

@@ -1,9 +1,9 @@
 """Per-(entity, period) values of the period-valued entity parameters, read through the shape resolver.
 
-The lifetimes, ``invest_cost``, the salvage value and ``discount_rate`` of units, nodes and connections are a
-constant or a period map (``PARAM_ALLOWED_SHAPES``).  A lifetime or the salvage value is asked for by its role
-(``lifetime_technical``, ``payback_time``, ``net_salvage_value``): each entity is read under the name it gives the
-role (:mod:`flextool.engine.input._legacy_names`).  Every reader of them goes through
+The lifetimes, ``invest_cost``, the net salvage value and ``discount_rate`` of units, nodes and connections are a
+constant or a period map (``PARAM_ALLOWED_SHAPES``).  The payback time is asked for by its role (``payback_time``):
+each entity is read under the name it gives the role, ``payback_time`` or else ``lifetime_technical``
+(:mod:`flextool.engine.input._lifetime_roles`).  Every reader of them goes through
 :func:`_ed_period_param_lf`, so a constant, a ``period`` map and a map with the unnamed ``x`` index read alike, a
 map with another index is an error naming the entity, and a stochastic branch period inherits its anchor's value.
 
@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from flextool.engine.input._axis_enums import align_join_dtypes, axis_lazyframe
-from flextool.engine.input._legacy_names import ENTITY_CLASSES, ROLE_CHAIN, source_role_sources
+from flextool.engine.input._lifetime_roles import ENTITY_CLASSES, ROLE_CHAIN, source_role_sources
 from flextool.engine.preprocess.params._branch import active_branch_anchor_pairs, inherit_active_branch_periods
 
 if TYPE_CHECKING:

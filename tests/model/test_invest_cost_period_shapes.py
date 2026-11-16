@@ -1,6 +1,6 @@
-"""``invest_cost`` / ``salvage_value`` shapes in the investment sets and annuities.
+"""``invest_cost`` / ``net_salvage_value`` shapes in the investment sets and annuities.
 
-``unit/node/connection.invest_cost`` and ``.salvage_value`` are "constant or period"
+``unit/node/connection.invest_cost`` and ``.net_salvage_value`` are "constant or period"
 (docs/reference/) and are read through the shape resolver (CLAUDE.md invariant #2).
 Whether an ``(entity, period)`` pair gets an invest / divest variable does not depend on
 the cost (#218: every investment period of an ``invest_method`` that allows it); the cost
@@ -166,18 +166,19 @@ def test_invest_cost_zero_in_one_period(tmp_path_factory, index_name):
     assert all(annuity.get(("coal_plant", d), 0.0) > 0.0 for d in ("p2020", "p2030", "p2035")), annuity
 
 
-# ── salvage_value (divest path): mixed shapes, per-period zero ──────────────
+# ── net_salvage_value (divest path): mixed shapes, per-period zero ──────────────
 
 
-def test_salvage_value_mixed_shapes(tmp_path_factory):
+def test_net_salvage_value_mixed_shapes(tmp_path_factory):
     values = [
         ["unit", "coal_plant", "invest_method", "invest_retire_total"],
-        ["unit", "coal_plant", "salvage_value",
+        ["unit", "coal_plant", "net_salvage_value",
          _pmap({"p2020": 10.0, "p2025": 0.0, "p2030": 10.0, "p2035": 10.0})],
         ["unit", "wind_plant", "invest_method", "invest_retire_total"],
-        ["unit", "wind_plant", "salvage_value", 5.0],
-        # A retirement with a salvage_value needs a lifetime (validate_basic_sanity).
-        ["unit", "wind_plant", "lifetime", 20.0],
+        ["unit", "wind_plant", "net_salvage_value", 5.0],
+        # A retirement with a net_salvage_value needs a lifetime (validate_basic_sanity).
+        ["unit", "wind_plant", "lifetime_technical", 20.0],
+        ["unit", "wind_plant", "payback_time", 20.0],
     ]
     step = _single(_solve(tmp_path_factory, "tests.json", _overlay(values)))
     divest = _pairs(step.flex_data.ed_divest_set)

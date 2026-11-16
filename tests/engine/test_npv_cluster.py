@@ -329,7 +329,7 @@ def test_npv_lazy_ed_entity_annual_discounted_2pct(scenario_run):
 # discount_rate 0 is 0 %, a missing rate is the 5 % default (both annuity paths)
 # ---------------------------------------------------------------------------
 #
-# invest_cost 1000 CUR/kW, lifetime 20 a.  Hand values:
+# invest_cost 1000 CUR/kW, lifetime_technical 20 a (no payback_time: the annuity is over 20 a).  Hand values:
 #   r = 0          → 1000·1000/20                 = 50 000 CUR/MW/a (straight line);
 #   r missing/0.05 → 1e6·0.05/(1 − 1.05^−20)      = 80 242.58719 CUR/MW/a.
 
@@ -364,7 +364,7 @@ def _lazy_annuity(disc: float | None, life: float | None, cost: float = 1000.0) 
     if disc is not None:
         params[("unit", "discount_rate")] = frame(disc)
     if life is not None:
-        params[("unit", "lifetime")] = frame(life)
+        params[("unit", "lifetime_technical")] = frame(life)
     src = InMemoryReader({"unit": pl.DataFrame({"name": ["u"]})}, params,
                          defaults={("unit", "discount_rate"): 0.05})
     ed = pl.LazyFrame({"e": ["u"], "d": ["p2020"]})
@@ -373,16 +373,16 @@ def _lazy_annuity(disc: float | None, life: float | None, cost: float = 1000.0) 
 
 
 def _emit_annuity(disc: float | None, life: float | None, cost: float = 1000.0) -> float:
-    from flextool.engine.input._legacy_names import lookup_roles
+    from flextool.engine.input._lifetime_roles import lookup_roles
     from flextool.engine.preprocess.emit._entity_annual import _annuity
 
     values = {("u", "invest_cost"): cost}
     if disc is not None:
         values[("u", "discount_rate")] = disc
     if life is not None:
-        values[("u", "lifetime")] = life
+        values[("u", "lifetime_technical")] = life
     lookup = _Lookup(values)
-    return _annuity({"pp": lookup, "roles": {"pp": lookup_roles(lookup, "unit")}}, "pp", "u", "p2020", "invest_cost")
+    return _annuity({"pp": lookup, "roles": {"pp": lookup_roles(lookup)}}, "pp", "u", "p2020", "invest_cost")
 
 
 @pytest.mark.parametrize("path", [_lazy_annuity, _emit_annuity], ids=["lazy", "emit"])
@@ -396,8 +396,8 @@ def test_annuity_discount_rate(path, disc, expected) -> None:
 def test_annuity_without_lifetime_is_an_error(path) -> None:
     from flextool.engine.input._solve_state import FlexToolConfigError
 
-    with pytest.raises(FlexToolConfigError, match="lifetime is missing or not above 0 where invest_cost is not 0: "
-                                                  "'u' in period p2020"):
+    with pytest.raises(FlexToolConfigError,
+                       match="payback_time is missing or not above 0 where invest_cost is not 0: 'u' in period p2020"):
         path(0.05, None)
     assert path(0.05, None, cost=0.0) == 0.0
 

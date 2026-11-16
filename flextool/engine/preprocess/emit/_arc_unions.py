@@ -667,20 +667,25 @@ def emit_process_source_sink_ramp_family(
 #
 # Update both sites in lockstep if base.dat changes; the parity tests
 # catch drift.
+#
+# ``payback_time`` is in none of them: these sets only feed ``pdProcess`` /
+# ``pdNode``, whose readers (the existing-capacity chain and the node
+# inflow scaling) do not use it; the annuity reads it from the
+# ``p_process`` / ``pd_process`` (``p_node`` / ``pd_node``) lookups.
 
 # flextool_base.dat:144-152 — processPeriodParam family.
 _PROCESS_PERIOD_PARAM: frozenset[str] = frozenset((
-    "fixed_cost", "other_operational_cost", "lifetime", "existing",
-    "discount_rate", "invest_cost", "salvage_value",
+    "fixed_cost", "other_operational_cost", "lifetime_technical", "existing",
+    "discount_rate", "invest_cost", "net_salvage_value",
     "invest_max_period", "invest_min_period",
     "cumulative_max_capacity", "cumulative_min_capacity",
     "retire_forced", "retire_max_period", "retire_min_period", "startup_cost",
 ))
 _PROCESS_PERIOD_PARAM_REQUIRED: frozenset[str] = frozenset((
-    "fixed_cost", "other_operational_cost", "lifetime", "existing",
+    "fixed_cost", "other_operational_cost", "lifetime_technical", "existing",
 ))
 _PROCESS_PERIOD_PARAM_INVEST: frozenset[str] = frozenset((
-    "discount_rate", "invest_cost", "salvage_value",
+    "discount_rate", "invest_cost", "net_salvage_value",
     "invest_max_period", "invest_min_period",
     "cumulative_max_capacity", "cumulative_min_capacity",
     "retire_forced", "retire_max_period", "retire_min_period",
@@ -703,20 +708,20 @@ _SOURCE_SINK_TIME_PARAM_REQUIRED: frozenset[str] = frozenset((
 # flextool_base.dat:168-177 — nodePeriodParam family.
 _NODE_PERIOD_PARAM: frozenset[str] = frozenset((
     "annual_flow", "peak_inflow", "fixed_cost", "discount_rate",
-    "invest_cost", "salvage_value",
-    "invest_max_period", "invest_min_period", "lifetime",
+    "invest_cost", "net_salvage_value",
+    "invest_max_period", "invest_min_period", "lifetime_technical",
     "cumulative_max_capacity", "cumulative_min_capacity",
     "retire_forced", "retire_max_period", "retire_min_period",
     "virtual_unitsize",
     "storage_state_reference_price", "existing", "penalty_up", "penalty_down",
 ))
 _NODE_PERIOD_PARAM_REQUIRED: frozenset[str] = frozenset((
-    "annual_flow", "peak_inflow", "fixed_cost", "lifetime",
+    "annual_flow", "peak_inflow", "fixed_cost", "lifetime_technical",
     "storage_state_reference_price", "existing",
     "penalty_up", "penalty_down",
 ))
 _NODE_PERIOD_PARAM_INVEST: frozenset[str] = frozenset((
-    "discount_rate", "invest_cost", "salvage_value",
+    "discount_rate", "invest_cost", "net_salvage_value",
     "invest_max_period", "invest_min_period",
     "cumulative_max_capacity", "cumulative_min_capacity",
     "retire_forced", "retire_max_period", "retire_min_period",

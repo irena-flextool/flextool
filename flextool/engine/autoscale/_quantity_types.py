@@ -348,16 +348,16 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('large_failure_ratio', 'reserve__upDown__unit__node'): QuantityType.FRACTION,
     # [factor] With a large_failure method, the reserve must cover the loss of this unit's flow times this ratio. Its own reserve does not count. ...
     ('lifetime', 'connection'): QuantityType.DURATION,
-    # [years] Used to calculate annuity together with interest rate. Constant or period.
     ('lifetime', 'node'): QuantityType.DURATION,
-    # [years] Used to calculate annuity together with interest rate. Constant or period.
     ('lifetime', 'unit'): QuantityType.DURATION,
-    # [years] Used to calculate annuity together with interest rate. Constant or period.
-    # The technical lifetime and the payback time that replace ``lifetime`` (both kept while a database can carry the
-    # old name).
+    # Pre-v81 name of lifetime_technical / payback_time, carried during the migration window (split by db_migration
+    # v81).
     ('lifetime_technical', 'connection'): QuantityType.DURATION,
+    # [years] Technical lifetime: how long the capacity operates; its end depends on lifetime_method.
     ('lifetime_technical', 'node'): QuantityType.DURATION,
+    # [years] Technical lifetime: how long the storage capacity operates. Constant or period.
     ('lifetime_technical', 'unit'): QuantityType.DURATION,
+    # [years] Technical lifetime: how long the capacity operates; its end depends on lifetime_method.
     ('lifetime_method', 'connection'): QuantityType.DIMENSIONLESS,
     # Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the en...
     ('lifetime_method', 'node'): QuantityType.DIMENSIONLESS,
@@ -530,19 +530,22 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Hours (Required if rolling_window solve). How long into the future the roll sees
     ('rolling_solve_jump', 'solve'): QuantityType.DURATION,
     # Hours, (Required if rolling_window solve). Interval between the start points of the rolls. Should be smaller than the horizon
-    # The net salvage value that replaces ``salvage_value`` (both kept while a database can carry the old name).
     ('net_salvage_value', 'connection'): QuantityType.PRICE_PER_CAPACITY,
+    # [CUR/kW] Net salvage value: scrap value minus decommissioning cost, received once when capacity is retired.
     ('net_salvage_value', 'node'): QuantityType.PRICE_PER_STORAGE,
+    # [CUR/kWh] Net salvage value of retired storage capacity. Constant or period.
     ('net_salvage_value', 'unit'): QuantityType.PRICE_PER_CAPACITY,
+    # [CUR/kW] Net salvage value: scrap value minus decommissioning cost, received once when capacity is retired.
     ('payback_time', 'connection'): QuantityType.DURATION,
+    # [years] Years over which invest_cost is annualized with discount_rate. No value: lifetime_technical.
     ('payback_time', 'node'): QuantityType.DURATION,
+    # [years] Years over which invest_cost is annualized with discount_rate. No value: lifetime_technical.
     ('payback_time', 'unit'): QuantityType.DURATION,
+    # [years] Years over which invest_cost is annualized with discount_rate. No value: lifetime_technical.
     ('salvage_value', 'connection'): QuantityType.PRICE_PER_CAPACITY,
-    # [CUR/kW] Salvage value for retiring capacity. Constant or period.
     ('salvage_value', 'node'): QuantityType.PRICE_PER_STORAGE,
-    # [CUR/kWh] Salvage value of the storage. Constant or period.
     ('salvage_value', 'unit'): QuantityType.PRICE_PER_CAPACITY,
-    # [CUR/kW] Salvage value of the unit. Constant or period.
+    # Pre-v81 name of net_salvage_value, carried during the migration window (renamed by db_migration v81).
     ('scaling', 'solve'): QuantityType.DIMENSIONLESS,
     # Numerical scaling of this solve's LP. full (default): FlexTool rescales variables, constraints and costs and sets the solver's scaling. basi...
     ('self_discharge_loss', 'node'): QuantityType.FRACTION,

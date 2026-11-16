@@ -26,14 +26,12 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine.input._legacy_names import (
+from flextool.engine.input._lifetime_roles import (
     LIFETIME_TECHNICAL,
     NET_SALVAGE_VALUE,
     NO_REINVESTMENT,
     PAYBACK_TIME,
-    ROLE_CHAIN,
     lookup_roles,
-    physical_name,
     role_param,
 )
 from flextool.engine.preprocess.emit._pdt_lookup import PdLookup
@@ -153,15 +151,14 @@ def _annuity(inp: dict, kind: str, e: str, d: str, cost_param: str) -> float:
     """``cost × 1000 × annuity_factor(r, n)`` of entity ``e`` in period ``d`` (:mod:`.._annuity`), read from the
     lookup ``inp[kind]`` (``"pp"`` processes, ``"pn"`` nodes).
 
-    ``cost_param``: ``invest_cost`` or the role ``net_salvage_value``; ``n`` is the entity's payback time
+    ``cost_param``: ``invest_cost`` or ``net_salvage_value``; ``n`` is the entity's payback time
     (:data:`PAYBACK_TIME`, its technical lifetime when it has none).  A missing ``discount_rate`` is
     ``DEFAULT_DISCOUNT_RATE`` (the schema default); an explicit 0 stays 0 (the straight-line annuity
     ``cost / n``).  A zero cost gives 0 whatever the payback time; a non-zero cost without a positive payback time
     is an error (:func:`require_lifetime`).
     """
     lookup, roles = inp[kind], inp["roles"][kind]
-    cost_name = role_param(roles, e, cost_param) if cost_param in ROLE_CHAIN else cost_param
-    cost = lookup.get(e, cost_name, d)
+    cost = lookup.get(e, cost_param, d)
     if cost == 0:
         return 0.0
     r = (lookup.get(e, "discount_rate", d) if lookup.has(e, "discount_rate", d)
@@ -169,10 +166,7 @@ def _annuity(inp: dict, kind: str, e: str, d: str, cost_param: str) -> float:
     life_name = role_param(roles, e, PAYBACK_TIME)
     n = lookup.get(e, life_name, d) if lookup.has(e, life_name, d) else 0.0
     if not n > 0:
-        def defined(name: str) -> bool:
-            return bool(lookup.explicit_rows(name))
-        require_lifetime([(e, d)], physical_name(cost_param, defined) if cost_param in ROLE_CHAIN else cost_param,
-                         physical_name(PAYBACK_TIME, defined))
+        require_lifetime([(e, d)], cost_param, PAYBACK_TIME)
     return cost * 1000.0 * annuity_factor(r, n)
 
 
@@ -188,7 +182,7 @@ def _inflation_window_sum(
 
     ``open_window=True`` matches reinvest_automatic — sums forward
     from ``pdy_d`` with no upper bound.  ``open_window=False`` matches
-    reinvest_choice / no_investment — sums only while
+    reinvest_choice / no_reinvestment — sums only while
     ``pdy < pdy_d + life``.
     """
     s = 0.0
@@ -265,7 +259,7 @@ def _entity_annual_inputs(input_dir: Path, solve_data_dir: Path,
         "window_reach": window_reach,
         "pp": pp,
         "pn": pn,
-        "roles": {"pp": lookup_roles(pp, "unit / connection"), "pn": lookup_roles(pn, "node")},
+        "roles": {"pp": lookup_roles(pp), "pn": lookup_roles(pn)},
         "process_set": frozenset(_read_singles(input_dir / "process.csv", provider=provider)),
         "node_set": frozenset(_read_singles(input_dir / "node.csv", provider=provider)),
         "entityInvest": _read_singles(solve_data_dir / "entityInvest.csv", provider=provider),
@@ -365,14 +359,14 @@ def _div_pair(inp: dict) -> tuple[
             pdy_d = inp["p_discount_years"].get(d, 0.0)
             disc = 0.0
             if e in inp["node_set"]:
-                life = inp["pn"].get(e, role_param(inp["roles"]["pn"], e, LIFETIME_TECHNICAL), d)
+                life = inp["pn"].get(e, LIFETIME_TECHNICAL, d)
                 disc = ann * _inflation_window_sum(
                     pdy_d, life, _window_periods(inp, d),
                     inp["p_discount_years"], inp["p_inflation_invest"],
                     open_window=False,
                 )
             elif e in inp["process_set"]:
-                life = inp["pp"].get(e, role_param(inp["roles"]["pp"], e, LIFETIME_TECHNICAL), d)
+                life = inp["pp"].get(e, LIFETIME_TECHNICAL, d)
                 disc = ann * _inflation_window_sum(
                     pdy_d, life, _window_periods(inp, d),
                     inp["p_discount_years"], inp["p_inflation_invest"],
@@ -420,9 +414,9 @@ def _rows_lifetime_fixed_cost_divest(inp: dict) -> list[tuple[str, str, float]]:
             fc = inp["ed_fixed_cost"].get((e, d), 0.0)
             pdy_d = inp["p_discount_years"].get(d, 0.0)
             if e in inp["node_set"]:
-                life = inp["pn"].get(e, role_param(inp["roles"]["pn"], e, LIFETIME_TECHNICAL), d)
+                life = inp["pn"].get(e, LIFETIME_TECHNICAL, d)
             elif e in inp["process_set"]:
-                life = inp["pp"].get(e, role_param(inp["roles"]["pp"], e, LIFETIME_TECHNICAL), d)
+                life = inp["pp"].get(e, LIFETIME_TECHNICAL, d)
             else:
                 life = 0.0
             v = fc * _inflation_window_sum(

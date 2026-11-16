@@ -266,7 +266,7 @@ def _invest_retire_values(cls: str, ent: str, scale: float) -> list:
         [cls, ent, "retire_max_total", 40 * scale],
         [cls, ent, "retire_min_total", 1 * scale],
         # without a salvage value the entity gets no divest variable
-        [cls, ent, "salvage_value", 100.0],
+        [cls, ent, "net_salvage_value", 100.0],
     ]
 
 
@@ -361,9 +361,10 @@ def _patch_stoch_invest_storage(data: dict) -> dict:
                 # which is what the fixture already got implicitly before this fix -- keeps
                 # maxDivest_entity_total_path[base,*] byte-identical).
                 ["unit", "base", "retire_max_total", 0.0],
-                ["node", "store", "salvage_value", 0.5],
+                ["node", "store", "net_salvage_value", 0.5],
                 ["node", "store", "discount_rate", 0.05],
-                ["node", "store", "lifetime", 1.0],
+                ["node", "store", "lifetime_technical", 1.0],
+                ["node", "store", "payback_time", 1.0],
                 ["node", "store", "penalty_up", 10000.0],
                 ["node", "store", "penalty_down", 10000.0],
                 ["connection", "store_conn", "existing", 50.0],
@@ -397,7 +398,7 @@ def _patch_multi_year_reinvest_choice(data: dict) -> dict:
     and stayed 700 in every solve."""
     return _overlay(
         data, name="multi_year_reinvest_choice", base="multi_year",
-        values=[["unit", "coal_plant", "lifetime", 5.0],
+        values=[["unit", "coal_plant", "lifetime_technical", 5.0], ["unit", "coal_plant", "payback_time", 5.0],
                 ["unit", "coal_plant", "lifetime_method", "reinvest_choice"]])
 
 
@@ -417,7 +418,8 @@ def _patch_invest_total_no_var(data: dict) -> dict:
         entities=[["unit", "x_unit"], ["unit__outputNode", ["x_unit", "west"]]],
         values=[["unit", "wind_plant", "invest_method", "invest_no_limit"],
                 ["unit", "wind_plant", "invest_cost", 1000.0],
-                ["unit", "wind_plant", "lifetime", 20.0],
+                ["unit", "wind_plant", "lifetime_technical", 20.0],
+                ["unit", "wind_plant", "payback_time", 20.0],
                 ["connection", "battery_inverter", "invest_method", "invest_no_limit"],
                 ["unit", "x_unit", "invest_method", "invest_total"],
                 ["unit", "x_unit", "invest_max_total", 10.0],
@@ -1668,7 +1670,8 @@ def _patch_conn_exact_invest(data: dict) -> dict:
     return _overlay(data, name="conn_exact_invest", base=_LL, values=[
         ["connection", "ll", "transfer_method", "exact"], ["connection", "ll", "efficiency", 0.95],
         ["connection", "ll", "existing", 0.0], ["connection", "ll", "invest_method", "invest_no_limit"],
-        ["connection", "ll", "invest_cost", 1.0], ["connection", "ll", "lifetime", 20.0],
+        ["connection", "ll", "invest_cost", 1.0], ["connection", "ll", "lifetime_technical", 20.0],
+        ["connection", "ll", "payback_time", 20.0],
         ["connection", "ll", "discount_rate", 0.05],
         ["node", "lw", "penalty_up", 1000.0], ["node", "lw", "penalty_down", 1000.0],
         ["node", "le", "penalty_up", 1000.0], ["node", "le", "penalty_down", 1000.0],

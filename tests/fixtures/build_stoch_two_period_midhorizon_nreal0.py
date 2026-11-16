@@ -216,7 +216,8 @@ def build() -> dict:
          _pack("invest_total", "str"), "base"],
         ["unit", "base", "invest_cost", _pack(invest_cost, "map"), "base"],
         ["unit", "base", "discount_rate", _pack(0.05, "float"), "base"],
-        ["unit", "base", "lifetime", _pack(1.0, "float"), "base"],
+        ["unit", "base", "lifetime_technical", _pack(1.0, "float"), "base"],
+        ["unit", "base", "payback_time", _pack(1.0, "float"), "base"],
         ["unit", "base", "invest_max_total", _pack(150.0, "float"),
          "base"],
         # Small positive dispatch cost so free wind is STRICTLY preferred up

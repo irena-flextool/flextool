@@ -31,7 +31,6 @@ from pathlib import Path
 import polars as pl
 
 from flextool.engine.input._axis_enums import rename_to_axis
-from flextool.engine.input._legacy_names import canonical_method_expr
 from flextool.engine.preprocess._provider_io import _emit
 from flextool.engine.preprocess._reserve_methods import (
     RESERVE_DYNAMIC_METHODS,
@@ -432,8 +431,7 @@ def derive_entity_lifetime_method(input_dir: Path,
         input_dir / "entity__lifetime_method.csv",
         ["entity", "lifetime_method"], provider=provider,
     )
-    explicit = _drop_blank_rows(explicit, ["entity", "lifetime_method"]).with_columns(
-        canonical_method_expr(pl.col("lifetime_method"), "lifetime_method"))
+    explicit = _drop_blank_rows(explicit, ["entity", "lifetime_method"])
     entities = _read_csv(input_dir / "entity.csv", ["entity"],
                           provider=provider)
     entities = _drop_blank_rows(entities, ["entity"])

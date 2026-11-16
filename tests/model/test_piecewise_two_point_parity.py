@@ -299,7 +299,8 @@ def _chain_values(existing: float, unitsize: float | None) -> list:
            ["unit", "coal_chp", "invest_method", text("invest_total")],
            ["unit", "coal_chp", "invest_cost", scalar(50.0)],
            ["unit", "coal_chp", "invest_max_total", scalar(3000.0)],
-           ["unit", "coal_chp", "lifetime", scalar(30.0)],
+           ["unit", "coal_chp", "lifetime_technical", scalar(30.0)],
+           ["unit", "coal_chp", "payback_time", scalar(30.0)],
            ["unit", "coal_chp", "discount_rate", scalar(0.05)],
            ["unit", "coal_chp", "fixed_cost", scalar(1.0)]]
     return out + ([["unit", "coal_chp", "virtual_unitsize", scalar(unitsize)]] if unitsize else [])
