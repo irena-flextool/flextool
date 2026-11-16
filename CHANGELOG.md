@@ -14,6 +14,13 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   value; results do not change. After the migration, a `lifetime_technical` set in a new alternative does not
   change the payback time where an older alternative still holds a `payback_time`: change both, or delete that
   `payback_time`. Update scripts and Excel workbooks that name the old parameters or the old value.
+- **With `lifetime_method` `reinvest_choice` or `no_reinvestment` the investment annuity is paid for
+  `payback_time` years from the start of operation, counted in exact years**, and the reported investment costs
+  follow. Before, every period that started before the end of the lifetime was paid in full (a 12-year lifetime on
+  5-year periods paid 15 years), and the window followed the technical lifetime. A period the payback time ends in
+  now pays only its years before the end (a fractional payback time pays that fraction of its last year). The fixed
+  cost still runs over `lifetime_technical`; `reinvest_automatic` still pays every year to the end of the horizon. Upgraded
+  databases get a notice naming the entities whose annuity changes (results change).
 
 ### Fixes
 

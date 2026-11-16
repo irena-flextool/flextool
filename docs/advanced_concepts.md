@@ -73,15 +73,17 @@ The inflation rate applies via the factor `1 / (1 + inflation_rate)^years`. Inve
 
 Each unit, connection, and storage node can have its own `discount_rate` parameter (default: 0.05, i.e., 5%). This represents the **weighted average cost of capital (WACC)** -- the return that investors require to finance the technology.
 
-The discount rate converts a lump-sum investment cost into annual payments over the technology's lifetime using the standard annuity formula:
+The discount rate converts a lump-sum investment cost into annual payments over the technology's payback time (`payback_time`, else its `lifetime_technical`) using the standard annuity formula:
 
 ```
-annual_payment = invest_cost * discount_rate / (1 - (1 / (1 + discount_rate))^lifetime)
+annual_payment = invest_cost * discount_rate / (1 - (1 / (1 + discount_rate))^payback_time)
 ```
 
-A `discount_rate` of 0 gives the straight-line annuity `invest_cost / lifetime` (no interest). Without a value the rate is 0.05; a negative rate is an input error. The `lifetime` has no default: it is required when the entity invests or retires with a cost (`invest_cost`, `salvage_value`), and when its `lifetime_method` is `reinvest_choice` or `no_investment` (also for existing capacity without investment), since the capacity then ends after the lifetime.
+With `lifetime_method` *reinvest_choice* or *no_reinvestment* the annual payment is made for `payback_time` years from the year the capacity starts to operate, counted in exact years: a period the payback time ends in pays only its years before the end (a payback time of 12 years on 5-year periods pays two whole periods and two years of the third; a fractional payback time pays that fraction of its last year). With *reinvest_automatic* it is made in every year to the end of the model horizon. Years after the model horizon are not counted.
 
-An `invest_method` other than `not_allowed` offers investment (retirement) in every investment period, also without an `invest_cost` (`salvage_value`) or where it is 0: that capacity has no annuity, and its `fixed_cost` still counts (a retirement saves it). A 0 in an `invest_cost` map therefore does not block investment in that period; to forbid investment in a period, use a period method (`invest_period`, `invest_period_total` or their `invest_retire_` forms) and set `invest_max_period` 0 for it; the other methods do not use `invest_max_period`. With neither `invest_cost` nor `fixed_cost` any invested amount is optimal, so the result is arbitrary. A zero-cost investment needs a `lifetime` only with `lifetime_method` `reinvest_choice` or `no_investment`.
+A `discount_rate` of 0 gives the straight-line annuity `invest_cost / payback_time` (no interest). Without a value the rate is 0.05; a negative rate is an input error. Neither lifetime has a default: an entity that invests or retires with a cost (`invest_cost`, `net_salvage_value`) needs a `payback_time` or a `lifetime_technical`, and one whose `lifetime_method` is `reinvest_choice` or `no_reinvestment` needs a `lifetime_technical` (also for existing capacity without investment), since the capacity then ends after it.
+
+An `invest_method` other than `not_allowed` offers investment (retirement) in every investment period, also without an `invest_cost` (`net_salvage_value`) or where it is 0: that capacity has no annuity, and its `fixed_cost` still counts (a retirement saves it). A 0 in an `invest_cost` map therefore does not block investment in that period; to forbid investment in a period, use a period method (`invest_period`, `invest_period_total` or their `invest_retire_` forms) and set `invest_max_period` 0 for it; the other methods do not use `invest_max_period`. With neither `invest_cost` nor `fixed_cost` any invested amount is optimal, so the result is arbitrary. A zero-cost investment needs a `lifetime_technical` only with `lifetime_method` `reinvest_choice` or `no_reinvestment`.
 
 **Example**: A solar plant costs 800 EUR/kW with a 25-year lifetime and 5% discount rate:
 ```
@@ -115,7 +117,7 @@ Fixed costs (`fixed_cost` parameter on units, connections, and nodes) represent 
 
 For **existing** assets, fixed costs are applied each year with inflation adjustment.
 
-For **invested** assets, the fixed cost is paid in every period the new capacity operates within the model horizon: until its `lifetime` ends, or in every later period with `lifetime_method` *reinvest_automatic*. Each period's fixed cost is discounted like the other costs of that period. Years after the model horizon are not counted, the same as for the investment annuity, so the investment decision weighs the costs of the years the model covers. In the results, these costs are reported as a separate line item (*fixed cost invested*) from the investment annuity.
+For **invested** assets, the fixed cost is paid in every period the new capacity operates within the model horizon: until its `lifetime_technical` ends, or in every later period with `lifetime_method` *reinvest_automatic* (the investment annuity runs over `payback_time` instead, see above). Each period's fixed cost is discounted like the other costs of that period. Years after the model horizon are not counted, the same as for the investment annuity, so the investment decision weighs the costs of the years the model covers. In the results, these costs are reported as a separate line item (*fixed cost invested*) from the investment annuity.
 
 ### Summary of economic parameters
 

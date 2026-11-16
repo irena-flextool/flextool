@@ -5425,17 +5425,23 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{(p,d) ∈ pd_invest_set} v_invest_p[p,d]·unitsize[p] · annual_discounted[p,d] · bw[d]
     #   + Σ_{(p,d) ∈ pd_invest_set} v_invest_p[p,d]·unitsize[p] · lifetime_fixed_cost[p,d] · bw[d]
-    #   annual_discounted[p,d] = ann(invest_cost[p,d], discount_rate[p,d], payback_time[p,d]) · Σ_{d′ ∈ L(p,d)} inflation_inv[d′]
-    #   L(p,d) = the solve's periods d′ with yr[d] ≤ yr[d′] < yr[d] + lifetime_technical[p,d] (reinvest_choice /
+    #   annual_discounted[p,d] = ann(invest_cost[p,c], discount_rate[p,c], n[p,c])
+    #                            · Σ_{d′ ∈ solve, yr[d′] ≥ yr[c]} Σ_{y ∈ Y(d′)} inflation_inv[d′,y] · σ[p,d,y]
+    #   c = c(d) the start of operation; n = payback_time (lifetime_technical where the entity has none); Y(d′) the
+    #     represented years of d′, year y starting at s_y = yr[d′] + Σ widths before it, width w_y;
+    #     inflation_inv[d′,y] = w_y·(1+i)^−(base_y + w_y·offset_inv), so Σ_y inflation_inv[d′,y] = inflation_inv[d′]
+    #   σ = clip((yr[c] + n − s_y)/w_y, 0, 1) for reinvest_choice / no_reinvestment (exact years: the period the
+    #     payback time ends in pays only its years before the end); σ = 1 for reinvest_automatic
+    #   lifetime_fixed_cost[p,d] = fixed_cost[p,c]·1000 · Σ_{d′ ∈ L(p,d)} inflation_op[d′]
+    #   L(p,d) = the solve's periods d′ with yr[c] ≤ yr[d′] < yr[c] + lifetime_technical[p,c] (reinvest_choice /
     #     no_reinvestment; no upper end for reinvest_automatic)
-    #   ann(c, r, n) = c·1000·r / (1 − (1+r)^−n) (c·1000 / n for r = 0); payback_time is the entity's
-    #     lifetime_technical where it has none
-    # Cost of process capacity decided in period d, currency/MW: the investment annuity summed over the
-    # discounted years it operates within the horizon, and the inflation-adjusted fixed cost over the same
-    # years of its lifetime.  With a construction lead time the capacity operates from its start of operation
-    # c(d): both windows start there, and the invest cost, interest rate, lifetime and fixed cost are those of
-    # c(d) (invest_cost is an overnight cost); without one c(d) = d.  No w_op: both factors are already per
-    # period.
+    #   ann(c, r, n) = c·1000·r / (1 − (1+r)^−n) (c·1000 / n for r = 0)
+    # Cost of process capacity decided in period d, currency/MW: the investment annuity, paid for payback_time
+    # years from the start of operation within the horizon (discounted per year), and the inflation-adjusted fixed
+    # cost over the periods of its technical lifetime.  With a construction lead time the capacity operates from
+    # its start of operation c(d): both windows start there, and the invest cost, interest rate, payback time,
+    # lifetime and fixed cost are those of c(d) (invest_cost is an overnight cost); without one c(d) = d.  No w_op:
+    # both factors are already per period.
     if b.has_invest_p:
         annu = _cost(d.ed_entity_annual_discounted, "p")
         lf = _cost(d.ed_lifetime_fixed_cost, "p")

@@ -31,6 +31,8 @@ and collect those that match the window predicate:
 
 * :data:`WindowMethod.BOUNDED` —
   ``pdy[d_all] ∈ [pdy[d], pdy[d] + life[e, d])``.
+* :data:`WindowMethod.PAYBACK_YEARS` — the periods of ``BOUNDED`` (``life`` the payback time), the period the
+  window ends in counted only for its represented years before the end (:func:`payback_share`).
 * :data:`WindowMethod.UNBOUNDED_FORWARD` —
   ``pdy[d_all] ≥ pdy[d]``.
 * :data:`WindowMethod.STRICT_LOOKBACK_BOUNDED` —
@@ -81,6 +83,13 @@ class WindowMethod(enum.Enum):
     * ``BOUNDED`` — ``pdy[d_all] ∈ [pdy[d], pdy[d] + life[e, d])``.
       Used by Cluster A's ``reinvest_choice`` / ``no_reinvestment`` cohort
       and by Cluster A's divest-side NPV (always bounded, raw lifetime).
+    * ``PAYBACK_YEARS`` — the periods of ``BOUNDED`` with ``life`` the
+      payback time; a period that ends after ``pdy[d] + life`` adds only
+      its represented years before that end (each year ``y`` its
+      discounted width times :func:`payback_share`), a period wholly
+      inside adds its whole factor.  ``factor_side="inv"`` only.  Used by
+      Cluster A's ``reinvest_choice`` / ``no_reinvestment`` investment
+      annuity: it is paid for the payback time, in exact years.
     * ``UNBOUNDED_FORWARD`` — ``pdy[d_all] ≥ pdy[d]``.  Used by
       Cluster A's ``reinvest_automatic`` cohort.
     * ``STRICT_LOOKBACK_BOUNDED`` — ``pdy[d] < pdy[d_all] < pdy[d] +
@@ -98,10 +107,39 @@ class WindowMethod(enum.Enum):
     """
 
     BOUNDED = "bounded"
+    PAYBACK_YEARS = "payback_years"
     UNBOUNDED_FORWARD = "unbounded_forward"
     STRICT_LOOKBACK_BOUNDED = "strict_lookback_bounded"
     STRICT_LOOKBACK_UNBOUNDED = "strict_lookback_unbounded"
     BOUNDED_INCLUSIVE_LOOKBACK = "bounded_inclusive_lookback"
+
+
+def payback_share(end: pl.Expr, start: pl.Expr, width: pl.Expr) -> pl.Expr:
+    """σ = clip((end − start) / width, 0, 1): the share of a represented year (``start``, ``width``) inside a window
+    that ends at ``end`` (0 for a year of width 0).  The one rule of the payback window: the objective's walk
+    (:data:`WindowMethod.PAYBACK_YEARS`) and the reported lumps and yearly shares (``_npv.apply_run_cost_fields``)."""
+    return pl.when(width > 0).then(((end - start) / width).clip(0.0, 1.0)).otherwise(0.0)
+
+
+def paid_whole(start: pl.Expr, period_width: pl.Expr, end: pl.Expr) -> pl.Expr:
+    """True for a period (``start``, its represented years ``period_width``) wholly inside a window that ends at
+    ``end`` (within ``YEAR_TOL``), and for a period without represented years (null ``period_width``): it counts
+    whole, with its period factor."""
+    from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
+    return period_width.is_null() | (start + period_width <= end + YEAR_TOL)
+
+
+def paid_year_sums(pairs: pl.LazyFrame, rows: pl.LazyFrame, keys: list[str]) -> pl.LazyFrame:
+    """``[*keys, d_all, paid, paid_width]``: for each row of ``pairs`` (``[*keys, d_all, yr_dall, end]``) the sums
+    over the represented years of ``d_all`` (``rows``: ``[d_all, off, width, contrib]``, ``off`` the years of the
+    period before the year) of ``contrib · σ`` and ``width · σ``, σ = :func:`payback_share` of the year starting at
+    ``yr_dall + off``."""
+    share = payback_share(pl.col("end"), pl.col("yr_dall") + pl.col("off"), pl.col("width"))
+    return (pairs
+              .join(rows, on="d_all", how="inner", maintain_order="left_right")
+              .group_by([*keys, "d_all"], maintain_order=True)
+              .agg((pl.col("contrib") * share).sum().alias("paid"),
+                   (pl.col("width") * share).sum().alias("paid_width")))
 
 
 def _assert_lineage_castable(lineage: pl.DataFrame,
@@ -319,8 +357,11 @@ def period_walk_iterator(
         return ed_lf.select("e", "d").with_columns(
             factor=pl.lit(0.0, dtype=pl.Float64))
 
+    if window_method == WindowMethod.PAYBACK_YEARS and factor_side != "inv":
+        raise ValueError("window_method=payback_years sums the investment factor (factor_side='inv')")
     bounded_methods = {
         WindowMethod.BOUNDED,
+        WindowMethod.PAYBACK_YEARS,
         WindowMethod.STRICT_LOOKBACK_BOUNDED,
         WindowMethod.BOUNDED_INCLUSIVE_LOOKBACK,
     }
@@ -437,7 +478,7 @@ def period_walk_iterator(
                   .filter(pl.col("yr_dall")
                           < pl.col("yr_avail") + pl.col("life"))
                 )
-    else:  # BOUNDED / BOUNDED_INCLUSIVE_LOOKBACK
+    else:  # BOUNDED / PAYBACK_YEARS / BOUNDED_INCLUSIVE_LOOKBACK
         walk_schema = walk.collect_schema()
         life_lf = life_lf.with_columns(
             pl.col("e").cast(walk_schema.get("e", pl.Utf8), strict=False),
@@ -463,7 +504,7 @@ def period_walk_iterator(
                   .unique())
 
     # Inflation factor sum.
-    from flextool.engine.preprocess.params._npv import _inflation_factors_lf
+    from flextool.engine.preprocess.params._npv import _inflation_factors_lf, _inflation_year_rows_lf
     factors_lf = _inflation_factors_lf(
         source, active_solve, period_universe, provider=provider, year_rows=year_rows)
     if factor_side == "inv":
@@ -480,11 +521,43 @@ def period_walk_iterator(
         factor_dall = factor_dall.with_columns(
             pl.col("d_all").cast(ed_d_dtype, strict=False))
 
-    return (walk
+    walk = (walk
               .join(factor_dall, on="d_all", how="left")
-              .with_columns(factor=pl.col("factor").fill_null(1.0))
+              .with_columns(factor=pl.col("factor").fill_null(1.0)))
+    if window_method == WindowMethod.PAYBACK_YEARS:
+        walk = _payback_factor(walk, _inflation_year_rows_lf(source, active_solve, period_universe,
+                                                             provider=provider, year_rows=year_rows),
+                               ed_d_dtype)
+    return (walk
               .group_by(["e", "d"])
               .agg(pl.col("factor").sum().alias("factor")))
+
+
+def _payback_factor(walk: pl.LazyFrame, year_rows: pl.LazyFrame | None, d_dtype) -> pl.LazyFrame:
+    """``walk`` (``[e, d, d_all, yr_dall, yr_avail, life, factor, ...]``) with ``factor`` of a period that ends after
+    the window end ``yr_avail + life`` replaced by the sum over its represented years (``year_rows``
+    ``[d, off, width, inv_contrib, ...]``) of ``inv_contrib · σ`` (:func:`paid_year_sums`).  A period wholly
+    inside (:func:`paid_whole`) keeps its factor and its row order, so a window that ends on a period boundary sums
+    exactly what :data:`WindowMethod.BOUNDED` sums."""
+    if year_rows is None:
+        return walk
+    rows = (year_rows
+              .filter(pl.col("d").is_not_null())
+              .select(pl.col("d").alias("d_all"), "off", "width", pl.col("inv_contrib").alias("contrib")))
+    if d_dtype != pl.Utf8:
+        rows = rows.with_columns(pl.col("d_all").cast(d_dtype, strict=False))
+    widths = rows.group_by("d_all").agg(pl.col("width").sum().alias("_period_width"))
+    walk = (walk
+              .with_columns(end=pl.col("yr_avail") + pl.col("life"))
+              .join(widths, on="d_all", how="left", maintain_order="left")
+              .with_columns(_whole=paid_whole(pl.col("yr_dall"), pl.col("_period_width"), pl.col("end"))))
+    partial = paid_year_sums(walk.filter(~pl.col("_whole")).select("e", "d", "d_all", "yr_dall", "end"), rows,
+                             ["e", "d"])
+    return (walk
+              .join(partial.select("e", "d", "d_all", "paid"), on=["e", "d", "d_all"], how="left",
+                    maintain_order="left")
+              .with_columns(factor=pl.when(pl.col("_whole")).then(pl.col("factor"))
+                                     .otherwise(pl.col("paid").fill_null(0.0))))
 
 
 __all__ = [

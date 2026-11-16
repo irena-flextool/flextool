@@ -13,6 +13,8 @@ Fixtures (built from JSON):
   roll.
 * stochastic: ``stoch_two_period_invest.json`` ``recourse`` (periods p2035, p2040, a fan of branches); peaker
   invests and retires: the branch periods inherit their anchor's value.
+* single_payback_mid / stochastic_payback_mid: the single and stochastic cases with a payback time that ends inside
+  a period (12 on 5-year periods; 0.5 on the one-year p2035), so the annuity is paid for part of that period.
 """
 from __future__ import annotations
 
@@ -75,6 +77,8 @@ SINGLE_BASE = {"lifetime_technical": 10.0, "payback_time": 10.0, "discount_rate"
 STOCH_BASE = {"lifetime_technical": 1.0, "payback_time": 1.0, "discount_rate": 0.05, "invest_cost": 1.0,
               "net_salvage_value": 0.1}
 ROLL_BASE = {"lifetime_technical": 10.0, "payback_time": 10.0}
+SINGLE_MID = {**SINGLE_BASE, "payback_time": 12.0}
+STOCH_MID = {**STOCH_BASE, "payback_time": 0.5}
 
 CASES = {
     # case: (entity, base values, extra fixed values, chain, periods, fixture json)
@@ -90,6 +94,8 @@ CASES = {
                     ["unit", PEAKER, "invest_method", b64("invest_retire_no_limit", "str")]],
                    STOCH_CHAIN, STOCH_PERIODS, STOCH_JSON),
 }
+CASES["single_payback_mid"] = (PLANT, SINGLE_MID) + CASES["single"][2:]
+CASES["stochastic_payback_mid"] = (PEAKER, STOCH_MID) + CASES["stochastic"][2:]
 
 
 def _steps(tmp_path_factory, case: str, shaped: str | None = None, shape: str = "constant") -> dict:
@@ -110,6 +116,7 @@ def _steps(tmp_path_factory, case: str, shaped: str | None = None, shape: str = 
     ("rolling", "lifetime_technical"), ("rolling", "payback_time"),
     ("stochastic", "lifetime_technical"), ("stochastic", "payback_time"), ("stochastic", "discount_rate"),
     ("stochastic", "invest_cost"), ("stochastic", "net_salvage_value"),
+    ("single_payback_mid", "payback_time"), ("stochastic_payback_mid", "payback_time"),
 ])
 @pytest.mark.parametrize("shape", ["period", "x"])
 def test_lifetime_constant_equals_maps(tmp_path_factory, case, parameter, shape) -> None:

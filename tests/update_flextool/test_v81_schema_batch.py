@@ -12,7 +12,10 @@ connection and a node), ``salvage_value`` (a constant and a ``period`` map) and 
 * renames the ``lifetime_methods`` member ``no_investment`` to ``no_reinvestment`` (list order kept) and rewrites
   every stored value; the default ``reinvest_automatic`` is unchanged;
 * rewrites the descriptions of ``lifetime_method``, ``discount_rate``, ``invest_cost``, ``node.unit_of_measure``
-  and ``group.penalty_capacity_margin``.
+  and ``group.penalty_capacity_margin``;
+* writes the behaviour-change marker ``annuity_over_payback_time`` naming the entities with ``reinvest_choice`` /
+  ``no_reinvestment`` and a non-zero ``invest_cost`` (thermal: reinvest_choice, 400; not wind: no_investment with
+  invest_cost 0; not c1: a non-zero invest_cost without a lifetime_method).
 
 Nothing else changes, and a rerun commits nothing.  Where a database already has a value under a new name, that
 value is kept.  A database already at 81 that lacks a definition of the step gets it without a migration of its
@@ -55,6 +58,9 @@ STORED = [
     ("unit", "wind", 0, "lifetime_method", "no_investment"),
     ("unit", "wind", 1, "lifetime_method", "no_investment"),
     ("unit", "thermal", 0, "lifetime_method", "reinvest_choice"),
+    ("unit", "thermal", 0, "invest_cost", 400.0),
+    ("unit", "wind", 0, "invest_cost", 0.0),
+    ("connection", "c1", 0, "invest_cost", Map(["p2020", "p2025"], [0.0, 50.0], index_name="period")),
 ]
 
 
@@ -104,7 +110,8 @@ def migrated(tmp_path_factory: pytest.TempPathFactory) -> dict:
         before = {"defs": _defs(db), "lists": _lists(db), "values": _values(db)}
     migrate_database(url, up_to=81)
     with DatabaseMapping(url) as db:
-        after = {"defs": _defs(db), "lists": _lists(db), "values": _values(db)}
+        after = {"defs": _defs(db), "lists": _lists(db), "values": _values(db),
+                 "markers": {md["name"]: md["value"] for md in db.get_items("metadata")}}
     return {"url": url, "alts": alts, "before": before, "after": after}
 
 
@@ -167,6 +174,12 @@ def test_no_investment_is_no_reinvestment(migrated) -> None:
         assert after["defs"][(cls, "lifetime_method")][1:] == before["defs"][(cls, "lifetime_method")][1:]
 
 
+def test_annuity_marker_names_bounded_entities_with_an_invest_cost(migrated) -> None:
+    markers = migrated["after"]["markers"]
+    assert json.loads(markers["flextool_behaviour_change:annuity_over_payback_time"]) == {
+        "since": 81, "entities": ["thermal"]}
+
+
 def test_descriptions_are_the_shipped_ones(migrated) -> None:
     before, after = migrated["before"]["defs"], migrated["after"]["defs"]
     shipped, _ = _shipped()
@@ -214,7 +227,8 @@ def _rerun_changes_nothing(db, step, monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("part", ["_v81_value_lists", "_v81_definitions_part", "_v81_move_values",
-                                  "_v81_list_member_renames", "_v81_descriptions", "_migrate_v81_schema_batch",
+                                  "_v81_list_member_renames", "_v81_descriptions", "_v81_annuity_marker",
+                                  "_migrate_v81_schema_batch",
                                   "_refresh_head_schema"])
 def test_rerun_commits_nothing(migrated, part: str, monkeypatch) -> None:
     with DatabaseMapping(migrated["url"]) as db:

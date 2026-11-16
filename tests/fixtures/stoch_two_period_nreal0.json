@@ -2076,7 +2076,7 @@
         null
       ],
       null,
-      "[CUR/kW] Overnight investment cost of new capacity. It is annualized over payback_time with discount_rate, and the annuity is paid in each year the capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the capacity is built (comes online) is used.",
+      "[CUR/kW] Overnight investment cost of new capacity. It is annualized over payback_time with discount_rate, and the annuity is paid for payback_time years from the start of operation (every year to the end of the model horizon with lifetime_method reinvest_automatic). Construction time costs with their interest must be included here. Constant or period: the value of the period when the capacity is built (comes online) is used.",
       "investment"
     ],
     [
@@ -2153,7 +2153,7 @@
         "str"
       ],
       "lifetime_methods",
-      "[choice] What happens when capacity reaches the end of its lifetime_technical. reinvest_automatic (default): the capacity is kept to the end of the model horizon and the annualized investment cost is paid on, without a model choice. reinvest_choice: the capacity retires at the end of its lifetime_technical and the model decides how much new capacity to build. no_reinvestment: the capacity retires at the end of its lifetime_technical; investment is possible only during the first technical lifetime from the model start, and the capacity is not rebuilt.",
+      "[choice] What happens when capacity reaches the end of its lifetime_technical. reinvest_automatic (default): the capacity is kept to the end of the model horizon and the annualized investment cost is paid on, without a model choice. reinvest_choice: the capacity retires at the end of its lifetime_technical and the model decides how much new capacity to build. no_reinvestment: the capacity retires at the end of its lifetime_technical; investment is possible only during the first technical lifetime from the model start, and the capacity is not rebuilt. With reinvest_choice and no_reinvestment the annualized investment cost is paid for payback_time years from the start of operation.",
       "investment"
     ],
     [
@@ -2197,7 +2197,7 @@
         null
       ],
       null,
-      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor). No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the capacity comes online is used.",
+      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor). With lifetime_method reinvest_choice or no_reinvestment the annuity is paid for these years from the start of operation, in exact years (a period they end in pays only its years before the end); with reinvest_automatic in every year to the end of the model horizon. No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the capacity comes online is used.",
       "investment"
     ],
     [
@@ -3143,7 +3143,7 @@
         null
       ],
       null,
-      "[CUR/kWh] Overnight investment cost of new storage capacity. It is annualized over payback_time with discount_rate, and the annuity is paid in each year the storage capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the storage capacity is built (comes online) is used.",
+      "[CUR/kWh] Overnight investment cost of new storage capacity. It is annualized over payback_time with discount_rate, and the annuity is paid for payback_time years from the start of operation (every year to the end of the model horizon with lifetime_method reinvest_automatic). Construction time costs with their interest must be included here. Constant or period: the value of the period when the storage capacity is built (comes online) is used.",
       "investment"
     ],
     [
@@ -3220,7 +3220,7 @@
         "str"
       ],
       "lifetime_methods",
-      "[choice] What happens when capacity reaches the end of its lifetime_technical. reinvest_automatic (default): the capacity is kept to the end of the model horizon and the annualized investment cost is paid on, without a model choice. reinvest_choice: the capacity retires at the end of its lifetime_technical and the model decides how much new capacity to build. no_reinvestment: the capacity retires at the end of its lifetime_technical; investment is possible only during the first technical lifetime from the model start, and the capacity is not rebuilt.",
+      "[choice] What happens when capacity reaches the end of its lifetime_technical. reinvest_automatic (default): the capacity is kept to the end of the model horizon and the annualized investment cost is paid on, without a model choice. reinvest_choice: the capacity retires at the end of its lifetime_technical and the model decides how much new capacity to build. no_reinvestment: the capacity retires at the end of its lifetime_technical; investment is possible only during the first technical lifetime from the model start, and the capacity is not rebuilt. With reinvest_choice and no_reinvestment the annualized investment cost is paid for payback_time years from the start of operation.",
       "investment"
     ],
     [
@@ -3264,7 +3264,7 @@
         null
       ],
       null,
-      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor). No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the storage capacity comes online is used.",
+      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor). With lifetime_method reinvest_choice or no_reinvestment the annuity is paid for these years from the start of operation, in exact years (a period they end in pays only its years before the end); with reinvest_automatic in every year to the end of the model horizon. No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the storage capacity comes online is used.",
       "investment"
     ],
     [
@@ -4243,7 +4243,7 @@
         null
       ],
       null,
-      "[CUR/kW] Overnight investment cost of new capacity. It is annualized over payback_time with discount_rate, and the annuity is paid in each year the capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the capacity is built (comes online) is used.",
+      "[CUR/kW] Overnight investment cost of new capacity. It is annualized over payback_time with discount_rate, and the annuity is paid for payback_time years from the start of operation (every year to the end of the model horizon with lifetime_method reinvest_automatic). Construction time costs with their interest must be included here. Constant or period: the value of the period when the capacity is built (comes online) is used.",
       "investment"
     ],
     [
@@ -4309,7 +4309,7 @@
         "str"
       ],
       "lifetime_methods",
-      "[choice] What happens when capacity reaches the end of its lifetime_technical. reinvest_automatic (default): the capacity is kept to the end of the model horizon and the annualized investment cost is paid on, without a model choice. reinvest_choice: the capacity retires at the end of its lifetime_technical and the model decides how much new capacity to build. no_reinvestment: the capacity retires at the end of its lifetime_technical; investment is possible only during the first technical lifetime from the model start, and the capacity is not rebuilt.",
+      "[choice] What happens when capacity reaches the end of its lifetime_technical. reinvest_automatic (default): the capacity is kept to the end of the model horizon and the annualized investment cost is paid on, without a model choice. reinvest_choice: the capacity retires at the end of its lifetime_technical and the model decides how much new capacity to build. no_reinvestment: the capacity retires at the end of its lifetime_technical; investment is possible only during the first technical lifetime from the model start, and the capacity is not rebuilt. With reinvest_choice and no_reinvestment the annualized investment cost is paid for payback_time years from the start of operation.",
       "investment"
     ],
     [
@@ -4386,7 +4386,7 @@
         null
       ],
       null,
-      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor). No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the capacity comes online is used.",
+      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor). With lifetime_method reinvest_choice or no_reinvestment the annuity is paid for these years from the start of operation, in exact years (a period they end in pays only its years before the end); with reinvest_automatic in every year to the end of the model horizon. No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the capacity comes online is used.",
       "investment"
     ],
     [

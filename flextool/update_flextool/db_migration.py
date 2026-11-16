@@ -10697,9 +10697,11 @@ def _v81_texts() -> dict[tuple[str, str], str]:
             "when lifetime_method is reinvest_choice or no_reinvestment (also for existing capacity without "
             f"investment). Constant or period: the value of the period when the {cap} comes online is used.")
         t[(cls, "payback_time")] = (
-            "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor). No value: "
-            "lifetime_technical. Must be above 0. Constant or period: the value of the period when the "
-            f"{cap} comes online is used.")
+            "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor). With "
+            "lifetime_method reinvest_choice or no_reinvestment the annuity is paid for these years from the start "
+            "of operation, in exact years (a period they end in pays only its years before the end); with "
+            "reinvest_automatic in every year to the end of the model horizon. No value: lifetime_technical. Must "
+            f"be above 0. Constant or period: the value of the period when the {cap} comes online is used.")
         t[(cls, "net_salvage_value")] = (
             f"[CUR/{per}] Net salvage value: scrap value minus decommissioning cost, received once when {cap} is "
             "retired (at end of life or earlier). Negative when decommissioning costs more than the scrap is worth. "
@@ -10710,7 +10712,9 @@ def _v81_texts() -> dict[tuple[str, str], str]:
             "paid on, without a model choice. reinvest_choice: the capacity retires at the end of its "
             "lifetime_technical and the model decides how much new capacity to build. no_reinvestment: the "
             "capacity retires at the end of its lifetime_technical; investment is possible only during the first "
-            "technical lifetime from the model start, and the capacity is not rebuilt.")
+            "technical lifetime from the model start, and the capacity is not rebuilt. With reinvest_choice and "
+            "no_reinvestment the annualized investment cost is paid for payback_time years from the start of "
+            "operation.")
         t[(cls, "discount_rate")] = (
             "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and "
             "risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. "
@@ -10719,7 +10723,8 @@ def _v81_texts() -> dict[tuple[str, str], str]:
             "annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.")
         t[(cls, "invest_cost")] = (
             f"[CUR/{per}] Overnight investment cost of new {cap}. It is annualized over payback_time with "
-            f"discount_rate, and the annuity is paid in each year the {cap} operates. Construction time costs with "
+            "discount_rate, and the annuity is paid for payback_time years from the start of operation (every year "
+            "to the end of the model horizon with lifetime_method reinvest_automatic). Construction time costs with "
             f"their interest must be included here. Constant or period: the value of the period when the {cap} is "
             "built (comes online) is used.")
     t[("node", "unit_of_measure")] = V79_NODE_UNIT_OF_MEASURE_DESCRIPTION.replace(
@@ -10871,6 +10876,29 @@ def _v81_descriptions(db) -> None:
             db.update_parameter_definition(id=pdef["id"], description=text)
 
 
+def _v81_annuity_marker(db) -> None:
+    """Part 6 of v81: the behaviour-change marker ``annuity_over_payback_time`` (``{"since": 81, "entities": [...]}``)
+    on a database where an entity with the ``lifetime_method`` ``reinvest_choice`` or ``no_reinvestment`` (in some
+    alternative) has a non-zero ``invest_cost``: its investment annuity is now paid for ``payback_time`` years from
+    the start of operation, in exact years, so a period the payback time ends in pays only its years before the end
+    (before: every period that started before the end of the lifetime paid in full).  A run names those whose
+    annuity changes.  No value is rewritten.  Idempotent: a rerun finds the marker written.
+    """
+    entities: set[str] = set()
+    for cls in ("unit", "connection", "node"):
+        if not db.get_item("entity_class", name=cls):
+            continue
+        bounded = {pv["entity_byname"][0] for pv in db.find_parameter_values(
+            entity_class_name=cls, parameter_definition_name="lifetime_method")
+            if from_database(pv["value"], pv["type"]) in ("reinvest_choice", "no_reinvestment")}
+        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name="invest_cost"):
+            name = pv["entity_byname"][0]
+            if name in bounded and any(v != 0.0 for v in _v79_numbers(from_database(pv["value"], pv["type"]))):
+                entities.add(name)
+    if entities:
+        _v77_set_marker(db, "annuity_over_payback_time", json.dumps({"since": 81, "entities": sorted(entities)}))
+
+
 def _migrate_v81_schema_batch(db) -> None:
     """All schema changes of database version 81 (v80 -> v81), in one step.
 
@@ -10885,6 +10913,8 @@ def _migrate_v81_schema_batch(db) -> None:
        value (:func:`_v81_list_member_renames`).
     5. The descriptions of the new definitions and of ``lifetime_method``, ``discount_rate``, ``invest_cost``,
        ``node.unit_of_measure`` and ``group.penalty_capacity_margin`` (:func:`_v81_descriptions`).
+    6. The behaviour-change marker ``annuity_over_payback_time`` on the entities whose investment annuity is now
+       paid for ``payback_time`` years in exact years (:func:`_v81_annuity_marker`).
 
     Values change only by the moves of part 3 and the renames of part 4.  Each part is idempotent, so a rerun of the
     step changes nothing.
@@ -10894,6 +10924,7 @@ def _migrate_v81_schema_batch(db) -> None:
     _v81_move_values(db)
     _v81_list_member_renames(db)
     _v81_descriptions(db)
+    _v81_annuity_marker(db)
     _commit_step(db, "v81: lifetime split into lifetime_technical and payback_time, salvage_value is "
                      "net_salvage_value, the lifetime_method value no_investment is no_reinvestment")
 

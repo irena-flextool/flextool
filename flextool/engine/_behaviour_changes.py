@@ -315,6 +315,16 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             published="13.11.2026",
         ),
         BehaviourChange(
+            id="annuity_over_payback_time",
+            summary=("With lifetime_method reinvest_choice or no_reinvestment the investment annuity is now paid for "
+                     "payback_time years from the start of operation, counted in exact years: a period that the "
+                     "payback time ends in pays only its years before the end. Before, every period that started "
+                     "before the end of the lifetime was paid in full, so these investments cost more (results "
+                     "change). The reported investment costs follow; the fixed cost still runs over "
+                     "lifetime_technical."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "annuity_over_payback_time"),
+        ),
+        BehaviourChange(
             id="gui_solver_defaults",
             summary=("Runs started from the FlexTool GUI now use the same solver settings as terminal and Spine "
                      "Toolbox runs: presolve is on (before: choose), and the MIP gap of each solve comes from its "
