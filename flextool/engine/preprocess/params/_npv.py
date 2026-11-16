@@ -109,6 +109,7 @@ from flextool.engine.preprocess._annuity import (
     require_lifetime,
 )
 from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
+from flextool.engine.preprocess.params._cohorts import BOUNDED_METHODS
 from flextool.engine.input._lifetime_roles import (
     LIFETIME_TECHNICAL,
     NET_SALVAGE_VALUE,
@@ -1006,7 +1007,8 @@ def _retire_window_lf(source: "InputSource",
                       provider: "object | None",
                       ) -> pl.LazyFrame:
     """``[e, d, d_all]`` (Utf8): the solve's periods d_all a retirement decided in d counts in,
-    yr[d] ≤ yr[d_all] < EOL[e] (the retirement reach of :func:`._cohorts.retire_active`), along the walk lineage of a fan."""
+    yr[d] ≤ yr[d_all] < EOL[e] (the retirement reach of :func:`._cohorts.retire_active`), along the walk lineage
+    of a fan."""
     walk = period_walk_iterator(source, active_solve, ed_anchor_lf, period_in_use, period_universe,
                                 bounded=False, life_lf=None, factor_side=None, lineage=lineage)
     walk = walk.select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("d_all").cast(pl.Utf8))
@@ -1540,7 +1542,8 @@ def ed_lifetime_fixed_cost_divest_from_source(
 #   Σ_y inflation_inv_run[d',y] = p_inflation_inv_run[d']; σ = clip((yr_run[c(d)] + n − s_y)/w_y, 0, 1) for
 #   reinvest_choice / no_reinvestment (the payback time in exact years, as the objective), 1 for reinvest_automatic.
 #      ed_lifetime_fixed_cost_run[e,d] = Σ_{(e,d,d') ∈ edd_operating_window} fc[e,c(d)]·p_inflation_op_run[d']
-#      ed_entity_annual_divest_discounted_run[e,d] = ed_divest_annuity[e,d]·Σ_{edd_salvage_window} p_inflation_inv_run[d']
+#      ed_entity_annual_divest_discounted_run[e,d]
+#        = ed_divest_annuity[e,d]·Σ_{edd_salvage_window} p_inflation_inv_run[d']
 #      ed_lifetime_fixed_cost_divest_run[e,d] = Σ_{(e,d,d') ∈ edd_retire_window} fc[e,d']·p_inflation_op_run[d']
 #   The divest lifetime fixed cost is the fixed cost of existing capacity it saves: each window period's fixed
 #   cost with the operations factor (as the fixed cost of existing capacity is charged), as its per-solve twin.
@@ -1556,7 +1559,6 @@ def ed_lifetime_fixed_cost_divest_from_source(
 #   built.  An entity with both a bounded and an unbounded lifetime method adds both sums, as the per-solve lumps
 #   do; edd_operating_window then holds the union of the two windows.
 
-_RUN_BOUNDED_METHODS = ("reinvest_choice", NO_REINVESTMENT)
 
 
 def _period_history_years(workdir: Path | None, provider: "object | None") -> dict[str, float] | None:
@@ -1844,7 +1846,7 @@ def _lifetime_kinds(source: "InputSource", entities: pl.DataFrame) -> pl.DataFra
     elm = _utf8_ed(_lifetime_method_with_default_lf(
         source, entities.lazy().select(alias_to_axis("e", "e"))), ("e",))
     return (pl.concat([
-                elm.filter(pl.col("method").is_in(list(_RUN_BOUNDED_METHODS))).select("e", kind=pl.lit("bounded")),
+                elm.filter(pl.col("method").is_in(list(BOUNDED_METHODS))).select("e", kind=pl.lit("bounded")),
                 elm.filter(pl.col("method") == "reinvest_automatic").select("e", kind=pl.lit("unbounded"))])
               .unique())
 

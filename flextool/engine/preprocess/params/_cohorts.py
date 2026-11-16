@@ -9,8 +9,8 @@ period d" is answered from these frames, so the lifetime rule lives in one place
 Three frames (``FlexData.cohort``, ``cohort_alive``, ``dd_forward``):
 
 * ``cohort`` — one row per cohort: ``cohort`` (Utf8 id, unique per entity: ``existing:<run start period>`` /
-  ``invest:<decision period>``; ``existing`` when the solve has no period years), ``e`` (entity-union axis), ``kind`` (``existing`` / ``invest``), ``method``
-  (``lifetime_method`` with its default), ``d_build`` (the decision period, the key of ``v_invest``; null for
+  ``invest:<decision period>``; ``existing`` when the solve has no period years), ``e`` (entity-union axis),
+  ``kind`` (``existing`` / ``invest``), ``method`` (``lifetime_method`` with its default), ``d_build`` (the decision period, the key of ``v_invest``; null for
   existing capacity), ``y_on`` (start of operation), ``y_life`` (``lifetime_technical``; ``+inf`` for
   ``reinvest_automatic``), ``y_end = y_on + y_life`` (the end of life, unrounded), ``y_first_life_end`` (existing
   capacity: the end of its first life, the year a ``no_reinvestment`` entity stops investing; null for an
@@ -52,6 +52,7 @@ from flextool.engine.input._axis_enums import (
     schema_dtype,
 )
 from flextool.engine.input._lifetime_roles import LIFETIME_TECHNICAL, NO_REINVESTMENT
+from flextool.engine.input._solve_state import CommissioningLagError
 from flextool.engine.preprocess.params._period_values import _ed_period_value_map, ed_values_on
 
 if TYPE_CHECKING:
@@ -65,7 +66,7 @@ REINVEST_CHOICE = "reinvest_choice"
 LIFETIME_METHODS: tuple[str, ...] = (REINVEST_AUTOMATIC, REINVEST_CHOICE, NO_REINVESTMENT)
 #: The methods whose capacity ends its life (``reinvest_automatic`` capacity is renewed).
 BOUNDED_METHODS: tuple[str, ...] = (REINVEST_CHOICE, NO_REINVESTMENT)
-#: The rounding of an end of life to a seam (P3a: the next one, compared exactly).
+#: The rounding of an end of life to a seam (the next seam, compared exactly).
 _EOL_ROUNDING = "next_seam"
 _EOL_TOL = 0.0
 
@@ -303,7 +304,11 @@ def invest_cohorts(source: "InputSource",
         e, d = str(e), str(d)
         method = methods[e]
         d_on = starts.get((e, d), d)
-        y_on = float(years.get(d_on, 0.0))
+        if d_on not in years:
+            raise CommissioningLagError(
+                f"Investment of {e!r} decided in period {d!r} starts to operate in period {d_on!r}, which has no "
+                f"year in the solve {active_solve!r}: its end of life cannot be placed.")
+        y_on = float(years[d_on])
         if method == REINVEST_AUTOMATIC:
             y_life, y_end = _INF, _INF
         else:
@@ -368,7 +373,7 @@ def forward_pairs(years: Mapping[str, float],
         _assert_lineage_castable(lineage, d_dtype)
         pairs = _apply_lineage_filter(pairs, lineage, [str(d) for d in period_in_use], d_dtype,
                                       anchor_col="d_retire", dall_col="d")
-    return pairs.select("d_retire", "d").collect()
+    return pairs.select("d_retire", "d").sort("d_retire", "d").collect()
 
 
 def build_cohort_frames(source: "InputSource",

@@ -71,7 +71,6 @@ from flextool.engine.preprocess.params._direct import (
 )
 from flextool.engine.input._lifetime_roles import (
     NET_SALVAGE_VALUE,
-    NO_REINVESTMENT,
 )
 from flextool.engine.preprocess.params._period_values import _ed_period_value_map
 from flextool.engine.preprocess.params._per_solve_sets import (
@@ -89,6 +88,8 @@ from flextool.engine.input._param_shapes import (
     solve_years_represented,
 )
 from flextool.engine.preprocess.params._cohorts import (
+    BOUNDED_METHODS,
+    _entity_methods,
     build_cohort_frames,
     cohort_years,
     existing_cohorts,
@@ -5461,8 +5462,8 @@ def _fan_branch_years_notice(source: "InputSource",
         if frame is not None and frame.height > 0:
             for e in frame["e"].cast(pl.Utf8).unique().sort().to_list():
                 names.setdefault(str(e), None)
-    for e, methods in _entity_lifetime_methods(source, _all_entities(source)).items():
-        if "reinvest_choice" in methods or NO_REINVESTMENT in methods:
+    for e, method in _entity_methods(source).items():
+        if method in BOUNDED_METHODS:
             names.setdefault(e, None)
     if names:
         from flextool.engine import _behaviour_changes
@@ -8115,9 +8116,6 @@ def apply_derived_e(
 # ---------------------------------------------------------------------------
 
 
-_LIFETIME_METHOD_DEFAULT_FALLBACK = "reinvest_automatic"
-
-
 def _solve_inflation_inputs(source: "InputSource") -> tuple[float, float, float]:
     """Read the three scalar inflation inputs from ``model``.
 
@@ -8591,46 +8589,6 @@ def _entity_invest_methods(source: "InputSource"
         for r in df.iter_rows(named=True):
             out.setdefault(str(r["name"]), []).append(str(r["value"]))
     return out
-
-
-def _entity_lifetime_methods(source: "InputSource",
-                                  all_entities: list[str],
-                                  ) -> dict[str, list[str]]:
-    """Return ``entity → [lifetime_method, ...]`` for every entity.
-
-    Default (when an entity has no explicit lifetime_method row) is
-    ``["reinvest_automatic"]`` per
-    ``preprocessing/method_with_fallback_sets.py::_LIFETIME_METHOD_DEFAULT``.
-    """
-    explicit: dict[str, list[str]] = {}
-    for ec in ("unit", "node", "connection"):
-        df = _try_param(source, ec, "lifetime_method")
-        if df is None:
-            continue
-        for r in df.iter_rows(named=True):
-            explicit.setdefault(str(r["name"]), []).append(str(r["value"]))
-
-    out: dict[str, list[str]] = {}
-    for e in all_entities:
-        if e in explicit:
-            out[e] = list(explicit[e])
-        else:
-            out[e] = [_LIFETIME_METHOD_DEFAULT_FALLBACK]
-    return out
-
-
-def _all_entities(source: "InputSource") -> list[str]:
-    """Union of unit + node + connection entity names, in flextool's
-    canonical iteration order (concatenation, dedup with first-wins).
-    """
-    seen: dict[str, None] = {}
-    for ec in ("unit", "node", "connection"):
-        df = _try_entities(source, ec)
-        if df is None:
-            continue
-        for n in df["name"].to_list():
-            seen.setdefault(str(n), None)
-    return list(seen.keys())
 
 
 def _p_discount_years_from_source(source: "InputSource",
