@@ -166,7 +166,7 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "process_reserve_upDown_node_increase_reserve_ratio",
     "process_reserve_upDown_node_large_failure_ratio",
     # Cumulative invest / group invest.
-    "ed_invest_forbidden_no_investment", "ed_invest_cumulative",
+    "ed_invest_cumulative",
     "group_entity", "g_invest_total", "g_divest_total",
     "g_invest_cumulative", "gd_invest_period", "gd_divest_period",
     "group_process_node",

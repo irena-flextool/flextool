@@ -43,7 +43,6 @@ if TYPE_CHECKING:
 _GATE_FIELDS: tuple[str, ...] = (
     "e_invest_min_total", "e_divest_min_total",
     "ed_invest_min_period", "ed_divest_min_period",
-    "ed_invest_forbidden_no_investment",
     "ed_invest_cumulative", "ed_cumulative_max_capacity", "ed_cumulative_min_capacity",
     "gd_invest_period", "gd_divest_period",
     "g_invest_total", "g_divest_total", "g_invest_cumulative",
@@ -163,7 +162,6 @@ def add_constraints(b: _Build) -> None:
     """Every family of the module, in emit order, when some of its data is populated."""
     if not b.has_cumulative_invest:
         return
-    _eq_fix_no_investment(b)
     _eq_min_entity_period(b)
     _eq_min_invest_total(b)
     _eq_min_divest_total(b)
@@ -199,36 +197,6 @@ def _check_group_retire_minimums(b: _Build) -> None:
         pre=ed_values(getattr(d, "p_entity_pre_existing", None)),
         prior=chain_prior(d, "divest"),
         carried=ed_values(getattr(d, "p_entity_retired_carried", None)))
-
-
-def _eq_fix_no_investment(b: _Build) -> None:
-    """fix_v_invest_no_investment_eq_{p,n}: no investment in the cells where investment is forbidden."""
-    forbid = b.d.ed_invest_forbidden_no_investment
-    if not _has_rows(forbid):
-        return
-
-    # ─── EQ. ─── fix_v_invest_no_investment_eq_{p,n} ─────────────────────────
-    # ─────────────────────────────────────────────────────────────────────────
-    # v_invest_p[p,d] = 0   ∀ (p,d) ∈ ed_invest_forbidden_no_investment ∩ pd_invest_set
-    # v_invest_n[n,d] = 0   ∀ (n,d) ∈ ed_invest_forbidden_no_investment ∩ nd_invest_set
-    # Pins investment to zero where the entity's invest method forbids it.
-    # Never emits rows: ed_invest_set (the v_invest_* domain) already excludes the forbidden cells, so the
-    # row domain is empty.
-    for name, var, axis in (("fix_v_invest_no_investment_eq_p", b.v_invest_p, "p"),
-                            ("fix_v_invest_no_investment_eq_n", b.v_invest_n, "n")):
-        if var is None:
-            continue
-        over, var_idx = align_join_dtypes(forbid.rename({"e": axis}), var.frame.select(axis, "d"), (axis, "d"))
-        over = over.join(var_idx, on=[axis, "d"], how="inner")
-        if over.height == 0:
-            continue
-        b.m.add_cstr(
-            name,
-            over      = over,
-            sense     = "==",
-            lhs_terms = {"invest": var},
-            rhs_terms = {"zero":   0.0},
-        )
 
 
 def _eq_min_entity_period(b: _Build) -> None:

@@ -15,7 +15,7 @@ Per :class:`CstrFamily` semantics:
 * ``rhs_type=None`` is a sentinel for *user-supplied composite-LHS
   constraints* (the ``process_constraint_*`` / ``node_balance_fix_*``
   family) and the small number of structural rows whose RHS is
-  identically zero (``dc_flow_eq``, ``fix_v_invest_no_investment_eq``)
+  identically zero (``dc_flow_eq``, ``non_anticipativity_storage_use``)
   — Layer 2 has no per-row scaling to apply there.  The column scaler
   on each LHS variable still propagates through these rows.
 * ``member_class_resolver="group_capacity"`` is the trigger for
@@ -643,11 +643,6 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # (legacy vs "_path"), so the literal-grep test cannot see it.  Registered EXACTLY, same reason
     # as the entity/group total-cap _path families.
     "ladder_tier_cap_cumulative_roll_path": CstrFamily(QuantityType.ENERGY),
-
-    # ── Forbid-invest rows.  RHS = 0 by construction; skip per-row.
-    # _cumulative_invest._eq_fix_no_investment
-    "fix_v_invest_no_investment_eq_p": CstrFamily(None),
-    "fix_v_invest_no_investment_eq_n": CstrFamily(None),
 
     # ── Non-anticipativity (cross-branch equality).  RHS = 0; skip.
     # flextool/engine/model/_non_anticipativity.py:add_dispatch_constraints

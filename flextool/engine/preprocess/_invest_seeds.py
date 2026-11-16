@@ -93,12 +93,11 @@ def read_forbidden_no_investment(workdir_solve_data: Path,
     """Read ``ed_invest_forbidden_no_investment.csv``.
 
     Entities that may NOT invest in specified periods
-    (lifetime_method=no_investment combined with
-    invest_method=invest_no_limit at periods where the lifetime window
-    disallows new build).  flextool encodes this as
-    ``fix_v_invest_no_investment_eq`` pinning the variable to 0; we
-    achieve the same effect by removing the (entity, period) tuple
-    from every invest set so the variable is never created.
+    (lifetime_method=no_investment at periods where the lifetime window
+    disallows new build).  The seed loader removes these (entity,
+    period) pairs from ``ed_invest_set``, and every other investment set
+    is a partition of that set (``apply_derived_c``), so no investment
+    variable is created for them.
 
     Returns an empty (e, d) frame when the Provider doesn't carry the
     key or it's empty.

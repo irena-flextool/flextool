@@ -3075,20 +3075,12 @@ DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
           for tail in ("InvestGroup_entity_cumulative",
                        "Cumulative_flow_solve", "Cumulative_flow_period",
                        "Instant_flow")),
-        "fix_v_invest_no_investment_eq_p", "fix_v_invest_no_investment_eq_n",
     ),
 }
 
 # Families no production build can emit, with the reason.  ``coverage``
 # reports them separately and does not count them as gaps.
-UNREACHABLE: dict[str, str] = {
-    name: ("ed_invest_set (the v_invest_* domain) already anti-joins "
-           "ed_invest_forbidden_no_investment (_derived."
-           "ed_invest_set_from_source), so the row domain "
-           "forbidden ∩ v_invest is always empty")
-    for name in ("fix_v_invest_no_investment_eq_p",
-                 "fix_v_invest_no_investment_eq_n")
-}
+UNREACHABLE: dict[str, str] = {}
 
 def constraint_universe() -> dict[str, str]:
     """family name -> source file, for every add_cstr in COVERAGE_SOURCES."""

@@ -21,13 +21,9 @@ process):
   ≤ 2 across two entities sharing a group, with high demand that would
   otherwise drive each above 2 individually.
 
-* ``test_min_invest_and_no_investment_eq`` — covers **B15-5**
-  (`minInvest_entity_period` + `e_invest_min_total`) consolidated with
-  **B15-6** (`fix_v_invest_no_investment_eq_p`).  In one fixture: pin
-  v_invest[u, d1] = 0 via `ed_invest_forbidden_no_investment` (equality),
-  force v_invest[u, d2] ≥ 1 via `ed_invest_min_period`, and force
-  Σ_d v_invest[u, d] ≥ 2 via `e_invest_min_total`.  Optimum picks
-  v_invest = (0, 1, 1).
+* ``test_min_invest_period_floor`` — covers **B15-5**
+  (`minInvest_entity_period`): force v_invest[u, d2] ≥ 1 via
+  `ed_invest_min_period`.  Optimum picks v_invest = (0, 1, 0).
 """
 from __future__ import annotations
 
@@ -393,40 +389,30 @@ def test_group_invest_totals_count_chain_prior(toy_invest_3d):
 
 
 # ---------------------------------------------------------------------------
-# B15-5 + B15-6 — minInvest floors and no-investment equality.
+# B15-5 — minInvest floor.
 
-def test_min_invest_and_no_investment_eq(toy_invest_3d):
-    """Covers B15-5 (`minInvest_entity_period`) consolidated with
-    B15-6 (`fix_v_invest_no_investment_eq_p`).
-
-    Both are forced-value constraints on v_invest (one floor, one
-    equality).  In one fixture:
-      * fix_v_invest_no_investment_eq pins v_invest[u, d1] == 0.
-      * minInvest_entity_period[d2] = 1 ⇒ v_invest[u, d2] ≥ 1.
+def test_min_invest_period_floor(toy_invest_3d):
+    """Covers B15-5 (`minInvest_entity_period`):
+    minInvest_entity_period[d2] = 1 ⇒ v_invest[u, d2] ≥ 1.
 
     With invest cost = 10/unit and no demand, the LP picks the cheapest
-    feasible point:
-      v_invest[d1]=0 (pinned), v_invest[d2]=1 (floor), v_invest[d3]=0.
+    feasible point: v_invest[d1]=0, v_invest[d2]=1 (floor), v_invest[d3]=0.
     """
     d = toy_invest_3d
-    # Forbid invest at d1 (forced equality).
-    forbid = pl.DataFrame({"e": ["u"], "d": ["d1"]})
     # Floor invest at d2 (>=1).
     ed_invest_min_period = Param(("e", "d"),
         pl.DataFrame({"e": ["u"], "d": ["d2"], "value": [1.0]}))
     data = dataclasses.replace(d,
-        ed_invest_forbidden_no_investment=forbid,
         ed_invest_min_period=ed_invest_min_period,
     )
     pb, sol = _solve(data)
     assert sol.optimal
     cstr = set(pb.cstr_names())
-    assert "fix_v_invest_no_investment_eq_p" in cstr
     assert "minInvest_entity_period_p" in cstr
     v_inv = sol.value("v_invest_p").sort("d")
     by_d = {row["d"]: row["value"]
             for row in v_inv.iter_rows(named=True)}
-    # Hand-calc: d1=0 (pinned), d2=1 (floor binds), d3=0 (no incentive).
+    # Hand-calc: d1=0 and d3=0 (no incentive), d2=1 (floor binds).
     assert by_d["d1"] == pytest.approx(0.0, abs=1e-7)
     assert by_d["d2"] == pytest.approx(1.0, rel=1e-7)
     assert by_d["d3"] == pytest.approx(0.0, abs=1e-7)

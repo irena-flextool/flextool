@@ -3338,13 +3338,9 @@ def _lifetime_expired_pairs(source: "InputSource",
     life per entity from the start of the run).  These are the rows where:
 
       * ``p_entity_pre_existing[e, d]`` should evaluate to 0.
-      * ``ed_invest_forbidden_no_investment`` adds (e, d) to the
-        forbidden set (only ``no_investment`` is forbidden — but the
-        gate is shared with ``reinvest_choice`` for the existing-cap
+      * a ``no_investment`` entity may not invest any more: callers filtering ``ed_invest_set`` pass
+        ``methods=("no_investment",)`` (the gate is shared with ``reinvest_choice`` for the existing-capacity
         cascade).
-
-    Only ``no_investment`` entries actually pin ``v_invest = 0`` —
-    callers filtering ``ed_invest_set`` should pass ``methods=("no_investment",)``.
     """
     pyd = _lifetime_years(source, active_solve, workdir, provider=provider)
     sums = _lifetime_gate_sums(source, active_solve, workdir, provider=provider, years=pyd)
@@ -3369,61 +3365,6 @@ def _lifetime_expired_pairs(source: "InputSource",
     return out
 
 
-def ed_invest_forbidden_no_investment_from_source(
-        source: "InputSource",
-        active_solve: str | None,
-        workdir: Path | None,
-        ed_invest: pl.DataFrame | None = None,  # noqa: ARG001 — kept for back-compat
-        *,
-        ctx: "SolveContext | None" = None,
-        provider: "object | None" = None,
-        ) -> pl.DataFrame | None:
-    """Audit §3.7 — ``ed_invest`` rows whose ``no_investment`` lifetime
-    window has already ended.
-
-    Mirrors :func:`flextool/preprocessing/invest_divest_sets.py
-    :write_ed_invest_forbidden_no_investment` — used in
-    ``fix_v_invest_no_investment_eq`` (mod L3930) to pin ``v_invest = 0``
-    after the lifetime expires.
-
-    Computed against the *unfiltered* ed_invest cross-product (so the
-    output matches flextool's CSV regardless of whether
-    :func:`ed_invest_set_from_source` has already anti-joined the
-    forbidden tuples).  We rebuild the universe locally:
-    ``entityInvest × period_invest`` then keep only the (e, d) pairs
-    where:
-
-      * ``e`` has ``lifetime_method == 'no_investment'``,
-      * ``yr[d] >= life_sum(e)``.
-    """
-    period_invest = _expand_invest_branch_periods(
-        _solve_periods(source, active_solve, "invest_periods"),
-        workdir, ctx=ctx, provider=provider)
-    if not period_invest:
-        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
-                                     "d": schema_dtype(_enums, "d")})
-    forbidden = _lifetime_expired_pairs(
-        source, active_solve, workdir, methods=("no_investment",), provider=provider)
-    if not forbidden:
-        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
-                                     "d": schema_dtype(_enums, "d")})
-    # Universe = entityInvest × period_invest (canonical's source set,
-    # before the forbidden filter is applied).
-    ei_lf = _entityInvest_set(source)
-    ei_df = ei_lf.collect() if ei_lf is not None else pl.DataFrame(
-        schema={"e": schema_dtype(_enums, "e")})
-    if ei_df.height == 0:
-        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
-                                     "d": schema_dtype(_enums, "d")})
-    ei = set(ei_df["e"].to_list())
-    rows = [(e, d) for (e, d) in forbidden
-              if e in ei and d in period_invest]
-    if not rows:
-        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
-                                     "d": schema_dtype(_enums, "d")})
-    return pl.DataFrame(rows, schema=["e", "d"], orient="row").sort("e", "d")
-
-
 def ed_invest_set_from_source(source: "InputSource",
                                 active_solve: str | None,
                                 workdir: Path | None = None,
@@ -3443,11 +3384,10 @@ def ed_invest_set_from_source(source: "InputSource",
     non-zero annuity or a user-constraint capacity coefficient; :func:`zero_cost_invest_notice`
     names the pairs that rule left out.)
 
-    Γ.6.D: ``ed_invest_forbidden_no_investment`` rows (entities with
-    ``lifetime_method = no_investment`` whose lifetime window has
-    expired) are anti-joined out.  Mirrors
-    ``invest_divest_sets.py:write_ed_invest_forbidden_no_investment``
-    consumed by ``fix_v_invest_no_investment_eq`` (mod L3930).
+    The pairs of entities with ``lifetime_method = no_investment`` whose
+    lifetime window has ended (:func:`_lifetime_expired_pairs`) are
+    left out, so no investment variable exists for them: every set of
+    investment variables is a partition of this set.
     """
     period_invest = _expand_invest_branch_periods(
         _solve_periods(source, active_solve, "invest_periods"),
@@ -6126,19 +6066,6 @@ def apply_derived_c(
         source, ed_inv_for_partition, (_pd_invest_lf, _nd_invest_lf, _ed_invest_period_lf))
     flex_data.pd_divest_set, flex_data.nd_divest_set, flex_data.ed_divest_period_set = _class_partitions(
         source, ed_div_for_partition, (_pd_divest_lf, _nd_divest_lf, _ed_divest_period_lf))
-
-    # Γ.6.D — ed_invest_forbidden_no_investment.  Built off the
-    # (possibly-overridden) ed_invest_set so the helper sees the same
-    # frame the LP downstream consumes.
-    ed_invest_for_forbidden = (
-        ed_inv_db if ed_inv_db is not None
-        else getattr(flex_data, "ed_invest_set", None))
-    forbidden_db = ed_invest_forbidden_no_investment_from_source(
-        source, active_solve, workdir, ed_invest_for_forbidden,
-        ctx=ctx, provider=provider)
-    if forbidden_db is not None:
-        flex_data.ed_invest_forbidden_no_investment = (
-            forbidden_db if forbidden_db.height > 0 else None)
 
     _fan_branch_years_notice(source, flex_data, ed_inv_for_partition, ed_div_for_partition)
     _end_of_life_notice(source, active_solve, workdir, provider=provider)
@@ -9856,8 +9783,6 @@ def apply_synthetic_invest_sets(flex_data: object,
         of ``ed_divest_set``)
       * ``edd_invest_set`` (history-extended triple; requires workdir
         for ``period_with_history.csv`` + ``period_in_use_set.csv``).
-      * ``ed_invest_forbidden_no_investment`` (no-investment lifetime
-        gate; needed by ``apply_existing_chain``).
 
     The per-period cap subsets (``ed_invest_period_set`` /
     ``ed_divest_period_set``) and the NPV cost cascade
@@ -9908,16 +9833,6 @@ def apply_synthetic_invest_sets(flex_data: object,
     if ed_div is not None and ed_div.height > 0:
         flex_data.ed_divest_set = ed_div
     zero_cost_invest_notice(source, ed_inv, ed_div)
-
-    # ed_invest_forbidden_no_investment — derived from the lifetime
-    # gate; consumed by apply_existing_chain.
-    try:
-        forbidden = ed_invest_forbidden_no_investment_from_source(
-            source, active_solve, workdir, ed_inv, provider=provider)
-    except Exception:  # pragma: no cover — defensive
-        forbidden = None
-    if forbidden is not None and forbidden.height > 0:
-        flex_data.ed_invest_forbidden_no_investment = forbidden
 
     # pd/nd_invest_set, pd/nd_divest_set partitions — pure entity-class
     # projections, no solve dependency beyond the input ed_*_set frame.

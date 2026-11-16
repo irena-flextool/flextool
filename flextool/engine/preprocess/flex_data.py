@@ -1633,7 +1633,6 @@ class FlexData:
 
     # ─── Cumulative / group-invest / min-invest (read by _cumulative_invest) ─
     # Sets
-    ed_invest_forbidden_no_investment: pl.DataFrame | None = None  # (e, d) — pin v_invest = 0
     ed_invest_cumulative: pl.DataFrame | None = None               # (e, d) — cumulative-cap rows
     group_entity: pl.DataFrame | None = None                       # (g, e)
     g_invest_total: pl.DataFrame | None = None                     # (g,)
@@ -4623,9 +4622,6 @@ def _load_cumulative_invest(inp: Path, sd: Path, dt: pl.DataFrame,
         return sliced if sliced.height > 0 else None
 
     # ── Sets (key-only frames) ────────────────────────────────────────────
-    out["ed_invest_forbidden_no_investment"] = _read_set(
-        "ed_invest_forbidden_no_investment",
-        {"entity": "e", "period": "d"})
     out["ed_invest_cumulative"] = _read_set(
         "ed_invest_cumulative", {"entity": "e", "period": "d"})
 

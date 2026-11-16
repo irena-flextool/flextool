@@ -227,7 +227,6 @@ def test_g_invest_cumulative_alone_does_not_emit_and_max_capacity_is_none(
     d_stub = SimpleNamespace(
         e_invest_min_total=None, e_divest_min_total=None,
         ed_invest_min_period=None, ed_divest_min_period=None,
-        ed_invest_forbidden_no_investment=None,
         ed_invest_cumulative=None,
         ed_cumulative_max_capacity=None, ed_cumulative_min_capacity=None,
         gd_invest_period=None, gd_divest_period=None,
