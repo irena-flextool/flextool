@@ -734,21 +734,16 @@ def read_sets(
         dims=("e", "d"), names=["entity", "period"],
     )
 
-    # edd_invest may have either (e, d_invest, d) or (e, d) dims.
-    if (flex_data.edd_invest_set is not None
-            and flex_data.edd_invest_set.height > 0):
-        cols = flex_data.edd_invest_set.columns
-        if len(cols) >= 3:
-            pdf = flex_data.edd_invest_set.with_columns(
-                pl.lit(solve_name).alias("solve")
-            ).select("solve", cols[0], cols[1], cols[2]).to_pandas()
-            s.edd_invest = pd.MultiIndex.from_frame(
-                pdf, names=["solve", "entity", "period_invest", "period"],
-            )
-        else:
-            s.edd_invest = empty_multi_index(
-                ["solve", "entity", "period_invest", "period"]
-            )
+    # edd_invest — (e, d_invest, d): the periods each investment is in service (the cohort table's view).
+    from flextool.engine.preprocess.params._cohorts import invest_alive
+    edd_invest = invest_alive(getattr(flex_data, "cohort_alive", None))
+    if edd_invest.height > 0:
+        pdf = edd_invest.with_columns(
+            pl.lit(solve_name).alias("solve")
+        ).select("solve", "e", "d_invest", "d").to_pandas()
+        s.edd_invest = pd.MultiIndex.from_frame(
+            pdf, names=["solve", "entity", "period_invest", "period"],
+        )
     else:
         s.edd_invest = empty_multi_index(
             ["solve", "entity", "period_invest", "period"]

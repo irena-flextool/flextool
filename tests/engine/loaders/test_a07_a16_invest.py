@@ -147,7 +147,7 @@ def test_skip_set_seeds_when_synthetic_solve(tmp_path: Path):
     # cost-param seed loaded -> ed_lifetime_fixed_cost Param at (e1,p1)=100.
     for set_field in ("ed_invest_set", "ed_divest_set",
                       "pd_invest_set", "pd_divest_set",
-                      "nd_invest_set", "nd_divest_set", "edd_invest_set"):
+                      "nd_invest_set", "nd_divest_set", "cohort", "cohort_alive"):
         assert out[set_field] is None, (
             f"{set_field} should be None on synthetic-skip path")
     assert out["ed_lifetime_fixed_cost"] is not None
@@ -204,7 +204,7 @@ def test_g_invest_cumulative_alone_does_not_emit_and_max_capacity_is_none(
       * leave ``ed_cumulative_max_capacity = None`` per the Δ.12-drop
         contract (override-only field; never seeded by the loader).
     Then call ``_eq_group_invest_cumulative`` with a stub data object
-    where ``group_entity`` and ``edd_invest_set`` are None — the
+    where ``group_entity`` is None and no investment is in service — the
     all-three-required guard must early-return without emitting any
     constraint (record m.add_cstr calls and assert empty).
     """
@@ -236,7 +236,6 @@ def test_g_invest_cumulative_alone_does_not_emit_and_max_capacity_is_none(
         p_group_max_cumulative_flow=None, p_group_min_cumulative_flow=None,
         pd_max_cumulative_flow=None, pd_min_cumulative_flow=None,
         group_process_node=None,
-        edd_invest_set=None,
         pd_group_cumulative_max_capacity=None,
     )
     # Hand-calc: g_invest_cumulative non-empty -> has_feature returns True.
@@ -246,6 +245,7 @@ def test_g_invest_cumulative_alone_does_not_emit_and_max_capacity_is_none(
         def __init__(self): self.calls = []
         def add_cstr(self, *a, **kw): self.calls.append((a, kw))
     m = _Recorder()
-    _eq_group_invest_cumulative(SimpleNamespace(m=m, d=d_stub, v_invest_p=None, v_invest_n=None))
+    _eq_group_invest_cumulative(SimpleNamespace(m=m, d=d_stub, v_invest_p=None, v_invest_n=None,
+                                                cap=SimpleNamespace(alive=None)))
     # Hand-calc: group_entity is None -> early return; no add_cstr call.
     assert m.calls == []

@@ -1529,7 +1529,7 @@ def ed_lifetime_fixed_cost_divest_from_source(
 #   reinvest_choice / no_reinvestment (unbounded for reinvest_automatic); c(d) is the start of operation (d without
 #   a construction lead time).  edd_retire_window[e,d_divest,d]: yr_run[d_divest] ≤ yr_run[d] < EOL[e] (the end
 #   of life of the pre-existing capacity, from the start of the run; the end of the run for reinvest_automatic),
-#   the window of edd_divest_active.  edd_salvage_window[e,d_divest,d]: yr_run[d] ∈ [yr_run[d_divest],
+#   the window of _cohorts.retire_active.  edd_salvage_window[e,d_divest,d]: yr_run[d] ∈ [yr_run[d_divest],
 #   yr_run[d_divest] + lifetime_technical[e, d_divest]), the window the net salvage value is spread over.  In a
 #   stochastic fan only the pairs of the walk lineage (each calendar period once).
 # OUT. ed_annuity[e,d] = annuity (CUR/MW/yr, undiscounted) of invest_cost at c(d) over payback_time; ed_divest_annuity
@@ -2053,7 +2053,7 @@ def apply_run_cost_fields(flex_data: object,
                 flex_data.ed_entity_annual_discounted_run = _ed_param(_lump(paid, ann, None, inv))
 
     # Retirement side: from the retirement period until the end of life of the existing capacity (the end of the
-    # run for reinvest_automatic), the window of edd_divest_active on the run calendar.
+    # run for reinvest_automatic), the window of _cohorts.retire_active on the run calendar.
     div = anchors_of("ed_divest_set", _DIVEST_NOT_ALLOWED, period_invest)
     if div.height > 0:
         from flextool.engine.preprocess.params._cohorts import existing_cohorts, existing_eol

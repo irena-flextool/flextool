@@ -2,7 +2,7 @@
 
 Exercises the P2 chain end to end (``commissioning_year_lf`` ->
 ``period_walk_iterator`` commission injection -> availability filters ->
-the investment cohorts' ``edd_invest_set`` view) against a hand-built source on the design §2.3 uneven
+the investment cohorts' ``invest_alive`` view) against a hand-built source on the design §2.3 uneven
 calendar (seams ``S = {0, 5, 8, 20}``), without invoking the LP.  Pins:
 
 * §7a deterministic lag — the alive (order -> available) set shifts by the
@@ -86,7 +86,7 @@ def _source(*, entity="nuke", lifetime_method="reinvest_automatic",
 
 
 def _alive(source, order="p1", entity="nuke"):
-    """Alive periods of edd_invest_set for (entity, order), with the lag
+    """Alive periods of the investment (entity, order), with the lag
     threaded through commissioning_year_lf exactly as the derive site does."""
     ed_invest = pl.DataFrame({"e": [entity], "d": [order]})
     commission_lf = commissioning_year_lf(

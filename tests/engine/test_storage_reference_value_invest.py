@@ -12,6 +12,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from flextool.engine.preprocess.params._cohorts import invest_alive
 from tests.engine._lp_rows import row_terms
 from tests.engine._unit_db import b64, build, make_db, run, utf8
 
@@ -37,7 +38,7 @@ def test_reference_value_counts_invested_storage(tmp_path_factory):
     assert rows
     invest = utf8(step.solution.value("v_invest_n")).filter(pl.col("n") == "battery")
     built = {d: v for d, v in invest.select("d", "value").iter_rows()}
-    alive = utf8(fd.edd_invest_set).filter(pl.col("e") == "battery")
+    alive = utf8(invest_alive(fd.cohort_alive)).filter(pl.col("e") == "battery")
     state = utf8(step.solution.value("v_state")).filter(pl.col("n") == "battery")
     total_built = 0.0
     for name, cols in rows.items():
@@ -56,7 +57,7 @@ def test_reference_value_counts_invested_storage(tmp_path_factory):
 
 def test_reference_value_invest_follows_the_branch(tmp_path_factory):
     """Stochastic recourse with non-anticipativity (``stoch_recourse_na``): the end pin of a branch period holds
-    v_invest_n of exactly the invest periods in service there (edd_invest_set: the trunk and the branch's own
+    v_invest_n of exactly the invest periods in service there (invest_alive: the trunk and the branch's own
     periods), never one of a sibling branch."""
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_migration import migrate_database
@@ -71,9 +72,9 @@ def test_reference_value_invest_follows_the_branch(tmp_path_factory):
     checked = 0
     for step in steps:
         fd = step.flex_data
-        if fd.edd_invest_set is None:
+        if invest_alive(fd.cohort_alive).height == 0:
             continue
-        alive = utf8(fd.edd_invest_set).filter(pl.col("e") == "hydro_reservoir")
+        alive = utf8(invest_alive(fd.cohort_alive)).filter(pl.col("e") == "hydro_reservoir")
         for name, cols in row_terms(build(fd), PIN, "hydro_reservoir,").items():
             _n, d, _t = name[name.index("[") + 1:-1].split(",")
             got = {c[c.index(",") + 1:-1] for c in cols if c.startswith("v_invest_n[hydro_reservoir,")}

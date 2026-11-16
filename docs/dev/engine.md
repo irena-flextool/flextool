@@ -201,7 +201,8 @@ few shared expressions):
    `add_variables(b)` are called from here. Declaration order is the LP
    column order.
 3. `_shared_expressions` — expressions read by several families (reserve
-   coupling sums, invest/divest-in-dispatch sums, `op_factor`).
+   coupling sums, the capacity in service `b.cap` of `_capacity`,
+   `op_factor`).
 4. One `_eq_<family>(b)` per core equation family, in emit order,
    interleaved with the feature modules' `add_constraints(b)`.
 5. `_obj_<family>(b)` and the modules' `objective_terms(b)` return their
@@ -229,7 +230,9 @@ group / cumulative / flow-group limits), `_commodity_ladder`,
 `_dc_power_flow`, `_exact` (direction switch of `exact` connections),
 `_delay` (delayed inputs, used by `conversion_indirect`) and
 `_non_anticipativity` (stochastic ties).
-Small helpers shared by these live in `_common`.
+Small helpers shared by these live in `_common`. `_capacity` builds the
+capacity in service once per solve (`b.cap`, below); every family that
+reads an investment or a retirement takes its frames and sums from there.
 
 **Emit order is part of the LP.** Row and column order decide which
 alternate optimum the solver returns, so moving a step in the table of
@@ -301,6 +304,20 @@ For a unit, connection or storage node `e` in period `d`:
 - `invest_*`, `retire_*`, `cumulative_*`, `invest_forced` and the capacity a
   construction lead time carries are MW (MWh) in every case. `v_invest` and
   `v_divest` are continuous, in units of `unitsize`.
+- The capacity in service (`model/_capacity.py`, built once per solve from
+  the cohort table `preprocess/params/_cohorts.py`), in units of `unitsize`
+  (`state_unitsize` for a storage node):
+  - `invested[e,d] = Σ_{d′ : (e,d′,d) ∈ alive} v_invest[e,d′]`: the
+    investments in service in `d` — the investment cohort `(e,d′)` is alive
+    in `d` when `y_on ≤ y[d] < y_eol` (start of operation, end of life
+    rounded up to a period start), along the scenario lineage of a fan;
+  - `prebuilt[e,d]`: the same over the cohorts in service from the start of
+    `d` (`y[d] > y_on`), not starting to operate in `d`;
+  - `retired[e,d] = Σ_{d′ : (e,d′,d) ∈ retired} v_divest[e,d′]`: a retirement
+    of existing capacity decided in `d′` counts in `d` when `y[d′] ≤ y[d]`
+    and the existing cohort of `e` is still in service in `d` (none for
+    `reinvest_automatic`, which has no end of life);
+  - `cap[e,d] = existing[e,d] + invested[e,d] − retired[e,d]`.
 
 ### Required fields
 
@@ -494,7 +511,7 @@ Representative entries:
 |---|---|
 | `_block.py` | `BlockLayout` fan-out — per-entity blocks, overlap sets, block step durations. |
 | `_branch.py` | `period_branch`, `pdt_branch_weight`, `pd_branch_weight` — stochastic branch weighting. |
-| `_cohorts.py` | The cohort table (`cohort`, `cohort_alive`, `dd_forward`): the start of operation and end of life of the existing capacity and of each investment, the periods each is in service, the reach of a retirement; its views are the only lifetime gate (end of life, expired periods, investment alive / pre-built, retirement reach). |
+| `_cohorts.py` | The cohort table (`cohort`, `cohort_alive`, `dd_forward`): the start of operation and end of life of the existing capacity and of each investment, the periods each is in service, the reach of a retirement; its views are the only lifetime gate (end of life, expired periods, investment alive / pre-built, retirement reach); `in_service` gives the model (`model/_capacity.py`) and the output readers the periods each investment and retirement counts in. |
 | `_existing.py` | `p_entity_all_existing`, `p_entity_previously_invested_capacity` — cross-solve existing-capacity composition. |
 | `_npv.py` | Annualized investment / divestment carriers feeding the objective. |
 | `_profiles.py` | `p_profile_value` and the `p_process_existing_count` factor used by profile-bound constraints. |

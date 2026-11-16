@@ -376,7 +376,7 @@ def test_unit_capacity_period_table_includes_invested(tmp_path: Path, scenario_w
 
     This exercises the post-solve derivation
     ``total = existing + cumulative_invested - cumulative_divested``
-    via the FlexData ``edd_invest_set`` indirection — the legacy
+    via the investments in service (``_cohorts.in_service``) — the legacy
     GMPL-phase 3 path produced this row.
     """
     fixture = scenario_workdir("network_coal_wind_battery_invest_cumulative")

@@ -40,6 +40,8 @@ from polar_high import Param, Problem
 from flextool.engine import build_flextool
 from flextool.engine.preprocess.flex_data import FlexData
 
+from tests.engine._cohort_frames import cohort_fields
+
 
 # ---------------------------------------------------------------------------
 # Online / ramp predecessor links, built the way the engine builds them.
@@ -531,7 +533,7 @@ def toy_invest_3d() -> FlexData:
         p_slope=p_slope, p_commodity_price=p_commodity_price,
         pd_invest_set=pd_invest_set,
         ed_invest_set=ed_invest_set,
-        edd_invest_set=edd_invest_set,
+        **cohort_fields(invest=edd_invest_set),
         p_entity_max_units=p_entity_max_units,
         ed_invest_period_set=ed_invest_period_set,
         ed_invest_max_period=ed_invest_max_period,

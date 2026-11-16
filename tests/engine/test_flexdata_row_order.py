@@ -13,7 +13,7 @@ order and partial-sum order are not stable.  The four runs must
 be ``.equals`` without sorting: run 1 == run 2 in one process, and process 1 == process 2.  The sweep
 covers every FlexData frame field, so it also catches producers not named here.  Fields the fixtures
 exercise: ``nodeState_first_dt``, ``storage_bind_{within_timeblock,forward_only,within_solve}``,
-``period_block``, ``period_block_time``, ``edd_invest_set`` (and the ``edd_invest__*`` outputs),
+``period_block``, ``period_block_time``, ``cohort_alive`` (and the ``edd_invest__*`` outputs),
 ``ndt_fix_storage_quantity``, ``period_branch``, ``label_steps``, ``period_last``, the rp sets and the
 entity-wide output columns.  No fixture uses ``bind_within_period``; ``storage_bind_within_period`` is
 built by the same code as the other three.
@@ -34,10 +34,10 @@ import pytest
 _CASES = [
     ("lh2", "lh2_db_url", ["lh2_three_region_invest"],
      ["nodeState_first_dt", "storage_bind_within_timeblock", "storage_bind_forward_only",
-      "storage_bind_within_solve", "period_block", "period_block_time", "edd_invest_set"]),
+      "storage_bind_within_solve", "period_block", "period_block_time", "cohort_alive"]),
     ("main", "test_db_url",
      ["wind_battery_invest_lifetime_renew_4solve", "network_coal_wind_battery_invest_cumulative", "test_a_lot"],
-     ["edd_invest_set", "ed_invest_cumulative", "period_in_use_set", "dtt__delay_duration",
+     ["cohort_alive", "ed_invest_cumulative", "period_in_use_set", "dtt__delay_duration",
       "flow_constraint_idx"]),
     pytest.param(("nested", "test_db_url", ["multi_fullYear_battery_nested_multi_invest"],
                   ["ndt_fix_storage_quantity", "dtt_timeline_matching"]),

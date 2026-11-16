@@ -95,7 +95,6 @@ from flextool.engine.preprocess.params._cohorts import (
     existing_cohorts,
     existing_eol,
     invest_alive,
-    invest_prebuilt,
     no_reinvestment_closed,
     retire_active,
 )
@@ -3396,7 +3395,7 @@ def retirable_existing_pairs(pairs: pl.DataFrame,
 
 
 # ---------------------------------------------------------------------------
-# §3.7.2 / §3.7.3 — edd_invest_set / edd_invest_lookback / edd_divest_active
+# §3.7.2 / §3.7.3 — the solve's period years and the invest / divest options
 # ---------------------------------------------------------------------------
 
 
@@ -5273,7 +5272,7 @@ def pdtNodeInflow_per_step_from_inflow(p_inflow: object | None,
 DERIVED_C_FIELDS = (
     # §3.7
     "ed_invest_set", "ed_divest_set",
-    "edd_invest_lookback_set", "edd_divest_active", "ndd_divest_active",
+    "cohort", "cohort_alive", "dd_forward",
     "p_entity_max_units",
     # §3.8
     "p_section",
@@ -5392,9 +5391,10 @@ def _offer_invest_set(flex_data: object,
     flex_data.ed_invest_commission = kept if kept.height > 0 else None
     if late is not None:
         # The sets built from ed_invest_set are set below only where they have rows; clear the earlier values
-        # (seeds) so a set left empty by the dropped decisions does not keep them.
+        # (seeds, also the seeded investment cohorts) so a set left empty by the dropped decisions does not keep
+        # them.
         for name in ("ed_invest_set", "pd_invest_set", "nd_invest_set", "ed_invest_period_set",
-                     "edd_invest_set", "edd_invest_lookback_set"):
+                     "cohort", "cohort_alive"):
             setattr(flex_data, name, None)
     return offered, commission_lf
 
@@ -5639,6 +5639,13 @@ def _class_partitions(source: "InputSource", ed_set: "pl.DataFrame | None",
     return tuple(frame if frame.height > 0 else None for frame in frames)
 
 
+def _seeded_invest(flex_data: object) -> "pl.DataFrame | None":
+    """``[e, d_invest, d]`` of the investment cohorts the loader seeded from ``edd_invest`` (``None`` without):
+    the cohorts of a solve whose investment walk finds no period in service."""
+    seed = invest_alive(getattr(flex_data, "cohort_alive", None))
+    return seed if seed.height > 0 else None
+
+
 def apply_derived_c(
     flex_data: object,
     source: "InputSource",
@@ -5768,7 +5775,7 @@ def apply_derived_c(
         source, active_solve, workdir, ctx=ctx, provider=provider)
     # Construction lead time: the start of operation of each investment decision, on the run calendar.  The
     # decisions whose capacity would start to operate after the solve or the model horizon are not offered.
-    # The frame is threaded into the availability walks below (edd_invest_lookback_set + edd_invest_set);
+    # The frame is threaded into the availability walk of the investment cohorts below;
     # ``None`` when no decision has a lead time (byte-parity).
     _c_period_in_use = _period_in_use_set(source, active_solve, workdir,
                                              ctx=ctx, provider=provider)
@@ -5848,9 +5855,8 @@ def apply_derived_c(
             "p_entity_max_units",
             "ed_invest_period_set", "ed_divest_period_set",
             "ed_invest_max_period", "ed_divest_max_period",
-            # Read only where an investment variable exists; nulled so no
-            # seed outlives the empty investment set.
-            "edd_invest_set", "edd_invest_lookback_set",
+            # Read only where an investment or retirement variable exists;
+            # nulled so no seed outlives the empty investment set.
             "cohort", "cohort_alive", "dd_forward",
         ):
             setattr(flex_data, blank_field, None)
@@ -5863,29 +5869,16 @@ def apply_derived_c(
                    else getattr(flex_data, "ed_invest_set", None)
     frames = build_cohort_frames(source, active_solve, ed_inv_used, list(_c_period_in_use), workdir,
                                  provider=provider, lineage=_c_lineage, commission_lf=commission_lf,
-                                 seed=getattr(flex_data, "edd_invest_set", None))
+                                 seed=_seeded_invest(flex_data))
     flex_data.cohort, flex_data.cohort_alive, flex_data.dd_forward = (
         frames.cohort, frames.cohort_alive, frames.dd_forward)
-    if not frames.seeded:
-        # edd_invest_set / edd_invest_lookback_set: the periods each investment is in service, and those it is in
-        # service from the start of the period; without rows the earlier value (the seed) stays.
-        edd_inv_db = invest_alive(frames.cohort_alive)
-        if edd_inv_db.height > 0:
-            flex_data.edd_invest_set = edd_inv_db
-        eil_db = invest_prebuilt(frames.cohort, frames.cohort_alive)
-        if eil_db.height > 0:
-            flex_data.edd_invest_lookback_set = eil_db
     # Construction lead time: the period each decision starts to operate in and the periods it is in construction.
     _apply_lead_time_sets(flex_data, source, active_solve, ed_inv_used, commission_lf, _c_period_in_use, workdir,
                           lineage=_c_lineage)
 
-    # edd_divest_active / ndd_divest_active: the periods a retirement of existing capacity counts in.
+    # The periods a retirement of existing capacity counts in (the model builds the same, model/_capacity.py).
     edda_db = retire_active(getattr(flex_data, "pd_divest_set", None), frames.cohort_alive, frames.dd_forward, "p")
-    if edda_db.height > 0:
-        flex_data.edd_divest_active = edda_db
     ndda_db = retire_active(getattr(flex_data, "nd_divest_set", None), frames.cohort_alive, frames.dd_forward, "n")
-    if ndda_db.height > 0:
-        flex_data.ndd_divest_active = ndda_db
     _check_retirement_minimums(flex_data, source, active_solve, workdir, offered_div, ed_div_db,
                                [edda_db, ndda_db], _c_period_in_use, provider=provider)
 
@@ -9473,8 +9466,9 @@ def apply_synthetic_invest_sets(flex_data: object,
         of ``ed_invest_set``)
       * ``pd_divest_set`` / ``nd_divest_set`` (process / node partition
         of ``ed_divest_set``)
-      * ``edd_invest_set`` (history-extended triple; requires workdir
-        for ``period_with_history.csv`` + ``period_in_use_set.csv``).
+      * ``cohort`` / ``cohort_alive`` (the existing and investment cohorts and
+        the periods they are in service; requires workdir for the period
+        years + ``period_in_use_set.csv``; no ``dd_forward``).
 
     The per-period cap subsets (``ed_invest_period_set`` /
     ``ed_divest_period_set``) stay on the ``_invest_seeds.py`` CSV-seed
@@ -9539,9 +9533,9 @@ def apply_synthetic_invest_sets(flex_data: object,
         flex_data.pd_divest_set, flex_data.nd_divest_set = _class_partitions(
             source, ed_div, (_pd_divest_lf, _nd_divest_lf))
 
-    # The cohort table and edd_invest_set (the periods each investment is in service) over the sub-solve's
-    # period_in_use_set.  The sub-solve places no retirement reach and no pre-built capacity (no dd_forward,
-    # edd_divest_active or edd_invest_lookback_set).
+    # The cohort table (the periods each investment is in service) over the sub-solve's period_in_use_set.  The
+    # sub-solve places no retirement reach (no dd_forward), so the model gives it no retirement and no pre-built
+    # capacity (_cohorts.in_service).
     if (ed_inv is not None and ed_inv.height > 0
             and workdir is not None):
         period_in_use = _period_in_use_set(source, active_solve, workdir, provider=provider)
@@ -9561,16 +9555,12 @@ def apply_synthetic_invest_sets(flex_data: object,
             _assert_recourse(workdir, source, active_solve, provider=provider)
         else:
             _s_lineage = None
-        # A failure here propagates: a missing edd_invest_set would drop every investment from the capacity.
+        # A failure here propagates: missing cohorts would drop every investment from the capacity.
         frames = build_cohort_frames(source, active_solve, ed_inv, list(period_in_use), workdir,
                                      provider=provider, lineage=_s_lineage, commission_lf=commission_lf,
-                                     seed=getattr(flex_data, "edd_invest_set", None), with_forward=False)
+                                     seed=_seeded_invest(flex_data), with_forward=False)
         flex_data.cohort, flex_data.cohort_alive, flex_data.dd_forward = (
             frames.cohort, frames.cohort_alive, frames.dd_forward)
-        if not frames.seeded:
-            edd_inv = invest_alive(frames.cohort_alive)
-            if edd_inv.height > 0:
-                flex_data.edd_invest_set = edd_inv
         _apply_lead_time_sets(flex_data, source, active_solve, ed_inv, commission_lf, period_in_use, workdir,
                               lineage=_s_lineage)
 

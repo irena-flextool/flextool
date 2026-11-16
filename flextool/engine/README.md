@@ -36,7 +36,7 @@ stochastic), builds each LP with polar_high, solves it and passes results
 | `preprocess/` | `FlexData` (`flex_data.py`), the Provider and its keys, input writer, per-solve context |
 | `preprocess/params/` | Parameter cascade: direct, projected and derived parameters |
 | `preprocess/emit/` | Per-solve sets and parameters written into the Provider |
-| `model/` | The LP: `core.py` plus one module per optional feature |
+| `model/` | The LP: `core.py` plus one module per optional feature; `_capacity.py` the capacity in service |
 | `solve/` | Orchestration, sub-solve expansion, solvers, warm start, Benders, handoff |
 | `output/` | Solution to output parquet files; CSV dumps |
 | `_csv_reload/` | Unsupported, opt-in: reload a model from a CSV dump; offline outputs from MPS + solution. Imports the engine; nothing imports it. |

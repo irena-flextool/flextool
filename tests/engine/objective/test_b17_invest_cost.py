@@ -29,6 +29,8 @@ from flextool.engine import build_flextool
 from flextool.engine.model._pdt_join import compute_pss_dt
 from flextool.engine.preprocess.flex_data import FlexData
 
+from tests.engine._cohort_frames import cohort_fields
+
 from .conftest import solver_options
 
 
@@ -78,7 +80,7 @@ def _enable_divest(data: FlexData, *, lfd: float, annd: float) -> FlexData:
         data,
         pd_divest_set=pd_div,
         ed_divest_set=ed_div,
-        edd_divest_active=edd_div,
+        **cohort_fields(base=data, retired_p=edd_div, divest_p=pd_div),
         ed_lifetime_fixed_cost_divest=lfd_param,
         ed_entity_annual_divest_discounted=annd_param,
         p_flow_upper=p_flow_upper,

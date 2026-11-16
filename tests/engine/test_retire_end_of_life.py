@@ -14,6 +14,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
+from flextool.engine.preprocess.params._cohorts import in_service
 from tests.engine._unit_db import FLEXTOOL_ROOT, b64, make_db, run, utf8, without_realization
 from tests.engine.test_chain_costs import (
     F_OPS,
@@ -244,7 +245,7 @@ def test_entity_without_existing_capacity_has_no_retirement(tmp_path_factory, ca
     assert utf8(step.solution.value("v_invest_p")).filter(pl.col("p") == PLANT).height == len(PERIODS)
     fd = step.flex_data
     assert fd.pd_divest_set is None or utf8(fd.pd_divest_set).filter(pl.col("p") == PLANT).height == 0
-    assert fd.edd_divest_active is None or utf8(fd.edd_divest_active).filter(pl.col("p") == PLANT).height == 0
+    assert utf8(in_service(fd).retired_p).filter(pl.col("p") == PLANT).height == 0
     out = capsys.readouterr().out
     assert f"{PLANT} has a retirement option" in out and "Only existing capacity can be retired" in out
 
@@ -335,12 +336,13 @@ def test_storage_retirement_counts_until_the_end_of_life(tmp_path_factory) -> No
 
 def _in_service(step, entity: str = PLANT) -> dict[str, float]:
     """Capacity in service per period of ``step``: its existing capacity (with the retirements of earlier solves
-    still counting) minus its own retirements still counting (edd_divest_active)."""
+    still counting) minus its own retirements still counting (``_cohorts.in_service``)."""
     fd = step.flex_data
     capacity = dict(_ed(fd.p_entity_all_existing, entity))
-    if fd.edd_divest_active is not None:
+    retired_p = in_service(fd).retired_p
+    if retired_p.height > 0:
         retired = _divest_mw(step, entity)
-        for d_r, d in utf8(fd.edd_divest_active).filter(pl.col("p") == entity).select("d_divest", "d").iter_rows():
+        for d_r, d in utf8(retired_p).filter(pl.col("p") == entity).select("d_divest", "d").iter_rows():
             capacity[d] = capacity.get(d, 0.0) - retired.get(d_r, 0.0)
     return capacity
 
@@ -414,7 +416,7 @@ def test_fan_retirement_ends_with_the_existing_capacity(tmp_path_factory, chain)
                         fixture_json=FAN)
     step = list(without_realization(run(tmp_path_factory, url, scen)).values())[-1]
     assert step.optimal
-    active = utf8(step.flex_data.edd_divest_active).filter(pl.col("p") == "wind")
+    active = utf8(in_service(step.flex_data).retired_p).filter(pl.col("p") == "wind")
     assert {"p2035_high", "p2035_low"} <= set(active["d"].to_list())
     assert not [d for d in active["d"].to_list() if d.startswith("p2040")]
     pb = build(step.flex_data)

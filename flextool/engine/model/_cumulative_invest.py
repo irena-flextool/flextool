@@ -193,8 +193,8 @@ def _check_group_retire_minimums(b: _Build) -> None:
         group_entity=d.group_entity,
         min_total=d.p_group_retire_min_total,
         min_period=d.p_group_retire_min_period,
-        windows=active_windows([getattr(d, "edd_divest_active", None), getattr(d, "ndd_divest_active", None)]),
-        pre=ed_values(getattr(d, "p_entity_pre_existing", None)),
+        windows=active_windows([b.cap.retired_frame("p"), b.cap.retired_frame("n")]),
+        pre=ed_values(b.cap.existing_cohort_size_e),
         prior=chain_prior(d, "divest"),
         carried=ed_values(getattr(d, "p_entity_retired_carried", None)))
 
@@ -261,7 +261,7 @@ def _eq_min_invest_total(b: _Build) -> None:
     #   _n: the node analogue with v_invest_n and state_unitsize[n]
     # The part of the minimum not met by earlier solves of the chain must be met in this solve
     # (Q3).  One row per entity over the chain horizon, replacing the old per-period "invested and
-    # still alive" row; edd_invest_set is no longer read.  Always named _path, even with one
+    # still alive" row; the capacity in service is not read.  Always named _path, even with one
     # scenario leaf: a single row summed over alternative branches would let one branch meet the
     # minimum for all, so the per-leaf row shape is load-bearing, not cosmetic.
     for name, var, axis in (("minInvest_entity_total_path_p", b.v_invest_p, "p"),
@@ -331,15 +331,15 @@ def _eq_min_divest_total(b: _Build) -> None:
 def _eq_cumulative_capacity(b: _Build) -> None:
     """{max,min}Cumulative_capacity_{p,n}: total capacity of an entity per period, from above and below."""
     d = b.d
-    idx, edd = d.ed_invest_cumulative, d.edd_invest_set
-    if not _has_rows(idx) or edd is None:
+    idx, edd = d.ed_invest_cumulative, b.cap.alive
+    if not _has_rows(idx) or not _has_rows(edd):
         return
-    existing = d.p_entity_all_existing
+    existing = b.cap.existing_mw_e
 
     # ─── EQ. ─── {max,min}Cumulative_capacity_{p,n} ──────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{d′ : (p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′] · unitsize[p]
-    #   − Σ_{d′ : (p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′] · unitsize[p]
+    # invested[p,d] · unitsize[p]
+    #   − retired[p,d] · unitsize[p]
     #   ≤ cumulative_max_capacity[p,d] − existing[p,d]        (maxCumulative_capacity_p)
     #   ≥ cumulative_min_capacity[p,d] − existing[p,d]        (minCumulative_capacity_p)
     #   max: ∀ (p,d) ∈ ed_invest_cumulative ∩ v_invest_p entities, p ∈ authors(cumulative_max_capacity) —
@@ -347,12 +347,12 @@ def _eq_cumulative_capacity(b: _Build) -> None:
     #        a period whose cumulative_max_capacity is inf has no row (no limit there)
     #       
     #   min: ∀ (p,d) ∈ ed_invest_cumulative ∩ v_invest_p entities ∩ cumulative_min_capacity.frame
-    #   _n: the node analogue with v_invest_n / v_divest_n, state_unitsize[n] and ``ndd_divest_active``.
+    #   _n: the node analogue with v_invest_n / v_divest_n and state_unitsize[n].
     # Keeps the capacity of an entity in a period (existing + invested and still alive − every
     # retirement up to and including d, #29, processes and storage nodes) within its cumulative
     # limits, MW (MWh for storage nodes).  Existing capacity is a constant on the right-hand side.
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
     for name, sense, cap, var, divest, axis, param_name in (
         ("maxCumulative_capacity_p", "<=", d.ed_cumulative_max_capacity, b.v_invest_p, b.v_divest_p, "p",
          "cumulative_max_capacity"),
@@ -393,17 +393,13 @@ def _eq_cumulative_capacity(b: _Build) -> None:
         invest = _var_view(var, "__cumcap_at", {"d": "d_invest"})
         lhs: dict = {"invest_cum": Sum(Where(invest * unitsize, lifetime), over=("d_invest",))}
         if divest is not None:
-            active_frame = d.edd_divest_active if axis == "p" else d.ndd_divest_active
-            if active_frame is not None:
-                # #29: every earlier divestment still active at d, not just d's own — the maxFlow
-                # measure (core.py divest_in_dispatch_p).
-                view = _var_view(divest, "__cumcap_div", {"d": "d_divest"}, to_axis=True)
-                active = _entity_rows(active_frame, axis, rows, axis)
-                active, rows_div = align_join_dtypes(active, rows.select(axis, "d"), (axis, "d"))
-                active = active.join(rows_div, on=[axis, "d"], how="semi")
-                lhs["divest"] = -Sum(Where(view * unitsize, active), over=("d_divest",))
-            else:
-                lhs["divest"] = -Where(divest * unitsize, rows)
+            # #29: every earlier divestment still active at d, not just d's own — the maxFlow measure
+            # (retired[e,d], _capacity).
+            view = _var_view(divest, "__cumcap_div", {"d": "d_divest"}, to_axis=True)
+            active = _entity_rows(b.cap.retired_frame(axis), axis, rows, axis)
+            active, rows_div = align_join_dtypes(active, rows.select(axis, "d"), (axis, "d"))
+            active = active.join(rows_div, on=[axis, "d"], how="semi")
+            lhs["divest"] = -Sum(Where(view * unitsize, active), over=("d_divest",))
         rhs: dict = {"cap": drop_no_limit_rows(Param((axis, "d"), cap_frame), "upper")}
         if existing is not None:
             rhs["minus_existing"] = -Param((axis, "d"), existing.frame.rename({"e": axis}))
@@ -668,8 +664,8 @@ def _eq_group_divest_total(b: _Build) -> None:
 def _eq_group_invest_cumulative(b: _Build) -> None:
     """{max,min}InvestGroup_entity_cumulative: existing plus invested capacity of a group per period."""
     d = b.d
-    group_entity, g_set, edd = d.group_entity, d.g_invest_cumulative, d.edd_invest_set
-    if not _has_rows(group_entity) or not _has_rows(g_set) or edd is None:
+    group_entity, g_set, edd = d.group_entity, d.g_invest_cumulative, b.cap.alive
+    if not _has_rows(group_entity) or not _has_rows(g_set) or not _has_rows(edd):
         return
     in_groups = pl.col("g").is_in(g_set["g"].unique())
     # (g, d): the periods in which some member of the group has investments alive.
@@ -681,10 +677,10 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
 
     # ─── EQ. ─── {max,min}InvestGroup_entity_cumulative ──────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{p : (g,p) ∈ group_entity} Σ_{d′ : (p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′] · unitsize[p]
-    #   + Σ_{n : (g,n) ∈ group_entity} Σ_{d′ : (n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′] · state_unitsize[n]
-    #   − Σ_{p : (g,p) ∈ group_entity} Σ_{d′ : (p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′] · unitsize[p]
-    #   − Σ_{n : (g,n) ∈ group_entity} Σ_{d′ : (n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′] · state_unitsize[n]
+    # Σ_{p : (g,p) ∈ group_entity} invested[p,d] · unitsize[p]
+    #   + Σ_{n : (g,n) ∈ group_entity} invested[n,d] · state_unitsize[n]
+    #   − Σ_{p : (g,p) ∈ group_entity} retired[p,d] · unitsize[p]
+    #   − Σ_{n : (g,n) ∈ group_entity} retired[n,d] · state_unitsize[n]
     #   ≤ cumulative_max_capacity[g,d] − Σ_{e : (g,e) ∈ group_entity} existing[e,d]   (max…)
     #   ≥ cumulative_min_capacity[g,d] − Σ_{e : (g,e) ∈ group_entity} existing[e,d]   (min…)
     #   ∀ g ∈ g_invest_cumulative (invest_method = cumulative_limits, #5/B-Q3), d with a cap value
@@ -701,8 +697,8 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
     # investment period of the solve cannot reach here: pass 1b refuses it
     # (``require_period_coverage``).  Capacity invested by earlier solves of a chain is not
     # counted (pre-existing, separate item).
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
     for name, sense, cap, param_name in (
         ("maxInvestGroup_entity_cumulative", "<=", d.pd_group_cumulative_max_capacity,
          "cumulative_max_capacity"),
@@ -736,8 +732,8 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
             if terms.height > 0:
                 invest = _var_view(var, "__grp_cum_at", {"d": "d_invest"})
                 lhs[key] = Sum(Where(invest * unitsize, terms), over=(axis, "d_invest"))
-            active_frame = d.edd_divest_active if axis == "p" else d.ndd_divest_active
-            if divest is not None and active_frame is not None:
+            active_frame = b.cap.retired_frame(axis)
+            if divest is not None:
                 div_members = _on_var_axis(group_entity, axis, divest).filter(in_groups)
                 active_axis = _entity_rows(active_frame, axis, div_members, axis)
                 active_axis, div_members = align_join_dtypes(active_axis, div_members, (axis,))
@@ -748,8 +744,8 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
         if not lhs:
             continue
         rhs: dict = {"cap": cap}
-        if d.p_entity_all_existing is not None:
-            group_existing = (d.p_entity_all_existing.frame
+        if b.cap.existing_mw_e is not None:
+            group_existing = (b.cap.existing_mw_e.frame
                               .join(group_entity, on="e", how="inner")
                               # Fixed summation order over the members.
                               .sort("g", "d", "e")

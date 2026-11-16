@@ -95,8 +95,6 @@ class CohortFrames:
     cohort: pl.DataFrame
     cohort_alive: pl.DataFrame
     dd_forward: pl.DataFrame | None
-    #: True when the investment cohorts are those of the ``edd_invest`` seed (:func:`seed_cohorts`).
-    seeded: bool = False
 
 
 @dataclass(frozen=True)
@@ -403,7 +401,7 @@ def build_cohort_frames(source: "InputSource",
     alive = (pl.concat([_existing_alive(existing, years, period_in_use), inv_alive], how="vertical")
                .sort("e", "kind", "d_build", "d", nulls_last=False))
     forward = forward_pairs(years, period_in_use, lineage=lineage) if with_forward else None
-    return CohortFrames(cohort=cohort, cohort_alive=alive, dd_forward=forward, seeded=seeded)
+    return CohortFrames(cohort=cohort, cohort_alive=alive, dd_forward=forward)
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +496,40 @@ def retire_active(pairs: pl.DataFrame | None,
               .collect())
 
 
+@dataclass(frozen=True)
+class InService:
+    """The periods each investment and each retirement of existing capacity counts in, from a solve's cohort
+    frames (:func:`in_service`)."""
+
+    #: ``[e, d_invest, d]``: the investments in service in ``d`` (:func:`invest_alive`).
+    alive: pl.DataFrame
+    #: ``[e, d_invest, d]``: the investments in service from the start of ``d`` (:func:`invest_prebuilt`).
+    prebuilt: pl.DataFrame
+    #: ``[p, d_divest, d]`` / ``[n, d_divest, d]``: the retirements of the process / storage-node options
+    #: (``pd_divest_set`` / ``nd_divest_set``) counting in ``d`` (:func:`retire_active`).
+    retired_p: pl.DataFrame
+    retired_n: pl.DataFrame
+
+    def retired(self, axis: str) -> pl.DataFrame:
+        """:attr:`retired_p` (``axis="p"``) or :attr:`retired_n` (``axis="n"``)."""
+        return self.retired_p if axis == "p" else self.retired_n
+
+
+def in_service(data: object) -> InService:
+    """The :class:`InService` frames of ``data`` (a ``FlexData``: ``cohort``, ``cohort_alive``, ``dd_forward``,
+    ``pd_divest_set``, ``nd_divest_set``).  A solve without ``dd_forward`` (a nested sub-solve, which places no
+    retirement reach) has no pre-built capacity and no retirement either; every frame is empty, never ``None``."""
+    cohort = getattr(data, "cohort", None)
+    alive_rows = getattr(data, "cohort_alive", None)
+    forward = getattr(data, "dd_forward", None)
+    prebuilt = invest_prebuilt(cohort, alive_rows) if forward is not None else invest_alive(None)
+    return InService(
+        alive=invest_alive(alive_rows),
+        prebuilt=prebuilt,
+        retired_p=retire_active(getattr(data, "pd_divest_set", None), alive_rows, forward, "p"),
+        retired_n=retire_active(getattr(data, "nd_divest_set", None), alive_rows, forward, "n"))
+
+
 __all__ = [
     "BOUNDED_METHODS",
     "CohortFrames",
@@ -509,7 +541,9 @@ __all__ = [
     "existing_cohorts",
     "existing_eol",
     "existing_expired",
+    "InService",
     "forward_pairs",
+    "in_service",
     "invest_alive",
     "invest_cohorts",
     "invest_prebuilt",

@@ -436,7 +436,7 @@ def _period_lists(wf: Path, reader, provider):
 # --- W6 — the (e, p_k, p_j_b) structural pin: branch periods take their label's year ---
 
 
-def test_w6_edd_invest_set_branch_periods_take_label_years(stoch_wf) -> None:
+def test_w6_invest_alive_branch_periods_take_label_years(stoch_wf) -> None:
     """W6 (§9.2): build the investment cohorts of hand ed_invest
     anchors ``[(wind, p2035), (wind, p2040)]`` on the real stoch
     cascade inputs (no recourse), inside the boundary scope the cascade

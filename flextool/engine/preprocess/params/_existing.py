@@ -28,9 +28,9 @@ Cluster B fields (per
   ``nd_divest_set`` — partitions of ``ed_invest_set`` / ``ed_divest_set``
   by entity-class (``unit ∪ connection`` → process-side; ``node`` →
   node-side).
-* The periods each investment and each retirement counts in (``edd_invest_set``,
-  ``edd_invest_lookback_set``, ``edd_divest_active`` / ``ndd_divest_active``) are views of the cohort
-  table (:mod:`._cohorts`).
+* The periods each investment and each retirement counts in are views of the cohort table
+  (:mod:`._cohorts`: ``invest_alive``, ``invest_prebuilt``, ``retire_active``), built for the model by
+  ``model/_capacity.py``.
 * ``p_entity_all_existing`` — per-(e, d) lifetime-cumulative existing
   capacity.  Algorithm:
     * solve-first: pre-existing[e, d] (lifetime-gated entity.existing).

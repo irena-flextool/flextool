@@ -104,7 +104,7 @@ def test_divested_storage_capacity_stays_retired_in_later_periods(tmp_path_facto
         assert max_state <= 10.0 + 1e-6, f"{d}: v_state reaches {max_state}, expected <= 10"
 
 
-@pytest.mark.parametrize("field", ["ndd_divest_active", "edd_invest_set"])
+@pytest.mark.parametrize("field", ["dd_forward", "cohort_alive"])
 def test_node_divest_without_its_retirement_map_is_refused(tmp_path_factory, monkeypatch, field):
     """A node-divest-only model whose retirement map is missing stops the build, and so
     does an investing model without its in-service investment map.

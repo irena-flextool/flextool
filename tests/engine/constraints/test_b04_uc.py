@@ -36,6 +36,8 @@ from polar_high import Param, Problem
 from flextool.engine import build_flextool
 from flextool.engine.preprocess.flex_data import FlexData
 
+from tests.engine._cohort_frames import cohort_fields
+
 from .conftest import online_link_fields, solver_options
 
 
@@ -235,7 +237,7 @@ def test_uptime_downtime_invest_interaction(toy_uc_3t):
     data = dataclasses.replace(d,
         p_process_existing_count=p_exist_zero,
         pd_invest_set=pd_invest,
-        edd_invest_set=edd_invest,
+        **cohort_fields(invest=edd_invest),
         p_entity_max_units=p_max_units,
         ed_invest_period_set=ed_invest_period,
         ed_invest_max_period=ed_max_period,

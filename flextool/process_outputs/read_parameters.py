@@ -781,24 +781,11 @@ def _entity_all_capacity(
     divest = (pl.concat(divest_pieces, how="vertical") if divest_pieces
               else pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64}))
 
-    # invest contribution per (e, d) — by edd_invest indirection
-    if (flex_data.edd_invest_set is not None
-            and flex_data.edd_invest_set.height > 0):
-        edd = flex_data.edd_invest_set.lazy()
-        cols = flex_data.edd_invest_set.columns
-        # canonical: (e, d_invest, d) — rename if dim names differ
-        rename = {}
-        if cols[0] not in ("e", "entity"):
-            rename[cols[0]] = "e"
-        elif cols[0] == "entity":
-            rename["entity"] = "e"
-        if len(cols) > 1 and cols[1] != "d_invest":
-            rename[cols[1]] = "d_invest"
-        if len(cols) > 2 and cols[2] != "d":
-            rename[cols[2]] = "d"
-        if rename:
-            edd = edd.rename(rename)
-        edd = edd.with_columns(
+    # invest contribution per (e, d) — the investments in service in d (the cohort table's view)
+    from flextool.engine.preprocess.params._cohorts import in_service
+    frames = in_service(flex_data)
+    if frames.alive.height > 0:
+        edd = frames.alive.lazy().with_columns(
             pl.col("e").cast(pl.Utf8),
             pl.col("d_invest").cast(pl.Utf8),
             pl.col("d").cast(pl.Utf8),
@@ -818,47 +805,20 @@ def _entity_all_capacity(
             schema={"e": pl.Utf8, "d": pl.Utf8, "invested": pl.Float64},
         ).lazy()
 
-    # divest contribution per (e, d) — for each (e, d_dv) in ed_divest_set,
-    # apply v_divest[e, d_dv] * unitsize[e] to every period d with
-    # years[d_dv] <= years[d].
-    if (flex_data.p_period_share is not None
-            and flex_data.p_period_share.frame.height > 0):
-        # We don't have years_from_start_d directly, but the divest
-        # carry-forward is monotone over period order; we approximate
-        # by using period name ordering (lexicographic).  For
-        # production fidelity we want years_from_start_d — get it from
-        # the timeline.  Instead rely on edd_divest_active which
-        # already gives the active (d_divest, d) pairs.
-        pass
-
+    # divest contribution per (e, d) — the retirements of the process / storage-node options (entity column
+    # ``p`` / ``n``) counting in d.
     def _normalize_divest_active(df: pl.DataFrame) -> pl.LazyFrame:
-        """``(e, d_divest, d)`` Utf8, from a frame whose entity column is
-        named ``p`` (process divest) or ``n`` (storage-node divest)."""
-        lf = df.lazy()
-        cols = df.columns
-        # canonical: (e, d_divest, d).  edd_divest_active / ndd_divest_active
-        # use ``p`` / ``n`` for the entity dim — rename to ``e``.
-        rename = {}
-        if cols[0] not in ("e", "entity"):
-            rename[cols[0]] = "e"
-        elif cols[0] == "entity":
-            rename["entity"] = "e"
-        if len(cols) > 1 and cols[1] != "d_divest":
-            rename[cols[1]] = "d_divest"
-        if len(cols) > 2 and cols[2] != "d":
-            rename[cols[2]] = "d"
-        if rename:
-            lf = lf.rename(rename)
-        return lf.with_columns(
-            pl.col("e").cast(pl.Utf8),
+        """``(e, d_divest, d)`` Utf8, from a frame whose entity column (the first) is ``p`` or ``n``."""
+        return df.lazy().select(
+            pl.col(df.columns[0]).cast(pl.Utf8).alias("e"),
             pl.col("d_divest").cast(pl.Utf8),
             pl.col("d").cast(pl.Utf8),
         )
 
     _divest_active_frames = [
         _normalize_divest_active(frame)
-        for frame in (flex_data.edd_divest_active, flex_data.ndd_divest_active)
-        if frame is not None and frame.height > 0
+        for frame in (frames.retired_p, frames.retired_n)
+        if frame.height > 0
     ]
     if _divest_active_frames:
         edd_dv = (pl.concat(_divest_active_frames, how="vertical")
@@ -1493,7 +1453,7 @@ def read_parameters(
     # populated by ``_derived.apply_derived_a`` from
     # ``solve.years_represented``).  ``years_from_start_d`` is still
     # defaulted to 0.0 (used only for divest carry-forward; the active
-    # divest cascade uses ``edd_divest_active`` directly).
+    # divest cascade uses the retirement periods of ``_cohorts.in_service``).
     if (flex_data.p_period_share is not None
             and flex_data.p_period_share.frame.height > 0):
         # p_period_share is (d,) → use d set as the period axis.

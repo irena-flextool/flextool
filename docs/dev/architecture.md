@@ -410,7 +410,9 @@ Same `build_flextool` body, three wrappers from `polar_high`:
 `objective_terms(b)` summed into the objective. Optional features with
 their own variables live in their own modules (`_online`, `_unit_floors`,
 `_reserve`, `_group_slack`, `_cumulative_invest`, `_commodity_ladder`,
-`_dc_power_flow`, `_delay`, `_non_anticipativity`). The `model/core.py` module
+`_dc_power_flow`, `_delay`, `_non_anticipativity`); `_capacity` builds the
+capacity in service (investments and retirements counting in each period, from
+the cohort table) once for all of them. The `model/core.py` module
 docstring maps every variable and equation family; details in
 [engine.md](engine.md#lp-build-modelpy-and-the-feature-modules).
 

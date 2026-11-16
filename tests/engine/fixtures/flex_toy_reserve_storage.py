@@ -48,6 +48,8 @@ import polars as pl
 from polar_high import Param
 from flextool.engine.preprocess.flex_data import FlexData
 
+from tests.engine._cohort_frames import cohort_fields
+
 
 _RESERVATION = 50.0
 _UNITSIZE = 100.0        # provider p_unitsize (MW)
@@ -78,14 +80,14 @@ def data(*, direction: str = "up", duration: float | None = 0.5,
         p_state_unitsize MWh).
     invest : bool
         Make the storage node ``bat`` invest-eligible (adds ``v_invest_n``,
-        ``edd_invest_set`` and an annuity cost ``invest_cost`` per invested
+        the cohort frames (``cohort_fields``) and an annuity cost ``invest_cost`` per invested
         var-unit).  Exercises the DOWN-headroom ceiling's
         ``+ v_invest_n·unitsize`` capacity-relaxation term (and its
         ``__at_reserve_down_invest`` view + n→e Enum cast through
         ``canonicalise()``).  Only meaningful in the DOWN direction.
     divest : bool
-        Make ``bat`` divest-eligible (adds ``v_divest_n`` +
-        ``edd_divest_active``).  No divest credit is authored, so the LP
+        Make ``bat`` divest-eligible (adds ``v_divest_n`` and its retirement
+        periods).  No divest credit is authored, so the LP
         leaves ``v_divest_n = 0`` — but the DOWN-headroom's
         ``+ v_divest_n·unitsize`` term (``__at_reserve_down_divest`` view +
         n→p Enum cast) is still *built and canonicalised*, closing the
@@ -278,8 +280,6 @@ def data(*, direction: str = "up", duration: float | None = 0.5,
     if invest:
         kwargs["nd_invest_set"] = pl.DataFrame({"n": ["bat"], "d": ["p2020"]})
         kwargs["ed_invest_set"] = pl.DataFrame({"e": ["bat"], "d": ["p2020"]})
-        kwargs["edd_invest_set"] = pl.DataFrame(
-            {"e": ["bat"], "d_invest": ["p2020"], "d": ["p2020"]})
         # Annuity per invested var-unit — cheap enough that relaxing the
         # DOWN-headroom ceiling by investing beats paying the reserve
         # shortfall penalty.
@@ -290,10 +290,14 @@ def data(*, direction: str = "up", duration: float | None = 0.5,
         kwargs["nd_divest_set"] = pl.DataFrame({"n": ["bat"], "d": ["p2020"]})
         # No divest credit is authored, so ``v_divest_n`` stays 0 at the
         # optimum — the term is still built.
-        kwargs["ndd_divest_active"] = pl.DataFrame(
-            {"n": ["bat"], "d_divest": ["p2020"], "d": ["p2020"]})
         # A retirement removes pre-existing storage only (maxRetired_existing_n): bat's existing capacity.
         kwargs["p_entity_pre_existing"] = Param(("e", "d"),
             pl.DataFrame({"e": ["bat"], "d": ["p2020"], "value": [cap * _US_BAT]}))
 
+    if invest or divest:
+        # The investment in service in p2020, the retirement counting there.
+        kwargs.update(cohort_fields(
+            invest=[("bat", "p2020", "p2020")] if invest else None,
+            retired_n=[("bat", "p2020", "p2020")] if divest else None,
+            divest_n=kwargs.get("nd_divest_set")))
     return FlexData(**kwargs)

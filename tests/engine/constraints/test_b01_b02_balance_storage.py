@@ -29,6 +29,8 @@ import pytest
 from polar_high import Param, Problem
 from flextool.engine import build_flextool
 
+from tests.engine._cohort_frames import cohort_fields
+
 from .conftest import solver_options
 
 
@@ -153,7 +155,7 @@ def test_profile_state_upper_invest_tightening(toy_storage_2t):
         p_state_unitsize=p_state_unitsize_one,
         nd_invest_set=nd_invest,
         ed_invest_set=ed_invest,
-        edd_invest_set=edd_invest,
+        **cohort_fields(invest=edd_invest),
         p_entity_max_units=p_entity_max_units,
         ed_invest_period_set=ed_invest_period_set,
         ed_invest_max_period=ed_invest_max_period,

@@ -1254,14 +1254,13 @@ class FlexData:
     nd_invest_set: pl.DataFrame | None = None        # (n, d) — node-side
     nd_divest_set: pl.DataFrame | None = None        # (n, d)
     # The cohort table (preprocess/params/_cohorts.py; apply_derived_c / apply_synthetic_invest_sets, None in a
-    # solve without investment or retirement): one row per block of capacity (the existing capacity of an entity,
-    # each investment decision) with its start of operation and end of life; the periods each cohort is in
-    # service; (d_retire, d) the periods a retirement decided in d_retire counts in.
+    # solve without investment or retirement; the edd_invest seed of a reload without the investment walk):
+    # one row per block of capacity (the existing capacity of an entity, each investment decision) with its start
+    # of operation and end of life; the periods each cohort is in service; (d_retire, d) the periods a retirement
+    # decided in d_retire counts in.  The model's capacity in service is built from them (model/_capacity.py).
     cohort: pl.DataFrame | None = None
     cohort_alive: pl.DataFrame | None = None
     dd_forward: pl.DataFrame | None = None
-    edd_invest_set: pl.DataFrame | None = None       # (e, d_invest, d)
-    edd_invest_lookback_set: pl.DataFrame | None = None  # (e, d_invest, d) strict d_invest<d
     # (e, d, d_c, yr_c) — start of operation d_c (a run period; yr_c its year on the solve calendar) of each
     # offered investment decision d with a construction lead time; None without lead times (apply_derived_c).
     ed_invest_commission: pl.DataFrame | None = None
@@ -1279,8 +1278,6 @@ class FlexData:
     # (e, d) MW (MWh): capacity earlier solves of a chain retired that still counts in d (until the end of life of
     # the pre-existing capacity; apply_existing_chain, from the handoff realized_divest).
     p_entity_retired_carried: Param | None = None
-    edd_divest_active: pl.DataFrame | None = None    # (p, d_divest, d) where d_divest ≤ d < EOL[p]
-    ndd_divest_active: pl.DataFrame | None = None    # (n, d_divest, d) where d_divest ≤ d < EOL[n] — node analogue
     p_entity_max_units: Param | None = None          # (e, d)
     ed_lifetime_fixed_cost: Param | None = None      # (e, d)
     ed_lifetime_fixed_cost_divest: Param | None = None
@@ -2895,8 +2892,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         ed_invest_set=None, ed_divest_set=None,
         pd_invest_set=None, pd_divest_set=None,
         nd_invest_set=None, nd_divest_set=None,
-        edd_invest_set=None, edd_invest_lookback_set=None,
-        edd_divest_active=None, ndd_divest_active=None,
+        cohort=None, cohort_alive=None,
         p_entity_max_units=None,
         ed_lifetime_fixed_cost=None,
         ed_lifetime_fixed_cost_divest=None,
@@ -2969,7 +2965,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
             ed_inv = ed_inv.join(forbid, on=["e", "d"], how="anti")
 
         # Δ.18 — CSV-fallback seeds for pd/nd_invest_set, pd/nd_divest_set,
-        # edd_invest_set.  The override chain (``apply_derived_c`` via the
+        # the investment cohorts (edd_invest).  The override chain (``apply_derived_c`` via the
         # lazy LFs in ``_existing.py``) overlays these when active.
         # For synthetic per-sub-solve fixtures the snapshot CSV is the only
         # source.
@@ -2980,12 +2976,12 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
 
         edd_inv = _seed_edd_invest(sd, provider=provider)
 
-    edd_div = pl.DataFrame(
-        schema={"p": pl.Utf8, "d_divest": pl.Utf8, "d": pl.Utf8})
-    ndd_div = pl.DataFrame(
-        schema={"n": pl.Utf8, "d_divest": pl.Utf8, "d": pl.Utf8})
-    edd_inv_lookback = pl.DataFrame(
-        schema={"e": pl.Utf8, "d_invest": pl.Utf8, "d": pl.Utf8})
+    # The edd_invest seed as investment cohorts (their years unknown, never pre-built: _cohorts.seed_cohorts);
+    # the investment walk of apply_derived_c replaces them when it finds periods in service.
+    seed_cohort = seed_alive = None
+    if edd_inv is not None and edd_inv.height > 0:
+        from flextool.engine.preprocess.params._cohorts import seed_cohorts
+        seed_cohort, seed_alive = seed_cohorts(edd_inv)
 
     # ``p_entity_max_units`` is produced by apply_derived_c; this provider seed is kept for synthetic
     # per-sub-solve names. The DB overlay normally wins.
@@ -3068,10 +3064,8 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         pd_divest_set=_hnz(pd_div),
         nd_invest_set=_hnz(nd_inv),
         nd_divest_set=_hnz(nd_div),
-        edd_invest_set=_hnz(edd_inv),
-        edd_invest_lookback_set=edd_inv_lookback if edd_inv_lookback.height > 0 else None,
-        edd_divest_active=edd_div if edd_div.height > 0 else None,
-        ndd_divest_active=ndd_div if ndd_div.height > 0 else None,
+        cohort=seed_cohort,
+        cohort_alive=seed_alive,
         p_entity_max_units=p_max_units,
         # The cost frames the Provider holds (see ``_read_e_d`` above); the
         # override chain overlays them.

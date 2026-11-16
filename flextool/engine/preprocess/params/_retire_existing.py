@@ -2,13 +2,14 @@
 
 Only capacity that existed before the run can be retired (``ed_divest_set`` keeps the periods with pre-existing
 capacity, :func:`._derived.retirable_existing_pairs`), and a retirement counts in the periods of its window
-``edd_divest_active`` = {(e, d′, d) : yr[d′] ≤ yr[d] < EOL[e]} (``maxRetired_existing_{p,n}`` caps the retired
-capacity of each such period at the pre-existing capacity).  A minimum retirement the existing capacity cannot
-supply would otherwise reach the solver as an infeasible LP; :func:`check_retirement_minimums` names it instead:
+``retired`` = {(e, d′, d) : yr[d′] ≤ yr[d] < EOL[e]} (``_cohorts.retire_active``; ``maxRetired_existing_{p,n}``
+caps the retired capacity of each such period at the pre-existing capacity).  A minimum retirement the existing
+capacity cannot supply would otherwise reach the solver as an infeasible LP; :func:`check_retirement_minimums` names
+it instead:
 
 * ``retire_min_period[e, d] > 0`` on a retirement option without pre-existing capacity (none given, or past its
   end of life);
-* Σ_{d′ : (e, d′, d) ∈ edd_divest_active} retire_min_period[e, d′] + carried[e, d] > pre_existing[e, d] for a
+* Σ_{d′ : (e, d′, d) ∈ retired} retire_min_period[e, d′] + carried[e, d] > pre_existing[e, d] for a
   period d (the required retirements still counting in d exceed what exists there);
 * retire_min_total[e] − prior[e] > :func:`max_retirable` (e), the largest total the existing capacity allows.
 
@@ -55,8 +56,8 @@ def _e_values(param) -> dict[str, float]:
 
 
 def active_windows(frames: Iterable["pl.DataFrame | None"]) -> dict[tuple[str, str], list[str]]:
-    """``{(e, d′): [d, …]}`` of ``edd_divest_active`` / ``ndd_divest_active`` frames (entity column ``p`` / ``n``,
-    then ``d_divest``, ``d``): the periods a retirement decided in d′ counts in."""
+    """``{(e, d′): [d, …]}`` of retirement-period frames (:func:`._cohorts.retire_active`; entity column ``p`` /
+    ``n``, then ``d_divest``, ``d``): the periods a retirement decided in d′ counts in."""
     parts = [frame.select(pl.col(frame.columns[0]).cast(pl.Utf8).alias("e"), pl.col("d_divest").cast(pl.Utf8),
                           pl.col("d").cast(pl.Utf8))
              for frame in frames if frame is not None and frame.height > 0]

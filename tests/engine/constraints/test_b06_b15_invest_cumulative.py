@@ -37,6 +37,7 @@ from polar_high import Param, Problem
 from flextool.engine import build_flextool
 from flextool.engine.model._pdt_join import compute_nodeBalance_dt
 
+from tests.engine._cohort_frames import cohort_fields
 from tests.engine._lp_rows import row_bounds
 
 from .conftest import solver_options
@@ -86,7 +87,7 @@ def test_max_divest_var_bound(toy_invest_3d):
         p_flow_upper_existing=p_flow_upper_existing,
         pd_divest_set=pd_divest_set,
         ed_divest_set=ed_divest_set,
-        edd_divest_active=edd_divest_active,
+        **cohort_fields(base=d, retired_p=edd_divest_active, divest_p=pd_divest_set),
         ed_lifetime_fixed_cost_divest=ed_lifetime_fixed_cost_divest,
         # A retirement removes pre-existing capacity only (maxRetired_existing_p): 3 MW (unitsize 1).
         p_entity_pre_existing=Param(("e", "d"), pl.DataFrame({"e": ["u"]*3, "d": periods, "value": [3.0]*3})),
@@ -146,7 +147,7 @@ def test_max_invest_and_divest_entity_period(toy_invest_3d):
         ed_invest_max_period=ed_invest_max_period,
         pd_divest_set=pd_divest_set,
         ed_divest_set=ed_divest_set,
-        edd_divest_active=edd_divest_active,
+        **cohort_fields(base=d, retired_p=edd_divest_active, divest_p=pd_divest_set),
         ed_divest_period_set=ed_divest_period_set,
         ed_divest_max_period=ed_divest_max_period,
         ed_lifetime_fixed_cost_divest=ed_lifetime_fixed_cost_divest,
@@ -254,7 +255,7 @@ def test_group_invest_max_total(toy_invest_3d):
         p_inflow=p_inflow_new,
         pd_invest_set=pd_invest_set,
         ed_invest_set=ed_invest_set,
-        edd_invest_set=edd_invest_set,
+        **cohort_fields(invest=edd_invest_set),
         p_entity_max_units=p_entity_max_units,
         ed_invest_period_set=ed_invest_set.clone(),
         ed_invest_max_period=ed_invest_max_period,
@@ -365,7 +366,7 @@ def test_group_invest_totals_count_chain_prior(toy_invest_3d):
         p_inflow=p_inflow_new,
         pd_invest_set=pd_invest_set,
         ed_invest_set=ed_invest_set,
-        edd_invest_set=edd_invest_set,
+        **cohort_fields(invest=edd_invest_set),
         p_entity_max_units=p_entity_max_units,
         ed_invest_period_set=ed_invest_set.clone(),
         ed_invest_max_period=ed_invest_max_period,
@@ -570,7 +571,7 @@ def test_entity_invest_totals_count_chain_prior(toy_invest_3d):
     e_invest_min_total = Param(("e",), pl.DataFrame({"e": ["u"], "value": [4.0]}))
     p_entity_invested = Param(("e",), pl.DataFrame({"e": ["u"], "value": [3.0]}))
     data = dataclasses.replace(d,
-        edd_invest_set=edd_invest_set,
+        **cohort_fields(invest=edd_invest_set),
         e_invest_total=e_invest_total,
         e_invest_max_total=e_invest_max_total,
         e_invest_min_total=e_invest_min_total,
@@ -646,7 +647,7 @@ def test_cumulative_min_counts_earlier_divest(toy_invest_3d):
         p_flow_upper_existing=p_flow_upper_existing,
         pd_divest_set=pd_divest_set,
         ed_divest_set=ed_divest_set,
-        edd_divest_active=edd_divest_active,
+        **cohort_fields(base=d, retired_p=edd_divest_active, divest_p=pd_divest_set),
         ed_lifetime_fixed_cost_divest=ed_lifetime_fixed_cost_divest,
         # A retirement removes pre-existing capacity only (maxRetired_existing_p): 3 MW (unitsize 1).
         p_entity_pre_existing=Param(("e", "d"), pl.DataFrame({"e": ["u"]*3, "d": periods, "value": [3.0]*3})),

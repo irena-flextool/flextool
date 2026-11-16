@@ -1617,7 +1617,7 @@ _MASTER_NODE_FIELDS: tuple[str, ...] = (
     "p_node_capacity_for_scaling",
     # node-keyed invest/divest sets (the trade nodes are not the master's
     # invest variables — only the cross connections are).
-    "nd_invest_set", "nd_divest_set", "ndd_divest_active",
+    "nd_invest_set", "nd_divest_set",
     # CO2 / reserve / user-constraint / group features — all in-region
     # recourse, not part of the network-only master.  (The commodity
     # frames + ``p_commodity_price`` are REQUIRED-present by the PROCESSES
@@ -1683,7 +1683,7 @@ _MASTER_N_KEYED_FIELDS: tuple[str, ...] = (
     "p_fix_storage_quantity", "n_fix_storage_usage",
     "ndt_fix_storage_usage", "p_fix_storage_usage", "ndt_fix_storage_price",
     "p_node_capacity_for_scaling",
-    "nd_invest_set", "nd_divest_set", "ndd_divest_active",
+    "nd_invest_set", "nd_divest_set",
     "group_node",
 )
 
@@ -2048,8 +2048,6 @@ def master_network_data(
     new.ed_divest_set = _keep_entity_frame(data.ed_divest_set)
     new.cohort = _keep_entity_frame(getattr(data, "cohort", None))
     new.cohort_alive = _keep_entity_frame(getattr(data, "cohort_alive", None))
-    new.edd_invest_set = _keep_entity_frame(data.edd_invest_set)
-    new.edd_invest_lookback_set = _keep_entity_frame(data.edd_invest_lookback_set)
     new.ed_invest_commission = _keep_entity_frame(getattr(data, "ed_invest_commission", None))
     new.edd_invest_commission = _keep_entity_frame(getattr(data, "edd_invest_commission", None))
     new.edd_invest_in_construction = _keep_entity_frame(getattr(data, "edd_invest_in_construction", None))
@@ -2058,7 +2056,6 @@ def master_network_data(
     new.p_entity_carried_in_construction = _keep_entity_param(
         getattr(data, "p_entity_carried_in_construction", None))
     new.p_entity_retired_carried = _keep_entity_param(getattr(data, "p_entity_retired_carried", None))
-    new.edd_divest_active = _keep_entity_frame(data.edd_divest_active)
     new.p_entity_max_units = _keep_entity_param(data.p_entity_max_units)
     new.ed_lifetime_fixed_cost = _keep_entity_param(data.ed_lifetime_fixed_cost)
     new.ed_lifetime_fixed_cost_divest = _keep_entity_param(data.ed_lifetime_fixed_cost_divest)

@@ -149,9 +149,11 @@ def piecewise_input_and_excess(flex_data: "FlexData", solution: "Solution | None
         exist = _param(getattr(flex_data, "p_process_existing_count", None), ("p", "d"), "exist")
         cap = (cap.join(exist, on=["p", "d"], how="left") if exist is not None
                else cap.with_columns(exist=pl.lit(None, dtype=pl.Float64)))
-        for var, edd, d_col, alias in (("v_invest_p", "edd_invest_set", "d_invest", "inv"),
-                                       ("v_divest_p", "edd_divest_active", "d_divest", "div")):
-            units = _invest_units(solution, var, getattr(flex_data, edd, None), d_col, built, flex_data)
+        from flextool.engine.preprocess.params._cohorts import in_service
+        frames = in_service(flex_data)
+        for var, edd, d_col, alias in (("v_invest_p", frames.alive, "d_invest", "inv"),
+                                       ("v_divest_p", frames.retired_p, "d_divest", "div")):
+            units = _invest_units(solution, var, edd, d_col, built, flex_data)
             cap = (cap.join(units.rename({"value": alias}), on=["p", "d"], how="left") if units is not None
                    else cap.with_columns(pl.lit(None, dtype=pl.Float64).alias(alias)))
         y_parts.append(cap.join(us, on="p", how="inner").select(

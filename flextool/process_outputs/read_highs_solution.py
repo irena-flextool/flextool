@@ -1641,8 +1641,10 @@ def write_v_self_discharge(
         cap = (fd.p_state_existing_capacity.frame
                .select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("value").alias("cap")))
         built = pl.DataFrame(schema={"n": pl.Utf8, "d": pl.Utf8, "built": pl.Float64})
-        for var, frame, ent, d_col, sign in (("v_invest", fd.edd_invest_set, "e", "d_invest", 1.0),
-                                             ("v_divest", fd.ndd_divest_active, "n", "d_divest", -1.0)):
+        from flextool.engine.preprocess.params._cohorts import in_service
+        frames = in_service(fd)
+        for var, frame, ent, d_col, sign in (("v_invest", frames.alive, "e", "d_invest", 1.0),
+                                             ("v_divest", frames.retired_n, "n", "d_divest", -1.0)):
             if frame is None or frame.height == 0:
                 continue
             chosen = _solution_frame(names, values, var, ("n", d_col))
