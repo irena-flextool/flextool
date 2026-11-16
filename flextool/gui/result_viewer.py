@@ -879,8 +879,11 @@ class ResultViewer(tk.Toplevel):
         for group in self._plot_groups:
             group_iid = f"group_{group.number}"
             group_text = f"{group.number} {group.name}"
+            # The unit / connection details (8) and the extras (9) start
+            # collapsed; a remembered selection inside reopens its group.
             self._plot_tree.insert(
-                "", "end", iid=group_iid, text=group_text, open=True,
+                "", "end", iid=group_iid, text=group_text,
+                open=str(group.number) not in ("8", "9"),
             )
 
             for entry in group.entries:

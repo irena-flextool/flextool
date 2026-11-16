@@ -104,6 +104,11 @@ Input databases move to data version 80. The FlexTool window, the Spine Toolbox 
 - **A quick right-click no longer runs the first menu item (Linux).** The right-click menus of the FlexTool window
   (input sources, available and executed scenarios), the execution window and the assistant (a question, a chat's
   tab) opened with their first item under the pointer, so releasing the button at once ran it.
+- **Result viewer plots are sized to the GUI text on Linux displays whose X server reports a different DPI than the
+  desktop** (they were up to about twice too large). The plot text is now one size bigger than the plot list's
+  text on every screen, and follows a font or theme change; saved PNGs keep their own resolution.
+- The Result viewer's plot groups 8 (unit and connection details) and 9 (extras) start collapsed; a remembered plot
+  inside one of them still opens it.
 - The docs no longer mention `model.exclude_entity_outputs` (removed in v56).
 
 ## Release 4.4.0 (13.11.2026) — capacity margin, units of measure, start-up inputs, period-total constraints, FT2 import, stochastic input checks (no future information), per-project solver options, solver limits kept with warnings, Xpress MIPs, objective options in model units and many fixes (schema v79)

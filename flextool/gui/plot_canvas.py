@@ -77,9 +77,9 @@ class PlotCanvas(ttk.Frame):
         self._resize_pending: str | None = None
         self._natural_size_inches: tuple[float, float] = (6.0, 4.0)
 
-        # Render figures at the same DPI Tk uses for its own widget fonts,
-        # so a 10-pt figure label matches a 10-pt UI label (see
-        # _detect_system_dpi for the full rationale).
+        # Render figures at a DPI that sizes the plot text to the plot
+        # tree's font (see _detect_system_dpi); recomputed on every new
+        # figure and resize, so a font, theme or screen change follows.
         self._system_dpi: float = self._detect_system_dpi()
 
         # ── Scrollable container ──────────────────────────────────
@@ -122,6 +122,8 @@ class PlotCanvas(ttk.Frame):
         # This only fires on real geometry changes (window resize,
         # paned-window sash), not on internal button style changes.
         self.bind("<Configure>", self._on_frame_configure)
+        # A theme change can change the reference font: re-render.
+        self.bind("<<ThemeChanged>>", self._on_frame_configure, add="+")
 
         # Monkey-patch the canvas widget's configure to silently ignore
         # width/height changes from matplotlib internals (draw/blit).
@@ -170,37 +172,61 @@ class PlotCanvas(ttk.Frame):
         self._scroll_canvas.unbind_all("<Button-4>")
         self._scroll_canvas.unbind_all("<Button-5>")
 
-    def _detect_system_dpi(self) -> float:
-        """Return the DPI to render figures at, matched to Tk's font DPI.
+    # Plot text is drawn this much bigger than the plot tree's text ("one size bigger").
+    _TEXT_TO_TREE_RATIO = 1.1
+    # The plot tree's style; its font is the reference the plot text is sized to.
+    _REFERENCE_STYLE = "PlotTree.Treeview"
 
-        The figure bitmap is blitted 1:1 into the Tk canvas, so for figure
-        text to match the surrounding widget text both must use the same
-        pixels-per-point.  Tk renders fonts at ``tk scaling`` px/pt, i.e.
-        ``winfo_fpixels('1i')`` px/inch — so we render the figure at that
-        same DPI.
+    def _reference_font_em_px(self) -> float | None:
+        """The pixel em of the plot tree's font (``PlotTree.Treeview``, falling back to ``TkDefaultFont``).
 
-        The previous code pinned the figure to the raw OS system DPI
-        (``GetDpiForSystem`` on Windows, e.g. 144 at 150% scaling).  But
-        ``apply_dpi_scaling`` deliberately keeps ``tk scaling`` lower than
-        the geometric system value, so the figure ended up rendered at a
-        *higher* DPI than the rest of the UI and its text/axes looked
-        ~1.5x oversized next to the Tk widgets.  Tying both to
-        ``winfo_fpixels`` removes that decoupling at any scaling factor.
-
-        macOS is left on matplotlib's default: Tk uses a 72-DPI logical
-        space there and handles Retina at the backing-store level, so
-        ``winfo_fpixels`` would under-report.
-        """
-        import sys
-        if sys.platform == "darwin":
-            return matplotlib.rcParams.get("figure.dpi", 100)
+        A negative Tk font size is already in pixels; a positive one is in points and is converted with
+        ``tk scaling`` (pixels per point)."""
         try:
-            dpi = float(self.tk.call("winfo", "fpixels", self._w, "1i"))
-            if dpi > 0:
-                return dpi
-        except (tk.TclError, AttributeError):
+            font = str(ttk.Style(self).lookup(self._REFERENCE_STYLE, "font")) or "TkDefaultFont"
+        except tk.TclError:
+            font = "TkDefaultFont"
+        try:
+            if font in self.tk.splitlist(self.tk.call("font", "names")):
+                size = float(self.tk.call("font", "configure", font, "-size"))
+            else:
+                size = float(self.tk.call("font", "actual", font, "-displayof", self._w, "-size"))
+            if size < 0:
+                return -size
+            if size > 0:
+                return size * float(self.tk.call("tk", "scaling", "-displayof", self._w))
+        except (tk.TclError, ValueError):
             pass
-        return matplotlib.rcParams.get("figure.dpi", 100)
+        return None
+
+    def _detect_system_dpi(self) -> float:
+        """Return the DPI to render figures at, so the plot text is sized to the GUI text next to it.
+
+        The figure bitmap is blitted 1:1 into the Tk canvas, so a figure text of ``font.size`` points is
+        ``font.size * dpi / 72`` pixels.  The DPI is chosen so that this is ``_TEXT_TO_TREE_RATIO`` times the
+        pixel em of the plot tree's font: the figure layout is calibrated in inches at fixed point sizes, so
+        only the DPI changes and the whole figure scales with the GUI text.
+
+        Neither ``winfo_fpixels('1i')`` nor the OS system DPI is a reliable reference: on Linux/X11 the X
+        server can report a DPI (e.g. 208 on a 4K panel) different from the desktop's ``Xft.dpi``, Tk takes the
+        X server's value while the themed fonts are given in pixels, and the plots came out about twice too big;
+        on Windows ``apply_dpi_scaling`` deliberately keeps ``tk scaling`` below the system DPI.  The font the
+        user actually reads is the reference that holds on every platform.
+        """
+        default = float(matplotlib.rcParams.get("figure.dpi", 100))
+        em_px = self._reference_font_em_px()
+        font_pt = float(matplotlib.rcParams.get("font.size", 10.0) or 10.0)
+        if not em_px or em_px <= 0 or font_pt <= 0:
+            return default
+        return 72.0 * em_px * self._TEXT_TO_TREE_RATIO / font_pt
+
+    def _refresh_system_dpi(self) -> bool:
+        """Recompute the figure DPI (the font, theme or screen may have changed); True when it changed."""
+        dpi = self._detect_system_dpi()
+        if abs(dpi - self._system_dpi) < 1e-6:
+            return False
+        self._system_dpi = dpi
+        return True
 
     # X11 pixmaps are limited to 32767 px per side (signed 16-bit). At
     # high DPI on tall figures (many subplots × long timeline) we can
@@ -218,7 +244,8 @@ class PlotCanvas(ttk.Frame):
         timeline) the DPI is reduced just enough to avoid the X
         server's BadValue on CreatePixmap.
         """
-        if not self._system_dpi:
+        if not self._system_dpi or getattr(fig, "_flextool_native_pixels", False):
+            # A PNG figure keeps the DPI it was built with: it shows the image 1:1.
             return
         target_dpi = float(self._system_dpi)
         try:
@@ -291,6 +318,7 @@ class PlotCanvas(ttk.Frame):
         h = self._scroll_canvas.winfo_height()
         if w < 2 or h < 2:
             return
+        self._refresh_system_dpi()
         self._apply_system_dpi(self._figure)
         self._size_and_draw()
         # Invalidate PNG cache if the size changed significantly
@@ -356,7 +384,8 @@ class PlotCanvas(ttk.Frame):
         fig.set_facecolor(_BG)
         # Remember the figure's designed size for resize handling
         self._natural_size_inches = tuple(fig.get_size_inches())
-        # Render at system DPI so fonts match the OS scaling
+        # Render at the DPI that sizes the plot text to the GUI text
+        self._refresh_system_dpi()
         self._apply_system_dpi(fig)
 
         self._figure = fig
@@ -405,10 +434,12 @@ class PlotCanvas(ttk.Frame):
         disp_w = img_w
         disp_h = img_h
 
-        # Place the image at top-left inside a figure sized to the image.
-        # Use system DPI so the image is rendered at the correct scale.
-        dpi = self._system_dpi or 100
+        # Place the image at top-left inside a figure sized to the image:
+        # the same DPI for the size and the rendering shows it 1:1, and
+        # the figure is marked so a later DPI change leaves it alone.
+        dpi = float(self._system_dpi or 100)
         fig = Figure(figsize=(disp_w / dpi, disp_h / dpi), dpi=dpi)
+        fig._flextool_native_pixels = True  # type: ignore[attr-defined]
         ax = fig.add_axes([0, 0, 1, 1])
         ax.imshow(img, interpolation="nearest")
         ax.set_axis_off()
