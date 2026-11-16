@@ -24,9 +24,10 @@ The cluster covers six FlexData fields:
 
 and, for the reported costs only (no model term reads them), their run-level
 twins ``*_run`` discounted from the start of the run over the periods of the
-whole run, the undiscounted annuities ``ed_annuity`` / ``ed_divest_annuity``
-and the operating / retirement / salvage windows ``edd_operating_window`` /
-``edd_retire_window`` / ``edd_salvage_window`` (section "Run-level fields of the reported costs").
+whole run, the undiscounted annuities ``ed_annuity`` / ``ed_divest_annuity``,
+the operating / retirement / salvage windows ``edd_operating_window`` /
+``edd_retire_window`` / ``edd_salvage_window`` and the paid share of each period of the payback window
+``edd_payback_share`` (section "Run-level fields of the reported costs").
 
 Architecture
 ------------
@@ -1551,6 +1552,10 @@ def ed_lifetime_fixed_cost_divest_from_source(
 #   The salvage value keeps the annuity over lifetime and the window of the investment annuity (its per-solve
 #   twin ed_entity_annual_divest_discounted likewise), so retiring existing capacity and building identical new
 #   capacity earns nothing.
+# OUT. edd_payback_share[e,d_invest,d] = Σ_{kind} Σ_{y ∈ Y(d)} w_y·σ[e,d_invest,y] / Σ_{y ∈ Y(d)} w_y over the run
+#   periods d ∈ P(e,d_invest) of each kind: the share of d's represented years in which the annuity of the vintage
+#   (e, d_invest) is paid (1 for a period wholly inside the payback window and for every period of the open window
+#   of reinvest_automatic).  The annualized investment cost of d is the annuity times this share.
 # Notes: when the run is the solve itself (no run calendar, or every run period is in use and the solve starts
 #   the run) the factors and lumps ARE the per-solve fields (byte-identical); only the windows and annuities are
 #   built.  An entity with both a bounded and an unbounded lifetime method adds both sums, as the per-solve lumps
@@ -1868,6 +1873,16 @@ def _window_frame(walk: pl.DataFrame, anchor_name: str) -> pl.DataFrame | None:
     return out if out.height > 0 else None
 
 
+def _share_frame(paid: pl.DataFrame) -> pl.DataFrame | None:
+    """``[e, d_invest, d, value]`` of :func:`_paid_years` rows: the share of each run period paid, summed over the
+    lifetime kinds of an entity with both (as its lumps add both sums)."""
+    out = (paid.group_by("e", "d", "d_all", maintain_order=True).agg(pl.col("share").sum().alias("value"))
+               .lazy().select(alias_to_axis("e", "e"), alias_to_axis("d", "d_invest"), alias_to_axis("d_all", "d"),
+                              "value")
+               .sort("e", "d_invest", "d").collect())
+    return out if out.height > 0 else None
+
+
 def _lump(walk: pl.DataFrame, coef: pl.DataFrame, factor: pl.DataFrame | None, anchors: pl.DataFrame
           ) -> pl.DataFrame:
     """``[e, d, value]`` over ``anchors``: ``coef[e, d] × Σ_{kind} Σ_{d_all ∈ window(kind)} factor[d_all]``; with
@@ -2031,6 +2046,8 @@ def apply_run_cost_fields(flex_data: object,
                      .join(_lifetime_kinds(source, fc_pairs.select("e").unique()), on="e", how="inner"))
         walk = _run_window(anchors, yr, lineage, period_in_use)
         flex_data.edd_operating_window = _window_frame(walk.join(vintages, on=["e", "d"], how="semi"), "d_invest")
+        if inv.height > 0:
+            flex_data.edd_payback_share = _share_frame(paid.join(vintages, on=["e", "d"], how="semi"))
         if years is not None:
             fc = _utf8_ed(_at_start_of_operation(
                 fc_lf, lambda lf: _ed_fixed_cost_raw_lf(source, lf), commission, "fc")).rename({"fc": "coef"})

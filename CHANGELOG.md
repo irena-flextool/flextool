@@ -18,8 +18,9 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   `payback_time` years from the start of operation, counted in exact years**, and the reported investment costs
   follow. Before, every period that started before the end of the lifetime was paid in full (a 12-year lifetime on
   5-year periods paid 15 years), and the window followed the technical lifetime. A period the payback time ends in
-  now pays only its years before the end (a fractional payback time pays that fraction of its last year). The fixed
-  cost still runs over `lifetime_technical`; `reinvest_automatic` still pays every year to the end of the horizon. Upgraded
+  now pays only its years before the end (a fractional payback time pays that fraction of its last year), and the
+  annualized investment cost of that period is the annuity times the share of its years paid. The fixed cost still
+  runs over `lifetime_technical`; `reinvest_automatic` still pays every year to the end of the horizon. Upgraded
   databases get a notice naming the entities whose annuity changes (results change).
 
 ### Fixes

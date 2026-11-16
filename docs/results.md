@@ -112,9 +112,11 @@ y-axis is `m3/h` for a water node and `MWh/h` by default. A label without tokens
 
     The annualized investment & retirement, *fixed cost invested* and *fixed cost reduction of divestments* are
     the yearly amounts of every vintage and retirement in effect in the period: an investment adds its annuity (the
-    `invest_cost` annuity of the period the capacity starts to operate) and its yearly fixed cost in every period it
-    operates within the run (within its `lifetime`, or every later period with `reinvest_automatic`); a retirement
-    subtracts its salvage annuity in every period from the retirement until `lifetime` later, and the yearly fixed
+    `invest_cost` annuity of the period the capacity starts to operate) for `payback_time` years from then (every
+    later period with `reinvest_automatic`; in the period the payback time ends in, the annuity times the share of
+    the period's years paid) and its yearly fixed cost in every period it operates within the run (within its
+    `lifetime_technical`, or every later period with `reinvest_automatic`); a retirement subtracts its salvage annuity
+    in every period from the retirement until `lifetime_technical` later, and the yearly fixed
     cost of the retired capacity in every period the retirement counts in (until the end of life of the existing
     capacity). They are reported only for capacity whose investment cost is reported (see the next section). For these
     columns the annualized value is therefore not the discounted value divided by the period's discount factor,
@@ -142,12 +144,12 @@ as one solve over the same periods with the same decisions would report:
   penalties stay out of the costs; `capacity_margin__d` has them.
 - **New capacity** is reported in the period where it starts to operate (the decision period without a
   `construction_lead_time`; during the lead time it is only `in_construction`, at no cost). Its investment cost
-  (the annuity over the years it operates within the run, at the `invest_cost`, `lifetime` and `discount_rate` of
-  that period) and the fixed cost over the same years come once, from the solve that decided it, and are reported
+  (the annuity for `payback_time` years from then within the run, in exact years, at the `invest_cost`,
+  `payback_time` and `discount_rate` of that period) and the fixed cost over the years it operates come once, from the solve that decided it, and are reported
   only once a solve realizes the period it starts to operate in. Capacity carried from an earlier solve is
   therefore not charged again as existing capacity.
 - **Retirements** are reported in the retirement period: the salvage annuity over the years from the retirement
-  until `lifetime` later, and the fixed cost saved in the periods the retirement counts in. The fixed cost of existing capacity (*fixed cost pre-existing*) is that of the
+  until `lifetime_technical` later, and the fixed cost saved in the periods the retirement counts in. The fixed cost of existing capacity (*fixed cost pre-existing*) is that of the
   capacity given in `existing`, aged over its lifetime, in every period of the run, also in the last solve's
   look-ahead periods that no solve realizes (the fixed cost of new capacity covers them too).
 - **Inside a stochastic fan** the investment cost and the fixed cost of the new capacity that operates in the fan's

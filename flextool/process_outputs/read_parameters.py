@@ -31,6 +31,7 @@ import pandas as pd
 import polars as pl
 
 from flextool.process_outputs._inmemory_helpers import (
+    empty_multi_index,
     series_with_index,
     series_with_multi_index,
     wide_multi_col,
@@ -1170,6 +1171,19 @@ def _build_entity_universe(flex_data: "FlexData") -> list[str]:
     return list(dict.fromkeys(universe))
 
 
+def _payback_share(flex_data: "FlexData", solve_name: str) -> pd.Series:
+    """``edd_payback_share`` as a Series over ``(solve, entity, period_invest, period)`` (empty without one)."""
+    from flextool.process_outputs._fan_labels import recourse_branch_labels, with_label_rows
+
+    names = ["solve", "entity", "period_invest", "period"]
+    frame = with_label_rows(getattr(flex_data, "edd_payback_share", None), recourse_branch_labels(flex_data),
+                            ("d_invest", "d"))
+    if frame is None or frame.height == 0:
+        return pd.Series(dtype=float, index=empty_multi_index(names), name="value")
+    return series_with_multi_index(with_solve_column(frame, solve_name), dims=("solve", "e", "d_invest", "d"),
+                                   names=names)
+
+
 def _with_fan_label_rows(param, flex_data: "FlexData"):
     """``param`` (dims ``(e, d)``) with the rows of its fan branch periods also at their label, in a solve that
     decides investments in the branches (recourse: the reported investment costs of a fan are at its label,
@@ -1712,6 +1726,10 @@ def read_parameters(
         getattr(flex_data, "ed_divest_annuity", None), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
     )
+    # entity_payback_share — Series((solve, entity, period_invest, period)): the share of each run period's years in
+    # which the annuity of a vintage is paid (the annualized investment cost is the annuity times it).  A fan's
+    # vintages are also read at their labels, as their operating window.
+    p.entity_payback_share = _payback_share(flex_data, solve_name)
 
     # inflation factors — Series((solve, period)).  The reported costs discount from the start of the run
     # (``p_inflation_*_run``); ``inflation_factor_operations_solve`` is the solve's own factor, the one its

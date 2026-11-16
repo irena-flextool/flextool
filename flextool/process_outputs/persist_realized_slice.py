@@ -99,6 +99,10 @@ _RUN_PERIOD_ATTRS: frozenset[str] = frozenset(
 # The solve's own operations factor: kept over its realized dispatch periods (the CO2 price of a period is its
 # dual ÷ the factor of the solve that realizes it).
 _SOLVE_FACTOR_ATTRS: frozenset[str] = frozenset({"inflation_factor_operations_solve"})
+# Params keyed by an investment decision besides their period: the share of a run period's years in which a
+# vintage's annuity is paid (``entity_payback_share``, (solve, entity, period_invest, period)); kept from the solve
+# that realizes the decision, as the operating window (``_DECISION_SETS``).
+_DECISION_PARAMS: dict[str, str] = {"entity_payback_share": "period_invest"}
 # Emptiness-gate attrs and the FlexData carrier that decides each.
 _ANNUAL_SRC_FIELD: dict[str, str] = {
     "entity_annual_discounted": "ed_entity_annual_discounted",
@@ -293,6 +297,11 @@ def _apply_realized_filter(
     general realized intersection for every other solve-keyed attr.
     The frame's ``solve`` index level is left intact (stage 3 drops it).
     """
+    # A decision-keyed param: kept for the decisions the roll realizes.
+    if attr in _DECISION_PARAMS:
+        decided = obj.index.get_level_values(_DECISION_PARAMS[attr]).astype(str)
+        return obj[decided.isin(realized_invest_periods)]
+
     # Hack 3 — emptiness gate: a dispatch-only step's densified-zero
     # annual frame is cleared so it can't compete with the parent invest
     # step's real values at union time.  The lumps of the invest / divest

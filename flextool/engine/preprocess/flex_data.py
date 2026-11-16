@@ -1295,6 +1295,9 @@ class FlexData:
     ed_annuity: Param | None = None
     ed_divest_annuity: Param | None = None
     edd_operating_window: pl.DataFrame | None = None
+    # (e, d_invest, d, value): the share of run period d's years in which the annuity of vintage (e, d_invest) is
+    # paid (``_npv`` "Run-level fields of the reported costs").
+    edd_payback_share: pl.DataFrame | None = None
     edd_retire_window: pl.DataFrame | None = None
     edd_salvage_window: pl.DataFrame | None = None
     # (e, d) existing capacity given by the user, aged over its lifetime (no capacity carried from earlier solves,
