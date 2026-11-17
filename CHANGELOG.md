@@ -79,9 +79,11 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   flow-group memberships, entity alternatives) deletes them in several commits.
 - **A failed migration leaves the database as it was, also from the command line.** `flextool-migrate-database`,
   `flextool-run --migrate` and the other migrations outside the FlexTool window now copy the database before the
-  first step and restore it when a step fails or the migration is cancelled, as the window already did; before, a
-  migration that failed part way left the steps before the failure in the database. A migration that is killed
-  outright can be run again: every step that deletes in several commits finishes on a rerun (before, a rerun of
+  first step (as `<database>.premigration.bak`, which needs free space as large as the database) and move it back
+  in one rename when a step fails or the migration is cancelled, as the window already did; before, a migration
+  that failed part way left the steps before the failure in the database. When the copy cannot be put back, it is
+  kept, the console says how to recover it, and a new migration of the database refuses to start until it is dealt
+  with. A migration that is killed outright can be run again: every step that deletes in several commits finishes on a rerun (before, a rerun of
   the version 56 step could lose `is_DC` / `is_non_synchronous` values and switch off reserves active in the base
   alternative, and a rerun of the version 70 step could keep an output `capacity_min_coeff` left over from version
   36).

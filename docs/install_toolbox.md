@@ -134,7 +134,7 @@ If you installed from a zip file, download the latest zip, extract it over the e
 python update_flextool.py --skip-git
 ```
 
-`update_flextool.py` brings the databases to the current schema version without destroying data (a backup is still good practice):
+`update_flextool.py` brings the databases to the current schema version without destroying data: each database is copied before it is migrated and put back if the migration fails (see [Migrate database schema](terminal_workflow.md#migrate-database-schema)); a backup of your own is still good practice:
 
 - it migrates the database selected as **Input data** in the project, `input_data.sqlite` and `templates/input_data_template.sqlite`;
 - it rebuilds the example databases (`templates/examples.sqlite`, `templates/time_settings_only.sqlite` and the databases in `how to example databases/`) from the current templates.
