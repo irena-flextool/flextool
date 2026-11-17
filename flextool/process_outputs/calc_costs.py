@@ -69,25 +69,18 @@ def _decisions_long(amount: pd.DataFrame, decision: str) -> pd.DataFrame:
     return long[long['value'].notna()]
 
 
-def _per_year_in_window(long: pd.DataFrame, window: "pd.MultiIndex | pd.Series", decision: str,
-                        columns: pd.Index) -> pd.DataFrame:
+def _per_year_in_window(long: pd.DataFrame, window: pd.MultiIndex, decision: str, columns: pd.Index) -> pd.DataFrame:
     """Rows ``[<decision>, entity, value]`` (a yearly amount of a decision) summed per (period, entity) over the
     periods of each decision's window (``window``: (entity, <decision>, period)): the yearly amounts of every
-    decision in effect in a period.  A Series ``window`` weighs each period by its value (the share of the period's
-    years paid).  Rows: period, columns: ``columns``."""
+    decision in effect in a period.  Rows: period, columns: ``columns``."""
     if long.empty or len(window) == 0:
         out = pd.DataFrame(index=pd.Index([], name='period'), columns=columns, dtype=float)
         out.columns.name = columns.name
         return out
-    if isinstance(window, pd.Series):
-        win = window.rename('share').reset_index()
-    else:
-        win = window.to_frame(index=False)
+    win = window.to_frame(index=False)
     win = win.astype({'entity': str, decision: str, 'period': str})
     long = long.astype({'entity': str, decision: str})
     joined = long.merge(win, on=['entity', decision], how='inner')
-    if 'share' in joined.columns:
-        joined = joined.assign(value=joined['value'] * joined['share'])
     out = joined.groupby(['period', 'entity'], sort=False)['value'].sum().unstack('entity')
     order = list(dict.fromkeys(win['period']))
     out = out.reindex(index=[d for d in order if d in out.index], columns=columns)
@@ -96,16 +89,44 @@ def _per_year_in_window(long: pd.DataFrame, window: "pd.MultiIndex | pd.Series",
     return out
 
 
+def _fixed_cost_in_window(long: pd.DataFrame, window: pd.MultiIndex, decision: str, fallback: str, par,
+                          columns: pd.Index, *, drop_unpriced: bool) -> pd.DataFrame:
+    """Rows ``[<decision>, entity, value, <fallback>]`` (MW of a decision) times the fixed cost of each period of
+    the decision's window (``window``: (entity, <decision>, period)), summed per (period, entity): fc[e,d'] of
+    ``par.entity_fixed_cost``, falling back to fc[e, <fallback>] for a window period the solve does not hold (such
+    rows are never reported: the chain union keeps each period from the solve that realizes it, which holds its
+    fixed cost).  A row with neither fixed cost adds no amount with ``drop_unpriced`` (an investment's cell stays
+    empty), else 0.  Rows: period, columns: ``columns``."""
+    if long.empty or len(window) == 0:
+        return _per_year_in_window(long.iloc[0:0], window, decision, columns)
+    fc = _decisions_long(par.entity_fixed_cost, 'period').astype({'entity': str, 'period': str})
+    win = window.to_frame(index=False).astype({'entity': str, decision: str, 'period': str})
+    per = long.astype({'entity': str, decision: str, fallback: str}).merge(win, on=['entity', decision], how='inner')
+    per = per.merge(fc.rename(columns={'value': 'fc'}), on=['period', 'entity'], how='left')
+    per = per.merge(fc.rename(columns={'period': fallback, 'value': 'fc_r'}), on=[fallback, 'entity'], how='left')
+    per = per.assign(value=per['value'] * per['fc'].fillna(per['fc_r']))
+    if drop_unpriced:
+        per = per[per['value'].notna()]
+    if per.empty:
+        return _per_year_in_window(long.iloc[0:0], window, decision, columns)
+    fixed = per.groupby(['period', 'entity'], sort=False)['value'].sum().unstack('entity')
+    order = list(dict.fromkeys(win['period']))
+    fixed = fixed.reindex(index=[d for d in order if d in fixed.index], columns=columns)
+    fixed.index.name = 'period'
+    fixed.columns.name = columns.name
+    return fixed
+
+
 def _annualized_investment(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
     """``(investment, fixed cost invested)`` per year, rows: period, columns: entity (CUR/yr).
 
-    ANN. invest_yr[e,d'] = Σ_{(e,d,d') ∈ edd_payback_share} v_invest[e,d]·unitsize[e]·ed_annuity[e,d]·share[e,d,d']
-         fixed_invested_yr[e,d'] = Σ_{(e,d,d') ∈ edd_operating_window} v_invest[e,d]·unitsize[e]·fc[e,c(d)]
-      The yearly amounts of every vintage in d': its annuity (at c(d)) times the share of d''s years in which it is
-      paid (payback_time years from c(d); 1 in every period of the open window of reinvest_automatic), so the
-      undiscounted yearly amounts add up to the years paid; its fixed cost (that of the lifetime fixed-cost lump) in
-      every period it operates.  Only the decisions whose lump is reported (c(d) realized,
-      :func:`_at_start_of_operation`)."""
+    ANN. invest_yr[e,d'] = Σ_{(e,d,d') ∈ edd_operating_window} v_invest[e,d]·unitsize[e]·ed_annuity[e,d]
+         fixed_invested_yr[e,d'] = Σ_{(e,d,d') ∈ edd_operating_window} v_invest[e,d]·unitsize[e]·fc[e,d']
+      The yearly amounts of every vintage in service in d': its price per year in service ed_annuity (a_cap at
+      c(d), the level yearly cost of its lifetime; the annuity with reinvest_automatic), as in the objective, and
+      the fixed cost of d'.  The investment cost is reported by these yearly amounts (the objective's spreading);
+      the events (investment and salvage when they happen) are not.  Only the decisions whose lump is reported
+      (c(d) realized, :func:`_at_start_of_operation`)."""
     columns = v.invest.columns
     mw = _invest_with_fan(v).mul(par.entity_unitsize[columns])
     long = _decisions_long(mw, 'period_invest')
@@ -118,13 +139,11 @@ def _annualized_investment(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
         long = long.assign(start=long['period_invest'])
     long = long[long['start'].isin(_reported_start_periods(s))]
     annuity = _decisions_long(par.entity_annuity_yearly, 'period_invest').rename(columns={'value': 'coef'})
-    fixed = _decisions_long(par.entity_fixed_cost, 'start').rename(columns={'value': 'coef'})
     invest = long.merge(annuity, on=['period_invest', 'entity'], how='inner')
     invest = invest.assign(value=invest['value'] * invest['coef'])[['period_invest', 'entity', 'value']]
-    fixed = long.merge(fixed, on=['start', 'entity'], how='inner')
-    fixed = fixed.assign(value=fixed['value'] * fixed['coef'])[['period_invest', 'entity', 'value']]
-    return (_per_year_in_window(invest, par.entity_payback_share, 'period_invest', columns),
-            _per_year_in_window(fixed, s.edd_operating_window, 'period_invest', columns))
+    window = s.edd_operating_window
+    return (_per_year_in_window(invest, window, 'period_invest', columns),
+            _fixed_cost_in_window(long, window, 'period_invest', 'start', par, columns, drop_unpriced=True))
 
 
 def _annualized_retirement(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -143,24 +162,8 @@ def _annualized_retirement(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
     joined = long.merge(annuity, on=['period_divest', 'entity'], how='inner')
     joined = joined.assign(value=joined['value'] * joined['coef'])[['period_divest', 'entity', 'value']]
     retirement = _per_year_in_window(joined, s.edd_salvage_window, 'period_divest', columns)
-    window = s.edd_retire_window
-    if long.empty or len(window) == 0:
-        return retirement, _per_year_in_window(long.iloc[0:0], window, 'period_divest', columns)
-    fc = _decisions_long(par.entity_fixed_cost, 'period').astype({'entity': str, 'period': str})
-    win = window.to_frame(index=False).astype({'entity': str, 'period_divest': str, 'period': str})
-    per = long.astype({'entity': str, 'period_divest': str}).merge(win, on=['entity', 'period_divest'], how='inner')
-    per = per.merge(fc.rename(columns={'value': 'fc'}), on=['period', 'entity'], how='left')
-    per = per.merge(fc.rename(columns={'period': 'period_divest', 'value': 'fc_r'}), on=['period_divest', 'entity'],
-                    how='left')
-    per = per.assign(value=per['value'] * per['fc'].fillna(per['fc_r']))
-    if per.empty:
-        return retirement, _per_year_in_window(long.iloc[0:0], window, 'period_divest', columns)
-    fixed = per.groupby(['period', 'entity'], sort=False)['value'].sum().unstack('entity')
-    order = list(dict.fromkeys(win['period']))
-    fixed = fixed.reindex(index=[d for d in order if d in fixed.index], columns=columns)
-    fixed.index.name = 'period'
-    fixed.columns.name = columns.name
-    return retirement, fixed
+    return retirement, _fixed_cost_in_window(long, s.edd_retire_window, 'period_divest', 'period_divest', par,
+                                             columns, drop_unpriced=False)
 
 
 def compute_costs(par, s, v, r) -> None:

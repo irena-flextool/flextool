@@ -465,38 +465,71 @@ def _yearly_investment(results: dict[str, pd.DataFrame]) -> dict[str, float]:
     return out
 
 
+def _yearly_fixed_cost(results: dict[str, pd.DataFrame]) -> dict[str, float]:
+    unit = results["cost_unit_annualized__d"]
+    out = {}
+    for d in PERIODS:
+        rows = unit[(unit["period"] == d) & (unit["unit"] == PLANT)]
+        out[d] = float(rows["fixed cost invested"].sum()) * MEGA if len(rows) else 0.0
+    return out
+
+
 @pytest.mark.solver
-def test_yearly_investment_cost_over_the_payback_years(tmp_path_factory) -> None:
-    """100 MW decided in p2020 (pinned), payback_time 12 and lifetime_technical 5: the capacity operates in p2020 only,
-    but the annuity is paid for 12 years.  The annualized investment cost is 100 · A12 a year in p2020 and p2025 and
-    2/5 of that in p2030 (years 10 and 11 of its five), 0 in p2035, so the undiscounted yearly amounts add up to the
-    12 years paid: 5 + 5 + 2.  Before: only the operating periods paid (p2020)."""
+def test_yearly_investment_cost_for_each_year_in_service(tmp_path_factory) -> None:
+    """100 MW decided in p2020 (pinned), payback_time 12 and lifetime_technical 5: the capacity is in service in
+    p2020 only, at the price a = A12 · G(12) / G(5) = A(5) = 92 389.92 a year (discount_rate = inflation_rate).
+    The annualized investment cost is 100 · a = 9 238 991.93 a year in p2020 and 0 in the later periods, the
+    yearly amount the objective charges for each year in service (before: 100 · A12 a year in p2020 and p2025 and
+    2/5 of that in p2030, the 12 payback years, also after the capacity was gone)."""
     results = _results(tmp_path_factory, "pb_yearly_single", _pinned(5.0), _no_battery_invest(SINGLE))
     got = _yearly_investment(results)
-    want = {"p2020": 100.0 * A12, "p2025": 100.0 * A12, "p2030": 100.0 * A12 * 2.0 / 5.0, "p2035": 0.0}
+    a = _price(12.0, 5.0)
+    assert 100.0 * a == pytest.approx(9_238_991.93, abs=0.01)
+    want = {"p2020": 100.0 * a, "p2025": 0.0, "p2030": 0.0, "p2035": 0.0}
     for d in PERIODS:
         assert got[d] == pytest.approx(want[d], rel=1e-7, abs=1e-6), d
 
 
 @pytest.mark.solver
-def test_chain_pays_the_payback_years_of_the_run(tmp_path_factory) -> None:
+def test_chain_pays_the_years_in_service_of_the_run(tmp_path_factory) -> None:
     """The chain ``invest_solveSequence_5weeks`` (each solve holds its own period and the next) with 100 MW decided in
-    p2020, payback_time = lifetime_technical = 12.  The y2020 solve (p2020, p2025) prices the decision over its own
-    years 0 … 9: A12 · S(1, 10) = 348 483.16 per MW.  The reported lump covers the payback years of the run, 0 … 11:
-    A12 · S(1, 12) = 400 000 per MW (before: every run period that starts before year 12, 468 435.67).  The
-    annualized investment cost is 100 · A12 in p2020 and p2025 and 100 · A12 · 2/5 = 1.805 M in p2030."""
+    p2020, payback_time = lifetime_technical = 12: the end of life 12 is rounded to 10, so the capacity is in
+    service in p2020 and p2025.  The y2020 solve (p2020, p2025) prices the decision over its years 0 … 9: A12 ·
+    S(1, 10) = 348 483.16 per MW, and so does the reported lump over the run (before: the payback years of the run,
+    0 … 11, A12 · S(1, 12) = 400 000).  The annualized investment cost is 100 · A12 in p2020 and p2025 and 0 in
+    p2030 (before: 100 · A12 · 2/5 = 1.805 M there)."""
     values = _pinned(12.0)
     steps, _, _ = _RUNS.get(tmp_path_factory, alt="pb_chain_steps", values=values,
                             base_chain=_no_battery_invest(CHAIN))
     fd = steps["y2020_5week"].flex_data
     assert _ed(fd.ed_entity_annual_discounted)["p2020"] == pytest.approx(A12 * _s(1, 10), rel=1e-12)
     assert A12 * _s(1, 10) == pytest.approx(348_483.1638, rel=1e-9)
-    assert _ed(fd.ed_entity_annual_discounted_run)["p2020"] == pytest.approx(400_000.0, rel=1e-12)
+    assert _ed(fd.ed_entity_annual_discounted_run)["p2020"] == pytest.approx(A12 * _s(1, 10), rel=1e-12)
     got = _yearly_investment(_results(tmp_path_factory, "pb_yearly_chain", values, _no_battery_invest(CHAIN)))
-    want = {"p2020": 100.0 * A12, "p2025": 100.0 * A12, "p2030": 100.0 * A12 * 2.0 / 5.0, "p2035": 0.0}
+    want = {"p2020": 100.0 * A12, "p2025": 100.0 * A12, "p2030": 0.0, "p2035": 0.0}
     for d in PERIODS:
         assert got[d] == pytest.approx(want[d], rel=1e-7, abs=1e-6), d
-    assert want["p2030"] == pytest.approx(1_805_206.56, rel=1e-8)
+
+
+@pytest.mark.solver
+def test_chain_reports_the_fixed_cost_of_each_period(tmp_path_factory) -> None:
+    """The chain above with the fixed_cost map {p2020: 10, p2025: 20, p2030: 30, p2035: 40} CUR/kW/a (100 MW in
+    service in p2020 and p2025): the reported lump over the run is 1000 · (10 · S_op(0, 5) + 20 · S_op(5, 10)) =
+    113 884.54 per MW, the objective's of the single solve (test_fixed_cost_of_each_period_in_service), and the
+    annualized fixed cost invested is 100 · 1000 · 10 = 1 M a year in p2020 and 2 M in p2025 (FlexTool 4.5.0: the
+    p2020 value in both, 79 124.24 per MW and 1 M a year)."""
+    values = [v for v in _pinned(12.0) if v[2] != "fixed_cost"] + [
+        ["model", "flexTool", "inflation_offset_operations", b64(0.5, "float")],
+        ["unit", PLANT, "fixed_cost", _period_map(FIXED_COST_MAP)]]
+    steps, _, _ = _RUNS.get(tmp_path_factory, alt="pb_chain_fixed_steps", values=values,
+                            base_chain=_no_battery_invest(CHAIN))
+    run_lump = _ed(steps["y2020_5week"].flex_data.ed_lifetime_fixed_cost_run)["p2020"]
+    assert run_lump == pytest.approx(1000.0 * (10.0 * _s_op(0, 5) + 20.0 * _s_op(5, 10)), rel=1e-12)
+    assert run_lump == pytest.approx(113_884.54, abs=0.01)
+    got = _yearly_fixed_cost(_results(tmp_path_factory, "pb_yearly_chain_fixed", values, _no_battery_invest(CHAIN)))
+    want = {"p2020": 1.0e6, "p2025": 2.0e6, "p2030": 0.0, "p2035": 0.0}
+    for d in PERIODS:
+        assert got[d] == pytest.approx(want[d], rel=1e-7, abs=1e-6), d
 
 
 NOTICE_ID = "annuity_over_payback_time"

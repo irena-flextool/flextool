@@ -24,10 +24,10 @@ The cluster covers six FlexData fields:
 
 and, for the reported costs only (no model term reads them), their run-level
 twins ``*_run`` discounted from the start of the run over the periods of the
-whole run, the undiscounted annuities ``ed_annuity`` / ``ed_divest_annuity``,
+whole run, the undiscounted yearly amounts ``ed_annuity`` (an investment's price per year in service) /
+``ed_divest_annuity`` (the salvage annuity),
 the operating / retirement / salvage windows ``edd_operating_window`` /
-``edd_retire_window`` / ``edd_salvage_window`` and the paid share of each period of the payback window
-``edd_payback_share`` (section "Run-level fields of the reported costs").
+``edd_retire_window`` / ``edd_salvage_window`` (section "Run-level fields of the reported costs").
 
 Architecture
 ------------
@@ -1634,28 +1634,23 @@ def ed_lifetime_fixed_cost_divest_from_source(
 #   the window of _cohorts.retire_active.  edd_salvage_window[e,d_divest,d]: yr_run[d] ∈ [yr_run[d_divest],
 #   yr_run[d_divest] + lifetime_technical[e, d_divest]), the window the net salvage value is spread over.  In a
 #   stochastic fan only the pairs of the walk lineage (each calendar period once).
-# OUT. ed_annuity[e,d] = annuity (CUR/MW/yr, undiscounted) of invest_cost at c(d) over payback_time; ed_divest_annuity
-#   [e,d] the same of net_salvage_value at d.
-# OUT. ed_entity_annual_discounted_run[e,d]
-#        = ed_annuity[e,d]·Σ_{d' ∈ P(e,d)} Σ_{y ∈ Y(d')} inflation_inv_run[d',y]·σ[e,d,y]
-#   P(e,d) the run periods d' with yr_run[d'] ≥ yr_run[c(d)], and yr_run[d'] < yr_run[c(d)] + n[e,c(d)] for
-#   reinvest_choice / no_reinvestment (n = payback_time, lifetime_technical where the entity has none); Y(d') the
-#   represented years of d', year y starting at s_y = yr_run[d'] + Σ widths before it, width w_y,
-#   Σ_y inflation_inv_run[d',y] = p_inflation_inv_run[d']; σ = clip((yr_run[c(d)] + n − s_y)/w_y, 0, 1) for
-#   reinvest_choice / no_reinvestment (the payback time in exact years, as the objective), 1 for reinvest_automatic.
-#      ed_lifetime_fixed_cost_run[e,d] = Σ_{(e,d,d') ∈ edd_operating_window} fc[e,c(d)]·p_inflation_op_run[d']
+# OUT. ed_annuity[e,d] = the price per year in service (CUR/MW/yr, undiscounted) of the vintage: a_cap[e,c(d)] for
+#   reinvest_choice / no_reinvestment (the level yearly cost of the plant over its lifetime_technical, the objective's
+#   price, _per_method_annuity_lf), the annuity of invest_cost at c(d) over payback_time for reinvest_automatic;
+#   ed_divest_annuity[e,d] the annuity of net_salvage_value at d.
+# OUT. ed_entity_annual_discounted_run[e,d] = Σ_{kind} price_kind[e,d]·Σ_{(e,d,d') ∈ edd_operating_window(kind)}
+#        p_inflation_inv_run[d']
+#   price_bounded = a_cap, price_unbounded = the annuity: the objective's investment lump over the run periods.
+#      ed_lifetime_fixed_cost_run[e,d] = Σ_{(e,d,d') ∈ edd_operating_window} fc[e,d']·p_inflation_op_run[d']
+#        (summed as fc[e,c(d)]·Σ factor + Σ (fc[e,d'] − fc[e,c(d)])·factor, the objective's form)
 #      ed_entity_annual_divest_discounted_run[e,d]
 #        = ed_divest_annuity[e,d]·Σ_{edd_salvage_window} p_inflation_inv_run[d']
 #      ed_lifetime_fixed_cost_divest_run[e,d] = Σ_{(e,d,d') ∈ edd_retire_window} fc[e,d']·p_inflation_op_run[d']
-#   The divest lifetime fixed cost is the fixed cost of existing capacity it saves: each window period's fixed
-#   cost with the operations factor (as the fixed cost of existing capacity is charged), as its per-solve twin.
+#   The fixed costs are those of each window period with the operations factor (as the fixed cost of existing
+#   capacity is charged), as their per-solve twins.
 #   The salvage value keeps the annuity over lifetime and the window of the investment annuity (its per-solve
 #   twin ed_entity_annual_divest_discounted likewise), so retiring existing capacity and building identical new
 #   capacity earns nothing.
-# OUT. edd_payback_share[e,d_invest,d] = Σ_{kind} Σ_{y ∈ Y(d)} w_y·σ[e,d_invest,y] / Σ_{y ∈ Y(d)} w_y over the run
-#   periods d ∈ P(e,d_invest) of each kind: the share of d's represented years in which the annuity of the vintage
-#   (e, d_invest) is paid (1 for a period wholly inside the payback window and for every period of the open window
-#   of reinvest_automatic).  The annualized investment cost of d is the annuity times this share.
 # Notes: when the run is the solve itself (no run calendar, or every run period is in use and the solve starts
 #   the run) the factors and lumps ARE the per-solve fields (byte-identical); only the windows and annuities are
 #   built.  An entity with both a bounded and an unbounded lifetime method adds both sums, as the per-solve lumps
@@ -1972,68 +1967,38 @@ def _window_frame(walk: pl.DataFrame, anchor_name: str) -> pl.DataFrame | None:
     return out if out.height > 0 else None
 
 
-def _share_frame(paid: pl.DataFrame) -> pl.DataFrame | None:
-    """``[e, d_invest, d, value]`` of :func:`_paid_years` rows: the share of each run period paid, summed over the
-    lifetime kinds of an entity with both (as its lumps add both sums)."""
-    out = (paid.group_by("e", "d", "d_all", maintain_order=True).agg(pl.col("share").sum().alias("value"))
-               .lazy().select(alias_to_axis("e", "e"), alias_to_axis("d", "d_invest"), alias_to_axis("d_all", "d"),
-                              "value")
-               .sort("e", "d_invest", "d").collect())
-    return out if out.height > 0 else None
-
-
-def _lump(walk: pl.DataFrame, coef: pl.DataFrame, factor: pl.DataFrame | None, anchors: pl.DataFrame
-          ) -> pl.DataFrame:
-    """``[e, d, value]`` over ``anchors``: ``coef[e, d] × Σ_{kind} Σ_{d_all ∈ window(kind)} factor[d_all]``; with
-    ``factor`` None the walk carries its own ``factor`` per row (:func:`_paid_years`)."""
-    if factor is not None:
-        walk = walk.join(factor, on="d_all", how="left")
-    sums = (walk
-                .group_by("e", "d")
+def _lump(walk: pl.DataFrame, coef: pl.DataFrame, factor: pl.DataFrame, anchors: pl.DataFrame) -> pl.DataFrame:
+    """``[e, d, value]`` over ``anchors``: ``coef[e, d] × Σ_{d_all ∈ window} factor[d_all]``; with a ``kind`` column in
+    ``coef`` (one price per lifetime kind of ``walk``) ``Σ_{kind} coef[e, d, kind] × Σ_{d_all ∈ window(kind)}
+    factor[d_all]``."""
+    keys = ["e", "d", "kind"] if "kind" in coef.columns else ["e", "d"]
+    sums = (walk.join(factor, on="d_all", how="left")
+                .group_by(keys)
                 .agg(pl.col("factor").fill_null(1.0).sum().alias("sum")))
-    return (anchors.join(coef, on=["e", "d"], how="left")
-                   .join(sums, on=["e", "d"], how="left")
-                   .select("e", "d", value=pl.col("coef").fill_null(0.0) * pl.col("sum").fill_null(0.0)))
+    parts = (sums.join(coef, on=keys, how="left")
+                 .group_by("e", "d")
+                 .agg((pl.col("coef").fill_null(0.0) * pl.col("sum")).sum().alias("value")))
+    return (anchors.join(parts, on=["e", "d"], how="left")
+                   .select("e", "d", value=pl.col("value").fill_null(0.0)))
 
 
-def _paid_years(walk: pl.DataFrame,
-                anchors: pl.DataFrame,
-                yr: dict[str, float],
-                rows: pl.LazyFrame | None,
-                factor: pl.DataFrame,
-                ) -> pl.DataFrame:
-    """``[e, d, kind, d_all, factor, share]`` of the payback window ``walk`` (``[e, d, kind, d_all]`` of
-    :func:`_run_window` over ``anchors`` ``[e, d, kind, yr_avail, life]``, ``life`` the payback time): ``factor`` the
-    discount factor the annuity of (e, d) takes in d_all and ``share`` the share of d_all's represented years paid.
-    A period of the open window (``unbounded``) or wholly inside the payback window
-    (:func:`._walks.paid_whole`) takes ``factor[d_all]`` and share 1; the period the payback time ends in the sums
-    over its represented years (``rows`` ``[d, off, width, inv_contrib, ...]``) of ``inv_contrib · σ`` and of
-    ``width · σ`` over its width (:func:`._walks.paid_year_sums`)."""
-    from flextool.engine.preprocess.params._walks import paid_whole, paid_year_sums
-    periods = pl.DataFrame({"d_all": list(yr), "yr_dall": [float(v) for v in yr.values()]},
-                           schema={"d_all": pl.Utf8, "yr_dall": pl.Float64})
-    if rows is None:
-        rows_u = pl.DataFrame(schema={"d_all": pl.Utf8, "off": pl.Float64, "width": pl.Float64,
-                                      "contrib": pl.Float64})
-    else:
-        rows_u = (_utf8_ed(rows, ("d",)).filter(pl.col("d").is_not_null())
-                  .select(pl.col("d").alias("d_all"), "off", "width", pl.col("inv_contrib").alias("contrib")))
-    widths = rows_u.group_by("d_all").agg(pl.col("width").sum().alias("_period_width"))
-    w = (walk.join(anchors.select("e", "d", "kind", end=pl.col("yr_avail") + pl.col("life")),
-                   on=["e", "d", "kind"], how="left", maintain_order="left")
-             .join(periods, on="d_all", how="left", maintain_order="left")
-             .join(factor, on="d_all", how="left", maintain_order="left")
-             .join(widths, on="d_all", how="left", maintain_order="left")
-             .with_columns(_whole=(pl.col("kind") == "unbounded")
-                           | paid_whole(pl.col("yr_dall"), pl.col("_period_width"), pl.col("end"))))
-    partial = paid_year_sums(w.lazy().filter(~pl.col("_whole")).select("e", "d", "kind", "d_all", "yr_dall", "end"),
-                             rows_u.lazy(), ["e", "d", "kind"]).collect()
-    return (w.join(partial, on=["e", "d", "kind", "d_all"], how="left", maintain_order="left")
-             .select("e", "d", "kind", "d_all",
-                     factor=pl.when(pl.col("_whole")).then(pl.col("factor"))
-                              .otherwise(pl.col("paid").fill_null(0.0)),
-                     share=pl.when(pl.col("_whole")).then(pl.lit(1.0))
-                             .otherwise(pl.col("paid_width").fill_null(0.0) / pl.col("_period_width"))))
+def _fixed_lump(walk: pl.DataFrame, fc_on: pl.DataFrame, factor: pl.DataFrame, anchors: pl.DataFrame,
+                source: "InputSource") -> pl.DataFrame:
+    """``[e, d, value]`` over ``anchors``: Σ over the window ``walk`` (``[e, d, kind, d_all]``) of fc[e, d_all] ×
+    factor[d_all], summed as ``fc_on[e, d] × Σ factor + Σ (fc[e, d_all] − fc_on[e, d]) × factor[d_all]`` (``fc_on``
+    ``[e, d, coef]``, the fixed cost of the online period; the lifetime fixed cost of the objective,
+    :func:`lifetime_fixed_cost_invest_lf`)."""
+    base = _lump(walk, fc_on, factor, anchors)
+    fc_all = _utf8_ed(_ed_fixed_cost_raw_lf(
+        source, walk.lazy().select(alias_to_axis("e", "e"), alias_to_axis("d_all", "d")).unique()))
+    corr = (walk.join(fc_all.rename({"d": "d_all"}), on=["e", "d_all"], how="left")
+                .join(fc_on, on=["e", "d"], how="left")
+                .join(factor, on="d_all", how="left")
+                .group_by("e", "d")
+                .agg(((pl.col("fc").fill_null(0.0) - pl.col("coef").fill_null(0.0))
+                      * pl.col("factor").fill_null(1.0)).sum().alias("corr")))
+    return (base.join(corr, on=["e", "d"], how="left")
+                .select("e", "d", value=pl.col("value") + pl.col("corr").fill_null(0.0)))
 
 
 def apply_run_cost_fields(flex_data: object,
@@ -2104,25 +2069,20 @@ def apply_run_cost_fields(flex_data: object,
     vintages = inv if offered_inv is None or offered_inv.height == 0 else (
         offered_inv.select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)).unique().sort("e", "d"))
     if inv.height > 0:
-        inv_lf = _anchor_lf(inv)
-        ann = _utf8_ed(_per_method_annuity_lf(source, inv_lf, "invest_cost", _INVEST_NOT_ALLOWED, commission)
-                       ).rename({"ann": "coef"})
-        flex_data.ed_annuity = _ed_param(vintages.join(ann, on=["e", "d"], how="left")
-                                            .select("e", "d", value=pl.col("coef").fill_null(0.0)))
-        # The annuity is paid over the payback time from the start of operation (the open window for
-        # reinvest_automatic), the period it ends in for its years before the end, as in the objective.
-        payback = _utf8_ed(_ed_lifetime_on_lf(source, inv_lf, PAYBACK_TIME, commission))
-        pay_anchors = (year_of_start(inv, True)
-                         .join(payback, on=["e", "d"], how="left")
-                         .with_columns(life=pl.col("life").fill_null(0.0))
-                         .join(_lifetime_kinds(source, inv.select("e").unique()), on="e", how="inner"))
-        if years is None:
-            pay_rows = _inflation_year_rows_lf(source, active_solve, list(yr), provider=provider)
-        else:
-            pay_rows = _inflation_year_rows_lf(source, active_solve, sorted(yr),
-                                               year_rows=_run_year_rows(*years))
-        paid = _paid_years(_run_window(pay_anchors, yr, lineage, period_in_use), pay_anchors, yr, pay_rows,
-                           factor_inv)
+        # The price per year in service of each lifetime kind: the level yearly price a_cap for reinvest_choice /
+        # no_reinvestment, the annuity for reinvest_automatic (the objective's, npv_invest_discounted_lf).
+        kinds = _lifetime_kinds(source, inv.select("e").unique())
+        ann = _utf8_ed(_per_method_annuity_lf(source, _anchor_lf(inv), "invest_cost", _INVEST_NOT_ALLOWED,
+                                              commission, level=True))
+        price = (ann.join(kinds, on="e", how="inner")
+                    .select("e", "d", "kind",
+                            coef=pl.when(pl.col("kind") == "bounded").then(pl.col("a_cap")).otherwise(pl.col("ann"))))
+        bounded_e = kinds.filter(pl.col("kind") == "bounded").select("e")
+        flex_data.ed_annuity = _ed_param(
+            vintages.join(ann.with_columns(bounded=pl.col("e").is_in(bounded_e["e"].implode())), on=["e", "d"],
+                          how="left")
+                    .select("e", "d", value=pl.when(pl.col("bounded")).then(pl.col("a_cap"))
+                                             .otherwise(pl.col("ann")).fill_null(0.0)))
     # The lifetime fixed cost covers every entity over the period history (as its per-solve twin); without run
     # years only the vintages are walked (for their operating window).  The history periods are those of the run
     # (:func:`run_years`): the branch copy of a realized designation (``<period>_<branch>``) is no period of the
@@ -2155,14 +2115,14 @@ def apply_run_cost_fields(flex_data: object,
         anchors = anchors.with_columns(life=y_eol - anchors["yr_avail"])
         walk = _run_window(anchors, yr, lineage, period_in_use)
         flex_data.edd_operating_window = _window_frame(walk.join(vintages, on=["e", "d"], how="semi"), "d_invest")
-        if inv.height > 0:
-            flex_data.edd_payback_share = _share_frame(paid.join(vintages, on=["e", "d"], how="semi"))
         if years is not None:
             fc = _utf8_ed(at_online_period(
                 fc_lf, lambda lf: _ed_fixed_cost_raw_lf(source, lf), commission, "fc")).rename({"fc": "coef"})
-            flex_data.ed_lifetime_fixed_cost_run = _ed_param(_lump(walk, fc, factor_ops, fc_pairs))
+            flex_data.ed_lifetime_fixed_cost_run = _ed_param(_fixed_lump(walk, fc, factor_ops, fc_pairs, source))
             if inv.height > 0:
-                flex_data.ed_entity_annual_discounted_run = _ed_param(_lump(paid, ann, None, inv))
+                # The price over the periods in service, as the objective's investment lump.
+                flex_data.ed_entity_annual_discounted_run = _ed_param(
+                    _lump(walk.join(inv, on=["e", "d"], how="semi"), price, factor_inv, inv))
 
     # Retirement side: from the retirement period until the rounded end of life ``y_eol`` of the existing capacity
     # (the end of the run for reinvest_automatic), the window of _cohorts.retire_active on the run calendar.

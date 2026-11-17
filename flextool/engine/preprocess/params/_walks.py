@@ -84,34 +84,6 @@ class WindowMethod(enum.Enum):
     UNBOUNDED_FORWARD = "unbounded_forward"
 
 
-def payback_share(end: pl.Expr, start: pl.Expr, width: pl.Expr) -> pl.Expr:
-    """σ = clip((end − start) / width, 0, 1): the share of a represented year (``start``, ``width``) inside a window
-    that ends at ``end`` (0 for a year of width 0).  The rule of the payback window of the reported lumps and yearly
-    shares (``_npv.apply_run_cost_fields``)."""
-    return pl.when(width > 0).then(((end - start) / width).clip(0.0, 1.0)).otherwise(0.0)
-
-
-def paid_whole(start: pl.Expr, period_width: pl.Expr, end: pl.Expr) -> pl.Expr:
-    """True for a period (``start``, its represented years ``period_width``) wholly inside a window that ends at
-    ``end`` (within ``YEAR_TOL``), and for a period without represented years (null ``period_width``): it counts
-    whole, with its period factor."""
-    from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
-    return period_width.is_null() | (start + period_width <= end + YEAR_TOL)
-
-
-def paid_year_sums(pairs: pl.LazyFrame, rows: pl.LazyFrame, keys: list[str]) -> pl.LazyFrame:
-    """``[*keys, d_all, paid, paid_width]``: for each row of ``pairs`` (``[*keys, d_all, yr_dall, end]``) the sums
-    over the represented years of ``d_all`` (``rows``: ``[d_all, off, width, contrib]``, ``off`` the years of the
-    period before the year) of ``contrib · σ`` and ``width · σ``, σ = :func:`payback_share` of the year starting at
-    ``yr_dall + off``."""
-    share = payback_share(pl.col("end"), pl.col("yr_dall") + pl.col("off"), pl.col("width"))
-    return (pairs
-              .join(rows, on="d_all", how="inner", maintain_order="left_right")
-              .group_by([*keys, "d_all"], maintain_order=True)
-              .agg((pl.col("contrib") * share).sum().alias("paid"),
-                   (pl.col("width") * share).sum().alias("paid_width")))
-
-
 def _assert_lineage_castable(lineage: pl.DataFrame,
                              d_dtype: pl.DataType) -> None:
     """Raise ``ValueError`` when any lineage token nulls under a

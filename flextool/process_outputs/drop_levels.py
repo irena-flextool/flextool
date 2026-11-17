@@ -408,9 +408,5 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
                            ('edd_salvage_window', 'period_divest')):
         idx = getattr(s, attr).droplevel('solve').unique()
         setattr(s, attr, idx[idx.get_level_values(decision).isin(realized_invest)])
-    # The share of each period's years in which a vintage's annuity is paid: keyed by its decision likewise.
-    share = par.entity_payback_share.droplevel('solve')
-    share = share[~share.index.duplicated(keep='last')]
-    par.entity_payback_share = share[share.index.get_level_values('period_invest').isin(realized_invest)]
 
     return par, s, v
