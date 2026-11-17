@@ -37,6 +37,73 @@ def _commit_step(db, message):
         logging.info("Migration step idempotent (no changes): %s", message)
 
 
+#: The most runs of consecutive ids one commit deletes from a table.  spinedb_api deletes the removed rows of a table
+#: in one ``DELETE ... WHERE id BETWEEN a AND b OR ...`` statement, one term per run, and SQLite refuses an expression
+#: deeper than 1000 (``Expression tree is too large``): the scattered values of a large database exceed that.
+_MAX_REMOVED_RANGES = 500
+
+
+def _id_runs(ids) -> list[list[int]]:
+    """The runs of consecutive integers in *ids*, in order."""
+    runs: list[list[int]] = []
+    for i in sorted(set(ids)):
+        if runs and i == runs[-1][-1] + 1:
+            runs[-1].append(i)
+        else:
+            runs.append([i])
+    return runs
+
+
+def _pending_removed_db_ids(db, item_type: str) -> set[int]:
+    """The database ids of the *item_type* rows removed in the session and not yet committed (what the next commit
+    deletes)."""
+    from spinedb_api.mapped_item_status import Status
+    from spinedb_api.temp_id import resolve
+
+    return {resolve(item["id"]) for item in db.mapped_table(item_type).values()
+            if item.status == Status.to_remove and item.has_valid_id}
+
+
+def _remove_items_bounded(db, item_type: str, ids, message: str) -> None:
+    """Remove the *item_type* items *ids* so that no commit deletes more than :data:`_MAX_REMOVED_RANGES` runs of
+    ids from one table.
+
+    When they fit beside the removals the session already holds, they are only removed (the caller's commit deletes
+    them, as a plain ``remove_items``).  Otherwise the session is committed first and the items are removed and
+    committed in batches, each commit named *message* with its batch number.  What cascades from an item is
+    removed first, the same way: the values of a ``parameter_definition``, the metadata links of a
+    ``parameter_value``.  The result is that of ``remove_items``.
+    """
+    from spinedb_api.temp_id import resolve
+
+    def key(id_):
+        # The database id; an item added in this session (no database id yet) is its own key.
+        db_id = resolve(id_)
+        return id_ if db_id is None else db_id
+
+    by_key = {key(i): i for i in ids}
+    if not by_key:
+        return
+    if item_type == "parameter_definition":
+        _remove_items_bounded(db, "parameter_value", [pv["id"] for pv in db.get_items("parameter_value")
+                                                      if key(pv["parameter_definition_id"]) in by_key], message)
+    elif item_type == "parameter_value" and db.get_items("parameter_value_metadata"):
+        _remove_items_bounded(db, "parameter_value_metadata", [x["id"] for x in db.get_items(
+            "parameter_value_metadata") if key(x["parameter_value_id"]) in by_key], message)
+    in_db = {k for k in by_key if isinstance(k, int)}
+    if len(_id_runs(_pending_removed_db_ids(db, item_type) | in_db)) <= _MAX_REMOVED_RANGES:
+        db.remove_items(item_type, *by_key.values())
+        return
+    # An item added in this session deletes no row.
+    db.remove_items(item_type, *(i for k, i in by_key.items() if not isinstance(k, int)))
+    _commit_step(db, f"{message} (before removing {len(in_db)} {item_type} items in batches)")
+    runs = _id_runs(in_db)
+    batches = [runs[i:i + _MAX_REMOVED_RANGES] for i in range(0, len(runs), _MAX_REMOVED_RANGES)]
+    for n, batch in enumerate(batches, start=1):
+        db.remove_items(item_type, *(by_key[k] for run in batch for k in run))
+        _commit_step(db, f"{message} (removed {item_type} items, batch {n}/{len(batches)})")
+
+
 def _ensure_parameter_group(db, name, color, priority):
     """Get-or-create a ``parameter_group`` so a new parameter can be
     attached to it.
@@ -1024,8 +1091,9 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     entity_class_name="node", name=typo_name,
                 ))
                 if typo_defs:
-                    db.remove_items(
-                        "parameter_definition", typo_defs[0]["id"]
+                    _remove_items_bounded(
+                        db, "parameter_definition", [typo_defs[0]["id"]],
+                        "v41: removed node.storate_state_end",
                     )
 
                 try:
@@ -1963,7 +2031,8 @@ def _rename_or_drop_parameter_definition(db, entity_class_name, old_name, new_na
     if new:
         # Target already exists (carried in by a prior partial migration);
         # the rename would collide.  Drop the stale source definition.
-        db.remove_parameter_definition(id=old["id"])
+        _remove_items_bounded(db, "parameter_definition", [old["id"]],
+                              f"removed {entity_class_name}.{old_name} ({new_name} is there)")
         return
     kwargs = {"id": old["id"], "name": new_name}
     if description is not None:
@@ -1991,7 +2060,7 @@ def remove_parameters_manual(db,obj_param_names):
             id_list.append(param.id)
 
     try:
-        db.remove_items('parameter_definition', *id_list)
+        _remove_items_bounded(db, 'parameter_definition', id_list, "Removed parameters")
         _commit_step(db,"Removed parameters")
     except SpineDBAPIError:
         print("This removal has been done before, continuing")
@@ -5094,7 +5163,8 @@ def _v77_drop_stale_definitions(db) -> None:
                       "re-author if needed):")
                 for pv in values:
                     print("  " + _describe_pv(pv))
-                db.remove_items("parameter_value", *[pv["id"] for pv in values])
+                _remove_items_bounded(db, "parameter_value", [pv["id"] for pv in values],
+                                      f"v77: removed the {cls}.{name} values")
             fields = {"description": description}
             if default is not None:
                 fields["default_value"], fields["default_type"] = default
@@ -5123,7 +5193,7 @@ def _v77_drop_stale_definitions(db) -> None:
             print(f"v77: {cls}.{name} is no longer a FlexTool parameter; deleted its values:")
             for pv in dropped:
                 print("  " + _describe_pv(pv))
-        db.remove_items("parameter_definition", pdef["id"])
+        _remove_items_bounded(db, "parameter_definition", [pdef["id"]], f"v77: removed {cls}.{name}")
     # The value list of the dropped storage_include_solve_fix_method, when nothing else uses it.
     if db.get_item("parameter_value_list", name="storage_include_solve_fix_method") and not any(
             pd["parameter_value_list_name"] == "storage_include_solve_fix_method"
@@ -6903,7 +6973,8 @@ def _migrate_v70_capacity_coefficient_descriptions(db) -> None:
                   "re-author if needed):")
             for pv in old_vals:
                 print("  " + _describe_pv(pv))
-            db.remove_items("parameter_value", *[pv["id"] for pv in old_vals])
+            _remove_items_bounded(db, "parameter_value", [pv["id"] for pv in old_vals],
+                                  "v70: removed the unit__inputNode capacity_min_coeff values")
     for old_name, new_name, description, default in (
         ("capacity_max_coeff", "input_share_max",
          _V70_INPUT_SHARE_MAX_DESCRIPTION, None),
@@ -6964,7 +7035,8 @@ def _migrate_v70_capacity_coefficient_descriptions(db) -> None:
                 print("  " + _describe_pv(pv))
         removed = out_of_range + leftovers
         if removed:
-            db.remove_items("parameter_value", *[pv["id"] for pv in removed])
+            _remove_items_bounded(db, "parameter_value", [pv["id"] for pv in removed],
+                                  "v70: removed unit__outputNode capacity_min_coeff values")
         if pre_step:
             _print_v70_min_load_notices(
                 db, [pv for pv in out_vals
@@ -9527,11 +9599,14 @@ def _migrate_v56_retype_yes_only_to_yes_no(db) -> None:
                 parameter_definition_name=name,
             )
         ]
-        for pv in list(db.find_parameter_values(
-            entity_class_name=entity_class_name,
-            parameter_definition_name=name,
-        )):
-            db.remove_item("parameter_value", pv["id"])
+        _remove_items_bounded(
+            db, "parameter_value",
+            [pv["id"] for pv in db.find_parameter_values(
+                entity_class_name=entity_class_name,
+                parameter_definition_name=name,
+            )],
+            f"v56: removed the {entity_class_name}.{name} values to rebind its value list",
+        )
         db.add_update_item(
             "parameter_definition",
             entity_class_name=entity_class_name,
@@ -9993,9 +10068,9 @@ def _migrate_v56_reactivate_is_enabled_parameter(db) -> None:
         ea_rows = list(
             db.find_entity_alternatives(entity_class_name=cls_name),
         )
-        for ea in ea_rows:
-            db.remove_item("entity_alternative", ea["id"])
-            dropped_ea_count += 1
+        _remove_items_bounded(db, "entity_alternative", [ea["id"] for ea in ea_rows],
+                              f"v56: removed the {cls_name} entity_alternative rows")
+        dropped_ea_count += len(ea_rows)
 
     # ---- Step 5: flip active_by_default on the two reserve classes ---
     entity_class_table = db.mapped_table("entity_class")
@@ -10870,21 +10945,25 @@ def _v81_definitions_part(db, *, update: bool = True) -> None:
 
 
 def _v81_move_values(db) -> None:
-    """Part 3 of v81: the values of each old parameter of :data:`V81_VALUE_MOVES` are copied to each of its new
-    names, then the old definition (and so its values) is removed.
+    """Part 3 of v81: the values of each old parameter of :data:`V81_VALUE_MOVES` go to each of its new names, then
+    the old definition is removed.
 
-    Every value is copied as it is stored (its bytes and type: a constant, a map with any index, every alternative),
-    on each class that defines the old name, to each new name where that (entity, alternative) has no value yet; a
+    Every value goes as it is stored (its bytes and type: a constant, a map with any index, every alternative), on
+    each class that defines the old name, to each new name where that (entity, alternative) has no value yet; a
     value already there is kept, and the old one it would have replaced is printed.  Without the old definition the
     part does nothing, so a rerun never brings back a value.
+
+    A value goes to the last new name by moving it there (it keeps its row) and to any other new name by a copy, so
+    the only values removed with the old definition are those a new name already had, in bounded commits
+    (:func:`_remove_items_bounded`): a database of any size moves.
     """
     for old, news in V81_VALUE_MOVES.items():
         for pdef in [d for d in db.get_items("parameter_definition") if d["name"] == old]:
             cls = pdef["entity_class_name"]
             values = list(db.find_parameter_values(entity_class_name=cls, parameter_definition_name=old))
-            for new in news:
-                if _pdef_or_none(db, cls, new) is None:
-                    continue
+            targets = [new for new in news if _pdef_or_none(db, cls, new) is not None]
+            for new in targets:
+                move = new == targets[-1]
                 taken = {(tuple(pv["entity_byname"]), pv["alternative_name"])
                          for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name=new)}
                 kept = []
@@ -10892,15 +10971,18 @@ def _v81_move_values(db) -> None:
                     key = (tuple(pv["entity_byname"]), pv["alternative_name"])
                     if key in taken:
                         kept.append(pv)
-                        continue
-                    db.add_parameter_value(entity_class_name=cls, entity_byname=key[0], parameter_definition_name=new,
-                                           alternative_name=key[1], value=pv["value"], type=pv["type"])
+                    elif move:
+                        db.update_parameter_value(id=pv["id"], parameter_definition_name=new)
+                    else:
+                        db.add_parameter_value(entity_class_name=cls, entity_byname=key[0],
+                                               parameter_definition_name=new, alternative_name=key[1],
+                                               value=pv["value"], type=pv["type"])
                 if kept:
                     print(f"v81: {cls} {new} already had a value where {old} had one; kept the {new} value, the "
                           f"{old} value was not copied to {new}:")
                     for pv in kept:
                         print("  " + _describe_pv(pv))
-            db.remove_parameter_definition(id=pdef["id"])
+            _remove_items_bounded(db, "parameter_definition", [pdef["id"]], f"v81: removed {cls}.{old}")
 
 
 def _v81_list_member_renames(db) -> None:

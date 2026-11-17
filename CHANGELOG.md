@@ -73,6 +73,11 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
 
 ### Fixes
 
+- **A large database migrates to version 81.** The migration stopped with "Expression tree is too large (maximum
+  depth 1000)" when a database had many `lifetime` or `salvage_value` values, and left the database unchanged.
+  The values now move to their new names without being deleted and written again, and a step that has to delete
+  many values (in any migration step) deletes them in several commits.
+
 - **A period-varying `existing` (a period map) is used in every solve of a run.** From the second solve of a
   chained run, and in every roll after the first of a rolling solve (and in nested sub-solves), the existing
   capacity was the map's first-period value in every period: a map {500, 300, 100, 0} gave 500 MW in each later

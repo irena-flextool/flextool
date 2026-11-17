@@ -500,3 +500,86 @@ def test_current_version_database_with_the_superseded_end_of_life_default(tmp_pa
             db.commit_session("rerun")
     assert not m._head_defaults_stale_ro(path)
     assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION and _stale_version(path) is None
+
+
+#: Entities per class in the large database: each one's old value sits between values of other parameters, so the
+#: ids of the old values are not consecutive and their removal is one id range per value (SQLite refuses a DELETE
+#: over more than about 1000 ranges).
+LARGE = 1100
+
+
+@pytest.fixture(scope="module")
+def large(tmp_path_factory: pytest.TempPathFactory) -> dict:
+    """A v80 database with ``LARGE`` units, each with a ``lifetime`` and an ``invest_cost`` value, and ``LARGE``
+    nodes, each with a ``salvage_value`` and an ``invest_cost`` value; every other node (even numbers) already has
+    a ``net_salvage_value`` (a definition added at 80, as an earlier development build left it), so its old value
+    is not copied, the odd ones get theirs."""
+    url = json_to_db(SEED, tmp_path_factory.mktemp("v81_large") / "seed.sqlite")
+    migrate_database(url, up_to=80)
+    with DatabaseMapping(url) as db:
+        alt = sorted(a["name"] for a in db.get_items("alternative"))[0]
+        db.add_parameter_definition(entity_class_name="node", name="net_salvage_value", parameter_type_list=("float",))
+
+        def add(cls, entity, param, value):
+            val, typ = to_database(value)
+            db.add_parameter_value(entity_class_name=cls, entity_byname=(entity,), parameter_definition_name=param,
+                                   alternative_name=alt, value=val, type=typ)
+
+        for i in range(LARGE):
+            db.add_entity(entity_class_name="unit", name=f"u{i}")
+            db.add_entity(entity_class_name="node", name=f"n{i}")
+        for i in range(LARGE):
+            add("unit", f"u{i}", "lifetime", Map(["p2020", "p2025"], [20.0 + i, 30.0], index_name="period")
+                if i % 3 == 0 else 20.0 + i)
+            add("unit", f"u{i}", "invest_cost", 100.0 + i)
+            add("node", f"n{i}", "salvage_value", 10.0 + i)
+            if i % 2 == 0:
+                add("node", f"n{i}", "net_salvage_value", -1.0 - i)
+            add("node", f"n{i}", "invest_cost", 5.0 + i)
+        db.commit_session("many interleaved lifetime and salvage_value values")
+        before = _values(db)
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        migrate_database(url, up_to=81)
+    with DatabaseMapping(url) as db:
+        after = {"defs": _defs(db), "values": _values(db)}
+    return {"url": url, "alt": alt, "before": before, "after": after, "printed": printed.getvalue()}
+
+
+def test_large_database_moves_every_value(large) -> None:
+    """A database whose old values are too scattered for one removal: it reaches 81; every ``lifetime`` value is
+    under ``lifetime_technical`` byte for byte, every ``salvage_value`` under ``net_salvage_value`` where that node had
+    none (the even nodes keep their own, and each is printed), the old names are gone and every other value is
+    unchanged."""
+    before, after = large["before"], large["after"]
+    old_lifetime = {k: v for k, v in before.items() if k[2] == "lifetime"}
+    old_salvage = {k: v for k, v in before.items() if k[2] == "salvage_value"}
+    assert len(old_lifetime) >= LARGE and len(old_salvage) >= LARGE
+    expected = {k: v for k, v in before.items() if k[2] not in ("lifetime", "salvage_value")}
+    for (cls, byname, _, alt), stored in old_lifetime.items():
+        expected[(cls, byname, "lifetime_technical", alt)] = stored
+    for (cls, byname, _, alt), stored in old_salvage.items():
+        expected.setdefault((cls, byname, "net_salvage_value", alt), stored)
+    assert after["values"] == expected
+    for i in range(0, LARGE, 2):
+        assert after["values"][("node", (f"n{i}",), "net_salvage_value", large["alt"])] == (
+            bytes(to_database(-1.0 - i)[0]), "float")
+        assert f"  node n{i} [{large['alt']}] = {10.0 + i}\n" in large["printed"]
+    assert not any(k[1] in ("lifetime", "salvage_value") for k in after["defs"])
+    from flextool.update_flextool.frozen import read_db_version_ro
+
+    assert read_db_version_ro(Path(large["url"].removeprefix("sqlite:///"))) == 81
+
+
+def test_large_database_definitions_are_those_of_a_small_one(large, migrated) -> None:
+    """The definitions after the step do not depend on how many values moved (the small database also has a
+    ``node.lifetime_method`` default of its own)."""
+    own = ("node", "lifetime_method")
+    assert ({k: v for k, v in large["after"]["defs"].items() if k != own}
+            == {k: v for k, v in migrated["after"]["defs"].items() if k != own})
+
+
+def test_large_database_rerun_commits_nothing(large, monkeypatch) -> None:
+    with DatabaseMapping(large["url"]) as db:
+        _rerun_changes_nothing(db, m._migrate_v81_schema_batch, monkeypatch)
+        assert _values(db) == large["after"]["values"]
