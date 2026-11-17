@@ -1521,3 +1521,44 @@ Generated with `pytest "tests/test_scenarios.py::test_scenario[<scenario>]" --re
 the regeneration also rewrote the time stamp line of `summary_solve.csv` and the number / header format of some
 other CSVs (`costs__dt.csv`, `node__d.csv`, `node__dt.csv`, `slack__upward__node_state__dt.csv`), which were put
 back to their previous content (copied from a backup taken before the run). The 19 scenarios then pass in compare mode.
+
+## 2026-11-18 — the investment annuity is sized for when it is paid (18 scenarios, #187)
+
+**Context.** The yearly investment payment is now `invest_cost · ann(r, n) · (1 + r)^(inflation_offset_investment − 1)`
+(`flextool/engine/preprocess/_annuity.py`). The default offset 0 places each payment at the start of its year, so
+the year-end annuity `ann(r, n)` made the loan worth `invest_cost · (1 + r)` at the `discount_rate` r; now it is worth
+`invest_cost` (`tests/engine/test_annuity_timing.py`, hand-derived). None of these scenarios sets the offset, so
+every investment cost (and salvage annuity) falls by 1 / (1 + r): 1 / 1.05 (coal_plant, battery, ro_desal), 1 / 1.04
+(wind_plant), 1 / 1.07 (csp units and tank). `tools/lp_snapshot.py`: exactly the v_invest / v_divest cost
+coefficients of the 47 fixtures with an annuity change, by these ratios (nearer 1 where a fixed cost shares the
+coefficient).
+
+**Investment cost only (decisions unchanged; every other CSV and cell identical):** the investment columns of
+`costs_discounted.csv`, `cost_unit_annualized__d.csv`, `cost_unit_discounted__d.csv` (and the storage columns of
+`cost_node_*__d.csv` in `test_a_lot`) scale by the ratios above in `multi_year`, `multi_year_one_solve`,
+`multi_year_one_solve_battery`, `multi_year_one_solve_co2_limit`, `multi_fullYear_battery`,
+`multi_fullYear_battery_nested_24h_invest_one_solve`, `multi_fullYear_battery_nested_multi_invest`,
+`multi_fullYear_battery_nested_sample_invest_one_solve`, `test_a_lot`, `y2020_2029_1x10y`, `y2020_2029_2x5y`
+(e.g. `multi_year_one_solve` unit investment 584.9159 → 562.4192 = × 1 / 1.04; `y2020_2029_*` 221.4396 = coal
+20.9490 + wind 200.4906 → 19.9514 + 192.7794 = 212.7306), `desal_ro_invest` (4.8146 → 4.5853 = × 1 / 1.05),
+`csp_fixed_design` (10.7263 → 10.0246 and 3.2179 → 3.0074 = × 1 / 1.07; summary objective 50.8092 → 49.8970) and
+`csp_optimised_design` (summary objective 43.3526 → 41.9492; investment 21.4526 → 20.0492 = × 1 / 1.07), and
+`multi_year_wind_growth_cap` (summary: investment 267.1018 → 256.4288, the growth caps bind so the capacities do
+not move). The hand-derived `expected_objective` of `desal_ro_invest` (147.003997), `csp_fixed_design` (49.896971)
+and `csp_optimised_design` (41.949186) and the observed one of `y2020_2029_*` (439.245507091) are updated in
+`tests/scenarios.yaml` with their derivations.
+
+**Decisions move (cheaper investment buys more of it):**
+- `5weeks_invest_fullYear_dispatch_coal_wind`: wind_plant invests 8.75 MW (before 0); the dispatch solve's wind
+  output rises by the factor 1.00875 and coal output and commodity cost fall accordingly (`unit_capacity__d`,
+  `unit__outputNode__dt`, `costs__dt`).
+- `multi_year_wind_no_investment`: wind_plant invests 88.11 MW in p2020 (before 72.63; the p2025 decision unchanged); coal output, commodity cost
+  and CO2 (10.776 → 10.7154 Mt) fall; summary objective 5107.70 → 5055.86.
+- `network_coal_wind_battery_invest_cumulative`: wind is cheaper by 1 / 1.04 against coal and battery by 1 / 1.05,
+  so coal invests 205.25 MW in p2030 (before 219.96) and the battery and the west–east line are used more in p2025
+  (`unit_capacity__d`, `unit__outputNode__dt`, `connection__dt`, `node_state__dt`, `costs__dt`).
+
+Generated with `pytest "tests/test_scenarios.py::test_scenario[<scenario>]" --regenerate <scenario>` per scenario.
+The regeneration also rewrote 24 files whose values did not change (number format only: compared with the test's
+own rounding and tolerance); those were put back to their previous content (copied from a backup taken before the
+run). The 18 scenarios then pass in compare mode.

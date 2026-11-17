@@ -9,7 +9,8 @@ deterministic demand 100/130 MW, an existing wind unit whose
 branch-varying ``upper_limit`` profile (high 0.40/0.40, low 0.20/0.10
 through the ``group__unit`` stochastic group) leaves the investable
 ``peaker`` (unitsize 1, invest_cost 1, discount_rate 0.05, lifetime 1 →
-annuity 1050 exactly; unbounded-forward windows 2100/1050) residual
+annuity 1 · 1000 · 0.05 / (1 − 1.05^−1) / 1.05 = 1000 exactly, one payment at
+the start of the year; unbounded-forward windows 2000/1000) residual
 demand high 60/90, low 80/120.  This is a FAN-AT-FIRST reveal (branches
 declared at the first period p2035), so under the forecasts-only model
 the reference forecast owns the real period names; the real-named trunk
@@ -18,11 +19,11 @@ investment fans per forecast onto p2035_high/p2040_high (weight 0.25) and
 p2035_low/p2040_low (weight 0.75).  The objective is the
 probability-weighted expectation:
 
-    0.25·(60·2100 + 30·1050) + 0.75·(80·2100 + 40·1050) = 196 875.
+    0.25·(60·2000 + 30·1000) + 0.75·(80·2000 + 40·1000) = 187 500.
 
 Verified on a driven solve (R3 re-ground): per-forecast invest
 {p2035_high:60, p2040_high:30, p2035_low:80, p2040_low:40}; the phantom
-trunk p2035/p2040 invest 0; objective 196 875.
+trunk p2035/p2040 invest 0; objective 187 500.
 """
 from __future__ import annotations
 
@@ -33,17 +34,17 @@ import pytest
 
 from tests._support.load import clone_provider, load_scenario
 
-OBJECTIVE = 196_875.0
+OBJECTIVE = 187_500.0
 SOLVE = "stoch_2p_inv"
 
 # ed_entity_annual_discounted[peaker, d] (§15.1 step 2) — the annuity is a
 # per-period window property, identical on the phantom trunk and both
-# forecast copies (2100 at the branching period p2035, 1050 at the
+# forecast copies (2000 at the branching period p2035, 1000 at the
 # continuation period p2040).
 # The period labels p2035 / p2040 have no investment under recourse (no column), so no annuity row.
 EXPECTED_ANNU = {
-    "p2035_high": 2100.0, "p2040_high": 1050.0,
-    "p2035_low": 2100.0, "p2040_low": 1050.0,
+    "p2035_high": 2000.0, "p2040_high": 1000.0,
+    "p2035_low": 2000.0, "p2040_low": 1000.0,
 }
 # Forecasts-only weights: period label → 0, forecasts renormalised
 # {high:0.25, low:0.75}.
@@ -202,7 +203,7 @@ def test_recourse_per_path_cap_two_leaf_rows(_resolved):
     210 > 150, and would spuriously bind) is gone.  Each leaf row sums only
     its own periods; the D2 per-leaf-invest test pins the forecast sums to
     90 (high 60+30) and 120 (low 80+40), both ≤ 150 → non-binding, hence
-    objective stays 196 875.  The naive all-``d`` sum 210 asymmetry is the
+    objective stays 187 500.  The naive all-``d`` sum 210 asymmetry is the
     proof the caps are per-path."""
     data, _sol = _resolved
     from flextool.engine import build_flextool

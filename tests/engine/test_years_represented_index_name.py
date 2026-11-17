@@ -7,9 +7,9 @@ index name, in a single, a rolling and a stochastic solve (the CLAUDE.md constan
 only a period map, so the two forms are the two index names).
 
 The single-solve investment coefficients are the independent hand calculation (oracle, from the docs: annuity
-1000 * 0.05 / (1 - 1.05**-20) = 80.2425872 EUR/MW/a, counted over the years the capacity operates in the horizon):
-p1 = 10 a * 80.2425872 = 802.425872, p2 = 5 a = 401.212936 EUR/MW; objective 100 MW * 802.425872 + 100 MW * 4 steps
-* 10 EUR/MWh * 21900 h = 87 680 242.59 EUR.
+1000 * 0.05 / (1 - 1.05**-20) / 1.05 = 76.4215116 EUR/MW/a, paid at the start of each year, counted over the years
+the capacity operates in the horizon): p1 = 10 a * 76.4215116 = 764.215116, p2 = 5 a = 382.107558 EUR/MW; objective
+100 MW * 764.215116 + 100 MW * 4 steps * 10 EUR/MWh * 21900 h = 87 676 421.51 EUR.
 """
 from __future__ import annotations
 
@@ -72,6 +72,6 @@ def test_default_index_name_builds_the_period_index_lp(tmp_path_factory, build, 
 def test_single_solve_investment_counts_the_years_represented(tmp_path_factory):
     built, steps = _run(tmp_path_factory, _model_a(None), "base", "coef")
     (_solve, mps, _offset), = built
-    assert scm.objective_coefficient(mps, "v_invest_p[gen,p1]") == pytest.approx(802.425872, rel=1e-8)
-    assert scm.objective_coefficient(mps, "v_invest_p[gen,p2]") == pytest.approx(401.212936, rel=1e-8)
-    assert steps["inv"].obj == pytest.approx(87_680_242.59, rel=1e-9)
+    assert scm.objective_coefficient(mps, "v_invest_p[gen,p1]") == pytest.approx(764.215116, rel=1e-8)
+    assert scm.objective_coefficient(mps, "v_invest_p[gen,p2]") == pytest.approx(382.107558, rel=1e-8)
+    assert steps["inv"].obj == pytest.approx(87_676_421.51, rel=1e-9)

@@ -6,8 +6,9 @@ values of the period it comes online (invest_cost is an overnight cost).
   time, so their cost coefficients are equal; the annuity of coal_plant (discount_rate 0.05, lifetime 30) is
   invest_cost · 1000 · 0.05 / (1 − 1.05^−30), proportional to invest_cost.
 * stoch_two_period_invest.json (recourse, p2035 and p2040 of one year each, a two-branch fan, no inflation):
-  peaker invest_cost 1, discount_rate 0.05, lifetime 1 → annuity 1 · 1000 · 0.05 / (1 − 1.05^−1) = 1050 per
-  operating year.
+  peaker invest_cost 1, discount_rate 0.05, lifetime 1 → annuity 1 · 1000 · 0.05 / (1 − 1.05^−1) / 1.05 = 1000 per
+  operating year (one payment at the start of the year, inflation_offset_investment 0: the year-end annuity 1050
+  divided by 1.05).
 * lh2_three_region.json (Benders over three regions) with two 5-year periods.
 """
 from __future__ import annotations
@@ -94,7 +95,7 @@ def test_fixed_cost_only_while_operating(tmp_path_factory) -> None:
 def test_recourse_annuity_counted_once_and_identity(tmp_path_factory) -> None:
     """peaker with L = 1 under recourse: the p2035 decisions of each branch come online in that branch's p2040
     (the p2040 decisions would start at the end of the horizon and are not offered).  The annuity of a p2035
-    decision is 1050 × one operating year = 1050, not 2100 (counting both branch copies of p2040, or p2035 too,
+    decision is 1000 × one operating year = 1000, not 2000 (counting both branch copies of p2040, or p2035 too,
     as without the lead time).  The user-constraint identity capacity = pre-built + invested − retired holds."""
     values = ([["unit", "peaker", "invest_method", b64("invest_retire_no_limit", "str")]]
               + _constraint("c_cap") + _constraint("c_twin"))
@@ -105,8 +106,8 @@ def test_recourse_annuity_counted_once_and_identity(tmp_path_factory) -> None:
     ann = _param(step, "ed_entity_annual_discounted", "peaker")
     offered = sorted(utf8(step.flex_data.ed_invest_set).filter(pl.col("e") == "peaker")["d"].to_list())
     assert offered == ["p2035_high", "p2035_low"]
-    assert ann["p2035_high"] == pytest.approx(1050.0, rel=1e-9)
-    assert ann["p2035_low"] == pytest.approx(1050.0, rel=1e-9)
+    assert ann["p2035_high"] == pytest.approx(1000.0, rel=1e-9)
+    assert ann["p2035_low"] == pytest.approx(1000.0, rel=1e-9)
     commission = utf8(step.flex_data.edd_invest_commission).filter(pl.col("e") == "peaker")
     assert sorted(commission.select("d_invest", "d").rows()) == [("p2035_high", "p2040_high"),
                                                                  ("p2035_low", "p2040_low")]

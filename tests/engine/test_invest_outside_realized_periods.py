@@ -19,11 +19,11 @@ import pytest
 SCENARIO = "deterministic_partial_realized"
 SOLVE = "stoch_2p_mid"
 # Hand values: p2035 residual 120 - 60 (wind) = 60 MW, p2040 residual 120 MW.  Invest 60 at p2035 and 60 more at
-# p2040 (the p2035 capacity carries over).  Annuity at r = 0.05, n = 1: 0.05 / (1 - 1.05**-1) = 1.05.  The p2040
-# annualized unit investment: 60 MW * 3000 CUR/MW * 1.05 + 60 MW * 1000 CUR/MW * 1.05 = 189 000 + 63 000 CUR
-# = 0.252 M CUR.
+# p2040 (the p2035 capacity carries over).  Annuity at r = 0.05, n = 1, paid at the start of the year (the default
+# inflation_offset_investment 0): 0.05 / (1 - 1.05**-1) / 1.05 = 1.  The p2040 annualized unit investment:
+# 60 MW * 3000 CUR/MW * 1 + 60 MW * 1000 CUR/MW * 1 = 180 000 + 60 000 CUR = 0.24 M CUR.
 EXPECTED_INVEST = {"p2035": 60.0, "p2040": 60.0}
-EXPECTED_P2040_ANNUALIZED_INVEST_MCUR = 0.252
+EXPECTED_P2040_ANNUALIZED_INVEST_MCUR = 0.24
 
 
 def _add_partial_scenario(db_url: str) -> None:

@@ -423,14 +423,15 @@ def test_lead_time_annuity_without_payback_time_takes_the_lifetime_of_its_online
     """Without payback_time the annuity of wind_plant (decided in p2020, online in p2025) is over the
     lifetime_technical of its online period, 20 years (not that of p2020, 3): the period map describes the plant as
     constructed (owner decision D50), as for its end of life.  The same as with payback_time 20.  By hand:
-    1.05^-20 = 0.3768895, factor 0.05 / (1 − 0.3768895) = 0.0802426, annuity 1000 · 1000 · 0.0802426 = 80 242.59
-    CUR/MW/a; reinvest_choice pays it for 20 years from y_on 5, of which the 15 to the horizon end 20 are in the
-    model (no inflation): 15 · 80 242.59 = 1 203 638.81.  (Over 3 years: 367 208.56 a year for 3 years.)"""
+    1.05^-20 = 0.3768895, factor 0.05 / (1 − 0.3768895) = 0.0802426, annuity 1000 · 1000 · 0.0802426 / 1.05 (paid
+    at the start of each year, the default inflation_offset_investment 0) = 76 421.51 CUR/MW/a; reinvest_choice pays
+    it for 20 years from y_on 5, of which the 15 to the horizon end 20 are in the model (no inflation): 15 · 76 421.51
+    = 1 146 322.67.  (Over 3 years: 349 722.44 a year for 3 years.)"""
     ann, discounted = _lead_time_annuity(_lead_time_annuity_step(tmp_path_factory, "lead_annuity_no_payback", None))
     twin = _lead_time_annuity(_lead_time_annuity_step(tmp_path_factory, "lead_annuity_payback_20",
                                                       b64(20.0, "float")))
-    assert ann == pytest.approx(80_242.59, rel=1e-7)
-    assert discounted == pytest.approx(1_203_638.81, rel=1e-7)
+    assert ann == pytest.approx(76_421.51, rel=1e-7)
+    assert discounted == pytest.approx(1_146_322.67, rel=1e-7)
     assert (ann, discounted) == pytest.approx(twin, rel=1e-12)
 
 
@@ -453,16 +454,17 @@ def test_lead_time_investment_reads_every_period_map_at_its_online_period(tmp_pa
     CUR/kW/a, end_of_life_method next_seam, reinvest_choice, no inflation.  The maps describe the plant as
     constructed (owner decision D50): every value is that of p2025.  By hand:
 
-    * annuity = invest_cost · 1000 · r / (1 − (1+r)^-n) = 1000 · 1000 · 0.05 / (1 − 1.05^-4) = 282 011.83 CUR/MW/a,
-      paid back over payback_time 4 years;
+    * annuity = invest_cost · 1000 · r / (1 − (1+r)^-n) / (1 + r) = 1000 · 1000 · 0.05 / (1 − 1.05^-4) / 1.05 =
+      268 582.70 CUR/MW/a, paid back over payback_time 4 years at the start of each year (the default
+      inflation_offset_investment 0);
     * end of life Y = 5 + 7 = 12 → next_seam 20: the cohort (y_life 7, y_eol 20) is in service in p2025 and
       p2030 (5 + 10 = 15 years), the operating window p2025, p2030, the fixed cost ``10 · 1000 ·
       (inflation_op[p2025] + inflation_op[p2030])`` (``ed_lifetime_fixed_cost`` and ``ed_lifetime_fixed_cost_run``);
-    * the level price over lifetime_technical 7 (no inflation: G(x) = x) is a = 282 011.83 · 4 / 7 = 161 149.62
-      CUR/MW a year in service (``ed_annuity``, the reported yearly amount; before: the annuity 282 011.83 for 4
-      of p2025's 5 years), so the lump ``ed_entity_annual_discounted`` (and its run-level twin
-      ``ed_entity_annual_discounted_run``: the solve is the run) = 15 · a = 2 417 244.28 (before: the 4 payback
-      years, 4 · 282 011.83 = 1 128 047.33).
+    * the level price over lifetime_technical 7 (no inflation: G(x) = x) is a = 268 582.70 · 4 / 7 = 153 475.83
+      CUR/MW a year in service (``ed_annuity``, the reported yearly amount; before: the annuity for 4 of p2025's 5
+      years), so the lump ``ed_entity_annual_discounted`` (and its run-level twin
+      ``ed_entity_annual_discounted_run``: the solve is the run) = 15 · a = 2 302 137.41 (before: the 4 payback
+      years, 4 · 268 582.70 = 1 074 330.79).
 
     (At the decision period: annuity 2000 · 1000 · 0.05 / (1 − 1.05^-10) over 10 years, end of life 0 + 5 + 3 =
     8 → 10, in service and paying fixed cost in p2025 only.)"""
@@ -479,12 +481,12 @@ def test_lead_time_investment_reads_every_period_map_at_its_online_period(tmp_pa
         ["unit", WIND, "fixed_cost", b64(10.0, "float")]]
     (step,) = steps_of(tmp_path_factory, "lead_online_maps", values).values()
     fd = step.flex_data
-    ann = 1000.0 * 1000.0 * 0.05 / (1.0 - 1.05 ** -4)
-    assert ann == pytest.approx(282_011.83, rel=1e-8)
+    ann = 1000.0 * 1000.0 * 0.05 / (1.0 - 1.05 ** -4) / 1.05
+    assert ann == pytest.approx(268_582.70, rel=1e-8)
     price = ann * 4.0 / 7.0
-    assert price == pytest.approx(161_149.62, abs=0.01)
+    assert price == pytest.approx(153_475.83, abs=0.01)
     assert _at_decision(fd.ed_annuity.frame) == pytest.approx(price, rel=1e-12)
-    assert 15.0 * price == pytest.approx(2_417_244.28, abs=0.01)
+    assert 15.0 * price == pytest.approx(2_302_137.41, abs=0.01)
     assert _at_decision(fd.ed_entity_annual_discounted.frame) == pytest.approx(15.0 * price, rel=1e-12)
     assert _at_decision(fd.ed_entity_annual_discounted_run.frame) == pytest.approx(15.0 * price, rel=1e-12)
     (cohort,) = fd.cohort.filter((pl.col("kind") == "invest") & (pl.col("e").cast(pl.Utf8) == WIND)).iter_rows(

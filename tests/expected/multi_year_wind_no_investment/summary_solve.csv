@@ -1,12 +1,12 @@
-"Diagnostic results from all solves. Output at (UTC): 2026-11-04 09:23:44.550665+00:00"
+"Diagnostic results from all solves. Output at (UTC): 2026-11-17 22:44:13.575777+00:00"
 
 
 "Solve","Objective","Total cost from solver, includes all penalty costs"
-y2020_2035_5week,5107.69783288
-"Total cost (calculated) full horizon (M CUR)",5800.67122517,"Annualized operational, penalty and investment costs"
-"Total cost (calculated) realized periods (M CUR)",5800.67122517
-"Operational costs for realized periods (M CUR)",1780.8593792
-"Investment costs for realized periods (M CUR)",1300.98715339
+y2020_2035_5week,5055.85548315
+"Total cost (calculated) full horizon (M CUR)",5748.82887544,"Annualized operational, penalty and investment costs"
+"Total cost (calculated) realized periods (M CUR)",5748.82887544
+"Operational costs for realized periods (M CUR)",1764.79767225
+"Investment costs for realized periods (M CUR)",1265.20651061
 "Retirement costs / salvage revenue for realized periods (M CUR)",0
 "Fixed costs for pre-existing entities (M CUR)",692.973392291
 "Fixed costs for invested entities (M CUR)",503.102248773
@@ -19,7 +19,7 @@ Period,p2020,p2025,p2030,p2035
 "Investment discount factor",4.62989522426,3.80543638627,3.12779131893,2.57081646931
 
 Emissions
-"CO2 [Mt]",10.776,"System-wide annualized CO2 emissions for realized periods"
+"CO2 [Mt]",10.7154,"System-wide annualized CO2 emissions for realized periods"
 
 "Slack variables multiplied by timestep duration and timestep weight, summed over the solved time steps of each period (creating or removing energy/matter, creating inertia, adding synchronous generation, creating reserve); capacity margin per period"
 Created, west, p2035, 1532.3

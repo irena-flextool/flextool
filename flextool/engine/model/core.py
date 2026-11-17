@@ -5386,10 +5386,12 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     #     n = payback_time[p,c] (lifetime_technical[p,c] where the entity has none); L = lifetime_technical[p,c];
     #     G(x) = Σ_{k<⌈x⌉} min(1, x−k)·(1+inflation_rate)^−k
     #   lifetime_fixed_cost[p,d] = 1000 · Σ_{d′ ∈ L(p,d)} fixed_cost[p,d′]·inflation_op[d′]
-    #   ann(c, r, n) = c·1000·r / (1 − (1+r)^−n) (c·1000 / n for r = 0)
+    #   ann(c, r, n) = c·1000·r / (1 − (1+r)^−n) · (1+r)^(off_inv − 1) (c·1000 / n for r = 0);
+    #     off_inv = inflation_offset_investment: each payment falls off_inv years into its service year
     # Cost of process capacity decided in period d, currency/MW.  Capital: the level yearly cost of a plant of its
     # real lifetime (the present value of the loan, paid over payback_time at discount_rate, spread evenly over
-    # lifetime_technical years), charged for each year the cohort is in service inside the horizon (discounted per
+    # lifetime_technical years; the payments are sized for when they fall, so the loan taken when the capacity
+    # comes online is worth invest_cost at discount_rate for every off_inv), charged for each year the cohort is in service inside the horizon (discounted per
     # period).  end_of_life_method sets the years in service, not the price; payback_time and discount_rate set
     # only the size (with discount_rate = inflation_rate payback_time changes nothing for a whole number of years).
     # The inflation-adjusted fixed cost of each period the capacity operates in is charged over the same periods (it

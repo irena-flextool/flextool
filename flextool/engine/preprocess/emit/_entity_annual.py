@@ -42,6 +42,7 @@ from flextool.engine.preprocess._annuity import (
     annuity_factor,
     require_lifetime,
 )
+from flextool.engine.preprocess.emit._period_calc import scalar_max
 from flextool.engine.preprocess.params._branch import annuity_window_pairs
 from flextool.engine.preprocess._provider_io import _emit
 from flextool.engine.preprocess.params._existing import (
@@ -149,9 +150,10 @@ def _rows_to_frame(rows: list[tuple[str, str, float]]) -> pl.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def _annuity(inp: dict, kind: str, e: str, d: str, cost_param: str) -> float:
-    """``cost × 1000 × annuity_factor(r, n)`` of entity ``e`` in period ``d`` (:mod:`.._annuity`), read from the
-    lookup ``inp[kind]`` (``"pp"`` processes, ``"pn"`` nodes).
+def _annuities(inp: dict, cost_param: str, rows: list[tuple[str, str, str | None, int]]) -> list[float]:
+    """``count × cost × 1000 × annuity_factor(r, n, off)`` of each row ``(entity e, period d, kind, count)``
+    (:mod:`.._annuity`), the values read from the lookup ``inp[kind]`` (``"pp"`` processes, ``"pn"`` nodes; ``None``
+    or ``count`` 0: 0), ``off`` the model's ``inflation_offset_investment`` (``inp["offset_inv"]``).
 
     ``cost_param``: ``invest_cost`` or ``net_salvage_value``; ``n`` is the entity's payback time
     (:data:`PAYBACK_TIME`, its technical lifetime when it has none).  A missing ``discount_rate`` is
@@ -159,17 +161,36 @@ def _annuity(inp: dict, kind: str, e: str, d: str, cost_param: str) -> float:
     ``cost / n``).  A zero cost gives 0 whatever the payback time; a non-zero cost without a positive payback time
     is an error (:func:`require_lifetime`).
     """
-    lookup, roles = inp[kind], inp["roles"][kind]
-    cost = lookup.get(e, cost_param, d)
-    if cost == 0:
-        return 0.0
-    r = (lookup.get(e, "discount_rate", d) if lookup.has(e, "discount_rate", d)
-         else DEFAULT_DISCOUNT_RATE)
-    life_name = role_param(roles, e, PAYBACK_TIME)
-    n = lookup.get(e, life_name, d) if lookup.has(e, life_name, d) else 0.0
-    if not n > 0:
-        require_lifetime([(e, d)], cost_param, PAYBACK_TIME)
-    return cost * 1000.0 * annuity_factor(r, n)
+    costs: list[float] = []
+    rates: list[float] = []
+    lives: list[float] = []
+    missing: list[tuple[str, str]] = []
+    for e, d, kind, count in rows:
+        if kind is None or count == 0:
+            costs.append(0.0)
+            rates.append(0.0)
+            lives.append(1.0)
+            continue
+        lookup, roles = inp[kind], inp["roles"][kind]
+        cost = lookup.get(e, cost_param, d)
+        r = (lookup.get(e, "discount_rate", d) if lookup.has(e, "discount_rate", d)
+             else DEFAULT_DISCOUNT_RATE)
+        life_name = role_param(roles, e, PAYBACK_TIME)
+        n = lookup.get(e, life_name, d) if lookup.has(e, life_name, d) else 0.0
+        if cost != 0 and not n > 0:
+            missing.append((e, d))
+        costs.append(float(cost) * count)
+        rates.append(float(r))
+        lives.append(float(n) if n > 0 else 1.0)
+    require_lifetime(missing, cost_param, PAYBACK_TIME)
+    if not rows:
+        return []
+    frame = pl.DataFrame({"cost": costs, "r": rates, "n": lives},
+                         schema={"cost": pl.Float64, "r": pl.Float64, "n": pl.Float64})
+    return frame.select(
+        pl.when(pl.col("cost") == 0).then(0.0)
+          .otherwise(pl.col("cost") * 1000.0 * annuity_factor(pl.col("r"), pl.col("n"), inp["offset_inv"]))
+    ).to_series().to_list()
 
 
 def _inflation_window_sum(
@@ -264,37 +285,27 @@ def _entity_annual_inputs(input_dir: Path, solve_data_dir: Path,
         "p_inflation_invest": _read_keyed_value(
             solve_data_dir / "p_inflation_factor_investment_yearly.csv", provider=provider),
         "ed_fixed_cost": _read_pdv(solve_data_dir / "ed_fixed_cost.csv", provider=provider),
+        "offset_inv": scalar_max(input_dir / "p_inflation_offset_investment.csv", 0.0, provider=provider),
     }
 
 
-def _per_method_annuity_invest(inp: dict, e: str, d: str) -> float:
-    v = 0.0
-    for m in inp["methods_for_entity"].get(e, ()):
-        if m in _INVEST_NOT_ALLOWED:
-            continue
-        if e in inp["node_set"]:
-            v += _annuity(inp, "pn", e, d, "invest_cost")
-        elif e in inp["process_set"]:
-            v += _annuity(inp, "pp", e, d, "invest_cost")
-    return v
-
-
-def _per_method_annuity_divest(inp: dict, e: str, d: str) -> float:
-    v = 0.0
-    for m in inp["methods_for_entity"].get(e, ()):
-        if m in _DIVEST_NOT_ALLOWED:
-            continue
-        if e in inp["node_set"]:
-            v += _annuity(inp, "pn", e, d, NET_SALVAGE_VALUE)
-        elif e in inp["process_set"]:
-            v += _annuity(inp, "pp", e, d, NET_SALVAGE_VALUE)
-    return v
+def _annuity_rows(inp: dict, pairs: list[tuple[str, str]], disallowed: frozenset[str]
+                  ) -> list[tuple[str, str, str | None, int]]:
+    """``(e, d, kind, count)`` of :func:`_annuities`: ``count`` the entity's invest methods outside ``disallowed``
+    (each contributes the same annuity), ``kind`` its lookup (nodes ``"pn"``, processes ``"pp"``, else None)."""
+    out = []
+    for e, d in pairs:
+        count = sum(1 for m in inp["methods_for_entity"].get(e, ()) if m not in disallowed)
+        kind = "pn" if e in inp["node_set"] else "pp" if e in inp["process_set"] else None
+        out.append((e, d, kind, count))
+    return out
 
 
 def _rows_annuity(inp: dict) -> list[tuple[str, str, float]]:
     """``ed_entity_annual``: the undiscounted annuity of each investment period (of that period's values)."""
-    return [(e, d, _per_method_annuity_invest(inp, e, d))
-            for e in inp["entityInvest"] for d in inp["period_invest"]]
+    pairs = [(e, d) for e in inp["entityInvest"] for d in inp["period_invest"]]
+    values = _annuities(inp, "invest_cost", _annuity_rows(inp, pairs, _INVEST_NOT_ALLOWED))
+    return [(e, d, v) for (e, d), v in zip(pairs, values)]
 
 
 def _div_pair(inp: dict) -> tuple[
@@ -303,26 +314,25 @@ def _div_pair(inp: dict) -> tuple[
     """Compute both ed_entity_annual_divest and its _discounted variant."""
     rows_div: list[tuple[str, str, float]] = []
     rows_div_disc: list[tuple[str, str, float]] = []
-    for e in inp["entityDivest"]:
-        for d in inp["period_invest"]:
-            ann = _per_method_annuity_divest(inp, e, d)
-            rows_div.append((e, d, ann))
-
-            pdy_d = inp["p_discount_years"].get(d, 0.0)
-            disc = 0.0
-            if e in inp["node_set"]:
-                life = inp["pn"].get(e, LIFETIME_TECHNICAL, d)
-                disc = ann * _inflation_window_sum(
-                    pdy_d, life, _window_periods(inp, d),
-                    inp["p_discount_years"], inp["p_inflation_invest"],
-                )
-            elif e in inp["process_set"]:
-                life = inp["pp"].get(e, LIFETIME_TECHNICAL, d)
-                disc = ann * _inflation_window_sum(
-                    pdy_d, life, _window_periods(inp, d),
-                    inp["p_discount_years"], inp["p_inflation_invest"],
-                )
-            rows_div_disc.append((e, d, disc))
+    pairs = [(e, d) for e in inp["entityDivest"] for d in inp["period_invest"]]
+    values = _annuities(inp, NET_SALVAGE_VALUE, _annuity_rows(inp, pairs, _DIVEST_NOT_ALLOWED))
+    for (e, d), ann in zip(pairs, values):
+        rows_div.append((e, d, ann))
+        pdy_d = inp["p_discount_years"].get(d, 0.0)
+        disc = 0.0
+        if e in inp["node_set"]:
+            life = inp["pn"].get(e, LIFETIME_TECHNICAL, d)
+            disc = ann * _inflation_window_sum(
+                pdy_d, life, _window_periods(inp, d),
+                inp["p_discount_years"], inp["p_inflation_invest"],
+            )
+        elif e in inp["process_set"]:
+            life = inp["pp"].get(e, LIFETIME_TECHNICAL, d)
+            disc = ann * _inflation_window_sum(
+                pdy_d, life, _window_periods(inp, d),
+                inp["p_discount_years"], inp["p_inflation_invest"],
+            )
+        rows_div_disc.append((e, d, disc))
     return rows_div, rows_div_disc
 
 

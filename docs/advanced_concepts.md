@@ -55,7 +55,7 @@ The model-level `inflation_rate` parameter (default: 0) adjusts all future costs
 - **Real inputs** (most common): Set `inflation_rate` = 0. All costs in all years use today's prices. A fuel cost of 50 EUR/MWh means the same purchasing power whether it occurs in 2025 or 2040. To discount future costs with a social discount rate, set `inflation_rate` to that rate instead (see [Discounting between milestone years](#discounting-between-milestone-years)).
 - **Nominal inputs**: Set `inflation_rate` to expected inflation (e.g., 0.02 for 2%). The model deflates future costs: a nominal cost of 60 EUR/MWh in 2035 is treated as 60 / (1.02)^10 = 49.2 EUR/MWh approximately in today's money.
 
-The inflation rate applies via the factor `1 / (1 + inflation_rate)^years`. Investment costs are assumed to occur at the beginning of each year; operational costs at the middle of the year (adjustable with `inflation_offset_investment` and `inflation_offset_operations`).
+The inflation rate applies via the factor `1 / (1 + inflation_rate)^years`. The yearly investment payments are assumed to occur at the beginning of each year (the annual payment is sized for that, see below); operational costs at the middle of the year (adjustable with `inflation_offset_investment` and `inflation_offset_operations`).
 
 ### Discounting between milestone years
 
@@ -77,7 +77,16 @@ The discount rate converts a lump-sum investment cost into annual payments over 
 
 ```
 annual_payment = invest_cost * discount_rate / (1 - (1 / (1 + discount_rate))^payback_time)
+                 * (1 + discount_rate)^(inflation_offset_investment - 1)
 ```
+
+The loan is taken when the capacity comes online (`invest_cost` is the overnight cost) and each yearly payment falls
+`inflation_offset_investment` years into its service year: at the default 0 at the start of each year, the first one on
+the day the capacity comes online; at 1 at the end of each year. The last factor sizes the payments for that moment,
+so the payments are worth exactly `invest_cost` at the `discount_rate` whatever the offset. For example, invest cost
+1000, discount rate 5 % and payback time 10 years give 129.50 a year paid at year ends (offset 1) and 129.50 / 1.05 =
+123.34 a year paid at year starts (offset 0); both are worth 1000 when discounted at 5 % from the moment the capacity
+comes online. The same annual payment sizes the salvage annuity of a retirement.
 
 With `lifetime_method` *reinvest_choice* or *no_reinvestment* the plant pays a level yearly cost over its real lifetime: the present value of the `payback_time` annual payments, discounted at the model `inflation_rate`, spread evenly over the `lifetime_technical` years, `annual_payment · G(payback_time) / G(lifetime_technical)` with `G(x)` the discounted sum of x years (a fractional last year counts its fraction). It is paid for each year the capacity is in service, from the year it starts to operate to its end of life as `end_of_life_method` rounds it: a 12-year plant whose life is rounded to 10 years pays the yearly cost of the 12-year plant for 10 years, and one rounded to 15 years for 15. The price does not depend on when the plant is built or on the period lengths. `payback_time` and `discount_rate` set only its size: with `discount_rate` equal to `inflation_rate` the yearly cost is the annuity over `lifetime_technical` whatever the payback time, and with a lower `discount_rate` (an investor who demands faster payback) a shorter payback time costs more. With *reinvest_automatic* the annual payment is made in every year to the end of the model horizon. Years after the model horizon are not counted.
 
@@ -124,7 +133,7 @@ For **invested** assets, the fixed cost is paid in every period the new capacity
 | Parameter | Level | Default | Description |
 |-----------|-------|---------|-------------|
 | `inflation_rate` | Model | 0 | General inflation rate. Set to 0 for real inputs. |
-| `inflation_offset_investment` | Model | 0 | When in the year investment costs occur (0 = start) |
+| `inflation_offset_investment` | Model | 0 | When in the year the yearly investment payments occur (0 = start); the annual payment is sized for it |
 | `inflation_offset_operations` | Model | 0.5 | When in the year operational costs occur (0.5 = middle) |
 | `discount_rate` | Entity | 0.05 | Technology-specific WACC for annualizing investments; 0 gives invest_cost / lifetime |
 | `invest_cost` | Entity | - | Overnight investment cost [CUR/kW] |

@@ -333,6 +333,17 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "fixed_cost_per_operating_period"),
         ),
         BehaviourChange(
+            id="annuity_timing",
+            summary=("The yearly payment of the investment annuity (and of the salvage annuity of a retirement) is "
+                     "now sized for the moment inflation_offset_investment places it in the year: the annuity "
+                     "times (1 + discount_rate)^(inflation_offset_investment - 1), so the loan taken when the "
+                     "capacity comes online is worth invest_cost at the discount_rate. Before, every offset used "
+                     "the year-end annuity, so at the default offset 0 (payments at the start of each year) an "
+                     "investment cost invest_cost times (1 + discount_rate). Investments are now cheaper by one "
+                     "year of interest at offset 0 (results change); offset 1 is unchanged."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "annuity_timing"),
+        ),
+        BehaviourChange(
             id="end_of_life_closest_seam",
             summary=("With lifetime_method reinvest_choice or no_reinvestment, the end of life (start of operation "
                      "plus lifetime_technical; existing capacity from the model start) is now rounded to the "

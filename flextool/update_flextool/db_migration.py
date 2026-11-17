@@ -11310,6 +11310,40 @@ def _v81_fixed_cost_marker(db) -> None:
         _v77_set_marker(db, "fixed_cost_per_operating_period", json.dumps({"since": 81, "entities": sorted(entities)}))
 
 
+def _v81_annuity_timing_marker(db) -> None:
+    """Part 9 of v81: the behaviour-change marker ``annuity_timing`` (``{"since": 81, "entities": [...]}``) on a
+    database where an entity has a non-zero ``invest_cost`` with an ``invest_method`` that allows investment, or a
+    non-zero ``net_salvage_value`` with one that allows retirement (in some alternative), and a ``discount_rate``
+    that is not 0 in every alternative: the yearly payment of the annuity is now sized for the moment
+    ``inflation_offset_investment`` places it in the year (the annuity times (1 + discount_rate)^(offset − 1)), so
+    the loan is worth the investment cost at the discount_rate; before, at the default offset 0 it was worth the
+    cost times 1 + discount_rate.  A run names those whose annuity changes (offset not 1).  No value is rewritten.
+    Idempotent: a rerun finds the marker written.
+    """
+    no_invest = {"not_allowed", "retire_period", "retire_total", "retire_no_limit", "retire_period_total"}
+    no_retire = {"not_allowed", "invest_period", "invest_total", "invest_no_limit", "invest_period_total"}
+    entities: set[str] = set()
+    for cls in ("unit", "connection", "node"):
+        if not db.get_item("entity_class", name=cls):
+            continue
+        methods: dict[str, set[str]] = {}
+        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name="invest_method"):
+            methods.setdefault(pv["entity_byname"][0], set()).add(from_database(pv["value"], pv["type"]))
+        rates: dict[str, list[float]] = {}
+        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name="discount_rate"):
+            rates.setdefault(pv["entity_byname"][0], []).extend(
+                _v79_numbers(from_database(pv["value"], pv["type"])))
+        for param, excluded in (("invest_cost", no_invest), ("net_salvage_value", no_retire)):
+            for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name=param):
+                name = pv["entity_byname"][0]
+                if (methods.get(name, set()) - excluded
+                        and any(v != 0.0 for v in _v79_numbers(from_database(pv["value"], pv["type"])))
+                        and not (rates.get(name) and all(v == 0.0 for v in rates[name]))):
+                    entities.add(name)
+    if entities:
+        _v77_set_marker(db, "annuity_timing", json.dumps({"since": 81, "entities": sorted(entities)}))
+
+
 def _migrate_v81_schema_batch(db) -> None:
     """All schema changes of database version 81 (v80 -> v81), in one step.
 
@@ -11339,6 +11373,9 @@ def _migrate_v81_schema_batch(db) -> None:
     8. The behaviour-change marker ``fixed_cost_per_operating_period`` on the investing entities whose
        ``fixed_cost`` differs between periods: new capacity now pays the fixed cost of each period it operates in
        (:func:`_v81_fixed_cost_marker`).
+    9. The behaviour-change marker ``annuity_timing`` on the entities with an investment or salvage annuity: its
+       yearly payment is now sized for where inflation_offset_investment places it in the year
+       (:func:`_v81_annuity_timing_marker`).
 
     Values change only by the moves of part 3 and the renames of part 4.  Each part is idempotent, so a rerun of the
     step changes nothing.
@@ -11351,6 +11388,7 @@ def _migrate_v81_schema_batch(db) -> None:
     _v81_annuity_marker(db)
     _v81_end_of_life_marker(db)
     _v81_fixed_cost_marker(db)
+    _v81_annuity_timing_marker(db)
     _commit_step(db, "v81: lifetime is lifetime_technical (payback_time added, no value), salvage_value is "
                      "net_salvage_value, the lifetime_method value no_investment is no_reinvestment")
 

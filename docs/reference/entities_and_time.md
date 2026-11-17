@@ -51,7 +51,7 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
 
   - *solves*: sequence of solves in the model represented with an array of solve names.
   - *inflation_rate*: [e.g. 0.02 for 2%] Model-wide inflation rate applied to all future costs. When inputs are in real (constant-price) terms, set to 0 (default). When inputs are in nominal terms, set to expected inflation.
-  - *inflation_offset_investment*: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.
+  - *inflation_offset_investment*: [years] Offset from the year start to the payment of the investment cost annuity in each year (the first one from the year the capacity comes online). The annual payment is sized for that moment, so the payments are worth `invest_cost` at the `discount_rate` whatever the offset.
   - *inflation_offset_operations*: [years] Offset from the period (often year) start to the payment of operational costs.
   - *periods_available*: (Optional) Array of periods available for the model. Use this for periods that are in the data, but are not in period_timeset.
   - *max_flow_for_unconstrained_variables*: [MW] Upper bound for capacities and flows that have no other limit: how much capacity an entity with `invest_method` `invest_no_limit` or `invest_retire_no_limit` (or `cumulative_limits` without `cumulative_max_capacity`) can add on top of its `existing` capacity, and the flow on a unit's input or output whose `conversion_flow_coeff` is 0. The value is used as given; with several model entities the largest value is used. Keep it large enough not to limit the real solution and small enough to avoid numerical problems (see [dev/scaling.md](../dev/scaling.md)). Default 1,000,000.

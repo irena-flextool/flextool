@@ -2,10 +2,12 @@
 
 Formula::
 
-    annuity_factor(r, n) = r / (1 − (1 + r)^−n)      r ≠ 0
-                         = 1 / n                     r = 0 (|r| < 1e-9)
+    ann(r, n) = r / (1 − (1 + r)^−n)      r ≠ 0
+              = 1 / n                     r = 0 (|r| < 1e-9)
+    annuity_factor(r, n, off) = ann(r, n) · (1 + r)^(off − 1)
 
-    annualised cost A [CUR/MW/a] = invest_cost [CUR/kW] · 1000 · annuity_factor(discount_rate, payback_time)
+    annualised cost A [CUR/MW/a] = invest_cost [CUR/kW] · 1000 · annuity_factor(discount_rate, payback_time,
+                                                                                 inflation_offset_investment)
 
     G(x) = Σ_{k<⌈x⌉} min(1, x − k)·v^k = (1 − v^⌊x⌋)/(1 − v) + (x − ⌊x⌋)·v^⌊x⌋,   v = 1/(1 + i)
          = x                                                                   i = 0 (|i| < 1e-9)
@@ -15,7 +17,11 @@ Formula::
 
 What it does: ``annuity_factor`` spreads an investment (or a retirement's net salvage value) over ``payback_time``
 years at the interest ``discount_rate``.  ``r = 0`` is the straight-line limit of the formula: the annuity is
-``cost / payback_time``.  An entity without ``payback_time`` pays back over its ``lifetime_technical``.
+``cost / payback_time``.  An entity without ``payback_time`` pays back over its ``lifetime_technical``.  The
+payment of service year k falls at ``off`` years into that year (``inflation_offset_investment``: 0 its start,
+1 its end), so ``(1 + r)^(off − 1)`` sizes the payments for that moment: the loan taken when the capacity comes
+online is then worth exactly ``cost`` at ``discount_rate`` for every ``off`` (``ann`` alone is the year-end loan
+of ``off`` 1; at ``off`` 0 it was worth ``cost · (1 + r)``).
 ``level_factor`` turns that loan into the level yearly cost of the plant over its real lifetime: the present value
 (at the model's ``inflation_rate`` i) of ``n`` yearly payments A, A·G(n), spread evenly over ``L`` years, gives
 A·G(n)/G(L) a year.  It does not depend on when the plant is built, so one price per year in service holds for
@@ -32,12 +38,13 @@ Notes:
 * The payback time has no default: a missing or non-positive one where the cost is non-zero is an error
   (:func:`require_lifetime`), never a silent 20 years.
 * ``|r| < 1e-9`` takes ``1/n`` and ``|i| < 1e-9`` takes ``G(x) = x``: the closed forms lose precision there (at
-  ``r = 1e-12`` it is 9e-5 relative off), so the float and polars annuity helpers agree to rounding.
+  ``r = 1e-12`` it is 9e-5 relative off).
+* ``annuity_factor`` is a polars expression only: every path forms the annuity with it, so they agree bit for bit.
 * ``level_factor`` is float only: the price of a (payback time, lifetime) pair is computed once in Python, so equal
   inputs give a bit-equal price whatever the layout of the frame that holds them.
 
-Used by ``preprocess/params/_npv.py`` (lazy, the values the model reads) and ``preprocess/emit/_entity_annual.py``
-(the per-solve ``ed_entity_annual*.csv`` that build the invest / divest sets).
+Used, as the one form of the annuity, by ``preprocess/params/_npv.py`` (the values the model reads and the reported
+costs) and ``preprocess/emit/_entity_annual.py`` (the per-solve ``ed_entity_annual*.csv``).
 """
 from __future__ import annotations
 
@@ -54,18 +61,13 @@ DEFAULT_DISCOUNT_RATE = 0.05
 _SMALL_RATE = 1e-9
 
 
-def annuity_factor(r: float, n: float) -> float:
-    """``r / (1 − (1+r)^−n)``; ``1/n`` for ``|r| < 1e-9`` (the r → 0 limit)."""
-    if abs(r) < _SMALL_RATE:
-        return 1.0 / n
-    return r / (1.0 - (1.0 + r) ** -n)
-
-
-def annuity_factor_expr(r: pl.Expr, n: pl.Expr) -> pl.Expr:
-    """Polars form of :func:`annuity_factor` (same formula, same small-rate branch)."""
-    return (pl.when(r.abs() < _SMALL_RATE)
-              .then(1.0 / n)
-              .otherwise(r / (1.0 - (1.0 + r).pow(-n))))
+def annuity_factor(r: pl.Expr, n: pl.Expr, offset: float) -> pl.Expr:
+    """``r / (1 − (1+r)^−n) · (1+r)^(offset − 1)``; ``1/n`` for ``|r| < 1e-9`` (the r → 0 limit), ``offset`` the
+    model's ``inflation_offset_investment`` (module docstring).  At ``offset`` 1 the timing factor is exactly 1.0."""
+    ann = (pl.when(r.abs() < _SMALL_RATE)
+             .then(1.0 / n)
+             .otherwise(r / (1.0 - (1.0 + r).pow(-n))))
+    return ann * (1.0 + r).pow(offset - 1.0)
 
 
 def _level_sum(x: float, i: float) -> float:

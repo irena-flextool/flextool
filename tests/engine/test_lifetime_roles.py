@@ -34,13 +34,15 @@ def test_payback_time_falls_back_per_entity_to_the_technical_lifetime() -> None:
 # ---------------------------------------------------------------------------
 # The annuity on the payback time, the window on the technical lifetime
 #
-# invest_cost c = 1000 CUR/kW, discount_rate r = 0.05.  Hand values:
-#   n = 10: 1.05^-10 = 0.6139133, factor 0.05 / (1 - 0.6139133) = 0.1295046, annuity 1e6 · 0.1295046
-#           = 129 504.57 CUR/MW/a;
-#   n = 20: 1.05^-20 = 0.3768895, factor 0.05 / (1 - 0.3768895) = 0.0802426, annuity 80 242.59 CUR/MW/a.
+# invest_cost c = 1000 CUR/kW, discount_rate r = 0.05, the default inflation_offset_investment 0 (payments at the
+# start of each year: the year-end annuity divided by 1 + r).  Hand values:
+#   n = 10: 1.05^-10 = 0.6139133, factor 0.05 / (1 - 0.6139133) = 0.1295046, annuity 1e6 · 0.1295046 / 1.05
+#           = 123 337.69 CUR/MW/a;
+#   n = 20: 1.05^-20 = 0.3768895, factor 0.05 / (1 - 0.3768895) = 0.0802426, annuity 1e6 · 0.0802426 / 1.05
+#           = 76 421.51 CUR/MW/a.
 
-ANN_N10 = 129_504.57
-ANN_N20 = 80_242.59
+ANN_N10 = 123_337.69
+ANN_N20 = 76_421.51
 
 
 def _invest_source(lifetimes: dict[str, float]) -> InMemoryReader:
@@ -64,19 +66,20 @@ def _emit_path(lifetimes: dict[str, float]) -> tuple[float, float]:
     """``(annuity, window)`` of unit u read from the CSV-generation lookup (``_entity_annual``): the annuity and the
     technical lifetime the windows of the emitted sets use."""
     from flextool.engine.input._lifetime_roles import LIFETIME_TECHNICAL, lookup_roles
-    from flextool.engine.preprocess.emit._entity_annual import _annuity
+    from flextool.engine.preprocess.emit._entity_annual import _annuities
     from tests.engine.test_npv_cluster import _Lookup
 
     lookup = _Lookup({("u", "invest_cost"): 1000.0, ("u", "discount_rate"): 0.05,
                       **{("u", k): v for k, v in lifetimes.items()}})
-    ann = _annuity({"pp": lookup, "roles": {"pp": lookup_roles(lookup)}}, "pp", "u", "p2020", "invest_cost")
+    inp = {"pp": lookup, "roles": {"pp": lookup_roles(lookup)}, "offset_inv": 0.0}
+    ann = _annuities(inp, "invest_cost", [("u", "p2020", "pp", 1)])[0]
     return ann, lookup.get("u", LIFETIME_TECHNICAL, "p2020")
 
 
 @pytest.mark.parametrize("path", [_db_path, _emit_path], ids=["db", "emit"])
 def test_payback_time_split(path) -> None:
-    """lifetime_technical 20, payback_time 10: the annuity is over 10 years (129 504.57 per MW, not the 20-year
-    80 242.59), the window over 20."""
+    """lifetime_technical 20, payback_time 10: the annuity is over 10 years (123 337.69 per MW, not the 20-year
+    76 421.51), the window over 20."""
     ann, life = path({"lifetime_technical": 20.0, "payback_time": 10.0})
     assert math.isclose(ann, ANN_N10, rel_tol=1e-7)
     assert life == 20.0

@@ -9,7 +9,8 @@ defaults), four periods p2020 … p2035 of 5 years each, so the run years are Y 
 
 coal_plant: invest_cost 400 CUR/kW, discount_rate 0.05, lifetime 30 (longer than the run), no lifetime_method
 (reinvest_automatic: the operating window of a decision is every run period from its start of operation on),
-fixed_cost 100 CUR/kW/yr.  Annuity A = 400 · 1000 · 0.05 / (1 − 1.05^−30) CUR/MW/yr.  So, for a decision in d with
+fixed_cost 100 CUR/kW/yr.  Annuity A = 400 · 1000 · 0.05 / (1 − 1.05^−30) / 1.05 CUR/MW/yr (paid at the start of
+each year, offset 0: the year-end annuity divided by 1 + discount_rate).  So, for a decision in d with
 start of operation c(d)::
 
     lump_invest[d] = A · Σ_{d' ≥ c(d)} F_inv(d')        lump_fixed[d] = 100 · 1000 · Σ_{d' ≥ c(d)} F_ops(d')
@@ -42,7 +43,8 @@ def _f(d: str, offset: float) -> float:
 
 F_OPS = {d: _f(d, 0.5) for d in PERIODS}
 F_INV = {d: _f(d, 0.0) for d in PERIODS}
-ANNUITY = 400.0 * 1000.0 * 0.05 / (1.0 - 1.05 ** -30)
+#: The annuity, paid at the start of each year (``inflation_offset_investment`` 0): the year-end annuity / 1.05.
+ANNUITY = 400.0 * 1000.0 * 0.05 / (1.0 - 1.05 ** -30) / 1.05
 FIXED = 100.0 * 1000.0
 
 
@@ -287,11 +289,12 @@ def _assert_annualized_investment(results: dict[str, pd.DataFrame]) -> None:
     every vintage operating in it (reinvest_automatic, lifetime 30: from its start of operation to the end of the
     run).  100 MW operate from p2025, 50 MW more from p2030::
 
-        investment[d]          = MW_operating[d] · A,  A = 400 · 1000 · 0.05 / (1 − 1.05^−30) = 26 020.57 CUR/MW/yr
+        investment[d]          = MW_operating[d] · A,  A = 400 · 1000 · 0.05 / (1 − 1.05^−30) / 1.05
+                                                         = 24 781.50 CUR/MW/yr
         fixed cost invested[d] = MW_operating[d] · 100 · 1000
         MW_operating = {p2020: 0, p2025: 100, p2030: 150, p2035: 150}
 
-    so 0, 2.60206, 3.90309, 3.90309 M/yr and 0, 10, 15, 15 M/yr; the system columns (only coal_plant invests)
+    so 0, 2.47815, 3.71722, 3.71722 M/yr and 0, 10, 15, 15 M/yr; the system columns (only coal_plant invests)
     are the same.  Before: the lump in the period it is reported, divided by that period's factor (p2025 only)."""
     operating = {"p2020": 0.0, "p2025": 100.0, "p2030": 150.0, "p2035": 150.0}
     unit = results["cost_unit_annualized__d"]
@@ -487,7 +490,7 @@ def test_retirement_costs(tmp_path_factory, lifetime) -> None:
     retirement's window is p2025 … p2035 for both lifetimes (the lifetime no longer cuts it): the saving of fixed
     cost is the fixed cost the 100 MW no longer pay there, 100 · 1e5 · Σ F_ops(d) (the operations factor, as the
     fixed cost of existing capacity is charged).  The salvage value is the annuity over lifetime,
-    A = 200 · 1000 · 0.05 / (1 − 1.05^−lifetime), over the window [Y(p2025), Y(p2025) + lifetime) as an
+    A = 200 · 1000 · 0.05 / (1 − 1.05^−lifetime) / 1.05 (paid at year starts), over the window [Y(p2025), Y(p2025) + lifetime) as an
     investment's annuity: lifetime 30: p2025 … p2035; lifetime 10: p2025 and p2030; retirement =
     −100 · A · Σ F_inv(d) there.  The fixed cost of the existing capacity stays that of the user's 500 MW (the
     retirement is in its own lump, not charged again)."""
@@ -502,15 +505,15 @@ def test_retirement_costs(tmp_path_factory, lifetime) -> None:
     retired = _row(discounted, "p2025")
     assert retired["fixed cost reduction of divestments"] * MEGA == pytest.approx(
         -100.0 * FIXED * sum(F_OPS[d] for d in window), rel=1e-7)
-    salvage_annuity = SALVAGE * 1000.0 * 0.05 / (1.0 - 1.05 ** -lifetime)
+    salvage_annuity = SALVAGE * 1000.0 * 0.05 / (1.0 - 1.05 ** -lifetime) / 1.05
     assert retired["retirement"] * MEGA == pytest.approx(
         -100.0 * salvage_annuity * sum(F_INV[d] for d in salvage_window), rel=1e-7)
     for d in PERIODS:
         assert _row(discounted, d)["fixed cost pre-existing"] * MEGA == pytest.approx(
             500.0 * FIXED * F_OPS[d], rel=1e-7), d
     # Annualized: the yearly salvage annuity of the retired 100 MW in every period of the salvage window,
-    # A(200, 0.05, L) = 200 · 1000 · 0.05 / (1 − 1.05^−L) CUR/MW/yr: lifetime 30 (A = 13 010.3): −1.30103 M/yr in
-    # p2025 … p2035; lifetime 10 (A = 25 900.9): −2.59009 M/yr in p2025 and p2030; and the yearly fixed cost of the
+    # A(200, 0.05, L) = 200 · 1000 · 0.05 / (1 − 1.05^−L) / 1.05 CUR/MW/yr: lifetime 30 (A = 12 390.7): −1.23907 M/yr
+    # in p2025 … p2035; lifetime 10 (A = 24 667.5): −2.46675 M/yr in p2025 and p2030; and the yearly fixed cost of the
     # retired 100 MW, −10 M/yr in p2025 … p2035; nothing in p2020.
     for annualized in (chain["cost_unit_annualized__d"], single["cost_unit_annualized__d"]):
         for d in PERIODS:
@@ -651,7 +654,8 @@ def test_chain_of_realized_fans_reports_from_the_run_start(tmp_path_factory) -> 
 
     Both investments and operations of s40 are discounted from the start of the run (Y = 2), not from the
     start of s40, in the reported costs and in s40's own objective (item 242): its p_inflation_op of p2040 is
-    1.1^-2.5 + 1.1^-3.5 = 1.504336.  Wind: annuity A = 1000 · 1000 · 0.05 / (1 − 1.05^−30) = 65 051.44 CUR/MW/yr, fixed cost
+    1.1^-2.5 + 1.1^-3.5 = 1.504336.  Wind: annuity A = 1000 · 1000 · 0.05 / (1 − 1.05^−30) / 1.05 (paid at year
+    starts) = 61 953.75 CUR/MW/yr, fixed cost
     10 000 CUR/MW/yr, reinvest_automatic (operates to the end of the run).  The builds: the low forecast must
     cover the demand of 100 MW (penalty 1e4): 100 / 0.3 = 333.33 MW in p2030, 100 / 0.25 = 400 MW in p2040, so
     66.67 MW more.  Discounted: p2030 333.33 · A · (F_inv(p2030) + F_inv(p2040)), p2040 66.67 · A · F_inv(p2040);
@@ -675,7 +679,7 @@ def test_chain_of_realized_fans_reports_from_the_run_start(tmp_path_factory) -> 
     out = work / "output_csv" / scen
     f_inv = {"p2030": 1.0 + 1.1 ** -1, "p2040": 1.1 ** -2 + 1.1 ** -3}
     f_ops = {"p2030": 1.1 ** -0.5 + 1.1 ** -1.5, "p2040": 1.1 ** -2.5 + 1.1 ** -3.5}
-    annuity = 1000.0 * 1000.0 * 0.05 / (1.0 - 1.05 ** -30)
+    annuity = 1000.0 * 1000.0 * 0.05 / (1.0 - 1.05 ** -30) / 1.05
     built = {"p2030": 100.0 / 0.3, "p2040": 100.0 / 0.25 - 100.0 / 0.3}
     window = {"p2030": ["p2030", "p2040"], "p2040": ["p2040"]}
     operations = 100.0 * 1.0 * 8760.0
@@ -703,7 +707,8 @@ FAN_VALUES = [["model", "flextool", "inflation_rate", b64(0.04, "float")],
               ["unit", "peaker", "fixed_cost", b64(20.0, "float")]]
 FAN_F_INV = {"p2035": 1.0, "p2040": 1.04 ** -1}
 FAN_F_OPS = {"p2035": 1.04 ** -0.5, "p2040": 1.04 ** -1.5}
-FAN_ANNUITY = 1.0 * 1000.0 * 0.05 / (1.0 - 1.05 ** -1)  # 1050 CUR/MW/yr
+#: One payment at the start of the one year: the year-end annuity 1050 / 1.05 = 1000 CUR/MW/yr (= the cost).
+FAN_ANNUITY = 1.0 * 1000.0 * 0.05 / (1.0 - 1.05 ** -1) / 1.05
 FAN_FIXED = 20.0 * 1000.0
 
 
@@ -729,13 +734,13 @@ def test_fan_without_realization_reports_investment_and_existing_fixed_cost(tmp_
     reported in the period it starts operating, over the run's periods it operates in; the fixed cost of the
     existing 100 MW wind is reported in both periods.  With r = 0.04, offsets ops 0.5 / inv 0:
     F_inv = {p2035: 1, p2040: 1.04^-1}, F_ops = {p2035: 1.04^-0.5, p2040: 1.04^-1.5}; peaker annuity
-    1 · 1000 · 0.05 / (1 − 1.05^-1) = 1050 CUR/MW/yr, fixed cost 20 · 1000, wind fixed cost 10 · 1000.
+    1 · 1000 · 0.05 / (1 − 1.05^-1) / 1.05 = 1000 CUR/MW/yr (paid at the start of its one year), fixed cost 20 · 1000, wind fixed cost 10 · 1000.
 
     The builds by hand: the deficit (demand − wind) is 60 / 80 MW (high / low) in p2035 and 90 / 120 MW in
     p2040, penalty 1e4.  A decision of p2040 operates in the p2040 branches, so p2035 builds 80 MW (its larger
     deficit) and p2040 adds the 40 MW that are cheaper there (no p2035 annuity or fixed cost):
-    p2035 investment 80 · 1050 · (F_inv(p2035) + F_inv(p2040)) (reinvest_automatic: it keeps operating in p2040),
-    p2040 investment 40 · 1050 · F_inv(p2040)."""
+    p2035 investment 80 · 1000 · (F_inv(p2035) + F_inv(p2040)) (reinvest_automatic: it keeps operating in p2040),
+    p2040 investment 40 · 1000 · F_inv(p2040)."""
     fan = _results(tmp_path_factory, "stoch_fan_costs", FAN_VALUES, ["init", "base", "stoch"],
                    fixture_json=FAN_JSON)
     discounted = fan["cost_unit_discounted__d"]
@@ -755,8 +760,8 @@ FAN_LEAD_TIME = [["unit", "peaker", "construction_lead_time", b64(1.0, "float")]
 def _assert_fan_investment(fan: dict[str, pd.DataFrame], built: dict[str, float], operating: dict[str, float]) -> None:
     """The peaker's reported investment costs: ``built[d]`` MW decided in d (branch-weighted), operating in the
     run periods after their start ``operating[d']`` MW.  Discounted, in the period the capacity starts to
-    operate: investment = MW · 1050 · Σ F_inv over the periods it operates in, fixed cost invested = MW · 20 000
-    · Σ F_ops likewise; annualized: operating[d'] · 1050 and operating[d'] · 20 000 per year in every period."""
+    operate: investment = MW · 1000 · Σ F_inv over the periods it operates in, fixed cost invested = MW · 20 000
+    · Σ F_ops likewise; annualized: operating[d'] · 1000 and operating[d'] · 20 000 per year in every period."""
     discounted, annualized = fan["cost_unit_discounted__d"], fan["cost_unit_annualized__d"]
     for d in ("p2035", "p2040"):
         later = [p for p in ("p2035", "p2040") if p >= d]
@@ -778,13 +783,13 @@ def test_fan_without_realization_reports_lead_time_investment(tmp_path_factory) 
     p2040 would start after the horizon and is not offered).  Nothing operates in the p2035 branches, so the one
     shared p2035 decision covers the larger p2040 deficit, 120 MW (low).  It operates in the p2040 branches,
     whose weights 0.25 + 0.75 sum to 1, so the reported costs are the unweighted amounts, at p2040:
-    investment 120 · 1050 · F_inv(p2040) = 121 153.85, fixed cost invested 120 · 20 000 · F_ops(p2040); annualized
-    120 · 1050 and 120 · 20 000 per year in p2040 only.  Before: the start p2040 is not a realized investment
+    investment 120 · 1000 · F_inv(p2040) = 115 384.62, fixed cost invested 120 · 20 000 · F_ops(p2040); annualized
+    120 · 1000 and 120 · 20 000 per year in p2040 only.  Before: the start p2040 is not a realized investment
     period of the fan, so nothing was reported."""
     fan = _results(tmp_path_factory, "stoch_fan_lead", FAN_VALUES + FAN_LEAD_TIME, ["init", "base", "stoch"],
                    fixture_json=FAN_JSON)
     discounted = fan["cost_unit_discounted__d"]
-    assert _row(discounted, "p2040", "peaker")["investment"] * MEGA == pytest.approx(120.0 * 1050.0 / 1.04,
+    assert _row(discounted, "p2040", "peaker")["investment"] * MEGA == pytest.approx(120.0 * 1000.0 / 1.04,
                                                                                     rel=1e-7)
     # Moved from the decision period p2035 to its start p2040: F_inv / F_ops of p2040 only.
     second = _row(discounted, "p2040", "peaker")

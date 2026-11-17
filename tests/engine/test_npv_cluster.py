@@ -247,8 +247,11 @@ def _inv_factor(d: str) -> float:
 def _annuity(invest_cost_eur_per_kw: float,
                    discount_rate: float,
                    lifetime_years: float) -> float:
+    """The yearly payment of a loan of invest_cost taken when the capacity comes online, paid at OFFSET_INV years
+    into each service year: the year-end annuity sized by (1 + r)^(OFFSET_INV − 1), so the loan is worth
+    invest_cost at the discount_rate (at OFFSET_INV 0 the year-end annuity divided by 1 + r)."""
     r, n = discount_rate, lifetime_years
-    return invest_cost_eur_per_kw * 1000.0 * r / (1.0 - (1.0 / (1.0 + r)) ** n)
+    return invest_cost_eur_per_kw * 1000.0 * r / (1.0 - (1.0 / (1.0 + r)) ** n) * (1.0 + r) ** (OFFSET_INV - 1.0)
 
 
 ANN_WIND = _annuity(1000.0, 0.04, 5.0)
@@ -329,12 +332,13 @@ def test_npv_lazy_ed_entity_annual_discounted_2pct(scenario_run):
 # discount_rate 0 is 0 %, a missing rate is the 5 % default (both annuity paths)
 # ---------------------------------------------------------------------------
 #
-# invest_cost 1000 CUR/kW, lifetime_technical 20 a (no payback_time: the annuity is over 20 a).  Hand values:
-#   r = 0          → 1000·1000/20                 = 50 000 CUR/MW/a (straight line);
-#   r missing/0.05 → 1e6·0.05/(1 − 1.05^−20)      = 80 242.58719 CUR/MW/a.
+# invest_cost 1000 CUR/kW, lifetime_technical 20 a (no payback_time: the annuity is over 20 a), the default
+# inflation_offset_investment 0 (each payment at the start of its year, so sized by (1 + r)^(0 − 1)).  Hand values:
+#   r = 0          → 1000·1000/20                          = 50 000 CUR/MW/a (straight line);
+#   r missing/0.05 → 1e6·0.05/(1 − 1.05^−20) / 1.05        = 80 242.58719 / 1.05 = 76 421.51161 CUR/MW/a.
 
 ANN_R0 = 50_000.0
-ANN_R5 = 80_242.58719
+ANN_R5 = 76_421.51161
 
 
 class _Lookup:
@@ -374,7 +378,7 @@ def _lazy_annuity(disc: float | None, life: float | None, cost: float = 1000.0) 
 
 def _emit_annuity(disc: float | None, life: float | None, cost: float = 1000.0) -> float:
     from flextool.engine.input._lifetime_roles import lookup_roles
-    from flextool.engine.preprocess.emit._entity_annual import _annuity
+    from flextool.engine.preprocess.emit._entity_annual import _annuities
 
     values = {("u", "invest_cost"): cost}
     if disc is not None:
@@ -382,7 +386,8 @@ def _emit_annuity(disc: float | None, life: float | None, cost: float = 1000.0) 
     if life is not None:
         values[("u", "lifetime_technical")] = life
     lookup = _Lookup(values)
-    return _annuity({"pp": lookup, "roles": {"pp": lookup_roles(lookup)}}, "pp", "u", "p2020", "invest_cost")
+    inp = {"pp": lookup, "roles": {"pp": lookup_roles(lookup)}, "offset_inv": 0.0}
+    return _annuities(inp, "invest_cost", [("u", "p2020", "pp", 1)])[0]
 
 
 @pytest.mark.parametrize("path", [_lazy_annuity, _emit_annuity], ids=["lazy", "emit"])
@@ -403,9 +408,10 @@ def test_annuity_without_lifetime_is_an_error(path) -> None:
 
 
 def test_annuity_factor_small_rate_is_the_straight_line() -> None:
-    from flextool.engine.preprocess._annuity import annuity_factor, annuity_factor_expr
+    from flextool.engine.preprocess._annuity import annuity_factor
 
-    assert annuity_factor(0.0, 20.0) == 1 / 20
-    assert math.isclose(annuity_factor(1e-12, 20.0), 1 / 20, rel_tol=1e-9)
-    got = pl.select(annuity_factor_expr(pl.lit(1e-12), pl.lit(20.0))).item()
-    assert math.isclose(got, 1 / 20, rel_tol=1e-9)
+    def factor(r: float) -> float:
+        return pl.select(annuity_factor(pl.lit(r), pl.lit(20.0), 0.0)).item()
+
+    assert factor(0.0) == 1 / 20
+    assert math.isclose(factor(1e-12), 1 / 20, rel_tol=1e-9)

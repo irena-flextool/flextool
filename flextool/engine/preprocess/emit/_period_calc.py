@@ -80,6 +80,21 @@ def _read_csv(path: Path, columns: list[str],
     )
 
 
+def scalar_max(csv_path: Path, default: float, *, provider: "object | None" = None) -> float:
+    """The largest value of a ``(key, value)`` scalar CSV of the model (``p_inflation_rate.csv``,
+    ``p_inflation_offset_investment.csv``, ...), ``default`` when it has none."""
+    rows_df = _read_csv(csv_path, ["key", "value"], provider=provider)
+    vals: list[float] = []
+    for v in rows_df["value"].to_list():
+        if v is None or v == "":
+            continue
+        try:
+            vals.append(float(v))
+        except ValueError:
+            continue
+    return max(vals) if vals else default
+
+
 def _read_singles(path: Path,
                   *, provider: "object | None" = None) -> list[str]:
     """List the first column of a header+rows CSV, dropping blanks."""
@@ -281,25 +296,9 @@ def emit_period_calculated_params(
     _emit_keyed(provider, "solve_data/complete_period_share_of_year_calc.csv",
                 ("period", "value"), complete_share)
 
-    def _scalar_max(csv_path: Path, default: float) -> float:
-        rows_df = _read_csv(csv_path, ["key", "value"], provider=provider)
-        vals: list[float] = []
-        for v in rows_df["value"].to_list():
-            if v is None or v == "":
-                continue
-            try:
-                vals.append(float(v))
-            except ValueError:
-                continue
-        return max(vals) if vals else default
-
-    p_inflation = _scalar_max(input_dir / "p_inflation_rate.csv", 0.0)
-    p_infl_offset_investment = _scalar_max(
-        input_dir / "p_inflation_offset_investment.csv", 0.0,
-    )
-    p_infl_offset_operations = _scalar_max(
-        input_dir / "p_inflation_offset_operations.csv", 0.5,
-    )
+    p_inflation = scalar_max(input_dir / "p_inflation_rate.csv", 0.0, provider=provider)
+    p_infl_offset_investment = scalar_max(input_dir / "p_inflation_offset_investment.csv", 0.0, provider=provider)
+    p_infl_offset_operations = scalar_max(input_dir / "p_inflation_offset_operations.csv", 0.5, provider=provider)
 
     global_years_set: dict[str, None] = {}
     for years_list in years_for_period.values():

@@ -16,9 +16,10 @@ invest_max_total 150, discount_rate 0.05, other_operational_cost 1 CUR/MWh), wit
 p2040: 1, p2045: 1} CUR/kW and ``lifetime`` 30 years (all capacity alive over the run).  p2045 uses ts1.
 
 Hand values: p2035 residual 120 - 60 = 60 MW -> invest 60; p2040 residual 120 MW -> 60 more; p2045 residual 60 MW
-< 120 MW existing -> invest 0.  Annuity at r = 0.05, n = 30: 0.05 / (1 - 1.05**-30) = 0.0650514.  The p2040
-annualized unit investment (both investments operate in p2040): (60 MW * 3000 CUR/MW + 60 MW * 1000 CUR/MW) *
-0.0650514 = 240 000 * 0.0650514 = 15 612.3 CUR = 0.0156123 M CUR.
+< 120 MW existing -> invest 0.  Annuity at r = 0.05, n = 30, paid at the start of each year (the default
+inflation_offset_investment 0): 0.05 / (1 - 1.05**-30) / 1.05 = 0.0619537.  The p2040 annualized unit investment
+(both investments operate in p2040): (60 MW * 3000 CUR/MW + 60 MW * 1000 CUR/MW) * 0.0619537 = 240 000 *
+0.0619537 = 14 868.9 CUR = 0.0148689 M CUR.
 
 A second chain (item 266) checks the investment duals the same way: ``s1`` does not invest in p2040, so the p2040
 marginal (``unit_invest_marginal__d``) is the non-zero reduced cost of ``s1``, not ``s2``'s 0 row.
@@ -34,7 +35,7 @@ SCENARIO = "two_solves_invest_ahead"
 S1 = "stoch_2p_mid"
 S2 = "s2_dispatch_p2040"
 EXPECTED_INVESTED = {"p2035": 60.0, "p2040": 60.0, "p2045": 0.0}
-_ANNUITY_30Y = 0.05 / (1.0 - 1.05 ** -30)
+_ANNUITY_30Y = 0.05 / (1.0 - 1.05 ** -30) / 1.05
 EXPECTED_P2040_ANNUALIZED_INVEST_MCUR = (60.0 * 3000.0 + 60.0 * 1000.0) * _ANNUITY_30Y / 1e6
 SCENARIO_NO_P2040_INVEST = "two_solves_no_p2040_invest"
 
@@ -136,12 +137,12 @@ def test_invest_marginal_of_a_period_comes_from_the_realizing_solve(tmp_path, mo
     p2040 row is a 0.
 
     Hand marginal = -(objective cost of 1 MW invested in d) / 1000 [CUR/kW] (value 0).  Undiscounted (factor 1,
-    years_represented 1), 1 MW invested in d costs invest_cost[d] * 1000 CUR/MW * a (a = 0.0650514, r = 0.05,
-    n = 30) in each period of the investing solve it is alive in:
+    years_represented 1), 1 MW invested in d costs invest_cost[d] * 1000 CUR/MW * a (a = 0.0619537, r = 0.05,
+    n = 30, paid at the start of each year) in each period of the investing solve it is alive in:
 
-    * p2035 (``s1``, alive in p2035 and p2040): -(3 * a * 2) = -0.3903084 CUR/kW
-    * p2040 (``s1``, alive in p2040):           -(1 * a * 1) = -0.0650514 CUR/kW
-    * p2045 (``s2``, alive in p2045):           -(1 * a * 1) = -0.0650514 CUR/kW
+    * p2035 (``s1``, alive in p2035 and p2040): -(3 * a * 2) = -0.3717225 CUR/kW
+    * p2040 (``s1``, alive in p2040):           -(1 * a * 1) = -0.0619537 CUR/kW
+    * p2045 (``s2``, alive in p2045):           -(1 * a * 1) = -0.0619537 CUR/kW
     """
     wf, csv_dir = _run_chain_and_write_outputs(tmp_path, monkeypatch, no_p2040_invest=True)
 

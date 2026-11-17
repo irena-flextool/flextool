@@ -441,7 +441,7 @@ def test_retirement_costs_stop_at_the_end_of_life(tmp_path_factory) -> None:
     (``test_chain_costs`` factors, r = 0.04 / offsets 0.5 and 0)::
 
         fixed cost reduction (p2025) = −100 · 1e5 · (F_ops(p2025) + F_ops(p2030))
-        A = 200 · 1000 · 0.05 / (1 − 1.05^−15) = 19 268.46 CUR/MW/yr
+        A = 200 · 1000 · 0.05 / (1 − 1.05^−15) / 1.05 = 18 350.91 CUR/MW/yr (paid at year starts)
         retirement (p2025)           = −100 · A · (F_inv(p2025) + F_inv(p2030) + F_inv(p2035))
         fixed cost pre-existing (d)  = 500 · 1e5 · F_ops(d) in p2020 … p2030, 0 in p2035
 
@@ -454,7 +454,7 @@ def test_retirement_costs_stop_at_the_end_of_life(tmp_path_factory) -> None:
     _assert_same_results(chain, single)
     window = ["p2025", "p2030"]
     salvage_window = ["p2025", "p2030", "p2035"]
-    annuity = SALVAGE * 1000.0 * 0.05 / (1.0 - 1.05 ** -15.0)
+    annuity = SALVAGE * 1000.0 * 0.05 / (1.0 - 1.05 ** -15.0) / 1.05
     discounted = single["cost_unit_discounted__d"]
     rows = discounted[(discounted["period"] == "p2025") & (discounted["unit"] == PLANT)]
     assert rows["fixed cost reduction of divestments"].sum() * MEGA == pytest.approx(

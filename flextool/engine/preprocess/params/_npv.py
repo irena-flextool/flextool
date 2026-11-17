@@ -55,8 +55,9 @@ Algorithm:
   where:
 
   * ``annuity`` = sum-over-allowed-methods of
-    ``invest_value × 1000 × annuity_factor(r, n)`` (:mod:`.._annuity`:
-    ``r / (1 - (1+r)^-n)``, ``1/n`` at ``r = 0``), ``n`` the payback time
+    ``invest_value × 1000 × annuity_factor(r, n, off)`` (:mod:`.._annuity`:
+    ``r / (1 - (1+r)^-n) · (1+r)^(off − 1)``, ``1/n`` at ``r = 0``; ``off`` the
+    ``inflation_offset_investment``), ``n`` the payback time
     (``payback_time``, else the entity's ``lifetime_technical``).  A missing
     ``r`` takes the schema default (0.05); a missing payback time where the
     cost is not 0 is an error.  The investment of ``reinvest_choice`` /
@@ -106,7 +107,7 @@ from flextool.engine.input._axis_enums import (
     schema_dtype,
 )
 from flextool.engine.preprocess._annuity import (
-    annuity_factor_expr,
+    annuity_factor,
     default_discount_rate,
     level_factor,
     require_lifetime,
@@ -691,6 +692,26 @@ def _notice_discount_rate_zero() -> None:
 
 
 ANNUITY_OVER_PAYBACK_TIME = "annuity_over_payback_time"
+ANNUITY_TIMING = "annuity_timing"
+
+
+def _notice_annuity_timing(rows: pl.LazyFrame, offset: float) -> None:
+    """The ``annuity_timing`` notice for the entities its marker names (an upgraded database whose annuity was the
+    year-end annuity at every ``inflation_offset_investment``) whose annuity now differs: ``rows`` ``[e, cost,
+    disc]`` (the cost and discount_rate of each annuity of the solve); it differs where the offset is not 1 and
+    both are non-zero.  Built only while the marker names entities."""
+    from flextool.engine import _behaviour_changes as bc
+
+    if offset == 1.0 or not bc.has_marker(ANNUITY_TIMING):
+        return
+    names = {str(n) for n in bc.marker_json(ANNUITY_TIMING).get("entities") or []}
+    if not names:
+        return
+    changed = (rows.filter((pl.col("cost") != 0) & (pl.col("disc") != 0))
+                   .select("e").unique().collect()["e"].to_list())
+    hit = sorted(names & {str(e) for e in changed})
+    if hit:
+        bc.notice(ANNUITY_TIMING, "entities", hit)
 
 
 def _notice_annuity_over_payback_time(paid: pl.LazyFrame, before) -> None:
@@ -741,7 +762,7 @@ def _per_method_annuity_lf(
 
       For each (e, d) ∈ ed_lf:
         ann[e, d] = Σ_{m ∈ invest_methods[e] \\ disallowed}
-                       cost[e, d] · 1000 · annuity_factor(discount_rate[e, d], payback_time[e, d])
+                       cost[e, d] · 1000 · annuity_factor(discount_rate[e, d], payback_time[e, d], off_inv)
         (when e ∈ unit ∪ connection ∪ node)
 
     The inner computation does NOT depend on ``m`` — every allowed
@@ -790,9 +811,12 @@ def _per_method_annuity_lf(
     require_lifetime(bad.iter_rows(), cost_param_name, PAYBACK_TIME)
     _notice_discount_rate_zero()
 
-    # Annuity: cost [CUR/kW] × 1000 × annuity_factor(r, n).
+    # Annuity: cost [CUR/kW] × 1000 × annuity_factor(r, n, inflation_offset_investment).
+    offset = _solve_inflation_scalars(source)[1]
+    _notice_annuity_timing(ed_with_life.join(method_count_lf, on="e", how="inner").filter(in_class)
+                           .select("e", "cost", "disc"), offset)
     annuity_expr = (pl.col("cost") * 1000.0
-                    * annuity_factor_expr(pl.col("disc"), pl.col("life")))
+                    * annuity_factor(pl.col("disc"), pl.col("life"), offset))
     out = (ed_with_life
               .join(method_count_lf, on="e", how="left")
               .with_columns(

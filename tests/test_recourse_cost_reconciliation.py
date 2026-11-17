@@ -8,13 +8,14 @@ investment-cost breakdown against the LP objective.
 0.25 / 0.75, no realization solve) revealing at its first period (p2035).
 Under recourse each forecast decides its own investment; the reported
 investment costs inside a fan are each branch's investment weighted by its
-branch weight, at the fan's period labels.  The LP objective (0.196875 M)
+branch weight, at the fan's period labels.  The LP objective (0.1875 M)
 is exactly that probability-weighted investment::
 
-    0.25·(60·2100 + 30·1050) + 0.75·(80·2100 + 40·1050) = 196 875
+    0.25·(60·2000 + 30·1000) + 0.75·(80·2000 + 40·1000) = 187 500
 
 (high builds 60 MW in p2035 and 30 more in p2040, low 80 and 40; annuity
-1050 per MW and year, a p2035 decision pays two years), so the
+1 · 1000 · 0.05 / (1 − 1.05^−1) / 1.05 = 1000 per MW and year, paid at the start
+of the year, a p2035 decision pays two years), so the
 "Investment costs for realized periods" total equals the objective.
 """
 from __future__ import annotations
@@ -99,5 +100,5 @@ def test_recourse_invest_cost_reconciles_to_objective(
 
     # The investment inside the fan is reported branch-weighted, so the
     # reported investment equals the objective (which holds nothing else).
-    assert objective == pytest.approx(0.196875, rel=1e-6)
+    assert objective == pytest.approx(0.1875, rel=1e-6)
     assert invest_realized == pytest.approx(objective, rel=1e-6)

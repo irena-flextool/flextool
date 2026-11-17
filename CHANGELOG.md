@@ -25,11 +25,22 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   horizon: a 12-year plant whose life is rounded to 10 years pays the yearly cost of the 12-year plant for 10
   years. The price does not depend on the build period or the period lengths; `payback_time` and `discount_rate`
   set only its size (with `discount_rate` equal to `inflation_rate` the payback time changes nothing for a whole
-  number of years; with a lower `discount_rate` a shorter payback time costs more). Before, every period that started before the end of the
-  lifetime paid the annuity in full (a 12-year lifetime on 5-year periods paid 15 years), also after the capacity
+  number of years; with a lower `discount_rate` a shorter payback time costs more). Before, every period that
+  started before the end of the lifetime paid the annuity in full (a 12-year lifetime on 5-year periods paid 15 years), also after the capacity
   was gone. The fixed cost runs over the same years; `reinvest_automatic` still pays the annuity every year to the
   end of the horizon. Upgraded databases get a notice naming the entities whose investment cost changes (results
   change).
+- **Investments get cheaper by one year of interest at the default `inflation_offset_investment` 0: the yearly
+  investment payment is sized for when it is paid** (unit, connection, node). The annuity is now `invest_cost ·
+  discount_rate / (1 − (1 + discount_rate)^−payback_time) · (1 + discount_rate)^(inflation_offset_investment − 1)`.
+  Before, the annuity was sized for payments at year ends, but the default offset 0 places each payment at the start
+  of its year (the first one on the day the capacity comes online), so the payments were worth `invest_cost · (1 +
+  discount_rate)` at the `discount_rate` instead of `invest_cost`. Now they are worth `invest_cost` at every offset.
+  With offset 0 every investment cost and every salvage annuity of a retirement falls by the factor 1 / (1 +
+  `discount_rate`) (for example 1 / 1.05 at 5 %), so more investment can pay and objective values, investment
+  decisions and reported investment costs change; offset 1 and `discount_rate` 0 give the same results as before.
+  Upgraded databases get a notice naming the entities with an investment or salvage annuity (results change).
+  The FlexTool 2 import sets `inflation_offset_investment` 1, the year-end annuity FlexTool 2 charges.
 - **New capacity pays the `fixed_cost` of each period it operates in**, as existing capacity does (unit,
   connection, node). In FlexTool 4.5.0 an investment paid the `fixed_cost` of the period it came online in every
   period it operated, so with a `fixed_cost` period map the fixed cost of new capacity changes; a constant
