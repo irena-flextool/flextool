@@ -981,6 +981,28 @@
     </label>
 <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
 <li class="md-nav__item">
+<a class="md-nav__link" href="#release-451-17112026-database-migration-fixes-schema-v80">
+<span class="md-ellipsis">
+      
+        Release 4.5.1 (17.11.2026) — database migration fixes (schema v80)
+      
+    </span>
+</a>
+<nav aria-label="Release 4.5.1 (17.11.2026) — database migration fixes (schema v80)" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#fixes">
+<span class="md-ellipsis">
+      
+        Fixes
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="#release-450-16112026-inf-as-no-limit-scaling-guard-ramp-envelope-and-ramp-frequency-plots-piecewise-linear-efficiency-full-load-efficiency-in-reduced-unit-detail-capacity-margin-renames-and-many-fixes-schema-v80">
 <span class="md-ellipsis">
       
@@ -1009,7 +1031,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes">
+<a class="md-nav__link" href="#fixes_1">
 <span class="md-ellipsis">
       
         Fixes
@@ -1049,7 +1071,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes_1">
+<a class="md-nav__link" href="#fixes_2">
 <span class="md-ellipsis">
       
         Fixes
@@ -1331,7 +1353,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes_2">
+<a class="md-nav__link" href="#fixes_3">
 <span class="md-ellipsis">
       
         Fixes
@@ -1371,7 +1393,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes_3">
+<a class="md-nav__link" href="#fixes_4">
 <span class="md-ellipsis">
       
         Fixes
@@ -2211,7 +2233,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes_4">
+<a class="md-nav__link" href="#fixes_5">
 <span class="md-ellipsis">
       
         Fixes
@@ -2884,6 +2906,28 @@
     </label>
 <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
 <li class="md-nav__item">
+<a class="md-nav__link" href="#release-451-17112026-database-migration-fixes-schema-v80">
+<span class="md-ellipsis">
+      
+        Release 4.5.1 (17.11.2026) — database migration fixes (schema v80)
+      
+    </span>
+</a>
+<nav aria-label="Release 4.5.1 (17.11.2026) — database migration fixes (schema v80)" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#fixes">
+<span class="md-ellipsis">
+      
+        Fixes
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="#release-450-16112026-inf-as-no-limit-scaling-guard-ramp-envelope-and-ramp-frequency-plots-piecewise-linear-efficiency-full-load-efficiency-in-reduced-unit-detail-capacity-margin-renames-and-many-fixes-schema-v80">
 <span class="md-ellipsis">
       
@@ -2912,7 +2956,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes">
+<a class="md-nav__link" href="#fixes_1">
 <span class="md-ellipsis">
       
         Fixes
@@ -2952,7 +2996,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes_1">
+<a class="md-nav__link" href="#fixes_2">
 <span class="md-ellipsis">
       
         Fixes
@@ -3234,7 +3278,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes_2">
+<a class="md-nav__link" href="#fixes_3">
 <span class="md-ellipsis">
       
         Fixes
@@ -3274,7 +3318,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes_3">
+<a class="md-nav__link" href="#fixes_4">
 <span class="md-ellipsis">
       
         Fixes
@@ -4114,7 +4158,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes_4">
+<a class="md-nav__link" href="#fixes_5">
 <span class="md-ellipsis">
       
         Fixes
@@ -4727,6 +4771,32 @@
 <div class="md-content" data-md-component="content">
 <article class="md-content__inner md-typeset">
 <h1 id="release-notes">Release notes</h1>
+<h2 id="release-451-17112026-database-migration-fixes-schema-v80">Release 4.5.1 (17.11.2026) — database migration fixes (schema v80)</h2>
+<p>Migrating older input databases works again in more cases. No change to the model, results or data version.</p>
+<h3 id="fixes">Fixes</h3>
+<ul>
+<li><strong>Migrating a database whose parameter default names a renamed value works.</strong> A database whose
+  <code>capacity_margin_method</code> default was <em>manual</em> or <em>share_of_peak</em> stopped migrating at data version 79 ("default
+  value ... not in list"); it now reaches version 80 with the default <em>absolute</em> / <em>relative_of_peak_demand</em>. The same
+  holds for a default <em>lagrangian</em> (<code>solve.decomposition</code>, now <em>benders</em>) or <em>lagrangian_region</em>
+  (<code>group.decomposition_method</code>, now <em>benders_regional</em>), and for a <code>storage_binding_method</code> default renamed in data
+  version 25. A default naming a value that an older migration step removed (<code>storage_binding_method</code>
+<em>bind_within_timeset</em>, <em>bind_using_blended_weights</em>, <em>bind_within_model</em>; <code>storage_nested_fix_method</code> <em>no</em>;
+  <code>solve_mode</code> <em>single_shot</em>) could end up as an unrelated value of the list; it now becomes the value's new name
+  (<em>bind_within_timeblock</em>, <em>bind_within_solve_blended_weights</em>, <em>bind_within_solve</em>, <em>fix_nothing</em>, <em>single_solve</em>).</li>
+<li><strong>A database older than data version 25 migrates again</strong>, also one that an earlier FlexTool 4 already tried
+  to migrate. The migration stopped with "there's already a parameter_definition ... flow_coefficient": the data
+  version 23 step created an empty <code>flow_coefficient</code> beside the unit flow <code>coefficient</code>, which version 35 renames
+  to <code>flow_coefficient</code>. The failed attempt left the database partly migrated under its old version number; running
+  the migration again then stopped earlier ("no entity_class matching timeblockSet"). Now the version 23 step types
+  <code>coefficient</code>, the steps that the failed attempt already applied recognise that and skip it, and version 35 removes
+  the empty <code>flow_coefficient</code> left by the earlier attempt. Such a database ends the same as one migrated in a single
+  run, with its <code>coefficient</code> values kept. A <code>flow_coefficient</code> that holds values beside <code>coefficient</code> stops the
+  migration with a message.</li>
+<li><strong>A database at data version 25 to 34 now gets the value type float on <code>unit__inputNode.input_share_max</code> /
+  <code>input_share_min</code> and <code>unit__outputNode.capacity_max_coeff</code> / <code>capacity_min_coeff</code></strong> when it migrates, as in the
+  shipped schema (before, only a database that had gone through the version 23 step got it).</li>
+</ul>
 <h2 id="release-450-16112026-inf-as-no-limit-scaling-guard-ramp-envelope-and-ramp-frequency-plots-piecewise-linear-efficiency-full-load-efficiency-in-reduced-unit-detail-capacity-margin-renames-and-many-fixes-schema-v80">Release 4.5.0 (16.11.2026) — inf as no limit, scaling guard, ramp envelope and ramp frequency plots, piecewise linear efficiency, full-load efficiency in reduced unit detail, capacity margin renames and many fixes (schema v80)</h2>
 <p>Input databases move to data version 80. The FlexTool window, the Spine Toolbox workflow and <code>flextool-run
 --migrate</code> migrate them. FlexTool now needs polar-high 3.15.0 or newer (installed with FlexTool).</p>
@@ -4798,7 +4868,7 @@
   <code>min_instant_flow</code>, <code>inertia_limit</code> and <code>non_synchronous_limit</code> take the mean over a solve's coarse step, so such
   a step has no limit at all; the warning names the steps. A step mixing <code>inf</code> and <code>-inf</code> is an error.</li>
 </ul>
-<h3 id="fixes">Fixes</h3>
+<h3 id="fixes_1">Fixes</h3>
 <ul>
 <li><strong><code>reduce_unit_detail_method</code> <em>online</em> runs <em>min_load_efficiency</em> and <em>piecewise_linear</em> units at their
   full-load efficiency</strong> (<code>efficiency</code>, or the curve's point at load share 1), as <em>constant_efficiency</em> units, also
@@ -5497,7 +5567,7 @@ needs polar-high 3.14.0 or newer (installed with FlexTool).</p>
   texts changed, so a chat resumed starts a fresh history with the AI service, and an evaluation run asks its
   unfinished cells again.</li>
 </ul>
-<h3 id="fixes_1">Fixes</h3>
+<h3 id="fixes_2">Fixes</h3>
 <h4 id="settings-comparison-and-project-files">Settings, comparison and project files</h4>
 <ul>
 <li><strong>A settings database that is not found is no longer ignored silently</strong>: the run warns that its output settings
@@ -9307,7 +9377,7 @@ migrated database solves byte-identically until you opt into the new levers.</p>
   cascade's exit scan. Tunable via <code>FLEXTOOL_ACCEPT_*</code> knobs; default
   thresholds are conservative.</li>
 </ul>
-<h3 id="fixes_2">Fixes</h3>
+<h3 id="fixes_3">Fixes</h3>
 <ul>
 <li><strong>Reserve balance crashed on dynamic / N-1 reserves.</strong> The dynamic and
   N-1 reserve-balance right-hand side left the flow variable's native
@@ -9377,7 +9447,7 @@ exercise those paths.</p>
   weighted by regional demand. Default (no flags / no region groups) is the
   unweighted, byte-parity path.</li>
 </ul>
-<h3 id="fixes_3">Fixes</h3>
+<h3 id="fixes_4">Fixes</h3>
 <ul>
 <li><strong>Storage nested-fix handoff was inert / inverted.</strong> Three fixes to the
   multi-solve coarse→fine storage handoff: (1) the
@@ -10532,7 +10602,7 @@ model or input changes.</p>
 <li>Execution log no longer unresponsive / unselectable (refreshes coalesced).</li>
 <li>Status icons, spinners and checkboxes use Windows-renderable glyphs.</li>
 </ul>
-<h3 id="fixes_4">Fixes</h3>
+<h3 id="fixes_5">Fixes</h3>
 <ul>
 <li>Migration: the <code>timeblockSet</code> -&gt; <code>timeset</code> timeline collapse is now deterministic.</li>
 <li>Input: <code>p_section</code> wired on the synthetic-solve early return.</li>
