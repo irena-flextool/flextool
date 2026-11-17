@@ -10674,7 +10674,8 @@ def _migrate_v80_schema_batch(db) -> None:
 #: ``lifetime`` moves to ``lifetime_technical`` only: an entity without ``payback_time`` pays back over its
 #: ``lifetime_technical`` (``engine/input/_lifetime_roles.py``), so a copy into ``payback_time`` would only repeat it.
 #: Databases migrated to 81 by an earlier development build of this step also hold a ``payback_time`` copy of each
-#: ``lifetime``; they are not migrated again and keep it, which builds the same model as the fallback (equal values).
+#: ``lifetime``; they are not migrated again and keep it, which builds the same model as the fallback (equal values,
+#: both read at the period the capacity comes online, also after a construction lead time).
 V81_VALUE_MOVES: dict[str, tuple[str, ...]] = {
     "lifetime": ("lifetime_technical",),
     "salvage_value": ("net_salvage_value",),
@@ -10713,7 +10714,7 @@ def _v81_texts() -> dict[tuple[str, str], str]:
             "from the model start. Without payback_time, invest_cost is annualized over it. Required when the "
             f"{what} invests or retires with a cost (invest_cost, net_salvage_value) and has no payback_time, and "
             "when lifetime_method is reinvest_choice or no_reinvestment (also for existing capacity without "
-            f"investment). Constant or period: an investment uses the value of the period it is decided in, "
+            f"investment). Constant or period: the value of the period when the {cap} comes online is used, for "
             f"existing {cap} that of the first period.")
         t[(cls, "payback_time")] = (
             "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor). With "
@@ -11021,7 +11022,8 @@ def _migrate_v81_schema_batch(db) -> None:
        ``salvage_value`` values go to ``net_salvage_value``; the old definitions are removed
        (:func:`_v81_move_values`).  A database migrated to 81 by an earlier development build of this step, which
        also copied each ``lifetime`` value to ``payback_time``, keeps that copy (a value move never reaches a
-       database already at 81); the copy equals the fallback, so the model is the same.
+       database already at 81); the copy equals the fallback, and both are read at the period the capacity comes
+       online (also after a construction lead time), so the model is the same.
     4. The ``lifetime_method`` value ``no_investment`` is ``no_reinvestment``, in the value list and in every stored
        value (:func:`_v81_list_member_renames`).
     5. The descriptions of the new definitions and of ``lifetime_method``, ``discount_rate``, ``invest_cost``,

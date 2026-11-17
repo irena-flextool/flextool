@@ -187,14 +187,20 @@ def test_investment_that_never_operates_is_not_offered(tmp_path_factory, capsys)
     assert invest_alive(step) == [("p2020", "p2020"), ("p2025", "p2025")]
 
 
-@pytest.mark.parametrize("lead", [False, True])
+@pytest.mark.parametrize("lead", [False, True, "map"])
 def test_entity_whose_every_investment_never_operates_solves(tmp_path_factory, lead) -> None:
     """wind_plant (the only entity that invests) lifetime_technical 4, previous_seam.  Decided in p2025: y_on 5,
     Y 9 → 5 = y_on.  With a 5-year construction lead time, decided in p2020: starts to operate in p2025, y_on 5,
-    Y 9 → 5 = y_on.  Either way the one decision would never operate: the solve has no investment set and no
-    investment column, and it solves."""
+    Y 9 → 5 = y_on; also with the lifetime the map {p2020: 20, p2025: 4, p2030: 20}, whose online period's value
+    describes the plant (owner decision D50; the decision period's 20 would give Y 25 → 20, in service in p2025
+    and p2030).  Each way the one decision would never operate: the solve has no investment set and no investment
+    column, and it solves."""
     if lead:
         values = solve_values(invest=["p2020"]) + _cap_every_period(_lead_time_wind(4.0, "previous_seam"))
+        if lead == "map":
+            values = [row if row[2] != "lifetime_technical" else
+                      ["unit", WIND, "lifetime_technical", _map({"p2020": 20.0, "p2025": 4.0, "p2030": 20.0})]
+                      for row in values]
     else:
         values = solve_values(invest=["p2025"]) + wind_invest(4.0, "previous_seam")
     steps = steps_of(tmp_path_factory, f"eol_never_all_{lead}", values)
@@ -230,13 +236,14 @@ def test_fixed_cost_of_an_investment_stops_at_its_rounded_end_of_life(tmp_path_f
     assert invest_alive(step) == [("p2025", d) for d in periods]
 
 
-def test_lead_time_investment_takes_the_lifetime_of_its_decision_period(tmp_path_factory) -> None:
+def test_lead_time_investment_takes_the_lifetime_of_its_online_period(tmp_path_factory) -> None:
     """wind_plant decided in p2020 (y 0) with a 5-year construction lead time starts to operate in p2025 (y_on 5);
     lifetime_technical is a map {p2020: 3, p2025: 20, p2030: 20}, end_of_life_method next_seam, fixed_cost 10
-    CUR/kW/a.  The lifetime is that of the decision period, 3: Y = 5 + 3 = 8 → next_seam 10, so the cohort is in
-    service in p2025 only and pays its fixed cost there: ``lifetime_fixed_cost[p2020] = 10 · 1000 ·
-    inflation_op[p2025]``, the reported operating window p2025.  (The lifetime of the start of operation, 20, would
-    give Y = 25, past the horizon end 20: p2025 and p2030.)"""
+    CUR/kW/a.  The period map describes the plant as constructed (owner decision D50), so the lifetime is that of
+    the online period p2025, 20: Y = 5 + 20 = 25, past the horizon end 20 (the last seam) → next_seam +inf, so the
+    cohort is in service in p2025 and p2030 and pays its fixed cost there: ``lifetime_fixed_cost[p2020] = 10 · 1000
+    · (inflation_op[p2025] + inflation_op[p2030])``, the reported operating window p2025, p2030.  (The lifetime of
+    the decision period, 3, would give Y = 8 → 10: p2025 only.)"""
     values = solve_values(invest=["p2020"]) + [
         ["unit", WIND, "lifetime_method", b64("reinvest_choice", "str")],
         ["unit", WIND, "invest_method", b64("invest_period", "str")],
@@ -249,14 +256,14 @@ def test_lead_time_investment_takes_the_lifetime_of_its_decision_period(tmp_path
         ["unit", WIND, "fixed_cost", b64(10.0, "float")]]
     (step,) = steps_of(tmp_path_factory, "eol_lead_life", values).values()
     fd = step.flex_data
-    assert invest_alive(step) == [("p2020", "p2025")]
+    assert invest_alive(step) == [("p2020", "p2025"), ("p2020", "p2030")]
     op = {str(d): float(v) for d, v in fd.p_inflation_op.frame.select(pl.col("d").cast(pl.Utf8), "value").iter_rows()}
     lfc = fd.ed_lifetime_fixed_cost.frame.filter((pl.col("e").cast(pl.Utf8) == WIND)
                                                  & (pl.col("d").cast(pl.Utf8) == "p2020"))
-    assert lfc["value"].to_list() == [pytest.approx(10.0 * 1000.0 * op["p2025"], rel=1e-12)]
+    assert lfc["value"].to_list() == [pytest.approx(10.0 * 1000.0 * (op["p2025"] + op["p2030"]), rel=1e-12)]
     window = fd.edd_operating_window.filter((pl.col("e").cast(pl.Utf8) == WIND)
                                             & (pl.col("d_invest").cast(pl.Utf8) == "p2020"))
-    assert sorted(str(d) for d in window["d"].to_list()) == ["p2025"]
+    assert sorted(str(d) for d in window["d"].to_list()) == ["p2025", "p2030"]
 
 
 # ---------------------------------------------------------------------------
@@ -380,10 +387,10 @@ def test_notice_is_registered() -> None:
     assert NOTICE_ID in BEHAVIOUR_CHANGES
 
 
-def _lead_time_annuity(tmp_path_factory, alt: str, payback: float | None) -> tuple[float, float]:
-    """``(ed_annuity, ed_entity_annual_discounted)`` of wind_plant decided in p2020 with a 5-year construction lead
-    time (online in p2025), lifetime_technical {p2020: 3, p2025: 20, p2030: 20}, and ``payback`` as its constant
-    payback_time (none when None)."""
+def _lead_time_annuity_step(tmp_path_factory, alt: str, payback: list | None):
+    """The step of wind_plant decided in p2020 with a 5-year construction lead time (online in p2025),
+    lifetime_technical {p2020: 3, p2025: 20, p2030: 20}, and ``payback`` (an encoded value) as its payback_time
+    (none when None)."""
     values = solve_values(invest=["p2020"]) + [
         ["unit", WIND, "lifetime_method", b64("reinvest_choice", "str")],
         ["unit", WIND, "invest_method", b64("invest_period", "str")],
@@ -394,27 +401,99 @@ def _lead_time_annuity(tmp_path_factory, alt: str, payback: float | None) -> tup
         ["unit", WIND, "construction_lead_time", b64(5.0, "float")],
         ["unit", WIND, "end_of_life_method", b64("next_seam", "str")]]
     if payback is not None:
-        values.append(["unit", WIND, "payback_time", b64(payback, "float")])
+        values.append(["unit", WIND, "payback_time", payback])
     (step,) = steps_of(tmp_path_factory, alt, values).values()
+    return step
+
+
+def _at_decision(frame: pl.DataFrame, d: str = "p2020") -> float:
+    """The value of wind_plant's decision ``d`` in ``frame`` (``[e, d, value]``)."""
+    rows = frame.filter((pl.col("e").cast(pl.Utf8) == WIND) & (pl.col("d").cast(pl.Utf8) == d))
+    (value,) = rows["value"].to_list()
+    return float(value)
+
+
+def _lead_time_annuity(step) -> tuple[float, float]:
+    """``(ed_annuity, ed_entity_annual_discounted)`` of wind_plant's decision p2020 in ``step``."""
     fd = step.flex_data
-
-    def at_decision(frame: pl.DataFrame) -> float:
-        rows = frame.filter((pl.col("e").cast(pl.Utf8) == WIND) & (pl.col("d").cast(pl.Utf8) == "p2020"))
-        (value,) = rows["value"].to_list()
-        return float(value)
-
-    return at_decision(fd.ed_annuity.frame), at_decision(fd.ed_entity_annual_discounted.frame)
+    return _at_decision(fd.ed_annuity.frame), _at_decision(fd.ed_entity_annual_discounted.frame)
 
 
-def test_lead_time_annuity_without_payback_time_takes_the_lifetime_of_its_decision_period(tmp_path_factory) -> None:
+def test_lead_time_annuity_without_payback_time_takes_the_lifetime_of_its_online_period(tmp_path_factory) -> None:
     """Without payback_time the annuity of wind_plant (decided in p2020, online in p2025) is over the
-    lifetime_technical of its decision period, 3 years (not that of p2025, 20), as its end of life is: the same as
-    with payback_time 3.  By hand: 1.05^-3 = 0.8638376, factor 0.05 / (1 − 0.8638376) = 0.3672086, annuity 1000 ·
-    1000 · 0.3672086 = 367 208.56 CUR/MW/a; reinvest_choice pays it for 3 years from y_on 5 (years 5, 6, 7 of p2025,
-    no inflation): 3 · 367 208.56 = 1 101 625.69.  (Over 20 years: 80 242.59 a year for the 15 years to the
-    horizon end.)"""
-    ann, discounted = _lead_time_annuity(tmp_path_factory, "lead_annuity_no_payback", None)
-    twin = _lead_time_annuity(tmp_path_factory, "lead_annuity_payback_3", 3.0)
-    assert ann == pytest.approx(367_208.56, rel=1e-7)
-    assert discounted == pytest.approx(1_101_625.69, rel=1e-7)
+    lifetime_technical of its online period, 20 years (not that of p2020, 3): the period map describes the plant as
+    constructed (owner decision D50), as for its end of life.  The same as with payback_time 20.  By hand:
+    1.05^-20 = 0.3768895, factor 0.05 / (1 − 0.3768895) = 0.0802426, annuity 1000 · 1000 · 0.0802426 = 80 242.59
+    CUR/MW/a; reinvest_choice pays it for 20 years from y_on 5, of which the 15 to the horizon end 20 are in the
+    model (no inflation): 15 · 80 242.59 = 1 203 638.81.  (Over 3 years: 367 208.56 a year for 3 years.)"""
+    ann, discounted = _lead_time_annuity(_lead_time_annuity_step(tmp_path_factory, "lead_annuity_no_payback", None))
+    twin = _lead_time_annuity(_lead_time_annuity_step(tmp_path_factory, "lead_annuity_payback_20",
+                                                      b64(20.0, "float")))
+    assert ann == pytest.approx(80_242.59, rel=1e-7)
+    assert discounted == pytest.approx(1_203_638.81, rel=1e-7)
     assert (ann, discounted) == pytest.approx(twin, rel=1e-12)
+
+
+def test_payback_time_copy_of_the_lifetime_is_the_empty_payback_time(tmp_path_factory) -> None:
+    """A payback_time equal to lifetime_technical (the period map {p2020: 3, p2025: 20, p2030: 20}, as a database
+    migrated by an earlier development build of v81 holds it) builds the same annuity, lumps and LP as an empty
+    payback_time, with a construction lead time and period-varying values: both are read at the period the
+    capacity comes online (owner decision D50)."""
+    empty = _lead_time_annuity_step(tmp_path_factory, "lead_payback_empty", None)
+    copy = _lead_time_annuity_step(tmp_path_factory, "lead_payback_copy",
+                                   _map({"p2020": 3.0, "p2025": 20.0, "p2030": 20.0}))
+    assert _lead_time_annuity(copy) == pytest.approx(_lead_time_annuity(empty), rel=1e-12)
+    _same_lp(empty, copy)
+
+
+def test_lead_time_investment_reads_every_period_map_at_its_online_period(tmp_path_factory) -> None:
+    """wind_plant decided in p2020 (y 0) with a 5-year construction lead time comes online in p2025 (y_on 5).  Its
+    period maps differ between the decision and the online period: invest_cost {p2020: 2000, p2025: 1000, p2030:
+    1500} CUR/kW, payback_time {10, 4, 10}, lifetime_technical {3, 7, 30}; discount_rate 0.05, fixed_cost 10
+    CUR/kW/a, end_of_life_method next_seam, reinvest_choice, no inflation.  The maps describe the plant as
+    constructed (owner decision D50): every value is that of p2025.  By hand:
+
+    * annuity = invest_cost · 1000 · r / (1 − (1+r)^-n) = 1000 · 1000 · 0.05 / (1 − 1.05^-4) = 282 011.83 CUR/MW/a
+      (``ed_annuity``, the reported yearly annuity);
+    * paid for payback_time 4 years from y_on 5 (years 5–8 of p2025, which holds 5 years): the lump
+      ``ed_entity_annual_discounted`` (and its run-level twin ``ed_entity_annual_discounted_run``, the reported
+      investment cost) = 4 · 282 011.83 = 1 128 047.33; ``edd_payback_share`` p2025 4 / 5 = 0.8;
+    * end of life Y = 5 + 7 = 12 → next_seam 20: the cohort (y_life 7, y_eol 20) is in service in p2025 and
+      p2030, the operating window p2025, p2030, the fixed cost ``10 · 1000 · (inflation_op[p2025] +
+      inflation_op[p2030])`` (``ed_lifetime_fixed_cost`` and ``ed_lifetime_fixed_cost_run``).
+
+    (At the decision period: annuity 2000 · 1000 · 0.05 / (1 − 1.05^-10) over 10 years, end of life 0 + 5 + 3 =
+    8 → 10, in service and paying fixed cost in p2025 only.)"""
+    values = solve_values(invest=["p2020"]) + [
+        ["unit", WIND, "lifetime_method", b64("reinvest_choice", "str")],
+        ["unit", WIND, "invest_method", b64("invest_period", "str")],
+        ["unit", WIND, "invest_cost", _map({"p2020": 2000.0, "p2025": 1000.0, "p2030": 1500.0})],
+        ["unit", WIND, "payback_time", _map({"p2020": 10.0, "p2025": 4.0, "p2030": 10.0})],
+        ["unit", WIND, "lifetime_technical", _map({"p2020": 3.0, "p2025": 7.0, "p2030": 30.0})],
+        ["unit", WIND, "discount_rate", b64(0.05, "float")],
+        ["unit", WIND, "invest_max_period", _map({"p2025": 100.0})],
+        ["unit", WIND, "construction_lead_time", b64(5.0, "float")],
+        ["unit", WIND, "end_of_life_method", b64("next_seam", "str")],
+        ["unit", WIND, "fixed_cost", b64(10.0, "float")]]
+    (step,) = steps_of(tmp_path_factory, "lead_online_maps", values).values()
+    fd = step.flex_data
+    ann = 1000.0 * 1000.0 * 0.05 / (1.0 - 1.05 ** -4)
+    assert ann == pytest.approx(282_011.83, rel=1e-8)
+    assert _at_decision(fd.ed_annuity.frame) == pytest.approx(ann, rel=1e-12)
+    assert _at_decision(fd.ed_entity_annual_discounted.frame) == pytest.approx(4.0 * ann, rel=1e-12)
+    assert _at_decision(fd.ed_entity_annual_discounted_run.frame) == pytest.approx(4.0 * ann, rel=1e-12)
+    share = fd.edd_payback_share.filter((pl.col("e").cast(pl.Utf8) == WIND)
+                                        & (pl.col("d_invest").cast(pl.Utf8) == "p2020"))
+    assert {str(d): float(v) for d, v in share.select("d", "value").iter_rows()} == {
+        "p2025": pytest.approx(0.8, rel=1e-12)}
+    (cohort,) = fd.cohort.filter((pl.col("kind") == "invest") & (pl.col("e").cast(pl.Utf8) == WIND)).iter_rows(
+        named=True)
+    assert (str(cohort["d_on"]), cohort["y_on"], cohort["y_life"], cohort["y_eol"]) == ("p2025", 5.0, 7.0, 20.0)
+    assert invest_alive(step) == [("p2020", "p2025"), ("p2020", "p2030")]
+    window = fd.edd_operating_window.filter((pl.col("e").cast(pl.Utf8) == WIND)
+                                            & (pl.col("d_invest").cast(pl.Utf8) == "p2020"))
+    assert sorted(str(d) for d in window["d"].to_list()) == ["p2025", "p2030"]
+    op = {str(d): float(v) for d, v in fd.p_inflation_op.frame.select(pl.col("d").cast(pl.Utf8), "value").iter_rows()}
+    fixed = 10.0 * 1000.0 * (op["p2025"] + op["p2030"])
+    assert _at_decision(fd.ed_lifetime_fixed_cost.frame) == pytest.approx(fixed, rel=1e-12)
+    assert _at_decision(fd.ed_lifetime_fixed_cost_run.frame) == pytest.approx(fixed, rel=1e-12)

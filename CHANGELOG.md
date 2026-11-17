@@ -11,10 +11,12 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   `payback_time` is the number of years over which `invest_cost` is annualized with `discount_rate`, and an entity
   without a `payback_time` pays back over its `lifetime_technical`. The migration moves every `lifetime` value, in
   every alternative, to `lifetime_technical` and leaves `payback_time` empty, so the payback time stays the
-  lifetime; it renames `salvage_value` and rewrites every stored `no_investment` value. Results do not change
-  (except an investment with a construction lead time and a period-varying lifetime, see Fixes). Set
-  `payback_time` only where the investment pays back over a different number of years than it operates. Update
-  scripts and Excel workbooks that name the old parameters or the old value.
+  lifetime; it renames `salvage_value` and rewrites every stored `no_investment` value. Results do not change. A
+  period map of `lifetime_technical`, `payback_time` or `invest_cost` describes the plant as constructed: an
+  investment with a construction lead time uses the value of the period it comes online, for its end of life, its
+  fixed-cost window and its annuity alike. Set `payback_time` only where the investment pays back over a different
+  number of years than it operates. Update scripts and Excel workbooks that name the old parameters or the old
+  value.
 - **With `lifetime_method` `reinvest_choice` or `no_reinvestment` the investment annuity is paid for
   `payback_time` years from the start of operation, counted in exact years**, and the reported investment costs
   follow. Before, every period that started before the end of the lifetime was paid in full (a 12-year lifetime on
@@ -68,14 +70,8 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   as the deciding solve placed them), minus the carried retirements. Results of chained, rolling and nested runs
   with an `existing` map change (capacity, flow bounds, dispatch, costs); a constant `existing` gives the same
   results as before. Two investments decided in different periods that start to operate in the same period
-  (construction lead times) are carried separately, each with its own lifetime; a carried investment with a
-  construction lead time keeps the `lifetime_technical` of the period it was decided in (before, the period it
-  started to operate in).
-- **Without a `payback_time`, an investment with a construction lead time is annualized over the
-  `lifetime_technical` of the period it is decided in**, the lifetime of its end of life and its fixed cost.
-  Before, the annuity and its payback window used the `lifetime_technical` of the period the capacity starts to
-  operate in. Results change only where that lifetime is a period map with different values in the two periods;
-  an explicit `payback_time` is still read at the start of operation.
+  (construction lead times) are carried separately, each with its own lifetime (the `lifetime_technical` of the
+  period it comes online).
 - **A chain of solves with a `no_reinvestment` entity no longer stops with a `p_entity_max_units` error** once the
   entity's investment window has closed in a later solve. The closed periods also no longer get an investment
   variable (held at zero) when another entity still invests in that solve; results are unchanged.

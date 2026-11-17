@@ -313,7 +313,9 @@ For a unit, connection or storage node `e` in period `d`:
     `y_on` is the start of operation (existing capacity:
     `y_on = y[d0] − age`, `d0` the first period of the run, `age` from
     `age_at_model_start` or `model.start_year − build_year`) and
-    `y_eol = round_end_of_life(y_on + lifetime_technical, end_of_life_method)`
+    `y_eol = round_end_of_life(y_on + lifetime_technical, end_of_life_method)`,
+    the `lifetime_technical` of the period the capacity comes online (`d0`
+    for existing capacity)
     (`_run_calendar.round_end_of_life`: the nearer period start for
     `closest_seam`, the default, a tie to the later one; the one at or after
     it for `next_seam`, at or before it for `previous_seam`; within

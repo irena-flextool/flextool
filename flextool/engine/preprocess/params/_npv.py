@@ -112,15 +112,12 @@ from flextool.engine.preprocess._annuity import (
 from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
 from flextool.engine.preprocess.params._cohorts import BOUNDED_METHODS
 from flextool.engine.input._lifetime_roles import (
-    ENTITY_CLASSES,
     LIFETIME_TECHNICAL,
     NET_SALVAGE_VALUE,
     NO_REINVESTMENT,
     PAYBACK_TIME,
-    reads_at_decision,
-    source_role_sources,
 )
-from flextool.engine.preprocess.params._period_values import ed_values_on
+from flextool.engine.preprocess.params._period_values import at_online_period, ed_values_on, ed_values_online
 from flextool.engine.preprocess.params._existing import (
     DIVEST_NOT_ALLOWED as _DIVEST_NOT_ALLOWED,
     INVEST_NOT_ALLOWED as _INVEST_NOT_ALLOWED,
@@ -641,42 +638,18 @@ def period_walk_iterator(
 # ---------------------------------------------------------------------------
 
 
-def _ed_lifetime_lf(source: "InputSource",
-                       all_entities_lf: pl.LazyFrame,
-                       periods_lf: pl.LazyFrame,
-                       ) -> pl.LazyFrame:
-    """Lazy ``(e, d, life)`` mirroring ``edEntity_lifetime`` semantics.
-
-    Mirrors :func:`._derived._ed_lifetime_mapping`: for each
-    (e, d) ∈ entities × periods, ``unit/node/connection.lifetime_technical`` read by
-    :func:`._period_values.ed_values_on` (0 where absent).  Non-process /
-    non-node entities get 0 (mirrors flextool's class-gated branch).
-    """
-    ed_lf = all_entities_lf.join(periods_lf, how="cross")
-    cls_lf = _entity_class_lookup_lf(_entity_class_lf(source))
-    # Restrict to processes + nodes — other classes get life=0.
-    ed_lf = ed_lf.join(cls_lf, on="e", how="left")
-    in_class = pl.col("is_process").fill_null(False) | pl.col("is_node").fill_null(False)
-    resolved = ed_values_on(source, LIFETIME_TECHNICAL, ed_lf, fill=0.0)
-    return (resolved
-              .with_columns(
-                  life=pl.when(in_class).then(pl.col("value")).otherwise(0.0),
-              )
-              .select("e", "d", "life"))
-
-
 def _ed_lifetime_on_lf(source: "InputSource", ed_lf: pl.LazyFrame,
                        parameter: str = LIFETIME_TECHNICAL,
                        commission: pl.DataFrame | None = None) -> pl.LazyFrame:
-    """Lazy ``(e, d, life)`` of :func:`_ed_lifetime_lf` over the given ``(e, d)`` pairs; ``parameter``
-    :data:`PAYBACK_TIME` gives the payback time instead (:func:`_payback_time_on`: with ``commission``, that of
-    the period a decision with a lead time comes online, its decision period's lifetime_technical for an entity
-    without one)."""
+    """Lazy ``(e, d, life)`` over the given ``(e, d)`` pairs: ``lifetime_technical`` (``parameter``
+    :data:`PAYBACK_TIME`: the payback time, ``lifetime_technical`` for an entity without one) of the period each
+    decision comes online (:func:`._period_values.ed_values_online`: with ``commission`` ``[e, d, d_c]``, ``d_c``
+    for a decision with a construction lead time, else ``d``), 0 where missing; only nodes and processes have a
+    lifetime (the others 0)."""
     cls_lf = _entity_class_lookup_lf(_entity_class_lf(source))
     in_class = pl.col("is_process").fill_null(False) | pl.col("is_node").fill_null(False)
     ed_with_class = ed_lf.select("e", "d").join(cls_lf, on="e", how="left")
-    resolved = (_payback_time_on(source, ed_with_class, 0.0, commission) if parameter == PAYBACK_TIME
-                else ed_values_on(source, parameter, ed_with_class, fill=0.0))
+    resolved = ed_values_online(source, parameter, ed_with_class, 0.0, commission)
     return (resolved
               .with_columns(life=pl.when(in_class).then(pl.col("value")).otherwise(0.0))
               .select("e", "d", "life"))
@@ -695,68 +668,6 @@ def _raw_lifetime_on_lf(source: "InputSource", ed_lf: pl.LazyFrame) -> pl.LazyFr
                   life=pl.when(in_class).then(pl.col("value")).otherwise(0.0),
               )
               .select("e", "d", "life"))
-
-
-def _at_start_of_operation(anchor_lf: pl.LazyFrame,
-                              compute,
-                              commission: pl.DataFrame | None,
-                              col: str,
-                              ) -> pl.LazyFrame:
-    """``compute(anchor_lf)`` (``[e, d, col]``) with the value of a decision with a construction lead time taken at
-    the period its capacity starts to operate (``commission`` ``[e, d, d_c]``): invest cost, interest rate and
-    fixed cost of new capacity are those of the build period (its ``lifetime_technical`` is that of the decision
-    period, read without this; its payback time is read by :func:`_payback_time_on`).  Without ``commission`` it
-    is ``compute(anchor_lf)`` itself."""
-    base = compute(anchor_lf)
-    if commission is None or commission.height == 0:
-        return base
-    schema = anchor_lf.collect_schema()
-    e_dt, d_dt = schema.get("e", pl.Utf8), schema.get("d", pl.Utf8)
-    cmap = (commission.lazy()
-              .select(pl.col("e").cast(pl.Utf8).cast(e_dt, strict=False),
-                      pl.col("d").cast(pl.Utf8).cast(d_dt, strict=False),
-                      pl.col("d_c").cast(pl.Utf8).cast(d_dt, strict=False)))
-    at_start = (compute(cmap.select("e", pl.col("d_c").alias("d")).unique())
-                  .select("e", pl.col("d").alias("d_c"), pl.col(col).alias("_at_start")))
-    return (base
-              .join(cmap, on=["e", "d"], how="left")
-              .join(at_start, on=["e", "d_c"], how="left")
-              .with_columns(pl.coalesce("_at_start", col).alias(col))
-              .select("e", "d", col))
-
-
-def _payback_time_on(source: "InputSource", ed_lf: pl.LazyFrame, fill: float | None,
-                     commission: pl.DataFrame | None) -> pl.LazyFrame:
-    """``ed_lf`` (``[e, d, ...]``) with the payback time of each decision ``(e, d)`` as ``value``
-    (:func:`._period_values.ed_values_on` of :data:`PAYBACK_TIME`, ``fill`` where it has none).
-
-    A decision with a construction lead time (``commission`` ``[e, d, d_c]``) reads each name at its own period
-    (:func:`._lifetime_roles.reads_at_decision`): an entity with a ``payback_time`` that of the period ``d_c`` its
-    capacity comes online, an entity without one the ``lifetime_technical`` of its decision period ``d`` (the
-    lifetime of its end of life and fixed-cost window).  Without ``commission`` every value is that of ``d``."""
-    out = ed_values_on(source, PAYBACK_TIME, ed_lf, fill=fill)
-    if commission is None or commission.height == 0:
-        return out
-    online = sorted({e for cls in ENTITY_CLASSES
-                     for e, name in source_role_sources(source, cls, PAYBACK_TIME).items()
-                     if not reads_at_decision(name)})
-    if not online:
-        return out
-    schema = ed_lf.collect_schema()
-    e_dt, d_dt = schema.get("e", pl.Utf8), schema.get("d", pl.Utf8)
-    cmap = (commission.lazy()
-              .filter(pl.col("e").cast(pl.Utf8).is_in(online))
-              .select(pl.col("e").cast(pl.Utf8).cast(e_dt, strict=False),
-                      pl.col("d").cast(pl.Utf8).cast(d_dt, strict=False),
-                      pl.col("d_c").cast(pl.Utf8).cast(d_dt, strict=False)))
-    at_start = (ed_values_on(source, PAYBACK_TIME, cmap.select("e", pl.col("d_c").alias("d")).unique(), fill=fill)
-                  .select("e", pl.col("d").alias("d_c"), pl.col("value").alias("_at_start")))
-    return (out
-              .join(cmap, on=["e", "d"], how="left", maintain_order="left")
-              .join(at_start, on=["e", "d_c"], how="left", maintain_order="left")
-              .with_columns(value=pl.when(pl.col("d_c").is_not_null()).then(pl.col("_at_start"))
-                            .otherwise(pl.col("value")))
-              .drop("d_c", "_at_start"))
 
 
 def _commission_walk_lf(commission: pl.DataFrame | None) -> pl.LazyFrame | None:
@@ -817,10 +728,9 @@ def _per_method_annuity_lf(
         ) -> pl.LazyFrame:
     """Lazy ``(e, d, ann)`` frame computing the per-method annuity sum.
 
-    ``commission`` (``[e, d, d_c]``, the decisions with a construction lead time): the cost and the interest rate
-    of such a decision are those of the period ``d_c`` it comes online (:func:`_at_start_of_operation`), its
-    payback time is read by :func:`_payback_time_on` (``payback_time`` at ``d_c``, else the ``lifetime_technical``
-    of ``d``).
+    ``commission`` (``[e, d, d_c]``, the decisions with a construction lead time): the cost, the interest rate and
+    the payback time (``lifetime_technical`` for an entity without ``payback_time``) of such a decision are those
+    of the period ``d_c`` it comes online (:func:`._period_values.ed_values_online`).
 
     Algorithm (port of
     ``entity_annual_calc_params.py:177-217``):
@@ -853,9 +763,8 @@ def _per_method_annuity_lf(
     ed_keys = ed_lf.select("e", "d")
 
     def at_start(parameter: str, fill: float, col: str) -> pl.LazyFrame:
-        return _at_start_of_operation(
-            ed_keys.unique(maintain_order=True),
-            lambda lf: ed_values_on(source, parameter, lf, fill=fill).rename({"value": col}), commission, col)
+        return (ed_values_online(source, parameter, ed_keys.unique(maintain_order=True), fill, commission)
+                  .rename({"value": col}))
 
     ed_with_class = ed_keys.join(cls_lf, on="e", how="left")
     ed_with_cost = ed_with_class.join(at_start(cost_param_name, 0.0, "cost"), on=["e", "d"], how="left",
@@ -865,7 +774,7 @@ def _per_method_annuity_lf(
                                      on=["e", "d"], how="left", maintain_order="left")
     # No lifetime default: a null (or ≤ 0) lifetime where the cost is not 0 is an input error.  Checked here,
     # not only in the validator: a period map can lack a period (the one the payback time is read at).
-    ed_with_life = (_payback_time_on(source, ed_with_disc, None, commission)
+    ed_with_life = (ed_values_online(source, PAYBACK_TIME, ed_with_disc, None, commission)
                        .rename({"value": "life"}))
     bad = (ed_with_life
               .join(method_count_lf, on="e", how="inner")
@@ -942,8 +851,8 @@ def npv_invest_discounted_lf(
         ann[e, d] × Σ_{d_all ∈ period_in_use, window(d, d_all)} inv_factor[d_all]
 
     ``commission`` (``[e, d, d_c, yr_c]``, the decisions with a construction lead time): the annuity of such a
-    decision is that of its build period ``d_c`` (invest cost, interest rate and payback time there) and its window
-    starts at ``yr_c``, so it is paid only over the years the capacity operates within the solve.
+    decision is that of the period ``d_c`` it comes online (invest cost, interest rate and payback time there) and
+    its window starts at ``yr_c``, so it is paid only over the years the capacity operates within the solve.
 
     where ``window`` switches on ``e``'s lifetime_method: ``reinvest_choice`` / ``no_reinvestment`` → the payback
     window (:data:`._walks.WindowMethod.PAYBACK_YEARS`: ``payback_time`` years from the start of operation, the
@@ -968,8 +877,7 @@ def npv_invest_discounted_lf(
         alias_to_axis("d", "d"))
     ed_anchor_lf = entity_invest_set.join(pi_lf, how="cross")
 
-    # Annuity (invest cost), of the build period for a decision with a lead time (the payback time of
-    # :func:`_payback_time_on`).
+    # Annuity (invest cost), of the period a decision with a lead time comes online.
     ann_lf = _per_method_annuity_lf(source, ed_anchor_lf, "invest_cost", _INVEST_NOT_ALLOWED, commission)
 
     # Lifetime methods: per-entity dispatch.
@@ -988,8 +896,8 @@ def npv_invest_discounted_lf(
                        .select("e").unique()
                        .with_columns(has_automatic=pl.lit(True)))
 
-    # The bounded walk runs over the payback time: for a decision with a lead time, payback_time of the build
-    # period, else the lifetime_technical of the decision period.
+    # The bounded walk runs over the payback time (lifetime_technical where the entity has none), of the period a
+    # decision with a lead time comes online.
     pwh_lf = pl.LazyFrame({"d": list({d for d in period_invest})}).with_columns(
         alias_to_axis("d", "d"))
     ed_pairs_lf = all_e_lf.join(pwh_lf, how="cross")
@@ -1012,9 +920,9 @@ def npv_invest_discounted_lf(
     _notice_annuity_over_payback_time(bounded.join(has_choice_or_no.select("e"), on="e", how="semi"),
                                       lambda: period_walk_iterator(
                                           source, active_solve, ed_anchor_lf, period_in_use, period_universe,
-                                          bounded=True, life_lf=_at_start_of_operation(
-                                              ed_pairs_lf, lambda lf: _ed_lifetime_on_lf(source, lf), commission,
-                                              "life"),
+                                          bounded=True,
+                                          life_lf=_ed_lifetime_on_lf(source, ed_pairs_lf, LIFETIME_TECHNICAL,
+                                                                     commission),
                                           factor_side="inv", lineage=lineage, commission_lf=commission_lf,
                                           year_rows=year_rows))
 
@@ -1192,9 +1100,10 @@ def lifetime_fixed_cost_invest_lf(
         ) -> pl.LazyFrame:
     """Variant 3: ``ed_lifetime_fixed_cost`` (invest-side lifetime FC).
 
-    ``commission`` (``[e, d, d_c, yr_c]``): a decision with a construction lead time pays the fixed cost of its
-    build period ``d_c``, over the years from ``yr_c`` its capacity operates; its lifetime is that of the decision
-    period ``d`` (as the end of life of its cohort, :func:`._cohorts.invest_cohorts`).
+    ``commission`` (``[e, d, d_c, yr_c]``): a decision with a construction lead time pays the fixed cost of the
+    period ``d_c`` its capacity comes online, over the years from ``yr_c`` it operates, until the end of life of
+    its cohort, the lifetime too that of ``d_c`` (:func:`._cohorts.invest_cohorts`,
+    :func:`._period_values.at_online_period`).
 
     Per (e ∈ entity, d ∈ period_with_history)::
 
@@ -1223,7 +1132,7 @@ def lifetime_fixed_cost_invest_lf(
         alias_to_axis("d", "d"))
     ed_anchor_lf = all_e_lf.join(pwh_lf, how="cross")
 
-    fc_lf = _at_start_of_operation(ed_anchor_lf, lambda lf: _ed_fixed_cost_raw_lf(source, lf), commission, "fc")
+    fc_lf = at_online_period(ed_anchor_lf, lambda lf: _ed_fixed_cost_raw_lf(source, lf), commission, "fc")
 
     elm_lf = _lifetime_method_with_default_lf(source, all_e_lf)
     has_choice_or_no = (elm_lf
@@ -1236,9 +1145,8 @@ def lifetime_fixed_cost_invest_lf(
                        .select("e").unique()
                        .with_columns(has_automatic=pl.lit(True)))
 
-    # life_lf via edEntity_lifetime: the lifetime of the decision period, also with a lead time (the cohort's end
-    # of life, _cohorts.invest_cohorts).
-    life_lf = _ed_lifetime_lf(source, all_e_lf, pwh_lf)
+    # The lifetime of the period the capacity comes online (the cohort's end of life, _cohorts.invest_cohorts).
+    life_lf = _ed_lifetime_on_lf(source, ed_anchor_lf, LIFETIME_TECHNICAL, commission)
     life_lf = _window_life_to_end_of_life(source, active_solve, life_lf, commission, provider=provider)
     commission_lf = _commission_walk_lf(commission)
 
@@ -1288,9 +1196,9 @@ def _window_life_to_end_of_life(source: "InputSource",
                                  commission: pl.DataFrame | None,
                                  *,
                                  provider: "object | None") -> pl.LazyFrame:
-    """``life_lf`` ``[e, d, life]`` (the lifetime of decision ``(e, d)``, read at its decision period) with ``life``
-    the years from the start of operation ``y_on`` to the rounded end of life of its cohort, so that the bounded walk
-    ``yr[d′] < yr_avail + life`` keeps the periods ``y_on ≤ yr[d′] < y_eol``::
+    """``life_lf`` ``[e, d, life]`` (the lifetime of decision ``(e, d)``, read at the period it comes online) with
+    ``life`` the years from the start of operation ``y_on`` to the rounded end of life of its cohort, so that the
+    bounded walk ``yr[d′] < yr_avail + life`` keeps the periods ``y_on ≤ yr[d′] < y_eol``::
 
         y_on  = y[c(d)]  (years of the run, :func:`._cohorts.cohort_years`; c(d) = d without a lead time)
         y_eol = round_end_of_life(y_on + life, end_of_life_method[e])   (:func:`._cohorts.end_of_life_years`)
@@ -1628,11 +1536,11 @@ def ed_lifetime_fixed_cost_divest_from_source(
 #   periods from the run calendar.
 # OUT. edd_operating_window[e,d_invest,d] — run periods d in which the capacity of decision (e, d_invest)
 #   operates: yr_run[d] ≥ yr_run[c(d_invest)], and < y_eol = round_end_of_life(yr_run[c(d_invest)] +
-#   lifetime_technical[e, d_invest], end_of_life_method[e]) for reinvest_choice / no_reinvestment (unbounded for
-#   reinvest_automatic): the periods its cohort is in service; c(d) is the start of operation (d without a
-#   construction lead time).  edd_retire_window[e,d_divest,d]: yr_run[d_divest] ≤ yr_run[d] < EOL[e] (the rounded
-#   end of life y_eol of the pre-existing capacity, from the start of the run; the end of the run for
-#   reinvest_automatic),
+#   lifetime_technical[e, c(d_invest)], end_of_life_method[e]) for reinvest_choice / no_reinvestment (unbounded
+#   for reinvest_automatic): the periods its cohort is in service; c(d) is the period the capacity comes online (d
+#   without a construction lead time), whose values describe the plant as constructed.
+#   edd_retire_window[e,d_divest,d]: yr_run[d_divest] ≤ yr_run[d] < EOL[e] (the rounded end of life y_eol of the
+#   pre-existing capacity, from the start of the run; the end of the run for reinvest_automatic),
 #   the window of _cohorts.retire_active.  edd_salvage_window[e,d_divest,d]: yr_run[d] ∈ [yr_run[d_divest],
 #   yr_run[d_divest] + lifetime_technical[e, d_divest]), the window the net salvage value is spread over.  In a
 #   stochastic fan only the pairs of the walk lineage (each calendar period once).
@@ -2137,8 +2045,8 @@ def apply_run_cost_fields(flex_data: object,
         inv]).unique().sort("e", "d")
     if fc_pairs.height > 0:
         fc_lf = _anchor_lf(fc_pairs)
-        # The lifetime of the decision period, also with a lead time (the cohort's end of life).
-        life = _utf8_ed(_ed_lifetime_on_lf(source, fc_lf))
+        # The lifetime of the period the capacity comes online (the cohort's end of life).
+        life = _utf8_ed(_ed_lifetime_on_lf(source, fc_lf, LIFETIME_TECHNICAL, commission))
         anchors = (year_of_start(fc_pairs, True)
                      .join(life, on=["e", "d"], how="left")
                      .with_columns(life=pl.col("life").fill_null(0.0))
@@ -2160,7 +2068,7 @@ def apply_run_cost_fields(flex_data: object,
         if inv.height > 0:
             flex_data.edd_payback_share = _share_frame(paid.join(vintages, on=["e", "d"], how="semi"))
         if years is not None:
-            fc = _utf8_ed(_at_start_of_operation(
+            fc = _utf8_ed(at_online_period(
                 fc_lf, lambda lf: _ed_fixed_cost_raw_lf(source, lf), commission, "fc")).rename({"fc": "coef"})
             flex_data.ed_lifetime_fixed_cost_run = _ed_param(_lump(walk, fc, factor_ops, fc_pairs))
             if inv.height > 0:

@@ -12,7 +12,7 @@ A leaf module: the readers in ``_derived``, ``_existing`` and ``_npv`` import it
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import polars as pl
 
@@ -113,3 +113,53 @@ def ed_values_on(source: "InputSource", parameter_name: str, ed_lf: pl.LazyFrame
     left, right = align_join_dtypes(ed_lf, values, ["e", "d"])
     out = left.join(right, on=["e", "d"], how="left", maintain_order="left")
     return out if fill is None else out.with_columns(pl.col("value").fill_null(fill))
+
+
+def at_online_period(ed_lf: pl.LazyFrame, compute: "Callable[[pl.LazyFrame], pl.LazyFrame]",
+                     commission: "pl.DataFrame | pl.LazyFrame | None", col: str) -> pl.LazyFrame:
+    """``compute(ed_lf)`` (``ed_lf``'s rows, ``col`` the value of each decision ``(e, d)``) with every decision of
+    ``commission`` (``[e, d, d_c]``, the decisions with a construction lead time) valued at the period ``d_c`` its
+    capacity comes online instead of its decision period ``d``::
+
+        value[e, d] = compute[e, c(d)],   c(d) = d_c of (e, d) in ``commission``, else d
+
+    The one lookup of the period a plant is built to: the period maps of ``lifetime_technical``, ``payback_time``,
+    ``invest_cost``, ``discount_rate`` and ``fixed_cost`` describe the plant as constructed, so a decision reads
+    them all at ``c(d)`` (the cohort's end of life, its fixed-cost window, its annuity and payback window, and the
+    reported costs).  A decision whose ``d_c`` is null (it never comes online) keeps the value of ``d``; a value
+    missing at ``d_c`` stays missing (``compute``'s own fill), it is not taken from ``d``.  The columns of
+    ``compute(ed_lf)`` and their order are kept; without ``commission`` it is ``compute(ed_lf)`` itself."""
+    base = compute(ed_lf)
+    if commission is None:
+        return base
+    cmap = (commission.lazy() if isinstance(commission, pl.DataFrame) else commission).select("e", "d", "d_c")
+    if cmap.select(pl.len()).collect().item() == 0:
+        return base
+    cols = base.collect_schema().names()
+    # Labels read back from a csv may be numbers: as text they join the axis labels.
+    cmap = cmap.with_columns(pl.col(c).cast(pl.Utf8) for c, t in cmap.collect_schema().items()
+                             if t.is_numeric())
+    base, cmap = align_join_dtypes(base, cmap, ["e", "d"])
+    base_d = base.collect_schema().get("d")
+    cmap = cmap.filter(pl.col("d_c").is_not_null())
+    if cmap.collect_schema().get("d_c") != base_d:
+        cmap = cmap.with_columns(pl.col("d_c").cast(base_d, strict=False))
+    at_on = (compute(cmap.select("e", pl.col("d_c").alias("d")).unique(maintain_order=True))
+               .select("e", pl.col("d").alias("d_c"), pl.col(col).alias("_at_online")))
+    cmap, at_on = align_join_dtypes(cmap, at_on, ["e", "d_c"])
+    base, cmap = align_join_dtypes(base, cmap, ["e", "d"])
+    return (base
+              .join(cmap, on=["e", "d"], how="left", maintain_order="left")
+              .join(at_on, on=["e", "d_c"], how="left", maintain_order="left")
+              .with_columns(pl.when(pl.col("d_c").is_not_null()).then(pl.col("_at_online"))
+                            .otherwise(pl.col(col)).alias(col))
+              .select(cols))
+
+
+def ed_values_online(source: "InputSource", parameter_name: str, ed_lf: pl.LazyFrame, fill: float | None,
+                     commission: "pl.DataFrame | pl.LazyFrame | None") -> pl.LazyFrame:
+    """:func:`ed_values_on` of each decision ``(e, d)`` of ``ed_lf`` at the period its capacity comes online
+    (:func:`at_online_period`: ``d_c`` of ``commission`` for a decision with a construction lead time, else
+    ``d``)."""
+    return at_online_period(ed_lf, lambda lf: ed_values_on(source, parameter_name, lf, fill=fill), commission,
+                            "value")

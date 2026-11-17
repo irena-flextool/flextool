@@ -16,10 +16,10 @@ Three frames (``FlexData.cohort``, ``cohort_alive``, ``dd_forward``):
   starts to operate in: the run start for existing capacity, the decision period or, with a construction lead
   time, the later period of ``ed_invest_commission``), ``y_on`` (start of operation; existing capacity:
   ``y[d0] − age``), ``age`` (the age of existing capacity at the model start, :func:`existing_ages`; 0 for an
-  investment), ``y_life``
-  (``lifetime_technical``; ``+inf`` for ``reinvest_automatic``), ``y_end = y_on + y_life`` (the end of life,
-  unrounded), ``y_first_life_end`` (existing capacity: ``y[d0] + y_life``, the end of its first life counted from
-  the model start without the age and unrounded, the year a ``no_reinvestment`` entity stops investing; null for
+  investment), ``y_life`` (``lifetime_technical`` of ``d_on``, the plant as constructed; ``+inf`` for
+  ``reinvest_automatic``), ``y_end = y_on + y_life`` (the end of life, unrounded), ``y_first_life_end``
+  (existing capacity: ``y[d0] + y_life``, the end of its first life counted from the model start without the age
+  and unrounded, the year a ``no_reinvestment`` entity stops investing; null for
   an investment), ``y_eol`` (``y_end`` rounded to a seam by ``eol_method``,
   :func:`._run_calendar.round_end_of_life`: ``+inf`` for ``reinvest_automatic`` and for ``next_seam`` past the last
   seam) and ``d_eol`` (Utf8: the run period that starts at ``y_eol``; null at ``+inf`` and at the end of the
@@ -81,7 +81,7 @@ from flextool.engine.input._lifetime_roles import (
     source_entities_with,
 )
 from flextool.engine.input._solve_state import CommissioningLagError
-from flextool.engine.preprocess.params._period_values import _ed_period_value_map, ed_values_on
+from flextool.engine.preprocess.params._period_values import _ed_period_value_map, ed_values_online
 from flextool.engine.preprocess.params._run_calendar import YEAR_TOL, eol_moves, round_end_of_life
 
 if TYPE_CHECKING:
@@ -495,18 +495,19 @@ def _invest_rows(source: "InputSource",
     """``(anchor, rows)``: the decisions ``[e, d]`` of ``ed_invest`` of entities with a ``lifetime_method`` and their
     cohort rows (:func:`_cohort_schema` order, Utf8 labels): the start of operation ``d_on`` (``commission_lf``'s
     ``d_c``; the decision period without a construction lead time) and the end of life of :func:`window_end` with
-    the lifetime of the decision period."""
+    the lifetime of the period ``d_on`` (the plant as constructed, :func:`._period_values.ed_values_online`)."""
     methods = _entity_methods(source)
     with_life = axis_lazyframe({"e": [e for e, m in methods.items() if m in LIFETIME_METHODS]})
     anchor, with_life = align_join_dtypes(ed_invest.lazy().select("e", "d"), with_life, ["e"])
     anchor = anchor.join(with_life, on="e", how="semi").collect()
     if anchor.height == 0:
         return anchor, []
-    life = ed_values_on(source, LIFETIME_TECHNICAL, anchor.lazy(), fill=0.0).collect()
+    online = (None if commission_lf is None
+              else commission_lf.filter(pl.col("yr_c").is_finite()).select("e", "d", "d_c").collect())
+    life = ed_values_online(source, LIFETIME_TECHNICAL, anchor.lazy(), 0.0, online).collect()
     starts: dict[tuple[str, str], str] = {}
-    if commission_lf is not None:
-        for e, d, d_c in (commission_lf.filter(pl.col("yr_c").is_finite())
-                                       .select("e", "d", "d_c").collect().iter_rows()):
+    if online is not None:
+        for e, d, d_c in online.iter_rows():
             starts[(str(e), str(d))] = str(d_c)
     rows: list[tuple] = []
     for e, d, life_v in life.select("e", "d", "value").iter_rows():
@@ -579,7 +580,8 @@ def invest_cohorts(source: "InputSource",
 
         y_on  = y[d_on],  d_on = the period the decision starts to operate in (``commission_lf``'s ``d_c``; the
                 decision period without a construction lead time)
-        y_life = lifetime_technical[e, d_build] (0 when missing; +inf for reinvest_automatic)
+        y_life = lifetime_technical[e, d_on] (the plant as constructed; 0 when missing; +inf for
+                 reinvest_automatic)
         y_end = y_on + y_life,   y_eol = round_end_of_life(y_end, end_of_life_method[e])
         alive = { d ∈ period_in_use : y_walk[d] >= yr_avail (the availability walk, along ``lineage``),
                                        y[d] < y_eol }
