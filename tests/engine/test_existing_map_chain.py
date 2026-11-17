@@ -262,3 +262,49 @@ def test_chain_and_single_solve_have_the_same_capacity_in_service(tmp_path_facto
     assert coal["total"].tolist() == pytest.approx([500.0, 250.0, 250.0, 250.0])
     assert wind["total"].tolist() == pytest.approx([1000.0, 1100.0, 1100.0, 1100.0])
     pd.testing.assert_frame_equal(chain, single, check_exact=False, rtol=1e-9, atol=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# A carried investment reaches its end of life in a later solve
+
+# coal: lifetime_method reinvest_choice, a 7-year life (lifetime_technical = payback_time = 7) and 50 MW forced in
+# p2025 (invest_min_period = invest_max_period), on the falling map.
+CARRIED_EOL = [_existing(FALLING),
+               ["unit", PLANT, "lifetime_method", b64("reinvest_choice", "str")],
+               ["unit", PLANT, "lifetime_technical", b64(7.0, "float")],
+               ["unit", PLANT, "payback_time", b64(7.0, "float")],
+               ["unit", PLANT, "invest_method", b64("invest_period", "str")],
+               ["unit", PLANT, "invest_min_period", _map([0.0, 50.0, 0.0, 0.0])],
+               ["unit", PLANT, "invest_max_period", _map([0.0, 50.0, 0.0, 0.0])]]
+
+
+def test_chain_carried_investment_reaches_its_end_of_life(tmp_path_factory) -> None:
+    """The end of life of a carried investment is the one its deciding solve gave it, in every later solve.
+
+    By hand, in run years (period starts p2020 0, p2025 5, p2030 10, p2035 15; horizon end 20), with
+    ``end_of_life_method`` next_seam (a cohort is in service in d iff y[d] < its rounded end of life):
+
+    * the existing cohort starts at 0: 0 + 7 = 7 → next period start 10, so it is in service in p2020 and p2025
+      only (500 and 300 MW from the map; the map's 100 MW in p2030 is past its end of life);
+    * the p2025 investment (50 MW, decided by y2025_5week) starts at 5: 5 + 7 = 12 → 15, so it is in service in
+      p2025 and p2030 only, and later solves carry it with that end of life.
+
+    Each solve holds its own period and the next one:
+    ``p_entity_all_existing`` y2020 {p2020: 500, p2025: 300}; y2025 {p2025: 300, p2030: 0};
+    y2030 {p2030: 0 + 50, p2035: 0}; y2035 {p2035: 0}.  The carried investment in service
+    (``p_entity_previously_invested_capacity``) is 50 in y2030's p2030 and 0 in p2035.
+    """
+    steps = run(tmp_path_factory, *make_db(tmp_path_factory, alt="carried_eol", values=CARRIED_EOL,
+                                           base_chain=CHAIN_INVEST))
+    assert list(steps) == ["y2020_5week", "y2025_5week", "y2030_5week", "y2035_5week"]
+    assert _invested_mw(steps["y2025_5week"]) == {"p2025": pytest.approx(50.0)}
+    want = {"y2020_5week": {"p2020": 500.0, "p2025": 300.0},
+            "y2025_5week": {"p2025": 300.0, "p2030": 0.0},
+            "y2030_5week": {"p2030": 50.0, "p2035": 0.0},
+            "y2035_5week": {"p2035": 0.0}}
+    for name, step in steps.items():
+        got = _frame(step, "p_entity_all_existing")
+        assert got == pytest.approx(want[name], abs=1e-9), name
+    prev = _frame(steps["y2030_5week"], "p_entity_previously_invested_capacity")
+    assert prev.get("p2030") == pytest.approx(50.0)
+    assert prev.get("p2035", 0.0) == pytest.approx(0.0, abs=1e-9)

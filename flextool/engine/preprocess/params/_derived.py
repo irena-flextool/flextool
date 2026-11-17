@@ -1309,7 +1309,7 @@ def _read_p_entity_all_existing_csv(workdir: Path | None,
     chained existing capacity (incl. multi-solve handoff) without
     recomputing it from raw ``entity.existing``.
 
-    ``emit_p_entity_existing_chain`` (``emit/_chain_params.py``) puts the
+    ``emit_existing_capacity`` (``emit/_chain_params.py``) puts the
     frame into the provider; *workdir* only forms the key, nothing is
     read from disk.
     """

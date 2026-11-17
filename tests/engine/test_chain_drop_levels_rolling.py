@@ -9,8 +9,8 @@ heavily non-unique indices that crash flextool's downstream MultiIndex
 joins).
 
 The polar_high analogue: when a chain runs with realised invest in
-many sub-solves, the in-memory ``SolveHandoff.realized_invest``
-carriers emitted for each sub-solve must have UNIQUE (entity, period)
+many sub-solves, the in-memory ``SolveHandoff.realized_cohort``
+carriers emitted for each sub-solve must have UNIQUE (entity, cohort)
 keys.  The chain-runner accumulator (``build_handoff_from_solution``
 reading ``prior_handoff`` and folding in this-solve's contributions)
 is the polar_high code path that, if buggy, would produce per-solve
