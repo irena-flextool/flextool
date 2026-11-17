@@ -1,3 +1,11 @@
+## Unreleased
+
+### Fixes
+
+- **A large database migrates.** A migration step that deletes many rows (values, entity alternatives) stopped
+  with "Expression tree is too large (maximum depth 1000)" when the rows were scattered over the database, as in a
+  large database edited over time. Such a step now deletes them in several commits.
+
 ## Release 4.5.1 (17.11.2026) — database migration fixes (schema v80)
 
 Migrating older input databases works again in more cases. No change to the model, results or data version.
