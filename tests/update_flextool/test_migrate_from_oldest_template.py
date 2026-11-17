@@ -3,8 +3,12 @@
 The oldest version the migration starts from is 0 (a database without ``model.version``); the bundled
 ``flextool_template_v2.json`` is such a database.  Its unit flow coefficient is ``coefficient`` until v35 renames it
 to ``flow_coefficient``.  The v23 step used to type ``flow_coefficient`` (so it created that definition beside
-``coefficient``) and the v35 rename then collided with it; v23 now types ``coefficient``, and v35 removes the empty
-``flow_coefficient`` that an older FlexTool's v23 left in a database migrated then.
+``coefficient``) and the v35 rename then collided with it; v23 now types ``coefficient``.
+
+A FlexTool 4.0..4.5 migration of such a database failed at v35 after steps 23..34 had committed, under the old stamp
+(each step commits; the version is written at the end).  Migrating that database reruns those steps: v23 does not
+bring back the names v25 and v32 changed, v25 and v32 recognise their own result, and v35 removes the empty
+``flow_coefficient`` the older v23 created.  The end result equals the clean path's.
 
 The databases are built from the bundled template JSONs (never a checked-in ``.sqlite``).  The oracle is relational:
 the same ``coefficient`` values written at v24 into a database from the v2 template, or at v25 into one from the
@@ -83,12 +87,29 @@ def v25_path(tmp_path_factory) -> dict:
     return {"definitions": _definitions(url), "values": _unit_node_values(url)}
 
 
-def test_oldest_version_migrates_with_its_coefficients(tmp_path_factory, v25_path) -> None:
+def _full_definitions(url: str) -> dict:
+    with DatabaseMapping(url) as db:
+        return {(d["entity_class_name"], d["name"]): (tuple(d["parameter_type_list"] or ()),
+                                                      from_database(d["default_value"], d["default_type"]),
+                                                      d["parameter_value_list_name"], d["description"],
+                                                      d["parameter_group_name"])
+                for d in db.get_items("parameter_definition")}
+
+
+@pytest.fixture(scope="module")
+def v2_path(tmp_path_factory) -> dict:
+    """The clean path: a v24 database from the v2 template (version 0) migrated to the current version."""
     url = _build(tmp_path_factory.mktemp("v2_template") / "db.sqlite", "flextool_template_v2.json", 24)
     with DatabaseMapping(url) as db:
         for cls in ("unit__inputNode", "unit__outputNode"):
             assert not db.get_item("parameter_definition", entity_class_name=cls, name="flow_coefficient")
     _quiet(migrate_database, url)
+    return {"url": url, "values": _unit_node_values(url), "definitions": _definitions(url),
+            "full_definitions": _full_definitions(url)}
+
+
+def test_oldest_version_migrates_with_its_coefficients(v2_path, v25_path) -> None:
+    url = v2_path["url"]
     values = _unit_node_values(url)
     assert values == v25_path["values"]
     assert len(values) > len(COEFFICIENTS)
@@ -98,16 +119,49 @@ def test_oldest_version_migrates_with_its_coefficients(tmp_path_factory, v25_pat
     assert set(v25_path["definitions"]) == shipped
 
 
-def test_flow_coefficient_left_by_an_older_v23_is_removed(tmp_path_factory, v25_path) -> None:
-    """A database migrated to 23..34 by an older FlexTool carries an empty ``flow_coefficient`` (type float) beside
-    ``coefficient``: v35 removes it and the ``coefficient`` values carry on as without it."""
-    url = _build(tmp_path_factory.mktemp("older_v23") / "db.sqlite", "flextool_template_v2.json", 34)
+def _restamp(db, version: int) -> None:
+    pdef = db.get_item("parameter_definition", entity_class_name="model", name="version")
+    val, typ = to_database(float(version))
+    db.update_parameter_definition(id=pdef["id"], default_value=val, default_type=typ)
+
+
+def _leave_failed_v35_state(url: str, stamp: int, stray_default: bytes | None = None) -> None:
+    """The state a FlexTool 4.0..4.5 migration left on a pre-v25 database: each step commits on its own and the
+    version is written only at the end, so its failed v35 left steps 23..34 applied (with the definitions its v23
+    created: flow_coefficient, max_capacity_coefficient and min_capacity_coefficient of type float) under the old
+    stamp.  *url* is at 34."""
     with DatabaseMapping(url) as db:
         for cls in ("unit__inputNode", "unit__outputNode"):
-            db.add_parameter_definition(entity_class_name=cls, name="flow_coefficient", parameter_type_list=("float",))
-        db.commit_session("the flow_coefficient an older v23 created")
+            for name in ("flow_coefficient", "max_capacity_coefficient", "min_capacity_coefficient"):
+                kwargs = {"default_value": stray_default, "default_type": None} if stray_default is not None else {}
+                db.add_parameter_definition(entity_class_name=cls, name=name, parameter_type_list=("float",), **kwargs)
+        _restamp(db, stamp)
+        db.commit_session(f"steps 23..34 of a failed migration under stamp {stamp}")
+
+
+@pytest.mark.parametrize("stamp", [22, 17, 11])
+def test_a_failed_older_migration_completes_as_the_clean_one(tmp_path_factory, stamp, v2_path) -> None:
+    """Steps 23..34 applied under stamp 22 or 17 (a database of that version) or 11 (a version-0 database: the
+    template imports of steps 1..10 write their version, the last one 11; no stamp below 11 is left with v23 applied):
+    the migration reruns them (v23 does not bring back the names v25 / v32 changed, v25 and v32 see their own
+    result, v35 removes the empty flow_coefficient) and ends with the definitions and values of the clean path."""
+    url = _build(tmp_path_factory.mktemp(f"failed_at_v35_{stamp}") / "db.sqlite", "flextool_template_v2.json", 34)
+    _leave_failed_v35_state(url, stamp)
     _quiet(migrate_database, url)
-    assert _unit_node_values(url) == v25_path["values"]
+    assert _unit_node_values(url) == v2_path["values"]
+    assert _full_definitions(url) == v2_path["full_definitions"]
+
+
+def test_an_empty_flow_coefficient_with_a_null_default_is_removed(tmp_path_factory, v2_path) -> None:
+    """A definition without a default that went through a JSON export and import has the default ``null`` (not SQL
+    NULL); it is still the empty flow_coefficient (stamp 34: only v35 and later run)."""
+    url = _build(tmp_path_factory.mktemp("null_default") / "db.sqlite", "flextool_template_v2.json", 34)
+    _leave_failed_v35_state(url, 34, stray_default=to_database(None)[0])
+    with DatabaseMapping(url) as db:
+        stray = db.get_item("parameter_definition", entity_class_name="unit__inputNode", name="flow_coefficient")
+        assert stray["default_value"] == b"null"
+    _quiet(migrate_database, url)
+    assert _unit_node_values(url) == v2_path["values"]
 
 
 def test_a_flow_coefficient_with_values_stops_v35(tmp_path_factory) -> None:
@@ -125,3 +179,15 @@ def test_a_flow_coefficient_with_values_stops_v35(tmp_path_factory) -> None:
         _quiet(migrate_database, url)
     with DatabaseMapping(url) as db:
         assert _version(db) == 34
+
+
+def test_a_v24_database_without_either_time_structure_stops_v25(tmp_path_factory) -> None:
+    """Without ``timeblockSet`` and without the v25 result, v25 stops with a message (it does not skip)."""
+    url = _build(tmp_path_factory.mktemp("no_timeblockset") / "db.sqlite", "flextool_template_v2.json", 24)
+    with DatabaseMapping(url) as db:
+        db.remove_entity_class(id=db.get_item("entity_class", name="timeblockSet")["id"])
+        db.commit_session("no timeblockSet")
+    with pytest.raises(SpineDBAPIError, match="v25: the database has no timeblockSet class"):
+        _quiet(migrate_database, url)
+    with DatabaseMapping(url) as db:
+        assert _version(db) == 24

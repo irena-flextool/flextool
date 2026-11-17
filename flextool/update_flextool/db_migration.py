@@ -424,6 +424,13 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 )
                 parameter_definitions = db.mapped_table("parameter_definition")
                 for cls in ("unit", "connection", "node"):
+                    # Already renamed: a migration that failed at a later step (v35, FlexTool 4.0 to 4.5) left v32
+                    # applied under the old stamp.  Any other shape (neither name) still stops at db.item.
+                    if (not db.get_item("parameter_definition", entity_class_name=cls,
+                                        name="constraint_capacity_coefficient")
+                            and db.get_item("parameter_definition", entity_class_name=cls,
+                                            name="constraint_invested_capacity_coefficient")):
+                        continue
                     param = db.item(parameter_definitions,
                                     entity_class_name=cls,
                                     name="constraint_capacity_coefficient")
@@ -528,12 +535,14 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                         name="max_capacity_coefficient",
                         default_value=default_one_val,
                         default_type=default_one_type,
+                        parameter_type_list=("float",),
                         description=maxcap_desc)
                     db.add_update_item("parameter_definition",
                         entity_class_name=cls,
                         name="min_capacity_coefficient",
                         default_value=default_one_val,
                         default_type=default_one_type,
+                        parameter_type_list=("float",),
                         description=mincap_desc)
                 _commit_step(db,
                     "Renamed coefficient -> flow_coefficient; added "
@@ -2117,8 +2126,30 @@ def change_optional_output_type(db, filepath):
         print("This change has been done before, continuing") 
     return 0
 
+def _v25_already_applied(db) -> bool:
+    """Whether the database already has the v25 time structure although its stamp is older.
+
+    Each step commits on its own and ``model.version`` is written only at the end, so a migration that failed at a
+    later step (v35, in FlexTool 4.0 to 4.5) left v25 applied under the old stamp.  Applied means: no ``timeblockSet``
+    class, a ``timeset`` class with ``timeline`` and ``timeset_duration`` and ``solve.period_timeset``.  A database
+    without ``timeblockSet`` that is not in that state stops with a message.
+    """
+    if db.get_item("entity_class", name="timeblockSet"):
+        return False
+    applied = (db.get_item("entity_class", name="timeset")
+               and not db.get_item("entity_class", name="timeblockSet__timeline")
+               and db.get_item("parameter_definition", entity_class_name="timeset", name="timeline")
+               and db.get_item("parameter_definition", entity_class_name="timeset", name="timeset_duration")
+               and db.get_item("parameter_definition", entity_class_name="solve", name="period_timeset"))
+    if not applied:
+        raise SpineDBAPIError("v25: the database has no timeblockSet class and not the v25 time structure (a timeset "
+                              "class with timeline and timeset_duration, solve.period_timeset); cannot migrate it.")
+    return True
+
+
 def update_timestructure(db):
-   
+    if _v25_already_applied(db):
+        return
     timeblocks__timelines = db.find_entities(entity_class_name="timeblockSet__timeline")
     block_durations = db.find_parameter_values(entity_class_name="timeblockSet", parameter_definition_name="block_duration")
     timeblock_entity_class_item = db.item(db.mapped_table("entity_class"), name="timeblockSet")
@@ -2186,7 +2217,7 @@ def _v35_drop_v23_flow_coefficient(db, cls: str) -> None:
     if not stray:
         return
     values = db.find_parameter_values(entity_class_name=cls, parameter_definition_name="flow_coefficient")
-    if values or stray["default_value"] is not None:
+    if values or from_database(stray["default_value"], stray["default_type"]) is not None:
         raise SpineDBAPIError(
             f"v35: {cls} has both coefficient and flow_coefficient, and flow_coefficient has values or a default; "
             f"coefficient is renamed to flow_coefficient in this version.  Move the values you want to keep to "
@@ -2194,16 +2225,32 @@ def _v35_drop_v23_flow_coefficient(db, cls: str) -> None:
     db.remove_parameter_definition(id=stray["id"])
 
 
+#: v23 does not create these when absent: they are v22 definitions that v25 (the timeblockSet class becomes timeset,
+#: period_timeblockSet becomes period_timeset, timeline_duration_in_years is removed) or v32
+#: (constraint_capacity_coefficient becomes constraint_invested_capacity_coefficient) renames or removes.  A rerun
+#: of v23 after those steps (a migration that failed at a later step left v23..v34 applied under the old stamp) would
+#: bring the old names back.
+_V23_NOT_CREATED = {
+    ("solve", "period_timeblockSet"),
+    ("timeblockSet", "block_duration"),
+    ("timeblockSet", "new_stepduration"),
+    ("timeline", "timeline_duration_in_years"),
+} | {(cls, "constraint_capacity_coefficient") for cls in ("unit", "connection", "node")}
+
+
 def update_parameter_types_v23(db):
     """Set the value types of the parameter definitions (v23).
 
-    The ``unit__inputNode`` / ``unit__outputNode`` flow coefficient is ``coefficient`` here: v35 renames it to
-    ``flow_coefficient`` and adds ``max_capacity_coefficient`` / ``min_capacity_coefficient``.  (Typing those names
-    here created a ``flow_coefficient`` beside ``coefficient``, and the v35 rename collided with it.)
+    An entry is created when the database lacks it (as v23 always did), except :data:`_V23_NOT_CREATED`.  The
+    ``unit__inputNode`` / ``unit__outputNode`` flow coefficient is ``coefficient`` here: v35 renames it to
+    ``flow_coefficient`` and adds ``max_capacity_coefficient`` / ``min_capacity_coefficient`` (typed there).  Typing
+    those v35 names here created ``flow_coefficient`` beside ``coefficient``, and the v35 rename collided with it.
     """
-    type_list = get_parameter_type_list_v23()
-    for i in type_list:
-        db.add_update_item("parameter_definition", entity_class_name = i[0], name = i[1], parameter_type_list = i[2])
+    for cls, name, types in get_parameter_type_list_v23():
+        if (cls, name) in _V23_NOT_CREATED and not db.get_item("parameter_definition", entity_class_name=cls,
+                                                                 name=name):
+            continue
+        db.add_update_item("parameter_definition", entity_class_name=cls, name=name, parameter_type_list=types)
 
 def get_parameter_type_list_v23():
     types = [["commodity", "co2_content", ("float",)],
