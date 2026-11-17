@@ -424,6 +424,13 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 )
                 parameter_definitions = db.mapped_table("parameter_definition")
                 for cls in ("unit", "connection", "node"):
+                    # Already renamed: a migration that failed at a later step (v35, FlexTool 4.0 to 4.5) left v32
+                    # applied under the old stamp.  Any other shape (neither name) still stops at db.item.
+                    if (not db.get_item("parameter_definition", entity_class_name=cls,
+                                        name="constraint_capacity_coefficient")
+                            and db.get_item("parameter_definition", entity_class_name=cls,
+                                            name="constraint_invested_capacity_coefficient")):
+                        continue
                     param = db.item(parameter_definitions,
                                     entity_class_name=cls,
                                     name="constraint_capacity_coefficient")
@@ -518,6 +525,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     param = db.item(parameter_definitions,
                                     entity_class_name=cls, name="coefficient")
                     if param:
+                        _v35_drop_v23_flow_coefficient(db, cls)
                         db.update_parameter_definition(
                             id=param["id"],
                             name="flow_coefficient",
@@ -527,12 +535,14 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                         name="max_capacity_coefficient",
                         default_value=default_one_val,
                         default_type=default_one_type,
+                        parameter_type_list=("float",),
                         description=maxcap_desc)
                     db.add_update_item("parameter_definition",
                         entity_class_name=cls,
                         name="min_capacity_coefficient",
                         default_value=default_one_val,
                         default_type=default_one_type,
+                        parameter_type_list=("float",),
                         description=mincap_desc)
                 _commit_step(db,
                     "Renamed coefficient -> flow_coefficient; added "
@@ -1964,6 +1974,33 @@ def _rename_or_drop_parameter_definition(db, entity_class_name, old_name, new_na
     db.update_parameter_definition(**kwargs)
 
 
+def _detach_list_defaults(db, list_name: str, renames: dict[str, str]) -> list[tuple[object, str]]:
+    """Clear each default of a definition on value list *list_name* that names an old member of *renames*.
+
+    A default refers to its list member.  After an in-place member rename the open mapping still holds the old name
+    for the definition, so every later update of it in the same migration run fails ("default value ... is not in
+    the list"); after a member removal the reference dangles and later reads as whichever member takes the freed id.
+    So a step that renames or removes members calls this before, and :func:`_attach_list_defaults` with the result
+    after.  Returns ``(definition id, new name)`` pairs.
+    """
+    pending = []
+    for pdef in db.get_items("parameter_definition"):
+        if pdef["parameter_value_list_name"] != list_name:
+            continue
+        default = from_database(pdef["default_value"], pdef["default_type"])
+        if isinstance(default, str) and default in renames and renames[default] != default:
+            db.update_parameter_definition(id=pdef["id"], default_value=None, default_type=None)
+            pending.append((pdef["id"], renames[default]))
+    return pending
+
+
+def _attach_list_defaults(db, pending: list[tuple[object, str]]) -> None:
+    """Set the defaults cleared by :func:`_detach_list_defaults` to their new member names."""
+    for pdef_id, new in pending:
+        val, typ = to_database(new)
+        db.update_parameter_definition(id=pdef_id, default_value=val, default_type=typ)
+
+
 def add_version(db):
     # this function adds the version information to the database if there is none
 
@@ -2089,8 +2126,30 @@ def change_optional_output_type(db, filepath):
         print("This change has been done before, continuing") 
     return 0
 
+def _v25_already_applied(db) -> bool:
+    """Whether the database already has the v25 time structure although its stamp is older.
+
+    Each step commits on its own and ``model.version`` is written only at the end, so a migration that failed at a
+    later step (v35, in FlexTool 4.0 to 4.5) left v25 applied under the old stamp.  Applied means: no ``timeblockSet``
+    class, a ``timeset`` class with ``timeline`` and ``timeset_duration`` and ``solve.period_timeset``.  A database
+    without ``timeblockSet`` that is not in that state stops with a message.
+    """
+    if db.get_item("entity_class", name="timeblockSet"):
+        return False
+    applied = (db.get_item("entity_class", name="timeset")
+               and not db.get_item("entity_class", name="timeblockSet__timeline")
+               and db.get_item("parameter_definition", entity_class_name="timeset", name="timeline")
+               and db.get_item("parameter_definition", entity_class_name="timeset", name="timeset_duration")
+               and db.get_item("parameter_definition", entity_class_name="solve", name="period_timeset"))
+    if not applied:
+        raise SpineDBAPIError("v25: the database has no timeblockSet class and not the v25 time structure (a timeset "
+                              "class with timeline and timeset_duration, solve.period_timeset); cannot migrate it.")
+    return True
+
+
 def update_timestructure(db):
-   
+    if _v25_already_applied(db):
+        return
     timeblocks__timelines = db.find_entities(entity_class_name="timeblockSet__timeline")
     block_durations = db.find_parameter_values(entity_class_name="timeblockSet", parameter_definition_name="block_duration")
     timeblock_entity_class_item = db.item(db.mapped_table("entity_class"), name="timeblockSet")
@@ -2139,15 +2198,61 @@ def update_timestructure(db):
     db.update_parameter_definition(id = param["id"], description = "Hours. Creates a new `timeline` from the old for this `timeset` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps.")
     param = db.item(parameter_definitions, entity_class_name= "node", name = "storage_binding_method")
     db.update_parameter_definition(id = param["id"], description = "Choice how the storage state will be maintained over discontinuos timelines. The default value 'bind_forward_only' will bind forward over any holes in the used timeline, but will not bind end to the start. Meanwhile 'bind_between_timesets' will bind the storage end state at the end of the timeset to the beginning of the timeset. 'bind_within_period', 'bind_within_solve' and bind_within_model' will act similarly but over increasingly longer time span. Separate parameters (e.g. 'storage_state_start') can force bindings. By default, storage start state is bound to 0.")
-    p_value, p_type = to_database("bind_within_timeblock") 
+    pending = _detach_list_defaults(db, "storage_binding_methods", {"bind_within_timeblock": "bind_within_timeset"})
+    p_value, p_type = to_database("bind_within_timeblock")
     param_list_value = db.item(db.mapped_table("list_value"), parameter_value_list_name = "storage_binding_methods", value = p_value, type = p_type)
-    p_value, p_type = to_database("bind_within_timeset") 
+    p_value, p_type = to_database("bind_within_timeset")
     db.update_list_value(id = param_list_value["id"], value = p_value, type = p_type)
+    _attach_list_defaults(db, pending)
+
+def _v35_drop_v23_flow_coefficient(db, cls: str) -> None:
+    """Remove the ``flow_coefficient`` definition that the v23 step of FlexTool 4.5.0 and older created on *cls*.
+
+    That step typed every name of its list and so created ``flow_coefficient`` (type ``float``, no description, no
+    default, no values) beside ``coefficient``; v35 renames ``coefficient`` to ``flow_coefficient`` and collided with
+    it.  The empty definition is removed so the rename keeps the ``coefficient`` values.  A ``flow_coefficient`` that
+    holds values (or a default) is not that definition: the step stops with a message instead of choosing between them.
+    """
+    stray = db.get_item("parameter_definition", entity_class_name=cls, name="flow_coefficient")
+    if not stray:
+        return
+    values = db.find_parameter_values(entity_class_name=cls, parameter_definition_name="flow_coefficient")
+    if values or from_database(stray["default_value"], stray["default_type"]) is not None:
+        raise SpineDBAPIError(
+            f"v35: {cls} has both coefficient and flow_coefficient, and flow_coefficient has values or a default; "
+            f"coefficient is renamed to flow_coefficient in this version.  Move the values you want to keep to "
+            f"coefficient and remove the flow_coefficient definition, then migrate again.")
+    db.remove_parameter_definition(id=stray["id"])
+
+
+#: v23 does not create one of these v22 definitions when it is absent and its successor (the name v25 or v32 gives
+#: it, or for the removed ``timeline_duration_in_years`` the v25 ``timeset.timeline``) exists: then a migration that
+#: failed at a later step left v23..v34 applied under the old stamp, and recreating it would bring the old name back
+#: beside the new one.  Without the successor, an absent definition is created as v23 always did.
+_V23_SUCCESSORS = {
+    ("solve", "period_timeblockSet"): ("solve", "period_timeset"),
+    ("timeblockSet", "block_duration"): ("timeset", "timeset_duration"),
+    ("timeblockSet", "new_stepduration"): ("timeset", "new_stepduration"),
+    ("timeline", "timeline_duration_in_years"): ("timeset", "timeline"),
+} | {(cls, "constraint_capacity_coefficient"): (cls, "constraint_invested_capacity_coefficient")
+     for cls in ("unit", "connection", "node")}
+
 
 def update_parameter_types_v23(db):
-    type_list = get_parameter_type_list_v23()
-    for i in type_list:
-        db.add_update_item("parameter_definition", entity_class_name = i[0], name = i[1], parameter_type_list = i[2])
+    """Set the value types of the parameter definitions (v23).
+
+    An entry is created when the database lacks it (as v23 always did), except one whose successor exists
+    (:data:`_V23_SUCCESSORS`).  The ``unit__inputNode`` / ``unit__outputNode`` flow coefficient is ``coefficient`` here: v35 renames it to
+    ``flow_coefficient`` and adds ``max_capacity_coefficient`` / ``min_capacity_coefficient`` (typed there).  Typing
+    those v35 names here created ``flow_coefficient`` beside ``coefficient``, and the v35 rename collided with it.
+    """
+    for cls, name, types in get_parameter_type_list_v23():
+        successor = _V23_SUCCESSORS.get((cls, name))
+        if (successor is not None
+                and not db.get_item("parameter_definition", entity_class_name=cls, name=name)
+                and db.get_item("parameter_definition", entity_class_name=successor[0], name=successor[1])):
+            continue
+        db.add_update_item("parameter_definition", entity_class_name=cls, name=name, parameter_type_list=types)
 
 def get_parameter_type_list_v23():
     types = [["commodity", "co2_content", ("float",)],
@@ -2321,9 +2426,7 @@ def get_parameter_type_list_v23():
              ["connection__node", "constraint_flow_coefficient", ("1d_map",)],
              ["connection__profile", "profile_method", ("str",)],
              ["node__profile", "profile_method", ("str",)],
-             ["unit__inputNode", "flow_coefficient", ("float",)],
-             ["unit__inputNode", "max_capacity_coefficient", ("float",)],
-             ["unit__inputNode", "min_capacity_coefficient", ("float",)],
+             ["unit__inputNode", "coefficient", ("float",)],
              ["unit__inputNode", "constraint_flow_coefficient", ("1d_map",)],
              ["unit__inputNode", "inertia_constant", ("float",)],
              ["unit__inputNode", "is_non_synchronous", ("str",)],
@@ -2332,9 +2435,7 @@ def get_parameter_type_list_v23():
              ["unit__inputNode", "ramp_method", ("str",)],
              ["unit__inputNode", "ramp_speed_down", ("float",)],
              ["unit__inputNode", "ramp_speed_up", ("float",)],
-             ["unit__outputNode", "flow_coefficient", ("float",)],
-             ["unit__outputNode", "max_capacity_coefficient", ("float",)],
-             ["unit__outputNode", "min_capacity_coefficient", ("float",)],
+             ["unit__outputNode", "coefficient", ("float",)],
              ["unit__outputNode", "constraint_flow_coefficient", ("1d_map",)],
              ["unit__outputNode", "inertia_constant", ("float",)],
              ["unit__outputNode", "is_non_synchronous", ("str",)],
@@ -3286,6 +3387,7 @@ def _migrate_v62_benders_rename(db) -> None:
                 value=new_val_bytes,
                 type=new_val_type,
             )
+    pending = _detach_list_defaults(db, "decomposition_schemes", {"lagrangian": "benders"})
     for lv in db.find_list_values(
         parameter_value_list_name="decomposition_schemes",
     ):
@@ -3295,6 +3397,7 @@ def _migrate_v62_benders_rename(db) -> None:
                 value=new_val_bytes, type=new_val_type,
             )
             break
+    _attach_list_defaults(db, pending)
 
     # --- 2. Rename group method 'lagrangian_region' -> 'benders_regional' -
     old_meth_bytes, _ = to_database("lagrangian_region")
@@ -3313,6 +3416,7 @@ def _migrate_v62_benders_rename(db) -> None:
                 value=new_meth_bytes,
                 type=new_meth_type,
             )
+    pending = _detach_list_defaults(db, "decomposition_methods", {"lagrangian_region": "benders_regional"})
     for lv in db.find_list_values(
         parameter_value_list_name="decomposition_methods",
     ):
@@ -3322,6 +3426,7 @@ def _migrate_v62_benders_rename(db) -> None:
                 value=new_meth_bytes, type=new_meth_type,
             )
             break
+    _attach_list_defaults(db, pending)
 
     try:
         _commit_step(db,
@@ -5133,9 +5238,11 @@ def _v77_drop_stale_definitions(db) -> None:
         val, typ = to_database("single_solve")
         for pv in shots:
             db.update_parameter_value(id=pv["id"], value=val, type=typ)
+    pending = _detach_list_defaults(db, "solve_mode", {"single_shot": "single_solve"})
     for lv in db.get_items("list_value", parameter_value_list_name="solve_mode"):
         if lv["parsed_value"] == "single_shot":
             db.remove_items("list_value", lv["id"])
+    _attach_list_defaults(db, pending)
 
 
 _V77_STORAGE_START_END_DESCRIPTION = (
@@ -7822,6 +7929,7 @@ def _migrate_v55_storage_binding_rename_and_extend(db) -> None:
     # bytes (same pattern as the v52 ``glpsol`` drop a few hundred
     # lines above).
     dropped_lvs: list[str] = []
+    pending = _detach_list_defaults(db, "storage_binding_methods", _STORAGE_BINDING_RENAMES_V55)
     for legacy_name in _STORAGE_BINDING_DROPPED_V55:
         legacy_bytes, _ = to_database(legacy_name)
         for lv in list(db.find_list_values(
@@ -7831,6 +7939,7 @@ def _migrate_v55_storage_binding_rename_and_extend(db) -> None:
                 db.remove_item("list_value", lv["id"])
                 dropped_lvs.append(legacy_name)
                 break
+    _attach_list_defaults(db, pending)
 
     # ---- Step (d): refresh parameter_definition description ---------
     # Mirror the Phase F rewrite of the schema-template description so
@@ -9675,6 +9784,7 @@ def _migrate_v56_drop_storage_nested_fix_method_no(db) -> None:
 
     no_bytes, _ = to_database("no")
     dropped = False
+    pending = _detach_list_defaults(db, "storage_nested_fix_method", {"no": "fix_nothing"})
     for lv in list(db.find_list_values(
         parameter_value_list_name="storage_nested_fix_method",
     )):
@@ -9682,6 +9792,7 @@ def _migrate_v56_drop_storage_nested_fix_method_no(db) -> None:
             db.remove_item("list_value", lv["id"])
             dropped = True
             break
+    _attach_list_defaults(db, pending)
 
     _commit_step(
         db,
@@ -9756,6 +9867,7 @@ def _migrate_v56_rename_co2_methods_no_method_to_none(db) -> None:
     # ---- Step 3: drop the legacy ``no_method`` list_value ----------------
     no_method_bytes, _ = to_database("no_method")
     dropped = False
+    pending = _detach_list_defaults(db, "co2_methods", {"no_method": "none"})
     for lv in list(db.find_list_values(
         parameter_value_list_name="co2_methods",
     )):
@@ -9763,6 +9875,7 @@ def _migrate_v56_rename_co2_methods_no_method_to_none(db) -> None:
             db.remove_item("list_value", lv["id"])
             dropped = True
             break
+    _attach_list_defaults(db, pending)
 
     # ---- Step 4: flip the parameter_definition default to ``none`` -------
     db.add_update_item(
@@ -10569,20 +10682,35 @@ def _v80_capacity_margin_rename(db) -> None:
     ``share_of_peak`` -> ``relative_of_peak_demand`` (part of v80).
 
     A definition rename keeps its values (they hang on the definition).  Each list member is renamed in place (its
-    index, so the list order, is kept), then every stored ``capacity_margin_method`` value (all alternatives) is
-    rewritten to the new name, so each value is a member of the list again; the default (``none``) is unchanged.
-    When the new name is already a member, the old member is removed instead of renamed (never a duplicate).
-    The values change only by name.  Idempotent: a rerun finds the new names.
+    index, so the list order, is kept); when the new name is already a member, the old member is removed instead of
+    renamed (never a duplicate).  Every stored ``capacity_margin_method`` value (all alternatives), and a default,
+    then reads the new name, so each is a member of the list again; each renamed stored value is printed.  The values
+    change only by name.  Idempotent: a rerun finds the new names.
+
+    A stored value and a default refer to their list member.  The open mapping keeps reading the old name for them
+    after the in-place rename, so each value is written again with the new name.  A default that still refers to the
+    old member makes every later update of its definition fail ("not in the list"), so it is cleared before the
+    members change and set to the new name after (:func:`_detach_list_defaults`).
     """
     if not db.get_item("entity_class", name="group"):
         return
     for old, new in V80_CAPACITY_MARGIN_RENAMES.items():
         _rename_or_drop_parameter_definition(db, "group", old, new)
+    renames = {old: new for old, new in V80_CAPACITY_MARGIN_METHODS.items() if old != new}
+    values = db.find_parameter_values(entity_class_name="group", parameter_definition_name="capacity_margin_method")
+    renamed = []
+    for pv in values:
+        parsed = from_database(pv["value"], pv["type"])
+        if isinstance(parsed, str) and parsed in renames:
+            renamed.append(f"group {'/'.join(pv['entity_byname'])} [{pv['alternative_name']}]: {parsed} -> "
+                           f"{renames[parsed]}")
+    pending = []
     if db.get_item("parameter_value_list", name="capacity_margin_methods"):
+        pending = _detach_list_defaults(db, "capacity_margin_methods", renames)
         items = db.get_items("list_value", parameter_value_list_name="capacity_margin_methods")
         members = {x["parsed_value"] for x in items}
         for item in sorted(items, key=lambda x: x["index"]):
-            new = V80_CAPACITY_MARGIN_METHODS.get(item["parsed_value"], item["parsed_value"])
+            new = renames.get(item["parsed_value"], item["parsed_value"])
             if new == item["parsed_value"]:
                 continue
             if new in members:
@@ -10594,14 +10722,14 @@ def _v80_capacity_margin_rename(db) -> None:
                 val, typ = to_database(new)
                 db.update_list_value(id=item["id"], value=val, type=typ)
                 members.add(new)
-    renamed = []
+    # A value still reads the old name (the mapping keeps it after the in-place rename, as does a value of a removed
+    # old member): write the new name.
     for pv in db.find_parameter_values(entity_class_name="group", parameter_definition_name="capacity_margin_method"):
         parsed = from_database(pv["value"], pv["type"])
-        new = V80_CAPACITY_MARGIN_METHODS.get(parsed, parsed) if isinstance(parsed, str) else parsed
-        if new != parsed:
-            val, typ = to_database(new)
+        if isinstance(parsed, str) and parsed in renames:
+            val, typ = to_database(renames[parsed])
             db.update_parameter_value(id=pv["id"], value=val, type=typ)
-            renamed.append(f"group {'/'.join(pv['entity_byname'])} [{pv['alternative_name']}]: {parsed} -> {new}")
+    _attach_list_defaults(db, pending)
     if renamed:
         print("v80: capacity_margin_method values renamed (capacity_margin is now capacity_margin_absolute, "
               "capacity_margin_share capacity_margin_relative): " + ", ".join(renamed))

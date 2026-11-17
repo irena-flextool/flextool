@@ -1,3 +1,29 @@
+## Unreleased
+
+### Fixes
+
+- **Migrating a database whose parameter default names a renamed value works.** A database whose
+  `capacity_margin_method` default was *manual* or *share_of_peak* stopped migrating at data version 79 ("default
+  value ... not in list"); it now reaches version 80 with the default *absolute* / *relative_of_peak_demand*. The same
+  holds for a default *lagrangian* (`solve.decomposition`, now *benders*) or *lagrangian_region*
+  (`group.decomposition_method`, now *benders_regional*), and for a `storage_binding_method` default renamed in data
+  version 25. A default naming a value that an older migration step removed (`storage_binding_method`
+  *bind_within_timeset*, *bind_using_blended_weights*, *bind_within_model*; `storage_nested_fix_method` *no*;
+  `solve_mode` *single_shot*) could end up as an unrelated value of the list; it now becomes the value's new name
+  (*bind_within_timeblock*, *bind_within_solve_blended_weights*, *bind_within_solve*, *fix_nothing*, *single_solve*).
+- **A database older than data version 25 migrates again**, also one that an earlier FlexTool 4 already tried
+  to migrate. The migration stopped with "there's already a parameter_definition ... flow_coefficient": the data
+  version 23 step created an empty `flow_coefficient` beside the unit flow `coefficient`, which version 35 renames
+  to `flow_coefficient`. The failed attempt left the database partly migrated under its old version number; running
+  the migration again then stopped earlier ("no entity_class matching timeblockSet"). Now the version 23 step types
+  `coefficient`, the steps that the failed attempt already applied recognise that and skip it, and version 35 removes
+  the empty `flow_coefficient` left by the earlier attempt. Such a database ends the same as one migrated in a single
+  run, with its `coefficient` values kept. A `flow_coefficient` that holds values beside `coefficient` stops the
+  migration with a message.
+- **A database at data version 25 to 34 now gets the value type float on `unit__inputNode.input_share_max` /
+  `input_share_min` and `unit__outputNode.capacity_max_coeff` / `capacity_min_coeff`** when it migrates, as in the
+  shipped schema (before, only a database that had gone through the version 23 step got it).
+
 ## Release 4.5.0 (16.11.2026) — inf as no limit, scaling guard, ramp envelope and ramp frequency plots, piecewise linear efficiency, full-load efficiency in reduced unit detail, capacity margin renames and many fixes (schema v80)
 
 Input databases move to data version 80. The FlexTool window, the Spine Toolbox workflow and `flextool-run
