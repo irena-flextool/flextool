@@ -2,9 +2,20 @@
 
 ### Fixes
 
-- **A large database migrates.** A migration step that deletes many rows (values, entity alternatives) stopped
-  with "Expression tree is too large (maximum depth 1000)" when the rows were scattered over the database, as in a
-  large database edited over time. Such a step now deletes them in several commits.
+- **A large database migrates.** A migration step that deletes many rows (values, flow-group memberships, entity
+  alternatives) stopped with "Expression tree is too large (maximum depth 1000)" when the rows were scattered over
+  the database, as in a large database edited over time. Such a step now deletes them in several commits.
+- **A failed migration leaves the database as it was, also from the command line.** `flextool-migrate-database`,
+  `flextool-run --migrate` and the other migrations outside the FlexTool window now copy the database before the
+  first step and restore it when a step fails or the migration is cancelled, as the window already did; before, a
+  migration that failed part way left the steps before the failure in the database.
+- **A migration that is killed outright can be run again.** Every step that deletes in several commits finishes on
+  a rerun: before, a rerun of the version 56 step could lose `is_DC` / `is_non_synchronous` values, and a rerun of
+  the version 70 step could keep an output `capacity_min_coeff` left over from version 36.
+- **Running the version 56 step again no longer switches off reserves active in the base alternative.** A rerun of
+  the step, after an interruption or after the whole step had been applied and a later step failed, set
+  `is_enabled` to *no* in the base alternative of every reserve, overwriting the *yes* the first run had written
+  for the reserves active there.
 
 ## Release 4.5.1 (17.11.2026) — database migration fixes (schema v80)
 

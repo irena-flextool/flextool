@@ -344,3 +344,40 @@ def test_v58_rerun_is_noop(migrated_url):
         assert len(db.find_entities(entity_class_name="flowGroup__connection__node")) == 1
         # value-list created exactly once
         assert len(db.find_parameter_value_lists(name="flow_aggregator_methods")) == 1
+
+
+#: Flow memberships per group in the large database; each membership sits between the unit or connection it names,
+#: so the removed ids are one run each (SQLite refuses a DELETE over more than about 1000 runs).
+LARGE = 1100
+
+
+def test_v58_scattered_memberships_of_a_large_database(tmp_path_factory):
+    """``flow_only`` (flow memberships only) and ``dual`` (also a ``group__node`` membership) have ``LARGE`` flow
+    memberships each, scattered between other entities.  The migration reaches 58 and re-homes every membership:
+    ``flow_only`` leaves ``group``, ``dual`` keeps its node membership, the old 3-dim classes are gone."""
+    url = "sqlite:///" + str(tmp_path_factory.mktemp("v58_large") / "v58_large.sqlite")
+    _build_v57_base(url)
+    with DatabaseMapping(url) as db:
+        db.add_entity(entity_class_name="node", name="n")
+        for g in ("flow_only", "dual"):
+            db.add_entity(entity_class_name="group", name=g)
+        db.add_entity(entity_class_name="group__node", entity_byname=("dual", "n"))
+        for i in range(LARGE):
+            db.add_entity(entity_class_name="unit", name=f"u{i}")
+            db.add_entity(entity_class_name="group__unit__node", entity_byname=("flow_only", f"u{i}", "n"))
+            db.add_entity(entity_class_name="connection", name=f"c{i}")
+            db.add_entity(entity_class_name="group__connection__node", entity_byname=("dual", f"c{i}", "n"))
+        db.commit_session("scattered flow memberships")
+    migrate_database(url, up_to=58)
+    assert _db_version(url) == 58
+    with DatabaseMapping(url) as db:
+        assert {e["entity_byname"] for e in db.find_entities(entity_class_name="flowGroup__unit__node")} == {
+            ("flow_only", f"u{i}", "n") for i in range(LARGE)}
+        assert {e["entity_byname"] for e in db.find_entities(entity_class_name="flowGroup__connection__node")} == {
+            ("dual", f"c{i}", "n") for i in range(LARGE)}
+        assert sorted(e["name"] for e in db.find_entities(entity_class_name="flowGroup")) == ["dual", "flow_only"]
+        assert [e["name"] for e in db.find_entities(entity_class_name="group")] == ["dual"]
+        assert [e["entity_byname"] for e in db.find_entities(entity_class_name="group__node")] == [("dual", "n")]
+        assert len(db.find_entities(entity_class_name="unit")) == LARGE
+        for cls in ("group__unit__node", "group__connection__node"):
+            assert not db.find_entity_classes(name=cls)
