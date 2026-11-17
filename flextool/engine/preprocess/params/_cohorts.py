@@ -484,6 +484,84 @@ def _existing_alive(cohort: pl.DataFrame, years: Mapping[str, float], period_in_
               .collect())
 
 
+def _invest_rows(source: "InputSource",
+                 active_solve: str | None,
+                 ed_invest: pl.DataFrame,
+                 years: Mapping[str, float],
+                 cal: _Calendar,
+                 eol_methods: Mapping[str, str],
+                 commission_lf: pl.LazyFrame | None,
+                 ) -> tuple[pl.DataFrame, list[tuple]]:
+    """``(anchor, rows)``: the decisions ``[e, d]`` of ``ed_invest`` of entities with a ``lifetime_method`` and their
+    cohort rows (:func:`_cohort_schema` order, Utf8 labels): the start of operation ``d_on`` (``commission_lf``'s
+    ``d_c``; the decision period without a construction lead time) and the end of life of :func:`window_end` with
+    the lifetime of the decision period."""
+    methods = _entity_methods(source)
+    with_life = axis_lazyframe({"e": [e for e, m in methods.items() if m in LIFETIME_METHODS]})
+    anchor, with_life = align_join_dtypes(ed_invest.lazy().select("e", "d"), with_life, ["e"])
+    anchor = anchor.join(with_life, on="e", how="semi").collect()
+    if anchor.height == 0:
+        return anchor, []
+    life = ed_values_on(source, LIFETIME_TECHNICAL, anchor.lazy(), fill=0.0).collect()
+    starts: dict[tuple[str, str], str] = {}
+    if commission_lf is not None:
+        for e, d, d_c in (commission_lf.filter(pl.col("yr_c").is_finite())
+                                       .select("e", "d", "d_c").collect().iter_rows()):
+            starts[(str(e), str(d))] = str(d_c)
+    rows: list[tuple] = []
+    for e, d, life_v in life.select("e", "d", "value").iter_rows():
+        e, d = str(e), str(d)
+        method = methods[e]
+        eol_method = eol_methods.get(e, END_OF_LIFE_METHOD_DEFAULT)
+        d_on = starts.get((e, d), d)
+        if d_on not in years:
+            raise CommissioningLagError(
+                f"Investment of {e!r} decided in period {d!r} starts to operate in period {d_on!r}, which has no "
+                f"year in the solve {active_solve!r}: its end of life cannot be placed.")
+        y_on = float(years[d_on])
+        y_life, y_end, y_eol = window_end(y_on, float(life_v), method, cal, eol_method)
+        rows.append((f"{KIND_INVEST}:{d}", e, KIND_INVEST, method, eol_method, d, d_on, y_on, 0.0, y_life, y_end,
+                     None, y_eol, cal.label(y_eol)))
+    return anchor, rows
+
+
+def never_operating_investments(source: "InputSource",
+                                active_solve: str | None,
+                                ed_invest: pl.DataFrame | None,
+                                workdir: Path | None = None,
+                                *,
+                                provider: "object | None" = None,
+                                commission_lf: pl.LazyFrame | None = None,
+                                ) -> pl.DataFrame:
+    """``[e, d]`` (Utf8): the investment decisions of ``ed_invest`` that would never operate, so the model does not
+    offer them::
+
+        never = { (e, d) : 0 < y_life < +inf,  y_eol <= y_on + YEAR_TOL }
+
+    with ``y_on``, ``y_life`` and ``y_eol`` those of the decision's cohort (:func:`_invest_rows`, on the run's
+    seams and the run's ``end_of_life_method``): a lifetime that ``previous_seam`` / ``closest_seam`` rounds to the
+    decision's own start of operation (also after a construction lead time, ``commission_lf``).  A warning names
+    them once per run and entity (:func:`_never_operates_warning`)."""
+    empty = pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8})
+    if ed_invest is None or ed_invest.height == 0:
+        return empty
+    years = cohort_years(source, active_solve, workdir, provider=provider)
+    if not years:
+        return empty
+    cal = cohort_calendar(_run_calendar_of(source, active_solve, years, provider), years)
+    eol_methods = eol_methods_of(existing_cohorts(source, active_solve, workdir, provider=provider, years=years))
+    _anchor, rows = _invest_rows(source, active_solve, ed_invest, years, cal, eol_methods, commission_lf)
+    never: dict[str, list[tuple[str, float, str]]] = {}
+    for _c, e, _k, _m, eol_method, d, _d_on, y_on, _age, y_life, _y_end, _first, y_eol, _d_eol in rows:
+        if 0.0 < y_life < _INF and y_eol <= y_on + YEAR_TOL:
+            never.setdefault(e, []).append((d, y_life, eol_method))
+    if not never:
+        return empty
+    _never_operates_warning(source, never)
+    pairs = [(e, d) for e, decisions in never.items() for d, _life, _m in decisions]
+    return pl.DataFrame(pairs, schema={"e": pl.Utf8, "d": pl.Utf8}, orient="row")
+
+
 def invest_cohorts(source: "InputSource",
                    active_solve: str | None,
                    ed_invest: pl.DataFrame,
@@ -509,47 +587,19 @@ def invest_cohorts(source: "InputSource",
     The start of the window is the availability walk of :func:`._walks.period_walk_iterator`
     (``UNBOUNDED_FORWARD``, with the construction lead time of ``commission_lf`` and the scenario ``lineage``).
     ``eol_methods`` is each entity's ``end_of_life_method`` (:func:`eol_methods_of` the run's existing cohort; read
-    from ``source`` when not given).  A decision whose rounded end of life is at its own start of operation (a
-    lifetime shorter than the period under ``previous_seam`` / ``closest_seam``) is still offered; a warning names
-    it once per run (:func:`_never_operates_warning`)."""
+    from ``source`` when not given).  A decision that would never operate is not in ``ed_invest``: the investment
+    set leaves it out (:func:`never_operating_investments`)."""
     from flextool.engine.preprocess.params._walks import WindowMethod, period_walk_iterator
     empty = (pl.DataFrame(schema=_cohort_schema()), pl.DataFrame(schema=_alive_schema()))
     if ed_invest is None or ed_invest.height == 0 or not period_in_use:
         return empty
     years = dict(years) if years is not None else cohort_years(source, active_solve, workdir, provider=provider)
     cal = cohort_calendar(_run_calendar_of(source, active_solve, years, provider), years)
-    methods = _entity_methods(source)
     if eol_methods is None:
         eol_methods = end_of_life_methods(source)
-    with_life = axis_lazyframe({"e": [e for e, m in methods.items() if m in LIFETIME_METHODS]})
-    anchor, with_life = align_join_dtypes(ed_invest.lazy().select("e", "d"), with_life, ["e"])
-    anchor = anchor.join(with_life, on="e", how="semi").collect()
+    anchor, rows = _invest_rows(source, active_solve, ed_invest, years, cal, eol_methods, commission_lf)
     if anchor.height == 0:
         return empty
-    life = ed_values_on(source, LIFETIME_TECHNICAL, anchor.lazy(), fill=0.0).collect()
-    starts: dict[tuple[str, str], str] = {}
-    if commission_lf is not None:
-        for e, d, d_c in (commission_lf.filter(pl.col("yr_c").is_finite())
-                                       .select("e", "d", "d_c").collect().iter_rows()):
-            starts[(str(e), str(d))] = str(d_c)
-    rows: list[tuple] = []
-    never: dict[str, list[tuple[str, float, str]]] = {}
-    for e, d, life_v in life.select("e", "d", "value").iter_rows():
-        e, d = str(e), str(d)
-        method = methods[e]
-        eol_method = eol_methods.get(e, END_OF_LIFE_METHOD_DEFAULT)
-        d_on = starts.get((e, d), d)
-        if d_on not in years:
-            raise CommissioningLagError(
-                f"Investment of {e!r} decided in period {d!r} starts to operate in period {d_on!r}, which has no "
-                f"year in the solve {active_solve!r}: its end of life cannot be placed.")
-        y_on = float(years[d_on])
-        y_life, y_end, y_eol = window_end(y_on, float(life_v), method, cal, eol_method)
-        if 0.0 < y_life < _INF and y_eol <= y_on + YEAR_TOL:
-            never.setdefault(e, []).append((d, y_life, eol_method))
-        rows.append((f"{KIND_INVEST}:{d}", e, KIND_INVEST, method, eol_method, d, d_on, y_on, 0.0, y_life, y_end,
-                     None, y_eol, cal.label(y_eol)))
-    _never_operates_warning(source, never)
     _closest_seam_notice(source, rows, cal)
     cohort = _cohort_frame(rows)
     walk = (period_walk_iterator(source, active_solve, anchor.lazy(), list(period_in_use), list(period_in_use),
@@ -576,7 +626,8 @@ def _entity_class_names(source: "InputSource") -> dict[str, str]:
 
 def _never_operates_warning(source: "InputSource", never: Mapping[str, list[tuple[str, float, str]]]) -> None:
     """Warn, once per run and entity, about investment decisions ``never[e] = [(period, lifetime, method)]`` whose
-    end of life is rounded to their own start of operation: such capacity is in service in no period."""
+    end of life is rounded to their own start of operation: such a decision would be in service in no period, so
+    the investment set leaves it out."""
     if not never:
         return
     from flextool.engine import _behaviour_changes
@@ -588,7 +639,7 @@ def _never_operates_warning(source: "InputSource", never: Mapping[str, list[tupl
             ("investment_never_operates", e),
             f"Warning: {classes.get(e, 'entity')} {e}: investments decided in {periods} would never operate "
             f"(lifetime_technical {life:g} years, end_of_life_method {method}): their end of life is rounded to the "
-            "start of the period they start to operate in. They are still offered.")
+            "start of the period they start to operate in. They are not offered.")
 
 
 def _closest_seam_notice(source: "InputSource", rows: list[tuple], cal: _Calendar) -> None:

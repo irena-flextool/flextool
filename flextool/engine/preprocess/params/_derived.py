@@ -5364,15 +5364,18 @@ def _offer_invest_set(flex_data: object,
                          provider: "object | None" = None,
                          ) -> tuple["pl.DataFrame | None", "pl.LazyFrame | None"]:
     """``(ed_invest offered, commission frame)``: drop the investment decisions whose capacity would start to
-    operate after the solve or the model horizon (with a warning), and keep the start of operation of the rest
-    on ``flex_data.ed_invest_commission`` (``[e, d, d_c, yr_c]``, the decisions with a lead time: the start
-    period and its year on the solve calendar; ``None`` without).
+    operate after the solve or the model horizon, and those that would never operate (an end of life rounded to
+    their own start of operation, :func:`._cohorts.never_operating_investments`), each with a warning; keep the
+    start of operation of the rest on ``flex_data.ed_invest_commission`` (``[e, d, d_c, yr_c]``, the offered
+    decisions with a lead time: the start period and its year on the solve calendar; ``None`` without).  Every set
+    of investment variables, rows and cost terms is built from the offered set.
 
     When decisions are dropped, the invest-set fields of ``flex_data`` are cleared, so no earlier value (seed)
     brings them back where the offered set leaves one empty."""
     flex_data.ed_invest_commission = None
     if ed_inv is None or ed_inv.height == 0 or not period_in_use:
         return ed_inv, None
+    from flextool.engine.preprocess.params._cohorts import never_operating_investments
     from flextool.engine.preprocess.params._existing import (
         offered_invest_set as _offered,
         warn_investments_not_offered as _warn,
@@ -5380,17 +5383,25 @@ def _offer_invest_set(flex_data: object,
     from flextool.engine.preprocess.params._run_calendar import read_run_calendar
     commission_lf = _build_commission_lf(
         source, active_solve, ed_inv.lazy().select("e", "d"), period_in_use, workdir, provider=provider)
-    if commission_lf is None:
-        return ed_inv, None
-    from flextool.engine import _behaviour_changes
-    lagged = commission_lf.select(pl.col("e").cast(pl.Utf8)).unique().sort("e").collect()["e"].to_list()
-    _behaviour_changes.notice("construction_lead_time_commissioning", "entities", lagged)
-    offered, late = _offered(ed_inv, commission_lf)
-    _warn(source, active_solve, late, list(period_in_use), read_run_calendar(provider))
-    kept = (commission_lf.filter(pl.col("yr_c").is_finite())
-                         .select("e", "d", "d_c", "yr_c").collect())
-    flex_data.ed_invest_commission = kept if kept.height > 0 else None
-    if late is not None:
+    offered, late = ed_inv, None
+    if commission_lf is not None:
+        from flextool.engine import _behaviour_changes
+        lagged = commission_lf.select(pl.col("e").cast(pl.Utf8)).unique().sort("e").collect()["e"].to_list()
+        _behaviour_changes.notice("construction_lead_time_commissioning", "entities", lagged)
+        offered, late = _offered(ed_inv, commission_lf)
+        _warn(source, active_solve, late, list(period_in_use), read_run_calendar(provider))
+    never = never_operating_investments(source, active_solve, offered, workdir, provider=provider,
+                                        commission_lf=commission_lf)
+    if never.height > 0:
+        offered, never = align_join_dtypes(offered, never, ["e", "d"])
+        offered = offered.join(never, on=["e", "d"], how="anti")
+    if commission_lf is not None:
+        kept = commission_lf.filter(pl.col("yr_c").is_finite()).select("e", "d", "d_c", "yr_c").collect()
+        if never.height > 0:
+            kept, never = align_join_dtypes(kept, never, ["e", "d"])
+            kept = kept.join(never, on=["e", "d"], how="anti")
+        flex_data.ed_invest_commission = kept if kept.height > 0 else None
+    if late is not None or never.height > 0:
         # The sets built from ed_invest_set are set below only where they have rows; clear the earlier values
         # (seeds, also the seeded investment cohorts) so a set left empty by the dropped decisions does not keep
         # them.

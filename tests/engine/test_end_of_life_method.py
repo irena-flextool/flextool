@@ -13,14 +13,14 @@ are 0, 5, 10, the horizon ends at 20, the seams are {0, 5, 10, 20}.  A cohort is
   (in service in p2025 only), next 20 (p2025 and p2030).
 * An explicit closest_seam builds the same LP as no end_of_life_method (the default).
 * wind_plant lifetime_technical 4, decided in p2025 under previous_seam: Y = 9 → 5 = y_on, in service nowhere: a
-  warning names it, the decision is still offered.
+  warning names it, and the decision is not offered (no investment column).
 """
 from __future__ import annotations
 
 import polars as pl
 import pytest
 
-from tests.engine._unit_db import RunCache, b64
+from tests.engine._unit_db import RunCache, b64, build, utf8
 from tests.engine.test_construction_lead_time_calendar import _same_lp
 
 pytestmark = pytest.mark.solver
@@ -145,20 +145,63 @@ def test_explicit_closest_seam_is_the_default(tmp_path_factory) -> None:
         _same_lp(unset[name], explicit[name])
 
 
-def test_investment_that_never_operates_warns_and_is_offered(tmp_path_factory, capsys) -> None:
+def _invest_columns(step, entity: str = WIND) -> list[str]:
+    """The decision periods of ``entity``'s investment columns in the LP of ``step``."""
+    var = build(step.flex_data)._vars.get("v_invest_p")
+    if var is None:
+        return []
+    return sorted(str(d) for d in utf8(var.frame).filter(pl.col("p") == entity)["d"].to_list())
+
+
+def _offered(step, entity: str = WIND) -> list[str]:
+    """The decision periods of ``entity`` in the solve's investment set."""
+    offered = step.flex_data.ed_invest_set
+    if offered is None:
+        return []
+    return sorted(str(d) for e, d in offered.select("e", "d").iter_rows() if str(e) == entity)
+
+
+def _cap_every_period(values: list) -> list:
+    """``values`` with wind_plant's ``invest_max_period`` 100 MW in every period of the solve."""
+    return [row if row[2] != "invest_max_period" else ["unit", WIND, "invest_max_period",
+                                                        _map(dict.fromkeys(PERIODS, 100.0))]
+            for row in values]
+
+
+def test_investment_that_never_operates_is_not_offered(tmp_path_factory, capsys) -> None:
+    """wind_plant may invest in p2020, p2025 and p2030 (lifetime_technical 7, previous_seam).  Hand: p2020 y_on 0,
+    Y 7 → 5 (in service in p2020); p2025 y_on 5, Y 12 → 10 (p2025); p2030 y_on 10, Y 17 → 10 = y_on: it would
+    never operate, so the solve has no investment column for it; a warning names p2030 once."""
     from flextool.engine import _behaviour_changes
     capsys.readouterr()
-    steps = steps_of(tmp_path_factory, "eol_never", solve_values(invest=["p2025"]) + wind_invest(4.0,
-                                                                                                "previous_seam"))
-    (step,) = steps.values()
+    values = solve_values(invest=PERIODS) + _cap_every_period(wind_invest(7.0, "previous_seam"))
+    (step,) = steps_of(tmp_path_factory, "eol_never_one", values).values()
     printed = capsys.readouterr().out
     assert _behaviour_changes.already_warned(("investment_never_operates", WIND))
-    assert ("Warning: unit wind_plant: investments decided in p2025 would never operate (lifetime_technical 4 "
+    assert ("Warning: unit wind_plant: investments decided in p2030 would never operate (lifetime_technical 7 "
             "years, end_of_life_method previous_seam)") in printed
+    assert "They are not offered." in printed
     assert printed.count("investments decided in") == 1
-    assert invest_alive(step) == []
-    offered = step.flex_data.ed_invest_set
-    assert (WIND, "p2025") in {(str(e), str(d)) for e, d in offered.select("e", "d").iter_rows()}
+    assert _offered(step) == ["p2020", "p2025"]
+    assert _invest_columns(step) == ["p2020", "p2025"]
+    assert invest_alive(step) == [("p2020", "p2020"), ("p2025", "p2025")]
+
+
+@pytest.mark.parametrize("lead", [False, True])
+def test_entity_whose_every_investment_never_operates_solves(tmp_path_factory, lead) -> None:
+    """wind_plant (the only entity that invests) lifetime_technical 4, previous_seam.  Decided in p2025: y_on 5,
+    Y 9 → 5 = y_on.  With a 5-year construction lead time, decided in p2020: starts to operate in p2025, y_on 5,
+    Y 9 → 5 = y_on.  Either way the one decision would never operate: the solve has no investment set and no
+    investment column, and it solves."""
+    if lead:
+        values = solve_values(invest=["p2020"]) + _cap_every_period(_lead_time_wind(4.0, "previous_seam"))
+    else:
+        values = solve_values(invest=["p2025"]) + wind_invest(4.0, "previous_seam")
+    steps = steps_of(tmp_path_factory, f"eol_never_all_{lead}", values)
+    (step,) = steps.values()
+    assert _offered(step) == []
+    assert _invest_columns(step) == []
+    assert step.flex_data.ed_invest_commission is None
 
 
 @pytest.mark.parametrize("method,periods", [

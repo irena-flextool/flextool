@@ -52,9 +52,10 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   `next_seam` (the rounding before this release: in service to the end of the period its life ends in) or
   `previous_seam` (gone for that whole period). The fixed cost of an investment stops when its capacity does. A
   warning names existing capacity whose end of life is at or before the model start and investments whose rounded end
-  of life is at their own start of operation (they are still offered). The `no_reinvestment` investment window (the
-  first technical lifetime from the model start) does not depend on the age. Without the new parameters only the
-  default rounding changes results (see `end_of_life_method` under Behaviour changes).
+  of life is at their own start of operation: such an investment would never operate and is not offered (no
+  investment variable, no cost). The `no_reinvestment` investment window (the first technical lifetime from the model
+  start) does not depend on the age. Without the new parameters only the default rounding changes results (see
+  `end_of_life_method` under Behaviour changes).
 
 ### Fixes
 
