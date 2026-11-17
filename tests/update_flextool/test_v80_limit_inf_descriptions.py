@@ -9,7 +9,8 @@ The step
 * renames ``group.capacity_margin`` -> ``capacity_margin_absolute`` and ``capacity_margin_share`` ->
   ``capacity_margin_relative`` (the values go with the definition, in every alternative, unchanged);
 * renames the ``capacity_margin_methods`` members ``manual`` -> ``absolute`` and ``share_of_peak`` ->
-  ``relative_of_peak_demand`` (list order kept) and rewrites every stored ``capacity_margin_method`` value;
+  ``relative_of_peak_demand`` (list order kept) and rewrites every stored ``capacity_margin_method`` value (each one
+  printed) and a ``manual`` / ``share_of_peak`` default;
 * rewrites the capacity-margin, ``solve.solver_precommand``, ``solve.solver_arguments``,
   ``unit.conversion_method``, ``solve.reduce_unit_detail_method`` and ``group.print_dispatch`` descriptions;
 * appends ``piecewise_linear`` to ``conversion_methods``, adds ``unit.piecewise_linear_efficiency`` (a curve, or a
@@ -20,11 +21,13 @@ The new texts and the value list are the shipped schema's; nothing else changes,
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 from pathlib import Path
 
 import pytest
-from spinedb_api import DatabaseMapping, Map, to_database
+from spinedb_api import DatabaseMapping, Map, from_database, to_database
 from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
@@ -85,10 +88,12 @@ def migrated(tmp_path_factory: pytest.TempPathFactory) -> dict:
                                    parameter_definition_name=param, alternative_name=alts[i], value=val, type=typ)
         db.commit_session("v79 capacity-margin values")
         before = {"defs": _defs(db), "lists": _lists(db), "values": _values(db)}
-    migrate_database(url, up_to=80)
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        migrate_database(url, up_to=80)
     with DatabaseMapping(url) as db:
         after = {"defs": _defs(db), "lists": _lists(db), "values": _values(db)}
-    return {"url": url, "alts": alts, "before": before, "after": after}
+    return {"url": url, "alts": alts, "before": before, "after": after, "printed": printed.getvalue()}
 
 
 def test_appends_the_limit_sentences_once(migrated) -> None:
@@ -155,6 +160,44 @@ def test_rewrites_every_stored_value_and_keeps_the_data(migrated) -> None:
     alts = migrated["alts"]
     assert json.loads(new[("group", ("stoch_g",), "capacity_margin_method", alts[1])][0]) == "relative_of_peak_demand"
     assert ("group", ("stoch_g",), "capacity_margin_relative", alts[1]) in new
+
+
+def test_renamed_values_are_printed(migrated) -> None:
+    """Each stored old method value is named in the message, once."""
+    alts = migrated["alts"]
+    lines = [x for x in migrated["printed"].splitlines() if x.startswith("v80: capacity_margin_method values renamed")]
+    assert len(lines) == 1
+    assert sorted(lines[0].split("): ", 1)[1].split(", ")) == sorted([
+        f"group stoch_g [{alts[0]}]: manual -> absolute",
+        f"group stoch_g [{alts[1]}]: share_of_peak -> relative_of_peak_demand"])
+
+
+@pytest.mark.parametrize(("old", "new"), [("manual", "absolute"), ("share_of_peak", "relative_of_peak_demand")])
+def test_an_old_method_default_is_renamed(tmp_path_factory, old, new) -> None:
+    """A v79 ``capacity_margin_method`` default ``manual`` / ``share_of_peak`` reads the renamed member at 80 (it
+    stopped the migration at 79: the later description update found the old name), and a rerun commits nothing."""
+    url = json_to_db(SEED, tmp_path_factory.mktemp(f"v80_default_{old}") / "seed.sqlite")
+    migrate_database(url, up_to=79)
+    with DatabaseMapping(url) as db:
+        pdef = db.get_item("parameter_definition", entity_class_name="group", name="capacity_margin_method")
+        val, typ = to_database(old)
+        db.update_parameter_definition(id=pdef["id"], default_value=val, default_type=typ)
+        db.commit_session(f"a {old} default")
+        before = _defs(db)
+    migrate_database(url, up_to=80)
+    with DatabaseMapping(url) as db:
+        version = db.get_item("parameter_definition", entity_class_name="model", name="version")
+        assert from_database(version["default_value"], version["default_type"]) == 80
+        after = _defs(db)
+        key = ("group", "capacity_margin_method")
+        assert from_database(*after[key][4:]) == new
+        assert after[key][1:4] == before[key][1:4]
+        assert after[key][0] == m._v80_texts()[key]
+    with DatabaseMapping(url) as db:
+        with pytest.raises(NothingToCommit):
+            m._v80_capacity_margin_rename(db)
+            m._v80_descriptions(db)
+            db.commit_session("rerun")
 
 
 def test_replaces_the_solver_descriptions(migrated) -> None:
@@ -290,7 +333,9 @@ def test_current_template_with_an_older_stamp_gets_no_duplicate_member(tmp_path_
         db.add_update_item("parameter_value", entity_class_name="group", entity_byname=(group,),
                            parameter_definition_name="capacity_margin_method", alternative_name=alt,
                            value=val, type=typ)
-        db.commit_session("an old-name method value")
+        pdef = db.get_item("parameter_definition", entity_class_name="group", name="capacity_margin_method")
+        db.update_parameter_definition(id=pdef["id"], default_value=val, default_type=typ)
+        db.commit_session("an old-name method value and default")
     migrate_database(url, up_to=80)
     _, shipped_lists = _shipped()
     with DatabaseMapping(url) as db:
@@ -300,6 +345,8 @@ def test_current_template_with_an_older_stamp_gets_no_duplicate_member(tmp_path_
         stored = db.get_item("parameter_value", entity_class_name="group", entity_byname=(group,),
                              parameter_definition_name="capacity_margin_method", alternative_name=alt)
         assert stored["parsed_value"] == "relative_of_peak_demand"
+        pdef = db.get_item("parameter_definition", entity_class_name="group", name="capacity_margin_method")
+        assert from_database(pdef["default_value"], pdef["default_type"]) == "relative_of_peak_demand"
     migrate_database(url, up_to=80)
     with DatabaseMapping(url) as db:
         assert _lists(db)["capacity_margin_methods"] == members

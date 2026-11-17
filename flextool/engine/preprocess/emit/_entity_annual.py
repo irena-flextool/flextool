@@ -14,8 +14,8 @@ Outputs (all written under ``solve_data/``):
   * ``ed_lifetime_fixed_cost_divest.csv``        (entity, period, value)
 
 ``ed_entity_annual_discounted.csv`` and ``ed_lifetime_fixed_cost.csv`` are not emitted here: their windows start
-at the start of operation of a decision (construction lead time) and the annuity window runs over the payback time
-in exact years, which only :mod:`..params._npv` derives; ``_npv.apply_invest_lumps`` registers its values under
+at the start of operation of a decision (construction lead time) and run over the years in service at the level
+price (:func:`..params._npv.npv_invest_discounted_lf`), which only :mod:`..params._npv` derives; ``_npv.apply_invest_lumps`` registers its values under
 these keys (for a Spine solve and a synthetic sub-solve alike).
 
 Method-enum constants mirror flextool/flextool_base.dat:184 and

@@ -20,7 +20,7 @@ years at the interest ``discount_rate``.  ``r = 0`` is the straight-line limit o
 (at the model's ``inflation_rate`` i) of ``n`` yearly payments A, A·G(n), spread evenly over ``L`` years, gives
 A·G(n)/G(L) a year.  It does not depend on when the plant is built, so one price per year in service holds for
 every build period and period length.  With ``discount_rate = inflation_rate`` the price is
-``invest_cost · 1000 · annuity_factor(i, L)`` whatever ``n``; with a ``discount_rate`` below the inflation rate a
+``invest_cost · 1000 · annuity_factor(i, L)`` whatever ``n`` (a whole number of years); with a ``discount_rate`` below the inflation rate a
 shorter payback time costs more.  A fractional last year counts its fraction (the rule of a fractional
 ``years_represented``).
 

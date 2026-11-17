@@ -646,7 +646,7 @@
       "payback_time",
       null,
       null,
-      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor): with discount_rate it sets the size of the yearly investment cost. With lifetime_method reinvest_choice or no_reinvestment the present value of the annuity (discounted at the model inflation_rate) is spread evenly over lifetime_technical and paid for each year the capacity is in service: with discount_rate equal to inflation_rate payback_time changes nothing, below it a shorter payback_time costs more. With reinvest_automatic the annuity is paid in every year to the end of the model horizon. No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the capacity comes online is used.",
+      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor): with discount_rate it sets the size of the yearly investment cost. With lifetime_method reinvest_choice or no_reinvestment the present value of the annuity (discounted at the model inflation_rate) is spread evenly over lifetime_technical and paid for each year the capacity is in service: with discount_rate equal to inflation_rate payback_time changes nothing (a whole number of years), below it a shorter payback_time costs more. With reinvest_automatic the annuity is paid in every year to the end of the model horizon. No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the capacity comes online is used.",
       "investment"
     ],
     [
@@ -1565,7 +1565,7 @@
       "payback_time",
       null,
       null,
-      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor): with discount_rate it sets the size of the yearly investment cost. With lifetime_method reinvest_choice or no_reinvestment the present value of the annuity (discounted at the model inflation_rate) is spread evenly over lifetime_technical and paid for each year the capacity is in service: with discount_rate equal to inflation_rate payback_time changes nothing, below it a shorter payback_time costs more. With reinvest_automatic the annuity is paid in every year to the end of the model horizon. No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the storage capacity comes online is used.",
+      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor): with discount_rate it sets the size of the yearly investment cost. With lifetime_method reinvest_choice or no_reinvestment the present value of the annuity (discounted at the model inflation_rate) is spread evenly over lifetime_technical and paid for each year the capacity is in service: with discount_rate equal to inflation_rate payback_time changes nothing (a whole number of years), below it a shorter payback_time costs more. With reinvest_automatic the annuity is paid in every year to the end of the model horizon. No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the storage capacity comes online is used.",
       "investment"
     ],
     [
@@ -2507,7 +2507,7 @@
       "payback_time",
       null,
       null,
-      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor): with discount_rate it sets the size of the yearly investment cost. With lifetime_method reinvest_choice or no_reinvestment the present value of the annuity (discounted at the model inflation_rate) is spread evenly over lifetime_technical and paid for each year the capacity is in service: with discount_rate equal to inflation_rate payback_time changes nothing, below it a shorter payback_time costs more. With reinvest_automatic the annuity is paid in every year to the end of the model horizon. No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the capacity comes online is used.",
+      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor): with discount_rate it sets the size of the yearly investment cost. With lifetime_method reinvest_choice or no_reinvestment the present value of the annuity (discounted at the model inflation_rate) is spread evenly over lifetime_technical and paid for each year the capacity is in service: with discount_rate equal to inflation_rate payback_time changes nothing (a whole number of years), below it a shorter payback_time costs more. With reinvest_automatic the annuity is paid in every year to the end of the model horizon. No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the capacity comes online is used.",
       "investment"
     ],
     [

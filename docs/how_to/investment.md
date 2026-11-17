@@ -31,8 +31,8 @@ First, the investment parameters need to be included both for the *battery_inver
 - `payback_time` - years over which the investment cost is annualized (together with the discount rate). Without it,
   the investment is paid back over `lifetime_technical`. It sets only the size of the yearly investment cost: with
   `lifetime_method` *reinvest_choice* or *no_reinvestment* the annuity's present value is spread evenly over
-  `lifetime_technical`, so with a `discount_rate` equal to the model `inflation_rate` it changes nothing, and with a
-  lower `discount_rate` a shorter payback time costs more.
+  `lifetime_technical`, so with a `discount_rate` equal to the model `inflation_rate` it changes nothing (for a
+  whole number of years), and with a lower `discount_rate` a shorter payback time costs more.
 
 Additional parameters:
 
