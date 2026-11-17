@@ -338,3 +338,43 @@ def test_notice_is_registered() -> None:
     from flextool.engine._behaviour_changes import BEHAVIOUR_CHANGES
 
     assert NOTICE_ID in BEHAVIOUR_CHANGES
+
+
+def _lead_time_annuity(tmp_path_factory, alt: str, payback: float | None) -> tuple[float, float]:
+    """``(ed_annuity, ed_entity_annual_discounted)`` of wind_plant decided in p2020 with a 5-year construction lead
+    time (online in p2025), lifetime_technical {p2020: 3, p2025: 20, p2030: 20}, and ``payback`` as its constant
+    payback_time (none when None)."""
+    values = solve_values(invest=["p2020"]) + [
+        ["unit", WIND, "lifetime_method", b64("reinvest_choice", "str")],
+        ["unit", WIND, "invest_method", b64("invest_period", "str")],
+        ["unit", WIND, "invest_cost", b64(1000.0, "float")],
+        ["unit", WIND, "discount_rate", b64(0.05, "float")],
+        ["unit", WIND, "invest_max_period", _map({"p2025": 100.0})],
+        ["unit", WIND, "lifetime_technical", _map({"p2020": 3.0, "p2025": 20.0, "p2030": 20.0})],
+        ["unit", WIND, "construction_lead_time", b64(5.0, "float")],
+        ["unit", WIND, "end_of_life_method", b64("next_seam", "str")]]
+    if payback is not None:
+        values.append(["unit", WIND, "payback_time", b64(payback, "float")])
+    (step,) = steps_of(tmp_path_factory, alt, values).values()
+    fd = step.flex_data
+
+    def at_decision(frame: pl.DataFrame) -> float:
+        rows = frame.filter((pl.col("e").cast(pl.Utf8) == WIND) & (pl.col("d").cast(pl.Utf8) == "p2020"))
+        (value,) = rows["value"].to_list()
+        return float(value)
+
+    return at_decision(fd.ed_annuity.frame), at_decision(fd.ed_entity_annual_discounted.frame)
+
+
+def test_lead_time_annuity_without_payback_time_takes_the_lifetime_of_its_decision_period(tmp_path_factory) -> None:
+    """Without payback_time the annuity of wind_plant (decided in p2020, online in p2025) is over the
+    lifetime_technical of its decision period, 3 years (not that of p2025, 20), as its end of life is: the same as
+    with payback_time 3.  By hand: 1.05^-3 = 0.8638376, factor 0.05 / (1 − 0.8638376) = 0.3672086, annuity 1000 ·
+    1000 · 0.3672086 = 367 208.56 CUR/MW/a; reinvest_choice pays it for 3 years from y_on 5 (years 5, 6, 7 of p2025,
+    no inflation): 3 · 367 208.56 = 1 101 625.69.  (Over 20 years: 80 242.59 a year for the 15 years to the
+    horizon end.)"""
+    ann, discounted = _lead_time_annuity(tmp_path_factory, "lead_annuity_no_payback", None)
+    twin = _lead_time_annuity(tmp_path_factory, "lead_annuity_payback_3", 3.0)
+    assert ann == pytest.approx(367_208.56, rel=1e-7)
+    assert discounted == pytest.approx(1_101_625.69, rel=1e-7)
+    assert (ann, discounted) == pytest.approx(twin, rel=1e-12)

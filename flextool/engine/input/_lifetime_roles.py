@@ -9,9 +9,11 @@ An entity gives three numbers:
 * ``net_salvage_value`` — the value of retired capacity.
 
 The payback time is read, per entity, from the first name of :data:`ROLE_CHAIN` under which the entity has a value
-(:func:`role_sources`): ``payback_time``, else ``lifetime_technical``, for all its periods.  The database readers,
-the CSV-generation readers and the input checks each pass :func:`role_sources` their own way of listing the
-entities that have a value of a parameter.  The ``lifetime_method`` value :data:`NO_REINVESTMENT` retires the
+(:func:`role_sources`): ``payback_time``, else ``lifetime_technical``, for all its periods.  An investment with a
+construction lead time reads each name at its own period (:func:`reads_at_decision`): ``payback_time`` at the period
+its capacity comes online, ``lifetime_technical`` (also as the payback time) at the decision period.  The database
+readers, the CSV-generation readers and the input checks each pass :func:`role_sources` their own way of listing
+the entities that have a value of a parameter.  The ``lifetime_method`` value :data:`NO_REINVESTMENT` retires the
 capacity at the end of its technical lifetime and allows investment only in the first technical lifetime.
 """
 from __future__ import annotations
@@ -31,6 +33,11 @@ NET_SALVAGE_VALUE = "net_salvage_value"
 ROLE_CHAIN: Mapping[str, tuple[str, ...]] = {
     PAYBACK_TIME: (PAYBACK_TIME, LIFETIME_TECHNICAL),
 }
+
+#: The names an investment with a construction lead time reads at its decision period; the others at the period its
+#: capacity comes online.  The technical lifetime of a decision is one number, that of the period it is decided in:
+#: its end of life, its fixed-cost window and, without ``payback_time``, its annuity and payback window.
+READ_AT_DECISION: frozenset[str] = frozenset({LIFETIME_TECHNICAL})
 
 NO_REINVESTMENT = "no_reinvestment"
 
@@ -85,6 +92,12 @@ def role_sources(role: str, entities_with: Callable[[str], Iterable[str]]) -> di
         for e in sorted({str(e) for e in entities_with(name)}):
             out.setdefault(e, name)
     return out
+
+
+def reads_at_decision(name: str) -> bool:
+    """Whether an investment with a construction lead time reads parameter ``name`` (a name of
+    :data:`ROLE_CHAIN`) at its decision period (:data:`READ_AT_DECISION`), not at the period it comes online."""
+    return name in READ_AT_DECISION
 
 
 def source_entities_with(source: "InputSource", entity_class: str) -> Callable[[str], set[str]]:

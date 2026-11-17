@@ -65,6 +65,11 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   (construction lead times) are carried separately, each with its own lifetime; a carried investment with a
   construction lead time keeps the `lifetime_technical` of the period it was decided in (before, the period it
   started to operate in).
+- **Without a `payback_time`, an investment with a construction lead time is annualized over the
+  `lifetime_technical` of the period it is decided in**, the lifetime of its end of life and its fixed cost.
+  Before, the annuity and its payback window used the `lifetime_technical` of the period the capacity starts to
+  operate in. Results change only where that lifetime is a period map with different values in the two periods;
+  an explicit `payback_time` is still read at the start of operation.
 - **A chain of solves with a `no_reinvestment` entity no longer stops with a `p_entity_max_units` error** once the
   entity's investment window has closed in a later solve. The closed periods also no longer get an investment
   variable (held at zero) when another entity still invests in that solve; results are unchanged.
