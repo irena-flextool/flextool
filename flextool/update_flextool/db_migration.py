@@ -2225,30 +2225,32 @@ def _v35_drop_v23_flow_coefficient(db, cls: str) -> None:
     db.remove_parameter_definition(id=stray["id"])
 
 
-#: v23 does not create these when absent: they are v22 definitions that v25 (the timeblockSet class becomes timeset,
-#: period_timeblockSet becomes period_timeset, timeline_duration_in_years is removed) or v32
-#: (constraint_capacity_coefficient becomes constraint_invested_capacity_coefficient) renames or removes.  A rerun
-#: of v23 after those steps (a migration that failed at a later step left v23..v34 applied under the old stamp) would
-#: bring the old names back.
-_V23_NOT_CREATED = {
-    ("solve", "period_timeblockSet"),
-    ("timeblockSet", "block_duration"),
-    ("timeblockSet", "new_stepduration"),
-    ("timeline", "timeline_duration_in_years"),
-} | {(cls, "constraint_capacity_coefficient") for cls in ("unit", "connection", "node")}
+#: v23 does not create one of these v22 definitions when it is absent and its successor (the name v25 or v32 gives
+#: it, or for the removed ``timeline_duration_in_years`` the v25 ``timeset.timeline``) exists: then a migration that
+#: failed at a later step left v23..v34 applied under the old stamp, and recreating it would bring the old name back
+#: beside the new one.  Without the successor, an absent definition is created as v23 always did.
+_V23_SUCCESSORS = {
+    ("solve", "period_timeblockSet"): ("solve", "period_timeset"),
+    ("timeblockSet", "block_duration"): ("timeset", "timeset_duration"),
+    ("timeblockSet", "new_stepduration"): ("timeset", "new_stepduration"),
+    ("timeline", "timeline_duration_in_years"): ("timeset", "timeline"),
+} | {(cls, "constraint_capacity_coefficient"): (cls, "constraint_invested_capacity_coefficient")
+     for cls in ("unit", "connection", "node")}
 
 
 def update_parameter_types_v23(db):
     """Set the value types of the parameter definitions (v23).
 
-    An entry is created when the database lacks it (as v23 always did), except :data:`_V23_NOT_CREATED`.  The
-    ``unit__inputNode`` / ``unit__outputNode`` flow coefficient is ``coefficient`` here: v35 renames it to
+    An entry is created when the database lacks it (as v23 always did), except one whose successor exists
+    (:data:`_V23_SUCCESSORS`).  The ``unit__inputNode`` / ``unit__outputNode`` flow coefficient is ``coefficient`` here: v35 renames it to
     ``flow_coefficient`` and adds ``max_capacity_coefficient`` / ``min_capacity_coefficient`` (typed there).  Typing
     those v35 names here created ``flow_coefficient`` beside ``coefficient``, and the v35 rename collided with it.
     """
     for cls, name, types in get_parameter_type_list_v23():
-        if (cls, name) in _V23_NOT_CREATED and not db.get_item("parameter_definition", entity_class_name=cls,
-                                                                 name=name):
+        successor = _V23_SUCCESSORS.get((cls, name))
+        if (successor is not None
+                and not db.get_item("parameter_definition", entity_class_name=cls, name=name)
+                and db.get_item("parameter_definition", entity_class_name=successor[0], name=successor[1])):
             continue
         db.add_update_item("parameter_definition", entity_class_name=cls, name=name, parameter_type_list=types)
 

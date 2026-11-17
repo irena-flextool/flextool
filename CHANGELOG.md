@@ -20,6 +20,9 @@
   the empty `flow_coefficient` left by the earlier attempt. Such a database ends the same as one migrated in a single
   run, with its `coefficient` values kept. A `flow_coefficient` that holds values beside `coefficient` stops the
   migration with a message.
+- **A database at data version 25 to 34 now gets the value type float on `unit__inputNode.input_share_max` /
+  `input_share_min` and `unit__outputNode.capacity_max_coeff` / `capacity_min_coeff`** when it migrates, as in the
+  shipped schema (before, only a database that had gone through the version 23 step got it).
 
 ## Release 4.5.0 (16.11.2026) — inf as no limit, scaling guard, ramp envelope and ramp frequency plots, piecewise linear efficiency, full-load efficiency in reduced unit detail, capacity margin renames and many fixes (schema v80)
 

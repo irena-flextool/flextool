@@ -191,3 +191,18 @@ def test_a_v24_database_without_either_time_structure_stops_v25(tmp_path_factory
         _quiet(migrate_database, url)
     with DatabaseMapping(url) as db:
         assert _version(db) == 24
+
+
+@pytest.mark.parametrize(("cls", "name"), [("unit", "constraint_capacity_coefficient"),
+                                           ("solve", "period_timeblockSet")])
+def test_a_deleted_v22_definition_is_recreated_by_v23(tmp_path_factory, v2_path, cls, name) -> None:
+    """A v22 database whose user deleted a definition that v25 / v32 later renames: its successor does not exist,
+    so v23 creates the definition again (as it always did) and the migration ends with the clean path's
+    definitions."""
+    url = _build(tmp_path_factory.mktemp(f"deleted_{name}") / "db.sqlite", "flextool_template_v2.json", 22)
+    with DatabaseMapping(url) as db:
+        db.remove_parameter_definition(id=db.get_item("parameter_definition", entity_class_name=cls, name=name)["id"])
+        db.commit_session(f"deleted {cls}.{name}")
+    _quiet(migrate_database, url)
+    assert _unit_node_values(url) == v2_path["values"]
+    assert set(_full_definitions(url)) == set(v2_path["full_definitions"])
