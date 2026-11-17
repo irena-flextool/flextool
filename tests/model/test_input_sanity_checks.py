@@ -309,3 +309,45 @@ def test_errors_of_the_input_checks_come_in_one_message(tmp_path_factory) -> Non
         "remove the link."
         "\n\n" + PREFIX + "unit 'coal_plant' efficiency = 0 (alternative 'b170_all'): efficiency must be above 0 "
         "(0 gives no output, a negative value pays the unit to run). Use a fraction such as 0.4.")
+
+
+# ---------------------------------------------------------------------------
+# The age of existing capacity: age_at_model_start, or model.start_year − build_year
+
+
+@pytest.mark.parametrize("alt, values, expected", [
+    ("age_both", [["unit", "coal_plant", "age_at_model_start", _f(3.0)],
+                  ["unit", "coal_plant", "build_year", _f(2017.0)],
+                  ["model", "flexTool", "start_year", _f(2020.0)]],
+     "unit 'coal_plant' has both age_at_model_start 3 and build_year 2017: give one of them (alternative "
+     "'age_both')."),
+    ("age_no_start", [["unit", "coal_plant", "build_year", _f(2017.0)]],
+     "unit 'coal_plant' has build_year 2017 but the model has no start_year: give model.start_year, or use "
+     "age_at_model_start (alternative 'age_no_start')."),
+    ("age_negative", [["unit", "coal_plant", "age_at_model_start", _f(-2.0)]],
+     "unit 'coal_plant' age_at_model_start = -2: the age must be 0 or more (alternative 'age_negative')."),
+    ("age_built_late", [["unit", "coal_plant", "build_year", _f(2025.0)],
+                        ["model", "flexTool", "start_year", _f(2020.0)]],
+     "unit 'coal_plant' build_year 2025 is after model.start_year 2020: capacity built after the model start is "
+     "an investment (alternative 'age_built_late')."),
+])
+def test_existing_age_errors(tmp_path_factory, alt, values, expected) -> None:
+    msg = _error(tmp_path_factory, alt, values)
+    assert msg == PREFIX + expected, msg
+
+
+def test_model_start_years_must_agree(tmp_path_factory) -> None:
+    url, scen = make_db(tmp_path_factory, alt="age_two_starts", base_chain=PLANT_CHAIN, values=[
+        ["model", "flexTool", "start_year", _f(2020.0)], ["model", "other", "start_year", _f(2025.0)]],
+        entities=[["model", "other", None]])
+    with pytest.raises(FlexToolConfigError) as err:
+        _validate(url, scen)
+    assert str(err.value) == PREFIX + (
+        "model.start_year differs between the models of the scenario: flexTool 2020 (alternative 'age_two_starts'), "
+        "other 2025 (alternative 'age_two_starts'); give the models one start year.")
+
+
+def test_age_and_build_year_with_a_start_year_are_silent(tmp_path_factory) -> None:
+    _validate(*make_db(tmp_path_factory, alt="age_ok", base_chain=PLANT_CHAIN, values=[
+        ["unit", "coal_plant", "build_year", _f(2017.0)], ["unit", "coal_chp", "age_at_model_start", _f(0.0)],
+        ["model", "flexTool", "start_year", _f(2020.0)]]))

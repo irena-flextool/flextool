@@ -97,7 +97,8 @@ def _eol_phrase(entity: str, eol: Mapping[str, "ExistingEnd"]) -> str:
         return ""
     gone = (f"gone from period {end.d_eol}" if end.d_eol is not None
             else "it operates to the end of the horizon")
-    return f"; its existing capacity ends at year {end.y_end:g} of the run (lifetime_technical); {gone}"
+    life = f"lifetime_technical minus age {end.age:g}" if end.age else "lifetime_technical"
+    return f"; its existing capacity ends at year {end.y_end:g} of the run ({life}); {gone}"
 
 
 def check_retirement_minimums(*,

@@ -37,10 +37,14 @@ import numpy as np
 import spinedb_api as api
 
 from flextool.engine.input._lifetime_roles import (
+    AGE_AT_MODEL_START,
+    BUILD_YEAR,
     LIFETIME_TECHNICAL,
     NET_SALVAGE_VALUE,
     NO_REINVESTMENT,
     PAYBACK_TIME,
+    START_YEAR,
+    existing_age,
     role_sources,
 )
 from flextool.engine.input._solve_state import FlexToolConfigError
@@ -2647,6 +2651,44 @@ def _entities_with(src, cls: str):
     return entities_with
 
 
+def _constant_rows(src, cls: str, param: str) -> dict[str, tuple[float, str]]:
+    """``{entity: (value, alternative)}`` of the explicit numeric constants of ``cls.param`` (a map is the
+    parameter-shape check's)."""
+    out: dict[str, tuple[float, str]] = {}
+    for pv in _pv_rows(src, cls, param):
+        if pv["type"] is None:
+            continue
+        value = _parsed_then_evict(pv)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            out[pv["entity_byname"][0]] = (float(value), pv["alternative_name"])
+    return out
+
+
+def _existing_age_errors(src) -> list[str]:
+    """Errors for an undefined age of existing capacity (:func:`._lifetime_roles.existing_age`, explicit values),
+    each naming its alternatives, and for models of the scenario with different ``start_year``."""
+    errors: list[str] = []
+    starts = _constant_rows(src, "model", START_YEAR)
+    if len({v for v, _ in starts.values()}) > 1:
+        errors.append("model.start_year differs between the models of the scenario: " + ", ".join(
+            f"{m} {v:g} (alternative '{alt}')" for m, (v, alt) in sorted(starts.items()))
+            + "; give the models one start year.")
+    start = next(iter(starts.values()))[0] if starts else None
+    for cls in ("unit", "connection", "node"):
+        ages = _constant_rows(src, cls, AGE_AT_MODEL_START)
+        built = _constant_rows(src, cls, BUILD_YEAR)
+        for name in sorted(set(ages) | set(built)):
+            _age, error = existing_age(ages[name][0] if name in ages else None,
+                                       built[name][0] if name in built else None, start)
+            if error is None:
+                continue
+            alts = list(dict.fromkeys(row[1] for row in (ages.get(name), built.get(name)) if row is not None))
+            where = (f"alternative '{alts[0]}'" if len(alts) == 1
+                     else "alternatives " + ", ".join(f"'{a}'" for a in alts))
+            errors.append(f"{cls} '{name}' {error} ({where}).")
+    return errors
+
+
 def _missing_lifetime(src, cls: str, methods: dict[str, str]) -> list[str]:
     """Errors for the ``cls`` entities that need a lifetime and have none.
 
@@ -2708,6 +2750,9 @@ def validate_basic_sanity(src) -> None:
       (without ``payback_time``), or a ``lifetime_method`` ``reinvest_choice`` / ``no_reinvestment`` with
       investment, retirement or ``existing``;
     * ``discount_rate`` < 0 (unit / connection / node); 0 is the straight-line annuity.
+    * the age of existing capacity (:func:`_existing_age_errors`): ``age_at_model_start`` and ``build_year`` on one
+      entity, a ``build_year`` without ``model.start_year`` or after it, a negative ``age_at_model_start``, models
+      of the scenario with different ``start_year``.
 
     ``existing`` as a time series, keyed by time steps or by numbers is :func:`validate_period_keys`'.
 
@@ -2800,6 +2845,7 @@ def validate_basic_sanity(src) -> None:
              "discount_rate must be 0 or above (0 gives the straight-line annuity invest_cost / payback_time).",
              errors)])
         errors.extend(_missing_lifetime(src, cls, methods[cls]))
+    errors.extend(_existing_age_errors(src))
 
     for text in warnings:
         _warn(text)

@@ -266,3 +266,36 @@ def test_retirement_reach_follows_the_scenario_lineage() -> None:
     assert got == sorted([("p2020", d) for d in periods]
                          + [("p2025_a", "p2025_a"), ("p2025_a", "p2030_a"), ("p2030_a", "p2030_a"),
                             ("p2025_b", "p2025_b"), ("p2025_b", "p2030_b"), ("p2030_b", "p2030_b")])
+
+
+# ---------------------------------------------------------------------------
+# A solve without years_represented and without a run calendar
+# ---------------------------------------------------------------------------
+
+
+def test_solve_calendar_without_years_represented_ends_one_year_after_the_last_start() -> None:
+    """Each period represents one year (as the run calendar counts it): the horizon ends at the last start + 1."""
+    from flextool.engine.preprocess.params._run_calendar import solve_calendar
+    rc = solve_calendar({"p1": 0.0, "p2": 1.0, "p3": 2.0}, None)
+    assert rc.horizon_end == 3.0 and rc.seams() == [0.0, 1.0, 2.0, 3.0]
+    assert solve_calendar({"p1": 0.0, "p2": 5.0}, {"p1": 5.0}).seams() == [0.0, 5.0, 6.0]
+
+
+@pytest.mark.parametrize("alt,method,life,alive", [
+    # y2020_2day_dispatch: p2020 only, no years_represented: year 0, one year, the horizon ends at 1; seams {0, 1}.
+    ("coh_1y_closest", "closest_seam", 0.6, ["p2020"]),     # 1 − 0.6 = 0.4 < 0.6 − 0 → 1: in service in p2020
+    ("coh_1y_previous", "previous_seam", 1.5, ["p2020"]),   # past the horizon end → 1: in service to the end
+    ("coh_1y_previous_short", "previous_seam", 0.6, []),    # 0.6 → 0: gone from the start
+    ("coh_1y_next", "next_seam", 0.6, ["p2020"]),           # 0.6 → 1
+])
+def test_end_of_life_on_a_solve_without_years_represented(tmp_path_factory, alt, method, life, alive) -> None:
+    """Without a run calendar and without years_represented the seams still end at the end of the horizon, so a
+    previous_seam / closest_seam end of life after the last period start keeps that period."""
+    from flextool.engine import SpineDbReader
+    url, scen = make_db(tmp_path_factory, alt=alt, base_chain=["init", "west", "coal"], values=[
+        ["unit", PLANT, "lifetime_method", b64("reinvest_choice", "str")],
+        ["unit", PLANT, "lifetime_technical", b64(life, "float")],
+        ["unit", PLANT, "end_of_life_method", b64(method, "str")]])
+    reader = SpineDbReader(url, scen)
+    frames = build_cohort_frames(reader, "y2020_2day_dispatch", None, ["p2020"], None)
+    assert _alive(frames, "existing") == alive

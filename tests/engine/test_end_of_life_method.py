@@ -50,12 +50,14 @@ def _array(values: list[str]) -> list:
 
 
 def solve_values(solve: str = SOLVE, periods: list[str] = PERIODS, years: list[float] = YEARS,
-                 realized: list[str] | None = None, invest: list[str] | None = None) -> list:
-    """The values of a single solve ``solve`` over ``periods`` (timeset 2day) representing ``years``."""
+                 realized: list[str] | None = None, invest: list[str] | None = None,
+                 mode: str = "single_solve") -> list:
+    """The values of a solve ``solve`` (``solve_mode`` ``mode``) over ``periods`` (timeset 2day) representing
+    ``years``."""
     out = [["solve", solve, "period_timeset", _map(dict.fromkeys(periods, "2day"))],
            ["solve", solve, "realized_periods", _array(realized if realized is not None else periods)],
            ["solve", solve, "years_represented", _map(dict(zip(periods, years)))],
-           ["solve", solve, "solve_mode", b64("single_solve", "str")]]
+           ["solve", solve, "solve_mode", b64(mode, "str")]]
     if invest:
         out.append(["solve", solve, "invest_periods", _array(invest)])
     return out
@@ -92,10 +94,9 @@ def steps_of(tmp_path_factory, alt: str, values: list, solves: list[str] = (SOLV
 
 
 def capacity(step, entity: str = PLANT) -> dict[str, float]:
-    """``{period: MW}`` of the emitted ``p_entity_all_existing`` of ``entity`` (the capacity the LP builds on)."""
-    f = step.flex_data_provider.get("solve_data/p_entity_all_existing")
-    f = f.filter(pl.col("entity").cast(pl.Utf8) == entity)
-    return {str(d): float(v) for d, v in f.select("period", "value").iter_rows()}
+    """``{period: MW}`` of the solve's ``p_entity_all_existing`` of ``entity`` (the capacity the LP builds on)."""
+    f = step.flex_data.p_entity_all_existing.frame.filter(pl.col("e").cast(pl.Utf8) == entity)
+    return {str(d): float(v) for d, v in f.select("d", "value").iter_rows()}
 
 
 def invest_alive(step, entity: str = WIND) -> list[tuple[str, str]]:

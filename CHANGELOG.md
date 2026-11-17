@@ -23,6 +23,20 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   runs over `lifetime_technical`; `reinvest_automatic` still pays every year to the end of the horizon. Upgraded
   databases get a notice naming the entities whose annuity changes (results change).
 
+### New features
+
+- **The age of existing capacity and the rounding of an end of life** (unit, connection and node).
+  `age_at_model_start` (years), or `build_year` with the new `model.start_year` (age = `start_year` −
+  `build_year`), shortens the life of the existing capacity: its end of life is `lifetime_technical` minus the age,
+  counted from the model start (with `lifetime_method` `reinvest_choice` or `no_reinvestment`; `reinvest_automatic`
+  capacity is kept). `end_of_life_method` says how an end of life that falls inside a period is rounded to a period
+  start, for existing capacity and for every investment: `next_seam` (the default, as before: in service to the end
+  of the period its life ends in), `previous_seam` (gone for that whole period) or `closest_seam` (the nearer
+  period start). The fixed cost of an investment stops when its capacity does. A warning names existing capacity
+  whose end of life is at or before the model start and investments whose rounded end of life is at their own
+  start of operation (they are still offered). The `no_reinvestment` investment window (the first technical
+  lifetime from the model start) does not depend on the age. Without the new parameters results do not change.
+
 ### Fixes
 
 - **A period-varying `existing` (a period map) is used in every solve of a run.** From the second solve of a

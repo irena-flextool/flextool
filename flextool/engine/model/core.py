@@ -3176,8 +3176,9 @@ def _eq_retired_existing(b: _Build) -> None:
     #   ∀ (n,d) with some (n,d′,d) ∈ retired, n ∈ nodeState
     #   retired[e,d] = Σ_{d′ : (e,d′,d) ∈ retired} v_divest[e,d′] (_capacity), retired = {(e,d′,d) : (e,d′) ∈
     #     ed_divest_set, yr[d′] ≤ yr[d] < EOL[e]}, EOL[e] the end of life of the entity's existing cohort:
-    #     yr[d0] + lifetime_technical[e,d0] rounded to a period start by end_of_life_method, d0 the run's first
-    #     period (none for reinvest_automatic)
+    #     yr[d0] − age[e] + lifetime_technical[e,d0] rounded to a period start by end_of_life_method, d0 the
+    #     run's first period, age from age_at_model_start or model.start_year − build_year (none for
+    #     reinvest_automatic)
     #   pre_existing = p_entity_pre_existing (the existing cohort's size: the user's existing × unitsize,
     #     lifetime-gated, MW, MWh)
     #   retired_carried = p_entity_retired_carried (the existing cohort's retirements that earlier solves of a

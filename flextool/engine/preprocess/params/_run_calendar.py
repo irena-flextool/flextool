@@ -202,16 +202,17 @@ def read_run_calendar(provider) -> RunCalendar | None:
 
 def solve_calendar(years: Mapping[str, float], years_represented: Mapping[str, float] | None) -> RunCalendar:
     """A :class:`RunCalendar` of one solve's own periods (when no run calendar is available): the horizon ends
-    where the solve's last period ends, or at its last period start when the solve gives no period lengths."""
+    where the solve's last period ends.  A period without a ``years_represented`` value (every period, when the
+    solve gives none) represents one year, as the run calendar counts it (``solve._run_model``), so the seams are
+    the period starts and the end of the horizon in every case."""
     ordered = dict(sorted(((str(d), float(y)) for d, y in years.items()), key=lambda kv: kv[1]))
+    represented = dict(years_represented or {})
     horizon_end: float | None = None
     last_period: str | None = None
     for d, y in ordered.items():
-        rep = (years_represented or {}).get(d)
-        if rep is None:
-            continue
-        if horizon_end is None or y + float(rep) > horizon_end:
-            horizon_end, last_period = y + float(rep), d
+        rep = float(represented.get(d, 1.0))
+        if horizon_end is None or y + rep > horizon_end:
+            horizon_end, last_period = y + rep, d
     return RunCalendar(years=ordered, horizon_end=horizon_end, last_period=last_period)
 
 

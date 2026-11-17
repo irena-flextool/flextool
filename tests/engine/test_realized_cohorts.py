@@ -23,16 +23,16 @@ def _table(rows: list[tuple]) -> pl.DataFrame:
     return _cohort_frame(rows)
 
 
-EXISTING = ("existing:p2020", "plant", "existing", "reinvest_choice", "next_seam", None, "p2020", 0.0, 12.0, 12.0,
-            12.0, 15.0, "p2035")
+EXISTING = ("existing:p2020", "plant", "existing", "reinvest_choice", "next_seam", None, "p2020", 0.0, 0.0, 12.0,
+            12.0, 12.0, 15.0, "p2035")
 SOLVE1 = _table([EXISTING,
-                 ("invest:p2020", "plant", "invest", "reinvest_choice", "next_seam", "p2020", "p2020", 0.0, 12.0, 12.0,
-                  None, 15.0, "p2035")])
+                 ("invest:p2020", "plant", "invest", "reinvest_choice", "next_seam", "p2020", "p2020", 0.0, 0.0, 12.0,
+                  12.0, None, 15.0, "p2035")])
 SOLVE2 = _table([EXISTING,
-                 ("invest:p2020", "plant", "invest", "reinvest_choice", "next_seam", "p2020", "p2020", 0.0, 12.0, 12.0,
-                  None, 15.0, "p2035"),
-                 ("invest:p2025", "plant", "invest", "reinvest_choice", "next_seam", "p2025", "p2025", 5.0, 30.0, 35.0,
-                  None, INF, None)])
+                 ("invest:p2020", "plant", "invest", "reinvest_choice", "next_seam", "p2020", "p2020", 0.0, 0.0, 12.0,
+                  12.0, None, 15.0, "p2035"),
+                 ("invest:p2025", "plant", "invest", "reinvest_choice", "next_seam", "p2025", "p2025", 5.0, 0.0, 30.0,
+                  35.0, None, INF, None)])
 
 
 def test_two_solve_chain_carries_each_cohort_once_with_its_own_years():

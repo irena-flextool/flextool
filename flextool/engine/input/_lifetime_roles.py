@@ -34,6 +34,10 @@ ROLE_CHAIN: Mapping[str, tuple[str, ...]] = {
 
 NO_REINVESTMENT = "no_reinvestment"
 
+AGE_AT_MODEL_START = "age_at_model_start"
+BUILD_YEAR = "build_year"
+#: ``model.start_year``: the calendar year the first period of the model's first solve starts in.
+START_YEAR = "start_year"
 END_OF_LIFE_METHOD = "end_of_life_method"
 #: The ``end_of_life_method`` values: how an end of life is rounded to a period start (``_run_calendar``).
 END_OF_LIFE_METHODS: tuple[str, ...] = ("closest_seam", "previous_seam", "next_seam")
@@ -41,6 +45,30 @@ END_OF_LIFE_METHODS: tuple[str, ...] = ("closest_seam", "previous_seam", "next_s
 END_OF_LIFE_METHOD_DEFAULT = "next_seam"
 
 ENTITY_CLASSES = ("unit", "node", "connection")
+
+
+def existing_age(age: float | None, build_year: float | None,
+                 start_year: float | None) -> tuple[float, str | None]:
+    """``(age, error)``: the age of an entity's existing capacity at the model start from its
+    ``age_at_model_start`` (``age``), or from its ``build_year`` and ``model.start_year`` (``start_year −
+    build_year``), else 0 (new at the model start).  ``error`` names what makes the age undefined (the age is then
+    0): both given, a negative age, a build year without a start year, a build year after the start year.  The
+    input checks and the engine reader share it."""
+    if age is not None and build_year is not None:
+        return 0.0, f"has both {AGE_AT_MODEL_START} {age:g} and {BUILD_YEAR} {build_year:g}: give one of them"
+    if age is not None:
+        if age < 0.0:
+            return 0.0, f"{AGE_AT_MODEL_START} = {age:g}: the age must be 0 or more"
+        return float(age), None
+    if build_year is None:
+        return 0.0, None
+    if start_year is None:
+        return 0.0, (f"has {BUILD_YEAR} {build_year:g} but the model has no {START_YEAR}: give model.{START_YEAR}, "
+                     f"or use {AGE_AT_MODEL_START}")
+    if build_year > start_year:
+        return 0.0, (f"{BUILD_YEAR} {build_year:g} is after model.{START_YEAR} {start_year:g}: capacity built after "
+                     "the model start is an investment")
+    return float(start_year) - float(build_year), None
 
 
 def role_sources(role: str, entities_with: Callable[[str], Iterable[str]]) -> dict[str, str]:

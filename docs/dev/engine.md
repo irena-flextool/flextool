@@ -309,8 +309,14 @@ For a unit, connection or storage node `e` in period `d`:
   (`state_unitsize` for a storage node):
   - `invested[e,d] = Σ_{d′ : (e,d′,d) ∈ alive} v_invest[e,d′]`: the
     investments in service in `d` — the investment cohort `(e,d′)` is alive
-    in `d` when `y_on ≤ y[d] < y_eol` (start of operation, end of life
-    rounded up to a period start), along the scenario lineage of a fan;
+    in `d` when `y_on ≤ y[d] < y_eol`, along the scenario lineage of a fan.
+    `y_on` is the start of operation (existing capacity:
+    `y_on = y[d0] − age`, `d0` the first period of the run, `age` from
+    `age_at_model_start` or `model.start_year − build_year`) and
+    `y_eol = round_end_of_life(y_on + lifetime_technical, end_of_life_method)`
+    (`_run_calendar.round_end_of_life`: the period start at or after it for
+    `next_seam`, at or before it for `previous_seam`, the nearer one for
+    `closest_seam`, within `YEAR_TOL`; `+inf` for `reinvest_automatic`);
   - `prebuilt[e,d]`: the same over the cohorts in service from the start of
     `d` (`y[d] > y_on`), not starting to operate in `d`;
   - `retired[e,d] = Σ_{d′ : (e,d′,d) ∈ retired} v_divest[e,d′]`: a retirement
