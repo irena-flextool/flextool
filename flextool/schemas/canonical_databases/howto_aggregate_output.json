@@ -1020,11 +1020,11 @@
       "connection",
       "end_of_life_method",
       [
-        "\"next_seam\"",
+        "\"closest_seam\"",
         "str"
       ],
       "end_of_life_methods",
-      "[choice] How the end of life of capacity (start of operation plus lifetime_technical; existing capacity: lifetime_technical minus its age, from the model start) is rounded to a period start. next_seam (default): the start at or after it (operates to the end of the period its life ends in). closest_seam: the nearer start, a tie goes to the later one. previous_seam: the start at or before it (gone for that whole period). An end of life after the model horizon keeps the capacity to the end. Used with lifetime_method reinvest_choice / no_reinvestment.",
+      "[choice] How the end of life of capacity (start of operation plus lifetime_technical; existing capacity: lifetime_technical minus its age, from the model start) is rounded to a period start. closest_seam (default): the nearer start, a tie goes to the later one. next_seam: the start at or after it (operates to the end of the period its life ends in; the rounding of FlexTool 4.5 and earlier). previous_seam: the start at or before it (gone for that whole period). An end of life after the model horizon keeps the capacity to the end. Used with lifetime_method reinvest_choice / no_reinvestment.",
       "retirement"
     ],
     [
@@ -1887,11 +1887,11 @@
       "node",
       "end_of_life_method",
       [
-        "\"next_seam\"",
+        "\"closest_seam\"",
         "str"
       ],
       "end_of_life_methods",
-      "[choice] How the end of life of storage capacity (start of operation plus lifetime_technical; existing storage capacity: lifetime_technical minus its age, from the model start) is rounded to a period start. next_seam (default): the start at or after it (operates to the end of the period its life ends in). closest_seam: the nearer start, a tie goes to the later one. previous_seam: the start at or before it (gone for that whole period). An end of life after the model horizon keeps the storage capacity to the end. Used with lifetime_method reinvest_choice / no_reinvestment.",
+      "[choice] How the end of life of storage capacity (start of operation plus lifetime_technical; existing storage capacity: lifetime_technical minus its age, from the model start) is rounded to a period start. closest_seam (default): the nearer start, a tie goes to the later one. next_seam: the start at or after it (operates to the end of the period its life ends in; the rounding of FlexTool 4.5 and earlier). previous_seam: the start at or before it (gone for that whole period). An end of life after the model horizon keeps the storage capacity to the end. Used with lifetime_method reinvest_choice / no_reinvestment.",
       "retirement"
     ],
     [
@@ -2868,11 +2868,11 @@
       "unit",
       "end_of_life_method",
       [
-        "\"next_seam\"",
+        "\"closest_seam\"",
         "str"
       ],
       "end_of_life_methods",
-      "[choice] How the end of life of capacity (start of operation plus lifetime_technical; existing capacity: lifetime_technical minus its age, from the model start) is rounded to a period start. next_seam (default): the start at or after it (operates to the end of the period its life ends in). closest_seam: the nearer start, a tie goes to the later one. previous_seam: the start at or before it (gone for that whole period). An end of life after the model horizon keeps the capacity to the end. Used with lifetime_method reinvest_choice / no_reinvestment.",
+      "[choice] How the end of life of capacity (start of operation plus lifetime_technical; existing capacity: lifetime_technical minus its age, from the model start) is rounded to a period start. closest_seam (default): the nearer start, a tie goes to the later one. next_seam: the start at or after it (operates to the end of the period its life ends in; the rounding of FlexTool 4.5 and earlier). previous_seam: the start at or before it (gone for that whole period). An end of life after the model horizon keeps the capacity to the end. Used with lifetime_method reinvest_choice / no_reinvestment.",
       "retirement"
     ],
     [

@@ -325,6 +325,16 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "annuity_over_payback_time"),
         ),
         BehaviourChange(
+            id="end_of_life_closest_seam",
+            summary=("With lifetime_method reinvest_choice or no_reinvestment, the end of life (start of operation "
+                     "plus lifetime_technical; existing capacity from the model start) is now rounded to the "
+                     "closest period start (end_of_life_method closest_seam, the new default; a tie goes to the "
+                     "later start). Before, it was rounded to the next period start, so the capacity operated to "
+                     "the end of the period its life ended in. Capacity whose life ends in the first half of a "
+                     "period is now out of service, without fixed cost, for that whole period (results change)."),
+            silence="Set end_of_life_method on these entities: next_seam keeps the old rounding, closest_seam the new.",
+        ),
+        BehaviourChange(
             id="gui_solver_defaults",
             summary=("Runs started from the FlexTool GUI now use the same solver settings as terminal and Spine "
                      "Toolbox runs: presolve is on (before: choose), and the MIP gap of each solve comes from its "

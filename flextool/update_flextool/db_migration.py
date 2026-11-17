@@ -135,16 +135,18 @@ def _current_version_ro(path, up_to: int | None) -> int | None:
     """The data version of *path* when it has nothing to migrate or refresh (read read-only), else ``None``.
 
     Nothing to do means: the current data version (and not below *up_to*), a current SpineDB schema revision, no
-    superseded unit-count description (:func:`_refresh_unit_count_texts` would rewrite one) and every definition and
-    list member the current version's schema step adds (:func:`_refresh_head_schema` would add one).  Anything that
-    cannot be read gives ``None``: it is decided under the lock.
+    superseded unit-count description (:func:`_refresh_unit_count_texts` would rewrite one), every definition and
+    list member the current version's schema step adds and no superseded shipped default and description pair
+    (:func:`_refresh_head_schema` would add or replace one).  Anything that cannot be read gives ``None``: it is
+    decided under the lock.
     """
     from flextool.update_flextool.frozen import read_db_version_ro, schema_outdated_ro
 
     version = read_db_version_ro(path)
     if version != FLEXTOOL_DB_VERSION or (up_to is not None and up_to > version):
         return None
-    if schema_outdated_ro(path) or _unit_count_texts_stale_ro(path) or _head_schema_missing_ro(path):
+    if (schema_outdated_ro(path) or _unit_count_texts_stale_ro(path) or _head_schema_missing_ro(path)
+            or _head_defaults_stale_ro(path)):
         return None
     return version
 
@@ -1929,8 +1931,8 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
             if int(version) == FLEXTOOL_DB_VERSION:
                 _refresh_unit_count_texts(db)
                 _refresh_head_schema(db)
-                _commit_step(db, "Refreshed existing / virtual_unitsize descriptions and added the current "
-                                 "version's new definitions")
+                _commit_step(db, "Refreshed existing / virtual_unitsize descriptions, added the current "
+                                 "version's new definitions and replaced its superseded defaults")
             print(database_path+ " already up-to-date at version "+ str(version))
 
 def _rename_or_drop_parameter_definition(db, entity_class_name, old_name, new_name, description=None):
@@ -10662,8 +10664,11 @@ def _migrate_v80_schema_batch(db) -> None:
 # The step is table-driven: the tables below say what it adds, moves, renames and rewrites.  While 81 is the current
 # data version, schema entries (definitions, value lists, list members, descriptions) may be appended to these
 # tables; :func:`_refresh_head_schema` adds the missing definitions and list members to a database already at 81, and
-# the template sync reruns the whole step (:data:`RERUNNABLE_HEAD_STEP`).  A value move or a list-member rename never
-# reaches a database already at 81 (fixture and example data included), so a later one needs a new version.
+# the template sync reruns the whole step (:data:`RERUNNABLE_HEAD_STEP`).  A shipped field of a definition may also
+# be superseded (:func:`_v81_superseded`: the default of end_of_life_method and its description, together): the
+# refresh replaces the pair where a database at 81 still has exactly a pair FlexTool shipped, never a value and never
+# an edited pair.  A value move or a list-member rename never reaches a database already at 81 (fixture and example
+# data included), so a later one needs a new version.
 
 #: v81: parameters whose values move to new names (old name -> the new names that each get a copy of every value).
 V81_VALUE_MOVES: dict[str, tuple[str, ...]] = {
@@ -10680,7 +10685,10 @@ V81_NEW_VALUE_LISTS: dict[str, tuple[str, ...]] = {
     "end_of_life_methods": ("closest_seam", "previous_seam", "next_seam"),
 }
 #: v81: the default of ``end_of_life_method`` (the rounding of an end of life to a period start).
-V81_END_OF_LIFE_METHOD_DEFAULT = "next_seam"
+V81_END_OF_LIFE_METHOD_DEFAULT = "closest_seam"
+#: v81: the default of ``end_of_life_method`` that FlexTool shipped before it became closest_seam (its description:
+#: :func:`_v81_superseded_end_of_life_text`).
+V81_SUPERSEDED_END_OF_LIFE_METHOD_DEFAULT = "next_seam"
 
 _V81_CAPACITY = {"unit": ("capacity", "unit", "kW"), "connection": ("capacity", "connection", "kW"),
                  "node": ("storage capacity", "node", "kWh")}
@@ -10745,11 +10753,12 @@ def _v81_texts() -> dict[tuple[str, str], str]:
             "Constant.")
         t[(cls, "end_of_life_method")] = (
             f"[choice] How the end of life of {cap} (start of operation plus lifetime_technical; existing {cap}: "
-            "lifetime_technical minus its age, from the model start) is rounded to a period start. next_seam "
-            "(default): the start at or after it (operates to the end of the period its life ends in). "
-            "closest_seam: the nearer start, a tie goes to the later one. previous_seam: the start at or before "
-            f"it (gone for that whole period). An end of life after the model horizon keeps the {cap} to the "
-            "end. Used with lifetime_method reinvest_choice / no_reinvestment.")
+            "lifetime_technical minus its age, from the model start) is rounded to a period start. closest_seam "
+            "(default): the nearer start, a tie goes to the later one. next_seam: the start at or after it "
+            "(operates to the end of the period its life ends in; the rounding of FlexTool 4.5 and earlier). "
+            "previous_seam: the start at or before it (gone for that whole period). An end of life after the "
+            f"model horizon keeps the {cap} to the end. Used with lifetime_method reinvest_choice / "
+            "no_reinvestment.")
     t[("model", "start_year")] = (
         "[year] The calendar year in which the first period of the model's first solve starts. Used by "
         "build_year (age = start_year - build_year).")
@@ -10760,6 +10769,27 @@ def _v81_texts() -> dict[tuple[str, str], str]:
         "annualized over a payback time like investment costs), so the value is not directly comparable to "
         "annualized investment costs. Constant or period.")
     return t
+
+
+def _v81_superseded_end_of_life_text(cls: str) -> str:
+    """The description of ``end_of_life_method`` on ``cls`` that FlexTool shipped with the default ``next_seam``
+    (verbatim)."""
+    cap = _V81_CAPACITY[cls][0]
+    return (f"[choice] How the end of life of {cap} (start of operation plus lifetime_technical; existing {cap}: "
+            "lifetime_technical minus its age, from the model start) is rounded to a period start. next_seam "
+            "(default): the start at or after it (operates to the end of the period its life ends in). "
+            "closest_seam: the nearer start, a tie goes to the later one. previous_seam: the start at or before "
+            f"it (gone for that whole period). An end of life after the model horizon keeps the {cap} to the "
+            "end. Used with lifetime_method reinvest_choice / no_reinvestment.")
+
+
+def _v81_superseded() -> dict[tuple[str, str], tuple[str, str]]:
+    """``{(class, name): (default, description)}``: the default and description pairs of v81 definitions that
+    FlexTool shipped and has since superseded (the current pair is in :func:`_v81_definitions`).  A database at 81
+    that has exactly such a pair gets the current one (:func:`_refresh_head_schema`)."""
+    return {(cls, "end_of_life_method"): (V81_SUPERSEDED_END_OF_LIFE_METHOD_DEFAULT,
+                                          _v81_superseded_end_of_life_text(cls))
+            for cls in _V81_CAPACITY}
 
 
 def _v81_definitions() -> dict[tuple[str, str], dict]:
@@ -10953,6 +10983,25 @@ def _v81_annuity_marker(db) -> None:
         _v77_set_marker(db, "annuity_over_payback_time", json.dumps({"since": 81, "entities": sorted(entities)}))
 
 
+def _v81_end_of_life_marker(db) -> None:
+    """Part 7 of v81: the behaviour-change marker ``end_of_life_closest_seam`` (``{"since": 81, "entities": [...]}``)
+    on a database with an entity whose ``lifetime_method`` is ``reinvest_choice`` or ``no_reinvestment`` (in some
+    alternative): ``end_of_life_method`` now defaults to ``closest_seam``, so an end of life inside a period may be
+    rounded to the start of that period (before: always to the next period start), which moves its capacity in
+    service and fixed cost.  A run names those whose end of life moves and that set no ``end_of_life_method``.  No
+    value is rewritten.  Idempotent: a rerun finds the marker written.
+    """
+    entities: set[str] = set()
+    for cls in ("unit", "connection", "node"):
+        if not db.get_item("entity_class", name=cls):
+            continue
+        entities |= {pv["entity_byname"][0] for pv in db.find_parameter_values(
+            entity_class_name=cls, parameter_definition_name="lifetime_method")
+            if from_database(pv["value"], pv["type"]) in ("reinvest_choice", "no_reinvestment")}
+    if entities:
+        _v77_set_marker(db, "end_of_life_closest_seam", json.dumps({"since": 81, "entities": sorted(entities)}))
+
+
 def _migrate_v81_schema_batch(db) -> None:
     """All schema changes of database version 81 (v80 -> v81), in one step.
 
@@ -10961,7 +11010,7 @@ def _migrate_v81_schema_batch(db) -> None:
     2. ``lifetime_technical`` and ``payback_time`` (group ``investment``) and ``net_salvage_value`` (group
        ``retirement``) on unit, connection and node: a constant or a period map, no default; on the same
        classes (group ``retirement``) ``age_at_model_start`` and ``build_year`` (a constant, no default) and
-       ``end_of_life_method`` (a choice of ``end_of_life_methods``, default ``next_seam``); ``model.start_year``
+       ``end_of_life_method`` (a choice of ``end_of_life_methods``, default ``closest_seam``); ``model.start_year``
        (group ``model``, a constant, no default) (:func:`_v81_definitions_part`).
     3. ``lifetime`` is split: every value is copied to both ``lifetime_technical`` (how long the capacity operates)
        and ``payback_time`` (the years of the annuity); ``salvage_value`` values go to ``net_salvage_value``; the old
@@ -10972,6 +11021,9 @@ def _migrate_v81_schema_batch(db) -> None:
        ``node.unit_of_measure`` and ``group.penalty_capacity_margin`` (:func:`_v81_descriptions`).
     6. The behaviour-change marker ``annuity_over_payback_time`` on the entities whose investment annuity is now
        paid for ``payback_time`` years in exact years (:func:`_v81_annuity_marker`).
+    7. The behaviour-change marker ``end_of_life_closest_seam`` on the entities with ``lifetime_method``
+       ``reinvest_choice`` / ``no_reinvestment``, whose end of life is now rounded to the closest period start
+       (:func:`_v81_end_of_life_marker`).
 
     Values change only by the moves of part 3 and the renames of part 4.  Each part is idempotent, so a rerun of the
     step changes nothing.
@@ -10982,6 +11034,7 @@ def _migrate_v81_schema_batch(db) -> None:
     _v81_list_member_renames(db)
     _v81_descriptions(db)
     _v81_annuity_marker(db)
+    _v81_end_of_life_marker(db)
     _commit_step(db, "v81: lifetime split into lifetime_technical and payback_time, salvage_value is "
                      "net_salvage_value, the lifetime_method value no_investment is no_reinvestment")
 
@@ -11033,13 +11086,81 @@ def _head_schema_missing_ro(path) -> bool:
     return any(not set(wanted) <= members.get(name, set()) for name, wanted in lists.items())
 
 
+def _head_superseded() -> dict[tuple[str, str], tuple[str, str]]:
+    """The superseded shipped ``(default, description)`` pairs of the schema step of the current data version
+    (:func:`_v81_superseded`)."""
+    if FLEXTOOL_DB_VERSION != 81:
+        return {}
+    return _v81_superseded()
+
+
+def _is_superseded_pair(cls: str, name: str, default, description: str | None) -> bool:
+    """Whether the definition ``(cls, name)`` has exactly a superseded shipped pair of :func:`_head_superseded`:
+    its parsed default and its description both equal to what FlexTool shipped.  The one test of
+    :func:`_refresh_head_schema` and :func:`_head_defaults_stale_ro`."""
+    old = _head_superseded().get((cls, name))
+    return old is not None and (default, description or "") == old
+
+
+def _head_defaults_stale_ro(path) -> bool:
+    """Whether the database *path* (read read-only) has a definition with a superseded shipped default and
+    description (:func:`_is_superseded_pair`; ``True`` when it cannot be read)."""
+    import sqlite3
+
+    from flextool.update_flextool.frozen import _connect_ro
+
+    superseded = _head_superseded()
+    if not superseded:
+        return False
+    names = sorted({name for _cls, name in superseded})
+    try:
+        con = _connect_ro(path)
+    except sqlite3.Error:
+        return True
+    try:
+        rows = con.execute(
+            "SELECT ec.name, pd.name, pd.default_value, pd.default_type, pd.description FROM parameter_definition pd "
+            "JOIN entity_class ec ON pd.entity_class_id = ec.id WHERE pd.name IN (%s)" % ",".join("?" * len(names)),
+            names).fetchall()
+        # A default from a value list is stored as a reference to its list member.
+        members = {int(i): (v, t) for i, v, t in con.execute("SELECT id, value, type FROM list_value").fetchall()}
+    except sqlite3.Error:
+        return True
+    finally:
+        con.close()
+
+    def parsed(value, typ):
+        if value is None:
+            return None
+        if typ == "list_value_ref":
+            member = members.get(int(value))
+            return from_database(*member) if member is not None else None
+        return from_database(value, typ)
+
+    return any(_is_superseded_pair(cls, name, parsed(value, typ), desc) for cls, name, value, typ, desc in rows)
+
+
 def _refresh_head_schema(db) -> None:
-    """Add to a database at the current data version the definitions and list members of its schema step that it
-    lacks (parts 1 and 2 of the step; an existing definition keeps its fields, a description is never rewritten).
-    Idempotent."""
+    """Bring a database at the current data version to the schema of its schema step: add the definitions and list
+    members it lacks (parts 1 and 2 of the step; an existing definition keeps its fields) and replace a superseded
+    shipped default and description pair (:func:`_is_superseded_pair`) with the current one, both together.  A
+    description the user edited, a default the user set and every value are kept; otherwise a description is never
+    rewritten.  Idempotent."""
     if FLEXTOOL_DB_VERSION == 81:
         _v81_value_lists(db)
         _v81_definitions_part(db, update=False)
+        current = _v81_definitions()
+        for cls, name in _head_superseded():
+            pdef = _pdef_or_none(db, cls, name)
+            if pdef is None:
+                continue
+            default = (from_database(pdef["default_value"], pdef["default_type"])
+                       if pdef["default_value"] is not None else None)
+            if _is_superseded_pair(cls, name, default, pdef["description"]):
+                fields = current[(cls, name)]
+                db.update_parameter_definition(id=pdef["id"], default_value=fields["default_value"],
+                                               default_type=fields["default_type"],
+                                               description=fields["description"])
 
 
 if __name__ == '__main__':

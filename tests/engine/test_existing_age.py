@@ -10,7 +10,7 @@ life at ``Y = y_on + lifetime_technical``, rounded by ``end_of_life_method``; it
 * coal_plant reinvest_choice, lifetime_technical 12, age 3: Y = −3 + 12 = 9 → closest / next 10 (500, 500, 0),
   previous 5 (500, 0, 0);
 * build_year 2017 with model.start_year 2020 is age 2020 − 2017 = 3: the same LP as age 3; age 0 and build_year
-  = start_year are the same LP as no age;
+  = start_year are the same LP as no age (next_seam: Y = 12 → 20, 500, 500, 500);
 * previous_seam, Y = 9 → 5: the existing capacity is 500, 0, 0 in a single solve, in each solve of the chain
   (p2020 | p2025, p2030), in every roll;
 * thermal, lifetime 12, age 3 under closest_seam on the seams {0, 5, 15}: Y = 9, 9 − 5 = 4 < 15 − 9 = 6 → 5:
@@ -100,9 +100,9 @@ def test_build_year_is_the_age_at_the_model_start(tmp_path_factory) -> None:
 
 @pytest.mark.parametrize("variant", ["age0", "built_at_start"])
 def test_no_age_is_new_at_the_model_start(tmp_path_factory, variant) -> None:
-    unset = only(steps_of(tmp_path_factory, "age_unset", solve_values() + coal(12.0)))
+    unset = only(steps_of(tmp_path_factory, "age_unset", solve_values() + coal(12.0, "next_seam")))
     extra = [age(0.0)] if variant == "age0" else built(2020.0, 2020.0)
-    aged = only(steps_of(tmp_path_factory, f"age_{variant}", solve_values() + coal(12.0) + extra))
+    aged = only(steps_of(tmp_path_factory, f"age_{variant}", solve_values() + coal(12.0, "next_seam") + extra))
     _same_lp(unset, aged)
     assert capacity(aged) == dict(zip(PERIODS, [500.0, 500.0, 500.0]))
 

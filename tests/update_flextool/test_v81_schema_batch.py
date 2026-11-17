@@ -10,7 +10,7 @@ connection and a node), ``salvage_value`` (a constant and a ``period`` map) and 
   ``retirement``) on unit, connection and node: a constant or a period map, no default, the shipped description;
 * adds the value list ``end_of_life_methods`` (closest_seam, previous_seam, next_seam), and on unit, connection and
   node (group ``retirement``) ``age_at_model_start`` and ``build_year`` (a constant, no default) and
-  ``end_of_life_method`` (a choice of that list, default ``next_seam``); ``model.start_year`` (group ``model``, a
+  ``end_of_life_method`` (a choice of that list, default ``closest_seam``); ``model.start_year`` (group ``model``, a
   constant, no default);
 * copies every ``lifetime`` value, as stored, to both ``lifetime_technical`` and ``payback_time``, and every
   ``salvage_value`` value to ``net_salvage_value``, then removes the old definitions;
@@ -21,11 +21,14 @@ connection and a node), ``salvage_value`` (a constant and a ``period`` map) and 
   and ``group.penalty_capacity_margin``;
 * writes the behaviour-change marker ``annuity_over_payback_time`` naming the entities with ``reinvest_choice`` /
   ``no_reinvestment`` and a non-zero ``invest_cost`` (thermal: reinvest_choice, 400; not wind: no_investment with
-  invest_cost 0; not c1: a non-zero invest_cost without a lifetime_method).
+  invest_cost 0; not c1: a non-zero invest_cost without a lifetime_method);
+* writes the behaviour-change marker ``end_of_life_closest_seam`` naming the entities with ``reinvest_choice`` /
+  ``no_reinvestment`` (thermal and wind; not c1 or city, which have no lifetime_method).
 
 Nothing else changes, and a rerun commits nothing.  Where a database already has a value under a new name, that
 value is kept (and printed).  A database already at 81 that lacks a definition of the step gets it without a migration of its
-values, and its own descriptions are kept.
+values, and its own descriptions are kept; one that still has the shipped ``end_of_life_method`` default
+``next_seam`` with its shipped description gets the current default and description, both together.
 """
 from __future__ import annotations
 
@@ -178,7 +181,7 @@ def test_age_and_end_of_life_definitions(migrated) -> None:
     shipped, shipped_lists = _shipped()
     assert after["lists"]["end_of_life_methods"] == ["closest_seam", "previous_seam", "next_seam"]
     assert shipped_lists["end_of_life_methods"] == ["closest_seam", "previous_seam", "next_seam"]
-    default = to_database("next_seam")
+    default = to_database("closest_seam")
     for cls in CLASSES:
         for name in ("age_at_model_start", "build_year"):
             assert after["defs"][(cls, name)] == (shipped[(cls, name)], ("float",), "retirement", None, None, None)
@@ -226,6 +229,12 @@ def test_annuity_marker_names_bounded_entities_with_an_invest_cost(migrated) -> 
     markers = migrated["after"]["markers"]
     assert json.loads(markers["flextool_behaviour_change:annuity_over_payback_time"]) == {
         "since": 81, "entities": ["thermal"]}
+
+
+def test_end_of_life_marker_names_bounded_entities(migrated) -> None:
+    markers = migrated["after"]["markers"]
+    assert json.loads(markers["flextool_behaviour_change:end_of_life_closest_seam"]) == {
+        "since": 81, "entities": ["thermal", "wind"]}
 
 
 def test_descriptions_are_the_shipped_ones(migrated) -> None:
@@ -279,7 +288,7 @@ def _rerun_changes_nothing(db, step, monkeypatch) -> None:
 
 @pytest.mark.parametrize("part", ["_v81_value_lists", "_v81_definitions_part", "_v81_move_values",
                                   "_v81_list_member_renames", "_v81_descriptions", "_v81_annuity_marker",
-                                  "_migrate_v81_schema_batch",
+                                  "_v81_end_of_life_marker", "_migrate_v81_schema_batch",
                                   "_refresh_head_schema"])
 def test_rerun_commits_nothing(migrated, part: str, monkeypatch) -> None:
     with DatabaseMapping(migrated["url"]) as db:
@@ -398,7 +407,7 @@ def test_current_version_database_gets_the_end_of_life_list_and_definitions(tmp_
         assert _lists(db)["end_of_life_methods"] == shipped_lists["end_of_life_methods"]
         for cls in CLASSES:
             assert defs[(cls, "end_of_life_method")] == (shipped[(cls, "end_of_life_method")], ("str",), "retirement",
-                                                         "end_of_life_methods", *to_database("next_seam"))
+                                                         "end_of_life_methods", *to_database("closest_seam"))
         assert defs[("unit", "age_at_model_start")][1:] == (("float",), "retirement", None, None, None)
         assert defs[("model", "start_year")][1:] == (("float",), "model", None, None, None)
         assert _values(db) == values_before
@@ -421,3 +430,54 @@ def test_materialized_file_without_a_head_definition_is_stale(tmp_path_factory) 
                                    name="net_salvage_value")["id"])
         db.commit_session("an older v81 file")
     assert _stale_version(path) == FLEXTOOL_DB_VERSION
+
+
+def _set_end_of_life_definition(db, cls: str, default: str, description: str) -> None:
+    pdef = db.get_item("parameter_definition", entity_class_name=cls, name="end_of_life_method")
+    val, typ = to_database(default)
+    db.update_parameter_definition(id=pdef["id"], default_value=val, default_type=typ, description=description)
+
+
+@pytest.mark.parametrize("case", ["shipped", "edited_text", "previous_seam_default"])
+def test_current_version_database_with_the_superseded_end_of_life_default(tmp_path_factory, case) -> None:
+    """A database at the current version made while ``end_of_life_method`` defaulted to ``next_seam`` (its shipped
+    description, verbatim) gets the current default ``closest_seam`` and description on every class; a definition
+    whose description or default the user changed keeps both.  Values are never touched.  Afterwards the database
+    is current for the migration (``_current_version_ro``) and for the canonical rebuild (``_stale_version``), so it
+    is not migrated or rebuilt again, and a second refresh commits nothing."""
+    from flextool.update_flextool.canonical_databases import _stale_version
+
+    url = _tests_json_at(tmp_path_factory, f"v81_eol_default_{case}", FLEXTOOL_DB_VERSION)
+    path = Path(url.removeprefix("sqlite:///"))
+    assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION and _stale_version(path) is None
+    old = {cls: m._v81_superseded_end_of_life_text(cls) for cls in CLASSES}
+    with DatabaseMapping(url) as db:
+        for cls in CLASSES:
+            _set_end_of_life_definition(db, cls, "next_seam", old[cls])
+        if case == "edited_text":
+            _set_end_of_life_definition(db, "unit", "next_seam", "my own text")
+        elif case == "previous_seam_default":
+            _set_end_of_life_definition(db, "unit", "previous_seam", old["unit"])
+        db.commit_session("an older v81 database")
+        values_before = _values(db)
+        user_unit = _defs(db)[("unit", "end_of_life_method")]
+    assert m._head_defaults_stale_ro(path)
+    assert m._current_version_ro(path, None) is None and _stale_version(path) == FLEXTOOL_DB_VERSION
+    migrate_database(url)
+    shipped, _ = _shipped()
+    with DatabaseMapping(url) as db:
+        defs = _defs(db)
+        for cls in CLASSES:
+            if cls == "unit" and case != "shipped":
+                assert defs[(cls, "end_of_life_method")] == user_unit
+                continue
+            assert defs[(cls, "end_of_life_method")] == (shipped[(cls, "end_of_life_method")], ("str",),
+                                                         "retirement", "end_of_life_methods",
+                                                         *to_database("closest_seam"))
+            assert shipped[(cls, "end_of_life_method")] == m._v81_texts()[(cls, "end_of_life_method")]
+        assert _values(db) == values_before
+        with pytest.raises(NothingToCommit):
+            m._refresh_head_schema(db)
+            db.commit_session("rerun")
+    assert not m._head_defaults_stale_ro(path)
+    assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION and _stale_version(path) is None

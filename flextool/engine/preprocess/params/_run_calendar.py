@@ -107,6 +107,18 @@ def round_end_of_life(y_end: float, method: str, seams: list[float], tol: float 
     return snap_to_seam(y_end, method, seams, tol)
 
 
+def eol_moves(y_end: float, seams: list[float], period_starts: Iterable[float], tol: float = YEAR_TOL) -> bool:
+    """Whether ``closest_seam`` takes out of service a period that ``next_seam`` keeps, for a life ending at
+    ``y_end``: ``c < n − tol`` and ``c`` is a period start (``period_starts``), with ``c`` / ``n`` the
+    :func:`round_end_of_life` of ``y_end`` by closest_seam / next_seam.  The capacity is in service in the periods
+    with ``y[d] < y_eol``, so the two in-service sets differ exactly then (the period starting at ``c``).  No move:
+    an end of life on a seam or a tie (``c = n``), past the horizon end (``c`` is the horizon end, ``n = +inf``:
+    in service to the end under both), before the model start, or ``+inf``."""
+    c = round_end_of_life(y_end, "closest_seam", seams, tol)
+    n = round_end_of_life(y_end, "next_seam", seams, tol)
+    return c < n - tol and any(abs(s - c) <= tol for s in period_starts)
+
+
 def solve_year_offset(rc: RunCalendar, years: Mapping[str, float]) -> tuple[float | None, str | None]:
     """``(offset, mismatch)``: the constant ``rc.years[d] - years[d]`` over the periods of ``years`` (a solve's own
     year calendar) that are on the run calendar ``rc``.  A solve that is not handed the run history counts years
@@ -222,6 +234,7 @@ __all__ = [
     "RunCalendar",
     "YEAR_TOL",
     "build_run_calendar",
+    "eol_moves",
     "read_run_calendar",
     "round_end_of_life",
     "run_calendar_from_frame",

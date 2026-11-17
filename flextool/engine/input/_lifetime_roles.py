@@ -42,7 +42,7 @@ END_OF_LIFE_METHOD = "end_of_life_method"
 #: The ``end_of_life_method`` values: how an end of life is rounded to a period start (``_run_calendar``).
 END_OF_LIFE_METHODS: tuple[str, ...] = ("closest_seam", "previous_seam", "next_seam")
 #: The ``end_of_life_method`` of an entity without one (the schema default; a database without the definition).
-END_OF_LIFE_METHOD_DEFAULT = "next_seam"
+END_OF_LIFE_METHOD_DEFAULT = "closest_seam"
 
 ENTITY_CLASSES = ("unit", "node", "connection")
 

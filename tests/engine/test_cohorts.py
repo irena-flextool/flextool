@@ -3,11 +3,12 @@ reach of a retirement, on hand-derived cases.
 
 Model: ``tests.json``, the single solve ``y2020_2035_5week`` (scenario chain ``SINGLE``) over p2020 … p2035 of 5
 years each.  Its years are 0, 5, 10, 15 and its horizon ends at 20 (no run calendar: the solve is the run), so the
-seams are {0, 5, 10, 15, 20}.  coal_plant has 500 MW existing.  An end of life ``Y`` is rounded to the next seam;
-a cohort is in service in ``d`` when ``y_on <= y[d] < y_eol``.
+seams are {0, 5, 10, 15, 20}.  coal_plant has 500 MW existing.  An end of life ``Y`` is rounded to the closest seam
+(the default ``end_of_life_method`` closest_seam; a tie goes to the later seam); a cohort is in service in ``d`` when
+``y_on <= y[d] < y_eol``.
 
-* existing, reinvest_choice, lifetime 12: Y = 0 + 12 = 12 → 15: in service p2020, p2025, p2030 (y 0, 5, 10 < 15),
-  gone from p2035; existing capacity 500 / 500 / 500 / 0;
+* existing, reinvest_choice, lifetime 12: Y = 0 + 12 = 12, 12 − 10 = 2 < 15 − 12 = 3 → 10: in service p2020, p2025
+  (y 0, 5 < 10), gone from p2030; existing capacity 500 / 500 / 0 / 0;
 * lifetime 10: Y = 10 → 10: p2020, p2025; gone from p2030; 500 / 500 / 0 / 0;
 * reinvest_automatic: renewed, no end of life (+inf), in service in every period, no end-of-life period;
 * an investment decided in p2025, reinvest_choice, lifetime 10: on at 5, Y = 15 → 15: p2025, p2030; in service
@@ -15,7 +16,8 @@ a cohort is in service in ``d`` when ``y_on <= y[d] < y_eol``.
 * decided in p2020 with a construction lead time of 5 years: starts at 0 + 5 = 5 (a seam: every method gives
   p2025), lifetime 10: Y = 15: p2025, p2030; pre-built in p2030;
 * no lifetime_technical (reinvest_choice): Y = y_on, in service nowhere (existing and investment);
-* a retirement decided in p2025 under lifetime 12 counts in p2025 and p2030 (p2035 is past the end of life).
+* a retirement decided in p2025 under lifetime 12 with end_of_life_method next_seam (Y = 12 → 15) counts in p2025
+  and p2030 (p2035 is past the end of life).
 """
 from __future__ import annotations
 
@@ -170,8 +172,7 @@ def test_alive_periods_and_end_of_life_period_by_method(y_end, method, alive) ->
 
 
 @pytest.mark.parametrize("alt,method,life,y_eol,d_eol,alive,capacity", [
-    ("coh_choice12", "reinvest_choice", 12.0, 15.0, "p2035", ["p2020", "p2025", "p2030"],
-     [500.0, 500.0, 500.0, 0.0]),
+    ("coh_choice12", "reinvest_choice", 12.0, 10.0, "p2030", ["p2020", "p2025"], [500.0, 500.0, 0.0, 0.0]),
     ("coh_choice10", "reinvest_choice", 10.0, 10.0, "p2030", ["p2020", "p2025"], [500.0, 500.0, 0.0, 0.0]),
     ("coh_auto", "reinvest_automatic", 12.0, math.inf, None, PERIODS, [500.0, 500.0, 500.0, 500.0]),
     ("coh_nolife", "reinvest_choice", None, 0.0, "p2020", [], [0.0, 0.0, 0.0, 0.0]),
@@ -245,7 +246,8 @@ def test_investment_without_lifetime_is_never_in_service(tmp_path_factory) -> No
 
 
 def test_retirement_counts_until_the_end_of_life(tmp_path_factory) -> None:
-    reader = _reader(tmp_path_factory, "coh_choice12", _lifetime("reinvest_choice", 12.0))
+    reader = _reader(tmp_path_factory, "coh_choice12_next", _lifetime("reinvest_choice", 12.0) + [
+        ["unit", PLANT, "end_of_life_method", b64("next_seam", "str")]])
     frames = _frames(reader)
     active = retire_active(_ed([(PLANT, "p2025")]), frames.cohort_alive, frames.dd_forward)
     assert [(str(a), str(b)) for _, a, b in active.rows()] == [("p2025", "p2025"), ("p2025", "p2030")]
@@ -299,3 +301,36 @@ def test_end_of_life_on_a_solve_without_years_represented(tmp_path_factory, alt,
     reader = SpineDbReader(url, scen)
     frames = build_cohort_frames(reader, "y2020_2day_dispatch", None, ["p2020"], None)
     assert _alive(frames, "existing") == alive
+
+
+@pytest.mark.parametrize("alt,life,alive,named", [
+    # y2020_2day_dispatch (p2020 only, no years_represented): seams {0, 1}, the horizon ends at 1.
+    ("coh_1y_default", 0.6, ["p2020"], False),       # 1 − 0.6 = 0.4 < 0.6 → 1, the horizon end: no period lost
+    ("coh_1y_default_past", 1.5, ["p2020"], False),  # past the horizon end → 1 (next_seam: +inf): in service alike
+    ("coh_1y_default_short", 0.4, [], True),         # 0.4 < 1 − 0.4 → 0 (next_seam: 1): p2020 is lost
+])
+def test_default_end_of_life_on_a_solve_without_years_represented(tmp_path_factory, capsys, alt, life, alive,
+                                                                   named) -> None:
+    """The default end_of_life_method (closest_seam) on a solve without a run calendar and without
+    years_represented: an end of life after the last period start rounds to the end of the horizon, so that period
+    stays in service and the upgrade's notice is silent; only an end of life that loses a period is named."""
+    from flextool.engine import SpineDbReader
+    from flextool.engine import _behaviour_changes as bc
+    url, scen = make_db(tmp_path_factory, alt=alt, base_chain=["init", "west", "coal"], values=[
+        ["unit", PLANT, "lifetime_method", b64("reinvest_choice", "str")],
+        ["unit", PLANT, "lifetime_technical", b64(life, "float")]])
+    reader = SpineDbReader(url, scen)
+    bc.start_run({"end_of_life_closest_seam": '{"since": 81, "entities": ["coal_plant"]}'})
+    try:
+        capsys.readouterr()
+        frames = build_cohort_frames(reader, "y2020_2day_dispatch", None, ["p2020"], None)
+        printed = [ln for ln in capsys.readouterr().out.splitlines()
+                   if bc.BEHAVIOUR_CHANGES["end_of_life_closest_seam"].summary in ln]
+    finally:
+        bc.start_run(None)
+    assert _alive(frames, "existing") == alive
+    if named:
+        assert len(printed) == 1 and "coal_plant (existing): end of life at year 0.4 of the run, out of service " \
+            "from p2020 (next_seam: in service to the end of the horizon)" in printed[0]
+    else:
+        assert printed == []

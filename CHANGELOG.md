@@ -22,6 +22,13 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   annualized investment cost of that period is the annuity times the share of its years paid. The fixed cost still
   runs over `lifetime_technical`; `reinvest_automatic` still pays every year to the end of the horizon. Upgraded
   databases get a notice naming the entities whose annuity changes (results change).
+- **`end_of_life_method` defaults to `closest_seam`** (unit, connection, node; `lifetime_method` reinvest_choice /
+  no_reinvestment). The end of life (start of operation plus `lifetime_technical`; existing capacity: from the model
+  start, minus its age) is rounded to the closest period start, a tie to the later one. Before, it was rounded to
+  the next period start, so capacity operated to the end of the period its life ended in. Capacity whose life ends
+  in the first half of a period is now out of service for that whole period and pays no fixed cost there; its
+  investment annuity is still paid for `payback_time` years. Set `end_of_life_method` `next_seam` to keep the old
+  rounding. Upgraded databases get a notice naming the entities whose end of life moves (results change).
 - **Scripts that inject state between solves (`override_provider`)**: the realized capacity is now given per
   investment cohort, `K.HANDOFF_REALIZED_COHORT` (one row per investment decision, with its start of operation, end
   of life and size), and the retirements per cohort, `K.HANDOFF_REALIZED_RETIRE`. The old keys
@@ -33,16 +40,17 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
 ### New features
 
 - **The age of existing capacity and the rounding of an end of life** (unit, connection and node).
-  `age_at_model_start` (years), or `build_year` with the new `model.start_year` (age = `start_year` −
-  `build_year`), shortens the life of the existing capacity: its end of life is `lifetime_technical` minus the age,
-  counted from the model start (with `lifetime_method` `reinvest_choice` or `no_reinvestment`; `reinvest_automatic`
-  capacity is kept). `end_of_life_method` says how an end of life that falls inside a period is rounded to a period
-  start, for existing capacity and for every investment: `next_seam` (the default, as before: in service to the end
-  of the period its life ends in), `previous_seam` (gone for that whole period) or `closest_seam` (the nearer
-  period start). The fixed cost of an investment stops when its capacity does. A warning names existing capacity
-  whose end of life is at or before the model start and investments whose rounded end of life is at their own
-  start of operation (they are still offered). The `no_reinvestment` investment window (the first technical
-  lifetime from the model start) does not depend on the age. Without the new parameters results do not change.
+  `age_at_model_start` (years), or `build_year` with the new `model.start_year` (age = `start_year` − `build_year`),
+  shortens the life of the existing capacity: its end of life is `lifetime_technical` minus the age, counted from the
+  model start (with `lifetime_method` `reinvest_choice` or `no_reinvestment`; `reinvest_automatic` capacity is kept).
+  `end_of_life_method` says how an end of life that falls inside a period is rounded to a period start, for existing
+  capacity and for every investment: `closest_seam` (the default: the nearer period start, a tie to the later one),
+  `next_seam` (the rounding before this release: in service to the end of the period its life ends in) or
+  `previous_seam` (gone for that whole period). The fixed cost of an investment stops when its capacity does. A
+  warning names existing capacity whose end of life is at or before the model start and investments whose rounded end
+  of life is at their own start of operation (they are still offered). The `no_reinvestment` investment window (the
+  first technical lifetime from the model start) does not depend on the age. Without the new parameters only the
+  default rounding changes results (see `end_of_life_method` under Behaviour changes).
 
 ### Fixes
 

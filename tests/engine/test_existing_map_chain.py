@@ -267,12 +267,14 @@ def test_chain_and_single_solve_have_the_same_capacity_in_service(tmp_path_facto
 # ---------------------------------------------------------------------------
 # A carried investment reaches its end of life in a later solve
 
-# coal: lifetime_method reinvest_choice, a 7-year life (lifetime_technical = payback_time = 7) and 50 MW forced in
-# p2025 (invest_min_period = invest_max_period), on the falling map.
+# coal: lifetime_method reinvest_choice, a 7-year life (lifetime_technical = payback_time = 7), end_of_life_method
+# next_seam (an end of life inside a period keeps that period) and 50 MW forced in p2025 (invest_min_period =
+# invest_max_period), on the falling map.
 CARRIED_EOL = [_existing(FALLING),
                ["unit", PLANT, "lifetime_method", b64("reinvest_choice", "str")],
                ["unit", PLANT, "lifetime_technical", b64(7.0, "float")],
                ["unit", PLANT, "payback_time", b64(7.0, "float")],
+               ["unit", PLANT, "end_of_life_method", b64("next_seam", "str")],
                ["unit", PLANT, "invest_method", b64("invest_period", "str")],
                ["unit", PLANT, "invest_min_period", _map([0.0, 50.0, 0.0, 0.0])],
                ["unit", PLANT, "invest_max_period", _map([0.0, 50.0, 0.0, 0.0])]]

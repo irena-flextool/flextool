@@ -66,5 +66,6 @@ def test_migration_markers_are_registered() -> None:
                                                               "invest_without_cost_offered",
                                                               "stochastic_storage_paths_tied",
                                                               "chained_solve_discount_from_run_start",
-                                                              "annuity_over_payback_time"}
+                                                              "annuity_over_payback_time",
+                                                              "end_of_life_closest_seam"}
     assert written <= set(BEHAVIOUR_CHANGES)

@@ -11,7 +11,7 @@ Three frames (``FlexData.cohort``, ``cohort_alive``, ``dd_forward``):
 * ``cohort`` — one row per cohort: ``cohort`` (Utf8 id, unique per entity: ``existing:<run start period>`` /
   ``invest:<decision period>``; ``existing`` when the solve has no period years), ``e`` (entity-union axis),
   ``kind`` (``existing`` / ``invest``), ``method`` (``lifetime_method`` with its default), ``eol_method``
-  (``end_of_life_method`` with its default ``next_seam``: how the end of life is rounded), ``d_build`` (the
+  (``end_of_life_method`` with its default ``closest_seam``: how the end of life is rounded), ``d_build`` (the
   decision period, the key of ``v_invest``; null for existing capacity), ``d_on`` (Utf8: the period the capacity
   starts to operate in: the run start for existing capacity, the decision period or, with a construction lead
   time, the later period of ``ed_invest_commission``), ``y_on`` (start of operation; existing capacity:
@@ -78,10 +78,11 @@ from flextool.engine.input._lifetime_roles import (
     NO_REINVESTMENT,
     START_YEAR,
     existing_age,
+    source_entities_with,
 )
 from flextool.engine.input._solve_state import CommissioningLagError
 from flextool.engine.preprocess.params._period_values import _ed_period_value_map, ed_values_on
-from flextool.engine.preprocess.params._run_calendar import YEAR_TOL, round_end_of_life
+from flextool.engine.preprocess.params._run_calendar import YEAR_TOL, eol_moves, round_end_of_life
 
 if TYPE_CHECKING:
     from flextool.engine.input._input_source import InputSource
@@ -97,6 +98,8 @@ LIFETIME_METHODS: tuple[str, ...] = (REINVEST_AUTOMATIC, REINVEST_CHOICE, NO_REI
 BOUNDED_METHODS: tuple[str, ...] = (REINVEST_CHOICE, NO_REINVESTMENT)
 
 _INF = float("inf")
+#: The behaviour change of the ``closest_seam`` default of ``end_of_life_method`` (``_behaviour_changes``).
+END_OF_LIFE_CLOSEST_SEAM = "end_of_life_closest_seam"
 
 
 def _cohort_schema() -> dict[str, pl.DataType]:
@@ -132,11 +135,12 @@ class CohortFrames:
 
 @dataclass(frozen=True)
 class _Calendar:
-    """The years and seams of the run, and the run period label of a seam."""
+    """The years and seams of the run, the run period label of a seam and the years periods start at."""
 
     years: dict[str, float]
     seams: list[float]
     label: Callable[[float], str | None]
+    period_starts: tuple[float, ...] = ()
 
     def eol(self, y_end: float, method: str = END_OF_LIFE_METHOD_DEFAULT) -> float:
         """``y_end`` rounded to a seam by the ``end_of_life_method`` ``method``
@@ -194,7 +198,8 @@ def cohort_calendar(rc: "RunCalendar", years: Mapping[str, float]) -> _Calendar:
     def label(y: float) -> str | None:
         return None if y == _INF else rc.period_at(y)
 
-    return _Calendar(years=dict(years), seams=seams, label=label)
+    starts = tuple(sorted({*(float(y) for y in years.values()), *rc.years.values()}))
+    return _Calendar(years=dict(years), seams=seams, label=label, period_starts=starts)
 
 
 def _entity_methods(source: "InputSource") -> dict[str, str]:
@@ -345,6 +350,7 @@ def _existing_rows(source: "InputSource", years: Mapping[str, float], cal: _Cale
             y_first = y0 + y_life
         rows.append((f"{KIND_EXISTING}:{start}", e, KIND_EXISTING, method, eol_method, None, start, y_on, age,
                      y_life, y_end, y_first, y_eol, cal.label(y_eol)))
+    _closest_seam_notice(source, rows, cal)
     return rows
 
 
@@ -544,6 +550,7 @@ def invest_cohorts(source: "InputSource",
         rows.append((f"{KIND_INVEST}:{d}", e, KIND_INVEST, method, eol_method, d, d_on, y_on, 0.0, y_life, y_end,
                      None, y_eol, cal.label(y_eol)))
     _never_operates_warning(source, never)
+    _closest_seam_notice(source, rows, cal)
     cohort = _cohort_frame(rows)
     walk = (period_walk_iterator(source, active_solve, anchor.lazy(), list(period_in_use), list(period_in_use),
                                  window_method=WindowMethod.UNBOUNDED_FORWARD, life_lf=None, factor_side=None,
@@ -582,6 +589,51 @@ def _never_operates_warning(source: "InputSource", never: Mapping[str, list[tupl
             f"Warning: {classes.get(e, 'entity')} {e}: investments decided in {periods} would never operate "
             f"(lifetime_technical {life:g} years, end_of_life_method {method}): their end of life is rounded to the "
             "start of the period they start to operate in. They are still offered.")
+
+
+def _closest_seam_notice(source: "InputSource", rows: list[tuple], cal: _Calendar) -> None:
+    """The ``end_of_life_closest_seam`` notice (an upgraded database whose marker names entities): the entities of
+    the cohort ``rows`` (:func:`_cohort_schema` order, Utf8 labels) that the marker names, with a bounded
+    ``lifetime_method``, ``end_of_life_method`` closest_seam and no explicit ``end_of_life_method`` (the new default
+    rounds them), and an end of life that the default moves (:func:`._run_calendar.eol_moves`: closest_seam takes
+    out of service a period next_seam keeps).  An existing cohort counts only with ``existing`` > 0 in some period;
+    an investment cohort is any decision the solve offers.  Each entity is named once per run, with its moved
+    cohorts in the detail."""
+    from flextool.engine import _behaviour_changes as bc
+    if not bc.has_marker(END_OF_LIFE_CLOSEST_SEAM):
+        return
+    named = {str(n) for n in bc.marker_json(END_OF_LIFE_CLOSEST_SEAM).get("entities") or []}
+    if not named:
+        return
+    moved: dict[str, list[tuple[str, str, float, float]]] = {}
+    for _c, e, kind, method, eol_method, d_build, _d_on, _y_on, _age, _life, y_end, _first, y_eol, _d_eol in rows:
+        if (e in named and method in BOUNDED_METHODS and eol_method == "closest_seam" and y_end is not None
+                and eol_moves(y_end, cal.seams, cal.period_starts)):
+            moved.setdefault(e, []).append((kind, str(d_build), float(y_end), float(y_eol)))
+    if not moved:
+        return
+    explicit: set[str] = set()
+    for cls in ENTITY_CLASSES:
+        explicit |= source_entities_with(source, cls)(END_OF_LIFE_METHOD)
+    if any(kind == KIND_EXISTING for cohorts in moved.values() for kind, *_ in cohorts):
+        from flextool.engine.preprocess.params._existing import _per_entity_param_lf
+        with_existing = {str(e) for e, v in _per_entity_param_lf(source, "existing").select("e", "value").collect()
+                         .iter_rows() if v is not None and v > 0.0}
+        moved = {e: [c for c in cohorts if c[0] != KIND_EXISTING or e in with_existing]
+                 for e, cohorts in moved.items()}
+    fresh = bc.unannounced(END_OF_LIFE_CLOSEST_SEAM, [e for e in sorted(moved) if moved[e] and e not in explicit])
+    if not fresh:
+        return
+
+    def phrase(e: str, kind: str, d_build: str, y_end: float, y_eol: float) -> str:
+        who = "existing" if kind == KIND_EXISTING else f"decided in {d_build}"
+        nxt = cal.label(cal.eol(y_end, "next_seam"))
+        before = f"from {nxt}" if nxt is not None else "in service to the end of the horizon"
+        return (f"{e} ({who}): end of life at year {y_end:g} of the run, out of service from "
+                f"{cal.label(y_eol) or f'year {y_eol:g}'} (next_seam: {before})")
+
+    detail = "; ".join(phrase(e, *c) for e in fresh for c in moved[e]) + "."
+    bc.notice(END_OF_LIFE_CLOSEST_SEAM, "entities", fresh, detail)
 
 
 def seed_cohorts(seed: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:

@@ -314,9 +314,10 @@ For a unit, connection or storage node `e` in period `d`:
     `y_on = y[d0] − age`, `d0` the first period of the run, `age` from
     `age_at_model_start` or `model.start_year − build_year`) and
     `y_eol = round_end_of_life(y_on + lifetime_technical, end_of_life_method)`
-    (`_run_calendar.round_end_of_life`: the period start at or after it for
-    `next_seam`, at or before it for `previous_seam`, the nearer one for
-    `closest_seam`, within `YEAR_TOL`; `+inf` for `reinvest_automatic`);
+    (`_run_calendar.round_end_of_life`: the nearer period start for
+    `closest_seam`, the default, a tie to the later one; the one at or after
+    it for `next_seam`, at or before it for `previous_seam`; within
+    `YEAR_TOL`; `+inf` for `reinvest_automatic`);
   - `prebuilt[e,d]`: the same over the cohorts in service from the start of
     `d` (`y[d] > y_on`), not starting to operate in `d`;
   - `retired[e,d] = Σ_{d′ : (e,d′,d) ∈ retired} v_divest[e,d′]`: a retirement
