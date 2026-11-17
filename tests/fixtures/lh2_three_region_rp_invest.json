@@ -10057,36 +10057,6 @@
     [
       "connection",
       "pipe_AB",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "lh2_three_region_rp_invest"
-    ],
-    [
-      "connection",
-      "pipe_AB",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "lh2_three_region_rp_invest_swap"
-    ],
-    [
-      "connection",
-      "pipe_AB",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "lh2_three_region_rp_invest_uniform"
-    ],
-    [
-      "connection",
-      "pipe_AB",
       "transfer_method",
       [
         "InJlZ3VsYXIi",
@@ -10320,36 +10290,6 @@
       "other_operational_cost",
       [
         "Mi4w",
-        "float"
-      ],
-      "lh2_three_region_rp_invest_uniform"
-    ],
-    [
-      "connection",
-      "pipe_BC",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "lh2_three_region_rp_invest"
-    ],
-    [
-      "connection",
-      "pipe_BC",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "lh2_three_region_rp_invest_swap"
-    ],
-    [
-      "connection",
-      "pipe_BC",
-      "payback_time",
-      [
-        "MjUuMA==",
         "float"
       ],
       "lh2_three_region_rp_invest_uniform"
@@ -12886,16 +12826,6 @@
     ],
     [
       "unit",
-      "wind_A",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "lh2_three_region_invest"
-    ],
-    [
-      "unit",
       "wind_B",
       "conversion_method",
       [
@@ -12966,16 +12896,6 @@
     ],
     [
       "unit",
-      "wind_B",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "lh2_three_region_invest"
-    ],
-    [
-      "unit",
       "wind_C",
       "conversion_method",
       [
@@ -13038,16 +12958,6 @@
       "unit",
       "wind_C",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "lh2_three_region_invest"
-    ],
-    [
-      "unit",
-      "wind_C",
-      "payback_time",
       [
         "MjUuMA==",
         "float"

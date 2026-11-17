@@ -7666,16 +7666,6 @@
     [
       "unit",
       "base",
-      "payback_time",
-      [
-        "MS4w",
-        "float"
-      ],
-      "base"
-    ],
-    [
-      "unit",
-      "base",
       "virtual_unitsize",
       [
         "MS4w",

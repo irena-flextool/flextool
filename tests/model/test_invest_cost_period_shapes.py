@@ -178,7 +178,6 @@ def test_net_salvage_value_mixed_shapes(tmp_path_factory):
         ["unit", "wind_plant", "net_salvage_value", 5.0],
         # A retirement with a net_salvage_value needs a lifetime (validate_basic_sanity).
         ["unit", "wind_plant", "lifetime_technical", 20.0],
-        ["unit", "wind_plant", "payback_time", 20.0],
     ]
     step = _single(_solve(tmp_path_factory, "tests.json", _overlay(values)))
     divest = _pairs(step.flex_data.ed_divest_set)

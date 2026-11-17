@@ -169,13 +169,11 @@ def test_d_period_total_methods_are_one_sided(tmp_path_factory) -> None:
         ["unit", "ipt", "net_salvage_value", _f(100.0)],
         ["unit", "ipt", "invest_cost", _f(1000.0)],
         ["unit", "ipt", "lifetime_technical", _f(20.0)],
-        ["unit", "ipt", "payback_time", _f(20.0)],
         ["unit", "rpt", "existing", _f(50.0)],
         ["unit", "rpt", "invest_method", _s("retire_period_total")],
         ["unit", "rpt", "invest_cost", _f(1000.0)],
         ["unit", "rpt", "net_salvage_value", _f(100.0)],
         ["unit", "rpt", "lifetime_technical", _f(20.0)],
-        ["unit", "rpt", "payback_time", _f(20.0)],
     ], _unit("ipt") + _unit("rpt"))
     assert ("ipt", "p2020") in invest and ("ipt", "p2020") not in divest
     assert ("rpt", "p2020") in divest and ("rpt", "p2020") not in invest
@@ -204,7 +202,6 @@ def test_notice_names_the_newly_offered_pairs(tmp_path_factory, capsys) -> None:
         ["unit", "c", "invest_method", _s("invest_no_limit")],
         ["unit", "c", "invest_cost", _f(1000.0)],
         ["unit", "c", "lifetime_technical", _f(20.0)],
-        ["unit", "c", "payback_time", _f(20.0)],
         ["unit", "k", "invest_method", _s("invest_no_limit")],
         ["unit", "k", "constraint_capacity_coeff", coeff],
         ["constraint", "cap_c", "sense", _s("less_than")],

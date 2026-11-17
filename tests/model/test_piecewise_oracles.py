@@ -133,7 +133,7 @@ CASES = {
                         extra_solve=[["solve", "s1", "reduce_unit_detail_method", text("online")]]),
     "O2a": lambda: _o2({}),
     "O2b": lambda: _o2({"existing": scalar(0.0), "invest_method": text("invest_no_limit"),
-                        "lifetime_technical": scalar(1.0), "payback_time": scalar(1.0), "discount_rate": scalar(0.0),
+                        "lifetime_technical": scalar(1.0), "discount_rate": scalar(0.0),
                         "invest_cost": scalar(33.652506)},
                        extra_solve=[["solve", "s1", "invest_periods", str_list(["p2030"])],
                                     ["solve", "s1", "realized_invest_periods", str_list(["p2030"])]]),

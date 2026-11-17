@@ -10671,8 +10671,12 @@ def _migrate_v80_schema_batch(db) -> None:
 # data included), so a later one needs a new version.
 
 #: v81: parameters whose values move to new names (old name -> the new names that each get a copy of every value).
+#: ``lifetime`` moves to ``lifetime_technical`` only: an entity without ``payback_time`` pays back over its
+#: ``lifetime_technical`` (``engine/input/_lifetime_roles.py``), so a copy into ``payback_time`` would only repeat it.
+#: Databases migrated to 81 by an earlier development build of this step also hold a ``payback_time`` copy of each
+#: ``lifetime``; they are not migrated again and keep it, which builds the same model as the fallback (equal values).
 V81_VALUE_MOVES: dict[str, tuple[str, ...]] = {
-    "lifetime": ("lifetime_technical", "payback_time"),
+    "lifetime": ("lifetime_technical",),
     "salvage_value": ("net_salvage_value",),
 }
 #: v81: value-list members renamed (list -> {old member: new member}); every stored value is rewritten.
@@ -11012,9 +11016,12 @@ def _migrate_v81_schema_batch(db) -> None:
        classes (group ``retirement``) ``age_at_model_start`` and ``build_year`` (a constant, no default) and
        ``end_of_life_method`` (a choice of ``end_of_life_methods``, default ``closest_seam``); ``model.start_year``
        (group ``model``, a constant, no default) (:func:`_v81_definitions_part`).
-    3. ``lifetime`` is split: every value is copied to both ``lifetime_technical`` (how long the capacity operates)
-       and ``payback_time`` (the years of the annuity); ``salvage_value`` values go to ``net_salvage_value``; the old
-       definitions are removed (:func:`_v81_move_values`).
+    3. ``lifetime`` values go to ``lifetime_technical`` (how long the capacity operates); ``payback_time`` (the
+       years of the annuity) gets no value: without one an entity pays back over its ``lifetime_technical``.
+       ``salvage_value`` values go to ``net_salvage_value``; the old definitions are removed
+       (:func:`_v81_move_values`).  A database migrated to 81 by an earlier development build of this step, which
+       also copied each ``lifetime`` value to ``payback_time``, keeps that copy (a value move never reaches a
+       database already at 81); the copy equals the fallback, so the model is the same.
     4. The ``lifetime_method`` value ``no_investment`` is ``no_reinvestment``, in the value list and in every stored
        value (:func:`_v81_list_member_renames`).
     5. The descriptions of the new definitions and of ``lifetime_method``, ``discount_rate``, ``invest_cost``,
@@ -11035,7 +11042,7 @@ def _migrate_v81_schema_batch(db) -> None:
     _v81_descriptions(db)
     _v81_annuity_marker(db)
     _v81_end_of_life_marker(db)
-    _commit_step(db, "v81: lifetime split into lifetime_technical and payback_time, salvage_value is "
+    _commit_step(db, "v81: lifetime is lifetime_technical (payback_time added, no value), salvage_value is "
                      "net_salvage_value, the lifetime_method value no_investment is no_reinvestment")
 
 

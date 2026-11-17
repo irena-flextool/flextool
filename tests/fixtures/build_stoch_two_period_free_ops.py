@@ -230,7 +230,6 @@ def build() -> dict:
         ["unit", "base", "invest_cost", _pack(20.0, "float"), "base"],
         ["unit", "base", "discount_rate", _pack(0.05, "float"), "base"],
         ["unit", "base", "lifetime_technical", _pack(1.0, "float"), "base"],
-        ["unit", "base", "payback_time", _pack(1.0, "float"), "base"],
         ["unit", "base", "invest_max_total", _pack(150.0, "float"),
          "base"],
         ["unit__outputNode", ["base", "elec"], "other_operational_cost",

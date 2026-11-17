@@ -255,7 +255,6 @@ def test_investment_limit_is_mw_and_units_are_continuous(tmp_path_factory, inves
         ["unit", PLANT, "invest_max_total", b64(invest_max_mw, "float")],
         ["unit", PLANT, "invest_cost", b64(1.0, "float")],
         ["unit", PLANT, "lifetime_technical", b64(30.0, "float")],
-        ["unit", PLANT, "payback_time", b64(30.0, "float")],
         ["unit", PLANT, "discount_rate", b64(0.05, "float")],
         ["solve", "y2020_2day_dispatch", "invest_periods",
          b64({"type": "array", "value_type": "str", "data": ["p2020"]}, "array")],

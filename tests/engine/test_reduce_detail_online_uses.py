@@ -588,7 +588,7 @@ def _opt_model(level: str, no_startup: tuple[str, ...], variant: str = "base"):
     units = dict(OPT_UNITS)
     if variant == "invest":
         units["ge"] = (OPT_GE_EXISTING, 0.3, [["invest_max_total", 100.0], ["invest_cost", 1.0],
-                                              ["lifetime_technical", 30.0], ["payback_time", 30.0],
+                                              ["lifetime_technical", 30.0],
                                               ["discount_rate", 0.05]])
         vals += [["unit", "ge", "invest_method", _s("invest_total")],
                  ["solve", SOLVE, "invest_periods", periods], ["solve", SOLVE, "realized_invest_periods", periods]]

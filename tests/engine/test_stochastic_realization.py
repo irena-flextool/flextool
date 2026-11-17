@@ -716,7 +716,7 @@ def _rolling_online_only(data: dict) -> None:
     no ``separate_dispatch``, no investment; horizon 2 h, jump 1 h, so every roll commits its first step inside the
     fan.  Each roll start t0001-t0003 has an analysis time: ``high`` (wind CF 0.8) and ``low`` (0.0), 0.5 each."""
     drop = {"dispatch_realization_method", "invest_periods", "realized_invest_periods", "invest_method",
-            "invest_cost", "discount_rate", "lifetime_technical", "payback_time", "invest_max_total"}
+            "invest_cost", "discount_rate", "lifetime_technical", "invest_max_total"}
     data["parameter_values"] = [r for r in data["parameter_values"] if r[2] not in drop]
     steps = ("t0001", "t0002", "t0003")
 

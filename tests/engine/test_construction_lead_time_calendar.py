@@ -278,7 +278,6 @@ def test_carry_counts_lifetime_from_start_of_operation(tmp_path_factory) -> None
     values = [_lead(b64(5.0, "float")),
               ["unit", PLANT, "lifetime_method", b64("reinvest_choice", "str")],
               ["unit", PLANT, "lifetime_technical", b64(10.0, "float")],
-              ["unit", PLANT, "payback_time", b64(10.0, "float")],
               ["unit", PLANT, "invest_min_total", b64(100.0, "float")],
               ["unit", PLANT, "invest_max_total", b64(100.0, "float")]]
     steps = _run(tmp_path_factory, "lt_carry", values, CHAIN)

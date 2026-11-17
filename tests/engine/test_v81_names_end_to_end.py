@@ -42,8 +42,8 @@ def _packed(value) -> list:
 def _as_version_80(data: dict) -> dict:
     """``data`` (a fixture JSON at version 81) written with the version-80 names: ``lifetime_technical`` is
     ``lifetime`` and ``net_salvage_value`` is ``salvage_value`` (definitions, types and values), ``payback_time`` is
-    dropped (definitions, types and values: the migration has to make it), the ``lifetime_methods`` member and the
-    values ``no_reinvestment`` are ``no_investment``, and the version is 80."""
+    dropped (definition and types: the migration has to make it; ``data`` has no ``payback_time`` value), the
+    ``lifetime_methods`` member and the values ``no_reinvestment`` are ``no_investment``, and the version is 80."""
     old = json.loads(json.dumps(data))
     new_member, old_member = _packed("no_reinvestment"), _packed("no_investment")
     old["parameter_definitions"] = [[r[0], NEW_TO_OLD.get(r[1], r[1]), *r[2:]] for r in old["parameter_definitions"]
@@ -55,10 +55,9 @@ def _as_version_80(data: dict) -> dict:
                               if r[1] != "payback_time"]
     old["parameter_value_lists"] = [[r[0], old_member] if r[0] == "lifetime_methods" and r[1] == new_member else r
                                     for r in old["parameter_value_lists"]]
+    assert not [r for r in old["parameter_values"] if r[2] == "payback_time"]
     values = []
     for r in old["parameter_values"]:
-        if r[2] == "payback_time":
-            continue
         r = [r[0], r[1], NEW_TO_OLD.get(r[2], r[2]), r[3], *r[4:]]
         if r[2] == "lifetime_method" and r[3] == new_member:
             r[3] = old_member
@@ -102,9 +101,8 @@ def test_v80_database_builds_the_same_lp_after_migration(tmp_path_factory, scena
     migrated, direct = _schema_and_values(old_url), _schema_and_values(new_url)
     assert migrated["defs"] == direct["defs"]
     assert migrated["lists"] == direct["lists"]
-    lifetimes = {k[:2] + k[3:]: v for k, v in migrated["values"].items() if k[2] == "lifetime_technical"}
-    assert lifetimes and lifetimes == {k[:2] + k[3:]: v for k, v in migrated["values"].items()
-                                       if k[2] == "payback_time"}
+    assert any(k[2] == "lifetime_technical" for k in migrated["values"])
+    assert not any(k[2] == "payback_time" for k in migrated["values"])
     assert migrated["values"] == direct["values"]
 
     runs = {name: run_chain_from_db(url, scenario, work_folder=work / f"{name}_w", keep_solutions=True)
@@ -166,14 +164,10 @@ def test_payback_time_sets_the_annuity_factor(tmp_path_factory, chain) -> None:
 # No payback_time: the payback time is the technical lifetime
 
 
-def _fixture_without_payback(tmp_path_factory, fixture: Path, entity: str) -> Path:
-    """``fixture`` without the ``payback_time`` values of ``entity`` (it keeps its ``lifetime_technical``)."""
+def _has_payback(fixture: Path, entity: str) -> bool:
+    """Whether ``fixture`` has a ``payback_time`` value of ``entity`` (in any alternative)."""
     data = json.loads(fixture.read_text(encoding="utf-8"))
-    data["parameter_values"] = [r for r in data["parameter_values"]
-                                if not (r[1] == entity and r[2] == "payback_time")]
-    path = tmp_path_factory.mktemp(f"no_payback_{fixture.stem}") / fixture.name
-    path.write_text(json.dumps(data), encoding="utf-8")
-    return path
+    return any(r[1] == entity and r[2] == "payback_time" for r in data["parameter_values"])
 
 
 CASES = {
@@ -195,7 +189,7 @@ CASES = {
 @pytest.mark.parametrize("case", list(CASES))
 def test_technical_lifetime_alone_equals_both(tmp_path_factory, case) -> None:
     entity, fixture, chain, extra, life = CASES[case]
-    fixture = _fixture_without_payback(tmp_path_factory, fixture, entity)
+    assert not _has_payback(fixture, entity)
     runs = {}
     for with_payback in (False, True):
         values = list(extra) + [["unit", entity, "lifetime_technical", b64(life, "float")]]

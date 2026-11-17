@@ -37,7 +37,6 @@ def _ed(param, entity: str = PLANT) -> dict[str, float]:
 
 def _lifetime(method: str, lifetime: float, entity: str = PLANT) -> list:
     return [["unit", entity, "lifetime_technical", b64(lifetime, "float")],
-            ["unit", entity, "payback_time", b64(lifetime, "float")],
             ["unit", entity, "lifetime_method", b64(method, "str")]]
 
 

@@ -97,7 +97,6 @@ def test_invest_min_period_above_a_constant_max_is_an_error_per_period(tmp_path_
         ["unit", "coal_plant", "invest_method", b64("invest_period", "str")],
         ["unit", "coal_plant", "invest_cost", _f(400.0)],
         ["unit", "coal_plant", "lifetime_technical", _f(30.0)],
-        ["unit", "coal_plant", "payback_time", _f(30.0)],
         ["unit", "coal_plant", "invest_min_period", _map([["p2020", 200.0]])],
         ["unit", "coal_plant", "invest_max_period", _f(100.0)]])
     with pytest.raises(FlexToolConfigError) as err:
@@ -158,7 +157,6 @@ def test_zero_discount_rate_is_silent(tmp_path_factory) -> None:
         ["unit", "coal_plant", "invest_method", b64("invest_no_limit", "str")],
         ["unit", "coal_plant", "invest_cost", _f(400.0)],
         ["unit", "coal_plant", "lifetime_technical", _f(30.0)],
-        ["unit", "coal_plant", "payback_time", _f(30.0)],
         ["unit", "coal_plant", "discount_rate", _f(0.0)]]))
 
 

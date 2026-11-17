@@ -13742,16 +13742,6 @@
     [
       "connection",
       "ARG_Battery_Connection",
-      "payback_time",
-      [
-        "MjAuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "connection",
-      "ARG_Battery_Connection",
       "transfer_method",
       [
         "InJlZ3VsYXIi",
@@ -13852,16 +13842,6 @@
     [
       "connection",
       "ARG_CHI_LH2",
-      "payback_time",
-      [
-        "MzAuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "connection",
-      "ARG_CHI_LH2",
       "transfer_method",
       [
         "InVuaWRpcmVjdGlvbmFsIg==",
@@ -13945,16 +13925,6 @@
       "other_operational_cost",
       [
         "NzQ4LjAwNzMwOQ==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "connection",
-      "ARG_CHI_LOHC",
-      "payback_time",
-      [
-        "MzAuMA==",
         "float"
       ],
       "shared"
@@ -14052,16 +14022,6 @@
     [
       "connection",
       "ARG_CHI_MeOH",
-      "payback_time",
-      [
-        "MzAuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "connection",
-      "ARG_CHI_MeOH",
       "transfer_method",
       [
         "InVuaWRpcmVjdGlvbmFsIg==",
@@ -14152,16 +14112,6 @@
     [
       "connection",
       "ARG_CHI_NH3",
-      "payback_time",
-      [
-        "MzAuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "connection",
-      "ARG_CHI_NH3",
       "transfer_method",
       [
         "InVuaWRpcmVjdGlvbmFsIg==",
@@ -14243,16 +14193,6 @@
       "connection",
       "AUS_Battery_Connection",
       "lifetime_technical",
-      [
-        "MjAuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "connection",
-      "AUS_Battery_Connection",
-      "payback_time",
       [
         "MjAuMA==",
         "float"
@@ -14362,16 +14302,6 @@
     [
       "connection",
       "AUS_CHI_HBI",
-      "payback_time",
-      [
-        "MzAuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "connection",
-      "AUS_CHI_HBI",
       "transfer_method",
       [
         "InVuaWRpcmVjdGlvbmFsIg==",
@@ -14455,16 +14385,6 @@
       "other_operational_cost",
       [
         "MTM3Ljk5OTY0",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "connection",
-      "AUS_CHI_LH2",
-      "payback_time",
-      [
-        "MzAuMA==",
         "float"
       ],
       "shared"
@@ -14562,16 +14482,6 @@
     [
       "connection",
       "AUS_CHI_LOHC",
-      "payback_time",
-      [
-        "MzAuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "connection",
-      "AUS_CHI_LOHC",
       "transfer_method",
       [
         "InVuaWRpcmVjdGlvbmFsIg==",
@@ -14655,16 +14565,6 @@
       "other_operational_cost",
       [
         "OTcuMDcyMTE2",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "connection",
-      "AUS_CHI_NH3",
-      "payback_time",
-      [
-        "MzAuMA==",
         "float"
       ],
       "shared"
@@ -14762,16 +14662,6 @@
     [
       "connection",
       "AUS_CHI_Ore",
-      "payback_time",
-      [
-        "MzAuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "connection",
-      "AUS_CHI_Ore",
       "transfer_method",
       [
         "InVuaWRpcmVjdGlvbmFsIg==",
@@ -14853,16 +14743,6 @@
       "connection",
       "CHI_Battery_Connection",
       "lifetime_technical",
-      [
-        "MjAuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "connection",
-      "CHI_Battery_Connection",
-      "payback_time",
       [
         "MjAuMA==",
         "float"
@@ -15442,16 +15322,6 @@
     [
       "node",
       "ARG_Battery",
-      "payback_time",
-      [
-        "MjAuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "node",
-      "ARG_Battery",
       "storage_binding_method",
       [
         "ImJpbmRfd2l0aGluX3NvbHZlIg==",
@@ -15586,16 +15456,6 @@
       [
         "InN0b3JhZ2Ui",
         "str"
-      ],
-      "shared"
-    ],
-    [
-      "node",
-      "ARG_H2",
-      "payback_time",
-      [
-        "MzAuMA==",
-        "float"
       ],
       "shared"
     ],
@@ -15802,16 +15662,6 @@
     [
       "node",
       "AUS_Battery",
-      "payback_time",
-      [
-        "MjAuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "node",
-      "AUS_Battery",
       "storage_binding_method",
       [
         "ImJpbmRfd2l0aGluX3NvbHZlIg==",
@@ -15946,16 +15796,6 @@
       [
         "InN0b3JhZ2Ui",
         "str"
-      ],
-      "shared"
-    ],
-    [
-      "node",
-      "AUS_H2",
-      "payback_time",
-      [
-        "MzAuMA==",
-        "float"
       ],
       "shared"
     ],
@@ -16172,16 +16012,6 @@
     [
       "node",
       "CHI_Battery",
-      "payback_time",
-      [
-        "MjAuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "node",
-      "CHI_Battery",
       "storage_binding_method",
       [
         "ImJpbmRfd2l0aGluX3NvbHZlIg==",
@@ -16316,16 +16146,6 @@
       [
         "InN0b3JhZ2Ui",
         "str"
-      ],
-      "shared"
-    ],
-    [
-      "node",
-      "CHI_H2",
-      "payback_time",
-      [
-        "MzAuMA==",
-        "float"
       ],
       "shared"
     ],
@@ -18091,16 +17911,6 @@
     ],
     [
       "unit",
-      "ARG_H2toLH2",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "ARG_H2toLOHC",
       "conversion_method",
       [
@@ -18173,16 +17983,6 @@
       "unit",
       "ARG_H2toLOHC",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "ARG_H2toLOHC",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -18271,16 +18071,6 @@
     ],
     [
       "unit",
-      "ARG_H2toMeOH",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "ARG_H2toNH3",
       "conversion_method",
       [
@@ -18353,16 +18143,6 @@
       "unit",
       "ARG_H2toNH3",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "ARG_H2toNH3",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -18451,16 +18231,6 @@
     ],
     [
       "unit",
-      "ARG_LH2toH2",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "ARG_LOHCtoH2",
       "conversion_method",
       [
@@ -18541,16 +18311,6 @@
     ],
     [
       "unit",
-      "ARG_LOHCtoH2",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "ARG_NH3toH2",
       "conversion_method",
       [
@@ -18623,16 +18383,6 @@
       "unit",
       "ARG_NH3toH2",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "ARG_NH3toH2",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -18721,16 +18471,6 @@
     ],
     [
       "unit",
-      "ARG_PV_CL1",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "ARG_PV_CL2",
       "conversion_method",
       [
@@ -18803,16 +18543,6 @@
       "unit",
       "ARG_PV_CL2",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "ARG_PV_CL2",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -18901,16 +18631,6 @@
     ],
     [
       "unit",
-      "ARG_PV_CL3",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "ARG_PV_CL4",
       "conversion_method",
       [
@@ -18983,16 +18703,6 @@
       "unit",
       "ARG_PV_CL4",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "ARG_PV_CL4",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -19081,16 +18791,6 @@
     ],
     [
       "unit",
-      "ARG_W_Offshore_CL1",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "ARG_W_Offshore_CL2",
       "conversion_method",
       [
@@ -19163,16 +18863,6 @@
       "unit",
       "ARG_W_Offshore_CL2",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "ARG_W_Offshore_CL2",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -19261,16 +18951,6 @@
     ],
     [
       "unit",
-      "ARG_W_Offshore_CL3",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "ARG_W_Offshore_CL4",
       "conversion_method",
       [
@@ -19343,16 +19023,6 @@
       "unit",
       "ARG_W_Offshore_CL4",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "ARG_W_Offshore_CL4",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -19441,16 +19111,6 @@
     ],
     [
       "unit",
-      "ARG_W_Offshore_CL5",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "ARG_W_Onshore_CL1",
       "conversion_method",
       [
@@ -19503,16 +19163,6 @@
       "unit",
       "ARG_W_Onshore_CL1",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "ARG_W_Onshore_CL1",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -19601,16 +19251,6 @@
     ],
     [
       "unit",
-      "ARG_W_Onshore_CL2",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "ARG_W_Onshore_CL3",
       "conversion_method",
       [
@@ -19683,16 +19323,6 @@
       "unit",
       "ARG_W_Onshore_CL3",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "ARG_W_Onshore_CL3",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -19781,16 +19411,6 @@
     ],
     [
       "unit",
-      "ARG_W_Onshore_CL4",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "ARG_W_Onshore_CL5",
       "conversion_method",
       [
@@ -19863,16 +19483,6 @@
       "unit",
       "ARG_W_Onshore_CL5",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "ARG_W_Onshore_CL5",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -19961,16 +19571,6 @@
     ],
     [
       "unit",
-      "ARG_electrolyser",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "AUS_H2_GT",
       "conversion_method",
       [
@@ -20091,16 +19691,6 @@
     ],
     [
       "unit",
-      "AUS_H2toLH2",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "AUS_H2toLOHC",
       "conversion_method",
       [
@@ -20173,16 +19763,6 @@
       "unit",
       "AUS_H2toLOHC",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "AUS_H2toLOHC",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -20271,16 +19851,6 @@
     ],
     [
       "unit",
-      "AUS_H2toMeOH",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "AUS_H2toNH3",
       "conversion_method",
       [
@@ -20353,16 +19923,6 @@
       "unit",
       "AUS_H2toNH3",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "AUS_H2toNH3",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -20451,16 +20011,6 @@
     ],
     [
       "unit",
-      "AUS_LH2toH2",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "AUS_LOHCtoH2",
       "conversion_method",
       [
@@ -20541,16 +20091,6 @@
     ],
     [
       "unit",
-      "AUS_LOHCtoH2",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "AUS_NH3toH2",
       "conversion_method",
       [
@@ -20623,16 +20163,6 @@
       "unit",
       "AUS_NH3toH2",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "AUS_NH3toH2",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -20721,16 +20251,6 @@
     ],
     [
       "unit",
-      "AUS_PV_CL1",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "AUS_PV_CL2",
       "conversion_method",
       [
@@ -20803,16 +20323,6 @@
       "unit",
       "AUS_PV_CL2",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "AUS_PV_CL2",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -20901,16 +20411,6 @@
     ],
     [
       "unit",
-      "AUS_PV_CL3",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "AUS_PV_CL4",
       "conversion_method",
       [
@@ -20983,16 +20483,6 @@
       "unit",
       "AUS_PV_CL4",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "AUS_PV_CL4",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -21081,16 +20571,6 @@
     ],
     [
       "unit",
-      "AUS_W_Offshore_CL2",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "AUS_W_Offshore_CL3",
       "conversion_method",
       [
@@ -21163,16 +20643,6 @@
       "unit",
       "AUS_W_Offshore_CL3",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "AUS_W_Offshore_CL3",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -21261,16 +20731,6 @@
     ],
     [
       "unit",
-      "AUS_W_Offshore_CL4",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "AUS_W_Offshore_CL5",
       "conversion_method",
       [
@@ -21351,16 +20811,6 @@
     ],
     [
       "unit",
-      "AUS_W_Offshore_CL5",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "AUS_W_Onshore_CL2",
       "conversion_method",
       [
@@ -21413,16 +20863,6 @@
       "unit",
       "AUS_W_Onshore_CL2",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "AUS_W_Onshore_CL2",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -21511,16 +20951,6 @@
     ],
     [
       "unit",
-      "AUS_W_Onshore_CL3",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "AUS_W_Onshore_CL4",
       "conversion_method",
       [
@@ -21593,16 +21023,6 @@
       "unit",
       "AUS_W_Onshore_CL4",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "AUS_W_Onshore_CL4",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -21691,16 +21111,6 @@
     ],
     [
       "unit",
-      "AUS_W_Onshore_CL5",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "AUS_electrolyser",
       "conversion_method",
       [
@@ -21781,16 +21191,6 @@
     ],
     [
       "unit",
-      "AUS_electrolyser",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "AUS_oretoHBI",
       "conversion_method",
       [
@@ -21863,16 +21263,6 @@
       "unit",
       "AUS_oretoHBI",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "AUS_oretoHBI",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -22001,16 +21391,6 @@
     ],
     [
       "unit",
-      "CHI_H2toLH2",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "CHI_H2toLOHC",
       "conversion_method",
       [
@@ -22083,16 +21463,6 @@
       "unit",
       "CHI_H2toLOHC",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "CHI_H2toLOHC",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -22181,16 +21551,6 @@
     ],
     [
       "unit",
-      "CHI_H2toMeOH",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "CHI_H2toNH3",
       "conversion_method",
       [
@@ -22263,16 +21623,6 @@
       "unit",
       "CHI_H2toNH3",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "CHI_H2toNH3",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -22361,16 +21711,6 @@
     ],
     [
       "unit",
-      "CHI_LH2toH2",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "CHI_LOHCtoH2",
       "conversion_method",
       [
@@ -22443,16 +21783,6 @@
       "unit",
       "CHI_LOHCtoH2",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "CHI_LOHCtoH2",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -22541,16 +21871,6 @@
     ],
     [
       "unit",
-      "CHI_NH3toH2",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "CHI_PV_CL1",
       "conversion_method",
       [
@@ -22623,16 +21943,6 @@
       "unit",
       "CHI_PV_CL1",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "CHI_PV_CL1",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -22721,16 +22031,6 @@
     ],
     [
       "unit",
-      "CHI_PV_CL2",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "CHI_PV_CL3",
       "conversion_method",
       [
@@ -22803,16 +22103,6 @@
       "unit",
       "CHI_PV_CL3",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "CHI_PV_CL3",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -22901,16 +22191,6 @@
     ],
     [
       "unit",
-      "CHI_PV_CL4",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "CHI_PV_CL5",
       "conversion_method",
       [
@@ -22991,16 +22271,6 @@
     ],
     [
       "unit",
-      "CHI_PV_CL5",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "CHI_W_Offshore_CL2",
       "conversion_method",
       [
@@ -23053,16 +22323,6 @@
       "unit",
       "CHI_W_Offshore_CL2",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "CHI_W_Offshore_CL2",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -23151,16 +22411,6 @@
     ],
     [
       "unit",
-      "CHI_W_Offshore_CL3",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "CHI_W_Offshore_CL4",
       "conversion_method",
       [
@@ -23233,16 +22483,6 @@
       "unit",
       "CHI_W_Offshore_CL4",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "CHI_W_Offshore_CL4",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -23331,16 +22571,6 @@
     ],
     [
       "unit",
-      "CHI_W_Offshore_CL5",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "CHI_W_Onshore_CL2",
       "conversion_method",
       [
@@ -23401,16 +22631,6 @@
     ],
     [
       "unit",
-      "CHI_W_Onshore_CL2",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "CHI_W_Onshore_CL3",
       "conversion_method",
       [
@@ -23463,16 +22683,6 @@
       "unit",
       "CHI_W_Onshore_CL3",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "CHI_W_Onshore_CL3",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -23561,16 +22771,6 @@
     ],
     [
       "unit",
-      "CHI_W_Onshore_CL4",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "CHI_W_Onshore_CL5",
       "conversion_method",
       [
@@ -23643,16 +22843,6 @@
       "unit",
       "CHI_W_Onshore_CL5",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "CHI_W_Onshore_CL5",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -23741,16 +22931,6 @@
     ],
     [
       "unit",
-      "CHI_electrolyser",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
       "CHI_oretoHBI",
       "conversion_method",
       [
@@ -23823,16 +23003,6 @@
       "unit",
       "CHI_oretoHBI",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit",
-      "CHI_oretoHBI",
-      "payback_time",
       [
         "MjUuMA==",
         "float"

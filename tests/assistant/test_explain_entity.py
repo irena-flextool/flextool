@@ -307,8 +307,7 @@ def test_a_plain_node_has_prices_slacks_and_no_feeders(ectx) -> None:
 def test_inputs_equal_get_parameter(ectx) -> None:
     out = _call(ectx, entity="coal_plant", run="multi_year_1")
     rows = {r[0]: r for r in out["inputs"]["rows"]}
-    names = ["invest_method", "invest_max_total", "invest_cost", "existing", "efficiency", "lifetime_technical",
-             "payback_time"]
+    names = ["invest_method", "invest_max_total", "invest_cost", "existing", "efficiency", "lifetime_technical"]
     cells = call_tool(ectx, "get_parameter", {"entity_class": "unit", "entities": [["coal_plant"]],
                                               "parameters": names, "scenario": "multi_year"})
     table = json.loads(cells.text)

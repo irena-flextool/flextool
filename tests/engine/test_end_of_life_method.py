@@ -80,8 +80,7 @@ def wind_invest(life: float, method: str | None = None) -> list:
            ["unit", WIND, "invest_method", b64("invest_period", "str")],
            ["unit", WIND, "invest_cost", b64(1000.0, "float")],
            ["unit", WIND, "invest_max_period", _map({"p2025": 100.0})],
-           ["unit", WIND, "lifetime_technical", b64(life, "float")],
-           ["unit", WIND, "payback_time", b64(life, "float")]]
+           ["unit", WIND, "lifetime_technical", b64(life, "float")]]
     if method is not None:
         out.append(["unit", WIND, "end_of_life_method", b64(method, "str")])
     return out
@@ -240,7 +239,6 @@ def _lead_time_wind(life: float, method: str | None) -> list:
            ["unit", WIND, "invest_cost", b64(1000.0, "float")],
            ["unit", WIND, "invest_max_period", _map({"p2025": 100.0})],
            ["unit", WIND, "lifetime_technical", b64(life, "float")],
-           ["unit", WIND, "payback_time", b64(life, "float")],
            ["unit", WIND, "construction_lead_time", b64(5.0, "float")],
            ["unit", WIND, "fixed_cost", b64(10.0, "float")]]
     if method is not None:
@@ -304,8 +302,7 @@ def test_notice_names_each_entity_whose_end_of_life_moves_once(tmp_path_factory,
         ["unit", WIND, "invest_method", b64("invest_period", "str")],
         ["unit", WIND, "invest_cost", b64(1000.0, "float")],
         ["unit", WIND, "invest_max_period", _map({"p2020": 100.0})],
-        ["unit", WIND, "lifetime_technical", b64(12.0, "float")],
-        ["unit", WIND, "payback_time", b64(12.0, "float")]]
+        ["unit", WIND, "lifetime_technical", b64(12.0, "float")]]
     lines = _notice_lines(tmp_path_factory, capsys, "eol_notice_chain", values, solves=("life_a", "life_b"))
     assert len(lines) == 2, lines
     assert "Affected entities: coal_plant." in lines[0]

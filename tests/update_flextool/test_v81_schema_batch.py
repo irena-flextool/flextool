@@ -12,8 +12,9 @@ connection and a node), ``salvage_value`` (a constant and a ``period`` map) and 
   node (group ``retirement``) ``age_at_model_start`` and ``build_year`` (a constant, no default) and
   ``end_of_life_method`` (a choice of that list, default ``closest_seam``); ``model.start_year`` (group ``model``, a
   constant, no default);
-* copies every ``lifetime`` value, as stored, to both ``lifetime_technical`` and ``payback_time``, and every
-  ``salvage_value`` value to ``net_salvage_value``, then removes the old definitions;
+* copies every ``lifetime`` value, as stored, to ``lifetime_technical`` only (``payback_time`` gets no value: it
+  falls back to ``lifetime_technical``), and every ``salvage_value`` value to ``net_salvage_value``, then removes
+  the old definitions;
 * renames the ``lifetime_methods`` member ``no_investment`` to ``no_reinvestment`` (list order kept) and rewrites
   every stored value (each one printed) and the node default; the default ``reinvest_automatic`` of unit and
   connection is unchanged;
@@ -133,19 +134,20 @@ def migrated(tmp_path_factory: pytest.TempPathFactory) -> dict:
     return {"url": url, "alts": alts, "before": before, "after": after, "printed": printed.getvalue()}
 
 
-def test_lifetime_values_go_to_both_new_names(migrated) -> None:
+def test_lifetime_values_go_to_lifetime_technical_only(migrated) -> None:
     """Every stored lifetime value (constant, period map, unnamed map, time-labelled map; unit, connection, node) is
-    under both lifetime_technical and payback_time, byte for byte with its type; lifetime is gone everywhere."""
+    under lifetime_technical, byte for byte with its type; payback_time has no value anywhere (an entity without
+    one pays back over its lifetime_technical); lifetime is gone everywhere."""
     before, after = migrated["before"], migrated["after"]
     old = {k: v for k, v in before["values"].items() if k[2] == "lifetime"}
     assert len(old) == 6 and {k[0] for k in old} == set(CLASSES)
     for (cls, byname, _, alt), stored in old.items():
-        for new in ("lifetime_technical", "payback_time"):
-            assert after["values"][(cls, byname, new, alt)] == stored
+        assert after["values"][(cls, byname, "lifetime_technical", alt)] == stored
+    assert not any(k[2] == "payback_time" for k in after["values"])
     assert not any(k[2] == "lifetime" for k in after["values"])
     assert not any(k[1] == "lifetime" for k in after["defs"])
     alts = migrated["alts"]
-    time_map = json.loads(after["values"][("unit", ("wind",), "payback_time", alts[3])][0])
+    time_map = json.loads(after["values"][("unit", ("wind",), "lifetime_technical", alts[3])][0])
     assert time_map["index_name"] == "time"
 
 
@@ -311,18 +313,16 @@ def _tests_json_at(tmp_path_factory, tag: str, version: int) -> str:
 
 def test_collision_keeps_the_new_value(tmp_path_factory, capsys) -> None:
     """A database built from the current template but stamped 80, with a ``lifetime`` definition (values on
-    coal_plant, which has lifetime_technical / payback_time values in the same alternative, and on csp_field, which
-    has none in it) and a ``no_investment`` member beside ``no_reinvestment``: the old value is copied only where
-    the new name has none, the old definition goes, and the list has no duplicate."""
+    coal_plant, which has a lifetime_technical value in the same alternative, and on csp_field, which has none in
+    it) and a ``no_investment`` member beside ``no_reinvestment``: the old value is copied only where
+    lifetime_technical has none, nothing goes to payback_time, the old definition goes, and the list has no
+    duplicate."""
     url = _tests_json_at(tmp_path_factory, "v81_collision", 80)
     with DatabaseMapping(url) as db:
         coal = db.get_item("parameter_value", entity_class_name="unit", entity_byname=("coal_plant",),
                            parameter_definition_name="lifetime_technical", alternative_name="coal_invest")
         assert coal, "tests.json: coal_plant has a lifetime_technical in alternative coal_invest"
-        coal_before = {name: bytes(db.get_item("parameter_value", entity_class_name="unit",
-                                               entity_byname=("coal_plant",), parameter_definition_name=name,
-                                               alternative_name="coal_invest")["value"])
-                       for name in ("lifetime_technical", "payback_time")}
+        coal_before = bytes(coal["value"])
         db.add_parameter_definition(entity_class_name="unit", name="lifetime", parameter_type_list=("float",))
         for entity, value in (("coal_plant", 99.0), ("csp_field", 7.0)):
             val, typ = to_database(value)
@@ -337,19 +337,22 @@ def test_collision_keeps_the_new_value(tmp_path_factory, capsys) -> None:
     capsys.readouterr()
     migrate_database(url, up_to=81)
     printed = capsys.readouterr().out
-    for name in ("lifetime_technical", "payback_time"):
-        assert (f"v81: unit {name} already had a value where lifetime had one; kept the {name} value, the lifetime "
-                f"value was not copied to {name}:\n  unit coal_plant [coal_invest] = 99.0\n") in printed
+    assert ("v81: unit lifetime_technical already had a value where lifetime had one; kept the lifetime_technical "
+            "value, the lifetime value was not copied to lifetime_technical:\n"
+            "  unit coal_plant [coal_invest] = 99.0\n") in printed
+    assert "payback_time" not in printed
     _, shipped_lists = _shipped()
     with DatabaseMapping(url) as db:
         assert not db.get_items("parameter_definition", entity_class_name="unit", name="lifetime")
-        for name, stored in coal_before.items():
-            stored_after = db.get_item("parameter_value", entity_class_name="unit", entity_byname=("coal_plant",),
-                                       parameter_definition_name=name, alternative_name="coal_invest")
-            assert bytes(stored_after["value"]) == stored
-        for name in ("lifetime_technical", "payback_time"):
-            assert db.get_item("parameter_value", entity_class_name="unit", entity_byname=("csp_field",),
-                               parameter_definition_name=name, alternative_name="coal_invest")["parsed_value"] == 7.0
+        stored_after = db.get_item("parameter_value", entity_class_name="unit", entity_byname=("coal_plant",),
+                                   parameter_definition_name="lifetime_technical", alternative_name="coal_invest")
+        assert bytes(stored_after["value"]) == coal_before
+        assert db.get_item("parameter_value", entity_class_name="unit", entity_byname=("csp_field",),
+                           parameter_definition_name="lifetime_technical",
+                           alternative_name="coal_invest")["parsed_value"] == 7.0
+        assert not [pv for pv in db.get_items("parameter_value", entity_class_name="unit",
+                                               parameter_definition_name="payback_time")
+                    if pv["entity_byname"] in (("coal_plant",), ("csp_field",))]
         members = _lists(db)["lifetime_methods"]
     assert sorted(members) == sorted(shipped_lists["lifetime_methods"])
 

@@ -7727,16 +7727,6 @@
     [
       "node",
       "hydro_reservoir",
-      "payback_time",
-      [
-        "MS4w",
-        "float"
-      ],
-      "recourse_na"
-    ],
-    [
-      "node",
-      "hydro_reservoir",
       "storage_solve_horizon_method",
       [
         "InVzZV9yZWZlcmVuY2VfdmFsdWUi",

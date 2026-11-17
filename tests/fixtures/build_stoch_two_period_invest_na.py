@@ -118,8 +118,6 @@ def build() -> dict:
          _pack(0.05, "float"), "recourse_na"],
         ["node", "hydro_reservoir", "lifetime_technical",
          _pack(1.0, "float"), "recourse_na"],
-        ["node", "hydro_reservoir", "payback_time",
-         _pack(1.0, "float"), "recourse_na"],
         ["node", "hydro_reservoir", "invest_max_total",
          _pack(100000.0, "float"), "recourse_na"],
     ]

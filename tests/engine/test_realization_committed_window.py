@@ -129,7 +129,7 @@ def test_chain_lookahead_reads_the_fan_forecast_and_realizes_the_committed_perio
                          "t0005": _m(dict(zip(P40, c40)), "time")}, "analysis_time")
                   for b, (c30, c40) in cf.items()}, "branch")
     wind = [("existing", 0.0), ("invest_method", "invest_total"), ("invest_cost", 1000.0),
-            ("lifetime_technical", 30.0), ("payback_time", 30.0), ("discount_rate", 0.05), ("invest_max_total", 400.0)]
+            ("lifetime_technical", 30.0), ("discount_rate", 0.05), ("invest_max_total", 400.0)]
     steps = _run(tmp_path_factory, solves=["s30", "s40"], profile=profile, wind=wind, inflow=-100.0, s40=True)
     assert list(steps) == ["s30", "s30__realized_dispatch", "s40", "s40__realized_dispatch"]
     invest = steps["s30"].solution.value("v_invest_p").with_columns(pl.col("d").cast(pl.Utf8))

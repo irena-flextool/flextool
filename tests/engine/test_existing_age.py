@@ -170,7 +170,6 @@ def test_no_reinvestment_window_does_not_age(tmp_path_factory, variant) -> None:
     values = solve_values(invest=PERIODS) + [
         ["unit", PLANT, "lifetime_method", b64("no_reinvestment", "str")],
         ["unit", PLANT, "lifetime_technical", b64(8.0, "float")],
-        ["unit", PLANT, "payback_time", b64(8.0, "float")],
         ["unit", PLANT, "invest_method", b64("invest_period", "str")],
         ["unit", PLANT, "invest_cost", b64(1000.0, "float")],
         ["unit", PLANT, "invest_max_period", _map(dict.fromkeys(PERIODS, 100.0))]]

@@ -116,7 +116,6 @@ def model_a(mode: str, *, years: tuple[float, float] = (5.0, 5.0), years_index: 
         ["unit", "gen", "invest_cost", pack(1.0, "float"), "init"],
         ["unit", "gen", "discount_rate", pack(0.05, "float"), "init"],
         ["unit", "gen", "lifetime_technical", pack(20.0, "float"), "init"],
-        ["unit", "gen", "payback_time", pack(20.0, "float"), "init"],
         ["unit", "gen", "invest_max_total", pack(1000.0, "float"), "init"],
     ]
     pv += [[*row[:3], row[3], "init"] for row in (model_rows or [])]

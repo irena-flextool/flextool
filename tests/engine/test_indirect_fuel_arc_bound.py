@@ -309,7 +309,6 @@ def test_sum_cap_binds_against_invested_capacity(
         ["unit", UNIT, "invest_max_total", _b64(5000.0, "float")],
         ["unit", UNIT, "invest_cost", _b64(1.0, "float")],
         ["unit", UNIT, "lifetime_technical", _b64(20.0, "float")],
-        ["unit", UNIT, "payback_time", _b64(20.0, "float")],
         ["unit", UNIT, "discount_rate", _b64(0.05, "float")],
         ["solve", "y2020_2day_dispatch", "invest_periods",
          _b64({"type": "array", "value_type": "str",

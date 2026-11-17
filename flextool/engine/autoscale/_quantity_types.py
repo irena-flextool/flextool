@@ -368,8 +368,7 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('lifetime', 'connection'): QuantityType.DURATION,
     ('lifetime', 'node'): QuantityType.DURATION,
     ('lifetime', 'unit'): QuantityType.DURATION,
-    # Pre-v81 name of lifetime_technical / payback_time, carried during the migration window (split by db_migration
-    # v81).
+    # Pre-v81 name of lifetime_technical, carried during the migration window (renamed by db_migration v81).
     ('lifetime_technical', 'connection'): QuantityType.DURATION,
     # [years] Technical lifetime: how long the capacity operates; its end depends on lifetime_method.
     ('lifetime_technical', 'node'): QuantityType.DURATION,

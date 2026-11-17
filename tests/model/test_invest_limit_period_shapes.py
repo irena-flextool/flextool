@@ -147,7 +147,7 @@ def test_constant_cap_reaches_p_entity_max_units(tmp_path_factory, param, inv_me
 def test_constant_next_to_map_in_one_class(tmp_path_factory):
     """A constant on one unit and a period map on another unit of the same class."""
     wind = [method("wind", "invest_period"), ["unit", "wind", "invest_cost", S(1.0)],
-            ["unit", "wind", "lifetime_technical", S(1.0)], ["unit", "wind", "payback_time", S(1.0)],
+            ["unit", "wind", "lifetime_technical", S(1.0)],
             ["unit", "wind", "discount_rate", S(0.05)],
             ["unit", "wind", "invest_max_period", M(5)]]
     common = [method("peaker", "invest_period")] + wind

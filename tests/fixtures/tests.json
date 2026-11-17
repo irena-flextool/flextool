@@ -9122,16 +9122,6 @@
     [
       "connection",
       "battery_inverter",
-      "payback_time",
-      [
-        "MjA=",
-        "float"
-      ],
-      "battery_invest"
-    ],
-    [
-      "connection",
-      "battery_inverter",
       "transfer_method",
       [
         "InJlZ3VsYXIi",
@@ -10162,16 +10152,6 @@
     [
       "node",
       "battery",
-      "payback_time",
-      [
-        "MTAuMA==",
-        "float"
-      ],
-      "battery_invest"
-    ],
-    [
-      "node",
-      "battery",
       "penalty_down",
       [
         "MzAwMA==",
@@ -10438,16 +10418,6 @@
         "str"
       ],
       "csp_plant"
-    ],
-    [
-      "node",
-      "csp_heat",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "csp_invest_common"
     ],
     [
       "node",
@@ -13383,26 +13353,6 @@
     [
       "unit",
       "coal_plant",
-      "payback_time",
-      [
-        "MzA=",
-        "float"
-      ],
-      "coal_invest"
-    ],
-    [
-      "unit",
-      "coal_plant",
-      "payback_time",
-      [
-        "MzA=",
-        "float"
-      ],
-      "retire"
-    ],
-    [
-      "unit",
-      "coal_plant",
       "retire_max_total",
       [
         "MTAwMA==",
@@ -13572,16 +13522,6 @@
     ],
     [
       "unit",
-      "csp_field",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "csp_invest_common"
-    ],
-    [
-      "unit",
       "csp_turbine",
       "constraint_capacity_coeff",
       [
@@ -13674,16 +13614,6 @@
       "unit",
       "csp_turbine",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "csp_invest_common"
-    ],
-    [
-      "unit",
-      "csp_turbine",
-      "payback_time",
       [
         "MjUuMA==",
         "float"
@@ -13954,16 +13884,6 @@
       "unit",
       "ro_desal",
       "lifetime_technical",
-      [
-        "MjAuMA==",
-        "float"
-      ],
-      "desal_ro_invest"
-    ],
-    [
-      "unit",
-      "ro_desal",
-      "payback_time",
       [
         "MjAuMA==",
         "float"
@@ -14404,36 +14324,6 @@
       "unit",
       "wind_plant",
       "lifetime_technical",
-      [
-        "MTAuMA==",
-        "float"
-      ],
-      "wind_no_investment_10yr"
-    ],
-    [
-      "unit",
-      "wind_plant",
-      "payback_time",
-      [
-        "NQ==",
-        "float"
-      ],
-      "lifetime_choice"
-    ],
-    [
-      "unit",
-      "wind_plant",
-      "payback_time",
-      [
-        "MjU=",
-        "float"
-      ],
-      "wind_invest"
-    ],
-    [
-      "unit",
-      "wind_plant",
-      "payback_time",
       [
         "MTAuMA==",
         "float"

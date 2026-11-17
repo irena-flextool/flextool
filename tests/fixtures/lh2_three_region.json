@@ -11419,16 +11419,6 @@
     ],
     [
       "unit",
-      "wind_A",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "lh2_three_region_invest"
-    ],
-    [
-      "unit",
       "wind_B",
       "conversion_method",
       [
@@ -11499,16 +11489,6 @@
     ],
     [
       "unit",
-      "wind_B",
-      "payback_time",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "lh2_three_region_invest"
-    ],
-    [
-      "unit",
       "wind_C",
       "conversion_method",
       [
@@ -11571,16 +11551,6 @@
       "unit",
       "wind_C",
       "lifetime_technical",
-      [
-        "MjUuMA==",
-        "float"
-      ],
-      "lh2_three_region_invest"
-    ],
-    [
-      "unit",
-      "wind_C",
-      "payback_time",
       [
         "MjUuMA==",
         "float"

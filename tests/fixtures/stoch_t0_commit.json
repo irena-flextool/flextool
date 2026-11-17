@@ -7532,16 +7532,6 @@
     [
       "unit",
       "peaker",
-      "payback_time",
-      [
-        "MS4w",
-        "float"
-      ],
-      "base"
-    ],
-    [
-      "unit",
-      "peaker",
       "startup_cost",
       [
         "MS4w",

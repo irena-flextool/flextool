@@ -8884,16 +8884,6 @@
     [
       "connection",
       "battery_inverter",
-      "payback_time",
-      [
-        "20",
-        "float"
-      ],
-      "battery_invest"
-    ],
-    [
-      "connection",
-      "battery_inverter",
       "transfer_method",
       [
         "\"regular\"",
@@ -9844,16 +9834,6 @@
     [
       "node",
       "battery",
-      "payback_time",
-      [
-        "10.0",
-        "float"
-      ],
-      "battery_invest"
-    ],
-    [
-      "node",
-      "battery",
       "penalty_down",
       [
         "3000",
@@ -10120,16 +10100,6 @@
         "str"
       ],
       "csp_plant"
-    ],
-    [
-      "node",
-      "csp_heat",
-      "payback_time",
-      [
-        "25.0",
-        "float"
-      ],
-      "csp_invest_common"
     ],
     [
       "node",
@@ -12945,26 +12915,6 @@
     [
       "unit",
       "coal_plant",
-      "payback_time",
-      [
-        "30",
-        "float"
-      ],
-      "coal_invest"
-    ],
-    [
-      "unit",
-      "coal_plant",
-      "payback_time",
-      [
-        "30",
-        "float"
-      ],
-      "retire"
-    ],
-    [
-      "unit",
-      "coal_plant",
       "retire_max_total",
       [
         "1000",
@@ -13134,16 +13084,6 @@
     ],
     [
       "unit",
-      "csp_field",
-      "payback_time",
-      [
-        "25.0",
-        "float"
-      ],
-      "csp_invest_common"
-    ],
-    [
-      "unit",
       "csp_turbine",
       "constraint_capacity_coeff",
       [
@@ -13236,16 +13176,6 @@
       "unit",
       "csp_turbine",
       "lifetime_technical",
-      [
-        "25.0",
-        "float"
-      ],
-      "csp_invest_common"
-    ],
-    [
-      "unit",
-      "csp_turbine",
-      "payback_time",
       [
         "25.0",
         "float"
@@ -13516,16 +13446,6 @@
       "unit",
       "ro_desal",
       "lifetime_technical",
-      [
-        "20.0",
-        "float"
-      ],
-      "desal_ro_invest"
-    ],
-    [
-      "unit",
-      "ro_desal",
-      "payback_time",
       [
         "20.0",
         "float"
@@ -13966,36 +13886,6 @@
       "unit",
       "wind_plant",
       "lifetime_technical",
-      [
-        "10.0",
-        "float"
-      ],
-      "wind_no_investment_10yr"
-    ],
-    [
-      "unit",
-      "wind_plant",
-      "payback_time",
-      [
-        "5",
-        "float"
-      ],
-      "lifetime_choice"
-    ],
-    [
-      "unit",
-      "wind_plant",
-      "payback_time",
-      [
-        "25",
-        "float"
-      ],
-      "wind_invest"
-    ],
-    [
-      "unit",
-      "wind_plant",
-      "payback_time",
       [
         "10.0",
         "float"

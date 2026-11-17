@@ -409,7 +409,6 @@ def test_share_binds_with_investment_and_scales_with_built_capacity(
             ["unit", UNIT, "invest_max_total", _b64(5000.0, "float")],
             ["unit", UNIT, "invest_cost", _b64(1.0, "float")],
             ["unit", UNIT, "lifetime_technical", _b64(20.0, "float")],
-            ["unit", UNIT, "payback_time", _b64(20.0, "float")],
             ["unit", UNIT, "discount_rate", _b64(0.05, "float")],
             ["solve", "y2020_2day_dispatch", "invest_periods",
              _b64({"type": "array", "value_type": "str",
@@ -459,7 +458,6 @@ def test_multi_period_investment_fuel_not_limited_below_need(
                   "map")],
             ["unit", UNIT, "invest_cost", _b64(1.0, "float")],
             ["unit", UNIT, "lifetime_technical", _b64(20.0, "float")],
-            ["unit", UNIT, "payback_time", _b64(20.0, "float")],
             ["unit", UNIT, "discount_rate", _b64(0.05, "float")],
         ])
     step = _solve(tmp_path_factory, url, scen)

@@ -370,7 +370,7 @@ COAL_PLANT_STORED = [
     "availability", "conversion_method", "cumulative_max_capacity", "discount_rate", "efficiency",
     "efficiency_at_min_load", "existing", "fixed_cost", "invest_cost", "invest_max_period", "invest_max_total",
     "invest_method", "lifetime_technical", "min_downtime", "min_load", "min_uptime", "minimum_time_method",
-    "net_salvage_value", "payback_time", "retire_max_total", "startup_cost", "startup_method", "virtual_unitsize"]
+    "net_salvage_value", "retire_max_total", "startup_cost", "startup_method", "virtual_unitsize"]
 
 
 class _NoScan(dict):
