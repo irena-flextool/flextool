@@ -1,3 +1,17 @@
+## Unreleased
+
+### Fixes
+
+- **Migrating a database whose parameter default names a renamed value works.** A database whose
+  `capacity_margin_method` default was *manual* or *share_of_peak* stopped migrating at data version 79 ("default
+  value ... not in list"); it now reaches version 80 with the default *absolute* / *relative_of_peak_demand*. The same
+  holds for a default *lagrangian* (`solve.decomposition`, now *benders*) or *lagrangian_region*
+  (`group.decomposition_method`, now *benders_regional*), and for a `storage_binding_method` default renamed in data
+  version 25. A default naming a value that an older migration step removed (`storage_binding_method`
+  *bind_within_timeset*, *bind_using_blended_weights*, *bind_within_model*; `storage_nested_fix_method` *no*;
+  `solve_mode` *single_shot*) could end up as an unrelated value of the list; it now becomes the value's new name
+  (*bind_within_timeblock*, *bind_within_solve_blended_weights*, *bind_within_solve*, *fix_nothing*, *single_solve*).
+
 ## Release 4.5.0 (16.11.2026) — inf as no limit, scaling guard, ramp envelope and ramp frequency plots, piecewise linear efficiency, full-load efficiency in reduced unit detail, capacity margin renames and many fixes (schema v80)
 
 Input databases move to data version 80. The FlexTool window, the Spine Toolbox workflow and `flextool-run
