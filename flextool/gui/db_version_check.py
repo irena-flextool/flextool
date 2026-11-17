@@ -15,36 +15,11 @@ from typing import Callable
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_migration import MigrationCancelled
 from flextool.sqlite_url import sqlite_url_string
+from flextool.update_flextool.migration_backup import backup_path, remove_backup, restore_from_backup
 
 logger = logging.getLogger(__name__)
 
 ISSUE_TRACKER_URL = "https://github.com/irena-flextool/flextool/issues"
-
-
-def _backup_path(db_path: Path) -> Path:
-    """Return the sidecar path used to hold the pre-migration backup."""
-    return db_path.with_name(db_path.name + ".premigration.bak")
-
-
-def _restore_from_backup(db_path: Path, backup: Path) -> bool:
-    """Restore *db_path* from *backup*, returning ``True`` on success.
-
-    Removes any stale SQLite ``-wal`` / ``-shm`` sidecars first so the
-    restored main file is not shadowed by a write-ahead log left behind
-    by the aborted migration.
-    """
-    try:
-        for suffix in ("-wal", "-shm"):
-            side = db_path.with_name(db_path.name + suffix)
-            if side.exists():
-                side.unlink()
-        shutil.copy2(backup, db_path)
-        return True
-    except Exception:
-        logger.error(
-            "Failed to restore %s from backup %s", db_path, backup, exc_info=True
-        )
-        return False
 
 
 def _read_flextool_version(db_url: str) -> int | None:
@@ -218,7 +193,7 @@ def _upgrade_locked(
         nonlocal backup
         if backup is not None:
             return True
-        candidate = _backup_path(db_path)
+        candidate = backup_path(db_path)
         try:
             shutil.copy2(db_path, candidate)
             backup = candidate
@@ -255,8 +230,10 @@ def _upgrade_locked(
 
             from flextool.update_flextool.db_migration import migrate_database
 
+            # The backup above covers the whole upgrade (and its messages); no second copy.
             migrate_database(
                 str(db_path),
+                backup=False,
                 progress_callback=progress_callback,
                 cancel_check=cancel_check,
                 allow_frozen=allow_frozen,
@@ -278,7 +255,7 @@ def _upgrade_locked(
 
     except MigrationCancelled:
         was_upgraded = False
-        if backup is not None and _restore_from_backup(db_path, backup):
+        if backup is not None and restore_from_backup(db_path, backup):
             messages.append(
                 f"{db_path.name}: migration cancelled — the database was "
                 f"restored to its original state. Re-run to migrate it."
@@ -297,7 +274,7 @@ def _upgrade_locked(
         tb_text = _tb.format_exc()
         was_upgraded = False
         failed = True
-        if backup is not None and _restore_from_backup(db_path, backup):
+        if backup is not None and restore_from_backup(db_path, backup):
             messages.append(
                 f"{db_path.name}: migration FAILED — the database was restored "
                 f"to its original state, so it is safe to keep using the "
@@ -317,9 +294,6 @@ def _upgrade_locked(
 
     finally:
         if backup is not None:
-            try:
-                backup.unlink(missing_ok=True)
-            except Exception:
-                logger.debug("Could not remove migration backup %s", backup, exc_info=True)
+            remove_backup(backup)
 
     return was_upgraded, failed, messages

@@ -74,9 +74,17 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
 ### Fixes
 
 - **A large database migrates to version 81.** The migration stopped with "Expression tree is too large (maximum
-  depth 1000)" when a database had many `lifetime` or `salvage_value` values, and left the database unchanged.
-  The values now move to their new names without being deleted and written again, and a step that has to delete
-  many values (in any migration step) deletes them in several commits.
+  depth 1000)" when a database had many `lifetime` or `salvage_value` values. The values now move to their new
+  names without being deleted and written again, and a migration step that has to delete many rows (values,
+  flow-group memberships, entity alternatives) deletes them in several commits.
+- **A failed migration leaves the database as it was, also from the command line.** `flextool-migrate-database`,
+  `flextool-run --migrate` and the other migrations outside the FlexTool window now copy the database before the
+  first step and restore it when a step fails or the migration is cancelled, as the window already did; before, a
+  migration that failed part way left the steps before the failure in the database. A migration that is killed
+  outright can be run again: every step that deletes in several commits finishes on a rerun (before, a rerun of
+  the version 56 step could lose `is_DC` / `is_non_synchronous` values and switch off reserves active in the base
+  alternative, and a rerun of the version 70 step could keep an output `capacity_min_coeff` left over from version
+  36).
 
 - **A period-varying `existing` (a period map) is used in every solve of a run.** From the second solve of a
   chained run, and in every roll after the first of a rolling solve (and in nested sub-solves), the existing
