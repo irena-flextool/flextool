@@ -339,6 +339,20 @@ For a unit, connection or storage node `e` in period `d`:
   (handoff `realized_retire`).  The same formula in every solve: the first,
   a chained, a roll, a nested sub-solve; the user's `existing` is read for
   each period of each solve.
+- The price of an investment cohort per year in service (`a_cap`, CUR/MW a
+  year, MWh for storage; column `a_cap` of the cohort table, carried by
+  `realized_cohort`; `_npv._per_method_annuity_lf`, `_annuity.level_factor`),
+  all values read at the period `c` the capacity comes online:
+  `A = invest_cost[e,c]·1000·r/(1 − (1+r)^−n)` (`c·1000/n` for `r = 0`),
+  `r = discount_rate[e,c]`, `n = payback_time[e,c]` (else
+  `lifetime_technical[e,c]`);
+  `a_cap = A·G(n)/G(L)` with `L = lifetime_technical[e,c]`,
+  `G(x) = Σ_{k<⌈x⌉} min(1, x−k)·(1+i)^−k`, `i = model.inflation_rate`
+  (`G(x) = x` for `i = 0`); `a_cap = A` when `n = L` and for
+  `reinvest_automatic`.  The loan's present value spread evenly over the real
+  lifetime: one price for every build period, rounding and period length.
+  The objective charges it over the cohort's periods in service
+  (`invest_cost_p` OBJ header).
 
 ### Required fields
 
@@ -895,7 +909,7 @@ the next solve's preprocessing. The dataclass is in
 
 | Field | Shape | Meaning |
 |---|---|---|
-| `realized_cohort` | `[entity, cohort, kind, method, period_decided, period_online, y_on, y_life, y_end, y_first_life_end, y_eol, period_eol, size]` | The investments realised by the run so far, one row per cohort (investment decision), chain-cumulative: the cohort-table row of the deciding solve (years of the run; a later solve compares its periods' run years with `y_on` / `y_eol`, no rounding repeated) and the size (MW, MWh). |
+| `realized_cohort` | `[entity, cohort, kind, method, eol_method, period_decided, period_online, y_on, age, y_life, y_end, y_first_life_end, y_eol, period_eol, a_cap, size]` | The investments realised by the run so far, one row per cohort (investment decision), chain-cumulative: the cohort-table row of the deciding solve (years of the run; a later solve compares its periods' run years with `y_on` / `y_eol`, no rounding repeated; `a_cap` its price per year in service) and the size (MW, MWh). |
 | `realized_retire` | `[entity, cohort, period, value]` | Retired capacity per cohort and realised decision period, chain-cumulative; counts while the cohort is in service. |
 | `realized_commission` | `[entity, period, commission_period, value]` | Realised investments with a construction lead time (coming online / in construction in a later solve). |
 | `divest_cumulative` | `[entity, value]` | Cumulative divest per entity. |

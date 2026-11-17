@@ -1,23 +1,27 @@
-"""The investment annuity of ``reinvest_choice`` / ``no_reinvestment`` capacity is paid for ``payback_time`` years
-from its start of operation, in exact years: the period the payback time ends in pays only its years before the end.
+"""The investment cost of ``reinvest_choice`` / ``no_reinvestment`` capacity is the level yearly cost of a plant of
+its real lifetime, charged for each year its cohort is in service inside the horizon.
 
 Fixture ``tests.json`` (built from JSON), single solve ``y2020_2035_5week``: periods p2020 … p2035 of 5 years each,
 run years 0, 5, 10, 15, horizon 20.  coal_plant: invest_cost 400 CUR/kW, discount_rate 0.05, ``invest_no_limit``,
-fixed_cost 0.  The model sets ``inflation_rate`` 0.05 and ``inflation_offset_investment`` 1 (both explicitly: the
-defaults are 0 and 0), so the investment factor of year k (0-based, from the run start) is 1.05^-(k+1).
+fixed_cost 0, end_of_life_method the default closest_seam.  The model sets ``inflation_rate`` 0.05 and
+``inflation_offset_investment`` 1 (both explicitly: the defaults are 0 and 0), so the investment factor of year k
+(0-based, from the run start) is 1.05^-(k+1).
 
-Hand derivation.  The annuity over n years is A(n) = 400 · 1000 · 0.05 / (1 − 1.05^-n) and Σ_{j=1..n} 1.05^-j =
-(1 − 1.05^-n) / 0.05, so n whole payments from the run start are worth exactly 400 000 and n payments from year 5
-on 400 000 · 1.05^-5.  With A12 = 45 130.164 and S(a, b) = Σ_{j=a..b} 1.05^-j (year k paid ↔ j = k + 1):
+Hand derivation.  The annuity over n years is A(n) = 400 · 1000 · r / (1 − (1+r)^-n) (r = discount_rate).  The
+price per year in service is a = A(n) · G(n) / G(L), G(x) = Σ_{k<⌈x⌉} min(1, x − k) · 1.05^-k (L =
+lifetime_technical): the loan's present value spread evenly over the real lifetime.  With r = 0.05 = the inflation
+rate, G(n) = (1 − 1.05^-n) / (1 − 1.05^-1), so a = A(L) for every n.  The capacity of a decision is in service from
+its start of operation y_on to its end of life y_on + L rounded to the closest period start (one of 0, 5, 10, 15,
+20; past the horizon: 20).  With S(a, b) = Σ_{j=a..b} 1.05^-j (year k in service ↔ j = k + 1) and A12 = 45 130.164:
 
-====================  ==================  ============================  =========================================
-decision              years paid          ed_entity_annual_discounted   before (every period starting before end)
-====================  ==================  ============================  =========================================
-p2020, payback 12     0 … 11              A12 · S(1, 12) = 400 000      A12 · S(1, 15) = 468 435.67
-p2025, payback 12     5 … 16              400 000 · 1.05^-5             A12 · S(6, 20) = 367 031.60
-p2030, payback 12     10 … 19 (horizon)   A12 · S(11, 20)               unchanged
-p2035, payback 12     15 … 19             A12 · S(16, 20)               unchanged
-====================  ==================  ============================  =========================================
+====================  ==================  ============================  ======================================
+decision, L = n = 12  years in service    ed_entity_annual_discounted   before (the payback window, 12 years)
+====================  ==================  ============================  ======================================
+p2020                 0 … 9 (12 → 10)     A12 · S(1, 10) = 348 483.16   A12 · S(1, 12) = 400 000
+p2025                 5 … 14 (17 → 15)    A12 · S(6, 15) = 273 045.68   400 000 · 1.05^-5 = 313 410.47
+p2030                 10 … 19 (22 → 20)   A12 · S(11, 20)               unchanged
+p2035                 15 … 19             A12 · S(16, 20)               unchanged
+====================  ==================  ============================  ======================================
 """
 from __future__ import annotations
 
@@ -42,8 +46,22 @@ def _s(a: int, b: int) -> float:
     return sum(R ** -j for j in range(a, b + 1))
 
 
-def _annuity(n: float) -> float:
-    return 400.0 * 1000.0 * 0.05 / (1.0 - R ** -n)
+def _annuity(n: float, r: float = 0.05) -> float:
+    return 400.0 * 1000.0 * r / (1.0 - (1.0 + r) ** -n)
+
+
+def _g(x: float) -> float:
+    """G(x) = Σ_{k<⌈x⌉} min(1, x − k) · 1.05^-k, written out year by year."""
+    total, k = 0.0, 0
+    while k < x:
+        total += min(1.0, x - k) * R ** -k
+        k += 1
+    return total
+
+
+def _price(n: float, life: float, r: float = 0.05) -> float:
+    """a = A(n) · G(n) / G(L): the price per year in service."""
+    return _annuity(n, r) * _g(n) / _g(life)
 
 
 A12 = _annuity(12.0)
@@ -62,17 +80,21 @@ def _period_map(values: dict[str, float]) -> list:
 
 
 def _economics(method: str = "reinvest_choice", technical: float = 12.0, payback=12.0,
-               invest_method: str = "invest_no_limit") -> list:
+               invest_method: str = "invest_no_limit", rate: float = 0.05,
+               end_of_life: str | None = None) -> list:
     payback_value = _period_map(payback) if isinstance(payback, dict) else b64(float(payback), "float")
-    return [["model", "flexTool", "inflation_rate", b64(0.05, "float")],
-            ["model", "flexTool", "inflation_offset_investment", b64(1.0, "float")],
-            ["unit", PLANT, "invest_cost", b64(400.0, "float")],
-            ["unit", PLANT, "discount_rate", b64(0.05, "float")],
-            ["unit", PLANT, "fixed_cost", b64(0.0, "float")],
-            ["unit", PLANT, "invest_method", b64(invest_method, "str")],
-            ["unit", PLANT, "lifetime_method", b64(method, "str")],
-            ["unit", PLANT, "lifetime_technical", b64(technical, "float")],
-            ["unit", PLANT, "payback_time", payback_value]]
+    out = [["model", "flexTool", "inflation_rate", b64(0.05, "float")],
+           ["model", "flexTool", "inflation_offset_investment", b64(1.0, "float")],
+           ["unit", PLANT, "invest_cost", b64(400.0, "float")],
+           ["unit", PLANT, "discount_rate", b64(rate, "float")],
+           ["unit", PLANT, "fixed_cost", b64(0.0, "float")],
+           ["unit", PLANT, "invest_method", b64(invest_method, "str")],
+           ["unit", PLANT, "lifetime_method", b64(method, "str")],
+           ["unit", PLANT, "lifetime_technical", b64(technical, "float")],
+           ["unit", PLANT, "payback_time", payback_value]]
+    if end_of_life is not None:
+        out.append(["unit", PLANT, "end_of_life_method", b64(end_of_life, "str")])
+    return out
 
 
 def _step(tmp_path_factory, alt: str, values: list, chain: list[str] | None = None):
@@ -86,18 +108,21 @@ def _ed(param, entity: str = PLANT) -> dict[str, float]:
     return dict(zip(frame["d"].to_list(), frame["value"].to_list()))
 
 
-EXPECTED_12 = {"p2020": 400_000.0, "p2025": 400_000.0 * R ** -5, "p2030": A12 * _s(11, 20),
+EXPECTED_12 = {"p2020": A12 * _s(1, 10), "p2025": A12 * _s(6, 15), "p2030": A12 * _s(11, 20),
                "p2035": A12 * _s(16, 20)}
 
 
 @pytest.mark.solver
 @pytest.mark.parametrize("method", ["reinvest_choice", "no_reinvestment"])
-def test_annuity_paid_over_payback_time(tmp_path_factory, method) -> None:
-    """Payback time = technical lifetime = 12 (table above).  The p2020 decision pays 12 years and so exactly its
-    present value 400 000 (before: three whole periods, 15 years, 468 435.67); the p2025 decision 400 000 ·
-    1.05^-5 (before 367 031.60); the later ones are cut by the horizon.  no_reinvestment allows investment only
-    within the first technical lifetime (decisions p2020, p2025, p2030), at the same values."""
+def test_level_price_for_each_year_in_service(tmp_path_factory, method) -> None:
+    """lifetime_technical = payback_time = 12 (table above): the price is A12 a year, and the closest period start
+    ends the life of the p2020 decision at 10 and of the p2025 decision at 15, so they pay 10 years, A12 · S(1, 10)
+    = 348 483.16 and A12 · S(6, 15) = 273 045.68 (before: the 12 payback years, 400 000 and 313 410.47, also the
+    years after the plant was gone); the later ones are cut by the horizon.  no_reinvestment allows investment
+    only within the first technical lifetime (decisions p2020, p2025, p2030), at the same values."""
     got = _ed(_step(tmp_path_factory, f"pb_{method}", _economics(method)).flex_data.ed_entity_annual_discounted)
+    assert EXPECTED_12["p2020"] == pytest.approx(348_483.16, abs=0.01)
+    assert EXPECTED_12["p2025"] == pytest.approx(273_045.68, abs=0.01)
     periods = PERIODS if method == "reinvest_choice" else PERIODS[:3]
     for d in periods:
         assert got[d] == pytest.approx(EXPECTED_12[d], rel=1e-12), d
@@ -115,57 +140,142 @@ def test_reinvest_automatic_pays_to_the_horizon(tmp_path_factory) -> None:
 
 @pytest.mark.solver
 @pytest.mark.parametrize("technical", [30.0, 5.0], ids=["technical_30", "technical_5"])
-def test_payback_window_is_not_the_technical_lifetime(tmp_path_factory, technical) -> None:
-    """payback_time 12 with lifetime_technical 30 or 5: the annuity is paid over the 12 payback years whatever the
-    technical lifetime (before: over the technical window, four whole periods with 30 and only p2020 with 5)."""
+def test_price_is_over_the_technical_lifetime(tmp_path_factory, technical) -> None:
+    """payback_time 12 with lifetime_technical 30 or 5, discount_rate = inflation_rate: the price is a =
+    A12 · G(12) / G(L) = A(L) (A30 = 26 020.57, A5 = 92 389.92), paid for the years in service: with 30 every year
+    to the horizon (S(y_on + 1, 20)), with 5 the decision's own period only (S(y_on + 1, y_on + 5)).  (Before: the
+    12 payback years, 400 000 for the p2020 decision with either lifetime.)"""
     got = _ed(_step(tmp_path_factory, f"pb_technical_{technical:g}", _economics(technical=technical)).flex_data
               .ed_entity_annual_discounted)
-    for d in PERIODS:
-        assert got[d] == pytest.approx(EXPECTED_12[d], rel=1e-12), d
+    a = _price(12.0, technical)
+    assert a == pytest.approx(_annuity(technical), rel=1e-12)
+    assert a == pytest.approx({30.0: 26_020.57, 5.0: 92_389.92}[technical], abs=0.01)
+    for d, y_on in zip(PERIODS, (0, 5, 10, 15)):
+        end = 20 if technical == 30.0 else y_on + 5
+        assert got[d] == pytest.approx(a * _s(y_on + 1, end), rel=1e-12), d
 
 
 @pytest.mark.solver
-def test_payback_time_of_the_decision_period(tmp_path_factory) -> None:
-    """A payback_time map {p2020: 12, p2025: 7, p2030: 12, p2035: 12}: the p2025 decision pays years 5 … 11,
-    A(7) · S(6, 12) = 400 000 · 1.05^-5 (seven whole payments from year 5)."""
+@pytest.mark.parametrize(("rate", "payback", "want"), [
+    (0.03, 20.0, 243_347.43), (0.03, 40.0, 215_657.94),
+    (0.05, 20.0, 290_509.88), (0.05, 40.0, 290_509.88),
+    (0.08, 20.0, 368_745.25), (0.08, 40.0, 418_033.19),
+])
+def test_payback_time_sets_the_size_of_the_price(tmp_path_factory, rate, payback, want) -> None:
+    """lifetime_technical 40 (in service from p2020 to the horizon, years 0 … 19), payback_time 20 or 40,
+    discount_rate 3, 5 or 8 %: the p2020 decision costs a · S(1, 20), a = A(n) · G(n) / G(40).  With the discount
+    rate below the inflation rate (3 %) the shorter payback time is dearer (243 347.43 > 215 657.94), at 5 % both
+    are A40 · S(1, 20) = 290 509.88, above it (8 %) cheaper (368 745.25 < 418 033.19).  (Before, payback 20: the 20
+    years of the horizon at A(20): 335 062.51, 400 000, 507 721.46.)"""
+    got = _ed(_step(tmp_path_factory, f"pb_size_{rate:g}_{payback:g}",
+                    _economics(technical=40.0, payback=payback, rate=rate)).flex_data.ed_entity_annual_discounted)
+    assert _price(payback, 40.0, rate) * _s(1, 20) == pytest.approx(want, abs=0.01)
+    assert got["p2020"] == pytest.approx(_price(payback, 40.0, rate) * _s(1, 20), rel=1e-12)
+
+
+A7 = _annuity(7.0)
+A40 = _annuity(40.0)
+
+
+@pytest.mark.solver
+@pytest.mark.parametrize(("technical", "end_of_life", "want"), [
+    (7.0, "closest_seam", (299_287.75, 234_499.78, 183_736.72, 143_962.52)),
+    (7.0, "next_seam", (533_787.53, 418_236.50, 327_699.24, 143_962.52)),
+    (40.0, "closest_seam", (290_509.88, 189_584.31, 110_506.48, 48_546.93)),
+])
+def test_end_of_life_method_sets_the_years_not_the_price(tmp_path_factory, technical, end_of_life, want) -> None:
+    """lifetime_technical = payback_time = 7 or 40: the price is A7 = 69 127.93 (A40 = 23 311.26) a year whatever
+    the rounding; end_of_life_method sets the years in service.  L 7, closest: ends 7, 12, 17, 22 → 5, 10, 15, 20
+    (each decision its own period); next_seam → 10, 15, 20 and +inf (two periods each, the p2035 one to the
+    horizon).  L 40: every decision to the horizon.  (Before, L 7: the 7 payback years, 400 000 for the p2020
+    decision under both methods.)"""
+    got = _ed(_step(tmp_path_factory, f"pb_eol_{technical:g}_{end_of_life}",
+                    _economics(technical=technical, payback=technical, end_of_life=end_of_life)).flex_data
+              .ed_entity_annual_discounted)
+    a = A7 if technical == 7.0 else A40
+    assert (A7, A40) == (pytest.approx(69_127.93, abs=0.01), pytest.approx(23_311.26, abs=0.01))
+    if technical == 40.0:
+        ends = (20, 20, 20, 20)
+    elif end_of_life == "closest_seam":
+        ends = (5, 10, 15, 20)
+    else:
+        ends = (10, 15, 20, 20)
+    for d, y_on, end, value in zip(PERIODS, (0, 5, 10, 15), ends, want):
+        assert a * _s(y_on + 1, end) == pytest.approx(value, abs=0.01), d
+        assert got[d] == pytest.approx(a * _s(y_on + 1, end), rel=1e-12), d
+
+
+@pytest.mark.solver
+def test_payback_time_of_the_online_period(tmp_path_factory) -> None:
+    """A payback_time map {p2020: 12, p2025: 7, p2030: 12, p2035: 12}, lifetime_technical 12: the p2025 decision
+    pays back over 7 years, a = A(7) · G(7) / G(12), which with discount_rate = inflation_rate is A12: the payback
+    time does not change the cost.  It is in service from 5 to 17 → 15: A12 · S(6, 15) = 273 045.68 (before: the 7
+    payback years, A(7) · S(6, 12) = 400 000 · 1.05^-5)."""
     payback = {"p2020": 12.0, "p2025": 7.0, "p2030": 12.0, "p2035": 12.0}
     got = _ed(_step(tmp_path_factory, "pb_map", _economics(payback=payback)).flex_data.ed_entity_annual_discounted)
-    assert got["p2025"] == pytest.approx(_annuity(7.0) * _s(6, 12), rel=1e-12)
-    assert got["p2025"] == pytest.approx(400_000.0 * R ** -5, rel=1e-12)
-    assert got["p2020"] == pytest.approx(400_000.0, rel=1e-12)
+    assert _price(7.0, 12.0) == pytest.approx(A12, rel=1e-12)
+    assert got["p2025"] == pytest.approx(_price(7.0, 12.0) * _s(6, 15), rel=1e-12)
+    assert got["p2025"] == pytest.approx(EXPECTED_12["p2025"], rel=1e-12)
+    assert got["p2020"] == pytest.approx(EXPECTED_12["p2020"], rel=1e-12)
 
 
 @pytest.mark.solver
-def test_fractional_payback_pays_part_of_a_year(tmp_path_factory) -> None:
-    """payback_time 12.5: the p2020 decision pays years 0 … 11 and half of year 12,
-    A(12.5) · (S(1, 12) + 0.5 · 1.05^-13) = 399 858.33."""
+def test_fractional_payback_time(tmp_path_factory) -> None:
+    """payback_time 12.5, lifetime_technical 12: a = A(12.5) · G(12.5) / G(12), G(12.5) = Σ_{k<12} 1.05^-k + 0.5 ·
+    1.05^-12; the p2020 decision is in service 10 years: a · S(1, 10) = 348 359.74 (before: the payback years 0 …
+    11 and half of 12, A(12.5) · (S(1, 12) + 0.5 · 1.05^-13) = 399 858.33)."""
     got = _ed(_step(tmp_path_factory, "pb_half", _economics(payback=12.5)).flex_data.ed_entity_annual_discounted)
-    want = _annuity(12.5) * (_s(1, 12) + 0.5 * R ** -13)
+    want = _price(12.5, 12.0) * _s(1, 10)
     assert got["p2020"] == pytest.approx(want, rel=1e-12)
-    assert want == pytest.approx(399_858.33, rel=1e-8)
+    assert want == pytest.approx(348_359.74, abs=0.01)
 
 
 @pytest.mark.solver
-def test_fractional_period_pays_part_of_its_last_year(tmp_path_factory) -> None:
-    """p2020 represents 2.5 years (rows of width 1, 1, 0.5 at years 0, 1, 2; the last discounted
-    0.5 · 1.05^-(2 + 0.5)) and payback_time = lifetime_technical = 2.25: the p2020 decision pays years 0, 1 and half
-    of the half-year row, A(2.25) · (1.05^-1 + 1.05^-2 + 0.25 · 1.05^-2.5) = 400 262.77 (before: the whole period,
-    A(2.25) · (1.05^-1 + 1.05^-2 + 0.5 · 1.05^-2.5) = 442 832.59)."""
+def test_fractional_period_and_lifetime(tmp_path_factory) -> None:
+    """p2020 represents 2.5 years (rows of width 1, 1, 0.5 at years 0, 1, 2; the last discounted 0.5 · 1.05^-(2 +
+    0.5)), so p2025 starts at 2.5; payback_time = lifetime_technical = 2.25: the end of life 2.25 is closer to 2.5
+    than to 0, so the p2020 decision is in service in the whole of p2020 at the price A(2.25):
+    A(2.25) · (1.05^-1 + 1.05^-2 + 0.5 · 1.05^-2.5) = 442 832.59 (before: the payback years 0, 1 and half of the
+    half-year row, 400 262.77)."""
     years = _period_map({"p2020": 2.5, "p2025": 5.0, "p2030": 5.0, "p2035": 5.0})
     got = _ed(_step(tmp_path_factory, "pb_frac_period", _economics(technical=2.25, payback=2.25) + [
         ["solve", "y2020_2035_5week", "years_represented", years]]).flex_data.ed_entity_annual_discounted)
-    want = _annuity(2.25) * (R ** -1 + R ** -2 + 0.25 * R ** -2.5)
+    want = _annuity(2.25) * (R ** -1 + R ** -2 + 0.5 * R ** -2.5)
     assert got["p2020"] == pytest.approx(want, rel=1e-12)
-    assert want == pytest.approx(400_262.77, rel=1e-8)
+    assert want == pytest.approx(442_832.59, abs=0.01)
 
 
 @pytest.mark.solver
-def test_lead_time_starts_the_payback_window_at_start_of_operation(tmp_path_factory) -> None:
-    """construction_lead_time 5: the p2020 decision starts to operate in p2025 and pays years 5 … 16, the value of a
-    p2025 decision without a lead time, 400 000 · 1.05^-5."""
+def test_lead_time_prices_the_years_from_the_start_of_operation(tmp_path_factory) -> None:
+    """construction_lead_time 5: the p2020 decision starts to operate in p2025 (y_on 5, end of life 17 → 15) and
+    pays A12 for years 5 … 14, the value of a p2025 decision without a lead time, A12 · S(6, 15) (before: its 12
+    payback years, 400 000 · 1.05^-5)."""
     got = _ed(_step(tmp_path_factory, "pb_lead", _economics() + [
         ["unit", PLANT, "construction_lead_time", b64(5.0, "float")]]).flex_data.ed_entity_annual_discounted)
-    assert got["p2020"] == pytest.approx(400_000.0 * R ** -5, rel=1e-12)
+    assert got["p2020"] == pytest.approx(EXPECTED_12["p2025"], rel=1e-12)
+
+
+@pytest.mark.solver
+def test_unequal_periods_pay_the_same_price_per_year(tmp_path_factory) -> None:
+    """A solve of five periods starting at 0, 5, 10, 20, 30 (years_represented 5, 5, 10, 10, 10; horizon 40),
+    lifetime_technical = payback_time = 7, closest_seam: the ends 7, 12, 17, 27, 37 round to 5, 10, 20, 30, 40, so
+    every decision is in service in its own period, 5, 5, 10, 10 and 10 years, and pays A7 = 69 127.93 for each:
+    A7 · S(1, 5) = 299 287.75, A7 · S(6, 10) = 234 499.78, A7 · S(11, 20) = 327 699.24, A7 · S(21, 30) =
+    201 178.91, A7 · S(31, 40) = 123 506.40.  (Before: the 7 payback years, so 1.3365 × A7 a year in service for
+    the decisions of 5-year periods and 0.7494 × A7 for those of 10-year periods.)"""
+    from tests.engine.test_end_of_life_method import CHAIN as LIFE_CHAIN, model_solves, solve_values
+    periods = ["p2020", "p2025", "p2030", "p2040", "p2050"]
+    values = [model_solves(["life_L"])] + solve_values(periods=periods, years=[5.0, 5.0, 10.0, 10.0, 10.0],
+                                                       invest=periods)
+    values += _economics(technical=7.0, payback=7.0)
+    steps, _, _ = _RUNS.get(tmp_path_factory, alt="pb_unequal", values=values, base_chain=LIFE_CHAIN,
+                            entities=[["solve", "life_L", None]])
+    got = _ed(list(steps.values())[-1].flex_data.ed_entity_annual_discounted)
+    spans = ((1, 5), (6, 10), (11, 20), (21, 30), (31, 40))
+    want = (299_287.75, 234_499.78, 327_699.24, 201_178.91, 123_506.40)
+    for d, (a, b), value in zip(periods, spans, want):
+        assert A7 * _s(a, b) == pytest.approx(value, abs=0.01), d
+        assert got[d] == pytest.approx(A7 * _s(a, b), rel=1e-12), d
 
 
 def _seed(step, name: str) -> dict[str, float]:
@@ -333,10 +443,11 @@ def _notice_lines(tmp_path_factory, capsys, alt: str, values: list) -> list[str]
 
 @pytest.mark.solver
 def test_notice_names_entities_whose_annuity_changes(tmp_path_factory, capsys) -> None:
-    """With the upgrade's marker, coal_plant (payback time 12 ending inside p2030) is named once; with a payback
-    time ending on a period boundary (10) nothing changes for it and no notice is printed.  Nor for
-    reinvest_automatic, whose annuity is paid to the horizon whatever the payback time (here 12 against a technical
-    lifetime of 30)."""
+    """With the upgrade's marker, coal_plant (lifetime_technical = payback_time = 12) is named once: before, its
+    annuity was paid in every period that started before the end of the lifetime (p2020 decision: years 0 … 14),
+    now for its 10 years in service.  With a lifetime of 10 (ending on a period start) the years and the price are
+    those of before and no notice is printed.  Nor for reinvest_automatic, whose annuity is paid to the horizon
+    whatever the lifetimes (here a payback time of 12 against a technical lifetime of 30)."""
     lines = _notice_lines(tmp_path_factory, capsys, "pb_notice", _economics())
     assert len(lines) == 1 and "coal_plant" in lines[0]
     assert _notice_lines(tmp_path_factory, capsys, "pb_notice_seam", _economics(technical=10.0, payback=10.0)) == []

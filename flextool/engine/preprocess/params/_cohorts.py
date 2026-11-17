@@ -22,8 +22,11 @@ Three frames (``FlexData.cohort``, ``cohort_alive``, ``dd_forward``):
   and unrounded, the year a ``no_reinvestment`` entity stops investing; null for
   an investment), ``y_eol`` (``y_end`` rounded to a seam by ``eol_method``,
   :func:`._run_calendar.round_end_of_life`: ``+inf`` for ``reinvest_automatic`` and for ``next_seam`` past the last
-  seam) and ``d_eol`` (Utf8: the run period that starts at ``y_eol``; null at ``+inf`` and at the end of the
-  horizon).
+  seam), ``d_eol`` (Utf8: the run period that starts at ``y_eol``; null at ``+inf`` and at the end of the
+  horizon) and ``a_cap`` (CUR/MW a year, MWh for storage: the price of an investment cohort per year in service, the
+  level yearly cost of the plant over its real lifetime, ``_npv.apply_invest_lumps``; the annuity for
+  ``reinvest_automatic``; null for existing capacity, which has no capital in the model, and until the lumps are
+  set).
 * ``cohort_alive`` — ``[cohort, e, kind, d_build, d, y]``: the periods ``d`` of the solve's ``period_in_use`` in
   which a cohort is in service, ``y`` the year of ``d``.
 * ``dd_forward`` — ``[d_retire, d]``: a retirement decided in ``d_retire`` counts in ``d`` when
@@ -106,7 +109,8 @@ def _cohort_schema() -> dict[str, pl.DataType]:
     return {"cohort": pl.Utf8, "e": schema_dtype(None, "e"), "kind": pl.Utf8, "method": pl.Utf8,
             "eol_method": pl.Utf8, "d_build": schema_dtype(None, "d"), "d_on": pl.Utf8, "y_on": pl.Float64,
             "age": pl.Float64, "y_life": pl.Float64,
-            "y_end": pl.Float64, "y_first_life_end": pl.Float64, "y_eol": pl.Float64, "d_eol": pl.Utf8}
+            "y_end": pl.Float64, "y_first_life_end": pl.Float64, "y_eol": pl.Float64, "d_eol": pl.Utf8,
+            "a_cap": pl.Float64}
 
 
 #: The cohort-table columns on an axis (``e`` / ``d_build``); every other column is Utf8 or Float64.
@@ -331,7 +335,7 @@ def _existing_rows(source: "InputSource", years: Mapping[str, float], cal: _Cale
     ages = existing_ages(source)
     if start is None:
         return [(KIND_EXISTING, e, KIND_EXISTING, method, eol_methods.get(e, END_OF_LIFE_METHOD_DEFAULT), None,
-                 None, None, ages.get(e, 0.0), None, None, None, _INF, None)
+                 None, None, ages.get(e, 0.0), None, None, None, _INF, None, None)
                 for e, method in _entity_methods(source).items() if method in LIFETIME_METHODS]
     lifetime = _ed_period_value_map(source, LIFETIME_TECHNICAL, [start])
     process_set, node_set, _ = _entity_classes_lookup(source)
@@ -349,7 +353,7 @@ def _existing_rows(source: "InputSource", years: Mapping[str, float], cal: _Cale
             y_life, y_end, y_eol = window_end(y_on, lifetime.get((e, start), 0.0), method, cal, eol_method)
             y_first = y0 + y_life
         rows.append((f"{KIND_EXISTING}:{start}", e, KIND_EXISTING, method, eol_method, None, start, y_on, age,
-                     y_life, y_end, y_first, y_eol, cal.label(y_eol)))
+                     y_life, y_end, y_first, y_eol, cal.label(y_eol), None))
     _closest_seam_notice(source, rows, cal)
     return rows
 
@@ -522,7 +526,7 @@ def _invest_rows(source: "InputSource",
         y_on = float(years[d_on])
         y_life, y_end, y_eol = window_end(y_on, float(life_v), method, cal, eol_method)
         rows.append((f"{KIND_INVEST}:{d}", e, KIND_INVEST, method, eol_method, d, d_on, y_on, 0.0, y_life, y_end,
-                     None, y_eol, cal.label(y_eol)))
+                     None, y_eol, cal.label(y_eol), None))
     return anchor, rows
 
 
@@ -553,7 +557,7 @@ def never_operating_investments(source: "InputSource",
     eol_methods = eol_methods_of(existing_cohorts(source, active_solve, workdir, provider=provider, years=years))
     _anchor, rows = _invest_rows(source, active_solve, ed_invest, years, cal, eol_methods, commission_lf)
     never: dict[str, list[tuple[str, float, str]]] = {}
-    for _c, e, _k, _m, eol_method, d, _d_on, y_on, _age, y_life, _y_end, _first, y_eol, _d_eol in rows:
+    for _c, e, _k, _m, eol_method, d, _d_on, y_on, _age, y_life, _y_end, _first, y_eol, _d_eol, _a_cap in rows:
         if 0.0 < y_life < _INF and y_eol <= y_on + YEAR_TOL:
             never.setdefault(e, []).append((d, y_life, eol_method))
     if not never:
@@ -660,7 +664,7 @@ def _closest_seam_notice(source: "InputSource", rows: list[tuple], cal: _Calenda
     if not named:
         return
     moved: dict[str, list[tuple[str, str, float, float]]] = {}
-    for _c, e, kind, method, eol_method, d_build, _d_on, _y_on, _age, _life, y_end, _first, y_eol, _d_eol in rows:
+    for _c, e, kind, method, eol_method, d_build, _d_on, _y_on, _age, _life, y_end, _first, y_eol, _d_eol, _a in rows:
         if (e in named and method in BOUNDED_METHODS and eol_method == "closest_seam" and y_end is not None
                 and eol_moves(y_end, cal.seams, cal.period_starts)):
             moved.setdefault(e, []).append((kind, str(d_build), float(y_end), float(y_eol)))
@@ -696,7 +700,7 @@ def seed_cohorts(seed: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     its alive periods those of the seed."""
     keys = seed.select("e", "d_invest").unique(maintain_order=True)
     rows = [(f"{KIND_INVEST}:{d}", str(e), KIND_INVEST, None, None, str(d), None, None, None, None, None, None,
-             _INF, None)
+             _INF, None, None)
             for e, d in keys.iter_rows()]
     cohort = _cohort_frame(rows)
     triples = [(f"{KIND_INVEST}:{di}", str(e), KIND_INVEST, str(di), str(d), None)

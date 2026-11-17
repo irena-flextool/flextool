@@ -17,20 +17,26 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   fixed-cost window and its annuity alike. Set `payback_time` only where the investment pays back over a different
   number of years than it operates. Update scripts and Excel workbooks that name the old parameters or the old
   value.
-- **With `lifetime_method` `reinvest_choice` or `no_reinvestment` the investment annuity is paid for
-  `payback_time` years from the start of operation, counted in exact years**, and the reported investment costs
-  follow. Before, every period that started before the end of the lifetime was paid in full (a 12-year lifetime on
-  5-year periods paid 15 years), and the window followed the technical lifetime. A period the payback time ends in
-  now pays only its years before the end (a fractional payback time pays that fraction of its last year), and the
-  annualized investment cost of that period is the annuity times the share of its years paid. The fixed cost still
-  runs over `lifetime_technical`; `reinvest_automatic` still pays every year to the end of the horizon. Upgraded
-  databases get a notice naming the entities whose annuity changes (results change).
+- **With `lifetime_method` `reinvest_choice` or `no_reinvestment` the investment cost is the level yearly cost of
+  the plant over its `lifetime_technical`, paid for each year its capacity is in service**, and the reported
+  investment costs follow. The annuity over `payback_time` (with `discount_rate`) is turned into one yearly price:
+  its present value, discounted at the model `inflation_rate`, spread evenly over the `lifetime_technical` years.
+  The price is paid from the start of operation to the end of life as `end_of_life_method` rounds it, inside the
+  horizon: a 12-year plant whose life is rounded to 10 years pays the yearly cost of the 12-year plant for 10
+  years. The price does not depend on the build period or the period lengths; `payback_time` and `discount_rate`
+  set only its size (with `discount_rate` equal to `inflation_rate` the payback time changes nothing; with a lower
+  `discount_rate` a shorter payback time costs more). Before, every period that started before the end of the
+  lifetime paid the annuity in full (a 12-year lifetime on 5-year periods paid 15 years), also after the capacity
+  was gone. The fixed cost runs over the same years; `reinvest_automatic` still pays the annuity every year to the
+  end of the horizon. Upgraded databases get a notice naming the entities whose investment cost changes (results
+  change).
 - **`end_of_life_method` defaults to `closest_seam`** (unit, connection, node; `lifetime_method` reinvest_choice /
   no_reinvestment). The end of life (start of operation plus `lifetime_technical`; existing capacity: from the model
   start, minus its age) is rounded to the closest period start, a tie to the later one. Before, it was rounded to
   the next period start, so capacity operated to the end of the period its life ended in. Capacity whose life ends
-  in the first half of a period is now out of service for that whole period and pays no fixed cost there; its
-  investment annuity is still paid for `payback_time` years. Set `end_of_life_method` `next_seam` to keep the old
+  in the first half of a period is now out of service for that whole period and pays neither its yearly
+  investment cost nor its fixed cost there. For capacity-adequacy studies, `previous_seam` never counts capacity
+  past its life. Set `end_of_life_method` `next_seam` to keep the old
   rounding. Upgraded databases get a notice naming the entities whose end of life moves (results change).
 - **BREAKING for tools that connect FlexTool with other modelling tools through `override_provider`** (scripts
   and integrations that inject state between solves, for example capacities decided by another model): the keys

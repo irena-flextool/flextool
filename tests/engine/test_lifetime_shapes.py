@@ -6,15 +6,16 @@ Fixtures (built from JSON):
 
 * single: ``tests.json``, the four periods p2020 … p2035 (run years 0, 5, 10, 15) in one solve (``SINGLE``);
   coal_plant has 500 MW existing, ``lifetime_method = reinvest_choice`` and may invest and retire
-  (``invest_retire_no_limit``), so its technical lifetime sets the end of life of the existing capacity and the
-  windows of the investment and retirement annuities, and its payback time their annuity factors.
+  (``invest_retire_no_limit``), so its technical lifetime sets the end of life of the existing capacity, the years
+  in service of an investment and the window of the retirement annuity, and its payback time their annuity factors.
 * rolling: ``tests.json`` ``dispatch_fullYear_roll`` with a 48 h horizon and a 36 h jump (8 rolls over
   p2020 … p2035) and coal_plant's 500 MW existing (``reinvest_choice``, no investment): the end of life in every
   roll.
 * stochastic: ``stoch_two_period_invest.json`` ``recourse`` (periods p2035, p2040, a fan of branches); peaker
   invests and retires: the branch periods inherit their anchor's value.
-* single_payback_mid / stochastic_payback_mid: the single and stochastic cases with a payback time that ends inside
-  a period (12 on 5-year periods; 0.5 on the one-year p2035), so the annuity is paid for part of that period.
+* single_payback_mid / stochastic_payback_mid: the single and stochastic cases with a payback time other than the
+  technical lifetime (12 against 10 on 5-year periods; 0.5 against 1 on the one-year p2035), so the investment price
+  is the annuity times G(payback_time) / G(lifetime_technical) and the payback time is read in every period.
 """
 from __future__ import annotations
 

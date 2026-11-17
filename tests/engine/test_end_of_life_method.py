@@ -454,13 +454,14 @@ def test_lead_time_investment_reads_every_period_map_at_its_online_period(tmp_pa
     constructed (owner decision D50): every value is that of p2025.  By hand:
 
     * annuity = invest_cost · 1000 · r / (1 − (1+r)^-n) = 1000 · 1000 · 0.05 / (1 − 1.05^-4) = 282 011.83 CUR/MW/a
-      (``ed_annuity``, the reported yearly annuity);
-    * paid for payback_time 4 years from y_on 5 (years 5–8 of p2025, which holds 5 years): the lump
-      ``ed_entity_annual_discounted`` (and its run-level twin ``ed_entity_annual_discounted_run``, the reported
-      investment cost) = 4 · 282 011.83 = 1 128 047.33; ``edd_payback_share`` p2025 4 / 5 = 0.8;
+      (``ed_annuity``, the reported yearly annuity), paid back over payback_time 4 years;
     * end of life Y = 5 + 7 = 12 → next_seam 20: the cohort (y_life 7, y_eol 20) is in service in p2025 and
-      p2030, the operating window p2025, p2030, the fixed cost ``10 · 1000 · (inflation_op[p2025] +
-      inflation_op[p2030])`` (``ed_lifetime_fixed_cost`` and ``ed_lifetime_fixed_cost_run``).
+      p2030 (5 + 10 = 15 years), the operating window p2025, p2030, the fixed cost ``10 · 1000 ·
+      (inflation_op[p2025] + inflation_op[p2030])`` (``ed_lifetime_fixed_cost`` and ``ed_lifetime_fixed_cost_run``);
+    * the level price over lifetime_technical 7 (no inflation: G(x) = x) is a = 282 011.83 · 4 / 7 = 161 149.62
+      CUR/MW a year in service, so the lump ``ed_entity_annual_discounted`` (and its run-level twin
+      ``ed_entity_annual_discounted_run``: the solve is the run) = 15 · a = 2 417 244.28 (before: the 4 payback
+      years, 4 · 282 011.83 = 1 128 047.33); ``edd_payback_share`` p2025 4 / 5 = 0.8 follows the payback years.
 
     (At the decision period: annuity 2000 · 1000 · 0.05 / (1 − 1.05^-10) over 10 years, end of life 0 + 5 + 3 =
     8 → 10, in service and paying fixed cost in p2025 only.)"""
@@ -480,8 +481,10 @@ def test_lead_time_investment_reads_every_period_map_at_its_online_period(tmp_pa
     ann = 1000.0 * 1000.0 * 0.05 / (1.0 - 1.05 ** -4)
     assert ann == pytest.approx(282_011.83, rel=1e-8)
     assert _at_decision(fd.ed_annuity.frame) == pytest.approx(ann, rel=1e-12)
-    assert _at_decision(fd.ed_entity_annual_discounted.frame) == pytest.approx(4.0 * ann, rel=1e-12)
-    assert _at_decision(fd.ed_entity_annual_discounted_run.frame) == pytest.approx(4.0 * ann, rel=1e-12)
+    price = ann * 4.0 / 7.0
+    assert 15.0 * price == pytest.approx(2_417_244.28, abs=0.01)
+    assert _at_decision(fd.ed_entity_annual_discounted.frame) == pytest.approx(15.0 * price, rel=1e-12)
+    assert _at_decision(fd.ed_entity_annual_discounted_run.frame) == pytest.approx(15.0 * price, rel=1e-12)
     share = fd.edd_payback_share.filter((pl.col("e").cast(pl.Utf8) == WIND)
                                         & (pl.col("d_invest").cast(pl.Utf8) == "p2020"))
     assert {str(d): float(v) for d, v in share.select("d", "value").iter_rows()} == {

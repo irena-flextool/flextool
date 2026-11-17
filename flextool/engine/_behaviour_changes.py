@@ -316,12 +316,12 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
         ),
         BehaviourChange(
             id="annuity_over_payback_time",
-            summary=("With lifetime_method reinvest_choice or no_reinvestment the investment annuity is now paid for "
-                     "payback_time years from the start of operation, counted in exact years: a period that the "
-                     "payback time ends in pays only its years before the end. Before, every period that started "
-                     "before the end of the lifetime was paid in full, so these investments cost more (results "
-                     "change). The reported investment costs follow; the fixed cost still runs over "
-                     "lifetime_technical."),
+            summary=("With lifetime_method reinvest_choice or no_reinvestment the investment cost is now the level "
+                     "yearly cost of the plant over its lifetime_technical (the annuity over payback_time with "
+                     "discount_rate, its present value spread evenly over the lifetime), paid for each year the "
+                     "capacity is in service within the horizon. Before, the annuity was paid in every period that "
+                     "started before the end of the lifetime, also where the capacity was already gone (results "
+                     "change). The reported investment costs follow; the fixed cost runs over the same years."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "annuity_over_payback_time"),
         ),
         BehaviourChange(
