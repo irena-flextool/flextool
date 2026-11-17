@@ -223,13 +223,18 @@ def test_compare_runs_overview_is_short(mctx) -> None:
 
 
 def test_compare_inputs_is_short(mctx) -> None:
-    """The largest pair of tests.json: 159 values that differ.  Counts by alternative and class are complete; 30
-    rows by default.  Before: 87 rows cut at the character cap, 19 810 characters (about 9 200 tokens)."""
+    """The largest pair of tests.json: 163 values that differ.  Counts by alternative and class are complete; 30
+    rows by default.  Before: 87 rows cut at the character cap, 19 810 characters (about 9 200 tokens).
+
+    163 = 159 + 4: data version 81 splits ``lifetime`` into ``lifetime_technical`` and ``payback_time`` and copies
+    each stored value to both.  The four ``lifetime`` values that differ (battery_invest: node battery and
+    connection battery_inverter; coal_invest: unit coal_plant; wind_invest: unit wind_plant) are now two values
+    each."""
     text = _text(mctx, "compare_inputs", scenario_a="5weeks_battery_intraperiod_blocks", scenario_b="test_a_lot")
     out = json.loads(text)
-    assert out["total_values"] == 159
-    assert sum(n for per_class in out["by_alternative"].values() for n in per_class.values()) == 159
+    assert out["total_values"] == 163
+    assert sum(n for per_class in out["by_alternative"].values() for n in per_class.values()) == 163
     assert len(out["differences"]) == 30
-    assert out["shown"] == (f"30 of {out['total_rows']} rows (159 values); pass alternative or entity_class, or a "
+    assert out["shown"] == (f"30 of {out['total_rows']} rows (163 values); pass alternative or entity_class, or a "
                             "larger max_rows")
     assert len(text) <= 8_000 and approx_tokens(text, "json") <= 3_800
