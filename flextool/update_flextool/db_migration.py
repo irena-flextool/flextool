@@ -10676,7 +10676,11 @@ V81_LIST_MEMBER_RENAMES: dict[str, dict[str, str]] = {
 }
 #: v81: value lists to create (when absent) with these members, or to complete with the members they lack (appended
 #: in this order).
-V81_NEW_VALUE_LISTS: dict[str, tuple[str, ...]] = {}
+V81_NEW_VALUE_LISTS: dict[str, tuple[str, ...]] = {
+    "end_of_life_methods": ("closest_seam", "previous_seam", "next_seam"),
+}
+#: v81: the default of ``end_of_life_method`` (the rounding of an end of life to a period start).
+V81_END_OF_LIFE_METHOD_DEFAULT = "next_seam"
 
 _V81_CAPACITY = {"unit": ("capacity", "unit", "kW"), "connection": ("capacity", "connection", "kW"),
                  "node": ("storage capacity", "node", "kWh")}
@@ -10689,7 +10693,9 @@ def _v81_texts() -> dict[tuple[str, str], str]:
     for cls, (cap, what, per) in _V81_CAPACITY.items():
         t[(cls, "lifetime_technical")] = (
             f"[years] Technical lifetime: how long the {cap} operates. It starts when the {cap} starts to operate: "
-            "with a construction lead time, after the construction. What happens at its end depends on "
+            "with a construction lead time, after the construction. Its end is rounded to a period start by "
+            "end_of_life_method; for existing capacity it counts from the model start minus age_at_model_start "
+            "(or model.start_year - build_year). What happens at its end depends on "
             f"lifetime_method: reinvest_automatic keeps the {cap} to the end of the model horizon, reinvest_choice "
             "retires it, no_reinvestment retires it and allows investment only during the first technical lifetime "
             "from the model start. Without payback_time, invest_cost is annualized over it. Required when the "
@@ -10727,6 +10733,25 @@ def _v81_texts() -> dict[tuple[str, str], str]:
             "to the end of the model horizon with lifetime_method reinvest_automatic). Construction time costs with "
             f"their interest must be included here. Constant or period: the value of the period when the {cap} is "
             "built (comes online) is used.")
+        t[(cls, "age_at_model_start")] = (
+            f"[years] Age of the existing {cap} at the start of the model. Its end of life is lifetime_technical "
+            "minus the age from the model start, rounded to a period start by end_of_life_method; with "
+            f"lifetime_method reinvest_automatic the {cap} is kept and the age has no effect. Give "
+            "age_at_model_start or build_year, not both. No value: new at the model start. Constant, 0 or more.")
+        t[(cls, "build_year")] = (
+            f"[year] Calendar year the existing {cap} was built: its age at the model start is model.start_year "
+            "minus build_year. Needs model.start_year and must not be after it. Not with age_at_model_start. "
+            "Constant.")
+        t[(cls, "end_of_life_method")] = (
+            f"[choice] How the end of life of {cap} (start of operation plus lifetime_technical; existing {cap}: "
+            "lifetime_technical minus its age, from the model start) is rounded to a period start. next_seam "
+            "(default): the start at or after it (operates to the end of the period its life ends in). "
+            "closest_seam: the nearer start, a tie goes to the later one. previous_seam: the start at or before "
+            f"it (gone for that whole period). An end of life after the model horizon keeps the {cap} to the "
+            "end. Used with lifetime_method reinvest_choice / no_reinvestment.")
+    t[("model", "start_year")] = (
+        "[year] The calendar year in which the first period of the model's first solve starts. Used by "
+        "build_year (age = start_year - build_year).")
     t[("node", "unit_of_measure")] = V79_NODE_UNIT_OF_MEASURE_DESCRIPTION.replace(
         "(invest_cost, fixed_cost, salvage_value)", "(invest_cost, fixed_cost, net_salvage_value)")
     t[("group", "penalty_capacity_margin")] = (
@@ -10746,12 +10771,24 @@ def _v81_definitions() -> dict[tuple[str, str], dict]:
             out[(cls, name)] = {"parameter_type_list": ("float", "1d_map"), "parameter_group_name": group,
                                 "default_value": None, "default_type": None, "parameter_value_list_name": None,
                                 "description": texts[(cls, name)]}
+        for name, types in (("age_at_model_start", ("float",)), ("build_year", ("float",))):
+            out[(cls, name)] = {"parameter_type_list": types, "parameter_group_name": "retirement",
+                                "default_value": None, "default_type": None, "parameter_value_list_name": None,
+                                "description": texts[(cls, name)]}
+        default_value, default_type = to_database(V81_END_OF_LIFE_METHOD_DEFAULT)
+        out[(cls, "end_of_life_method")] = {"parameter_type_list": ("str",), "parameter_group_name": "retirement",
+                                          "default_value": default_value, "default_type": default_type,
+                                          "parameter_value_list_name": "end_of_life_methods",
+                                          "description": texts[(cls, "end_of_life_method")]}
+    out[("model", "start_year")] = {"parameter_type_list": ("float",), "parameter_group_name": "model",
+                                    "default_value": None, "default_type": None, "parameter_value_list_name": None,
+                                    "description": texts[("model", "start_year")]}
     return out
 
 
 #: Colour and priority of the parameter groups v81 definitions use (as v44 / v45 create them), for a database built
 #: without the standard groups.
-_V81_GROUPS = {"investment": ("7fb095", 20), "retirement": ("a3b08c", 25)}
+_V81_GROUPS = {"investment": ("7fb095", 20), "retirement": ("a3b08c", 25), "model": ("a3a3a3", 80)}
 
 
 def _v81_value_lists(db) -> None:
@@ -10918,10 +10955,13 @@ def _v81_annuity_marker(db) -> None:
 def _migrate_v81_schema_batch(db) -> None:
     """All schema changes of database version 81 (v80 -> v81), in one step.
 
-    1. The value lists of :data:`V81_NEW_VALUE_LISTS` and their members (:func:`_v81_value_lists`).
+    1. The value lists of :data:`V81_NEW_VALUE_LISTS` and their members (:func:`_v81_value_lists`):
+       ``end_of_life_methods`` (closest_seam, previous_seam, next_seam).
     2. ``lifetime_technical`` and ``payback_time`` (group ``investment``) and ``net_salvage_value`` (group
-       ``retirement``) on unit, connection and node: a constant or a period map, no default
-       (:func:`_v81_definitions_part`).
+       ``retirement``) on unit, connection and node: a constant or a period map, no default; on the same
+       classes (group ``retirement``) ``age_at_model_start`` and ``build_year`` (a constant, no default) and
+       ``end_of_life_method`` (a choice of ``end_of_life_methods``, default ``next_seam``); ``model.start_year``
+       (group ``model``, a constant, no default) (:func:`_v81_definitions_part`).
     3. ``lifetime`` is split: every value is copied to both ``lifetime_technical`` (how long the capacity operates)
        and ``payback_time`` (the years of the annuity); ``salvage_value`` values go to ``net_salvage_value``; the old
        definitions are removed (:func:`_v81_move_values`).

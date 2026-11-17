@@ -740,6 +740,27 @@
       ]
     ],
     [
+      "end_of_life_methods",
+      [
+        "ImNsb3Nlc3Rfc2VhbSI=",
+        "str"
+      ]
+    ],
+    [
+      "end_of_life_methods",
+      [
+        "InByZXZpb3VzX3NlYW0i",
+        "str"
+      ]
+    ],
+    [
+      "end_of_life_methods",
+      [
+        "Im5leHRfc2VhbSI=",
+        "str"
+      ]
+    ],
+    [
       "energy_margin_methods",
       [
         "Im5vbmUi",
@@ -1985,6 +2006,17 @@
     ],
     [
       "connection",
+      "age_at_model_start",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Age of the existing capacity at the start of the model. Its end of life is lifetime_technical minus the age from the model start, rounded to a period start by end_of_life_method; with lifetime_method reinvest_automatic the capacity is kept and the age has no effect. Give age_at_model_start or build_year, not both. No value: new at the model start. Constant, 0 or more.",
+      "retirement"
+    ],
+    [
+      "connection",
       "availability",
       [
         "MS4w",
@@ -1993,6 +2025,17 @@
       null,
       "[-] e.g. 0.9 means 90%. Fraction of capacity available for connection flows. Constant, period, time or period+time.",
       "basics"
+    ],
+    [
+      "connection",
+      "build_year",
+      [
+        null,
+        null
+      ],
+      null,
+      "[year] Calendar year the existing capacity was built: its age at the model start is model.start_year minus build_year. Needs model.start_year and must not be after it. Not with age_at_model_start. Constant.",
+      "retirement"
     ],
     [
       "connection",
@@ -2139,6 +2182,17 @@
     ],
     [
       "connection",
+      "end_of_life_method",
+      [
+        "Im5leHRfc2VhbSI=",
+        "str"
+      ],
+      "end_of_life_methods",
+      "[choice] How the end of life of capacity (start of operation plus lifetime_technical; existing capacity: lifetime_technical minus its age, from the model start) is rounded to a period start. next_seam (default): the start at or after it (operates to the end of the period its life ends in). closest_seam: the nearer start, a tie goes to the later one. previous_seam: the start at or before it (gone for that whole period). An end of life after the model horizon keeps the capacity to the end. Used with lifetime_method reinvest_choice / no_reinvestment.",
+      "retirement"
+    ],
+    [
+      "connection",
       "existing",
       [
         null,
@@ -2255,7 +2309,7 @@
         null
       ],
       null,
-      "[years] Technical lifetime: how long the capacity operates. It starts when the capacity starts to operate: with a construction lead time, after the construction. What happens at its end depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_reinvestment retires it and allows investment only during the first technical lifetime from the model start. Without payback_time, invest_cost is annualized over it. Required when the connection invests or retires with a cost (invest_cost, net_salvage_value) and has no payback_time, and when lifetime_method is reinvest_choice or no_reinvestment (also for existing capacity without investment). Constant or period: the value of the period when the capacity comes online is used.",
+      "[years] Technical lifetime: how long the capacity operates. It starts when the capacity starts to operate: with a construction lead time, after the construction. Its end is rounded to a period start by end_of_life_method; for existing capacity it counts from the model start minus age_at_model_start (or model.start_year - build_year). What happens at its end depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_reinvestment retires it and allows investment only during the first technical lifetime from the model start. Without payback_time, invest_cost is annualized over it. Required when the connection invests or retires with a cost (invest_cost, net_salvage_value) and has no payback_time, and when lifetime_method is reinvest_choice or no_reinvestment (also for existing capacity without investment). Constant or period: the value of the period when the capacity comes online is used.",
       "investment"
     ],
     [
@@ -2997,6 +3051,17 @@
     ],
     [
       "model",
+      "start_year",
+      [
+        null,
+        null
+      ],
+      null,
+      "[year] The calendar year in which the first period of the model's first solve starts. Used by build_year (age = start_year - build_year).",
+      "model"
+    ],
+    [
+      "model",
       "version",
       [
         "ODEuMA==",
@@ -3005,6 +3070,17 @@
       null,
       "[version number] Contains database version information.",
       "model"
+    ],
+    [
+      "node",
+      "age_at_model_start",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Age of the existing storage capacity at the start of the model. Its end of life is lifetime_technical minus the age from the model start, rounded to a period start by end_of_life_method; with lifetime_method reinvest_automatic the storage capacity is kept and the age has no effect. Give age_at_model_start or build_year, not both. No value: new at the model start. Constant, 0 or more.",
+      "retirement"
     ],
     [
       "node",
@@ -3027,6 +3103,17 @@
       null,
       "[-] e.g. 0.9 means 90%. Fraction of capacity available for storage. Constant, period, time, period+time or stochastic time.",
       "basics"
+    ],
+    [
+      "node",
+      "build_year",
+      [
+        null,
+        null
+      ],
+      null,
+      "[year] Calendar year the existing storage capacity was built: its age at the model start is model.start_year minus build_year. Needs model.start_year and must not be after it. Not with age_at_model_start. Constant.",
+      "retirement"
     ],
     [
       "node",
@@ -3148,6 +3235,17 @@
       null,
       "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time: annuity = invest_cost x r / (1 - (1 + r)^-payback_time). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
+    ],
+    [
+      "node",
+      "end_of_life_method",
+      [
+        "Im5leHRfc2VhbSI=",
+        "str"
+      ],
+      "end_of_life_methods",
+      "[choice] How the end of life of storage capacity (start of operation plus lifetime_technical; existing storage capacity: lifetime_technical minus its age, from the model start) is rounded to a period start. next_seam (default): the start at or after it (operates to the end of the period its life ends in). closest_seam: the nearer start, a tie goes to the later one. previous_seam: the start at or before it (gone for that whole period). An end of life after the model horizon keeps the storage capacity to the end. Used with lifetime_method reinvest_choice / no_reinvestment.",
+      "retirement"
     ],
     [
       "node",
@@ -3322,7 +3420,7 @@
         null
       ],
       null,
-      "[years] Technical lifetime: how long the storage capacity operates. It starts when the storage capacity starts to operate: with a construction lead time, after the construction. What happens at its end depends on lifetime_method: reinvest_automatic keeps the storage capacity to the end of the model horizon, reinvest_choice retires it, no_reinvestment retires it and allows investment only during the first technical lifetime from the model start. Without payback_time, invest_cost is annualized over it. Required when the node invests or retires with a cost (invest_cost, net_salvage_value) and has no payback_time, and when lifetime_method is reinvest_choice or no_reinvestment (also for existing capacity without investment). Constant or period: the value of the period when the storage capacity comes online is used.",
+      "[years] Technical lifetime: how long the storage capacity operates. It starts when the storage capacity starts to operate: with a construction lead time, after the construction. Its end is rounded to a period start by end_of_life_method; for existing capacity it counts from the model start minus age_at_model_start (or model.start_year - build_year). What happens at its end depends on lifetime_method: reinvest_automatic keeps the storage capacity to the end of the model horizon, reinvest_choice retires it, no_reinvestment retires it and allows investment only during the first technical lifetime from the model start. Without payback_time, invest_cost is annualized over it. Required when the node invests or retires with a cost (invest_cost, net_salvage_value) and has no payback_time, and when lifetime_method is reinvest_choice or no_reinvestment (also for existing capacity without investment). Constant or period: the value of the period when the storage capacity comes online is used.",
       "investment"
     ],
     [
@@ -4130,6 +4228,17 @@
     ],
     [
       "unit",
+      "age_at_model_start",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Age of the existing capacity at the start of the model. Its end of life is lifetime_technical minus the age from the model start, rounded to a period start by end_of_life_method; with lifetime_method reinvest_automatic the capacity is kept and the age has no effect. Give age_at_model_start or build_year, not both. No value: new at the model start. Constant, 0 or more.",
+      "retirement"
+    ],
+    [
+      "unit",
       "availability",
       [
         "MS4w",
@@ -4138,6 +4247,17 @@
       null,
       "[-] e.g. 0.9 means 90%. Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant, period, time, period+time or stochastic time.",
       "basics"
+    ],
+    [
+      "unit",
+      "build_year",
+      [
+        null,
+        null
+      ],
+      null,
+      "[year] Calendar year the existing capacity was built: its age at the model start is model.start_year minus build_year. Needs model.start_year and must not be after it. Not with age_at_model_start. Constant.",
+      "retirement"
     ],
     [
       "unit",
@@ -4306,6 +4426,17 @@
     ],
     [
       "unit",
+      "end_of_life_method",
+      [
+        "Im5leHRfc2VhbSI=",
+        "str"
+      ],
+      "end_of_life_methods",
+      "[choice] How the end of life of capacity (start of operation plus lifetime_technical; existing capacity: lifetime_technical minus its age, from the model start) is rounded to a period start. next_seam (default): the start at or after it (operates to the end of the period its life ends in). closest_seam: the nearer start, a tie goes to the later one. previous_seam: the start at or before it (gone for that whole period). An end of life after the model horizon keeps the capacity to the end. Used with lifetime_method reinvest_choice / no_reinvestment.",
+      "retirement"
+    ],
+    [
+      "unit",
       "existing",
       [
         null,
@@ -4411,7 +4542,7 @@
         null
       ],
       null,
-      "[years] Technical lifetime: how long the capacity operates. It starts when the capacity starts to operate: with a construction lead time, after the construction. What happens at its end depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_reinvestment retires it and allows investment only during the first technical lifetime from the model start. Without payback_time, invest_cost is annualized over it. Required when the unit invests or retires with a cost (invest_cost, net_salvage_value) and has no payback_time, and when lifetime_method is reinvest_choice or no_reinvestment (also for existing capacity without investment). Constant or period: the value of the period when the capacity comes online is used.",
+      "[years] Technical lifetime: how long the capacity operates. It starts when the capacity starts to operate: with a construction lead time, after the construction. Its end is rounded to a period start by end_of_life_method; for existing capacity it counts from the model start minus age_at_model_start (or model.start_year - build_year). What happens at its end depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_reinvestment retires it and allows investment only during the first technical lifetime from the model start. Without payback_time, invest_cost is annualized over it. Required when the unit invests or retires with a cost (invest_cost, net_salvage_value) and has no payback_time, and when lifetime_method is reinvest_choice or no_reinvestment (also for existing capacity without investment). Constant or period: the value of the period when the capacity comes online is used.",
       "investment"
     ],
     [
@@ -4895,6 +5026,12 @@
     ],
     [
       "connection",
+      "age_at_model_start",
+      "float",
+      0
+    ],
+    [
+      "connection",
       "availability",
       "float",
       0
@@ -4910,6 +5047,12 @@
       "availability",
       "map",
       2
+    ],
+    [
+      "connection",
+      "build_year",
+      "float",
+      0
     ],
     [
       "connection",
@@ -5030,6 +5173,12 @@
       "efficiency",
       "map",
       2
+    ],
+    [
+      "connection",
+      "end_of_life_method",
+      "str",
+      0
     ],
     [
       "connection",
@@ -5729,7 +5878,19 @@
     ],
     [
       "model",
+      "start_year",
+      "float",
+      0
+    ],
+    [
+      "model",
       "version",
+      "float",
+      0
+    ],
+    [
+      "node",
+      "age_at_model_start",
       "float",
       0
     ],
@@ -5768,6 +5929,12 @@
       "availability",
       "map",
       3
+    ],
+    [
+      "node",
+      "build_year",
+      "float",
+      0
     ],
     [
       "node",
@@ -5858,6 +6025,12 @@
       "discount_rate",
       "map",
       1
+    ],
+    [
+      "node",
+      "end_of_life_method",
+      "str",
+      0
     ],
     [
       "node",
@@ -6623,6 +6796,12 @@
     ],
     [
       "unit",
+      "age_at_model_start",
+      "float",
+      0
+    ],
+    [
+      "unit",
       "availability",
       "float",
       0
@@ -6644,6 +6823,12 @@
       "availability",
       "map",
       3
+    ],
+    [
+      "unit",
+      "build_year",
+      "float",
+      0
     ],
     [
       "unit",
@@ -6794,6 +6979,12 @@
       "efficiency_at_min_load",
       "map",
       2
+    ],
+    [
+      "unit",
+      "end_of_life_method",
+      "str",
+      0
     ],
     [
       "unit",

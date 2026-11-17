@@ -515,6 +515,21 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("node",       "invest_method"): {Shape.SCALAR_STR},
     ("unit",       "invest_method"): {Shape.SCALAR_STR},
     ("connection", "invest_method"): {Shape.SCALAR_STR},
+    # ─── age of existing capacity and the rounding of an end of life ─────
+    # ``{node, unit, connection}.age_at_model_start`` / ``build_year`` and ``model.start_year`` are constants
+    # (schema type ``float`` only); ``end_of_life_method`` a choice of the ``end_of_life_methods`` list.  Read by
+    # ``preprocess/params/_cohorts.py`` (``existing_ages`` / ``end_of_life_methods``) once per run: a map is an
+    # authoring error the resolver refuses.
+    ("node",       "age_at_model_start"): {Shape.SCALAR},
+    ("unit",       "age_at_model_start"): {Shape.SCALAR},
+    ("connection", "age_at_model_start"): {Shape.SCALAR},
+    ("node",       "build_year"): {Shape.SCALAR},
+    ("unit",       "build_year"): {Shape.SCALAR},
+    ("connection", "build_year"): {Shape.SCALAR},
+    ("model",      "start_year"): {Shape.SCALAR},
+    ("node",       "end_of_life_method"): {Shape.SCALAR_STR},
+    ("unit",       "end_of_life_method"): {Shape.SCALAR_STR},
+    ("connection", "end_of_life_method"): {Shape.SCALAR_STR},
     # ─── timeset: per-timestep weight map ────────────────────────────────
     # ``timeset.timeset_weights`` — a 1-D Map timestep -> weight (schema: map rank 1).  The index is
     # ``time`` (or ``t``), or Spine's silent ``x`` (unique at depth 1, so it resolves to ``time``); any

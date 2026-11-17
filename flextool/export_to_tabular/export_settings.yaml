@@ -107,7 +107,7 @@ split_params:
                "inflation_offset_investment", "inflation_offset_operations",
                "max_flow_for_unconstrained_variables",
                "small_number_threshold",
-               "output_horizon"]
+               "output_horizon", "start_year"]
     model_solve_sequence:
       params: ["solves"]
     model_periods_available:

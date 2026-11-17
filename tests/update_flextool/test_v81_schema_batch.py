@@ -8,6 +8,10 @@ connection and a node), ``salvage_value`` (a constant and a ``period`` map) and 
 
 * adds ``lifetime_technical`` and ``payback_time`` (group ``investment``) and ``net_salvage_value`` (group
   ``retirement``) on unit, connection and node: a constant or a period map, no default, the shipped description;
+* adds the value list ``end_of_life_methods`` (closest_seam, previous_seam, next_seam), and on unit, connection and
+  node (group ``retirement``) ``age_at_model_start`` and ``build_year`` (a constant, no default) and
+  ``end_of_life_method`` (a choice of that list, default ``next_seam``); ``model.start_year`` (group ``model``, a
+  constant, no default);
 * copies every ``lifetime`` value, as stored, to both ``lifetime_technical`` and ``payback_time``, and every
   ``salvage_value`` value to ``net_salvage_value``, then removes the old definitions;
 * renames the ``lifetime_methods`` member ``no_investment`` to ``no_reinvestment`` (list order kept) and rewrites
@@ -43,8 +47,10 @@ from tests.db_utils import json_to_db
 SEED = Path(__file__).resolve().parent / "data" / "v75_seed_stoch_two_period.json"
 TESTS_JSON = Path(__file__).resolve().parents[1] / "fixtures" / "tests.json"
 CLASSES = ("unit", "connection", "node")
+AGE_DEFINITIONS = {(cls, name) for cls in CLASSES for name in ("age_at_model_start", "build_year",
+                                                                "end_of_life_method")} | {("model", "start_year")}
 NEW_DEFINITIONS = {(cls, name) for cls in CLASSES for name in ("lifetime_technical", "payback_time",
-                                                                "net_salvage_value")}
+                                                                "net_salvage_value")} | AGE_DEFINITIONS
 OLD_DEFINITIONS = {(cls, name) for cls in CLASSES for name in ("lifetime", "salvage_value")}
 REWRITTEN = {(cls, name) for cls in CLASSES for name in ("lifetime_method", "discount_rate", "invest_cost")} | {
     ("node", "unit_of_measure"), ("group", "penalty_capacity_margin")}
@@ -165,6 +171,26 @@ def test_new_lifetime_definitions(migrated) -> None:
     assert "No value: lifetime_technical" in after[("unit", "payback_time")][0]
 
 
+def test_age_and_end_of_life_definitions(migrated) -> None:
+    """The age of existing capacity, its build year, the model's start year and the rounding of an end of life: the
+    types, groups, defaults and value list of the schema, and the list members in the rounding order."""
+    after = migrated["after"]
+    shipped, shipped_lists = _shipped()
+    assert after["lists"]["end_of_life_methods"] == ["closest_seam", "previous_seam", "next_seam"]
+    assert shipped_lists["end_of_life_methods"] == ["closest_seam", "previous_seam", "next_seam"]
+    default = to_database("next_seam")
+    for cls in CLASSES:
+        for name in ("age_at_model_start", "build_year"):
+            assert after["defs"][(cls, name)] == (shipped[(cls, name)], ("float",), "retirement", None, None, None)
+        assert after["defs"][(cls, "end_of_life_method")] == (
+            shipped[(cls, "end_of_life_method")], ("str",), "retirement", "end_of_life_methods", *default)
+    assert after["defs"][("model", "start_year")] == (shipped[("model", "start_year")], ("float",), "model", None,
+                                                      None, None)
+    assert after["defs"][("unit", "age_at_model_start")][0].startswith("[years] Age of the existing capacity")
+    assert after["defs"][("node", "build_year")][0].startswith("[year] Calendar year the existing storage capacity")
+    assert "end_of_life_method" in after["defs"][("unit", "lifetime_technical")][0]
+
+
 def test_no_investment_is_no_reinvestment(migrated) -> None:
     before, after = migrated["before"], migrated["after"]
     _, shipped_lists = _shipped()
@@ -222,7 +248,8 @@ def test_changes_nothing_else(migrated) -> None:
     touched = NEW_DEFINITIONS | OLD_DEFINITIONS | REWRITTEN | {("model", "version")}
     assert ({k: v for k, v in after["defs"].items() if k not in touched}
             == {k: v for k, v in before["defs"].items() if k not in touched})
-    assert ({k: v for k, v in after["lists"].items() if k != "lifetime_methods"}
+    assert "end_of_life_methods" not in before["lists"]
+    assert ({k: v for k, v in after["lists"].items() if k not in ("lifetime_methods", "end_of_life_methods")}
             == {k: v for k, v in before["lists"].items() if k != "lifetime_methods"})
     moved = {"lifetime", "salvage_value", "lifetime_method", "lifetime_technical", "payback_time",
              "net_salvage_value"}
@@ -346,6 +373,39 @@ def test_current_version_database_gets_a_missing_head_definition(tmp_path_factor
         assert _values(db) == values_before
     assert not m._head_schema_missing_ro(path)
     assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION
+
+
+def test_current_version_database_gets_the_end_of_life_list_and_definitions(tmp_path_factory) -> None:
+    """A database at the current version made before ``end_of_life_methods``, ``end_of_life_method``,
+    ``age_at_model_start`` and ``model.start_year`` were added gets them, with their shipped fields, the list before
+    the definition that names it; a second migration commits nothing."""
+    url = _tests_json_at(tmp_path_factory, "v81_head_eol", FLEXTOOL_DB_VERSION)
+    path = Path(url.removeprefix("sqlite:///"))
+    with DatabaseMapping(url) as db:
+        for cls, name in (("unit", "end_of_life_method"), ("node", "end_of_life_method"),
+                          ("connection", "end_of_life_method"), ("unit", "age_at_model_start"),
+                          ("model", "start_year")):
+            db.remove_item("parameter_definition",
+                           db.get_item("parameter_definition", entity_class_name=cls, name=name)["id"])
+        db.remove_item("parameter_value_list", db.get_item("parameter_value_list", name="end_of_life_methods")["id"])
+        db.commit_session("an older v81 database")
+        values_before = _values(db)
+    assert m._head_schema_missing_ro(path)
+    migrate_database(url)
+    shipped, shipped_lists = _shipped()
+    with DatabaseMapping(url) as db:
+        defs = _defs(db)
+        assert _lists(db)["end_of_life_methods"] == shipped_lists["end_of_life_methods"]
+        for cls in CLASSES:
+            assert defs[(cls, "end_of_life_method")] == (shipped[(cls, "end_of_life_method")], ("str",), "retirement",
+                                                         "end_of_life_methods", *to_database("next_seam"))
+        assert defs[("unit", "age_at_model_start")][1:] == (("float",), "retirement", None, None, None)
+        assert defs[("model", "start_year")][1:] == (("float",), "model", None, None, None)
+        assert _values(db) == values_before
+        with pytest.raises(NothingToCommit):
+            m._refresh_head_schema(db)
+            db.commit_session("rerun")
+    assert not m._head_schema_missing_ro(path)
 
 
 def test_materialized_file_without_a_head_definition_is_stale(tmp_path_factory) -> None:

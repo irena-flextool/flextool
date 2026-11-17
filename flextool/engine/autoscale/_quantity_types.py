@@ -44,6 +44,12 @@ class QuantityType(Enum):
 
 
 PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
+    ('age_at_model_start', 'connection'): QuantityType.DURATION,
+    # [years] Age of the existing capacity at the start of the model; shortens its end of life. Constant.
+    ('age_at_model_start', 'node'): QuantityType.DURATION,
+    # [years] Age of the existing capacity at the start of the model; shortens its end of life. Constant.
+    ('age_at_model_start', 'unit'): QuantityType.DURATION,
+    # [years] Age of the existing capacity at the start of the model; shortens its end of life. Constant.
     ('annual_flow', 'node'): QuantityType.ENERGY,
     # [MWh] Annual flow in energy units (always positive, the sign of inflow defines in/out). Inflow time series can be scaled to match annual flo...
     ('availability', 'connection'): QuantityType.FRACTION,
@@ -58,6 +64,12 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Benders max outer (master/subproblem) iterations. Solver-algorithm knob, never an LP coefficient.
     ('benders_tolerance', 'solve'): QuantityType.DIMENSIONLESS,
     # Benders relative optimality-gap convergence threshold. Solver-algorithm knob, never an LP coefficient.
+    ('build_year', 'connection'): QuantityType.DIMENSIONLESS,
+    # [year] Calendar year the existing capacity was built (age = model.start_year - build_year). Constant.
+    ('build_year', 'node'): QuantityType.DIMENSIONLESS,
+    # [year] Calendar year the existing capacity was built (age = model.start_year - build_year). Constant.
+    ('build_year', 'unit'): QuantityType.DIMENSIONLESS,
+    # [year] Calendar year the existing capacity was built (age = model.start_year - build_year). Constant.
     ('benders_in_out_weight', 'solve'): QuantityType.DIMENSIONLESS,
     # Benders in-out separation stabilization weight (lambda). Solver-algorithm knob, never an LP coefficient.
     ('candidate_precapacity_to_avoid_big_m', 'group'): QuantityType.POWER,
@@ -211,6 +223,12 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model...
     ('discount_rate', 'unit'): QuantityType.FRACTION,
     # [e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model...
+    ('end_of_life_method', 'connection'): QuantityType.DIMENSIONLESS,
+    # [choice] How an end of life is rounded to a period start (closest_seam / previous_seam / next_seam).
+    ('end_of_life_method', 'node'): QuantityType.DIMENSIONLESS,
+    # [choice] How an end of life is rounded to a period start (closest_seam / previous_seam / next_seam).
+    ('end_of_life_method', 'unit'): QuantityType.DIMENSIONLESS,
+    # [choice] How an end of life is rounded to a period start (closest_seam / previous_seam / next_seam).
     ('efficiency', 'connection'): QuantityType.FRACTION,
     # [factor, typically 0-1] Efficiency of the connection. Constant, period, time or period+time.
     ('efficiency', 'unit'): QuantityType.FRACTION,
@@ -582,6 +600,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Not used: FlexTool never runs solver_precommand (kept so older databases still read).
     ('use_row_scaling', 'solve'): QuantityType.DIMENSIONLESS,
     # Boolean-style toggle ('yes'/'no') enabling experimental automatic row scaling. Flag, no physical unit.
+    ('start_year', 'model'): QuantityType.DIMENSIONLESS,
+    # [year] Calendar year the first period of the model's first solve starts (build_year's reference).
     ('solves', 'model'): QuantityType.DIMENSIONLESS,
     # Sequence of solves in the model. Array.
     ('small_number_threshold', 'model'): QuantityType.DIMENSIONLESS,
@@ -694,7 +714,7 @@ QUANTITY_UNITS: dict[QuantityType, frozenset[str]] = {
     QuantityType.DURATION: frozenset({"[hours]", "[years]"}),
     QuantityType.RAMP_RATE: frozenset({"[share of capacity per minute]"}),
     QuantityType.DIMENSIONLESS: frozenset({
-        "[choice]", "[yes/no]", "[name]", "[text]", "[count]", "[version number]", "[p.u.]",
+        "[choice]", "[yes/no]", "[name]", "[text]", "[count]", "[version number]", "[p.u.]", "[year]",
         "[unit of the constraint per MW]", "[unit of the constraint per MWh]", "[unit of the constraint per unit online]",
         "[the constraint's own unit]",
     }),

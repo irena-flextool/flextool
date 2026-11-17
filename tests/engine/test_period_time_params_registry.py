@@ -73,6 +73,11 @@ def test_facet_and_scalar_str_shapes_excluded():
         ("unit", "invest_method"),
         ("connection", "invest_method"),
         ("unit", "piecewise_linear_efficiency"),
+        # Constants (SCALAR only) and a scalar string: the age of existing capacity, its build year, the model's
+        # start year and the rounding of an end of life.
+        *((cls, name) for cls in ("node", "unit", "connection")
+          for name in ("age_at_model_start", "build_year", "end_of_life_method")),
+        ("model", "start_year"),
     }
     for key in excluded:
         assert key not in PERIOD_TIME_PARAMS
