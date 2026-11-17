@@ -53,15 +53,40 @@ forward through versioned steps. Each step either:
   entity classes, parameter definitions, value lists, or alternatives.
 
 The chain is **forward-only** — there are no down-migrations. Each
-step bumps the `model.version` parameter stored in the DB so the
-migration is resumable from where it left off.
+step commits its own changes, but `model.version` is stamped **once, at
+the end of the chain**: a chain that stops part way leaves the database
+at its old version with the earlier steps committed, and the next run
+repeats every step from there.
+
+**All or nothing.** `migrate_database` copies a local file to
+`<db>.premigration.bak` before the first step and moves that copy back
+(one atomic `os.replace`) when any step fails or the migration is
+cancelled (`flextool/update_flextool/migration_backup.py`; the window's
+upgrade in `gui/db_version_check.py` holds the same copy and passes
+`backup=False`). Only a killed process bypasses the restore; then the
+copy stays, and the next migration of the file refuses to start until
+it is put back or deleted.
+
+**Every step must converge on a rerun.** Because a kill can stop the
+chain anywhere, a step rerun on its own partial result must give what
+one clean run gives (reruns compare equal in
+`tests/update_flextool/test_interrupted_migration_steps.py`):
+
+- recompute from what is still in the database and skip keys already
+  written; never overwrite a value an earlier run of the step wrote;
+- a step that removes many rows uses `_remove_items_bounded` (one
+  `DELETE` is limited to 400 runs of ids: SQLite's expression depth and
+  bound-variable limits). It commits in batches when the removal is
+  large, so the step must also converge from **any batch**: write what
+  replaces the removed rows before the first removal (the v56 yes/no
+  stage), decide what to remove before a rename that hides it (v70), and
+  recognise its own half-done state (v58's same-name flowGroup).
 
 !!! note "Idempotent commits"
     Migration steps wrap their `commit_session` calls in `_commit_step`,
     which swallows `spinedb_api.exception.NothingToCommit`. A step that
-    was already hand-applied by an earlier partial run is treated as a
-    no-op rather than a fatal abort, so the version bump still
-    persists and later steps run normally.
+    was already applied by an earlier partial run is treated as a
+    no-op rather than a fatal abort, so later steps run normally.
 
 Skim `migrate_database` in `db_migration.py` to see the full chain and
 the per-version diffs.

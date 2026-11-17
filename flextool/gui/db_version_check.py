@@ -8,18 +8,24 @@ as human-readable messages so the GUI never crashes.
 from __future__ import annotations
 
 import logging
-import shutil
 from pathlib import Path
 from typing import Callable
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_migration import MigrationCancelled
 from flextool.sqlite_url import sqlite_url_string
-from flextool.update_flextool.migration_backup import backup_path, remove_backup, restore_from_backup
+from flextool.update_flextool.migration_backup import make_backup, recovery_text, remove_backup, restore_from_backup
 
 logger = logging.getLogger(__name__)
 
 ISSUE_TRACKER_URL = "https://github.com/irena-flextool/flextool/issues"
+
+
+def _recovery(db_path: Path, backup: Path | None) -> str:
+    """How to recover the original database, when its pre-migration copy is kept."""
+    if backup is not None and backup.exists():
+        return recovery_text(db_path, backup)
+    return "Restore it from your own backup."
 
 
 def _read_flextool_version(db_url: str) -> int | None:
@@ -187,19 +193,19 @@ def _upgrade_locked(
         schema_current = False
 
     backup: Path | None = None
+    backup_error = ""
+    completed = False
 
     def _ensure_backup() -> bool:
         """Take the pre-migration backup once; return ``True`` if available."""
-        nonlocal backup
+        nonlocal backup, backup_error
         if backup is not None:
             return True
-        candidate = backup_path(db_path)
         try:
-            shutil.copy2(db_path, candidate)
-            backup = candidate
-            logger.info("Pre-migration backup written: %s", candidate)
+            backup = make_backup(db_path)
             return True
-        except Exception:
+        except Exception as exc:
+            backup_error = str(exc)
             logger.error("Could not create migration backup for %s", db_path, exc_info=True)
             return False
 
@@ -209,7 +215,7 @@ def _upgrade_locked(
             if not _ensure_backup():
                 messages.append(
                     f"{db_path.name}: could not create a safety backup before "
-                    f"upgrading; the database was left untouched."
+                    f"upgrading; the database was left untouched. {backup_error}"
                 )
                 return was_upgraded, True, messages
             with open_database_mapping(db_url, create=False, upgrade=True):
@@ -224,7 +230,7 @@ def _upgrade_locked(
             if not _ensure_backup():
                 messages.append(
                     f"{db_path.name}: could not create a safety backup before "
-                    f"migrating; the database was left untouched."
+                    f"migrating; the database was left untouched. {backup_error}"
                 )
                 return was_upgraded, True, messages
 
@@ -252,6 +258,7 @@ def _upgrade_locked(
                     version_before,
                     version_after,
                 )
+        completed = True
 
     except MigrationCancelled:
         was_upgraded = False
@@ -264,8 +271,8 @@ def _upgrade_locked(
             failed = True
             messages.append(
                 f"{db_path.name}: migration cancelled, but the database could "
-                f"NOT be restored automatically. Do not use it; restore it "
-                f"from your own backup and report this at {ISSUE_TRACKER_URL}."
+                f"NOT be restored automatically. Do not use it. "
+                f"{_recovery(db_path, backup)} Please report this at {ISSUE_TRACKER_URL}."
             )
         logger.info("FlexTool migration cancelled for %s", db_path)
 
@@ -285,15 +292,20 @@ def _upgrade_locked(
         else:
             messages.append(
                 f"{db_path.name}: migration FAILED and the database could NOT be "
-                f"restored automatically. Do not use it; restore it from your "
-                f"own backup. Please report this at {ISSUE_TRACKER_URL}: copy the "
+                f"restored automatically. Do not use it. {_recovery(db_path, backup)} "
+                f"Please report this at {ISSUE_TRACKER_URL}: copy the "
                 f"traceback below and, if possible, share the database file."
                 f"\n\nError: {exc}\n\nTraceback:\n{tb_text}"
             )
         logger.warning("FlexTool migration failed for %s: %s", db_path, exc, exc_info=True)
 
     finally:
+        # After an upgrade the copy goes; after a restore it is gone already (moved back).  Otherwise (the restore
+        # failed, or an interruption) it is kept: it is the original.
         if backup is not None:
-            remove_backup(backup)
+            if completed:
+                remove_backup(backup)
+            elif backup.exists():
+                print(recovery_text(db_path, backup), flush=True)
 
     return was_upgraded, failed, messages

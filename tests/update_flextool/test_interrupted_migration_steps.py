@@ -338,3 +338,142 @@ def test_the_window_upgrade_backs_up_once(tmp_path, monkeypatch) -> None:
     assert copies == [path.with_name(path.name + ".premigration.bak")]
     assert path.read_bytes() == before
 
+
+
+# ── the restore: atomic, and the original is never lost ──────────────────────────────────────────────────────────
+
+def _os_with_replace(replace):
+    """A stand-in for the ``os`` module of ``migration_backup`` whose ``replace`` is *replace*."""
+    import os
+    from types import SimpleNamespace
+
+    return SimpleNamespace(replace=replace, name=os.name)
+
+
+def _integrity(path: Path) -> str:
+    import sqlite3
+
+    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        return con.execute("PRAGMA integrity_check").fetchone()[0]
+    finally:
+        con.close()
+
+
+def test_interrupt_before_the_rename_keeps_the_original_and_names_it(tmp_path, monkeypatch, capsys) -> None:
+    """A Ctrl+C during the restore, before the copy is moved back: the database is the (whole) half-migrated file,
+    the copy is the original and the console says where it is and how to put it back; doing that gives the
+    original."""
+    from flextool.update_flextool import migration_backup as mb
+
+    path, url = _v79_file(tmp_path)
+    before = path.read_bytes()
+    backup = tmp_path / "db.sqlite.premigration.bak"
+
+    def interrupted(src, dst):
+        raise KeyboardInterrupt("second Ctrl+C")
+
+    monkeypatch.setattr(m, "_migrate_v80_schema_batch", _failing_v80)
+    monkeypatch.setattr(mb, "os", _os_with_replace(interrupted))
+    with pytest.raises(KeyboardInterrupt):
+        m.migrate_database(url)
+    printed = capsys.readouterr().out
+    assert backup.read_bytes() == before
+    assert _integrity(path) == "ok" and path.read_bytes() != before
+    assert str(backup) in printed and f"rename {backup.name} to {path.name}" in printed
+    path.unlink()
+    backup.rename(path)
+    assert path.read_bytes() == before
+
+
+def test_interrupt_after_the_rename_leaves_the_original(tmp_path, monkeypatch, capsys) -> None:
+    """A Ctrl+C right after the copy is moved back: the database is the original and no copy is left."""
+    import os
+
+    from flextool.update_flextool import migration_backup as mb
+
+    path, url = _v79_file(tmp_path)
+    before = path.read_bytes()
+
+    def replaced_then_interrupted(src, dst):
+        os.replace(src, dst)
+        raise KeyboardInterrupt("second Ctrl+C")
+
+    monkeypatch.setattr(m, "_migrate_v80_schema_batch", _failing_v80)
+    monkeypatch.setattr(mb, "os", _os_with_replace(replaced_then_interrupted))
+    with pytest.raises(KeyboardInterrupt):
+        m.migrate_database(url)
+    assert path.read_bytes() == before
+    assert not (tmp_path / "db.sqlite.premigration.bak").exists()
+    assert "premigration.bak" not in capsys.readouterr().out
+
+
+def test_windows_copy_restore_interrupted_keeps_the_original(tmp_path, monkeypatch, capsys) -> None:
+    """Windows refuses the rename (another program holds the file), so the copy is written over the file; a Ctrl+C
+    part way through that write leaves the copy, which the console names, and the console said it was a copy."""
+    from flextool.update_flextool import migration_backup as mb
+
+    path, url = _v79_file(tmp_path)
+    before = path.read_bytes()
+    backup = tmp_path / "db.sqlite.premigration.bak"
+
+    def refused(src, dst):
+        raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+
+    def part_copy(src, dst, *args, **kwargs):
+        with open(src, "rb") as f, open(dst, "wb") as g:
+            g.write(f.read(4096))
+        raise KeyboardInterrupt("second Ctrl+C")
+
+    def failing_v80_then_copy_breaks(db):
+        monkeypatch.setattr(mb.shutil, "copy2", part_copy)
+        _failing_v80(db)
+
+    monkeypatch.setattr(mb, "_WINDOWS", True)
+    monkeypatch.setattr(mb, "os", _os_with_replace(refused))
+    monkeypatch.setattr(m, "_migrate_v80_schema_batch", failing_v80_then_copy_breaks)
+    with pytest.raises(KeyboardInterrupt):
+        m.migrate_database(url)
+    printed = capsys.readouterr().out
+    assert "open in another program" in printed
+    assert backup.read_bytes() == before
+    assert str(backup) in printed
+
+
+def test_no_room_for_the_copy_is_a_clear_error(tmp_path, monkeypatch) -> None:
+    """A full disk while the copy is written: the migration does not start, the message says there is no room, the
+    file is unchanged and no partial copy is left."""
+    import errno
+
+    from flextool.update_flextool import migration_backup as mb
+
+    path, url = _v79_file(tmp_path)
+    before = path.read_bytes()
+    real_copy = mb.shutil.copy2
+
+    def disk_full(src, dst, *args, **kwargs):
+        if str(dst).endswith(".premigration.bak"):
+            Path(dst).write_bytes(b"partial")
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_copy(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(mb.shutil, "copy2", disk_full)
+    with pytest.raises(mb.MigrationBackupError, match="no room for its pre-migration copy"):
+        m.migrate_database(url)
+    assert path.read_bytes() == before
+    assert not (tmp_path / "db.sqlite.premigration.bak").exists()
+
+
+def test_a_kept_copy_is_never_overwritten(tmp_path) -> None:
+    """A copy left by an earlier migration (it may be the only original) stops a new migration before anything is
+    written; the message says how to recover it."""
+    from flextool.update_flextool import migration_backup as mb
+
+    path, url = _v79_file(tmp_path)
+    before = path.read_bytes()
+    backup = tmp_path / "db.sqlite.premigration.bak"
+    backup.write_bytes(b"the original of an earlier migration")
+    with pytest.raises(mb.MigrationBackupError, match="still there"):
+        m.migrate_database(url)
+    assert path.read_bytes() == before
+    assert backup.read_bytes() == b"the original of an earlier migration"
