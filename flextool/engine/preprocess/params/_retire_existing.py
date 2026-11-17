@@ -19,8 +19,12 @@ it (``p_entity_divested``).
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING
 
 import polars as pl
+
+if TYPE_CHECKING:
+    from flextool.engine.preprocess.params._cohorts import ExistingEnd
 
 #: Capacities (MW, MWh) closer than this are equal.
 _TOL = 1e-6
@@ -87,8 +91,13 @@ def max_retirable(entity: str,
     return best, best_d
 
 
-def _eol_phrase(entity: str, eol: Mapping[str, float]) -> str:
-    return (f"; its existing capacity ends at year {eol[entity]:g} of the run (lifetime)" if entity in eol else "")
+def _eol_phrase(entity: str, eol: Mapping[str, "ExistingEnd"]) -> str:
+    end = eol.get(entity)
+    if end is None:
+        return ""
+    gone = (f"gone from period {end.d_eol}" if end.d_eol is not None
+            else "it operates to the end of the horizon")
+    return f"; its existing capacity ends at year {end.y_end:g} of the run (lifetime_technical); {gone}"
 
 
 def check_retirement_minimums(*,
@@ -102,7 +111,7 @@ def check_retirement_minimums(*,
                               min_total,
                               prior,
                               carried: Mapping[tuple[str, str], float] | None,
-                              eol: Mapping[str, float],
+                              eol: Mapping[str, "ExistingEnd"],
                               ) -> None:
     """Raise :class:`FlexToolConfigError` for a minimum retirement the pre-existing capacity cannot supply (the
     three conditions of the module docstring), naming the entity, the period and the existing capacity.
@@ -112,7 +121,7 @@ def check_retirement_minimums(*,
     limit (``retire_min_period`` applies); ``total_method_entities`` those with a total limit; ``windows`` is
     :func:`active_windows`; ``pre`` the pre-existing capacity ``{(e, d): MW}``; ``min_period`` /
     ``min_total`` / ``prior`` the Params ``ed_divest_min_period`` / ``e_divest_min_total`` /
-    ``p_entity_divested``; ``eol`` the end-of-life year of the bounded-lifetime entities."""
+    ``p_entity_divested``; ``eol`` the end of life of the bounded-lifetime entities (:func:`._cohorts.existing_ends`)."""
     from flextool.engine.input._solve_state import FlexToolConfigError
     carried = carried or {}
     mins = {k: v for k, v in _ed_values(min_period).items() if v > _TOL}

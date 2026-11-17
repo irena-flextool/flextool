@@ -10,15 +10,17 @@ Three frames (``FlexData.cohort``, ``cohort_alive``, ``dd_forward``):
 
 * ``cohort`` — one row per cohort: ``cohort`` (Utf8 id, unique per entity: ``existing:<run start period>`` /
   ``invest:<decision period>``; ``existing`` when the solve has no period years), ``e`` (entity-union axis),
-  ``kind`` (``existing`` / ``invest``), ``method`` (``lifetime_method`` with its default), ``d_build`` (the
+  ``kind`` (``existing`` / ``invest``), ``method`` (``lifetime_method`` with its default), ``eol_method``
+  (``end_of_life_method`` with its default ``next_seam``: how the end of life is rounded), ``d_build`` (the
   decision period, the key of ``v_invest``; null for existing capacity), ``d_on`` (Utf8: the period the capacity
   starts to operate in: the run start for existing capacity, the decision period or, with a construction lead
   time, the later period of ``ed_invest_commission``), ``y_on`` (start of operation), ``y_life``
   (``lifetime_technical``; ``+inf`` for ``reinvest_automatic``), ``y_end = y_on + y_life`` (the end of life,
   unrounded), ``y_first_life_end`` (existing capacity: the end of its first life, the year a ``no_reinvestment``
-  entity stops investing; null for an investment), ``y_eol`` (``y_end`` rounded to the next seam, ``+inf`` when
-  it lies past the last seam) and ``d_eol`` (Utf8: the run period that starts at ``y_eol``; null at ``+inf`` and
-  at the end of the horizon).
+  entity stops investing; null for an investment), ``y_eol`` (``y_end`` rounded to a seam by ``eol_method``,
+  :func:`._run_calendar.round_end_of_life`: ``+inf`` for ``reinvest_automatic`` and for ``next_seam`` past the last
+  seam) and ``d_eol`` (Utf8: the run period that starts at ``y_eol``; null at ``+inf`` and at the end of the
+  horizon).
 * ``cohort_alive`` — ``[cohort, e, kind, d_build, d, y]``: the periods ``d`` of the solve's ``period_in_use`` in
   which a cohort is in service, ``y`` the year of ``d``.
 * ``dd_forward`` — ``[d_retire, d]``: a retirement decided in ``d_retire`` counts in ``d`` when
@@ -28,8 +30,10 @@ Three frames (``FlexData.cohort``, ``cohort_alive``, ``dd_forward``):
 Years are years of the run: a solve's period years (``p_years_d``, which covers the period history) on the run
 calendar (:func:`cohort_years`, :func:`._run_calendar.run_years`: a period takes its run-calendar year, a branch
 period its anchor's, never a year shifted by an offset).  The seams are those years, the start of the run, and the
-run calendar's period starts and horizon end.  Rounding to the next seam with no tolerance keeps every comparison
-exact: for a period year ``y`` (itself a seam), ``y < Y ⟺ y < next_seam(Y)``.  So a cohort placed by one solve
+run calendar's period starts and horizon end, each year once (a run seam within ``YEAR_TOL`` of a solve year is that
+year, so ``y_eol`` is a period's own year and ``y[d] < y_eol`` compares exactly).  An end of life is rounded with
+the year tolerance ``YEAR_TOL`` under every ``end_of_life_method``; for ``next_seam`` and a period year ``y`` (a
+seam; the seams lie more than ``YEAR_TOL`` apart) ``y < next_seam(Y) ⟺ y < Y − YEAR_TOL``.  So a cohort placed by one solve
 (the existing cohort, built once for the run: :func:`run_existing_cohorts`; an investment realized by an earlier
 solve, carried in the handoff ``realized_cohort``) is in service in a later solve's period ``d`` by the same
 comparison of ``d``'s run year with the carried ``y_on`` / ``y_eol``, with no rounding repeated.  Where two solves
@@ -60,9 +64,17 @@ from flextool.engine.input._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
-from flextool.engine.input._lifetime_roles import LIFETIME_TECHNICAL, NO_REINVESTMENT
+from flextool.engine.input._lifetime_roles import (
+    END_OF_LIFE_METHOD,
+    END_OF_LIFE_METHOD_DEFAULT,
+    END_OF_LIFE_METHODS,
+    ENTITY_CLASSES,
+    LIFETIME_TECHNICAL,
+    NO_REINVESTMENT,
+)
 from flextool.engine.input._solve_state import CommissioningLagError
 from flextool.engine.preprocess.params._period_values import _ed_period_value_map, ed_values_on
+from flextool.engine.preprocess.params._run_calendar import YEAR_TOL, round_end_of_life
 
 if TYPE_CHECKING:
     from flextool.engine.input._input_source import InputSource
@@ -76,16 +88,13 @@ REINVEST_CHOICE = "reinvest_choice"
 LIFETIME_METHODS: tuple[str, ...] = (REINVEST_AUTOMATIC, REINVEST_CHOICE, NO_REINVESTMENT)
 #: The methods whose capacity ends its life (``reinvest_automatic`` capacity is renewed).
 BOUNDED_METHODS: tuple[str, ...] = (REINVEST_CHOICE, NO_REINVESTMENT)
-#: The rounding of an end of life to a seam (the next seam, compared exactly).
-_EOL_ROUNDING = "next_seam"
-_EOL_TOL = 0.0
 
 _INF = float("inf")
 
 
 def _cohort_schema() -> dict[str, pl.DataType]:
     return {"cohort": pl.Utf8, "e": schema_dtype(None, "e"), "kind": pl.Utf8, "method": pl.Utf8,
-            "d_build": schema_dtype(None, "d"), "d_on": pl.Utf8, "y_on": pl.Float64, "y_life": pl.Float64,
+            "eol_method": pl.Utf8, "d_build": schema_dtype(None, "d"), "d_on": pl.Utf8, "y_on": pl.Float64, "y_life": pl.Float64,
             "y_end": pl.Float64, "y_first_life_end": pl.Float64, "y_eol": pl.Float64, "d_eol": pl.Utf8}
 
 
@@ -121,9 +130,10 @@ class _Calendar:
     seams: list[float]
     label: Callable[[float], str | None]
 
-    def eol(self, y_end: float) -> float:
-        from flextool.engine.preprocess.params._run_calendar import snap_to_seam
-        return snap_to_seam(y_end, _EOL_ROUNDING, self.seams, tol=_EOL_TOL)
+    def eol(self, y_end: float, method: str = END_OF_LIFE_METHOD_DEFAULT) -> float:
+        """``y_end`` rounded to a seam by the ``end_of_life_method`` ``method``
+        (:func:`._run_calendar.round_end_of_life`)."""
+        return round_end_of_life(y_end, method, self.seams)
 
 
 def _run_calendar_of(source: "InputSource",
@@ -189,29 +199,80 @@ def _entity_methods(source: "InputSource") -> dict[str, str]:
     return out
 
 
+def end_of_life_methods(source: "InputSource") -> dict[str, str]:
+    """``{entity: end_of_life_method}`` of the units, nodes and connections that have one (explicit, or the
+    schema default the source broadcasts); an entity without one rounds by :data:`END_OF_LIFE_METHOD_DEFAULT`
+    (:func:`eol_methods_of`).  A constant choice (``resolve_param_shape`` refuses a map); a value outside the
+    ``end_of_life_methods`` list raises :class:`FlexToolConfigError`."""
+    from flextool.engine.input._param_shapes import resolve_param_shape
+    from flextool.engine.input._solve_state import FlexToolConfigError
+    out: dict[str, str] = {}
+    for cls in ENTITY_CLASSES:
+        resolved = resolve_param_shape(source, cls, END_OF_LIFE_METHOD)
+        if resolved is None or resolved.frame is None:
+            continue
+        for e, m in resolved.frame.select(pl.col("name").cast(pl.Utf8), pl.col("value").cast(pl.Utf8)).iter_rows():
+            if m is None:
+                continue
+            if m not in END_OF_LIFE_METHODS:
+                raise FlexToolConfigError(f"{cls} {e!r} has end_of_life_method {m!r}: use one of "
+                                          f"{', '.join(END_OF_LIFE_METHODS)}.")
+            out[str(e)] = m
+    return out
+
+
+def eol_methods_of(cohort: pl.DataFrame) -> dict[str, str]:
+    """``{entity: end_of_life_method}`` of the existing rows of a cohort frame (Utf8 or axis labels): the run's
+    rounding of each entity, read where the run placed its existing cohort."""
+    rows = cohort.filter(pl.col("kind") == KIND_EXISTING).select(pl.col("e").cast(pl.Utf8), "eol_method")
+    return {str(e): str(m) for e, m in rows.iter_rows() if m is not None}
+
+
+def run_cohort_calendar(source: "InputSource",
+                        active_solve: str | None,
+                        years: Mapping[str, float],
+                        provider: "object | None") -> _Calendar:
+    """The seams of the run for the period years ``years`` (:func:`cohort_calendar` on the run calendar of
+    ``provider``; the solve's own periods without one)."""
+    return cohort_calendar(_run_calendar_of(source, active_solve, years, provider), years)
+
+
+def end_of_life_years(anchors: pl.DataFrame, cal: _Calendar, eol_methods: Mapping[str, str]) -> pl.Series:
+    """``y_eol`` (Float64, one per row of ``anchors`` ``[e, y_on, life]``, years of the run) of capacity starting to
+    operate at ``y_on`` with the lifetime ``life`` (a null as 0): ``round_end_of_life(y_on + life,
+    end_of_life_method[e])``, the end of the cohort window (:func:`window_end` of a bounded ``lifetime_method``).
+    The investment windows that stop with the capacity (its lifetime fixed cost) end there."""
+    out = [cal.eol((y_on or 0.0) + (life or 0.0), eol_methods.get(str(e), END_OF_LIFE_METHOD_DEFAULT))
+           for e, y_on, life in anchors.select("e", "y_on", "life").iter_rows()]
+    return pl.Series("y_eol", out, dtype=pl.Float64)
+
+
 def _years_frame(years: Mapping[str, float]) -> pl.LazyFrame:
     """``[d, y]`` of ``years`` on the period axis."""
     return (axis_lazyframe({"d": list(years)})
             .with_columns(y=pl.Series("y", [float(v) for v in years.values()], dtype=pl.Float64)))
 
 
-def window_end(y_on: float, y_life: float, method: str, cal: _Calendar) -> tuple[float, float, float]:
+def window_end(y_on: float, y_life: float, method: str, cal: _Calendar,
+               eol_method: str = END_OF_LIFE_METHOD_DEFAULT) -> tuple[float, float, float]:
     """``(y_life, y_end, y_eol)`` of capacity starting to operate at ``y_on`` with the lifetime ``y_life`` under
     ``lifetime_method`` ``method``: ``reinvest_automatic`` capacity is renewed (``+inf`` each); otherwise
-    ``y_end = y_on + y_life`` and ``y_eol = next_seam(y_end)``.  The one lifetime-window rule: the capacity is in
-    service in the periods with ``y_on <= y[d] < y_eol``."""
+    ``y_end = y_on + y_life`` and ``y_eol = round_end_of_life(y_end, eol_method)``.  The one lifetime-window rule:
+    the capacity is in service in the periods with ``y_on <= y[d] < y_eol``."""
     if method == REINVEST_AUTOMATIC:
-        return _INF, _INF, cal.eol(_INF)
+        return _INF, _INF, cal.eol(_INF, eol_method)
     y_end = y_on + y_life
-    return y_life, y_end, cal.eol(y_end)
+    return y_life, y_end, cal.eol(y_end, eol_method)
 
 
 def _existing_rows(source: "InputSource", years: Mapping[str, float], cal: _Calendar) -> list[tuple]:
     """The rows (:func:`_cohort_schema` order, Utf8 labels) of the existing cohorts on the years ``years``."""
     from flextool.engine.preprocess.params._derived import _entity_classes_lookup, run_start_period
     start = run_start_period(dict(years))
+    eol_methods = end_of_life_methods(source)
     if start is None:
-        return [(KIND_EXISTING, e, KIND_EXISTING, method, None, None, None, None, None, None, _INF, None)
+        return [(KIND_EXISTING, e, KIND_EXISTING, method, eol_methods.get(e, END_OF_LIFE_METHOD_DEFAULT), None,
+                 None, None, None, None, None, _INF, None)
                 for e, method in _entity_methods(source).items() if method in LIFETIME_METHODS]
     lifetime = _ed_period_value_map(source, LIFETIME_TECHNICAL, [start])
     process_set, node_set, _ = _entity_classes_lookup(source)
@@ -220,12 +281,13 @@ def _existing_rows(source: "InputSource", years: Mapping[str, float], cal: _Cale
     for e, method in _entity_methods(source).items():
         if method not in LIFETIME_METHODS:
             continue
+        eol_method = eol_methods.get(e, END_OF_LIFE_METHOD_DEFAULT)
         if method != REINVEST_AUTOMATIC and e not in process_set and e not in node_set:
-            y_life, y_end, y_eol = 0.0, 0.0, cal.eol(0.0)
+            y_life, y_end, y_eol = 0.0, 0.0, cal.eol(0.0, eol_method)
         else:
-            y_life, y_end, y_eol = window_end(y_on, lifetime.get((e, start), 0.0), method, cal)
-        rows.append((f"{KIND_EXISTING}:{start}", e, KIND_EXISTING, method, None, start, y_on, y_life, y_end, y_end,
-                     y_eol, cal.label(y_eol)))
+            y_life, y_end, y_eol = window_end(y_on, lifetime.get((e, start), 0.0), method, cal, eol_method)
+        rows.append((f"{KIND_EXISTING}:{start}", e, KIND_EXISTING, method, eol_method, None, start, y_on, y_life,
+                     y_end, y_end, y_eol, cal.label(y_eol)))
     return rows
 
 
@@ -235,7 +297,7 @@ def run_existing_cohorts(source: "InputSource", rc: "RunCalendar | None") -> pl.
     calendar)::
 
         y_on = y[d0],   y_life = lifetime_technical[e, d0] (0 when missing; +inf for reinvest_automatic)
-        y_end = y_first_life_end = y_on + y_life,   y_eol = next_seam(y_end)
+        y_end = y_first_life_end = y_on + y_life,   y_eol = round_end_of_life(y_end, end_of_life_method[e])
 
     The existing cohort is fixed when the run starts: ``_run_model`` builds this frame once and puts it on every
     sub-solve's Provider (:data:`._run_calendar.RUN_EXISTING_COHORT_KEY`); :func:`existing_cohorts` reads it there.
@@ -319,6 +381,7 @@ def invest_cohorts(source: "InputSource",
                    years: Mapping[str, float] | None = None,
                    lineage: pl.DataFrame | None = None,
                    commission_lf: pl.LazyFrame | None = None,
+                   eol_methods: Mapping[str, str] | None = None,
                    ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """``(cohort rows, cohort_alive rows)`` of the investment decisions ``ed_invest`` (``[e, d]``) of entities with a
     ``lifetime_method``::
@@ -326,12 +389,16 @@ def invest_cohorts(source: "InputSource",
         y_on  = y[d_on],  d_on = the period the decision starts to operate in (``commission_lf``'s ``d_c``; the
                 decision period without a construction lead time)
         y_life = lifetime_technical[e, d_build] (0 when missing; +inf for reinvest_automatic)
-        y_end = y_on + y_life,   y_eol = next_seam(y_end)
+        y_end = y_on + y_life,   y_eol = round_end_of_life(y_end, end_of_life_method[e])
         alive = { d ∈ period_in_use : y_walk[d] >= yr_avail (the availability walk, along ``lineage``),
                                        y[d] < y_eol }
 
     The start of the window is the availability walk of :func:`._walks.period_walk_iterator`
-    (``UNBOUNDED_FORWARD``, with the construction lead time of ``commission_lf`` and the scenario ``lineage``)."""
+    (``UNBOUNDED_FORWARD``, with the construction lead time of ``commission_lf`` and the scenario ``lineage``).
+    ``eol_methods`` is each entity's ``end_of_life_method`` (:func:`eol_methods_of` the run's existing cohort; read
+    from ``source`` when not given).  A decision whose rounded end of life is at its own start of operation (a
+    lifetime shorter than the period under ``previous_seam`` / ``closest_seam``) is still offered; a warning names
+    it once per run (:func:`_never_operates_warning`)."""
     from flextool.engine.preprocess.params._walks import WindowMethod, period_walk_iterator
     empty = (pl.DataFrame(schema=_cohort_schema()), pl.DataFrame(schema=_alive_schema()))
     if ed_invest is None or ed_invest.height == 0 or not period_in_use:
@@ -339,6 +406,8 @@ def invest_cohorts(source: "InputSource",
     years = dict(years) if years is not None else cohort_years(source, active_solve, workdir, provider=provider)
     cal = cohort_calendar(_run_calendar_of(source, active_solve, years, provider), years)
     methods = _entity_methods(source)
+    if eol_methods is None:
+        eol_methods = end_of_life_methods(source)
     with_life = axis_lazyframe({"e": [e for e, m in methods.items() if m in LIFETIME_METHODS]})
     anchor, with_life = align_join_dtypes(ed_invest.lazy().select("e", "d"), with_life, ["e"])
     anchor = anchor.join(with_life, on="e", how="semi").collect()
@@ -351,18 +420,23 @@ def invest_cohorts(source: "InputSource",
                                        .select("e", "d", "d_c").collect().iter_rows()):
             starts[(str(e), str(d))] = str(d_c)
     rows: list[tuple] = []
+    never: dict[str, list[tuple[str, float, str]]] = {}
     for e, d, life_v in life.select("e", "d", "value").iter_rows():
         e, d = str(e), str(d)
         method = methods[e]
+        eol_method = eol_methods.get(e, END_OF_LIFE_METHOD_DEFAULT)
         d_on = starts.get((e, d), d)
         if d_on not in years:
             raise CommissioningLagError(
                 f"Investment of {e!r} decided in period {d!r} starts to operate in period {d_on!r}, which has no "
                 f"year in the solve {active_solve!r}: its end of life cannot be placed.")
         y_on = float(years[d_on])
-        y_life, y_end, y_eol = window_end(y_on, float(life_v), method, cal)
-        rows.append((f"{KIND_INVEST}:{d}", e, KIND_INVEST, method, d, d_on, y_on, y_life, y_end, None, y_eol,
-                     cal.label(y_eol)))
+        y_life, y_end, y_eol = window_end(y_on, float(life_v), method, cal, eol_method)
+        if 0.0 < y_life < _INF and y_eol <= y_on + YEAR_TOL:
+            never.setdefault(e, []).append((d, y_life, eol_method))
+        rows.append((f"{KIND_INVEST}:{d}", e, KIND_INVEST, method, eol_method, d, d_on, y_on, y_life, y_end, None,
+                     y_eol, cal.label(y_eol)))
+    _never_operates_warning(source, never)
     cohort = _cohort_frame(rows)
     walk = (period_walk_iterator(source, active_solve, anchor.lazy(), list(period_in_use), list(period_in_use),
                                  window_method=WindowMethod.UNBOUNDED_FORWARD, life_lf=None, factor_side=None,
@@ -380,12 +454,36 @@ def invest_cohorts(source: "InputSource",
     return cohort, alive
 
 
+def _entity_class_names(source: "InputSource") -> dict[str, str]:
+    """``{entity: class}`` of the units, nodes and connections (the class a message names)."""
+    from flextool.engine.preprocess.params._existing import _entity_class_lf
+    return {str(e): str(c) for e, c in _entity_class_lf(source).select("e", "ec").collect().iter_rows()}
+
+
+def _never_operates_warning(source: "InputSource", never: Mapping[str, list[tuple[str, float, str]]]) -> None:
+    """Warn, once per run and entity, about investment decisions ``never[e] = [(period, lifetime, method)]`` whose
+    end of life is rounded to their own start of operation: such capacity is in service in no period."""
+    if not never:
+        return
+    from flextool.engine import _behaviour_changes
+    classes = _entity_class_names(source)
+    for e, decisions in sorted(never.items()):
+        periods = ", ".join(d for d, _life, _m in decisions)
+        _d, life, method = decisions[0]
+        _behaviour_changes.warn_once(
+            ("investment_never_operates", e),
+            f"Warning: {classes.get(e, 'entity')} {e}: investments decided in {periods} would never operate "
+            f"(lifetime_technical {life:g} years, end_of_life_method {method}): their end of life is rounded to the "
+            "start of the period they start to operate in. They are still offered.")
+
+
 def seed_cohorts(seed: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """``(cohort rows, cohort_alive rows)`` of an ``edd_invest`` seed ``[e, d_invest, d]`` (a sub-solve whose
     investment walk was not run): one cohort per decision, its years unknown (``y_on`` null, ``y_eol = +inf``) and
     its alive periods those of the seed."""
     keys = seed.select("e", "d_invest").unique(maintain_order=True)
-    rows = [(f"{KIND_INVEST}:{d}", str(e), KIND_INVEST, None, str(d), None, None, None, None, None, _INF, None)
+    rows = [(f"{KIND_INVEST}:{d}", str(e), KIND_INVEST, None, None, str(d), None, None, None, None, None, _INF,
+             None)
             for e, d in keys.iter_rows()]
     cohort = _cohort_frame(rows)
     triples = [(f"{KIND_INVEST}:{di}", str(e), KIND_INVEST, str(di), str(d), None)
@@ -441,7 +539,8 @@ def build_cohort_frames(source: "InputSource",
     years = cohort_years(source, active_solve, workdir, provider=provider)
     existing = existing_cohorts(source, active_solve, workdir, provider=provider, years=years)
     inv_rows, inv_alive = invest_cohorts(source, active_solve, ed_invest, period_in_use, workdir, provider=provider,
-                                         years=years, lineage=lineage, commission_lf=commission_lf)
+                                         years=years, lineage=lineage, commission_lf=commission_lf,
+                                         eol_methods=eol_methods_of(existing))
     seeded = inv_alive.height == 0 and seed is not None and seed.height > 0
     if seeded:
         inv_rows, inv_alive = seed_cohorts(seed)
@@ -455,6 +554,29 @@ def build_cohort_frames(source: "InputSource",
 # ---------------------------------------------------------------------------
 # Views
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ExistingEnd:
+    """The end of life of an entity's existing capacity (:func:`existing_ends`)."""
+
+    #: The end of life, unrounded (years of the run).
+    y_end: float
+    #: ``y_end`` rounded by the entity's ``end_of_life_method``: in service while ``y[d] < y_eol``.
+    y_eol: float
+    #: The run period that starts at ``y_eol`` (``None`` at the end of the horizon and at ``+inf``).
+    d_eol: str | None
+
+
+def existing_ends(cohort: pl.DataFrame) -> dict[str, ExistingEnd]:
+    """``{entity: ExistingEnd}`` of the existing capacity of the ``reinvest_choice`` / ``no_reinvestment``
+    entities (``reinvest_automatic`` capacity is renewed and has none)."""
+    rows = (cohort.filter((pl.col("kind") == KIND_EXISTING) & pl.col("method").is_in(list(BOUNDED_METHODS))
+                          & pl.col("y_end").is_not_null())
+                  .select("e", "y_end", "y_eol", "d_eol"))
+    return {str(e): ExistingEnd(y_end=float(y), y_eol=_INF if y_eol is None else float(y_eol),
+                                d_eol=None if d_eol is None else str(d_eol))
+            for e, y, y_eol, d_eol in rows.iter_rows()}
 
 
 def existing_eol(cohort: pl.DataFrame) -> dict[str, float]:
@@ -785,6 +907,7 @@ __all__ = [
     "BOUNDED_METHODS",
     "CohortFrames",
     "ExistingCapacity",
+    "ExistingEnd",
     "KIND_EXISTING",
     "KIND_INVEST",
     "LIFETIME_METHODS",
@@ -796,6 +919,10 @@ __all__ = [
     "cohort_years",
     "existing_cohorts",
     "existing_capacity",
+    "end_of_life_methods",
+    "end_of_life_years",
+    "eol_methods_of",
+    "existing_ends",
     "existing_eol",
     "existing_expired",
     "InService",
@@ -808,6 +935,7 @@ __all__ = [
     "realized_cohort_schema",
     "realized_cohorts",
     "retire_active",
+    "run_cohort_calendar",
     "run_existing_cohorts",
     "seed_cohorts",
     "window_end",

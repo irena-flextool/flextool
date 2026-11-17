@@ -25,13 +25,18 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine.input._lifetime_roles import NO_REINVESTMENT
+from flextool.engine.input._lifetime_roles import END_OF_LIFE_METHOD_DEFAULT, NO_REINVESTMENT
 from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine.preprocess._provider_io import _emit
 from flextool.engine.preprocess.params._branch import fan_period_labels
-from flextool.engine.preprocess.params._cohorts import cohort_calendar, window_end
+from flextool.engine.preprocess.params._cohorts import cohort_calendar, eol_methods_of, window_end
 from flextool.engine.preprocess.params._derived import _expand_invest_branch_periods, run_start_period
-from flextool.engine.preprocess.params._run_calendar import read_run_calendar, run_years, solve_calendar
+from flextool.engine.preprocess.params._run_calendar import (
+    RUN_EXISTING_COHORT_KEY,
+    read_run_calendar,
+    run_years,
+    solve_calendar,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -707,11 +712,13 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
 
     # edd_invest [entity, period_history, period]: the periods d of period_in_use each investment decision
     # (e, d_inv) of ed_invest is in service in, by the cohorts' window rule (_cohorts.window_end, from the decision
-    # year; a construction lead time is not applied here): y[d_inv] <= y[d] < y_eol, years of the run.  Grouped by
+    # year; a construction lead time is not applied here): y[d_inv] <= y[d] < y_eol, years of the run, the end of
+    # life rounded by the entity's end_of_life_method (the run's existing cohort carries it).  Grouped by
     # lifetime_method (reinvest_choice, reinvest_automatic, no_reinvestment), then entity, decision and period.
     rc = read_run_calendar(provider)
     years = run_years(p_years_d, rc)
     cal = cohort_calendar(rc if rc is not None else solve_calendar(years, None), years)
+    eol_methods = eol_methods_of(provider.get(RUN_EXISTING_COHORT_KEY))
     invest_set = frozenset(entityInvest)
     edd_invest: list[tuple[str, str, str]] = []
     for method in ("reinvest_choice", "reinvest_automatic", NO_REINVESTMENT):
@@ -722,7 +729,8 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
                 if (e, d_inv) not in ed_invest_set:
                     continue
                 y_on = years.get(d_inv, 0.0)
-                _life, _end, y_eol = window_end(y_on, edEntity_lifetime.get((e, d_inv), 0.0), method, cal)
+                _life, _end, y_eol = window_end(y_on, edEntity_lifetime.get((e, d_inv), 0.0), method, cal,
+                                                eol_methods.get(e, END_OF_LIFE_METHOD_DEFAULT))
                 edd_invest.extend((e, d_inv, d) for d in period_in_use
                                   if y_on <= years.get(d, 0.0) < y_eol)
     _emit_tuples(provider, "solve_data/edd_invest.csv",

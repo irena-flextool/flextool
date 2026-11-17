@@ -110,6 +110,60 @@ def test_rounding_tolerance_merges_a_year_just_past_a_seam() -> None:
     assert snap_to_seam(10.0 + 1e-12, "next_seam", [0.0, 5.0, 10.0, 15.0, 20.0], tol=YEAR_TOL) == 10.0
 
 
+# Periods of 5, 5 and 10 years: seams {0, 5, 10, 20}, the horizon ends at 20.  Each row: the end of life Y and its
+# rounding by closest_seam / previous_seam / next_seam, derived by hand:
+#   9  (lifetime 12, age 3): 9 − 5 = 4 > 10 − 9 = 1 → closest 10; previous 5; next 10
+#   12 (lifetime 12):        12 − 10 = 2 < 20 − 12 = 8 → closest 10; previous 10; next 20
+#   7.5:                     a tie (2.5, 2.5) goes to the later seam → closest 10; previous 5; next 10
+#   16:                      16 − 10 = 6 > 20 − 16 = 4 → closest 20; previous 10; next 20
+#   23 (lifetime 25, age 2): past the horizon end: previous / closest 20 (in service to the end), next +inf
+#   −2 (lifetime 10, age 12): ended before the model start → the model start 0 under every method
+#   3:                       3 − 0 = 3 > 5 − 3 = 2 → closest 5; previous 0; next 5
+#   5, 5 ± 1e-12:            on a seam (within the year tolerance) → 5 under every method
+_L_SEAMS = [0.0, 5.0, 10.0, 20.0]
+
+
+@pytest.mark.parametrize("y_end,closest,previous,nxt", [
+    (9.0, 10.0, 5.0, 10.0),
+    (12.0, 10.0, 10.0, 20.0),
+    (7.5, 10.0, 5.0, 10.0),
+    (16.0, 20.0, 10.0, 20.0),
+    (23.0, 20.0, 20.0, math.inf),
+    (-2.0, 0.0, 0.0, 0.0),
+    (3.0, 5.0, 0.0, 5.0),
+    (5.0, 5.0, 5.0, 5.0),
+    (5.0 + 1e-12, 5.0, 5.0, 5.0),
+    (5.0 - 1e-12, 5.0, 5.0, 5.0),
+    (math.inf, math.inf, math.inf, math.inf),
+])
+def test_end_of_life_rounding_by_method(y_end, closest, previous, nxt) -> None:
+    from flextool.engine.preprocess.params._run_calendar import round_end_of_life
+    for method, want in (("closest_seam", closest), ("previous_seam", previous), ("next_seam", nxt)):
+        assert round_end_of_life(y_end, method, _L_SEAMS) == want, method
+
+
+@pytest.mark.parametrize("y_end,method,alive", [
+    (9.0, "closest_seam", ["p1", "p2"]), (9.0, "next_seam", ["p1", "p2"]), (9.0, "previous_seam", ["p1"]),
+    (12.0, "closest_seam", ["p1", "p2"]), (12.0, "previous_seam", ["p1", "p2"]),
+    (12.0, "next_seam", ["p1", "p2", "p3"]),
+    (23.0, "closest_seam", ["p1", "p2", "p3"]), (23.0, "previous_seam", ["p1", "p2", "p3"]),
+    (23.0, "next_seam", ["p1", "p2", "p3"]),
+])
+def test_alive_periods_and_end_of_life_period_by_method(y_end, method, alive) -> None:
+    """In service in ``d`` while ``y[d] < y_eol`` (period years 0, 5, 10); the end-of-life period is the period that
+    starts at ``y_eol`` (none at the horizon end or +inf): 10 → p3, 5 → p2, 20 / +inf → none."""
+    from flextool.engine.preprocess.params._cohorts import cohort_calendar
+    from flextool.engine.preprocess.params._run_calendar import RunCalendar, round_end_of_life
+    years = {"p1": 0.0, "p2": 5.0, "p3": 10.0}
+    rc = RunCalendar(years=dict(years), horizon_end=20.0, years_represented={"p1": 5.0, "p2": 5.0, "p3": 10.0})
+    cal = cohort_calendar(rc, years)
+    assert cal.seams == _L_SEAMS
+    y_eol = cal.eol(y_end, method)
+    assert y_eol == round_end_of_life(y_end, method, _L_SEAMS)
+    assert [d for d, y in years.items() if y < y_eol] == alive
+    assert cal.label(y_eol) == {10.0: "p3", 5.0: "p2"}.get(y_eol)
+
+
 # ---------------------------------------------------------------------------
 # Existing capacity
 # ---------------------------------------------------------------------------

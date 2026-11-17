@@ -3176,8 +3176,8 @@ def _eq_retired_existing(b: _Build) -> None:
     #   ∀ (n,d) with some (n,d′,d) ∈ retired, n ∈ nodeState
     #   retired[e,d] = Σ_{d′ : (e,d′,d) ∈ retired} v_divest[e,d′] (_capacity), retired = {(e,d′,d) : (e,d′) ∈
     #     ed_divest_set, yr[d′] ≤ yr[d] < EOL[e]}, EOL[e] the end of life of the entity's existing cohort:
-    #     yr[d0] + lifetime_technical[e,d0] rounded up to a period start, d0 the run's first period (none for
-    #     reinvest_automatic)
+    #     yr[d0] + lifetime_technical[e,d0] rounded to a period start by end_of_life_method, d0 the run's first
+    #     period (none for reinvest_automatic)
     #   pre_existing = p_entity_pre_existing (the existing cohort's size: the user's existing × unitsize,
     #     lifetime-gated, MW, MWh)
     #   retired_carried = p_entity_retired_carried (the existing cohort's retirements that earlier solves of a
@@ -5384,14 +5384,16 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     #   σ = clip((yr[c] + n − s_y)/w_y, 0, 1) for reinvest_choice / no_reinvestment (exact years: the period the
     #     payback time ends in pays only its years before the end); σ = 1 for reinvest_automatic
     #   lifetime_fixed_cost[p,d] = fixed_cost[p,c]·1000 · Σ_{d′ ∈ L(p,d)} inflation_op[d′]
-    #   L(p,d) = the solve's periods d′ with yr[c] ≤ yr[d′] < yr[c] + lifetime_technical[p,c] (reinvest_choice /
-    #     no_reinvestment; no upper end for reinvest_automatic)
+    #   L(p,d) = the solve's periods d′ with yr[c] ≤ yr[d′] < y_eol[p,d] (reinvest_choice / no_reinvestment; no
+    #     upper end for reinvest_automatic): the periods the cohort of the decision is in service in, y_eol =
+    #     round_end_of_life(yr[c] + lifetime_technical[p,c], end_of_life_method[p]) (engine.md "Capacity symbols")
     #   ann(c, r, n) = c·1000·r / (1 − (1+r)^−n) (c·1000 / n for r = 0)
     # Cost of process capacity decided in period d, currency/MW: the investment annuity, paid for payback_time
     # years from the start of operation within the horizon (discounted per year), and the inflation-adjusted fixed
-    # cost over the periods of its technical lifetime.  With a construction lead time the capacity operates from
-    # its start of operation c(d): both windows start there, and the invest cost, interest rate, payback time,
-    # lifetime and fixed cost are those of c(d) (invest_cost is an overnight cost); without one c(d) = d.  No w_op:
+    # cost over the periods the capacity is in service (it stops at the rounded end of life).  With a construction
+    # lead time the capacity operates from its start of operation c(d): both windows start there, and the invest
+    # cost, interest rate, payback time, lifetime and fixed cost are those of c(d) (invest_cost is an overnight
+    # cost); without one c(d) = d.  No w_op:
     # both factors are already per period.  A solve with invest variables and neither cost frame is an error, not
     # a free investment.
     if b.has_invest_p:

@@ -93,6 +93,7 @@ from flextool.engine.preprocess.params._cohorts import (
     build_cohort_frames,
     cohort_years,
     existing_cohorts,
+    existing_ends,
     existing_eol,
     invest_alive,
     no_reinvestment_closed,
@@ -5530,7 +5531,7 @@ def _check_retirement_minimums(flex_data: object,
         min_total=getattr(flex_data, "e_divest_min_total", None),
         prior=p_entity_divested_from_handoff(provider=provider),
         carried=ed_values(p_entity_retired_carried_from_provider(workdir, provider=provider)),
-        eol=existing_eol(existing_cohorts(source, active_solve, workdir, provider=provider)))
+        eol=existing_ends(existing_cohorts(source, active_solve, workdir, provider=provider)))
 
 
 def _end_of_life_notice(source: "InputSource",

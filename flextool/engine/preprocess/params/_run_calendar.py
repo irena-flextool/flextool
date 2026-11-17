@@ -18,6 +18,8 @@ from typing import Iterable, Mapping
 
 import polars as pl
 
+from flextool.engine.input._lifetime_roles import END_OF_LIFE_METHODS
+
 #: Provider key of the run calendar frame ``[solve, period, yr, years_represented]``.
 RUN_CALENDAR_KEY = "solve_data/run_period_calendar"
 #: Provider key of the existing cohorts of the run (:func:`._cohorts.run_existing_cohorts`: Utf8 labels, run
@@ -83,6 +85,26 @@ def snap_to_seam(t_star: float, method: str, seams: list[float], tol: float = YE
     if lo is None:
         return hi
     return lo if (t_star - lo) < (hi - t_star) - tol else hi
+
+
+def round_end_of_life(y_end: float, method: str, seams: list[float], tol: float = YEAR_TOL) -> float:
+    """The end of life ``y_eol`` of capacity whose life ends at the year ``y_end``, rounded to a seam by the
+    ``end_of_life_method`` ``method`` (:func:`snap_to_seam`, two years within ``tol`` the same seam)::
+
+        +inf                              if y_end = +inf (reinvest_automatic: renewed, never ends)
+        seams[0]                          if y_end < seams[0] − tol (ended before the model start)
+        snap_to_seam(y_end, method)       otherwise
+
+    Past the last seam ``next_seam`` gives ``+inf`` and ``previous_seam`` / ``closest_seam`` the last seam (the end
+    of the horizon): in service to the end under all three.  The capacity is in service in the periods with
+    ``y[d] < y_eol``."""
+    if method not in END_OF_LIFE_METHODS:
+        raise ValueError(f"Unknown end_of_life_method {method!r}: use one of {', '.join(END_OF_LIFE_METHODS)}.")
+    if y_end == float("inf"):
+        return y_end
+    if seams and y_end < seams[0] - tol:
+        return seams[0]
+    return snap_to_seam(y_end, method, seams, tol)
 
 
 def solve_year_offset(rc: RunCalendar, years: Mapping[str, float]) -> tuple[float | None, str | None]:
@@ -200,6 +222,7 @@ __all__ = [
     "YEAR_TOL",
     "build_run_calendar",
     "read_run_calendar",
+    "round_end_of_life",
     "run_calendar_from_frame",
     "run_years",
     "snap_to_seam",

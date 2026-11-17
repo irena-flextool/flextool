@@ -64,8 +64,9 @@ Algorithm:
       - investment annuity, ``reinvest_choice`` / ``no_reinvestment``: the represented years of the solve's
         periods in ``[pdy[d], pdy[d] + payback_time[e, d])``, in exact years: the period the payback time ends
         in counts only its years before the end (:data:`._walks.WindowMethod.PAYBACK_YEARS`).
-      - lifetime fixed cost, ``reinvest_choice`` / ``no_reinvestment``:
-        ``pdy[d_all] ∈ [pdy[d], pdy[d] + lifetime_technical[e, d])``.
+      - lifetime fixed cost, ``reinvest_choice`` / ``no_reinvestment``: ``pdy[d_all] ∈ [pdy[d], y_eol)``,
+        ``y_eol = round_end_of_life(pdy[d] + lifetime_technical[e, d], end_of_life_method[e])`` (the periods the
+        cohort is in service; :func:`_window_life_to_end_of_life`).
       - ``reinvest_automatic``: ``pdy[d_all] ≥ pdy[d]``.
       - divest side: always the bounded form using ``lifetime_technical``.
   * ``inflation_factor[d_all]``:
@@ -1136,6 +1137,7 @@ def lifetime_fixed_cost_invest_lf(
         lineage: pl.DataFrame | None = None,
         commission: pl.DataFrame | None = None,
         year_rows: pl.DataFrame | None = None,
+        provider: "object | None" = None,
         ) -> pl.LazyFrame:
     """Variant 3: ``ed_lifetime_fixed_cost`` (invest-side lifetime FC).
 
@@ -1148,8 +1150,10 @@ def lifetime_fixed_cost_invest_lf(
 
     Same window dispatch as :func:`npv_invest_discounted_lf`
     (choice/no_invest → bounded; automatic → unbounded), with
-    ops_factor (not inv_factor) and edEntity_lifetime as the bound.
-    See L292-321.
+    ops_factor (not inv_factor).  The bounded window ends at the cohort's
+    rounded end of life ``y_eol = round_end_of_life(y_on + lifetime_technical,
+    end_of_life_method)`` (:func:`_window_life_to_end_of_life`): the fixed cost
+    stops with the capacity, in the periods of ``cohort_alive``.
 
     ``lineage`` — see :func:`._walks.period_walk_iterator`; the
     :func:`._branch.annuity_window_lineage_df` frame in a stochastic fan, ``None`` otherwise.
@@ -1185,6 +1189,7 @@ def lifetime_fixed_cost_invest_lf(
         life_lf = _ed_lifetime_lf(source, all_e_lf, pwh_lf)
     else:
         life_lf = _at_start_of_operation(ed_anchor_lf, lambda lf: _ed_lifetime_on_lf(source, lf), commission, "life")
+    life_lf = _window_life_to_end_of_life(source, active_solve, life_lf, commission, provider=provider)
     commission_lf = _commission_walk_lf(commission)
 
     bounded = period_walk_iterator(
@@ -1225,6 +1230,52 @@ def lifetime_fixed_cost_invest_lf(
                   ),
               )
               .select("e", "d", "value"))
+
+
+def _window_life_to_end_of_life(source: "InputSource",
+                                 active_solve: str | None,
+                                 life_lf: pl.LazyFrame,
+                                 commission: pl.DataFrame | None,
+                                 *,
+                                 provider: "object | None") -> pl.LazyFrame:
+    """``life_lf`` ``[e, d, life]`` (the lifetime of decision ``(e, d)`` at its start of operation) with ``life``
+    the years from the start of operation ``y_on`` to the rounded end of life of its cohort, so that the bounded walk
+    ``yr[d′] < yr_avail + life`` keeps the periods ``y_on ≤ yr[d′] < y_eol``::
+
+        y_on  = y[c(d)]  (years of the run, :func:`._cohorts.cohort_years`; c(d) = d without a lead time)
+        y_eol = round_end_of_life(y_on + life, end_of_life_method[e])   (:func:`._cohorts.end_of_life_years`)
+        life  = y_eol − y_on − YEAR_TOL / 2
+
+    The half tolerance keeps the period starting at ``y_eol`` out whatever the float rounding of
+    ``y_on + (y_eol − y_on)`` (period starts lie more than ``YEAR_TOL`` apart).  Under ``next_seam`` the walk keeps
+    the same periods as with the raw lifetime.  A decision whose start of operation has no year keeps its
+    lifetime."""
+    from flextool.engine.preprocess.params._cohorts import (
+        cohort_years,
+        end_of_life_years,
+        eol_methods_of,
+        existing_cohorts,
+        run_cohort_calendar,
+    )
+    from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
+    years = cohort_years(source, active_solve, None, provider=provider)
+    if not years:
+        return life_lf
+    cal = run_cohort_calendar(source, active_solve, years, provider)
+    eol = eol_methods_of(existing_cohorts(source, active_solve, provider=provider, years=years))
+    life = life_lf.collect()
+    starts: dict[tuple[str, str], str] = {}
+    if commission is not None and commission.height > 0:
+        starts = {(str(e), str(d)): str(d_c)
+                  for e, d, d_c in commission.select("e", "d", "d_c").iter_rows() if d_c is not None}
+    y_on = [years.get(starts.get((str(e), str(d)), str(d))) for e, d in life.select("e", "d").iter_rows()]
+    life = life.with_columns(y_on=pl.Series("y_on", y_on, dtype=pl.Float64))
+    y_eol = end_of_life_years(life, cal, eol)
+    return (life.with_columns(y_eol=y_eol)
+                .with_columns(life=pl.when(pl.col("y_on").is_null()).then(pl.col("life"))
+                                     .otherwise(pl.col("y_eol") - pl.col("y_on") - YEAR_TOL / 2))
+                .drop("y_on", "y_eol")
+                .lazy())
 
 
 def lifetime_fixed_cost_divest_lf(
@@ -1453,6 +1504,7 @@ def ed_lifetime_fixed_cost_from_source(
         lineage: pl.DataFrame | None = None,
         commission: pl.DataFrame | None = None,
         year_rows: pl.DataFrame | None = None,
+        provider: "object | None" = None,
         ) -> "Param | None":
     """Public entry: ``ed_lifetime_fixed_cost[e, d]``.
 
@@ -1467,7 +1519,7 @@ def ed_lifetime_fixed_cost_from_source(
     out = (lifetime_fixed_cost_invest_lf(
               source, active_solve,
               period_with_history, period_in_use, period_universe,
-              lineage=lineage, commission=commission, year_rows=year_rows)
+              lineage=lineage, commission=commission, year_rows=year_rows, provider=provider)
               .select("e", "d", "value")
               .sort("e", "d")
               .collect())
@@ -1525,10 +1577,12 @@ def ed_lifetime_fixed_cost_divest_from_source(
 #   yr_run, pyr: the solve's own periods from its period_with_history and years_represented, the other run
 #   periods from the run calendar.
 # OUT. edd_operating_window[e,d_invest,d] — run periods d in which the capacity of decision (e, d_invest)
-#   operates: yr_run[d] ≥ yr_run[c(d_invest)], and < yr_run[c(d_invest)] + lifetime_technical[e, c(d_invest)] for
-#   reinvest_choice / no_reinvestment (unbounded for reinvest_automatic); c(d) is the start of operation (d without
-#   a construction lead time).  edd_retire_window[e,d_divest,d]: yr_run[d_divest] ≤ yr_run[d] < EOL[e] (the end
-#   of life of the pre-existing capacity, from the start of the run; the end of the run for reinvest_automatic),
+#   operates: yr_run[d] ≥ yr_run[c(d_invest)], and < y_eol = round_end_of_life(yr_run[c(d_invest)] +
+#   lifetime_technical[e, c(d_invest)], end_of_life_method[e]) for reinvest_choice / no_reinvestment (unbounded for
+#   reinvest_automatic): the periods its cohort is in service; c(d) is the start of operation (d without a
+#   construction lead time).  edd_retire_window[e,d_divest,d]: yr_run[d_divest] ≤ yr_run[d] < EOL[e] (the rounded
+#   end of life y_eol of the pre-existing capacity, from the start of the run; the end of the run for
+#   reinvest_automatic),
 #   the window of _cohorts.retire_active.  edd_salvage_window[e,d_divest,d]: yr_run[d] ∈ [yr_run[d_divest],
 #   yr_run[d_divest] + lifetime_technical[e, d_divest]), the window the net salvage value is spread over.  In a
 #   stochastic fan only the pairs of the walk lineage (each calendar period once).
@@ -2041,6 +2095,18 @@ def apply_run_cost_fields(flex_data: object,
                      .join(life, on=["e", "d"], how="left")
                      .with_columns(life=pl.col("life").fill_null(0.0))
                      .join(_lifetime_kinds(source, fc_pairs.select("e").unique()), on="e", how="inner"))
+        # The operating window ends at the cohort's rounded end of life: life = y_eol − yr_avail (_run_window
+        # compares yr[d′] < yr_avail + life − YEAR_TOL, so the period starting at y_eol is out).
+        from flextool.engine.preprocess.params._cohorts import (
+            end_of_life_years,
+            eol_methods_of,
+            existing_cohorts,
+            run_cohort_calendar,
+        )
+        eol = eol_methods_of(existing_cohorts(source, active_solve, workdir, provider=provider))
+        y_eol = end_of_life_years(anchors.rename({"yr_avail": "y_on"}),
+                                  run_cohort_calendar(source, active_solve, yr, provider), eol)
+        anchors = anchors.with_columns(life=y_eol - anchors["yr_avail"])
         walk = _run_window(anchors, yr, lineage, period_in_use)
         flex_data.edd_operating_window = _window_frame(walk.join(vintages, on=["e", "d"], how="semi"), "d_invest")
         if inv.height > 0:
@@ -2052,19 +2118,19 @@ def apply_run_cost_fields(flex_data: object,
             if inv.height > 0:
                 flex_data.ed_entity_annual_discounted_run = _ed_param(_lump(paid, ann, None, inv))
 
-    # Retirement side: from the retirement period until the end of life of the existing capacity (the end of the
-    # run for reinvest_automatic), the window of _cohorts.retire_active on the run calendar.
+    # Retirement side: from the retirement period until the rounded end of life ``y_eol`` of the existing capacity
+    # (the end of the run for reinvest_automatic), the window of _cohorts.retire_active on the run calendar.
     div = anchors_of("ed_divest_set", _DIVEST_NOT_ALLOWED, period_invest)
     if div.height > 0:
-        from flextool.engine.preprocess.params._cohorts import existing_cohorts, existing_eol
+        from flextool.engine.preprocess.params._cohorts import existing_cohorts, existing_ends
         from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
         div_lf = _anchor_lf(div)
         anchors = (year_of_start(div, False)
                      .with_columns(life=pl.lit(0.0), kind=pl.lit("unbounded")))
         walk = _run_window(anchors, yr, lineage, period_in_use)
-        eol = existing_eol(existing_cohorts(source, active_solve, workdir, provider=provider))
+        eol = existing_ends(existing_cohorts(source, active_solve, workdir, provider=provider))
         if eol:
-            ends = pl.DataFrame({"e": list(eol), "end": [float(v) for v in eol.values()]},
+            ends = pl.DataFrame({"e": list(eol), "end": [v.y_eol for v in eol.values()]},
                                 schema={"e": pl.Utf8, "end": pl.Float64})
             periods = pl.DataFrame({"d_all": list(yr), "y": [float(v) for v in yr.values()]},
                                    schema={"d_all": pl.Utf8, "y": pl.Float64})
@@ -2373,7 +2439,7 @@ def apply_invest_lumps(flex_data: object,
         flex_data.ed_entity_annual_discounted = annuity
     fixed = ed_lifetime_fixed_cost_from_source(
         source, active_solve, period_with_history, period_in_use, period_universe,
-        lineage=lineage, commission=commission, year_rows=year_rows)
+        lineage=lineage, commission=commission, year_rows=year_rows, provider=provider)
     if fixed is not None:
         flex_data.ed_lifetime_fixed_cost = fixed
     _register_invest_lumps(flex_data, provider)
