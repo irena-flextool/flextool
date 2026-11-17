@@ -180,7 +180,7 @@ def test_investment_that_never_operates_is_not_offered(tmp_path_factory, capsys)
     assert _behaviour_changes.already_warned(("investment_never_operates", WIND))
     assert ("Warning: unit wind_plant: investments decided in p2030 would never operate (lifetime_technical 7 "
             "years, end_of_life_method previous_seam)") in printed
-    assert "They are not offered." in printed
+    assert "They are not offered (their investment minimums do not apply)." in printed
     assert printed.count("investments decided in") == 1
     assert _offered(step) == ["p2020", "p2025"]
     assert _invest_columns(step) == ["p2020", "p2025"]

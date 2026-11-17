@@ -69,7 +69,7 @@ in `flextool.engine.preprocess._provider_keys`; import as
 
 | Key constant | What it overrides | Required columns |
 |---|---|---|
-| `K.HANDOFF_REALIZED_COHORT` | The investments realised by the earlier solves, one row per cohort (investment decision): its start of operation and end of life (years of the run) and its size. The next solve's capacity is the user's `existing` of each period plus the cohorts in service there | `entity, cohort, kind, method, period_decided, period_online, y_on, y_life, y_end, y_first_life_end, y_eol, period_eol, size` |
+| `K.HANDOFF_REALIZED_COHORT` | The investments realised by the earlier solves, one row per cohort (investment decision): its start of operation and end of life (years of the run) and its size. The next solve's capacity is the user's `existing` of each period plus the cohorts in service there | `entity, cohort, kind, method, eol_method, period_decided, period_online, y_on, age, y_life, y_end, y_first_life_end, y_eol, period_eol, size` |
 | `K.HANDOFF_REALIZED_RETIRE` | Retired capacity per cohort and decision period (counts while the cohort is in service) | `entity, cohort, period, value` |
 | `K.HANDOFF_DIVEST_CUMULATIVE` | Cumulative divestments carried forward | `entity, value` |
 | `K.HANDOFF_ROLL_END_STATE` | End-of-horizon storage state (downward roll) | `node, value` |
@@ -234,9 +234,9 @@ def _make_override_callback(scenario: str, solve_order: list[str]):
         # ``y_on`` and end of life ``y_eol`` in years of the run, and
         # ``size`` in MW (MWh for storage).
         frame = frame.select(
-            "entity", "cohort", "kind", "method", "period_decided",
-            "period_online", "y_on", "y_life", "y_end",
-            "y_first_life_end", "y_eol", "period_eol", "size",
+            "entity", "cohort", "kind", "method", "eol_method",
+            "period_decided", "period_online", "y_on", "age", "y_life",
+            "y_end", "y_first_life_end", "y_eol", "period_eol", "size",
         )
         return {K.HANDOFF_REALIZED_COHORT: frame}
 

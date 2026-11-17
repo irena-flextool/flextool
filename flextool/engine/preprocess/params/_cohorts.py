@@ -639,7 +639,8 @@ def _never_operates_warning(source: "InputSource", never: Mapping[str, list[tupl
             ("investment_never_operates", e),
             f"Warning: {classes.get(e, 'entity')} {e}: investments decided in {periods} would never operate "
             f"(lifetime_technical {life:g} years, end_of_life_method {method}): their end of life is rounded to the "
-            "start of the period they start to operate in. They are not offered.")
+            "start of the period they start to operate in. They are not offered (their investment minimums do not "
+            "apply).")
 
 
 def _closest_seam_notice(source: "InputSource", rows: list[tuple], cal: _Calendar) -> None:
