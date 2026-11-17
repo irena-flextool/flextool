@@ -11013,6 +11013,29 @@ def _v81_end_of_life_marker(db) -> None:
         _v77_set_marker(db, "end_of_life_closest_seam", json.dumps({"since": 81, "entities": sorted(entities)}))
 
 
+def _v81_fixed_cost_marker(db) -> None:
+    """Part 8 of v81: the behaviour-change marker ``fixed_cost_per_operating_period`` (``{"since": 81, "entities":
+    [...]}``) on a database where an entity with an ``invest_method`` that allows investment (in some alternative)
+    has a ``fixed_cost`` whose values differ (a period map, in some alternative): new capacity now pays the
+    fixed_cost of each period it operates in (before: that of the period it came online, in every period).  A run
+    names those whose fixed cost changes.  No value is rewritten.  Idempotent: a rerun finds the marker written.
+    """
+    no_invest = {"not_allowed", "retire_period", "retire_total", "retire_no_limit", "retire_period_total"}
+    entities: set[str] = set()
+    for cls in ("unit", "connection", "node"):
+        if not db.get_item("entity_class", name=cls):
+            continue
+        investing = {pv["entity_byname"][0] for pv in db.find_parameter_values(
+            entity_class_name=cls, parameter_definition_name="invest_method")
+            if from_database(pv["value"], pv["type"]) not in no_invest}
+        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name="fixed_cost"):
+            name = pv["entity_byname"][0]
+            if name in investing and len(set(_v79_numbers(from_database(pv["value"], pv["type"])))) > 1:
+                entities.add(name)
+    if entities:
+        _v77_set_marker(db, "fixed_cost_per_operating_period", json.dumps({"since": 81, "entities": sorted(entities)}))
+
+
 def _migrate_v81_schema_batch(db) -> None:
     """All schema changes of database version 81 (v80 -> v81), in one step.
 
@@ -11039,6 +11062,9 @@ def _migrate_v81_schema_batch(db) -> None:
     7. The behaviour-change marker ``end_of_life_closest_seam`` on the entities with ``lifetime_method``
        ``reinvest_choice`` / ``no_reinvestment``, whose end of life is now rounded to the closest period start
        (:func:`_v81_end_of_life_marker`).
+    8. The behaviour-change marker ``fixed_cost_per_operating_period`` on the investing entities whose
+       ``fixed_cost`` differs between periods: new capacity now pays the fixed cost of each period it operates in
+       (:func:`_v81_fixed_cost_marker`).
 
     Values change only by the moves of part 3 and the renames of part 4.  Each part is idempotent, so a rerun of the
     step changes nothing.
@@ -11050,6 +11076,7 @@ def _migrate_v81_schema_batch(db) -> None:
     _v81_descriptions(db)
     _v81_annuity_marker(db)
     _v81_end_of_life_marker(db)
+    _v81_fixed_cost_marker(db)
     _commit_step(db, "v81: lifetime is lifetime_technical (payback_time added, no value), salvage_value is "
                      "net_salvage_value, the lifetime_method value no_investment is no_reinvestment")
 

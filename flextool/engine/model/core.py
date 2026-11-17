@@ -5385,18 +5385,19 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     #   a_cap[p,c] = A[p,c]·G(n)/G(L) (A[p,c] when n = L); A[p,c] = ann(invest_cost[p,c], discount_rate[p,c], n);
     #     n = payback_time[p,c] (lifetime_technical[p,c] where the entity has none); L = lifetime_technical[p,c];
     #     G(x) = Σ_{k<⌈x⌉} min(1, x−k)·(1+inflation_rate)^−k
-    #   lifetime_fixed_cost[p,d] = fixed_cost[p,c]·1000 · Σ_{d′ ∈ L(p,d)} inflation_op[d′]
+    #   lifetime_fixed_cost[p,d] = 1000 · Σ_{d′ ∈ L(p,d)} fixed_cost[p,d′]·inflation_op[d′]
     #   ann(c, r, n) = c·1000·r / (1 − (1+r)^−n) (c·1000 / n for r = 0)
     # Cost of process capacity decided in period d, currency/MW.  Capital: the level yearly cost of a plant of its
     # real lifetime (the present value of the loan, paid over payback_time at discount_rate, spread evenly over
     # lifetime_technical years), charged for each year the cohort is in service inside the horizon (discounted per
     # period).  end_of_life_method sets the years in service, not the price; payback_time and discount_rate set
     # only the size (with discount_rate = inflation_rate payback_time changes nothing).  The inflation-adjusted
-    # fixed cost is charged over the same periods (it stops at the rounded end of life).  With a construction lead
-    # time the capacity operates from its start of operation c(d): both windows start there, and the invest cost,
-    # interest rate, payback time, lifetime and fixed cost are those of c(d): their period maps describe the plant
-    # as constructed (invest_cost is an overnight cost); without one c(d) = d.  No w_op: both factors are already
-    # per period.  A solve with invest variables and neither cost frame is an error, not a free investment.
+    # fixed cost of each period the capacity operates in is charged over the same periods (it stops at the rounded
+    # end of life), as for existing capacity.  With a construction lead time the capacity operates from its start
+    # of operation c(d): both windows start there, and the invest cost, interest rate, payback time and lifetime
+    # are those of c(d): their period maps describe the plant as constructed (invest_cost is an overnight cost);
+    # without one c(d) = d.  No w_op: both factors are already per period.  A solve with invest variables and
+    # neither cost frame is an error, not a free investment.
     if b.has_invest_p:
         annu, lf = (_cost(p, "p") for p in _costs("v_invest_p", "ed_entity_annual_discounted",
                                                     "ed_lifetime_fixed_cost"))

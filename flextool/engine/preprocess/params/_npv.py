@@ -1131,14 +1131,17 @@ def lifetime_fixed_cost_invest_lf(
         ) -> pl.LazyFrame:
     """Variant 3: ``ed_lifetime_fixed_cost`` (invest-side lifetime FC).
 
-    ``commission`` (``[e, d, d_c, yr_c]``): a decision with a construction lead time pays the fixed cost of the
-    period ``d_c`` its capacity comes online, over the years from ``yr_c`` it operates, until the end of life of
-    its cohort, the lifetime too that of ``d_c`` (:func:`._cohorts.invest_cohorts`,
-    :func:`._period_values.at_online_period`).
-
     Per (e ∈ entity, d ∈ period_with_history)::
 
-        fc[e, d] × Σ_{d_all ∈ period_in_use, window(d, d_all)} ops_factor[d_all]
+        Σ_{d_all ∈ period_in_use, window(d, d_all)} fc[e, d_all] × ops_factor[d_all]
+          = fc[e, c(d)] × Σ_{window} ops_factor[d_all] + Σ_{window} (fc[e, d_all] − fc[e, c(d)]) × ops_factor[d_all]
+
+    the fixed cost of each period the capacity operates in, as existing capacity pays it.  The second form is how it
+    is summed: the first sum is the walk's own factor sum and the second is exactly 0.0 where the fixed cost is the
+    same in every period, so such a lump is the one of a fixed cost read once.  ``commission`` (``[e, d, d_c,
+    yr_c]``): the window of a decision with a construction lead time starts at ``yr_c``, the period ``d_c`` its
+    capacity comes online, and ends at the end of life of its cohort, the lifetime that of ``d_c``
+    (:func:`._cohorts.invest_cohorts`, :func:`._period_values.at_online_period`).
 
     Same window dispatch as :func:`npv_invest_discounted_lf`
     (choice/no_invest → bounded; automatic → unbounded), with
@@ -1181,44 +1184,99 @@ def lifetime_fixed_cost_invest_lf(
     life_lf = _window_life_to_end_of_life(source, active_solve, life_lf, commission, provider=provider)
     commission_lf = _commission_walk_lf(commission)
 
-    bounded = period_walk_iterator(
-        source, active_solve, ed_anchor_lf,
-        period_in_use, period_universe,
-        bounded=True, life_lf=life_lf, factor_side="ops",
-        lineage=lineage, commission_lf=commission_lf, year_rows=year_rows)
-    unbounded = period_walk_iterator(
-        source, active_solve, ed_anchor_lf,
-        period_in_use, period_universe,
-        bounded=False, life_lf=life_lf, factor_side="ops",
-        lineage=lineage, commission_lf=commission_lf, year_rows=year_rows)
+    def walks(bounded: bool, factor_side: str | None) -> pl.LazyFrame:
+        return period_walk_iterator(source, active_solve, ed_anchor_lf, period_in_use, period_universe,
+                                    bounded=bounded, life_lf=life_lf, factor_side=factor_side, lineage=lineage,
+                                    commission_lf=commission_lf, year_rows=year_rows)
 
-    bounded = bounded.rename({"factor": "factor_b"})
-    unbounded = unbounded.rename({"factor": "factor_u"})
+    bounded = walks(True, "ops").rename({"factor": "factor_b"})
+    unbounded = walks(False, "ops").rename({"factor": "factor_u"})
+    ops = _walk_ops_factor(source, active_solve, period_universe, year_rows)
+    corr_b = _fixed_cost_changes(source, walks(True, None), fc_lf, ops).rename({"corr": "corr_b"})
+    corr_u = _fixed_cost_changes(source, walks(False, None), fc_lf, ops).rename({"corr": "corr_u"})
 
-    return (ed_anchor_lf
+    out = (ed_anchor_lf
               .join(fc_lf, on=["e", "d"], how="left")
               .join(bounded, on=["e", "d"], how="left")
               .join(unbounded, on=["e", "d"], how="left")
+              .join(corr_b, on=["e", "d"], how="left")
+              .join(corr_u, on=["e", "d"], how="left")
               .join(has_choice_or_no, on="e", how="left")
               .join(has_automatic, on="e", how="left")
               .with_columns(
                   fc=pl.col("fc").fill_null(0.0),
                   factor_b=pl.col("factor_b").fill_null(0.0),
                   factor_u=pl.col("factor_u").fill_null(0.0),
+                  corr_b=pl.col("corr_b").fill_null(0.0),
+                  corr_u=pl.col("corr_u").fill_null(0.0),
                   has_choice=pl.col("has_choice").fill_null(False),
                   has_automatic=pl.col("has_automatic").fill_null(False),
               )
               .with_columns(
                   value=(
                       pl.when(pl.col("has_choice"))
-                          .then(pl.col("fc") * pl.col("factor_b"))
+                          .then(pl.col("fc") * pl.col("factor_b") + pl.col("corr_b"))
                           .otherwise(0.0)
                       + pl.when(pl.col("has_automatic"))
-                          .then(pl.col("fc") * pl.col("factor_u"))
+                          .then(pl.col("fc") * pl.col("factor_u") + pl.col("corr_u"))
                           .otherwise(0.0)
                   ),
-              )
-              .select("e", "d", "value"))
+                  _corr=(pl.when(pl.col("has_choice")).then(pl.col("corr_b")).otherwise(0.0)
+                         + pl.when(pl.col("has_automatic")).then(pl.col("corr_u")).otherwise(0.0)),
+              ))
+    _notice_fixed_cost_per_operating_period(out)
+    return out.select("e", "d", "value")
+
+
+def _walk_ops_factor(source: "InputSource", active_solve: str | None, period_universe: list[str],
+                     year_rows: pl.DataFrame | None) -> pl.LazyFrame:
+    """``[d_all, factor]``: the operations factor the walks of :func:`period_walk_iterator` sum (the same factors,
+    with the boundary's walker Provider of a solve with branch periods)."""
+    from flextool.engine.preprocess.params._derived import _fan_walk_provider
+    return (_inflation_factors_lf(source, active_solve, period_universe, provider=_fan_walk_provider(),
+                                  year_rows=year_rows)
+              .select(pl.col("d").alias("d_all"), pl.col("ops_factor").alias("factor")))
+
+
+def _fixed_cost_changes(source: "InputSource", walk: pl.LazyFrame, fc_on: pl.LazyFrame,
+                        ops: pl.LazyFrame) -> pl.LazyFrame:
+    """``[e, d, corr]``: Σ over the window ``walk`` (``[e, d, d_all]``) of (fc[e, d_all] − fc_on[e, d]) ×
+    factor[d_all] (``ops`` ``[d_all, factor]``; a period without a factor counts 1, as in the walk)."""
+    periods = walk.select("e", pl.col("d_all").alias("d")).unique()
+    fc_all = _ed_fixed_cost_raw_lf(source, periods).select("e", pl.col("d").alias("d_all"),
+                                                           pl.col("fc").alias("_fc_all"))
+    rows, fc_all = align_join_dtypes(walk, fc_all, ["e", "d_all"])
+    rows = rows.join(fc_all, on=["e", "d_all"], how="left")
+    rows, ops = align_join_dtypes(rows, ops, ["d_all"])
+    rows = rows.join(ops, on="d_all", how="left")
+    rows, fc_on = align_join_dtypes(rows, fc_on.select("e", "d", pl.col("fc").alias("_fc_on")), ["e", "d"])
+    return (rows.join(fc_on, on=["e", "d"], how="left")
+                .group_by("e", "d")
+                .agg(((pl.col("_fc_all").fill_null(0.0) - pl.col("_fc_on").fill_null(0.0))
+                      * pl.col("factor").fill_null(1.0)).sum().alias("corr")))
+
+
+FIXED_COST_PER_OPERATING_PERIOD = "fixed_cost_per_operating_period"
+
+
+def _notice_fixed_cost_per_operating_period(lumps: pl.LazyFrame) -> None:
+    """The ``fixed_cost_per_operating_period`` notice for the entities its marker names (an upgraded database whose
+    investing entities have a fixed_cost that differs between periods) whose lifetime fixed cost now differs from
+    the fixed cost of the online period over the same years: ``lumps`` ``[e, d, value, _corr, ...]``, ``_corr``
+    the difference (:func:`_fixed_cost_changes`).  Built only while the marker names entities."""
+    from flextool.engine import _behaviour_changes as bc
+
+    if not bc.has_marker(FIXED_COST_PER_OPERATING_PERIOD):
+        return
+    names = {str(n) for n in bc.marker_json(FIXED_COST_PER_OPERATING_PERIOD).get("entities") or []}
+    if not names:
+        return
+    changed = (lumps.filter(pl.col("_corr").abs()
+                            > 1e-12 * pl.max_horizontal(pl.lit(1.0), (pl.col("value") - pl.col("_corr")).abs()))
+                    .select("e").unique().collect()["e"].to_list())
+    hit = sorted(names & {str(e) for e in changed})
+    if hit:
+        bc.notice(FIXED_COST_PER_OPERATING_PERIOD, "entities", hit)
 
 
 def _window_life_to_end_of_life(source: "InputSource",

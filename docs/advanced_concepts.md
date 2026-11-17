@@ -117,7 +117,7 @@ Fixed costs (`fixed_cost` parameter on units, connections, and nodes) represent 
 
 For **existing** assets, fixed costs are applied each year with inflation adjustment.
 
-For **invested** assets, the fixed cost is paid in every period the new capacity operates within the model horizon: until its `lifetime_technical` ends, or in every later period with `lifetime_method` *reinvest_automatic* (the same years as the yearly investment cost, see above). Each period's fixed cost is discounted like the other costs of that period. Years after the model horizon are not counted, the same as for the investment annuity, so the investment decision weighs the costs of the years the model covers. In the results, these costs are reported as a separate line item (*fixed cost invested*) from the investment annuity.
+For **invested** assets, the fixed cost is paid in every period the new capacity operates within the model horizon: until its `lifetime_technical` ends, or in every later period with `lifetime_method` *reinvest_automatic* (the same years as the yearly investment cost, see above). It is the `fixed_cost` of each of those periods, as for existing capacity (a period map can let it rise with the age of the fleet), discounted like the other costs of that period. Years after the model horizon are not counted, the same as for the investment annuity, so the investment decision weighs the costs of the years the model covers. In the results, these costs are reported as a separate line item (*fixed cost invested*) from the investment annuity.
 
 ### Summary of economic parameters
 

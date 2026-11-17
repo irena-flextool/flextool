@@ -278,6 +278,84 @@ def test_unequal_periods_pay_the_same_price_per_year(tmp_path_factory) -> None:
         assert got[d] == pytest.approx(A7 * _s(a, b), rel=1e-12), d
 
 
+FIXED_COST_MAP = {"p2020": 10.0, "p2025": 20.0, "p2030": 30.0, "p2035": 40.0}
+
+
+def _with_fixed_cost(fixed) -> list:
+    value = _period_map(fixed) if isinstance(fixed, dict) else b64(float(fixed), "float")
+    return [v for v in _economics() if v[2] != "fixed_cost"] + [
+        ["model", "flexTool", "inflation_offset_operations", b64(0.5, "float")],
+        ["unit", PLANT, "fixed_cost", value]]
+
+
+def _s_op(a: int, b: int) -> float:
+    """Σ_{k=a..b−1} 1.05^-(k + 0.5): the operations factors of years a … b−1 (offset 0.5)."""
+    return sum(R ** -(k + 0.5) for k in range(a, b))
+
+
+@pytest.mark.solver
+def test_fixed_cost_of_each_period_in_service(tmp_path_factory) -> None:
+    """fixed_cost map {p2020: 10, p2025: 20, p2030: 30, p2035: 40} CUR/kW/a, lifetime_technical = payback_time = 12
+    (in service 0 … 9, 5 … 14, 10 … 19, 15 … 19), inflation_offset_operations 0.5 (set explicitly), so the
+    operations factor of year k is 1.05^-(k + 0.5): S_op(0, 5) = 4.436393, S_op(5, 10) = 3.476030.  New capacity
+    pays the fixed cost of each period it is in service, as existing capacity does:
+    ``ed_lifetime_fixed_cost`` = 1000 · Σ fixed_cost[d′] · S_op(d′) = 113 884.54 (p2020: 10 · S_op(0, 5) + 20 ·
+    S_op(5, 10)), 151 227.43 (p2025), 167 066.07 (p2030), 85 359.24 (p2035).  (FlexTool 4.5.0: the fixed cost of the
+    period it comes online for every period, 79 124.24, 123 991.82, 145 726.25, 85 359.24.)"""
+    got = _ed(_step(tmp_path_factory, "pb_fixed_map", _with_fixed_cost(FIXED_COST_MAP)).flex_data
+              .ed_lifetime_fixed_cost)
+    starts = {"p2020": 0, "p2025": 5, "p2030": 10, "p2035": 15}
+    ends = {"p2020": 10, "p2025": 15, "p2030": 20, "p2035": 20}
+    want = {"p2020": 113_884.54, "p2025": 151_227.43, "p2030": 167_066.07, "p2035": 85_359.24}
+    assert (_s_op(0, 5), _s_op(5, 10)) == (pytest.approx(4.436393, abs=1e-6), pytest.approx(3.476030, abs=1e-6))
+    for d in PERIODS:
+        by_hand = 1000.0 * sum(FIXED_COST_MAP[p] * _s_op(y, y + 5) for p, y in starts.items()
+                               if starts[d] <= y < ends[d])
+        assert by_hand == pytest.approx(want[d], abs=0.01), d
+        assert got[d] == pytest.approx(by_hand, rel=1e-12), d
+
+
+@pytest.mark.solver
+def test_constant_fixed_cost_map_is_the_constant(tmp_path_factory) -> None:
+    """A fixed_cost map with 25 in every period builds the lumps and the LP of the constant 25."""
+    from tests.engine.test_construction_lead_time_calendar import _same_lp
+    constant = _step(tmp_path_factory, "pb_fixed_const", _with_fixed_cost(25.0))
+    mapped = _step(tmp_path_factory, "pb_fixed_const_map", _with_fixed_cost(dict.fromkeys(PERIODS, 25.0)))
+    for name in ("ed_entity_annual_discounted", "ed_lifetime_fixed_cost"):
+        assert _ed(getattr(mapped.flex_data, name)) == _ed(getattr(constant.flex_data, name)), name
+    _same_lp(constant, mapped)
+
+
+FIXED_NOTICE_ID = "fixed_cost_per_operating_period"
+
+
+@pytest.mark.solver
+def test_fixed_cost_notice_names_entities_whose_fixed_cost_changes(tmp_path_factory, capsys) -> None:
+    """With the upgrade's marker naming coal_plant, the fixed_cost map above changes its lifetime fixed cost and the
+    notice names it once; a map with the same value in every period changes nothing and prints no notice."""
+    from spinedb_api import DatabaseMapping
+
+    from flextool.engine import run_chain_from_db
+    from flextool.engine._behaviour_changes import BEHAVIOUR_CHANGES, MARKER_PREFIX
+    from tests.engine._unit_db import make_db
+
+    def lines(alt: str, fixed) -> list[str]:
+        url, scen = make_db(tmp_path_factory, alt=alt, values=_with_fixed_cost(fixed),
+                            base_chain=_no_battery_invest(SINGLE))
+        with DatabaseMapping(url) as db:
+            db.add_item("metadata", name=MARKER_PREFIX + FIXED_NOTICE_ID,
+                        value='{"since": 81, "entities": ["coal_plant"]}')
+            db.commit_session("behaviour-change marker")
+        capsys.readouterr()
+        run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
+        summary = BEHAVIOUR_CHANGES[FIXED_NOTICE_ID].summary
+        return [ln for ln in capsys.readouterr().out.splitlines() if summary in ln]
+
+    named = lines("pb_fixed_notice", FIXED_COST_MAP)
+    assert len(named) == 1 and "Affected entities: coal_plant." in named[0], named
+    assert lines("pb_fixed_notice_flat", dict.fromkeys(PERIODS, 25.0)) == []
+
+
 def _seed(step, name: str) -> dict[str, float]:
     from flextool.engine.preprocess.params._derived import _provider_has_key, _provider_read
 

@@ -500,3 +500,38 @@ def test_lead_time_investment_reads_every_period_map_at_its_online_period(tmp_pa
     fixed = 10.0 * 1000.0 * (op["p2025"] + op["p2030"])
     assert _at_decision(fd.ed_lifetime_fixed_cost.frame) == pytest.approx(fixed, rel=1e-12)
     assert _at_decision(fd.ed_lifetime_fixed_cost_run.frame) == pytest.approx(fixed, rel=1e-12)
+
+
+@pytest.mark.parametrize(("cost", "named"), [
+    ({"p2020": 0.0, "p2025": 1000.0, "p2030": 1000.0}, False),
+    ({"p2020": 1000.0, "p2025": 0.0, "p2030": 0.0}, True),
+], ids=["cost_online", "no_cost_online"])
+def test_zero_cost_notice_reads_the_cost_of_the_online_period(tmp_path_factory, capsys, cost, named) -> None:
+    """With the ``invest_without_cost_offered`` marker, wind_plant decided in p2020 with a 5-year construction lead
+    time comes online in p2025 and pays the invest_cost of p2025 (the plant as constructed): an invest_cost map
+    with 0 only in p2020 has a cost, so wind_plant is not named; a map with 0 from p2025 on has none, so it is named
+    with its decision period p2020.  (Before, the notice read the decision period's cost: the other way round.)"""
+    from spinedb_api import DatabaseMapping
+
+    from flextool.engine import run_chain_from_db
+    from flextool.engine._behaviour_changes import MARKER_PREFIX
+    from tests.engine._unit_db import make_db
+
+    values = [model_solves([SOLVE])] + solve_values(invest=["p2020"]) + [
+        ["unit", WIND, "lifetime_method", b64("reinvest_choice", "str")],
+        ["unit", WIND, "invest_method", b64("invest_period", "str")],
+        ["unit", WIND, "invest_cost", _map(cost)],
+        ["unit", WIND, "invest_max_period", _map({"p2025": 100.0})],
+        ["unit", WIND, "lifetime_technical", b64(20.0, "float")],
+        ["unit", WIND, "construction_lead_time", b64(5.0, "float")]]
+    alt = f"zero_cost_online_{named}"
+    url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=CHAIN,
+                        entities=[["solve", SOLVE, None]])
+    with DatabaseMapping(url) as db:
+        db.add_item("metadata", name=MARKER_PREFIX + "invest_without_cost_offered", value="{}")
+        db.commit_session("behaviour-change marker")
+    capsys.readouterr()
+    run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if "invest_without_cost_offered" in ln]
+    listed = [ln for ln in lines if f"{WIND} (p2020)" in ln]
+    assert bool(listed) == named, lines

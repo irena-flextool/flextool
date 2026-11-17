@@ -124,9 +124,11 @@ def at_online_period(ed_lf: pl.LazyFrame, compute: "Callable[[pl.LazyFrame], pl.
         value[e, d] = compute[e, c(d)],   c(d) = d_c of (e, d) in ``commission``, else d
 
     The one lookup of the period a plant is built to: the period maps of ``lifetime_technical``, ``payback_time``,
-    ``invest_cost``, ``discount_rate`` and ``fixed_cost`` describe the plant as constructed, so a decision reads
-    them all at ``c(d)`` (the cohort's end of life, its fixed-cost window, its annuity and payback window, and the
-    reported costs).  A decision whose ``d_c`` is null (it never comes online) keeps the value of ``d``; a value
+    ``invest_cost`` and ``discount_rate`` describe the plant as constructed, so a decision reads them all at
+    ``c(d)`` (the cohort's end of life and years in service, its price per year in service, the reported costs and
+    the notice of an investment without a cost).  ``fixed_cost`` is not one of them: new capacity pays the fixed
+    cost of each period it operates in; the lifetime fixed cost reads it at ``c(d)`` only to sum the window of a
+    fixed cost that does not change.  A decision whose ``d_c`` is null (it never comes online) keeps the value of ``d``; a value
     missing at ``d_c`` stays missing (``compute``'s own fill), it is not taken from ``d``.  The columns of
     ``compute(ed_lf)`` and their order are kept; without ``commission`` it is ``compute(ed_lf)`` itself."""
     base = compute(ed_lf)

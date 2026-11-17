@@ -30,6 +30,11 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   was gone. The fixed cost runs over the same years; `reinvest_automatic` still pays the annuity every year to the
   end of the horizon. Upgraded databases get a notice naming the entities whose investment cost changes (results
   change).
+- **New capacity pays the `fixed_cost` of each period it operates in**, as existing capacity does (unit,
+  connection, node). In FlexTool 4.5.0 an investment paid the `fixed_cost` of the period it came online in every
+  period it operated, so with a `fixed_cost` period map the fixed cost of new capacity changes; a constant
+  `fixed_cost` gives the same results. The reported fixed cost of investments follows. Upgraded databases get a
+  notice naming the investing entities whose `fixed_cost` differs between periods (results change).
 - **`end_of_life_method` defaults to `closest_seam`** (unit, connection, node; `lifetime_method` reinvest_choice /
   no_reinvestment). The end of life (start of operation plus `lifetime_technical`; existing capacity: from the model
   start, minus its age) is rounded to the closest period start, a tie to the later one. Before, it was rounded to

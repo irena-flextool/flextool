@@ -325,6 +325,14 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "annuity_over_payback_time"),
         ),
         BehaviourChange(
+            id="fixed_cost_per_operating_period",
+            summary=("New capacity now pays the fixed_cost of each period it operates in, as existing capacity does. "
+                     "In FlexTool 4.5.0 an investment paid the fixed_cost of the period it came online in every "
+                     "period it operated, so where fixed_cost differs between periods (a period map) the fixed cost "
+                     "of new capacity changes (results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "fixed_cost_per_operating_period"),
+        ),
+        BehaviourChange(
             id="end_of_life_closest_seam",
             summary=("With lifetime_method reinvest_choice or no_reinvestment, the end of life (start of operation "
                      "plus lifetime_technical; existing capacity from the model start) is now rounded to the "

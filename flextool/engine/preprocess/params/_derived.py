@@ -72,7 +72,7 @@ from flextool.engine.preprocess.params._direct import (
 from flextool.engine.input._lifetime_roles import (
     NET_SALVAGE_VALUE,
 )
-from flextool.engine.preprocess.params._period_values import _ed_period_value_map
+from flextool.engine.preprocess.params._period_values import _ed_period_value_map, ed_values_online
 from flextool.engine.preprocess.params._per_solve_sets import (
     solve_period_timeset_frame,
     timeset_duration_lf,
@@ -5591,36 +5591,40 @@ _OLD_RULE_DIVEST_COEFFS: tuple[str, ...] = (*_OLD_RULE_INVEST_COEFFS, "constrain
 
 
 def _zero_cost_pairs(source: "InputSource", pairs: "pl.DataFrame | None", cost_param: str,
-                     coeffs: tuple[str, ...]) -> dict[str, list[str]]:
-    """``{entity: [periods]}`` of the ``pairs`` (``[e, d]``) whose ``cost_param`` is missing or 0 in the period,
-    leaving out the entities a user-constraint capacity coefficient names (their variable existed before)."""
+                     coeffs: tuple[str, ...], commission: "pl.DataFrame | pl.LazyFrame | None" = None,
+                     ) -> dict[str, list[str]]:
+    """``{entity: [periods]}`` of the ``pairs`` (``[e, d]``) whose ``cost_param`` is missing or 0, leaving out the
+    entities a user-constraint capacity coefficient names (their variable existed before).  The cost is that of the
+    period the capacity comes online (``commission`` ``[e, d, d_c, ...]``, the decisions with a construction lead
+    time, :func:`._period_values.ed_values_online`; the period itself without one)."""
     if pairs is None or pairs.height == 0:
         return {}
-    rows = [(str(e), str(d)) for e, d in pairs.select("e", "d").iter_rows()]
     coeff_entities: set[str] = set()
     for cls in ("unit", "node", "connection"):
         for pname in coeffs:
             df = _try_param(source, cls, pname)
             if df is not None and "name" in df.columns:
                 coeff_entities.update(df.get_column("name").cast(pl.Utf8).to_list())
-    periods = list(dict.fromkeys(d for _e, d in rows))
-    cost = _ed_period_value_map(source, cost_param, periods)
+    cost = ed_values_online(source, cost_param, pairs.lazy().select("e", "d"), 0.0, commission).collect()
     out: dict[str, list[str]] = {}
-    for e, d in rows:
-        if e not in coeff_entities and cost.get((e, d), 0.0) == 0.0:
-            out.setdefault(e, []).append(d)
+    for e, d, v in cost.select("e", "d", "value").iter_rows():
+        if str(e) not in coeff_entities and v == 0.0:
+            out.setdefault(str(e), []).append(str(d))
     return out
 
 
 def zero_cost_invest_notice(source: "InputSource", ed_invest: "pl.DataFrame | None",
-                            ed_divest: "pl.DataFrame | None") -> None:
+                            ed_divest: "pl.DataFrame | None",
+                            commission: "pl.DataFrame | pl.LazyFrame | None" = None) -> None:
     """Behaviour-change notice ``invest_without_cost_offered``: names the entities that now get an investment
-    variable where their ``invest_cost`` is missing or 0, or a retirement variable where their ``salvage_value``
-    is (before, such a period had no variable unless a user-constraint capacity coefficient named the entity)."""
+    variable where their ``invest_cost`` is missing or 0 (at the period the capacity comes online: ``commission``,
+    the start of operation of a construction lead time), or a retirement variable where their
+    ``net_salvage_value`` is (before, such a period had no variable unless a user-constraint capacity coefficient
+    named the entity)."""
     from flextool.engine import _behaviour_changes
     if not _behaviour_changes.has_marker("invest_without_cost_offered"):
         return
-    invest = _zero_cost_pairs(source, ed_invest, "invest_cost", _OLD_RULE_INVEST_COEFFS)
+    invest = _zero_cost_pairs(source, ed_invest, "invest_cost", _OLD_RULE_INVEST_COEFFS, commission)
     divest = _zero_cost_pairs(source, ed_divest, NET_SALVAGE_VALUE, _OLD_RULE_DIVEST_COEFFS)
     # A later solve of a multi-solve / rolling run lists only the entities not yet announced.
     fresh = set(_behaviour_changes.unannounced("invest_without_cost_offered", sorted(set(invest) | set(divest))))
@@ -5809,7 +5813,7 @@ def apply_derived_c(
         if ed_div_db.height == 0:
             # The seeds of the retirement partitions describe the options before the filter.
             flex_data.pd_divest_set = flex_data.nd_divest_set = flex_data.ed_divest_period_set = None
-    zero_cost_invest_notice(source, ed_inv_db, ed_div_db)
+    zero_cost_invest_notice(source, ed_inv_db, ed_div_db, commission_lf)
 
     # pd/nd_invest_set, pd/nd_divest_set, ed_invest/divest_period_set: the
     # class partitions of the effective ed_*_set (the one just produced,
@@ -9503,7 +9507,7 @@ def apply_synthetic_invest_sets(flex_data: object,
         source, active_solve, workdir, provider=provider)
     if ed_div is not None and ed_div.height > 0:
         flex_data.ed_divest_set = ed_div
-    zero_cost_invest_notice(source, ed_inv, ed_div)
+    zero_cost_invest_notice(source, ed_inv, ed_div, synth_commission_lf)
 
     # pd/nd_invest_set, pd/nd_divest_set partitions — pure entity-class
     # projections, no solve dependency beyond the input ed_*_set frame.
