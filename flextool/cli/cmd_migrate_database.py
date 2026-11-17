@@ -10,6 +10,7 @@ import sys
 from flextool._file_lock import FileLockError
 from flextool.update_flextool.db_migration import migrate_database
 from flextool.update_flextool.frozen import FrozenDatabaseError, migrate_copy, read_frozen, sqlite_path_from
+from flextool.update_flextool.migration_backup import MigrationBackupError, MigrationRestoreError
 
 #: The exit code of a refused frozen database.
 EXIT_FROZEN = 2
@@ -54,6 +55,11 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_FROZEN
     except FileLockError as exc:
         print(f"The database was not migrated: {exc}", file=sys.stderr)
+        return 1
+    except (MigrationBackupError, MigrationRestoreError) as exc:
+        # Not migrated (a kept copy, no room for the copy), or failed and not restored (the copy is kept): the
+        # message says what to do.
+        print(str(exc), file=sys.stderr)
         return 1
     if args.allow_migrate_frozen:
         path = sqlite_path_from(args.filepath)

@@ -12,9 +12,18 @@
   that failed part way left the steps before the failure in the database. When the copy cannot be put back, it is
   kept, the console says how to recover it, and a new migration of the database refuses to start until it is dealt
   with.
-- **A migration that is killed outright can be run again.** Every step that deletes in several commits finishes on
-  a rerun: before, a rerun of the version 56 step could lose `is_DC` / `is_non_synchronous` values, and a rerun of
-  the version 70 step could keep an output `capacity_min_coeff` left over from version 36.
+- **A migration that is killed outright can be finished.** A killed migration (the process stopped, the console
+  closed) can leave the database half migrated, with its original in `<database>.premigration.bak`. The next
+  migration of the database then refuses to start, names the copy and the time it was made, and says how to go on:
+  put the copy back (close every program that uses the database, delete the database and rename the copy to the
+  database's name) or, when the copy is out of date, delete it; then run the migration again. Every step that
+  deletes in several commits also finishes on a rerun: before, a rerun of the version 56 step could lose `is_DC` /
+  `is_non_synchronous` values, and a rerun of the version 70 step could keep an output `capacity_min_coeff` left
+  over from version 36.
+- **`flextool-migrate-database`, `flextool-run --migrate` and `flextool-update` print the reason when a database
+  is not migrated** (a kept pre-migration copy, no room for the copy, or a restore that failed) and exit with code
+  1, instead of showing a traceback. `flextool-update` goes on with the other databases and lists those it could
+  not migrate at the end.
 - **Running the version 56 step again no longer switches off reserves active in the base alternative.** A rerun of
   the step, after an interruption or after the whole step had been applied and a later step failed, set
   `is_enabled` to *no* in the base alternative of every reserve, overwriting the *yes* the first run had written

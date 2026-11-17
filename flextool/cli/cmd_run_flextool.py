@@ -1131,10 +1131,12 @@ EXIT_FROZEN = 2
 
 
 def _migrate_input_or_exit(input_db_url: str) -> None:
-    """Migrate the input database for ``--migrate`` (once across parallel runs); exit 2 on a frozen database."""
+    """Migrate the input database for ``--migrate`` (once across parallel runs); exit 2 on a frozen database, 1 when it
+    was not migrated (lock, kept or impossible pre-migration copy) or could not be restored after a failure."""
     from flextool._file_lock import FileLockError
     from flextool.update_flextool.frozen import FrozenDatabaseError
     from flextool.update_flextool.migrate_before_run import migrate_before_run
+    from flextool.update_flextool.migration_backup import MigrationBackupError, MigrationRestoreError
 
     try:
         migrate_before_run(input_db_url)
@@ -1143,6 +1145,9 @@ def _migrate_input_or_exit(input_db_url: str) -> None:
         sys.exit(EXIT_FROZEN)
     except FileLockError as exc:
         print(f"The input database was not migrated: {exc}", file=sys.stderr, flush=True)
+        sys.exit(1)
+    except (MigrationBackupError, MigrationRestoreError) as exc:
+        print(str(exc), file=sys.stderr, flush=True)
         sys.exit(1)
 
 
