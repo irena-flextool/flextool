@@ -203,7 +203,7 @@ In the examples.sqlite, the solve entities can carry solver options in the `solv
 **(examples.sqlite scenario: csp_fixed_design)**
 ***init - west - coal - csp_system - csp_plant - csp_invest_common - csp_fixed_design***
 
-**Investment data.** *csp_invest_common* sets `invest_periods` [*p2020*] on the solve *y2020_2day_dispatch*, and on each of the three entities `existing` 0, `invest_method` *invest_total*, `lifetime_technical` and `payback_time` 25 and `discount_rate` 0.07:
+**Investment data.** *csp_invest_common* sets `invest_periods` [*p2020*] on the solve *y2020_2day_dispatch*, and on each of the three entities `existing` 0, `invest_method` *invest_total*, `lifetime_technical` 25 (no `payback_time`: the investment pays back over the 25 years) and `discount_rate` 0.07:
 
 | Entity | `invest_max_total` | `invest_cost` |
 |---|---|---|

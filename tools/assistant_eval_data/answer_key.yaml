@@ -477,7 +477,7 @@ questions:
         kind: statement
         critical: true
         criterion: "Lists the input differences: invest_periods [p2020] on the solve, and coal_plant's invest_method
-          invest_total, invest_cost 400 CUR/kW, lifetime_technical 30 (and payback_time 30), discount_rate 0.05,
+          invest_total, invest_cost 400 CUR/kW, lifetime_technical 30, discount_rate 0.05,
           fixed_cost 100 CUR/kW/a, invest_max_total 700, invest_max_period map; and notes that fixed_cost also applies to the existing 500 MW
           (a constant cost of 50 M CUR/a that does not change the decision)."
         derivation: "tests.json alternative coal_invest + grounding_projects.py INVEST_2DAY; existing_fixed_cost OBJ:

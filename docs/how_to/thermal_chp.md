@@ -135,7 +135,7 @@ Again, the negative value can be turned positive by arranging it to the right si
 | `unit` *ro_desal* | `conversion_method`, `efficiency` | *constant_efficiency*, 250 [m³/MWh] |
 | `unit` *ro_desal* | `invest_method`, `invest_max_total` | *invest_total*, 2000 [m³/h] |
 | `unit` *ro_desal* | `invest_cost` | 30 (= 30 000 CUR per m³/h) |
-| `unit` *ro_desal* | `lifetime_technical`, `payback_time`, `discount_rate` | 20, 20, 0.05 |
+| `unit` *ro_desal* | `lifetime_technical`, `discount_rate` | 20 (also the payback time), 0.05 |
 
 **invest_cost is per kW of the unit's capacity unit.** FlexTool reads every capacity as if it were in MW, and `invest_cost` is per kW, that is per 0.001 of the capacity unit (with `unit_of_measure` *m3* on *water* the results label it CUR/(0.001 m³/h) and the annuity CUR/(m³/h)). For a capacity in m³/h, enter the cost per m³/h divided by 1000: 30 000 CUR per m³/h is `invest_cost` 30. The same holds for `fixed_cost`. The capacities themselves are entered in m³/h unchanged: `existing`, `invest_max_total` and `invest_min_total` of 2000 m³/h are 2000, not 2. An `other_operational_cost` on a water flow is per m³ directly (it is per MWh of flow, no ÷ 1000).
 

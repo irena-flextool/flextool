@@ -9,11 +9,12 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   `lifetime_method` value `no_investment` is `no_reinvestment`** (unit, connection and node).
   `lifetime_technical` is how long capacity operates (its end of life and the investment and retirement windows);
   `payback_time` is the number of years over which `invest_cost` is annualized with `discount_rate`, and an entity
-  without a `payback_time` pays back over its `lifetime_technical`. The migration copies every `lifetime` value, in
-  every alternative, into both new parameters, renames `salvage_value` and rewrites every stored `no_investment`
-  value; results do not change. After the migration, a `lifetime_technical` set in a new alternative does not
-  change the payback time where an older alternative still holds a `payback_time`: change both, or delete that
-  `payback_time`. Update scripts and Excel workbooks that name the old parameters or the old value.
+  without a `payback_time` pays back over its `lifetime_technical`. The migration moves every `lifetime` value, in
+  every alternative, to `lifetime_technical` and leaves `payback_time` empty, so the payback time stays the
+  lifetime; it renames `salvage_value` and rewrites every stored `no_investment` value. Results do not change
+  (except an investment with a construction lead time and a period-varying lifetime, see Fixes). Set
+  `payback_time` only where the investment pays back over a different number of years than it operates. Update
+  scripts and Excel workbooks that name the old parameters or the old value.
 - **With `lifetime_method` `reinvest_choice` or `no_reinvestment` the investment annuity is paid for
   `payback_time` years from the start of operation, counted in exact years**, and the reported investment costs
   follow. Before, every period that started before the end of the lifetime was paid in full (a 12-year lifetime on
@@ -29,12 +30,15 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   in the first half of a period is now out of service for that whole period and pays no fixed cost there; its
   investment annuity is still paid for `payback_time` years. Set `end_of_life_method` `next_seam` to keep the old
   rounding. Upgraded databases get a notice naming the entities whose end of life moves (results change).
-- **Scripts that inject state between solves (`override_provider`)**: the realized capacity is now given per
+- **BREAKING for tools that connect FlexTool with other modelling tools through `override_provider`** (scripts
+  and integrations that inject state between solves, for example capacities decided by another model): the keys
+  `handoff/realized_invest`, `handoff/realized_existing` and `handoff/realized_divest` are gone and raise an error
+  naming the new key, so such a tool stops working until it is changed. The realized capacity is now given per
   investment cohort, `K.HANDOFF_REALIZED_COHORT` (one row per investment decision, with its start of operation, end
-  of life and size), and the retirements per cohort, `K.HANDOFF_REALIZED_RETIRE`. The old keys
-  `handoff/realized_invest`, `handoff/realized_existing` and `handoff/realized_divest` raise an error naming the new
-  key (`docs/dev/inject_between_solves.md`). The `--csv-dump` mirrors `solve_data/p_entity_period_existing_capacity.csv`
-  and `p_entity_divested_period.csv` are gone; the dump has the carriers themselves
+  of life and size; start from a captured `SolveHandoff.realized_cohort` and change its sizes), and the retirements
+  per cohort, `K.HANDOFF_REALIZED_RETIRE`. `docs/dev/inject_between_solves.md` gives the columns of both and a
+  worked wrapper. The `--csv-dump` mirrors `solve_data/p_entity_period_existing_capacity.csv` and
+  `p_entity_divested_period.csv` are gone; the dump has the carriers themselves
   (`produced_handoff/realized_cohort.csv`, `realized_retire.csv`).
 
 ### New features
