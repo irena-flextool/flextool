@@ -696,8 +696,9 @@ def _at_start_of_operation(anchor_lf: pl.LazyFrame,
                               col: str,
                               ) -> pl.LazyFrame:
     """``compute(anchor_lf)`` (``[e, d, col]``) with the value of a decision with a construction lead time taken at
-    the period its capacity starts to operate (``commission`` ``[e, d, d_c]``): invest cost, interest rate,
-    lifetime and fixed cost of new capacity are those of the build period.  Without ``commission`` it is
+    the period its capacity starts to operate (``commission`` ``[e, d, d_c]``): invest cost, interest rate, payback
+    time and fixed cost of new capacity are those of the build period (its ``lifetime_technical`` is that of the
+    decision period, read without this).  Without ``commission`` it is
     ``compute(anchor_lf)`` itself."""
     base = compute(anchor_lf)
     if commission is None or commission.height == 0:
@@ -1141,8 +1142,9 @@ def lifetime_fixed_cost_invest_lf(
         ) -> pl.LazyFrame:
     """Variant 3: ``ed_lifetime_fixed_cost`` (invest-side lifetime FC).
 
-    ``commission`` (``[e, d, d_c, yr_c]``): a decision with a construction lead time pays the fixed cost (and
-    takes the lifetime) of its build period ``d_c``, over the years from ``yr_c`` its capacity operates.
+    ``commission`` (``[e, d, d_c, yr_c]``): a decision with a construction lead time pays the fixed cost of its
+    build period ``d_c``, over the years from ``yr_c`` its capacity operates; its lifetime is that of the decision
+    period ``d`` (as the end of life of its cohort, :func:`._cohorts.invest_cohorts`).
 
     Per (e ∈ entity, d ∈ period_with_history)::
 
@@ -1184,11 +1186,9 @@ def lifetime_fixed_cost_invest_lf(
                        .select("e").unique()
                        .with_columns(has_automatic=pl.lit(True)))
 
-    # life_lf via edEntity_lifetime (per L306); of the build period for a decision with a lead time.
-    if commission is None or commission.height == 0:
-        life_lf = _ed_lifetime_lf(source, all_e_lf, pwh_lf)
-    else:
-        life_lf = _at_start_of_operation(ed_anchor_lf, lambda lf: _ed_lifetime_on_lf(source, lf), commission, "life")
+    # life_lf via edEntity_lifetime: the lifetime of the decision period, also with a lead time (the cohort's end
+    # of life, _cohorts.invest_cohorts).
+    life_lf = _ed_lifetime_lf(source, all_e_lf, pwh_lf)
     life_lf = _window_life_to_end_of_life(source, active_solve, life_lf, commission, provider=provider)
     commission_lf = _commission_walk_lf(commission)
 
@@ -1238,7 +1238,7 @@ def _window_life_to_end_of_life(source: "InputSource",
                                  commission: pl.DataFrame | None,
                                  *,
                                  provider: "object | None") -> pl.LazyFrame:
-    """``life_lf`` ``[e, d, life]`` (the lifetime of decision ``(e, d)`` at its start of operation) with ``life``
+    """``life_lf`` ``[e, d, life]`` (the lifetime of decision ``(e, d)``, read at its decision period) with ``life``
     the years from the start of operation ``y_on`` to the rounded end of life of its cohort, so that the bounded walk
     ``yr[d′] < yr_avail + life`` keeps the periods ``y_on ≤ yr[d′] < y_eol``::
 
@@ -1578,7 +1578,7 @@ def ed_lifetime_fixed_cost_divest_from_source(
 #   periods from the run calendar.
 # OUT. edd_operating_window[e,d_invest,d] — run periods d in which the capacity of decision (e, d_invest)
 #   operates: yr_run[d] ≥ yr_run[c(d_invest)], and < y_eol = round_end_of_life(yr_run[c(d_invest)] +
-#   lifetime_technical[e, c(d_invest)], end_of_life_method[e]) for reinvest_choice / no_reinvestment (unbounded for
+#   lifetime_technical[e, d_invest], end_of_life_method[e]) for reinvest_choice / no_reinvestment (unbounded for
 #   reinvest_automatic): the periods its cohort is in service; c(d) is the start of operation (d without a
 #   construction lead time).  edd_retire_window[e,d_divest,d]: yr_run[d_divest] ≤ yr_run[d] < EOL[e] (the rounded
 #   end of life y_eol of the pre-existing capacity, from the start of the run; the end of the run for
@@ -2089,8 +2089,8 @@ def apply_run_cost_fields(flex_data: object,
         inv]).unique().sort("e", "d")
     if fc_pairs.height > 0:
         fc_lf = _anchor_lf(fc_pairs)
-        life = _utf8_ed(_at_start_of_operation(
-            fc_lf, lambda lf: _ed_lifetime_on_lf(source, lf), commission, "life"))
+        # The lifetime of the decision period, also with a lead time (the cohort's end of life).
+        life = _utf8_ed(_ed_lifetime_on_lf(source, fc_lf))
         anchors = (year_of_start(fc_pairs, True)
                      .join(life, on=["e", "d"], how="left")
                      .with_columns(life=pl.col("life").fill_null(0.0))

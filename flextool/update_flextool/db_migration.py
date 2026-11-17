@@ -10701,7 +10701,8 @@ def _v81_texts() -> dict[tuple[str, str], str]:
             "from the model start. Without payback_time, invest_cost is annualized over it. Required when the "
             f"{what} invests or retires with a cost (invest_cost, net_salvage_value) and has no payback_time, and "
             "when lifetime_method is reinvest_choice or no_reinvestment (also for existing capacity without "
-            f"investment). Constant or period: the value of the period when the {cap} comes online is used.")
+            f"investment). Constant or period: an investment uses the value of the period it is decided in, "
+            f"existing {cap} that of the first period.")
         t[(cls, "payback_time")] = (
             "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor). With "
             "lifetime_method reinvest_choice or no_reinvestment the annuity is paid for these years from the start "

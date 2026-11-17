@@ -185,3 +185,32 @@ def test_fixed_cost_of_an_investment_stops_at_its_rounded_end_of_life(tmp_path_f
                                             & (pl.col("d_invest").cast(pl.Utf8) == "p2025"))
     assert sorted(str(d) for d in window["d"].to_list()) == periods
     assert invest_alive(step) == [("p2025", d) for d in periods]
+
+
+def test_lead_time_investment_takes_the_lifetime_of_its_decision_period(tmp_path_factory) -> None:
+    """wind_plant decided in p2020 (y 0) with a 5-year construction lead time starts to operate in p2025 (y_on 5);
+    lifetime_technical is a map {p2020: 3, p2025: 20, p2030: 20}, end_of_life_method next_seam, fixed_cost 10
+    CUR/kW/a.  The lifetime is that of the decision period, 3: Y = 5 + 3 = 8 → next_seam 10, so the cohort is in
+    service in p2025 only and pays its fixed cost there: ``lifetime_fixed_cost[p2020] = 10 · 1000 ·
+    inflation_op[p2025]``, the reported operating window p2025.  (The lifetime of the start of operation, 20, would
+    give Y = 25, past the horizon end 20: p2025 and p2030.)"""
+    values = solve_values(invest=["p2020"]) + [
+        ["unit", WIND, "lifetime_method", b64("reinvest_choice", "str")],
+        ["unit", WIND, "invest_method", b64("invest_period", "str")],
+        ["unit", WIND, "invest_cost", b64(1000.0, "float")],
+        ["unit", WIND, "invest_max_period", _map({"p2025": 100.0})],
+        ["unit", WIND, "lifetime_technical", _map({"p2020": 3.0, "p2025": 20.0, "p2030": 20.0})],
+        ["unit", WIND, "payback_time", b64(20.0, "float")],
+        ["unit", WIND, "construction_lead_time", b64(5.0, "float")],
+        ["unit", WIND, "end_of_life_method", b64("next_seam", "str")],
+        ["unit", WIND, "fixed_cost", b64(10.0, "float")]]
+    (step,) = steps_of(tmp_path_factory, "eol_lead_life", values).values()
+    fd = step.flex_data
+    assert invest_alive(step) == [("p2020", "p2025")]
+    op = {str(d): float(v) for d, v in fd.p_inflation_op.frame.select(pl.col("d").cast(pl.Utf8), "value").iter_rows()}
+    lfc = fd.ed_lifetime_fixed_cost.frame.filter((pl.col("e").cast(pl.Utf8) == WIND)
+                                                 & (pl.col("d").cast(pl.Utf8) == "p2020"))
+    assert lfc["value"].to_list() == [pytest.approx(10.0 * 1000.0 * op["p2025"], rel=1e-12)]
+    window = fd.edd_operating_window.filter((pl.col("e").cast(pl.Utf8) == WIND)
+                                            & (pl.col("d_invest").cast(pl.Utf8) == "p2020"))
+    assert sorted(str(d) for d in window["d"].to_list()) == ["p2025"]

@@ -64,14 +64,14 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Benders max outer (master/subproblem) iterations. Solver-algorithm knob, never an LP coefficient.
     ('benders_tolerance', 'solve'): QuantityType.DIMENSIONLESS,
     # Benders relative optimality-gap convergence threshold. Solver-algorithm knob, never an LP coefficient.
+    ('benders_in_out_weight', 'solve'): QuantityType.DIMENSIONLESS,
+    # Benders in-out separation stabilization weight (lambda). Solver-algorithm knob, never an LP coefficient.
     ('build_year', 'connection'): QuantityType.DIMENSIONLESS,
     # [year] Calendar year the existing capacity was built (age = model.start_year - build_year). Constant.
     ('build_year', 'node'): QuantityType.DIMENSIONLESS,
     # [year] Calendar year the existing capacity was built (age = model.start_year - build_year). Constant.
     ('build_year', 'unit'): QuantityType.DIMENSIONLESS,
     # [year] Calendar year the existing capacity was built (age = model.start_year - build_year). Constant.
-    ('benders_in_out_weight', 'solve'): QuantityType.DIMENSIONLESS,
-    # Benders in-out separation stabilization weight (lambda). Solver-algorithm knob, never an LP coefficient.
     ('candidate_precapacity_to_avoid_big_m', 'group'): QuantityType.POWER,
     # [MW] Small pre-existing capacity assigned to investment candidate connections in DC power flow groups that have zero existing capacity. This...
     ('capacity_margin_absolute', 'group'): QuantityType.POWER,
@@ -223,18 +223,18 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model...
     ('discount_rate', 'unit'): QuantityType.FRACTION,
     # [e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model...
-    ('end_of_life_method', 'connection'): QuantityType.DIMENSIONLESS,
-    # [choice] How an end of life is rounded to a period start (closest_seam / previous_seam / next_seam).
-    ('end_of_life_method', 'node'): QuantityType.DIMENSIONLESS,
-    # [choice] How an end of life is rounded to a period start (closest_seam / previous_seam / next_seam).
-    ('end_of_life_method', 'unit'): QuantityType.DIMENSIONLESS,
-    # [choice] How an end of life is rounded to a period start (closest_seam / previous_seam / next_seam).
     ('efficiency', 'connection'): QuantityType.FRACTION,
     # [factor, typically 0-1] Efficiency of the connection. Constant, period, time or period+time.
     ('efficiency', 'unit'): QuantityType.FRACTION,
     # [factor] Efficiency of the unit at full load: outputs / inputs, each flow weighted by its conversion_flow_coeff (default 1, giving plain sum...
     ('efficiency_at_min_load', 'unit'): QuantityType.FRACTION,
     # [e.g. 0.4 means 40%] Efficiency of a min_load_efficiency unit at its minimum load. Fuel use is a straight line from minimum load (this effic...
+    ('end_of_life_method', 'connection'): QuantityType.DIMENSIONLESS,
+    # [choice] How an end of life is rounded to a period start (closest_seam / previous_seam / next_seam).
+    ('end_of_life_method', 'node'): QuantityType.DIMENSIONLESS,
+    # [choice] How an end of life is rounded to a period start (closest_seam / previous_seam / next_seam).
+    ('end_of_life_method', 'unit'): QuantityType.DIMENSIONLESS,
+    # [choice] How an end of life is rounded to a period start (closest_seam / previous_seam / next_seam).
     ('energy_margin_multiplier', 'node'): QuantityType.DIMENSIONLESS,
     # [factor] Multiplier applied to this node's inflow in the investment solve only, when energy_margin_method = 'inflow_multiplier'. Offsets rep...
     ('energy_margin', 'node'): QuantityType.DIMENSIONLESS,
@@ -600,12 +600,12 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Not used: FlexTool never runs solver_precommand (kept so older databases still read).
     ('use_row_scaling', 'solve'): QuantityType.DIMENSIONLESS,
     # Boolean-style toggle ('yes'/'no') enabling experimental automatic row scaling. Flag, no physical unit.
-    ('start_year', 'model'): QuantityType.DIMENSIONLESS,
-    # [year] Calendar year the first period of the model's first solve starts (build_year's reference).
     ('solves', 'model'): QuantityType.DIMENSIONLESS,
     # Sequence of solves in the model. Array.
     ('small_number_threshold', 'model'): QuantityType.DIMENSIONLESS,
     # Config scalar: LP coefficients/RHS below this magnitude are floored to 0. Not an LP coefficient itself.
+    ('start_year', 'model'): QuantityType.DIMENSIONLESS,
+    # [year] Calendar year the first period of the model's first solve starts (build_year's reference).
     ('startup_cost', 'connection'): QuantityType.PRICE_PER_CAPACITY,
     # [CUR/MW] Cost of starting up one MW of capacity. Constant or period.
     ('startup_cost', 'unit'): QuantityType.PRICE_PER_CAPACITY,

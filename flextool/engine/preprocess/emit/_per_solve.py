@@ -35,7 +35,6 @@ from flextool.engine.preprocess.params._run_calendar import (
     RUN_EXISTING_COHORT_KEY,
     read_run_calendar,
     run_years,
-    solve_calendar,
 )
 
 
@@ -715,9 +714,14 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
     # year; a construction lead time is not applied here): y[d_inv] <= y[d] < y_eol, years of the run, the end of
     # life rounded by the entity's end_of_life_method (the run's existing cohort carries it).  Grouped by
     # lifetime_method (reinvest_choice, reinvest_automatic, no_reinvestment), then entity, decision and period.
+    # The run puts its calendar and its existing cohorts on every sub-solve's Provider (_run_model); emit has no
+    # stand-in for them (the preprocess cohorts round on the same calendar).
     rc = read_run_calendar(provider)
+    if rc is None or not provider.has(RUN_EXISTING_COHORT_KEY):
+        raise ValueError("The investment sets of a solve need the run calendar and the run's existing cohorts "
+                         f"({RUN_EXISTING_COHORT_KEY}), which the run puts on every sub-solve's Provider.")
     years = run_years(p_years_d, rc)
-    cal = cohort_calendar(rc if rc is not None else solve_calendar(years, None), years)
+    cal = cohort_calendar(rc, years)
     eol_methods = eol_methods_of(provider.get(RUN_EXISTING_COHORT_KEY))
     invest_set = frozenset(entityInvest)
     edd_invest: list[tuple[str, str, str]] = []
