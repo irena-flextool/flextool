@@ -1,4 +1,6 @@
-## Unreleased
+## Release 4.5.1 (17.11.2026) — database migration fixes (schema v80)
+
+Migrating older input databases works again in more cases. No change to the model, results or data version.
 
 ### Fixes
 
