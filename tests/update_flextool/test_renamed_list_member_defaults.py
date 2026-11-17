@@ -9,8 +9,8 @@ member change and sets the new member name after.
 Every database is built from a JSON template (the bundled v25 template, or the v75 seed for a step above 75) and
 migrated up to the version before the step; its definition default is then set to the old member and the database is
 migrated to the current version (the default reads the new member, which is in the list), and once more (nothing to
-migrate, nothing changes).  The v25 step is checked in one open mapping, as the migration runs it: a later update of
-the definition succeeds.
+migrate, nothing changes).  The v25 step is checked in one open mapping, as the migration runs it (a later update of
+the definition succeeds), and from a v24 database (the v2 template) through the whole chain.
 """
 from __future__ import annotations
 
@@ -113,3 +113,21 @@ def test_v25_renamed_storage_binding_default_survives_a_later_update(tmp_path_fa
         db.commit_session("a later update of the definition")
         assert _default(db, "node", "storage_binding_method") == "bind_within_timeset"
         assert "bind_within_timeblock" not in _members(db, "node", "storage_binding_method")
+
+
+def test_v25_renamed_storage_binding_default_through_the_whole_chain(tmp_path_factory) -> None:
+    """A v24 database (from the v2 template) with the default ``bind_within_timeblock`` migrates to the current
+    version: v25 renames the member to ``bind_within_timeset`` and v55 renames ``bind_within_timeset`` to
+    ``bind_within_timeblock`` (removing the old member), so the default ends as ``bind_within_timeblock``."""
+    path = tmp_path_factory.mktemp("v25_chain") / "db.sqlite"
+    url = "sqlite:///" + str(path)
+    with contextlib.redirect_stdout(io.StringIO()):
+        initialize_database(str(V2_TEMPLATE), str(path))
+        migrate_database(url, up_to=24)
+    _set_default(url, "node", "storage_binding_method", "bind_within_timeblock")
+    with contextlib.redirect_stdout(io.StringIO()):
+        migrate_database(url)
+    with DatabaseMapping(url) as db:
+        assert _default(db, "model", "version") == FLEXTOOL_DB_VERSION
+        assert _default(db, "node", "storage_binding_method") == "bind_within_timeblock"
+        assert "bind_within_timeblock" in _members(db, "node", "storage_binding_method")

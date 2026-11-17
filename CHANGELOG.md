@@ -11,6 +11,12 @@
   *bind_within_timeset*, *bind_using_blended_weights*, *bind_within_model*; `storage_nested_fix_method` *no*;
   `solve_mode` *single_shot*) could end up as an unrelated value of the list; it now becomes the value's new name
   (*bind_within_timeblock*, *bind_within_solve_blended_weights*, *bind_within_solve*, *fix_nothing*, *single_solve*).
+- **A database older than data version 25 migrates again.** It stopped at data version 34 ("there's already a
+  parameter_definition ... flow_coefficient"): the version 23 step created an empty `flow_coefficient` beside the
+  unit flow `coefficient` that version 35 renames to `flow_coefficient`. The version 23 step now types `coefficient`,
+  and version 35 removes the empty `flow_coefficient` that an older FlexTool left in a database migrated then; the
+  `coefficient` values carry on as before. A `flow_coefficient` holding values beside `coefficient` stops the
+  migration with a message.
 
 ## Release 4.5.0 (16.11.2026) — inf as no limit, scaling guard, ramp envelope and ramp frequency plots, piecewise linear efficiency, full-load efficiency in reduced unit detail, capacity margin renames and many fixes (schema v80)
 

@@ -518,6 +518,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     param = db.item(parameter_definitions,
                                     entity_class_name=cls, name="coefficient")
                     if param:
+                        _v35_drop_v23_flow_coefficient(db, cls)
                         db.update_parameter_definition(
                             id=param["id"],
                             name="flow_coefficient",
@@ -2173,7 +2174,33 @@ def update_timestructure(db):
     db.update_list_value(id = param_list_value["id"], value = p_value, type = p_type)
     _attach_list_defaults(db, pending)
 
+def _v35_drop_v23_flow_coefficient(db, cls: str) -> None:
+    """Remove the ``flow_coefficient`` definition that the v23 step of FlexTool 4.5.0 and older created on *cls*.
+
+    That step typed every name of its list and so created ``flow_coefficient`` (type ``float``, no description, no
+    default, no values) beside ``coefficient``; v35 renames ``coefficient`` to ``flow_coefficient`` and collided with
+    it.  The empty definition is removed so the rename keeps the ``coefficient`` values.  A ``flow_coefficient`` that
+    holds values (or a default) is not that definition: the step stops with a message instead of choosing between them.
+    """
+    stray = db.get_item("parameter_definition", entity_class_name=cls, name="flow_coefficient")
+    if not stray:
+        return
+    values = db.find_parameter_values(entity_class_name=cls, parameter_definition_name="flow_coefficient")
+    if values or stray["default_value"] is not None:
+        raise SpineDBAPIError(
+            f"v35: {cls} has both coefficient and flow_coefficient, and flow_coefficient has values or a default; "
+            f"coefficient is renamed to flow_coefficient in this version.  Move the values you want to keep to "
+            f"coefficient and remove the flow_coefficient definition, then migrate again.")
+    db.remove_parameter_definition(id=stray["id"])
+
+
 def update_parameter_types_v23(db):
+    """Set the value types of the parameter definitions (v23).
+
+    The ``unit__inputNode`` / ``unit__outputNode`` flow coefficient is ``coefficient`` here: v35 renames it to
+    ``flow_coefficient`` and adds ``max_capacity_coefficient`` / ``min_capacity_coefficient``.  (Typing those names
+    here created a ``flow_coefficient`` beside ``coefficient``, and the v35 rename collided with it.)
+    """
     type_list = get_parameter_type_list_v23()
     for i in type_list:
         db.add_update_item("parameter_definition", entity_class_name = i[0], name = i[1], parameter_type_list = i[2])
@@ -2350,9 +2377,7 @@ def get_parameter_type_list_v23():
              ["connection__node", "constraint_flow_coefficient", ("1d_map",)],
              ["connection__profile", "profile_method", ("str",)],
              ["node__profile", "profile_method", ("str",)],
-             ["unit__inputNode", "flow_coefficient", ("float",)],
-             ["unit__inputNode", "max_capacity_coefficient", ("float",)],
-             ["unit__inputNode", "min_capacity_coefficient", ("float",)],
+             ["unit__inputNode", "coefficient", ("float",)],
              ["unit__inputNode", "constraint_flow_coefficient", ("1d_map",)],
              ["unit__inputNode", "inertia_constant", ("float",)],
              ["unit__inputNode", "is_non_synchronous", ("str",)],
@@ -2361,9 +2386,7 @@ def get_parameter_type_list_v23():
              ["unit__inputNode", "ramp_method", ("str",)],
              ["unit__inputNode", "ramp_speed_down", ("float",)],
              ["unit__inputNode", "ramp_speed_up", ("float",)],
-             ["unit__outputNode", "flow_coefficient", ("float",)],
-             ["unit__outputNode", "max_capacity_coefficient", ("float",)],
-             ["unit__outputNode", "min_capacity_coefficient", ("float",)],
+             ["unit__outputNode", "coefficient", ("float",)],
              ["unit__outputNode", "constraint_flow_coefficient", ("1d_map",)],
              ["unit__outputNode", "inertia_constant", ("float",)],
              ["unit__outputNode", "is_non_synchronous", ("str",)],
