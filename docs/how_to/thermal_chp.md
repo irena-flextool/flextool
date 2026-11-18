@@ -141,7 +141,7 @@ Again, the negative value can be turned positive by arranging it to the right si
 
 **MED or RO.** A cubic metre from MED costs 1/12 MWh of heat. The heat costs 1.5/0.85 MWh of fuel at 20 CUR/MWh, but the CHP also makes 0.5/12 MWh of power that *coal_plant* would otherwise make at 50 CUR/MWh: 2.941 − 2.083 = 0.858 CUR/m³. A cubic metre from RO costs 0.004 MWh of power at 50 CUR/MWh = 0.2 CUR/m³. The saving, 0.658 CUR/m³ × 8760 h = 5 764 CUR per m³/h and year, is more than twice the annuity (30 000 × 0.0802 / 1.05 = 2 293 CUR per m³/h and year at 5 % over 20 years, paid at the start of each year).
 
-**The results.** *ro_desal* is invested to its 2000 m³/h limit and uses 8 MW of power. MED makes the other 1000 m³/h, with 83.33 MW of heat, so *bp_chp* makes 41.67 MW of power and *coal_plant* 300 + 8 − 41.67 = 266.33 MW. The operation costs 16 257.8 CUR/h (142.419 M CUR a year) and the RO annuity is 2000 × 30 000 × 0.0802 / 1.05 = 4.585 M CUR: 147.004 M CUR. The investment is in `unit_capacity__d` and in the *unit investment & retirement* row of the costs.
+**The results.** *ro_desal* is invested to its 2000 m³/h limit and uses 8 MW of power. MED makes the other 1000 m³/h, with 83.33 MW of heat, so *bp_chp* makes 41.67 MW of power and *coal_plant* 300 + 8 − 41.67 = 266.33 MW. The operation costs 16 257.8 CUR/h (142.419 M CUR a year) and the RO annuity is 2000 × 30 000 × 0.0802 / 1.05 = 4.585 M CUR: 147.004 M CUR. The investment is in `unit_capacity__d` and in the *investment* row of the costs.
 
 ### Water storage
 

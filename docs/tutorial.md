@@ -243,7 +243,7 @@ Commit with **Ctrl-Enter**.
 Create a scenario *wind_invest* with alternatives *init*, *init_2day-test*, *west*, *coal*, *wind*, *network*, *wind_invest*. Commit, queue, execute. In the results:
 
 - **Capacity.** The unit capacity table (`unit_capacity__d`) shows the *existing* capacity of *wind_plant*, the capacity *invested* and the *total*. The model builds wind until one more MW would save less in fuel and penalties than its annuity.
-- **Costs.** The annualized costs (`annualized_costs__d`) now have a *unit investment & retirement* category: the annuity of the new capacity for one year, in M CUR.
+- **Costs.** The annualized costs (`annualized_costs__d`) now have an *investment* category: in this one-year period, the annuity of the new capacity for its one year in the model, in M CUR.
 - **Dispatch.** Compare *network* and *wind_invest* in the comparison view: more wind output and less coal.
 
 !!! note "One period, two days"

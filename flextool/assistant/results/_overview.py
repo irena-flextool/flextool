@@ -1,7 +1,8 @@
 """The numbers list_runs gives about a run (Cycle 2, agent feedback 2026-11-09 items 1 and 2): its cost totals for a
 scan across runs, and a one-call overview of one run (costs by category, capacity per entity, slacks).
 
-**Costs** come from ``costs_discounted_p_``: every cost category the model minimises, discounted and summed over
+**Costs** come from ``costs_discounted_p_``: every cost category of the run (the investment-type ones by event:
+investment, replacement, retirement, salvage …; the pre-existing ones are constants), discounted and summed over
 all periods (the total ``calibrate._readers.read_total_system_cost`` uses; the run record's per-solve objective
 is not used, since rolling solves overlap and the record keeps a limited number of solves).  ``total_cost`` adds
 every category (``commodity_sales`` is negative), ``penalty_cost`` the categories whose name holds "penalty" (the

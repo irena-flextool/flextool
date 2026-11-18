@@ -115,12 +115,15 @@ MONEY_PERSTEP = Transform(
 )
 MONEY_ANNUAL = Transform(
     "M CUR/a", Semantics.ANNUALIZED,
-    "Cost, scaled from the sampled timeline to a full-year equivalent.",
-    algebra="Σ cost_dt / period_share / 1e6",
+    "Cost, scaled from the sampled timeline to a full-year equivalent; an investment-type category is its "
+    "discounted event divided by the period's investment discount factor (the event spread evenly over the "
+    "period's years).",
+    algebra="Σ cost_dt / period_share / 1e6;  investment-type: discounted / investment_discount_factor",
 )
 MONEY_DISCOUNTED = Transform(
     "M CUR", Semantics.DISCOUNTED,
-    "Net present cost over the horizon (discount factor × years_represented applied).",
+    "Net present cost over the horizon (discount factor × years_represented applied); the investment-type "
+    "categories in the period the event happens, at the amount the objective charges.",
     algebra="annual_cost · discount_factor · years_represented",
 )
 COST_ENTITY_ANNUAL = Transform(
@@ -131,7 +134,10 @@ COST_ENTITY_ANNUAL = Transform(
                 "rather than summed system-wide. Fuel/commodity cost is "
                 "attributed to the consuming process (the unit/connection that "
                 "draws the commodity, not the source node); CO2 cost is summed "
-                "over every priced group the process touches. Summing a "
+                "over every priced group the process touches. The "
+                "investment-type categories are events (in the period they "
+                "happen), annualized as the discounted value divided by the "
+                "period's investment discount factor. Summing a "
                 "category over all entities reproduces the system summary "
                 "(annualized_costs_d_p).",
     algebra="Σ entity_cost_dt / period_share / 1e6",
@@ -144,7 +150,9 @@ COST_ENTITY_DISCOUNTED = Transform(
                 "entity rather than summed system-wide. Fuel/commodity cost is "
                 "attributed to the consuming process (the unit/connection that "
                 "draws the commodity, not the source node); CO2 cost is summed "
-                "over every priced group the process touches. Summing a "
+                "over every priced group the process touches. The "
+                "investment-type categories are reported in the period the "
+                "event happens, at the amount the objective charges. Summing a "
                 "category over all entities reproduces the system summary "
                 "(costs_discounted_d_p).",
     algebra="annual_entity_cost · discount_factor · years_represented",
@@ -665,9 +673,31 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
 
 # Per-(output, column) formula overrides — only where a bespoke derivation
 # string helps more than the transform's generic tooltip.
+#: The event each investment-type cost line reports (per MW of the decision, × its MW; @ the period it is reported in).
+_COST_LINE_FORMULAS: dict[str, str] = {
+    "investment": "a_cap · Σ_service investment_discount_factor  @ start of operation",
+    "replacement": "a_cap[g] · Σ_service(g) investment_discount_factor of a later reinvest_automatic plant  "
+                   "@ its online period",
+    "extension": "extension cost part of a_cap[x] · Σ_service(x) investment_discount_factor  @ the extension's start",
+    "retirement": "pay · Σ paid years + D(d) · loan balance − a_cap · Σ_service investment_discount_factor  "
+                  "@ retirement period d",
+    "salvage end of life": "−a_salv · Σ_service investment_discount_factor (+ the credits a retirement gives back)  "
+                           "@ end of life (last period past the horizon)",
+    "salvage replaced": "−a_salv[g] · Σ_service(g) investment_discount_factor of a reinvest_automatic plant  @ its end "
+                        "of life",
+    "salvage extended": "salvage part of a_cap[x] · Σ_service(x) investment_discount_factor (the salvage given up)  "
+                        "@ the extension's start",
+    "salvage economic": "−D(d) · net_salvage_value[d] · 1000  @ retirement period d",
+    "investment pre-existing": "existing · a_cap[g] · investment_discount_factor of the replacement of existing "
+                               "capacity  @ its online period",
+    "salvage pre-existing": "−existing · a_salv · investment_discount_factor of existing capacity  @ its end of life",
+}
 FORMULA_OVERRIDE: dict[tuple[str, str], str] = {
     ("annualized_costs_d_p", "commodity_cost"):
         "Σₜ(costs__dt.commodity_cost) / complete_period_share_of_year / 1e6",
+    **{("costs_discounted_d_p", line): formula + " / 1e6" for line, formula in _COST_LINE_FORMULAS.items()},
+    **{("annualized_costs_d_p", line): "(" + formula + ") / investment_discount_factor[d] / 1e6"
+       for line, formula in _COST_LINE_FORMULAS.items()},
 }
 
 DOCS_ANCHOR: dict[str, str] = {
@@ -771,16 +801,18 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
     # Costs
     "costs_dt_p": "Operational and penalty costs incurred in each time step by cost category, in currency (not "
                   "millions), with the step duration and timestep weight applied and not scaled to a year.",
-    "annualized_costs_d_p": "Total cost of each period by cost category, scaled to a full year of operation, "
-                            "including the yearly investment, retirement and fixed costs.",
+    "annualized_costs_d_p": "Total cost of each period by cost category, scaled to a full year of operation: the "
+                            "investment-type categories (investment, replacement, retirement, salvage …) are their "
+                            "discounted event divided by the period's investment discount factor.",
     "costs_discounted_d_p": "Cost of each period by cost category, discounted and multiplied by the years the "
-                            "period represents (the net present value the objective counts).",
+                            "period represents (the net present value the objective counts); the investment-type "
+                            "categories in the period the event happens.",
     "costs_discounted_p_": "Discounted cost by cost category, totalled over all periods of the run.",
     "cost_unit_annualized_d_ec": "Annualized cost of each unit and period by cost category; summed over units, "
                                  "connections and nodes it gives the system annualized costs.",
     "cost_connection_annualized_d_ec": "Annualized cost of each connection and period by cost category.",
-    "cost_node_annualized_d_ec": "Annualized cost of each node and period by cost category (storage investment "
-                                 "and retirement, fixed costs, balance slack penalties).",
+    "cost_node_annualized_d_ec": "Annualized cost of each node and period by cost category (the investment-type "
+                                 "cost lines of its storage, fixed costs, balance slack penalties).",
     "cost_unit_discounted_d_ec": "Discounted cost of each unit and period by cost category; summed over units, "
                                  "connections and nodes it gives the system discounted costs.",
     "cost_connection_discounted_d_ec": "Discounted cost of each connection and period by cost category.",
