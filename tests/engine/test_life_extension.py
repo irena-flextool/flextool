@@ -194,3 +194,27 @@ def test_extension_without_an_invest_method_is_reported_as_investment(tmp_path_f
         row = yearly[(yearly["unit"] == PLANT) & (yearly["period"] == d)].iloc[0]
         assert row["investment"] * MEGA == pytest.approx(MW * 100_000.0 * ann(10.0), rel=1e-7), d
     assert MW * 100_000.0 * ann(10.0) / MEGA == pytest.approx(6.475229, abs=1e-6)
+
+
+@pytest.mark.solver
+def test_no_reinvestment_capacity_is_kept_by_an_extension(tmp_path_factory) -> None:
+    """lifetime_method no_reinvestment: investment is open only in the first lifetime (p2020, p2025); at p2030 the
+    existing 500 MW can still be extended, the only way to keep them, and the cheap extension (E 100) takes all."""
+    values = [v if v[2] != "lifetime_method" else [*v[:3], b64("no_reinvestment", "str")]
+              for v in _values(cost=100.0)]
+    step = _step(tmp_path_factory, "le_no_reinvestment", values)
+    invest = _solution(step, "v_invest_p", ("d",))
+    assert ("p2030",) not in invest and ("p2035",) not in invest
+    assert _solution(step, "v_extend_p")[("existing:p2020", "p2030")] * MW == pytest.approx(MW, abs=1e-6)
+
+
+@pytest.mark.solver
+def test_extension_that_rounds_to_no_period_is_not_offered(tmp_path_factory, capsys) -> None:
+    """life_extension_years 1 on 5-year periods: closest_seam rounds the extended end of life (11) back to 10, the
+    extension's own start; it would never operate, so it has no column, and a warning names the entity."""
+    from flextool.engine import _behaviour_changes
+    _behaviour_changes.start_run({})
+    step = _step(tmp_path_factory, "le_never", _values(cost=100.0, years=1.0))
+    assert step.flex_data.cd_extend is None
+    assert (f"Warning: {PLANT}: the life extensions starting in p2030, p2035 would never operate "
+            "(life_extension_years 1 years, end_of_life_method closest_seam)") in capsys.readouterr().out
