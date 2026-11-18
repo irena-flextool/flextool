@@ -354,16 +354,17 @@ For a unit, connection or storage node `e` in period `d`:
   year, MWh for storage; column `a_cap` of the cohort table, carried by
   `realized_cohort`; `_npv._per_method_annuity_lf`, `_annuity.level_factor`),
   all values read at the period `c` the capacity comes online:
-  `A = invest_cost[e,c]·1000·r/(1 − (1+r)^−n)` (`c·1000/n` for `r = 0`),
-  `r = discount_rate[e,c]`, `n = payback_time[e,c]` (else
-  `lifetime_technical[e,c]`);
+  `A = invest_cost[e,c]·1000·r/(1 − (1+r)^−n)·(1+r)^(off_inv − 1)`
+  (`c·1000/n` for `r = 0`), `r = discount_rate[e,c]`, `n = payback_time[e,c]`
+  (else `lifetime_technical[e,c]`), `off_inv =
+  model.inflation_offset_investment`;
   `a_cap = A·G(n)/G(L)` with `L = lifetime_technical[e,c]`,
   `G(x) = Σ_{k<⌈x⌉} min(1, x−k)·(1+i)^−k`, `i = model.inflation_rate`
   (`G(x) = x` for `i = 0`); `a_cap = A` when `n = L` and for
   `reinvest_automatic`.  The loan's present value spread evenly over the real
   lifetime: one price for every build period, rounding and period length.
-  `A` carries the timing factor `(1+r)^(off_inv − 1)` (`_annuity.annuity_factor`):
-  the loan is worth `invest_cost` at `r` for every `inflation_offset_investment`.
+  The timing factor `(1+r)^(off_inv − 1)` (`_annuity.annuity_factor`) makes
+  the loan worth `invest_cost` at `r` for every `inflation_offset_investment`.
   The salvage credit `a_salv = S·(1+r)^−L·af(r, L)` (`af` the annual factor
   `annuity_factor`, `_annuity.salvage_credit`) with `S =
   1000·net_salvage_value[e,d_eol]` (`_npv._level_prices_lf`; 0 for

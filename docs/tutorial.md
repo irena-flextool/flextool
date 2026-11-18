@@ -229,7 +229,8 @@ Add alternative *wind_invest*. On *wind_plant* (under *wind_invest*):
 
 The model turns the investment cost into a yearly payment (an annuity) over the payback time, here the technical
 lifetime:
-1000 × 0.04 / (1 − 1.04^−25) ≈ 64 CUR/kW per year.
+1000 × 0.04 / (1 − 1.04^−25) / 1.04 ≈ 61.5 CUR/kW per year, paid at the start of each year (the `/ 1.04` makes the
+payments worth the 1000 CUR/kW at 4 % when the capacity starts to operate).
 
 On the solve *2day-dispatch* (under *wind_invest*):
 

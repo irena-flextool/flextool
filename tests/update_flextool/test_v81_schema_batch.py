@@ -530,17 +530,19 @@ def test_current_version_database_with_the_superseded_end_of_life_default(tmp_pa
 
 
 def _superseded_descriptions() -> list[tuple[str, str]]:
-    """The superseded shipped pairs of definitions without a default: only their description changed."""
-    return sorted(key for key, (default, _text) in m._v81_superseded().items() if default is None)
+    """The superseded shipped pairs whose default is still the shipped one (none, or a definition v81 does not add,
+    such as ``discount_rate``): only their description changed."""
+    return sorted(key for key, (default, _text) in m._v81_superseded().items()
+                  if default is None or key not in m._v81_definitions())
 
 
 @pytest.mark.parametrize("edited", [False, True], ids=["shipped", "edited_text"])
 def test_current_version_database_with_a_superseded_description(tmp_path_factory, edited) -> None:
-    """A database at the current version whose definitions without a default still have the description FlexTool
-    shipped before (verbatim) gets the current description of each; a description the user changed is kept.
+    """A database at the current version whose definitions with an unchanged default still have the description
+    FlexTool shipped before (verbatim) gets the current description of each; a description the user changed is kept.
     Values are never touched, and afterwards the database is current, so it is not migrated again."""
     keys = _superseded_descriptions()
-    assert keys
+    assert {(cls, "discount_rate") for cls in CLASSES} <= set(keys)
     url = _tests_json_at(tmp_path_factory, f"v81_superseded_text_{edited}", FLEXTOOL_DB_VERSION)
     path = Path(url.removeprefix("sqlite:///"))
     with DatabaseMapping(url) as db:

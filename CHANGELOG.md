@@ -36,8 +36,8 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   Before, the annuity was sized for payments at year ends, but the default offset 0 places each payment at the start
   of its year (the first one on the day the capacity comes online), so the payments were worth `invest_cost · (1 +
   discount_rate)` at the `discount_rate` instead of `invest_cost`. Now they are worth `invest_cost` at every offset.
-  With offset 0 every investment cost and every salvage annuity of a retirement falls by the factor 1 / (1 +
-  `discount_rate`) (for example 1 / 1.05 at 5 %), so more investment can pay and objective values, investment
+  With offset 0 every investment cost and every yearly salvage credit falls by the factor 1 / (1 + `discount_rate`)
+  (for example 1 / 1.05 at 5 %), so more investment can pay and objective values, investment
   decisions and reported investment costs change; offset 1 and `discount_rate` 0 give the same results as before.
   Upgraded databases get a notice naming the entities with an investment or salvage annuity (results change).
   The FlexTool 2 import sets `inflation_offset_investment` 1, the year-end annuity FlexTool 2 charges.
@@ -49,9 +49,12 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   the life ends in; after the last period, the last value) is a level yearly credit over the lifetime at
   `discount_rate`: it lowers the yearly cost of new capacity (the textbook capital recovery with salvage when
   `payback_time` equals `lifetime_technical`; before, it had no effect), existing capacity holds it over its
-  service years (counted from the model start to its end of life as `end_of_life_method` rounds it; an objective
-  constant with `include_existing_fixed_cost`), and a retirement gives these credits back, so a retired MW earns its
-  salvage value exactly once. Two consequences follow from counting only what happens inside the horizon: a kept
+  service years (counted from the model start to its end of life as `end_of_life_method` rounds it; a constant that
+  is not in the reported objective), and a retirement gives these credits back, so a retired MW earns its salvage
+  value exactly once. A kept new plant's credit is levelled over its `lifetime_technical` but, like its yearly cost,
+  received for its service years as `end_of_life_method` rounds them: with `discount_rate` and `inflation_rate` 0 a
+  plant whose life is rounded from 8 to 10 years receives 10 / 8 = 1.25 times its salvage value, one rounded from 12
+  to 10 years 10 / 12 ≈ 0.83 times (existing capacity's credit is levelled over its rounded service years). Two consequences follow from counting only what happens inside the horizon: a kept
   plant's credits after the horizon are not seen while a retirement collects the whole salvage value, so retiring
   long-lived capacity late in the horizon can pay (an existing 40-year plant retired at the start of the last
   5-year period of a 20-year horizon gains about 0.38 of its salvage value, and swapping it for an identical new

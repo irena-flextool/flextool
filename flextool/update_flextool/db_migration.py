@@ -10959,6 +10959,9 @@ V81_END_OF_LIFE_METHOD_DEFAULT = "closest_seam"
 #: v81: the default of ``end_of_life_method`` that FlexTool shipped before it became closest_seam (its description:
 #: :func:`_v81_superseded_end_of_life_text`).
 V81_SUPERSEDED_END_OF_LIFE_METHOD_DEFAULT = "next_seam"
+#: The shipped default of ``discount_rate`` (unit, connection, node), which v81 keeps; with the superseded description
+#: it forms a superseded pair (:func:`_v81_superseded`).
+V81_DISCOUNT_RATE_DEFAULT = 0.05
 
 _V81_CAPACITY = {"unit": ("capacity", "unit", "kW"), "connection": ("capacity", "connection", "kW"),
                  "node": ("storage capacity", "node", "kWh")}
@@ -10996,8 +10999,10 @@ def _v81_texts() -> dict[tuple[str, str], str]:
             "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and "
             "risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. "
             "When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the "
-            "payback time: annuity = invest_cost x r / (1 - (1 + r)^-payback_time). 0 gives the straight-line "
-            "annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.")
+            "payback time, sized so that the yearly payments are worth invest_cost at this rate when the capacity "
+            "starts to operate: annuity = invest_cost x r / (1 - (1 + r)^-payback_time) x (1 + r)^"
+            "(inflation_offset_investment - 1). 0 gives the straight-line annuity invest_cost / payback_time. No "
+            "value means 0.05. Must be 0 or above. Constant or period.")
         t[(cls, "invest_cost")] = (
             f"[CUR/{per}] Overnight investment cost of new {cap}. It is annualized over payback_time with "
             "discount_rate; with lifetime_method reinvest_choice or no_reinvestment that annuity is spread evenly "
@@ -11079,16 +11084,28 @@ def _v81_superseded_end_of_life_text(cls: str) -> str:
             "end. Used with lifetime_method reinvest_choice / no_reinvestment.")
 
 
+def _v81_superseded_discount_rate_text() -> str:
+    """The description of ``discount_rate`` (unit, connection, node) that FlexTool shipped with the annuity formula
+    before the yearly payment was sized for when it is paid (verbatim)."""
+    return ("[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and "
+            "risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. "
+            "When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the "
+            "payback time: annuity = invest_cost x r / (1 - (1 + r)^-payback_time). 0 gives the straight-line "
+            "annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.")
+
+
 def _v81_superseded() -> dict[tuple[str, str], tuple[str | None, str]]:
     """``{(class, name): (default, description)}``: the default and description pairs of v81 definitions that
-    FlexTool shipped and has since superseded (the current pair is in :func:`_v81_definitions`).  A database at 81
-    that has exactly such a pair gets the current one (:func:`_refresh_head_schema`)."""
+    FlexTool shipped and has since superseded (the current pair is in :func:`_v81_definitions`; for a definition
+    that v81 does not add, only the description of :func:`_v81_texts` is current and the default stays).  A
+    database at 81 that has exactly such a pair gets the current one (:func:`_refresh_head_schema`)."""
     out: dict[tuple[str, str], tuple[str | None, str]] = {}
     for cls, (cap, _what, per) in _V81_CAPACITY.items():
         out[(cls, "end_of_life_method")] = (V81_SUPERSEDED_END_OF_LIFE_METHOD_DEFAULT,
                                             _v81_superseded_end_of_life_text(cls))
         out[(cls, "payback_time")] = (None, _v81_payback_time_text(cap, "changes nothing"))
         out[(cls, "net_salvage_value")] = (None, _v81_superseded_net_salvage_text(cap, per))
+        out[(cls, "discount_rate")] = (V81_DISCOUNT_RATE_DEFAULT, _v81_superseded_discount_rate_text())
     return out
 
 
@@ -11589,8 +11606,12 @@ def _refresh_head_schema(db) -> None:
                 continue
             default = (from_database(pdef["default_value"], pdef["default_type"])
                        if pdef["default_value"] is not None else None)
-            if _is_superseded_pair(cls, name, default, pdef["description"]):
-                fields = current[(cls, name)]
+            if not _is_superseded_pair(cls, name, default, pdef["description"]):
+                continue
+            fields = current.get((cls, name))
+            if fields is None:  # a definition v81 does not add: only its description was superseded
+                db.update_parameter_definition(id=pdef["id"], description=_v81_texts()[(cls, name)])
+            else:
                 db.update_parameter_definition(id=pdef["id"], default_value=fields["default_value"],
                                                default_type=fields["default_type"],
                                                description=fields["description"])

@@ -188,8 +188,8 @@ In the examples.sqlite, the solve entities can carry solver options in the `solv
 |---|---|---|---|---|
 | *csp_without* | – | – | 7200 | 65.700 |
 | *csp_existing* | 7900 / 500 | 3160 | 4040 | 36.865 |
-| *csp_fixed_design* | 7900 / 500 | 3160 | 4040 | 50.809 |
-| *csp_optimised_design* | 12 000 / 2000 | 4800 | 2400 | 43.353 |
+| *csp_fixed_design* | 7900 / 500 | 3160 | 4040 | 49.897 |
+| *csp_optimised_design* | 12 000 / 2000 | 4800 | 2400 | 41.949 |
 | *csp_gas_backup* | 7900 / 500, boiler 4100 | 4800 | 2400 | 31.877 |
 
 **Only totals are unique.** The field's heat is free and coal costs the same in every hour, so the model does not care when the turbine runs. The totals, the capacities and the costs are unique; the hourly dispatch and the storage state are not. Compare scenarios with period results (`unit__outputNode__d`, `unit_capacity__d`, `node_capacity__d`, the costs), not with hourly ones.
@@ -229,16 +229,16 @@ In the examples.sqlite, the solve entities can carry solver options in the `solv
 
 **Use the design efficiency.** η_d in the coefficients is a constant, the turbine's efficiency at its design point, even when the turbine's `efficiency` is a time series (for example lower on hot days with dry cooling). For a solar multiple in a range instead of a fixed value, use two rows: *greater_than* with SM_min and *less_than* with SM_max.
 
-**The results.** The plant pays: it saves 288 350 CUR per MW_e and year of coal, against 139 442 CUR of annuities, so the turbine is built to its bound of 100 MW_e. The ties then give a field of 500 MW_th and a tank of 2500 MWh_th, the plant of *csp_existing*, with the same dispatch. The annuities are (100 × 500 + 500 × 150 + 2500 × 15) × 1000 × 0.0858 (7 % over 25 years) = 13.944 M CUR, so the objective is 36.865 + 13.944 = 50.809 M CUR.
+**The results.** The plant pays: it saves 288 350 CUR per MW_e and year of coal, against 130 320 CUR of annuities, so the turbine is built to its bound of 100 MW_e. The ties then give a field of 500 MW_th and a tank of 2500 MWh_th, the plant of *csp_existing*, with the same dispatch. The annuities are (100 × 500 + 500 × 150 + 2500 × 15) × 1000 × 0.0858 / 1.07 = 162.5 M × 0.0802 (7 % over 25 years, paid at the start of each year) = 13.032 M CUR, so the objective is 36.865 + 13.032 = 49.897 M CUR.
 
 ### Optimised design
 
 **(examples.sqlite scenario: csp_optimised_design)**
 ***init - west - coal - csp_system - csp_plant - csp_invest_common***
 
-**What it does.** Without the ties the model chooses the three capacities within their bounds. It can still build the fixed design, so its objective can only be lower or the same: 43.353 against 50.809 M CUR. Here it builds the turbine and the tank to their bounds (100 MW_e and 5000 MWh_th) and a field of 833 MW_th: a solar multiple of 3.3 and 20 storage hours, with the turbine running in every hour.
+**What it does.** Without the ties the model chooses the three capacities within their bounds. It can still build the fixed design, so its objective can only be lower or the same: 41.949 against 49.897 M CUR. Here it builds the turbine and the tank to their bounds (100 MW_e and 5000 MWh_th) and a field of 833 MW_th: a solar multiple of 3.3 and 20 storage hours, with the turbine running in every hour.
 
-**Which bound decides what.** Two bounds bind. Each extra MW_e of turbine still pays: it saves 438 000 CUR of coal a year against about 285 000 CUR of turbine and field annuities. A tank MWh_th is cheaper than the field it replaces, so the tank also runs to its bound. The field of 833 MW_th is then set by the tank bound: a smaller tank needs a larger field to carry the cloudy day.
+**Which bound decides what.** Two bounds bind. Each extra MW_e of turbine still pays: it saves 438 000 CUR of coal a year against about 266 000 CUR of turbine and field annuities. A tank MWh_th is cheaper than the field it replaces, so the tank also runs to its bound. The field of 833 MW_th is then set by the tank bound: a smaller tank needs a larger field to carry the cloudy day.
 
 **Without the bounds.** With the tank bound lifted, the costs alone would choose a field of 714 MW_th and a tank of 5571 MWh_th (solar multiple 2.86, 22.3 h). With the turbine bound lifted, free heat against the flat 50 CUR/MWh of coal makes every MW_e pay until the plant meets the whole demand.
 
@@ -278,8 +278,8 @@ In the examples.sqlite, the solve entities can carry solver options in the `solv
 | Turbine output | `unit__outputNode__d` (*csp_turbine*, *west*) | 576 700 MWh_e/a (3160 × 182.5) |
 | Capacity factor | `unit_cf__outputNode__d` (*csp_turbine*, *west*) | 3160 / (100 × 48) = 65.8 % |
 | Tank cycles | the decreases of `node_state__dt` (*csp_heat*) summed, divided by the tank capacity | at least 1 in the 48 h (the 2500 MWh_th stored on the clear day: day 1 must store ≥ 2500 MWh_th because the turbine can take only 3000 of the 5500 used) |
-| Plant cost | the *investment* columns of `cost_unit_annualized__d` (*csp_field*, *csp_turbine*) and *storage investment* of `cost_node_annualized__d` (*csp_heat*) | 6.4355 + 4.2905 + 3.2179 = 13.944 M CUR/a |
-| Levelised cost | plant cost / turbine output | 13.944 M / 576 700 = 24.2 CUR/MWh |
+| Plant cost | the *investment* columns of `cost_unit_annualized__d` (*csp_field*, *csp_turbine*) and *storage investment* of `cost_node_annualized__d` (*csp_heat*) | 6.0148 + 4.0098 + 3.0074 = 13.032 M CUR/a |
+| Levelised cost | plant cost / turbine output | 13.032 M / 576 700 = 22.6 CUR/MWh |
 | Average price received | Σ turbine flow × `node_prices__dt` (*west*) / Σ turbine flow | 50 CUR/MWh (coal sets the price in every hour) |
 
 **Not unique.** The tank cycles depend on the hourly timing, which is free in this example, so they are not unique. The levelised cost is the plant's own cost, not its value to the system: show the average price received next to it.

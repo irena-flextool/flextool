@@ -2553,7 +2553,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time: annuity = invest_cost x r / (1 - (1 + r)^-payback_time). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time, sized so that the yearly payments are worth invest_cost at this rate when the capacity starts to operate: annuity = invest_cost x r / (1 - (1 + r)^-payback_time) x (1 + r)^(inflation_offset_investment - 1). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -3431,7 +3431,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time: annuity = invest_cost x r / (1 - (1 + r)^-payback_time). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time, sized so that the yearly payments are worth invest_cost at this rate when the capacity starts to operate: annuity = invest_cost x r / (1 - (1 + r)^-payback_time) x (1 + r)^(inflation_offset_investment - 1). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -4393,7 +4393,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time: annuity = invest_cost x r / (1 - (1 + r)^-payback_time). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time, sized so that the yearly payments are worth invest_cost at this rate when the capacity starts to operate: annuity = invest_cost x r / (1 - (1 + r)^-payback_time) x (1 + r)^(inflation_offset_investment - 1). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [

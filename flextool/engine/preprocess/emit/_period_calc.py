@@ -48,6 +48,7 @@ import polars as pl
 from flextool.engine.input._constants import HOURS_PER_YEAR
 from flextool.engine.preprocess._provider_io import _emit
 from flextool.engine.preprocess.params._branch import branch_periods_inherit_carry
+from flextool.engine.preprocess.params._npv import _INFL_OFFSET_INV_DEFAULT, _INFL_OFFSET_OPS_DEFAULT
 
 
 # ---------------------------------------------------------------------------
@@ -297,8 +298,10 @@ def emit_period_calculated_params(
                 ("period", "value"), complete_share)
 
     p_inflation = scalar_max(input_dir / "p_inflation_rate.csv", 0.0, provider=provider)
-    p_infl_offset_investment = scalar_max(input_dir / "p_inflation_offset_investment.csv", 0.0, provider=provider)
-    p_infl_offset_operations = scalar_max(input_dir / "p_inflation_offset_operations.csv", 0.5, provider=provider)
+    p_infl_offset_investment = scalar_max(input_dir / "p_inflation_offset_investment.csv", _INFL_OFFSET_INV_DEFAULT,
+                                          provider=provider)
+    p_infl_offset_operations = scalar_max(input_dir / "p_inflation_offset_operations.csv", _INFL_OFFSET_OPS_DEFAULT,
+                                          provider=provider)
 
     global_years_set: dict[str, None] = {}
     for years_list in years_for_period.values():

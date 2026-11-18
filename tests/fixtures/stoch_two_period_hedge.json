@@ -2075,7 +2075,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time: annuity = invest_cost x r / (1 - (1 + r)^-payback_time). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time, sized so that the yearly payments are worth invest_cost at this rate when the capacity starts to operate: annuity = invest_cost x r / (1 - (1 + r)^-payback_time) x (1 + r)^(inflation_offset_investment - 1). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -3142,7 +3142,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time: annuity = invest_cost x r / (1 - (1 + r)^-payback_time). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time, sized so that the yearly payments are worth invest_cost at this rate when the capacity starts to operate: annuity = invest_cost x r / (1 - (1 + r)^-payback_time) x (1 + r)^(inflation_offset_investment - 1). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -4308,7 +4308,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time: annuity = invest_cost x r / (1 - (1 + r)^-payback_time). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time, sized so that the yearly payments are worth invest_cost at this rate when the capacity starts to operate: annuity = invest_cost x r / (1 - (1 + r)^-payback_time) x (1 + r)^(inflation_offset_investment - 1). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -7887,7 +7887,7 @@
     [
       "hedge",
       false,
-      "Mid-horizon reveal at p2040 (RP = 173 250)"
+      "Mid-horizon reveal at p2040 (RP = 165 000)"
     ],
     [
       "hedge_na_divest",
@@ -7902,7 +7902,7 @@
     [
       "hedge_na_window",
       false,
-      "Invest-NA window main mode: fan-at-t0 + shared_invest_periods=[p2035] (RP = 173 250)"
+      "Invest-NA window main mode: fan-at-t0 + shared_invest_periods=[p2035] (RP = 165 000)"
     ],
     [
       "hedge_storage",
@@ -7912,7 +7912,7 @@
     [
       "hedge_ws",
       false,
-      "Wait-and-see fan-at-p2035 control (WS = 157 500)"
+      "Wait-and-see fan-at-p2035 control (WS = 150 000)"
     ]
   ],
   "scenario_alternatives": [

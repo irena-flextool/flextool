@@ -334,8 +334,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
         ),
         BehaviourChange(
             id="annuity_timing",
-            summary=("The yearly payment of the investment annuity (and of the salvage annuity of a retirement) is "
-                     "now sized for the moment inflation_offset_investment places it in the year: the annuity "
+            summary=("The yearly payment of the investment annuity (and of the yearly salvage credits) is now "
+                     "sized for the moment inflation_offset_investment places it in the year: the annuity "
                      "times (1 + discount_rate)^(inflation_offset_investment - 1), so the loan taken when the "
                      "capacity comes online is worth invest_cost at the discount_rate. Before, every offset used "
                      "the year-end annuity, so at the default offset 0 (payments at the start of each year) an "
@@ -351,8 +351,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "lifetime_technical, inside the horizon). With lifetime_method reinvest_choice or "
                      "no_reinvestment the net_salvage_value at the end of life lowers the yearly cost of new "
                      "capacity (levelled over lifetime_technical at discount_rate; before: no effect), existing "
-                     "capacity holds it as a level yearly credit (an objective constant with "
-                     "include_existing_fixed_cost) and a retirement gives the credits back. Retiring long-lived "
+                     "capacity holds it as a level yearly credit (a constant that is not in the reported "
+                     "objective) and a retirement gives the credits back. Retiring long-lived "
                      "capacity late in the horizon can now pay, since the years after the horizon are not seen "
                      "(results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "net_salvage_once"),

@@ -14,10 +14,10 @@ differing ONLY in WHERE the branches are declared:
 
   * ``hedge``     — reveal at **p2040** (mid-horizon).  ``v_invest[base,
     p2035]`` is a single SHARED first-stage decision (Option B: the shared
-    trunk, NA by construction).  Hand-calc objective **173 250** (RP).
+    trunk, NA by construction).  Hand-calc objective **165 000** (RP).
   * ``hedge_ws``  — reveal at **p2035** (fan-at-first-step, the Slice-D
     wait-and-see topology).  ``v_invest`` is scenario-specific; each
-    scenario builds all-first-stage.  Hand-calc objective **157 500** (WS).
+    scenario builds all-first-stage.  Hand-calc objective **150 000** (WS).
 
 ``RP − WS = 15 750 = EVPI > 0`` — a direct behavioural proof that the
 mid-horizon first stage is genuinely shared (§8.3).
@@ -39,13 +39,15 @@ mechanism note).  A free existing ``wind`` unit with a branch-varying
       - p2040 low:             0.6 → wind 60 → base residual  60 (= D2 low).
   * unit ``base`` → ``elec`` — the investable peaker (virtual_unitsize 1,
     invest_total, discount_rate 0.05, lifetime 1 → annuity per MW-period
-    = cost·1000·CRF(0.05,1) = cost·1050; unbounded-forward windows so the
-    p2035 anchor's window is {p2035, p2040} → K1 = 2·1050 = 2100 and the
-    p2040 anchor's window is {p2040} → K2 = 1·1050 = 3150),
+    = cost·1000·CRF(0.05,1)·1.05^(0−1) = cost·1000 at the default
+    inflation_offset_investment 0 (a start-of-year payment worth the cost at
+    5 %); unbounded-forward windows so the p2035 anchor's window is
+    {p2035, p2040} → K1 = 2·1·1000 = 2000 and the p2040 anchor's window is
+    {p2040} → K2 = 1·3·1000 = 3000),
     ``invest_max_total`` 150 (non-binding; the per-path cap witness §8.3).
 
 **No inflation / no solve-level discount** (design §8.1 F3): the exact
-173 250 golden requires ``inv_factor ≡ 1.0``, i.e. the SOLVE-level
+165 000 golden requires ``inv_factor ≡ 1.0``, i.e. the SOLVE-level
 inflation scalar = 0.  This builder authors NO ``model.inflation_rate``,
 NO ``inflation_offset_investment/operations``, and NO solve-level
 ``discount_rate`` — all left at their 0.0 default.  The entity
@@ -56,10 +58,10 @@ Hand calculation (design §8.2), ``x = v_invest[base, p2035]``,
 ``r_s = v_invest[base, p2040_s]``, weights ``w_high = 0.25`` (D2 = 120),
 ``w_low = 0.75`` (D2 = 60):
 
-    RP  = min_x 2100·x + Σ_s w_s·3150·(D2_s − x)^+
+    RP  = min_x 2000·x + Σ_s w_s·3000·(D2_s − x)^+
         → x* = 60 (hedge between 60 and 120, above D1 = 40)
-        → 2100·60 + 0.25·3150·60 = 126 000 + 47 250 = 173 250.
-    WS  = 0.75·(2100·60) + 0.25·(2100·120) = 94 500 + 63 000 = 157 500.
+        → 2000·60 + 0.25·3000·60 = 120 000 + 45 000 = 165 000.
+    WS  = 0.75·(2000·60) + 0.25·(2000·120) = 90 000 + 60 000 = 150 000.
 
 Run:  ~/venv-spi/bin/python tests/fixtures/build_stoch_two_period_hedge.py
 """
@@ -114,14 +116,14 @@ def build() -> dict:
                     "mid-horizon predecessor linkage)"],
     ]
     spec["scenarios"] = [
-        ["hedge", False, "Mid-horizon reveal at p2040 (RP = 173 250)"],
+        ["hedge", False, "Mid-horizon reveal at p2040 (RP = 165 000)"],
         ["hedge_ws", False,
-         "Wait-and-see fan-at-p2035 control (WS = 157 500)"],
+         "Wait-and-see fan-at-p2035 control (WS = 150 000)"],
         ["hedge_storage", False,
          "Mid-horizon reveal + stochastic-group storage node (T-S)"],
         ["hedge_na_window", False,
          "Invest-NA window main mode: fan-at-t0 + "
-         "shared_invest_periods=[p2035] (RP = 173 250)"],
+         "shared_invest_periods=[p2035] (RP = 165 000)"],
         ["hedge_na_divest", False,
          "T-Divest: divest-eligible base under recourse+window — "
          "non_anticipativity_divest_p ties first-period divest too (F2)"],
@@ -318,7 +320,7 @@ def build() -> dict:
         # Layered on ``ws`` (fan-at-t0 recourse): tie v_invest/v_divest at
         # p2035 across branches (shared first stage) while p2040 invests
         # per-branch (recourse), and free operations from t0.  The tie
-        # reproduces the Option-B hedge RP = 173 250 by CONSTRAINT (vs the
+        # reproduces the Option-B hedge RP = 165 000 by CONSTRAINT (vs the
         # mid-horizon ``hedge`` scenario's shared trunk by construction).
         ["solve", "stoch_2p_hedge", "shared_invest_periods",
          _pack({"value_type": "str", "data": ["p2035"]}, "array"),

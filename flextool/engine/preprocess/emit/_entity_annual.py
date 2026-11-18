@@ -44,6 +44,7 @@ from flextool.engine.preprocess._annuity import (
 )
 from flextool.engine.preprocess.emit._period_calc import scalar_max
 from flextool.engine.preprocess.params._branch import annuity_window_pairs
+from flextool.engine.preprocess.params._npv import _INFL_OFFSET_INV_DEFAULT
 from flextool.engine.preprocess._provider_io import _emit
 from flextool.engine.preprocess.params._existing import (
     INVEST_NOT_ALLOWED as _INVEST_NOT_ALLOWED,
@@ -283,7 +284,8 @@ def _entity_annual_inputs(input_dir: Path, solve_data_dir: Path,
         "p_inflation_invest": _read_keyed_value(
             solve_data_dir / "p_inflation_factor_investment_yearly.csv", provider=provider),
         "ed_fixed_cost": _read_pdv(solve_data_dir / "ed_fixed_cost.csv", provider=provider),
-        "offset_inv": scalar_max(input_dir / "p_inflation_offset_investment.csv", 0.0, provider=provider),
+        "offset_inv": scalar_max(input_dir / "p_inflation_offset_investment.csv", _INFL_OFFSET_INV_DEFAULT,
+                                 provider=provider),
     }
 
 

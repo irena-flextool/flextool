@@ -708,8 +708,8 @@ def stoch_two_period_hedge_db_url(
 
     Built from ``tests/fixtures/stoch_two_period_hedge.json`` (generated
     by ``tests/fixtures/build_stoch_two_period_hedge.py``): two scenarios
-    (``hedge`` = mid-horizon reveal at p2040 → RP 173 250; ``hedge_ws`` =
-    wait-and-see fan-at-p2035 → WS 157 500) on identical scenario data.
+    (``hedge`` = mid-horizon reveal at p2040 → RP 165 000; ``hedge_ws`` =
+    wait-and-see fan-at-p2035 → WS 150 000) on identical scenario data.
     Defensive migration as in :func:`stochastic_db_url`.
     """
     from flextool.update_flextool.db_migration import migrate_database

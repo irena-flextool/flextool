@@ -23,20 +23,24 @@ which is why the demand variation is supply-side here:
     high 60/90, low 80/120 (the §15.1 demand table).
   * unit ``peaker`` → ``elec`` — variable cost 0, virtual_unitsize 1 MW,
     invest_method=invest_total, invest_cost 1 CUR/kW, discount_rate 0.05,
-    lifetime 1 (→ annuity 1000·CRF(0.05,1) = 1050 exactly),
+    lifetime 1 (→ annuity 1000·CRF(0.05,1)·1.05^(0−1) = 1000 exactly: the
+    yearly payment at the start of the year, the default
+    inflation_offset_investment 0, worth the investment cost at 5 %),
     invest_max_total 150 (the design §15.1 per-path demonstration value:
     each leaf's own total — realized 60+30 = 90, low 80+40 = 120 — is
     ≤ 150 so the cap is non-binding PER LEAF, while the legacy all-``d``
     sum 210 would spuriously bind.  With D6 per-path caps
     ``maxInvest_entity_total_path`` splits the cap by scenario leaf so
-    the objective stays 196 875).
+    the objective stays 187 500).
 
 Hand calculation (design §15.1): with the invest axis fanned, per-scenario
 optimal invest {p2035_high:60, p2040_high:30, p2035_low:80, p2040_low:40};
 annuity
-windows 2100 (branching) / 1050 (continuation); weighted objective
+windows 2000 (branching) / 1000 (continuation); weighted objective
 
-    0.25·(60·2100 + 30·1050) + 0.75·(80·2100 + 40·1050) = 196 875.
+    0.25·(60·2000 + 30·1000) + 0.75·(80·2000 + 40·1000) = 187 500.
+
+(The design's 196 875 was at the year-end payment 1050: 187 500 = 196 875 · 1000 / 1050.)
 
 Run:  ~/venv-spi/bin/python tests/fixtures/build_stoch_two_period_invest.py
 """
