@@ -109,6 +109,22 @@ values").
   so its cycle never closed), and the roll beginning such a period ends its horizon at least at its start level.
   A jump of whole periods or timeblocks changes nothing. Before, energy could appear at every roll boundary that
   fell inside a period or timeblock. Upgraded databases get a notice naming the nodes.
+- **A representative-period solve that follows another solve starts its storage chain from the realised level
+  (results change).** A `bind_forward_only_blended_weights` node in a solve with representative periods that
+  continues from an earlier solve (a sequence, or a roll) now starts its base-period chain from the level realised
+  before it; before, the chain started free and ended at least there. A solve with representative periods now hands
+  on the level its chain reaches at the end of its realised period, not the state at its last realised step (inside
+  a representative block, with a free offset), also to a later solve without representative periods. A later solve
+  of a sequence that continues a forward chain with a free start (`fix_nothing`) and reaches the end of the model
+  ends it at least at the level the model started it from. Upgraded databases get a notice naming the nodes.
+- **The closing level of a rolling cyclic storage never exceeds the closing period's storage capacity (results
+  change).** The roll(s) closing a `bind_within_solve` solve (or a period or timeblock) end at the MWh level the
+  scope started from, capped at the storage capacity in service in the closing period; before, a store whose
+  capacity shrank between periods could not close and used its penalty slack. Capacity added later still brings no
+  energy of its own.
+- **A `fix_start` storage with a free end on capacity the solve cannot change prints a warning with its start
+  energy** (once per node and solve): the run may use that stock without producing it, which is a valid model of an
+  initial stock. Before, it was only logged.
 - **A nested `fix_usage` is cumulative over the rolls and pro rata, and a nested `fix_quantity` is interpolated
   inside an upper step (results change).** A lower-level solve under an upper `fix_usage` may now use, over the
   last period of its horizon, the upper solve's usage from the start of that period (in the solve instance) to the
@@ -150,7 +166,7 @@ values").
   with representative periods, and with a free start (`fix_nothing`) in a rolling solve without them (the first
   roll ends its horizon at least at the level it starts from, and the rolls reaching the end of the model end at
   least at that level); a free end after `fix_start` on capacity the solve cannot change is kept (the
-  user's start energy, logged with its size). With `use_reference_value` and a free start the reference end bounds
+  user's start energy, named with its size in a warning once per node and solve). With `use_reference_value` and a free start the reference end bounds
   the start, so a falling reference series no longer lets the solve take the drop for free. An investment solve
   that does not reach the end of the model warns for such nodes instead. Upgraded databases get a notice naming
   the nodes.
