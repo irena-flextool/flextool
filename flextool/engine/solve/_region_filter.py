@@ -2068,7 +2068,8 @@ def master_network_data(
                  "cd_divest_built_fixed", "cd_extend_cost", "cd_extend_fixed"):
         setattr(new, name, _keep_entity_param(getattr(data, name, None)))
     for name in ("cd_divest_built", "cdd_divest_built", "cohort_divest_built", "cd_extend", "cdd_extend",
-                 "cohort_extend"):
+                 "cohort_extend", "edl_invest_lines_run", "edl_divest_lines", "edl_existing_credit_lines",
+                 "edl_existing_replacement_lines", "cdl_divest_built_lines", "cdl_extend_lines"):
         setattr(new, name, _keep_entity_frame(getattr(data, name, None)))
     new.edd_operating_window = _keep_entity_frame(getattr(data, "edd_operating_window", None))
     new.edd_retire_window = _keep_entity_frame(getattr(data, "edd_retire_window", None))

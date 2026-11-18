@@ -103,7 +103,7 @@ Cross-references
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import polars as pl
 
@@ -1387,6 +1387,16 @@ def _retirement_discount_lf(source: "InputSource",
                    .select("d", "disc"))
 
 
+class ExistingSalvage(NamedTuple):
+    """The salvage terms of existing capacity (:func:`existing_salvage`)."""
+
+    divest: pl.DataFrame
+    credit: pl.DataFrame
+    prices: pl.DataFrame
+    divest_lines: pl.DataFrame
+    credit_lines: pl.DataFrame
+
+
 #: The columns of :func:`existing_salvage`'s ``prices``: the cohort price columns of the existing capacity.
 _EXISTING_PRICE_COLUMNS = ("r_loan", "a_salv", "nsv_eol")
 
@@ -1440,8 +1450,9 @@ def existing_salvage(source: "InputSource",
                      workdir: Path | None,
                      provider: "object | None",
                      run_factor: "Param | None" = None,
-                     ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-    """``(divest_salvage, credit, prices)`` of the existing capacity of the entities that may retire (entityDivest):
+                     ) -> "ExistingSalvage":
+    """``(divest_salvage, credit, prices, divest_lines, credit_lines)`` (:class:`ExistingSalvage`) of the existing
+    capacity of the entities that may retire (entityDivest):
     the salvage term of the retirement coefficient, the level salvage credit of the objective constant and the
     existing cohort's prices (``divest_salvage_p`` / ``existing_salvage`` OBJ headers)::
 
@@ -1470,7 +1481,14 @@ def existing_salvage(source: "InputSource",
     gives back every credit of the cohort (history included, along d's lineage of a stochastic fan, each calendar
     period once), so a retired MW earns exactly S_d·D(d).  Rows of ``divest_salvage`` only where S_d or a_x is not
     0; ``credit`` only where a_x is not 0; ``prices`` ``[e, r_loan, a_salv, nsv_eol]`` (r_x, a_x, S_x) of every
-    entity of entityDivest with an existing cohort.  All frames Utf8 keyed."""
+    entity of entityDivest with an existing cohort.  All frames Utf8 keyed.
+
+    The line frames (``[e, d, line, d_report, value]``, :mod:`._cost_lines`): ``divest_lines`` the events of
+    −divest_salvage (the cost of a MW retired in d): ``salvage economic`` @ d = −D(d)·S_d, the credits given back
+    a_x·S̄_x[e,d] @ the existing plant's end of life (``salvage end of life``; ``salvage replaced`` for a
+    reinvest_automatic plant) and the lines of ``chain`` (:func:`chain_retirement_costs`); ``credit_lines`` the
+    credit of a MW of existing capacity in d, −credit[e,d] as ``salvage pre-existing`` @ the plant's end of life."""
+    from flextool.engine.preprocess.params import _cost_lines as L
     from flextool.engine.preprocess._annuity import salvage_credit
     from flextool.engine.preprocess.params._cohorts import (
         REINVEST_AUTOMATIC,
@@ -1484,11 +1502,13 @@ def existing_salvage(source: "InputSource",
     from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
     empty_ed = pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64})
     empty_prices = pl.DataFrame(schema={"e": pl.Utf8, **{c: pl.Float64 for c in _EXISTING_PRICE_COLUMNS}})
+    no_lines = stack_lines(pl.DataFrame(), ("e", "d"), [])
+    nothing = ExistingSalvage(empty_ed, empty_ed, empty_prices, no_lines, no_lines)
     divesting = _utf8_ed(_entity_invest_set_lf(source, _DIVEST_NOT_ALLOWED), ("e",)).select("e").unique()
     years = cohort_years(source, active_solve, workdir, provider=provider)
     start = run_start_period(years)
     if divesting.height == 0 or start is None:
-        return empty_ed, empty_ed, empty_prices
+        return nothing
     y0 = float(years[start])
     horizon = _run_calendar_of(source, active_solve, years, provider).horizon_end
     first = (existing_generations(source, active_solve, workdir, provider=provider, years=years)
@@ -1503,7 +1523,7 @@ def existing_salvage(source: "InputSource",
                              y_eol=pl.when(automatic).then(pl.col("_y_eol")).otherwise(pl.col("y_eol")))
                .drop("_y_end", "_y_eol"))
     if cohorts.height == 0:
-        return empty_ed, empty_ed, empty_prices
+        return nothing
     span = (pl.when(pl.col("y_end").is_null() | pl.col("y_eol").is_null()).then(float("inf"))
               .when(automatic & (pl.col("y_eol") <= y0 + YEAR_TOL)).then(0.0)
               .when(pl.lit(horizon is not None) & (pl.col("y_end") <= (horizon or 0.0) + YEAR_TOL))
@@ -1556,15 +1576,26 @@ def existing_salvage(source: "InputSource",
     in_service = (anchors.join(cohorts.select("e", "y_eol"), on="e", how="inner").join(y_d, on="d", how="left")
                          .filter(pl.col("y_d").is_null() | (pl.col("y_d") < pl.col("y_eol") - YEAR_TOL))
                          .select("e", "d"))
-    divest = (in_service.join(s_d, on=["e", "d"], how="left")
-                        .join(take_back, on=["e", "d"], how="left")
-                        .join(disc, on="d", how="left")
-                        .with_columns(s_d=pl.col("s_d").fill_null(0.0), taken=pl.col("taken").fill_null(0.0),
-                                      disc=pl.col("disc").fill_null(1.0))
-                        .select("e", "d", value=pl.col("disc") * pl.col("s_d") - pl.col("taken")))
+    parts = (in_service.join(s_d, on=["e", "d"], how="left")
+                       .join(take_back, on=["e", "d"], how="left")
+                       .join(disc, on="d", how="left")
+                       .with_columns(s_d=pl.col("s_d").fill_null(0.0), taken=pl.col("taken").fill_null(0.0),
+                                     disc=pl.col("disc").fill_null(1.0)))
+    divest = parts.select("e", "d", value=pl.col("disc") * pl.col("s_d") - pl.col("taken"))
+    reported = report_years(source, active_solve, period_in_use, workdir, provider)
+    ends = event_period(cohorts.select("e", "method", "y_eol"), "y_eol", reported, "d_eol")
+    end_line = pl.when(pl.col("method") == REINVEST_AUTOMATIC).then(pl.lit(L.SALVAGE_REPLACED)).otherwise(
+        pl.lit(L.SALVAGE_END_OF_LIFE))
+    timed = parts.join(ends, on="e", how="left")
+    own_lines = pl.concat([
+        stack_lines(timed, ("e", "d"), [(L.SALVAGE_ECONOMIC, -pl.col("disc") * pl.col("s_d"), pl.col("d"))]),
+        *(stack_lines(timed.filter(end_line == line), ("e", "d"), [(line, pl.col("taken"), pl.col("d_eol"))])
+          for line in (L.SALVAGE_END_OF_LIFE, L.SALVAGE_REPLACED))])
+    credit_lines = stack_lines(credit.join(ends, on="e", how="left"), ("e", "d"),
+                               [(L.SALVAGE_PRE_EXISTING, -pl.col("value"), pl.col("d_eol"))])
     replacements = (existing_generations(source, active_solve, workdir, provider=provider, years=years)
                     .filter(~pl.col("cohort").str.ends_with(":1")))
-    chain = chain_retirement_costs(
+    chain, chain_lines = chain_retirement_costs(
         source, active_solve, chain_generations(replacements, "existing"),
         anchors.join(cohorts.filter(automatic).select("e"), on="e", how="semi")
                .with_columns(root=pl.lit(f"existing:{start}")),
@@ -1577,7 +1608,11 @@ def existing_salvage(source: "InputSource",
                 .group_by("e", "d", maintain_order=True).agg(pl.col("value").sum())
                 .filter(pl.col("value") != 0.0)
                 .sort("e", "d"))
-    return divest, credit.sort("e", "d"), prices
+    divest_lines = (pl.concat([own_lines, chain_lines.drop("root")], how="vertical_relaxed")
+                      .group_by("e", "d", "line", "d_report", maintain_order=True).agg(pl.col("value").sum())
+                      .sort("e", "d", "line", "d_report"))
+    return ExistingSalvage(divest, credit.sort("e", "d"), prices, divest_lines,
+                           credit_lines.sort("e", "d", "line", "d_report"))
 
 
 def existing_replacement_prices(source: "InputSource",
@@ -1588,10 +1623,11 @@ def existing_replacement_prices(source: "InputSource",
                                 lineage: pl.DataFrame | None,
                                 workdir: Path | None,
                                 provider: "object | None") -> pl.DataFrame:
-    """``[e, d_on, d, value]`` (Utf8): the price per year in service (CUR/MW, MWh for storage; a_b of
-    :func:`generation_prices` as one plant, ``per_plant``) of the replacement of a reinvest_automatic entity's
-    existing capacity in service in each period ``d`` of ``periods`` (``years`` their run years), ``d_on`` the
-    period it comes online in; the existing plant itself (the first generation, sunk) has none.  A replacement
+    """``[e, d_on, d, value, pay, nsv_eol, a_cap, a_salv, y_eol]`` (Utf8 keys): the price per year in service
+    (CUR/MW, MWh for storage; a_b = a_cap − a_salv of :func:`generation_prices` as one plant, ``per_plant``) of the
+    replacement of a reinvest_automatic entity's existing capacity in service in each period ``d`` of ``periods``
+    (``years`` their run years), ``d_on`` the period it comes online in, ``y_eol`` its end of life; the existing
+    plant itself (the first generation, sunk) has none.  A replacement
     starting inside a stochastic fan takes the values of ``d``'s branch (:func:`_labels_on_lineage`)."""
     from flextool.engine.preprocess.params._cohorts import existing_generations, salvage_periods
     from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
@@ -1612,8 +1648,28 @@ def existing_replacement_prices(source: "InputSource",
                                .unique(maintain_order=True), per_plant=True)
     return (rows.join(prices.rename({"d": "d_price"}), on=["e", "cohort", "d_price", "d_salv"], how="left")
                 .select("e", d_on=pl.col("d_price"), d="d", value=pl.col("a_b").fill_null(0.0),
-                        pay=pl.col("pay").fill_null(0.0), nsv_eol=pl.col("nsv_eol").fill_null(0.0))
+                        pay=pl.col("pay").fill_null(0.0), nsv_eol=pl.col("nsv_eol").fill_null(0.0),
+                        a_cap=pl.col("a_cap").fill_null(0.0), a_salv=pl.col("a_salv").fill_null(0.0),
+                        y_eol="y_eol")
                 .sort("e", "d"))
+
+
+def _existing_replacement_lines(prices: pl.DataFrame, factor: "Param | None",
+                                years: dict[str, float]) -> pl.DataFrame | None:
+    """``[e, d, line, d_report, value]`` (Utf8, :mod:`._cost_lines`) per MW of existing reinvest_automatic capacity in
+    the run period d (``prices``: :func:`existing_replacement_prices` over the run's periods; ``factor``
+    ``p_inflation_inv_run``): ``investment pre-existing`` @ d_on = a_cap[g]·inflation_inv[d] and ``salvage
+    pre-existing`` @ the end of life of g = −a_salv[g]·inflation_inv[d], g the replacement in service in d (the
+    objective constant ``existing_replacement`` over the run); None without a replacement."""
+    from flextool.engine.preprocess.params import _cost_lines as L
+    if prices.height == 0 or factor is None:
+        return None
+    f = factor.frame.select(pl.col("d").cast(pl.Utf8), factor=pl.col("value"))
+    timed = event_period(prices.join(f, on="d", how="inner"), "y_eol", years, "d_eol")
+    lines = stack_lines(timed, ("e", "d"), [
+        (L.INVESTMENT_PRE_EXISTING, pl.col("a_cap") * pl.col("factor"), pl.col("d_on")),
+        (L.SALVAGE_PRE_EXISTING, -pl.col("a_salv") * pl.col("factor"), pl.col("d_eol"))])
+    return lines.sort("e", "d", "line", "d_report") if lines.height > 0 else None
 
 
 def warn_free_replacement_salvage(prices: pl.DataFrame, existing: "Param | None") -> None:
@@ -1659,6 +1715,9 @@ def apply_existing_replacement(flex_data: object,
                                            workdir=workdir, provider=provider)
     flex_data.edd_existing_replacement_run = _edd_param(
         reported.filter(pl.col("value") != 0.0).select("e", d_invest=pl.col("d_on"), d="d", value="value"))
+    flex_data.edl_existing_replacement_lines = _existing_replacement_lines(
+        reported, getattr(flex_data, "p_inflation_inv_run", None),
+        report_years(source, active_solve, list(period_in_use), workdir, provider))
     prices = existing_replacement_prices(source, active_solve, [str(d) for d in period_in_use], years,
                                          lineage=lineage, workdir=workdir, provider=provider)
     warn_free_replacement_salvage(prices, getattr(flex_data, "p_entity_pre_existing", None))
@@ -1702,6 +1761,61 @@ def _payment_rows(source: "InputSource",
                 .sort("base").unique(subset=["base"], keep="first", maintain_order=True).collect())
 
 
+def report_years(source: "InputSource",
+                 active_solve: str | None,
+                 period_in_use: list[str],
+                 workdir: Path | None,
+                 provider: "object | None") -> dict[str, float]:
+    """``{period: year from the start of the run}`` of the periods the reported costs can place an event in: the run's
+    periods (:func:`run_years`), or the solve's periods with its history (:func:`._cohorts.cohort_years`) when the
+    run is the solve."""
+    run = run_years(source, active_solve, list(period_in_use), workdir, provider=provider)
+    if run is not None:
+        return dict(run[0])
+    from flextool.engine.preprocess.params._cohorts import cohort_years
+    return dict(cohort_years(source, active_solve, workdir, provider=provider))
+
+
+def event_period(frame: pl.DataFrame, y_col: str, years: dict[str, float], out: str = "d_report") -> pl.DataFrame:
+    """``frame`` with ``out`` (Utf8): the period of ``years`` that starts at the year ``frame[y_col]`` (within
+    ``YEAR_TOL``; the first such period in ``years``' order), else the last period of ``years`` (the latest year):
+    the period an end of life is reported in, the last period for a life that ends at or past the end of the
+    horizon (the salvage credit of its years inside the horizon)."""
+    from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
+    if not years:
+        return frame.with_columns(pl.lit(None, dtype=pl.Utf8).alias(out))
+    order = list(years)
+    latest = max(years.values())
+    last = next(d for d in order if abs(years[d] - latest) <= YEAR_TOL)
+    yr = pl.DataFrame({"_p": order, "_y": [float(years[d]) for d in order], "_i": list(range(len(order)))},
+                      schema={"_p": pl.Utf8, "_y": pl.Float64, "_i": pl.Int64})
+    wanted = frame.select(pl.col(y_col).cast(pl.Float64).alias("_want")).unique().filter(pl.col("_want").is_finite())
+    hit = (wanted.join(yr, how="cross").filter((pl.col("_y") - pl.col("_want")).abs() <= YEAR_TOL)
+                 .sort("_i").unique(subset=["_want"], keep="first").select("_want", "_p"))
+    return (frame.with_columns(pl.col(y_col).cast(pl.Float64).alias("_want"))
+                 .join(hit, on="_want", how="left", maintain_order="left")
+                 .with_columns(pl.coalesce("_p", pl.lit(last, dtype=pl.Utf8)).alias(out))
+                 .drop("_want", "_p"))
+
+
+def stack_lines(frame: pl.DataFrame, keys: tuple[str, ...], parts: list[tuple[str, pl.Expr, pl.Expr]]
+                ) -> pl.DataFrame:
+    """``[*keys, line, d_report, value]`` (labels Utf8, :func:`._cohorts.as_names`) of ``frame``: for each ``(line,
+    value, report)`` of ``parts`` the amount ``value`` reported in the period ``report``, summed per key, line and
+    report period; rows of 0 left out."""
+    from flextool.engine.preprocess.params._cohorts import as_names
+    schema = {**{k: pl.Utf8 for k in keys}, "line": pl.Utf8, "d_report": pl.Utf8, "value": pl.Float64}
+    if frame.height == 0 or not parts:
+        return pl.DataFrame(schema=schema)
+    named = as_names(frame, [k for k in keys if frame.schema[k] != pl.Utf8])
+    stacked = pl.concat([named.select(*keys, line=pl.lit(line, dtype=pl.Utf8), d_report=report.cast(pl.Utf8),
+                                      value=value.cast(pl.Float64))
+                         for line, value, report in parts], how="vertical_relaxed")
+    return (stacked.filter(pl.col("value").fill_null(0.0) != 0.0)
+                   .group_by(*keys, "line", "d_report", maintain_order=True).agg(pl.col("value").sum())
+                   .select(*schema))
+
+
 def built_retirement_costs(source: "InputSource",
                            active_solve: str | None,
                            cohorts: pl.DataFrame,
@@ -1715,8 +1829,8 @@ def built_retirement_costs(source: "InputSource",
                            workdir: Path | None,
                            provider: "object | None",
                            run_factor: "Param | None" = None,
-                           ) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """``(cost, fixed)`` ``[e, cohort, d, value]`` of the retirement options ``options`` (``cd_divest_built``) of the
+                           ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """``(cost, fixed, lines)`` ``[e, cohort, d, value]`` of the retirement options ``options`` (``cd_divest_built``) of the
     model-built cohorts ``cohorts`` (``cohort_divest_built`` with their prices), CUR/MW (MWh for storage): the
     ``divest_built_cost_{p,n}`` OBJ header::
 
@@ -1733,17 +1847,35 @@ def built_retirement_costs(source: "InputSource",
     investment walks.  A retired MW pays its contract as it ran: the payments due before d, then at the start of d the
     capital still owed, less its salvage value received then; the level price its years in service were charged is
     taken back (history included: a carried cohort's price was charged by an earlier solve) and the fixed cost from d
-    on is saved."""
+    on is saved.
+
+    ``lines`` ``[e, cohort, d, line, d_report, value]`` (Utf8, :mod:`._cost_lines`) split ``cost`` into its events::
+
+        retirement           @ d       = cash[c,d] − a_cap[c]·S̄[c,d]     (the contract's payments less the capital
+                                                                          its years in service were charged)
+        salvage economic     @ d       = −D(d)·S_d                        (the salvage value received)
+        salvage end of life  @ d_eol   = a_salv[c]·S̄[c,d]                (the salvage credits given back, where the
+                                                                          plant's end-of-life credit is reported)
+
+    ``cash = pay·S[y_on, min(y[d], y_on + n)) + D(d)·B``, d_eol the period of the plant's end of life
+    (:func:`event_period` on :func:`report_years`)."""
+    from flextool.engine.preprocess.params import _cost_lines as L
     empty = pl.DataFrame(schema={"e": schema_dtype(_enums, "e"), "cohort": pl.Utf8, "d": schema_dtype(_enums, "d"),
                                  "value": pl.Float64})
     parts = _settlements(source, active_solve, cohorts, options, period_in_use, period_universe, period_with_history,
                          lineage=lineage, year_rows=year_rows, workdir=workdir, provider=provider,
                          run_factor=run_factor)
     if parts is None:
-        return empty, empty
+        return empty, empty, stack_lines(pl.DataFrame(), ("e", "cohort", "d"), [])
     keys = ["e", "cohort", "d"]
     out = parts.with_columns(value=pl.col("settle") - (pl.col("a_cap") - pl.col("a_salv")) * pl.col("taken"))
-    return out.select(*keys, "value"), out.select(*keys, value=pl.col("saved"))
+    timed = event_period(out, "y_eol", report_years(source, active_solve, period_in_use, workdir, provider),
+                         "d_eol")
+    lines = stack_lines(timed, ("e", "cohort", "d"), [
+        (L.RETIREMENT, pl.col("cash") - pl.col("a_cap") * pl.col("taken"), pl.col("d")),
+        (L.SALVAGE_ECONOMIC, -pl.col("sold"), pl.col("d")),
+        (L.SALVAGE_END_OF_LIFE, pl.col("a_salv") * pl.col("taken"), pl.col("d_eol"))])
+    return out.select(*keys, "value"), out.select(*keys, value=pl.col("saved")), lines
 
 
 def _settlements(source: "InputSource",
@@ -1760,11 +1892,13 @@ def _settlements(source: "InputSource",
                  provider: "object | None",
                  run_factor: "Param | None" = None,
                  ) -> pl.DataFrame | None:
-    """``[e, cohort, d, y_d, y_on, a_cap, a_salv, settle, taken, saved]`` of the retirement options ``options``
-    (``[e, cohort, d]``) of the plants ``cohorts`` (``[e, cohort, y_on, y_eol, pay, n_pay, r_loan, a_cap, a_salv]``),
-    the parts of :func:`built_retirement_costs`: ``settle[c,d]`` the cash of a MW retired in d as its contract ran
-    (``set``), ``taken[c,d] = S̄[c,d]`` the investment factors of the plant's periods in service (history included,
-    on d's lineage) and ``saved[c,d]`` the fixed cost it saves from d on; ``None`` without an option."""
+    """``[e, cohort, d, y_d, y_on, y_eol, a_cap, a_salv, settle, cash, sold, taken, saved]`` of the retirement options
+    ``options`` (``[e, cohort, d]``) of the plants ``cohorts`` (``[e, cohort, y_on, y_eol, pay, n_pay, r_loan, a_cap,
+    a_salv]``), the parts of :func:`built_retirement_costs`: ``settle[c,d]`` the cash of a MW retired in d as its
+    contract ran (``set``; ``cash = pay·paid + D(d)·B`` its payments, ``sold = D(d)·S_d`` the salvage value received,
+    ``settle = cash − sold``), ``taken[c,d] = S̄[c,d]`` the investment factors of the plant's periods in service
+    (history included, on d's lineage) and ``saved[c,d]`` the fixed cost it saves from d on; ``None`` without an
+    option."""
     from flextool.engine.input._axis_enums import cast_dim
     from flextool.engine.preprocess.params._cohorts import cohort_years
     from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
@@ -1847,9 +1981,11 @@ def _settlements(source: "InputSource",
                   .with_columns(paid=pl.col("paid").fill_null(0.0), taken=pl.col("taken").fill_null(0.0),
                                 saved=pl.col("saved").fill_null(0.0), s_d=pl.col("s_d").fill_null(0.0),
                                 disc=pl.col("disc").fill_null(1.0))
-                  .with_columns(settle=pl.col("pay") * pl.col("paid") + pl.col("disc") * (balance - pl.col("s_d")))
+                  .with_columns(settle=pl.col("pay") * pl.col("paid") + pl.col("disc") * (balance - pl.col("s_d")),
+                                cash=pl.col("pay") * pl.col("paid") + pl.col("disc") * balance,
+                                sold=pl.col("disc") * pl.col("s_d"))
                   .sort(keys))
-    return out.select(*keys, "y_d", "y_on", "a_cap", "a_salv", "settle", "taken", "saved")
+    return out.select(*keys, "y_d", "y_on", "y_eol", "a_cap", "a_salv", "settle", "cash", "sold", "taken", "saved")
 
 
 def _labels_on_lineage(rows: pl.DataFrame,
@@ -1899,8 +2035,8 @@ def chain_retirement_costs(source: "InputSource",
                            run_factor: "Param | None" = None,
                            per_plant: bool = False,
                            first_settles: bool = False,
-                           ) -> pl.DataFrame:
-    """``[e, root, d, value]`` (Utf8 keys, CUR/MW, MWh for storage) of retiring a MW of the ``reinvest_automatic``
+                           ) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """``(cost, lines)``: ``cost`` ``[e, root, d, value]`` (Utf8 keys, CUR/MW, MWh for storage) of retiring a MW of the ``reinvest_automatic``
     chain ``root`` in d (``options`` ``[e, root, d]``), the plants of the chain being ``gens``
     (:func:`chain_generations`), without the fixed cost it saves::
 
@@ -1911,13 +2047,20 @@ def chain_retirement_costs(source: "InputSource",
     lineage) and a_b = a_cap − a_salv (:func:`generation_prices` of the plant as constructed in its online period on
     d's lineage, ``per_plant`` for the replacement of existing capacity).  A retired MW pays its current plant's
     contract (a replacement retired at its own start was never bought) and gives back the level price of its plant
-    and of every replacement still to come."""
+    and of every replacement still to come.
+
+    ``lines`` ``[e, root, d, line, d_report, value]`` (Utf8, :mod:`._cost_lines`) split ``cost`` as
+    :func:`built_retirement_costs` does, per plant g′: ``retirement`` @ d = [settles]·cash − a_cap[g′]·S̄[g′,d],
+    ``salvage economic`` @ d = −[settles]·D(d)·S_d, ``salvage replaced`` @ the end of life of g′ =
+    a_salv[g′]·S̄[g′,d] (a plant of a chain is replaced at its end of life)."""
+    from flextool.engine.preprocess.params import _cost_lines as L
     from flextool.engine.input._axis_enums import cast_dim
     from flextool.engine.preprocess.params._cohorts import salvage_periods
     from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
     empty = pl.DataFrame(schema={"e": pl.Utf8, "root": pl.Utf8, "d": pl.Utf8, "value": pl.Float64})
+    no_lines = stack_lines(pl.DataFrame(), ("e", "root", "d"), [])
     if gens.height == 0 or options is None or options.height == 0:
-        return empty
+        return empty, no_lines
     years = _chain_years(source, active_solve, provider)
     last = salvage_periods(source, active_solve, years, provider, [None])[0]
     opts = options.select(pl.col("e").cast(pl.Utf8), pl.col("root").cast(pl.Utf8), pl.col("d").cast(pl.Utf8))
@@ -1928,7 +2071,7 @@ def chain_retirement_costs(source: "InputSource",
                       how="inner")
                 .filter(pl.col("y_eol") > pl.col("y_d") + YEAR_TOL))
     if rows.height == 0:
-        return empty
+        return empty, no_lines
     rows = _labels_on_lineage(rows, years, lineage, last)
     prices = generation_prices(source, rows.select("e", "cohort", d=pl.col("d_price"), d_salv=pl.col("d_salv"))
                                .unique(maintain_order=True), per_plant=per_plant)
@@ -1942,18 +2085,27 @@ def chain_retirement_costs(source: "InputSource",
                          plant_options, period_in_use, period_universe, period_with_history, lineage=lineage,
                          year_rows=year_rows, workdir=workdir, provider=provider, run_factor=run_factor)
     if parts is None:
-        return empty
+        return empty, no_lines
     parts = parts.select(pl.col("e").cast(pl.Utf8), pl.col("cohort").alias("plant"), pl.col("d").cast(pl.Utf8),
-                         "settle", "taken")
+                         "settle", "cash", "sold", "taken")
     current = (pl.col("y_on") <= pl.col("y_d") + YEAR_TOL)
     starts = pl.col("cohort").str.ends_with(":1") & pl.lit(first_settles)
     settles = current & ((pl.col("y_d") - pl.col("y_on") > YEAR_TOL) | starts)
-    return (rows.join(parts, on=["e", "plant", "d"], how="left")
-                .sort("e", "root", "d", "y_on")
-                .group_by("e", "root", "d", maintain_order=True)
-                .agg((pl.when(settles).then(pl.col("settle").fill_null(0.0)).otherwise(0.0)
-                      - (pl.col("a_cap") - pl.col("a_salv")) * pl.col("taken").fill_null(0.0)).sum().alias("value"))
-                .sort("e", "root", "d"))
+    joined = rows.join(parts, on=["e", "plant", "d"], how="left").sort("e", "root", "d", "y_on")
+    cost = (joined.group_by("e", "root", "d", maintain_order=True)
+                  .agg((pl.when(settles).then(pl.col("settle").fill_null(0.0)).otherwise(0.0)
+                        - (pl.col("a_cap") - pl.col("a_salv")) * pl.col("taken").fill_null(0.0)).sum().alias("value"))
+                  .sort("e", "root", "d"))
+    timed = event_period(joined.with_columns(_settles=settles), "y_eol",
+                         report_years(source, active_solve, period_in_use, workdir, provider), "d_eol")
+    taken = pl.col("taken").fill_null(0.0)
+    lines = stack_lines(timed, ("e", "root", "d"), [
+        (L.RETIREMENT, pl.when(pl.col("_settles")).then(pl.col("cash").fill_null(0.0)).otherwise(0.0)
+         - pl.col("a_cap") * taken, pl.col("d")),
+        (L.SALVAGE_ECONOMIC, -pl.when(pl.col("_settles")).then(pl.col("sold").fill_null(0.0)).otherwise(0.0),
+         pl.col("d")),
+        (L.SALVAGE_REPLACED, pl.col("a_salv") * taken, pl.col("d_eol"))])
+    return cost, lines
 
 
 def _ed_fixed_cost_raw_lf(source: "InputSource",
@@ -2921,6 +3073,12 @@ def apply_run_cost_fields(flex_data: object,
         price = (ann.join(kinds, on="e", how="inner")
                     .select("e", "d", "kind",
                             coef=pl.when(pl.col("kind") == "bounded").then(level).otherwise(pl.col("ann"))))
+        # The two parts of that price: the capital (a_cap, the annuity for reinvest_automatic) and the salvage
+        # credit (−a_salv; none for reinvest_automatic): the reported investment and salvage lines.
+        bounded = pl.col("kind") == "bounded"
+        split = (ann.join(kinds, on="e", how="inner")
+                    .select("e", "d", "kind", inv=pl.when(bounded).then(pl.col("a_cap")).otherwise(pl.col("ann")),
+                            salv=pl.when(bounded).then(-pl.col("a_salv")).otherwise(0.0)))
     # The lifetime fixed cost covers every entity over the period history (as its per-solve twin); without run
     # years only the vintages are walked (for their operating window).  The history periods are those of the run
     # (:func:`run_years`): the branch copy of a realized designation (``<period>_<branch>``) is no period of the
@@ -2959,6 +3117,10 @@ def apply_run_cost_fields(flex_data: object,
                                          factor_inv, yr, flex_data, provider)
             flex_data.edd_annuity, flex_data.edd_entity_annual_discounted_run = _vintage_yearly_and_starts(
                 walk.join(vintages, on=["e", "d"], how="semi"), price, chain_rows, factor_inv, start)
+            ends = anchors.select("e", "d", "kind", y_eol=pl.col("yr_avail") + pl.col("life"))
+            flex_data.edl_invest_lines_run = _vintage_lines(
+                walk.join(vintages, on=["e", "d"], how="semi"), split, chain_rows, factor_inv, start, ends,
+                chain_generations(getattr(flex_data, "cohort", None)), yr)
         if years is not None:
             fc = _utf8_ed(at_online_period(
                 fc_lf, lambda lf: _ed_fixed_cost_raw_lf(source, lf), commission, "fc")).rename({"fc": "coef"})
@@ -3061,6 +3223,64 @@ def _vintage_yearly_and_starts(walk: pl.DataFrame,
                   .agg((pl.col("coef") * pl.col("factor")).sum().alias("value"))
                   .select("e", pl.col("d").alias("d_invest"), pl.col("d_start").alias("d"), "value"))
     return _edd_param(yearly), _edd_param(starts)
+
+
+def _vintage_lines(walk: pl.DataFrame,
+                   split: pl.DataFrame,
+                   chain_rows: pl.DataFrame | None,
+                   factor: pl.DataFrame,
+                   start: pl.DataFrame,
+                   ends: pl.DataFrame,
+                   gens: pl.DataFrame,
+                   years: dict[str, float]) -> pl.DataFrame | None:
+    """``[e, d, line, d_report, value]`` (Utf8, :mod:`._cost_lines`) of the vintages of ``walk`` (``[e, d, kind,
+    d_all]``, their run operating window): the investment lump of a MW of each decision (the sum of
+    :func:`_vintage_yearly_and_starts`' starts) split by event, each part Σ price·factor over the periods of its
+    plant (``factor`` ``[d_all, factor]``)::
+
+        investment          @ c(d)          = a_cap[e,c]·S̄          (the annuity for reinvest_automatic)
+        salvage end of life @ d_eol         = −a_salv[e,c]·S̄         (reinvest_choice / no_reinvestment)
+        investment / replacement @ d_on(g) = a_cap[g]·S̄[g]         (each plant g of a reinvest_automatic chain;
+                                                                     replacement from its second plant on)
+        salvage replaced    @ d_eol(g)      = −a_salv[g]·S̄[g]
+
+    ``split`` ``[e, d, kind, inv, salv]`` the two parts of each price, ``start`` ``[e, d, d_c]`` the start of
+    operation, ``ends`` ``[e, d, kind, y_eol]`` the end of life of a decision, ``gens`` :func:`chain_generations`
+    (their ``y_eol``), ``chain_rows`` :func:`priced_chain_rows`; d_eol the period of ``years`` its end of life starts
+    (the last period when it lives to or past the end of the horizon, :func:`event_period`).  None without a
+    row."""
+    from flextool.engine.preprocess.params import _cost_lines as L
+    chained = (pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8}) if chain_rows is None
+               else chain_rows.select("e", "d").unique())
+    plain = (walk.join(chained.with_columns(kind=pl.lit("unbounded")), on=["e", "d", "kind"], how="anti")
+                 .join(factor, on="d_all", how="left")
+                 .group_by("e", "d", "kind", maintain_order=True)
+                 .agg(pl.col("factor").fill_null(1.0).sum().alias("sum"))
+                 .join(split, on=["e", "d", "kind"], how="left")
+                 .join(start, on=["e", "d"], how="left")
+                 .join(ends, on=["e", "d", "kind"], how="left")
+                 .with_columns(d_start=pl.coalesce("d_c", "d")))
+    plain = event_period(plain, "y_eol", years, "d_eol")
+    parts = [stack_lines(plain, ("e", "d"), [
+        (L.INVESTMENT, pl.col("inv").fill_null(0.0) * pl.col("sum"), pl.col("d_start")),
+        (L.SALVAGE_END_OF_LIFE, pl.col("salv").fill_null(0.0) * pl.col("sum"), pl.col("d_eol"))])]
+    if chain_rows is not None and chain_rows.height > 0:
+        plants = (chain_rows.group_by("e", "d", "cohort", maintain_order=True)
+                            .agg(pl.col("a_cap").first(), pl.col("a_salv").first(), pl.col("d_price").first(),
+                                 pl.col("factor").sum().alias("sum"))
+                            .join(gens.select("e", "cohort", "y_eol"), on=["e", "cohort"], how="left"))
+        plants = event_period(plants, "y_eol", years, "d_eol")
+        first = pl.col("cohort").str.ends_with(":1")
+        parts += [stack_lines(plants.filter(first), ("e", "d"), [
+                      (L.INVESTMENT, pl.col("a_cap") * pl.col("sum"), pl.col("d_price"))]),
+                  stack_lines(plants.filter(~first), ("e", "d"), [
+                      (L.REPLACEMENT, pl.col("a_cap") * pl.col("sum"), pl.col("d_price"))]),
+                  stack_lines(plants, ("e", "d"), [
+                      (L.SALVAGE_REPLACED, -pl.col("a_salv") * pl.col("sum"), pl.col("d_eol"))])]
+    lines = (pl.concat(parts, how="vertical_relaxed")
+               .group_by("e", "d", "line", "d_report", maintain_order=True).agg(pl.col("value").sum())
+               .sort("e", "d", "line", "d_report"))
+    return lines if lines.height > 0 else None
 
 
 def _edd_param(df: pl.DataFrame) -> "Param | None":
@@ -3417,13 +3637,17 @@ def apply_retirement_salvage(flex_data: object,
     """Set the salvage terms of the retirement of existing capacity (:func:`existing_salvage`):
     ``ed_divest_salvage`` (the salvage part of the ``v_divest`` coefficient), ``ed_existing_salvage_credit`` (the
     level salvage credit of the objective constant), ``ed_divest_settlement_yearly`` (the reported yearly amount of
-    the retirement period: ``ed_divest_salvage / inflation_inv``) and the existing cohort's prices (``r_loan``,
-    ``a_salv``, ``nsv_eol``).  The only derivation of these terms: a Spine solve (:func:`apply_npv`) and a synthetic
+    the retirement period: ``ed_divest_salvage / inflation_inv``), the existing cohort's prices (``r_loan``,
+    ``a_salv``, ``nsv_eol``) and the cost lines of the reported costs (``edl_divest_lines``: per MW retired,
+    ``edl_existing_credit_lines``: per MW of existing capacity; :func:`existing_salvage`).  The only derivation of these terms: a Spine solve (:func:`apply_npv`) and a synthetic
     sub-solve (:func:`apply_run_fields_of_synthetic_solve`) call it alike."""
-    divest, credit, prices = existing_salvage(
+    salvage = existing_salvage(
         source, active_solve, period_invest, period_in_use, period_universe, period_with_history,
         lineage=lineage, year_rows=year_rows, workdir=workdir, provider=provider,
         run_factor=getattr(flex_data, "p_inflation_inv_run", None))
+    divest, credit, prices = salvage.divest, salvage.credit, salvage.prices
+    flex_data.edl_divest_lines = salvage.divest_lines if salvage.divest_lines.height > 0 else None
+    flex_data.edl_existing_credit_lines = salvage.credit_lines if salvage.credit_lines.height > 0 else None
     _notice_net_salvage_once(divest["e"].unique().to_list())
     flex_data.ed_divest_salvage = _ed_param(divest) if divest.height > 0 else None
     flex_data.ed_existing_salvage_credit = _ed_param(credit) if credit.height > 0 else None
@@ -3453,7 +3677,8 @@ def apply_built_retirement_costs(flex_data: object,
                                  provider: "object | None" = None,
                                  ) -> None:
     """Set the retirement costs of model-built capacity (:func:`built_retirement_costs`): ``cd_divest_built_cost``
-    (the settlement less the level price taken back) and ``cd_divest_built_fixed`` (the fixed cost saved), after the
+    (the settlement less the level price taken back), ``cd_divest_built_fixed`` (the fixed cost saved) and
+    ``cdl_divest_built_lines`` (the cost lines of the reported costs, per MW retired), after the
     cohort prices of this solve's investments (:func:`apply_invest_lumps`) are on ``cohort_divest_built``.  A
     retirable cohort without its prices is an error (:func:`._retire_built.require_cohort_prices`), never a 0.  Warns
     where building a cohort and retiring it earns money (:func:`._retire_built.warn_build_to_retire`).  The only
@@ -3463,7 +3688,7 @@ def apply_built_retirement_costs(flex_data: object,
     options = getattr(flex_data, "cd_divest_built", None)
     cohorts = getattr(flex_data, "cohort_divest_built", None)
     if options is None or options.height == 0 or cohorts is None or cohorts.height == 0:
-        flex_data.cd_divest_built_cost = flex_data.cd_divest_built_fixed = None
+        flex_data.cd_divest_built_cost = flex_data.cd_divest_built_fixed = flex_data.cdl_divest_built_lines = None
         return
     cohorts = _with_cohort_prices(cohorts, getattr(flex_data, "cohort", None))
     flex_data.cohort_divest_built = cohorts
@@ -3472,7 +3697,7 @@ def apply_built_retirement_costs(flex_data: object,
         gens.select("e", pl.col("root").alias("cohort")).unique(), on=["e", "cohort"], how="semi")
     left = cohorts.with_columns(_e=pl.col("e").cast(pl.Utf8))
     require_cohort_prices(left.join(roots.rename({"e": "_e"}), on=["_e", "cohort"], how="anti").drop("_e"))
-    cost, fixed = built_retirement_costs(
+    cost, fixed, lines = built_retirement_costs(
         source, active_solve, cohorts, options, period_in_use, period_universe, period_with_history,
         lineage=lineage, year_rows=year_rows, workdir=workdir, provider=provider,
         run_factor=getattr(flex_data, "p_inflation_inv_run", None))
@@ -3480,10 +3705,13 @@ def apply_built_retirement_costs(flex_data: object,
         # A reinvest_automatic cohort: its chain's settlement (the plant in service, and every replacement to come).
         chained = options.select(pl.col("e").cast(pl.Utf8), pl.col("cohort").alias("root"), pl.col("d").cast(pl.Utf8))
         chained = chained.join(roots.rename({"cohort": "root"}), on=["e", "root"], how="semi")
-        chain = chain_retirement_costs(
+        chain, chain_lines = chain_retirement_costs(
             source, active_solve, gens, chained, period_in_use, period_universe, period_with_history,
             lineage=lineage, year_rows=year_rows, workdir=workdir, provider=provider,
             run_factor=getattr(flex_data, "p_inflation_inv_run", None), first_settles=True)
+        chained_keys = chain.select("e", pl.col("root").alias("cohort"), "d")
+        lines = pl.concat([lines.join(chained_keys, on=["e", "cohort", "d"], how="anti"),
+                           chain_lines.rename({"root": "cohort"})], how="vertical_relaxed")
         chain, cost = align_join_dtypes(
             chain.lazy().select(alias_to_axis("e", "e"), pl.col("root").alias("cohort"), alias_to_axis("d", "d"),
                                 _chain=pl.col("value")), cost.lazy(), ["e", "d"])
@@ -3492,6 +3720,7 @@ def apply_built_retirement_costs(flex_data: object,
         _notice_automatic_replacement_cost(roots.lazy().select("e").unique().with_columns(changed=pl.lit(True)))
     flex_data.cd_divest_built_cost = Param(("e", "cohort", "d"), cost)
     flex_data.cd_divest_built_fixed = Param(("e", "cohort", "d"), fixed)
+    flex_data.cdl_divest_built_lines = lines.sort("e", "cohort", "d", "line", "d_report")
     warn_build_to_retire(_build_and_retire_totals(flex_data, cohorts, cost, fixed))
 
 
@@ -3513,7 +3742,8 @@ def extension_prices(source: "InputSource",
 
     ``af`` :func:`.._annuity.annuity_factor` (the offset's timing factor); ``d_salv`` the period of the extended
     end of life on ``d``'s lineage (:func:`_labels_on_lineage`; the last run period after the last period start).
-    Every value is read at ``d`` (on its lineage in a fan, through ``_param_shapes``)."""
+    Every value is read at ``d`` (on its lineage in a fan, through ``_param_shapes``).  ``share_cost`` =
+    1000·life_extension_cost / C_x, the extension cost's part of a_cap (a_cap is linear in C_x; 0 at C_x = 0)."""
     from flextool.engine.input._lifetime_roles import LIFE_EXTENSION_COST, LIFE_EXTENSION_YEARS
     from flextool.engine.preprocess._annuity import salvage_credit
     from flextool.engine.preprocess.params._cohorts import salvage_periods
@@ -3541,8 +3771,10 @@ def extension_prices(source: "InputSource",
                                     .otherwise(pl.col("_capital") * annuity_factor(r, life, offset)),
                               a_salv=salvage_credit(pl.col("nsv_eol"), r, life, offset),
                               n_pay=life, r_loan=r)
-                .with_columns(a_cap=pl.col("pay"))
-                .select(*rows.columns, *PRICE_COLUMNS))
+                .with_columns(a_cap=pl.col("pay"),
+                              share_cost=pl.when(pl.col("_capital") == 0.0).then(0.0)
+                                           .otherwise(pl.col("_cost") * 1000.0 / pl.col("_capital")))
+                .select(*rows.columns, *PRICE_COLUMNS, "share_cost"))
 
 
 def extension_costs(source: "InputSource",
@@ -3558,8 +3790,8 @@ def extension_costs(source: "InputSource",
                     workdir: Path | None,
                     provider: "object | None",
                     run_factor: "Param | None" = None,
-                    ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-    """``(prices, cost, fixed)`` of the life-extension cohorts of the cohort table ``cohort`` (kind ``extend``):
+                    ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """``(prices, cost, fixed, lines)`` of the life-extension cohorts of the cohort table ``cohort`` (kind ``extend``):
     ``prices`` ``[e, cohort, PRICE_COLUMNS…]`` (:func:`extension_prices`) and ``[e, parent, d, value]`` (Utf8 keys,
     CUR/MW, MWh) the ``extend_cost_{p,n}`` coefficients of the option (e, parent, d)::
 
@@ -3568,7 +3800,13 @@ def extension_costs(source: "InputSource",
 
     x the extension of c decided in d, alive(x) its periods in service (``cohort_alive``: on d's lineage, y[d] ≤
     y[d′] < y_eol(x)), the factors those a retirement of x takes back and saves (:func:`_run_inv_factors`,
-    :func:`_settlements`), so extending and retiring is the extension's cash flow."""
+    :func:`_settlements`), so extending and retiring is the extension's cash flow.
+
+    ``lines`` ``[e, cohort, d, line, d_report, value]`` (Utf8, the parent's ``cohort``; :mod:`._cost_lines`) split
+    ``cost``: ``extension`` @ d = share_cost·a_cap[x]·S̄[x,d] (the extension cost), ``salvage extended`` @ d =
+    (1 − share_cost)·a_cap[x]·S̄[x,d] (the parent's salvage given up), ``salvage end of life`` @ the end of life of
+    x = −a_salv[x]·S̄[x,d] (``share_cost`` of :func:`extension_prices`)."""
+    from flextool.engine.preprocess.params import _cost_lines as L
     from flextool.engine.preprocess.params._cohorts import KIND_EXTEND, cohort_years
     empty = pl.DataFrame(schema={"e": pl.Utf8, "parent": pl.Utf8, "d": pl.Utf8, "value": pl.Float64})
     ext = (cohort.filter(pl.col("kind") == KIND_EXTEND)
@@ -3576,7 +3814,7 @@ def extension_costs(source: "InputSource",
                          y_eol="y_eol", d_on="d_on", d_eol="d_eol"))
     if ext.height == 0:
         return pl.DataFrame(schema={"e": pl.Utf8, "cohort": pl.Utf8, **{c: pl.Float64 for c in PRICE_COLUMNS}}), \
-            empty, empty
+            empty, empty, stack_lines(pl.DataFrame(), ("e", "cohort", "d"), [])
     prices = extension_prices(source, active_solve, ext.drop("parent"), lineage=lineage, provider=provider)
     years = cohort_years(source, active_solve, workdir, provider=provider)
     factors, _walk, _universe = _run_inv_factors(source, active_solve, period_in_use, period_universe,
@@ -3599,14 +3837,21 @@ def extension_costs(source: "InputSource",
                   .group_by("e", "cohort", maintain_order=True)
                   .agg((pl.col("fc").fill_null(0.0) * pl.col("ops").fill_null(0.0)).sum().alias("saved")))
     sums = taken.join(saved, on=["e", "cohort"], how="left")
-    out = (ext.select("e", "cohort", "parent", "d")
-              .join(prices.select("e", "cohort", "a_cap", "a_salv"), on=["e", "cohort"], how="left")
+    out = (ext.select("e", "cohort", "parent", "d", "y_eol")
+              .join(prices.select("e", "cohort", "a_cap", "a_salv", "share_cost"), on=["e", "cohort"], how="left")
               .join(sums, on=["e", "cohort"], how="left")
               .with_columns(pl.col("taken").fill_null(0.0), pl.col("saved").fill_null(0.0))
               .sort("e", "parent", "d"))
     cost = out.select("e", "parent", "d", value=(pl.col("a_cap") - pl.col("a_salv")) * pl.col("taken"))
     fixed = out.select("e", "parent", "d", value=pl.col("saved"))
-    return prices.select("e", "cohort", *PRICE_COLUMNS), cost, fixed
+    timed = event_period(out, "y_eol", report_years(source, active_solve, period_in_use, workdir, provider),
+                         "d_eol").drop("cohort").rename({"parent": "cohort"})
+    capital = pl.col("a_cap") * pl.col("taken")
+    lines = stack_lines(timed, ("e", "cohort", "d"), [
+        (L.EXTENSION, pl.col("share_cost") * capital, pl.col("d")),
+        (L.SALVAGE_EXTENDED, (1.0 - pl.col("share_cost")) * capital, pl.col("d")),
+        (L.SALVAGE_END_OF_LIFE, -pl.col("a_salv") * pl.col("taken"), pl.col("d_eol"))])
+    return prices.select("e", "cohort", *PRICE_COLUMNS), cost, fixed, lines
 
 
 def apply_extension_costs(flex_data: object,
@@ -3629,9 +3874,9 @@ def apply_extension_costs(flex_data: object,
     options = getattr(flex_data, "cd_extend", None)
     cohort, alive = getattr(flex_data, "cohort", None), getattr(flex_data, "cohort_alive", None)
     if options is None or options.height == 0 or cohort is None or alive is None:
-        flex_data.cd_extend_cost = flex_data.cd_extend_fixed = None
+        flex_data.cd_extend_cost = flex_data.cd_extend_fixed = flex_data.cdl_extend_lines = None
         return
-    prices, cost, fixed = extension_costs(
+    prices, cost, fixed, lines = extension_costs(
         source, active_solve, cohort, alive, period_in_use, period_universe, period_with_history, lineage=lineage,
         year_rows=year_rows, workdir=workdir, provider=provider,
         run_factor=getattr(flex_data, "p_inflation_inv_run", None))
@@ -3649,6 +3894,7 @@ def apply_extension_costs(flex_data: object,
 
     flex_data.cd_extend_cost = keyed(cost)
     flex_data.cd_extend_fixed = keyed(fixed)
+    flex_data.cdl_extend_lines = lines.sort("e", "cohort", "d", "line", "d_report")
 
 
 def _built_chain_generations(flex_data: object, provider: "object | None") -> pl.DataFrame:

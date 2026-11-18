@@ -1328,6 +1328,16 @@ class FlexData:
     # capacity in service in run period d, d_invest the period it comes online: the reported investment pre-existing.
     edd_existing_replacement_run: Param | None = None
     ed_divest_settlement_yearly: Param | None = None
+    # The cost lines of the reported costs (``_npv``, :mod:`.params._cost_lines`; no model term reads them):
+    # ``[e, d, line, d_report, value]`` (Utf8) per MW of v_invest (the run lump split by event), of v_divest, of
+    # the existing capacity in d (its credit; its replacement over the run), and ``[e, cohort, d, line, d_report,
+    # value]`` per MW of v_divest_built / v_extend (the parent's cohort).  Each frame's lines add up to its term.
+    edl_invest_lines_run: pl.DataFrame | None = None
+    edl_divest_lines: pl.DataFrame | None = None
+    edl_existing_credit_lines: pl.DataFrame | None = None
+    edl_existing_replacement_lines: pl.DataFrame | None = None
+    cdl_divest_built_lines: pl.DataFrame | None = None
+    cdl_extend_lines: pl.DataFrame | None = None
     edd_operating_window: pl.DataFrame | None = None
     edd_retire_window: pl.DataFrame | None = None
     # (e, d) existing capacity given by the user, aged over its lifetime (no capacity carried from earlier solves,
