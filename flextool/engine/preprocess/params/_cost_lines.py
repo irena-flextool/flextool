@@ -17,7 +17,8 @@ sums).  The lines of one term add up to the term (the objective's coefficient or
   it lives to or past the end of the horizon), for a plant whose life simply ends / one a reinvest_automatic
   replacement takes over; a retirement takes the credit of the years it no longer serves back here.
   ``salvage extended`` — the salvage value a life extension gives up (the parent's salvage at its end of life),
-  part of the extension's price.  ``salvage economic`` — the salvage value received at a retirement.
+  financed at discount_rate over life_extension_years: its share inside the horizon, part of the extension's
+  price.  ``salvage economic`` — the salvage value received at a retirement.
 * ``investment pre-existing`` / ``salvage pre-existing`` — the replacement of existing reinvest_automatic capacity
   and the salvage credits of existing capacity: objective constants (counted only with
   ``include_existing_fixed_cost``).

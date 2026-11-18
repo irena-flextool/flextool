@@ -16,8 +16,8 @@ eager polars CSV reads, expression chains, ``unique(maintain_order=True)``
 for legacy-bit-identical row order, missing files treated as empty
 frames.
 
-Output bytes are CSV-identical to the legacy emitter — verified by
-``tests/engine/test_writer_port_phase1.py`` parity tests.
+Output bytes are CSV-identical to the legacy emitter; a change that
+moves the LP shows in ``tools/lp_snapshot.py``.
 """
 from __future__ import annotations
 

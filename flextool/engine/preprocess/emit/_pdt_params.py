@@ -30,7 +30,7 @@ These four writers are the high-memory hotspots flagged in
 ``write_pdtProcess`` can emit a 441 MB / 280k-row dense CSV.  The
 sparse-emit optimisation (``filter(value != 0.0)`` + consumer-side
 ``fill_null(0.0)``) is intentionally NOT applied here: byte-parity with
-the legacy dense emit must hold for ``test_writer_port_phase1.py``.
+the legacy dense emit must hold (``tools/lp_snapshot.py``).
 The sparse-emit rework is a separate future dispatch that needs
 goldens regenerated and consumer-side overlays.
 

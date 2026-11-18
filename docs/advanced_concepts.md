@@ -38,22 +38,24 @@ FlexTool minimizes total system cost over a planning horizon. The economic frame
 
 Economic values can be expressed in two ways:
 
-- **Real (constant prices)**: All values are expressed in today's money. A power plant that costs 1000 EUR/kW today still costs 1000 EUR/kW in 2040 in real terms -- the purchasing power is the same.
-- **Nominal (current prices)**: Values include inflation. The same plant might cost 1300 EUR/kW in 2040 at 2% annual inflation, even though its real cost hasn't changed.
+- **Real (constant prices)**: all values are in the money of one base year. A power plant that costs 1000 EUR/kW today still costs 1000 EUR/kW in 2040 in real terms: the purchasing power is the same.
+- **Nominal (current prices)**: values include inflation. The same plant might cost 1300 EUR/kW in 2040 at 2 % annual inflation, even though its real cost has not changed.
 
-**Example**: A coal plant costs 1500 EUR/kW today. At 2% inflation:
+**The rule: every cost input and both rates are in the same terms.** FlexTool never converts a rate or a price between real and nominal. The annuity, the salvage credits and the retirement settlement all assume one consistent basis, normally real prices with real rates.
 
-- Real cost in 2035: 1500 EUR/kW (unchanged)
-- Nominal cost in 2035: 1500 x (1.02)^10 = 1829 EUR/kW approximately
+| Inputs | `social_discount_rate` (model) | `discount_rate` (entity) |
+|--------|-------------------------------|--------------------------|
+| Real (constant prices) | the real time preference: 0 for none, or e.g. 0.03 | the real WACC, e.g. 0.05 |
+| Nominal (current prices) | (1 + inflation) × (1 + real time preference) − 1, e.g. 1.02 × 1.03 − 1 = 0.0506 | the nominal WACC, e.g. 0.07 |
 
-**Rule**: Never mix real and nominal values in the same model. Both rates are given in the same terms as the cost inputs: real rates for inputs in real prices, nominal rates for nominal inputs.
+- **`social_discount_rate` is the model's time discounting**, in the terms of the inputs. 0 means no time preference: a cost in a later period weighs the same as the same cost now (with real inputs, inflation is already in the prices). Above 0, later costs and incomes weigh less. With nominal inputs it must include inflation (the combined rate above), or later nominal costs would weigh too much.
+- **The entity `discount_rate` is the investor's rate of return (WACC)**, in the same terms. It turns `invest_cost` into the yearly payments the investor needs. A risk premium belongs here, not in the `social_discount_rate`. With a `discount_rate` above the `social_discount_rate`, money paid back to the investor sooner is cheaper for the model: a shorter `payback_time` with the same `discount_rate` makes the investment cheaper, not dearer (and a retirement, which pays the rest of the loan at once, also changes the cost). With equal rates the timing of the investor's payments does not matter.
+
+The Fisher equation relates the two: (1 + nominal rate) = (1 + real rate) × (1 + inflation); approximately, nominal = real + inflation (5 % + 2 % ≈ 7 %).
 
 ### The social discount rate
 
-The model-level `social_discount_rate` (no value: 0) weighs every cost and income by `1 / (1 + social_discount_rate)^t`, where `t` is the years from the start of the run to the moment the cost falls. It applies uniformly to all cost types: investment payments, fuel costs, fixed O&M, penalties, salvage values, etc.
-
-- **0** (no value): no time preference. A cost in a later period weighs the same as the same cost now. With real-price inputs, inflation is already in the prices.
-- **Above 0**: later costs and incomes weigh less, the planner's (or society's) preference for now over later; the discounted costs are present values at that rate. With real inputs, give the real social rate (for example 0.03). With nominal inputs, use the combined rate (1 + inflation) × (1 + social rate) − 1: for 2 % inflation and a 3 % social rate, 1.02 × 1.03 − 1 = 0.0506.
+The model-level `social_discount_rate` (no value: 0) weighs every cost and income by `1 / (1 + social_discount_rate)^t`, where `t` is the years from the start of the run to the moment the cost falls. It applies uniformly to all cost types: investment payments, fuel costs, fixed O&M, penalties, salvage values, etc. The discounted costs are present values at that rate.
 
 The yearly investment payments fall at the start of each year by default (the annual payment is sized for that, see below) and operating costs at the middle of the year: `discount_offset_investment` (default 0) and `discount_offset_operations` (default 0.5) move them within the year.
 
@@ -86,7 +88,7 @@ so the payments are worth exactly `invest_cost` at the `discount_rate` whatever 
 123.34 a year paid at year starts (offset 0); both are worth 1000 when discounted at 5 % from the moment the capacity
 comes online. The same factor sizes the level salvage credit (below).
 
-With `lifetime_method` *reinvest_choice* or *no_reinvestment* the plant pays a level yearly cost over its real lifetime: the present value of the `payback_time` annual payments, discounted at the model `social_discount_rate`, spread evenly over the `lifetime_technical` years, `annual_payment · G(payback_time) / G(lifetime_technical)` with `G(x)` the discounted sum of x years (a fractional last year counts its fraction). It is paid for each year the capacity is in service, from the year it starts to operate to its end of life as `end_of_life_method` rounds it: a 12-year plant whose life is rounded to 10 years pays the yearly cost of the 12-year plant for 10 years, and one rounded to 15 years for 15. The price does not depend on when the plant is built or on the period lengths. `payback_time` and `discount_rate` set only its size: with `discount_rate` equal to `social_discount_rate` the yearly cost is the annuity over `lifetime_technical` whatever the payback time, and with a lower `discount_rate` (an investor who demands faster payback) a shorter payback time costs more. With *reinvest_automatic* the plant is replaced at its end of life by a new plant with the values of the period the replacement comes online, each plant paying its own level yearly cost (its salvage value netted in) for its years in service, to the end of the model horizon; with constant values, `payback_time` equal to `lifetime_technical` and no `net_salvage_value` this is the annual payment in every year. Years after the model horizon are not counted.
+With `lifetime_method` *reinvest_choice* or *no_reinvestment* the plant pays a level yearly cost over its real lifetime: the present value of the `payback_time` annual payments, discounted at the model `social_discount_rate`, spread evenly over the `lifetime_technical` years, `annual_payment · G(payback_time) / G(lifetime_technical)` with `G(x)` the discounted sum of x years (a fractional last year counts its fraction). It is paid for each year the capacity is in service, from the year it starts to operate to its end of life as `end_of_life_method` rounds it: a 12-year plant whose life is rounded to 10 years pays the yearly cost of the 12-year plant for 10 years, and one rounded to 15 years for 15. The price does not depend on when the plant is built or on the period lengths. `payback_time` and `discount_rate` set only its size: with `discount_rate` equal to `social_discount_rate` the yearly cost is the annuity over `lifetime_technical` whatever the payback time, with a `discount_rate` above it a shorter payback time is cheaper, and below it dearer (see [real vs nominal values](#real-vs-nominal-values)). With *reinvest_automatic* the plant is replaced at its end of life by a new plant with the values of the period the replacement comes online, each plant paying its own level yearly cost (its salvage value netted in) for its years in service, to the end of the model horizon; with constant values, `payback_time` equal to `lifetime_technical` and no `net_salvage_value` this is the annual payment in every year. Years after the model horizon are not counted.
 
 The `net_salvage_value` at the end of the real lifetime lowers that yearly cost: its present value at `discount_rate` levelled over the `lifetime_technical` years, `net_salvage_value · (1 + discount_rate)^−lifetime_technical · annual factor`, the same annual factor as the investment (with `payback_time` equal to `lifetime_technical`, the textbook capital recovery with salvage). Existing capacity, whose investment is sunk, holds its salvage value as the same level credit over its service years from the model start. A retirement receives the whole `net_salvage_value` at the start of the retirement period and gives the credits back. Since years after the horizon are not counted, a retirement late in the horizon collects a salvage value whose credits a kept plant would earn mostly after the horizon, so it can pay; this is a consequence of the finite horizon, not a model error. In the cost results the *investment* and *salvage* of capacity that lives past the horizon are these horizon shares (see [Costs](results.md#costs)).
 
@@ -104,21 +106,6 @@ Different technologies can have different discount rates reflecting their risk p
 - Low risk (e.g., established solar PV): 3-5%
 - Medium risk (e.g., natural gas turbine): 5-7%
 - High risk (e.g., novel technology): 8-12%
-
-### Consistency between rates
-
-The `discount_rate` and the `social_discount_rate` must use the same price basis as the cost inputs of the model instance (either real or nominal):
-
-| Inputs | social_discount_rate | discount_rate (entity) |
-|--------|---------------|----------------------|
-| Real (constant prices) | 0, or the real social rate (e.g., 3%) | Real WACC (e.g., 5%) |
-| Nominal (current and future prices) | (1 + inflation) × (1 + real social rate) − 1 (e.g., 5.06% at 2% and 3%) | Nominal WACC (e.g., 7%) |
-
-The relationship between real and nominal rates follows the Fisher equation:
-```
-(1 + nominal_rate) = (1 + real_rate) * (1 + inflation)
-```
-Approximation: nominal = real + inflation approximately (e.g., 5% + 2% = 7%).
 
 ### Fixed costs
 

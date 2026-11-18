@@ -20,9 +20,8 @@ constructions) rather than delegating to sibling emitters.
   :mod:`._pdt_lookup`).
 
 Parity contract: same CSV header, same per-row formatting, same
-iteration order as the historical preprocessing chain — verified at
-the file level via ``filecmp.cmp(shallow=False)`` in
-``tests/engine/test_writer_port_phase1.py``.
+iteration order as the historical preprocessing chain; a change that
+moves the LP shows in ``tools/lp_snapshot.py``.
 """
 from __future__ import annotations
 

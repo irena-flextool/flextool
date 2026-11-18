@@ -110,9 +110,11 @@ y-axis is `m3/h` for a water node and `MWh/h` by default. A label without tokens
       credit of a plant (its `net_salvage_value`, levelled over its lifetime, for its years in service inside the
       horizon) at its end of life, also for a plant of a `reinvest_automatic` chain that is replaced then (a
       retirement gives back here the credit of the years the plant no longer serves); the salvage value a life
-      extension gives up (the `net_salvage_value` at the extended plant's end of life), part of the extension's
-      price, when the extension starts; and the salvage value received when capacity is retired, in the
-      retirement period. `summary_solve.csv` shows the four apart as *Salvage end of life*, *Salvage replaced*,
+      extension gives up (the parent's `net_salvage_value` at its end of life, which the extension finances at
+      `discount_rate` over `life_extension_years`: its share inside the horizon), part of the extension's price,
+      when the extension starts; and the salvage value received when capacity is retired, in the retirement
+      period. With a `discount_rate` different from the `social_discount_rate` the salvage given up by an
+      extension and the parent's credit do not cancel, so the period's *salvage* can be positive. `summary_solve.csv` shows the four apart as *Salvage end of life*, *Salvage replaced*,
       *Salvage extended* and *Salvage economic*; the capacity that leaves service by cause is in the
       [retirement tables](#capacity-by-cohort-and-retirements)
     - *fixed cost pre-existing* — M[CUR] fixed O&M for pre-existing capacity
@@ -172,18 +174,20 @@ as one solve over the same periods with the same decisions would report:
 - **New capacity** is reported in the period where it starts to operate (the decision period without a
   `construction_lead_time`; during the lead time it is only `in_construction`, at no cost). Its *investment* (its
   yearly investment cost for each year it is in service within the run, at the `invest_cost`, `payback_time`,
-  `discount_rate` and `lifetime_technical` of that period) and its *salvage …* lines come once, from the solve
-  that decided it, and are reported only once a solve realizes the period it starts to operate in; its *salvage
-  …* line is reported at its end of life (or the last period of the run). With `reinvest_automatic` each
+  `discount_rate` and `lifetime_technical` of that period) and its *salvage* come once, from the solve that
+  decided it, and are reported only once a solve realizes the period it starts to operate in; its *salvage* is
+  reported at its end of life (or the last period of the run). With `reinvest_automatic` each
   replacement of the plant at its end of life is reported as *replacement* in the period it comes online (its own
   yearly cost for its years in service, at the values of that period). The fixed cost of new capacity is reported
   in each period it operates, from the solve that realizes the period. Capacity carried from an earlier solve is
   therefore not charged again as existing capacity.
-- **Retirements** are reported as the objective of the retiring solve charges them: *retirement* and *salvage
-  economic* in the retirement period, the credits given back at the end of life of the plant they belong to, and
+- **Retirements** are reported as the objective of the retiring solve charges them: *retirement* and *salvage*
+  (*Salvage economic* in `summary_solve.csv`) in the retirement period, the credits given back at the end of life of the plant they belong to, and
   the fixed cost saved in each period the retirement counts in. The fixed cost of existing capacity (*fixed cost
   pre-existing*) is that of the capacity given in `existing`, aged over its lifetime, in every period of the run,
-  also in the last solve's look-ahead periods that no solve realizes.
+  also in the last solve's look-ahead periods that no solve realizes. Each solve prices a retirement against its
+  own horizon (the credits and yearly prices given back are those of the years it sees), so the settlement of a
+  retirement in a chain can differ from the same retirement in one solve over all the periods.
 - **Inside a stochastic fan** the investment-type costs and the fixed cost of the new capacity of the fan's branch
   periods are reported, weighted by each branch's probability weight, at the fan's period label (with or without a
   `construction_lead_time`, and also without a realization solve). A shared investment (`stochastic_invest_method`

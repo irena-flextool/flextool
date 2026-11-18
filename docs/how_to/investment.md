@@ -32,11 +32,13 @@ First, the investment parameters need to be included both for the *battery_inver
   the investment is paid back over `lifetime_technical`. It sets only the size of the yearly investment cost: with
   `lifetime_method` *reinvest_choice* or *no_reinvestment* the annuity's present value is spread evenly over
   `lifetime_technical`, so with a `discount_rate` equal to the model `social_discount_rate` it changes nothing (for a
-  whole number of years), and with a lower `discount_rate` a shorter payback time costs more.
+  whole number of years); with a `discount_rate` above it a shorter payback time is cheaper, below it dearer (see
+  [the discount rate](../advanced_concepts.md#the-discount-rate-per-technology)).
 
 Additional parameters:
 
-- `lifetime_method`: Model can either be forced to reinvest when the technical lifetime ends (`reinvest_automatic`), have a choice (`reinvest_choice`), or be restricted to a one-shot build that retires after its technical lifetime without rebuild (`no_reinvestment` — for physical one-off additions like plant refurbishments).
+- `lifetime_method`: at the end of the technical lifetime the plant is replaced automatically (`reinvest_automatic`, the default), the model chooses how much new capacity to build (`reinvest_choice`), or nothing is rebuilt (`no_reinvestment`, investment only during the first technical lifetime from the model start — for one-off additions like plant refurbishments).
+- `age_at_model_start` (or `build_year` with the `model` parameter `start_year`) and `end_of_life_method`: the age of the existing capacity, and how an end of life inside a period is rounded to a period start (`closest_seam` by default; `previous_seam` for capacity-adequacy studies). See [lifetime, age and end of life](../reference/units.md#lifetime-age-and-end-of-life).
 - `construction_lead_time` [years]: time from the investment decision until the capacity starts to operate. The start is rounded to the start of a period by `construction_lead_time_method` (below), on the periods of the whole model (all its solves). Constant or period (a map may set a different lead time per decision period). Default 0. Applies to `unit`, `connection` and `node` investments, deterministic and stochastic alike.
   - **Terms.** The *investment decision* is taken in a period of the solve's `invest_periods`. The capacity is *in construction* from the decision period until it *comes online* at the *start of operation*; from then on it is in service. Without a lead time, the capacity comes online in the decision period.
   - **Results.** In the capacity results (`unit_capacity__d`, `connection_capacity__d`, `node_capacity__d`) *invested* is the capacity that comes online in the period and *in_construction* the capacity decided but not yet operating (empty without a lead time); *total* is the capacity in service and does not include capacity in construction. Over combined solves (a chain of solves, invest then dispatch) every realized investment is counted once, in the period it comes online.
@@ -51,7 +53,7 @@ Additional parameters:
 
     **Construction lead time and stochastics compose automatically.** Under recourse (`stochastic_invest_method = recourse`) with an invest non-anticipativity window (`shared_invest_periods`, see the stochastics how-to), a long-lead technology that must be online *after* the branch reveal has to be *ordered* before it — in a pre-reveal, tied period — so its investment is a single shared here-and-now decision, while a short-lead technology can be ordered at/after the reveal and react per scenario. This staging is emergent (no extra parameter): set the window to the pre-reveal periods and the lead time stages the technologies for you. Note the two knobs stay orthogonal — the window is the *information* boundary (which order periods are shared), the lead time is the *physics* (how early you must order); you need both, set consistently, for staging.
 
-- `net_salvage_value`: Sets the extra value that can be gained for retiring [CUR/kW]: scrap value minus decommissioning cost (negative when decommissioning costs more). Capacity that existed before the model run (`existing`) can be retired until its end of life, and with *reinvest_choice* / *no_reinvestment* also the capacity the model builds (an *invest_retire_…* or *cumulative_limits* `invest_method`); the retirement saves its fixed cost over the periods it counts in and receives the whole net salvage value at the start of the retirement period (the investment in existing capacity is sunk; new capacity pays the rest of its loan then, so building and retiring at once costs `invest_cost − net_salvage_value`; with a `discount_rate` above the `social_discount_rate` the early repayment is cheaper for the model, below it dearer). With *reinvest_choice* / *no_reinvestment* the net salvage value at the end of life is a level yearly credit over the lifetime at `discount_rate`: it lowers the yearly cost of new capacity, existing capacity holds it over its service years, and a retirement gives the credits back. Only the horizon counts, so retiring long-lived capacity late in the horizon can pay (see [retirements](../reference/units.md#retirements)).
+- `net_salvage_value`: the value received when capacity stops operating [CUR/kW]: scrap value minus decommissioning cost (an income when positive, a cost when decommissioning costs more). Existing capacity can be retired with an `invest_method` that allows retirement (*retire_…*, *invest_retire_…*, *cumulative_limits*), and with *invest_retire_…* or *cumulative_limits* also the capacity the model builds. A retirement happens at the start of a period: the investment is sunk (a built plant pays the rest of its loan then), the full net salvage value of that period is received, and the fixed costs stop. Capacity kept to its end of life gets its salvage value as a level yearly credit in its yearly price. A period map can express a resale value that falls with age or time. See [retirements](../reference/units.md#retirements) and the example below.
 - `fixed_cost`: Annual cost for capacity [CUR/kW]
 
 In many cases some of the investment decisions are tied to each other. Here the battery capacity and the connection capacity of the *battery_inverter* will be tied as they are simultaneously limited by the choice of the battery technology to be invested in.
@@ -110,6 +112,70 @@ Finally, FlexTool can mix several types of constraint coefficients: `constraint_
 ```
 
 ![Add battery investments](../img/concept/battery_invest.png)
+
+## How to decide on an aged plant: retire, extend or keep
+
+An existing plant that is getting old can be kept to the end of its life, kept longer with a life extension, or
+retired early. FlexTool weighs the three against new capacity with one principle: **each plant pays a level yearly
+price for each year it serves, computed from its real lifetime, and only the modelled years count.** A new plant
+with a 40-year life built ten years before the end of the horizon pays ten of its forty yearly prices; the other
+thirty years are neither paid nor served inside the model, so leaving out both sides keeps the comparison fair.
+
+**The case.** The numbers below come from runs of the small test model of the FlexTool repository
+(`tests/fixtures/tests.json`, built into a database): the node *west* with growing demand, *wind_plant* (1000 MW)
+and *coal_plant*, and the solve *y2020_2035_5week* with the periods p2020, p2025, p2030 and p2035 of 5 years each
+(a 20-year horizon). One added alternative gives *coal_plant*:
+
+| Parameter | Value |
+|-----------|-------|
+| `existing` | 500 MW |
+| `lifetime_technical`, `age_at_model_start` | 40, 30 years: 10 years left, the life ends at the start of p2030 |
+| `lifetime_method`, `invest_method` | *reinvest_choice*, *invest_retire_no_limit* |
+| `invest_cost`, `net_salvage_value` | 400 and 20 CUR/kW |
+| `life_extension_years` | 10 |
+| `life_extension_cost` | 150 or 60 CUR/kW (below) |
+| `fixed_cost`, `discount_rate`, model `social_discount_rate` | 0 |
+
+Both rates are 0 so that the arithmetic stays visible; with rates above 0 the same comparison holds in present
+values.
+
+**The yearly prices, per kW.** A new plant pays (400 − 20) / 40 = 9.5 a year: its investment less its salvage
+value, over its 40-year life. The extension is a plant of its own: its cost plus the salvage value it gives up
+(20, which stays in the plant), less the salvage value received at its extended end of life (20), over 10 years:
+E / 10 a year. The existing plant's investment is sunk; it receives its salvage value of 20 as a credit over its
+10 remaining years.
+
+| Option for the 500 MW, per kW over the horizon | Cost |
+|------------------------------------------------|------|
+| Keep to p2030, then new capacity for the last 10 years | 10 × 9.5 − 20 = 75 |
+| Keep to p2030, then extend for 10 years | E − 20 + 20 − 20 = E − 20 |
+| Retire at the start of p2020, new capacity for 20 years | 20 × 9.5 − (salvage value in p2020) |
+
+So extending pays when E < 95, and retiring at once pays when the plant can be sold for more than 115 at the
+start of p2020.
+
+**The runs.**
+
+1. *Keep.* `life_extension_cost` 150, `net_salvage_value` 20: the plant runs to its end of life
+   (`unit_retirement__d`: 500 MW *end_of_life* in p2030) and the model builds new capacity from p2030. The
+   objective is 3169.28 M CUR.
+2. *Extend.* `life_extension_cost` 60: the 500 MW are extended at p2030 (500 MW *extended*; the cohort
+   `extend:p2030:existing:p2020` in `unit_cohort_capacity__d`) and the model builds 500 MW less new capacity
+   there. The objective is 3151.78 M CUR, 17.50 M lower: 500 MW × (95 − 60) CUR/kW. In `summary_solve.csv` the
+   extension shows as *Extension* 30 M (500 MW × 60), *Salvage extended* 10 M (the salvage value the extension
+   gives up) and, inside *Salvage end of life*, −10 M at the extended end of life.
+3. *Retire.* `life_extension_cost` 150 and a `net_salvage_value` period map that falls with age, {p2020: 120,
+   p2025: 60, p2030: 20, p2035: 20} (a resale value): the 500 MW are retired at the start of p2020 (500 MW
+   *economic*) and replaced by new capacity. The objective is 3164.20 M CUR, 5.07 M lower than *keep*: 500 MW ×
+   (75 − 70) = 2.5 M from the swap, and 2.6 M because the old plant was larger than the system needed in p2020
+   (the model builds 444.6 MW there and the rest in p2025). *Salvage economic* is −60 M (500 MW × 120); the
+   credits the existing plant no longer receives come back as +10 M.
+
+Two effects of the finite horizon and of the rates are worth knowing; they are economics of the inputs, not
+errors (see [retirements](../reference/units.md#retirements)). Near the end of the horizon a retirement collects
+the whole salvage value, while a kept plant would receive it only after the horizon, so a retirement or a swap
+for an identical plant can pay there. With a `discount_rate` different from the `social_discount_rate` the timing
+of the investor's payments changes the cost, which can also make a retirement pay.
 
 ## How to create a multi-year model
 

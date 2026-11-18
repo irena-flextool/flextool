@@ -338,7 +338,7 @@ result labels of that node follow it. Time steps are hours, so the node's *rate*
 | storage state and capacity, `inflow` per time step | MWh | m3 | MWh_th |
 | flows summed over a period (annualized) | MWh/a | m3/a | MWh_th/a |
 | prices, `penalty_up` / `penalty_down`, commodity `price` | CUR/MWh | CUR/m3 | CUR/MWh_th |
-| `invest_cost`, `fixed_cost`, `salvage_value` of a unit whose capacity is on the node | CUR/kW | CUR per 0.001 m3/h | CUR/kW_th |
+| `invest_cost`, `fixed_cost`, `net_salvage_value` of a unit whose capacity is on the node | CUR/kW | CUR per 0.001 m3/h | CUR/kW_th |
 | the same of a storage node | CUR/kWh | CUR per 0.001 m3 | CUR/kWh_th |
 
 The rule: a unit ending in `Wh` drops the `h` for the rate (MWh → MW, MWh_th → MW_th, kWh → kW), any other unit
@@ -346,7 +346,7 @@ gets `/h` (m3 → m3/h, t → t/h). The value is case-sensitive (`mwh` gives `mw
 changes no number. Set the amount unit, not the rate: `m3`, not `m3/h` (FlexTool warns about a value that looks
 like a rate).
 
-**Costs per kW and kWh.** `invest_cost`, `fixed_cost` and `salvage_value` (and the group
+**Costs per kW and kWh.** `invest_cost`, `fixed_cost` and `net_salvage_value` (and the group
 `penalty_capacity_margin`) are entered per kW or kWh, and FlexTool multiplies them by 1000. For a node in another
 unit they are per 0.001 of the rate or the amount. A desalination unit that costs 500 CUR per m3/h of capacity has
 `invest_cost` 0.5 (500 × 0.001); a water tank that costs 20 CUR per m3 has `invest_cost` 0.02. The capacities

@@ -88,8 +88,8 @@ rerun fixes them all. A warning is printed once per scenario read in the run log
   `retire_min_period` / `retire_max_period`, `cumulative_min_capacity` / `cumulative_max_capacity` (compared per
   period; a constant applies to every period), `invest_min_total` / `invest_max_total`, `retire_min_total` /
   `retire_max_total` (unit, connection, node, group). No capacity could meet both.
-- `lifetime` at or below 0 on an entity that can invest or retire (the investment would be charged for no years).
-- A map key of a period parameter (`existing`, `invest_cost`, `startup_cost`, `co2_max_period`, `lifetime`, and
+- `lifetime_technical` or `payback_time` at or below 0 on an entity that can invest or retire (the investment would be charged for no years).
+- A map key of a period parameter (`existing`, `invest_cost`, `startup_cost`, `co2_max_period`, `lifetime_technical`, and
   every other parameter that takes a period map) that is not a period: the readers would drop the value without a
   word (*y2020* for *p2020* gave no capacity). Periods are the keys of every `period_timeset`, the solve period lists,
   `years_represented`, the first level of `stochastic_branches`, the stochastic branch periods (*p2035_high*: the
@@ -102,7 +102,7 @@ rerun fixes them all. A warning is printed once per scenario read in the run log
   time-series check reports them). Maps keyed by something else (`constraint_flow_coeff` by constraint, `delay` by
   hours) are not period maps and are not checked.
 - A time-step key, a `time` level or a time series on a period parameter that cannot vary over time
-  (`existing`, `startup_cost`, `invest_cost`, `lifetime`, ...; use a constant or a period map), and numeric map
+  (`existing`, `startup_cost`, `invest_cost`, `lifetime_technical`, ...; use a constant or a period map), and numeric map
   keys (2020) on any period parameter (periods are names such as *p2020*). A name that is both a period and a time
   step is read as a period.
 - A timeline used by a solve (through a timeset named in a `period_timeset`, or the timeset a solve without
