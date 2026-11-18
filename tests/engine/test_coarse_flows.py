@@ -22,8 +22,8 @@ import pytest
 
 from flextool.engine.preprocess.params import _coarse
 from tests.engine._lp_rows import row_bounds, row_terms
-from tests.engine._unit_db import (FLEXTOOL_ROOT, axis_vocabulary, b64, build, last_stochastic, make_db, run, utf8,
-                                   without_realization)
+from tests.engine._unit_db import (FLEXTOOL_ROOT, axis_vocabulary, b64, build, last_stochastic, make_db,
+                                   record_roll_carry, replay_roll_carry, run, utf8, without_realization)
 
 pytestmark = pytest.mark.solver
 
@@ -318,9 +318,14 @@ def test_lh2_same_optimum_as_fine_flows(tmp_path_factory, monkeypatch, case) -> 
     """lh2 (every per-step parameter of the liquefiers and pipes is constant within a day): the model with one
     flow per day has the objective of the model with hourly flows, in a single solve, a rolling solve (72 h /
     48 h) and a representative-period invest solve, with fewer columns.  Only the objective is compared: with
-    storage at every lh2 node and pipes in both directions the daily energy of each arc is not unique."""
+    storage at every lh2 node and pipes in both directions the daily energy of each arc is not unique.  So is the
+    lh2 level at a roll end, which the next roll continues from: the rolling fine model replays the coarse model's
+    roll-end carry, and each roll is compared from the same start."""
+    carry = record_roll_carry(monkeypatch) if case == "rolling" else None
     coarse = _case(tmp_path_factory, case, f"cf_same_{case}")
     _fine_flows(monkeypatch)
+    if carry is not None:
+        replay_roll_carry(monkeypatch, carry)
     fine = _case(tmp_path_factory, case, f"cf_same_{case}_fine")
     assert len(coarse) == len(fine)
     assert _total_objective(coarse) == pytest.approx(_total_objective(fine), rel=1e-9)

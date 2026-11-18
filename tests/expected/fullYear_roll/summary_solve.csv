@@ -1,82 +1,82 @@
-"Diagnostic results from all solves. Output at (UTC): 2026-11-18 10:52:33.634120+00:00"
+"Diagnostic results from all solves. Output at (UTC): 2026-11-18 23:07:12.369540+00:00"
 
 
 "Solve","Objective","Total cost from solver, includes all penalty costs"
 dispatch_fullYear_roll_roll_0,252.534505023
-dispatch_fullYear_roll_roll_1,6.57
+dispatch_fullYear_roll_roll_1,12.045
 dispatch_fullYear_roll_roll_2,0
 dispatch_fullYear_roll_roll_3,123.1875
 dispatch_fullYear_roll_roll_4,591.849552712
-dispatch_fullYear_roll_roll_5,483.173347607
-dispatch_fullYear_roll_roll_6,25.185
+dispatch_fullYear_roll_roll_5,493.026458128
+dispatch_fullYear_roll_roll_6,30.66
 dispatch_fullYear_roll_roll_7,8.76
 dispatch_fullYear_roll_roll_8,8.76
 dispatch_fullYear_roll_roll_9,80.4825
-dispatch_fullYear_roll_roll_10,148.103347607
-dispatch_fullYear_roll_roll_11,56.3925
+dispatch_fullYear_roll_roll_10,148.923064621
+dispatch_fullYear_roll_roll_11,68.4405646208
 dispatch_fullYear_roll_roll_12,0
 dispatch_fullYear_roll_roll_13,0
 dispatch_fullYear_roll_roll_14,0
 dispatch_fullYear_roll_roll_15,168.0825
-dispatch_fullYear_roll_roll_16,511.914552712
+dispatch_fullYear_roll_roll_16,513.966795485
 dispatch_fullYear_roll_roll_17,586.3725
 dispatch_fullYear_roll_roll_18,239.535847607
-dispatch_fullYear_roll_roll_19,6.57
+dispatch_fullYear_roll_roll_19,12.045
 dispatch_fullYear_roll_roll_20,0
 dispatch_fullYear_roll_roll_21,123.1875
 dispatch_fullYear_roll_roll_22,591.849552712
-dispatch_fullYear_roll_roll_23,483.173347607
-dispatch_fullYear_roll_roll_24,25.185
+dispatch_fullYear_roll_roll_23,493.026458128
+dispatch_fullYear_roll_roll_24,30.66
 dispatch_fullYear_roll_roll_25,8.76
 dispatch_fullYear_roll_roll_26,8.76
 dispatch_fullYear_roll_roll_27,80.4825
-dispatch_fullYear_roll_roll_28,148.103347607
-dispatch_fullYear_roll_roll_29,56.3925
+dispatch_fullYear_roll_roll_28,148.923064621
+dispatch_fullYear_roll_roll_29,68.4405646208
 dispatch_fullYear_roll_roll_30,0
 dispatch_fullYear_roll_roll_31,0
 dispatch_fullYear_roll_roll_32,0
 dispatch_fullYear_roll_roll_33,168.0825
-dispatch_fullYear_roll_roll_34,511.914552712
-dispatch_fullYear_roll_roll_35,586.3725
+dispatch_fullYear_roll_roll_34,527.475239296
+dispatch_fullYear_roll_roll_35,591.532739296
 dispatch_fullYear_roll_roll_36,239.535847607
-dispatch_fullYear_roll_roll_37,6.57
+dispatch_fullYear_roll_roll_37,12.045
 dispatch_fullYear_roll_roll_38,0
 dispatch_fullYear_roll_roll_39,123.1875
 dispatch_fullYear_roll_roll_40,591.849552712
-dispatch_fullYear_roll_roll_41,483.173347607
-dispatch_fullYear_roll_roll_42,25.185
+dispatch_fullYear_roll_roll_41,493.026458128
+dispatch_fullYear_roll_roll_42,30.66
 dispatch_fullYear_roll_roll_43,8.76
 dispatch_fullYear_roll_roll_44,8.76
 dispatch_fullYear_roll_roll_45,80.4825
-dispatch_fullYear_roll_roll_46,148.103347607
-dispatch_fullYear_roll_roll_47,56.3925
+dispatch_fullYear_roll_roll_46,148.923064621
+dispatch_fullYear_roll_roll_47,68.4405646208
 dispatch_fullYear_roll_roll_48,0
 dispatch_fullYear_roll_roll_49,0
 dispatch_fullYear_roll_roll_50,0
 dispatch_fullYear_roll_roll_51,168.0825
-dispatch_fullYear_roll_roll_52,511.914552712
-dispatch_fullYear_roll_roll_53,586.3725
+dispatch_fullYear_roll_roll_52,527.475239296
+dispatch_fullYear_roll_roll_53,591.532739296
 dispatch_fullYear_roll_roll_54,239.535847607
-dispatch_fullYear_roll_roll_55,6.57
+dispatch_fullYear_roll_roll_55,12.045
 dispatch_fullYear_roll_roll_56,0
 dispatch_fullYear_roll_roll_57,123.1875
 dispatch_fullYear_roll_roll_58,591.849552712
-dispatch_fullYear_roll_roll_59,483.173347607
-dispatch_fullYear_roll_roll_60,25.185
+dispatch_fullYear_roll_roll_59,493.026458128
+dispatch_fullYear_roll_roll_60,30.66
 dispatch_fullYear_roll_roll_61,8.76
 dispatch_fullYear_roll_roll_62,8.76
 dispatch_fullYear_roll_roll_63,80.4825
-dispatch_fullYear_roll_roll_64,148.103347607
-dispatch_fullYear_roll_roll_65,56.3925
+dispatch_fullYear_roll_roll_64,148.923064621
+dispatch_fullYear_roll_roll_65,68.4405646208
 dispatch_fullYear_roll_roll_66,0
 dispatch_fullYear_roll_roll_67,0
 dispatch_fullYear_roll_roll_68,0
 dispatch_fullYear_roll_roll_69,168.0825
-dispatch_fullYear_roll_roll_70,511.914552712
-dispatch_fullYear_roll_roll_71,343.2825
-"Total cost (calculated) full horizon (M CUR)",5985.18185996,"Annualized operational, penalty and investment costs"
-"Total cost (calculated) realized periods (M CUR)",5985.18185996
-"Total cost counted in the objective (M CUR)",5985.18185996,"The solver objective for one deterministic solve; for several solves or a stochastic solve, the realized run total priced as the objectives price it"
+dispatch_fullYear_roll_roll_70,527.475239296
+dispatch_fullYear_roll_roll_71,348.442739296
+"Total cost (calculated) full horizon (M CUR)",6165.32086306,"Annualized operational, penalty and investment costs"
+"Total cost (calculated) realized periods (M CUR)",6165.32086306
+"Total cost counted in the objective (M CUR)",6165.32086306,"The solver objective for one deterministic solve; for several solves or a stochastic solve, the realized run total priced as the objectives price it"
 "Operational costs for realized periods (M CUR)",0
 "Investment (M CUR)",0
 "Replacement (M CUR)",0
@@ -89,7 +89,7 @@ dispatch_fullYear_roll_roll_71,343.2825
 "Fixed costs for pre-existing entities (M CUR)",0
 "Fixed costs for invested entities (M CUR)",0
 "Fixed cost removal due to divested entities (M CUR)",0
-"Penalty (slack) costs for realized periods (M CUR)",5985.18185996
+"Penalty (slack) costs for realized periods (M CUR)",6165.32086306
 
 Period,p2020,p2025,p2030,p2035
 "Time in use in years",0.00821917808219,0.00821917808219,0.00821917808219,0.00821917808219
@@ -100,7 +100,7 @@ Emissions
 "CO2 [Mt]",0,"System-wide annualized CO2 emissions for realized periods"
 
 "Slack variables multiplied by timestep duration and timestep weight, summed over the solved time steps of each period (creating or removing energy/matter, creating inertia, adding synchronous generation, creating reserve); capacity margin per period"
-Created, west, p2020, 2750.8
-Created, west, p2025, 2727
-Created, west, p2030, 2727
-Created, west, p2035, 2727
+Created, west, p2020, 2814.5
+Created, west, p2025, 2815.4
+Created, west, p2030, 2815.4
+Created, west, p2035, 2815.4

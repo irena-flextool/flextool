@@ -36,8 +36,12 @@ _SCEN = "fullYear_roll"
 
 
 # v3.32.0 golden — see ``output_raw/v_obj__dispatch_fullYear_roll_roll_71.parquet``
-# in the work_fullYear_roll fixture.
-_V3320_ROLL_71_OBJ = 3.432825e8
+# in the work_fullYear_roll fixture — was 3.432825e8.  Re-pinned for the rolling storage carry (feat/rolling-
+# storage-carry, Phases 1-3): the battery (bind_within_timeblock, used as bind_within_period in a rolling solve)
+# now continues each roll from the realised level and closes each period at its start level; before, each roll
+# cycled on itself from a free level, so the rolls could use energy never produced.  The last roll closes p2035
+# and costs more (3.484427e8, +1.5 %); unchanged from Phase 3 to Phase 5 (per roll, 00d145a1 = Phase 5).
+_V3320_ROLL_71_OBJ = 3.484427393e8
 
 
 @pytest.fixture(scope="module")

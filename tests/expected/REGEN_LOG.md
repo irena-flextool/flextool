@@ -1703,3 +1703,24 @@ them `bind_within_timeblock` there (one representative day is one timeset block)
   Benders loop's upper bound converges to the same value.
 - `tests/engine/test_rp_multi_period.py::test_variant_order_on_two_periods`, `bind_within_period_blended_weights`
   cost: 16 910 567 160 → 16 457 293 278 (−2.7 %).
+
+## 2026-11-19 — four rolling and nested battery scenarios (rolling storage carry, Phase 3; regenerated in Phase 5)
+
+**Context.** `test_scenario[fullYear_roll]` and the three `multi_fullYear_battery_nested_*` scenarios pass on
+6152569e and fail from 7c7eb7ec (Phase 3 of feat/rolling-storage-carry) on; they were outside the test sets run
+in Phases 3 and 4. Phase 5 does not change them (identical failures on 00d145a1).
+
+- `fullYear_roll/summary_solve.csv`: the battery (`bind_within_timeblock`, which a rolling solve now uses as
+  `bind_within_period`) continues each roll from the realised level and closes each 72-h period at its start
+  level; before, every roll cycled on itself from a free level, so the rolls could use energy never produced. The
+  roll objectives of the rolls that close or anchor change (e.g. roll 5 483.17 → 493.03, roll 35 586.37 → 591.53);
+  the last roll's objective is the one `tests/engine/test_phase_e_g_multi_roll.py` pins (3.484427e8).
+- `multi_fullYear_battery_nested_{24h_invest_one_solve,multi_invest,sample_invest_one_solve}` (cost tables,
+  `node_state__dt`, `unit__outputNode__dt`): the battery is fixed by the 6-h storage solve (`fix_quantity`) above
+  the rolling dispatch (horizon 8 h, jump 4 h). A roll's horizon ends inside a 6-h upper step; it is now fixed at
+  the upper level interpolated at that moment instead of the level at the end of the step (Phase 3, "nested
+  fix_quantity interpolated"), so the battery path and the coal dispatch move; commodity cost 338.87 → 331.97 and
+  233.26 → 228.63. No slack.
+
+**Decision** (agent, pending owner review): accept the regeneration; the old values were the behaviour the
+branch fixes (roll-boundary free energy, and a target taken at the wrong moment).
