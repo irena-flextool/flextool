@@ -59,7 +59,9 @@ from flextool.process_outputs.out_group import (
     nodeGroup_indicators, nodeGroup_VRE_share,
     nodeGroup_total_inflow, nodeGroup_flows, nodeGroup_ramp_envelope,
 )
-from flextool.process_outputs.out_node import node_summary, node_additional_results, node_ramp_envelope
+from flextool.process_outputs.out_node import (
+    node_summary, node_additional_results, node_ramp_envelope, node_storage_usage,
+)
 from flextool.process_outputs.process_results import post_process_results
 from flextool.process_outputs.read_parameters import (
     read_parameters_multi,
@@ -722,6 +724,7 @@ ALL_OUTPUTS = [
     unit_ramps,
     node_ramp_envelope,
     nodeGroup_ramp_envelope,
+    node_storage_usage,
     dc_power_flow,
 ]
 

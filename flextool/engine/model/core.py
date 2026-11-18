@@ -734,6 +734,7 @@ def _prepare(b: _Build) -> None:
     if b.has_storage:
         _validate_storage_start_end_values(d)
         _check_storage_accounting(b)
+        _warn_storage_slack_bypass(b)
     if b.has_rp:
         b.rp_start_idx = compute_nodeState_rp_block_first_dt(d)
     if b.has_online_lin:
@@ -983,6 +984,52 @@ def _check_storage_accounting(b: _Build) -> None:
                                "not held at least at that start: built storage can deliver its start energy without "
                                "producing it. Use bind_within_solve(_blended_weights), or fix_start_end with "
                                "storage_state_end at least storage_state_start."))
+
+
+def _warn_storage_slack_bypass(b: _Build) -> None:
+    """Warn about storage nodes whose balance slack can act as a bypass of a hard balance.
+
+    A storage node with balance slack (vq_state_up / vq_state_down: penalty_method not off) that a unit or a
+    connection links to a node with penalty_method off: the storage slack supplies or absorbs energy that flows on
+    to (or comes from) the node meant to balance exactly, so the hard balance is bypassed at the storage node's
+    penalty, which can be far below what an unmet demand elsewhere should cost.  Printed once per node and solve
+    (the rolls of a rolling solve count as one solve).
+    """
+    import re
+    from flextool.engine import _behaviour_changes
+    d = b.d
+    off = getattr(d, "nodeBalance_penalty_off", None)
+    if not (_has_rows(off) and _has_rows(d.nodeState) and _has_rows(d.process_source_sink)):
+        return
+    off_nodes = set(str(n) for n in off["n"].to_list())
+    balanced = set(str(n) for n in d.nodeBalance["n"].to_list()) if _has_rows(d.nodeBalance) else set()
+    if _has_rows(d.nodeBalancePeriod):
+        balanced |= set(str(n) for n in d.nodeBalancePeriod["n"].to_list())
+    slack_storage = (set(str(n) for n in d.nodeState["n"].to_list()) & balanced) - off_nodes
+    if not slack_storage:
+        return
+    nodes_of: dict[str, set[str]] = {}
+    for p, src, snk in d.process_source_sink.select(
+            pl.col("p").cast(pl.Utf8), pl.col("source").cast(pl.Utf8), pl.col("sink").cast(pl.Utf8)).iter_rows():
+        nodes_of.setdefault(p, set()).update((src, snk))
+    linked: dict[str, set[str]] = {}
+    for nodes in nodes_of.values():
+        for n in nodes & slack_storage:
+            hard = (nodes & off_nodes) - {n}
+            if hard:
+                linked.setdefault(n, set()).update(hard)
+    if not linked:
+        return
+    solve = re.sub(r"_roll_\d+$", "", b.solve_name) if b.solve_name else ""
+    where = f"solve '{solve}'" if solve else "this solve"
+    _behaviour_changes.warn_once_each(
+        f"storage_slack_bypass:{solve}", sorted(linked),
+        lambda fresh: (f"Warning: in {where} storage node(s) with balance slack (penalty_method not off) are linked by "
+                       "a unit or a connection to node(s) with penalty_method off: "
+                       f"{', '.join(f'{n} ({_node_list(sorted(linked[n]))})' for n in fresh)}. The storage slack "
+                       "can supply or absorb energy for those nodes and so bypass their hard balance at the storage "
+                       "node's penalty. If the balance should hold, set penalty_method off on the storage node too "
+                       "(or give it a high penalty), so that a shortfall shows where it arises."))
 
 
 STORAGE_START_END_MESSAGE = (

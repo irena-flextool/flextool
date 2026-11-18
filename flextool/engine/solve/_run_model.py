@@ -181,9 +181,8 @@ def _check_rp_solve(*, complete_solve_name: str, rp_periods: list[str], period_o
 
     A solve that mixes periods with and without representative periods while it has ``*_blended_weights`` nodes:
     the blocks of the other periods would be outside the base-period chain.  The forecast branch periods of a
-    stochastic solve are rp periods with the timeset of the period they branch from.  A rolling_window solve never
-    reaches this check with blended nodes: :func:`_downgrade_blended_for_rolling_rp` has made them
-    bind_forward_only before (so in a rolling solve that downgrade pre-empts this raise).
+    stochastic solve are rp periods with the timeset of the period they branch from.  A rolling_window solve on
+    representative periods never reaches this check: :func:`_reject_rolling_rp` raises before.
     """
     blended = _blended_nodes(provider)
     non_rp = [p for p in period_order if p not in rp_periods]
@@ -196,55 +195,77 @@ def _check_rp_solve(*, complete_solve_name: str, rp_periods: list[str], period_o
             "representative_period_weights, or use separate solves.")
 
 
-# A rolling_window solve on representative periods: every *_blended_weights method binds forward only (owner
-# decision, item 126): the base-period chain spans the whole period and cannot be cut into rolls, so the storage
-# state is passed directly from roll to roll.  Used by :func:`_downgrade_blended_for_rolling_rp`.
-_RP_ROLLING_DOWNGRADE: dict[str, str] = {
-    "bind_within_solve_blended_weights":  "bind_forward_only",
-    "bind_within_period_blended_weights": "bind_forward_only",
-    "bind_forward_only_blended_weights":  "bind_forward_only",
-}
+def _reject_rolling_rp(*, state, complete_solve_name: str, active_timeset_names: list) -> None:
+    """Raise for a rolling_window solve on representative periods: rolling over representative periods is not
+    supported (owner decision; before, its *_blended_weights nodes bound forward only, with a warning).
 
-
-def _downgrade_blended_for_rolling_rp(*, state, complete_solve_name: str, active_timeset_names: list, provider,
-                                      warned: set) -> None:
-    """Map every ``*_blended_weights`` storage_binding_method of a rolling_window solve on representative periods
-    to bind_forward_only (see :data:`_RP_ROLLING_DOWNGRADE`), with one warning per complete solve.
-
-    Rewrites the per-solve ``input/node__storage_binding_method`` frame in place, like
-    :func:`_downgrade_rp_methods_for_non_rp_solve` (which handles a solve without representative periods; this one
-    runs after it and before :func:`_fix_start_end_chains_forward`).  The downgraded nodes chain v_state forward
-    and carry it from roll to roll (roll_continue), like any bind_forward_only node.  Runs before
-    :func:`_check_rp_solve`, so a rolling solve that mixes periods with and without representative periods does not
-    raise for these nodes.  Routed through the module logger: ``state.logger`` is silenced during the cascade.
+    The representative periods stand for the whole period through their weights, and the base-period chain of the
+    blended storage methods spans the whole period, so a roll cannot realise a part of them: the storage would carry
+    from roll to roll without the weights and without a closure.
     """
     if state.solve.solve_modes.get(complete_solve_name) != "rolling_window":
         return
-    if not any(ts in state.timeline.rp_weights for ts in active_timeset_names):
+    rp = sorted({ts for ts in active_timeset_names if ts in state.timeline.rp_weights})
+    if not rp:
+        return
+    raise FlexToolConfigError(
+        f"Solve '{complete_solve_name}' is a rolling_window solve on representative periods (timeset(s) "
+        f"{', '.join(rp)} have representative_period_weights): rolling over representative periods is not "
+        "supported. Use solve_mode single_solve for the solve on representative periods (e.g. an investment solve) "
+        "and roll a separate solve over a timeset without representative_period_weights.")
+
+
+# Plain storage_binding_methods that link the representative periods of a solve to each other without their
+# weights, and the *_blended_weights variant to use instead.  Used by :func:`_reject_plain_cyclic_in_rp_solve`.
+_RP_UNWEIGHTED_CYCLES: dict[str, str] = {
+    "bind_within_solve":       "bind_within_solve_blended_weights",
+    "bind_within_period":      "bind_within_period_blended_weights",
+    "bind_intraperiod_blocks": "bind_within_period_blended_weights",
+}
+
+
+def _reject_plain_cyclic_in_rp_solve(*, complete_solve_name: str, active_timeset_names: list, rp_weights: dict,
+                                     provider) -> None:
+    """Raise for a solve on representative periods with a bind_within_solve, bind_within_period or
+    bind_intraperiod_blocks storage node.
+
+    In such a solve the representative periods follow each other on the solve's timeline (each one a timeset block),
+    so these methods chain v_state from the last step of one representative period to the first step of the next one
+    and close the cycle over all of them, unweighted, while the flows of each step count with the weight of its
+    representative period.
+    Energy stored in a period of low weight can then be used in a period of high weight (the energy counts once in
+    the storage but weight-many times in the balance and the objective): the solve makes energy for free.  The
+    *_blended_weights variants chain the representative periods by their weights on the base-period chain.
+    bind_within_timeblock cycles within each timeset block, which in a solve on representative periods is one
+    representative period, so it is not affected.  Checked on the method set in the database, before
+    :func:`_fix_start_end_chains_forward` (which maps a fix_start_end node to bind_forward_only).
+    """
+    if not any(ts in rp_weights for ts in active_timeset_names):
         return
     key = "input/node__storage_binding_method"
     if not provider.has(key):
         return
     sbm = provider.get(key)
-    if sbm.height == 0:
+    if sbm is None or sbm.height == 0:
         return
     col = "storage_binding_method" if "storage_binding_method" in sbm.columns else "method"
     if col not in sbm.columns:
         return  # malformed frame; let the downstream loaders surface it
-    hit = sbm.filter(pl.col(col).is_in(list(_RP_ROLLING_DOWNGRADE)))
+    hit = (sbm.filter(pl.col(col).cast(pl.Utf8).is_in(list(_RP_UNWEIGHTED_CYCLES)))
+           .select(pl.col("node").cast(pl.Utf8), pl.col(col).cast(pl.Utf8)).unique().sort("node"))
     if hit.height == 0:
         return
-    provider.put(key, sbm.with_columns(
-        pl.col(col).replace_strict(_RP_ROLLING_DOWNGRADE, default=pl.col(col)).alias(col)))
-    if complete_solve_name in warned:
-        return
-    warned.add(complete_solve_name)
-    names = sorted(str(n) for n in hit["node"].unique().to_list())
-    _MODULE_LOGGER.warning(
-        "Solve '%s' is a rolling_window solve on representative periods and node(s) %s use a *_blended_weights "
-        "storage_binding_method; storage_binding_method is not applied in a rolling solve: they bind forward only "
-        "and the storage state is passed directly from roll to roll.",
-        complete_solve_name, ", ".join(names))
+    rp = sorted({ts for ts in active_timeset_names if ts in rp_weights})
+    nodes = ", ".join(f"{node} ({method})" for node, method in hit.iter_rows())
+    variants = ", ".join(f"{m} -> {_RP_UNWEIGHTED_CYCLES[m]}" for m in sorted(set(hit[col].to_list())))
+    raise FlexToolConfigError(
+        f"Solve '{complete_solve_name}' is on representative periods (timeset(s) {', '.join(rp)} have "
+        f"representative_period_weights) and storage node(s) {nodes} use a storage_binding_method that carries "
+        "the storage state from one representative period to the next without their weights, while the flows of "
+        "each period count with its weight: energy stored in a period of low weight could be used in a period of "
+        f"high weight, for free. Use the *_blended_weights variant ({variants}), which links the representative "
+        "periods by their weights, or bind_within_timeblock, which cycles the storage within each representative "
+        "period.")
 
 
 def _rp_chain_reaches_model_end(state, solves: list, complete_solve: dict, at_end: list[bool], index) -> list[bool]:
@@ -1765,7 +1786,6 @@ def native_run_model(state, solver) -> int:
     cached_complete_step_jumps: dict = {}
     _warned_rolling_blocks: set = set()
     _logged_fix_start_end_blocks: set = set()
-    _warned_rolling_rp_blended: set = set()
 
     # Pre-compute per-iter level keys.  Same-key consecutive iters are
     # rolling continuations of one base solve; a key change marks a
@@ -2331,10 +2351,13 @@ def native_run_model(state, solver) -> int:
             provider=sub_solve_provider,
             logger=state.logger,
         )
-        # A rolling solve on representative periods: blended nodes bind forward only (item 126), with a warning.
-        _downgrade_blended_for_rolling_rp(state=state, complete_solve_name=complete_solve[solve],
-                                          active_timeset_names=active_timeset_names,
-                                          provider=sub_solve_provider, warned=_warned_rolling_rp_blended)
+        # Rolling over representative periods is not supported; nor are cycles that link the representative
+        # periods without their weights.
+        _reject_rolling_rp(state=state, complete_solve_name=complete_solve[solve],
+                           active_timeset_names=active_timeset_names)
+        _reject_plain_cyclic_in_rp_solve(complete_solve_name=complete_solve[solve],
+                                         active_timeset_names=active_timeset_names,
+                                         rp_weights=state.timeline.rp_weights, provider=sub_solve_provider)
         # fix_start_end ignores a cyclic binding method: after the downgrades, on the same frame.
         _fix_start_end_chains_forward(solve=solve, provider=sub_solve_provider, logger=state.logger,
                                       complete_solve_name=complete_solve[solve], logged=_logged_fix_start_end_blocks)

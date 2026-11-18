@@ -15,7 +15,6 @@ the trunk period also has ``real`` (``realized: yes``): the trunk reads its seri
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
 
 import polars as pl
@@ -587,9 +586,10 @@ _LH2_DET: list[float] = []
 
 @pytest.mark.parametrize("fan", _FANS, ids=_FAN_IDS)
 def test_lh2_identical_forecasts_plain_within_solve(tmp_path_factory, fan):
-    """Identical forecasts (0.5 / 0.5) of the lh2 fixture as it is (batteries bind_within_solve + fix_start, the lh2
-    nodes bind_within_period_blended_weights) give the deterministic objective: every forecast path closes its own
-    loop (before, only the last-listed branch did and the other battery ends were free: 8.93e9 vs 9.39e9)."""
+    """Identical forecasts (0.5 / 0.5) of the lh2 fixture as it is (batteries bind_within_timeblock + fix_start since
+    Phase 4, before bind_within_solve; the lh2 nodes bind_within_period_blended_weights) give the deterministic
+    objective: every forecast path closes its own loop (with bind_within_solve batteries, before item 125 only the
+    last-listed branch did and the other battery ends were free: 8.93e9 vs 9.39e9)."""
     if not _LH2_DET:
         _LH2_DET.append(float(_lh2_run(tmp_path_factory, [])[LH2_SOLVE].solution.obj))
     step = _lh2_run(tmp_path_factory, [["solve", LH2_SOLVE, "stochastic_branches", _branches(*fan)]])[LH2_SOLVE]
@@ -597,37 +597,25 @@ def test_lh2_identical_forecasts_plain_within_solve(tmp_path_factory, fan):
 
 
 @pytest.mark.parametrize("fan", _FANS, ids=_FAN_IDS)
-def test_plain_within_solve_every_leaf_ends_at_the_wrap_target(tmp_path_factory, fan):
-    """The rp_multi_base_solve topology (lp_snapshot) with forecasts a / b and the batteries (plain
-    bind_within_solve) on fix_nothing: the last step of every leaf (y2040_a, y2040_b) ends at the level of the
-    trunk's wrap target d* (the last period key, y2040_b).  With the fan in the first period each root's first
-    step continues from the last step of its own path (y2030_x t0001 ← y2040_x t0096)."""
-    steps = _lh2_run(tmp_path_factory,
-                     [["solve", LH2_SOLVE, "stochastic_branches", _branches(*fan)]]
-                     + [["node", n, "storage_start_end_method", "fix_nothing"] for n in BATTERIES],
-                     patch=L._patch_rp_multi_base_solve)
-    step = steps[LH2_SOLVE]
-    state = _values(step, "v_state")
-    for n in BATTERIES:
-        assert state[(n, "y2040_a", "t0096")] == pytest.approx(state[(n, "y2040_b", "t0096")], abs=1e-6), n
-    assert _rows(build(step.flex_data), "storage_within_solve_path_end") == [
-        f"storage_within_solve_path_end[{n},y2040_a,t0096,y2040_b,t0096]" for n in BATTERIES]
-    lag = step.flex_data.dtttdt_within_solve
-    if fan[0] == "y2030":
-        wrap = {(d, t): (dp, tp) for d, t, dp, tp in _u(lag).select(
-            "d", "t", "d_previous", "t_previous_within_solve").iter_rows() if d.startswith("y2030")}
-        assert wrap[("y2030_a", "t0001")] == ("y2040_a", "t0096")
-        assert wrap[("y2030_b", "t0001")] == ("y2040_b", "t0096")
-    else:
-        assert lag is None
+def test_plain_within_solve_on_representative_periods_is_an_error(tmp_path_factory, fan):
+    """The rp_multi_base_solve topology (lp_snapshot) with forecasts a / b and the batteries on plain
+    bind_within_solve: a configuration error naming the batteries (Phase 4; the plain cycle carried the state between
+    the representative days without their weights).  Before, every leaf ended at the trunk's wrap target."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    with pytest.raises(FlexToolConfigError) as exc:
+        _lh2_run(tmp_path_factory,
+                 [["solve", LH2_SOLVE, "stochastic_branches", _branches(*fan)]]
+                 + [["node", n, "storage_binding_method", "bind_within_solve"] for n in BATTERIES],
+                 patch=L._patch_rp_multi_base_solve)
+    assert "battery_A (bind_within_solve), battery_B (bind_within_solve), battery_C (bind_within_solve)" in str(
+        exc.value)
 
 
 # ---------------------------------------------------------------------------
-# O6: rolling + representative periods + blended (item 126)
+# O6: rolling + representative periods (item 126; a configuration error since Phase 4)
 # ---------------------------------------------------------------------------
 
-# daily_group's 24-h coarse steps would be cut by a roll that starts inside a day: 12-h coarse steps align with
-# the 36-h jump and divide the 24-h representative blocks.
 _ROLLING = [["solve", LH2_SOLVE, "solve_mode", "rolling_window"],
             ["solve", LH2_SOLVE, "rolling_solve_horizon", 48.0],
             ["solve", LH2_SOLVE, "rolling_solve_jump", 36.0],
@@ -635,77 +623,12 @@ _ROLLING = [["solve", LH2_SOLVE, "solve_mode", "rolling_window"],
 _NO_INVEST = ("invest_periods", "realized_invest_periods")
 
 
-def test_o6_day_long_coarse_step_cut_by_the_roll_names_the_jump(tmp_path_factory):
-    """daily_group's own 24-h coarse step divides the 24-h representative blocks, but roll 0 (jump 36 h) realizes
-    up to t0036, 12 h into the block t0025-t0048: the error names the roll's realized end, not the
-    representative-period length."""
+@pytest.mark.parametrize("method", [WS_B, FO_B, WP_B])
+def test_o6_rolling_on_representative_periods_is_an_error(tmp_path_factory, method):
+    """O6: a rolling_window solve on representative periods stops with a configuration error before its first roll
+    is built, whatever the storage methods (before: the blended nodes bound forward only, with a warning)."""
     from flextool.engine.input._solve_state import FlexToolConfigError
 
-    rolling = [r for r in _ROLLING if r[1] != "daily_group"] + [["group", "daily_group", "new_stepduration", 24.0]]
-    with pytest.raises(FlexToolConfigError) as exc:
-        _lh2_run(tmp_path_factory, rolling, drop=_NO_INVEST)
-    msg = str(exc.value)
-    assert ("the realized part of this roll ends at step 't0036' (rolling_solve_jump), inside a representative "
-            "period and inside the coarse step starting 't0025' (period 'y2030')") in msg
-    assert "'daily_group'" in msg
-    assert "does not evenly divide" not in msg
-
-
-def _rolling(tmp_path_factory, method: str) -> dict:
-    return _lh2_run(tmp_path_factory, _ROLLING + [["node", n, "storage_binding_method", method] for n in LH2],
-                    drop=_NO_INVEST)
-
-
-def _mps(step, path: Path) -> bytes:
-    build(step.flex_data).write_mps(path)
-    return path.read_bytes()
-
-
-_O6_REF: dict[str, bytes] = {}
-
-
-@pytest.mark.parametrize("method", [WS_B, FO_B, WP_B])
-def test_o6_rolling_blended_binds_forward_only_with_one_warning(tmp_path_factory, caplog, method):
-    """O6: horizon 48 h, jump 36 h over the 96 rp steps ⇒ 3 rolls (roll 0 realises up to t0036, inside the
-    second y2030 block); one warning naming the lh2 nodes; no representative-period storage rows; rolls 1 and 2
-    continue the lh2 states; every roll's LP is the LP of the same model with bind_forward_only."""
-    caplog.set_level(logging.WARNING, logger="flextool.engine.solve._run_model")
-    steps = _rolling(tmp_path_factory, method)
-    warnings = [r.getMessage() for r in caplog.records if "storage_binding_method is not applied" in r.getMessage()]
-    assert len(warnings) == 1, warnings
-    assert "lh2_A, lh2_B, lh2_C" in warnings[0]
-    assert ("storage_binding_method is not applied in a rolling solve: they bind forward only and the storage "
-            "state is passed directly from roll to roll") in warnings[0]
-    names = list(steps)
-    assert names == [f"{LH2_SOLVE}_roll_{k}" for k in range(3)]
-    for k, name in enumerate(names):
-        step = steps[name]
-        assert step.flex_data.nodeState_rp is None or step.flex_data.nodeState_rp.height == 0
-        for var in ("v_state_inter", "v_state_rp_start"):
-            with pytest.raises(KeyError):
-                step.solution.value(var)
-        pb = build(step.flex_data)
-        for fam in ("rp_inter_period_balance", "rp_inter_period_cyclic", "rp_inter_period_fan_start",
-                    "rp_inter_period_max_state", "maxState_rp_start"):
-            assert _rows(pb, fam) == [], (name, fam)
-        if k:
-            carry = {n: v for n, v in _u(step.flex_data.p_roll_continue_state.frame)
-                     .select("n", "value").iter_rows()}
-            prev = steps[names[k - 1]]
-            end = ("t0036", "y2030") if k == 1 else ("t0072", "y2040")
-            su = {n: v for n, v in _u(prev.flex_data.p_state_unitsize.frame).select("n", "value").iter_rows()}
-            state = _values(prev, "v_state")
-            for n in LH2:
-                assert carry[n] == pytest.approx(state[(n, end[1], end[0])] * su[n], rel=1e-9, abs=1e-6)
-    if not _O6_REF:
-        before = len(caplog.records)
-        ref = _rolling(tmp_path_factory, "bind_forward_only")
-        assert not [r for r in caplog.records[before:] if "storage_binding_method is not applied" in r.getMessage()]
-        out = tmp_path_factory.mktemp("o6_ref_mps")
-        for k, name in enumerate(ref):
-            _O6_REF[name] = _mps(ref[name], out / f"{k}.mps")
-        _O6_REF["_obj"] = [float(s.solution.obj) for s in ref.values()]
-    out = tmp_path_factory.mktemp("o6_mps")
-    for k, name in enumerate(names):
-        assert _mps(steps[name], out / f"{k}.mps") == _O6_REF[name], name
-    assert [float(s.solution.obj) for s in steps.values()] == pytest.approx(_O6_REF["_obj"], rel=1e-9)
+    with pytest.raises(FlexToolConfigError, match="rolling over representative periods is not supported"):
+        _lh2_run(tmp_path_factory, _ROLLING + [["node", n, "storage_binding_method", method] for n in LH2],
+                 drop=_NO_INVEST)

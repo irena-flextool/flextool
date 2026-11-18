@@ -1050,7 +1050,16 @@ def read_sets(
 
     s.node__storage_start_end_method = empty_multi_index(["node", "method"])
     s.node__inflow_method = empty_multi_index(["node", "method"])
-    s.node__storage_nested_fix_method = empty_multi_index(["node", "method"])
+    # The node parameter storage_nested_fix_method (the same in every solve; the storage usage output).
+    nsfm = getattr(flex_data, "node__storage_nested_fix_method", None)
+    if nsfm is not None and nsfm.height > 0 and {"node", "method"}.issubset(nsfm.columns):
+        s.node__storage_nested_fix_method = pd.MultiIndex.from_frame(
+            nsfm.select(pl.col("node").cast(pl.Utf8), pl.col("method").cast(pl.Utf8))
+            .unique(maintain_order=True).to_pandas(),
+            names=["node", "method"],
+        )
+    else:
+        s.node__storage_nested_fix_method = empty_multi_index(["node", "method"])
 
     # process_source / process_sink — (process, source) / (process, sink).
     #

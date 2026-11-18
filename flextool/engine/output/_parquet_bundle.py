@@ -337,6 +337,7 @@ for _key, _producer, _note in (
     ("node_d_ep",                  "out_node.node_summary",            "Per-period aggregated node balance."),
     ("node_state_dt_e",            "out_node.node_additional_results", "Per-(period,time) node state."),
     ("node_inflow__dt",            "out_node.node_additional_results", "Per-(period,time) node inflow."),
+    ("node_storage_usage_dt_e",    "out_node.node_storage_usage",      "Per-(period,time) net use of the fix_usage storage nodes."),
     ("node_prices_dt_e",           "out_node.node_additional_results", "Per-(period,time) node price (dual_node_balance)."),
     ("node_slack_up_dt_e",         "out_ancillary.slack_variables",    "Per-(period,time) node up-slack."),
     ("node_slack_down_dt_e",       "out_ancillary.slack_variables",    "Per-(period,time) node down-slack."),

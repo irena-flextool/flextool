@@ -570,6 +570,7 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "nodeGroup_flows_dt_gpe": ENERGY_PERSTEP,
     "node_inflow__dt": ENERGY_PERSTEP,
     "node_state_dt_e": STORAGE_STATE,
+    "node_storage_usage_dt_e": ENERGY_PERSTEP,
     # VRE shares + curtailment/potential.  NOTE: the *_d_ee curtailment and
     # potential are SUM-ONLY over the sample (per_period), NOT annualized —
     # unlike unit_outputNode_d_ee (see Task #4 / Stage-1 finding).
@@ -870,6 +871,9 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
                            "mean of the two step durations), the divisor of the ramp histogram's rate; empty "
                            "where the ramp envelope row is empty.",
     "node_state_dt_e": "Stored energy of each storage node at each time step.",
+    "node_storage_usage_dt_e": "Net use of each storage node with storage_nested_fix_method fix_usage in each "
+                               "realised time step: the flows out of the node minus the flows into it, times the "
+                               "step duration (the quantity an upper-level fix_usage caps).",
     "node_inflow__dt": "Inflow of each node in each time step as given to the model (demand is negative).",
     "node_prices_dt_e": "Price of energy at each balanced node and time step: the cost of one more unit of demand "
                         "there (the dual of the node balance), in the price base of the cost inputs.",
@@ -1071,6 +1075,7 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "transition_hours_dt": OutputDims(_DT, ("param",), kinds=_PARAM_QUANTITY),
     "node_d_ep": OutputDims(_D, ("node", "category"), "node_dt_ep", _NODE_CATEGORY),
     "node_state_dt_e": OutputDims(_DT, ("node",)),
+    "node_storage_usage_dt_e": OutputDims(_DT, ("node",)),
     "node_inflow__dt": OutputDims(_DT, ("node",)),
     "node_prices_dt_e": OutputDims(("solve", "period", "time"), ("node",)),
     "node_slack_up_dt_e": OutputDims(_DT, ("node",), "node_slack_up_d_e"),
@@ -1616,6 +1621,7 @@ UNIT_SOURCE: dict[str, UnitSource] = {
     "nodeGroup_ramp_envelope_dt_gp": UnitSource("group", _U.GROUP_MEMBERS),
     "node_d_ep": UnitSource("node", _U.NODE),
     "node_state_dt_e": UnitSource("node", _U.NODE),
+    "node_storage_usage_dt_e": UnitSource("node", _U.NODE),
     "node_inflow__dt": UnitSource("node", _U.NODE),
     "node_prices_dt_e": UnitSource("node", _U.NODE),
     "node_slack_up_dt_e": UnitSource("node", _U.NODE),

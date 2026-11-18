@@ -2406,6 +2406,7 @@ rename:
   node_retirement_ed_p: [node_retirement__d, true]
   node_prices_dt_e: [node_prices__dt, true]
   node_state_dt_e: [node_state__dt, true]
+  node_storage_usage_dt_e: [node_storage_usage__dt, true]
   process_co2_d_eee: [process__d_co2, true]
   years_represented__d: [years_represented__d, false]
   period_share_of_year__d: [period_share_of_year__d, false]

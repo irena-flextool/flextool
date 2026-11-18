@@ -83,9 +83,10 @@ def _total_cost(step) -> float:
 
 
 def test_every_period_gets_rp_weights_without_blended_nodes(tmp_path_factory):
-    """Plain bind_within_solve nodes: y2040's representative steps keep their weights 1.1 / 0.9 (before, every
-    period but the first fell back to 1.0)."""
-    steps = _run(tmp_path_factory, _overlay(_methods("bind_within_solve")))
+    """Plain (not blended) bind_within_timeblock nodes: y2040's representative steps keep their weights 1.1 / 0.9
+    (before, every period but the first fell back to 1.0).  bind_within_timeblock: a plain bind_within_solve is a
+    configuration error on representative periods."""
+    steps = _run(tmp_path_factory, _overlay(_methods("bind_within_timeblock")))
     fd = steps[SOLVE].flex_data
     assert _weights(fd, "y2030") == [1.4, 0.6]
     assert _weights(fd, "y2040") == [1.1, 0.9]
@@ -173,7 +174,10 @@ def test_variant_order_on_two_periods(tmp_path_factory):
     # 16 820 838 994 → 16 910 567 160 (+0.53 %): the lh2 nodes' fix_start 0.5 now pins the level their y2030 chain
     # starts from (rp_inter_period_start_fix; the closure holds y2030's cycle there), not a free offset inside
     # their first block.
-    assert cost["wp"] == pytest.approx(16_910_567_160.0, rel=1e-6)
+    # 16 910 567 160 → 16 457 293 278 (−2.7 %): the fixture's batteries cycle within each representative day
+    # (bind_within_timeblock; a plain bind_within_solve on representative periods is now a configuration error), so
+    # their whole-solve fix_start pin is gone.
+    assert cost["wp"] == pytest.approx(16_457_293_278.0, rel=1e-6)
 
 
 def test_mixed_variants_in_one_solve(tmp_path_factory):
@@ -209,7 +213,7 @@ def test_mixed_rp_and_non_rp_periods_with_blended_node_raises(tmp_path_factory):
 
 
 def test_mixed_rp_and_non_rp_periods_keep_both_weights(tmp_path_factory):
-    fd = _run(tmp_path_factory, _y2040_plain_timeset("bind_within_solve"))[SOLVE].flex_data
+    fd = _run(tmp_path_factory, _y2040_plain_timeset("bind_within_timeblock"))[SOLVE].flex_data
     assert _weights(fd, "y2030") == [1.4, 0.6]
     assert _weights(fd, "y2040") == [round(2.0 * 48 / 72, 9), round(48 / 72, 9)]
 
@@ -240,21 +244,14 @@ def test_stochastic_solve_with_rp_timeset_solves(tmp_path_factory):
     assert all(_weights(fd, p) == [1.0] for p in branch_periods)
 
 
-def test_rolling_solve_with_blended_nodes_binds_forward_only(tmp_path_factory, caplog):
-    """A rolling_window solve on representative periods: the blended nodes bind forward only, with one warning
-    (item 126; before: a FlexToolConfigError)."""
-    import logging
-
-    caplog.set_level(logging.WARNING, logger="flextool.engine.solve._run_model")
+def test_rolling_solve_on_representative_periods_is_an_error(tmp_path_factory):
+    """A rolling_window solve on representative periods stops with a configuration error (owner decision, Phase 4;
+    item 126 had made its blended nodes bind forward only, with a warning)."""
     patch = _overlay([["solve", SOLVE, "solve_mode", "rolling_window"],
                       ["solve", SOLVE, "rolling_solve_horizon", 48.0],
                       ["solve", SOLVE, "rolling_solve_jump", 24.0]])
-    steps = _run(tmp_path_factory, patch)
-    assert len(steps) > 1
-    warnings = [r.getMessage() for r in caplog.records if "storage_binding_method is not applied" in r.getMessage()]
-    assert len(warnings) == 1 and "lh2_A, lh2_B, lh2_C" in warnings[0]
-    for step in steps.values():
-        assert step.flex_data.nodeState_rp is None or step.flex_data.nodeState_rp.height == 0
+    with pytest.raises(FlexToolConfigError, match="rolling over representative periods is not supported"):
+        _run(tmp_path_factory, patch)
 
 
 # ---------------------------------------------------------------------------

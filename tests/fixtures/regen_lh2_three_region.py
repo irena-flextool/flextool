@@ -568,7 +568,8 @@ def _build_rp_invest_overlay(
     * Greenfield investable pipes (``existing=0`` + ``invest_total``) with
       a NON-ZERO flow cost (``other_operational_cost=2.0``).
     * lh2 nodes bind with ``bind_within_period_blended_weights`` (the RP
-      storage variant); battery left on the base ``bind_within_solve``.
+      storage variant); batteries ``bind_within_timeblock`` (each
+      representative day cycles on itself).
     * Asymmetry forcing A→B→C trade: region A has cheap per-day wind
       (full 1.0 / low 0.3 within each period) + boosted existing wind/
       electrolyser/liquefier to supply the corridor; regions B/C have their
@@ -678,11 +679,17 @@ def _build_rp_invest_overlay(
                 ("connection", pipe, "other_operational_cost", 2.0,
                  alt_name),
             ])
-        # lh2 nodes: RP storage binding.
+        # lh2 nodes: RP storage binding.  Batteries cycle within each
+        # representative day (a plain bind_within_solve would carry their
+        # state from one representative day to the next without the weights:
+        # a configuration error in a solve on representative periods).
         for r in REGIONS:
             pv.append(
                 ("node", f"lh2_{r}", "storage_binding_method",
                  "bind_within_period_blended_weights", alt_name))
+            pv.append(
+                ("node", f"battery_{r}", "storage_binding_method",
+                 "bind_within_timeblock", alt_name))
         # Region A: cheap per-day wind (full/low within each period) +
         # boosted supply chain.
         pv.append(

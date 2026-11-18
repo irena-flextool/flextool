@@ -100,6 +100,7 @@ class TimeSeriesResults:
     node_inflow__dt: pd.DataFrame | None = None
     node_prices_dt_e: pd.DataFrame | None = None
     node_state_dt_e: pd.DataFrame | None = None
+    node_storage_usage_dt_e: pd.DataFrame | None = None
     node_slack_up_dt_e: pd.DataFrame | None = None
     node_slack_up_d_e: pd.DataFrame | None = None
     node_slack_down_dt_e: pd.DataFrame | None = None

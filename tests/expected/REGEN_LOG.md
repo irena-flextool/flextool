@@ -1686,3 +1686,20 @@ Files the regeneration rewrote that this change does not touch (`costs__dt`, `no
 `unit__outputNode__dt`, `slack__upward__node_state__dt`, `summary_solve` timestamps; within the 1e-4 compare
 tolerance) were restored to their previous content. All 44 `test_scenario` cases and their `test_obj_decomposition`
 pass.
+
+## 2026-11-18 — the rp lh2 fixture's batteries cycle within each representative day; two re-captured pins (rolling storage carry, Phase 4)
+
+No golden CSV changed.
+
+**Context.** A plain `bind_within_solve` (or `bind_within_period`, `bind_intraperiod_blocks`) storage in a solve on
+representative periods is now a configuration error: it carried the state from one representative day into the
+next without their weights while the flows counted with them, so the solve could deliver energy it never charged
+(`tests/engine/test_rp_storage_guards.py`).  The batteries of `tests/fixtures/lh2_three_region_rp_invest.json` were
+plain `bind_within_solve` in the three representative-period alternatives; `regen_lh2_three_region.py` now gives
+them `bind_within_timeblock` there (one representative day is one timeset block), and the JSON was regenerated
+(only these nine values added).
+
+- `tests/engine/test_benders_phase3b_rp_loop.py`: `_M_RP_EXPECTED` 9 437 466 952.7 → 9 034 135 956.5 (−4.3 %); the
+  Benders loop's upper bound converges to the same value.
+- `tests/engine/test_rp_multi_period.py::test_variant_order_on_two_periods`, `bind_within_period_blended_weights`
+  cost: 16 910 567 160 → 16 457 293 278 (−2.7 %).

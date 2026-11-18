@@ -349,6 +349,37 @@ def test_fix_storage_timesteps_output_set(tmp_path):
     assert len(read_sets(roll.flex_data, roll.solution, solve_name=roll.solve_name).dt_fix_storage_timesteps) == 0
 
 
+def test_storage_usage_output(tmp_path):
+    """node_storage_usage_dt_e: the realised net use of the fix_usage tank in each step (MWh, out − in), written by
+    the output writer (parquet and csv): the rolls of the cumulative fix_usage case above draw 10 MWh an hour in
+    t01-t02 and recharge it in t03-t04; 0 elsewhere."""
+    import contextlib
+    import io
+
+    from flextool.lean_parquet import read_lean_parquet
+    from flextool.process_outputs.out_node import node_storage_usage
+    from flextool.process_outputs.write_outputs import write_outputs
+
+    solves, tank = nested("fix_usage", {"rolling_solve_jump": 2.0, "rolling_solve_horizon": 4.0})
+    steps = run(tmp_path, solves, top=["up"], tank=tank, load={"t01": 10.0, "t02": 10.0},
+                gen={"t03": 1.0, "t04": 1.0})
+    last = next(reversed(steps.values()))
+    out = tmp_path / "out"
+    with contextlib.redirect_stdout(io.StringIO()):
+        write_outputs(SCENARIO, output_location=str(out), subdir=SCENARIO,
+                      output_config_path=str(FLEXTOOL_ROOT / "flextool" / "schemas" / "default_plots.yaml"),
+                      output_funcs=[node_storage_usage], write_methods=["parquet", "csv"],
+                      fallback_output_location=str(tmp_path / "work"),
+                      raw_output_dir=str(tmp_path / "work" / "output_raw"), solution=last.solution,
+                      solve_name=last.solve_name, flex_data=last.flex_data,
+                      flex_data_provider=last.flex_data_provider)
+    frame = read_lean_parquet(out / "output_parquet" / SCENARIO / "node_storage_usage_dt_e.parquet")
+    usage = {t: v for (_d, t), v in frame.droplevel("scenario", axis=1)["tank"].items()}
+    assert usage == pytest.approx({t: {"t01": 10.0, "t02": 10.0, "t03": -10.0, "t04": -10.0}.get(t, 0.0)
+                                   for t in STEPS}, abs=1e-6)
+    assert (out / "output_csv" / SCENARIO / "node_storage_usage__dt.csv").is_file()
+
+
 @pytest.mark.parametrize("start", ["fix_start", "fix_nothing"])
 def test_nested_first_roll_of_a_period_starts_from_the_upper_start(tmp_path, start):
     """bind_within_period under an upper fix_quantity: the first roll's horizon cuts the period, so its first step
