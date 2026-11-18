@@ -6,7 +6,10 @@ An entity gives three numbers:
   and retirement windows;
 * ``payback_time`` — the years over which the investment is annualised (the annuity factor); an entity without
   it pays back over its ``lifetime_technical``;
-* ``net_salvage_value`` — the value of retired capacity.
+* ``net_salvage_value`` — the value of retired capacity;
+
+and optionally a life extension: ``life_extension_cost`` (a one-off cost per capacity) keeps capacity reaching
+its end of life in service ``life_extension_years`` longer (both or neither).
 
 The payback time is read, per entity, from the first name of :data:`ROLE_CHAIN` under which the entity has a value
 (:func:`role_sources`): ``payback_time``, else ``lifetime_technical``, for all its periods.  A period map of either
@@ -28,6 +31,10 @@ if TYPE_CHECKING:
 LIFETIME_TECHNICAL = "lifetime_technical"
 PAYBACK_TIME = "payback_time"
 NET_SALVAGE_VALUE = "net_salvage_value"
+LIFE_EXTENSION_COST = "life_extension_cost"
+LIFE_EXTENSION_YEARS = "life_extension_years"
+#: The parameters of a life extension: an entity gives both or neither.
+LIFE_EXTENSION: tuple[str, str] = (LIFE_EXTENSION_COST, LIFE_EXTENSION_YEARS)
 
 #: Role → the parameter names it is read from, in order: an entity takes the first one it has a value of.
 #: ``payback_time`` falls back to the technical lifetime of the same entity.

@@ -39,6 +39,8 @@ import spinedb_api as api
 from flextool.engine.input._lifetime_roles import (
     AGE_AT_MODEL_START,
     BUILD_YEAR,
+    LIFE_EXTENSION_COST,
+    LIFE_EXTENSION_YEARS,
     LIFETIME_TECHNICAL,
     NET_SALVAGE_VALUE,
     NO_REINVESTMENT,
@@ -2728,6 +2730,24 @@ def _missing_lifetime(src, cls: str, methods: dict[str, str]) -> list[str]:
     return errors
 
 
+def _life_extension_pairs(src, cls: str, errors: list[str], warnings: list[str]) -> None:
+    """The life-extension checks of the ``cls`` entities: an error for an entity that gives only one of
+    ``life_extension_cost`` / ``life_extension_years`` (the extension needs both), a warning for one that gives both
+    but no ``lifetime_technical`` (its capacity never reaches an end of life, so there is nothing to extend)."""
+    entities_with = _entities_with(src, cls)
+    cost, years = entities_with(LIFE_EXTENSION_COST), entities_with(LIFE_EXTENSION_YEARS)
+    for ent in sorted(cost ^ years):
+        given, missing = ((LIFE_EXTENSION_COST, LIFE_EXTENSION_YEARS) if ent in cost
+                          else (LIFE_EXTENSION_YEARS, LIFE_EXTENSION_COST))
+        errors.append(f"{cls} '{ent}' has a {given} but no {missing}: a life extension needs both. Give the "
+                      f"{missing}, or remove the {given}.")
+    lifeless = sorted((cost & years) - entities_with(LIFETIME_TECHNICAL))
+    if lifeless:
+        warnings.append(f"{cls} " + ", ".join(f"'{e}'" for e in lifeless) + f" has {LIFE_EXTENSION_COST} and "
+                        f"{LIFE_EXTENSION_YEARS} but no {LIFETIME_TECHNICAL}: its capacity never reaches an end of "
+                        "life, so it is never extended.")
+
+
 def validate_basic_sanity(src) -> None:
     """Values that make no sense, or are almost surely a typing mistake (#170).
 
@@ -2750,6 +2770,8 @@ def validate_basic_sanity(src) -> None:
       (without ``payback_time``), or a ``lifetime_method`` ``reinvest_choice`` / ``no_reinvestment`` with
       investment, retirement or ``existing``;
     * ``discount_rate`` < 0 (unit / connection / node); 0 is the straight-line annuity.
+    * ``life_extension_years`` ≤ 0 (charged for no years), ``life_extension_cost`` < 0, or only one of the two on
+      an entity (:func:`_life_extension_pairs`; an extension needs both).
     * the age of existing capacity (:func:`_existing_age_errors`): ``age_at_model_start`` and ``build_year`` on one
       entity, a ``build_year`` without ``model.start_year`` or after it, a negative ``age_at_model_start``, models
       of the scenario with different ``start_year``.
@@ -2759,7 +2781,8 @@ def validate_basic_sanity(src) -> None:
     Warnings: ``availability`` above 1.5 (entered as percent?); connection ``efficiency`` > 1 (creates energy);
     ``virtual_unitsize`` ≤ 0 (ignored); ``existing`` < 0 (unit, connection, node; :data:`_NEGATIVE_EXISTING`):
     supported (a unit with a negative capacity is an "anti-energy" unit), but more often a typing mistake, and with
-    a profile, min_load or invest / retire limits it can make the problem infeasible.  Profiles above 1.5 are
+    a profile, min_load or invest / retire limits it can make the problem infeasible; a life extension on an entity
+    without ``lifetime_technical`` (never extended).  Profiles above 1.5 are
     :func:`warn_profiles_as_percent`' (after the read).  The warnings are printed before an error is raised.
     """
     errors: list[str] = []
@@ -2845,6 +2868,12 @@ def validate_basic_sanity(src) -> None:
              "discount_rate must be 0 or above (0 gives the straight-line annuity invest_cost / payback_time).",
              errors)])
         errors.extend(_missing_lifetime(src, cls, methods[cls]))
+        scan(cls, LIFE_EXTENSION_YEARS, [(lambda v: v <= 0.0,
+             f"{LIFE_EXTENSION_YEARS} must be above 0; with 0 the extension is charged for no years. Give the "
+             f"{LIFE_EXTENSION_YEARS} in years.", errors)])
+        scan(cls, LIFE_EXTENSION_COST, [(lambda v: v < 0.0,
+             f"{LIFE_EXTENSION_COST} must be 0 or above (a negative cost pays the capacity to be extended).", errors)])
+        _life_extension_pairs(src, cls, errors, warnings)
     errors.extend(_existing_age_errors(src))
 
     for text in warnings:

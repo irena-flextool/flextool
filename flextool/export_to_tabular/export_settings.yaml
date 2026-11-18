@@ -337,6 +337,8 @@ period_only_params:
     - retire_max_period
     - retire_min_period
     - net_salvage_value
+    - life_extension_cost
+    - life_extension_years
     - storage_state_reference_price
     - storage_state_reference_value
   unit:
@@ -359,6 +361,8 @@ period_only_params:
     - retire_max_period
     - retire_min_period
     - net_salvage_value
+    - life_extension_cost
+    - life_extension_years
     - startup_cost
   connection:
     - constraint_invested_capacity_coeff
@@ -380,6 +384,8 @@ period_only_params:
     - retire_max_period
     - retire_min_period
     - net_salvage_value
+    - life_extension_cost
+    - life_extension_years
     - startup_cost
   group:
     - co2_max_period

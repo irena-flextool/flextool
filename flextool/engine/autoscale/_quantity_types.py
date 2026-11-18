@@ -556,6 +556,18 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [CUR/kWh] Net salvage value of retired storage capacity. Constant or period.
     ('net_salvage_value', 'unit'): QuantityType.PRICE_PER_CAPACITY,
     # [CUR/kW] Net salvage value: scrap value minus decommissioning cost, received once when capacity is retired.
+    ('life_extension_cost', 'connection'): QuantityType.PRICE_PER_CAPACITY,
+    # [CUR/kW] One-off cost of keeping capacity in service for life_extension_years beyond its end of life.
+    ('life_extension_cost', 'node'): QuantityType.PRICE_PER_STORAGE,
+    # [CUR/kWh] One-off cost of keeping storage capacity in service for life_extension_years beyond its end of life.
+    ('life_extension_cost', 'unit'): QuantityType.PRICE_PER_CAPACITY,
+    # [CUR/kW] One-off cost of keeping capacity in service for life_extension_years beyond its end of life.
+    ('life_extension_years', 'connection'): QuantityType.DURATION,
+    # [years] How long capacity can be kept in service beyond the end of its lifetime_technical.
+    ('life_extension_years', 'node'): QuantityType.DURATION,
+    # [years] How long storage capacity can be kept in service beyond the end of its lifetime_technical.
+    ('life_extension_years', 'unit'): QuantityType.DURATION,
+    # [years] How long capacity can be kept in service beyond the end of its lifetime_technical.
     ('payback_time', 'connection'): QuantityType.DURATION,
     # [years] Years over which invest_cost is annualized with discount_rate. No value: lifetime_technical.
     ('payback_time', 'node'): QuantityType.DURATION,

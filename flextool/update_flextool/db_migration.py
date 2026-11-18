@@ -11515,12 +11515,16 @@ V82_PARAMETER_RENAMES: dict[str, str] = {
     "inflation_offset_investment": "discount_offset_investment",
     "inflation_offset_operations": "discount_offset_operations",
 }
-#: v82: the default a definition of :data:`V82_PARAMETER_RENAMES` gets when the step adds it (a renamed one keeps its
-#: own).  ``social_discount_rate`` has none: without a value the engine uses 0.
+#: v82: the parameters of a life extension, added on unit, connection and node (types ``float`` and ``1d_map``, group
+#: ``investment``, no default).
+V82_LIFE_EXTENSION: tuple[str, ...] = ("life_extension_cost", "life_extension_years")
+#: v82: the default a definition of :func:`_v82_definitions` gets when the step adds it (a renamed one keeps its own).
+#: ``social_discount_rate`` has none: without a value the engine uses 0; a life extension has none: it is opt-in.
 V82_DEFAULTS: dict[str, float | None] = {
     "social_discount_rate": None,
     "discount_offset_investment": 0.0,
     "discount_offset_operations": 0.5,
+    **{name: None for name in V82_LIFE_EXTENSION},
 }
 
 
@@ -11567,7 +11571,37 @@ def _v82_texts() -> dict[tuple[str, str], str]:
             "With reinvest_automatic each plant (the first one and each replacement) is priced the same way, at the "
             "values of the period it comes online.")
         t.update(_v82_replacement_texts(cls, cap, what, per))
+        t.update(_v82_life_extension_texts(cls, cap, per))
     return t
+
+
+def _v82_life_extension_texts(cls: str, cap: str, per: str) -> dict[tuple[str, str], str]:
+    """The descriptions of :data:`V82_LIFE_EXTENSION` on the class *cls* whose capacity is *cap* (priced per
+    *per*)."""
+    both = "Give both life_extension_cost and life_extension_years, or neither."
+    return {
+        (cls, "life_extension_cost"): (
+            f"[CUR/{per}] One-off cost of keeping {cap} in service for life_extension_years beyond the end of its "
+            "lifetime_technical, paid when the extension starts: at the end of life (rounded by end_of_life_method). "
+            f"The model decides how much of the {cap} still in service at its end of life to extend, at most all of "
+            "it; no invest_method is needed, but the period the extension starts in must be an invest_period of the "
+            "solve. The extension is priced as a plant of its own: life_extension_cost plus the net_salvage_value the capacity would have received at its end of life (given up: it stays in "
+            "the plant), financed at discount_rate over life_extension_years, less the net_salvage_value received "
+            "at the extended end of life, paid as a level yearly cost for each year in service, with the fixed_cost "
+            "of each year. With lifetime_method reinvest_choice it competes with new capacity, with "
+            "no_reinvestment it is the only way to keep the capacity after its end of life, and with "
+            "reinvest_automatic it competes with the replacement: the extended capacity is replaced at the "
+            "extended end of life instead (each end of life of the chain can be extended). An extension, and the "
+            "replacements of an extension, are never extended again. Extended capacity can be retired when "
+            "invest_method allows retirement, and counts as capacity, not as investment, in the investment limits. "
+            f"{both} Constant or period: the value of the period the extension starts in is used."),
+        (cls, "life_extension_years"): (
+            f"[years] How long {cap} can be kept in service beyond the end of its lifetime_technical for "
+            "life_extension_cost (see there): the extended end of life is the end of life plus "
+            "life_extension_years, rounded by end_of_life_method; the extension is financed over these years at "
+            f"discount_rate. {both} Must be above 0. Constant or period: the value of the period the extension "
+            "starts in is used."),
+    }
 
 
 def _v82_shipped_payback_time_text(cap: str) -> str:
@@ -11637,13 +11671,20 @@ def _v82_superseded() -> dict[tuple[str, str], tuple[str | None, str]]:
 
 
 def _v82_definitions() -> dict[tuple[str, str], dict]:
-    """The ``model`` definitions of :data:`V82_PARAMETER_RENAMES` (new names) with the fields v82 gives them: a
-    constant (``float``), group ``model`` and the description.  The default is not among them: a renamed
-    definition keeps its own (:func:`_v82_definitions_part`)."""
+    """The definitions v82 adds, with the fields it gives them: the ``model`` definitions of
+    :data:`V82_PARAMETER_RENAMES` (new names; a constant, ``float``, group ``model``) and those of
+    :data:`V82_LIFE_EXTENSION` on unit, connection and node (``float`` and ``1d_map``, group ``investment``), each
+    with its description.  The default is not among them: a renamed definition keeps its own
+    (:func:`_v82_definitions_part`)."""
     texts = _v82_texts()
-    return {("model", new): {"parameter_type_list": ("float",), "parameter_group_name": "model",
-                             "description": texts[("model", new)]}
-            for new in V82_PARAMETER_RENAMES.values()}
+    out = {("model", new): {"parameter_type_list": ("float",), "parameter_group_name": "model",
+                            "description": texts[("model", new)]}
+           for new in V82_PARAMETER_RENAMES.values()}
+    for cls in _V81_CAPACITY:
+        for name in V82_LIFE_EXTENSION:
+            out[(cls, name)] = {"parameter_type_list": ("float", "1d_map"), "parameter_group_name": "investment",
+                                "description": texts[(cls, name)]}
+    return out
 
 
 def _v82_rename_definitions(db) -> None:
@@ -11682,14 +11723,14 @@ def _v82_rename_definitions(db) -> None:
 
 
 def _v82_definitions_part(db, *, update: bool = True) -> None:
-    """Part 3 of v82: each definition of :func:`_v82_definitions` is added (with the default of
-    :data:`V82_DEFAULTS`), or (``update``) given its types, group and description.  A default is never compared or
-    written on an existing definition (a renamed one keeps its own, also a stored empty one).  ``update=False`` only
-    adds the missing ones.  Idempotent."""
-    if not db.get_item("entity_class", name="model"):
-        return
-    _ensure_parameter_group(db, "model", *_V81_GROUPS["model"])
+    """Part 3 of v82: each definition of :func:`_v82_definitions` on an existing class is added (with the default of
+    :data:`V82_DEFAULTS`, and its parameter group), or (``update``) given its types, group and description.  A
+    default is never compared or written on an existing definition (a renamed one keeps its own, also a stored empty
+    one).  ``update=False`` only adds the missing ones.  Idempotent."""
     for (cls, name), fields in _v82_definitions().items():
+        if not db.get_item("entity_class", name=cls):
+            continue
+        _ensure_parameter_group(db, fields["parameter_group_name"], *_V81_GROUPS[fields["parameter_group_name"]])
         pdef = _pdef_or_none(db, cls, name)
         if pdef is None:
             default = V82_DEFAULTS[name]
@@ -11758,7 +11799,9 @@ def _migrate_v82_schema_batch(db) -> None:
        ``discount_offset_investment`` and ``inflation_offset_operations`` is ``discount_offset_operations``, with
        every value and the default (:func:`_v82_rename_definitions`).
     3. The three definitions: a constant, group ``model``, the description; a missing one is added with its shipped
-       default (:func:`_v82_definitions_part`).
+       default (:func:`_v82_definitions_part`).  With them, ``life_extension_cost`` and ``life_extension_years`` on
+       unit, connection and node (a constant or a period map, group ``investment``, no default): capacity at its end
+       of life can be kept in service longer for a one-off cost.
     4. The descriptions of the three and of ``discount_rate`` and ``payback_time`` (unit, connection, node), which
        name them, and of ``lifetime_method``, ``lifetime_technical``, ``invest_cost``, ``age_at_model_start``,
        ``net_salvage_value`` and ``end_of_life_method``, which say what reinvest_automatic does: the capacity is
