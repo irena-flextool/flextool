@@ -19,7 +19,7 @@ differing ONLY in WHERE the branches are declared:
     wait-and-see topology).  ``v_invest`` is scenario-specific; each
     scenario builds all-first-stage.  Hand-calc objective **150 000** (WS).
 
-``RP − WS = 15 750 = EVPI > 0`` — a direct behavioural proof that the
+``RP − WS = 15 000 = EVPI > 0`` — a direct behavioural proof that the
 mid-horizon first stage is genuinely shared (§8.3).
 
 Effective demand seen by the investable ``base`` unit (design §8.1: p2035 =

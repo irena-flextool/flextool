@@ -1360,7 +1360,7 @@
         "float"
       ],
       null,
-      "[years] Where in each year operating and fixed costs are weighed by social_discount_rate, counted from the start of the year: 0.5 (default) the middle of the year, standing for costs spread over the year. No effect when social_discount_rate is 0. Constant.",
+      "[years] Where in each year operating and fixed costs are weighed by social_discount_rate, counted from the start of the year, between 0 and 1: 0.5 (default) the middle of the year, standing for costs spread over the year. No effect when social_discount_rate is 0. Constant.",
       "model"
     ],
     [

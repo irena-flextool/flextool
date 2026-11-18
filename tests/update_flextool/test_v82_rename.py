@@ -301,3 +301,33 @@ def test_head_refresh_writes_the_v82_text_for_a_superseded_pair(tmp_path_factory
             assert text == m._v82_texts()[(cls, "payback_time")] == _shipped()[(cls, "payback_time")]
             assert "inflation_rate" not in text
     assert not m._head_defaults_stale_ro(path)
+
+
+#: The ``discount_offset_operations`` description an earlier development build of v82 shipped (no 0-1 range).
+_DEV_V82_OPERATIONS_TEXT = (
+    "[years] Where in each year operating and fixed costs are weighed by social_discount_rate, counted from the start "
+    "of the year: 0.5 (default) the middle of the year, standing for costs spread over the year. No effect when "
+    "social_discount_rate is 0. Constant.")
+
+
+@pytest.mark.parametrize("edited", [False, True])
+def test_head_refresh_replaces_the_superseded_operations_offset_text(tmp_path_factory, edited) -> None:
+    """A database at 82 with the discount_offset_operations description of an earlier development build (and the
+    shipped default 0.5) gets the current one, which gives the 0-1 range; a description the user edited is kept."""
+    url = _seed(tmp_path_factory, f"v82_ops_text_{edited}", FLEXTOOL_DB_VERSION)
+    old = _DEV_V82_OPERATIONS_TEXT + (" My note." if edited else "")
+    with DatabaseMapping(url) as db:
+        pdef = db.get_item("parameter_definition", entity_class_name="model", name="discount_offset_operations")
+        db.update_parameter_definition(id=pdef["id"], description=old)
+        db.commit_session("the operations offset text of a development build")
+    path = Path(url.removeprefix("sqlite:///"))
+    assert m._head_defaults_stale_ro(path) is not edited
+    migrate_database(url)
+    with DatabaseMapping(url) as db:
+        pdef = db.get_item("parameter_definition", entity_class_name="model", name="discount_offset_operations")
+        if edited:
+            assert pdef["description"] == old
+        else:
+            assert pdef["description"] == _shipped()[("model", "discount_offset_operations")]
+            assert "between 0 and 1" in pdef["description"]
+    assert not m._head_defaults_stale_ro(path)

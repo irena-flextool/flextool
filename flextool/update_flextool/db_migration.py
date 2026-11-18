@@ -11557,14 +11557,25 @@ def _v82_texts() -> dict[tuple[str, str], str]:
             "Constant."),
         ("model", "discount_offset_operations"): (
             "[years] Where in each year operating and fixed costs are weighed by social_discount_rate, counted from "
-            "the start of the year: 0.5 (default) the middle of the year, standing for costs spread over the year. "
-            "No effect when social_discount_rate is 0. Constant."),
+            "the start of the year, between 0 and 1: 0.5 (default) the middle of the year, standing for costs "
+            "spread over the year. No effect when social_discount_rate is 0. Constant."),
     }
     for cls, (cap, _what, _per) in _V81_CAPACITY.items():
         t[(cls, "discount_rate")] = _v82_discount_rate_text()
         t[(cls, "payback_time")] = _v81_payback_time_text(cap, "changes nothing (a whole number of years)").replace(
             "inflation_rate", "social_discount_rate")
     return t
+
+
+def _v82_superseded() -> dict[tuple[str, str], tuple[str | None, str]]:
+    """``{(class, name): (default, description)}``: the default and description pairs of v82 definitions that a
+    development build of v82 shipped and that have since been superseded (the current description is in
+    :func:`_v82_texts`; the default stays).  A database at 82 that has exactly such a pair gets the current
+    description (:func:`_refresh_head_schema`)."""
+    return {("model", "discount_offset_operations"): (
+        0.5, "[years] Where in each year operating and fixed costs are weighed by social_discount_rate, counted from "
+             "the start of the year: 0.5 (default) the middle of the year, standing for costs spread over the year. "
+             "No effect when social_discount_rate is 0. Constant.")}
 
 
 def _v82_definitions() -> dict[tuple[str, str], dict]:
@@ -11715,16 +11726,16 @@ def _head_schema_missing_ro(path) -> bool:
 
 def _head_superseded() -> dict[tuple[str, str], tuple[str | None, str]]:
     """The superseded shipped ``(default, description)`` pairs that the refresh of the current data version replaces
-    (:func:`_v81_superseded`, through :func:`_v81_refresh`)."""
+    (:func:`_v81_superseded` through :func:`_v81_refresh`, and :func:`_v82_superseded`)."""
     if FLEXTOOL_DB_VERSION != 82:
         return {}
-    return _v81_superseded()
+    return {**_v81_superseded(), **_v82_superseded()}
 
 
 def _is_superseded_pair(cls: str, name: str, default, description: str | None) -> bool:
     """Whether the definition ``(cls, name)`` has exactly a superseded shipped pair of :func:`_head_superseded`:
     its parsed default and its description both equal to what FlexTool shipped.  The test of
-    :func:`_head_defaults_stale_ro`; :func:`_v81_refresh` applies the same one (:func:`_pair_is`)."""
+    :func:`_head_defaults_stale_ro`; :func:`_replace_superseded_pairs` applies the same one (:func:`_pair_is`)."""
     return _pair_is(_head_superseded().get((cls, name)), default, description)
 
 
@@ -11781,8 +11792,15 @@ def _v81_refresh(db, texts: dict[tuple[str, str], str]) -> None:
     texts = {**_v81_texts(), **texts}
     _v81_value_lists(db)
     _v81_definitions_part(db, update=False, texts=texts)
-    current = _v81_definitions(texts)
-    for (cls, name), old in _v81_superseded().items():
+    _replace_superseded_pairs(db, _v81_superseded(), _v81_definitions(texts), texts)
+
+
+def _replace_superseded_pairs(db, superseded: dict[tuple[str, str], tuple[str | None, str]],
+                              current: dict[tuple[str, str], dict], texts: dict[tuple[str, str], str]) -> None:
+    """Replace each definition that has exactly a *superseded* shipped ``(default, description)`` pair: with the
+    default and description of *current* where the step defines the whole definition, else with the description
+    of *texts* (the default stays).  An edited description or default is kept.  Idempotent."""
+    for (cls, name), old in superseded.items():
         pdef = _pdef_or_none(db, cls, name)
         if pdef is None:
             continue
@@ -11791,7 +11809,7 @@ def _v81_refresh(db, texts: dict[tuple[str, str], str]) -> None:
         if not _pair_is(old, default, pdef["description"]):
             continue
         fields = current.get((cls, name))
-        if fields is None:  # a definition v81 does not add: only its description was superseded
+        if fields is None:  # a definition the step does not add: only its description was superseded
             db.update_parameter_definition(id=pdef["id"], description=texts[(cls, name)])
         else:
             db.update_parameter_definition(id=pdef["id"], default_value=fields["default_value"],
@@ -11800,13 +11818,15 @@ def _v81_refresh(db, texts: dict[tuple[str, str], str]) -> None:
 
 def _refresh_head_schema(db) -> None:
     """Bring a database at the current data version to the schema of its schema step: the v81 refresh with the
-    current descriptions (:func:`_v81_refresh`: missing v81 definitions and list members, superseded shipped pairs)
-    and the v82 definitions it lacks (:func:`_v82_definitions_part`; an existing definition keeps its fields).  A
-    description the user edited, a default the user set and every value are kept; otherwise a description is never
-    rewritten.  Idempotent."""
+    current descriptions (:func:`_v81_refresh`: missing v81 definitions and list members, superseded shipped pairs),
+    the v82 definitions it lacks (:func:`_v82_definitions_part`; an existing definition keeps its fields) and the
+    current description in place of a superseded shipped v82 pair (:func:`_v82_superseded`).  A description the
+    user edited, a default the user set and every value are kept; otherwise a description is never rewritten.
+    Idempotent."""
     if FLEXTOOL_DB_VERSION == 82:
         _v81_refresh(db, _v82_texts())
         _v82_definitions_part(db, update=False)
+        _replace_superseded_pairs(db, _v82_superseded(), {}, _v82_texts())
 
 
 if __name__ == '__main__':
