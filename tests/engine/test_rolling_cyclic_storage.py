@@ -1,11 +1,12 @@
-"""Cyclic storage binding methods in the rolls of a rolling solve take no roll carry (#119).
+"""Cyclic storage binding methods in the rolls of a rolling solve (#119).
 
 how_to/solve_sequences.md (rolling notes): *bind_within_timeblock* "will bind the first step of the roll (whatever it is) to the
-end of the timeblock", the same for *bind_within_period*, and *bind_within_solve* "binds the start state to the end
-state of each roll".  So a cyclic node cycles within each roll: its first-step row holds the wrap
-(v_state[wrap] − v_state[first])·su and nothing else.  Before the fix the roll carry (−v_state[first]·su +
-roll_continue_state) was added on top: −2·su on v_state[first] and the carry in the bounds.  A bind_forward_only
-node keeps the carry.  The battery's self-discharge is set to 0 so the coefficients are exactly ±su.
+end of the timeblock", the same for *bind_within_period*.  So such a node cycles within each roll: its first-step row
+holds the wrap (v_state[wrap] − v_state[first])·su and nothing else.  Before the fix the roll carry
+(−v_state[first]·su + roll_continue_state) was added on top: −2·su on v_state[first] and the carry in the bounds.
+*bind_within_solve* continues each roll from the carried level instead, like a bind_forward_only node, and ends the
+horizon at the instance's start level in the closing rolls (tests/engine/test_rolling_storage_anchor.py has the rest).
+The battery's self-discharge is set to 0 so the coefficients are exactly ±su.
 
 Database: ``tests/fixtures/tests.json`` + an override alternative (never a checked-in sqlite).
 """
@@ -55,7 +56,7 @@ def _carried(fd) -> None:
     assert _carry(fd) > 25.0, "the carry must be non-zero for the test to be meaningful"
 
 
-@pytest.mark.parametrize("method", ["bind_within_timeblock", "bind_within_period", "bind_within_solve"])
+@pytest.mark.parametrize("method", ["bind_within_timeblock", "bind_within_period"])
 def test_cyclic_roll_first_step_has_no_carry(tmp_path_factory, method):
     steps = _rolls(tmp_path_factory, f"c119{method[5:12]}", method)
     for step in steps[1:3]:
@@ -83,3 +84,20 @@ def test_forward_only_roll_keeps_carry(tmp_path_factory):
         # the first step of the roll has no state change of its own: only the carried start
         assert state == {f"v_state[battery,{d0},{t0}]": pytest.approx(-SU, rel=1e-12)}
         assert bounds[0] == pytest.approx(-carry, rel=1e-9) and bounds[1] == pytest.approx(-carry, rel=1e-9)
+
+
+def test_within_solve_roll_continues_from_carry(tmp_path_factory):
+    """bind_within_solve: rolls 1 and 2 (both reach t0012, the end of the 12-h solve) start from the carry, as a
+    bind_forward_only node, and end at the level roll 0 started from: its fix_start pin, 0.1 × 50 = 5 MWh."""
+    from tests.engine._lp_rows import row_bounds as bounds_of
+
+    steps = _rolls(tmp_path_factory, "c119ws", "bind_within_solve")
+    for step in steps[1:3]:
+        fd, (d0, t0), state, bounds = _first_row(step)
+        _carried(fd)
+        carry = _carry(fd)
+        assert state == {f"v_state[battery,{d0},{t0}]": pytest.approx(-SU, rel=1e-12)}
+        assert bounds[0] == pytest.approx(-carry, rel=1e-9) and bounds[1] == pytest.approx(-carry, rel=1e-9)
+        close = bounds_of(build(fd), "storage_state_roll_close", "battery,")
+        d1, t1 = utf8(fd.dt).sort("d", "t").row(-1)
+        assert close == {f"storage_state_roll_close[battery,{d1},{t1}]": (pytest.approx(5.0), pytest.approx(5.0))}

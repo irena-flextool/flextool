@@ -68,6 +68,12 @@ SOLVE_DATA_ROLL_PERIOD_WHOLE = "solve_data/roll_period_whole"
 # (value) one Boolean row: whether the sub-solve's horizon holds the last step of the entire model (_run_model);
 # fix_end / fix_start_end pin the end state there only.
 SOLVE_DATA_STORAGE_SOLVE_AT_MODEL_END = "solve_data/storage_solve_at_model_end"
+# (node, kind, value) the horizon-end condition of the bind_within_solve storage nodes of a rolling_window roll
+# that the cascade continues from a carried state (_run_model._anchor_cyclic_in_rolling): kind ``anchor`` (end ≥
+# the carried level, value MWh), ``close`` (end = the instance's start level, value MWh), ``anchor_share`` /
+# ``close_share`` (end ≥ / = storage_state_start × capacity, value null) and ``wrap_end`` (the first roll's wrap
+# pinned at storage_state_end); header-only when none.
+SOLVE_DATA_STORAGE_ROLL_END = "solve_data/storage_roll_end"
 # (value) one Boolean row: True when the sub-solve belongs to a rolling solve whose rolls do not each realize whole
 # periods (RecursiveSolveBuilder._check_period_total_rolls); its constraint_period_method period_total rows are left out.
 SOLVE_DATA_USER_CONSTRAINT_PERIOD_TOTAL_OFF = "solve_data/user_constraint_period_total_off"

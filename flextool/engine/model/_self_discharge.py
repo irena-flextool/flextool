@@ -480,3 +480,105 @@ def open_first(d) -> "pl.DataFrame | None":
         if covered is not None:
             first = first.join(covered.select("n", "d", "t"), on=["n", "d", "t"], how="anti")
     return first if first.height > 0 else None
+
+
+# ---------------------------------------------------------------------------
+# The level each storage chain starts from, in MWh (outputs and the cascade's handoff)
+# ---------------------------------------------------------------------------
+
+
+def fix_start_energy(d, chosen) -> "pl.DataFrame | None":
+    """``(n, d, t, value)`` (Utf8 keys): the start energy (MWh) of the first steps of :func:`fix_start_first`,
+    storage_state_start × the capacity in service (existing + invested − retired) in the step's period.
+
+    ``chosen(var, dims)`` returns a solved variable as ``(*dims, value)`` with Utf8 keys (``v_invest_n`` with dims
+    ``("n", "d_invest")``, ``v_divest_n`` with ``("n", "d_divest")``; None or empty when the solve has none).
+    None when no step starts from fix_start.
+    """
+    fix_first = fix_start_first(d)
+    if fix_first is None:
+        return None
+    fix_first = fix_first.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+    su = d.p_state_unitsize.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("su"))
+    cap = (d.p_state_existing_capacity.frame
+           .select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("value").alias("cap")))
+    built = pl.DataFrame(schema={"n": pl.Utf8, "d": pl.Utf8, "built": pl.Float64})
+    from flextool.engine.preprocess.params._cohorts import in_service
+    frames = in_service(d)
+    for var, frame, ent, d_col, sign in (("v_invest_n", frames.alive, "e", "d_invest", 1.0),
+                                         ("v_divest_n", frames.retired_n, "n", "d_divest", -1.0)):
+        if frame is None or frame.height == 0:
+            continue
+        picked = chosen(var, ("n", d_col))
+        if picked is None or picked.height == 0:
+            continue
+        alive = frame.select(pl.col(ent).cast(pl.Utf8).alias("n"), pl.col(d_col).cast(pl.Utf8),
+                             pl.col("d").cast(pl.Utf8))
+        part = (alive.join(picked, on=["n", d_col], how="inner").group_by("n", "d")
+                .agg((pl.col("value").sum() * sign).alias("built")))
+        built = pl.concat([built, part], how="vertical")
+    built = built.group_by("n", "d").agg(pl.col("built").sum())
+    return (fix_first
+            .join(d.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("ss")),
+                  on="n", how="inner")
+            .join(cap, on=["n", "d"], how="left").join(su, on="n", how="left")
+            .join(built, on=["n", "d"], how="left")
+            .select("n", "d", "t", value=pl.col("ss") * (pl.col("cap").fill_null(0.0)
+                                                         + pl.col("built").fill_null(0.0) * pl.col("su"))))
+
+
+def start_levels(d, state: pl.DataFrame, chosen) -> "pl.DataFrame | None":
+    """``[node, value]``: the level (MWh) each storage node's first step starts from in a solved solve.
+
+    The carried state (:func:`roll_first`), the fix_start energy (:func:`fix_start_energy`), the state of a cyclic
+    node's wrap target (the step its first step continues from, :func:`state_links`) or, for an open chain with
+    neither, the state of its first step (the step has no state change).  ``state``: the solve's v_state
+    ``(n, d, t, value)`` in state units.  Representative-period nodes are left out (their first step starts from
+    the free v_state_rp_start of a block).  With several first steps (a stochastic fan in the first period) the
+    first in sorted order is taken: they start from the same level.  None without storage.
+    """
+    if not _has_rows(getattr(d, "nodeState_first_dt", None)) or d.p_state_unitsize is None:
+        return None
+
+    def utf8(frame: pl.DataFrame) -> pl.DataFrame:
+        return frame.with_columns([pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t") if c in frame.columns])
+
+    state = utf8(state)
+    su = utf8(d.p_state_unitsize.frame).select("n", pl.col("value").alias("su"))
+    first = utf8(d.nodeState_first_dt.select("n", "d", "t"))
+    rp = getattr(d, "nodeState_rp", None)
+    if _has_rows(rp):
+        first = first.join(utf8(rp.select("n")), on="n", how="anti")
+    parts = []
+    carry = roll_first(d)
+    if carry is not None:
+        parts.append(utf8(carry.select("n", "d", "t"))
+                     .join(utf8(d.p_roll_continue_state.frame.select("n", "value")), on="n", how="inner"))
+    fixed = fix_start_energy(d, chosen)
+    if fixed is not None:
+        parts.append(fixed)
+    cyclic = cyclic_nodes(d)
+    if cyclic is not None:
+        links = previous_steps(state_links(d, has_rp=False, has_nsb=_has_rows(getattr(d, "nodeStateBlock", None))))
+        wrap = (first.join(utf8(cyclic.select("n")), on="n", how="semi")
+                .join(links, on=["n", "d", "t"], how="inner")
+                .join(state.select("n", pl.col("d").alias("d_prev"), pl.col("t").alias("t_prev"), "value"),
+                      on=["n", "d_prev", "t_prev"], how="inner")
+                .join(su, on="n", how="inner")
+                .select("n", "d", "t", value=pl.col("value") * pl.col("su")))
+        parts.append(wrap)
+    free = open_first(d)
+    if free is not None:
+        parts.append(utf8(free.select("n", "d", "t"))
+                     .join(state, on=["n", "d", "t"], how="inner")
+                     .join(su, on="n", how="inner")
+                     .select("n", "d", "t", value=pl.col("value") * pl.col("su")))
+    parts = [p.select("n", "d", "t", pl.col("value").cast(pl.Float64)) for p in parts if p.height > 0]
+    if not parts:
+        return None
+    out = (pl.concat(parts, how="vertical")
+           .join(first, on=["n", "d", "t"], how="semi")
+           .sort("n", "d", "t")
+           .unique(subset=["n"], keep="first", maintain_order=True)
+           .select(pl.col("n").alias("node"), "value"))
+    return out if out.height > 0 else None

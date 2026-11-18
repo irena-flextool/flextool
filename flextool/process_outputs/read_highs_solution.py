@@ -1634,33 +1634,7 @@ def write_v_self_discharge(
     rp_start = None
     if fd.nodeState_rp is not None and fd.nodeState_rp.height > 0:
         rp_start = _solution_frame(names, values, "v_state_rp_start", ("n", "d", "t"))
-    start = None
-    fix_first = at(sd.fix_start_first(fd))
-    if fix_first is not None:
-        su = fd.p_state_unitsize.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("su"))
-        cap = (fd.p_state_existing_capacity.frame
-               .select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("value").alias("cap")))
-        built = pl.DataFrame(schema={"n": pl.Utf8, "d": pl.Utf8, "built": pl.Float64})
-        from flextool.engine.preprocess.params._cohorts import in_service
-        frames = in_service(fd)
-        for var, frame, ent, d_col, sign in (("v_invest", frames.alive, "e", "d_invest", 1.0),
-                                             ("v_divest", frames.retired_n, "n", "d_divest", -1.0)):
-            if frame is None or frame.height == 0:
-                continue
-            chosen = _solution_frame(names, values, var, ("n", d_col))
-            alive = frame.select(pl.col(ent).cast(pl.Utf8).alias("n"), pl.col(d_col).cast(pl.Utf8),
-                                 pl.col("d").cast(pl.Utf8))
-            part = (alive.join(chosen, on=["n", d_col], how="inner").group_by("n", "d")
-                    .agg((pl.col("value").sum() * sign).alias("built")))
-            built = pl.concat([built, part], how="vertical")
-        built = built.group_by("n", "d").agg(pl.col("built").sum())
-        start = (fix_first
-                 .join(fd.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("ss")),
-                       on="n", how="inner")
-                 .join(cap, on=["n", "d"], how="left").join(su, on="n", how="left")
-                 .join(built, on=["n", "d"], how="left")
-                 .select("n", "d", "t", value=pl.col("ss") * (pl.col("cap").fill_null(0.0)
-                                                              + pl.col("built").fill_null(0.0) * pl.col("su"))))
+    start = sd.fix_start_energy(fd, lambda var, dims: _solution_frame(names, values, var, dims))
     carry = None
     roll = at(sd.roll_first(fd))
     open_start = sd.open_start_nodes(fd)

@@ -230,6 +230,20 @@ class SolveHandoff:
     unit_detail: str = "none"
     online_left_out: frozenset = frozenset()
 
+    # The storage level (MWh) each storage node's first step starts from: the carried state, the fix_start energy
+    # (storage_state_start × capacity in service), the state of a cyclic node's wrap target or the free first state
+    # of an open chain (representative-period nodes are left out).  ``[node, value]``.  Read by the cascade
+    # (``solve._run_model``): the start of a rolling instance that its closing rolls return to, and the start a
+    # nested lower level borrows from this solve.  Producer: ``build_handoff_from_solution``.  Not a carrier: not in
+    # ``_FIELDS``.
+    cycle_start_state: pl.DataFrame | None = None
+
+    # The planned storage level (v_state × state_unitsize, MWh, the end of each step) of the nodes this solve hands a
+    # nested fix to (any storage_nested_fix_method), at every step of the solve: ``[node, period, step, value]``.
+    # The start a nested lower level that first appears after this solve's first step borrows.  Producer and
+    # consumer as ``cycle_start_state``.  Not a carrier.
+    storage_level: pl.DataFrame | None = None
+
     _FIELDS = (
         "realized_commission", "divest_cumulative", "realized_cohort", "realized_retire",
         "roll_end_state", "upward_roll_end_state", "roll_end_online", "roll_end_flow",

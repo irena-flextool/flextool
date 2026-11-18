@@ -315,6 +315,32 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             published="13.11.2026",
         ),
         BehaviourChange(
+            id="rolling_cyclic_storage_anchored",
+            summary=("In a rolling_window solve without representative periods, a storage node with "
+                     "storage_binding_method bind_within_solve (also bind_within_solve_blended_weights, which such a "
+                     "solve uses as bind_within_solve) now continues each roll from the level realised by the "
+                     "previous roll, and each roll ends its horizon at least at the level it started from. The "
+                     "roll(s) whose horizon reaches the end of the solve end at the level the first roll started "
+                     "from, so the year (the solve) returns the energy it took. An upper-level fix_quantity or "
+                     "fix_usage at the end of a roll's horizon replaces these end conditions (fix_price keeps the "
+                     "closure and only values the end), and fix_end wins at the last step of the model. Before, each "
+                     "roll cycled on itself from a free level, so the level jumped at every roll boundary and the "
+                     "rolls could use energy that was never produced (results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "rolling_cyclic_storage_anchored"),
+        ),
+        BehaviourChange(
+            id="nested_storage_start_borrowed",
+            summary=("A storage node of a nested lower-level solve whose end an upper-level solve fixes "
+                     "(storage_nested_fix_method fix_quantity, fix_usage or fix_price) and that has no state "
+                     "realised before the lower solve now starts from the level the upper solve planned for the "
+                     "same moment, when it chains forward (bind_forward_only, or bind_within_solve in a rolling "
+                     "solve under fix_quantity or fix_usage) and fix_start does not apply (no fix_start, or the "
+                     "lower solve starts after the start of the model). Before, it started free or from fix_start, "
+                     "so the lower solve could start fuller than the upper plan and keep the difference (results "
+                     "change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "nested_storage_start_borrowed"),
+        ),
+        BehaviourChange(
             id="annuity_over_payback_time",
             summary=("With lifetime_method reinvest_choice or no_reinvestment the investment cost is now the level "
                      "yearly cost of the plant over its lifetime_technical (the annuity over payback_time with "

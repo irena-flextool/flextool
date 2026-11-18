@@ -1106,6 +1106,7 @@ def _build_region_data(
     )
     new.storage_fix_start = _filter_frame(src.storage_fix_start, "n", keep_nodes)
     new.storage_fix_end = _filter_frame(getattr(src, "storage_fix_end", None), "n", keep_nodes)
+    new.storage_roll_end = _filter_frame(getattr(src, "storage_roll_end", None), "n", keep_nodes)
     new.ndt_fix_storage_price = _filter_frame(getattr(src, "ndt_fix_storage_price", None), "n", keep_nodes)
     new.nodeStateBlock = _filter_frame(src.nodeStateBlock, "n", keep_nodes)
     new.nodeState_rp = _filter_frame(
@@ -1604,7 +1605,7 @@ _MASTER_NODE_FIELDS: tuple[str, ...] = (
     "storage_bind_within_timeblock", "storage_bind_forward_only",
     "storage_bind_within_solve", "storage_bind_within_period", "storage_bind_within_solve_blended_weights",
     "storage_bind_within_period_blended_weights",
-    "storage_bind_forward_only_blended_weights", "storage_fix_start", "storage_fix_end",
+    "storage_bind_forward_only_blended_weights", "storage_fix_start", "storage_fix_end", "storage_roll_end",
     "p_state_upper", "p_state_unitsize", "p_state_self_discharge",
     "p_state_start", "p_state_end", "p_state_existing_capacity",
     "storage_use_reference_value", "p_storage_state_reference_value",
@@ -1672,7 +1673,7 @@ _MASTER_N_KEYED_FIELDS: tuple[str, ...] = (
     "storage_bind_within_timeblock", "storage_bind_forward_only",
     "storage_bind_within_solve", "storage_bind_within_period", "storage_bind_within_solve_blended_weights",
     "storage_bind_within_period_blended_weights",
-    "storage_bind_forward_only_blended_weights", "storage_fix_start", "storage_fix_end",
+    "storage_bind_forward_only_blended_weights", "storage_fix_start", "storage_fix_end", "storage_roll_end",
     "p_state_upper", "p_state_unitsize", "p_state_self_discharge",
     "p_state_start", "p_state_end", "p_state_existing_capacity",
     "storage_use_reference_value", "p_storage_state_reference_value",

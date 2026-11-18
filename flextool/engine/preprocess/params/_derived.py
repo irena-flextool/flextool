@@ -8213,7 +8213,10 @@ def apply_derived_e(
             source, nsb_db, rolling=bool(getattr(flex_data, "solve_is_rolling", False)))
         # The solve's plain cyclic sets come from the per-solve frame, so they include the blended-weights
         # nodes this solve downgraded (no representative periods): those cycle too and get no end pin.
-        for cyclic in (flex_data.storage_bind_within_solve, flex_data.storage_bind_within_period):
+        # A bind_within_solve node of a rolling roll that continues from a carried state chains forward in the roll
+        # (_run_model._anchor_cyclic_in_rolling) and its end is tied to its start by storage_roll_end: no pin either.
+        for cyclic in (flex_data.storage_bind_within_solve, flex_data.storage_bind_within_period,
+                       getattr(flex_data, "storage_roll_end", None)):
             if use_ref is not None and cyclic is not None and cyclic.height > 0:
                 names = [str(n) for n in cyclic["n"].to_list()]
                 use_ref = use_ref.filter(~pl.col("n").cast(pl.Utf8).is_in(names))

@@ -275,6 +275,11 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "storage_state_fan_start": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_end_binding
     "storage_state_end_binding": CstrFamily(QuantityType.ENERGY),
+    # flextool/engine/model/core.py _eq_storage_roll_end (rolling bind_within_solve: anchor and closure)
+    "storage_state_roll_anchor": CstrFamily(QuantityType.ENERGY),
+    "storage_state_roll_close": CstrFamily(QuantityType.ENERGY),
+    "storage_state_roll_anchor_share": CstrFamily(QuantityType.ENERGY),
+    "storage_state_roll_close_share": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_reference_value
     "storage_state_solve_horizon_reference_value": CstrFamily(QuantityType.ENERGY),
 

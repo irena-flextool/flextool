@@ -63,6 +63,7 @@ Equation families, in emit order (module in brackets when not model/core.py):
   Storage state       maxState; profile_state_{upper_limit,lower_limit,fixed};
                       storage_state_start_binding[_cyclic_period]; storage_within_solve_path_end,
                       storage_state_fan_start (stochastic fans); storage_state_end_binding;
+                      storage_state_roll_{anchor,close}[_share] (rolling bind_within_solve);
                       storage_state_solve_horizon_reference_value
   Profiles            profile_flow_{upper_limit,lower_limit,fixed}
   Objective           balance slack penalty, commodity cost and sales, CO2 price, variable cost, startup cost,
@@ -527,6 +528,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _eq_storage_within_solve_path_end,
         _eq_storage_state_fan_start,
         _eq_storage_end_binding,
+        _eq_storage_roll_end,
         _eq_storage_reference_value,
         _eq_profiles,
         # ── core objective terms ──
@@ -1784,7 +1786,9 @@ def _roll_continue_terms(b: _Build) -> dict:
     # previous roll, the previous solve of a sequence, the dispatch below a storage solve; roll_continue_state, MWh,
     # routed by the cascade: solve._carry_routing).  α, β: the self-discharge weights of an open-start node
     # (_self_discharge).  A cyclic node (_cyclic_nodes) cycles within the solve and takes no carry (how_to/solve_sequences.md
-    # rolling notes); a representative-period node starts each block from v_state_rp_start (no carry).  Nodes of
+    # rolling notes); a bind_within_solve node of a rolling roll that continues from a carried state is bind_forward_only
+    # in that roll (_run_model._anchor_cyclic_in_rolling) and takes the carry here, its horizon end in
+    # storage_state_roll_anchor / _close; a representative-period node starts each block from v_state_rp_start (no carry).  Nodes of
     # neither kind outside the open-start set take the unweighted form.
     d = b.d
     first = _self_discharge.roll_first(d)
@@ -4656,14 +4660,45 @@ def _eq_storage_start_binding(b: _Build) -> None:
     )
 
 
+def _roll_end_rows(d, kinds) -> "pl.DataFrame | None":
+    """``(n, value)`` of the storage_roll_end rows of the ``kinds`` (_run_model._anchor_cyclic_in_rolling); None
+    when there are none."""
+    sre = getattr(d, "storage_roll_end", None)
+    if not _has_rows(sre):
+        return None
+    out = sre.filter(pl.col("kind").is_in(list(kinds))).select("n", "value")
+    return out if out.height > 0 else None
+
+
+def _cyclic_pin_coefficient(b: _Build) -> "Param | None":
+    """``(n)``: the share of the capacity a cyclic node's first-roll wrap is pinned at: storage_state_start of the
+    fix_start nodes, storage_state_end of the ``wrap_end`` nodes of storage_roll_end (a fix_end node of a rolling
+    instance that reaches the model end, without fix_start).  None when neither."""
+    d = b.d
+    parts = []
+    if _has_rows(d.storage_fix_start) and d.p_state_start is not None:
+        parts.append(d.p_state_start.frame.join(d.storage_fix_start.select("n"), on="n", how="semi")
+                     .select("n", "value"))
+    wrap_end = _roll_end_rows(d, ("wrap_end",))
+    if wrap_end is not None and d.p_state_end is not None:
+        end = d.p_state_end.frame.join(wrap_end.select("n"), on="n", how="semi").select("n", "value")
+        if parts:
+            end = end.join(parts[0].select("n"), on="n", how="anti")
+        parts.append(end)
+    parts = [f for f in parts if f.height > 0]
+    if not parts:
+        return None
+    return Param(("n",), pl.concat(parts, how="vertical"))
+
+
 def _cyclic_start_pin_steps(b: _Build) -> "pl.DataFrame | None":
     """``(n, d, t)``: the steps storage_state_start_binding_cyclic_period pins (the wrap targets of the cyclic
-    fix_start nodes' first steps, less the steps an upper-level solve fixes, which are logged); None when there are
-    none."""
+    fix_start nodes' first steps, and of the ``wrap_end`` nodes of storage_roll_end, less the steps an upper-level
+    solve fixes, which are logged); None when there are none."""
     d = b.d
+    coef = _cyclic_pin_coefficient(b)
     if not (b.has_storage
-            and _has_rows(d.storage_fix_start)
-            and d.p_state_start is not None
+            and coef is not None
             and b.cap.existing_state_n is not None
             and d.p_state_unitsize is not None
             and _has_rows(d.nodeState_first_dt)):
@@ -4672,7 +4707,7 @@ def _cyclic_start_pin_steps(b: _Build) -> "pl.DataFrame | None":
                                           d.storage_bind_within_period, _self_discharge.block_cyclic_nodes(d)))
     if cyclic is None:
         return None
-    nodes = cyclic.join(d.storage_fix_start, on="n", how="inner")
+    nodes = cyclic.join(coef.frame.select(pl.col("n").cast(cyclic.schema["n"], strict=False)), on="n", how="inner")
     nodes = _self_discharge.without_nodes(nodes, _self_discharge.carried_nodes(d))
     if nodes is None:
         return None
@@ -4714,23 +4749,29 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
     # v_state[n,d′,t′] − state_start[n]·invested[n,d′]
     #   + state_start[n]·retired[n,d′]
     #   = state_start[n] · capacity[n,d′] / state_unitsize[n]
-    #   ∀ n ∈ storage_fix_start ∩ (bind_within_timeblock ∪ bind_within_solve ∪ bind_within_period
-    #     ∪ looping nodeStateBlock), n ∉ carried, (n,d,t) ∈ nodeState_first_dt, (d′,t′) = the step (d,t) starts
-    #     from (the node's wrap), (n,d′,t′) ∉ the steps node_balance_fix_quantity_eq_lower fixes
+    #   ∀ n ∈ (storage_fix_start ∪ storage_roll_end(wrap_end)) ∩ (bind_within_timeblock ∪ bind_within_solve
+    #     ∪ bind_within_period ∪ looping nodeStateBlock), n ∉ carried, (n,d,t) ∈ nodeState_first_dt,
+    #     (d′,t′) = the step (d,t) starts from (the node's wrap), (n,d′,t′) ∉ the steps
+    #     node_balance_fix_quantity_eq_lower fixes
     # The first step of a cyclic node starts from its wrap target, so the start state is pinned there, to the
     # share state_start of the built storage capacity (state units): the last step of the first timeblock
     # (bind_within_timeblock; in a roll, of the timeblock's part in the roll), of the solve (bind_within_solve) or
     # of the first period (bind_within_period, bind_intraperiod_blocks).  Only where no state of the node was
     # realised before this solve (the first solve of the model and of each nested level); a later solve neither
-    # pins nor carries a cyclic node (it cycles within the solve).  Where an
+    # pins nor carries a cyclic node (it cycles within the solve; a later roll of a rolling bind_within_solve node
+    # chains forward from the carry instead, _run_model._anchor_cyclic_in_rolling).  Where an
     # upper-level solve fixes the state at the wrap target the upper value wins (the two equalities would sit on
     # one variable).  A bind_intraperiod_blocks node that chains forward (fix_start_end, or a roll that holds its
     # first period only in part) has its start in nodeBalanceBlock_eq (_fix_start_terms); fix_start_end nodes of the
     # other cyclic methods are forward-only in the solve (_run_model._fix_start_end_chains_forward).
+    # In a rolling instance that reaches the model end, a fix_end node without fix_start is pinned the same way at
+    # storage_state_end (state_start below stands for that share; storage_roll_end kind wrap_end): its cycle level
+    # is the end value, as in a solve that is not rolling, where the end pin sits on the wrap target.
     # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
     # existing capacity counting until its end of life (none for reinvest_automatic).
+    coef = _cyclic_pin_coefficient(b)
     lhs: dict = {"state": b.v_state}
-    invested, divested = _capacity.node_in_service(b, d.nodeState, "_cyclic", coef=d.p_state_start)
+    invested, divested = _capacity.node_in_service(b, d.nodeState, "_cyclic", coef=coef)
     if invested is not None:
         lhs["invest_neg"] = -invested
     if divested is not None:
@@ -4740,7 +4781,7 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
         over      = over,
         sense     = "==",
         lhs_terms = lhs,
-        rhs_terms = {"target": (d.p_state_start * b.cap.existing_state_n) / d.p_state_unitsize},
+        rhs_terms = {"target": (coef * b.cap.existing_state_n) / d.p_state_unitsize},
     )
 
 
@@ -4756,6 +4797,12 @@ def _state_cells_typed(b: _Build, frame: pl.DataFrame, rename: dict) -> pl.DataF
     dtype."""
     schema = b.v_state.frame.schema
     return frame.with_columns([pl.col(c).cast(schema[rename.get(c, c)], strict=False) for c in frame.columns])
+
+
+def _state_keys_typed(b: _Build, frame: pl.DataFrame) -> pl.DataFrame:
+    """``frame`` (n, d, t, value) with its keys cast onto v_state's dtypes."""
+    schema = b.v_state.frame.schema
+    return frame.with_columns([pl.col(c).cast(schema[c], strict=False) for c in ("n", "d", "t")])
 
 
 def _notice_stochastic_storage_paths(names) -> None:
@@ -4906,9 +4953,9 @@ def _eq_storage_state_fan_start(b: _Build) -> None:
     _notice_stochastic_storage_paths(over["n"].to_list())
 
 
-def _eq_storage_end_binding(b: _Build) -> None:
-    """End state of fix_end / fix_start_end storage nodes at the last step of the entire model, in every sub-solve
-    whose horizon holds that step."""
+def _end_binding_steps(b: _Build) -> "pl.DataFrame | None":
+    """``(n, d, t)``: the steps storage_state_end_binding pins (the last step of the entire model, of the fix_end /
+    fix_start_end nodes, less the steps an upper-level fix_quantity / fix_usage fixes); None when there are none."""
     d = b.d
     if not (b.has_storage
             and d.storage_solve_at_model_end
@@ -4918,7 +4965,7 @@ def _eq_storage_end_binding(b: _Build) -> None:
             and d.period_last is not None
             and b.cap.existing_state_n is not None
             and d.p_state_unitsize is not None):
-        return
+        return None
     over = (d.nodeState_last_dt
             .join(d.period_last, on="d", how="inner")
             .join(d.storage_fix_end, on="n", how="inner")
@@ -4927,7 +4974,15 @@ def _eq_storage_end_binding(b: _Build) -> None:
     # the end pinned the usage cap can be infeasible).  A nested fix_price does not conflict and keeps the pin.
     over = _without_steps(over, _nested_fixed_end(b, with_price=False))
     over = over.sort("n", "d", "t")
-    if over.height == 0:
+    return over if over.height > 0 else None
+
+
+def _eq_storage_end_binding(b: _Build) -> None:
+    """End state of fix_end / fix_start_end storage nodes at the last step of the entire model, in every sub-solve
+    whose horizon holds that step."""
+    d = b.d
+    over = _end_binding_steps(b)
+    if over is None:
         return
 
     # ─── EQ. ─── storage_state_end_binding ───────────────────────────────────
@@ -4962,6 +5017,182 @@ def _eq_storage_end_binding(b: _Build) -> None:
         lhs_terms = lhs,
         rhs_terms = {"target": (d.p_state_end * b.cap.existing_state_n) / d.p_state_unitsize},
     )
+
+
+def _roll_horizon_ends(b: _Build, nodes: pl.DataFrame) -> "pl.DataFrame | None":
+    """``(n, d, t)`` of ``nodes`` (n): the last step of each last period (the roll's horizon end; each terminal
+    branch of a stochastic roll); None when there are none."""
+    d = b.d
+    if not (_has_rows(d.nodeState_last_dt) and _has_rows(d.period_last)):
+        return None
+    over = (d.nodeState_last_dt.join(d.period_last, on="d", how="inner")
+            .join(nodes.select(pl.col("n").cast(d.nodeState_last_dt.schema["n"], strict=False)), on="n", how="semi")
+            .select("n", "d", "t").unique().sort("n", "d", "t"))
+    return over if over.height > 0 else None
+
+
+def _do_nothing_level(b: _Build, start: pl.DataFrame, ends: pl.DataFrame) -> pl.DataFrame:
+    """``(n, d, t, value)`` (Utf8 keys, MWh): the anchor level of each horizon end of ``ends`` — the lower of the
+    carried level ``start`` (n, value) and the level the storage would reach from it by doing nothing.
+
+    Doing nothing: no flow in or out, only the node's own ``inflow`` (a negative one is a forced outflow) and its
+    self-discharge, step by step along the forward chain from the roll's first step (dtttdt_forward_only):
+    S_t = (S⁻·(1 − β_t) + inflow_t) / (1 + α_t), clipped to [0, existing capacity] (the balance rows'
+    self-discharge weights, _self_discharge).  That level is reachable by construction, so the anchor never forces
+    slack; a lossless node without inflow keeps the carried level.
+    """
+    d = b.d
+    start = start.select(pl.col("n").cast(pl.Utf8), pl.col("value").cast(pl.Float64))
+    ends = ends.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+    out = ends.join(start, on="n", how="inner")
+    names = set(start["n"].to_list())
+    inflow = None
+    if d.p_inflow is not None and _has_rows(d.p_inflow.frame) and "t" in d.p_inflow.frame.columns:
+        inflow = (d.p_inflow.frame.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                          pl.col("t").cast(pl.Utf8), pl.col("value").cast(pl.Float64))
+                  .filter(pl.col("n").is_in(names) & (pl.col("value") != 0.0)))
+    loss = None
+    if b.self_discharge is not None:
+        loss = (b.self_discharge.frame.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                              pl.col("t").cast(pl.Utf8), "alpha", "beta")
+                .filter(pl.col("n").is_in(names)))
+    moving = set()
+    for frame in (inflow, loss.filter((pl.col("alpha") > 0) | (pl.col("beta") > 0)) if loss is not None else None):
+        if frame is not None:
+            moving |= set(frame["n"].to_list())
+    lag = d.dtttdt_forward_only
+    if not moving or not _has_rows(lag) or not _has_rows(d.nodeState_first_dt):
+        return out
+    nxt: dict = {}
+    for dd, tt, dp, tp in lag.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+                                     pl.col("d_previous").cast(pl.Utf8),
+                                     pl.col("t_previous_within_solve").cast(pl.Utf8)).iter_rows():
+        nxt.setdefault((dp, tp), []).append((dd, tt))
+    e_of = {} if inflow is None else {(n, dd, tt): v for n, dd, tt, v in inflow.iter_rows()}
+    ab_of = {} if loss is None else {(n, dd, tt): (a, bb) for n, dd, tt, a, bb in loss.iter_rows()}
+    cap_of: dict = {}
+    if b.cap.existing_state_n is not None:
+        cap_of = {(n, dd): v for n, dd, v in b.cap.existing_state_n.frame.select(
+            pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("value").cast(pl.Float64)).iter_rows()}
+    first = d.nodeState_first_dt.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+    carry = dict(start.iter_rows())
+    level: dict = {}
+    for node in sorted(moving & names):
+        roots = [(dd, tt) for dd, tt in first.filter(pl.col("n") == node).select("d", "t").iter_rows()]
+        queue = [(step, carry[node]) for step in roots]
+        while queue:
+            (dd, tt), prev = queue.pop()
+            a, bb = ab_of.get((node, dd, tt), (0.0, 0.0))
+            now = (prev * (1.0 - bb) + e_of.get((node, dd, tt), 0.0)) / (1.0 + a)
+            now = min(max(now, 0.0), cap_of.get((node, dd), float("inf")))
+            level[(node, dd, tt)] = now
+            queue.extend((step, now) for step in nxt.get((dd, tt), ()))
+    if not level:
+        return out
+    held = pl.DataFrame([(n, dd, tt, v) for (n, dd, tt), v in level.items()],
+                        schema={"n": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "_hold": pl.Float64}, orient="row")
+    return (out.join(held, on=["n", "d", "t"], how="left")
+            .with_columns(value=pl.min_horizontal("value", pl.col("_hold").fill_null(pl.col("value"))))
+            .drop("_hold"))
+
+
+def _eq_storage_roll_end(b: _Build) -> None:
+    """The horizon end of the bind_within_solve nodes of a rolling roll that continues from a carried state."""
+    d = b.d
+    if not (b.has_storage and _has_rows(getattr(d, "storage_roll_end", None)) and d.p_state_unitsize is not None):
+        return
+    m = b.m
+    pinned_end = _end_binding_steps(b)
+
+    def rows(kinds, *, with_price: bool):
+        nodes = _roll_end_rows(d, kinds)
+        if nodes is None:
+            return None, None
+        over = _roll_horizon_ends(b, nodes)
+        if over is None:
+            return None, None
+        over = _without_steps(_without_steps(over, _nested_fixed_end(b, with_price=with_price)),
+                              None if pinned_end is None else _utf8_cells(pinned_end))
+        return (over, nodes) if over.height > 0 else (None, None)
+
+    # ─── EQ. ─── storage_state_roll_anchor ───────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,d,t]·state_unitsize[n] ≥ min(carry[n], hold[n,d,t])
+    #   ∀ n ∈ storage_roll_end(anchor), (n,d,t) ∈ nodeState_last_dt, d ∈ period_last,
+    #     (n,d,t) ∉ the steps an upper-level solve fixes (fix_quantity, fix_usage, fix_price),
+    #     (n,d,t) ∉ the steps storage_state_end_binding pins
+    #   carry = the level the roll starts from (MWh, roll_continue_state); hold = the level reached from it by doing
+    #   nothing (_do_nothing_level: inflow and self-discharge only, clipped to [0, existing capacity])
+    # A bind_within_solve node of a rolling solve continues each roll from the level realised by the previous roll
+    # (the cascade rewrites it to bind_forward_only for the roll, _run_model._anchor_cyclic_in_rolling), and a roll
+    # whose horizon does not reach the end of its solve ends at least at that level: each roll's plan is cyclic on
+    # its own start, as the first roll's wrap is.  An inequality, so that it can always be reached: storing more has
+    # a cost, so a lossless node ends at the carried level.  Where an upper-level solve fixes, caps or prices the
+    # state at the step, that replaces the anchor; fix_end (at the last step of the model) wins.
+    over, nodes = rows(("anchor",), with_price=True)
+    if over is not None:
+        level = _do_nothing_level(b, nodes, over)
+        m.add_cstr(
+            "storage_state_roll_anchor",
+            over      = over,
+            sense     = ">=",
+            lhs_terms = {"state": Where(b.v_state, over) * d.p_state_unitsize},
+            rhs_terms = {"level": Param(("n", "d", "t"), _state_keys_typed(b, level))},
+        )
+
+    # ─── EQ. ─── storage_state_roll_close ────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,d,t]·state_unitsize[n] = start[n]
+    #   ∀ n ∈ storage_roll_end(close), (n,d,t) ∈ nodeState_last_dt, d ∈ period_last,
+    #     (n,d,t) ∉ the steps an upper-level fix_quantity / fix_usage fixes,
+    #     (n,d,t) ∉ the steps storage_state_end_binding pins
+    #   start = the level (MWh) the first roll of the instance started from (the cascade records it)
+    # A roll whose horizon holds the last step of its solve instance closes the cycle of bind_within_solve: it ends at
+    # the level the instance started from, so the realised rolls together return what they took (every roll whose
+    # horizon reaches that step, e.g. two when the horizon is not a multiple of the jump).  An upper-level
+    # fix_quantity / fix_usage at the step replaces it (that target carries the upper solve's closure); a nested
+    # fix_price only values the state and keeps it; fix_end wins at the last step of the model.
+    over, nodes = rows(("close",), with_price=False)
+    if over is not None:
+        level = (over.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+                 .join(nodes.select(pl.col("n").cast(pl.Utf8), pl.col("value").cast(pl.Float64)), on="n"))
+        m.add_cstr(
+            "storage_state_roll_close",
+            over      = over,
+            sense     = "==",
+            lhs_terms = {"state": Where(b.v_state, over) * d.p_state_unitsize},
+            rhs_terms = {"start": Param(("n", "d", "t"), _state_keys_typed(b, level))},
+        )
+
+    # ─── EQ. ─── storage_state_roll_anchor_share / storage_state_roll_close_share ──
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,d,t] − state_start[n]·invested[n,d] + state_start[n]·retired[n,d]
+    #   (≥ | =) state_start[n] · capacity[n,d] / state_unitsize[n]
+    #   ∀ n ∈ storage_roll_end(anchor_share | close_share), (n,d,t) as above (the anchor's or the closure's
+    #     exclusions)
+    # The first roll of a nested lower level under an upper-level fix_quantity / fix_usage starts from fix_start
+    # (forward, _fix_start_terms, not from its wrap: the wrap target would be the upper target), so where no upper
+    # target lies at its horizon end the anchor (≥, a roll that does not reach the end of its instance) or the
+    # closure (=) is the fix_start share of the capacity in service.
+    if b.cap.existing_state_n is not None and d.p_state_start is not None:
+        for kind, name, sense, with_price in (("anchor_share", "storage_state_roll_anchor_share", ">=", True),
+                                              ("close_share", "storage_state_roll_close_share", "==", False)):
+            over, nodes = rows((kind,), with_price=with_price)
+            if over is None:
+                continue
+            lhs: dict = {"state": Where(b.v_state, over)}
+            invested, divested = _capacity.node_in_service(b, nodes.select("n"), f"_{kind}", coef=d.p_state_start)
+            if invested is not None:
+                lhs["invest_neg"] = -invested
+            if divested is not None:
+                lhs["divest"] = divested
+            m.add_cstr(
+                name,
+                over      = over,
+                sense     = sense,
+                lhs_terms = lhs,
+                rhs_terms = {"target": (d.p_state_start * b.cap.existing_state_n) / d.p_state_unitsize},
+            )
 
 
 def _horizon_end_steps(b: _Build) -> "pl.DataFrame | None":

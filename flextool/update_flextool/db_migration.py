@@ -11810,6 +11810,41 @@ def _v82_automatic_replacement_marker(db) -> None:
         _v77_set_marker(db, "automatic_replacement_cost", json.dumps({"since": 82, "entities": sorted(entities)}))
 
 
+def _v82_rolling_storage_markers(db) -> None:
+    """Part 6 of v82: the behaviour-change markers of the storage carry in rolling and nested solves.  No value is
+    rewritten.  Idempotent: a rerun finds the markers written.
+
+    * ``rolling_cyclic_storage_anchored`` (``{"since": 82, "nodes": [...]}``) when a solve has ``solve_mode``
+      ``rolling_window`` and a storage node has ``storage_binding_method`` ``bind_within_solve`` or
+      ``bind_within_solve_blended_weights`` (in some alternative): such a node now continues each roll from the
+      previous roll, ends a roll's horizon at least at its start level and closes the solve at the first roll's
+      start.
+    * ``nested_storage_start_borrowed`` (``{"since": 82, "nodes": [...]}``) when a solve has ``contains_solves``
+      and a node has a ``storage_nested_fix_method``: its first lower-level solve can now start from the upper
+      solve's planned level.
+
+    The markers are broader than the changes (the migration does not read which alternatives a scenario
+    combines); a run names the nodes whose rows change.
+    """
+    if not (db.get_item("entity_class", name="solve") and db.get_item("entity_class", name="node")):
+        return
+
+    def values(cls: str, name: str) -> list[tuple[str, object]]:
+        return [(pv["entity_byname"][0], from_database(pv["value"], pv["type"]))
+                for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name=name)]
+
+    storage = {n for n, v in values("node", "node_type") if v == "storage"}
+    if any(v == "rolling_window" for _s, v in values("solve", "solve_mode")):
+        nodes = sorted({n for n, v in values("node", "storage_binding_method")
+                        if v in ("bind_within_solve", "bind_within_solve_blended_weights")} & storage)
+        if nodes:
+            _v77_set_marker(db, "rolling_cyclic_storage_anchored", json.dumps({"since": 82, "nodes": nodes}))
+    if any(v is not None for _s, v in values("solve", "contains_solves")):
+        nodes = sorted({n for n, v in values("node", "storage_nested_fix_method") if v} & storage)
+        if nodes:
+            _v77_set_marker(db, "nested_storage_start_borrowed", json.dumps({"since": 82, "nodes": nodes}))
+
+
 def _migrate_v82_schema_batch(db) -> None:
     """All schema changes of database version 82 (v81 -> v82), in one step.
 
@@ -11830,6 +11865,8 @@ def _migrate_v82_schema_batch(db) -> None:
     5. The behaviour-change marker ``automatic_replacement_cost`` on the reinvest_automatic entities with a
        lifetime_technical whose investment cost or retirement now follows the replacements of their capacity
        (:func:`_v82_automatic_replacement_marker`).
+    6. The behaviour-change markers ``rolling_cyclic_storage_anchored`` and ``nested_storage_start_borrowed`` of the
+       storage carry in rolling and nested solves (:func:`_v82_rolling_storage_markers`).
 
     Values change only by the renames of part 2 (they keep their rows; a collision moves them).  Each part is
     idempotent, so a rerun of the step changes nothing.
@@ -11839,6 +11876,7 @@ def _migrate_v82_schema_batch(db) -> None:
     _v82_definitions_part(db)
     _v82_descriptions(db)
     _v82_automatic_replacement_marker(db)
+    _v82_rolling_storage_markers(db)
     _commit_step(db, "v82: inflation_rate is social_discount_rate, inflation_offset_investment is "
                      "discount_offset_investment, inflation_offset_operations is discount_offset_operations")
 

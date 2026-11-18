@@ -72,5 +72,7 @@ def test_migration_markers_are_registered() -> None:
                                                               "annuity_timing",
                                                               "net_salvage_once",
                                                               "built_capacity_retirable",
-                                                              "automatic_replacement_cost"}
+                                                              "automatic_replacement_cost",
+                                                              "rolling_cyclic_storage_anchored",
+                                                              "nested_storage_start_borrowed"}
     assert written <= set(BEHAVIOUR_CHANGES)

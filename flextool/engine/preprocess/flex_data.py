@@ -1478,6 +1478,11 @@ class FlexData:
     # solve_data/storage_solve_at_model_end, default True).
     storage_fix_end: pl.DataFrame | None = None  # set: (n,)
     storage_solve_at_model_end: bool = True
+    # (n, kind, value): the horizon-end condition of the bind_within_solve nodes of a rolling roll that continues
+    # from a carried state (solve_data/storage_roll_end, _run_model._anchor_cyclic_in_rolling): kind anchor /
+    # close (MWh value), anchor_share / close_share (storage_state_start × capacity) and wrap_end (the first roll's
+    # wrap pinned at storage_state_end).  model.core._eq_storage_roll_end.
+    storage_roll_end: pl.DataFrame | None = None
     dtttdt: pl.DataFrame | None = None           # (d, t, t_previous_*, ...)
     dtttdt_forward_only: pl.DataFrame | None = None  # dtttdt with first (d,t) per solve dropped
     # The bind_within_solve lag (columns of dtttdt) where it differs from dtttdt: with a stochastic fan in the
@@ -3641,6 +3646,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         storage_fix_start = None,
         storage_fix_end = None,
         storage_solve_at_model_end = True,
+        storage_roll_end = None,
         storage_use_reference_value = None,
         p_storage_state_reference_value = None,
         p_storage_state_reference_price = None,
@@ -3908,6 +3914,15 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         if ssl.height > 0 and "value" in ssl.columns:
             at_model_end = bool(ssl["value"].cast(pl.Boolean)[0])
 
+    # The horizon-end condition of the rolling bind_within_solve nodes continued from a carried state (_run_model).
+    roll_end = None
+    if _provider_has(provider, K.SOLVE_DATA_STORAGE_ROLL_END, sd / "storage_roll_end.csv"):
+        sre = _provider_read(provider, K.SOLVE_DATA_STORAGE_ROLL_END, sd / "storage_roll_end.csv")
+        if sre.height > 0:
+            roll_end = (sre.pipe(rename_to_axis, {"node": "n"})
+                        .select("n", pl.col("kind").cast(pl.Utf8),
+                                pl.col("value").cast(pl.Float64, strict=False)))
+
     # Rolling sub-solve: solve_data/roll_period_whole (period, whole) has a row per period of the roll
     # (_run_model).  The bind_intraperiod_blocks blocks of a period the roll holds only in part chain forward.
     solve_is_rolling = False
@@ -3952,9 +3967,11 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             nsb_df_local = _provider_read(provider, "solve_data/nodeStateBlock", nsb_path_local)
             if nsb_df_local.height > 0:
                 nsb_for_excl = nsb_df_local.pipe(rename_to_axis, {"node": "n"}).select("n")
+        # A rolling bind_within_solve node continued from a carried state chains forward in the roll and its end is
+        # tied to its start by storage_roll_end (_run_model._anchor_cyclic_in_rolling): no reference pin.
         for excl in (fix_end,
                      binding_within_solve, binding_within_period, binding_within_timeblock,
-                     nsb_for_excl):
+                     nsb_for_excl, None if roll_end is None else roll_end.select("n")):
             if excl is not None and excl.height > 0:
                 use_reference_value = use_reference_value.join(
                     excl, on="n", how="anti")
@@ -4347,6 +4364,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         storage_fix_start = fix_start,
         storage_fix_end = fix_end,
         storage_solve_at_model_end = at_model_end,
+        storage_roll_end = roll_end,
         storage_use_reference_value = use_reference_value,
         p_storage_state_reference_value = p_ssrv,
         p_storage_state_reference_price = p_storage_state_reference_price,
@@ -7902,6 +7920,11 @@ def build_handoff_from_solution(
                 if weighted.height > 0:
                     fix_storage_usage_df = weighted
 
+    # ---- cycle_start_state / storage_level: the start level of each storage node and the planned level of the
+    # nodes handed a nested fix (not carriers: the cascade reads them, solve._run_model) ----
+    cycle_start_state_df, storage_level_df = _storage_start_and_level(
+        sol, flex_data, nsfm_df, unitsize)
+
     return SolveHandoff(
         realized_commission=pl.DataFrame(
             commission_rows, schema=["entity", "period", "commission_period", "value"], orient="row",
@@ -7925,7 +7948,52 @@ def build_handoff_from_solution(
         cumulative_co2=cumulative_co2_df,
         cumulative_commodity=cumulative_commodity_df,
         cum_sim_hours=cum_sim_hours_df,
+        cycle_start_state=cycle_start_state_df,
+        storage_level=storage_level_df,
     )
+
+
+def _storage_start_and_level(sol, flex_data, nsfm_df, unitsize: dict):
+    """``(cycle_start_state, storage_level)`` of a solved solve (:class:`SolveHandoff`), each None when empty.
+
+    ``cycle_start_state`` ``[node, value]`` (MWh): the level each storage node's first step starts from
+    (``model._self_discharge.start_levels``).  ``storage_level`` ``[node, period, step, value]`` (MWh, the end of
+    each step): v_state × state_unitsize at every step of the solve for the nodes of
+    ``node__storage_nested_fix_method`` (``nsfm_df``, any method).  Both need ``flex_data`` and a solved v_state.
+    """
+    if flex_data is None or "v_state" not in getattr(sol, "_vars", {}):
+        return None, None
+    v_state = sol.value("v_state")
+    if v_state is None or v_state.height == 0:
+        return None, None
+    state = v_state.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+                           pl.col("value").cast(pl.Float64))
+
+    def chosen(var: str, dims: tuple) -> "pl.DataFrame | None":
+        if var not in sol._vars:
+            return None
+        frame = sol.value(var)
+        if frame is None or frame.height == 0:
+            return None
+        keys = [c for c in frame.columns if c != "value"]
+        return frame.select([pl.col(k).cast(pl.Utf8).alias(n) for k, n in zip(keys, dims)]
+                            + [pl.col("value").cast(pl.Float64)])
+
+    from flextool.engine.model import _self_discharge
+    start = _self_discharge.start_levels(flex_data, state, chosen)
+    level = None
+    if nsfm_df is not None and nsfm_df.height > 0 and "method" in nsfm_df.columns:
+        nodes = sorted(set(nsfm_df.filter(pl.col("method").is_in(["fix_quantity", "fix_price", "fix_usage"]))
+                           ["node"].cast(pl.Utf8).to_list()))
+        if nodes:
+            us = pl.DataFrame({"n": nodes, "us": [float(unitsize.get(n, 1.0)) for n in nodes]})
+            level = (state.join(us, on="n", how="inner")
+                     .select(pl.col("n").alias("node"), pl.col("d").alias("period"), pl.col("t").alias("step"),
+                             value=pl.col("value") * pl.col("us"))
+                     .sort("node", "period", "step"))
+            if level.height == 0:
+                level = None
+    return start, level
 
 
 def _overlay_handoff(flex_data: "FlexData", handoff,
