@@ -357,14 +357,16 @@ For a unit, connection or storage node `e` in period `d`:
   `A = invest_cost[e,c]·1000·r/(1 − (1+r)^−n)·(1+r)^(off_inv − 1)`
   (`c·1000/n` for `r = 0`), `r = discount_rate[e,c]`, `n = payback_time[e,c]`
   (else `lifetime_technical[e,c]`), `off_inv =
-  model.inflation_offset_investment`;
+  model.discount_offset_investment`;
   `a_cap = A·G(n)/G(L)` with `L = lifetime_technical[e,c]`,
-  `G(x) = Σ_{k<⌈x⌉} min(1, x−k)·(1+i)^−k`, `i = model.inflation_rate`
+  `G(x) = Σ_{k<⌈x⌉} min(1, x−k)·(1+i)^−k`, `i = model.social_discount_rate`
+  (the investment payments are weighed by `inflation_inv[d]`, the social
+  discount factor of investment payments, at `discount_offset_investment`)
   (`G(x) = x` for `i = 0`); `a_cap = A` when `n = L` and for
   `reinvest_automatic`.  The loan's present value spread evenly over the real
   lifetime: one price for every build period, rounding and period length.
   The timing factor `(1+r)^(off_inv − 1)` (`_annuity.annuity_factor`) makes
-  the loan worth `invest_cost` at `r` for every `inflation_offset_investment`.
+  the loan worth `invest_cost` at `r` for every `discount_offset_investment`.
   The salvage credit `a_salv = S·(1+r)^−L·af(r, L)` (`af` the annual factor
   `annuity_factor`, `_annuity.salvage_credit`) with `S =
   1000·net_salvage_value[e,d_eol]` (`_npv._level_prices_lf`; 0 for
@@ -995,6 +997,10 @@ on the child solve:
             · v_state[n, d, t] · unitsize[n]
             · rp_cost_weight[d, t] · inflation_op[d] / period_share[d]
             · pdt_branch_weight[d, t]
+
+  with `inflation_op[d]` (`p_inflation_op`, the social discount factor of
+  operating costs) = Σ over the years of `d` of the years' length ·
+  `(1 + social_discount_rate)^−(years from the run start + discount_offset_operations)`.
 
   The same parameter is also populated for any node whose
   `storage_binding_method` is `use_reference_price`, so the routing is

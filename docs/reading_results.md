@@ -33,7 +33,7 @@ Penalties are large on purpose, so a small slack can dominate the costs. See [Sl
 ### 3. What does the system cost?
 
 - `annualized_costs__d` [M CUR per year]: the costs of one year of each period by category (investment annuities, fixed costs, fuel, CO2, other operating costs, start-ups, penalties). Use it to compare periods.
-- `costs_discounted__d` and `costs_discounted` [M CUR]: the same costs discounted with `inflation_rate` and multiplied by the years each period represents, per period and in total. This is what the model minimises.
+- `costs_discounted__d` and `costs_discounted` [M CUR]: the same costs discounted with `social_discount_rate` and multiplied by the years each period represents, per period and in total. This is what the model minimises.
 - `cost_unit_annualized__d` and the tables for connections and nodes: the costs of each entity.
 
 See [Costs](results.md#costs) and [Discounting between milestone years](advanced_concepts.md#discounting-between-milestone-years).

@@ -20,7 +20,7 @@ The groups are organised in three informal tiers — **asset physics** (what the
 | `network` | 50 | `80b1d3` | DC power flow, inertia, non-synchronous share — network-aware modelling. |
 | `flow_limit` | 55 | `fccde5` | Group-level aggregated flow caps / floors and loss-of-load share control. |
 | `constraint` | 70 | `bc80bd` | User-authored linear constraints plus the coefficient parameters on other entities that couple into them. |
-| `model` | 80 | `d9d9d9` | Whole-model scope, horizons, numeric framing (version, periods, inflation). |
+| `model` | 80 | `d9d9d9` | Whole-model scope, horizons, numeric framing (version, periods, discounting). |
 | `solve_basics` | 85 | `bebada` | Per-solve knobs a typical user touches (solver, mode, periods, years). |
 | `solve_advanced` | 87 | `9f94c6` | Per-solve internals: solver options, rolling/nested/stochastic structures, cross-solve storage handoff. |
 | `timeline` | 90 | `ffed6f` | Time-structure definitions consumed by solves (timestep duration, timeset metadata). |

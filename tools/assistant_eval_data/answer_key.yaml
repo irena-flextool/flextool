@@ -349,10 +349,10 @@ questions:
         kind: statement
         critical: true
         criterion: "States the objective term: vq_state_up x penalty_up (CUR/MWh) x step duration x timestep weight x
-          inflation factor / period share of year (x branch weight), i.e. the penalty per MWh scaled to a year and
-          to the price base."
+          operational discount factor / period share of year (x branch weight), i.e. the penalty per MWh scaled to a
+          year and to the price base."
         derivation: "core.py OBJ. balance_slack_penalty: Σ vq_state_up * penalty_up * w_op, with w_op[d,t] =
-          step_duration * timestep_weight * inflation_op / period_share * branch_weight"
+          step_duration * timestep_weight * inflation_op (the social discount factor) / period_share * branch_weight"
       - id: penalty_parameter
         kind: token
         value: penalty_up

@@ -1470,7 +1470,7 @@ by `realized_cohort` / `realized_retire`.
 `process_outputs.read_highs_solution.VARIABLE_SPECS` declares every
 variable and dual to harvest from the live `highspy.Highs` instance:
 `v_flow`, `v_state`, `v_invest`, `v_divest`, `vq_*`, period / total /
-cumulative invest-cap duals, `co2_max_*` duals, the inflation-adjusted
+cumulative invest-cap duals, `co2_max_*` duals, the discount-factor-adjusted
 `v_dual_node_balance`, and so on. Each `VariableSpec` carries an
 `unscale_by` field so row / objective scaling is undone before the parquet
 is written.

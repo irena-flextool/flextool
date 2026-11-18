@@ -69,10 +69,10 @@ FlexTool is a linear (or mixed-integer) optimisation model of an energy system. 
 
 ## Discounting
 
-- **Only `inflation_rate` discounts between periods.** With the default 0, a cost in the last milestone weighs the same as in the first.
+- **Only `social_discount_rate` discounts between periods.** With the default 0, a cost in the last milestone weighs the same as in the first.
 
-    In a model with real (constant-price) inputs, enter the social discount rate as `inflation_rate`. The
-    per-technology `discount_rate` only turns investment costs into annuities; see
+    Set `social_discount_rate` to discount later costs (a real rate for real inputs, a nominal one for nominal
+    inputs). The per-technology `discount_rate` only turns investment costs into annuities; see
     [Discounting between milestone years](advanced_concepts.md#discounting-between-milestone-years).
 
 ## Storage

@@ -1,10 +1,19 @@
 ## Unreleased
 
-Input databases move to data version 81. The FlexTool window, the Spine Toolbox workflow and `flextool-run
+Input databases move to data version 82. The FlexTool window, the Spine Toolbox workflow and `flextool-run
 --migrate` migrate them.
 
 ### Behaviour changes — read before upgrading
 
+- **`inflation_rate` is `social_discount_rate`, `inflation_offset_investment` is `discount_offset_investment` and
+  `inflation_offset_operations` is `discount_offset_operations`** (model). The migration renames each parameter with
+  every value, in every alternative, and its default; results do not change. `social_discount_rate` is the model's
+  time discount rate, in the same real or nominal terms as the cost inputs: 0 (no value) means no time preference,
+  and above 0 a cost or income in a later year weighs less; with nominal inputs use (1 + inflation) × (1 + social
+  rate) − 1. The per-entity `discount_rate` stays the investor's rate that turns `invest_cost` into yearly payments.
+  The offsets say where in each year the investment payments (and the salvage credits) and the operating costs
+  fall. Update scripts and Excel workbooks that name the old parameters; a workbook of an earlier version is
+  migrated when it is imported.
 - **`lifetime` is split into `lifetime_technical` and `payback_time`; `salvage_value` is `net_salvage_value`; the
   `lifetime_method` value `no_investment` is `no_reinvestment`** (unit, connection and node).
   `lifetime_technical` is how long capacity operates (its end of life and the investment and retirement windows);
@@ -20,19 +29,19 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
 - **With `lifetime_method` `reinvest_choice` or `no_reinvestment` the investment cost is the level yearly cost of
   the plant over its `lifetime_technical`, paid for each year its capacity is in service**, and the reported
   investment costs follow. The annuity over `payback_time` (with `discount_rate`) is turned into one yearly price:
-  its present value, discounted at the model `inflation_rate`, spread evenly over the `lifetime_technical` years.
+  its present value, discounted at the model `social_discount_rate`, spread evenly over the `lifetime_technical` years.
   The price is paid from the start of operation to the end of life as `end_of_life_method` rounds it, inside the
   horizon: a 12-year plant whose life is rounded to 10 years pays the yearly cost of the 12-year plant for 10
   years. The price does not depend on the build period or the period lengths; `payback_time` and `discount_rate`
-  set only its size (with `discount_rate` equal to `inflation_rate` the payback time changes nothing for a whole
+  set only its size (with `discount_rate` equal to `social_discount_rate` the payback time changes nothing for a whole
   number of years; with a lower `discount_rate` a shorter payback time costs more). Before, every period that
   started before the end of the lifetime paid the annuity in full (a 12-year lifetime on 5-year periods paid 15 years), also after the capacity
   was gone. The fixed cost runs over the same years; `reinvest_automatic` still pays the annuity every year to the
   end of the horizon. Upgraded databases get a notice naming the entities whose investment cost changes (results
   change).
-- **Investments get cheaper by one year of interest at the default `inflation_offset_investment` 0: the yearly
+- **Investments get cheaper by one year of interest at the default `discount_offset_investment` 0: the yearly
   investment payment is sized for when it is paid** (unit, connection, node). The annuity is now `invest_cost ·
-  discount_rate / (1 − (1 + discount_rate)^−payback_time) · (1 + discount_rate)^(inflation_offset_investment − 1)`.
+  discount_rate / (1 − (1 + discount_rate)^−payback_time) · (1 + discount_rate)^(discount_offset_investment − 1)`.
   Before, the annuity was sized for payments at year ends, but the default offset 0 places each payment at the start
   of its year (the first one on the day the capacity comes online), so the payments were worth `invest_cost · (1 +
   discount_rate)` at the `discount_rate` instead of `invest_cost`. Now they are worth `invest_cost` at every offset.
@@ -40,7 +49,7 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   (for example 1 / 1.05 at 5 %), so more investment can pay and objective values, investment
   decisions and reported investment costs change; offset 1 and `discount_rate` 0 give the same results as before.
   Upgraded databases get a notice naming the entities with an investment or salvage annuity (results change).
-  The FlexTool 2 import sets `inflation_offset_investment` 1, the year-end annuity FlexTool 2 charges.
+  The FlexTool 2 import sets `discount_offset_investment` 1, the year-end annuity FlexTool 2 charges.
 - **The `net_salvage_value` is counted once, as a cash flow when the capacity stops operating** (unit, connection,
   node). Retiring existing capacity receives the whole `net_salvage_value` of the retirement period at the start of
   that period, discounted to it, and saves the fixed cost from then on; the investment in existing capacity is sunk.
@@ -52,14 +61,14 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   service years (counted from the model start to its end of life as `end_of_life_method` rounds it; a constant that
   is not in the reported objective), and a retirement gives these credits back, so a retired MW earns its salvage
   value exactly once. A kept new plant's credit is levelled over its `lifetime_technical` but, like its yearly cost,
-  received for its service years as `end_of_life_method` rounds them: with `discount_rate` and `inflation_rate` 0 a
+  received for its service years as `end_of_life_method` rounds them: with `discount_rate` and `social_discount_rate` 0 a
   plant whose life is rounded from 8 to 10 years receives 10 / 8 = 1.25 times its salvage value, one rounded from 12
   to 10 years 10 / 12 ≈ 0.83 times (existing capacity's credit is levelled over its rounded service years). Two consequences follow from counting only what happens inside the horizon: a kept
   plant's credits after the horizon are not seen while a retirement collects the whole salvage value, so retiring
   long-lived capacity late in the horizon can pay (an existing 40-year plant retired at the start of the last
   5-year period of a 20-year horizon gains about 0.38 of its salvage value, and swapping it for an identical new
-  plant can pay); and with a `discount_rate` different from `inflation_rate` a kept plant's salvage is levelled at
-  the `discount_rate` while a retired one is discounted at the `inflation_rate`. Upgraded databases get a notice
+  plant can pay); and with a `discount_rate` different from `social_discount_rate` a kept plant's salvage is levelled at
+  the `discount_rate` while a retired one is discounted at the `social_discount_rate`. Upgraded databases get a notice
   naming the entities whose salvage is now counted differently (results change).
 - **Capacity the model builds can be retired** (#70; unit, connection, node). With `lifetime_method`
   *reinvest_choice* or *no_reinvestment* and an `invest_method` that allows investment and retirement
@@ -70,7 +79,7 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   the `net_salvage_value` of that period then, gives back the yearly cost it was charged for its years in service
   and saves its `fixed_cost` from then on. So building and retiring at once costs `invest_cost − net_salvage_value`,
   discounted to the retirement, for any `discount_rate`, `payback_time` and offset; with a `discount_rate` above the
-  `inflation_rate` paying the loan off early is cheaper for the model, below it dearer. An investment never retires
+  `social_discount_rate` paying the loan off early is cheaper for the model, below it dearer. An investment never retires
   more than it built (also across the solves of a chain, which carry each retirement with its investment), the
   retirement limits (`retire_max_period`, `retire_max_total`, the minima, group limits) and the retired-capacity
   terms of user constraints count it, and stochastic solves tie it in the shared investment periods like the

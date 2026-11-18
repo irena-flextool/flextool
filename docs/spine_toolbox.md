@@ -154,7 +154,7 @@ tool's `--results-db-url` argument instead.
 
 Two caveats apply to the **replay** path only:
 
-- The two inflation / discount-factor parameters are omitted (they need the live
+- The two discount-factor parameters (operational and investment) are omitted (they need the live
   solve); the native run path writes the full set.
 - For a *bidirectional* connection the `(source, sink)` byname uses the parquet
   `(node_1, node_2)` geometry; one-directional connections are exact.
