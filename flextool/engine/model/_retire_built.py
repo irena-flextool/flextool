@@ -20,6 +20,7 @@ from polar_high import Param, Sum, Where
 
 from flextool.engine.input._axis_enums import align_join_dtypes, cast_dim, rename_to_axis, schema_dtype
 from flextool.engine.model._common import _entity_rows, _has_rows, _var_view
+from flextool.engine.preprocess.params._cohorts import KIND_EXTEND
 
 if TYPE_CHECKING:
     from flextool.engine.model.core import _Build
@@ -153,7 +154,8 @@ def add_constraints(b: "_Build") -> None:
         # ─── EQ. ─── maxDivest_cohort_{p,n} ──────────────────────────────────
         # ─────────────────────────────────────────────────────────────────────
         # Σ_{d′ : (e,c,d′,d) ∈ cdd_divest_built} v_divest_built[e,c,d′]·us[e]
-        #   − [c decided in this solve] v_invest[e,d_build(c)]·us[e]  ≤  [c carried] remaining[e,c]
+        #   − [c decided in this solve] v_invest[e,d_build(c)]·us[e]
+        #   − [c a life extension of this solve] v_extend[e,parent(c),d_build(c)]·us[e]  ≤  [c carried] remaining[e,c]
         #   ∀ (e,c,d) ∈ cd_divest_built;  us = unitsize (process) / state_unitsize (storage node)
         #   remaining[e,c] = the carried size of c less the retirements earlier solves realized (realized_retire)
         # A cohort never retires more than it has (#70: retired ≤ remaining), in every period it can retire in, so
@@ -164,7 +166,11 @@ def add_constraints(b: "_Build") -> None:
         reach = reach.join(rows_k, on=[axis, "cohort", "d"], how="semi")
         lhs: dict = {"retired": Sum(Where(at * us, reach), over=("d_divest",))}
         cohorts = _entity_rows(d.cohort_divest_built, "e", _members(d, axis), axis)
-        built_here = cohorts.filter(pl.col("d_build").is_not_null()).select(axis, "cohort", "d_build")
+        here = cohorts.filter(pl.col("d_build").is_not_null())
+        extended_here = here.filter(pl.col("kind") == KIND_EXTEND).select(axis, "cohort", "parent", "d_build")
+        built_here = here.filter(pl.col("kind") != KIND_EXTEND).select(axis, "cohort", "d_build")
+        if extended_here.height > 0:
+            lhs["extended_neg"] = _extension_link(b, axis, rows, extended_here, us)
         if built_here.height > 0:
             invest = getattr(b, f"v_invest_{axis}", None)
             link, built_here = align_join_dtypes(rows, built_here, [axis])
@@ -193,6 +199,28 @@ def add_constraints(b: "_Build") -> None:
         )
 
 
+def _extension_link(b: "_Build", axis: str, rows: pl.DataFrame, extended: pl.DataFrame, us: Param):
+    """``−v_extend[e, parent(c), d_build(c)]·us`` of the retirement rows ``rows`` (``[axis, cohort, d]``) of the
+    life-extension cohorts ``extended`` (``[axis, cohort, parent, d_build]``) decided in this solve: what the
+    extension holds."""
+    var = getattr(b, f"v_extend_{axis}", None)
+    link, extended = align_join_dtypes(rows, extended, [axis])
+    link = link.join(extended, on=[axis, "cohort"], how="inner")
+    columns = (pl.DataFrame(schema={axis: schema_dtype(None, axis), "parent": pl.Utf8,
+                                    "d_build": schema_dtype(None, "d")})
+               if var is None
+               else var.frame.select(axis, pl.col("cohort").alias("parent"), "d")
+                    .pipe(rename_to_axis, {"d": "d_build"}))
+    link_k, columns = align_join_dtypes(link, columns, [axis, "d_build"])
+    unbuilt = link_k.join(columns, on=[axis, "parent", "d_build"], how="anti")
+    if unbuilt.height > 0:
+        raise ValueError(f"maxDivest_cohort_{axis}: the life extensions {sorted(set(unbuilt['cohort'].to_list()))} "
+                         "are decided in this solve but have no extension column; their retirement would be "
+                         "unbounded.")
+    view = _var_view(var, "__cohort_extend", {"cohort": "parent", "d": "d_build"}, to_axis=True)
+    return -Sum(Where(view * us, link_k), over=("parent", "d_build"))
+
+
 def _forecast_groups(window: pl.DataFrame) -> pl.DataFrame:
     """``[d_build, ref]``: each forecast period of a tied window pair ``(d_ref, b)`` (``b`` on the period axis) and
     its reference forecast ``d_ref`` (the forecasts of one anchor period share it)."""
@@ -216,36 +244,14 @@ def add_non_anticipativity(b: "_Build", window: pl.DataFrame) -> None:
     #     (the forecasts of a window anchor share its reference forecast)
     # A retirement inside the window is the same in every forecast branch, of the same cohort (a cohort decided
     # before the window) or of its twins (the forecasts' copies of one shared decision).
-    window = window.with_columns(cast_dim(pl.col("b"), None, "d"))
-    groups = _forecast_groups(window)
+    window, groups = forecast_window(window)
     for axis in ("p", "n"):
         var = getattr(b, f"v_divest_built_{axis}", None)
         if var is None:
             continue
         cohorts = _entity_rows(d.cohort_divest_built, "e", _members(d, axis), axis).select(axis, "cohort", "d_build")
-        rows = var.frame.select(axis, "cohort", "d")
-        rows, cohorts = align_join_dtypes(rows, cohorts, [axis])
-        rows = rows.join(cohorts, on=[axis, "cohort"], how="left")
-        # The cohort's group: the reference forecast of its decision period (null outside the window).
-        rows, groups_k = align_join_dtypes(rows, groups, ["d_build"])
-        keyed = rows.join(groups_k, on="d_build", how="left")
-        rows_w, window_k = align_join_dtypes(keyed, window, ["d"])
-        left = rows_w.join(window_k, on="d", how="inner")
-        if left.height == 0:
-            continue
-        right = (keyed.select(axis, pl.col("cohort").alias("cohort_b"), pl.col("d").alias("b"),
-                              pl.col("ref").alias("ref_b")))
-        same = (left.filter(pl.col("ref").is_null())
-                    .join(right.select(axis, "cohort_b", "b"), left_on=[axis, "cohort", "b"],
-                          right_on=[axis, "cohort_b", "b"], how="inner")
-                    .with_columns(cohort_b=pl.col("cohort")))
-        twin = (left.filter(pl.col("ref").is_not_null())
-                    .join(right.filter(pl.col("ref_b").is_not_null()), left_on=[axis, "b", "ref"],
-                          right_on=[axis, "b", "ref_b"], how="inner"))
-        over = (pl.concat([same.select(axis, "cohort", "d", "cohort_b", "b"),
-                           twin.select(axis, "cohort", "d", "cohort_b", "b")])
-                  .unique().sort(axis, "cohort", "d", "b"))
-        if over.height == 0:
+        over = tied_pairs(var.frame.select(axis, "cohort", "d"), cohorts, groups, window, axis)
+        if over is None:
             continue
         b.m.add_cstr(
             f"non_anticipativity_divest_built_{axis}",
@@ -255,6 +261,47 @@ def add_non_anticipativity(b: "_Build", window: pl.DataFrame) -> None:
                          "v_b": -_var_view(var, "__nab", {"cohort": "cohort_b", "d": "b"})},
             rhs_terms = {},
         )
+
+
+def forecast_window(window: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """``(window, groups)``: the invest-NA window ``(d, b)`` with ``b`` on the period axis, and its forecast groups
+    (:func:`_forecast_groups`), the inputs of :func:`tied_pairs`."""
+    window = window.with_columns(cast_dim(pl.col("b"), None, "d"))
+    return window, _forecast_groups(window)
+
+
+def tied_pairs(rows: pl.DataFrame, cohorts: pl.DataFrame, groups: pl.DataFrame, window: pl.DataFrame,
+               axis: str) -> pl.DataFrame | None:
+    """``[axis, cohort, d, cohort_b, b]``: the pairs of the columns ``rows`` (``[axis, cohort, d]``, one per cohort
+    and period) a non-anticipativity row ties over the window ``window`` (``(d, b)``, ``b`` on the period axis)::
+
+        c^b = c for a cohort not decided in a forecast of the window (``cohorts``' ``d_build`` null or outside it);
+              the cohort of the same entity decided in the forecast of b's branch at the same anchor period as c's
+              decision otherwise (``groups``: the forecasts of a window anchor share its reference forecast)
+
+    ``None`` without a pair."""
+    rows, cohorts = align_join_dtypes(rows, cohorts, [axis])
+    rows = rows.join(cohorts, on=[axis, "cohort"], how="left")
+    # The cohort's group: the reference forecast of its decision period (null outside the window).
+    rows, groups_k = align_join_dtypes(rows, groups, ["d_build"])
+    keyed = rows.join(groups_k, on="d_build", how="left")
+    rows_w, window_k = align_join_dtypes(keyed, window, ["d"])
+    left = rows_w.join(window_k, on="d", how="inner")
+    if left.height == 0:
+        return None
+    right = (keyed.select(axis, pl.col("cohort").alias("cohort_b"), pl.col("d").alias("b"),
+                          pl.col("ref").alias("ref_b")))
+    same = (left.filter(pl.col("ref").is_null())
+                .join(right.select(axis, "cohort_b", "b"), left_on=[axis, "cohort", "b"],
+                      right_on=[axis, "cohort_b", "b"], how="inner")
+                .with_columns(cohort_b=pl.col("cohort")))
+    twin = (left.filter(pl.col("ref").is_not_null())
+                .join(right.filter(pl.col("ref_b").is_not_null()), left_on=[axis, "b", "ref"],
+                      right_on=[axis, "b", "ref_b"], how="inner"))
+    over = (pl.concat([same.select(axis, "cohort", "d", "cohort_b", "b"),
+                       twin.select(axis, "cohort", "d", "cohort_b", "b")])
+              .unique().sort(axis, "cohort", "d", "b"))
+    return over if over.height > 0 else None
 
 
 def _cost(d, param: "Param | None", axis: str) -> "Param | None":
@@ -315,4 +362,5 @@ def objective_terms(b: "_Build") -> list:
 
 
 __all__ = ["add_constraints", "add_non_anticipativity", "add_variables", "decided", "decided_frame",
-           "objective_terms", "options", "prepare", "retired", "retired_frame", "retirement_cells"]
+           "forecast_window", "objective_terms", "options", "prepare", "retired", "retired_frame",
+           "retirement_cells", "tied_pairs"]

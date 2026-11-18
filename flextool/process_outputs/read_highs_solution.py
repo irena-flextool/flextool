@@ -58,7 +58,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import NamedTuple, Sequence, TYPE_CHECKING
+from typing import Callable, NamedTuple, Sequence, TYPE_CHECKING
 
 import pandas as pd
 import polars as pl
@@ -1886,12 +1886,99 @@ def write_v_divest_built(
     """
     if flex_data is None or getattr(flex_data, "cd_divest_built", None) is None:
         return []
+    return _write_cohort_decisions(
+        h, solve_name=solve_name, output_dir=output_dir, flex_data=flex_data,
+        decision=("v_divest_built_p", "v_divest_built_n"), counted=("v_divested_built_p", "v_divested_built_n"),
+        coefficients=(flex_data.cd_divest_built_cost, flex_data.cd_divest_built_fixed),
+        outputs=DIVEST_BUILT_OUTPUTS, realized_periods_csv=realized_periods_csv, provider=provider,
+        col_names_cache=col_names_cache, col_value=col_value)
+
+
+#: The parquets of :func:`write_v_extend` (output name → the quantity, per realized investment period and entity).
+EXTEND_OUTPUTS: tuple[str, ...] = ("v_extend", "v_extended", "v_extend_cost", "v_extend_fixed", "v_extend_yearly")
+
+
+def write_v_extend(
+    h: "highspy.Highs",
+    *,
+    solve_name: str,
+    output_dir: Path | str,
+    flex_data: "FlexData | None",
+    realized_periods_csv: Path | str | None = None,
+    provider: "object | None" = None,
+    col_names_cache: Sequence[str] | None = None,
+    col_value: "object | None" = None,
+) -> list[Path]:
+    """Write the life extensions (:data:`EXTEND_OUTPUTS`), one parquet each.
+
+    # ─── OUTPUT. ─── v_extend / v_extended / v_extend_cost / v_extend_fixed ───
+    # extend[e,d]       = Σ_c v_extend[e,c,d]                          (units extended in d, starting to operate)
+    # extended[e,d]     = v_extended[e,d]                              (extended units in service in d)
+    # extend_cost[e,d]  = Σ_c v_extend[e,c,d]·us[e]·cd_extend_cost[e,c,d]     (CUR)
+    # extend_fixed[e,d] = Σ_c v_extend[e,c,d]·us[e]·cd_extend_fixed[e,c,d]    (CUR)
+    # extend_yearly[e,d] = Σ_{(e,c,d′,d) ∈ cdd_extend} v_extend[e,c,d′]·us[e]·(a_cap − a_salv)[x(c,d′)]   (CUR/yr)
+    #   us = unitsize (state_unitsize for a storage node); d a period whose investment the solve realizes
+    # The capacity kept beyond its end of life (per parent cohort in the LP, summed here) and its objective terms
+    # extend_cost_{p,n}: the level price of the extension over its years in service and their fixed cost (both
+    # discounted, as the objective), and the yearly price of the extensions in service in d (undiscounted, the
+    # yearly investment cost they are charged there).  The reported capacities add the extended capacity; the
+    # reported investment cost adds the extension cost of the period it is decided in, and the yearly investment
+    # cost the yearly price of each period.  Rows: the realized investment periods; columns: the entities with an
+    # extension option.
+
+    No file without FlexData or without an extension option.
+    """
+    if flex_data is None or getattr(flex_data, "cd_extend", None) is None:
+        return []
+    return _write_cohort_decisions(
+        h, solve_name=solve_name, output_dir=output_dir, flex_data=flex_data,
+        decision=("v_extend_p", "v_extend_n"), counted=("v_extended_p", "v_extended_n"),
+        coefficients=(flex_data.cd_extend_cost, flex_data.cd_extend_fixed),
+        outputs=EXTEND_OUTPUTS, realized_periods_csv=realized_periods_csv, provider=provider,
+        col_names_cache=col_names_cache, col_value=col_value, yearly=_extension_yearly)
+
+
+def _extension_yearly(flex_data: "FlexData", mw: pl.DataFrame) -> pl.DataFrame:
+    """``[e, d, value]``: the yearly price (CUR/yr) of the extensions in service in d: the MW extended ``mw``
+    (``[e, cohort, d, mw]``, d the decision) in service in d (``cdd_extend``) times the yearly price a_cap − a_salv of
+    the extension cohort ``extend:<decision>:<cohort>``."""
+    from flextool.engine.preprocess.params._extend import extension_id_expr
+    prices = (flex_data.cohort.filter(pl.col("parent").is_not_null())
+              .select(pl.col("e").cast(pl.Utf8), pl.col("cohort").alias("x"), a_b=pl.col("a_cap") - pl.col("a_salv")))
+    served = flex_data.cdd_extend.select(pl.col("e").cast(pl.Utf8), "cohort", pl.col("d_extend").cast(pl.Utf8),
+                                         pl.col("d").cast(pl.Utf8).alias("d_in"))
+    rows = (mw.join(served, left_on=["e", "cohort", "d"], right_on=["e", "cohort", "d_extend"], how="inner")
+              .with_columns(x=extension_id_expr("d", "cohort"))
+              .join(prices, on=["e", "x"], how="inner"))
+    return (rows.group_by("e", "d_in", maintain_order=True).agg((pl.col("mw") * pl.col("a_b")).sum().alias("value"))
+                .rename({"d_in": "d"}))
+
+
+def _write_cohort_decisions(
+    h: "highspy.Highs",
+    *,
+    solve_name: str,
+    output_dir: Path | str,
+    flex_data: "FlexData",
+    decision: tuple[str, str],
+    counted: tuple[str, str],
+    coefficients: tuple,
+    outputs: tuple[str, ...],
+    realized_periods_csv: Path | str | None,
+    provider: "object | None",
+    col_names_cache: Sequence[str] | None,
+    col_value: "object | None",
+    yearly: "Callable[[FlexData, pl.DataFrame], pl.DataFrame] | None" = None,
+) -> list[Path]:
+    """The parquets ``outputs`` of a per-cohort decision (``decision`` ``[axis, cohort, d]`` of processes and
+    storage nodes) and of its per-entity aggregate (``counted`` ``[axis, d]``): the units decided in d (summed over
+    the cohorts), the aggregate, the decided MW times each of ``coefficients`` (``[e, cohort, d]`` Params) and, with
+    ``yearly`` (``(flex_data, [e, cohort, d, mw]) → [e, d, value]``), a fifth quantity of the decided MW; rows the
+    realized investment periods, columns the entities with a decision column."""
     names = col_names_cache if col_names_cache is not None else h.allVariableNames()
     values = col_value if col_value is not None else h.getSolution().col_value
-    decided = pl.concat([_solution_frame(names, values, var, ("e", "cohort", "d"))
-                         for var in ("v_divest_built_p", "v_divest_built_n")])
-    counted = pl.concat([_solution_frame(names, values, var, ("e", "d"))
-                         for var in ("v_divested_built_p", "v_divested_built_n")])
+    decided = pl.concat([_solution_frame(names, values, var, ("e", "cohort", "d")) for var in decision])
+    counted_frame = pl.concat([_solution_frame(names, values, var, ("e", "d")) for var in counted])
     if decided.height == 0:
         return []
     sizes = [param.frame.select(pl.col(col).cast(pl.Utf8).alias("e"), pl.col("value").alias("us"))
@@ -1906,21 +1993,24 @@ def write_v_divest_built(
 
     mw = decided.join(us, on="e", how="inner").with_columns(mw=pl.col("value") * pl.col("us"))
     keys = ["e", "cohort", "d"]
+    cost, fixed = coefficients
     long = {
-        "v_divest_built": decided.group_by("e", "d", maintain_order=True).agg(pl.col("value").sum()),
-        "v_divested_built": counted,
-        "v_divest_built_cost": (mw.join(coefficient(flex_data.cd_divest_built_cost), on=keys, how="inner")
-                                .group_by("e", "d", maintain_order=True)
-                                .agg((pl.col("mw") * pl.col("coef")).sum().alias("value"))),
-        "v_divest_built_fixed": (mw.join(coefficient(flex_data.cd_divest_built_fixed), on=keys, how="inner")
-                                 .group_by("e", "d", maintain_order=True)
-                                 .agg((pl.col("mw") * pl.col("coef")).sum().alias("value"))),
+        outputs[0]: decided.group_by("e", "d", maintain_order=True).agg(pl.col("value").sum()),
+        outputs[1]: counted_frame,
+        outputs[2]: (mw.join(coefficient(cost), on=keys, how="inner")
+                     .group_by("e", "d", maintain_order=True)
+                     .agg((pl.col("mw") * pl.col("coef")).sum().alias("value"))),
+        outputs[3]: (mw.join(coefficient(fixed), on=keys, how="inner")
+                     .group_by("e", "d", maintain_order=True)
+                     .agg((pl.col("mw") * pl.col("coef")).sum().alias("value"))),
     }
+    if yearly is not None:
+        long[outputs[4]] = yearly(flex_data, mw.select("e", "cohort", "d", "mw"))
     realized = _load_realized_invest_periods_list(realized_periods_csv, provider=provider)
     entities = list(dict.fromkeys(decided["e"].to_list()))
     rows = realized if realized is not None else list(dict.fromkeys(decided["d"].to_list()))
     written: list[Path] = []
-    for name in DIVEST_BUILT_OUTPUTS:
+    for name in outputs:
         frame = long[name]
         wide = (frame.to_pandas().pivot_table(index="d", columns="e", values="value", aggfunc="sum")
                 if frame.height > 0 else pd.DataFrame())
@@ -2052,6 +2142,14 @@ def write_all_variables(
             col_value=col_value,
         )),
         ("v_divest_built", lambda: write_v_divest_built(
+            h, solve_name=solve_name, output_dir=output_dir,
+            flex_data=flex_data,
+            realized_periods_csv=realized_periods_csv,
+            provider=provider,
+            col_names_cache=col_names_cache,
+            col_value=col_value,
+        )),
+        ("v_extend", lambda: write_v_extend(
             h, solve_name=solve_name, output_dir=output_dir,
             flex_data=flex_data,
             realized_periods_csv=realized_periods_csv,

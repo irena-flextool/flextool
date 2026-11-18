@@ -135,7 +135,8 @@ def test_existing_chain_without_lifetime_is_one_generation(tmp_path_factory) -> 
 def _table(rows: list[tuple]) -> pl.DataFrame:
     """A cohort table of ``rows`` = (cohort, kind, d_build, d_on, y_on, y_life, y_eol, d_eol, a_cap, root)."""
     full = [(c, "plant", kind, "reinvest_automatic", "closest_seam", d_build, d_on, y_on, 0.0, life,
-             None if life is None else y_on + life, None, y_eol, d_eol, a_cap, None, None, None, 0.0, None, root)
+             None if life is None else y_on + life, None, y_eol, d_eol, a_cap, None, None, None, 0.0, None, root,
+             None)
             for c, kind, d_build, d_on, y_on, life, y_eol, d_eol, a_cap, root in rows]
     return _cohort_frame(full)
 

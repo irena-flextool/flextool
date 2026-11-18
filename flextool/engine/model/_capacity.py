@@ -6,7 +6,7 @@ The capacity of a process ``p`` or a storage node ``n`` in period ``d`` is a lin
 
     cap[e,d]      = existing[e,d] + invested[e,d] − retired[e,d]
     invested[e,d] = Σ_{d′ : (e,d′,d) ∈ alive}    v_invest[e,d′]
-    retired[e,d]  = Σ_{d′ : (e,d′,d) ∈ retired}  v_divest[e,d′]  +  v_divested_built[e,d]
+    retired[e,d]  = Σ_{d′ : (e,d′,d) ∈ retired}  v_divest[e,d′]  +  v_divested_built[e,d]  −  v_extended[e,d]
     prebuilt[e,d] = Σ_{d′ : (e,d′,d) ∈ prebuilt} v_invest[e,d′]
 
     alive    = {(e,d′,d) : d in service of the investment cohort (e,d′)}: y_on ≤ y[d] < y_eol, along the scenario
@@ -17,7 +17,10 @@ The capacity of a process ``p`` or a storage node ``n`` in period ``d`` is a lin
 
 ``v_divested_built[e,d]`` is the model-built capacity retired so far that still counts in d (``_retire_built``:
 the retirements of each model-built cohort while it is in service; absent without retirable model-built capacity,
-so every existing-only row keeps its terms).
+so every existing-only row keeps its terms).  ``v_extended[e,d]`` is the extended capacity in service in d
+(``_extend``: the cohorts kept beyond their end of life), a capacity term of its own that the capacity rows carry
+with the retirements (it is never an investment: the investment limits do not read ``cap``); absent without a
+life extension.
 ``y_on`` / ``y_eol`` are the start of operation and the end of life of a cohort (``preprocess/params/_cohorts.py``,
 the only lifetime-gate code).  The sets come from :func:`._cohorts.in_service`; the constants ``existing`` are the
 solve's existing capacity Params (``existing_count_p`` units of a process, ``existing_state_n`` MWh of a storage
@@ -32,7 +35,8 @@ from typing import TYPE_CHECKING, Any
 import polars as pl
 from polar_high import Param, Sum, Where
 
-from flextool.engine.model import _retire_built
+from flextool.engine.input._axis_enums import align_join_dtypes
+from flextool.engine.model import _extend, _retire_built
 from flextool.engine.model._common import _entity_rows, _var_view
 from flextool.engine.preprocess.params._cohorts import InService, in_service
 
@@ -88,6 +92,9 @@ def build_capacity(b: "_Build") -> CapacityInService:
     built = _retire_built.retired(b, "p")
     if built is not None:
         cap.retired_p = built if cap.retired_p is None else cap.retired_p + built
+    ext = _extend.extended(b, "p")
+    if ext is not None:
+        cap.retired_p = -ext if cap.retired_p is None else cap.retired_p - ext
     if b.has_invest_p:
         invested = _var_view(b.v_invest_p, "__at_invest", {"d": "d_invest"}, to_axis=True)
         alive = _entity_rows(cap.alive, "e", d.process_source_sink, "p")
@@ -116,6 +123,9 @@ def node_in_service(b: "_Build", nodes: pl.DataFrame, tag: str, coef: "Param | N
         if rows.height > 0:
             term = Where(built if coef is None else built * coef, rows)
             retired = term if retired is None else retired + term
+    ext = _extend.capacity_term(b, "n", nodes, coef)
+    if ext is not None:
+        retired = -ext if retired is None else retired - ext
     return invested, retired
 
 
@@ -130,4 +140,22 @@ def node_capacity_change_terms(b: "_Build", nodes: pl.DataFrame, tag: str) -> di
     return terms
 
 
-__all__ = ["CapacityInService", "build_capacity", "node_capacity_change_terms", "node_in_service"]
+def existing_not_retired(b: "_Build") -> "pl.DataFrame | None":
+    """``[e, d, value]``: the existing cohort's capacity in d (``p_entity_pre_existing``, MW, MWh) less its
+    retirements realized by earlier solves of a chain that still count in d (``p_entity_retired_carried``); None
+    without existing capacity."""
+    pre = b.cap.existing_cohort_size_e
+    if pre is None:
+        return None
+    frame = pre.frame
+    carried = getattr(b.d, "p_entity_retired_carried", None)
+    if carried is not None and carried.frame.height > 0:
+        frame, carried_frame = align_join_dtypes(frame, carried.frame.rename({"value": "carried"}), ["e", "d"])
+        frame = (frame.join(carried_frame, on=["e", "d"], how="left")
+                      .with_columns(value=pl.col("value") - pl.col("carried").fill_null(0.0))
+                      .drop("carried"))
+    return frame
+
+
+__all__ = ["CapacityInService", "build_capacity", "existing_not_retired", "node_capacity_change_terms",
+           "node_in_service"]

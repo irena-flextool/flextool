@@ -21,7 +21,7 @@ from polar_high.engine import Var
 
 from flextool.engine.input._axis_enums import rename_to_axis, schema_dtype
 from flextool.engine.preprocess._provider_io import _provider_key
-from flextool.engine.model import _coarse_flows, _retire_built
+from flextool.engine.model import _coarse_flows, _extend, _retire_built
 from flextool.engine.model._common import (
     _connection_procs, _drop_uncapped, _entity_rows, _has_rows, _indirect_input_cap, _utf8_keys, _var_view,
 )
@@ -940,6 +940,10 @@ def add_constraints(b: "_Build") -> None:
                 built_rows = _retire_built.retired_frame(b, "p").join(p_in_idx, on="p", how="inner")
                 if built_rows.height > 0:
                     lhs["divest_built"] = Where(built, built_rows) * share
+            ext = _extend.capacity_term(b, "p", p_in_idx)
+            if ext is not None:
+                # The extended capacity in service (_extend).
+                lhs["extended_neg"] = -(ext * share)
             _coarse_flows.add_cstr(b, name, over=idx, sense="<=", lhs_terms=lhs, rhs_terms={"max": rhs_param})
 
     _add_connection_reserve_constraints(b)
@@ -1560,6 +1564,10 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
             built_rows = _entity_rows(_retire_built.retired_frame(b, "n"), "n", d.nodeState, "n")
             if built_rows.height > 0:
                 state_lhs["divest_built"] = Where(built_n, built_rows) * us_n
+        ext_n = _extend.capacity_term(b, "n", d.nodeState, us_n)
+        if ext_n is not None:
+            # The extended storage capacity in service (_extend).
+            state_lhs["extended_neg"] = -ext_n
         if b.v_invest_n is not None:
             v_inv_n_at = _var_view(b.v_invest_n, "__at_reserve_down_invest", {"d": "d_invest"}, to_axis=True)
             edd_inv_n = _entity_rows(b.cap.alive, "e", d.nodeState, "n")

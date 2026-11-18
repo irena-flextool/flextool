@@ -18,7 +18,7 @@ from polar_high.engine import Expr, Var
 
 from flextool.engine.input._axis_enums import align_join_dtypes, rename_to_axis
 from flextool.engine.input._param_shapes import drop_no_limit_rows, without_no_limit_rows
-from flextool.engine.model import _coarse_flows, _lead_time, _retire_built
+from flextool.engine.model import _coarse_flows, _extend, _lead_time, _retire_built
 from flextool.engine.model._common import (
     _entities_of_kind,
     _entity_rows,
@@ -432,6 +432,13 @@ def _eq_cumulative_capacity(b: _Build) -> None:
             built_rows = built_rows.join(rows_b, on=[axis, "d"], how="semi")
             if built_rows.height > 0:
                 lhs["divest_built"] = -Where(built * unitsize, built_rows)
+        ext = _extend.extended(b, axis)
+        if ext is not None:
+            # The extended capacity in service (_extend) is capacity, not investment.
+            ext_rows, rows_e = align_join_dtypes(_extend.extended_frame(b, axis), rows.select(axis, "d"), (axis, "d"))
+            ext_rows = ext_rows.join(rows_e, on=[axis, "d"], how="semi")
+            if ext_rows.height > 0:
+                lhs["extended"] = Where(ext * unitsize, ext_rows)
         rhs: dict = {"cap": drop_no_limit_rows(Param((axis, "d"), cap_frame), "upper")}
         if existing is not None:
             rhs["minus_existing"] = -Param((axis, "d"), existing.frame.rename({"e": axis}))
@@ -795,6 +802,14 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
                 built_terms = built_members.join(counted, on=axis, how="inner")
                 if built_terms.height > 0:
                     lhs[f"{key}_divest_built"] = -Sum(Where(built * unitsize, built_terms), over=(axis,))
+            ext = _extend.extended(b, axis)
+            if ext is not None:
+                # The extended capacity in service (_extend): capacity, not investment.
+                counted = _extend.extended_frame(b, axis)
+                ext_members = _on_var_axis(group_entity, axis, counted).filter(in_groups)
+                ext_terms = ext_members.join(counted, on=axis, how="inner")
+                if ext_terms.height > 0:
+                    lhs[f"{key}_extended"] = Sum(Where(ext * unitsize, ext_terms), over=(axis,))
         if not lhs:
             continue
         rhs: dict = {"cap": cap}

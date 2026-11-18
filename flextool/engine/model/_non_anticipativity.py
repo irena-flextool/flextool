@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from flextool.engine.input._axis_enums import cast_dim
-from flextool.engine.model import _balance_terms, _coarse_flows, _retire_built
+from flextool.engine.model import _balance_terms, _coarse_flows, _extend, _retire_built
 from flextool.engine.model._common import _has_rows, _var_view
 from flextool.engine.model._online import online_rows
 from flextool.engine.preprocess.params._branch import forecast_star_pairs
@@ -449,3 +449,5 @@ def add_invest_constraints(b: "_Build") -> None:
         )
     # The retirements of model-built capacity inside the window (non_anticipativity_divest_built_{p,n}).
     _retire_built.add_non_anticipativity(b, window)
+    # The life extensions inside the window (non_anticipativity_extend_{p,n}).
+    _extend.add_non_anticipativity(b, window)

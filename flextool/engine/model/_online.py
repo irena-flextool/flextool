@@ -27,7 +27,7 @@ from polar_high import Param, Sum, Where
 
 from flextool.engine.input._axis_enums import rename_to_axis
 from flextool.engine.input._param_shapes import promote_param_to_dt
-from flextool.engine.model import _coarse_flows, _retire_built
+from flextool.engine.model import _coarse_flows, _extend, _retire_built
 from flextool.engine.model._common import (
     _availability_factor, _capped_arcs, _coef_factor, _drop_uncapped, _entity_rows, _has_rows, _indirect_input_cap,
     _indirect_sum_arcs, _utf8_keys, _var_view,
@@ -139,6 +139,10 @@ def add_constraints(b: "_Build") -> None:
             if built_rows.height > 0:
                 built_term = Where(built, built_rows)
                 divest_term = built_term if divest_term is None else divest_term + built_term
+        ext_term = _extend.capacity_term(b, "p", online_set)
+        if ext_term is not None:
+            # The extended capacity in service (_extend), restricted to this class: capacity, not investment.
+            divest_term = -ext_term if divest_term is None else divest_term - ext_term
 
         def _lhs_with_invdiv(var, key):
             lhs: dict = {key: var}

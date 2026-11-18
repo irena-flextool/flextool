@@ -22,6 +22,10 @@ r reserve, ud up/down, c commodity, i price tier.  "× unitsize" converts to MW 
                                        units (connections) online / starting / stopping, count of unitsize
                                                                                               [_online]
   v_{invest,divest}_{p,n}[p|n,d]       capacity built / retired in d, count of unitsize
+  v_divest_built_{p,n}[p|n,c,d], v_divested_built_{p,n}[p|n,d]
+                                       model-built cohort c retired in d, retired so far     [_retire_built]
+  v_extend_{p,n}[p|n,c,d], v_extended_{p,n}[p|n,d]
+                                       cohort c kept beyond its end of life from d, extended in service [_extend]
   v_reserve[p,r,ud,n,d,t]              reserve held by p for n; × unitsize = MW               [_reserve]
   vq_reserve[r,ud,g,d,t]               reserve shortfall, fraction of the requirement scale   [_reserve]
   v_reserve_total[r,ud,g,d,t]          total reserve of a group with n-1 rows, MW             [_reserve]
@@ -50,7 +54,9 @@ Equation families, in emit order (module in brackets when not model/core.py):
                       maxFlow_exact_{forward,reverse} (exact connections) [_exact];
                       minFlow_{minload,output_floor,reserve,reserve_arc} [_unit_floors];
                       ramp_{sink,source}_{up,down}_constraint; ramp_change_eq (ramp cost)
-  Investment          max{Invest,Divest}_var_bound[_n], _entity_period_{p,n}, _entity_total[_path][_n]
+  Investment          max{Invest,Divest}_var_bound[_n], _entity_period_{p,n}, _entity_total[_path][_n];
+                      maxRetired_existing_{p,n}; divestedBuilt_{p,n}, maxDivest_cohort_{p,n} [_retire_built];
+                      extendedCapacity_{p,n}, maxExtend_cohort_{p,n} [_extend]
   Conversion          conversion_indirect (delayed inputs from [_delay]); conversion_piecewise (part-load curves of
                       piecewise_linear units); minInputShare
   Emissions & user    co2_max_period, co2_max_total; process_constraint_{equal,less_than,greater_than}[_period]
@@ -60,7 +66,8 @@ Equation families, in emit order (module in brackets when not model/core.py):
                       storage_state_solve_horizon_reference_value
   Profiles            profile_flow_{upper_limit,lower_limit,fixed}
   Objective           balance slack penalty, commodity cost and sales, CO2 price, variable cost, startup cost,
-                      ramp cost, storage reference price, invest/divest annuities, existing fixed cost (optional constant)
+                      ramp cost, storage reference price, invest/divest annuities, existing fixed cost (optional constant),
+                      divest_built_cost [_retire_built], extend_cost [_extend]
   Feature modules     capacityMargin, inertia_constraint, non_sync_constraint + slack penalties [_group_slack];
                       reserveBalance_*, reserve_total_upper, reserve_process_*, connection_reserve_*,
                       reserve_storage_*
@@ -91,6 +98,7 @@ from flextool.engine.model import _lead_time
 from flextool.engine.model import _non_anticipativity
 from flextool.engine.model import _online
 from flextool.engine.model import _reserve
+from flextool.engine.model import _extend
 from flextool.engine.model import _retire_built
 from flextool.engine.model import _self_discharge
 from flextool.engine.model import _unit_floors
@@ -212,6 +220,10 @@ DIVEST_N: tuple[str, ...] = ("p_entity_max_units", "cohort_alive", "dd_forward",
 # cd_divest_built_fixed; without them it would remove capacity for nothing or remove none.
 DIVEST_BUILT: tuple[str, ...] = ("cdd_divest_built", "cohort_divest_built", "cd_divest_built_cost",
                                  "cd_divest_built_fixed")
+# A life extension counts in the periods of cdd_extend (into the capacity rows through v_extended), is bounded by
+# its parent cohort (cohort_extend, dd_forward) and costs cd_extend_cost / cd_extend_fixed; without them it would
+# add capacity for nothing or add none.
+EXTEND: tuple[str, ...] = ("cdd_extend", "cohort_extend", "dd_forward", "cd_extend_cost", "cd_extend_fixed")
 
 
 def _check_covers_dt(d, field: str, feature: str, *, positive: bool = False, message: str | None = None) -> None:
@@ -355,6 +367,8 @@ class _Build:
     has_divest_n: bool = False
     has_divest_built_p: bool = False     # cd_divest_built of processes: model-built capacity can be retired
     has_divest_built_n: bool = False     # ... of storage nodes (_retire_built)
+    has_extend_p: bool = False           # cd_extend of processes: capacity can be extended (_extend)
+    has_extend_n: bool = False           # ... of storage nodes
     has_ladder: bool = False
     has_reserve: bool = False
     has_capacity_margin: bool = False
@@ -409,6 +423,10 @@ class _Build:
     v_divest_built_n: Var | None = None
     v_divested_built_p: Var | None = None
     v_divested_built_n: Var | None = None
+    v_extend_p: Var | None = None
+    v_extend_n: Var | None = None
+    v_extended_p: Var | None = None
+    v_extended_n: Var | None = None
     v_flow_back: Var | None = None
     v_ramp_up: Var | None = None
     v_ramp_down: Var | None = None
@@ -494,6 +512,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _eq_invest_total_caps,
         _eq_retired_existing,
         _retire_built.add_constraints,
+        _extend.add_constraints,
         _eq_conversion,
         _eq_conversion_piecewise,
         _eq_min_input_share,
@@ -623,6 +642,7 @@ def _prepare(b: _Build) -> None:
     b.has_invest_n = _has_rows(d.nd_invest_set)
     b.has_divest_n = _has_rows(d.nd_divest_set)
     _retire_built.prepare(b)
+    _extend.prepare(b)
     b.has_ladder = _commodity_ladder.has_feature(d)
     b.has_reserve = _has_rows(getattr(d, "reserve_upDown_group", None))
     b.has_capacity_margin = _group_slack.has_capacity_margin(d)
@@ -674,6 +694,8 @@ def _prepare(b: _Build) -> None:
         _check(d, DIVEST_N, "divest")
     if b.has_divest_built_p or b.has_divest_built_n:
         _check(d, DIVEST_BUILT, "retirement of model-built capacity")
+    if b.has_extend_p or b.has_extend_n:
+        _check(d, EXTEND, "life extension")
     if b.has_online:
         _validate_no_online_dc_lines(d)
         _check(d, ONLINE, "online")
@@ -718,7 +740,8 @@ def _prepare(b: _Build) -> None:
         procs = [s.select(pl.col("p").cast(pl.Utf8))
                  for s in (d.pd_invest_set if b.has_invest_p else None,
                            d.pd_divest_set if b.has_divest_p else None,
-                           _retire_built.options(d, "p") if b.has_divest_built_p else None)
+                           _retire_built.options(d, "p") if b.has_divest_built_p else None,
+                           _extend.options(d, "p") if b.has_extend_p else None)
                  if s is not None]
         b.invest_procs = pl.concat(procs).unique() if procs else None
         (b.flow_upper_rhs, b.flow_cap_mult,
@@ -1025,6 +1048,8 @@ def _declare_variables(b: _Build) -> None:
         b.v_divest_n = m.add_var("v_divest_n", ("n", "d"), d.nd_divest_set)
     # Retirement of model-built capacity (v_divest_built, v_divested_built): declared by _retire_built.
     _retire_built.add_variables(b)
+    # Life extension (v_extend, v_extended): declared by _extend.
+    _extend.add_variables(b)
 
     # Reserve variables (v_reserve, vq_reserve, v_reserve_total): declared by _reserve.
     _reserve.add_variables(b)
@@ -1738,6 +1763,14 @@ def _fix_start_terms(b: _Build) -> dict:
         if rows.height > 0:
             term = Where(built * start * su, rows)
             terms["fwd_fix_divest_built_neg"] = -(term if loss is None else term * loss.keep_prev)
+    ext = _extend.extended(b, "n")
+    if ext is not None:
+        # The extended storage capacity in service (_extend): a capacity term, as an investment's.
+        rows = (_entity_rows(_extend.extended_frame(b, "n"), "n", nodes, "n")
+                .join(first.select("n", "d", "t"), on=["n", "d"], how="inner"))
+        if rows.height > 0:
+            term = Where(ext * start * su, rows)
+            terms["fwd_fix_extended_pos"] = term if loss is None else term * loss.keep_prev
     return terms
 
 
@@ -3232,7 +3265,7 @@ def _eq_retired_existing(b: _Build) -> None:
     # Only capacity that existed before the run can be retired: the capacity retired so far and still counting in
     # d stays within the pre-existing capacity of d (a declining existing map, or an entity that also invests,
     # cannot retire more than was there).  A retirement option exists only where pre_existing > 0.
-    pre_frame = _existing_not_retired(b)
+    pre_frame = _capacity.existing_not_retired(b)
     for axis, active_set, var, members in (
             ("p", b.cap.retired_frame("p"), b.v_divest_p if b.has_divest_p else None,
              d.process_source_sink),
@@ -3926,9 +3959,11 @@ def _eq_user_constraints(b: _Build) -> None:
     #   pre[e,d] = existing[e,d] − carried_commission[e,d] + prebuilt[e,d]·us[e]
     #                            − Σ_{(e,d′,d) ∈ retired, d′ ≠ d} v_divest[e,d′]·us[e]
     #                            − (v_divested_built[e,d] − Σ_c v_divest_built[e,c,d])·us[e]
+    #                            + (v_extended[e,d] − Σ_c v_extend[e,c,d])·us[e]
     #   cap[e,d] = existing[e,d] + invested[e,d]·us[e] − retired[e,d]·us[e]
     #   invested, prebuilt, retired: the capacity in service (_capacity; retired includes v_divested_built, the
-    #     model-built capacity retired so far, _retire_built)
+    #     model-built capacity retired so far, _retire_built, less v_extended, the capacity extended beyond its
+    #     end of life, _extend: capacity, never in inv or con)
     # A linear constraint authored by the user over flows (MW), storage states (MWh) and capacities.  The
     # invested term is the capacity that comes online in d (an investment decided in o with a construction
     # lead time comes online in c(o); without one c(o) = o and inv[e,d] = v_invest[e,d]·us[e]); the
@@ -4116,6 +4151,7 @@ def _eq_user_constraints(b: _Build) -> None:
                 over=(axis,),
             ))
         capacity_terms.extend(_user_constraint_built_terms(b, axis, unitsize, pre, cap, retired))
+        capacity_terms.extend(_user_constraint_extended_terms(b, axis, unitsize, pre, cap))
     if netted:
         from flextool.engine import _behaviour_changes
         _behaviour_changes.notice("user_constraint_prebuilt_nets_retirements", "user constraints", sorted(netted),
@@ -4221,6 +4257,36 @@ def _user_constraint_built_terms(b: _Build, axis: str, unitsize: Param, pre: "Pa
         now = options.join(retired.frame.select(axis, "cn"), on=axis, how="inner")
         if now.height > 0:
             terms.append(Sum(Where(decided * unitsize, now) * retired, over=(axis,)))
+    return terms
+
+
+def _user_constraint_extended_terms(b: _Build, axis: str, unitsize: Param, pre: "Param | None",
+                                    cap: "Param | None") -> list:
+    """The life-extension terms of the user constraints on ``axis`` (_extend), dims (cn, d):
+
+        pre: + (v_extended[e,d] − Σ_c v_extend[e,c,d])·us[e]·prebuilt_coef[e,cn]
+        cap: + v_extended[e,d]·us[e]·capacity_coef[e,cn]
+
+    the extended capacity in service from the start of d (an extension decided in d starts to operate there) and
+    every extension in service in d.  An extension is capacity, never an investment: it has no term with
+    invested_coef or in_construction_coef."""
+    ext = _extend.extended(b, axis)
+    if ext is None:
+        return []
+    decided = _extend.decided(b, axis)
+    counted, options = _extend.extended_frame(b, axis), _extend.decided_frame(b, axis)
+    terms: list = []
+    for coef, with_decided in ((pre, True), (cap, False)):
+        if coef is None:
+            continue
+        rows = counted.join(coef.frame.select(axis, "cn"), on=axis, how="inner")
+        if rows.height == 0:
+            continue
+        terms.append(Sum(Where(ext * unitsize, rows) * coef, over=(axis,)))
+        if with_decided:
+            now = options.join(coef.frame.select(axis, "cn"), on=axis, how="inner")
+            if now.height > 0:
+                terms.append(-Sum(Where(decided * unitsize, now) * coef, over=(axis,)))
     return terms
 
 
@@ -5020,11 +5086,12 @@ def _eq_profiles(b: _Build) -> None:
     invested = divested = None
     if b.has_invest_p and _entity_rows(b.cap.alive, "e", d.process_source_sink, "p").height > 0:
         invested = b.cap.invested_p
-    if b.has_divest_p or b.has_divest_built_p:
+    if b.has_divest_p or b.has_divest_built_p or b.has_extend_p:
         # The retirements and process_source_sink carry different p vocabularies: cast to the former.
         retired_p = b.cap.retired_frame("p")
         procs = d.process_source_sink.select(pl.col("p").cast(retired_p.schema["p"], strict=False)).unique()
-        if retired_p.join(procs, on="p", how="semi").height > 0 or b.has_divest_built_p:
+        if (retired_p.join(procs, on="p", how="semi").height > 0 or b.has_divest_built_p
+                or b.has_extend_p):
             divested = b.cap.retired_p
     reserve_down = -b.reserve_down_to_sink if b.reserve_down_to_sink is not None else None
     source_terms = {
@@ -5418,7 +5485,7 @@ def _obj_storage_reference_price(b: _Build) -> Expr | None:
 def _obj_invest_divest(b: _Build) -> Expr | None:
     """Investment and divestment costs of processes and storage nodes."""
     if not (b.has_invest_p or b.has_divest_p or b.has_invest_n or b.has_divest_n
-            or b.has_divest_built_p or b.has_divest_built_n):
+            or b.has_divest_built_p or b.has_divest_built_n or b.has_extend_p or b.has_extend_n):
         return None
     d = b.d
     terms: list = []
@@ -5569,6 +5636,8 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
 
     # The retirement of model-built capacity (divest_built_cost_{p,n}): _retire_built.
     terms.extend(_retire_built.objective_terms(b))
+    # The life extensions (extend_cost_{p,n}): _extend.
+    terms.extend(_extend.objective_terms(b))
     return _sum_terms(terms)
 
 
@@ -5607,23 +5676,6 @@ def _obj_existing_fixed_cost(b: _Build) -> None:
         b.m.add_obj_constant(float(fc_const) * b.scale_the_objective)
 
 
-def _existing_not_retired(b: _Build) -> "pl.DataFrame | None":
-    """``[e, d, value]``: the existing cohort's capacity in d (``p_entity_pre_existing``, MW, MWh) less its
-    retirements realized by earlier solves of a chain that still count in d (``p_entity_retired_carried``); None
-    without existing capacity."""
-    pre = b.cap.existing_cohort_size_e
-    if pre is None:
-        return None
-    frame = pre.frame
-    carried = getattr(b.d, "p_entity_retired_carried", None)
-    if carried is not None and carried.frame.height > 0:
-        frame, carried_frame = align_join_dtypes(frame, carried.frame.rename({"value": "carried"}), ["e", "d"])
-        frame = (frame.join(carried_frame, on=["e", "d"], how="left")
-                      .with_columns(value=pl.col("value") - pl.col("carried").fill_null(0.0))
-                      .drop("carried"))
-    return frame
-
-
 def _obj_existing_salvage(b: _Build) -> None:
     """The salvage value of existing capacity as a level yearly credit, an objective constant (opt-in)."""
     d = b.d
@@ -5643,7 +5695,7 @@ def _obj_existing_salvage(b: _Build) -> None:
     # service years from the run start, the same credit as a built plant's (net of the retirements of earlier
     # solves; a retirement in this solve gives its credits back through divest_cost_p).  A constant, added only with
     # include_existing_fixed_cost, multiplied by scale_the_objective like every other objective term.
-    exist = _existing_not_retired(b).rename({"value": "exist"})
+    exist = _capacity.existing_not_retired(b).rename({"value": "exist"})
     frame, credit_frame = align_join_dtypes(exist, credit.frame.rename({"value": "credit"}), ["e", "d"])
     frame = frame.join(credit_frame, on=["e", "d"], how="inner")
     if d.pd_branch_weight is not None:
@@ -5678,7 +5730,7 @@ def _obj_existing_replacement(b: _Build) -> None:
     # the replacement comes online: no decision changes it except retiring the capacity first, whose retirement
     # coefficient (divest_cost_p) gives the replacement back whether or not this constant is added.  A constant,
     # added only with include_existing_fixed_cost, multiplied by scale_the_objective like every other objective term.
-    exist = _existing_not_retired(b).rename({"value": "exist"})
+    exist = _capacity.existing_not_retired(b).rename({"value": "exist"})
     frame, price_frame = align_join_dtypes(exist, price.frame.rename({"value": "price"}), ["e", "d"])
     frame = frame.join(price_frame, on=["e", "d"], how="inner")
     if d.pd_branch_weight is not None:

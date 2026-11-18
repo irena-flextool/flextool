@@ -1,7 +1,8 @@
 """Retirement of model-built capacity: the retirement options of each built cohort, their bounds and the checks.
 
-A cohort built by the model (an investment decision of this solve, or one an earlier solve of the run realized and
-handed on in ``realized_cohort``) can be retired when its entity's ``invest_method`` allows retirement, whatever its
+A cohort built by the model (an investment decision of this solve, a life extension of this solve (``_extend``,
+kind ``extend``: its key is the parent and period of its ``v_extend``), or one an earlier solve of the run realized
+and handed on in ``realized_cohort``) can be retired when its entity's ``invest_method`` allows retirement, whatever its
 ``lifetime_method`` (a ``reinvest_automatic`` cohort is the root of its chain of replacements: retiring it retires
 the plant in service and avoids every replacement still to come).  A retirement is decided in an investment period ``d`` in which the cohort is in
 service and counts in every later period of the lineage while the cohort is in service (``dd_forward``, the
@@ -10,8 +11,9 @@ cohort's alive periods).  The frames (``FlexData`` fields, :func:`built_retireme
 * ``cd_divest_built`` ``[e, cohort, d]`` — the retirement options: the columns of ``v_divest_built``;
 * ``cdd_divest_built`` ``[e, cohort, d_divest, d]`` — a retirement of ``cohort`` decided in ``d_divest`` counts in
   ``d``;
-* ``cohort_divest_built`` — one row per retirable cohort: ``d_build`` (the decision period of a cohort of this solve,
-  the key of its ``v_invest``; null for a carried one), ``remaining`` (MW, MWh for storage: the carried size less
+* ``cohort_divest_built`` — one row per retirable cohort: ``kind`` / ``parent`` (of the cohort table), ``d_build``
+  (the decision period of a cohort of this solve, the key of its ``v_invest``, of an extension its ``v_extend``
+  with ``parent``; null for a carried one), ``remaining`` (MW, MWh for storage: the carried size less
   the retirements earlier solves realized; 0 for a cohort of this solve), ``bound`` (the most the cohort can hold:
   ``remaining`` plus, for a cohort of this solve, ``p_entity_max_units · unitsize`` of its decision; +inf when that
   is unknown), its years ``y_on`` / ``y_eol`` and its prices (:data:`._cohorts.PRICE_COLUMNS`; a cohort of this
@@ -33,18 +35,20 @@ from flextool.engine.input._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
-from flextool.engine.preprocess.params._cohorts import KIND_INVEST, LIFETIME_METHODS, PRICE_COLUMNS
+from flextool.engine.preprocess.params._cohorts import KIND_EXTEND, KIND_INVEST, LIFETIME_METHODS, PRICE_COLUMNS
 
 _INF = float("inf")
+#: The kinds of the cohorts of this solve that are model-built capacity: an investment, a life extension.
+_BUILT_KINDS: tuple[str, ...] = (KIND_INVEST, KIND_EXTEND)
 #: Capacities (MW, MWh) closer than this are equal.
 _TOL = 1e-6
 
 
 def cohort_columns() -> dict[str, pl.DataType]:
     """The columns of ``cohort_divest_built`` (module docstring)."""
-    return {"e": schema_dtype(None, "e"), "cohort": pl.Utf8, "d_build": schema_dtype(None, "d_build"),
-            "remaining": pl.Float64, "bound": pl.Float64, "y_on": pl.Float64, "y_eol": pl.Float64,
-            **{c: pl.Float64 for c in PRICE_COLUMNS}}
+    return {"e": schema_dtype(None, "e"), "cohort": pl.Utf8, "kind": pl.Utf8, "parent": pl.Utf8,
+            "d_build": schema_dtype(None, "d_build"), "remaining": pl.Float64, "bound": pl.Float64,
+            "y_on": pl.Float64, "y_eol": pl.Float64, **{c: pl.Float64 for c in PRICE_COLUMNS}}
 
 
 @dataclass(frozen=True)
@@ -57,16 +61,19 @@ class BuiltRetirement:
 
 
 def _carried_rows(carried: pl.DataFrame | None, retire: pl.DataFrame | None, entities: pl.DataFrame) -> pl.DataFrame:
-    """``[e, cohort, remaining, y_on, y_eol, prices…]`` of the carried cohorts (handoff ``realized_cohort``) that can
-    be retired: an investment cohort (not a generation of a chain) of an entity of ``entities`` (``[e]``),
-    ``remaining`` its size less its carried retirements (``realized_retire``)."""
-    schema = {"e": schema_dtype(None, "e"), "cohort": pl.Utf8, "remaining": pl.Float64, "y_on": pl.Float64,
-              "y_eol": pl.Float64, **{c: pl.Float64 for c in PRICE_COLUMNS}}
+    """``[e, cohort, kind, parent, remaining, y_on, y_eol, prices…]`` of the carried cohorts (handoff
+    ``realized_cohort``) that can be retired: an investment or life-extension cohort (not a generation of a chain)
+    of an entity of ``entities`` (``[e]``), ``remaining`` its size less its carried retirements
+    (``realized_retire``)."""
+    schema = {"e": schema_dtype(None, "e"), "cohort": pl.Utf8, "kind": pl.Utf8, "parent": pl.Utf8,
+              "remaining": pl.Float64, "y_on": pl.Float64, "y_eol": pl.Float64,
+              **{c: pl.Float64 for c in PRICE_COLUMNS}}
     if carried is None or carried.height == 0:
         return pl.DataFrame(schema=schema)
     rows = (carried.lazy()
-                   .filter((pl.col("kind") == KIND_INVEST) & pl.col("method").is_in(list(LIFETIME_METHODS)))
-                   .select(alias_to_axis("entity", "e"), pl.col("cohort"), pl.col("size").cast(pl.Float64),
+                   .filter(pl.col("kind").is_in(list(_BUILT_KINDS)) & pl.col("method").is_in(list(LIFETIME_METHODS)))
+                   .select(alias_to_axis("entity", "e"), pl.col("cohort"), pl.col("kind").cast(pl.Utf8),
+                           pl.col("parent").cast(pl.Utf8), pl.col("size").cast(pl.Float64),
                            pl.col("y_on").cast(pl.Float64), pl.col("y_eol").cast(pl.Float64).fill_null(_INF),
                            *(pl.col(c).cast(pl.Float64) for c in PRICE_COLUMNS)))
     rows, ents = align_join_dtypes(rows, entities.lazy(), ["e"])
@@ -107,20 +114,21 @@ def built_retirement_options(cohort: pl.DataFrame | None,
         return None
     entities = offered.select("e").unique()
     alive_parts: list[pl.DataFrame] = []
-    here = pl.DataFrame(schema={"e": schema_dtype(None, "e"), "cohort": pl.Utf8,
+    here = pl.DataFrame(schema={"e": schema_dtype(None, "e"), "cohort": pl.Utf8, "kind": pl.Utf8, "parent": pl.Utf8,
                                 "d_build": schema_dtype(None, "d_build"), "y_on": pl.Float64, "y_eol": pl.Float64,
                                 **{c: pl.Float64 for c in PRICE_COLUMNS}})
     if cohort is not None and cohort.height > 0 and cohort_alive is not None and cohort_alive.height > 0:
         own, ents = align_join_dtypes(
-            cohort.lazy().filter((pl.col("kind") == KIND_INVEST) & pl.col("method").is_in(list(LIFETIME_METHODS))
-                                 & pl.col("y_on").is_not_null()),
+            cohort.lazy().filter(pl.col("kind").is_in(list(_BUILT_KINDS))
+                                 & pl.col("method").is_in(list(LIFETIME_METHODS)) & pl.col("y_on").is_not_null()),
             entities.lazy(), ["e"])
         here = (own.join(ents, on="e", how="semi")
-                   .select("e", "cohort", "d_build", "y_on", pl.col("y_eol").fill_null(_INF), *PRICE_COLUMNS)
+                   .select("e", "cohort", "kind", "parent", "d_build", "y_on", pl.col("y_eol").fill_null(_INF),
+                           *PRICE_COLUMNS)
                    .collect())
         if here.height > 0:
             alive_parts.append(cohort_alive.lazy()
-                               .filter(pl.col("kind") == KIND_INVEST)
+                               .filter(pl.col("kind").is_in(list(_BUILT_KINDS)))
                                .select("e", "cohort", "d")
                                .join(here.lazy().select("e", "cohort"), on=["e", "cohort"], how="semi")
                                .collect())
@@ -166,7 +174,8 @@ def _cohort_table(here: pl.DataFrame, carried: pl.DataFrame, options: pl.DataFra
     both = (own.join(old.select("e", "cohort", "remaining"), on=["e", "cohort"], how="full", coalesce=True)
                .join(old.drop("remaining"), on=["e", "cohort"], how="left", suffix="_carried"))
     out = both.select(
-        "e", "cohort", "d_build", remaining=pl.col("remaining").fill_null(0.0), bound=pl.lit(None, dtype=pl.Float64),
+        "e", "cohort", kind=pl.coalesce("kind", "kind_carried"), parent=pl.coalesce("parent", "parent_carried"),
+        d_build="d_build", remaining=pl.col("remaining").fill_null(0.0), bound=pl.lit(None, dtype=pl.Float64),
         y_on=pl.coalesce("y_on", "y_on_carried"), y_eol=pl.coalesce("y_eol", "y_eol_carried"),
         **{c: pl.when(pl.col("d_build").is_not_null()).then(pl.col(c)).otherwise(pl.col(f"{c}_carried"))
            for c in PRICE_COLUMNS})
@@ -178,7 +187,8 @@ def with_bounds(cohorts: pl.DataFrame, flex_data: object, unitsize: Mapping[str,
     plus, for a cohort of this solve, the bound of its investment: ``p_entity_max_units[e, d_build] · unitsize[e]``
     (``maxInvest_var_bound``: a decision without a row may not invest), and for an entity with a per-period
     investment limit at most ``invest_max_period`` of the period the cohort comes online (``ed_invest_max_period``;
-    no limit where it has no row).  +inf without ``p_entity_max_units`` or a unitsize."""
+    no limit where it has no row).  +inf without ``p_entity_max_units`` or a unitsize, and for a life extension of
+    this solve (it holds what its parent has in service at its end of life, known only from the solution)."""
     out = cohorts.lazy()
     max_units = getattr(flex_data, "p_entity_max_units", None)
     if max_units is not None:
@@ -202,6 +212,7 @@ def with_bounds(cohorts: pl.DataFrame, flex_data: object, unitsize: Mapping[str,
     invest = pl.col("units") * pl.col("us")
     invest = pl.when(pl.col("cap").is_not_null()).then(pl.min_horizontal(invest, pl.col("cap"))).otherwise(invest)
     out = out.with_columns(bound=pl.when(pl.col("d_build").is_null()).then(pl.col("remaining"))
+                           .when(pl.col("kind") == KIND_EXTEND).then(_INF)
                            .when(pl.col("units").is_null() | pl.col("us").is_null()).then(_INF)
                            .otherwise(pl.col("remaining") + invest))
     return out.select(cohorts.columns).collect()

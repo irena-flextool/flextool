@@ -15,6 +15,9 @@ Fixtures (built from JSON):
   invests and retires: the branch periods inherit their anchor's value.
 * single_automatic / stochastic_automatic / rolling_automatic: the same with ``lifetime_method = reinvest_automatic``
   (the plant is replaced at its end of life, every replacement at the values of the period it comes online in).
+* single_extension / stochastic_extension / rolling_extension: the single, stochastic and rolling cases with a life
+  extension (``life_extension_cost`` and ``life_extension_years``): an extension of a cohort reaching its end of
+  life reads both at the period it starts in (a roll has no extension option: it places no retirement reach).
 * single_payback_mid / stochastic_payback_mid: the single and stochastic cases with a payback time other than the
   technical lifetime (12 against 10 on 5-year periods; 0.5 against 1 on the one-year p2035), so the investment price
   is the annuity times G(payback_time) / G(lifetime_technical) and the payback time is read in every period.
@@ -110,6 +113,13 @@ CASES["stochastic_automatic"] = (PEAKER, STOCH_BASE,
 CASES["rolling_automatic"] = (PLANT, ROLL_BASE,
                               ROLL_LONG_JUMP + [["unit", PLANT, "lifetime_method", b64("reinvest_automatic", "str")]],
                               ROLL_CHAIN, PERIODS, None)
+# A life extension (life_extension_cost / life_extension_years): each extension reads the values of the period it
+# starts in (the cohort's end of life).
+EXTENSION = {"life_extension_cost": 150.0, "life_extension_years": 10.0}
+CASES["single_extension"] = (PLANT, {**SINGLE_BASE, **EXTENSION}) + CASES["single"][2:]
+CASES["stochastic_extension"] = (PEAKER, {**STOCH_BASE, "life_extension_cost": 0.5, "life_extension_years": 1.0}) \
+    + CASES["stochastic"][2:]
+CASES["rolling_extension"] = (PLANT, {**ROLL_BASE, **EXTENSION}) + CASES["rolling"][2:]
 
 
 def _steps(tmp_path_factory, case: str, shaped: str | None = None, shape: str = "constant") -> dict:
@@ -137,6 +147,9 @@ def _steps(tmp_path_factory, case: str, shaped: str | None = None, shape: str = 
     ("stochastic_automatic", "lifetime_technical"), ("stochastic_automatic", "invest_cost"),
     ("stochastic_automatic", "net_salvage_value"),
     ("rolling_automatic", "lifetime_technical"),
+    ("single_extension", "life_extension_cost"), ("single_extension", "life_extension_years"),
+    ("stochastic_extension", "life_extension_cost"), ("stochastic_extension", "life_extension_years"),
+    ("rolling_extension", "life_extension_cost"), ("rolling_extension", "life_extension_years"),
 ])
 @pytest.mark.parametrize("shape", ["period", "x"])
 def test_lifetime_constant_equals_maps(tmp_path_factory, case, parameter, shape) -> None:

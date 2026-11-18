@@ -332,6 +332,10 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     *(f"process_constraint_{s}{c}" for s in ("equal", "less_than", "greater_than")
       for c in ("", "_coarse", "_period_total")),
     "non_anticipativity_storage_use", "non_anticipativity_storage_use_coarse",
+    # The retirement of model-built capacity and the life extension (_retire_built, _extend: f"…_{axis}").
+    *(f"{fam}_{axis}" for fam in ("maxDivest_cohort", "divestedBuilt", "non_anticipativity_divest_built",
+                                  "maxExtend_cohort", "extendedCapacity", "non_anticipativity_extend")
+      for axis in ("p", "n")),
 ]
 
 

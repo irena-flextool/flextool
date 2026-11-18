@@ -135,6 +135,16 @@ Input databases move to data version 82. The FlexTool window, the Spine Toolbox 
 
 ### New features
 
+- **Life extension** (unit, connection and node). With `life_extension_cost` [CUR/kW, CUR/kWh] and
+  `life_extension_years`, capacity reaching the end of its `lifetime_technical` can be kept in service that many
+  years longer: the model decides how much of what is still in service at the end of life to extend, for a one-off
+  cost paid when the extension starts. The extension is priced as a plant of its own (the extension cost plus the
+  `net_salvage_value` the capacity would have received at its end of life, financed at `discount_rate` over
+  `life_extension_years`, less the salvage value at the extended end of life), so it competes with new capacity on
+  equal terms; it pays the `fixed_cost` of its years in service. It needs no `invest_method`, can be retired when the
+  `invest_method` allows retirement, is never extended again, and counts as capacity, not investment, in the
+  investment limits. The extension cost is reported as investment of the period it starts in. Give both parameters or
+  neither (an input error names an entity with one of them). Without them nothing changes.
 - **The age of existing capacity and the rounding of an end of life** (unit, connection and node).
   `age_at_model_start` (years), or `build_year` with the new `model.start_year` (age = `start_year` − `build_year`),
   shortens the life of the existing capacity: its end of life is `lifetime_technical` minus the age, counted from the

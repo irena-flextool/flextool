@@ -10,7 +10,8 @@ Three frames (``FlexData.cohort``, ``cohort_alive``, ``dd_forward``):
 
 * ``cohort`` — one row per cohort: ``cohort`` (Utf8 id, unique per entity: ``existing:<run start period>`` /
   ``invest:<decision period>``; ``existing`` when the solve has no period years; ``gen:<root>:<k>`` for a
-  generation), ``e`` (entity-union axis), ``kind`` (``existing`` / ``invest`` / ``generation``), ``method``
+  generation; ``extend:<period>:<parent>`` for a life extension), ``e`` (entity-union axis), ``kind``
+  (``existing`` / ``invest`` / ``generation`` / ``extend``), ``method``
   (``lifetime_method`` with its default), ``eol_method``
   (``end_of_life_method`` with its default ``closest_seam``: how the end of life is rounded), ``d_build`` (the
   decision period, the key of ``v_invest``; null for existing capacity), ``d_on`` (Utf8: the period the capacity
@@ -31,7 +32,10 @@ Three frames (``FlexData.cohort``, ``cohort_alive``, ``dd_forward``):
   ``pay`` (A), its years ``n_pay`` and interest rate ``r_loan``; ``a_salv`` the level yearly salvage credit (the
   price per year in service is ``a_cap − a_salv``; 0 for ``reinvest_automatic``; for existing capacity its credit
   a_x) and ``nsv_eol`` the salvage value at the end of life (existing capacity: ``r_loan`` its discount_rate at
-  the run start, ``nsv_eol`` S_x), and ``root`` (Utf8: the cohort the row belongs to; a root row's own id).
+  the run start, ``nsv_eol`` S_x), ``root`` (Utf8: the cohort the row belongs to; a root row's own id) and
+  ``parent`` (Utf8: the cohort a life extension extends, ``_extend``; null on every other row).  An ``extend`` row
+  is a cohort of its own: decided (``d_build``) and online in the period that starts at its parent's end of life,
+  ``y_life`` its ``life_extension_years``, priced as one plant (``_npv.extension_prices``).
 
   A ``reinvest_automatic`` root (an investment decision, or the existing capacity) is renewed: its row keeps the
   window of the whole chain (``y_life`` / ``y_end`` / ``y_eol`` ``+inf``), and its *generations* (kind
@@ -111,6 +115,8 @@ KIND_EXISTING = "existing"
 KIND_INVEST = "invest"
 #: A plant of a ``reinvest_automatic`` chain (:func:`chain_rows`).
 KIND_GENERATION = "generation"
+#: The life extension of a cohort (``_extend``): a cohort of its own, ``parent`` the cohort it extends.
+KIND_EXTEND = "extend"
 REINVEST_AUTOMATIC = "reinvest_automatic"
 REINVEST_CHOICE = "reinvest_choice"
 #: The ``lifetime_method`` values; an entity with another value has no cohort.
@@ -128,7 +134,7 @@ def _cohort_schema() -> dict[str, pl.DataType]:
             "eol_method": pl.Utf8, "d_build": schema_dtype(None, "d"), "d_on": pl.Utf8, "y_on": pl.Float64,
             "age": pl.Float64, "y_life": pl.Float64,
             "y_end": pl.Float64, "y_first_life_end": pl.Float64, "y_eol": pl.Float64, "d_eol": pl.Utf8,
-            **{c: pl.Float64 for c in PRICE_COLUMNS}, "root": pl.Utf8}
+            **{c: pl.Float64 for c in PRICE_COLUMNS}, "root": pl.Utf8, "parent": pl.Utf8}
 
 
 #: The price columns of the cohort table (CUR/MW, MWh for storage; ``_npv.apply_invest_lumps`` sets them): the
@@ -460,14 +466,14 @@ def chain_rows(source: "InputSource", starts: Iterable[_ChainStart], cal: _Calen
             cohort = f"gen:{st.root}:{k}"
             if life is None or not 0.0 < life < _INF:
                 rows.append((cohort, st.e, KIND_GENERATION, st.method, st.eol_method, st.d_build, d_on, y_on, age,
-                             _INF, _INF, None, _INF, None, *_NO_PRICES, st.root))
+                             _INF, _INF, None, _INF, None, *_NO_PRICES, st.root, None))
                 continue
             y_end = y_on + life
             y_eol = end if end is not None else cal.eol(y_end, st.eol_method)
             if end is None and y_eol <= y_on + YEAR_TOL:
                 y_eol = cal.next_seam(y_on)
             rows.append((cohort, st.e, KIND_GENERATION, st.method, st.eol_method, st.d_build, d_on, y_on, age, life,
-                         y_end, None, y_eol, cal.label(y_eol), *_NO_PRICES, st.root))
+                         y_end, None, y_eol, cal.label(y_eol), *_NO_PRICES, st.root, None))
             if y_eol < _INF and horizon is not None and y_eol < horizon - YEAR_TOL:
                 nxt.append((st, k + 1, y_eol, cal.online_period(y_eol)))
         periods = sorted({d for _st, _k, _y, d in nxt if d is not None})
@@ -486,7 +492,7 @@ def _existing_rows(source: "InputSource", years: Mapping[str, float], cal: _Cale
     ages = existing_ages(source)
     if start is None:
         return [(KIND_EXISTING, e, KIND_EXISTING, method, eol_methods.get(e, END_OF_LIFE_METHOD_DEFAULT), None,
-                 None, None, ages.get(e, 0.0), None, None, None, _INF, None, *_NO_PRICES, KIND_EXISTING)
+                 None, None, ages.get(e, 0.0), None, None, None, _INF, None, *_NO_PRICES, KIND_EXISTING, None)
                 for e, method in _entity_methods(source).items() if method in LIFETIME_METHODS]
     lifetime = _ed_period_value_map(source, LIFETIME_TECHNICAL, [start])
     process_set, node_set, _ = _entity_classes_lookup(source)
@@ -506,7 +512,7 @@ def _existing_rows(source: "InputSource", years: Mapping[str, float], cal: _Cale
             y_life, y_end, y_eol = window_end(y_on, lifetime.get((e, start), 0.0), method, cal, eol_method)
             y_first = y0 + y_life
         rows.append((root, e, KIND_EXISTING, method, eol_method, None, start, y_on, age,
-                     y_life, y_end, y_first, y_eol, cal.label(y_eol), *_NO_PRICES, root))
+                     y_life, y_end, y_first, y_eol, cal.label(y_eol), *_NO_PRICES, root, None))
         if method == REINVEST_AUTOMATIC and (e in process_set or e in node_set):
             life = lifetime.get((e, start))
             if life is not None and 0.0 < life < _INF:
@@ -748,7 +754,7 @@ def _invest_rows(source: "InputSource",
         y_life, y_end, y_eol = window_end(y_on, float(life_v or 0.0), method, cal, eol_method)
         root = f"{KIND_INVEST}:{d}"
         rows.append((root, e, KIND_INVEST, method, eol_method, d, d_on, y_on, 0.0, y_life, y_end,
-                     None, y_eol, cal.label(y_eol), *_NO_PRICES, root))
+                     None, y_eol, cal.label(y_eol), *_NO_PRICES, root, None))
         if method == REINVEST_AUTOMATIC:
             chains.append(_ChainStart(root=root, e=e, method=method, eol_method=eol_method, d_build=d, d_on=d_on,
                                       y_on=y_on, age=0.0, life=life_v))
@@ -928,7 +934,7 @@ def seed_cohorts(seed: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     its alive periods those of the seed."""
     keys = seed.select("e", "d_invest").unique(maintain_order=True)
     rows = [(f"{KIND_INVEST}:{d}", str(e), KIND_INVEST, None, None, str(d), None, None, None, None, None, None,
-             _INF, None, *_NO_PRICES, f"{KIND_INVEST}:{d}")
+             _INF, None, *_NO_PRICES, f"{KIND_INVEST}:{d}", None)
             for e, d in keys.iter_rows()]
     cohort = _cohort_frame(rows)
     triples = [(f"{KIND_INVEST}:{di}", str(e), KIND_INVEST, str(di), str(d), None)
@@ -1158,7 +1164,7 @@ def in_service(data: object) -> InService:
 _CARRIER_NAMES: dict[str, str] = {"e": "entity", "d_build": "period_decided", "d_on": "period_online",
                                   "d_eol": "period_eol"}
 #: The order of the cohort kinds in the carrier (the order the capacity of an entity is summed in).
-_KIND_ORDER: dict[str, int] = {KIND_EXISTING: 0, KIND_INVEST: 1, KIND_GENERATION: 2}
+_KIND_ORDER: dict[str, int] = {KIND_EXISTING: 0, KIND_INVEST: 1, KIND_GENERATION: 2, KIND_EXTEND: 3}
 
 
 def realized_cohort_schema(cohort_schema: Mapping[str, pl.DataType] | None = None) -> dict[str, pl.DataType]:
@@ -1390,6 +1396,7 @@ __all__ = [
     "ExistingCapacity",
     "ExistingEnd",
     "KIND_EXISTING",
+    "KIND_EXTEND",
     "KIND_GENERATION",
     "KIND_INVEST",
     "LIFETIME_METHODS",

@@ -337,6 +337,12 @@ For a unit, connection or storage node `e` in period `d`:
     the carried retirements); a chain carries each retirement with its cohort
     (handoff `realized_retire`), so the existing capacity's limit
     (`maxRetired_existing`) counts only the existing cohort's;
+  - `retired[e,d]` also subtracts `v_extended[e,d]`, the capacity extended beyond its end of life that is in
+    service in `d` (`model/_extend.py`, `extendedCapacity`: each extension `v_extend[e,c,d′]` of a cohort `c`
+    reaching its end of life at the start of an investment period `d′`, `(d′,d) ∈ dd_forward`, while
+    `y[d] < y_eol(x)` of the extension cohort `x = extend:<d′>:<c>`).  It is a capacity term, never an
+    investment: the investment limits and `constraint_invested_capacity_coeff` do not count it.  A cohort
+    extends at most what it has in service at its end of life (`maxExtend_cohort`), once;
   - `cap[e,d] = existing[e,d] + invested[e,d] − retired[e,d]`.
 - `existing_mw[e,d]` (`p_entity_all_existing`, MW or MWh; the `existing` of
   `cap` is `existing_mw / unitsize`) — the capacity a solve starts from, from
@@ -378,6 +384,13 @@ For a unit, connection or storage node `e` in period `d`:
   objective (`existing_replacement` OBJ header), and its retirement settled by
   `chain_retirement_costs`.  The cohort
   also carries the loan (`pay = A`, `n_pay = n`, `r_loan = r`) and `nsv_eol = S`.
+  A life extension (kind `extend`, `parent` the cohort it extends) is priced as
+  one plant of its own (`_npv.extension_prices`): capital `E + S_c` (the
+  `life_extension_cost` and the parent's salvage value it gives up), loan over
+  `life_extension_years` at its `discount_rate`, its own salvage at the extended
+  end of life; its option costs `(a_cap − a_salv)·S̄` and its fixed cost over its
+  periods in service (`extend_cost` OBJ header), and its retirement is one of
+  model-built capacity.
   The existing cohort carries `r_loan = r_x`, `a_salv = a_x` and `nsv_eol = S_x`
   of its salvage credit (`_npv.existing_salvage`, `divest_cost_p` /
   `existing_salvage` OBJ headers).
@@ -575,6 +588,7 @@ Representative entries:
 | `_block.py` | `BlockLayout` fan-out — per-entity blocks, overlap sets, block step durations. |
 | `_branch.py` | `period_branch`, `pdt_branch_weight`, `pd_branch_weight` — stochastic branch weighting. |
 | `_cohorts.py` | The cohort table (`cohort`, `cohort_alive`, `dd_forward`): the start of operation and end of life of the existing capacity and of each investment, the periods each is in service, the reach of a retirement; the `generation` rows of a `reinvest_automatic` chain (`chain_rows`: each plant that holds the root's capacity in turn, from its start of operation to its rounded end of life, at least one period each, to the end of the horizon; no capacity of their own); its views are the only lifetime gate (end of life, expired periods, investment alive / pre-built, retirement reach); `in_service` gives the model (`model/_capacity.py`) and the output readers the periods each investment and retirement counts in. |
+| `_extend.py` | The life extensions (`cd_extend`, `cdd_extend`, `cohort_extend`): each cohort that ends its life at the start of an investment period can be extended by `life_extension_years`; the extension cohort (`extend:<period>:<parent>`) and its periods in service join the cohort table. |
 | `_existing.py` | `p_entity_all_existing`, `p_entity_previously_invested_capacity` — cross-solve existing-capacity composition. |
 | `_npv.py` | Annualized investment / divestment carriers feeding the objective. |
 | `_profiles.py` | `p_profile_value` and the `p_process_existing_count` factor used by profile-bound constraints. |
@@ -937,7 +951,7 @@ the next solve's preprocessing. The dataclass is in
 
 | Field | Shape | Meaning |
 |---|---|---|
-| `realized_cohort` | `[entity, cohort, kind, method, eol_method, period_decided, period_online, y_on, age, y_life, y_end, y_first_life_end, y_eol, period_eol, a_cap, pay, n_pay, r_loan, a_salv, nsv_eol, root, size]` | The investments realised by the run so far, one row per cohort (investment decision), chain-cumulative: the cohort-table row of the deciding solve (years of the run; a later solve compares its periods' run years with `y_on` / `y_eol`, no rounding repeated; `a_cap` / `a_salv` the capital price and the salvage credit per year in service, `pay` / `n_pay` / `r_loan` its loan, `nsv_eol` the salvage value at its end of life) and the size (MW, MWh); a `reinvest_automatic` cohort is followed by its `generation` rows (`root` the cohort, size empty: the plants of its chain and their prices, as the deciding solve placed them). |
+| `realized_cohort` | `[entity, cohort, kind, method, eol_method, period_decided, period_online, y_on, age, y_life, y_end, y_first_life_end, y_eol, period_eol, a_cap, pay, n_pay, r_loan, a_salv, nsv_eol, root, parent, size]` | The investments realised by the run so far, one row per cohort (investment decision), chain-cumulative: the cohort-table row of the deciding solve (years of the run; a later solve compares its periods' run years with `y_on` / `y_eol`, no rounding repeated; `a_cap` / `a_salv` the capital price and the salvage credit per year in service, `pay` / `n_pay` / `r_loan` its loan, `nsv_eol` the salvage value at its end of life) and the size (MW, MWh); a `reinvest_automatic` cohort is followed by its `generation` rows (`root` the cohort, size empty: the plants of its chain and their prices, as the deciding solve placed them). |
 | `realized_retire` | `[entity, cohort, period, value]` | Retired capacity per cohort and realised decision period, chain-cumulative; counts while the cohort is in service. |
 | `realized_commission` | `[entity, period, commission_period, value]` | Realised investments with a construction lead time (coming online / in construction in a later solve). |
 | `divest_cumulative` | `[entity, value]` | Cumulative divest per entity. |

@@ -5880,7 +5880,8 @@ def apply_derived_c(
     inv_empty = ed_inv_for_partition is None or ed_inv_for_partition.height == 0
     div_empty = ed_div_for_partition is None or ed_div_for_partition.height == 0
     # A cohort an earlier solve built can be retired here even without an investment or existing-capacity option.
-    if inv_empty and div_empty and not _carried_retirable(offered_div, carried_cohort):
+    if inv_empty and div_empty and not _carried_retirable(offered_div, carried_cohort) \
+            and not _extending(source):
         _check_retirement_minimums(flex_data, source, active_solve, workdir, offered_div, ed_div_db, [],
                                    _c_period_in_use, provider=provider)
         for blank_field in (
@@ -5894,6 +5895,7 @@ def apply_derived_c(
             # nulled so no seed outlives the empty investment set.
             "cohort", "cohort_alive", "dd_forward",
             "cd_divest_built", "cdd_divest_built", "cohort_divest_built",
+            "cd_extend", "cdd_extend", "cohort_extend",
         ):
             setattr(flex_data, blank_field, None)
         return
@@ -5906,6 +5908,8 @@ def apply_derived_c(
     frames = build_cohort_frames(source, active_solve, ed_inv_used, list(_c_period_in_use), workdir,
                                  provider=provider, lineage=_c_lineage, commission_lf=commission_lf,
                                  seed=_seeded_invest(flex_data))
+    # The life extensions of the cohorts that end their life in an investment period: cohorts of their own.
+    frames = _apply_extensions(flex_data, source, active_solve, workdir, frames, provider=provider)
     flex_data.cohort, flex_data.cohort_alive, flex_data.dd_forward = (
         frames.cohort, frames.cohort_alive, frames.dd_forward)
     # Construction lead time: the period each decision starts to operate in and the periods it is in construction.
@@ -5953,6 +5957,42 @@ def _carried_cohorts(provider: "object | None") -> "tuple[pl.DataFrame | None, p
     from flextool.engine.preprocess._provider_translators import read_handoff_frame
     return (read_handoff_frame(provider, K.HANDOFF_REALIZED_COHORT),
             read_handoff_frame(provider, K.HANDOFF_REALIZED_RETIRE))
+
+
+def _extending(source: "InputSource") -> bool:
+    """Whether a unit, node or connection gives a life extension (``_extend.extending_entities``): its cohorts can
+    be extended without an investment or retirement option."""
+    from flextool.engine.preprocess.params._extend import extending_entities
+    return bool(extending_entities(source))
+
+
+def _apply_extensions(flex_data: object,
+                      source: "InputSource",
+                      active_solve: str | None,
+                      workdir: Path | None,
+                      frames: "object",
+                      *,
+                      provider: "object | None" = None):
+    """Set ``cd_extend`` / ``cdd_extend`` / ``cohort_extend`` (:mod:`._extend`) on ``flex_data`` from the solve's
+    cohort frames ``frames`` and return the frames with the extension cohorts and their periods in service
+    (``frames`` unchanged, and the fields ``None``, without an extension option)."""
+    from dataclasses import replace
+
+    from flextool.engine.preprocess.params._cohorts import run_cohort_calendar
+    from flextool.engine.preprocess.params._extend import append_extensions, extension_frames
+    years = cohort_years(source, active_solve, workdir, provider=provider)
+    period_invest = _expand_invest_branch_periods(_solve_periods(source, active_solve, "invest_periods"), workdir,
+                                                  provider=provider) or []
+    cal = run_cohort_calendar(source, active_solve, years, provider) if years else None
+    ext = extension_frames(source, frames.cohort, frames.cohort_alive, frames.dd_forward,
+                           [str(d) for d in period_invest], years, cal)
+    flex_data.cd_extend = None if ext is None else ext.options
+    flex_data.cdd_extend = None if ext is None else ext.counting
+    flex_data.cohort_extend = None if ext is None else ext.parents
+    if ext is None:
+        return frames
+    cohort, alive = append_extensions(frames.cohort, frames.cohort_alive, ext)
+    return replace(frames, cohort=cohort, cohort_alive=alive)
 
 
 def _carried_retirable(offered: "pl.DataFrame | None", carried: "pl.DataFrame | None") -> bool:

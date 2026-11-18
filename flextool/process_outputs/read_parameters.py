@@ -712,6 +712,7 @@ def _entity_all_capacity(
               - sum over (e, d_dv) in ed_divest with years[d_dv] <= years[d] of
                 v_divest[e, d_dv] * unitsize[e]
               - v_divested_built[e, d] * unitsize[e]   (the model-built capacity retired so far)
+              + v_extended[e, d] * unitsize[e]         (the capacity extended beyond its end of life)
     """
     # Collect base existing — start from p_entity_all_existing if
     # available; else fall back to a (entity × period) zero frame
@@ -897,20 +898,32 @@ def _entity_all_capacity(
         if built_pieces else
         pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "divested_built": pl.Float64}).lazy()
     )
+    # The capacity extended beyond its end of life, in service in d (``v_extended``, per (e, d)).
+    ext_pieces = [f for f in (_try_value("v_extended_p"), _try_value("v_extended_n")) if f.height > 0]
+    ext_contrib = (
+        pl.concat(ext_pieces, how="vertical").lazy()
+          .join(unitsize_lf, on="e", how="inner")
+          .select("e", "d", extended=pl.col("value") * pl.col("unitsize"))
+        if ext_pieces else
+        pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "extended": pl.Float64}).lazy()
+    )
     j1 = existing_lf.join(
         invest_contrib, on=["e", "d"], how="full", coalesce=True,
     )
     j2 = (j1.join(divest_contrib, on=["e", "d"], how="full", coalesce=True)
-            .join(built_contrib, on=["e", "d"], how="full", coalesce=True))
+            .join(built_contrib, on=["e", "d"], how="full", coalesce=True)
+            .join(ext_contrib, on=["e", "d"], how="full", coalesce=True))
     combined = (
         j2.with_columns(
             existing=pl.col("existing").fill_null(0.0),
             invested=pl.col("invested").fill_null(0.0),
             divested=pl.col("divested").fill_null(0.0),
             divested_built=pl.col("divested_built").fill_null(0.0),
+            extended=pl.col("extended").fill_null(0.0),
         )
         .with_columns(
-            total=pl.col("existing") + pl.col("invested") - pl.col("divested") - pl.col("divested_built"),
+            total=pl.col("existing") + pl.col("invested") - pl.col("divested") - pl.col("divested_built")
+            + pl.col("extended"),
         )
         .filter(pl.col("e").is_not_null() & pl.col("d").is_not_null())
         .select("e", "d", "total")

@@ -31,7 +31,7 @@ from flextool.engine.input._param_shapes import (
 )
 from flextool.engine.preprocess._provider_io import _provider_key
 from flextool.engine.preprocess.params._cohorts import in_service
-from flextool.engine.model import _balance_terms, _coarse_flows, _retire_built
+from flextool.engine.model import _balance_terms, _coarse_flows, _extend, _retire_built
 from flextool.engine.model._common import _availability_factor, _has_rows, _indirect_sum_arcs, _var_view
 
 if TYPE_CHECKING:
@@ -393,6 +393,10 @@ def _invest_change(b: _Build, procs: pl.DataFrame, tag: str) -> tuple[Expr | Non
         if rows.height > 0:
             term = Where(built, rows)
             divest = term if divest is None else divest + term
+    ext = _extend.capacity_term(b, "p", procs_p)
+    if ext is not None:
+        # The extended capacity in service (_extend): capacity, carried with the retirements (never an investment).
+        divest = -ext if divest is None else divest - ext
     return invest, divest
 
 

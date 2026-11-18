@@ -55,6 +55,10 @@ _AXIS_SYNONYMS: dict[str, str] = {
     # retirement is decided in.
     "d_build": "d",
     "d_retire": "d",
+    # Life extension (``preprocess/params/_extend.py``): the period an extension is decided in, and its parent's last
+    # period in service before it.
+    "d_extend": "d",
+    "d_last": "d",
     # ``anchor`` is the cascade column name used in _derived.py
     # during the period__branch overlay (period→anchor rename).  The
     # values are period labels, so the column belongs to the ``d`` axis.

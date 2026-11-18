@@ -223,8 +223,25 @@ def _annualized_investment(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
     long = _invested_mw_at_start(par, s, v)
     long = long[long['start'].isin(_reported_start_periods(s))]
     window = s.edd_operating_window
-    return (_per_vintage_period(long[['period_invest', 'entity', 'value']], par.entity_annuity_yearly, columns),
-            _fixed_cost_in_window(long, window, 'period_invest', 'start', par, columns, drop_unpriced=True))
+    invest = _per_vintage_period(long[['period_invest', 'entity', 'value']], par.entity_annuity_yearly, columns)
+    fixed = _fixed_cost_in_window(long, window, 'period_invest', 'start', par, columns, drop_unpriced=True)
+    return _with_extensions(par, v, invest, fixed)
+
+
+def _with_extensions(par, v, invest: pd.DataFrame, fixed: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """``(investment, fixed cost invested)`` per year with the life extensions (read_highs_solution.write_v_extend):
+
+    ANN. extend_yr[e,d] = extend_yearly[e,d] = Σ_{extensions x in service in d} MW[x]·(a_cap − a_salv)[x]
+         fixed_extended_yr[e,d] = extended[e,d]·unitsize[e]·fc[e,d]
+      The yearly price of every extension in service in d (its level price, as in the objective) and the fixed cost
+      of d of the extended capacity.  Both are added to the entity's investment columns.  Unchanged without an
+      extension."""
+    if v.extend_yearly.empty or len(v.extend_yearly.columns) == 0:
+        return invest, fixed
+    yearly = v.extend_yearly
+    kept = v.extended.mul(par.entity_unitsize[v.extended.columns])
+    paid = kept.mul(par.entity_fixed_cost.reindex(index=kept.index, columns=kept.columns).fillna(0.0))
+    return _with_built(invest, yearly), _with_built(fixed, paid)
 
 
 def _with_built(existing: pd.DataFrame, built: pd.DataFrame) -> pd.DataFrame:
@@ -580,7 +597,8 @@ def compute_costs(par, s, v, r) -> None:
     # lifetime fixed cost of new capacity are reported in the period the capacity starts to operate, the
     # retirement lumps in the retirement period.
     invest = _invest_with_fan(v)
-    r.cost_entity_invest_d = _invest_at_plant_starts(par, s, v)
+    # A life extension's objective term is reported as investment of the period it is decided (comes online) in.
+    r.cost_entity_invest_d = _with_built(_invest_at_plant_starts(par, s, v), v.extend_cost)
     r.cost_entity_divest_d = _with_built(
         -v.divest.mul(par.entity_unitsize[v.divest.columns]).mul(par.entity_divest_salvage), v.divest_built_cost)
     # The fixed cost of existing capacity: the user's existing capacity aged over its lifetime, in every period of
@@ -594,8 +612,9 @@ def compute_costs(par, s, v, r) -> None:
     # entity_lifetime_fixed_cost* are densified over _entity_universe and
     # solve-keyed (concat-unioned), so they cover every v.invest/v.divest
     # column — direct indexing is safe.
-    r.cost_entity_fixed_invested = _at_start_of_operation(
-        invest.mul(par.entity_unitsize[v.invest.columns] * par.entity_lifetime_fixed_cost[v.invest.columns]), s)
+    r.cost_entity_fixed_invested = _with_built(_at_start_of_operation(
+        invest.mul(par.entity_unitsize[v.invest.columns] * par.entity_lifetime_fixed_cost[v.invest.columns]), s),
+        v.extend_fixed)
     r.cost_entity_fixed_divested = _with_built(
         -(v.divest.mul(par.entity_unitsize[v.divest.columns]
                        * par.entity_lifetime_fixed_cost_divest[v.divest.columns])), -v.divest_built_fixed)

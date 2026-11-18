@@ -161,7 +161,7 @@ def test_warning_names_an_entity_whose_plant_earns_money(capsys) -> None:
 
     def row(e, cohort, a_cap, a_salv):
         return (cohort, e, "generation", "reinvest_automatic", "closest_seam", "p2020", "p2030", 10.0, 0.0, 10.0,
-                20.0, None, 20.0, None, a_cap, a_cap, 10.0, 0.05, a_salv, 200_000.0, "invest:p2020")
+                20.0, None, 20.0, None, a_cap, a_cap, 10.0, 0.05, a_salv, 200_000.0, "invest:p2020", None)
 
     _behaviour_changes.start_run(None)
     table = _cohort_frame([row("free", "gen:invest:p2020:2", 0.0, 15_900.91),

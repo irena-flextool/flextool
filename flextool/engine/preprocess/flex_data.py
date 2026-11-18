@@ -1298,6 +1298,16 @@ class FlexData:
     cohort_divest_built: pl.DataFrame | None = None
     cd_divest_built_cost: Param | None = None
     cd_divest_built_fixed: Param | None = None
+    # Life extension (preprocess/params/_extend.py; apply_derived_c, None without an option): (e, cohort, d) the
+    # extension options (the columns of v_extend; cohort the parent), (e, cohort, d_extend, d) the periods the units
+    # extended in d_extend are in service in, one row per option (the parent's kind, decision period, last period
+    # in service and carried size); (e, cohort, d) the level price of the extension over its periods in service and
+    # its fixed cost (CUR/MW, MWh; ``_npv.apply_extension_costs``).
+    cd_extend: pl.DataFrame | None = None
+    cdd_extend: pl.DataFrame | None = None
+    cohort_extend: pl.DataFrame | None = None
+    cd_extend_cost: Param | None = None
+    cd_extend_fixed: Param | None = None
     # Reported costs only (no model term reads them; ``_npv`` "Run-level fields of the reported costs"):
     # discounted from the start of the run over the periods of the whole run.  (d,) factors over the solve's
     # periods and the other run periods; (e, d) lumps of the invest / divest decisions (the lifetime fixed cost
