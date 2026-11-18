@@ -60,7 +60,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flextool.engine.input._axis_enums import rename_to_axis
+from flextool.engine.input._axis_enums import align_join_dtypes, rename_to_axis
 
 if TYPE_CHECKING:
     from flextool.engine.input._input_source import InputSource
@@ -314,18 +314,16 @@ def period_walk_iterator(
     # Cast ``d_all`` to match ``ed_lf.d``'s dtype, then push the same
     # dtype onto ``pyd_anchor.d`` / ``pyd_all.d_all`` so every join key
     # is consistent.
+    # ``align_join_dtypes`` prefers the Enum side, so a Utf8 ``ed_lf`` meets
+    # an Enum ``pyd_anchor`` (axis-Enum mode) on the Enum as well.
     ed_d_dtype = ed_lf.collect_schema().get("d", pl.Utf8)
     piu_lf = pl.LazyFrame({"d_all": period_in_use}).with_columns(
         pl.col("d_all").cast(ed_d_dtype, strict=False))
-    if ed_d_dtype != pl.Utf8:
-        pyd_anchor = pyd_anchor.with_columns(
-            pl.col("d").cast(ed_d_dtype, strict=False))
-        pyd_all = pyd_all.with_columns(
-            pl.col("d_all").cast(ed_d_dtype, strict=False))
+    walk = ed_lf.select("e", "d").join(piu_lf, how="cross")
+    walk, pyd_anchor = align_join_dtypes(walk, pyd_anchor, ["d"])
+    walk, pyd_all = align_join_dtypes(walk, pyd_all, ["d_all"])
 
-    walk = (ed_lf
-              .select("e", "d")
-              .join(piu_lf, how="cross")
+    walk = (walk
               .join(pyd_anchor, on="d", how="left")
               .join(pyd_all, on="d_all", how="left")
               .with_columns(

@@ -25,6 +25,7 @@ from pathlib import Path
 
 import polars as pl
 
+from flextool.engine.input._axis_enums import rename_to_axis
 from flextool.engine.input._lifetime_roles import NO_REINVESTMENT
 from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine.preprocess._provider_io import _emit
@@ -596,6 +597,7 @@ def _invest_window(source, solve_data_dir: Path, provider, ed_invest_pairs: list
     workdir = solve_data_dir.parent
     active = _read_active_solve(workdir, provider=provider)
     ed_invest = pl.DataFrame(ed_invest_pairs, schema={"e": pl.Utf8, "d": pl.Utf8}, orient="row")
+    ed_invest = ed_invest.pipe(rename_to_axis, {"e": "e", "d": "d"})
     commission_lf = _build_commission_lf(source, active, ed_invest.lazy(), list(period_in_use), workdir,
                                          provider=provider)
     _rows, alive = invest_cohorts(source, active, ed_invest, list(period_in_use), workdir, provider=provider,
