@@ -188,7 +188,7 @@ def period_walk_iterator(
     source
         ``InputSource`` for the cluster's data (used to read
         ``p_years_d`` / yearly inflation factors via lazy helpers
-        in ``_npv``).
+        in ``_discount``).
     active_solve
         Active solve name for ``p_years_d`` resolution.
     ed_lf
@@ -248,7 +248,7 @@ def period_walk_iterator(
         without lead times) leaves ``yr_avail ≡ yr_d``.
     year_rows
         Optional ``[d, width, base]`` years of the solve from the start of the run
-        (:func:`._npv.solve_year_rows`), forwarded to the inflation factors of ``factor_side``.  ``None`` (a
+        (:func:`._discount.solve_year_rows`), forwarded to the inflation factors of ``factor_side``.  ``None`` (a
         solve that starts the run with whole-year widths) keeps the solve's own count.
 
     Returns
@@ -421,7 +421,7 @@ def period_walk_iterator(
                   .unique())
 
     # Inflation factor sum.
-    from flextool.engine.preprocess.params._npv import _inflation_factors_lf
+    from flextool.engine.preprocess.params._discount import _inflation_factors_lf
     factors_lf = _inflation_factors_lf(
         source, active_solve, period_universe, provider=provider, year_rows=year_rows)
     if factor_side == "inv":

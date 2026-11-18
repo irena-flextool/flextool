@@ -48,7 +48,7 @@ import polars as pl
 from flextool.engine.input._constants import HOURS_PER_YEAR
 from flextool.engine.preprocess._provider_io import _emit
 from flextool.engine.preprocess.params._branch import branch_periods_inherit_carry
-from flextool.engine.preprocess.params._npv import _INFL_OFFSET_INV_DEFAULT, _INFL_OFFSET_OPS_DEFAULT
+from flextool.engine.preprocess.params._discount import _INFL_OFFSET_INV_DEFAULT, _INFL_OFFSET_OPS_DEFAULT
 
 
 # ---------------------------------------------------------------------------
@@ -322,10 +322,10 @@ def emit_period_calculated_params(
         1.0 / (1.0 + p_inflation) if p_inflation != -1.0 else 1.0
     )
 
-    # The years from the start of the run (``_npv`` "The discount base of a solve's own factors"), when the
+    # The years from the start of the run (``_discount`` "The discount base of a solve's own factors"), when the
     # solve's own count does not give them: a roll or nested sub-solve of a solve that starts after the run
     # start, or fractional years.  None keeps the own count below.
-    from flextool.engine.preprocess.params._npv import notice_discount_from_run_start, year_rows_from_history
+    from flextool.engine.preprocess.params._discount import notice_discount_from_run_start, year_rows_from_history
     history: dict[str, float] = {}
     for d, v in zip(pwh_df["period"].to_list(), pwh_df["value"].to_list()):
         if d and d not in history:

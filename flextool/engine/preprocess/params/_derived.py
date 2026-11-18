@@ -5491,7 +5491,7 @@ def _retirement_without_existing_warning(source: "InputSource", offered: pl.Data
     life is a valid model and is not warned about (the end of life is in the retirement notice)."""
     from flextool.engine import _behaviour_changes
     from flextool.engine.preprocess.params._cohorts import LIFETIME_METHODS
-    from flextool.engine.preprocess.params._npv import (
+    from flextool.engine.preprocess.params._lifetime_inputs import (
         _entity_invest_set_lf,
         _lifetime_method_with_default_lf,
         _per_entity_param_lf,

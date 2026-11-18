@@ -51,13 +51,15 @@ def _invest_source(lifetimes: dict[str, float]) -> InMemoryReader:
 
 
 def _db_path(lifetimes: dict[str, float]) -> tuple[float, float]:
-    """``(annuity, window)`` of unit u read from the database (``_npv``)."""
+    """``(annuity, window)`` of unit u read from the database (``_npv``, ``_lifetime_inputs``)."""
+    from flextool.engine.preprocess.params import _lifetime_inputs
     from flextool.engine.preprocess.params import _npv as npv
+    from flextool.engine.preprocess.params._existing import INVEST_NOT_ALLOWED
 
     src = _invest_source(lifetimes)
     ed = pl.LazyFrame({"e": ["u"], "d": ["p2020"]})
-    ann = npv._per_method_annuity_lf(src, ed, "invest_cost", npv._INVEST_NOT_ALLOWED).collect()
-    window = npv._ed_lifetime_on_lf(src, ed).collect()
+    ann = npv._per_method_annuity_lf(src, ed, "invest_cost", INVEST_NOT_ALLOWED).collect()
+    window = _lifetime_inputs._ed_lifetime_on_lf(src, ed).collect()
     return float(ann["ann"][0]), float(window["life"][0])
 
 

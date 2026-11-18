@@ -1,4 +1,4 @@
-"""The discount base of a solve's own factors (``_npv`` "The discount base of a solve's own factors", item 242).
+"""The discount base of a solve's own factors (``_discount`` "The discount base of a solve's own factors", item 242).
 
 Every solve discounts its investments and its operations from the start of the run.  The base reaches the model
 along three paths: ``p_inflation_op`` of a real solve and the investment walks (``_inflation_factors_lf`` with
@@ -64,7 +64,7 @@ def test_the_three_paths_give_the_run_start_factors() -> None:
     """A solve over p2 after p1: the real-solve factors (``_inflation_factors_lf`` with ``solve_year_rows``) and
     the sub-solve seeds of ``_period_calc`` are both the hand values, discounted from the start of the run."""
     from flextool.engine.preprocess.emit._period_calc import emit_period_calculated_params
-    from flextool.engine.preprocess.params._npv import _inflation_factors_lf, solve_year_rows
+    from flextool.engine.preprocess.params._discount import _inflation_factors_lf, solve_year_rows
 
     prov = _later_solve_provider([(str(y), 1.0) for y in range(5)])
     rows = solve_year_rows(Path("."), prov)
@@ -82,7 +82,7 @@ def test_a_solve_that_starts_the_run_keeps_its_own_count() -> None:
     """Whole-year widths from the run start: the solve's own count already gives every year its base, so no
     year rows (the factors stay byte-identical); a fractional year before a period (item 259) or a later start
     give rows."""
-    from flextool.engine.preprocess.params._npv import year_rows_from_history
+    from flextool.engine.preprocess.params._discount import year_rows_from_history
 
     whole = {"p1": [(str(y), 1.0) for y in range(5)], "p2": [(str(y), 1.0) for y in range(5, 10)]}
     assert year_rows_from_history({"p1": 0.0, "p2": 5.0}, whole) is None
@@ -98,7 +98,7 @@ def test_a_period_without_history_is_an_error_only_when_the_rows_are_needed() ->
     """The gate over the periods with history decides first: a solve that keeps its own count keeps it even with
     a period outside its history (byte-identical, as before); one that needs the rows cannot discount that
     period."""
-    from flextool.engine.preprocess.params._npv import year_rows_from_history
+    from flextool.engine.preprocess.params._discount import year_rows_from_history
 
     assert year_rows_from_history({"p1": 0.0}, {"p1": [("0", 1.0)], "p3": [("1", 1.0)]}, solve="s") is None
     with pytest.raises(ValueError, match="Period 'p3' of solve 's'"):
@@ -109,7 +109,7 @@ def test_a_single_solve_with_its_map_out_of_period_order_counts_in_the_map_order
     """A single solve whose ``years_represented`` map lists p2 before p1 (periodAll order p1, p2): its history and
     its own rows count in the map order (p2 from 0, p1 from 5), the investment walk's database count in the period
     order (p1 from 0).  Both factors take the map order (the run's base); the v79 marker names such a solve."""
-    from flextool.engine.preprocess.params._npv import year_rows_from_history
+    from flextool.engine.preprocess.params._discount import year_rows_from_history
 
     own = {"p2": [(str(y), 1.0) for y in range(5)], "p1": [(str(y), 1.0) for y in range(5, 10)]}
     walk = {"p1": [(str(y), 1.0) for y in range(5)], "p2": [(str(y), 1.0) for y in range(5, 10)]}
@@ -125,7 +125,7 @@ def test_notice_names_the_solve_once_and_only_with_inflation(capsys) -> None:
     """The notice fires while the marker is present and inflation discounts the costs; the rolls of a rolling
     solve are announced once, by the rolling solve's name."""
     from flextool.engine import _behaviour_changes as bc
-    from flextool.engine.preprocess.params._npv import notice_discount_from_run_start
+    from flextool.engine.preprocess.params._discount import notice_discount_from_run_start
 
     bc.start_run({"chained_solve_discount_from_run_start": '{"since": 79}'})
     try:

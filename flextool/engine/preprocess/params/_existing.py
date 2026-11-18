@@ -137,7 +137,7 @@ _LIFETIME_METHOD_DEFAULT = "reinvest_automatic"
 def _entity_class_lf(source: "InputSource") -> pl.LazyFrame:
     """Lazy ``[e, ec]``: every (entity, entity_class) pairing.
 
-    Mirror of :func:`._npv._entity_class_lf` (kept local to
+    Mirror of :func:`._lifetime_inputs._entity_class_lf` (kept local to
     avoid cross-module coupling).
     """
     parts: list[pl.LazyFrame] = []
@@ -171,7 +171,7 @@ def _entity_method_lf(source: "InputSource",
     """Lazy ``[e, method]`` from ``unit/node/connection.<param>``.
 
     ``parameter_name`` ∈ {``invest_method``, ``lifetime_method``}.
-    Mirror of :func:`._npv._entity_method_lf`.
+    Mirror of :func:`._lifetime_inputs._entity_method_lf`.
     """
     parts: list[pl.LazyFrame] = []
     for ec in ("unit", "node", "connection"):
@@ -201,7 +201,7 @@ def _lifetime_method_with_default_lf(
 
     Entities without an explicit ``lifetime_method`` row get
     ``reinvest_automatic``.  Mirror of
-    :func:`._npv._lifetime_method_with_default_lf`.
+    :func:`._lifetime_inputs._lifetime_method_with_default_lf`.
     """
     explicit = _entity_method_lf(source, "lifetime_method")
     explicit_entities = explicit.select("e").unique()
@@ -216,7 +216,7 @@ def _per_entity_param_lf(source: "InputSource",
                             ) -> pl.LazyFrame:
     """Lazy ``[e, d, value, is_scalar]``.
 
-    Mirror of :func:`._npv._per_entity_param_lf`.
+    Mirror of :func:`._lifetime_inputs._per_entity_param_lf`.
 
     Period-dim detection: a per-period parameter exposes exactly one
     index column alongside ``name`` / ``value``.  The canonical name is
@@ -257,7 +257,7 @@ def _per_entity_param_lf(source: "InputSource",
             df = inherit_active_branch_periods(
                 df, group_keys=("name",), period_col=period_col)
             # Per-ROW scalar detection — see the matching helper in
-            # ``_npv._per_entity_param_lf`` for the full rationale.
+            # ``_lifetime_inputs._per_entity_param_lf`` for the full rationale.
             # A constant ``existing`` (etc.) stored in an entity class
             # that ALSO carries period-Map values for sibling entities
             # surfaces with a NULL index (``x = null``).  That row must
@@ -292,7 +292,7 @@ def _resolve_per_period_lf(per_param: pl.LazyFrame,
                               ) -> pl.LazyFrame:
     """Resolve ``pdX[e, param, d]`` cascade in lazy form.
 
-    Mirror of :func:`._npv._resolve_per_period_lf`.
+    Mirror of :func:`._lifetime_inputs._resolve_per_period_lf`.
     """
     # Align ``per_param``'s ``e`` / ``d`` dtypes to ``ed_lf``'s before
     # joining — ``per_param`` was built from a String-typed CSV read

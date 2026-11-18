@@ -592,6 +592,9 @@ Representative entries:
 | `_extend.py` | The life extensions (`cd_extend`, `cdd_extend`, `cohort_extend`): each cohort that ends its life at the start of an investment period can be extended by `life_extension_years`; the extension cohort (`extend:<period>:<parent>`) and its periods in service join the cohort table. |
 | `_existing.py` | `p_entity_all_existing`, `p_entity_previously_invested_capacity` — cross-solve existing-capacity composition. |
 | `_npv.py` | Annualized investment / divestment carriers feeding the objective. |
+| `_lifetime_inputs.py` | The per-entity readers and the per-decision lifetime inputs the lifetime costs share: entity class, `invest_method` / `lifetime_method`, the lifetime at the period a decision comes online, the raw fixed cost, the per-period walk (`period_walk_iterator`) and its window to the end of life, the registration of the lumps set as values. |
+| `_discount.py` | Discount factors: the inflation scalars, the year rows, the per-period investment and operations factors (`p_inflation_op`), the solve's discount base from the run start (`solve_year_rows`), the run years (`run_years`). |
+| `_report_lines.py` | Placing a reported cost event in a period (`report_years`, `event_period`, `stack_lines`). |
 | `_profiles.py` | `p_profile_value` and the `p_process_existing_count` factor used by profile-bound constraints. |
 | `_walks.py` | Backward / forward step lookups (`dtttdt`, `dtttdt_forward_only`, the block-interior variant). |
 | `_arc_unions.py` | Arc set algebra: `flow_to_n`, `flow_from_n`, the commodity-flow joins, the reverse-arc additions for connections. |

@@ -705,7 +705,7 @@ raises.
 
 Not every DB read goes through `resolve_param_shape`. The **per-entity
 cascades** in `_derived.py` / `_existing.py` /
-`_npv.py` read raw entity params (`source.parameter(...)`) and
+`_lifetime_inputs.py` read raw entity params (`source.parameter(...)`) and
 must detect the period axis themselves. The failure mode is identical to
 the resolver's: Spine names a Map's index column with the author's
 `index_name`, whose spinedb_api *default is the literal string `"x"`*

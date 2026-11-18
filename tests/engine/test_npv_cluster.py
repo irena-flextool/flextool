@@ -29,6 +29,7 @@ import math
 import polars as pl
 import pytest
 
+from flextool.engine.preprocess.params import _discount as discount
 from flextool.engine.preprocess.params import _npv as npv
 from flextool.engine.preprocess.params._derived import (
     _read_active_solve,
@@ -37,6 +38,7 @@ from flextool.engine.preprocess.params._derived import (
     _periodAll_from_source,
     _read_period_with_history,
 )
+from flextool.engine.preprocess.params._existing import INVEST_NOT_ALLOWED
 from tests._support.load import ScenarioRun, clone_provider, load_scenario
 
 
@@ -157,9 +159,9 @@ def test_npv_lazy_vs_eager_parity(
     period_with_history = (_read_period_with_history(work, provider=provider)
                               or list(period_in_use))
     # The solve's years from the start of the run, as apply_npv passes them (a later solve of a chain, item 242).
-    year_rows = npv.solve_year_rows(work, provider, reader, active_solve, list(period_universe))
+    year_rows = discount.solve_year_rows(work, provider, reader, active_solve, list(period_universe))
     # Compute lazy variants.
-    lazy_infl = npv.p_inflation_op_from_source(
+    lazy_infl = discount.p_inflation_op_from_source(
         reader, active_solve, period_in_use, period_universe, provider=provider, year_rows=year_rows)
     lazy_fc = npv.p_ed_fixed_cost_from_source(reader, period_with_history)
     lazy_ann = lazy_lfc = lazy_lfcd = None
@@ -286,7 +288,7 @@ def test_npv_lazy_p_inflation_op_2pct(scenario_run):
                                           provider=provider)
     period_universe = _periodAll_from_source(
         reader, active_solve, workdir=work, provider=provider)
-    p_infl = npv.p_inflation_op_from_source(
+    p_infl = discount.p_inflation_op_from_source(
         reader, active_solve, period_in_use, period_universe)
     assert p_infl is not None
     for d in PERIODS_INFL:
@@ -350,7 +352,7 @@ def _lazy_annuity(disc: float | None, life: float | None, cost: float = 1000.0) 
     src = InMemoryReader({"unit": pl.DataFrame({"name": ["u"]})}, params,
                          defaults={("unit", "discount_rate"): 0.05})
     ed = pl.LazyFrame({"e": ["u"], "d": ["p2020"]})
-    out = npv._per_method_annuity_lf(src, ed, "invest_cost", npv._INVEST_NOT_ALLOWED).collect()
+    out = npv._per_method_annuity_lf(src, ed, "invest_cost", INVEST_NOT_ALLOWED).collect()
     return float(out["ann"][0])
 
 

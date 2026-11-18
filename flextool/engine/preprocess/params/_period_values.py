@@ -7,8 +7,8 @@ each entity is read under the name it gives the role, ``payback_time`` or else `
 :func:`_ed_period_param_lf`, so a constant, a ``period`` map and a map with the unnamed ``x`` index read alike, a
 map with another index is an error naming the entity, and a stochastic branch period inherits its anchor's value.
 
-A leaf module: the readers in ``_derived``, ``_existing`` and ``_npv`` import it at module level, so it imports
-``_direct`` (which imports ``_existing``) only inside its functions.
+A leaf module: the readers in ``_derived``, ``_existing``, ``_lifetime_inputs`` and ``_npv`` import it at module
+level, so it imports ``_direct`` (which imports ``_existing``) only inside its functions.
 """
 from __future__ import annotations
 

@@ -8229,8 +8229,8 @@ def _migrate_v56_fix_wrong_defaults(db) -> None:
 
     * ``model.inflation_offset_investment`` — current default ``1.0``,
       patched to ``0.0`` to match the engine fallback in
-      :func:`flextool.engine.preprocess.params._npv._inflation_scalars`
-      (line 355) and the symmetric fallback in ``_period_calc.py``
+      :func:`flextool.engine.preprocess.params._discount._solve_inflation_scalars`
+      and the symmetric fallback in ``_period_calc.py``
       (line 295).
 
     * ``commodity.unitsize`` — current default ``1.0``, patched to

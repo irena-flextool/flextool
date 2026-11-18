@@ -25,7 +25,7 @@ Fixture
 DB-direct ``p_inflation_op_full_cascade_from_source`` both see the
 same rate-0.02 source.  Built by ``tests/_gen_inflation_check.py``.
 
-Cascade algorithm (per ``flextool/engine/preprocess/params/_npv.py``):
+Cascade algorithm (per ``flextool/engine/preprocess/params/_discount.py``):
 
 For each (period d, year y in ``solve.years_represented``):
 
