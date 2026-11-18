@@ -120,8 +120,8 @@ def _values(db) -> dict:
 
 def _shipped(*, as_v81: bool = False) -> tuple[dict, dict[str, list[str]]]:
     """``({(class, name): description}, lists)`` of the shipped schema.  ``as_v81``: a description that a later step
-    rewrote (v82: the ones naming the model's discount parameters) is the v81 text, as a database migrated to 81 has
-    it."""
+    rewrote (v82: the ones naming the model's discount parameters or what reinvest_automatic does) is the v81
+    text, as a database migrated to 81 has it."""
     with open(package_data_path("schemas/spinedb_schema.json"), encoding="utf-8") as f:
         schema = json.load(f)
     lists: dict[str, list[str]] = {}
@@ -183,7 +183,7 @@ def test_lifetime_values_go_to_lifetime_technical_only(migrated) -> None:
 
 def test_salvage_value_is_net_salvage_value(migrated) -> None:
     before, after = migrated["before"], migrated["after"]
-    shipped, _ = _shipped()
+    shipped, _ = _shipped(as_v81=True)
     old = {k: v for k, v in before["values"].items() if k[2] == "salvage_value"}
     assert len(old) == 2
     for (cls, byname, _, alt), stored in old.items():
@@ -210,7 +210,7 @@ def test_age_and_end_of_life_definitions(migrated) -> None:
     """The age of existing capacity, its build year, the model's start year and the rounding of an end of life: the
     types, groups, defaults and value list of the schema, and the list members in the rounding order."""
     after = migrated["after"]
-    shipped, shipped_lists = _shipped()
+    shipped, shipped_lists = _shipped(as_v81=True)
     assert after["lists"]["end_of_life_methods"] == ["closest_seam", "previous_seam", "next_seam"]
     assert shipped_lists["end_of_life_methods"] == ["closest_seam", "previous_seam", "next_seam"]
     default = to_database("closest_seam")

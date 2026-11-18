@@ -332,3 +332,40 @@ def test_head_refresh_replaces_the_superseded_operations_offset_text(tmp_path_fa
             assert pdef["description"] == _shipped()[("model", "discount_offset_operations")]
             assert "between 0 and 1" in pdef["description"]
     assert not m._head_defaults_stale_ro(path)
+
+
+#: The definitions whose descriptions v82 rewrote for the replacement of reinvest_automatic capacity.
+_REPLACEMENT_TEXTS = ("lifetime_method", "lifetime_technical", "invest_cost", "age_at_model_start",
+                      "net_salvage_value", "end_of_life_method", "payback_time")
+
+
+@pytest.mark.parametrize("edited", [False, True])
+def test_head_refresh_writes_the_replacement_texts(tmp_path_factory, edited) -> None:
+    """A database at 82 made by a development build before v82 described the replacement of reinvest_automatic
+    capacity: its descriptions of these definitions are the v81 ones (payback_time the shipped v82 one), with the
+    shipped defaults.  It gets the current ones; a description the user edited (here unit.lifetime_method) is
+    kept."""
+    url = _seed(tmp_path_factory, f"v82_replacement_texts_{edited}", FLEXTOOL_DB_VERSION)
+    old = {key: pair[1] for key, pair in m._v82_superseded().items() if key[1] in _REPLACEMENT_TEXTS}
+    assert len(old) == 3 * len(_REPLACEMENT_TEXTS)
+    defaults = {key: pair[0] for key, pair in m._v82_superseded().items() if key in old}
+    with DatabaseMapping(url) as db:
+        for (cls, name), text in old.items():
+            pdef = db.get_item("parameter_definition", entity_class_name=cls, name=name)
+            mine = edited and (cls, name) == ("unit", "lifetime_method")
+            fields = {} if defaults[(cls, name)] is None else dict(zip(("default_value", "default_type"),
+                                                                       to_database(defaults[(cls, name)])))
+            db.update_parameter_definition(id=pdef["id"], description=text + (" My note." if mine else ""),
+                                           **fields)
+        db.commit_session("a development build's texts and the shipped defaults")
+    path = Path(url.removeprefix("sqlite:///"))
+    assert m._head_defaults_stale_ro(path)
+    migrate_database(url)
+    with DatabaseMapping(url) as db:
+        for (cls, name), text in old.items():
+            got = db.get_item("parameter_definition", entity_class_name=cls, name=name)["description"]
+            if edited and (cls, name) == ("unit", "lifetime_method"):
+                assert got == text + " My note."
+            else:
+                assert got == m._v82_texts()[(cls, name)] == _shipped()[(cls, name)] != text
+    assert not m._head_defaults_stale_ro(path)

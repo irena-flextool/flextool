@@ -11560,11 +11560,60 @@ def _v82_texts() -> dict[tuple[str, str], str]:
             "the start of the year, between 0 and 1: 0.5 (default) the middle of the year, standing for costs "
             "spread over the year. No effect when social_discount_rate is 0. Constant."),
     }
-    for cls, (cap, _what, _per) in _V81_CAPACITY.items():
+    for cls, (cap, what, per) in _V81_CAPACITY.items():
         t[(cls, "discount_rate")] = _v82_discount_rate_text()
-        t[(cls, "payback_time")] = _v81_payback_time_text(cap, "changes nothing (a whole number of years)").replace(
-            "inflation_rate", "social_discount_rate")
+        t[(cls, "payback_time")] = _v82_shipped_payback_time_text(cap).replace(
+            "With reinvest_automatic the annuity is paid in every year to the end of the model horizon.",
+            "With reinvest_automatic each plant (the first one and each replacement) is priced the same way, at the "
+            "values of the period it comes online.")
+        t.update(_v82_replacement_texts(cls, cap, what, per))
     return t
+
+
+def _v82_shipped_payback_time_text(cap: str) -> str:
+    """The description of ``payback_time`` a development build of v82 shipped (superseded, :func:`_v82_superseded`)."""
+    return _v81_payback_time_text(cap, "changes nothing (a whole number of years)").replace(
+        "inflation_rate", "social_discount_rate")
+
+
+def _v82_replacement_texts(cls: str, cap: str, what: str, per: str) -> dict[tuple[str, str], str]:
+    """The descriptions v82 writes for the replacement of reinvest_automatic capacity at its end of life, on the
+    class *cls* whose capacity is *cap* (of a *what*, priced per *per*)."""
+    v81 = _v81_texts()
+    return {
+        (cls, "lifetime_method"): (
+            "[choice] What happens when capacity reaches the end of its lifetime_technical. reinvest_automatic "
+            "(default): the plant is replaced, without a model choice, by a plant at the invest_cost, discount_rate, "
+            "payback_time, lifetime_technical and net_salvage_value of the period the replacement comes online, and "
+            "so on to the end of the model horizon (existing capacity too, free without an invest_cost); each plant "
+            "pays its own level yearly cost for its years in service, and retiring the capacity avoids the "
+            "replacements still to come. reinvest_choice: the capacity retires at the end of its lifetime_technical "
+            "and the model decides how much new capacity to build. no_reinvestment: the capacity retires at the end "
+            "of its lifetime_technical; investment is possible only during the first technical lifetime from the "
+            "model start, and the capacity is not rebuilt. The investment cost of a plant is paid as a level yearly "
+            "cost of its lifetime_technical (the annuity over payback_time spread over it, its net_salvage_value "
+            "netted in) for each year it is in service."),
+        (cls, "lifetime_technical"): v81[(cls, "lifetime_technical")].replace(
+            f"lifetime_method: reinvest_automatic keeps the {cap} to the end of the model horizon, reinvest_choice",
+            f"lifetime_method: reinvest_automatic replaces the {cap} (to the end of the model horizon), "
+            "reinvest_choice"),
+        (cls, "invest_cost"): v81[(cls, "invest_cost")].replace(
+            "(every year to the end of the model horizon with reinvest_automatic)",
+            "(with reinvest_automatic: each replacement at the invest_cost of the period it comes online, for its "
+            "years in service)"),
+        (cls, "age_at_model_start"): v81[(cls, "age_at_model_start")].replace(
+            f"with lifetime_method reinvest_automatic the {cap} is kept and the age has no effect.",
+            f"with lifetime_method reinvest_automatic the existing {cap} reaches its end of life (its age less the "
+            "replacements before the model start) and is then replaced."),
+        (cls, "net_salvage_value"): v81[(cls, "net_salvage_value")].replace(
+            "With lifetime_method reinvest_choice or no_reinvestment the value at the end of life is a level yearly "
+            "credit over the lifetime at discount_rate:",
+            "The value at the end of life is a level yearly credit over the lifetime at discount_rate (with "
+            "reinvest_automatic for each plant of the chain; a replacement without an invest_cost keeps it):"),
+        (cls, "end_of_life_method"): v81[(cls, "end_of_life_method")].replace(
+            "Used with lifetime_method reinvest_choice / no_reinvestment.",
+            "Used with every lifetime_method (with reinvest_automatic it sets when each plant is replaced)."),
+    }
 
 
 def _v82_superseded() -> dict[tuple[str, str], tuple[str | None, str]]:
@@ -11572,10 +11621,19 @@ def _v82_superseded() -> dict[tuple[str, str], tuple[str | None, str]]:
     development build of v82 shipped and that have since been superseded (the current description is in
     :func:`_v82_texts`; the default stays).  A database at 82 that has exactly such a pair gets the current
     description (:func:`_refresh_head_schema`)."""
-    return {("model", "discount_offset_operations"): (
+    out: dict[tuple[str, str], tuple[str | None, str]] = {("model", "discount_offset_operations"): (
         0.5, "[years] Where in each year operating and fixed costs are weighed by social_discount_rate, counted from "
              "the start of the year: 0.5 (default) the middle of the year, standing for costs spread over the year. "
              "No effect when social_discount_rate is 0. Constant.")}
+    # The descriptions of the replacement of reinvest_automatic capacity: a database at 82 has the v81 text (the
+    # shipped v82 text of payback_time).
+    v81 = _v81_texts()
+    defaults = {"lifetime_method": "reinvest_automatic", "end_of_life_method": "closest_seam"}
+    for cls, (cap, what, per) in _V81_CAPACITY.items():
+        for _cls, name in _v82_replacement_texts(cls, cap, what, per):
+            out[(cls, name)] = (defaults.get(name), v81[(cls, name)])
+        out[(cls, "payback_time")] = (None, _v82_shipped_payback_time_text(cap))
+    return out
 
 
 def _v82_definitions() -> dict[tuple[str, str], dict]:
@@ -11702,7 +11760,9 @@ def _migrate_v82_schema_batch(db) -> None:
     3. The three definitions: a constant, group ``model``, the description; a missing one is added with its shipped
        default (:func:`_v82_definitions_part`).
     4. The descriptions of the three and of ``discount_rate`` and ``payback_time`` (unit, connection, node), which
-       name them (:func:`_v82_descriptions`).
+       name them, and of ``lifetime_method``, ``lifetime_technical``, ``invest_cost``, ``age_at_model_start``,
+       ``net_salvage_value`` and ``end_of_life_method``, which say what reinvest_automatic does: the capacity is
+       replaced at the end of its life (:func:`_v82_descriptions`).
     5. The behaviour-change marker ``automatic_replacement_cost`` on the reinvest_automatic entities with a
        lifetime_technical whose investment cost or retirement now follows the replacements of their capacity
        (:func:`_v82_automatic_replacement_marker`).
@@ -11766,19 +11826,25 @@ def _head_schema_missing_ro(path) -> bool:
     return any(not set(wanted) <= members.get(name, set()) for name, wanted in lists.items())
 
 
-def _head_superseded() -> dict[tuple[str, str], tuple[str | None, str]]:
+def _head_superseded() -> dict[tuple[str, str], list[tuple[str | None, str]]]:
     """The superseded shipped ``(default, description)`` pairs that the refresh of the current data version replaces
-    (:func:`_v81_superseded` through :func:`_v81_refresh`, and :func:`_v82_superseded`)."""
+    (:func:`_v81_superseded` through :func:`_v81_refresh`, and :func:`_v82_superseded`), per definition: a
+    definition can have one of each (e.g. ``end_of_life_method``: the ``next_seam`` default of an early v81 build,
+    and the v81 text that v82 rewrote)."""
     if FLEXTOOL_DB_VERSION != 82:
         return {}
-    return {**_v81_superseded(), **_v82_superseded()}
+    out: dict[tuple[str, str], list[tuple[str | None, str]]] = {}
+    for superseded in (_v81_superseded(), _v82_superseded()):
+        for key, pair in superseded.items():
+            out.setdefault(key, []).append(pair)
+    return out
 
 
 def _is_superseded_pair(cls: str, name: str, default, description: str | None) -> bool:
     """Whether the definition ``(cls, name)`` has exactly a superseded shipped pair of :func:`_head_superseded`:
     its parsed default and its description both equal to what FlexTool shipped.  The test of
     :func:`_head_defaults_stale_ro`; :func:`_replace_superseded_pairs` applies the same one (:func:`_pair_is`)."""
-    return _pair_is(_head_superseded().get((cls, name)), default, description)
+    return any(_pair_is(pair, default, description) for pair in _head_superseded().get((cls, name), ()))
 
 
 def _pair_is(old: tuple[object, str] | None, default, description: str | None) -> bool:
