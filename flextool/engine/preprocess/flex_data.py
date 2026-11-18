@@ -7115,6 +7115,22 @@ def build_handoff_from_solution(
                     continue
                 v = float(r["value"]) * unitsize.get(n, 1.0)
                 rcs_rows.append((n, v))
+        # A representative-period node's realised level is its base-period chain at the end of the last realised
+        # period (v_state_inter at that period's last base period): the state at the last realised step lies
+        # inside a representative block and has a free offset.  The next solve starts its chain from it
+        # (model.core rp_inter_period_start_carry, owner decision).
+        rp_nodes = getattr(flex_data, "nodeState_rp", None) if flex_data is not None else None
+        if rcs_rows and rp_nodes is not None and rp_nodes.height > 0 and "v_state_inter" in sol._vars:
+            inter = sol.value("v_state_inter")
+            if inter is not None and inter.height > 0:
+                inter = (inter.with_columns(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                            pl.col("b").cast(pl.Utf8))
+                         .filter(pl.col("d") == str(last_d)).sort("n", "b")
+                         .group_by("n", maintain_order=True).last())
+                chain = {n: float(v) * unitsize.get(n, 1.0) for n, v in zip(inter["n"].to_list(),
+                                                                           inter["value"].to_list())}
+                rp_set = set(rp_nodes["n"].cast(pl.Utf8).to_list())
+                rcs_rows = [(n, chain[n]) if n in rp_set and n in chain else (n, v) for n, v in rcs_rows]
         if rcs_rows:
             roll_end_state_df = pl.DataFrame(
                 rcs_rows, schema=["node", "value"], orient="row")
@@ -8057,6 +8073,21 @@ def _storage_start_and_level(sol, flex_data, nsfm_df, unitsize: dict):
             if level.height == 0:
                 level = None
     scopes = _self_discharge.scope_start_levels(flex_data, state, start)
+
+    def values(var: str) -> "pl.DataFrame | None":
+        if var not in sol._vars:
+            return None
+        frame = sol.value(var)
+        if frame is None or frame.height == 0:
+            return None
+        return frame.with_columns([pl.col(c).cast(pl.Utf8) for c in frame.columns if c != "value"])
+
+    # A representative-period node's start is the start of its base-period chain (start_levels leaves it out).
+    chain = _self_discharge.rp_chain_start_levels(flex_data, values)
+    if chain is not None:
+        start = chain.select("node", pl.col("value").cast(pl.Float64)) if start is None else pl.concat(
+            [start.select("node", pl.col("value").cast(pl.Float64)),
+             chain.select("node", pl.col("value").cast(pl.Float64))], how="vertical")
     return start, level, scopes
 
 

@@ -694,3 +694,43 @@ def scope_start_levels(d, state: pl.DataFrame, start: "pl.DataFrame | None") -> 
            .sort("node", "period", "step"))
     return out if out.height > 0 else None
 
+
+def rp_chain_start_levels(d, values) -> "pl.DataFrame | None":
+    """``[node, value]``: the level (MWh) the base-period chain of each representative-period storage node starts
+    from in a solved solve: v_state_inter at the first base period of the solve's first period less that base
+    period's weighted net change of its blocks (``model.core._rp_weighted_drift``), × state_unitsize.
+
+    ``values(var)`` returns a solved variable as a frame (n, d, …, value) with Utf8 keys, or None.  None without
+    representative-period nodes.
+    """
+    rp = getattr(d, "nodeState_rp", None)
+    first = getattr(d, "nodeState_first_dt", None)
+    if not (_has_rows(rp) and _has_rows(first) and getattr(d, "rp_base__rep", None) is not None
+            and _has_rows(getattr(d, "p_rp_last_step", None)) and d.p_state_unitsize is not None):
+        return None
+    inter, state, start = values("v_state_inter"), values("v_state"), values("v_state_rp_start")
+    if inter is None or state is None or start is None:
+        return None
+    nodes = rp.select(pl.col("n").cast(pl.Utf8)).unique()
+    d0 = sorted(set(str(x) for x in first["d"].to_list()))
+    root = (inter.join(nodes, on="n", how="semi").filter(pl.col("d").is_in(d0))
+            .sort("n", "d", "b").group_by("n", maintain_order=True).first())
+    rep = d.rp_base__rep.frame.select(pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8), pl.col("r").cast(pl.Utf8),
+                                      pl.col("value").alias("w"))
+    last = d.p_rp_last_step.select(pl.col("d").cast(pl.Utf8), pl.col("r").cast(pl.Utf8),
+                                   pl.col("last_step").cast(pl.Utf8))
+    drift = (root.select("n", "d", "b")
+             .join(rep, on=["d", "b"], how="inner").join(last, on=["d", "r"], how="inner")
+             .join(state.select("n", "d", pl.col("t").alias("last_step"), pl.col("value").alias("_end")),
+                   on=["n", "d", "last_step"], how="left")
+             .join(start.select("n", "d", pl.col("t").alias("r"), pl.col("value").alias("_start")),
+                   on=["n", "d", "r"], how="left")
+             .group_by("n").agg((pl.col("w") * (pl.col("_end").fill_null(0.0) - pl.col("_start").fill_null(0.0)))
+                                .sum().alias("_drift")))
+    su = d.p_state_unitsize.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("su"))
+    out = (root.join(drift, on="n", how="left").join(su, on="n", how="inner")
+           .select(pl.col("n").alias("node"),
+                   value=(pl.col("value") - pl.col("_drift").fill_null(0.0)) * pl.col("su"))
+           .sort("node"))
+    return out if out.height > 0 else None
+

@@ -329,7 +329,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "the roll continues it from the carried level and the roll(s) holding its end close it at the "
                      "level it started from. Before, each roll cycled on itself from a free level (or the blocks of "
                      "a period held in part chained forward without closing it), so the level jumped at roll "
-                     "boundaries and the rolls could use energy that was never produced (results change)."),
+                     "boundaries and the rolls could use energy that was never produced (results change). The "
+                     "closing level is the start level in MWh, at most the storage capacity of the closing period."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "rolling_cyclic_storage_anchored"),
         ),
         BehaviourChange(
@@ -366,7 +367,10 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "free offset. The level a bind_forward_only_blended_weights chain starts from is now within the "
                      "storage capacity, and a bind_within_solve_blended_weights or "
                      "bind_within_period_blended_weights node takes no use_reference_value (its cycle closes on "
-                     "itself). Before, a forward chain started and ended at free levels whatever these parameters "
+                     "itself). A solve with representative periods that follows another solve starts the chain of a "
+                     "bind_forward_only_blended_weights node from the realised level, and hands on its chain level "
+                     "at the end of its realised period. Before, a forward chain started and ended at free levels "
+                     "whatever these parameters "
                      "said, so an investment solve could use stored energy that was never produced (results "
                      "change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "rp_storage_chain_pinned"),

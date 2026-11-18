@@ -231,8 +231,8 @@ class SolveHandoff:
     online_left_out: frozenset = frozenset()
 
     # The storage level (MWh) each storage node's first step starts from: the carried state, the fix_start energy
-    # (storage_state_start × capacity in service), the state of a cyclic node's wrap target or the free first state
-    # of an open chain (representative-period nodes are left out).  ``[node, value]``.  Read by the cascade
+    # (storage_state_start × capacity in service), the state of a cyclic node's wrap target, the free first state
+    # of an open chain, or the start of a representative-period node's base-period chain.  ``[node, value]``.  Read by the cascade
     # (``solve._run_model``): the start of a rolling instance that its closing rolls return to, and the start a
     # nested lower level borrows from this solve.  Producer: ``build_handoff_from_solution``.  Not a carrier: not in
     # ``_FIELDS``.

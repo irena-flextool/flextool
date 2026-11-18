@@ -371,3 +371,38 @@ def test_nested_first_roll_of_a_period_starts_from_the_upper_start(tmp_path, sta
         assert carry(rs[0]) == pytest.approx(up_start, abs=1e-6)
     up_levels = levels(up)
     assert levels(rs[-1])[("p1", "t16")] == pytest.approx(up_levels[max(up_levels)], abs=1e-6)
+
+
+@pytest.mark.parametrize("p2_capacity, closing", [(40.0, 40.0), (200.0, 50.0)])
+def test_closing_level_capped_at_the_closing_period_capacity(tmp_path, p2_capacity, closing):
+    """bind_within_solve, fix_start 0.5 on 100 MWh in p1, rolling over p1 and p2: the closing rolls end at the MWh
+    the first roll started from (50; no new energy when p2's capacity grows to 200) but never above the storage p2
+    holds (40 MWh when it shrinks; owner decision).  Before: always 50, so a shrinking store could not close."""
+    rs = rolls(run(tmp_path, {"st": two_periods(rolling_solve_jump=4.0)},
+                   tank={"existing": tmap({"p1": 100.0, "p2": p2_capacity}, "period")}))
+    closes = [row_bounds(build(r.flex_data), CLOSE, "tank") for r in rs if "close" in kinds(r)]
+    assert closes
+    for rows in closes:
+        (key, (lo, hi)), = rows.items()
+        assert key.endswith(",p2,t16]") and lo == pytest.approx(closing) and hi == pytest.approx(closing)
+    assert levels(rs[-1])[("p2", "t16")] == pytest.approx(closing, abs=1e-6)
+
+
+@pytest.mark.parametrize("rolling", [False, True])
+def test_capacity_added_later_starts_empty(tmp_path, rolling):
+    """Storage capacity added in a later period (existing 100 → 200 MWh in p2) holds no energy of its own: a forward
+    chain with fix_start 0.5 starts p1 at 50 MWh (the share of p1's capacity) and enters p2 at the level p1 left
+    (no load or charging at p2 t01), not at a share of the larger store — in one solve and across rolls (the carry
+    is MWh)."""
+    solve = two_periods(rolling_solve_jump=4.0)
+    if not rolling:
+        solve = {k: v for k, v in solve.items() if not k.startswith("rolling")} | {"solve_mode": "single_solve"}
+    steps = run(tmp_path, {"st": solve}, tank={"storage_binding_method": "bind_forward_only",
+                                               "existing": tmap({"p1": 100.0, "p2": 200.0}, "period")})
+    seq = rolls(steps) if rolling else [steps["st"]]
+    lv: dict = {}
+    for r in seq:                                            # the realised part of each roll (jump 4 h)
+        own = levels(r)
+        lv.update({k: own[k] for k in (sorted(own)[:4] if rolling else own)})
+    assert lv[("p2", "t01")] == pytest.approx(lv[("p1", "t16")], abs=1e-6)
+    assert lv[("p1", "t16")] <= 50.0 + 1e-6

@@ -40,7 +40,7 @@ r reserve, ud up/down, c commodity, i price tier.  "× unitsize" converts to MW 
 
 Equation families, in emit order (module in brackets when not model/core.py):
   Balance & storage   rp_inter_period_{balance,cyclic,fan_start,max_state}, maxState_rp_start;
-                      rp_inter_period_{start_fix,end_fix,start_max_state,start_min_state,end_match,
+                      rp_inter_period_{start_fix,start_carry,end_fix,start_max_state,start_min_state,end_match,start_match,
                       reference_value} (the ends of the base-period chain); nodeBalance_eq;
                       nodeBalanceCoarse_eq, stateConstantCoarse_eq (coarse new_stepduration groups);
                       nodeBalancePeriod_eq; node_balance_fix_quantity_eq_lower; node_storage_usage_fix_le;
@@ -897,7 +897,7 @@ def _check_storage_accounting(b: _Build) -> None:
       below the fix_start share there (raised where the reference row is built: _raise_reference_below_start).
     * fix_start on a forward chain (bind_forward_only, bind_forward_only_blended_weights) whose capacity at the start
       is not a decision of the solve, with an open end (no fix_end, no use_reference_value, no upper-level fix): the
-      start is an endowment the run may use up; logged once per run per node with its size.
+      start is an endowment the run may use up; a warning with its size, once per node and solve (owner decision).
     * A forward chain without representative periods whose start the solve decides by investing (a free start or
       fix_start on capacity it can invest in during the start period) in a solve that does not hold the last step
       of the model: the matching end (storage_state_end_match) needs both ends in one solve, so it is not applied;
@@ -955,17 +955,22 @@ def _check_storage_accounting(b: _Build) -> None:
     if endowed and d.p_state_existing_capacity is not None:
         exist = {(str(n), str(p)): float(v) for n, p, v in d.p_state_existing_capacity.frame.select(
             pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), "value").iter_rows()}
-        sizes = []
+        sizes = {}
         for n in endowed:
             first = sorted(periods.get(n, []))
             mwh = share[n] * exist.get((n, first[0]), 0.0) if first else 0.0
-            if mwh > 0 and _behaviour_changes.mark_once(("storage_endowment", n)):
-                sizes.append(f"{n} {mwh:.6g} MWh")
+            if mwh > 0:
+                sizes[n] = f"{n} {mwh:.6g} MWh"
         if sizes:
-            _LOG.info(
-                "Storage node(s) start at storage_state_start on capacity %s cannot change and end free (bind "
-                "forward only, no fix_end, use_reference_value or upper-level fix): the run may use this stored start "
-                "energy without producing it: %s.", where, ", ".join(sizes))
+            # Printed once per node and solve (the first solve of each level: a carried start is not an endowment).
+            _behaviour_changes.warn_once_each(
+                f"storage_endowment:{b.solve_name}", sorted(sizes),
+                lambda fresh: (f"Warning: storage node(s) start {where} at storage_state_start on capacity the solve "
+                               "cannot change and end free (bind forward only, no fix_end, use_reference_value or "
+                               "upper-level fix), so the run may use this start energy without producing it: "
+                               f"{', '.join(sizes[n] for n in fresh)}. This is a valid model of an initial stock (an "
+                               "endowment); if the storage should return it, use fix_start_end, a cyclic "
+                               "storage_binding_method or use_reference_value."))
     if not d.storage_solve_at_model_end:
         rp_nodes = set(str(n) for n in d.nodeState_rp["n"].to_list()) if _has_rows(d.nodeState_rp) else set()
         decided = sorted(n for n in forward - nested - rp_nodes if investable(n))
@@ -1747,9 +1752,33 @@ def _eq_rp_chain_ends(b: _Build) -> None:
 
     if forward is None:
         return
-    # The forward chains with a free start: the start pin above does not apply (no fix_start; a carried node,
-    # whose block states take no carry).
-    free_start = _rp_minus(forward, start_pin)
+    # ─── EQ. ─── rp_inter_period_start_carry ─────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # (v_state_inter[n,d,b] − drift[n,d,b]) · state_unitsize[n] = roll_continue_state[n]
+    #   ∀ n ∈ bind_forward_only_blended_weights ∩ nodeState_rp ∩ carried, (d,b) ∈ chain roots
+    # A representative-period solve that follows another solve (a sequence, or a roll) starts the base-period chain
+    # of a forward node from the level realised before it (the carry, MWh, routed by the cascade), as a
+    # bind_forward_only node without representative periods does at its first step (owner decision).  Before, the
+    # chain started free.  The block-internal states keep their free offsets: only the chain is absolute.
+    carried = _rp_node_set(b, _self_discharge.carried_nodes(d))
+    carry_start = None if carried is None else _rp_minus(
+        forward.join(carried, on="n", how="semi"), start_pin)
+    if carry_start is not None and d.p_roll_continue_state is not None:
+        over = carry_start.join(roots, how="cross").select("n", "d", "b")
+        level = (d.p_roll_continue_state.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").cast(pl.Float64))
+                 .join(over.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                   pl.col("b").cast(pl.Utf8)), on="n", how="inner")
+                 .select("n", "d", "b", "value"))
+        _notice_nodes("rp_storage_chain_pinned", carry_start)
+        m.add_cstr(
+            "rp_inter_period_start_carry",
+            over      = over,
+            sense     = "==",
+            lhs_terms = {"state_inter": Where(v_inter, over) * su, "neg_rp_drift": -Where(drift, over) * su},
+            rhs_terms = {"carry": Param(("n", "d", "b"), _rp_typed(b, level))},
+        )
+    # The forward chains with a free start: neither the start pin nor the carry above applies.
+    free_start = _rp_minus(_rp_minus(forward, start_pin), carry_start)
 
     # ─── EQ. ─── rp_inter_period_start_max_state / rp_inter_period_start_min_state ─
     # ─────────────────────────────────────────────────────────────────────────
@@ -1847,6 +1876,38 @@ def _eq_rp_chain_ends(b: _Build) -> None:
                          "rp_drift_start": Where(drift, over)},
             rhs_terms = {"endowment": rhs},
         )
+
+    # ─── EQ. ─── rp_inter_period_start_match ─────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_inter[n,d,b] · state_unitsize[n]  ≥  min(start[n], capacity[n,d])
+    #   ∀ n ∈ storage_roll_end(match) ∩ bind_forward_only_blended_weights ∩ nodeState_rp, (d,b) ∈ chain leaves,
+    #     not pinned by fix_end, no upper-level fix
+    #   start = the level (MWh) the node started the model from (a free start, recorded by the cascade)
+    # The matching end of a carried chain: a later representative-period solve that reaches the end of the model
+    # ends the chain at least at the level the model started the node from, so the solves together return it.
+    starts = _roll_end_rows(d, ("match",))
+    if starts is not None and b.cap.existing_state_n is not None:
+        names = set(starts["n"].cast(pl.Utf8).to_list()) & set(forward["n"].cast(pl.Utf8).to_list())
+        if end_pin is not None:
+            names -= set(end_pin["n"].cast(pl.Utf8).to_list())
+        if nested is not None:
+            names -= set(nested["n"].to_list())
+        nodes = forward.filter(pl.col("n").cast(pl.Utf8).is_in(sorted(names)))
+        if nodes.height > 0:
+            over = nodes.join(leaves, how="cross").select("n", "d", "b")
+            level = (over.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8))
+                     .join(starts.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("_s")), on="n")
+                     .join(b.cap.existing_state_n.frame.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                                              pl.col("value").alias("_c")), on=["n", "d"], how="left")
+                     .select("n", "d", "b", value=pl.min_horizontal("_s", pl.col("_c").fill_null(pl.col("_s")))))
+            _notice_nodes("storage_end_matches_start", nodes)
+            m.add_cstr(
+                "rp_inter_period_start_match",
+                over      = over,
+                sense     = ">=",
+                lhs_terms = {"state_inter": Where(v_inter, over) * su},
+                rhs_terms = {"start": Param(("n", "d", "b"), _rp_typed(b, level))},
+            )
 
     # ─── EQ. ─── rp_inter_period_reference_value ─────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -5713,6 +5774,19 @@ def _do_nothing_level(b: _Build, start: pl.DataFrame, ends: pl.DataFrame) -> pl.
             .drop("_hold"))
 
 
+def _capped_at_capacity(b: _Build, level: pl.DataFrame) -> pl.DataFrame:
+    """``level`` (n, d, t, value MWh, Utf8 keys) lowered to the storage capacity in service in the row's period
+    (existing, MWh; owner decision: a closure keeps the start energy in MWh but never asks for more than the period
+    can hold)."""
+    cap = b.cap.existing_state_n
+    if cap is None:
+        return level
+    return (level.join(cap.frame.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                        pl.col("value").cast(pl.Float64).alias("_cap")), on=["n", "d"], how="left")
+            .with_columns(value=pl.min_horizontal("value", pl.col("_cap").fill_null(pl.col("value"))))
+            .drop("_cap"))
+
+
 def _eq_storage_roll_end(b: _Build) -> None:
     """The horizon end of the bind_within_solve nodes of a rolling roll that continues from a carried state."""
     d = b.d
@@ -5778,7 +5852,9 @@ def _eq_storage_roll_end(b: _Build) -> None:
     #     (n,d,t) ∉ the steps an upper-level fix_quantity / fix_usage fixes,
     #     (n,d,t) ∉ the steps storage_state_end_binding pins
     #   start = the level (MWh) the first roll of the instance (scope_close: the roll that began the period or
-    #   timeblock) started from (the cascade records it)
+    #   timeblock) started from (the cascade records it), at most the storage capacity in service in d (owner
+    #   decision: the start energy is kept in MWh, so capacity built later adds none, but a closure never asks
+    #   for more than the closing period can hold)
     # A roll whose horizon holds the last step of its solve instance closes the cycle of bind_within_solve: it ends at
     # the level the instance started from, so the realised rolls together return what they took (every roll whose
     # horizon reaches that step, e.g. two when the horizon is not a multiple of the jump).  An upper-level
@@ -5795,8 +5871,9 @@ def _eq_storage_roll_end(b: _Build) -> None:
         over = scope_over if over is None else pl.concat([over, scope_over.cast(over.schema)]).unique()
         nodes = scope_nodes if nodes is None else pl.concat([nodes, scope_nodes.cast(nodes.schema)])
     if over is not None:
-        level = (over.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
-                 .join(nodes.select(pl.col("n").cast(pl.Utf8), pl.col("value").cast(pl.Float64)), on="n"))
+        level = _capped_at_capacity(b, over.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+                                    .join(nodes.select(pl.col("n").cast(pl.Utf8), pl.col("value").cast(pl.Float64)),
+                                          on="n"))
         m.add_cstr(
             "storage_state_roll_close",
             over      = over,
@@ -5807,18 +5884,22 @@ def _eq_storage_roll_end(b: _Build) -> None:
 
     # ─── EQ. ─── storage_state_roll_match ────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_state[n,d,t]·state_unitsize[n] ≥ start[n]
-    #   ∀ n ∈ storage_roll_end(match), (n,d,t) ∈ nodeState_last_dt, d ∈ period_last,
+    # v_state[n,d,t]·state_unitsize[n] ≥ min(start[n], capacity[n,d])
+    #   ∀ n ∈ storage_roll_end(match) ∖ nodeState_rp, (n,d,t) ∈ nodeState_last_dt, d ∈ period_last,
     #     (n,d,t) ∉ the steps an upper-level solve fixes, (n,d,t) ∉ the steps storage_state_end_binding pins
     #   start = the level (MWh) the first roll started the node from (free: fix_nothing; the cascade records it)
-    # The matching end of a forward chain in a rolling solve: a roll that reaches the end of the model ends a
-    # bind_forward_only node whose start the first roll chose at least at that start (storage_state_end_match in a
-    # solve that holds the whole model).  An inequality: the first roll's own horizon end is held to its start
+    # The matching end of a forward chain in a rolling solve or a sequence: a roll (or a later solve) that reaches
+    # the end of the model ends a bind_forward_only node whose start the first roll (the first solve) chose at least
+    # at that start (storage_state_end_match in a solve that holds the whole model).  An inequality: the first roll's own horizon end is held to its start
     # (storage_state_end_match), so it starts no higher than it can refill.
     over, nodes = rows(("match",), with_price=True)
+    if over is not None and _has_rows(d.nodeState_rp):
+        over = over.join(d.nodeState_rp.select(pl.col("n").cast(over.schema["n"], strict=False)), on="n", how="anti")
+        over = over if over.height > 0 else None
     if over is not None:
-        level = (over.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
-                 .join(nodes.select(pl.col("n").cast(pl.Utf8), pl.col("value").cast(pl.Float64)), on="n"))
+        level = _capped_at_capacity(b, over.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+                                    .join(nodes.select(pl.col("n").cast(pl.Utf8), pl.col("value").cast(pl.Float64)),
+                                          on="n"))
         m.add_cstr(
             "storage_state_roll_match",
             over      = over,

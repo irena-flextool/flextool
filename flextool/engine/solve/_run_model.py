@@ -368,6 +368,8 @@ class _RollingStorage:
         # usage_realised[(instance, period, node)]: the fix_usage energy the instance's sub-solves realised in it.
         self.usage_start: dict = {}
         self.usage_realised: dict = {}
+        # model_start[node]: the level (MWh) the node started the model from (a sub-solve at the model start).
+        self.model_start: dict = {}
 
 
 def _restore_methods(store: _RollingStorage, level_key, provider) -> "pl.DataFrame | None":
@@ -451,9 +453,10 @@ def _anchor_cyclic_in_rolling(*, state, solve: str, complete_solve_name: str, in
               if m in _SCOPE_METHODS and not (m == "bind_intraperiod_blocks"
                                                and sse.get(str(n)) == "fix_start_end")}
     # The matching end of a forward chain whose start the first roll chooses (fix_nothing; logic doc E-match).
+    shm = _node_methods(provider, "input/node__storage_solve_horizon_method", "storage_solve_horizon_method")
     free_forward = sorted(str(n) for n, m in zip(sbm["node"].to_list(), sbm[col].to_list())
                           if m == "bind_forward_only" and sse.get(str(n), "fix_nothing") == "fix_nothing"
-                          and str(n) not in nested_any)
+                          and str(n) not in nested_any and shm.get(str(n)) != "use_reference_value")
     if not targets and not scoped and not free_forward:
         _put_roll_end(provider, extra)
         return
@@ -819,6 +822,42 @@ def _nested_end_rows(*, solve: str, parent: "str | None", parent_handoff, active
     if rows:
         from flextool.engine import _behaviour_changes
         _behaviour_changes.notice("nested_storage_fix_cumulative", "nodes", sorted({r[0] for r in rows}))
+    return rows
+
+
+def _record_model_start(store: "_RollingStorage", handoff, routed_state) -> None:
+    """Record the level (MWh) each storage node started the model from, in a sub-solve that starts with the model
+    (``cycle_start_state``; the nodes it did not take from a carry)."""
+    frame = getattr(handoff, "cycle_start_state", None)
+    if frame is None or frame.height == 0:
+        return
+    carried = _frame_nodes(routed_state)
+    for node, value in zip(frame["node"].cast(pl.Utf8).to_list(), frame["value"].to_list()):
+        if node not in carried and value is not None:
+            store.model_start.setdefault(node, float(value))
+
+
+def _sequence_match_rows(*, provider, routed_state, store: "_RollingStorage", at_model_end: bool,
+                         upper_fixed: set) -> list:
+    """``match`` rows (node, MWh) of a sub-solve that is not rolling, reaches the end of the model and continues a
+    forward chain (bind_forward_only, bind_forward_only_blended_weights) with a free start (fix_nothing) from a
+    carry: it ends the chain at least at the level the model started the node from (the matching end over a
+    sequence of solves; model.core storage_state_roll_match / rp_inter_period_start_match)."""
+    if not at_model_end or routed_state is None:
+        return []
+    sbm = _node_methods(provider, _SBM_KEY, "storage_binding_method")
+    sse = _node_methods(provider, _SSE_KEY, "storage_start_end_method")
+    shm = _node_methods(provider, "input/node__storage_solve_horizon_method", "storage_solve_horizon_method")
+    rows = []
+    for node in sorted(_frame_nodes(routed_state)):
+        if (sbm.get(node, "bind_forward_only") in ("bind_forward_only", "bind_forward_only_blended_weights")
+                and sse.get(node, "fix_nothing") == "fix_nothing" and node not in upper_fixed
+                and shm.get(node) != "use_reference_value"
+                and node in store.model_start):
+            rows.append((node, "match", store.model_start[node]))
+    if rows:
+        from flextool.engine import _behaviour_changes
+        _behaviour_changes.notice("storage_end_matches_start", "nodes", [r[0] for r in rows])
     return rows
 
 
@@ -2470,6 +2509,13 @@ def native_run_model(state, solver) -> int:
             solve=solve, parent=parent_roll.get(solve), parent_handoff=parent_handoff,
             active_time_lists=active_time_lists, time_index=_time_index, instance=_instance_of[solve],
             store=_rolling_storage, period_branch=period__branch_lists[solve])
+        # A later solve of a sequence that reaches the end of the model returns the free start the model began
+        # forward chains at (the rolls of a rolling solve do so in _anchor_cyclic_in_rolling).
+        if state.solve.solve_modes.get(complete_solve[solve]) != "rolling_window":
+            _nested_rows += _sequence_match_rows(
+                provider=sub_solve_provider, routed_state=_routed_state, store=_rolling_storage,
+                at_model_end=storage_solve_at_model_end[i] or storage_rp_chain_at_model_end[i],
+                upper_fixed=_upper_fixed)
         # Rolling bind_within_solve: carry from roll to roll, the horizon-end anchor and the closing rolls' closure.
         _anchor_cyclic_in_rolling(
             state=state, solve=solve, complete_solve_name=complete_solve[solve], instance=_instance_of[solve],
@@ -2660,6 +2706,8 @@ def native_run_model(state, solver) -> int:
                                  period__branch_lists[solve])
             _record_usage(_rolling_storage, _instance_of[solve], state.handoffs.get(last_captured_solve),
                           period__branch_lists[solve])
+            if _first_step is not None and _time_index.position(*_first_step) == _model_start:
+                _record_model_start(_rolling_storage, state.handoffs.get(last_captured_solve), _routed_state)
             _check_borrowed_start(_rolling_storage, solve, complete_solve[solve],
                                   state.handoffs.get(last_captured_solve))
             # The solve's own (produced) handoff goes to the ``produced_handoff/*`` keys: the ``handoff/*`` keys

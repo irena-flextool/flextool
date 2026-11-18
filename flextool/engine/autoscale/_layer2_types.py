@@ -286,6 +286,8 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "storage_state_roll_anchor_share": CstrFamily(QuantityType.ENERGY),
     "storage_state_roll_close_share": CstrFamily(QuantityType.ENERGY),
     "storage_state_roll_match": CstrFamily(QuantityType.ENERGY),
+    "rp_inter_period_start_carry": CstrFamily(QuantityType.ENERGY),
+    "rp_inter_period_start_match": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_end_match (forward chains whose start the solve decides)
     "storage_state_end_match": CstrFamily(QuantityType.ENERGY),
     "storage_state_end_match_share": CstrFamily(QuantityType.ENERGY),

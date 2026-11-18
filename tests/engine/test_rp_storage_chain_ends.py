@@ -168,12 +168,15 @@ def test_cyclic_blended_fix_start_pins_the_cycle_level(tmp_path_factory):
     assert not row_terms(build(step.flex_data), "rp_inter_period_end_match")
 
 
-def test_fix_start_on_existing_capacity_is_an_endowment(tmp_path_factory):
+def test_fix_start_on_existing_capacity_is_an_endowment(tmp_path_factory, capsys):
     """fix_start 0.5 on 2 MWh the solve cannot change, forward chain, free end: the chain starts at 1 MWh (pinned on
-    the chain, not inside the first block) and may end empty, the user's explicit endowment (logged, not
-    closed): production 3."""
+    the chain, not inside the first block) and may end empty, the user's explicit endowment (a printed warning with
+    its size that calls it a valid initial stock, owner decision; not closed): production 3."""
     step = _run(tmp_path_factory, s={"existing": 2.0, "storage_binding_method": FO_B,
                                      "storage_start_end_method": "fix_start", "storage_state_start": 0.5})
+    out = capsys.readouterr().out
+    lines = [ln for ln in out.splitlines() if "storage_state_start on capacity the solve cannot change" in ln]
+    assert len(lines) == 1 and "s 1 MWh" in lines[0] and "endowment" in lines[0]
     start, end = _chain(step)
     assert (start, end) == pytest.approx((1.0, 0.0), abs=TOL)
     assert _production(step) == pytest.approx(3.0, abs=TOL)
