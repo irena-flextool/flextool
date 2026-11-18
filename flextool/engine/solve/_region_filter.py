@@ -2061,7 +2061,8 @@ def master_network_data(
     new.ed_lifetime_fixed_cost_divest = _keep_entity_param(data.ed_lifetime_fixed_cost_divest)
     new.ed_entity_annual_discounted = _keep_entity_param(data.ed_entity_annual_discounted)
     for name in ("ed_divest_salvage", "ed_existing_salvage_credit", "ed_entity_annual_discounted_run",
-                 "ed_lifetime_fixed_cost_run", "ed_lifetime_fixed_cost_divest_run", "ed_annuity",
+                 "ed_lifetime_fixed_cost_run", "ed_lifetime_fixed_cost_divest_run", "edd_annuity",
+                 "edd_entity_annual_discounted_run",
                  "ed_divest_settlement_yearly", "p_entity_pre_existing", "cd_divest_built_cost",
                  "cd_divest_built_fixed"):
         setattr(new, name, _keep_entity_param(getattr(data, name, None)))

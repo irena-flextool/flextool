@@ -74,7 +74,7 @@ _PAR_DROP = [
     # decision period only (persist_realized_slice); keep='last' ties the
     # rolls of one solve.
     'entity_annual_discounted', 'entity_divest_salvage',
-    'entity_annuity_yearly', 'entity_divest_settlement_yearly',
+    'entity_annuity_yearly', 'entity_annual_discounted_start', 'entity_divest_settlement_yearly',
     # The reported costs' discount factors count from the start of the run,
     # so every solve holding a period gives it the same value.
     'inflation_factor_investment_yearly',

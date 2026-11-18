@@ -170,3 +170,43 @@ def test_warning_names_an_entity_whose_plant_earns_money(capsys) -> None:
     warn_salvage_above_cost(table)
     out = capsys.readouterr().out
     assert out.count("Warning: free:") == 1 and "priced" not in out
+
+
+@pytest.mark.solver
+def test_replacement_is_reported_when_it_comes_online(tmp_path_factory) -> None:
+    """100 MW built in p2020 (invest_period, exactly 100 MW there and nothing elsewhere), invest_cost 400 in p2020 /
+    p2025 and 300 in p2030 / p2035, L 10: the plant of p2020 serves [0, 10), its replacement (online in p2030 at
+    the p2030 invest_cost) [10, 20).  The reported costs follow each plant:
+
+    * the price per year in service (``edd_annuity``): A(400 000) in p2020 and p2025, A(300 000) in p2030 and p2035;
+    * the investment lump split by the period each plant comes online (``edd_entity_annual_discounted_run``; the
+      solve is the run): A(400 000)·S[0,10) at p2020, A(300 000)·S[10,20) at p2030;
+    * cost_unit_discounted__d investment (M CUR): 100 · those in p2020 and p2030, 0 in p2025 and p2035;
+      cost_unit_annualized__d investment: 100 · the yearly price of each period."""
+    from tests.engine.test_chain_costs import MEGA, _period_map, _results, _row
+    cost = _map({"p2020": 400.0, "p2025": 400.0, "p2030": 300.0, "p2035": 300.0})
+    only_p2020 = _period_map({"p2020": 100.0, "p2025": 0.0, "p2030": 0.0, "p2035": 0.0})
+    values = [v for v in _values(10.0, cost=cost) if v[2] != "invest_method"] + [
+                                         ["unit", PLANT, "invest_method", b64("invest_period", "str")],
+                                         ["unit", PLANT, "invest_max_period", only_p2020],
+                                         ["unit", PLANT, "invest_min_period", only_p2020]]
+    a400, a300 = 400_000.0 * ann(R, 10.0), 300_000.0 * ann(R, 10.0)
+    yearly = {"p2020": a400, "p2025": a400, "p2030": a300, "p2035": a300}
+    lumps = {"p2020": a400 * span(0, 10), "p2025": 0.0, "p2030": a300 * span(10, 20), "p2035": 0.0}
+
+    steps, _, _ = _RUNS.get(tmp_path_factory, alt="rp_reported", values=values,
+                            base_chain=_no_battery_invest(SINGLE))
+    fd = list(steps.values())[-1].flex_data
+    rows = utf8(fd.edd_annuity.frame).filter((pl.col("e") == PLANT) & (pl.col("d_invest") == "p2020"))
+    assert dict(zip(rows["d"].to_list(), rows["value"].to_list())) == pytest.approx(yearly, rel=1e-12)
+    rows = utf8(fd.edd_entity_annual_discounted_run.frame).filter(
+        (pl.col("e") == PLANT) & (pl.col("d_invest") == "p2020"))
+    assert dict(zip(rows["d"].to_list(), rows["value"].to_list())) == pytest.approx(
+        {d: v for d, v in lumps.items() if v}, rel=1e-12)
+
+    results = _results(tmp_path_factory, "rp_reported_csv", values, _no_battery_invest(SINGLE))
+    for d in ("p2020", "p2025", "p2030", "p2035"):
+        discounted = _row(results["cost_unit_discounted__d"], d)["investment"] * MEGA
+        assert discounted == pytest.approx(100.0 * lumps[d], rel=1e-7, abs=1e-6), d
+        annualized = _row(results["cost_unit_annualized__d"], d)["investment"] * MEGA
+        assert annualized == pytest.approx(100.0 * yearly[d], rel=1e-7), d

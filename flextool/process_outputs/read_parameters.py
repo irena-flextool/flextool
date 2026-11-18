@@ -197,6 +197,23 @@ def _pdX_per_entity(
     return out
 
 
+def _edd_per_entity(param, *, solve_name: str, flex_data: "FlexData") -> pd.DataFrame:
+    """A Param with dims ``(e, d_invest, d)`` in pandas wide format: rows ``(solve, period_invest, period)``,
+    columns entity; the rows of a recourse fan's branch periods also at their label (:mod:`._fan_labels`)."""
+    from flextool.process_outputs._fan_labels import recourse_branch_labels, with_label_rows
+
+    frame = None if param is None else param.frame
+    if frame is not None:
+        frame = with_label_rows(frame, recourse_branch_labels(flex_data), ("d_invest", "d"))
+    if frame is None or frame.height == 0:
+        idx = pd.MultiIndex.from_arrays([[], [], []], names=["solve", "period_invest", "period"])
+        out = pd.DataFrame(index=idx, dtype=float)
+        out.columns = pd.Index([], dtype="object", name="entity")
+        return out
+    return wide_per_entity(with_solve_column(frame, solve_name), row_dims=("solve", "d_invest", "d"), col_dim="e",
+                           row_names=("solve", "period_invest", "period"), col_name="entity")
+
+
 def _ramp_cost_by_period(flex_data: "FlexData") -> "object | None":
     """``p_ramp_cost_arc`` (p, source, sink) repeated over the periods of the solve, as a Param
     ``(p, source, sink, d)`` (the cost is constant; the period key keeps it solve-keyed like
@@ -1676,13 +1693,15 @@ def read_parameters(
         densify_entities=_entity_universe,
     )
 
-    # The undiscounted yearly amounts (CUR/MW/yr) of the investment decisions (the price per year in service, at
-    # the start of operation) and of the retirements (the salvage settlement as a yearly amount of the retirement
-    # period): the annualized investment and retirement costs.
-    p.entity_annuity_yearly = _pdX_per_entity(
-        _with_fan_label_rows(getattr(flex_data, "ed_annuity", None), flex_data), solve_name=solve_name,
-        entity_dim="e", col_name="entity", flex_data=flex_data,
-    )
+    # The undiscounted yearly amounts (CUR/MW/yr) of the investment decisions (the price per year in service of the
+    # plant in service in each period, rows (solve, period_invest, period)) and of the retirements (the salvage
+    # settlement as a yearly amount of the retirement period): the annualized investment and retirement costs.
+    # The investment lump of each decision split by the period each of its plants comes online (rows (solve,
+    # period_invest, period)): the discounted investment cost, reported when each plant comes online.
+    p.entity_annuity_yearly = _edd_per_entity(getattr(flex_data, "edd_annuity", None), solve_name=solve_name,
+                                              flex_data=flex_data)
+    p.entity_annual_discounted_start = _edd_per_entity(
+        getattr(flex_data, "edd_entity_annual_discounted_run", None), solve_name=solve_name, flex_data=flex_data)
     p.entity_divest_settlement_yearly = _pdX_per_entity(
         getattr(flex_data, "ed_divest_settlement_yearly", None), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,

@@ -104,9 +104,16 @@ _ANNUAL_SRC_FIELD: dict[str, str] = {
     "entity_annual_discounted": "ed_entity_annual_discounted",
     "entity_annuity": "ed_entity_annual_discounted",
     "entity_divest_salvage": "ed_divest_salvage",
-    # The yearly annuities of the decisions (the annualized investment and retirement costs).
-    "entity_annuity_yearly": "ed_annuity",
+    # The yearly settlement of the retirements (the annualized retirement costs).
     "entity_divest_settlement_yearly": "ed_divest_settlement_yearly",
+}
+# The (period_invest, period)-keyed amounts of the investment decisions and their FlexData carriers: the yearly
+# price of the plant in service in each period (the annualized investment cost) and the investment lump at the
+# period each plant comes online (the discounted investment cost).  Like the lumps, they come from the solve that
+# realizes the decision period.
+_DECISION_PARAMS: dict[str, str] = {
+    "entity_annuity_yearly": "edd_annuity",
+    "entity_annual_discounted_start": "edd_entity_annual_discounted_run",
 }
 
 
@@ -301,6 +308,11 @@ def _apply_realized_filter(
         if _annual_carrier_empty(flex_data, _ANNUAL_SRC_FIELD[attr]):
             return obj.iloc[0:0]
         return _filter_by_period(obj, realized_invest_periods)
+    if attr in _DECISION_PARAMS:
+        if _annual_carrier_empty(flex_data, _DECISION_PARAMS[attr]):
+            return obj.iloc[0:0]
+        decided = obj.index.get_level_values("period_invest").astype(str)
+        return obj[decided.isin(realized_invest_periods)]
 
     # Hack 1 — entity_lifetime_fixed_cost[_divest]: the lifetime fixed-cost
     # lump of a decision comes from the solve that realizes the decision

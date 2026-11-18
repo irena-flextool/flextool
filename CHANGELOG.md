@@ -47,8 +47,10 @@ Input databases move to data version 82. The FlexTool window, the Spine Toolbox 
   Before, the capacity paid the annuity of its first plant for every year to the end of the horizon, without a
   salvage value. With constant values, `payback_time` equal to `lifetime_technical` and no `net_salvage_value` the
   cost is the same as before; a falling `invest_cost`, a `net_salvage_value` or a `payback_time` now changes it. In
-  a stochastic fan a replacement takes the values of its own branch. A plant without a `lifetime_technical` is
-  never replaced and pays its annuity to the end of the horizon. Upgraded databases get a notice naming the
+  a stochastic fan a replacement takes the values of its own branch. The reported investment cost of a
+  replacement is in the period it comes online, and the annualized investment cost of each period is the yearly
+  cost of the plant in service then. A plant without a `lifetime_technical` is never replaced and pays its annuity
+  to the end of the horizon. Upgraded databases get a notice naming the
   entities whose investment cost changes (results change).
 - **Investments get cheaper by one year of interest at the default `discount_offset_investment` 0: the yearly
   investment payment is sized for when it is paid** (unit, connection, node). The annuity is now `invest_cost ·

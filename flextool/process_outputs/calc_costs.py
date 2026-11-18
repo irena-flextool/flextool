@@ -117,16 +117,10 @@ def _fixed_cost_in_window(long: pd.DataFrame, window: pd.MultiIndex, decision: s
     return fixed
 
 
-def _annualized_investment(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """``(investment, fixed cost invested)`` per year, rows: period, columns: entity (CUR/yr).
-
-    ANN. invest_yr[e,d'] = Σ_{(e,d,d') ∈ edd_operating_window} v_invest[e,d]·unitsize[e]·ed_annuity[e,d]
-         fixed_invested_yr[e,d'] = Σ_{(e,d,d') ∈ edd_operating_window} v_invest[e,d]·unitsize[e]·fc[e,d']
-      The yearly amounts of every vintage in service in d': its price per year in service ed_annuity (a_cap at
-      c(d), the level yearly cost of its lifetime; the annuity with reinvest_automatic), as in the objective, and
-      the fixed cost of d'.  The investment cost is reported by these yearly amounts (the objective's spreading);
-      the events (investment and salvage when they happen) are not.  Only the decisions whose lump is reported
-      (c(d) realized, :func:`_at_start_of_operation`)."""
+def _invested_mw_at_start(par, s, v) -> pd.DataFrame:
+    """``[period_invest, entity, value, start]``: the capacity of each investment decision (MW, MWh; under recourse
+    the branch-weighted investment at a fan label, :func:`_invest_with_fan`) and the period it starts to operate in,
+    c(d) (``s.edd_invest_commission``; the decision period without a construction lead time)."""
     columns = v.invest.columns
     mw = _invest_with_fan(v).mul(par.entity_unitsize[columns])
     long = _decisions_long(mw, 'period_invest')
@@ -137,12 +131,61 @@ def _annualized_investment(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
         long['start'] = long['start'].fillna(long['period_invest'])
     else:
         long = long.assign(start=long['period_invest'])
+    return long
+
+
+def _per_vintage_period(long: pd.DataFrame, amount: pd.DataFrame, columns: pd.Index) -> pd.DataFrame:
+    """``long`` (``[period_invest, entity, value]``, MW of a decision) times ``amount`` (rows (period_invest,
+    period), columns entity: an amount per MW of each decision in each period), summed per (period, entity).  Rows:
+    period (in ``amount``'s order), columns: ``columns``."""
+    if long.empty or amount.empty or len(amount.columns) == 0:
+        out = pd.DataFrame(index=pd.Index([], name='period'), columns=columns, dtype=float)
+        out.columns.name = columns.name
+        return out
+    per = (amount.stack(future_stack=True).rename('coef').rename_axis(['period_invest', 'period', 'entity'])
+                 .reset_index())
+    per = per[per['coef'].notna()].astype({'period_invest': str, 'period': str, 'entity': str})
+    joined = long.astype({'period_invest': str, 'entity': str}).merge(per, on=['period_invest', 'entity'],
+                                                                      how='inner')
+    joined = joined.assign(value=joined['value'] * joined['coef'])
+    out = joined.groupby(['period', 'entity'], sort=False)['value'].sum().unstack('entity')
+    order = list(dict.fromkeys(per['period']))
+    out = out.reindex(index=[d for d in order if d in out.index], columns=columns)
+    out.index.name = 'period'
+    out.columns.name = columns.name
+    return out
+
+
+def _invest_at_plant_starts(par, s, v) -> pd.DataFrame:
+    """The discounted investment cost (rows: period, columns: entity, CUR), reported when each plant comes online.
+
+    INV. invest_d[e,d'] = Σ_{d} v_invest[e,d]·unitsize[e]·entity_annual_discounted_start[e,d,d']
+      entity_annual_discounted_start[e,d,d'] (``edd_entity_annual_discounted_run``): the investment lump of decision
+      d (the objective's, from the start of the run over the run's periods) of the plants that come online in d':
+      the whole lump at c(d), or with reinvest_automatic each replacement's part at the period it comes online.
+      Only where the decision's c(d) and d' are realized or a fan label (:func:`_reported_start_periods`)."""
+    long = _invested_mw_at_start(par, s, v)
+    reported = _reported_start_periods(s)
+    long = long[long['start'].isin(reported)]
+    out = _per_vintage_period(long, par.entity_annual_discounted_start, v.invest.columns)
+    return out[out.index.isin(reported)]
+
+
+def _annualized_investment(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """``(investment, fixed cost invested)`` per year, rows: period, columns: entity (CUR/yr).
+
+    ANN. invest_yr[e,d'] = Σ_{d} v_invest[e,d]·unitsize[e]·edd_annuity[e,d,d']
+         fixed_invested_yr[e,d'] = Σ_{(e,d,d') ∈ edd_operating_window} v_invest[e,d]·unitsize[e]·fc[e,d']
+      The yearly amounts of every vintage in service in d': edd_annuity[e,d,d'] the price per year in service of
+      the plant of decision d in service in d' (a_cap − a_salv of the plant as constructed in c(d), the level
+      yearly cost of its lifetime with its salvage credit; with reinvest_automatic each replacement at its own
+      price), as in the objective, and the fixed cost of d'.  The investment cost is reported by these yearly
+      amounts (the objective's spreading).  Only the decisions whose c(d) is realized (or a fan label)."""
+    columns = v.invest.columns
+    long = _invested_mw_at_start(par, s, v)
     long = long[long['start'].isin(_reported_start_periods(s))]
-    annuity = _decisions_long(par.entity_annuity_yearly, 'period_invest').rename(columns={'value': 'coef'})
-    invest = long.merge(annuity, on=['period_invest', 'entity'], how='inner')
-    invest = invest.assign(value=invest['value'] * invest['coef'])[['period_invest', 'entity', 'value']]
     window = s.edd_operating_window
-    return (_per_year_in_window(invest, window, 'period_invest', columns),
+    return (_per_vintage_period(long[['period_invest', 'entity', 'value']], par.entity_annuity_yearly, columns),
             _fixed_cost_in_window(long, window, 'period_invest', 'start', par, columns, drop_unpriced=True))
 
 
@@ -499,8 +542,7 @@ def compute_costs(par, s, v, r) -> None:
     # lifetime fixed cost of new capacity are reported in the period the capacity starts to operate, the
     # retirement lumps in the retirement period.
     invest = _invest_with_fan(v)
-    r.cost_entity_invest_d = _at_start_of_operation(
-        invest.mul(par.entity_unitsize[v.invest.columns]).mul(par.entity_annual_discounted), s)
+    r.cost_entity_invest_d = _invest_at_plant_starts(par, s, v)
     r.cost_entity_divest_d = _with_built(
         -v.divest.mul(par.entity_unitsize[v.divest.columns]).mul(par.entity_divest_salvage), v.divest_built_cost)
     # The fixed cost of existing capacity: the user's existing capacity aged over its lifetime, in every period of

@@ -114,7 +114,8 @@ y-axis is `m3/h` for a water node and `MWh/h` by default. A label without tokens
     the yearly amounts of every vintage and retirement in effect in the period: an investment adds its yearly
     investment cost (with `reinvest_choice` / `no_reinvestment` the level yearly cost of the plant over its
     `lifetime_technical`: the `invest_cost` annuity over `payback_time` of the period the capacity starts to operate,
-    its present value spread evenly over the lifetime; the annuity with `reinvest_automatic`) and the period's
+    its present value spread evenly over the lifetime, less its salvage credit; with `reinvest_automatic` the same
+    for each plant of its chain, each replacement at the values of the period it comes online) and the period's
     yearly fixed cost in every period it is in service within the run (until its end of life as
     `end_of_life_method` rounds it, or every later period with `reinvest_automatic`). These are the yearly amounts
     the objective charges; the investment is not reported as a one-off event. A retirement
@@ -150,8 +151,10 @@ as one solve over the same periods with the same decisions would report:
   (its yearly investment cost for each year it is in service within the run, at the `invest_cost`,
   `payback_time`, `discount_rate` and `lifetime_technical` of that period) and the fixed cost of each period it
   operates in come once, from the solve that decided it, and are reported
-  only once a solve realizes the period it starts to operate in. Capacity carried from an earlier solve is
-  therefore not charged again as existing capacity.
+  only once a solve realizes the period it starts to operate in. With `reinvest_automatic` each replacement of the
+  plant at its end of life is reported in the period the replacement comes online (its own yearly cost for its
+  years in service, at the values of that period). Capacity carried from an earlier solve is therefore not charged
+  again as existing capacity.
 - **Retirements** are reported in the retirement period: the salvage settlement as the objective charges it (the
   net salvage value received at the start of the period, less the salvage credits of existing capacity given back),
   and the fixed cost saved in the periods the retirement counts in. The fixed cost of existing capacity (*fixed cost pre-existing*) is that of the

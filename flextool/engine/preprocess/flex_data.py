@@ -1297,16 +1297,19 @@ class FlexData:
     # Reported costs only (no model term reads them; ``_npv`` "Run-level fields of the reported costs"):
     # discounted from the start of the run over the periods of the whole run.  (d,) factors over the solve's
     # periods and the other run periods; (e, d) lumps of the invest / divest decisions (the lifetime fixed cost
-    # over every entity of the period history); (e, d) undiscounted yearly amounts, CUR/MW/yr (invest: the price per
-    # year in service of the start of operation; divest: the salvage settlement as a yearly amount of the retirement
-    # period); (e, d_invest, d) / (e, d_divest, d) the run periods each vintage operates in / each retirement applies
-    # to.  Equal to the per-solve fields when the run is the solve.
+    # over every entity of the period history); undiscounted yearly amounts, CUR/MW/yr ((e, d_invest, d) invest: the
+    # price per year in service of the plant of each vintage in service in d, a reinvest_automatic replacement at its
+    # own price; (e, d) divest: the salvage settlement as a yearly amount of the retirement period); (e, d_invest,
+    # d) the investment lump of each vintage split by the period each of its plants comes online; (e, d_invest, d)
+    # / (e, d_divest, d) the run periods each vintage operates in / each retirement applies to.  Equal to the
+    # per-solve fields when the run is the solve.
     p_inflation_op_run: Param | None = None
     p_inflation_inv_run: Param | None = None
     ed_entity_annual_discounted_run: Param | None = None
     ed_lifetime_fixed_cost_run: Param | None = None
     ed_lifetime_fixed_cost_divest_run: Param | None = None
-    ed_annuity: Param | None = None
+    edd_annuity: Param | None = None
+    edd_entity_annual_discounted_run: Param | None = None
     ed_divest_settlement_yearly: Param | None = None
     edd_operating_window: pl.DataFrame | None = None
     edd_retire_window: pl.DataFrame | None = None

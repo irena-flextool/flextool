@@ -28,7 +28,8 @@ The cluster covers these FlexData fields:
 
 and, for the reported costs only (no model term reads them), their run-level
 twins ``*_run`` discounted from the start of the run over the periods of the
-whole run, the undiscounted yearly amounts ``ed_annuity`` (an investment's price per year in service) /
+whole run, the undiscounted yearly amounts ``edd_annuity`` (an investment's price per year in service, per
+period) /
 ``ed_divest_settlement_yearly`` (a retirement's salvage settlement as a yearly amount of its period),
 the operating / retirement windows ``edd_operating_window`` / ``edd_retire_window`` (section "Run-level
 fields of the reported costs").
@@ -1041,25 +1042,17 @@ def _generation_walk(walk: pl.DataFrame, years: dict[str, float], gens: pl.DataF
                         d_salv=pl.coalesce("_eol", "d_eol", pl.lit(last_period, dtype=pl.Utf8))))
 
 
-def chain_lumps(source: "InputSource",
-                walk: pl.DataFrame,
-                factor: pl.DataFrame,
-                years: dict[str, float],
-                gens: pl.DataFrame,
-                last_period: str | None) -> pl.DataFrame:
-    """``[e, d, single, a_b, value]`` of the chains of ``gens`` (:func:`chain_generations`) over their walk ``walk``
-    (``[e, d, d_all]``, Utf8, ``factor`` ``[d_all, factor]``; a period without a factor counts 1.0): the price of
-    each generation (:func:`generation_prices`, at the values of the walk's lineage, :func:`_generation_walk`)
-    summed over its periods in service::
-
-        value[e,d] = Σ_g a_b[g]·Σ_{d′ ∈ walk(e,d), y_on[g] ≤ y[d′] < y_eol[g]} factor[d′]
-
-    ``single`` when every period of the walk is priced alike: then ``a_b`` is that one price and the caller
-    multiplies it by its own sum of the walk's factors (the chain of constant values charges today's annuity
-    over the same periods, bit for bit).  A period of the walk that no generation covers is an error."""
-    if gens.height == 0 or walk.height == 0:
-        return pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "single": pl.Boolean, "a_b": pl.Float64,
-                                    "value": pl.Float64})
+def priced_chain_rows(source: "InputSource",
+                      walk: pl.DataFrame,
+                      factor: pl.DataFrame,
+                      years: dict[str, float],
+                      gens: pl.DataFrame,
+                      last_period: str | None) -> pl.DataFrame:
+    """``[e, d, d_all, cohort, d_price, d_salv, a_b, factor, ...]``: each period of the walk ``walk`` (``[e, d,
+    d_all]``, Utf8) of a chain of ``gens`` (:func:`chain_generations`) with the generation in service there
+    (:func:`_generation_walk`), its price (:func:`generation_prices`, at the values of the walk's lineage) and the
+    period's factor (``factor`` ``[d_all, factor]``; 1.0 where it has none).  Only the decisions with generations;
+    a period of their walk that no generation covers is an error."""
     keyed = gens.rename({"d_build": "d"})
     walk = walk.join(keyed.select("e", "d").unique(), on=["e", "d"], how="semi")
     rows = _generation_walk(walk, years, keyed, last_period)
@@ -1069,13 +1062,40 @@ def chain_lumps(source: "InputSource",
     if gap.height > 0:
         raise ValueError(f"The replacement generations of {sorted(gap['e'].unique().to_list())} do not cover the "
                          "periods their capacity is in service in; the chain cannot be priced.")
-    priced = (generation_prices(source, rows.rename({"d": "_dec", "d_price": "d"}))
-              .rename({"d": "d_price", "_dec": "d"})
-              .join(factor, on="d_all", how="left"))
-    parts = (priced.sort("e", "d", "cohort", "d_all")
-                   .group_by("e", "d", "cohort", maintain_order=True)
+    return (generation_prices(source, rows.rename({"d": "_dec", "d_price": "d"}))
+            .rename({"d": "d_price", "_dec": "d"})
+            .join(factor, on="d_all", how="left")
+            .with_columns(factor=pl.col("factor").fill_null(1.0))
+            .sort("e", "d", "cohort", "d_all"))
+
+
+def chain_lumps(source: "InputSource",
+                walk: pl.DataFrame,
+                factor: pl.DataFrame,
+                years: dict[str, float],
+                gens: pl.DataFrame,
+                last_period: str | None) -> pl.DataFrame:
+    """``[e, d, single, a_b, value]`` of the chains of ``gens`` over their walk (:func:`priced_chain_rows`): each
+    generation's price summed over its periods in service::
+
+        value[e,d] = Σ_g a_b[g]·Σ_{d′ ∈ walk(e,d), y_on[g] ≤ y[d′] < y_eol[g]} factor[d′]
+
+    ``single`` when every period of the walk is priced alike: then ``a_b`` is that one price and the caller
+    multiplies it by its own sum of the walk's factors (the chain of constant values charges today's annuity
+    over the same periods, bit for bit)."""
+    if gens.height == 0 or walk.height == 0:
+        return _lumps_of(None)
+    return _lumps_of(priced_chain_rows(source, walk, factor, years, gens, last_period))
+
+
+def _lumps_of(priced: pl.DataFrame | None) -> pl.DataFrame:
+    """:func:`chain_lumps` of the rows ``priced`` (:func:`priced_chain_rows`; ``None``: no chain)."""
+    if priced is None or priced.height == 0:
+        return pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "single": pl.Boolean, "a_b": pl.Float64,
+                                    "value": pl.Float64})
+    parts = (priced.group_by("e", "d", "cohort", maintain_order=True)
                    .agg(pl.col("a_b").first(), pl.col("a_b").n_unique().alias("_k"),
-                        pl.col("factor").fill_null(1.0).sum().alias("_sum")))
+                        pl.col("factor").sum().alias("_sum")))
     return (parts.group_by("e", "d", maintain_order=True)
                  .agg(single=(pl.col("a_b").n_unique() == 1) & (pl.col("_k").max() == 1),
                       a_b=pl.col("a_b").first(),
@@ -2186,17 +2206,23 @@ def ed_lifetime_fixed_cost_divest_from_source(
 #   pre-existing capacity, from the start of the run; the end of the run for reinvest_automatic),
 #   the window of _cohorts.retire_active.  In a stochastic fan only the pairs of the walk lineage (each calendar
 #   period once).
-# OUT. ed_annuity[e,d] = the price per year in service (CUR/MW/yr, undiscounted) of the vintage: a_cap[e,c(d)] −
-#   a_salv[e,c(d)] for reinvest_choice / no_reinvestment (the level yearly cost of the plant over its
-#   lifetime_technical less its level salvage credit, the objective's price, _level_prices_lf), the annuity of
-#   invest_cost at c(d) over payback_time for reinvest_automatic.
+# OUT. edd_annuity[e,d_invest,d] = the price per year in service (CUR/MW/yr, undiscounted) of the plant of the vintage
+#   (e, d_invest) in service in d, over its operating window: a_cap[e,c(d_invest)] − a_salv[e,c(d_invest)] for
+#   reinvest_choice / no_reinvestment (the level yearly cost of the plant over its lifetime_technical less its level
+#   salvage credit, the objective's price, _level_prices_lf); for reinvest_automatic a_b[g] of the generation g in
+#   service in d (each replacement at its own price, priced_chain_rows; the annuity of a decision without
+#   generations).
+#      edd_entity_annual_discounted_run[e,d_invest,d] = Σ over the window periods d' of the plants of the vintage
+#   that come online in d of price[d']·p_inflation_inv_run[d']: the investment lump split by the period each plant
+#   comes online (c(d_invest), and each generation of a chain at its own online period); the reported investment
+#   cost when it happens.
 #   ed_divest_settlement_yearly[e,d] = ed_divest_salvage[e,d] / p_inflation_inv[d]: the salvage settlement of a MW
 #   retired in d (the salvage value received at the start of d less the salvage credits given back, the objective's
 #   term) as a yearly amount of the retirement period d.
 # OUT. ed_entity_annual_discounted_run[e,d] = Σ_{kind} price_kind[e,d]·Σ_{(e,d,d') ∈ edd_operating_window(kind)}
 #        p_inflation_inv_run[d']
-#   price_bounded = a_cap − a_salv, price_unbounded = the annuity: the objective's investment lump over the run
-#   periods.
+#   price_bounded = a_cap − a_salv, price_unbounded = the price of the generation in service in d' (the annuity
+#   without generations): the objective's investment lump over the run periods.
 #      ed_lifetime_fixed_cost_run[e,d] = Σ_{(e,d,d') ∈ edd_operating_window} fc[e,d']·p_inflation_op_run[d']
 #        (summed as fc[e,c(d)]·Σ factor + Σ (fc[e,d'] − fc[e,c(d)])·factor, the objective's form)
 #      ed_lifetime_fixed_cost_divest_run[e,d] = Σ_{(e,d,d') ∈ edd_retire_window} fc[e,d']·p_inflation_op_run[d']
@@ -2624,19 +2650,13 @@ def apply_run_cost_fields(flex_data: object,
     if inv.height > 0:
         # The price per year in service of each lifetime kind: the level yearly price a_cap less the level salvage
         # credit a_salv for reinvest_choice / no_reinvestment, the annuity for reinvest_automatic (the objective's,
-        # npv_invest_discounted_lf).
+        # npv_invest_discounted_lf; a reinvest_automatic chain at the price of each generation, below).
         kinds = _lifetime_kinds(source, inv.select("e").unique())
         ann = _utf8_ed(_level_prices_lf(source, active_solve, _anchor_lf(inv), commission, provider=provider))
         level = pl.col("a_cap") - pl.col("a_salv")
         price = (ann.join(kinds, on="e", how="inner")
                     .select("e", "d", "kind",
                             coef=pl.when(pl.col("kind") == "bounded").then(level).otherwise(pl.col("ann"))))
-        bounded_e = kinds.filter(pl.col("kind") == "bounded").select("e")
-        flex_data.ed_annuity = _ed_param(
-            vintages.join(ann.with_columns(bounded=pl.col("e").is_in(bounded_e["e"].implode())), on=["e", "d"],
-                          how="left")
-                    .select("e", "d", value=pl.when(pl.col("bounded")).then(level)
-                                             .otherwise(pl.col("ann")).fill_null(0.0)))
     # The lifetime fixed cost covers every entity over the period history (as its per-solve twin); without run
     # years only the vintages are walked (for their operating window).  The history periods are those of the run
     # (:func:`run_years`): the branch copy of a realized designation (``<period>_<branch>``) is no period of the
@@ -2669,6 +2689,12 @@ def apply_run_cost_fields(flex_data: object,
         anchors = anchors.with_columns(life=y_eol - anchors["yr_avail"])
         walk = _run_window(anchors, yr, lineage, period_in_use)
         flex_data.edd_operating_window = _window_frame(walk.join(vintages, on=["e", "d"], how="semi"), "d_invest")
+        chain_rows = None
+        if inv.height > 0:
+            chain_rows = _run_chain_rows(source, active_solve, walk.join(inv, on=["e", "d"], how="semi"),
+                                         factor_inv, yr, flex_data, provider)
+            flex_data.edd_annuity, flex_data.edd_entity_annual_discounted_run = _vintage_yearly_and_starts(
+                walk.join(vintages, on=["e", "d"], how="semi"), price, chain_rows, factor_inv, start)
         if years is not None:
             fc = _utf8_ed(at_online_period(
                 fc_lf, lambda lf: _ed_fixed_cost_raw_lf(source, lf), commission, "fc")).rename({"fc": "coef"})
@@ -2677,7 +2703,7 @@ def apply_run_cost_fields(flex_data: object,
                 # The price over the periods in service, as the objective's investment lump: a reinvest_automatic
                 # chain at the price of the generation in service in each period (single price: the same product).
                 inv_walk = walk.join(inv, on=["e", "d"], how="semi")
-                chain = _run_chain_lumps(source, active_solve, inv_walk, factor_inv, yr, flex_data, provider)
+                chain = _lumps_of(chain_rows)
                 single = chain.filter(pl.col("single")).select("e", "d", kind=pl.lit("unbounded"), _a_b="a_b")
                 price = (price.join(single, on=["e", "d", "kind"], how="left")
                               .with_columns(coef=pl.coalesce("_a_b", "coef")).drop("_a_b"))
@@ -2722,22 +2748,63 @@ def apply_run_cost_fields(flex_data: object,
         _run_lumps_are_the_solves(flex_data)
 
 
-def _run_chain_lumps(source: "InputSource",
-                     active_solve: str | None,
-                     walk: pl.DataFrame,
-                     factor: pl.DataFrame,
-                     yr: dict[str, float],
-                     flex_data: object,
-                     provider: "object | None") -> pl.DataFrame:
-    """:func:`chain_lumps` of the investment decisions of the solve's cohort table over the run's operating window
-    ``walk`` (``[e, d, kind, d_all]``: its ``unbounded`` rows), the factors ``factor`` (``p_inflation_inv_run``)
-    and the run years ``yr``."""
+def _run_chain_rows(source: "InputSource",
+                    active_solve: str | None,
+                    walk: pl.DataFrame,
+                    factor: pl.DataFrame,
+                    yr: dict[str, float],
+                    flex_data: object,
+                    provider: "object | None") -> pl.DataFrame | None:
+    """:func:`priced_chain_rows` of the investment decisions of the solve's cohort table over the run's operating
+    window ``walk`` (``[e, d, kind, d_all]``: its ``unbounded`` rows), the factors ``factor``
+    (``p_inflation_inv_run``) and the run years ``yr``; ``None`` without a chain."""
     from flextool.engine.preprocess.params._cohorts import salvage_periods
     gens = chain_generations(getattr(flex_data, "cohort", None))
     rows = walk.filter(pl.col("kind") == "unbounded").select("e", "d", "d_all")
+    if gens.height == 0 or rows.height == 0:
+        return None
     years = _chain_years(source, active_solve, provider)
     last = salvage_periods(source, active_solve, years, provider, [None])[0]
-    return chain_lumps(source, rows, factor, {**years, **yr}, gens, last)
+    return priced_chain_rows(source, rows, factor, {**years, **yr}, gens, last)
+
+
+def _vintage_yearly_and_starts(walk: pl.DataFrame,
+                               price: pl.DataFrame,
+                               chain_rows: pl.DataFrame | None,
+                               factor: pl.DataFrame,
+                               start: pl.DataFrame) -> tuple["Param | None", "Param | None"]:
+    """``(edd_annuity, edd_entity_annual_discounted_run)`` (``[e, d_invest, d, value]``) of the vintages of
+    ``walk`` (``[e, d, kind, d_all]``, their run operating window): the price per year in service of the plant in
+    service in each period ``d`` (``price`` ``[e, d, kind, coef]``; a reinvest_automatic chain at its
+    generation's ``a_b``, ``chain_rows`` of :func:`priced_chain_rows`), and the investment lump split by the period
+    each plant comes online (``d`` the start of operation ``c(d_invest)``, ``start`` ``[e, d, d_c]``; a generation
+    of a chain at its own online period), Σ price·factor over its periods (``factor`` ``[d_all, factor]``)."""
+    chained = (pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8}) if chain_rows is None
+               else chain_rows.select("e", "d").unique())
+    plain = (walk.join(chained.with_columns(kind=pl.lit("unbounded")), on=["e", "d", "kind"], how="anti")
+                 .join(price, on=["e", "d", "kind"], how="left")
+                 .join(factor, on="d_all", how="left")
+                 .join(start, on=["e", "d"], how="left")
+                 .select("e", "d", "d_all", coef=pl.col("coef").fill_null(0.0),
+                         factor=pl.col("factor").fill_null(1.0), d_start=pl.coalesce("d_c", "d")))
+    rows = plain if chain_rows is None else pl.concat([
+        plain, chain_rows.select("e", "d", "d_all", coef=pl.col("a_b"), factor=pl.col("factor"),
+                                 d_start=pl.col("d_price"))])
+    yearly = (rows.group_by("e", "d", "d_all").agg(pl.col("coef").sum().alias("value"))
+                  .select("e", pl.col("d").alias("d_invest"), pl.col("d_all").alias("d"), "value"))
+    starts = (rows.sort("e", "d", "d_all")
+                  .group_by("e", "d", "d_start", maintain_order=True)
+                  .agg((pl.col("coef") * pl.col("factor")).sum().alias("value"))
+                  .select("e", pl.col("d").alias("d_invest"), pl.col("d_start").alias("d"), "value"))
+    return _edd_param(yearly), _edd_param(starts)
+
+
+def _edd_param(df: pl.DataFrame) -> "Param | None":
+    if df.height == 0:
+        return None
+    return Param(("e", "d_invest", "d"),
+                 df.lazy().select(alias_to_axis("e", "e"), alias_to_axis("d_invest", "d_invest"),
+                                  alias_to_axis("d", "d"), "value").sort("e", "d_invest", "d").collect())
 
 
 def _run_lumps_are_the_solves(flex_data: object) -> None:
