@@ -2904,6 +2904,10 @@ dialogs/                         Add / project / plot / file-picker dialogs.
 <td>Walk the version chain to the current <code>FLEXTOOL_DB_VERSION</code>.</td>
 </tr>
 <tr>
+<td><code>migration_backup.py</code></td>
+<td>The pre-migration copy (<code>&lt;db&gt;.premigration.bak</code>) and its atomic restore on failure; shared by <code>migrate_database</code> and the window's upgrade.</td>
+</tr>
+<tr>
 <td><code>initialize_database.py</code> (<code>initialize_database</code>)</td>
 <td>Create new DB from JSON template.</td>
 </tr>

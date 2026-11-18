@@ -981,6 +981,28 @@
     </label>
 <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
 <li class="md-nav__item">
+<a class="md-nav__link" href="#unreleased">
+<span class="md-ellipsis">
+      
+        Unreleased
+      
+    </span>
+</a>
+<nav aria-label="Unreleased" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#fixes">
+<span class="md-ellipsis">
+      
+        Fixes
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="#release-451-17112026-database-migration-fixes-schema-v80">
 <span class="md-ellipsis">
       
@@ -991,7 +1013,7 @@
 <nav aria-label="Release 4.5.1 (17.11.2026) — database migration fixes (schema v80)" class="md-nav">
 <ul class="md-nav__list">
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes">
+<a class="md-nav__link" href="#fixes_1">
 <span class="md-ellipsis">
       
         Fixes
@@ -1031,7 +1053,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes_1">
+<a class="md-nav__link" href="#fixes_2">
 <span class="md-ellipsis">
       
         Fixes
@@ -1071,7 +1093,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes_2">
+<a class="md-nav__link" href="#fixes_3">
 <span class="md-ellipsis">
       
         Fixes
@@ -1353,7 +1375,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes_3">
+<a class="md-nav__link" href="#fixes_4">
 <span class="md-ellipsis">
       
         Fixes
@@ -1393,7 +1415,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes_4">
+<a class="md-nav__link" href="#fixes_5">
 <span class="md-ellipsis">
       
         Fixes
@@ -2233,7 +2255,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes_5">
+<a class="md-nav__link" href="#fixes_6">
 <span class="md-ellipsis">
       
         Fixes
@@ -2906,6 +2928,28 @@
     </label>
 <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
 <li class="md-nav__item">
+<a class="md-nav__link" href="#unreleased">
+<span class="md-ellipsis">
+      
+        Unreleased
+      
+    </span>
+</a>
+<nav aria-label="Unreleased" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#fixes">
+<span class="md-ellipsis">
+      
+        Fixes
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="#release-451-17112026-database-migration-fixes-schema-v80">
 <span class="md-ellipsis">
       
@@ -2916,7 +2960,7 @@
 <nav aria-label="Release 4.5.1 (17.11.2026) — database migration fixes (schema v80)" class="md-nav">
 <ul class="md-nav__list">
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes">
+<a class="md-nav__link" href="#fixes_1">
 <span class="md-ellipsis">
       
         Fixes
@@ -2956,7 +3000,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes_1">
+<a class="md-nav__link" href="#fixes_2">
 <span class="md-ellipsis">
       
         Fixes
@@ -2996,7 +3040,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes_2">
+<a class="md-nav__link" href="#fixes_3">
 <span class="md-ellipsis">
       
         Fixes
@@ -3278,7 +3322,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes_3">
+<a class="md-nav__link" href="#fixes_4">
 <span class="md-ellipsis">
       
         Fixes
@@ -3318,7 +3362,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes_4">
+<a class="md-nav__link" href="#fixes_5">
 <span class="md-ellipsis">
       
         Fixes
@@ -4158,7 +4202,7 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#fixes_5">
+<a class="md-nav__link" href="#fixes_6">
 <span class="md-ellipsis">
       
         Fixes
@@ -4771,9 +4815,39 @@
 <div class="md-content" data-md-component="content">
 <article class="md-content__inner md-typeset">
 <h1 id="release-notes">Release notes</h1>
+<h2 id="unreleased">Unreleased</h2>
+<h3 id="fixes">Fixes</h3>
+<ul>
+<li><strong>A large database migrates.</strong> A migration step that deletes many rows (values, flow-group memberships, entity
+  alternatives) stopped with "Expression tree is too large (maximum depth 1000)" when the rows were scattered over
+  the database, as in a large database edited over time. Such a step now deletes them in several commits.</li>
+<li><strong>A failed migration leaves the database as it was, also from the command line.</strong> <code>flextool-migrate-database</code>,
+  <code>flextool-run --migrate</code> and the other migrations outside the FlexTool window now copy the database before the
+  first step (as <code>&lt;database&gt;.premigration.bak</code>, which needs free space as large as the database) and move it back
+  in one rename when a step fails or the migration is cancelled, as the window already did; before, a migration
+  that failed part way left the steps before the failure in the database. When the copy cannot be put back, it is
+  kept, the console says how to recover it, and a new migration of the database refuses to start until it is dealt
+  with.</li>
+<li><strong>A migration that is killed outright can be finished.</strong> A killed migration (the process stopped, the console
+  closed) can leave the database half migrated, with its original in <code>&lt;database&gt;.premigration.bak</code>. The next
+  migration of the database then refuses to start, names the copy and the time it was made, and says how to go on:
+  put the copy back (close every program that uses the database, delete the database and rename the copy to the
+  database's name) or, when the copy is out of date, delete it; then run the migration again. Every step that
+  deletes in several commits also finishes on a rerun: before, a rerun of the version 56 step could lose <code>is_DC</code> /
+  <code>is_non_synchronous</code> values, and a rerun of the version 70 step could keep an output <code>capacity_min_coeff</code> left
+  over from version 36.</li>
+<li><strong><code>flextool-migrate-database</code>, <code>flextool-run --migrate</code> and <code>flextool-update</code> print the reason when a database
+  is not migrated</strong> (a kept pre-migration copy, no room for the copy, or a restore that failed) and exit with code
+  1, instead of showing a traceback. <code>flextool-update</code> goes on with the other databases and lists those it could
+  not migrate at the end.</li>
+<li><strong>Running the version 56 step again no longer switches off reserves active in the base alternative.</strong> A rerun of
+  the step, after an interruption or after the whole step had been applied and a later step failed, set
+  <code>is_enabled</code> to <em>no</em> in the base alternative of every reserve, overwriting the <em>yes</em> the first run had written
+  for the reserves active there.</li>
+</ul>
 <h2 id="release-451-17112026-database-migration-fixes-schema-v80">Release 4.5.1 (17.11.2026) — database migration fixes (schema v80)</h2>
 <p>Migrating older input databases works again in more cases. No change to the model, results or data version.</p>
-<h3 id="fixes">Fixes</h3>
+<h3 id="fixes_1">Fixes</h3>
 <ul>
 <li><strong>Migrating a database whose parameter default names a renamed value works.</strong> A database whose
   <code>capacity_margin_method</code> default was <em>manual</em> or <em>share_of_peak</em> stopped migrating at data version 79 ("default
@@ -4868,7 +4942,7 @@
   <code>min_instant_flow</code>, <code>inertia_limit</code> and <code>non_synchronous_limit</code> take the mean over a solve's coarse step, so such
   a step has no limit at all; the warning names the steps. A step mixing <code>inf</code> and <code>-inf</code> is an error.</li>
 </ul>
-<h3 id="fixes_1">Fixes</h3>
+<h3 id="fixes_2">Fixes</h3>
 <ul>
 <li><strong><code>reduce_unit_detail_method</code> <em>online</em> runs <em>min_load_efficiency</em> and <em>piecewise_linear</em> units at their
   full-load efficiency</strong> (<code>efficiency</code>, or the curve's point at load share 1), as <em>constant_efficiency</em> units, also
@@ -5567,7 +5641,7 @@ needs polar-high 3.14.0 or newer (installed with FlexTool).</p>
   texts changed, so a chat resumed starts a fresh history with the AI service, and an evaluation run asks its
   unfinished cells again.</li>
 </ul>
-<h3 id="fixes_2">Fixes</h3>
+<h3 id="fixes_3">Fixes</h3>
 <h4 id="settings-comparison-and-project-files">Settings, comparison and project files</h4>
 <ul>
 <li><strong>A settings database that is not found is no longer ignored silently</strong>: the run warns that its output settings
@@ -9377,7 +9451,7 @@ migrated database solves byte-identically until you opt into the new levers.</p>
   cascade's exit scan. Tunable via <code>FLEXTOOL_ACCEPT_*</code> knobs; default
   thresholds are conservative.</li>
 </ul>
-<h3 id="fixes_3">Fixes</h3>
+<h3 id="fixes_4">Fixes</h3>
 <ul>
 <li><strong>Reserve balance crashed on dynamic / N-1 reserves.</strong> The dynamic and
   N-1 reserve-balance right-hand side left the flow variable's native
@@ -9447,7 +9521,7 @@ exercise those paths.</p>
   weighted by regional demand. Default (no flags / no region groups) is the
   unweighted, byte-parity path.</li>
 </ul>
-<h3 id="fixes_4">Fixes</h3>
+<h3 id="fixes_5">Fixes</h3>
 <ul>
 <li><strong>Storage nested-fix handoff was inert / inverted.</strong> Three fixes to the
   multi-solve coarse→fine storage handoff: (1) the
@@ -10602,7 +10676,7 @@ model or input changes.</p>
 <li>Execution log no longer unresponsive / unselectable (refreshes coalesced).</li>
 <li>Status icons, spinners and checkboxes use Windows-renderable glyphs.</li>
 </ul>
-<h3 id="fixes_5">Fixes</h3>
+<h3 id="fixes_6">Fixes</h3>
 <ul>
 <li>Migration: the <code>timeblockSet</code> -&gt; <code>timeset</code> timeline collapse is now deterministic.</li>
 <li>Input: <code>p_section</code> wired on the synthetic-solve early return.</li>

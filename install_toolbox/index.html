@@ -2982,7 +2982,7 @@ python<span class="w"> </span>update_flextool.py
 <p>If you installed from a zip file, download the latest zip, extract it over the existing directory, and run:</p>
 <div class="highlight"><pre><span></span><code>python<span class="w"> </span>update_flextool.py<span class="w"> </span>--skip-git
 </code></pre></div>
-<p><code>update_flextool.py</code> brings the databases to the current schema version without destroying data (a backup is still good practice):</p>
+<p><code>update_flextool.py</code> brings the databases to the current schema version without destroying data: each database is copied before it is migrated and put back if the migration fails (see <a href="../terminal_workflow/#migrate-database-schema">Migrate database schema</a>); a backup of your own is still good practice:</p>
 <ul>
 <li>it migrates the database selected as <strong>Input data</strong> in the project, <code>input_data.sqlite</code> and <code>templates/input_data_template.sqlite</code>;</li>
 <li>it rebuilds the example databases (<code>templates/examples.sqlite</code>, <code>templates/time_settings_only.sqlite</code> and the databases in <code>how to example databases/</code>) from the current templates.</li>

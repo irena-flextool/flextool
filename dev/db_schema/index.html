@@ -2703,15 +2703,39 @@ forward through versioned steps. Each step either:</p>
   entity classes, parameter definitions, value lists, or alternatives.</li>
 </ul>
 <p>The chain is <strong>forward-only</strong> — there are no down-migrations. Each
-step bumps the <code>model.version</code> parameter stored in the DB so the
-migration is resumable from where it left off.</p>
+step commits its own changes, but <code>model.version</code> is stamped <strong>once, at
+the end of the chain</strong>: a chain that stops part way leaves the database
+at its old version with the earlier steps committed, and the next run
+repeats every step from there.</p>
+<p><strong>All or nothing.</strong> <code>migrate_database</code> copies a local file to
+<code>&lt;db&gt;.premigration.bak</code> before the first step and moves that copy back
+(one atomic <code>os.replace</code>) when any step fails or the migration is
+cancelled (<code>flextool/update_flextool/migration_backup.py</code>; the window's
+upgrade in <code>gui/db_version_check.py</code> holds the same copy and passes
+<code>backup=False</code>). Only a killed process bypasses the restore; then the
+copy stays, and the next migration of the file refuses to start until
+it is put back or deleted.</p>
+<p><strong>Every step must converge on a rerun.</strong> Because a kill can stop the
+chain anywhere, a step rerun on its own partial result must give what
+one clean run gives (reruns compare equal in
+<code>tests/update_flextool/test_interrupted_migration_steps.py</code>):</p>
+<ul>
+<li>recompute from what is still in the database and skip keys already
+  written; never overwrite a value an earlier run of the step wrote;</li>
+<li>a step that removes many rows uses <code>_remove_items_bounded</code> (one
+  <code>DELETE</code> is limited to 400 runs of ids: SQLite's expression depth and
+  bound-variable limits). It commits in batches when the removal is
+  large, so the step must also converge from <strong>any batch</strong>: write what
+  replaces the removed rows before the first removal (the v56 yes/no
+  stage), decide what to remove before a rename that hides it (v70), and
+  recognise its own half-done state (v58's same-name flowGroup).</li>
+</ul>
 <div class="admonition note">
 <p class="admonition-title">Idempotent commits</p>
 <p>Migration steps wrap their <code>commit_session</code> calls in <code>_commit_step</code>,
 which swallows <code>spinedb_api.exception.NothingToCommit</code>. A step that
-was already hand-applied by an earlier partial run is treated as a
-no-op rather than a fatal abort, so the version bump still
-persists and later steps run normally.</p>
+was already applied by an earlier partial run is treated as a
+no-op rather than a fatal abort, so later steps run normally.</p>
 </div>
 <p>Skim <code>migrate_database</code> in <code>db_migration.py</code> to see the full chain and
 the per-version diffs.</p>
