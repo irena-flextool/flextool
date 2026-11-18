@@ -6,7 +6,7 @@ pair needed a non-zero annuity or a user-constraint capacity coefficient, so an 
 silently offered nothing.  The capacity has no annuity; its ``fixed_cost`` still counts.
 
 Vehicle: ``tests/fixtures/tests.json``, chain ``init, west`` (one period p2020, 48 one-hour steps of the ``2day``
-timeset, ``years_represented`` 1, ``inflation_rate`` 0) plus one override alternative: the west demand is a
+timeset, ``years_represented`` 1, ``social_discount_rate`` 0) plus one override alternative: the west demand is a
 constant 100 MW, the solve invests in p2020.  Expected values are hand-derived (``penalty_up`` 900 CUR/MWh ≫
 60 000 / 8760 CUR/MWh, so investing 100 MW is the unique optimum of (a)):
 

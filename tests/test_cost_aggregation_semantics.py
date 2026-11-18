@@ -649,7 +649,7 @@ class TestDivestSalvageIncludedInObjective:
     """The salvage settlement (``ed_divest_salvage`` × v_divest × unitsize)
     is in the objective as a variable term alongside the lifetime-fixed-cost
     savings term.  In ``coal_retire`` (tests.json init / west / coal /
-    retire: one 1-year period p2020, inflation_rate 0, coal_plant
+    retire: one 1-year period p2020, social_discount_rate 0, coal_plant
     reinvest_automatic with net_salvage_value 200 CUR/kW, fixed_cost 100,
     retire_max_total 1000 MW) the retirement earns the full net salvage
     value at the start of p2020 (the existing capacity's investment is

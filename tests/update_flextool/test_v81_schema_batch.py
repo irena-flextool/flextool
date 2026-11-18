@@ -46,6 +46,7 @@ values, and its own descriptions are kept; one that still has the shipped ``end_
 from __future__ import annotations
 
 import contextlib
+import functools
 import io
 import json
 from pathlib import Path
@@ -117,15 +118,24 @@ def _values(db) -> dict:
              v["alternative_name"]): (bytes(v["value"]), v["type"]) for v in db.get_items("parameter_value")}
 
 
-def _shipped() -> tuple[dict, dict[str, list[str]]]:
-    """``({(class, name): (description, types, group, value list, default value, default type)}, lists)`` of the
-    shipped schema."""
+def _shipped(*, as_v81: bool = False) -> tuple[dict, dict[str, list[str]]]:
+    """``({(class, name): description}, lists)`` of the shipped schema.  ``as_v81``: a description that a later step
+    rewrote (v82: the ones naming the model's discount parameters) is the v81 text, as a database migrated to 81 has
+    it."""
     with open(package_data_path("schemas/spinedb_schema.json"), encoding="utf-8") as f:
         schema = json.load(f)
     lists: dict[str, list[str]] = {}
     for name, value in schema["parameter_value_lists"]:
         lists.setdefault(name, []).append(value)
-    return {(r[0], r[1]): r[4] for r in schema["parameter_definitions"]}, lists
+    texts = {(r[0], r[1]): r[4] for r in schema["parameter_definitions"]}
+    if as_v81:
+        texts.update({key: m._v81_texts()[key] for key in m._v82_texts() if key in m._v81_texts()})
+    return texts, lists
+
+
+def _head_texts() -> dict[tuple[str, str], str]:
+    """The descriptions the refresh of the current version writes: v81's, with v82's where v82 rewrites one."""
+    return {**m._v81_texts(), **m._v82_texts()}
 
 
 @pytest.fixture(scope="module")
@@ -189,7 +199,7 @@ def test_salvage_value_is_net_salvage_value(migrated) -> None:
 
 def test_new_lifetime_definitions(migrated) -> None:
     after = migrated["after"]["defs"]
-    shipped, _ = _shipped()
+    shipped, _ = _shipped(as_v81=True)
     for cls in CLASSES:
         for name in ("lifetime_technical", "payback_time"):
             assert after[(cls, name)] == (shipped[(cls, name)], ("float", "1d_map"), "investment", None, None, None)
@@ -283,7 +293,7 @@ def test_built_retirable_marker_names_bounded_entities_that_invest_and_retire(mi
 
 def test_descriptions_are_the_shipped_ones(migrated) -> None:
     before, after = migrated["before"]["defs"], migrated["after"]["defs"]
-    shipped, _ = _shipped()
+    shipped, _ = _shipped(as_v81=True)
     texts = m._v81_texts()
     assert set(texts) == NEW_DEFINITIONS | REWRITTEN
     for key in REWRITTEN:
@@ -333,11 +343,14 @@ def _rerun_changes_nothing(db, step, monkeypatch) -> None:
 @pytest.mark.parametrize("part", ["_v81_value_lists", "_v81_definitions_part", "_v81_move_values",
                                   "_v81_list_member_renames", "_v81_descriptions", "_v81_annuity_marker",
                                   "_v81_end_of_life_marker", "_v81_fixed_cost_marker", "_v81_annuity_timing_marker",
-                                  "_v81_net_salvage_marker", "_migrate_v81_schema_batch",
-                                  "_refresh_head_schema"])
+                                  "_v81_net_salvage_marker", "_migrate_v81_schema_batch", "_v81_refresh"])
 def test_rerun_commits_nothing(migrated, part: str, monkeypatch) -> None:
+    """Each part, the whole step and the v81 refresh (with the v81 texts) change nothing on a database at 81."""
+    step = getattr(m, part)
+    if part == "_v81_refresh":
+        step = functools.partial(step, texts={})
     with DatabaseMapping(migrated["url"]) as db:
-        _rerun_changes_nothing(db, getattr(m, part), monkeypatch)
+        _rerun_changes_nothing(db, step, monkeypatch)
         assert _defs(db) == migrated["after"]["defs"] and _values(db) == migrated["after"]["values"]
 
 
@@ -405,7 +418,7 @@ def test_current_version_database_gets_a_missing_head_definition(tmp_path_factor
     ``unit.payback_time`` removed, the ``payback_time`` description of node edited) is not current for the
     read-only check; ``migrate_database`` adds the definition with its shipped fields and keeps the edited
     description and every value."""
-    assert m.RERUNNABLE_HEAD_STEP[FLEXTOOL_DB_VERSION] is m._migrate_v81_schema_batch
+    assert m.RERUNNABLE_HEAD_STEP[FLEXTOOL_DB_VERSION] is m._migrate_v82_schema_batch
     url = _tests_json_at(tmp_path_factory, "v81_head", FLEXTOOL_DB_VERSION)
     path = Path(url.removeprefix("sqlite:///"))
     assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION
@@ -520,7 +533,7 @@ def test_current_version_database_with_the_superseded_end_of_life_default(tmp_pa
             assert defs[(cls, "end_of_life_method")] == (shipped[(cls, "end_of_life_method")], ("str",),
                                                          "retirement", "end_of_life_methods",
                                                          *to_database("closest_seam"))
-            assert shipped[(cls, "end_of_life_method")] == m._v81_texts()[(cls, "end_of_life_method")]
+            assert shipped[(cls, "end_of_life_method")] == _head_texts()[(cls, "end_of_life_method")]
         assert _values(db) == values_before
         with pytest.raises(NothingToCommit):
             m._refresh_head_schema(db)
@@ -559,7 +572,7 @@ def test_current_version_database_with_a_superseded_description(tmp_path_factory
         defs = _defs(db)
         for cls, name in keys:
             assert defs[(cls, name)][0] == ("my own text" if edited else shipped[(cls, name)])
-            assert shipped[(cls, name)] == m._v81_texts()[(cls, name)]
+            assert shipped[(cls, name)] == _head_texts()[(cls, name)]
         assert _values(db) == values_before
     assert not m._head_defaults_stale_ro(path)
     assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION

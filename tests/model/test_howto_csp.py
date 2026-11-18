@@ -11,7 +11,7 @@ is the backup.  The field yield *csp_field_yield* is 1.0 for t0007..t0018 (clear
     csp_fixed_design  invested, field = 5 x turbine and tank = 25 x turbine (solar multiple 2, 10 h at the
                       design efficiency 0.4): 100 / 500 / 2500, the dispatch totals of csp_existing,
                       objective 36.865 + 162.5 M x CRF(7 %, 25) / 1.07 = 36.865 + 13.031971 = 49.896971 M CUR
-                      (the yearly payment at the start of each year, the default inflation_offset_investment 0,
+                      (the yearly payment at the start of each year, the default discount_offset_investment 0,
                       is sized to be worth the investment cost at 7 %: CRF / (1 + 0.07))
     csp_optimised_design  no ties: the turbine (100 MW_e) and the tank (5000 MWh_th) reach their bounds; the cyclic
                       heat balance needs tank >= 9000 - 4.8 x field and 16.8 x field >= 12 000, and 4.8 MWh_th

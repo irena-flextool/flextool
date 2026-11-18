@@ -8,7 +8,7 @@ anchor's value).  Audited without a defect (``_common._availability_factor``, ``
 
 Vehicle (``tests/fixtures/tests.json`` + one override alternative on ``init, west, coal``; independent oracle
 ``specs/bugfix/v1/oracle.md`` item 79): periods p2020 and p2025, each on the 1-step timeset ``one_hour``
-(t0001, 1 h); ``years_represented`` 5 each, ``inflation_rate`` 0, timestep weight 1.  Node west: inflow
+(t0001, 1 h); ``years_represented`` 5 each, ``social_discount_rate`` 0, timestep weight 1.  Node west: inflow
 -100 MW, penalty_up 1e4.  coal_market price 10 CUR/MWh, gas_market price 50.  coal_plant 100 MW from
 coal_market; gas_plant 100 MW from gas_market, efficiency 1.  Operating-cost weight of a period::
 
@@ -87,7 +87,7 @@ COAL2 = [
 
 def _base_values() -> list:
     return [
-        ["model", "flexTool", "inflation_rate", _num(0.0)],
+        ["model", "flexTool", "social_discount_rate", _num(0.0)],
         ["timeset", "one_hour", "timeline", _str("y2020")],
         ["timeset", "one_hour", "timeset_duration", b64({"type": "map", "index_type": "str",
                                                          "data": [["t0001", 1.0]]}, "map")],

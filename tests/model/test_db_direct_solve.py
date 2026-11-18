@@ -397,7 +397,7 @@ RESOLVED_DEFAULTS = [
     ("connection", "virtual_unitsize", None),
     ("unit", "min_load", None),
     ("node", "self_discharge_loss", None),
-    ("model", "inflation_rate", None),
+    ("model", "social_discount_rate", None),
     ("reserve__upDown__group", "reservation", None),
 ]
 

@@ -39,7 +39,7 @@ def _later_solve_provider(years: list[tuple[str, float]]) -> FlexDataProvider:
     for name in ("steps_in_use", "steps_complete_solve"):
         prov.put(f"solve_data/{name}", _utf8({"period": ["p2"], "step": ["t03"], "duration": [2.0]}))
     prov.put("solve_data/solve_current", _utf8({"solve": ["later"]}))
-    prov.put("input/p_inflation_rate", _utf8({"model": ["m"], "value": [0.05]}))
+    prov.put("input/p_social_discount_rate", _utf8({"model": ["m"], "value": [0.05]}))
     return prov
 
 
@@ -47,7 +47,7 @@ class _Source:
     """The model's inflation scalars: rate 0.05, the default offsets."""
 
     def parameter(self, cls: str, name: str) -> pl.DataFrame:
-        if (cls, name) == ("model", "inflation_rate"):
+        if (cls, name) == ("model", "social_discount_rate"):
             return pl.DataFrame({"value": [0.05]})
         raise KeyError(name)
 

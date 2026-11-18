@@ -295,7 +295,7 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
         ),
         BehaviourChange(
             id="chained_solve_discount_from_run_start",
-            summary=("With an inflation_rate other than 0, every solve now discounts its investments and its "
+            summary=("With a social_discount_rate other than 0, every solve now discounts its investments and its "
                      "operations from the start of the run, as one solve over the same periods does. Before, a "
                      "later solve of a run of several solves (also a split solve of a 2-D period map, a rolling "
                      "or nested solve starting after the run start) discounted its operations, and when its "
@@ -335,8 +335,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
         BehaviourChange(
             id="annuity_timing",
             summary=("The yearly payment of the investment annuity (and of the yearly salvage credits) is now "
-                     "sized for the moment inflation_offset_investment places it in the year: the annuity "
-                     "times (1 + discount_rate)^(inflation_offset_investment - 1), so the loan taken when the "
+                     "sized for the moment discount_offset_investment places it in the year: the annuity "
+                     "times (1 + discount_rate)^(discount_offset_investment - 1), so the loan taken when the "
                      "capacity comes online is worth invest_cost at the discount_rate. Before, every offset used "
                      "the year-end annuity, so at the default offset 0 (payments at the start of each year) an "
                      "investment cost invest_cost times (1 + discount_rate). Investments are now cheaper by one "

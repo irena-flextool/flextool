@@ -152,7 +152,7 @@ def _rows_to_frame(rows: list[tuple[str, str, float]]) -> pl.DataFrame:
 def _annuities(inp: dict, cost_param: str, rows: list[tuple[str, str, str | None, int]]) -> list[float]:
     """``count × cost × 1000 × annuity_factor(r, n, off)`` of each row ``(entity e, period d, kind, count)``
     (:mod:`.._annuity`), the values read from the lookup ``inp[kind]`` (``"pp"`` processes, ``"pn"`` nodes; ``None``
-    or ``count`` 0: 0), ``off`` the model's ``inflation_offset_investment`` (``inp["offset_inv"]``).
+    or ``count`` 0: 0), ``off`` the model's ``discount_offset_investment`` (``inp["offset_inv"]``).
 
     ``cost_param``: ``invest_cost`` or ``net_salvage_value``; ``n`` is the entity's payback time
     (:data:`PAYBACK_TIME`, its technical lifetime when it has none).  A missing ``discount_rate`` is
@@ -284,7 +284,7 @@ def _entity_annual_inputs(input_dir: Path, solve_data_dir: Path,
         "p_inflation_invest": _read_keyed_value(
             solve_data_dir / "p_inflation_factor_investment_yearly.csv", provider=provider),
         "ed_fixed_cost": _read_pdv(solve_data_dir / "ed_fixed_cost.csv", provider=provider),
-        "offset_inv": scalar_max(input_dir / "p_inflation_offset_investment.csv", _INFL_OFFSET_INV_DEFAULT,
+        "offset_inv": scalar_max(input_dir / "p_discount_offset_investment.csv", _INFL_OFFSET_INV_DEFAULT,
                                  provider=provider),
     }
 

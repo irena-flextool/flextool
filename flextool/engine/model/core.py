@@ -267,7 +267,7 @@ def _check_covers_dt_steps(d, field: str, message: str) -> None:
 # Plain-English errors of the always-on coverage checks of ``_prepare`` (a partial ``solve_data`` CSV of a
 # reloaded run or a hand-built FlexData; the database path builds every Param over the solve's periods and steps).
 _INFLATION_OP_GAP = (
-    "The inflation factor of operating costs (p_inflation_factor_operations_yearly) has no value for period(s) "
+    "The discount factor of operating costs (p_inflation_factor_operations_yearly) has no value for period(s) "
     "{periods}; the operating costs of those periods would be left out. Add the period(s) to "
     "solve_data/p_inflation_factor_operations_yearly.csv, or re-run from the database.")
 _STEP_DURATION_GAP = (
@@ -5084,6 +5084,9 @@ def _sum_terms(terms: list) -> Expr | None:
 
 # Every operational cost term is weighted by b.op_factor:
 #   w_op[d,t] = step_duration[d,t] · timestep_weight[d,t] · inflation_op[d] / period_share[d] · branch_weight[d,t]
+#   inflation_op[d] (the social discount factor of operating costs) = Σ_y pyr[d,y]·(1 + social_discount_rate)^−(
+#     base[d,y] + pyr[d,y]·discount_offset_operations), y the years d represents, pyr their length, base[d,y] the
+#     years from the run start to the start of y
 # step_duration turns a rate (currency/h) into currency per step, timestep_weight scales a representative step
 # to the time it stands for, / period_share scales the modelled part of the period to a full year, and
 # inflation_op discounts that year's operating cost; branch_weight is 1 outside stochastic solves.  Terms for point events
@@ -5455,24 +5458,26 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     #   + Σ_{(p,d) ∈ pd_invest_set} v_invest_p[p,d]·unitsize[p] · lifetime_fixed_cost[p,d] · bw[d]
     #   annual_discounted[p,d] = (a_cap[p,c] − a_salv[p,c]) · Σ_{d′ ∈ L(p,d)} inflation_inv[d′]
     #                                                                       (reinvest_choice / no_reinvestment)
+    #   inflation_inv[d] (the social discount factor of investment payments) = Σ_y pyr[d,y]·(1 +
+    #     social_discount_rate)^−(base[d,y] + pyr[d,y]·discount_offset_investment) (y, pyr, base as for inflation_op)
     #                          = A[p,c] · Σ_{d′ ∈ solve, yr[d′] ≥ yr[c]} inflation_inv[d′]   (reinvest_automatic)
     #   c = c(d) the period the capacity comes online; L(p,d) = the solve's periods d′ with yr[c] ≤ yr[d′] < y_eol[p,d]
     #     (no upper end for reinvest_automatic): the periods the cohort of the decision is in service in, y_eol =
     #     round_end_of_life(yr[c] + lifetime_technical[p,c], end_of_life_method[p]) (engine.md "Capacity symbols")
     #   a_cap[p,c] = A[p,c]·G(n)/G(L) (A[p,c] when n = L); A[p,c] = ann(invest_cost[p,c], discount_rate[p,c], n);
     #     n = payback_time[p,c] (lifetime_technical[p,c] where the entity has none); L = lifetime_technical[p,c];
-    #     G(x) = Σ_{k<⌈x⌉} min(1, x−k)·(1+inflation_rate)^−k
+    #     G(x) = Σ_{k<⌈x⌉} min(1, x−k)·(1+social_discount_rate)^−k
     #   a_salv[p,c] = S·(1+r)^−L·af(r, L), S = 1000·net_salvage_value[p,d_eol] (d_eol the period y_eol starts; the
     #     last period after the last period start), r = discount_rate[p,c]
     #   lifetime_fixed_cost[p,d] = 1000 · Σ_{d′ ∈ L(p,d)} fixed_cost[p,d′]·inflation_op[d′]
     #   ann(c, r, n) = c·1000·af(r, n);  af(r, x) = r / (1 − (1+r)^−x) · (1+r)^(off_inv − 1) (1 / x for r = 0);
-    #     off_inv = inflation_offset_investment: each payment falls off_inv years into its service year
+    #     off_inv = discount_offset_investment: each payment falls off_inv years into its service year
     # Cost of process capacity decided in period d, currency/MW. Capital: the level yearly cost of a plant of its real
     # lifetime (the present value of the loan, paid over payback_time at discount_rate, spread evenly over
     # lifetime_technical years; the payments are sized for when they fall, so the loan taken when the capacity comes
     # online is worth invest_cost at discount_rate for every off_inv), charged for each year the cohort is in service
     # inside the horizon (discounted per period). end_of_life_method sets the years in service, not the price;
-    # payback_time and discount_rate set only the size (with discount_rate = inflation_rate payback_time changes
+    # payback_time and discount_rate set only the size (with discount_rate = social_discount_rate payback_time changes
     # nothing for a whole number of years). The salvage value at the end of the real lifetime lowers the price: its
     # present value at discount_rate, levelled over the lifetime_technical years (the textbook capital recovery with
     # salvage when payback_time = lifetime_technical). The inflation-adjusted fixed cost of each period the capacity
@@ -5497,7 +5502,7 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     #   divest_salvage[p,d] = D(d)·S_d − a_x[p]·S̄_x[p,d]
     #   W(p,d) = the solve's periods d′ with yr[d] ≤ yr[d′] < EOL[p] (the window of retired[p,·]: until the
     #     end of life of p's pre-existing capacity, the end of the horizon for reinvest_automatic)
-    #   S_d = 1000·net_salvage_value[p,d]; D(d) = (1+inflation_rate)^−(years from the run start to the start of d)
+    #   S_d = 1000·net_salvage_value[p,d]; D(d) = (1+social_discount_rate)^−(years from the run start to the start of d)
     #   a_x[p] = S_x·(1+r_x)^−R_x·af(r_x, R_x) (af: invest_cost_p), S_x = 1000·net_salvage_value[p,d_eol] (the
     #     last period's value after the last period start), r_x = discount_rate[p,d0], R_x = y_eol[p] − y0 (y_end[p]
     #     − y0 for a life past the horizon), a_x = 0 for reinvest_automatic; y0 / d0 the start of the run

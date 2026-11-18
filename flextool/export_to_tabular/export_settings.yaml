@@ -103,8 +103,8 @@ split_params:
       params: ["stochastic_branches"]
   model:
     model:
-      params: ["inflation_rate",
-               "inflation_offset_investment", "inflation_offset_operations",
+      params: ["social_discount_rate",
+               "discount_offset_investment", "discount_offset_operations",
                "max_flow_for_unconstrained_variables",
                "small_number_threshold",
                "output_horizon", "start_year"]

@@ -1006,19 +1006,19 @@ _PARAMETER_SPECS: list[dict] = [
     },
     # --- model inflation ---
     {
-        "cl_pars": [("model", "inflation_rate")],
-        "header": "model,p_inflation_rate",
-        "filename": "input/p_inflation_rate.csv",
+        "cl_pars": [("model", "social_discount_rate")],
+        "header": "model,p_social_discount_rate",
+        "filename": "input/p_social_discount_rate.csv",
     },
     {
-        "cl_pars": [("model", "inflation_offset_operations")],
-        "header": "model,p_inflation_offset_operations",
-        "filename": "input/p_inflation_offset_operations.csv",
+        "cl_pars": [("model", "discount_offset_operations")],
+        "header": "model,p_discount_offset_operations",
+        "filename": "input/p_discount_offset_operations.csv",
     },
     {
-        "cl_pars": [("model", "inflation_offset_investment")],
-        "header": "model,p_inflation_offset_investment",
-        "filename": "input/p_inflation_offset_investment.csv",
+        "cl_pars": [("model", "discount_offset_investment")],
+        "header": "model,p_discount_offset_investment",
+        "filename": "input/p_discount_offset_investment.csv",
     },
     {
         "cl_pars": [("model", "max_flow_for_unconstrained_variables")],

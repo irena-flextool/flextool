@@ -439,7 +439,7 @@ def test_retirement_costs_stop_at_the_end_of_life(tmp_path_factory) -> None:
     fixed-cost saving) is p2025 and p2030.  The existing capacity's investment is sunk; it holds its salvage value
     200 · 1000 CUR/MW, received at its end of life (year 15, the start of p2035: net_salvage_value of p2035), as a
     level credit over its 15 service years from the run start at its discount_rate 0.05, paid at year starts
-    (inflation_offset_investment 0).  Retiring a MW in p2025 receives the salvage value at the start of p2025 and
+    (discount_offset_investment 0).  Retiring a MW in p2025 receives the salvage value at the start of p2025 and
     gives back every credit of its service years.  By hand (``test_chain_costs`` factors, r = 0.04 / offsets 0.5
     and 0)::
 

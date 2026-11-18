@@ -217,6 +217,10 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [hours] A time delay between the input node and the output node - works only with one-way connections (or units). Either a constant indicati...
     ('delay', 'unit'): QuantityType.DURATION,
     # [hours] A time delay between the input nodes and the output nodes. Either a constant indicating the time difference in hours or a map of tim...
+    ('discount_offset_investment', 'model'): QuantityType.DURATION,
+    # [years] Where in each year the yearly investment payments and the yearly salvage credits fall (0 start, 1 end).
+    ('discount_offset_operations', 'model'): QuantityType.DURATION,
+    # [years] Where in each year operating and fixed costs are weighed by social_discount_rate. Default 0.5.
     ('discount_rate', 'connection'): QuantityType.FRACTION,
     # [e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model...
     ('discount_rate', 'node'): QuantityType.FRACTION,
@@ -282,11 +286,10 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('inertia_limit', 'group'): QuantityType.INERTIA,
     # [MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value means no requirement. Constant or period.
     ('inflation_offset_investment', 'model'): QuantityType.DURATION,
-    # [years] Offset for when investment costs occur within a year. Default 0 (beginning of year).
     ('inflation_offset_operations', 'model'): QuantityType.DURATION,
-    # [years] Offset for when operational costs occur within a year. Default 0.5 (middle of year).
     ('inflation_rate', 'model'): QuantityType.FRACTION,
-    # [e.g. 0.02 for 2%] Model-wide inflation rate applied to all future costs. When inputs are in real (constant-price) terms, set to 0. When inp...
+    # Pre-v82 names of discount_offset_investment / discount_offset_operations / social_discount_rate, carried during
+    # the migration window (renamed by db_migration v82).
     ('inflow', 'node'): QuantityType.ENERGY,
     # [MWh] Inflow into the node (negative is outflow). Constant or time.
     ('inflow_method', 'node'): QuantityType.DIMENSIONLESS,
@@ -603,6 +606,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Sequence of solves in the model. Array.
     ('small_number_threshold', 'model'): QuantityType.DIMENSIONLESS,
     # Config scalar: LP coefficients/RHS below this magnitude are floored to 0. Not an LP coefficient itself.
+    ('social_discount_rate', 'model'): QuantityType.FRACTION,
+    # [-] e.g. 0.03 means 3% per year. The model's time discount rate: weighs a cost by 1 / (1 + rate)^years.
     ('start_year', 'model'): QuantityType.DIMENSIONLESS,
     # [year] Calendar year the first period of the model's first solve starts (build_year's reference).
     ('startup_cost', 'connection'): QuantityType.PRICE_PER_CAPACITY,

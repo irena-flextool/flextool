@@ -2,7 +2,7 @@
 capacity retires.
 
 Fixture ``tests.json`` (built from JSON), single solve ``y2020_2035_5week``: periods p2020 … p2035 of 5 years each,
-run years 0, 5, 10, 15, horizon 20.  The model sets ``inflation_rate`` i = 0.05 and ``inflation_offset_investment``
+run years 0, 5, 10, 15, horizon 20.  The model sets ``social_discount_rate`` i = 0.05 and ``discount_offset_investment``
 1, so the investment factor of year k (0-based) is 1.05^-(k+1) and a period's factor is the sum of its five years.
 coal_plant: discount_rate r = 0.05 (= i), fixed_cost 0, net_salvage_value 200 CUR/kW (S = 200 000 CUR/MW),
 lifetime_method reinvest_choice, existing 500 MW.  D(d) = 1.05^-y[d] discounts a one-off at the start of d.
@@ -60,8 +60,8 @@ def _level(amount: float, years: int) -> float:
 
 
 def _values(lifetime: float, invest_method: str, *, salvage=None, extra: list | None = None) -> list:
-    return ([["model", "flexTool", "inflation_rate", b64(0.05, "float")],
-             ["model", "flexTool", "inflation_offset_investment", b64(1.0, "float")],
+    return ([["model", "flexTool", "social_discount_rate", b64(0.05, "float")],
+             ["model", "flexTool", "discount_offset_investment", b64(1.0, "float")],
              ["unit", PLANT, "discount_rate", b64(0.05, "float")],
              ["unit", PLANT, "fixed_cost", b64(0.0, "float")],
              ["unit", PLANT, "invest_method", b64(invest_method, "str")],

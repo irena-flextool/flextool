@@ -25,7 +25,7 @@ which is why the demand variation is supply-side here:
     invest_method=invest_total, invest_cost 1 CUR/kW, discount_rate 0.05,
     lifetime 1 (→ annuity 1000·CRF(0.05,1)·1.05^(0−1) = 1000 exactly: the
     yearly payment at the start of the year, the default
-    inflation_offset_investment 0, worth the investment cost at 5 %),
+    discount_offset_investment 0, worth the investment cost at 5 %),
     invest_max_total 150 (the design §15.1 per-path demonstration value:
     each leaf's own total — realized 60+30 = 90, low 80+40 = 120 — is
     ≤ 150 so the cap is non-binding PER LEAF, while the legacy all-``d``

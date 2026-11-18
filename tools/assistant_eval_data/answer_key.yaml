@@ -6,7 +6,7 @@
 #   co2_price; the override scenarios of tests/assistant/grounding_projects.py add their alternative after the
 #   base chain);
 # - timeline: solve y2020_2day_dispatch, period p2020, timeset 2day = t0001..t0048 (48 steps of 1 h), no
-#   timestep weights, years_represented 1 (default), inflation_rate 0 (default);
+#   timestep weights, years_represented 1 (default), social_discount_rate 0 (default);
 # - _d_ energy tables are annualised: sample total / period_share_of_year, period_share = 48 / 8760, so
 #   x 182.5 (_output_meta ENERGY_ANNUAL, docs/advanced_concepts.md); _dt_ tables are MW per step; costs_dt_p is
 #   CUR per step (not annualised); annualized_costs_d_p is M CUR/a;
@@ -458,7 +458,7 @@ questions:
         critical: true
         derivation: "invest_2day_test = init, west, coal, coal_invest, invest_2day (invest_periods [p2020]).
           Cost of 1 MW built in p2020: annuity 400 CUR/kW x 1000 x 0.05 / (1 - 1.05^-30) / 1.05 = 24781.50 CUR/MW/a
-          (paid at the start of the year, inflation_offset_investment 0) plus fixed_cost 100 CUR/kW/a x 1000 = 100000
+          (paid at the start of the year, discount_offset_investment 0) plus fixed_cost 100 CUR/kW/a x 1000 = 100000
           CUR/MW/a, total 124781.50 CUR/MW for the one-year horizon.
           Value of 1 MW in a sample hour with slack above it: (penalty 900 - fuel 20 / 0.4 = 50) = 850 CUR/MWh x
           8760 / 48 = 155125 CUR/a > 124781.50, so every MW up to the peak slack is worth building (break-even 0.80

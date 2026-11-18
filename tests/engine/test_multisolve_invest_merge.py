@@ -17,7 +17,7 @@ p2040: 1, p2045: 1} CUR/kW and ``lifetime`` 30 years (all capacity alive over th
 
 Hand values: p2035 residual 120 - 60 = 60 MW -> invest 60; p2040 residual 120 MW -> 60 more; p2045 residual 60 MW
 < 120 MW existing -> invest 0.  Annuity at r = 0.05, n = 30, paid at the start of each year (the default
-inflation_offset_investment 0): 0.05 / (1 - 1.05**-30) / 1.05 = 0.0619537.  The p2040 annualized unit investment
+discount_offset_investment 0): 0.05 / (1 - 1.05**-30) / 1.05 = 0.0619537.  The p2040 annualized unit investment
 (both investments operate in p2040): (60 MW * 3000 CUR/MW + 60 MW * 1000 CUR/MW) * 0.0619537 = 240 000 *
 0.0619537 = 14 868.9 CUR = 0.0148689 M CUR.
 

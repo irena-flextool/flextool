@@ -24,7 +24,7 @@ with the branches FANNING AT t0 (the ``ws`` alternative), plus:
 
 The objectives are investment costs only, at the peaker annuity 1 · 1000 · 0.05 /
 (1 − 1.05^−1) / 1.05 = 1000 CUR/MW per year (one payment at the start of the
-year, the default inflation_offset_investment 0); the design's 173 250 / 157 500
+year, the default discount_offset_investment 0); the design's 173 250 / 157 500
 were at the year-end annuity 1050, so each is 1000 / 1050 of it.
   * ``hedge_na_divest`` — ``base`` made ``invest_retire_total`` + existing
     50 so ``v_divest`` exists; the divest ties fire too (F2).

@@ -146,7 +146,7 @@ def test_pre_reveal_period_reads_plain_or_realized_data(midhorizon_run):
 
 # The here-and-now investment of 60 MW at p2035, at invest_cost 1 CUR/kW (1000 CUR/MW), lifetime 1 year and
 # discount_rate 0.05: annuity 0.05 / (1 - 1.05**-1) / 1.05 = 1 (one payment at the start of the year, the default
-# inflation_offset_investment 0), so 60 * 1000 * 1 = 60 000 CUR = 0.06 M CUR a year.
+# discount_offset_investment 0), so 60 * 1000 * 1 = 60 000 CUR = 0.06 M CUR a year.
 EXPECTED_PRE_REVEAL_ANNUALIZED_INVEST_MCUR = 0.06
 
 

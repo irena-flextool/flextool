@@ -104,7 +104,7 @@ def test_p_timestep_weight_non_trivial_on_base_weighted(
 
 def test_p_inflation_op_uses_years_represented(scenario_run) -> None:
     """Direct unit test on the helper: ``p_inflation_op_from_source``
-    must read ``solve.years_represented`` when ``inflation_rate=0``,
+    must read ``solve.years_represented`` when ``social_discount_rate=0``,
     not return the trivial 1.0.  Specifically: rolling-solve fixtures
     key the DB parameter on the parent solve name; the helper must
     fall back via stripping ``_roll_<N>``.

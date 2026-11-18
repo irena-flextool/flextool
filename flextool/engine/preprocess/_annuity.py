@@ -7,30 +7,30 @@ Formula::
     annuity_factor(r, n, off) = ann(r, n) · (1 + r)^(off − 1)
 
     annualised cost A [CUR/MW/a] = invest_cost [CUR/kW] · 1000 · annuity_factor(discount_rate, payback_time,
-                                                                                 inflation_offset_investment)
+                                                                                 discount_offset_investment)
 
     G(x) = Σ_{k<⌈x⌉} min(1, x − k)·v^k = (1 − v^⌊x⌋)/(1 − v) + (x − ⌊x⌋)·v^⌊x⌋,   v = 1/(1 + i)
          = x                                                                   i = 0 (|i| < 1e-9)
     level_factor(n, L, i) = G(n) / G(L)
 
-    level yearly price a_cap [CUR/MW/a] = A · level_factor(payback_time, lifetime_technical, inflation_rate)
+    level yearly price a_cap [CUR/MW/a] = A · level_factor(payback_time, lifetime_technical, social_discount_rate)
 
     salvage_credit(S, r, x, off) = S · (1 + r)^−x · annuity_factor(r, x, off)
 
 What it does: ``annuity_factor`` spreads an investment over ``payback_time`` years at the interest
 ``discount_rate``.  ``r = 0`` is the straight-line limit of the formula: the annuity is
 ``cost / payback_time``.  An entity without ``payback_time`` pays back over its ``lifetime_technical``.  The
-payment of service year k falls at ``off`` years into that year (``inflation_offset_investment``: 0 its start,
+payment of service year k falls at ``off`` years into that year (``discount_offset_investment``: 0 its start,
 1 its end), so ``(1 + r)^(off − 1)`` sizes the payments for that moment: the loan taken when the capacity comes
 online is then worth exactly ``cost`` at ``discount_rate`` for every ``off`` (``ann`` alone is the year-end loan
 of ``off`` 1; at ``off`` 0 it was worth ``cost · (1 + r)``).
 ``level_factor`` turns that loan into the level yearly cost of the plant over its real lifetime: the present value
-(at the model's ``inflation_rate`` i) of ``n`` yearly payments A, A·G(n), spread evenly over ``L`` years, gives
+(at the model's ``social_discount_rate`` i) of ``n`` yearly payments A, A·G(n), spread evenly over ``L`` years, gives
 A·G(n)/G(L) a year.  ``salvage_credit`` is the level yearly income of a salvage value S received at the end of ``x``
 service years: its present value at ``r`` levelled over those years (``x = L`` for a plant built in the model).
 It does not depend on when the plant is built, so one price per year in service holds for
-every build period and period length.  With ``discount_rate = inflation_rate`` the price is
-``invest_cost · 1000 · annuity_factor(i, L)`` whatever ``n`` (a whole number of years); with a ``discount_rate`` below the inflation rate a
+every build period and period length.  With ``discount_rate = social_discount_rate`` the price is
+``invest_cost · 1000 · annuity_factor(i, L)`` whatever ``n`` (a whole number of years); with a ``discount_rate`` below it a
 shorter payback time costs more.  A fractional last year counts its fraction (the rule of a fractional
 ``years_represented``).
 
@@ -67,7 +67,7 @@ _SMALL_RATE = 1e-9
 
 def annuity_factor(r: pl.Expr, n: pl.Expr, offset: float) -> pl.Expr:
     """``r / (1 − (1+r)^−n) · (1+r)^(offset − 1)``; ``1/n`` for ``|r| < 1e-9`` (the r → 0 limit), ``offset`` the
-    model's ``inflation_offset_investment`` (module docstring).  At ``offset`` 1 the timing factor is exactly 1.0."""
+    model's ``discount_offset_investment`` (module docstring).  At ``offset`` 1 the timing factor is exactly 1.0."""
     ann = (pl.when(r.abs() < _SMALL_RATE)
              .then(1.0 / n)
              .otherwise(r / (1.0 - (1.0 + r).pow(-n))))

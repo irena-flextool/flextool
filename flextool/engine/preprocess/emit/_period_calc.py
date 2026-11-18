@@ -82,8 +82,8 @@ def _read_csv(path: Path, columns: list[str],
 
 
 def scalar_max(csv_path: Path, default: float, *, provider: "object | None" = None) -> float:
-    """The largest value of a ``(key, value)`` scalar CSV of the model (``p_inflation_rate.csv``,
-    ``p_inflation_offset_investment.csv``, ...), ``default`` when it has none."""
+    """The largest value of a ``(key, value)`` scalar CSV of the model (``p_social_discount_rate.csv``,
+    ``p_discount_offset_investment.csv``, ...), ``default`` when it has none."""
     rows_df = _read_csv(csv_path, ["key", "value"], provider=provider)
     vals: list[float] = []
     for v in rows_df["value"].to_list():
@@ -297,10 +297,10 @@ def emit_period_calculated_params(
     _emit_keyed(provider, "solve_data/complete_period_share_of_year_calc.csv",
                 ("period", "value"), complete_share)
 
-    p_inflation = scalar_max(input_dir / "p_inflation_rate.csv", 0.0, provider=provider)
-    p_infl_offset_investment = scalar_max(input_dir / "p_inflation_offset_investment.csv", _INFL_OFFSET_INV_DEFAULT,
+    p_inflation = scalar_max(input_dir / "p_social_discount_rate.csv", 0.0, provider=provider)
+    p_infl_offset_investment = scalar_max(input_dir / "p_discount_offset_investment.csv", _INFL_OFFSET_INV_DEFAULT,
                                           provider=provider)
-    p_infl_offset_operations = scalar_max(input_dir / "p_inflation_offset_operations.csv", _INFL_OFFSET_OPS_DEFAULT,
+    p_infl_offset_operations = scalar_max(input_dir / "p_discount_offset_operations.csv", _INFL_OFFSET_OPS_DEFAULT,
                                           provider=provider)
 
     global_years_set: dict[str, None] = {}

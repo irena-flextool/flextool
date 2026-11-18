@@ -61,7 +61,7 @@ Algorithm:
   * ``annuity`` = sum-over-allowed-methods of
     ``invest_value × 1000 × annuity_factor(r, n, off)`` (:mod:`.._annuity`:
     ``r / (1 - (1+r)^-n) · (1+r)^(off − 1)``, ``1/n`` at ``r = 0``; ``off`` the
-    ``inflation_offset_investment``), ``n`` the payback time
+    ``discount_offset_investment``), ``n`` the payback time
     (``payback_time``, else the entity's ``lifetime_technical``).  A missing
     ``r`` takes the schema default (0.05); a missing payback time where the
     cost is not 0 is an error.  The investment of ``reinvest_choice`` /
@@ -373,8 +373,8 @@ def _lifetime_method_with_default_lf(
 
 def _solve_inflation_scalars(source: "InputSource"
                                   ) -> tuple[float, float, float]:
-    """Read ``model.inflation_rate`` / ``model.inflation_offset_invest`` /
-    ``model.inflation_offset_operations`` scalars, falling back to
+    """Read ``model.social_discount_rate`` / ``model.discount_offset_investment`` /
+    ``model.discount_offset_operations`` scalars, falling back to
     flextool's CSV-side defaults when the Spine reader returned
     only-default rows.
 
@@ -408,9 +408,9 @@ def _solve_inflation_scalars(source: "InputSource"
             return default
 
     return (
-        _explicit_max("inflation_rate", _INFL_RATE_DEFAULT),
-        _explicit_max("inflation_offset_investment", _INFL_OFFSET_INV_DEFAULT),
-        _explicit_max("inflation_offset_operations", _INFL_OFFSET_OPS_DEFAULT),
+        _explicit_max("social_discount_rate", _INFL_RATE_DEFAULT),
+        _explicit_max("discount_offset_investment", _INFL_OFFSET_INV_DEFAULT),
+        _explicit_max("discount_offset_operations", _INFL_OFFSET_OPS_DEFAULT),
     )
 
 
@@ -705,7 +705,7 @@ def _notice_net_salvage_once(entities) -> None:
 
 def _notice_annuity_timing(rows: pl.LazyFrame, offset: float) -> None:
     """The ``annuity_timing`` notice for the entities its marker names (an upgraded database whose annuity was the
-    year-end annuity at every ``inflation_offset_investment``) whose annuity now differs: ``rows`` ``[e, cost,
+    year-end annuity at every ``discount_offset_investment``) whose annuity now differs: ``rows`` ``[e, cost,
     disc]`` (the cost and discount_rate of each annuity of the solve); it differs where the offset is not 1 and
     both are non-zero.  Built only while the marker names entities."""
     from flextool.engine import _behaviour_changes as bc
@@ -765,7 +765,7 @@ def _per_method_annuity_lf(
     ``lifetime_technical`` ``L`` read at the same period::
 
         a_cap[e, d] = ann[e, d]                                     |n − L| ≤ YEAR_TOL, or no L
-                    = ann[e, d] · G(n) / G(L)  (:func:`.._annuity.level_factor`, i = model.inflation_rate)
+                    = ann[e, d] · G(n) / G(L)  (:func:`.._annuity.level_factor`, i = model.social_discount_rate)
 
     Algorithm (port of
     ``entity_annual_calc_params.py:177-217``):
@@ -821,7 +821,7 @@ def _per_method_annuity_lf(
     require_lifetime(bad.iter_rows(), cost_param_name, PAYBACK_TIME)
     _notice_discount_rate_zero()
 
-    # Annuity: cost [CUR/kW] × 1000 × annuity_factor(r, n, inflation_offset_investment).
+    # Annuity: cost [CUR/kW] × 1000 × annuity_factor(r, n, discount_offset_investment).
     offset = _solve_inflation_scalars(source)[1]
     _notice_annuity_timing(ed_with_life.join(method_count_lf, on="e", how="inner").filter(in_class)
                            .select("e", "cost", "disc"), offset)

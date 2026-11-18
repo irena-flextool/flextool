@@ -22,10 +22,10 @@ EVPI = RP − WS = 15 000 > 0 and VSS = EEV − RP = 18 750 > 0 — genuine
 hedging value.
 
 Annuity of the investable ``base`` (discount_rate r = 0.05, lifetime 1, at the
-default inflation_offset_investment 0): the yearly payment is sized so that,
+default discount_offset_investment 0): the yearly payment is sized so that,
 paid at the start of the year, it is worth the investment cost at r:
 A = cost · 1000 · r / (1 − (1 + r)^−1) · (1 + r)^(0 − 1) = cost · 1000 · 1.05 / 1.05
-= cost · 1000 CUR/MW per year.  The solve has no inflation_rate, so every
+= cost · 1000 CUR/MW per year.  The solve has no social_discount_rate, so every
 payment weighs 1.  The p2035 capacity (cost 1) pays in p2035 and p2040:
 K1 = 2 · 1000 = 2000; the p2040 capacity (cost 3) pays once: K2 = 3 · 1000 = 3000.
 The design's 173 250 / 157 500 / 192 937.5 were at the year-end payment 1050

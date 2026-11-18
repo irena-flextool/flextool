@@ -1,8 +1,8 @@
 """Retirement of model-built capacity (#70): a built cohort can be retired; a retired MW pays its contract as it ran.
 
 Fixture ``tests.json`` (built from JSON), single solve ``y2020_2035_5week``: periods p2020 … p2035 of 5 one-year rows
-each, run years 0, 5, 10, 15, horizon 20.  The model sets ``inflation_rate`` i = 0.05 and
-``inflation_offset_investment`` 1 (0 where stated), so a payment of service year k (0-based, from the run start)
+each, run years 0, 5, 10, 15, horizon 20.  The model sets ``social_discount_rate`` i = 0.05 and
+``discount_offset_investment`` 1 (0 where stated), so a payment of service year k (0-based, from the run start)
 weighs v^(k+off) with v = 1/1.05, and a one-off at the start of year t weighs D(t) = v^t.  coal_plant: existing 0
 (unless stated), invest_cost 400 CUR/kW (C = 400 000 CUR/MW), fixed_cost 0, net_salvage_value 200 (S = 200 000),
 lifetime_method reinvest_choice.
@@ -71,8 +71,8 @@ def _contract(r: float, n: int, life: int, off: float, built: int, retired: int 
 def _values(*, r: float = 0.05, life: float = 10.0, off: float = 1.0, payback: float | None = None,
             method: str = "invest_retire_period", existing: "float | list" = 0.0, fixed_cost: list | None = None,
             salvage: list | None = None, extra: list | None = None) -> list:
-    out = [["model", "flexTool", "inflation_rate", b64(0.05, "float")],
-           ["model", "flexTool", "inflation_offset_investment", b64(off, "float")],
+    out = [["model", "flexTool", "social_discount_rate", b64(0.05, "float")],
+           ["model", "flexTool", "discount_offset_investment", b64(off, "float")],
            ["unit", PLANT, "discount_rate", b64(r, "float")],
            ["unit", PLANT, "fixed_cost", b64(0.0, "float") if fixed_cost is None else fixed_cost],
            ["unit", PLANT, "existing", existing if isinstance(existing, list) else b64(existing, "float")],
@@ -325,8 +325,8 @@ HEDGE_C, HEDGE_S = 1000.0, 500.0
 
 
 def _hedge_values(invest: dict[str, float], retire_min: dict[str, float]) -> list:
-    return [["model", "flextool", "inflation_rate", b64(0.05, "float")],
-            ["model", "flextool", "inflation_offset_investment", b64(1.0, "float")],
+    return [["model", "flextool", "social_discount_rate", b64(0.05, "float")],
+            ["model", "flextool", "discount_offset_investment", b64(1.0, "float")],
             ["unit", "base", "invest_method", b64("invest_retire_period", "str")],
             ["unit", "base", "lifetime_method", b64("reinvest_choice", "str")],
             ["unit", "base", "lifetime_technical", b64(2.0, "float")],
@@ -426,7 +426,7 @@ def test_retirement_of_built_capacity_in_the_results(tmp_path_factory) -> None:
     reports 40 MW divested in p2025 and 60 MW in service then (0 from p2030, the end of life); the discounted
     retirement cost is the objective's term, 40 MW × the change of retiring a MW (C − S·D(5) less the kept
     plant's level price, :func:`_contract`), and the fixed cost no longer paid −40 · 100 000 · Σ_{k=5..9}
-    1.05^-(k+0.5) (inflation_offset_operations 0.5); annualized, the retirement is that cost ÷ Σ_{k=5..9}
+    1.05^-(k+0.5) (discount_offset_operations 0.5); annualized, the retirement is that cost ÷ Σ_{k=5..9}
     1.05^-(k+1) a year in p2025, the fixed cost reduction −40 · 100 000 a year in p2025."""
     import pandas as pd
 

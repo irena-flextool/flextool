@@ -907,7 +907,7 @@
 
 # --- How-to: emission trajectories (docs/how_to/emissions.md) ---
 # Chain init, west, coal, co2_trajectory_system, <trajectory>: four periods
-# p2020..p2035 on the 2-day timeset, years_represented 5 each, inflation_rate
+# p2020..p2035 on the 2-day timeset, years_represented 5 each, social_discount_rate
 # 0; constant 300 MW demand; coal_plant 50 CUR/MWh emitting 0.34 / 0.4 =
 # 0.85 t/MWh_e; clean_plant 500 MW at 80 CUR/MWh, no emissions.
 # Unconstrained coal = 300 MW -> 255 t/h -> 2 233 800 t/a.  With a binding
@@ -991,7 +991,7 @@
     - costs_discounted.csv
   # ro_desal (250 m3/MWh_e: 0.2 CUR/m3 against 0.857843 for MED) is invested
   # to its 2000 m3/h limit (annuity 30 000 x CRF(5 %, 20) / 1.05 = 2 292.65 CUR
-  # per m3/h and year, paid at year starts (inflation_offset_investment 0),
+  # per m3/h and year, paid at year starts (discount_offset_investment 0),
   # against a saving of 5 764).  RO 2000 m3/h (8 MW), MED 1000 (heat 83.33,
   # bp_chp power 41.67), coal_plant 266.33: operation 16 257.843 CUR/h ->
   # 142.418706, plus the RO annuity 2000 x 30 000 x 0.0802426 / 1.05 =

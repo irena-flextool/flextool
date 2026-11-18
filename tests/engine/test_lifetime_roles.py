@@ -34,7 +34,7 @@ def test_payback_time_falls_back_per_entity_to_the_technical_lifetime() -> None:
 # ---------------------------------------------------------------------------
 # The annuity on the payback time, the window on the technical lifetime
 #
-# invest_cost c = 1000 CUR/kW, discount_rate r = 0.05, the default inflation_offset_investment 0 (payments at the
+# invest_cost c = 1000 CUR/kW, discount_rate r = 0.05, the default discount_offset_investment 0 (payments at the
 # start of each year: the year-end annuity divided by 1 + r).  Hand values:
 #   n = 10: 1.05^-10 = 0.6139133, factor 0.05 / (1 - 0.6139133) = 0.1295046, annuity 1e6 · 0.1295046 / 1.05
 #           = 123 337.69 CUR/MW/a;

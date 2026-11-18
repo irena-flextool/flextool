@@ -1,7 +1,7 @@
 """Reported costs of chained solves: discount factors, lumps and windows from the start of the run.
 
-Fixture ``tests.json`` (built from JSON).  ``model.inflation_rate`` r = 0.04 (alternative
-``invest_solveSequence_5weeks``), ``inflation_offset_operations`` 0.5 and ``inflation_offset_investment`` 0 (the
+Fixture ``tests.json`` (built from JSON).  ``model.social_discount_rate`` r = 0.04 (alternative
+``invest_solveSequence_5weeks``), ``discount_offset_operations`` 0.5 and ``discount_offset_investment`` 0 (the
 defaults), four periods p2020 … p2035 of 5 years each, so the run years are Y = 0, 5, 10, 15 and the horizon ends at
 20.  Hand derivation of the factors (``_npv`` "Run-level fields of the reported costs")::
 
@@ -43,7 +43,7 @@ def _f(d: str, offset: float) -> float:
 
 F_OPS = {d: _f(d, 0.5) for d in PERIODS}
 F_INV = {d: _f(d, 0.0) for d in PERIODS}
-#: The annuity, paid at the start of each year (``inflation_offset_investment`` 0): the year-end annuity / 1.05.
+#: The annuity, paid at the start of each year (``discount_offset_investment`` 0): the year-end annuity / 1.05.
 ANNUITY = 400.0 * 1000.0 * 0.05 / (1.0 - 1.05 ** -30) / 1.05
 FIXED = 100.0 * 1000.0
 
@@ -151,7 +151,7 @@ def _rolling(periods: dict[str, str]) -> list:
     def pmap(data: dict) -> list:
         return b64({"index_type": "str", "index_name": "period", "data": [[k, v] for k, v in data.items()]}, "map")
     return ROLLING_VALUES + [
-        ["model", "flexTool", "inflation_rate", b64(0.04, "float")],
+        ["model", "flexTool", "social_discount_rate", b64(0.04, "float")],
         ["solve", "y2020_2day_dispatch", "period_timeset", pmap(periods)],
         ["solve", "y2020_2day_dispatch", "realized_periods", arr(list(periods))],
         ["solve", "y2020_2day_dispatch", "years_represented", pmap({d: 5.0 for d in periods})]]
@@ -531,7 +531,7 @@ def test_retirement_costs(tmp_path_factory, lifetime) -> None:
 
 STOCH_RD_JSON = FLEXTOOL_ROOT / "tests" / "fixtures" / "stoch_realized_dispatch.json"
 STOCH_RD_CHAIN = ["init", "base", "stoch"]
-STOCH_RD_VALUES = [["model", "flextool", "inflation_rate", b64(0.04, "float")],
+STOCH_RD_VALUES = [["model", "flextool", "social_discount_rate", b64(0.04, "float")],
                    ["unit", "wind", "fixed_cost", b64(10.0, "float")],
                    ["unit", "peaker", "fixed_cost", b64(20.0, "float")],
                    ["solve", "stoch_rd", "years_represented", _period_map({"p2035": 5.0})],
@@ -604,7 +604,7 @@ def _realized_fan_chain_db(tmp_path_factory) -> tuple[str, str]:
                 ("solve", "s30"), ("solve", "s40")]
     values = [
         ("model", "flextool", "solves", api.Array(["s30", "s40"])),
-        ("model", "flextool", "inflation_rate", 0.1),
+        ("model", "flextool", "social_discount_rate", 0.1),
         ("timeline", "tl", "timestep_duration", m({t: 1.0 for t in steps}, "time")),
         ("timeset", "ts30", "timeline", "tl"), ("timeset", "ts30", "timeset_duration", m({"t0001": 4.0}, "time")),
         ("timeset", "ts40", "timeline", "tl"), ("timeset", "ts40", "timeset_duration", m({"t0005": 4.0}, "time")),
@@ -697,7 +697,7 @@ def test_chain_of_realized_fans_reports_from_the_run_start(tmp_path_factory) -> 
 FAN_JSON = FLEXTOOL_ROOT / "tests" / "fixtures" / "stoch_two_period_invest.json"
 
 
-FAN_VALUES = [["model", "flextool", "inflation_rate", b64(0.04, "float")],
+FAN_VALUES = [["model", "flextool", "social_discount_rate", b64(0.04, "float")],
               ["unit", "wind", "fixed_cost", b64(10.0, "float")],
               ["unit", "peaker", "fixed_cost", b64(20.0, "float")]]
 FAN_F_INV = {"p2035": 1.0, "p2040": 1.04 ** -1}

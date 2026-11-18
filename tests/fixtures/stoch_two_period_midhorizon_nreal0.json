@@ -1996,7 +1996,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time, sized so that the yearly payments are worth invest_cost at this rate when the capacity starts to operate: annuity = invest_cost x r / (1 - (1 + r)^-payback_time) x (1 + r)^(inflation_offset_investment - 1). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. In the same terms as the cost inputs: a real rate for inputs in real prices, a nominal rate for nominal inputs. Not the model's social_discount_rate, which weighs costs over time. Used to annualize investment costs over the payback time, sized so that the yearly payments are worth invest_cost at this rate when the capacity starts to operate: annuity = invest_cost x r / (1 - (1 + r)^-payback_time) x (1 + r)^(discount_offset_investment - 1). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -2172,7 +2172,7 @@
         null
       ],
       null,
-      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor): with discount_rate it sets the size of the yearly investment cost. With lifetime_method reinvest_choice or no_reinvestment the present value of the annuity (discounted at the model inflation_rate) is spread evenly over lifetime_technical and paid for each year the capacity is in service: with discount_rate equal to inflation_rate payback_time changes nothing (a whole number of years), below it a shorter payback_time costs more. With reinvest_automatic the annuity is paid in every year to the end of the model horizon. No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the capacity comes online is used.",
+      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor): with discount_rate it sets the size of the yearly investment cost. With lifetime_method reinvest_choice or no_reinvestment the present value of the annuity (discounted at the model social_discount_rate) is spread evenly over lifetime_technical and paid for each year the capacity is in service: with discount_rate equal to social_discount_rate payback_time changes nothing (a whole number of years), below it a shorter payback_time costs more. With reinvest_automatic the annuity is paid in every year to the end of the model horizon. No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the capacity comes online is used.",
       "investment"
     ],
     [
@@ -2793,35 +2793,24 @@
     ],
     [
       "model",
-      "inflation_offset_investment",
+      "discount_offset_investment",
       [
         "MC4w",
         "float"
       ],
       null,
-      "[years] Offset for when investment costs occur within a year. Default 0 (beginning of year).",
+      "[years] Where in each year the yearly investment payments and the yearly salvage credits fall, counted from the start of the year, between 0 and 1: 0 (default) the start, 1 the end. The loan over payback_time is sized so that, at the entity's discount_rate, its payments are worth invest_cost when the capacity starts to operate, at any offset; the salvage credits are sized the same way. The offset moves the payments and credits that social_discount_rate weighs. No effect when both rates are 0. Constant.",
       "model"
     ],
     [
       "model",
-      "inflation_offset_operations",
+      "discount_offset_operations",
       [
         "MC41",
         "float"
       ],
       null,
-      "[years] Offset for when operational costs occur within a year. Default 0.5 (middle of year).",
-      "model"
-    ],
-    [
-      "model",
-      "inflation_rate",
-      [
-        null,
-        null
-      ],
-      null,
-      "[-] e.g. 0.02 means 2% per year. Model-wide inflation rate applied to all future costs. When inputs are in real (constant-price) terms, set to 0. When inputs are in nominal terms, set to expected inflation. Default: 0 (real inputs).",
+      "[years] Where in each year operating and fixed costs are weighed by social_discount_rate, counted from the start of the year: 0.5 (default) the middle of the year, standing for costs spread over the year. No effect when social_discount_rate is 0. Constant.",
       "model"
     ],
     [
@@ -2870,6 +2859,17 @@
     ],
     [
       "model",
+      "social_discount_rate",
+      [
+        null,
+        null
+      ],
+      null,
+      "[-] e.g. 0.03 means 3% per year. The model's time discount rate: a cost or income is weighed by 1 / (1 + social_discount_rate)^t, with t the years from the start of the run to the moment it falls (its year plus discount_offset_investment or discount_offset_operations). Give it in the same terms as the cost inputs. 0 (default): no time preference; a cost in a later period weighs the same as now (with real-price inputs, inflation is already in the prices). Above 0: later costs and incomes weigh less (the planner's preference for now over later); with nominal inputs, use the combined rate (1 + inflation) x (1 + social rate) - 1. Not the discount_rate of a unit, connection or node: that is the investor's rate (WACC), which turns invest_cost into yearly payments. Constant.",
+      "model"
+    ],
+    [
+      "model",
       "solves",
       [
         null,
@@ -2894,7 +2894,7 @@
       "model",
       "version",
       [
-        "ODEuMA==",
+        "ODIuMA==",
         "float"
       ],
       null,
@@ -3063,7 +3063,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time, sized so that the yearly payments are worth invest_cost at this rate when the capacity starts to operate: annuity = invest_cost x r / (1 - (1 + r)^-payback_time) x (1 + r)^(inflation_offset_investment - 1). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. In the same terms as the cost inputs: a real rate for inputs in real prices, a nominal rate for nominal inputs. Not the model's social_discount_rate, which weighs costs over time. Used to annualize investment costs over the payback time, sized so that the yearly payments are worth invest_cost at this rate when the capacity starts to operate: annuity = invest_cost x r / (1 - (1 + r)^-payback_time) x (1 + r)^(discount_offset_investment - 1). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -3283,7 +3283,7 @@
         null
       ],
       null,
-      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor): with discount_rate it sets the size of the yearly investment cost. With lifetime_method reinvest_choice or no_reinvestment the present value of the annuity (discounted at the model inflation_rate) is spread evenly over lifetime_technical and paid for each year the capacity is in service: with discount_rate equal to inflation_rate payback_time changes nothing (a whole number of years), below it a shorter payback_time costs more. With reinvest_automatic the annuity is paid in every year to the end of the model horizon. No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the storage capacity comes online is used.",
+      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor): with discount_rate it sets the size of the yearly investment cost. With lifetime_method reinvest_choice or no_reinvestment the present value of the annuity (discounted at the model social_discount_rate) is spread evenly over lifetime_technical and paid for each year the capacity is in service: with discount_rate equal to social_discount_rate payback_time changes nothing (a whole number of years), below it a shorter payback_time costs more. With reinvest_automatic the annuity is paid in every year to the end of the model horizon. No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the storage capacity comes online is used.",
       "investment"
     ],
     [
@@ -4229,7 +4229,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the payback time, sized so that the yearly payments are worth invest_cost at this rate when the capacity starts to operate: annuity = invest_cost x r / (1 - (1 + r)^-payback_time) x (1 + r)^(inflation_offset_investment - 1). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. In the same terms as the cost inputs: a real rate for inputs in real prices, a nominal rate for nominal inputs. Not the model's social_discount_rate, which weighs costs over time. Used to annualize investment costs over the payback time, sized so that the yearly payments are worth invest_cost at this rate when the capacity starts to operate: annuity = invest_cost x r / (1 - (1 + r)^-payback_time) x (1 + r)^(discount_offset_investment - 1). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -4438,7 +4438,7 @@
         null
       ],
       null,
-      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor): with discount_rate it sets the size of the yearly investment cost. With lifetime_method reinvest_choice or no_reinvestment the present value of the annuity (discounted at the model inflation_rate) is spread evenly over lifetime_technical and paid for each year the capacity is in service: with discount_rate equal to inflation_rate payback_time changes nothing (a whole number of years), below it a shorter payback_time costs more. With reinvest_automatic the annuity is paid in every year to the end of the model horizon. No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the capacity comes online is used.",
+      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor): with discount_rate it sets the size of the yearly investment cost. With lifetime_method reinvest_choice or no_reinvestment the present value of the annuity (discounted at the model social_discount_rate) is spread evenly over lifetime_technical and paid for each year the capacity is in service: with discount_rate equal to social_discount_rate payback_time changes nothing (a whole number of years), below it a shorter payback_time costs more. With reinvest_automatic the annuity is paid in every year to the end of the model horizon. No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the capacity comes online is used.",
       "investment"
     ],
     [
@@ -5660,19 +5660,13 @@
     ],
     [
       "model",
-      "inflation_offset_investment",
+      "discount_offset_investment",
       "float",
       0
     ],
     [
       "model",
-      "inflation_offset_operations",
-      "float",
-      0
-    ],
-    [
-      "model",
-      "inflation_rate",
+      "discount_offset_operations",
       "float",
       0
     ],
@@ -5697,6 +5691,12 @@
     [
       "model",
       "small_number_threshold",
+      "float",
+      0
+    ],
+    [
+      "model",
+      "social_discount_rate",
       "float",
       0
     ],

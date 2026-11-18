@@ -3,8 +3,8 @@ its real lifetime, charged for each year its cohort is in service inside the hor
 
 Fixture ``tests.json`` (built from JSON), single solve ``y2020_2035_5week``: periods p2020 … p2035 of 5 years each,
 run years 0, 5, 10, 15, horizon 20.  coal_plant: invest_cost 400 CUR/kW, discount_rate 0.05, ``invest_no_limit``,
-fixed_cost 0, end_of_life_method the default closest_seam.  The model sets ``inflation_rate`` 0.05 and
-``inflation_offset_investment`` 1 (both explicitly: the defaults are 0 and 0), so the investment factor of year k
+fixed_cost 0, end_of_life_method the default closest_seam.  The model sets ``social_discount_rate`` 0.05 and
+``discount_offset_investment`` 1 (both explicitly: the defaults are 0 and 0), so the investment factor of year k
 (0-based, from the run start) is 1.05^-(k+1).
 
 Hand derivation.  The annuity over n years is A(n) = 400 · 1000 · r / (1 − (1+r)^-n) (r = discount_rate).  The
@@ -83,8 +83,8 @@ def _economics(method: str = "reinvest_choice", technical: float = 12.0, payback
                invest_method: str = "invest_no_limit", rate: float = 0.05,
                end_of_life: str | None = None) -> list:
     payback_value = _period_map(payback) if isinstance(payback, dict) else b64(float(payback), "float")
-    out = [["model", "flexTool", "inflation_rate", b64(0.05, "float")],
-           ["model", "flexTool", "inflation_offset_investment", b64(1.0, "float")],
+    out = [["model", "flexTool", "social_discount_rate", b64(0.05, "float")],
+           ["model", "flexTool", "discount_offset_investment", b64(1.0, "float")],
            ["unit", PLANT, "invest_cost", b64(400.0, "float")],
            ["unit", PLANT, "discount_rate", b64(rate, "float")],
            ["unit", PLANT, "fixed_cost", b64(0.0, "float")],
@@ -141,7 +141,7 @@ def test_reinvest_automatic_pays_to_the_horizon(tmp_path_factory) -> None:
 @pytest.mark.solver
 @pytest.mark.parametrize("technical", [30.0, 5.0], ids=["technical_30", "technical_5"])
 def test_price_is_over_the_technical_lifetime(tmp_path_factory, technical) -> None:
-    """payback_time 12 with lifetime_technical 30 or 5, discount_rate = inflation_rate: the price is a =
+    """payback_time 12 with lifetime_technical 30 or 5, discount_rate = social_discount_rate: the price is a =
     A12 · G(12) / G(L) = A(L) (A30 = 26 020.57, A5 = 92 389.92), paid for the years in service: with 30 every year
     to the horizon (S(y_on + 1, 20)), with 5 the decision's own period only (S(y_on + 1, y_on + 5)).  (Before: the
     12 payback years, 400 000 for the p2020 decision with either lifetime.)"""
@@ -208,8 +208,8 @@ def test_end_of_life_method_sets_the_years_not_the_price(tmp_path_factory, techn
 @pytest.mark.solver
 def test_payback_time_of_the_online_period(tmp_path_factory) -> None:
     """A payback_time map {p2020: 12, p2025: 7, p2030: 12, p2035: 12}, lifetime_technical 12: the p2025 decision
-    pays back over 7 years, a = A(7) · G(7) / G(12), which with discount_rate = inflation_rate is A12: the payback
-    time does not change the cost.  It is in service from 5 to 17 → 15: A12 · S(6, 15) = 273 045.68 (before: the 7
+    pays back over 7 years, a = A(7) · G(7) / G(12), which with discount_rate = social_discount_rate is A12: the
+    payback time does not change the cost.  It is in service from 5 to 17 → 15: A12 · S(6, 15) = 273 045.68 (before: the 7
     payback years, A(7) · S(6, 12) = 400 000 · 1.05^-5)."""
     payback = {"p2020": 12.0, "p2025": 7.0, "p2030": 12.0, "p2035": 12.0}
     got = _ed(_step(tmp_path_factory, "pb_map", _economics(payback=payback)).flex_data.ed_entity_annual_discounted)
@@ -284,7 +284,7 @@ FIXED_COST_MAP = {"p2020": 10.0, "p2025": 20.0, "p2030": 30.0, "p2035": 40.0}
 def _with_fixed_cost(fixed) -> list:
     value = _period_map(fixed) if isinstance(fixed, dict) else b64(float(fixed), "float")
     return [v for v in _economics() if v[2] != "fixed_cost"] + [
-        ["model", "flexTool", "inflation_offset_operations", b64(0.5, "float")],
+        ["model", "flexTool", "discount_offset_operations", b64(0.5, "float")],
         ["unit", PLANT, "fixed_cost", value]]
 
 
@@ -296,7 +296,7 @@ def _s_op(a: int, b: int) -> float:
 @pytest.mark.solver
 def test_fixed_cost_of_each_period_in_service(tmp_path_factory) -> None:
     """fixed_cost map {p2020: 10, p2025: 20, p2030: 30, p2035: 40} CUR/kW/a, lifetime_technical = payback_time = 12
-    (in service 0 … 9, 5 … 14, 10 … 19, 15 … 19), inflation_offset_operations 0.5 (set explicitly), so the
+    (in service 0 … 9, 5 … 14, 10 … 19, 15 … 19), discount_offset_operations 0.5 (set explicitly), so the
     operations factor of year k is 1.05^-(k + 0.5): S_op(0, 5) = 4.436393, S_op(5, 10) = 3.476030.  New capacity
     pays the fixed cost of each period it is in service, as existing capacity does:
     ``ed_lifetime_fixed_cost`` = 1000 · Σ fixed_cost[d′] · S_op(d′) = 113 884.54 (p2020: 10 · S_op(0, 5) + 20 ·
@@ -477,7 +477,7 @@ def _yearly_fixed_cost(results: dict[str, pd.DataFrame]) -> dict[str, float]:
 @pytest.mark.solver
 def test_yearly_investment_cost_for_each_year_in_service(tmp_path_factory) -> None:
     """100 MW decided in p2020 (pinned), payback_time 12 and lifetime_technical 5: the capacity is in service in
-    p2020 only, at the price a = A12 · G(12) / G(5) = A(5) = 92 389.92 a year (discount_rate = inflation_rate).
+    p2020 only, at the price a = A12 · G(12) / G(5) = A(5) = 92 389.92 a year (discount_rate = social_discount_rate).
     The annualized investment cost is 100 · a = 9 238 991.93 a year in p2020 and 0 in the later periods, the
     yearly amount the objective charges for each year in service (before: 100 · A12 a year in p2020 and p2025 and
     2/5 of that in p2030, the 12 payback years, also after the capacity was gone)."""
@@ -519,7 +519,7 @@ def test_chain_reports_the_fixed_cost_of_each_period(tmp_path_factory) -> None:
     annualized fixed cost invested is 100 · 1000 · 10 = 1 M a year in p2020 and 2 M in p2025 (FlexTool 4.5.0: the
     p2020 value in both, 79 124.24 per MW and 1 M a year)."""
     values = [v for v in _pinned(12.0) if v[2] != "fixed_cost"] + [
-        ["model", "flexTool", "inflation_offset_operations", b64(0.5, "float")],
+        ["model", "flexTool", "discount_offset_operations", b64(0.5, "float")],
         ["unit", PLANT, "fixed_cost", _period_map(FIXED_COST_MAP)]]
     steps, _, _ = _RUNS.get(tmp_path_factory, alt="pb_chain_fixed_steps", values=values,
                             base_chain=_no_battery_invest(CHAIN))

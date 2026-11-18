@@ -797,7 +797,7 @@ _INVESTED_CAPACITY_REASON = (
 def ft2_annuity(interest: float, lifetime: float) -> float:
     """FT2's annuity factor, ``-PMT(interest, lifetime, 1)`` in its workbook: ``r / (1 - (1 + r)^-n)``, and
     ``1 / n`` at an interest of 0 (Excel's PMT at rate 0).  The same as FlexTool 4's annuity of ``discount_rate``
-    and ``lifetime`` paid at the year end (``inflation_offset_investment`` 1, which the importer sets), so the
+    and ``lifetime`` paid at the year end (``discount_offset_investment`` 1, which the importer sets), so the
     importer maps ``interest`` to ``discount_rate`` (0 included) and drops the column."""
     if abs(interest) < 1e-9:
         return 1.0 / lifetime
@@ -2498,7 +2498,8 @@ def _write_timeline_and_solve(
     _add_param(db, "model", ("flexTool",), "solves", model_solves,
                alt_name, counters)
     # FT2 charges its annuity (ft2_annuity: the year-end annuity) once a year; FlexTool sizes the annuity for the
-    # moment inflation_offset_investment places it in the year, and at 1 (the year end) it is FT2's.
+    # moment discount_offset_investment places it in the year, and at 1 (the year end) it is FT2's.  The importer
+    # writes the v56 name, inflation_offset_investment, which the migration renames.
     _add_param(db, "model", ("flexTool",), "inflation_offset_investment", 1.0, alt_name, counters)
 
     modes = []

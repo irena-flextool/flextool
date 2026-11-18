@@ -91,7 +91,7 @@ CLASS_HELP: dict[str, str] = {
                  "maximum instant flow or a cumulative flow over a period.",
     "group": "A set of units, connections and nodes that share limits or targets (investment limits, CO2 "
              "limits, capacity margin, inertia) or that are reported together.",
-    "model": "Settings for the whole model: which solves run and in which order, inflation, and numerical "
+    "model": "Settings for the whole model: which solves run and in which order, discounting, and numerical "
              "settings.",
     "node": "A point where energy is balanced: demand, supply and transfers meet there. A node can also be a "
             "storage (its state is the energy stored) or a price-setting market.",

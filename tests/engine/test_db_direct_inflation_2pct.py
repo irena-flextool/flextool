@@ -20,7 +20,7 @@ Fixture
 -------
 ``tests/data/work_inflation_check/`` — derivative of
 ``wind_battery_invest_lifetime_renew`` with the spine-DB
-``model.inflation_rate`` patched from 0.04 to 0.02 *before*
+``model.social_discount_rate`` patched from 0.04 to 0.02 *before*
 ``runner.write_input``, so flextool's CSV writer and polar_high's
 DB-direct ``p_inflation_op_full_cascade_from_source`` both see the
 same rate-0.02 source.  Built by ``tests/_gen_inflation_check.py``.
@@ -34,9 +34,9 @@ For each (period d, year y in ``solve.years_represented``):
   - ``factor_contribution[d, y] = pyr[d, y] × (1 + rate)^(-until[d, y])``
   - ``factor[d] = Σ_y factor_contribution[d, y]``
 
-For the operations cascade ``offset = inflation_offset_operations``
+For the operations cascade ``offset = discount_offset_operations``
 (default 0.5, mid-period); for the investment cascade
-``offset = inflation_offset_investment`` (default 0.0, end-of-prior-period).
+``offset = discount_offset_investment`` (default 0.0, end-of-prior-period).
 The fixture's offsets are at their defaults.
 
 Lifetime cascade for ``ed_entity_annual_discounted`` (per
@@ -63,7 +63,7 @@ from tests._support.load import load_scenario
 pytestmark = pytest.mark.solver
 
 # Phase 3d: ``work_inflation_check`` was a derivative of
-# ``wind_battery_invest_lifetime_renew`` with model.inflation_rate
+# ``wind_battery_invest_lifetime_renew`` with model.social_discount_rate
 # patched from 0.04 to 0.02.  We now expose this as a real scenario in
 # ``tests.json`` (``wind_battery_invest_lifetime_renew_inflation_2pct``,
 # alt chain + ``inflation_2pct``).  ``scenario_run`` runs its cascade
@@ -92,7 +92,7 @@ SCENARIO = "wind_battery_invest_lifetime_renew_inflation_2pct"
 # show enough digits for a reader to verify by hand.
 # ---------------------------------------------------------------------------
 
-R = 0.02                           # patched model.inflation_rate
+R = 0.02                           # patched model.social_discount_rate
 PERIODS = ["p2020", "p2025", "p2030", "p2035"]
 PDY = {"p2020": 0.0, "p2025": 5.0, "p2030": 10.0, "p2035": 15.0}
 OFFSET_OPS = 0.5                   # flextool default (period_calculated_params.py:226)

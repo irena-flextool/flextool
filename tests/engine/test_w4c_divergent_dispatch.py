@@ -224,7 +224,7 @@ def test_parent_forecasts_genuinely_diverge(chain) -> None:
 #   + invest annuity                                 =    90 000
 #   = 4 908 000
 # Invest annuity: peaker 1 CUR/kW, r 0.05, lifetime 1 -> 1000 · 0.05 / (1 − 1.05^−1) / 1.05 = 1000 CUR/MW per year
-# (one payment at the start of the year, the default inflation_offset_investment 0);
+# (one payment at the start of the year, the default discount_offset_investment 0);
 # 90 MW (the low forecast's peak) over the one calendar period p2035 (1 year) = 90 000.  The period label p2035
 # and its forecast copies p2035_high / p2035_low are the same calendar year, counted once.
 PARENT_FORECAST_ONLY_OBJECTIVE = 0.5 * 20 * 8760 * 10 + 0.5 * 90 * 8760 * 10 + 90 * 1000.0

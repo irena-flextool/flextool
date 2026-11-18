@@ -38,7 +38,7 @@ independent hand calculations (oracles, from the docs):
   period on the existing 100 MW: 43 800 000 EUR each.  disp_p1 = 43.8 M (not 87.6 M) pins that the contained
   solve runs only the period its containing solve realizes.  Before the fix the hand-written ladder ran
   ``disp`` (not ``disp_p1``) under inv_p1 and the examples' hand-written ladder stopped with a KeyError.
-* model A with ``inflation_rate`` 0.05: see ``test_years_represented_counts_from_the_model_start`` and the tests
+* model A with ``social_discount_rate`` 0.05: see ``test_years_represented_counts_from_the_model_start`` and the tests
   after it (item 242: every solve discounts from the start of the run).
 """
 from __future__ import annotations
@@ -222,8 +222,8 @@ def test_a_solve_contained_in_a_split_solve_gets_the_period_whatever_the_row_nam
     assert named_steps["disp_p2"].obj == pytest.approx(43_800_000.0, rel=1e-9)
 
 
-#: ``inflation_rate`` 0.05 on the model.
-INFLATION = [["model", "flextool", "inflation_rate", scm.pack(0.05, "float")]]
+#: ``social_discount_rate`` 0.05 on the model.
+INFLATION = [["model", "flextool", "social_discount_rate", scm.pack(0.05, "float")]]
 
 # Hand calculation (``advanced_concepts.md``: every solve discounts from the start of the run, investments at the
 # start of each year, operations at mid-year; 4380 h per step and year; offsets inv 0 / ops 0.5):

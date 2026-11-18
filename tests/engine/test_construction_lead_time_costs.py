@@ -7,7 +7,7 @@ values of the period it comes online (invest_cost is an overnight cost).
   invest_cost · 1000 · 0.05 / (1 − 1.05^−30), proportional to invest_cost.
 * stoch_two_period_invest.json (recourse, p2035 and p2040 of one year each, a two-branch fan, no inflation):
   peaker invest_cost 1, discount_rate 0.05, lifetime 1 → annuity 1 · 1000 · 0.05 / (1 − 1.05^−1) / 1.05 = 1000 per
-  operating year (one payment at the start of the year, inflation_offset_investment 0: the year-end annuity 1050
+  operating year (one payment at the start of the year, discount_offset_investment 0: the year-end annuity 1050
   divided by 1.05).
 * lh2_three_region.json (Benders over three regions) with two 5-year periods.
 """

@@ -241,7 +241,7 @@ def test_h4_tied_block_start_costs_a_spill(tmp_path_factory):
       cheaper (P_d < P_u at the same weight) ⇒ S = 2, spill 1 MWh at (p1_high, t0003), up 0; v_state high
       t0003 = 3, t0004 = 1; low t0003 = 0, t0004 = 2.
     op_factor[p1_high, t0003] = Δt (1 h) · tsw (1) · inflation_op[p1] / period_share[p1] · branch weight:
-    inflation_rate 0 and years_represented 1 ⇒ inflation_op = 1; p1 represents b1 + b2 = 4 h ⇒ period_share =
+    social_discount_rate 0 and years_represented 1 ⇒ inflation_op = 1; p1 represents b1 + b2 = 4 h ⇒ period_share =
     4 / 8760; weight 0.5 ⇒ op_factor = 8760 / 4 · 0.5 = 1095.  **Objective = P_d · 1 MWh · 1095 = 109 500.**
     """
     st = _steps(4)
@@ -321,7 +321,7 @@ def test_h2b_within_solve_blended_every_branch_closes_on_the_trunk_start(tmp_pat
     (d_first × d_last = p1 × {p2_high, p2_low}); drift[p1] = +2 ⇒ drift of every branch = −2, so the high block
     spills 1 MWh (its flows net −1); v_inter p1 = 2, p2_high = p2_low = 0.
     Objective = P_d (100) · 1 MWh · op_factor[p2_high, t]; op_factor = Δt (1 h) · tsw (1) · inflation_op[p2] /
-    period_share[p2] · branch weight: inflation_rate 0 and years_represented 1 ⇒ inflation_op = 1; p2 (and its
+    period_share[p2] · branch weight: social_discount_rate 0 and years_represented 1 ⇒ inflation_op = 1; p2 (and its
     branch periods) represents one 2-h base period ⇒ period_share = 2 / 8760; weight 0.5 ⇒ op_factor = 8760 / 2 ·
     0.5 = 2190 ⇒ **objective = 219 000**."""
     K, D = 2.0, 1.0
@@ -408,8 +408,8 @@ def _h2(tmp_path_factory, *, K: float, D: float, low: list[float]) -> dict:
         realized="real")["sol"]
 
 
-# op_factor[p2_x, t] = Δt (1 h) · tsw (1) · inflation_op[p2] / period_share[p2] · branch weight: inflation_rate 0 and
-# years_represented 1 ⇒ inflation_op = 1; p2 (and its branch periods) holds 2 h ⇒ period_share = 2 / 8760 ⇒
+# op_factor[p2_x, t] = Δt (1 h) · tsw (1) · inflation_op[p2] / period_share[p2] · branch weight: social_discount_rate 0
+# and years_represented 1 ⇒ inflation_op = 1; p2 (and its branch periods) holds 2 h ⇒ period_share = 2 / 8760 ⇒
 # op_factor = 4380 · w: high (0.3) 1314, low (0.7) 3066.
 _OP_HIGH, _OP_LOW = 4380.0 * 0.3, 4380.0 * 0.7
 

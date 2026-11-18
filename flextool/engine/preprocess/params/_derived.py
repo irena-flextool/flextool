@@ -938,7 +938,7 @@ def p_inflation_op_from_source(
 ) -> Param | None:
     """Period-level inflation factor for operations.
 
-    Audit §3.1.3 says the formula compounds ``(1 + inflation_rate)^...``;
+    Audit §3.1.3 says the formula compounds ``(1 + social_discount_rate)^...``;
     the actual flextool implementation
     (``period_calculated_params.py:280-322``) computes
     ``sum_y p_years_represented[d,y] * (1+rate)^until_op[d,y]``
@@ -946,7 +946,7 @@ def p_inflation_op_from_source(
     ``base[d, y] = sum_{y'<y} pyr[d, y']``.
 
     Γ.8.E coverage:
-      * ``model.inflation_rate ∈ {None, 0}`` (the default) — formula
+      * ``model.social_discount_rate ∈ {None, 0}`` (the default) — formula
         collapses to ``ops_factor[d] = Σ_y pyr[d, y] * 1 =
         years_represented[solve, d]`` since each period has a single
         flat scalar in the 1D-Map shape exposed by InputSource (each
@@ -955,7 +955,7 @@ def p_inflation_op_from_source(
         rate=0) — handled here, mirrors the regression that
         ``work_fullYear_roll`` exposes when CSV retirement Step 3 lands.
 
-    Non-trivial-rate (``rate != 0``) and ``inflation_offset`` cascade
+    Non-trivial-rate (``rate != 0``) and ``discount_offset`` cascade
     are handled by :func:`p_inflation_op_multi_year_from_source`
     (Γ.3.C, applied in :func:`apply_derived_c`).
 
@@ -965,7 +965,7 @@ def p_inflation_op_from_source(
     """
     if dt is None:
         return None
-    rate = _try_param(source, "model", "inflation_rate")
+    rate = _try_param(source, "model", "social_discount_rate")
     rate_v = 0.0
     if rate is not None and rate.height > 0:
         rate_v = float(rate["value"][0])
@@ -3911,7 +3911,7 @@ def p_entity_max_units_from_source(source: "InputSource",
 # §3.7.5/6 — Multi-year inflation cascade  (default-rate path only)
 # ---------------------------------------------------------------------------
 #
-# Replaces the simple Γ.3.A ``p_inflation_op`` when ``model.inflation_rate
+# Replaces the simple Γ.3.A ``p_inflation_op`` when ``model.social_discount_rate
 # != 0`` AND the active solve carries non-trivial ``years_represented`` /
 # ``period_timeset``.  The full cascade is documented at
 # ``period_calculated_params.py:280-322``: for each period d, sum across
@@ -3934,17 +3934,17 @@ def p_inflation_op_multi_year_from_source(source: "InputSource",
     """Multi-year inflation factor for the default 1-year-per-period case.
 
     Returns None when:
-      * ``model.inflation_rate == 0`` (Γ.3.A's simple path covers it).
+      * ``model.social_discount_rate == 0`` (Γ.3.A's simple path covers it).
       * The active solve has no ``years_from_start`` parameter.
       * Any period has > 1 represented year (defer to CSV).
     """
-    rate_df = _try_param(source, "model", "inflation_rate")
+    rate_df = _try_param(source, "model", "social_discount_rate")
     rate_v = 0.0
     if rate_df is not None and rate_df.height > 0:
         rate_v = float(rate_df["value"][0])
     if rate_v == 0.0:
         return None  # Γ.3.A's trivial path applies.
-    offset_df = _try_param(source, "model", "inflation_offset_operations")
+    offset_df = _try_param(source, "model", "discount_offset_operations")
     offset_v = 0.5
     if offset_df is not None and offset_df.height > 0:
         offset_v = float(offset_df["value"][0])
@@ -8270,9 +8270,9 @@ def _solve_inflation_inputs(source: "InputSource") -> tuple[float, float, float]
         except Exception:
             return default
 
-    rate = _explicit_max("inflation_rate", 0.0)
-    off_inv = _explicit_max("inflation_offset_investment", 0.0)
-    off_ops = _explicit_max("inflation_offset_operations", 0.5)
+    rate = _explicit_max("social_discount_rate", 0.0)
+    off_inv = _explicit_max("discount_offset_investment", 0.0)
+    off_ops = _explicit_max("discount_offset_operations", 0.5)
     return rate, off_inv, off_ops
 
 
@@ -8432,7 +8432,7 @@ def _inflation_yearly_from_source(source: "InputSource",
     Returns ``None`` only when the periodAll set is empty.
 
     Algorithm:
-      1. ``inflation_rate``, ``inflation_offset_invest/ops`` from model.
+      1. ``social_discount_rate``, ``discount_offset_investment`` / ``discount_offset_operations`` from model.
       2. For each period ``d`` ∈ periodAll, build ``years_for_period[d]``
          via :func:`_years_for_period_from_source`.
       3. Build the GLOBAL year set = union of all year labels across

@@ -424,7 +424,7 @@ def test_lead_time_annuity_without_payback_time_takes_the_lifetime_of_its_online
     lifetime_technical of its online period, 20 years (not that of p2020, 3): the period map describes the plant as
     constructed (owner decision D50), as for its end of life.  The same as with payback_time 20.  By hand:
     1.05^-20 = 0.3768895, factor 0.05 / (1 − 0.3768895) = 0.0802426, annuity 1000 · 1000 · 0.0802426 / 1.05 (paid
-    at the start of each year, the default inflation_offset_investment 0) = 76 421.51 CUR/MW/a; reinvest_choice pays
+    at the start of each year, the default discount_offset_investment 0) = 76 421.51 CUR/MW/a; reinvest_choice pays
     it for 20 years from y_on 5, of which the 15 to the horizon end 20 are in the model (no inflation): 15 · 76 421.51
     = 1 146 322.67.  (Over 3 years: 349 722.44 a year for 3 years.)"""
     ann, discounted = _lead_time_annuity(_lead_time_annuity_step(tmp_path_factory, "lead_annuity_no_payback", None))
@@ -456,7 +456,7 @@ def test_lead_time_investment_reads_every_period_map_at_its_online_period(tmp_pa
 
     * annuity = invest_cost · 1000 · r / (1 − (1+r)^-n) / (1 + r) = 1000 · 1000 · 0.05 / (1 − 1.05^-4) / 1.05 =
       268 582.70 CUR/MW/a, paid back over payback_time 4 years at the start of each year (the default
-      inflation_offset_investment 0);
+      discount_offset_investment 0);
     * end of life Y = 5 + 7 = 12 → next_seam 20: the cohort (y_life 7, y_eol 20) is in service in p2025 and
       p2030 (5 + 10 = 15 years), the operating window p2025, p2030, the fixed cost ``10 · 1000 ·
       (inflation_op[p2025] + inflation_op[p2030])`` (``ed_lifetime_fixed_cost`` and ``ed_lifetime_fixed_cost_run``);

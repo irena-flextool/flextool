@@ -40,7 +40,7 @@ mechanism note).  A free existing ``wind`` unit with a branch-varying
   * unit ``base`` → ``elec`` — the investable peaker (virtual_unitsize 1,
     invest_total, discount_rate 0.05, lifetime 1 → annuity per MW-period
     = cost·1000·CRF(0.05,1)·1.05^(0−1) = cost·1000 at the default
-    inflation_offset_investment 0 (a start-of-year payment worth the cost at
+    discount_offset_investment 0 (a start-of-year payment worth the cost at
     5 %); unbounded-forward windows so the p2035 anchor's window is
     {p2035, p2040} → K1 = 2·1·1000 = 2000 and the p2040 anchor's window is
     {p2040} → K2 = 1·3·1000 = 3000),
@@ -48,8 +48,8 @@ mechanism note).  A free existing ``wind`` unit with a branch-varying
 
 **No inflation / no solve-level discount** (design §8.1 F3): the exact
 165 000 golden requires ``inv_factor ≡ 1.0``, i.e. the SOLVE-level
-inflation scalar = 0.  This builder authors NO ``model.inflation_rate``,
-NO ``inflation_offset_investment/operations``, and NO solve-level
+inflation scalar = 0.  This builder authors NO ``model.social_discount_rate``,
+NO ``discount_offset_investment/operations``, and NO solve-level
 ``discount_rate`` — all left at their 0.0 default.  The entity
 ``discount_rate = 0.05`` on ``base`` drives ONLY the CRF (the annuity), a
 distinct knob.

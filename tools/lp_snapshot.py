@@ -401,6 +401,19 @@ def _patch_multi_year_reinvest_choice(data: dict) -> dict:
                 ["unit", "coal_plant", "lifetime_method", "reinvest_choice"]])
 
 
+def _patch_model_discount_settings(data: dict) -> dict:
+    """The model's discount settings away from their defaults on ``multi_year_reinvest_choice`` (a chain that
+    invests and reinvests): ``social_discount_rate`` 0.03, ``discount_offset_investment`` 1 and
+    ``discount_offset_operations`` 0.25, so the discount factors of investments and of operations both move (at a
+    rate equal to the investors' discount_rate 0.05 the offset of the investment payments would cancel out)."""
+    data = _patch_multi_year_reinvest_choice(data)
+    return _overlay(
+        data, name="model_discount_settings", base="multi_year_reinvest_choice",
+        values=[["model", "flexTool", "social_discount_rate", 0.03],
+                ["model", "flexTool", "discount_offset_investment", 1.0],
+                ["model", "flexTool", "discount_offset_operations", 0.25]])
+
+
 def _patch_invest_total_no_var(data: dict) -> dict:
     """c16a #28/#43 probe (review's ``i28_skip2``): ``wind_plant`` and
     ``battery_inverter`` switched to ``invest_no_limit`` (no entity-total
@@ -2015,6 +2028,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "cumulative_capacity": _patch_cumulative_capacity,
     "stoch_invest_storage": _patch_stoch_invest_storage,
     "multi_year_reinvest_choice": _patch_multi_year_reinvest_choice,
+    "model_discount_settings": _patch_model_discount_settings,
     "invest_total_no_var": _patch_invest_total_no_var,
     "reserve_floors": _patch_reserve_floors,
     "chp_floor_linear": _patch_chp_floor_linear,
@@ -2235,6 +2249,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("cumulative_capacity", _T),
     ("stoch_invest_storage", _F + "stoch_two_period_hedge.json"),
     ("multi_year_reinvest_choice", _T),
+    ("model_discount_settings", _T),
     ("invest_total_no_var", _T),
     ("reserve_floors", _T),
     ("chp_floor_linear", _T),

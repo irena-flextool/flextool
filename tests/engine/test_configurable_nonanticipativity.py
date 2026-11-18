@@ -57,7 +57,7 @@ SOLVE = "stoch_2p_free"
 
 # Investment cost coefficient of ``base`` built in p2035, CUR/MW (ed_entity_annual_discounted).
 # Annuity = invest_cost · 1000 · r / (1 − (1 + r)^−life) / (1 + r) = 20 · 1000 · 0.05 / (1 − 1.05^−1) / 1.05
-# = 20 000 (one payment at the start of the year, the default inflation_offset_investment 0: the cost itself).
+# = 20 000 (one payment at the start of the year, the default discount_offset_investment 0: the cost itself).
 # lifetime_method reinvest_automatic: the capacity serves every later calendar period of the horizon, p2035 and
 # p2040 (1 year each, every investment inflation factor 1.0), so the sum is 2 × 20 000 = 40 000.  Each calendar
 # period counts once: the period labels p2035 / p2040 and their forecast copies p20xx_up / p20xx_low are the

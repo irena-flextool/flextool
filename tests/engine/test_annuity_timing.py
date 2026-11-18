@@ -1,7 +1,7 @@
-"""The investment annuity is worth the investment cost at discount_rate for every ``inflation_offset_investment``.
+"""The investment annuity is worth the investment cost at discount_rate for every ``discount_offset_investment``.
 
 The yearly payment of service year k falls at k + off years after the capacity comes online (off =
-``inflation_offset_investment``: 0 the start of the year, 1 its end).  A loan of C taken when the capacity comes
+``discount_offset_investment``: 0 the start of the year, 1 its end).  A loan of C taken when the capacity comes
 online and repaid in n level payments at those moments is worth C at the interest r when each payment is
 
     A = C · r / (1 − (1+r)^−n) · (1+r)^(off − 1).
@@ -14,8 +14,8 @@ Hand derivation, C = 1000 CUR/kW = 1 000 000 CUR/MW, r = 5 %, n = 10:
 Before, A was the year-end annuity for every offset: at off 0 the loan was worth C · 1.05 = 1 050 000.
 
 The present values below are summed payment by payment (not the closed form), so they check the engine's annuity
-independently.  In the model (``tests.json`` single solve, 5-year periods p2020 … p2035, inflation_rate = r = 5 %,
-lifetime_technical = payback_time = 10, invest_cost 400 CUR/kW) a p2020 investment is in service in years 0 … 9 and
+independently.  In the model (``tests.json`` single solve, 5-year periods p2020 … p2035, social_discount_rate = r =
+5 %, lifetime_technical = payback_time = 10, invest_cost 400 CUR/kW) a p2020 investment is in service in years 0 … 9 and
 each year's investment factor is 1.05^−(k + off): its objective coefficient is the PV of the loan, 400 000 CUR/MW,
 at every offset (before: 420 000 at off 0).
 """
@@ -76,8 +76,8 @@ def _free_runs():
 
 
 def _values(off: float) -> list:
-    return [["model", "flexTool", "inflation_rate", b64(R, "float")],
-            ["model", "flexTool", "inflation_offset_investment", b64(off, "float")],
+    return [["model", "flexTool", "social_discount_rate", b64(R, "float")],
+            ["model", "flexTool", "discount_offset_investment", b64(off, "float")],
             ["unit", PLANT, "invest_cost", b64(400.0, "float")],
             ["unit", PLANT, "discount_rate", b64(R, "float")],
             ["unit", PLANT, "fixed_cost", b64(0.0, "float")],
@@ -94,8 +94,8 @@ def _plant(param) -> dict[str, float]:
 @pytest.mark.solver
 @pytest.mark.parametrize("off", [0.0, 0.5, 1.0])
 def test_investment_is_worth_its_cost_at_every_offset(tmp_path_factory, off) -> None:
-    """The objective coefficient of a p2020 investment (10 years in service, inflation_rate = discount_rate) is the
-    PV of its loan, 400 CUR/kW · 1000 = 400 000 CUR/MW, at every offset; the reported yearly investment cost of
+    """The objective coefficient of a p2020 investment (10 years in service, social_discount_rate = discount_rate) is
+    the PV of its loan, 400 CUR/kW · 1000 = 400 000 CUR/MW, at every offset; the reported yearly investment cost of
     that decision is the payment A, whose payments discounted one by one at discount_rate are worth 400 000."""
     steps, _, _ = _RUNS.get(tmp_path_factory, alt=f"ann_off_{str(off).replace('.', '_')}", values=_values(off),
                             base_chain=_no_battery_invest(SINGLE))

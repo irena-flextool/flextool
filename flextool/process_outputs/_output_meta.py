@@ -40,7 +40,7 @@ class Semantics(str, Enum):
     PER_PERIOD = "per_period"        # summed over the period, as-sampled (NOT scaled to a year).
     ANNUALIZED = "annualized"        # scaled to a full-year equivalent (÷ period_share_of_year).
     HORIZON = "horizon"              # undiscounted total over the represented horizon (×years_represented).
-    DISCOUNTED = "discounted"        # NPV over the horizon (inflation + years_represented).
+    DISCOUNTED = "discounted"        # NPV over the horizon (discount factor + years_represented).
     AVERAGE = "average"              # time-average over the period (÷ period_hours).
     RATIO = "ratio"                  # dimensionless (share, capacity factor).
     COUNT = "count"                  # event count (e.g. start-ups), annualized.
@@ -120,8 +120,8 @@ MONEY_ANNUAL = Transform(
 )
 MONEY_DISCOUNTED = Transform(
     "M CUR", Semantics.DISCOUNTED,
-    "Net present cost over the horizon (inflation × years_represented applied).",
-    algebra="annual_cost · inflation_factor · years_represented",
+    "Net present cost over the horizon (discount factor × years_represented applied).",
+    algebra="annual_cost · discount_factor · years_represented",
 )
 COST_ENTITY_ANNUAL = Transform(
     "M CUR/a", Semantics.ANNUALIZED,
@@ -147,7 +147,7 @@ COST_ENTITY_DISCOUNTED = Transform(
                 "over every priced group the process touches. Summing a "
                 "category over all entities reproduces the system summary "
                 "(costs_discounted_d_p).",
-    algebra="annual_entity_cost · inflation_factor · years_represented",
+    algebra="annual_entity_cost · discount_factor · years_represented",
 )
 EMISSION_ANNUAL = Transform(
     "t/a", Semantics.ANNUALIZED,
@@ -251,7 +251,7 @@ PRICE_ENERGY = Transform(
     description="Nodal energy price — the shadow price (dual) of the node "
                 "balance constraint: the marginal system cost of one more unit "
                 "of the commodity at that node and timestep, in CUR/MWh in the "
-                "price base of the cost inputs (inflation and the years the "
+                "price base of the cost inputs (the operational discount factor and the years the "
                 "period represents removed; not weighted by timestep weight or "
                 "branch probability; empty where the objective does not weigh "
                 "the step). For a storage "
@@ -263,7 +263,7 @@ PRICE_ENERGY = Transform(
                 "charge and discharge sides by the round-trip efficiency, and "
                 "be shifted by end-of-horizon, rolling and inter-period "
                 "(blended-weight) storage linking.",
-    algebra="σ·dual(node_balance) / s / (timestep_weight · inflation / period_share · branch_weight)",
+    algebra="σ·dual(node_balance) / s / (timestep_weight · operational_discount_factor / period_share · branch_weight)",
     template="CUR/{A}",
 )
 ENERGY_HORIZON = Transform(
@@ -282,13 +282,13 @@ EMISSION_MT = Transform(
 )
 FACTOR = Transform(
     "", Semantics.RATIO,
-    "Dimensionless discount / inflation factor.",
+    "Dimensionless discount factor (operational or investment).",
 )
 INVEST_COST_DISCOUNTED = Transform(
     "CUR/MW", Semantics.DISCOUNTED,
     "Discounted investment cost per MW of capacity (per MWh for storage nodes): the yearly annuity summed "
-    "with the inflation factors over the years of the lifetime inside the horizon.",
-    algebra="annuity · Σ inflation_factor over the lifetime window",
+    "with the investment discount factors over the years of the lifetime inside the horizon.",
+    algebra="annuity · Σ investment_discount_factor over the lifetime window",
     template="CUR/{R}", node_template="CUR/{A}",
 )
 YEARS = Transform(
@@ -304,13 +304,13 @@ PRICE_RESERVE = Transform(
     "CUR/MW", Semantics.PRICE,
     "Reserve price (dual of the reserve balance) — CUR per MW of reserve held "
     "for one hour (CUR/MWh).",
-    algebra="dual(reserve_balance) / s / (step_duration · timestep_weight · inflation / period_share "
+    algebra="dual(reserve_balance) / s / (step_duration · timestep_weight · operational_discount_factor / period_share "
             "· branch_weight)",
 )
 PRICE_CO2 = Transform(
     "CUR/t", Semantics.PRICE,
     "CO2 price (shadow price of the CO2 cap).",
-    algebra="−dual(co2_max_period) / s / inflation",
+    algebra="−dual(co2_max_period) / s / operational_discount_factor",
 )
 # Investment duals carry the same convention as invest_cost: CUR/kW for
 # units & connections (CUR/kWh for storage nodes).
@@ -385,14 +385,14 @@ CAPACITY_MARGIN_MW = Transform(
 )
 CAPACITY_MARGIN_PENALTY = Transform(
     "M CUR", Semantics.DISCOUNTED,
-    "Penalty of the capacity-margin shortfall: shortfall · penalty_capacity_margin · 1000 · inflation / 1e6, "
+    "Penalty of the capacity-margin shortfall: shortfall · penalty_capacity_margin · 1000 · operational discount factor / 1e6, "
     "priced once per period.",
-    algebra="shortfall · penalty_capacity_margin · 1000 · inflation_op / 1e6",
+    algebra="shortfall · penalty_capacity_margin · 1000 · operational_discount_factor / 1e6",
 )
 CAPACITY_MARGIN_PRICE = Transform(
     "CUR/kW/a", Semantics.PRICE,
     "Shadow price of the capacity margin (equals penalty_capacity_margin while there is a shortfall).",
-    algebra="Σₜ dual(capacityMargin) · inv_group_cap / s / (1000 · inflation_op · branch_weight)",
+    algebra="Σₜ dual(capacityMargin) · inv_group_cap / s / (1000 · operational_discount_factor · branch_weight)",
 )
 # Sentinel: an output that is a pure membership/index set (no measures).
 DIMENSION_TABLE = Transform(

@@ -327,7 +327,7 @@ def test_npv_lazy_ed_entity_annual_discounted_2pct(scenario_run):
 # ---------------------------------------------------------------------------
 #
 # invest_cost 1000 CUR/kW, lifetime_technical 20 a (no payback_time: the annuity is over 20 a), the default
-# inflation_offset_investment 0 (each payment at the start of its year, so sized by (1 + r)^(0 − 1)).  Hand values:
+# discount_offset_investment 0 (each payment at the start of its year, so sized by (1 + r)^(0 − 1)).  Hand values:
 #   r = 0          → 1000·1000/20                          = 50 000 CUR/MW/a (straight line);
 #   r missing/0.05 → 1e6·0.05/(1 − 1.05^−20) / 1.05        = 80 242.58719 / 1.05 = 76 421.51161 CUR/MW/a.
 

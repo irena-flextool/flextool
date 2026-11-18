@@ -2015,6 +2015,8 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 _migrate_v80_schema_batch(db)
             elif next_version == 81:
                 _migrate_v81_schema_batch(db)
+            elif next_version == 82:
+                _migrate_v82_schema_batch(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -10926,14 +10928,13 @@ def _migrate_v80_schema_batch(db) -> None:
 
 # ─── v81: technical lifetime and payback time, net salvage value, no_reinvestment ───
 #
-# The step is table-driven: the tables below say what it adds, moves, renames and rewrites.  While 81 is the current
-# data version, schema entries (definitions, value lists, list members, descriptions) may be appended to these
-# tables; :func:`_refresh_head_schema` adds the missing definitions and list members to a database already at 81, and
-# the template sync reruns the whole step (:data:`RERUNNABLE_HEAD_STEP`).  A shipped field of a definition may also
-# be superseded (:func:`_v81_superseded`: a default and its description, together; a definition without a default
-# has the pair (None, description)): the refresh replaces the pair where a database at 81 still has exactly a pair
-# FlexTool shipped, never a value and never an edited pair.  A value move or a list-member rename never reaches a database already at 81 (fixture and example
-# data included), so a later one needs a new version.
+# The step is table-driven: the tables below say what it adds, moves, renames and rewrites.  The tables are frozen
+# since v82.  A database migrated to 81 by a development build of this step is brought up to them by the v81 refresh
+# (:func:`_v81_refresh`, part 1 of v82): it adds the missing definitions and list members, and a shipped field of a
+# definition that was superseded (:func:`_v81_superseded`: a default and its description, together; a definition
+# without a default has the pair (None, description)) is replaced where the database still has exactly a pair
+# FlexTool shipped, never a value and never an edited pair.  The refresh writes neither the behaviour-change markers
+# nor a description that is not part of a superseded pair.
 
 #: v81: parameters whose values move to new names (old name -> the new names that each get a copy of every value).
 #: ``lifetime`` moves to ``lifetime_technical`` only: an entity without ``payback_time`` pays back over its
@@ -11109,9 +11110,10 @@ def _v81_superseded() -> dict[tuple[str, str], tuple[str | None, str]]:
     return out
 
 
-def _v81_definitions() -> dict[tuple[str, str], dict]:
-    """The definitions v81 adds, with the fields it gives them (types, group, default, value list, description)."""
-    texts = _v81_texts()
+def _v81_definitions(texts: dict[tuple[str, str], str] | None = None) -> dict[tuple[str, str], dict]:
+    """The definitions v81 adds, with the fields it gives them (types, group, default, value list, description).
+    *texts* replaces a description of :func:`_v81_texts` (a later step's text of the same definition)."""
+    texts = {**_v81_texts(), **(texts or {})}
     out: dict[tuple[str, str], dict] = {}
     for cls in _V81_CAPACITY:
         for name, group in (("lifetime_technical", "investment"), ("payback_time", "investment"),
@@ -11157,11 +11159,11 @@ def _v81_value_lists(db) -> None:
             have.add(member)
 
 
-def _v81_definitions_part(db, *, update: bool = True) -> None:
-    """Part 2 of v81: each definition of :func:`_v81_definitions` on an existing class is added, or (``update``)
-    set to the given fields.  ``update=False`` only adds the missing ones (an existing one keeps its own fields,
-    e.g. a description the user edited).  Idempotent."""
-    for (cls, name), fields in _v81_definitions().items():
+def _v81_definitions_part(db, *, update: bool = True, texts: dict[tuple[str, str], str] | None = None) -> None:
+    """Part 2 of v81: each definition of :func:`_v81_definitions` (with *texts*) on an existing class is added, or
+    (``update``) set to the given fields.  ``update=False`` only adds the missing ones (an existing one keeps its own
+    fields, e.g. a description the user edited).  Idempotent."""
+    for (cls, name), fields in _v81_definitions(texts).items():
         if not db.get_item("entity_class", name=cls):
             continue
         group = fields["parameter_group_name"]
@@ -11489,18 +11491,184 @@ def _migrate_v81_schema_batch(db) -> None:
                      "net_salvage_value, the lifetime_method value no_investment is no_reinvestment")
 
 
+# ─── v82: social_discount_rate and the discount offsets ───
+#
+# The step renames the model's discount parameters and rewrites the descriptions that name them.  While 82 is the
+# current data version, new schema entries go to the v82 tables; the v81 tables are frozen.  A database already at 81
+# from a development build of v81 gets, from the v81 refresh, the v81 definitions and list members it lacks and the
+# current pair in place of a superseded shipped one, then the whole v82 step; the v81 behaviour-change markers and a
+# v81 description that is not a superseded pair are not written to it.
+
+#: v82: ``model`` parameters renamed (old name -> new name).  Each keeps its id, so its values, default, types and
+#: group (published for the assistant's old-name translation).
+V82_PARAMETER_RENAMES: dict[str, str] = {
+    "inflation_rate": "social_discount_rate",
+    "inflation_offset_investment": "discount_offset_investment",
+    "inflation_offset_operations": "discount_offset_operations",
+}
+#: v82: the default a definition of :data:`V82_PARAMETER_RENAMES` gets when the step adds it (a renamed one keeps its
+#: own).  ``social_discount_rate`` has none: without a value the engine uses 0.
+V82_DEFAULTS: dict[str, float | None] = {
+    "social_discount_rate": None,
+    "discount_offset_investment": 0.0,
+    "discount_offset_operations": 0.5,
+}
+
+
+def _v82_discount_rate_text() -> str:
+    """The description of ``discount_rate`` on unit, connection and node from v82 on."""
+    return ("[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and "
+            "risk premium for this technology. In the same terms as the cost inputs: a real rate for inputs in real "
+            "prices, a nominal rate for nominal inputs. Not the model's social_discount_rate, which weighs costs over "
+            "time. Used to annualize investment costs over the payback time, sized so that the yearly payments are "
+            "worth invest_cost at this rate when the capacity starts to operate: annuity = invest_cost x r / (1 - "
+            "(1 + r)^-payback_time) x (1 + r)^(discount_offset_investment - 1). 0 gives the straight-line annuity "
+            "invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.")
+
+
+def _v82_texts() -> dict[tuple[str, str], str]:
+    """The whole descriptions v82 writes: those of the renamed definitions and of the definitions whose text names
+    one of them."""
+    t: dict[tuple[str, str], str] = {
+        ("model", "social_discount_rate"): (
+            "[-] e.g. 0.03 means 3% per year. The model's time discount rate: a cost or income is weighed by 1 / "
+            "(1 + social_discount_rate)^t, with t the years from the start of the run to the moment it falls (its "
+            "year plus discount_offset_investment or discount_offset_operations). Give it in the same terms as the "
+            "cost inputs. 0 (default): no time preference; a cost in a later period weighs the same as now (with "
+            "real-price inputs, inflation is already in the prices). Above 0: later costs and incomes weigh less "
+            "(the planner's preference for now over later); with nominal inputs, use the combined rate "
+            "(1 + inflation) x (1 + social rate) - 1. Not the discount_rate of a unit, connection or node: that is "
+            "the investor's rate (WACC), which turns invest_cost into yearly payments. Constant."),
+        ("model", "discount_offset_investment"): (
+            "[years] Where in each year the yearly investment payments and the yearly salvage credits fall, "
+            "counted from the start of the year, between 0 and 1: 0 (default) the start, 1 the end. The loan over "
+            "payback_time is sized so that, at the entity's discount_rate, its payments are worth invest_cost when "
+            "the capacity starts to operate, at any offset; the salvage credits are sized the same way. The offset "
+            "moves the payments and credits that social_discount_rate weighs. No effect when both rates are 0. "
+            "Constant."),
+        ("model", "discount_offset_operations"): (
+            "[years] Where in each year operating and fixed costs are weighed by social_discount_rate, counted from "
+            "the start of the year: 0.5 (default) the middle of the year, standing for costs spread over the year. "
+            "No effect when social_discount_rate is 0. Constant."),
+    }
+    for cls, (cap, _what, _per) in _V81_CAPACITY.items():
+        t[(cls, "discount_rate")] = _v82_discount_rate_text()
+        t[(cls, "payback_time")] = _v81_payback_time_text(cap, "changes nothing (a whole number of years)").replace(
+            "inflation_rate", "social_discount_rate")
+    return t
+
+
+def _v82_definitions() -> dict[tuple[str, str], dict]:
+    """The ``model`` definitions of :data:`V82_PARAMETER_RENAMES` (new names) with the fields v82 gives them: a
+    constant (``float``), group ``model`` and the description.  The default is not among them: a renamed
+    definition keeps its own (:func:`_v82_definitions_part`)."""
+    texts = _v82_texts()
+    return {("model", new): {"parameter_type_list": ("float",), "parameter_group_name": "model",
+                             "description": texts[("model", new)]}
+            for new in V82_PARAMETER_RENAMES.values()}
+
+
+def _v82_rename_definitions(db) -> None:
+    """Part 2 of v82: each old name of :data:`V82_PARAMETER_RENAMES` becomes its new name.
+
+    Without the new definition the old one is renamed in place: it keeps its id, so its values (every alternative,
+    their bytes and types), its default, its types and its group; no value row is touched.  When both exist (the
+    user added the new name, a template was re-applied, or old-named data was imported into a database at 81), each
+    old value moves to the new name where that alternative has no value under it yet, a value already there is kept
+    and the old one is printed, and the old definition is removed (:func:`_remove_items_bounded`).  Without the old
+    definition the part does nothing, so a rerun changes nothing.
+    """
+    if not db.get_item("entity_class", name="model"):
+        return
+    for old, new in V82_PARAMETER_RENAMES.items():
+        old_def = _pdef_or_none(db, "model", old)
+        if old_def is None:
+            continue
+        if _pdef_or_none(db, "model", new) is None:
+            db.update_parameter_definition(id=old_def["id"], name=new)
+            continue
+        taken = {(tuple(pv["entity_byname"]), pv["alternative_name"])
+                 for pv in db.find_parameter_values(entity_class_name="model", parameter_definition_name=new)}
+        kept = []
+        for pv in list(db.find_parameter_values(entity_class_name="model", parameter_definition_name=old)):
+            if (tuple(pv["entity_byname"]), pv["alternative_name"]) in taken:
+                kept.append(pv)
+            else:
+                db.update_parameter_value(id=pv["id"], parameter_definition_name=new)
+        if kept:
+            print(f"v82: model {new} already had a value where {old} had one; kept the {new} value, the {old} "
+                  f"value was not moved to {new}:")
+            for pv in kept:
+                print("  " + _describe_pv(pv))
+        _remove_items_bounded(db, "parameter_definition", [old_def["id"]], f"v82: removed model.{old}")
+
+
+def _v82_definitions_part(db, *, update: bool = True) -> None:
+    """Part 3 of v82: each definition of :func:`_v82_definitions` is added (with the default of
+    :data:`V82_DEFAULTS`), or (``update``) given its types, group and description.  A default is never compared or
+    written on an existing definition (a renamed one keeps its own, also a stored empty one).  ``update=False`` only
+    adds the missing ones.  Idempotent."""
+    if not db.get_item("entity_class", name="model"):
+        return
+    _ensure_parameter_group(db, "model", *_V81_GROUPS["model"])
+    for (cls, name), fields in _v82_definitions().items():
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is None:
+            default = V82_DEFAULTS[name]
+            extra = {} if default is None else dict(zip(("default_value", "default_type"), to_database(default)))
+            db.add_parameter_definition(entity_class_name=cls, name=name, **fields, **extra)
+        elif update and any((tuple(pdef[k] or ()) if k == "parameter_type_list" else (pdef[k] or "")) != v
+                            for k, v in fields.items()):
+            db.update_parameter_definition(id=pdef["id"], **fields)
+
+
+def _v82_descriptions(db) -> None:
+    """Part 4 of v82: the whole descriptions of :func:`_v82_texts`.  No value is rewritten.  Idempotent."""
+    for (cls, name), text in _v82_texts().items():
+        if not db.get_item("entity_class", name=cls):
+            continue
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is not None and (pdef["description"] or "") != text:
+            db.update_parameter_definition(id=pdef["id"], description=text)
+
+
+def _migrate_v82_schema_batch(db) -> None:
+    """All schema changes of database version 82 (v81 -> v82), in one step.
+
+    1. The v81 refresh (:func:`_v81_refresh`): a database migrated to 81 by a development build of v81 gets the v81
+       definitions and list members it lacks and the current pair in place of a superseded shipped one (with the
+       v82 descriptions); after a full v81 it changes nothing.
+    2. ``model.inflation_rate`` is ``social_discount_rate``, ``inflation_offset_investment`` is
+       ``discount_offset_investment`` and ``inflation_offset_operations`` is ``discount_offset_operations``, with
+       every value and the default (:func:`_v82_rename_definitions`).
+    3. The three definitions: a constant, group ``model``, the description; a missing one is added with its shipped
+       default (:func:`_v82_definitions_part`).
+    4. The descriptions of the three and of ``discount_rate`` and ``payback_time`` (unit, connection, node), which
+       name them (:func:`_v82_descriptions`).
+
+    Values change only by the renames of part 2 (they keep their rows; a collision moves them).  Each part is
+    idempotent, so a rerun of the step changes nothing.
+    """
+    _v81_refresh(db, _v82_texts())
+    _v82_rename_definitions(db)
+    _v82_definitions_part(db)
+    _v82_descriptions(db)
+    _commit_step(db, "v82: inflation_rate is social_discount_rate, inflation_offset_investment is "
+                     "discount_offset_investment, inflation_offset_operations is discount_offset_operations")
+
+
 #: The schema step of the current data version.  The template sync reruns it on the master template, so that schema
 #: entries appended to its tables after the version was first stamped reach the shipped schema (a database at the
 #: current version is otherwise not migrated again).
-RERUNNABLE_HEAD_STEP: dict[int, Callable] = {81: _migrate_v81_schema_batch}
+RERUNNABLE_HEAD_STEP: dict[int, Callable] = {82: _migrate_v82_schema_batch}
 
 
 def _head_schema_additions() -> tuple[set[tuple[str, str]], dict[str, tuple[str, ...]]]:
     """``(definitions, list members)`` the schema step of the current data version adds: what a database at that
     version must have (on the classes it has)."""
-    if FLEXTOOL_DB_VERSION != 81:
+    if FLEXTOOL_DB_VERSION != 82:
         return set(), {}
-    return set(_v81_definitions()), dict(V81_NEW_VALUE_LISTS)
+    return set(_v81_definitions()) | set(_v82_definitions()), dict(V81_NEW_VALUE_LISTS)
 
 
 def _head_schema_missing_ro(path) -> bool:
@@ -11537,18 +11705,22 @@ def _head_schema_missing_ro(path) -> bool:
 
 
 def _head_superseded() -> dict[tuple[str, str], tuple[str | None, str]]:
-    """The superseded shipped ``(default, description)`` pairs of the schema step of the current data version
-    (:func:`_v81_superseded`)."""
-    if FLEXTOOL_DB_VERSION != 81:
+    """The superseded shipped ``(default, description)`` pairs that the refresh of the current data version replaces
+    (:func:`_v81_superseded`, through :func:`_v81_refresh`)."""
+    if FLEXTOOL_DB_VERSION != 82:
         return {}
     return _v81_superseded()
 
 
 def _is_superseded_pair(cls: str, name: str, default, description: str | None) -> bool:
     """Whether the definition ``(cls, name)`` has exactly a superseded shipped pair of :func:`_head_superseded`:
-    its parsed default and its description both equal to what FlexTool shipped.  The one test of
-    :func:`_refresh_head_schema` and :func:`_head_defaults_stale_ro`."""
-    old = _head_superseded().get((cls, name))
+    its parsed default and its description both equal to what FlexTool shipped.  The test of
+    :func:`_head_defaults_stale_ro`; :func:`_v81_refresh` applies the same one (:func:`_pair_is`)."""
+    return _pair_is(_head_superseded().get((cls, name)), default, description)
+
+
+def _pair_is(old: tuple[object, str] | None, default, description: str | None) -> bool:
+    """Whether a parsed default and a description are exactly the shipped pair *old* (``None``: no pair)."""
     return old is not None and (default, description or "") == old
 
 
@@ -11590,31 +11762,42 @@ def _head_defaults_stale_ro(path) -> bool:
     return any(_is_superseded_pair(cls, name, parsed(value, typ), desc) for cls, name, value, typ, desc in rows)
 
 
+def _v81_refresh(db, texts: dict[tuple[str, str], str]) -> None:
+    """Bring a database migrated to 81 by a development build of v81 up to the frozen v81 tables: add the value lists,
+    list members and definitions it lacks (an existing definition keeps its fields) and replace a superseded shipped
+    default and description pair (:func:`_v81_superseded`) with the current one, both together.  *texts* are the
+    current descriptions where a later step rewrote a v81 one (an added definition and a replaced pair get them).  A
+    description the user edited, a default the user set and every value are kept; the behaviour-change markers of v81
+    and its other descriptions are not written.  After a full v81 it changes nothing.  Idempotent."""
+    texts = {**_v81_texts(), **texts}
+    _v81_value_lists(db)
+    _v81_definitions_part(db, update=False, texts=texts)
+    current = _v81_definitions(texts)
+    for (cls, name), old in _v81_superseded().items():
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is None:
+            continue
+        default = (from_database(pdef["default_value"], pdef["default_type"])
+                   if pdef["default_value"] is not None else None)
+        if not _pair_is(old, default, pdef["description"]):
+            continue
+        fields = current.get((cls, name))
+        if fields is None:  # a definition v81 does not add: only its description was superseded
+            db.update_parameter_definition(id=pdef["id"], description=texts[(cls, name)])
+        else:
+            db.update_parameter_definition(id=pdef["id"], default_value=fields["default_value"],
+                                           default_type=fields["default_type"], description=fields["description"])
+
+
 def _refresh_head_schema(db) -> None:
-    """Bring a database at the current data version to the schema of its schema step: add the definitions and list
-    members it lacks (parts 1 and 2 of the step; an existing definition keeps its fields) and replace a superseded
-    shipped default and description pair (:func:`_is_superseded_pair`) with the current one, both together.  A
+    """Bring a database at the current data version to the schema of its schema step: the v81 refresh with the
+    current descriptions (:func:`_v81_refresh`: missing v81 definitions and list members, superseded shipped pairs)
+    and the v82 definitions it lacks (:func:`_v82_definitions_part`; an existing definition keeps its fields).  A
     description the user edited, a default the user set and every value are kept; otherwise a description is never
     rewritten.  Idempotent."""
-    if FLEXTOOL_DB_VERSION == 81:
-        _v81_value_lists(db)
-        _v81_definitions_part(db, update=False)
-        current = _v81_definitions()
-        for cls, name in _head_superseded():
-            pdef = _pdef_or_none(db, cls, name)
-            if pdef is None:
-                continue
-            default = (from_database(pdef["default_value"], pdef["default_type"])
-                       if pdef["default_value"] is not None else None)
-            if not _is_superseded_pair(cls, name, default, pdef["description"]):
-                continue
-            fields = current.get((cls, name))
-            if fields is None:  # a definition v81 does not add: only its description was superseded
-                db.update_parameter_definition(id=pdef["id"], description=_v81_texts()[(cls, name)])
-            else:
-                db.update_parameter_definition(id=pdef["id"], default_value=fields["default_value"],
-                                               default_type=fields["default_type"],
-                                               description=fields["description"])
+    if FLEXTOOL_DB_VERSION == 82:
+        _v81_refresh(db, _v82_texts())
+        _v82_definitions_part(db, update=False)
 
 
 if __name__ == '__main__':

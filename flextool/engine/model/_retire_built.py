@@ -287,8 +287,8 @@ def objective_terms(b: "_Build") -> list:
         #   a_b[c] = a_cap[c] − a_salv[c] (invest_cost_p: the level yearly price, the salvage credit netted in);
         #     pay = A (invest_cost_p), n = payback_time (lifetime_technical without one), r = discount_rate, all of
         #     the plant as constructed (the cohort's columns, carried to the later solves)
-        #   S[a,b) = Σ_{year rows of the run in [a,b)} σ·w·(1+inflation_rate)^−(base + w·off_inv), σ the row's share
-        #   D(d) = (1+inflation_rate)^−(years from the run start to the start of d); S_d = 1000·net_salvage_value[e,d]
+        #   S[a,b) = Σ_{year rows of the run in [a,b)} σ·w·(1+social_discount_rate)^−(base + w·off_inv), σ the row's share
+        #   D(d) = (1+social_discount_rate)^−(years from the run start to the start of d); S_d = 1000·net_salvage_value[e,d]
         #   S̄[c,d] = Σ_{d′ ∈ history ∪ solve, y_on ≤ y[d′] < y_eol, on d's lineage} inflation_inv[d′]
         #   fcs[c,d] = Σ_{d″ ∈ solve, y[d] ≤ y[d″] < y_eol, on d's lineage} 1000·fixed_cost[e,d″]·inflation_op[d″]
         #   us = unitsize (state_unitsize for _n), bw = pd_branch_weight under recourse (else 1)
