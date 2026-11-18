@@ -70,5 +70,6 @@ def test_migration_markers_are_registered() -> None:
                                                               "end_of_life_closest_seam",
                                                               "fixed_cost_per_operating_period",
                                                               "annuity_timing",
-                                                              "net_salvage_once"}
+                                                              "net_salvage_once",
+                                                              "built_capacity_retirable"}
     assert written <= set(BEHAVIOUR_CHANGES)

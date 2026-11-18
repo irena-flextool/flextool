@@ -11392,6 +11392,31 @@ def _v81_net_salvage_marker(db) -> None:
         _v77_set_marker(db, "net_salvage_once", json.dumps({"since": 81, "entities": sorted(entities)}))
 
 
+def _v81_built_retirable_marker(db) -> None:
+    """Part 11 of v81: the behaviour-change marker ``built_capacity_retirable`` (``{"since": 81, "entities":
+    [...]}``) on a database where an entity has an ``invest_method`` (in some alternative) that allows both
+    investment and retirement and the ``lifetime_method`` ``reinvest_choice`` or ``no_reinvestment``: the capacity
+    the model builds can now be retired too (before: only the existing capacity).  A run names those with a
+    retirement option of model-built capacity.  No value is rewritten.  Idempotent: a rerun finds the marker
+    written.
+    """
+    no_invest = {"not_allowed", "retire_period", "retire_total", "retire_no_limit", "retire_period_total"}
+    no_retire = {"not_allowed", "invest_period", "invest_total", "invest_no_limit", "invest_period_total"}
+    entities: set[str] = set()
+    for cls in ("unit", "connection", "node"):
+        if not db.get_item("entity_class", name=cls):
+            continue
+        bounded = {pv["entity_byname"][0] for pv in db.find_parameter_values(
+            entity_class_name=cls, parameter_definition_name="lifetime_method")
+            if from_database(pv["value"], pv["type"]) in ("reinvest_choice", "no_reinvestment")}
+        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name="invest_method"):
+            method = from_database(pv["value"], pv["type"])
+            if pv["entity_byname"][0] in bounded and method not in no_invest and method not in no_retire:
+                entities.add(pv["entity_byname"][0])
+    if entities:
+        _v77_set_marker(db, "built_capacity_retirable", json.dumps({"since": 81, "entities": sorted(entities)}))
+
+
 def _migrate_v81_schema_batch(db) -> None:
     """All schema changes of database version 81 (v80 -> v81), in one step.
 
@@ -11426,6 +11451,8 @@ def _migrate_v81_schema_batch(db) -> None:
        (:func:`_v81_annuity_timing_marker`).
     10. The behaviour-change marker ``net_salvage_once`` on the entities with a net_salvage_value that a retirement
         or a new plant's yearly cost now counts differently (:func:`_v81_net_salvage_marker`).
+    11. The behaviour-change marker ``built_capacity_retirable`` on the reinvest_choice / no_reinvestment entities
+        that may invest and retire: the capacity the model builds can now be retired (:func:`_v81_built_retirable_marker`).
 
     Values change only by the moves of part 3 and the renames of part 4.  Each part is idempotent, so a rerun of the
     step changes nothing.
@@ -11440,6 +11467,7 @@ def _migrate_v81_schema_batch(db) -> None:
     _v81_fixed_cost_marker(db)
     _v81_annuity_timing_marker(db)
     _v81_net_salvage_marker(db)
+    _v81_built_retirable_marker(db)
     _commit_step(db, "v81: lifetime is lifetime_technical (payback_time added, no value), salvage_value is "
                      "net_salvage_value, the lifetime_method value no_investment is no_reinvestment")
 

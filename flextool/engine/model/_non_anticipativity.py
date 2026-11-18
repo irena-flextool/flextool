@@ -3,7 +3,8 @@
 Owns the dispatch ties non_anticipativity_storage_use, _storage_state_first, _rp_block_start,
 _online_{integer,linear} and _reserve, which hold over the tied steps dt_non_anticipativity between the forecast branches of each anchor
 period, and the investment ties non_anticipativity_{invest,divest}_{p,n}, which hold over the window
-pd_non_anticipativity of a recourse-investment solve.  The module declares no variables.
+pd_non_anticipativity of a recourse-investment solve (the ties of the retirements of model-built capacity,
+non_anticipativity_divest_built_{p,n}, are _retire_built's).  The module declares no variables.
 """
 
 import logging
@@ -12,7 +13,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from flextool.engine.input._axis_enums import cast_dim
-from flextool.engine.model import _balance_terms, _coarse_flows
+from flextool.engine.model import _balance_terms, _coarse_flows, _retire_built
 from flextool.engine.model._common import _has_rows, _var_view
 from flextool.engine.model._online import online_rows
 from flextool.engine.preprocess.params._branch import forecast_star_pairs
@@ -446,3 +447,5 @@ def add_invest_constraints(b: "_Build") -> None:
                          "v_b": -_var_view(v, "__nab", {"d": "b"})},
             rhs_terms = {},
         )
+    # The retirements of model-built capacity inside the window (non_anticipativity_divest_built_{p,n}).
+    _retire_built.add_non_anticipativity(b, window)

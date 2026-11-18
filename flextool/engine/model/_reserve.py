@@ -21,7 +21,7 @@ from polar_high.engine import Var
 
 from flextool.engine.input._axis_enums import rename_to_axis, schema_dtype
 from flextool.engine.preprocess._provider_io import _provider_key
-from flextool.engine.model import _coarse_flows
+from flextool.engine.model import _coarse_flows, _retire_built
 from flextool.engine.model._common import (
     _connection_procs, _drop_uncapped, _entity_rows, _has_rows, _indirect_input_cap, _utf8_keys, _var_view,
 )
@@ -934,6 +934,12 @@ def add_constraints(b: "_Build") -> None:
                 if edd_p_div.height > 0:
                     v_div_at = _var_view(b.v_divest_p, f"__at_{name}", {"d": "d_divest"}, to_axis=True)
                     lhs["divest"] = Sum(Where(v_div_at, edd_p_div), over=("d_divest",)) * share
+            built = _retire_built.retired(b, "p")
+            if built is not None:
+                # The model-built capacity retired so far (_retire_built).
+                built_rows = _retire_built.retired_frame(b, "p").join(p_in_idx, on="p", how="inner")
+                if built_rows.height > 0:
+                    lhs["divest_built"] = Where(built, built_rows) * share
             _coarse_flows.add_cstr(b, name, over=idx, sense="<=", lhs_terms=lhs, rhs_terms={"max": rhs_param})
 
     _add_connection_reserve_constraints(b)
@@ -1548,6 +1554,12 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
             edd_div_n = _entity_rows(b.cap.retired_frame("n"), "n", d.nodeState, "n")
             if edd_div_n.height > 0:
                 state_lhs["divest"] = Sum(Where(v_div_n_at, edd_div_n), over=("d_divest",)) * us_n
+        built_n = _retire_built.retired(b, "n")
+        if built_n is not None:
+            # The model-built storage capacity retired so far (_retire_built).
+            built_rows = _entity_rows(_retire_built.retired_frame(b, "n"), "n", d.nodeState, "n")
+            if built_rows.height > 0:
+                state_lhs["divest_built"] = Where(built_n, built_rows) * us_n
         if b.v_invest_n is not None:
             v_inv_n_at = _var_view(b.v_invest_n, "__at_reserve_down_invest", {"d": "d_invest"}, to_axis=True)
             edd_inv_n = _entity_rows(b.cap.alive, "e", d.nodeState, "n")

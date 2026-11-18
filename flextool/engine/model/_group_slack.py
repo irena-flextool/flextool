@@ -31,7 +31,7 @@ from flextool.engine.input._param_shapes import (
 )
 from flextool.engine.preprocess._provider_io import _provider_key
 from flextool.engine.preprocess.params._cohorts import in_service
-from flextool.engine.model import _balance_terms, _coarse_flows
+from flextool.engine.model import _balance_terms, _coarse_flows, _retire_built
 from flextool.engine.model._common import _availability_factor, _has_rows, _indirect_sum_arcs, _var_view
 
 if TYPE_CHECKING:
@@ -385,6 +385,14 @@ def _invest_change(b: _Build, procs: pl.DataFrame, tag: str) -> tuple[Expr | Non
         e = e.join(pp, on="p", how="inner")
         if e.height > 0:
             divest = Sum(Where(_var_view(b.v_divest_p, f"__{tag}_div", {"d": "d_divest"}), e), over=("d_divest",))
+    built = _retire_built.retired(b, "p")
+    if built is not None:
+        # The model-built capacity retired so far (_retire_built).
+        rows, pp = align_join_dtypes(_retire_built.retired_frame(b, "p"), procs_p, ("p",))
+        rows = rows.join(pp, on="p", how="inner")
+        if rows.height > 0:
+            term = Where(built, rows)
+            divest = term if divest is None else divest + term
     return invest, divest
 
 
@@ -1071,7 +1079,8 @@ def capacity_margin_report(d, sol, *, scale_the_objective: "float | None" = None
     One evaluation of the row's terms at the solution, from the class frames the row is built from
     (:func:`capacity_margin_unit_arcs`, :func:`_counted_terms`, ``_balance_terms.balance_flow_values``):
 
-        firm, vre   = Σ_{arcs of F(g) / V(g)} (existing_count + Σ invest − Σ divest) · unitsize · κ   (per unit)
+        firm, vre   = Σ_{arcs of F(g) / V(g)} (existing_count + Σ invest − Σ divest − divested_built) · unitsize · κ
+                      (per unit; divested_built the model-built capacity retired so far)
         storage_flow, unit_flow, connections_net, consumption
                     = the B¬FV terms of the storage-backed units' output, the other by-flow unit outputs
                       (converters inside g, conversion_flow_coeff 0), the connections (both ends, reverse
@@ -1116,6 +1125,11 @@ def capacity_margin_report(d, sol, *, scale_the_objective: "float | None" = None
         frames = in_service(d)
         inv = _invest_units(d, sol, "v_invest_p", frames.alive, "d_invest")
         div = _invest_units(d, sol, "v_divest_p", frames.retired_p, "d_divest")
+        if "v_divested_built_p" in getattr(sol, "_vars", {}):
+            # The model-built capacity retired so far (_retire_built): already per (p, d).
+            built = _as_utf8(sol.value("v_divested_built_p")).select("p", "d", pl.col("value").cast(pl.Float64))
+            div = built if div is None else (pl.concat([div, built]).group_by("p", "d", maintain_order=True)
+                                                .agg(pl.col("value").sum()))
         kap = _as_utf8(kappa.frame).rename({"value": "kappa"})
         cap = kap.join(units, on=["p", "d"], how="left")
         for frame, alias in ((inv, "inv"), (div, "div")):

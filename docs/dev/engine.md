@@ -322,10 +322,21 @@ For a unit, connection or storage node `e` in period `d`:
     `YEAR_TOL`; `+inf` for `reinvest_automatic`);
   - `prebuilt[e,d]`: the same over the cohorts in service from the start of
     `d` (`y[d] > y_on`), not starting to operate in `d`;
-  - `retired[e,d] = Σ_{d′ : (e,d′,d) ∈ retired} v_divest[e,d′]`: a retirement
+  - `retired[e,d] = Σ_{d′ : (e,d′,d) ∈ retired} v_divest[e,d′] + v_divested_built[e,d]`: a retirement
     of existing capacity decided in `d′` counts in `d` when `y[d′] ≤ y[d]`
     and the existing cohort of `e` is still in service in `d` (none for
-    `reinvest_automatic`, which has no end of life);
+    `reinvest_automatic`, which has no end of life); `v_divested_built[e,d]`
+    is the model-built capacity retired so far that still counts in `d`
+    (`model/_retire_built.py`, `divestedBuilt`: the retirements
+    `v_divest_built[e,c,d′]` of each model-built cohort `c` of a
+    `reinvest_choice` / `no_reinvestment` entity, `(d′,d) ∈ dd_forward`, while
+    `c` is in service in `d`; one column per (entity, period) whatever the
+    number of cohorts; absent without such a cohort, so existing-only rows
+    keep their terms).  A cohort retires at most what it has
+    (`maxDivest_cohort`: the investment of this solve, or the carried size less
+    the carried retirements); a chain carries each retirement with its cohort
+    (handoff `realized_retire`), so the existing capacity's limit
+    (`maxRetired_existing`) counts only the existing cohort's;
   - `cap[e,d] = existing[e,d] + invested[e,d] − retired[e,d]`.
 - `existing_mw[e,d]` (`p_entity_all_existing`, MW or MWh; the `existing` of
   `cap` is `existing_mw / unitsize`) — the capacity a solve starts from, from

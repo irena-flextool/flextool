@@ -221,8 +221,8 @@
     "pending_audit": []
   },
   "non_dim_columns": {
-    "_comment": "String columns that look like dim columns by name but hold data values (method discriminators, scenario labels, etc). Leave as pl.Utf8 — do NOT cast. 'load' / 'eff' hold the load shares and efficiencies of a part-load curve (unit.piecewise_linear_efficiency, Float64).",
-    "confirmed": ["method", "scenario", "model", "solve", "value", "paramName", "class", "ts", "default_value", "load", "eff"]
+    "_comment": "String columns that look like dim columns by name but hold data values (method discriminators, scenario labels, etc). Leave as pl.Utf8 — do NOT cast. 'load' / 'eff' hold the load shares and efficiencies of a part-load curve (unit.piecewise_linear_efficiency, Float64). 'cohort' is a model-internal dimension (never authored): the id of a block of capacity of the cohort table (existing:<run start period> / invest:<decision period>, preprocess/params/_cohorts.py), a dim of v_divest_built and of the retirement frames of model-built capacity (model/_retire_built.py); it stays Utf8 and joins by value.",
+    "confirmed": ["method", "scenario", "model", "solve", "value", "paramName", "class", "ts", "default_value", "load", "eff", "cohort"]
   },
   "parameter_value_dtypes": {
     "_comment": "Inner-leaf dtype for Map/Array parameter VALUES. SpineDB does not enforce types inside Maps (e.g. a numeric coefficient may be authored as the string '1' instead of 1.0). This registry pins the expected leaf dtype per (entity_class, parameter) so SpineDBReader._unroll_rows casts the value column to a stable dtype instead of sniffing the first sample. Lenient cast (strict=False) parses 'looks-numeric' strings; values that fail to parse become null and are surfaced as FlexDataIntegrityError with an entity/index breadcrumb. Default = Float64; overrides list only parameters whose leaf is genuinely non-numeric.",

@@ -27,7 +27,7 @@ from polar_high import Param, Sum, Where
 
 from flextool.engine.input._axis_enums import rename_to_axis
 from flextool.engine.input._param_shapes import promote_param_to_dt
-from flextool.engine.model import _coarse_flows
+from flextool.engine.model import _coarse_flows, _retire_built
 from flextool.engine.model._common import (
     _availability_factor, _capped_arcs, _coef_factor, _drop_uncapped, _entity_rows, _has_rows, _indirect_input_cap,
     _indirect_sum_arcs, _utf8_keys, _var_view,
@@ -130,6 +130,15 @@ def add_constraints(b: "_Build") -> None:
             edd_div_p_uc = retired_p.join(p_on, on="p", how="semi")
             if edd_div_p_uc.height > 0:
                 divest_term = Sum(Where(v_div_at_uc, edd_div_p_uc), over=("d_divest",))
+        built = _retire_built.retired(b, "p")
+        if built is not None:
+            # The model-built capacity retired so far (_retire_built), restricted to this class.
+            built_rows = _retire_built.retired_frame(b, "p")
+            p_on = online_set.select(pl.col("p").cast(built_rows.schema["p"], strict=False)).unique()
+            built_rows = built_rows.join(p_on, on="p", how="semi")
+            if built_rows.height > 0:
+                built_term = Where(built, built_rows)
+                divest_term = built_term if divest_term is None else divest_term + built_term
 
         def _lhs_with_invdiv(var, key):
             lhs: dict = {key: var}

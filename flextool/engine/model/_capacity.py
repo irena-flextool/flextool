@@ -6,7 +6,7 @@ The capacity of a process ``p`` or a storage node ``n`` in period ``d`` is a lin
 
     cap[e,d]      = existing[e,d] + invested[e,d] − retired[e,d]
     invested[e,d] = Σ_{d′ : (e,d′,d) ∈ alive}    v_invest[e,d′]
-    retired[e,d]  = Σ_{d′ : (e,d′,d) ∈ retired}  v_divest[e,d′]
+    retired[e,d]  = Σ_{d′ : (e,d′,d) ∈ retired}  v_divest[e,d′]  +  v_divested_built[e,d]
     prebuilt[e,d] = Σ_{d′ : (e,d′,d) ∈ prebuilt} v_invest[e,d′]
 
     alive    = {(e,d′,d) : d in service of the investment cohort (e,d′)}: y_on ≤ y[d] < y_eol, along the scenario
@@ -15,6 +15,9 @@ The capacity of a process ``p`` or a storage node ``n`` in period ``d`` is a lin
     retired  = {(e,d′,d) : (e,d′) ∈ divest options, (d′,d) ∈ dd_forward (y[d′] ≤ y[d]), d in service of the
                existing cohort of e (y[d] < y_eol)}
 
+``v_divested_built[e,d]`` is the model-built capacity retired so far that still counts in d (``_retire_built``:
+the retirements of each model-built cohort while it is in service; absent without retirable model-built capacity,
+so every existing-only row keeps its terms).
 ``y_on`` / ``y_eol`` are the start of operation and the end of life of a cohort (``preprocess/params/_cohorts.py``,
 the only lifetime-gate code).  The sets come from :func:`._cohorts.in_service`; the constants ``existing`` are the
 solve's existing capacity Params (``existing_count_p`` units of a process, ``existing_state_n`` MWh of a storage
@@ -29,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 import polars as pl
 from polar_high import Param, Sum, Where
 
+from flextool.engine.model import _retire_built
 from flextool.engine.model._common import _entity_rows, _var_view
 from flextool.engine.preprocess.params._cohorts import InService, in_service
 
@@ -41,8 +45,8 @@ class CapacityInService:
     """The capacity-in-service frames and sums of a solve (module docstring)."""
 
     frames: InService
-    #: ``invested[p,d]`` / ``retired[p,d]`` of every process with a ``v_invest_p`` / ``v_divest_p`` column, dims
-    #: ``(p, d)``; ``None`` without the variable.  Read by maxFlow, maxOutputSum, the ramp limits, the
+    #: ``invested[p,d]`` / ``retired[p,d]`` of every process with a ``v_invest_p`` / ``v_divest_p`` (or
+    #: ``v_divested_built_p``) column, dims ``(p, d)``; ``None`` without the variable.  Read by maxFlow, maxOutputSum, the ramp limits, the
     #: piecewise conversion, the profiles and the connection reserves.
     invested_p: Any = None
     retired_p: Any = None
@@ -81,6 +85,9 @@ def build_capacity(b: "_Build") -> CapacityInService:
     if b.has_divest_p:
         divested = _var_view(b.v_divest_p, "__at_divest", {"d": "d_divest"}, to_axis=True)
         cap.retired_p = Sum(Where(divested, cap.retired_frame("p")), over=("d_divest",))
+    built = _retire_built.retired(b, "p")
+    if built is not None:
+        cap.retired_p = built if cap.retired_p is None else cap.retired_p + built
     if b.has_invest_p:
         invested = _var_view(b.v_invest_p, "__at_invest", {"d": "d_invest"}, to_axis=True)
         alive = _entity_rows(cap.alive, "e", d.process_source_sink, "p")
@@ -103,6 +110,12 @@ def node_in_service(b: "_Build", nodes: pl.DataFrame, tag: str, coef: "Param | N
         active = _entity_rows(b.cap.retired_frame("n"), "n", nodes, "n")
         if active.height > 0:
             retired = Sum(Where(view if coef is None else view * coef, active), over=("d_divest",))
+    built = _retire_built.retired(b, "n")
+    if built is not None:
+        rows = _entity_rows(_retire_built.retired_frame(b, "n"), "n", nodes, "n")
+        if rows.height > 0:
+            term = Where(built if coef is None else built * coef, rows)
+            retired = term if retired is None else retired + term
     return invested, retired
 
 

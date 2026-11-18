@@ -358,6 +358,16 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "net_salvage_once"),
         ),
         BehaviourChange(
+            id="built_capacity_retirable",
+            summary=("With lifetime_method reinvest_choice or no_reinvestment and an invest_method that allows "
+                     "investment and retirement (invest_retire_* or cumulative_limits), the capacity the model "
+                     "builds can now be retired too (before: only existing capacity). A retired MW pays its loan "
+                     "in full at the start of the retirement period, receives the net_salvage_value then and saves "
+                     "its fixed cost from then on; retirement limits and user-constraint retirement terms count "
+                     "it, and a chain of solves carries each retirement with its cohort (results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "built_capacity_retirable"),
+        ),
+        BehaviourChange(
             id="end_of_life_closest_seam",
             summary=("With lifetime_method reinvest_choice or no_reinvestment, the end of life (start of operation "
                      "plus lifetime_technical; existing capacity from the model start) is now rounded to the "

@@ -58,6 +58,22 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   plant can pay); and with a `discount_rate` different from `inflation_rate` a kept plant's salvage is levelled at
   the `discount_rate` while a retired one is discounted at the `inflation_rate`. Upgraded databases get a notice
   naming the entities whose salvage is now counted differently (results change).
+- **Capacity the model builds can be retired** (#70; unit, connection, node). With `lifetime_method`
+  *reinvest_choice* or *no_reinvestment* and an `invest_method` that allows investment and retirement
+  (*invest_retire_…* or *cumulative_limits*), each investment can be retired in a later investment period while it
+  is in service, in the solve that builds it or in a later solve of a chain (before: only existing capacity could be
+  retired; *reinvest_automatic* capacity still cannot). A retired MW pays its investment as it ran: the payments of
+  the years before the retirement, then, at the start of the retirement period, the rest of the loan; it receives
+  the `net_salvage_value` of that period then, gives back the yearly cost it was charged for its years in service
+  and saves its `fixed_cost` from then on. So building and retiring at once costs `invest_cost − net_salvage_value`,
+  discounted to the retirement, for any `discount_rate`, `payback_time` and offset; with a `discount_rate` above the
+  `inflation_rate` paying the loan off early is cheaper for the model, below it dearer. An investment never retires
+  more than it built (also across the solves of a chain, which carry each retirement with its investment), the
+  retirement limits (`retire_max_period`, `retire_max_total`, the minima, group limits) and the retired-capacity
+  terms of user constraints count it, and stochastic solves tie it in the shared investment periods like the
+  investment. A `net_salvage_value` above what the capacity costs until its retirement makes building to retire
+  pay: a warning names such entities. Upgraded databases get a notice naming the entities whose new capacity can
+  now be retired (results change).
 - **New capacity pays the `fixed_cost` of each period it operates in**, as existing capacity does (unit,
   connection, node). In FlexTool 4.5.0 an investment paid the `fixed_cost` of the period it came online in every
   period it operated, so with a `fixed_cost` period map the fixed cost of new capacity changes; a constant

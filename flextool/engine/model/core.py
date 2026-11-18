@@ -91,6 +91,7 @@ from flextool.engine.model import _lead_time
 from flextool.engine.model import _non_anticipativity
 from flextool.engine.model import _online
 from flextool.engine.model import _reserve
+from flextool.engine.model import _retire_built
 from flextool.engine.model import _self_discharge
 from flextool.engine.model import _unit_floors
 from flextool.engine.input._axis_enums import alias_to_axis, align_join_dtypes, rename_to_axis
@@ -206,6 +207,11 @@ DIVEST: tuple[str, ...] = ("p_entity_max_units", "cohort_alive", "dd_forward", "
 # (p_state_unitsize); without them a node divest would cost or earn but never lose capacity.
 DIVEST_N: tuple[str, ...] = ("p_entity_max_units", "cohort_alive", "dd_forward", "nd_divest_set",
                               "p_entity_pre_existing", "p_state_unitsize")
+# A retirement of model-built capacity counts in the periods of cdd_divest_built (into the capacity rows through
+# v_divested_built), is bounded by its cohort (cohort_divest_built) and costs or earns cd_divest_built_cost /
+# cd_divest_built_fixed; without them it would remove capacity for nothing or remove none.
+DIVEST_BUILT: tuple[str, ...] = ("cdd_divest_built", "cohort_divest_built", "cd_divest_built_cost",
+                                 "cd_divest_built_fixed")
 
 
 def _check_covers_dt(d, field: str, feature: str, *, positive: bool = False, message: str | None = None) -> None:
@@ -347,6 +353,8 @@ class _Build:
     has_divest_p: bool = False
     has_invest_n: bool = False
     has_divest_n: bool = False
+    has_divest_built_p: bool = False     # cd_divest_built of processes: model-built capacity can be retired
+    has_divest_built_n: bool = False     # ... of storage nodes (_retire_built)
     has_ladder: bool = False
     has_reserve: bool = False
     has_capacity_margin: bool = False
@@ -397,6 +405,10 @@ class _Build:
     v_divest_p: Var | None = None
     v_invest_n: Var | None = None
     v_divest_n: Var | None = None
+    v_divest_built_p: Var | None = None
+    v_divest_built_n: Var | None = None
+    v_divested_built_p: Var | None = None
+    v_divested_built_n: Var | None = None
     v_flow_back: Var | None = None
     v_ramp_up: Var | None = None
     v_ramp_down: Var | None = None
@@ -481,6 +493,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _eq_invest_period_caps,
         _eq_invest_total_caps,
         _eq_retired_existing,
+        _retire_built.add_constraints,
         _eq_conversion,
         _eq_conversion_piecewise,
         _eq_min_input_share,
@@ -608,6 +621,7 @@ def _prepare(b: _Build) -> None:
     b.has_divest_p = _has_rows(d.pd_divest_set)
     b.has_invest_n = _has_rows(d.nd_invest_set)
     b.has_divest_n = _has_rows(d.nd_divest_set)
+    _retire_built.prepare(b)
     b.has_ladder = _commodity_ladder.has_feature(d)
     b.has_reserve = _has_rows(getattr(d, "reserve_upDown_group", None))
     b.has_capacity_margin = _group_slack.has_capacity_margin(d)
@@ -657,6 +671,8 @@ def _prepare(b: _Build) -> None:
         _check(d, DIVEST, "divest")
     if b.has_divest_n:
         _check(d, DIVEST_N, "divest")
+    if b.has_divest_built_p or b.has_divest_built_n:
+        _check(d, DIVEST_BUILT, "retirement of model-built capacity")
     if b.has_online:
         _validate_no_online_dc_lines(d)
         _check(d, ONLINE, "online")
@@ -700,7 +716,8 @@ def _prepare(b: _Build) -> None:
         b.twoway1var_arcs = _two_way_one_var_arcs(d)
         procs = [s.select(pl.col("p").cast(pl.Utf8))
                  for s in (d.pd_invest_set if b.has_invest_p else None,
-                           d.pd_divest_set if b.has_divest_p else None)
+                           d.pd_divest_set if b.has_divest_p else None,
+                           _retire_built.options(d, "p") if b.has_divest_built_p else None)
                  if s is not None]
         b.invest_procs = pl.concat(procs).unique() if procs else None
         (b.flow_upper_rhs, b.flow_cap_mult,
@@ -1005,6 +1022,8 @@ def _declare_variables(b: _Build) -> None:
         b.v_invest_n = m.add_var("v_invest_n", ("n", "d"), d.nd_invest_set)
     if b.has_divest_n:
         b.v_divest_n = m.add_var("v_divest_n", ("n", "d"), d.nd_divest_set)
+    # Retirement of model-built capacity (v_divest_built, v_divested_built): declared by _retire_built.
+    _retire_built.add_variables(b)
 
     # Reserve variables (v_reserve, vq_reserve, v_reserve_total): declared by _reserve.
     _reserve.add_variables(b)
@@ -1711,6 +1730,13 @@ def _fix_start_terms(b: _Build) -> dict:
         if active.height > 0:
             term = Sum(Where(divested * start * su, active), over=("d_divest",))
             terms["fwd_fix_divest_neg"] = -(term if loss is None else term * loss.keep_prev)
+    built = _retire_built.retired(b, "n")
+    if built is not None:
+        rows = (_entity_rows(_retire_built.retired_frame(b, "n"), "n", nodes, "n")
+                .join(first.select("n", "d", "t"), on=["n", "d"], how="inner"))
+        if rows.height > 0:
+            term = Where(built * start * su, rows)
+            terms["fwd_fix_divest_built_neg"] = -(term if loss is None else term * loss.keep_prev)
     return terms
 
 
@@ -2496,7 +2522,7 @@ def _ramp_family(b: _Build, name: str, rows: pl.DataFrame, idx_set: pl.DataFrame
         rhs["limit"] = (rate_built * b.cap.existing_count_p) * sign
         if b.has_invest_p:
             rhs["invest"] = (b.cap.invested_p * rate_built) * sign
-        if b.has_divest_p:
+        if b.cap.retired_p is not None:
             rhs["divest"] = (b.cap.retired_p * rate_built) * (-sign)
     for kind, (sub, v_online_k, v_startup_k, v_shutdown_k) in online_rows.items():
         for term_name, term in _online_ramp_rhs(b, idx_set, ramp_speed, side, up, sub,
@@ -3029,7 +3055,8 @@ def _eq_invest_max_units(b: _Build) -> None:
 
 def _eq_invest_period_caps(b: _Build) -> None:
     """Capacity invested or divested per period, for entities with a per-period limit."""
-    if not (b.has_invest_p or b.has_divest_p or b.has_invest_n or b.has_divest_n):
+    if not (b.has_invest_p or b.has_divest_p or b.has_invest_n or b.has_divest_n
+            or b.has_divest_built_p or b.has_divest_built_n):
         return
     m, d = b.m, b.d
 
@@ -3039,8 +3066,10 @@ def _eq_invest_period_caps(b: _Build) -> None:
     #                                      ≤ invest_max_period[p,d]   ∀ (p,d) with a decision coming online in d,
     #                                                                   p ∈ ed_invest_period_set
     # (n: v_invest_n with state_unitsize[n], n ∈ ed_invest_period_set ∩ nd_invest_set)
-    # v_divest_p[p,d] · unitsize[p]        ≤ divest_max_period[p,d]   ∀ (p,d) ∈ ed_divest_period_set ∩ pd_divest_set
-    # v_divest_n[n,d] · state_unitsize[n]  ≤ divest_max_period[n,d]   ∀ (n,d) ∈ ed_divest_period_set ∩ nd_divest_set
+    # R_p[p,d] · unitsize[p]        ≤ divest_max_period[p,d]   ∀ (p,d) ∈ ed_divest_period_set ∩ (pd_divest_set ∪ B_p)
+    # R_n[n,d] · state_unitsize[n]  ≤ divest_max_period[n,d]   ∀ (n,d) ∈ ed_divest_period_set ∩ (nd_divest_set ∪ B_n)
+    #   R[e,d] = v_divest[e,d] + Σ_c v_divest_built[e,c,d] (existing and model-built capacity retired in d, each
+    #     term where it has a column); B = the (e,d) of cd_divest_built (_retire_built)
     #   (p,d) and (n,d) whose invest_max_period / retire_max_period is inf have no row (no limit in that period)
     # Caps the capacity coming online or retired in one period for entities with a per-period limit
     # (e.g. invest_method = invest_period_total).  An investment decided in o comes online in d = c(o)
@@ -3059,7 +3088,9 @@ def _eq_invest_period_caps(b: _Build) -> None:
         ("maxDivest_entity_period_n", b.has_divest_n, d.ed_divest_period_set, d.nd_divest_set,
          d.ed_divest_max_period, b.v_divest_n, "n", "divest", "retire_max_period"),
     ):
-        if not active or not _has_rows(period_set):
+        # A per-period retirement limit also sums the retirements of model-built capacity (_retire_built).
+        built = _retire_built.decided(b, axis) if kind == "divest" else None
+        if not (active or built is not None) or not _has_rows(period_set):
             continue
         unitsize = d.p_unitsize if axis == "p" else Param(("n",), d.p_state_unitsize.frame)
         if kind == "invest" and _lead_time.active(d):
@@ -3072,7 +3103,8 @@ def _eq_invest_period_caps(b: _Build) -> None:
                           axis, True, param_name=param_name)  # FA-12
             _lead_time.period_limit(b, name, axis, var, unitsize, entities, cap, "<=", param_name)
             continue
-        over = period_set.pipe(rename_to_axis, {"e": axis}).join(var_set, on=[axis, "d"], how="inner")
+        cells = var_set if built is None else _retire_built.retirement_cells(b, axis, var if active else None)
+        over = period_set.pipe(rename_to_axis, {"e": axis}).join(cells, on=[axis, "d"], how="inner")
         if over.height == 0 or cap is None:
             continue
         cap_frame = cap.frame.pipe(rename_to_axis, {"e": axis})
@@ -3082,18 +3114,22 @@ def _eq_invest_period_caps(b: _Build) -> None:
         over = without_no_limit_rows(over, cap_param, "upper")
         if over.height == 0:
             continue
+        lhs: dict = {kind: var * unitsize} if active else {}
+        if built is not None:
+            lhs["divest_built"] = built * unitsize
         m.add_cstr(
             name,
             over      = over,
             sense     = "<=",
-            lhs_terms = {kind:  var * unitsize},
+            lhs_terms = lhs,
             rhs_terms = {"cap": drop_no_limit_rows(cap_param, "upper")},
         )
 
 
 def _eq_invest_total_caps(b: _Build) -> None:
     """Capacity invested or divested over the horizon, for entities with a total limit."""
-    if not (b.has_invest_p or b.has_divest_p or b.has_invest_n or b.has_divest_n):
+    if not (b.has_invest_p or b.has_divest_p or b.has_invest_n or b.has_divest_n
+            or b.has_divest_built_p or b.has_divest_built_n):
         return
     m, d = b.m, b.d
     d_leaf = getattr(d, "d_leaf", None)
@@ -3108,12 +3144,13 @@ def _eq_invest_total_caps(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{d ∈ D(leaf)} v_invest_p[p,d] · unitsize[p]  ≤  max(0, invest_max_total[p] − prior_inv[p])
     #   ∀ p ∈ e_invest_total ∩ process_source_sink ∩ P(v_invest_p) (, leaf)
-    # Σ_{d ∈ D(leaf)} v_divest_p[p,d] · unitsize[p]  ≤  max(0, divest_max_total[p] − prior_div[p])
-    #   ∀ p ∈ e_divest_total ∩ process_source_sink ∩ P(v_divest_p) (, leaf)
+    # Σ_{d ∈ D(leaf)} R_p[p,d] · unitsize[p]  ≤  max(0, divest_max_total[p] − prior_div[p])
+    #   ∀ p ∈ e_divest_total ∩ process_source_sink ∩ P(v_divest_p ∪ v_divest_built_p) (, leaf)
+    #   R[e,d] = v_divest[e,d] + Σ_c v_divest_built[e,c,d] (existing and model-built capacity retired in d)
     #   prior_inv[e] = p_entity_invested[e]  (capacity realized by all earlier solves of the
     #     chain, retired or not); prior_div[e] = p_entity_divested[e]  (capacity retired by all
-    #     earlier solves of the chain, at realized non-branch periods only)
-    #   _n: v_invest_n / v_divest_n with state_unitsize[n], n ∈ nodeState
+    #     earlier solves of the chain, existing and model-built, at realized non-branch periods only)
+    #   _n: v_invest_n / R_n with state_unitsize[n], n ∈ nodeState
     #   _path: one row per (entity, leaf), D(leaf) = periods of the leaf, only for (entity, leaf)
     #     pairs that have the variable
     # Caps the amount built (retired) over the chain; reinvestments count, retirements do not
@@ -3135,7 +3172,9 @@ def _eq_invest_total_caps(b: _Build) -> None:
          "maxDivest_entity_total_n", "maxDivest_entity_total_path_n", "divest_total", prior_divest,
          "retire_max_total"),
     ):
-        if not active or not _has_rows(total_set) or max_total is None:
+        # A retirement total also sums the retirements of model-built capacity (_retire_built).
+        built = _retire_built.decided(b, axis) if label == "divest_total" else None
+        if not (active or built is not None) or not _has_rows(total_set) or max_total is None:
             continue
         # Entities with flows (process_source_sink) or a state (nodeState) AND the variable: a
         # Benders region subproblem carries dangling v_invest_p columns of the coupling pipes the
@@ -3143,24 +3182,29 @@ def _eq_invest_total_caps(b: _Build) -> None:
         members = d.process_source_sink if axis == "p" else d.nodeState
         if not _has_rows(members):
             continue
+        cells = _retire_built.retirement_cells(b, axis, var if active else None) if built is not None else var.frame
         over_e = _entity_rows(total_set, "e", members, axis).join(
-            var.frame.select(axis).unique(), on=axis, how="semi")
+            cells.select(axis).unique(), on=axis, how="semi")
         if over_e.height == 0:
             continue
         max_total_frame = max_total.frame.pipe(rename_to_axis, {"e": axis})
         check_max_cap(over_e, max_total_frame, axis, False, param_name=param_name)  # FA-12
         cap = Param((axis,), minus_prior(max_total_frame, axis, prior))
         unitsize = d.p_unitsize if axis == "p" else Param(("n",), d.p_state_unitsize.frame)
-        terms = over_e.join(var.frame.select(axis, "d").unique(), on=axis, how="inner")
-        is_path, over, mask = leaf_rows(terms, axis, var, d_leaf)
+        terms = over_e.join(cells.select(axis, "d").unique(), on=axis, how="inner")
+        is_path, over, mask = leaf_rows(terms, axis, var if built is None else cells, d_leaf)
         name = path_name if is_path else legacy_name
+        lhs: dict = {label: Sum(Where(var * unitsize, mask), over=("d",))} if active else {}
+        if built is not None:
+            lhs[f"{label}_built"] = Sum(Where(built * unitsize, mask), over=("d",))
         m.add_cstr(
             name,
             over      = over,
             sense     = "<=",
-            lhs_terms = {label: Sum(Where(var * unitsize, mask), over=("d",))},
+            lhs_terms = lhs,
             rhs_terms = {"cap": cap},
         )
+
 
 
 def _eq_retired_existing(b: _Build) -> None:
@@ -3865,7 +3909,7 @@ def _eq_user_constraints(b: _Build) -> None:
     #   + Σ_n v_state[n,d,t]·state_unitsize[n]·node_state_coef[n,cn]
     #   + Σ_e inv[e,d]·invested_coef[e,cn]
     #   + Σ_e con[e,d]·in_construction_coef[e,cn]
-    #   + Σ_e v_divest[e,d]·us[e]·retired_coef[e,cn]
+    #   + Σ_e (v_divest[e,d] + Σ_c v_divest_built[e,c,d])·us[e]·retired_coef[e,cn]
     #   + Σ_e pre[e,d]·prebuilt_coef[e,cn]
     #   + Σ_e cap[e,d]·capacity_coef[e,cn]
     #   + Σ_{p ∈ process_online} v_online[p,d,t]·online_coef[p,cn]
@@ -3880,8 +3924,10 @@ def _eq_user_constraints(b: _Build) -> None:
     #   con[e,d] = Σ_{(e,o,d) ∈ edd_invest_in_construction} v_invest[e,o]·us[e] + carried_in_construction[e,d]
     #   pre[e,d] = existing[e,d] − carried_commission[e,d] + prebuilt[e,d]·us[e]
     #                            − Σ_{(e,d′,d) ∈ retired, d′ ≠ d} v_divest[e,d′]·us[e]
+    #                            − (v_divested_built[e,d] − Σ_c v_divest_built[e,c,d])·us[e]
     #   cap[e,d] = existing[e,d] + invested[e,d]·us[e] − retired[e,d]·us[e]
-    #   invested, prebuilt, retired: the capacity in service (_capacity)
+    #   invested, prebuilt, retired: the capacity in service (_capacity; retired includes v_divested_built, the
+    #     model-built capacity retired so far, _retire_built)
     # A linear constraint authored by the user over flows (MW), storage states (MWh) and capacities.  The
     # invested term is the capacity that comes online in d (an investment decided in o with a construction
     # lead time comes online in c(o); without one c(o) = o and inv[e,d] = v_invest[e,d]·us[e]); the
@@ -4068,6 +4114,7 @@ def _eq_user_constraints(b: _Build) -> None:
                 Where(divest * unitsize, retired.frame.select(axis, "cn")) * retired,
                 over=(axis,),
             ))
+        capacity_terms.extend(_user_constraint_built_terms(b, axis, unitsize, pre, cap, retired))
     if netted:
         from flextool.engine import _behaviour_changes
         _behaviour_changes.notice("user_constraint_prebuilt_nets_retirements", "user constraints", sorted(netted),
@@ -4140,6 +4187,40 @@ def _eq_user_constraints(b: _Build) -> None:
     if pt_cns:
         _eq_user_constraints_period_total(b, pt_cns, invest_terms + capacity_terms, online_by_class, const_terms,
                                           rhs_constant)
+
+
+def _user_constraint_built_terms(b: _Build, axis: str, unitsize: Param, pre: "Param | None", cap: "Param | None",
+                                 retired: "Param | None") -> list:
+    """The model-built retirement terms of the user constraints on ``axis`` (_retire_built), dims (cn, d):
+
+        pre:     − (v_divested_built[e,d] − Σ_c v_divest_built[e,c,d])·us[e]·prebuilt_coef[e,cn]
+        cap:     − v_divested_built[e,d]·us[e]·capacity_coef[e,cn]
+        retired: + Σ_c v_divest_built[e,c,d]·us[e]·retired_coef[e,cn]
+
+    the retirements decided before d that still count there, every retirement counting in d, and those decided
+    in d (the model-built part of retired[e,d] and of the retirements of d)."""
+    built = _retire_built.retired(b, axis)
+    if built is None:
+        return []
+    decided = _retire_built.decided(b, axis)
+    counted, options = _retire_built.retired_frame(b, axis), _retire_built.decided_frame(b, axis)
+    terms: list = []
+    for coef, sign, with_decided in ((pre, -1.0, True), (cap, -1.0, False)):
+        if coef is None:
+            continue
+        rows = counted.join(coef.frame.select(axis, "cn"), on=axis, how="inner")
+        if rows.height == 0:
+            continue
+        terms.append(Sum(Where(built * unitsize, rows) * coef, over=(axis,)) * sign)
+        if with_decided:
+            now = options.join(coef.frame.select(axis, "cn"), on=axis, how="inner")
+            if now.height > 0:
+                terms.append(Sum(Where(decided * unitsize, now) * coef, over=(axis,)))
+    if retired is not None:
+        now = options.join(retired.frame.select(axis, "cn"), on=axis, how="inner")
+        if now.height > 0:
+            terms.append(Sum(Where(decided * unitsize, now) * retired, over=(axis,)))
+    return terms
 
 
 def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_terms: list, online_by_class: list,
@@ -4938,11 +5019,11 @@ def _eq_profiles(b: _Build) -> None:
     invested = divested = None
     if b.has_invest_p and _entity_rows(b.cap.alive, "e", d.process_source_sink, "p").height > 0:
         invested = b.cap.invested_p
-    if b.has_divest_p:
+    if b.has_divest_p or b.has_divest_built_p:
         # The retirements and process_source_sink carry different p vocabularies: cast to the former.
         retired_p = b.cap.retired_frame("p")
         procs = d.process_source_sink.select(pl.col("p").cast(retired_p.schema["p"], strict=False)).unique()
-        if retired_p.join(procs, on="p", how="semi").height > 0:
+        if retired_p.join(procs, on="p", how="semi").height > 0 or b.has_divest_built_p:
             divested = b.cap.retired_p
     reserve_down = -b.reserve_down_to_sink if b.reserve_down_to_sink is not None else None
     source_terms = {
@@ -5332,7 +5413,8 @@ def _obj_storage_reference_price(b: _Build) -> Expr | None:
 
 def _obj_invest_divest(b: _Build) -> Expr | None:
     """Investment and divestment costs of processes and storage nodes."""
-    if not (b.has_invest_p or b.has_divest_p or b.has_invest_n or b.has_divest_n):
+    if not (b.has_invest_p or b.has_divest_p or b.has_invest_n or b.has_divest_n
+            or b.has_divest_built_p or b.has_divest_built_n):
         return None
     d = b.d
     terms: list = []
@@ -5460,6 +5542,9 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
             terms.append(-Sum(b.v_divest_n * us_n * lfd_n))
         if salvage_n is not None:
             terms.append(-Sum(b.v_divest_n * us_n * salvage_n))
+
+    # The retirement of model-built capacity (divest_built_cost_{p,n}): _retire_built.
+    terms.extend(_retire_built.objective_terms(b))
     return _sum_terms(terms)
 
 

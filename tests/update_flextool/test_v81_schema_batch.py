@@ -33,7 +33,10 @@ connection and a node), ``salvage_value`` (a constant and a ``period`` map) and 
   retire_no_limit without a net_salvage_value);
 * writes the behaviour-change marker ``net_salvage_once`` naming the entities whose net_salvage_value a retirement or
   a new plant's yearly cost counts (thermal: a non-zero net_salvage_value, reinvest_choice and invest_no_limit; not
-  city: retire_no_limit but no net_salvage_value).
+  city: retire_no_limit but no net_salvage_value);
+* writes the behaviour-change marker ``built_capacity_retirable`` naming the reinvest_choice / no_reinvestment
+  entities that may invest and retire (thermal: invest_retire_no_limit in another alternative; not wind:
+  invest_no_limit only; not city: retire_no_limit without a lifetime_method).
 
 Nothing else changes, and a rerun commits nothing.  Where a database already has a value under a new name, that
 value is kept (and printed).  A database already at 81 that lacks a definition of the step gets it without a migration of its
@@ -86,6 +89,7 @@ STORED = [
     ("connection", "c1", 0, "invest_cost", Map(["p2020", "p2025"], [0.0, 50.0], index_name="period")),
     ("unit", "thermal", 0, "invest_method", "invest_no_limit"),
     ("unit", "thermal", 1, "fixed_cost", Map(["p2020", "p2025"], [10.0, 20.0], index_name="period")),
+    ("unit", "thermal", 1, "invest_method", "invest_retire_no_limit"),
     ("unit", "wind", 0, "invest_method", "invest_no_limit"),
     ("unit", "wind", 0, "fixed_cost", Map(["p2020", "p2025"], [5.0, 5.0], index_name="period")),
     ("connection", "c1", 0, "fixed_cost", Map(["p2020", "p2025"], [1.0, 2.0], index_name="period")),
@@ -269,6 +273,12 @@ def test_annuity_timing_marker_names_entities_with_an_annuity(migrated) -> None:
 def test_net_salvage_marker_names_entities_with_a_salvage_value(migrated) -> None:
     markers = migrated["after"]["markers"]
     assert json.loads(markers["flextool_behaviour_change:net_salvage_once"]) == {"since": 81, "entities": ["thermal"]}
+
+
+def test_built_retirable_marker_names_bounded_entities_that_invest_and_retire(migrated) -> None:
+    markers = migrated["after"]["markers"]
+    assert json.loads(markers["flextool_behaviour_change:built_capacity_retirable"]) == {
+        "since": 81, "entities": ["thermal"]}
 
 
 def test_descriptions_are_the_shipped_ones(migrated) -> None:

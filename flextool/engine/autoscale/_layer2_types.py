@@ -150,6 +150,12 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     "v_invest_n": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_state_unitsize"),
     # flextool/engine/model/core.py _declare_variables
     "v_divest_n": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_state_unitsize"),
+    # flextool/engine/model/_retire_built.py add_variables: the retirement of a model-built cohort and the
+    # model-built capacity retired so far, counts of unitsize like v_divest.
+    "v_divest_built_p": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
+    "v_divest_built_n": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_state_unitsize"),
+    "v_divested_built_p": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
+    "v_divested_built_n": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_state_unitsize"),
 
     # ── Reserve.  DIMENSIONLESS column; ``p_unitsize`` multiplier
     # carries the per-row POWER coefficient.
@@ -336,6 +342,12 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "maxRetired_existing_p": CstrFamily(QuantityType.POWER),
     # flextool/engine/model/core.py _eq_retired_existing
     "maxRetired_existing_n": CstrFamily(QuantityType.ENERGY),
+    # flextool/engine/model/_retire_built.py add_constraints: a cohort retires at most what it has (MW / MWh)
+    "maxDivest_cohort_p": CstrFamily(QuantityType.POWER),
+    "maxDivest_cohort_n": CstrFamily(QuantityType.ENERGY),
+    # flextool/engine/model/_retire_built.py add_constraints: the units retired so far, a count (RHS 0)
+    "divestedBuilt_p": CstrFamily(QuantityType.DIMENSIONLESS),
+    "divestedBuilt_n": CstrFamily(QuantityType.DIMENSIONLESS),
 
     # Slice D per-path total caps (design §7.2/§14) — one cap row per
     # (entity, scenario-leaf).  Emitted by
@@ -662,6 +674,9 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "non_anticipativity_invest_n": CstrFamily(None),
     "non_anticipativity_divest_p": CstrFamily(None),
     "non_anticipativity_divest_n": CstrFamily(None),
+    # flextool/engine/model/_retire_built.py add_non_anticipativity (RHS = 0)
+    "non_anticipativity_divest_built_p": CstrFamily(None),
+    "non_anticipativity_divest_built_n": CstrFamily(None),
 
     # ── Profile constraints (per timestep).
     # Node profiles emit in model._eq_state_profiles with names

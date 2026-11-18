@@ -131,7 +131,7 @@ def group_prior(group_entity: pl.DataFrame, prior: "pl.DataFrame | None", d, axi
     return out if out.height > 0 else pl.DataFrame(schema=out_schema)
 
 
-def leaf_rows(terms: pl.DataFrame, key: str, var: Var, d_leaf: "pl.DataFrame | None"
+def leaf_rows(terms: pl.DataFrame, key: str, var: "Var | pl.DataFrame", d_leaf: "pl.DataFrame | None"
              ) -> tuple[bool, pl.DataFrame, pl.DataFrame]:
     """``(is_path, rows, mask)`` for the ``Σ_d`` block shared by every ``*_total`` family.
 
@@ -151,14 +151,16 @@ def leaf_rows(terms: pl.DataFrame, key: str, var: Var, d_leaf: "pl.DataFrame | N
     that would be infeasible for a ``>=`` family and a no-op for ``<=``.  Leaves of one key with
     the same ``d`` support (the period labels' here-and-now investment is on every branch path)
     collapse to the first sorted leaf; when every key then has one row, the legacy shape is
-    returned.
+    returned.  ``var`` is the variable of the Σ term, or a frame with the ``d`` of the variables when the term
+    sums several (a retirement total: v_divest and v_divest_built).
     """
     if d_leaf is None or getattr(d_leaf, "height", 0) == 0:
         return False, terms.select(key).unique(), terms
-    d_dtype = var.frame.schema["d"]
+    support = var if isinstance(var, pl.DataFrame) else var.frame
+    d_dtype = support.schema["d"]
     leaves_all = (d_leaf if d_leaf.schema["d"] == d_dtype
                   else d_leaf.with_columns(pl.col("d").cast(d_dtype, strict=False)))
-    leaves = leaves_all.join(var.frame.select("d").unique(), on="d", how="semi")
+    leaves = leaves_all.join(support.select("d").unique(), on="d", how="semi")
     if leaves.height == 0 or leaves["leaf"].n_unique() <= 1:
         return False, terms.select(key).unique(), terms
     mask = terms.join(leaves_all, on="d", how="inner")
