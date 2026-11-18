@@ -1416,7 +1416,7 @@ names as before for debug inspection:
 
 | Carrier (`SolveHandoff` field) | Debug-mirror file | Meaning |
 |---|---|---|
-| `realized_cohort` | `produced_handoff/realized_cohort.csv` | The investments realised by the run so far, one row per cohort (investment decision): its start of operation and end of life in years of the run (placed once, by the deciding solve) and its size. A later solve's capacity is its existing cohort (the user's `existing` of each of its periods) plus the carried cohorts in service, minus the carried retirements (`_cohorts.existing_capacity`). |
+| `realized_cohort` | `produced_handoff/realized_cohort.csv` | The investments realised by the run so far, one row per cohort (investment decision): its start of operation and end of life in years of the run (placed once, by the deciding solve) and its size. A later solve's capacity is its existing cohort (the user's `existing` of each of its periods) plus the carried cohorts in service, minus the carried retirements (`_cohort_handoff.existing_capacity`). |
 | `realized_retire` | `produced_handoff/realized_retire.csv` | Retired capacity per cohort and realised decision period; counts while the cohort is in service. |
 | `realized_commission` | *(in-memory only)* | Realised investments with a construction lead time: coming online / in construction in a later solve. |
 | `divest_cumulative` | `p_entity_divested.csv` | Cumulative divest per entity carried forward. |

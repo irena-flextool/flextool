@@ -267,7 +267,8 @@ def extension_frames(source: "InputSource",
 
 def _served(cohort_alive: pl.DataFrame | None, carried: pl.DataFrame, yr: pl.DataFrame) -> pl.DataFrame:
     """``[e, cohort, d_last]`` (Utf8): the periods of the solve each parent is in service in (``cohort_alive``; a
-    carried cohort ``carried`` while ``y_on ≤ y < y_eol``, the comparison of :func:`._cohorts.existing_capacity`)."""
+    carried cohort ``carried`` while ``y_on ≤ y < y_eol``, the comparison of
+    :func:`._cohort_handoff.existing_capacity`)."""
     parts = [pl.DataFrame(schema={"e": pl.Utf8, "cohort": pl.Utf8, "d_last": pl.Utf8})]
     if cohort_alive is not None and cohort_alive.height > 0:
         parts.append(cohort_alive.select(pl.col("e").cast(pl.Utf8), "cohort",

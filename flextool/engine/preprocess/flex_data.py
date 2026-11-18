@@ -6797,7 +6797,7 @@ def build_handoff_from_solution(
 
     ``cohort`` is the solve's cohort table when ``flex_data`` is ``None`` (the Benders invest solve hands its
     undecomposed ``FlexData.cohort``); with ``flex_data`` its ``cohort`` is used.  ``realized_cohort`` /
-    ``realized_retire`` (:func:`._cohorts.realized_cohorts`) carry the realized investments as cohorts and the
+    ``realized_retire`` (:func:`._cohort_handoff.realized_cohorts`) carry the realized investments as cohorts and the
     retirements per cohort.
 
     *provider* (the sub-solve's :class:`FlexDataProvider`) is required:
@@ -6988,7 +6988,7 @@ def build_handoff_from_solution(
 
     # ---- realized_cohort / realized_retire: the realized investments as cohorts (their rows of the cohort table,
     # placed once by this solve) and the retirements per cohort, chain-cumulative ----
-    from flextool.engine.preprocess.params._cohorts import realized_cohorts
+    from flextool.engine.preprocess.params._cohort_handoff import realized_cohorts
     _cohort_table = getattr(flex_data, "cohort", None) if flex_data is not None else cohort
     realized_cohort_df, realized_retire_df = realized_cohorts(
         getattr(prior_handoff, "realized_cohort", None) if prior_handoff is not None else None,

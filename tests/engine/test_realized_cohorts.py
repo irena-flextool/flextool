@@ -1,4 +1,4 @@
-"""The cohorts a solve hands to the later solves of a run (``_cohorts.realized_cohorts``).
+"""The cohorts a solve hands to the later solves of a run (``_cohort_handoff.realized_cohorts``).
 
 A two-solve chain by hand: solve 1 realizes an investment of 2 units (unitsize 50 MW) in p2020 and retires 1 unit
 of existing capacity there; solve 2 (handed solve 1's carriers) realizes 3 units in p2025 and 0.5 units again of the
@@ -13,12 +13,8 @@ import math
 import polars as pl
 import pytest
 
-from flextool.engine.preprocess.params._cohorts import (
-    PRICE_COLUMNS,
-    REALIZED_RETIRE_SCHEMA,
-    _cohort_frame,
-    realized_cohorts,
-)
+from flextool.engine.preprocess.params._cohort_handoff import REALIZED_RETIRE_SCHEMA, realized_cohorts
+from flextool.engine.preprocess.params._cohorts import PRICE_COLUMNS, _cohort_frame
 
 INF = math.inf
 UNITSIZE = {"plant": 50.0}

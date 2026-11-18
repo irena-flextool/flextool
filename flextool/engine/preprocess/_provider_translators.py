@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 
 def _cohort_carrier_columns() -> list[str]:
-    from flextool.engine.preprocess.params._cohorts import realized_cohort_schema
+    from flextool.engine.preprocess.params._cohort_handoff import realized_cohort_schema
     return list(realized_cohort_schema())
 
 

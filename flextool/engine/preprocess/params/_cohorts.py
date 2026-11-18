@@ -61,10 +61,10 @@ year, so ``y_eol`` is a period's own year and ``y[d] < y_eol`` compares exactly)
 the year tolerance ``YEAR_TOL`` under every ``end_of_life_method``; for ``next_seam`` and a period year ``y`` (a
 seam; the seams lie more than ``YEAR_TOL`` apart) ``y < next_seam(Y) ⟺ y < Y − YEAR_TOL``.  So a cohort placed by one solve
 (the existing cohort, built once for the run: :func:`run_existing_cohorts`; an investment realized by an earlier
-solve, carried in the handoff ``realized_cohort``) is in service in a later solve's period ``d`` by the same
-comparison of ``d``'s run year with the carried ``y_on`` / ``y_eol``, with no rounding repeated.  Where two solves
-give a period different years (the run calendar's ``conflicts``), the run calendar's year (the first solve's)
-decides.
+solve, carried in the handoff ``realized_cohort``: ``_cohort_handoff``) is in service in a later solve's period
+``d`` by the same comparison of ``d``'s run year with the carried ``y_on`` / ``y_eol``, with no rounding repeated.
+Where two solves give a period different years (the run calendar's ``conflicts``), the run calendar's year (the
+first solve's) decides.
 
 Views (the only lifetime-gate code): :func:`existing_eol`, :func:`existing_expired`,
 :func:`no_reinvestment_closed`, :func:`invest_alive`, :func:`invest_prebuilt`, :func:`retire_active`; the test
@@ -1190,433 +1190,30 @@ def in_service(data: object) -> InService:
         retired_n=retire_active(getattr(data, "nd_divest_set", None), alive_rows, forward, "n"))
 
 
-# ---------------------------------------------------------------------------
-# The cohorts carried between the solves of a run
-# ---------------------------------------------------------------------------
-
-#: Cohort-table column → its ``realized_cohort`` carrier column (the carrier speaks the handoff's Utf8 names).
-#: Any other column of the cohort table is carried under its own name.
-_CARRIER_NAMES: dict[str, str] = {"e": "entity", "d_build": "period_decided", "d_on": "period_online",
-                                  "d_eol": "period_eol"}
-#: The order of the cohort kinds in the carrier (the order the capacity of an entity is summed in).
-_KIND_ORDER: dict[str, int] = {KIND_EXISTING: 0, KIND_INVEST: 1, KIND_GENERATION: 2, KIND_EXTEND: 3}
-
-
-def realized_cohort_schema(cohort_schema: Mapping[str, pl.DataType] | None = None) -> dict[str, pl.DataType]:
-    """The columns of the ``realized_cohort`` carrier: ``entity`` and one per column of the cohort table
-    (``cohort_schema``, default :func:`_cohort_schema`; renamed by :data:`_CARRIER_NAMES`; a float column Float64,
-    every other Utf8), then ``size`` (MW, MWh for storage)."""
-    schema = _cohort_schema() if cohort_schema is None else dict(cohort_schema)
-    out: dict[str, pl.DataType] = {"entity": pl.Utf8}
-    for c, t in schema.items():
-        out[_CARRIER_NAMES.get(c, c)] = pl.Float64 if t.is_float() else pl.Utf8
-    out["size"] = pl.Float64
-    return out
-
-
-#: A retirement (MW, MWh) of a cohort that was not built, at most this, is the solver's tolerance.
-_RETIRED_TOL = 1e-6
-#: The columns of the ``realized_retire`` carrier: MW (MWh) retired from a cohort in a realized decision period.
-REALIZED_RETIRE_SCHEMA: dict[str, pl.DataType] = {"entity": pl.Utf8, "cohort": pl.Utf8, "period": pl.Utf8,
-                                                  "value": pl.Float64}
-
-
-def _cell(value: object, dtype: pl.DataType) -> object:
-    if value is None:
-        return None
-    return float(value) if dtype == pl.Float64 else str(value)
-
-
-def realized_cohorts(prior_cohort: pl.DataFrame | None,
-                     prior_retire: pl.DataFrame | None,
-                     cohort: pl.DataFrame | None,
-                     invested: Mapping[tuple[str, str], float],
-                     retired: Mapping[tuple[str, str], float],
-                     unitsize: Mapping[str, float],
-                     retired_built: Mapping[tuple[str, str, str], float] | None = None,
-                     extended: Mapping[tuple[str, str, str], float] | None = None,
-                     ) -> tuple[pl.DataFrame | None, pl.DataFrame | None]:
-    """``(realized_cohort, realized_retire)``: the cohorts a solve hands to the later solves of the run, and the
-    capacity retired from them, both chain-cumulative.
-
-    ``realized_cohort`` — the rows of ``prior_cohort`` (the carrier the solve was handed), unchanged, and one row per
-    investment decision ``(e, d) ∈ invested`` (``v_invest`` of a realized, real-named decision period, > 0) with
-    the columns of its row of the solve's cohort table ``cohort`` (run years, never recomputed by a later solve) and
-    ``size = v_invest · unitsize[e]``, followed by the rows of its generations (``root`` the decision's cohort, the
-    rows of the solve's table by name, size null: the chain's plants and their prices), and one row per life
-    extension ``(e, c, d) ∈ extended`` (``v_extend`` of the cohort ``c`` in a realized, real-named period, > 0):
-    its row ``extend:<d>:<c>`` of the cohort table and ``size = v_extend · unitsize[e]``.  A decision already carried
-    (the same cohort realized again) adds its size to the carried row.  Sorted by entity, kind, start of operation
-    (stable: earlier rows first).
-
-    ``realized_retire`` ``[entity, cohort, period, value]`` — the rows of ``prior_retire`` and
-    ``retired[e, d] · unitsize[e]`` (``v_divest`` of a realized decision period, > 0) of the existing cohort of
-    ``e`` and ``retired_built[e, c, d] · unitsize[e]`` (``v_divest_built`` of a realized decision period, > 0) of
-    the model-built cohort ``c`` (also a life extension), summed per (entity, cohort, period); sorted, zero rows left
-    out.  A later solve
-    subtracts each from its own cohort only (the existing cohort's retirements bound the existing capacity, a built
-    cohort's its carried size).
-
-    Each frame is ``None`` when it has no row.  An investment without a row in ``cohort`` cannot be placed in a
-    later solve's periods and raises :class:`ValueError`."""
-    by_key: dict[tuple[str, str], dict] = {}
-    columns = list(cohort.columns) if cohort is not None else list(_cohort_schema())
-    schema = realized_cohort_schema(cohort.schema if cohort is not None else None)
-    if prior_cohort is not None and prior_cohort.height > 0:
-        for row in prior_cohort.iter_rows(named=True):
-            rec = {c: _cell(row.get(c), t) for c, t in schema.items()}
-            by_key[(rec["entity"], rec["cohort"])] = rec
-    if invested or extended:
-        if cohort is None:
-            raise ValueError("Realized investments cannot be handed to the later solves: the solve has no cohort "
-                             "table.")
-        rows = {(str(r["e"]), str(r["cohort"])): r for r in cohort.iter_rows(named=True)}
-        chains: dict[tuple[str, str], list[dict]] = {}
-        if "root" in columns:
-            for r in cohort.filter(pl.col("kind") == KIND_GENERATION).iter_rows(named=True):
-                chains.setdefault((str(r["e"]), str(r["root"])), []).append(r)
-        for (e, d), v in invested.items():
-            key = (e, f"{KIND_INVEST}:{d}")
-            size = v * unitsize.get(e, 1.0)
-            if key in by_key:
-                by_key[key]["size"] = by_key[key]["size"] + size
-                continue
-            row = rows.get(key)
-            if row is None or row.get("y_on") is None:
-                raise ValueError(f"The investment of {e!r} decided in period {d!r} has no start of operation in the "
-                                 "solve's cohort table: it cannot be handed to the later solves.")
-            rec = {_CARRIER_NAMES.get(c, c): _cell(row[c], schema[_CARRIER_NAMES.get(c, c)]) for c in columns}
-            rec["size"] = size
-            by_key[key] = rec
-            for gen in chains.get(key, ()):
-                rec = {_CARRIER_NAMES.get(c, c): _cell(gen[c], schema[_CARRIER_NAMES.get(c, c)]) for c in columns}
-                rec["size"] = None
-                by_key[(e, str(gen["cohort"]))] = rec
-        for (e, c, d), v in (extended or {}).items():
-            key = (e, f"{KIND_EXTEND}:{d}:{c}")
-            size = v * unitsize.get(e, 1.0)
-            if key in by_key:
-                by_key[key]["size"] = by_key[key]["size"] + size
-                continue
-            row = rows.get(key)
-            if row is None or row.get("y_on") is None:
-                raise ValueError(f"The life extension of {e!r} cohort {c!r} in period {d!r} has no row in the solve's "
-                                 "cohort table: it cannot be handed to the later solves.")
-            rec = {_CARRIER_NAMES.get(c_, c_): _cell(row[c_], schema[_CARRIER_NAMES.get(c_, c_)]) for c_ in columns}
-            rec["size"] = size
-            by_key[key] = rec
-    ordered = sorted(by_key.values(),
-                     key=lambda r: (r["entity"], _KIND_ORDER.get(r["kind"], len(_KIND_ORDER)), r["y_on"] or 0.0))
-    cohort_out = (pl.DataFrame([[r[c] for c in schema] for r in ordered], schema=schema, orient="row")
-                  if ordered else None)
-
-    existing_of: dict[str, str] = {}
-    if cohort is not None:
-        for e, c in cohort.filter(pl.col("kind") == KIND_EXISTING).select("e", "cohort").iter_rows():
-            existing_of.setdefault(str(e), str(c))
-    sums: dict[tuple[str, str, str], float] = {}
-    if prior_retire is not None and prior_retire.height > 0:
-        for e, c, d, v in prior_retire.select("entity", "cohort", "period", "value").iter_rows():
-            key = (str(e), str(c), str(d))
-            sums[key] = sums.get(key, 0.0) + float(v)
-    for (e, d), v in retired.items():
-        key = (e, existing_of.get(e, KIND_EXISTING), d)
-        sums[key] = sums.get(key, 0.0) + v * unitsize.get(e, 1.0)
-    for (e, c, d), v in (retired_built or {}).items():
-        mw = v * unitsize.get(e, 1.0)
-        if (e, c) not in by_key:
-            if mw <= _RETIRED_TOL:
-                continue  # the solver's tolerance on a cohort that was not built
-            raise ValueError(f"The retirement of {e!r} cohort {c!r} in period {d!r} ({mw:g}) names a cohort that is "
-                             "not realized: it cannot be handed to the later solves.")
-        sums[(e, c, d)] = sums.get((e, c, d), 0.0) + mw
-    retire_rows = [(e, c, d, v) for (e, c, d), v in sorted(sums.items()) if v != 0.0]
-    retire_out = (pl.DataFrame(retire_rows, schema=REALIZED_RETIRE_SCHEMA, orient="row")
-                  if retire_rows else None)
-    return cohort_out, retire_out
-
-
-@dataclass(frozen=True)
-class ExistingCapacity:
-    """The capacity a solve starts from, per entity and period of ``period_in_use`` (MW, MWh for storage): the
-    existing cohort and the cohorts earlier solves of the run realized (:func:`existing_capacity`)."""
-
-    #: ``pre[e, d]``: the existing cohort (the user's ``existing`` of period d, × virtual_unitsize) in service in d.
-    pre: dict[tuple[str, str], float]
-    #: ``carried[e, d]``: the carried investment cohorts in service in d, less their carried retirements.
-    carried: dict[tuple[str, str], float]
-    #: ``all[e, d] = pre + carried − retired_all`` (``retired_all`` subtracted for the entities that may retire).
-    all: dict[tuple[str, str], float]
-    #: ``retired[e, d]``: the retirements of the existing cohort that earlier solves realized and still count in d.
-    retired: dict[tuple[str, str], float]
-    #: ``invested[e]``: every carried investment of e, in service or not.
-    invested: dict[str, float]
-
-
-def _in_service(y: float, y_on: float | None, y_eol: float) -> bool:
-    return (y_on is None or y >= y_on) and y < y_eol
-
-
-def existing_capacity(entities: Iterable[str],
-                      periods: Iterable[str],
-                      years: Mapping[str, float],
-                      existing: pl.DataFrame,
-                      existing_mw: Mapping[tuple[str, str], float],
-                      carried: pl.DataFrame | None,
-                      retire: pl.DataFrame | None,
-                      divest_entities: Iterable[str],
-                      ) -> ExistingCapacity:
-    """The capacity in service at the start of a solve, from the cohorts (one formula for every solve)::
-
-        alive_c(d)    ⟺  y_on_c ≤ y[d] < y_eol_c                          (years of the run)
-        pre[e, d]     =  existing_mw[e, d]  if the existing cohort of e is alive in d, else 0
-        retired_c[e, d] = Σ_{(c, d′, v) ∈ retire : alive_c(d), y[d′] ≤ y[d] or d′ before the solve} v
-        carried[e, d] =  Σ_{carried invest cohorts c of e alive in d} size_c
-                         − [e may retire] · Σ_{carried invest cohorts c} retired_c[e, d]
-        all[e, d]     =  (pre[e, d] + Σ_{carried invest and extension cohorts c alive in d} size_c)
-                         − [e may retire] · Σ_c retired_c[e, d]
-        invested[e]   =  Σ_{carried invest cohorts c of e} size_c
-
-    ``existing`` are the existing cohorts of the run (:func:`run_existing_cohorts`, ``y_on`` / ``y_eol``),
-    ``existing_mw[e, d]`` the user's ``existing`` of each period in MW (the map is read in every solve),
-    ``carried`` / ``retire`` the handoff ``realized_cohort`` / ``realized_retire`` (their ``generation`` rows are
-    the plants of a chain, not capacity, and are left out).  The sums add in the order of
-    the carried rows (by start of operation), ``all`` starting from ``pre``.  ``retired`` is the existing cohort's
-    part (the bound of the retirements of existing capacity); ``carried`` subtracts those of the carried cohorts,
-    ``all`` those of every cohort (so ``all − carried`` is the existing cohort less its own retirements and plus the
-    carried life extensions).  A carried life extension (kind ``extend``) is capacity but never an investment: it
-    counts in ``all`` only, not in ``carried`` (the previously invested capacity) or ``invested`` (the investment
-    limits).  A retirement of a cohort that is neither the existing cohort nor a carried one raises
-    :class:`ValueError`."""
-    from flextool.engine.preprocess.params._retire_existing import retired_carried
-    entities = [str(e) for e in entities]
-    periods = [str(d) for d in periods]
-    y_of = {d: float(years.get(d, 0.0)) for d in periods}
-    ends: dict[tuple[str, str], tuple[float | None, float]] = {}
-    existing_of: dict[str, str] = {}
-    existing = _roots(existing)
-    if carried is not None:
-        carried = _roots(carried)
-    for e, c, y_on, y_eol in existing.select("e", "cohort", "y_on", "y_eol").iter_rows():
-        existing_of.setdefault(str(e), str(c))
-        ends[(str(e), str(c))] = (None, _INF if y_eol is None else float(y_eol))
-    sizes: dict[str, list[tuple[str, float]]] = {}
-    extensions: set[tuple[str, str]] = set()
-    if carried is not None and carried.height > 0:
-        for e, c, kind, y_on, y_eol, size in carried.select("entity", "cohort", "kind", "y_on", "y_eol",
-                                                            "size").iter_rows():
-            e, c = str(e), str(c)
-            ends[(e, c)] = (None if y_on is None else float(y_on), _INF if y_eol is None else float(y_eol))
-            sizes.setdefault(e, []).append((c, float(size)))
-            if kind == KIND_EXTEND:
-                extensions.add((e, c))
-    alive = {(e, c, d): _in_service(y_of[d], *ends[(e, c)]) for (e, c) in ends for d in periods}
-
-    rows = [] if retire is None else [(str(e), str(c), str(d), float(v)) for e, c, d, v in
-                                      retire.select("entity", "cohort", "period", "value").iter_rows()]
-    unknown = sorted({(e, c) for e, c, _d, _v in rows if (e, c) not in ends})
-    if unknown:
-        raise ValueError(f"Carried retirements name cohorts the solve does not have: {unknown}.")
-    dead = {k for k, v in alive.items() if not v}
-    retired_all = retired_carried(rows, years, periods, dead)
-    retired = retired_carried([r for r in rows if existing_of.get(r[0]) == r[1]], years, periods, dead)
-    retired_built = retired_carried(
-        [r for r in rows if existing_of.get(r[0]) != r[1] and (r[0], r[1]) not in extensions], years, periods, dead)
-
-    divest = frozenset(str(e) for e in divest_entities)
-    pre: dict[tuple[str, str], float] = {}
-    carried_mw: dict[tuple[str, str], float] = {}
-    all_mw: dict[tuple[str, str], float] = {}
-    for e in entities:
-        c0 = existing_of.get(e)
-        for d in periods:
-            v_pre = existing_mw.get((e, d), 0.0) if c0 is not None and alive[(e, c0, d)] else 0.0
-            v_all = v_pre
-            v_carried = 0.0
-            for c, size in sizes.get(e, ()):
-                if alive[(e, c, d)]:
-                    v_all += size
-                    if (e, c) not in extensions:
-                        v_carried += size
-            if e in divest:
-                v_all -= retired_all.get((e, d), 0.0)
-                v_carried -= retired_built.get((e, d), 0.0)
-            pre[(e, d)], carried_mw[(e, d)], all_mw[(e, d)] = v_pre, v_carried, v_all
-    invested: dict[str, float] = {}
-    for e, cohorts in sizes.items():
-        total = 0.0
-        for c, size in cohorts:
-            if (e, c) not in extensions:
-                total += size
-        invested[e] = total
-    return ExistingCapacity(pre=pre, carried=carried_mw, all=all_mw, retired=retired, invested=invested)
-
-
-
-# ---------------------------------------------------------------------------
-# The capacity of each cohort in the solve's periods (outputs)
-# ---------------------------------------------------------------------------
-#: The reported kind of a cohort (:func:`cohort_capacity`): the existing capacity (and the first plant of an existing
-#: ``reinvest_automatic`` chain), an investment (and its chain's first plant), a later plant of any chain and a
-#: life extension.
-REPORTED_KIND_EXISTING = "existing"
-REPORTED_KIND_INVESTED = "invested"
-REPORTED_KIND_REPLACEMENT = "replacement"
-REPORTED_KIND_EXTENSION = "extension"
-_REPORTED_ROOT_KIND = {KIND_EXISTING: REPORTED_KIND_EXISTING, KIND_INVEST: REPORTED_KIND_INVESTED,
-                       KIND_EXTEND: REPORTED_KIND_EXTENSION}
-#: The columns of :func:`cohort_capacity`.
-COHORT_CAPACITY_SCHEMA: dict[str, pl.DataType] = {
-    "e": pl.Utf8, "cohort": pl.Utf8, "kind": pl.Utf8, "built": pl.Boolean, "d_on": pl.Utf8, "d_eol": pl.Utf8,
-    "d": pl.Utf8, "capacity": pl.Float64, "retired": pl.Float64, "retired_in_period": pl.Float64}
-
-
 def as_names(frame: pl.DataFrame, columns: Iterable[str]) -> pl.DataFrame:
     """``frame`` with the label columns ``columns`` as plain strings (``Series.to_list`` of the axis labels, never a
     cast of an axis Enum): the cohort tables of the outputs are keyed by names."""
     return frame.with_columns(pl.Series(c, frame[c].to_list(), dtype=pl.Utf8) for c in columns)
 
 
-def cohort_capacity(cohort: pl.DataFrame,
-                    alive: pl.DataFrame,
-                    carried: pl.DataFrame | None,
-                    carried_retire: pl.DataFrame | None,
-                    pre: pl.DataFrame,
-                    sizes: pl.DataFrame,
-                    retired: pl.DataFrame,
-                    years: Mapping[str, float],
-                    periods: Iterable[str],
-                    ) -> pl.DataFrame:
-    """The capacity of every cohort in service in the solve's ``periods`` (MW, MWh for storage;
-    :data:`COHORT_CAPACITY_SCHEMA`, labels Utf8)::
-
-        size[c,d]     = pre[e,d]                 c the existing cohort of e, (c, d) ∈ alive (rows with size > 0)
-                      = sizes[c]                 c an investment or life extension of the solve, (c, d) ∈ alive
-                      = size_c                   c carried from an earlier solve (``realized_cohort``),
-                                                 y_on_c ≤ y[d] < y_eol_c
-        retired[c,d]  = Σ_{(c, d′, d) ∈ retired} mw  +  Σ_{(c, d′, v) ∈ carried_retire, y[d′] ≤ y[d] or d′ before
-                        the solve} v             (retired so far, still counting in d)
-        capacity[c,d] = size[c,d] − retired[c,d]
-
-    ``cohort`` / ``alive`` the solve's cohort table and ``cohort_alive`` (the existing cohort and the solve's own
-    decisions), ``carried`` / ``carried_retire`` the handoff ``realized_cohort`` / ``realized_retire`` of the earlier
-    solves, ``pre`` ``[e, d, mw]`` the existing cohort's capacity (``p_entity_pre_existing``), ``sizes`` ``[e,
-    cohort, mw]`` the MW of the solve's investments and life extensions, ``retired`` ``[e, cohort, d_divest, d, mw]``
-    the solve's retirements and the periods each counts in (``retire_active`` / ``cdd_divest_built``), ``years`` the
-    run years (:func:`cohort_years`).  ``retired_in_period[c,d]`` is the part retired at the start of ``d``.
-
-    A ``reinvest_automatic`` root holds its capacity through its plants (its ``generation`` rows): each period's
-    capacity is reported under the plant in service then (``y_on[g] ≤ y[d] < y_eol[g]``), the first plant with the
-    root's kind, a later one as ``replacement``; other cohorts under their own row.  ``kind``: existing /
-    invested / replacement / extension; ``built`` false for the existing capacity and its chain; ``d_on`` the period
-    the cohort (plant) comes online in, ``d_eol`` the period its life ends at (null at or past the horizon end)."""
-    periods = [str(d) for d in periods]
-    out_empty = pl.DataFrame(schema=COHORT_CAPACITY_SCHEMA)
-    if not periods:
-        return out_empty
-    year = pl.DataFrame({"d": periods, "y": [float(years.get(d, 0.0)) for d in periods]},
-                        schema={"d": pl.Utf8, "y": pl.Float64})
-    keep = ["e", "cohort", "kind", "root", "d_on", "d_eol", "y_on", "y_eol"]
-    own = as_names(cohort.select(keep), ("e",))
-    if carried is not None and carried.height > 0:
-        theirs = (carried.select(pl.col("entity").alias("e"), "cohort", "kind", "root",
-                                 pl.col("period_online").alias("d_on"), pl.col("period_eol").alias("d_eol"),
-                                 "y_on", "y_eol", "size")
-                         .join(own.select("e", "cohort"), on=["e", "cohort"], how="anti"))
-    else:
-        theirs = pl.DataFrame(schema={**{c: own.schema[c] for c in keep}, "size": pl.Float64})
-    rows_all = pl.concat([own, theirs.select(keep)], how="vertical_relaxed")
-    roots = rows_all.filter(pl.col("kind") != KIND_GENERATION)
-    gens = rows_all.filter(pl.col("kind") == KIND_GENERATION)
-
-    # The size of each root in each period it is in service.
-    on_alive = as_names(alive.select("e", "cohort", "kind", "d"), ("e", "d"))
-    existing = (on_alive.filter(pl.col("kind") == KIND_EXISTING)
-                        .join(as_names(pre.select("e", "d", "mw"), ("e", "d")), on=["e", "d"], how="inner")
-                        .select("e", "cohort", "d", size=pl.col("mw")))
-    decided = (on_alive.filter(pl.col("kind") != KIND_EXISTING)
-                       .join(as_names(sizes.select("e", "cohort", "mw"), ("e",)), on=["e", "cohort"], how="inner")
-                       .select("e", "cohort", "d", size=pl.col("mw")))
-    previous = (theirs.filter(pl.col("kind") != KIND_GENERATION)
-                      .join(year, how="cross")
-                      .filter(within_life(pl.col("y"), pl.col("y_on").fill_null(-_INF),
-                                          pl.col("y_eol").fill_null(_INF)))
-                      .select("e", "cohort", "d", size=pl.col("size").fill_null(0.0)))
-    sized = pl.concat([existing, decided, previous], how="vertical_relaxed").filter(pl.col("size") > 0.0)
-
-    # The capacity retired so far (and in the period) that still counts.
-    own_retired = as_names(retired.select("e", "cohort", "d_divest", "d", "mw"), ("e", "d_divest", "d"))
-    parts = [own_retired.select("e", "cohort", "d", "mw",
-                                now=pl.when(pl.col("d") == pl.col("d_divest")).then(pl.col("mw")).otherwise(0.0))]
-    if carried_retire is not None and carried_retire.height > 0:
-        decided_year = pl.DataFrame({"d_r": list(years), "y_r": [float(v) for v in years.values()]},
-                                    schema={"d_r": pl.Utf8, "y_r": pl.Float64})
-        parts.append(carried_retire.select(pl.col("entity").alias("e"), "cohort", pl.col("period").alias("d_r"),
-                                           mw=pl.col("value"))
-                     .join(decided_year, on="d_r", how="left")
-                     .join(year, how="cross")
-                     .filter(pl.col("y_r").is_null() | (pl.col("y_r") <= pl.col("y") + YEAR_TOL))
-                     .select("e", "cohort", "d", "mw",
-                             now=pl.when(pl.col("d") == pl.col("d_r")).then(pl.col("mw")).otherwise(0.0)))
-    gone = (pl.concat(parts, how="vertical_relaxed")
-              .group_by("e", "cohort", "d").agg(pl.col("mw").sum().alias("retired"), pl.col("now").sum()))
-    held = (sized.join(gone, on=["e", "cohort", "d"], how="left")
-                 .with_columns(retired=pl.col("retired").fill_null(0.0), now=pl.col("now").fill_null(0.0))
-                 .with_columns(capacity=pl.col("size") - pl.col("retired") + 0.0, retired=pl.col("retired") + 0.0,
-                               now=pl.col("now") + 0.0)
-                 .join(roots.select("e", "cohort", "kind", "d_on", "d_eol"), on=["e", "cohort"], how="inner"))
-
-    # A chained root is reported under the plant in service in each period.
-    chained = held.join(gens.select("e", "root").unique(), left_on=["e", "cohort"], right_on=["e", "root"],
-                        how="semi")
-    plants = (chained.join(year, on="d", how="inner")
-                     .join(gens.select("e", "root", pl.col("cohort").alias("plant"), pl.col("d_on").alias("g_on"),
-                                       pl.col("d_eol").alias("g_eol"), pl.col("y_on").alias("g_y_on"),
-                                       pl.col("y_eol").alias("g_y_eol")),
-                           left_on=["e", "cohort"], right_on=["e", "root"], how="inner")
-                     .filter((pl.col("y") >= pl.col("g_y_on") - YEAR_TOL)
-                             & (pl.col("y") < pl.col("g_y_eol") - YEAR_TOL))
-                     .with_columns(kind=pl.when(pl.col("plant").str.ends_with(":1"))
-                                          .then(pl.col("kind").replace_strict(_REPORTED_ROOT_KIND))
-                                          .otherwise(pl.lit(REPORTED_KIND_REPLACEMENT)),
-                                   built=pl.col("kind") != KIND_EXISTING)
-                     .select("e", cohort=pl.col("plant"), kind="kind", built="built", d_on=pl.col("g_on"),
-                             d_eol=pl.col("g_eol"), d="d", capacity="capacity", retired="retired",
-                             retired_in_period="now"))
-    single = (held.join(chained.select("e", "cohort").unique(), on=["e", "cohort"], how="anti")
-                  .select("e", "cohort", kind=pl.col("kind").replace_strict(_REPORTED_ROOT_KIND),
-                          built=pl.col("kind") != KIND_EXISTING, d_on="d_on", d_eol="d_eol", d="d",
-                          capacity="capacity", retired="retired", retired_in_period="now"))
-    out = pl.concat([single, plants], how="vertical_relaxed").select(
-        *(pl.col(c).cast(t) for c, t in COHORT_CAPACITY_SCHEMA.items()))
-    order = {d: i for i, d in enumerate(periods)}
-    return (out.with_columns(_o=pl.col("d").replace_strict(order, default=len(order), return_dtype=pl.Int64))
-               .sort("e", "_o", "d_on", "cohort").drop("_o"))
-
-
 __all__ = [
     "within_life",
     "BOUNDED_METHODS",
-    "COHORT_CAPACITY_SCHEMA",
     "as_names",
     "CohortFrames",
-    "ExistingCapacity",
     "ExistingEnd",
     "KIND_EXISTING",
     "KIND_EXTEND",
     "KIND_GENERATION",
     "KIND_INVEST",
     "LIFETIME_METHODS",
-    "REALIZED_RETIRE_SCHEMA",
     "YEAR_COLUMNS",
     "build_cohort_frames",
     "chain_rows",
     "cohort_calendar",
-    "cohort_capacity",
     "cohort_frame_from_utf8",
     "cohort_years",
     "existing_cohorts",
-    "existing_capacity",
     "end_of_life_methods",
     "end_of_life_years",
     "eol_methods_of",
@@ -1633,8 +1230,6 @@ __all__ = [
     "invest_prebuilt",
     "model_start_year",
     "no_reinvestment_closed",
-    "realized_cohort_schema",
-    "realized_cohorts",
     "retire_active",
     "run_cohort_calendar",
     "run_existing_cohorts",

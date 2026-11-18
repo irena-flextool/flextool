@@ -58,7 +58,7 @@ producer/consumer reality without NULL-padding columns.
 ``realized_cohort`` / ``realized_retire`` carry the capacity a later solve starts from: each investment realized
 by the run as a cohort (its start of operation and end of life placed once, by the deciding solve) and the
 retirements per cohort; the existing capacity is the run's existing cohort with the user's ``existing`` of each
-period (``_cohorts.existing_capacity``).
+period (``_cohort_handoff.existing_capacity``).
 """
 from __future__ import annotations
 
@@ -94,8 +94,8 @@ class SolveHandoff:
     # The investments realized by this solve and the earlier solves of the run, one row per cohort (an investment
     # decision), chain-cumulative: the cohort's row of the cohort table of the solve that decided it (run years,
     # never recomputed: ``y_on`` / ``y_eol`` place it in a later solve's periods) and its ``size`` (MW, MWh for
-    # storage).  Columns: ``_cohorts.realized_cohort_schema``.  Producer: ``build_handoff_from_solution``
-    # (``_cohorts.realized_cohorts``).  Consumer: the later solves' existing capacity (emit
+    # storage).  Columns: ``_cohort_handoff.realized_cohort_schema``.  Producer: ``build_handoff_from_solution``
+    # (``_cohort_handoff.realized_cohorts``).  Consumer: the later solves' existing capacity (emit
     # ``_chain_params.emit_existing_capacity``).  In-memory only.
     realized_cohort: pl.DataFrame | None = None
 

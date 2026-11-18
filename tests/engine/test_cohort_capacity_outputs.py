@@ -1,4 +1,5 @@
-"""Capacity by cohort and retirements by cause (``_cohorts.cohort_capacity``, ``out_capacity.retirement_causes``).
+"""Capacity by cohort and retirements by cause (``output._cohort_capacity.cohort_capacity``,
+``out_capacity.retirement_causes``).
 
 Hand values (the pure function, five-year periods p2020 … p2035 at run years 0, 5, 10, 15): unit u has 100 MW
 existing (end of life at year 10, the start of p2030); 50 MW are built at p2025 (lifetime 10: end of life at
@@ -50,7 +51,7 @@ def _cohort(rows: list[tuple]) -> pl.DataFrame:
 
 
 def test_cohort_capacity_and_causes_by_hand() -> None:
-    from flextool.engine.preprocess.params._cohorts import cohort_capacity
+    from flextool.engine.output._cohort_capacity import cohort_capacity
     from flextool.process_outputs.out_capacity import retirement_causes
 
     cohort = _cohort([("existing:p2020", "u", "existing", "existing:p2020", "p2020", "p2030", 0.0, 10.0),
@@ -74,7 +75,7 @@ def test_cohort_capacity_and_causes_by_hand() -> None:
 def test_carried_cohorts_and_their_retirements_count_in_a_later_solve() -> None:
     """A later solve (p2030, p2035) gets invest:p2025 (50 MW) from the handoff with 20 MW retired at p2025: 30 MW in
     p2030, none in p2035 (its end of life); its own decision of p2030 (40 MW) is a cohort of its own."""
-    from flextool.engine.preprocess.params._cohorts import cohort_capacity
+    from flextool.engine.output._cohort_capacity import cohort_capacity
 
     cohort = _cohort([("invest:p2030", "u", "invest", "invest:p2030", "p2030", None, 10.0, float("inf"))])
     alive = pl.DataFrame({"e": ["u", "u"], "cohort": ["invest:p2030"] * 2, "kind": ["invest"] * 2,

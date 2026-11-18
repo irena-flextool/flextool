@@ -346,7 +346,7 @@ For a unit, connection or storage node `e` in period `d`:
   - `cap[e,d] = existing[e,d] + invested[e,d] − retired[e,d]`.
 - `existing_mw[e,d]` (`p_entity_all_existing`, MW or MWh; the `existing` of
   `cap` is `existing_mw / unitsize`) — the capacity a solve starts from, from
-  the cohorts (`_cohorts.existing_capacity`, emitted per solve by
+  the cohorts (`_cohort_handoff.existing_capacity`, emitted per solve by
   `_chain_params.emit_existing_capacity`):
   `existing_mw[e,d] = pre[e,d] + carried[e,d] − retired_carried[e,d]`, with
   `pre[e,d] = capacity[e,d]` while the existing cohort (counted from the start
@@ -588,6 +588,7 @@ Representative entries:
 | `_block.py` | `BlockLayout` fan-out — per-entity blocks, overlap sets, block step durations. |
 | `_branch.py` | `period_branch`, `pdt_branch_weight`, `pd_branch_weight` — stochastic branch weighting. |
 | `_cohorts.py` | The cohort table (`cohort`, `cohort_alive`, `dd_forward`): the start of operation and end of life of the existing capacity and of each investment, the periods each is in service, the reach of a retirement; the `generation` rows of a `reinvest_automatic` chain (`chain_rows`: each plant that holds the root's capacity in turn, from its start of operation to its rounded end of life, at least one period each, to the end of the horizon; no capacity of their own); its views are the only lifetime gate (end of life, expired periods, investment alive / pre-built, retirement reach); `in_service` gives the model (`model/_capacity.py`) and the output readers the periods each investment and retirement counts in. |
+| `_cohort_handoff.py` | The cohorts carried between the solves of a run: `realized_cohorts` writes the handoff `realized_cohort` / `realized_retire` (the realized investments, their chains and life extensions, and the retirements per cohort, chain-cumulative); `existing_capacity` sums the existing and the carried cohorts into the capacity a solve starts from. |
 | `_extend.py` | The life extensions (`cd_extend`, `cdd_extend`, `cohort_extend`): each cohort that ends its life at the start of an investment period can be extended by `life_extension_years`; the extension cohort (`extend:<period>:<parent>`) and its periods in service join the cohort table. |
 | `_existing.py` | `p_entity_all_existing`, `p_entity_previously_invested_capacity` — cross-solve existing-capacity composition. |
 | `_npv.py` | Annualized investment / divestment carriers feeding the objective. |

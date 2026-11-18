@@ -29,13 +29,12 @@ import math
 import polars as pl
 import pytest
 
+from flextool.engine.preprocess.params._cohort_handoff import existing_capacity, realized_cohorts
 from flextool.engine.preprocess.params._cohorts import (
     KIND_GENERATION,
     _cohort_frame,
     build_cohort_frames,
     cohort_frame_from_utf8,
-    existing_capacity,
-    realized_cohorts,
 )
 from tests.engine._unit_db import PLANT, b64, make_db
 from tests.engine.test_user_constraint_capacity_terms import SINGLE

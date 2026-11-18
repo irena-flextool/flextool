@@ -1,9 +1,10 @@
 """The capacity a solve starts from, and its capacity ceilings, per (entity, period).
 
-* :func:`emit_existing_capacity` — the existing capacity from the cohorts (:func:`._cohorts.existing_capacity`):
-  the run's existing cohort (the user's ``existing`` of each period, in service until its end of life), the
-  investments earlier solves of the run realized (handoff ``realized_cohort``, each in service from its start of
-  operation to its end of life) and their retirements (handoff ``realized_retire``).  One formula for every solve
+* :func:`emit_existing_capacity` — the existing capacity from the cohorts
+  (:func:`._cohort_handoff.existing_capacity`): the run's existing cohort (the user's ``existing`` of each period,
+  in service until its end of life), the investments earlier solves of the run realized (handoff
+  ``realized_cohort``, each in service from its start of operation to its end of life) and their retirements
+  (handoff ``realized_retire``).  One formula for every solve
   of a run (first, chained, roll, nested sub-solve):
   ``p_entity_pre_existing``, ``p_entity_all_existing``, ``p_entity_previously_invested_capacity``,
   ``p_entity_retired_carried``, ``p_entity_invested``.
@@ -30,7 +31,7 @@ from flextool.engine.preprocess._provider_translators import read_handoff_frame
 from flextool.engine.preprocess.params._derived import INVEST_METHODS_INVEST_NO_LIMIT
 
 if TYPE_CHECKING:
-    from flextool.engine.preprocess.params._cohorts import ExistingCapacity
+    from flextool.engine.preprocess.params._cohort_handoff import ExistingCapacity
 
 
 def _ed_value_frame(
@@ -261,12 +262,13 @@ def solve_run_years(provider, solve_data_dir: Path = Path("solve_data")) -> dict
 
 def compute_existing_capacity(input_dir: Path, solve_data_dir: Path,
                               *, provider) -> "tuple[list[str], list[str], ExistingCapacity]":
-    """``(entities, period_in_use, capacity)``: :func:`._cohorts.existing_capacity` of the solve from the
+    """``(entities, period_in_use, capacity)``: :func:`._cohort_handoff.existing_capacity` of the solve from the
     Provider: the run's existing cohorts (:data:`._run_calendar.RUN_EXISTING_COHORT_KEY`, put by ``_run_model``),
     the solve's ``existing`` map (:func:`_existing_mw`), its period years on the run calendar
     (:func:`._run_calendar.run_years` of ``p_years_d``), the carried cohorts and retirements (handoff
     ``realized_cohort`` / ``realized_retire``, an override first) and ``entityDivest``."""
-    from flextool.engine.preprocess.params._cohorts import cohort_frame_from_utf8, existing_capacity
+    from flextool.engine.preprocess.params._cohort_handoff import existing_capacity
+    from flextool.engine.preprocess.params._cohorts import cohort_frame_from_utf8
     from flextool.engine.preprocess.params._run_calendar import RUN_EXISTING_COHORT_KEY
     if not provider.has(RUN_EXISTING_COHORT_KEY):
         raise ValueError("The existing capacity of a solve needs the run's existing cohorts "

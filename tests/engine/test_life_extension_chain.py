@@ -1,4 +1,4 @@
-"""Life extensions carried across the solves of a chain (``_cohorts.realized_cohorts`` / ``existing_capacity``,
+"""Life extensions carried across the solves of a chain (``_cohort_handoff.realized_cohorts`` / ``existing_capacity``,
 ``_extend.extension_frames``), hand-derived and relational.
 
 Model: ``tests.json`` as ``test_life_extension`` (coal_plant 500 MW existing, reinvest_choice, lifetime 10: the
@@ -93,11 +93,8 @@ def test_a_carried_extension_is_capacity_and_its_retirement_comes_off_it() -> No
     of life 15, out of service in p2035): the capacity in service is 500 − 200 = 300 MW, the previously invested
     capacity and the investment already made count the investment only (0 in service, 100 in all), and the
     extension's retirement is no retirement of the existing cohort."""
-    from flextool.engine.preprocess.params._cohorts import (
-        _utf8_cohort_frame,
-        existing_capacity,
-        realized_cohort_schema,
-    )
+    from flextool.engine.preprocess.params._cohort_handoff import existing_capacity, realized_cohort_schema
+    from flextool.engine.preprocess.params._cohorts import _utf8_cohort_frame
     existing = _utf8_cohort_frame([("existing:p2020", PLANT, "existing", "reinvest_choice", "closest_seam", None,
                                     "p2020", 0.0, 0.0, 10.0, 10.0, 10.0, 10.0, "p2030", *((None,) * 6),
                                     "existing:p2020", None)])
@@ -121,7 +118,7 @@ def test_a_carried_extension_is_capacity_and_its_retirement_comes_off_it() -> No
 def test_a_cohort_whose_extension_was_realized_is_not_extended_again() -> None:
     """A carried investment cohort reaching its end of life is a parent (its size less its realized retirements);
     once an earlier solve realized its extension it is not."""
-    from flextool.engine.preprocess.params._cohorts import realized_cohort_schema
+    from flextool.engine.preprocess.params._cohort_handoff import realized_cohort_schema
     from flextool.engine.preprocess.params._extend import _parent_rows
     schema = realized_cohort_schema()
 

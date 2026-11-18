@@ -111,7 +111,7 @@ def built_retirement_options(cohort: pl.DataFrame | None,
     retirement options of entityDivest over the solve's investment periods (before the existing-capacity filter),
     ``carried`` / ``carried_retire`` the handoff ``realized_cohort`` / ``realized_retire``, ``years`` the period years
     of the run (:func:`._cohorts.cohort_years`) and ``period_in_use`` the solve's periods.  A carried cohort is in
-    service in d when ``y_on ≤ y[d] < y_eol`` (the comparison of :func:`._cohorts.existing_capacity`)::
+    service in d when ``y_on ≤ y[d] < y_eol`` (the comparison of :func:`._cohort_handoff.existing_capacity`)::
 
         options  = {(e, c, d) : (e, d) ∈ offered, (c, d) alive}
         counting = {(e, c, d′, d) : (e, c, d′) ∈ options, (d′, d) ∈ dd_forward, (c, d) alive}

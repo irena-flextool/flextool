@@ -274,9 +274,9 @@ def cohort_capacity(par, s, v, r, debug):
     """Capacity by cohort and retirements by cause, per class (unit / connection / node):
 
     * ``<class>_cohort_capacity_ed_p`` — rows (entity, cohort, kind, period_online, period_end_of_life, period), one
-      column ``capacity``: each cohort's capacity in service in the period (``_cohorts.cohort_capacity``), a
-      reinvest_automatic chain under the plant in service; summed over the cohorts it is the ``total`` of the
-      capacity table;
+      column ``capacity``: each cohort's capacity in service in the period
+      (``output._cohort_capacity.cohort_capacity``), a reinvest_automatic chain under the plant in service; summed
+      over the cohorts it is the ``total`` of the capacity table;
     * ``<class>_retirement_ed_p`` — rows (entity, period), columns :data:`RETIREMENT_CAUSES`
       (:func:`retirement_causes`).
 
