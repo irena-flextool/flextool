@@ -11595,9 +11595,10 @@ def _v82_storage_texts() -> dict[tuple[str, str], str]:
             "balanced and the blocks of a period loop. In a rolling_window solve without representative periods a "
             "cycle is closed over the rolls: a roll that starts inside the solve, period or timeblock continues it "
             "from the level realised by the previous roll and ends its part at least at that level, and the roll(s) "
-            "holding its end end it at the level it started from. In a rolling solve on representative periods the "
-            "blended methods bind forward only (with a warning). storage_start_end_method fixes the start and the "
-            "end of the whole model."),
+            "holding its end end it at the level it started from. A rolling solve on representative periods is a "
+            "configuration error, and so is bind_within_solve, bind_within_period or bind_intraperiod_blocks in a "
+            "solve on representative periods (use a blended method or bind_within_timeblock). "
+            "storage_start_end_method fixes the start and the end of the whole model."),
         ("node", "storage_nested_fix_method"): (
             "[choice] Used in nested solve sequences: makes this storage a long-term storage whose planned level the "
             "upper-level solve hands to the lower-level solves it contains (at the steps of its "

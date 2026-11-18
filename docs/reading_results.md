@@ -50,6 +50,7 @@ See [Capacity and investment results](results.md#capacity-and-investment-results
 - `unit__outputNode__dt` and `unit__inputNode__dt` [MW]: the output and input of each unit in each time step; `connection__dt` the flows on connections.
 - `node__dt` [MW] and `node__d` [MWh per year]: the energy balance of each node by category (units, connections, storage losses, inflow, loss of load).
 - `node_state__dt` [MWh]: the content of each storage.
+- `node_storage_usage__dt` [MWh]: the net use (outflows minus inflows) in each realised time step of each storage node with `storage_nested_fix_method` *fix_usage*, the quantity an upper-level solve caps.
 - The dispatch plots of a node group with `print_dispatch` *yes* stack all flows into and out of the group.
 
 See [Energy flows](results.md#energy-flows) and [Energy balance in nodes](results.md#energy-balance-in-nodes).

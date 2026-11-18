@@ -125,6 +125,20 @@ values").
 - **A `fix_start` storage with a free end on capacity the solve cannot change prints a warning with its start
   energy** (once per node and solve): the run may use that stock without producing it, which is a valid model of an
   initial stock. Before, it was only logged.
+- **A rolling solve on representative periods stops with a configuration error.** Rolling over representative
+  periods is not supported: use a single solve on the representative periods (e.g. the investment solve) and roll a
+  separate solve over a timeset without `representative_period_weights`. Before (#126), its `*_blended_weights`
+  storage nodes bound forward only, with a warning, without the weights and without a closure.
+- **`bind_within_solve`, `bind_within_period` or `bind_intraperiod_blocks` storage in a solve on representative
+  periods stops with a configuration error** naming the nodes. These methods carried the storage state from the end of one
+  representative period into the start of the next without their weights, while the flows counted with them, so
+  energy stored in a period of low weight could be used in a period of high weight for free. Use the
+  `*_blended_weights` variant, or `bind_within_timeblock`, which cycles the storage within each representative
+  period and is not affected.
+- **A storage node whose balance slack can bypass a hard balance prints a warning** (once per node and solve): a
+  storage node with `penalty_method` other than *off* that a unit or a connection links to a node with
+  `penalty_method` *off*. Its slack can supply or absorb that node's energy at the storage node's penalty, so a
+  shortfall meant to show elsewhere appears as storage slack.
 - **A nested `fix_usage` is cumulative over the rolls and pro rata, and a nested `fix_quantity` is interpolated
   inside an upper step (results change).** A lower-level solve under an upper `fix_usage` may now use, over the
   last period of its horizon, the upper solve's usage from the start of that period (in the solve instance) to the
@@ -218,6 +232,10 @@ values").
 - **The output set `dt_fix_storage_timesteps` holds the steps at which a solve hands its nested storage fix
   down** (the steps of its `fix_storage_periods`). It was always empty, and with it the storage usage the result
   processing computes for `fix_usage` nodes.
+- **The storage usage of `fix_usage` nodes is written as a result**, `node_storage_usage__dt` (parquet
+  `node_storage_usage_dt_e`): the net use (flows out minus flows in, MWh) of each storage node with
+  `storage_nested_fix_method` *fix_usage* in each realised time step. The result processing computed it but no
+  output wrote it, and it was always empty (the nodes' nested fix methods were not read).
 - **The self-discharge result (`v_self_discharge`) of a `fix_start` storage node counts the storage invested in
   the solve** in the loss of the first step. Before, only the existing capacity was counted there (the model's
   balance row was right).
