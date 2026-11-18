@@ -19,15 +19,11 @@ from flextool.engine.preprocess.params._discount import (
     run_years,
     solve_year_rows,
 )
-from flextool.engine.preprocess.params._npv import (
-    apply_built_retirement_costs,
-    apply_existing_replacement,
-    apply_extension_costs,
-    apply_invest_lumps,
-    apply_retirement_fixed_cost,
-    apply_retirement_salvage,
-    p_ed_fixed_cost_from_source,
-)
+from flextool.engine.preprocess.params._existing_salvage import apply_existing_replacement, apply_retirement_salvage
+from flextool.engine.preprocess.params._extend import apply_extension_costs
+from flextool.engine.preprocess.params._fixed_costs import apply_retirement_fixed_cost, p_ed_fixed_cost_from_source
+from flextool.engine.preprocess.params._npv import apply_invest_lumps
+from flextool.engine.preprocess.params._retire_settlement import apply_built_retirement_costs
 from flextool.engine.preprocess.params._run_costs import (
     _run_lumps_are_the_solves,
     apply_pre_existing_of_reported_costs,
@@ -49,10 +45,10 @@ def apply_run_fields_of_synthetic_solve(flex_data: object,
     ``<solve>_<period>`` sub-solve), for which ``apply_npv`` does not run.
 
     A sub-solve with an invest or a divest set gets its investment lumps from :func:`._npv.apply_invest_lumps`, its
-    salvage terms from :func:`._npv.apply_retirement_salvage` and the fixed cost its retirements save from
-    :func:`._npv.apply_retirement_fixed_cost` over its own periods, as a Spine solve does (no CSV emitter derives them;
-    the rolls and nested sub-solves of the test fixtures have no divest set); its own discount factors stay the
-    loaded ``solve_data`` frames.  Without run years the run fields are the sub-solve's own fields."""
+    salvage terms from :func:`._existing_salvage.apply_retirement_salvage` and the fixed cost its retirements save from
+    :func:`._fixed_costs.apply_retirement_fixed_cost` over its own periods, as a Spine solve does (no CSV emitter
+    derives them; the rolls and nested sub-solves of the test fixtures have no divest set); its own discount factors
+    stay the loaded ``solve_data`` frames.  Without run years the run fields are the sub-solve's own fields."""
     from flextool.engine.preprocess.params._branch import annuity_window_lineage_df
     from flextool.engine.preprocess.params._derived import (
         _expand_invest_branch_periods,

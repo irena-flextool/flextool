@@ -438,7 +438,7 @@ def _ed_param(df: pl.DataFrame) -> "Param | None":
 
 #: The investment lumps whose ``solve_data`` frames are the values set here (no CSV emitter derives them).
 _REGISTERED_LUMPS = ("ed_entity_annual_discounted", "ed_lifetime_fixed_cost")
-#: The retirement lump whose ``solve_data`` frame is the value set by :func:`._npv.apply_retirement_fixed_cost`.
+#: The retirement lump whose ``solve_data`` frame is the value set by :func:`._fixed_costs.apply_retirement_fixed_cost`.
 _REGISTERED_RETIREMENT_LUMPS = ("ed_lifetime_fixed_cost_divest",)
 
 

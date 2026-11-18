@@ -35,7 +35,7 @@ Three frames (``FlexData.cohort``, ``cohort_alive``, ``dd_forward``):
   the run start, ``nsv_eol`` S_x), ``root`` (Utf8: the cohort the row belongs to; a root row's own id) and
   ``parent`` (Utf8: the cohort a life extension extends, ``_extend``; null on every other row).  An ``extend`` row
   is a cohort of its own: decided (``d_build``) and online in the period that starts at its parent's end of life,
-  ``y_life`` its ``life_extension_years``, priced as one plant (``_npv.extension_prices``).
+  ``y_life`` its ``life_extension_years``, priced as one plant (``_extend.extension_prices``).
 
   A ``reinvest_automatic`` root (an investment decision, or the existing capacity) is renewed: its row keeps the
   window of the whole chain (``y_life`` / ``y_end`` / ``y_eol`` ``+inf``), and its *generations* (kind

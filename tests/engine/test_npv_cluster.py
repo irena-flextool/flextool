@@ -1,7 +1,7 @@
 """Δ.5 — Cluster A (annual integration / NPV) parity tests.
 
 Per-fixture parity check that the new lazy-polars NPV helpers in
-``flextool.engine.preprocess.params._npv`` produce frame-equal output
+``flextool.engine.preprocess.params._npv`` / ``_discount`` / ``_fixed_costs`` produce frame-equal output
 (modulo column ordering) vs the eager ``ed_entity_annual_family_from_source``
 helper in ``flextool.engine.preprocess.params._derived`` — which itself is
 parity-clean against flextool's CSV-side reference output (gated by
@@ -30,6 +30,7 @@ import polars as pl
 import pytest
 
 from flextool.engine.preprocess.params import _discount as discount
+from flextool.engine.preprocess.params import _fixed_costs as fixed_costs
 from flextool.engine.preprocess.params import _npv as npv
 from flextool.engine.preprocess.params._derived import (
     _read_active_solve,
@@ -163,7 +164,7 @@ def test_npv_lazy_vs_eager_parity(
     # Compute lazy variants.
     lazy_infl = discount.p_inflation_op_from_source(
         reader, active_solve, period_in_use, period_universe, provider=provider, year_rows=year_rows)
-    lazy_fc = npv.p_ed_fixed_cost_from_source(reader, period_with_history)
+    lazy_fc = fixed_costs.p_ed_fixed_cost_from_source(reader, period_with_history)
     lazy_ann = lazy_lfc = lazy_lfcd = None
     # Mirror apply_npv's no_invest short-circuit so the lazy path
     # matches the eager loader's gate.
@@ -177,10 +178,10 @@ def test_npv_lazy_vs_eager_parity(
         lazy_ann = npv.ed_entity_annual_discounted_from_source(
             reader, active_solve,
             period_invest, period_in_use, period_universe, year_rows=year_rows)
-        lazy_lfc = npv.ed_lifetime_fixed_cost_from_source(
+        lazy_lfc = fixed_costs.ed_lifetime_fixed_cost_from_source(
             reader, active_solve,
             period_with_history, period_in_use, period_universe, year_rows=year_rows)
-        lazy_lfcd = npv.ed_lifetime_fixed_cost_divest_from_source(
+        lazy_lfcd = fixed_costs.ed_lifetime_fixed_cost_divest_from_source(
             reader, active_solve,
             period_invest, period_in_use, period_universe, year_rows=year_rows)
 

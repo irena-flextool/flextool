@@ -1,5 +1,5 @@
 """Model-built ``reinvest_automatic`` capacity can be retired; a retirement before the end of life also avoids every
-replacement still to come (``_npv.chain_retirement_costs``), on hand-derived cases.
+replacement still to come (``_retire_settlement.chain_retirement_costs``), on hand-derived cases.
 
 Model: ``tests.json``, the single solve over p2020 … p2035 (5-year periods, run years 0, 5, 10, 15, horizon end
 20).  coal_plant: lifetime_method reinvest_automatic, lifetime_technical L = 10, invest_method

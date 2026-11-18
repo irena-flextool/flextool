@@ -1,4 +1,4 @@
-"""Life extension of capacity reaching its end of life (``_extend``, ``_npv.extension_prices``), hand-derived.
+"""Life extension of capacity reaching its end of life (``_extend``, ``_extend.extension_prices``), hand-derived.
 
 Model: ``tests.json``, the single solve over p2020 … p2035 (5-year periods, run years 0, 5, 10, 15, horizon end
 20).  coal_plant: 500 MW existing (age 0, one unit of 500 MW), lifetime_method reinvest_choice, lifetime_technical

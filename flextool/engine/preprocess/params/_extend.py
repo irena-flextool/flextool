@@ -7,7 +7,7 @@ that starts at the cohort's end of life ``t0 = y_eol(c)`` and lies on the cohort
 cohort of its own (kind ``extend``, id ``extend:<d>:<parent>``, :func:`extension_id`): it comes online at ``t0``
 in ``d`` and ends at ``y_eol(x) = round_end_of_life(t0 + life_extension_years[e,d], end_of_life_method[e])``; an
 extension that the rounding gives no period of service (``y_eol(x) ≤ t0``) is not offered (a warning names it).
-Its prices are ``_npv.extension_prices``' (the one cost point).  The frames (``FlexData`` fields,
+Its prices are :func:`extension_prices`' (the one cost point).  The frames (``FlexData`` fields,
 :func:`extension_frames`):
 
 * ``cd_extend`` ``[e, cohort, d]`` — the extension options: ``cohort`` the parent, the columns of ``v_extend``;
@@ -27,29 +27,38 @@ A solve that places no retirement reach (no ``dd_forward``: a roll or a nested s
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Mapping
 
 import polars as pl
+from polar_high import Param
 
-from flextool.engine.input._axis_enums import align_join_dtypes, rename_to_axis, schema_dtype
+from flextool.engine.input._axis_enums import alias_to_axis, align_join_dtypes, rename_to_axis, schema_dtype
 from flextool.engine.input._lifetime_roles import (
     ENTITY_CLASSES,
     LIFE_EXTENSION,
     LIFE_EXTENSION_COST,
     LIFE_EXTENSION_YEARS,
+    NET_SALVAGE_VALUE,
     source_entities_with,
 )
+from flextool.engine.preprocess._annuity import annuity_factor, default_discount_rate
 from flextool.engine.preprocess.params._cohorts import (
     BOUNDED_METHODS,
     KIND_EXISTING,
     KIND_EXTEND,
     KIND_INVEST,
+    PRICE_COLUMNS,
     _alive_schema,
     _cohort_frame,
     _Calendar,
     within_life,
 )
+from flextool.engine.preprocess.params._discount import _factor_frame, _run_inv_factors, _solve_inflation_scalars
+from flextool.engine.preprocess.params._lifetime_inputs import _ed_fixed_cost_raw_lf, _utf8_ed
+from flextool.engine.preprocess.params._npv import _chain_years, _labels_on_lineage
 from flextool.engine.preprocess.params._period_values import ed_values_on
+from flextool.engine.preprocess.params._report_lines import event_period, report_years, stack_lines
 from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
 
 if TYPE_CHECKING:
@@ -390,5 +399,179 @@ def append_extensions(cohort: pl.DataFrame, cohort_alive: pl.DataFrame,
             pl.concat([own_alive, x_alive.select(own_alive.columns)], how="vertical"))
 
 
-__all__ = ["ExtensionFrames", "append_extensions", "cohort_extend_columns", "extending_entities",
-           "extension_frames", "extension_id", "extension_id_expr"]
+def extension_prices(source: "InputSource",
+                     active_solve: str | None,
+                     rows: pl.DataFrame,
+                     *,
+                     lineage: pl.DataFrame | None,
+                     provider: "object | None") -> pl.DataFrame:
+    """``rows`` ``[e, cohort, d, y_on, y_eol, d_on, d_eol]`` (Utf8: life-extension cohorts, ``d`` the period the
+    extension starts in) with the prices of the extension as a plant of its own (:data:`._cohorts.PRICE_COLUMNS`,
+    CUR/MW a year in service; ``extend_cost_{p,n}`` OBJ header)::
+
+        C_x   = 1000·life_extension_cost[e,d] + S_c     S_c = 1000·net_salvage_value[e,d] (the parent's salvage at
+                its end of life, the start of d: given up, it stays in the plant)
+        pay   = a_cap = C_x·af(r, L_x),  r = discount_rate[e,d],  L_x = life_extension_years[e,d]
+        a_salv = S_x·(1+r)^−L_x·af(r, L_x),  S_x = nsv_eol = 1000·net_salvage_value[e, d_salv]
+        n_pay = L_x,  r_loan = r
+
+    ``af`` :func:`.._annuity.annuity_factor` (the offset's timing factor); ``d_salv`` the period of the extended
+    end of life on ``d``'s lineage (:func:`._npv._labels_on_lineage`; the last run period after the last period start).
+    Every value is read at ``d`` (on its lineage in a fan, through ``_param_shapes``).  ``share_cost`` =
+    1000·life_extension_cost / C_x, the extension cost's part of a_cap (a_cap is linear in C_x; 0 at C_x = 0)."""
+    from flextool.engine.input._lifetime_roles import LIFE_EXTENSION_COST, LIFE_EXTENSION_YEARS
+    from flextool.engine.preprocess._annuity import salvage_credit
+    from flextool.engine.preprocess.params._cohorts import salvage_periods
+    years = _chain_years(source, active_solve, provider)
+    last = salvage_periods(source, active_solve, years, provider, [None])[0]
+    rows = _labels_on_lineage(rows, years, lineage, last)
+    keys = rows.select("e", "d").unique(maintain_order=True).lazy()
+
+    def at(name: str, fill: float | None, col: str, keys_lf: pl.LazyFrame = keys) -> pl.DataFrame:
+        return _utf8_ed(ed_values_on(source, name, keys_lf.select(alias_to_axis("e", "e"), alias_to_axis("d", "d")),
+                                     fill=fill).rename({"value": col}))
+
+    salv = rows.select("e", d=pl.col("d_salv")).unique(maintain_order=True).lazy()
+    s_x = at(NET_SALVAGE_VALUE, 0.0, "_s_x", salv).rename({"d": "d_salv"})
+    offset = _solve_inflation_scalars(source)[1]
+    r, life = pl.col("_r"), pl.col("_life")
+    return (rows.join(at(LIFE_EXTENSION_COST, 0.0, "_cost"), on=["e", "d"], how="left")
+                .join(at(LIFE_EXTENSION_YEARS, None, "_life"), on=["e", "d"], how="left")
+                .join(at("discount_rate", default_discount_rate(source), "_r"), on=["e", "d"], how="left")
+                .join(at(NET_SALVAGE_VALUE, 0.0, "_s_c"), on=["e", "d"], how="left")
+                .join(s_x, on=["e", "d_salv"], how="left")
+                .with_columns(_capital=pl.col("_cost") * 1000.0 + pl.col("_s_c") * 1000.0,
+                              nsv_eol=pl.col("_s_x") * 1000.0)
+                .with_columns(pay=pl.when(pl.col("_capital") == 0.0).then(0.0)
+                                    .otherwise(pl.col("_capital") * annuity_factor(r, life, offset)),
+                              a_salv=salvage_credit(pl.col("nsv_eol"), r, life, offset),
+                              n_pay=life, r_loan=r)
+                .with_columns(a_cap=pl.col("pay"),
+                              share_cost=pl.when(pl.col("_capital") == 0.0).then(0.0)
+                                           .otherwise(pl.col("_cost") * 1000.0 / pl.col("_capital")))
+                .select(*rows.columns, *PRICE_COLUMNS, "share_cost"))
+
+
+def extension_costs(source: "InputSource",
+                    active_solve: str | None,
+                    cohort: pl.DataFrame,
+                    cohort_alive: pl.DataFrame,
+                    period_in_use: list[str],
+                    period_universe: list[str],
+                    period_with_history: list[str],
+                    *,
+                    lineage: pl.DataFrame | None,
+                    year_rows: pl.DataFrame | None,
+                    workdir: Path | None,
+                    provider: "object | None",
+                    run_factor: "Param | None" = None,
+                    ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """``(prices, cost, fixed, lines)`` of the life-extension cohorts of the cohort table ``cohort`` (kind ``extend``):
+    ``prices`` ``[e, cohort, PRICE_COLUMNS…]`` (:func:`extension_prices`) and ``[e, parent, d, value]`` (Utf8 keys,
+    CUR/MW, MWh) the ``extend_cost_{p,n}`` coefficients of the option (e, parent, d)::
+
+        cost[e,c,d]  = (a_cap[x] − a_salv[x])·S̄[x,d],  S̄[x,d] = Σ_{d′ ∈ alive(x)} inflation_inv[d′]
+        fixed[e,c,d] = Σ_{d′ ∈ alive(x)} 1000·fixed_cost[e,d′]·inflation_op[d′]
+
+    x the extension of c decided in d, alive(x) its periods in service (``cohort_alive``: on d's lineage, y[d] ≤
+    y[d′] < y_eol(x)), the factors those a retirement of x takes back and saves (:func:`._discount._run_inv_factors`,
+    :func:`._retire_settlement._settlements`), so extending and retiring is the extension's cash flow.
+
+    ``lines`` ``[e, cohort, d, line, d_report, value]`` (Utf8, the parent's ``cohort``; :mod:`._cost_lines`) split
+    ``cost``: ``extension`` @ d = share_cost·a_cap[x]·S̄[x,d] (the extension cost), ``salvage extended`` @ d =
+    (1 − share_cost)·a_cap[x]·S̄[x,d] (the parent's salvage given up), ``salvage end of life`` @ the end of life of
+    x = −a_salv[x]·S̄[x,d] (``share_cost`` of :func:`extension_prices`)."""
+    from flextool.engine.preprocess.params import _cost_lines as L
+    from flextool.engine.preprocess.params._cohorts import KIND_EXTEND, cohort_years
+    empty = pl.DataFrame(schema={"e": pl.Utf8, "parent": pl.Utf8, "d": pl.Utf8, "value": pl.Float64})
+    ext = (cohort.filter(pl.col("kind") == KIND_EXTEND)
+                 .select(pl.col("e").cast(pl.Utf8), "cohort", "parent", d=pl.col("d_build").cast(pl.Utf8), y_on="y_on",
+                         y_eol="y_eol", d_on="d_on", d_eol="d_eol"))
+    if ext.height == 0:
+        return pl.DataFrame(schema={"e": pl.Utf8, "cohort": pl.Utf8, **{c: pl.Float64 for c in PRICE_COLUMNS}}), \
+            empty, empty, stack_lines(pl.DataFrame(), ("e", "cohort", "d"), [])
+    prices = extension_prices(source, active_solve, ext.drop("parent"), lineage=lineage, provider=provider)
+    years = cohort_years(source, active_solve, workdir, provider=provider)
+    factors, _walk, _universe = _run_inv_factors(source, active_solve, period_in_use, period_universe,
+                                                 period_with_history, years, provider=provider, year_rows=year_rows,
+                                                 run_factor=run_factor)
+    alive = (cohort_alive.filter(pl.col("kind") == KIND_EXTEND)
+                         .select(pl.col("e").cast(pl.Utf8), "cohort", pl.col("d").cast(pl.Utf8).alias("d_all"))
+                         .join(factors, on="d_all", how="left"))
+    missing = alive.filter(pl.col("factor").is_null())
+    if missing.height > 0:
+        raise ValueError(f"Solve '{active_solve}': the periods {sorted(set(missing['d_all'].to_list()))} have no "
+                         "investment discount factor; the life extension cannot be priced.")
+    fc = (_ed_fixed_cost_raw_lf(source, alive.lazy().select("e", pl.col("d_all").alias("d")).unique())
+          .select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8).alias("d_all"), "fc").collect())
+    ops = (_factor_frame(source, active_solve, period_in_use, period_universe, provider, "ops_factor", year_rows)
+           .collect())
+    taken = alive.group_by("e", "cohort", maintain_order=True).agg(pl.col("factor").sum().alias("taken"))
+    saved = (alive.join(fc.unique(subset=["e", "d_all"], keep="first"), on=["e", "d_all"], how="left")
+                  .join(ops.rename({"factor": "ops"}).unique(subset=["d_all"], keep="first"), on="d_all", how="left")
+                  .group_by("e", "cohort", maintain_order=True)
+                  .agg((pl.col("fc").fill_null(0.0) * pl.col("ops").fill_null(0.0)).sum().alias("saved")))
+    sums = taken.join(saved, on=["e", "cohort"], how="left")
+    out = (ext.select("e", "cohort", "parent", "d", "y_eol")
+              .join(prices.select("e", "cohort", "a_cap", "a_salv", "share_cost"), on=["e", "cohort"], how="left")
+              .join(sums, on=["e", "cohort"], how="left")
+              .with_columns(pl.col("taken").fill_null(0.0), pl.col("saved").fill_null(0.0))
+              .sort("e", "parent", "d"))
+    cost = out.select("e", "parent", "d", value=(pl.col("a_cap") - pl.col("a_salv")) * pl.col("taken"))
+    fixed = out.select("e", "parent", "d", value=pl.col("saved"))
+    timed = event_period(out, "y_eol", report_years(source, active_solve, period_in_use, workdir, provider),
+                         "d_eol").drop("cohort").rename({"parent": "cohort"})
+    capital = pl.col("a_cap") * pl.col("taken")
+    lines = stack_lines(timed, ("e", "cohort", "d"), [
+        (L.EXTENSION, pl.col("share_cost") * capital, pl.col("d")),
+        (L.SALVAGE_EXTENDED, (1.0 - pl.col("share_cost")) * capital, pl.col("d")),
+        (L.SALVAGE_END_OF_LIFE, -pl.col("a_salv") * pl.col("taken"), pl.col("d_eol"))])
+    return prices.select("e", "cohort", *PRICE_COLUMNS), cost, fixed, lines
+
+
+def apply_extension_costs(flex_data: object,
+                          source: "InputSource",
+                          active_solve: str,
+                          period_in_use: list[str],
+                          period_universe: list[str],
+                          period_with_history: list[str],
+                          *,
+                          lineage: pl.DataFrame | None,
+                          year_rows: pl.DataFrame | None,
+                          workdir: Path | None,
+                          provider: "object | None" = None,
+                          ) -> None:
+    """Set the prices of the life-extension cohorts in the cohort table (carried to the later solves) and the
+    coefficients of the extension options (:func:`extension_costs`): ``cd_extend_cost`` (the level price over its
+    periods in service) and ``cd_extend_fixed`` (its fixed cost there), ``[e, cohort, d]`` keyed by the parent.
+    ``None`` each without an option.  Before :func:`._retire_settlement.apply_built_retirement_costs`: a retirement of
+    an extension settles its contract."""
+    options = getattr(flex_data, "cd_extend", None)
+    cohort, alive = getattr(flex_data, "cohort", None), getattr(flex_data, "cohort_alive", None)
+    if options is None or options.height == 0 or cohort is None or alive is None:
+        flex_data.cd_extend_cost = flex_data.cd_extend_fixed = flex_data.cdl_extend_lines = None
+        return
+    prices, cost, fixed, lines = extension_costs(
+        source, active_solve, cohort, alive, period_in_use, period_universe, period_with_history, lineage=lineage,
+        year_rows=year_rows, workdir=workdir, provider=provider,
+        run_factor=getattr(flex_data, "p_inflation_inv_run", None))
+    new = prices.rename({c: f"_{c}" for c in PRICE_COLUMNS})
+    left = cohort.with_columns(_e=pl.col("e").cast(pl.Utf8))
+    flex_data.cohort = (left.join(new.rename({"e": "_e"}), on=["_e", "cohort"], how="left", maintain_order="left")
+                            .with_columns(pl.when(pl.col("_a_cap").is_not_null()).then(pl.col(f"_{c}"))
+                                          .otherwise(pl.col(c)).alias(c) for c in PRICE_COLUMNS)
+                            .select(cohort.columns))
+
+    def keyed(frame: pl.DataFrame) -> Param:
+        return Param(("e", "cohort", "d"),
+                     frame.lazy().select(alias_to_axis("e", "e"), pl.col("parent").alias("cohort"),
+                                         alias_to_axis("d", "d"), "value").collect())
+
+    flex_data.cd_extend_cost = keyed(cost)
+    flex_data.cd_extend_fixed = keyed(fixed)
+    flex_data.cdl_extend_lines = lines.sort("e", "cohort", "d", "line", "d_report")
+
+
+__all__ = ["ExtensionFrames", "append_extensions", "apply_extension_costs", "cohort_extend_columns",
+           "extending_entities", "extension_costs", "extension_frames", "extension_id", "extension_id_expr",
+           "extension_prices"]

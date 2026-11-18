@@ -47,8 +47,8 @@ Notes:
 * ``level_factor`` is float only: the price of a (payback time, lifetime) pair is computed once in Python, so equal
   inputs give a bit-equal price whatever the layout of the frame that holds them.
 
-Used, as the one form of the annuity, by ``preprocess/params/_npv.py`` (the values the model reads and the reported
-costs).
+Used, as the one form of the annuity, by the lifetime costs of ``preprocess/params`` (``_npv.py``, ``_extend.py``,
+``_existing_salvage.py``: the values the model reads and the reported costs).
 """
 from __future__ import annotations
 

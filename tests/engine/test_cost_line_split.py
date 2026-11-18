@@ -1,5 +1,5 @@
-"""The cost lines of the reported costs add up to the objective's terms they split (``_npv`` line frames,
-``params._cost_lines``).
+"""The cost lines of the reported costs add up to the objective's terms they split (the lifetime-cost line
+frames, ``params._cost_lines``).
 
 Per decision (row) of each solve, to 1e-12 relative:
 

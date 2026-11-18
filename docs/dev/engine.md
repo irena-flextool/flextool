@@ -385,14 +385,14 @@ For a unit, connection or storage node `e` in period `d`:
   `chain_retirement_costs`.  The cohort
   also carries the loan (`pay = A`, `n_pay = n`, `r_loan = r`) and `nsv_eol = S`.
   A life extension (kind `extend`, `parent` the cohort it extends) is priced as
-  one plant of its own (`_npv.extension_prices`): capital `E + S_c` (the
+  one plant of its own (`_extend.extension_prices`): capital `E + S_c` (the
   `life_extension_cost` and the parent's salvage value it gives up), loan over
   `life_extension_years` at its `discount_rate`, its own salvage at the extended
   end of life; its option costs `(a_cap − a_salv)·S̄` and its fixed cost over its
   periods in service (`extend_cost` OBJ header), and its retirement is one of
   model-built capacity.
   The existing cohort carries `r_loan = r_x`, `a_salv = a_x` and `nsv_eol = S_x`
-  of its salvage credit (`_npv.existing_salvage`, `divest_cost_p` /
+  of its salvage credit (`_existing_salvage.existing_salvage`, `divest_cost_p` /
   `existing_salvage` OBJ headers).
 
 ### Required fields
@@ -589,9 +589,12 @@ Representative entries:
 | `_branch.py` | `period_branch`, `pdt_branch_weight`, `pd_branch_weight` — stochastic branch weighting. |
 | `_cohorts.py` | The cohort table (`cohort`, `cohort_alive`, `dd_forward`): the start of operation and end of life of the existing capacity and of each investment, the periods each is in service, the reach of a retirement; the `generation` rows of a `reinvest_automatic` chain (`chain_rows`: each plant that holds the root's capacity in turn, from its start of operation to its rounded end of life, at least one period each, to the end of the horizon; no capacity of their own); its views are the only lifetime gate (end of life, expired periods, investment alive / pre-built, retirement reach); `in_service` gives the model (`model/_capacity.py`) and the output readers the periods each investment and retirement counts in. |
 | `_cohort_handoff.py` | The cohorts carried between the solves of a run: `realized_cohorts` writes the handoff `realized_cohort` / `realized_retire` (the realized investments, their chains and life extensions, and the retirements per cohort, chain-cumulative); `existing_capacity` sums the existing and the carried cohorts into the capacity a solve starts from. |
-| `_extend.py` | The life extensions (`cd_extend`, `cdd_extend`, `cohort_extend`): each cohort that ends its life at the start of an investment period can be extended by `life_extension_years`; the extension cohort (`extend:<period>:<parent>`) and its periods in service join the cohort table. |
+| `_extend.py` | The life extensions (`cd_extend`, `cdd_extend`, `cohort_extend`): each cohort that ends its life at the start of an investment period can be extended by `life_extension_years`; the extension cohort (`extend:<period>:<parent>`) and its periods in service join the cohort table; its prices and costs (`extension_prices`, `extension_costs`, `apply_extension_costs`), the one cost point. |
 | `_existing.py` | `p_entity_all_existing`, `p_entity_previously_invested_capacity` — cross-solve existing-capacity composition. |
-| `_npv.py` | Annualized investment / divestment carriers feeding the objective. |
+| `_npv.py` | The investment price: the per-method annuity, the level prices, the chain and generation prices of `reinvest_automatic`, the investment lump `ed_entity_annual_discounted` (`apply_invest_lumps`) and the cohort prices. |
+| `_fixed_costs.py` | The lifetime fixed costs: `ed_lifetime_fixed_cost`, the side a retirement saves `ed_lifetime_fixed_cost_divest` (`apply_retirement_fixed_cost`), `p_ed_fixed_cost`. |
+| `_retire_settlement.py` | The retirement settlement of model-built cohorts and of `reinvest_automatic` chains (`cd_divest_built_cost` / `cd_divest_built_fixed`, `apply_built_retirement_costs`). |
+| `_existing_salvage.py` | The salvage and replacement prices of existing capacity (`ed_divest_salvage`, `ed_existing_salvage_credit`; `apply_retirement_salvage`, `apply_existing_replacement`). |
 | `_lifetime_inputs.py` | The per-entity readers and the per-decision lifetime inputs the lifetime costs share: entity class, `invest_method` / `lifetime_method`, the lifetime at the period a decision comes online, the raw fixed cost, the per-period walk (`period_walk_iterator`) and its window to the end of life, the registration of the lumps set as values. |
 | `_discount.py` | Discount factors: the inflation scalars, the year rows, the per-period investment and operations factors (`p_inflation_op`), the solve's discount base from the run start (`solve_year_rows`), the run years (`run_years`). |
 | `_report_lines.py` | Placing a reported cost event in a period (`report_years`, `event_period`, `stack_lines`). |
@@ -690,7 +693,7 @@ for the handoff-key family.
 
 Emitters have dependencies — `_chain_params.emit_existing_capacity` reads
 `realized_cohort` from prior solves' handoffs, `_existing` reads `pd_invest_set`
-from `_period_params`; `_npv` reads
+from `_period_params`; `_fixed_costs` reads
 `ed_lifetime_fixed_cost` which depends on `p_entity_all_existing`;
 `_block`'s overlap sets feed the arc-side block aggregation
 in `_arc_unions`.
@@ -796,7 +799,7 @@ Known gaps (not exercised, or not Enum, in this mode):
   fixture runs it; only the Benders / master-hosted region tests that
   load with `axis_enums=True` cover it.
 - Intended narrowing casts null labels outside the scenario's
-  vocabulary: `d` casts of periods outside the solve (`_npv.py`,
+  vocabulary: `d` casts of periods outside the solve (`_retire_settlement.py`,
   `_derived.py`) and the `constraint` cast in `_spinedb_reader.py`. No
   LP effect in the fixtures; a site that needs such a label must not
   read it through the cast.

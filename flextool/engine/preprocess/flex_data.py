@@ -1280,19 +1280,19 @@ class FlexData:
     ed_entity_annual_discounted: Param | None = None
     # (e, d) the salvage term of a retirement of existing capacity (D(d)·S_d − a_x·S̄_x, CUR/MW) and (e, d) the level
     # salvage credit of existing capacity in d (a_x·inflation_inv[d], the objective constant with
-    # include_existing_fixed_cost): ``_npv.apply_retirement_salvage``.
+    # include_existing_fixed_cost): ``_existing_salvage.apply_retirement_salvage``.
     ed_divest_salvage: Param | None = None
     ed_existing_salvage_credit: Param | None = None
     # (e, d) the yearly price of the replacement of existing reinvest_automatic capacity in service in d times
     # inflation_inv[d] (CUR/MW; the objective constant with include_existing_fixed_cost):
-    # ``_npv.apply_existing_replacement``.
+    # ``_existing_salvage.apply_existing_replacement``.
     ed_existing_replacement: Param | None = None
     # Retirement of model-built capacity (preprocess/params/_retire_built.py; apply_derived_c, None without an
     # option): (e, cohort, d) the retirement options (the columns of v_divest_built), (e, cohort, d_divest, d) the
     # periods a retirement decided in d_divest counts in, one row per retirable cohort (its decision period in this
     # solve or the carried capacity it has left, its bound, years and prices); (e, cohort, d) the settlement of a
     # retired MW less the level price taken back and the fixed cost it saves (CUR/MW, MWh;
-    # ``_npv.apply_built_retirement_costs``).
+    # ``_retire_settlement.apply_built_retirement_costs``).
     cd_divest_built: pl.DataFrame | None = None
     cdd_divest_built: pl.DataFrame | None = None
     cohort_divest_built: pl.DataFrame | None = None
@@ -1302,7 +1302,7 @@ class FlexData:
     # extension options (the columns of v_extend; cohort the parent), (e, cohort, d_extend, d) the periods the units
     # extended in d_extend are in service in, one row per option (the parent's kind, decision period, last period
     # in service and carried size); (e, cohort, d) the level price of the extension over its periods in service and
-    # its fixed cost (CUR/MW, MWh; ``_npv.apply_extension_costs``).
+    # its fixed cost (CUR/MW, MWh; ``_extend.apply_extension_costs``).
     cd_extend: pl.DataFrame | None = None
     cdd_extend: pl.DataFrame | None = None
     cohort_extend: pl.DataFrame | None = None
@@ -3015,7 +3015,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     # The lifetime / NPV cost frames as the Provider holds them.  None is
     # emitted: ``_npv.apply_invest_lumps`` derives ``ed_entity_annual_discounted``
     # / ``ed_lifetime_fixed_cost`` for every solve that invests and
-    # ``_npv.apply_retirement_fixed_cost`` ``ed_lifetime_fixed_cost_divest`` for
+    # ``_fixed_costs.apply_retirement_fixed_cost`` ``ed_lifetime_fixed_cost_divest`` for
     # every solve that retires (Spine solve and synthetic sub-solve alike),
     # after this load, and registers its frames: what is read here is a
     # reader-less reload's frame of a dumped workdir, or the frame an earlier

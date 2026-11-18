@@ -4,9 +4,10 @@ A cohort of an entity that gives ``life_extension_cost`` and ``life_extension_ye
 start of an investment period ``d`` of the solve has an extension column ``v_extend[e,c,d]`` (``cd_extend``,
 ``preprocess/params/_extend.py``): the units of the cohort still in service at its end of life that are kept
 ``life_extension_years`` more.  The extension is a cohort of its own (``extend:<d>:<c>``), priced as one plant
-(``_npv.extension_prices``) and retirable as model-built capacity (``_retire_built``).  One aggregate column per
-(entity, period) holds the extended units in service there, so every capacity row gains one term whatever the
-number of cohorts (:func:`extended`: the ``extended[e,d]`` term of the capacity rows, never an investment term).
+(``params._extend.extension_prices``) and retirable as model-built capacity (``_retire_built``).  One aggregate
+column per (entity, period) holds the extended units in service there, so every capacity row gains one term
+whatever the number of cohorts (:func:`extended`: the ``extended[e,d]`` term of the capacity rows, never an
+investment term).
 
 Owns the variables ``v_extend_{p,n}`` / ``v_extended_{p,n}``, the rows ``extendedCapacity_{p,n}``,
 ``maxExtend_cohort_{p,n}`` and ``non_anticipativity_extend_{p,n}`` and the objective term ``extend_cost_{p,n}``.

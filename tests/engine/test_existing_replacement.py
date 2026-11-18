@@ -1,6 +1,6 @@
 """The existing capacity of a ``reinvest_automatic`` entity reaches its end of life and is replaced; retiring it
-avoids every replacement still to come (``_npv.existing_salvage`` / ``chain_retirement_costs``), on hand-derived
-cases.
+avoids every replacement still to come (``_existing_salvage.existing_salvage`` /
+``_retire_settlement.chain_retirement_costs``), on hand-derived cases.
 
 Model: ``tests.json``, the single solve over p2020 … p2035 (5-year periods, run years 0, 5, 10, 15, horizon end
 20).  coal_plant: 500 MW existing (age 0), lifetime_method reinvest_automatic, lifetime_technical L = 10,

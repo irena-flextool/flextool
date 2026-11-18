@@ -2,8 +2,9 @@
 
 Each investment-type term of the objective (an investment's price over its years in service, a retirement's
 settlement, a life extension's price, the constants of existing capacity) is split into the events it is made of,
-each reported in the period it happens (``_npv``: the line frames ``edl_*`` / ``cdl_*``; ``process_outputs.
-calc_costs``: their sums).  The lines of one term add up to the term (the objective's coefficient or lump).
+each reported in the period it happens (the lifetime-cost modules ``_run_costs``, ``_retire_settlement``,
+``_existing_salvage``, ``_extend``: the line frames ``edl_*`` / ``cdl_*``; ``process_outputs.calc_costs``: their
+sums).  The lines of one term add up to the term (the objective's coefficient or lump).
 
 * ``investment`` — the capital of a plant (a_cap over its years in service inside the horizon), at its start of
   operation; ``replacement`` — the same of a later plant of a reinvest_automatic chain, and a retirement before

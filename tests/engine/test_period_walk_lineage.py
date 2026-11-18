@@ -30,6 +30,8 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from flextool.engine.preprocess.params import _existing_salvage as existing_salvage
+from flextool.engine.preprocess.params import _fixed_costs as fixed_costs
 from flextool.engine.preprocess.params import _npv as npv
 from flextool.engine.preprocess.params._branch import (
     check_recourse_npv_preconditions,
@@ -565,18 +567,18 @@ def test_w7_npv_variants_vacuity_and_overlay(stoch_wf) -> None:
     assert npv.npv_invest_discounted_lf(
         reader, STOCH_SOLVE, period_invest, piu, universe
         ).collect().height == 0
-    assert all(frame.height == 0 for frame in npv.existing_salvage(
+    assert all(frame.height == 0 for frame in existing_salvage.existing_salvage(
         reader, STOCH_SOLVE, period_invest, piu, universe, pwh, lineage=None, year_rows=None, workdir=wf,
         provider=provider))
-    assert npv.lifetime_fixed_cost_divest_lf(
+    assert fixed_costs.lifetime_fixed_cost_divest_lf(
         reader, STOCH_SOLVE, period_invest, piu, universe
         ).collect().height == 0
 
     # lifetime_fixed_cost_invest — all-entities anchored → non-vacuous;
     # pin non-empty + repeat-deterministic (see DEVIATION above).
-    lfc1 = npv.lifetime_fixed_cost_invest_lf(
+    lfc1 = fixed_costs.lifetime_fixed_cost_invest_lf(
         reader, STOCH_SOLVE, pwh, piu, universe).collect()
-    lfc2 = npv.lifetime_fixed_cost_invest_lf(
+    lfc2 = fixed_costs.lifetime_fixed_cost_invest_lf(
         reader, STOCH_SOLVE, pwh, piu, universe).collect()
     assert lfc1.height > 0
     assert _sorted(lfc1).equals(_sorted(lfc2))
