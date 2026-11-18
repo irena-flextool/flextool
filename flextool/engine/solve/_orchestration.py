@@ -3210,8 +3210,9 @@ def _drive_cascade(
             # dispatch solve consumes this Benders solve's invested
             # capacity.  ``result.invest_solution_vars`` is a dict keyed by
             # ``v_invest_p`` / ``v_invest_n`` / ``v_divest_p`` /
-            # ``v_divest_n`` and the built retirements ``v_divest_built_{p,n}``
-            # (per cohort) / ``v_divested_built_{p,n}`` to long-form frames
+            # ``v_divest_n``, the built retirements ``v_divest_built_{p,n}``
+            # (per cohort) / ``v_divested_built_{p,n}`` and the life extensions
+            # ``v_extend_{p,n}`` (per cohort) / ``v_extended_{p,n}`` to long-form frames
             # whose columns match ``polar_high.Solution.value(name)`` exactly;
             # it is ``{}`` when the model has no investment.
             # ``--csv-dump``: dump the solve's undecomposed FlexData (the master and the regions are derived from it).
@@ -4975,7 +4976,8 @@ def _drive_cascade(
             # (``_entity_all_capacity`` and friends) need EACH sub-
             # solve's own ``v_invest_p`` / ``v_invest_n`` /
             # ``v_divest_p`` / ``v_divest_n`` and the built capacity
-            # retired so far ``v_divested_built_p`` / ``v_divested_built_n``;
+            # retired so far ``v_divested_built_p`` / ``v_divested_built_n`` and
+            # the extended capacity ``v_extended_p`` / ``v_extended_n``;
             # snapshot those long-form polars frames here so they survive
             # the between-solve release.  Cost: 6 small DataFrames per
             # sub-solve (typically a few hundred rows each).  See
@@ -4987,6 +4989,7 @@ def _drive_cascade(
                     "v_invest_p", "v_invest_n",
                     "v_divest_p", "v_divest_n",
                     "v_divested_built_p", "v_divested_built_n",
+                    "v_extended_p", "v_extended_n",
                 ):
                     if _vname in sol._vars:
                         try:

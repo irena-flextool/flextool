@@ -178,11 +178,16 @@ def _silence_if_quiet(wp: WarmProblem) -> None:
 # (``model/_retire_built.py``): ``v_divest_built`` per cohort over
 # ``(entity, "cohort", d)`` (the handoff carries them per cohort in
 # ``realized_retire``) and ``v_divested_built`` over ``(entity, d)`` (the
-# built capacity retired so far, read by the solve's capacity results).
+# built capacity retired so far, read by the solve's capacity results), and the
+# life extensions (``model/_extend.py``): ``v_extend`` per extended cohort over
+# ``(entity, "cohort", d)`` (the handoff carries each as a cohort of its own in
+# ``realized_cohort``) and ``v_extended`` over ``(entity, d)`` (the extended
+# capacity in service, read by the solve's capacity results).
 # ``Var.dims`` is read at runtime to recover the exact key columns — we do
 # not hard-code them.
 _INVEST_VAR_NAMES = ("v_invest_p", "v_invest_n", "v_divest_p", "v_divest_n",
-                     "v_divest_built_p", "v_divest_built_n", "v_divested_built_p", "v_divested_built_n")
+                     "v_divest_built_p", "v_divest_built_n", "v_divested_built_p", "v_divested_built_n",
+                     "v_extend_p", "v_extend_n", "v_extended_p", "v_extended_n")
 
 # Absolute tolerance below which a non-owner region's invest value for an
 # entity is treated as a numerically-collapsed zero (the expected case for

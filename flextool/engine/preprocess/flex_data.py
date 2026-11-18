@@ -6872,6 +6872,14 @@ def build_handoff_from_solution(
                 if float(v) > 1e-12:
                     key = (str(e), str(c), str(dd))
                     divest_built_by_ecd[key] = divest_built_by_ecd.get(key, 0.0) + float(v)
+    # The life extensions (v_extend), per (entity, extended cohort, period).
+    extend_by_ecd: dict[tuple[str, str, str], float] = {}
+    for var_name, entity_col in (("v_extend_p", "p"), ("v_extend_n", "n")):
+        if var_name in sol._vars:
+            for e, c, dd, v in sol.value(var_name).select(entity_col, "cohort", "d", "value").iter_rows():
+                if float(v) > 1e-12:
+                    key = (str(e), str(c), str(dd))
+                    extend_by_ecd[key] = extend_by_ecd.get(key, 0.0) + float(v)
 
     # ---- Slice D (H, §10.1): EXPLICIT non-realized invest drop ----
     # ``invest_by_ed`` collects every solved v_invest row, including
@@ -6909,6 +6917,7 @@ def build_handoff_from_solution(
         divest_by_ed = {k: v for k, v in divest_by_ed.items()
                         if k[1] not in _synth_handoff}
         divest_built_by_ecd = {k: v for k, v in divest_built_by_ecd.items() if k[2] not in _synth_handoff}
+        extend_by_ecd = {k: v for k, v in extend_by_ecd.items() if k[2] not in _synth_handoff}
 
     # ---- the realized decision periods of this solve ----
     realize_invest = _read_realize_invest_periods(
@@ -6993,7 +7002,8 @@ def build_handoff_from_solution(
         {(e, o): v for (e, o), v in invest_by_ed.items() if o in realize_invest},
         {(e, d): v for (e, d), v in realized_divest_by_ed.items() if e in entity_divest and v != 0.0},
         unitsize,
-        {k: v for k, v in realized_divest_built.items() if k[0] in entity_divest})
+        {k: v for k, v in realized_divest_built.items() if k[0] in entity_divest},
+        {k: v for k, v in extend_by_ecd.items() if k[2] in realize_invest})
     # Slice C Guard 3 (b): no carried cohort is decided in a synthetic branch period.
     if _synth and realized_cohort_df is not None:
         _bad_cohort = sorted(set(realized_cohort_df["period_decided"].drop_nulls().to_list()) & _synth)

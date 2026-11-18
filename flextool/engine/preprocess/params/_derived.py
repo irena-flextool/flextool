@@ -5909,7 +5909,8 @@ def apply_derived_c(
                                  provider=provider, lineage=_c_lineage, commission_lf=commission_lf,
                                  seed=_seeded_invest(flex_data))
     # The life extensions of the cohorts that end their life in an investment period: cohorts of their own.
-    frames = _apply_extensions(flex_data, source, active_solve, workdir, frames, provider=provider)
+    frames = _apply_extensions(flex_data, source, active_solve, workdir, frames, carried_cohort, carried_retire,
+                               provider=provider)
     flex_data.cohort, flex_data.cohort_alive, flex_data.dd_forward = (
         frames.cohort, frames.cohort_alive, frames.dd_forward)
     # Construction lead time: the period each decision starts to operate in and the periods it is in construction.
@@ -5971,21 +5972,31 @@ def _apply_extensions(flex_data: object,
                       active_solve: str | None,
                       workdir: Path | None,
                       frames: "object",
+                      carried: "pl.DataFrame | None",
+                      carried_retire: "pl.DataFrame | None",
                       *,
                       provider: "object | None" = None):
     """Set ``cd_extend`` / ``cdd_extend`` / ``cohort_extend`` (:mod:`._extend`) on ``flex_data`` from the solve's
-    cohort frames ``frames`` and return the frames with the extension cohorts and their periods in service
-    (``frames`` unchanged, and the fields ``None``, without an extension option)."""
+    cohort frames ``frames`` and the cohorts earlier solves realized (``carried`` / ``carried_retire``, the handoff)
+    and return the frames with the extension cohorts and their periods in service (``frames`` unchanged, and the
+    fields ``None``, without an extension option)."""
     from dataclasses import replace
 
     from flextool.engine.preprocess.params._cohorts import run_cohort_calendar
-    from flextool.engine.preprocess.params._extend import append_extensions, extension_frames
+    from flextool.engine.preprocess.params._extend import (
+        append_extensions,
+        existing_in_service_before,
+        extension_frames,
+    )
     years = cohort_years(source, active_solve, workdir, provider=provider)
     period_invest = _expand_invest_branch_periods(_solve_periods(source, active_solve, "invest_periods"), workdir,
                                                   provider=provider) or []
     cal = run_cohort_calendar(source, active_solve, years, provider) if years else None
+    before = (existing_in_service_before(source, active_solve, cal, carried_retire, workdir=workdir, provider=provider)
+              if cal is not None else None)
     ext = extension_frames(source, frames.cohort, frames.cohort_alive, frames.dd_forward,
-                           [str(d) for d in period_invest], years, cal)
+                           [str(d) for d in period_invest], years, cal, carried=carried,
+                           carried_retire=carried_retire, existing_before=before)
     flex_data.cd_extend = None if ext is None else ext.options
     flex_data.cdd_extend = None if ext is None else ext.counting
     flex_data.cohort_extend = None if ext is None else ext.parents

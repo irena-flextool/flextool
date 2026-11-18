@@ -27,7 +27,7 @@ A solve that places no retirement reach (no ``dd_forward``: a roll or a nested s
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Mapping
+from typing import TYPE_CHECKING, Callable, Mapping
 
 import polars as pl
 
@@ -55,6 +55,10 @@ if TYPE_CHECKING:
     from flextool.engine.input._input_source import InputSource
 
 _INF = float("inf")
+#: Capacities (MW, MWh) closer than this are equal.
+_TOL = 1e-6
+#: The ``cohort_extend`` kind of a parent cohort an earlier solve of the run realized.
+KIND_CARRIED = "carried"
 
 
 def extension_id(d: str, parent: str) -> str:
@@ -97,18 +101,52 @@ class ExtensionFrames:
     alive: pl.DataFrame
 
 
-def _parent_rows(cohort: pl.DataFrame, entities: set[str]) -> pl.DataFrame:
-    """``[e, cohort, kind, method, eol_method, d_build, y_eol]`` (Utf8 labels) of the cohorts of ``entities`` that
-    end their life inside the run: an existing or investment cohort of a bounded ``lifetime_method`` with a
-    lifetime (``0 < y_life < +inf``) and a finite end of life."""
-    return (cohort.filter((pl.col("kind").is_in([KIND_EXISTING, KIND_INVEST]))
-                          & pl.col("method").is_in(list(BOUNDED_METHODS))
-                          & pl.col("y_on").is_not_null() & pl.col("y_life").is_not_null()
-                          & (pl.col("y_life") > 0.0) & (pl.col("y_life") < _INF)
-                          & pl.col("y_eol").is_not_null() & (pl.col("y_eol") < _INF)
-                          & pl.col("e").cast(pl.Utf8).is_in(sorted(entities)))
-                  .select(pl.col("e").cast(pl.Utf8), "cohort", "kind", "method", "eol_method",
-                          pl.col("d_build").cast(pl.Utf8), "y_eol"))
+#: The parent columns of :func:`_parent_rows`.
+_PARENT_COLUMNS = ("e", "cohort", "kind", "method", "eol_method", "d_build", "y_on", "y_eol", "remaining")
+
+
+def _ends_life(frame: pl.DataFrame, entities: set[str], e_col: str = "e") -> pl.DataFrame:
+    """The rows of ``frame`` (cohort-table or carrier columns) of ``entities`` that end their life inside the run:
+    an existing or investment cohort of a bounded ``lifetime_method`` with a lifetime (``0 < y_life < +inf``) and a
+    finite end of life (a life extension is never extended again)."""
+    return frame.filter(pl.col("kind").is_in([KIND_EXISTING, KIND_INVEST])
+                        & pl.col("method").is_in(list(BOUNDED_METHODS))
+                        & pl.col("y_on").is_not_null() & pl.col("y_life").is_not_null()
+                        & (pl.col("y_life").cast(pl.Float64) > 0.0) & (pl.col("y_life").cast(pl.Float64) < _INF)
+                        & pl.col("y_eol").is_not_null() & (pl.col("y_eol").cast(pl.Float64) < _INF)
+                        & pl.col(e_col).cast(pl.Utf8).is_in(sorted(entities)))
+
+
+def _parent_rows(cohort: pl.DataFrame, carried: pl.DataFrame | None, carried_retire: pl.DataFrame | None,
+                 entities: set[str]) -> pl.DataFrame:
+    """``[e, cohort, kind, method, eol_method, d_build, y_on, y_eol, remaining]`` (Utf8 labels) of the cohorts that
+    can be extended (:func:`_ends_life`): those of the solve's cohort table (``remaining`` 0; ``d_build`` the key of
+    an investment of this solve) and the investment cohorts earlier solves realized (``carried``, handoff
+    ``realized_cohort``: ``kind`` ``carried``, ``d_build`` null, ``remaining`` their size less their realized
+    retirements ``carried_retire``), less the cohorts whose extension an earlier solve realized (one extension per
+    cohort)."""
+    own = (_ends_life(cohort, entities)
+           .select(pl.col("e").cast(pl.Utf8), "cohort", "kind", "method", "eol_method",
+                   pl.col("d_build").cast(pl.Utf8), "y_on", "y_eol", remaining=pl.lit(0.0)))
+    if carried is None or carried.height == 0:
+        return own
+    old = (_ends_life(carried.filter(pl.col("kind") == KIND_INVEST), entities, "entity")
+           .select(pl.col("entity").cast(pl.Utf8).alias("e"), pl.col("cohort").cast(pl.Utf8),
+                   kind=pl.lit(KIND_CARRIED), method="method", eol_method="eol_method",
+                   d_build=pl.lit(None, dtype=pl.Utf8), y_on=pl.col("y_on").cast(pl.Float64),
+                   y_eol=pl.col("y_eol").cast(pl.Float64), size=pl.col("size").cast(pl.Float64))
+           .join(own.select("e", "cohort"), on=["e", "cohort"], how="anti"))
+    if carried_retire is not None and carried_retire.height > 0:
+        retired = (carried_retire.select(pl.col("entity").cast(pl.Utf8).alias("e"), pl.col("cohort").cast(pl.Utf8),
+                                         pl.col("value").cast(pl.Float64))
+                   .group_by("e", "cohort", maintain_order=True).agg(pl.col("value").sum().alias("retired")))
+        old = old.join(retired, on=["e", "cohort"], how="left")
+    else:
+        old = old.with_columns(retired=pl.lit(0.0))
+    old = old.select(*_PARENT_COLUMNS[:-1], remaining=pl.col("size") - pl.col("retired").fill_null(0.0))
+    extended = (carried.filter(pl.col("kind") == KIND_EXTEND)
+                .select(pl.col("entity").cast(pl.Utf8).alias("e"), pl.col("parent").cast(pl.Utf8).alias("cohort")))
+    return pl.concat([own, old]).join(extended, on=["e", "cohort"], how="anti")
 
 
 def extension_frames(source: "InputSource",
@@ -118,12 +156,19 @@ def extension_frames(source: "InputSource",
                      period_invest: list[str],
                      years: Mapping[str, float],
                      cal: _Calendar | None,
+                     *,
+                     carried: pl.DataFrame | None = None,
+                     carried_retire: pl.DataFrame | None = None,
+                     existing_before: "Callable[[pl.DataFrame], pl.DataFrame] | None" = None,
                      ) -> ExtensionFrames | None:
     """The :class:`ExtensionFrames` of a solve, ``None`` without an extension option.
 
     ``cohort`` / ``cohort_alive`` / ``dd_forward`` are the solve's cohort frames, ``period_invest`` its investment
-    periods, ``years`` the period years of the run (:func:`._cohorts.cohort_years`) and ``cal`` the seams of the
-    run (:func:`._cohorts.run_cohort_calendar`)::
+    periods, ``years`` the period years of the run (:func:`._cohorts.cohort_years`), ``cal`` the seams of the run
+    (:func:`._cohorts.run_cohort_calendar`), ``carried`` / ``carried_retire`` the handoff ``realized_cohort`` /
+    ``realized_retire`` and ``existing_before`` the existing capacity in service at the end of life of an existing
+    cohort whose last period in service lies before the solve (``[e, d_run]`` → ``[e, d_run, value]``, MW, MWh:
+    the run period before the end of life, the user's existing less the realized retirements)::
 
         options = {(e, c, d) : e ∈ extending_entities, c a parent cohort of e (:func:`_parent_rows`),
                    d ∈ period_invest, |y[d] − y_eol(c)| ≤ YEAR_TOL, (d_build(c), d) ∈ dd_forward for an
@@ -131,7 +176,11 @@ def extension_frames(source: "InputSource",
         y_eol(x) = round_end_of_life(y[d] + L_x[e,d], end_of_life_method[e])
         alive(x) = {d′ : (d, d′) ∈ dd_forward, y[d′] < y_eol(x)}
         d_last(c, d) = the period d″ with the largest year y[d″] < y[d] − YEAR_TOL, (d″, d) ∈ dd_forward and c in
-                   service in d″ (``cohort_alive``)
+                   service in d″ (``cohort_alive``; a carried cohort: y_on ≤ y[d″] < y_eol)
+        size(c, d) = existing_before[e, the last run period starting before y[d]]   (c existing, no d_last)
+
+    An option of an existing cohort without a period in service before d (in the solve or the run) has nothing
+    to extend and is not offered; nor is one of a carried cohort without what is left of it.
     """
     if (cohort is None or cohort.height == 0 or dd_forward is None or dd_forward.height == 0 or not period_invest
             or cal is None):
@@ -139,7 +188,7 @@ def extension_frames(source: "InputSource",
     entities = extending_entities(source)
     if not entities:
         return None
-    parents = _parent_rows(cohort, entities)
+    parents = _parent_rows(cohort, carried, carried_retire, entities)
     if parents.height == 0:
         return None
     invest = pl.DataFrame({"d": [str(d) for d in period_invest if str(d) in years],
@@ -148,6 +197,7 @@ def extension_frames(source: "InputSource",
     forward = dd_forward.select(pl.col("d_retire").cast(pl.Utf8), pl.col("d").cast(pl.Utf8))
     rows = (parents.join(invest, how="cross")
                    .filter((pl.col("y_d") - pl.col("y_eol")).abs() <= YEAR_TOL))
+    rows = rows.filter((pl.col("kind") != KIND_CARRIED) | (pl.col("remaining") > _TOL))
     # An investment cohort extends on the lineage of its decision.
     built = rows.filter(pl.col("kind") == KIND_INVEST).join(
         forward.rename({"d_retire": "d_build"}), on=["d_build", "d"], how="semi")
@@ -181,8 +231,12 @@ def extension_frames(source: "InputSource",
                    .join(forward.rename({"d_retire": "d", "d": "d_all"}), on="d", how="inner")
                    .join(yr, on="d_all", how="inner")
                    .filter(pl.col("y") < pl.col("y_eol_x") - YEAR_TOL))
-    d_last = _last_periods(rows.select("e", "cohort", "d", "y_d"), cohort_alive, forward, yr)
+    served = _served(cohort_alive, parents.filter(pl.col("kind") == KIND_CARRIED), yr)
+    d_last = _last_periods(rows.select("e", "cohort", "d", "y_d"), served, forward, yr)
     rows = rows.join(d_last, on=["e", "cohort", "d"], how="left")
+    rows = _with_sizes(rows, cal, existing_before)
+    if rows.height == 0:
+        return None
 
     x_rows = [(x, e, KIND_EXTEND, method, eol_method, d, d, y_d, 0.0, life, y_d + life, None, y_eol,
                cal.label(y_eol), *((None,) * 6), x, c)
@@ -202,8 +256,7 @@ def extension_frames(source: "InputSource",
     counting = (alive_x.select("e", "cohort", d_extend="d", d="d_all").lazy()
                        .pipe(rename_to_axis, {"e": "e", "d_extend": "d_extend", "d": "d"})
                        .sort("e", "cohort", "d_extend", "d").collect())
-    parents_out = (rows.select("e", "cohort", "kind", "d_build", "d", "d_last",
-                               remaining=pl.lit(0.0), size=pl.lit(None, dtype=pl.Float64))
+    parents_out = (rows.select("e", "cohort", "kind", "d_build", "d", "d_last", "remaining", "size")
                        .lazy()
                        .pipe(rename_to_axis, {"e": "e", "d_build": "d_build", "d": "d", "d_last": "d_last"})
                        .select(list(cohort_extend_columns()))
@@ -211,15 +264,56 @@ def extension_frames(source: "InputSource",
     return ExtensionFrames(options=options, counting=counting, parents=parents_out, cohort=x_cohort, alive=alive)
 
 
-def _last_periods(rows: pl.DataFrame, cohort_alive: pl.DataFrame | None, forward: pl.DataFrame,
+def _served(cohort_alive: pl.DataFrame | None, carried: pl.DataFrame, yr: pl.DataFrame) -> pl.DataFrame:
+    """``[e, cohort, d_last]`` (Utf8): the periods of the solve each parent is in service in (``cohort_alive``; a
+    carried cohort ``carried`` while ``y_on ≤ y < y_eol``, the comparison of :func:`._cohorts.existing_capacity`)."""
+    parts = [pl.DataFrame(schema={"e": pl.Utf8, "cohort": pl.Utf8, "d_last": pl.Utf8})]
+    if cohort_alive is not None and cohort_alive.height > 0:
+        parts.append(cohort_alive.select(pl.col("e").cast(pl.Utf8), "cohort",
+                                         pl.col("d").cast(pl.Utf8).alias("d_last")))
+    if carried.height > 0:
+        parts.append(carried.select("e", "cohort", "y_on", "y_eol").join(yr, how="cross")
+                     .filter((pl.col("y") >= pl.col("y_on") - YEAR_TOL) & (pl.col("y") < pl.col("y_eol") - YEAR_TOL))
+                     .select("e", "cohort", pl.col("d_all").alias("d_last")))
+    return pl.concat(parts)
+
+
+def _with_sizes(rows: pl.DataFrame, cal: _Calendar,
+                existing_before: "Callable[[pl.DataFrame], pl.DataFrame] | None") -> pl.DataFrame:
+    """``rows`` with ``size``: the existing capacity in service at the end of life of an existing cohort that has no
+    period in service in the solve before it (``d_last`` null), read at the last run period starting before the
+    extension (``existing_before``); such an option without that period, or without capacity there, is dropped."""
+    before = rows.filter((pl.col("kind") == KIND_EXISTING) & pl.col("d_last").is_null())
+    rows = rows.with_columns(size=pl.lit(None, dtype=pl.Float64))
+    if before.height == 0:
+        return rows
+    runs = pl.DataFrame({"d_run": [d for d, _y in cal.run_periods], "y_run": [y for _d, y in cal.run_periods]},
+                        schema={"d_run": pl.Utf8, "y_run": pl.Float64})
+    last = (before.select("e", "cohort", "d", "y_d").join(runs, how="cross")
+                  .filter(pl.col("y_run") < pl.col("y_d") - YEAR_TOL)
+                  .sort("e", "cohort", "d", "y_run")
+                  .unique(subset=["e", "cohort", "d"], keep="last", maintain_order=True))
+    sizes = (existing_before(last.select("e", "d_run").unique(maintain_order=True))
+             if existing_before is not None and last.height > 0
+             else pl.DataFrame(schema={"e": pl.Utf8, "d_run": pl.Utf8, "value": pl.Float64}))
+    last = (last.join(sizes, on=["e", "d_run"], how="left")
+                .select("e", "cohort", "d", _size=pl.col("value").fill_null(0.0)))
+    rows = (rows.join(last, on=["e", "cohort", "d"], how="left")
+                .with_columns(size=pl.when(pl.col("kind") == KIND_EXISTING).then(pl.col("_size"))
+                              .otherwise(pl.col("size")))
+                .drop("_size"))
+    keep = (pl.col("kind") != KIND_EXISTING) | pl.col("d_last").is_not_null() | (pl.col("size") > _TOL)
+    return rows.filter(keep)
+
+
+def _last_periods(rows: pl.DataFrame, served: pl.DataFrame, forward: pl.DataFrame,
                   yr: pl.DataFrame) -> pl.DataFrame:
     """``[e, cohort, d, d_last]`` (Utf8): for each option ``(e, c, d)`` of ``rows`` (with ``y_d``) the parent's last
-    period in service before ``d`` on ``d``'s lineage (none when the parent serves no period of the solve before
-    ``d``)."""
+    period in service before ``d`` on ``d``'s lineage (``served``, :func:`_served`; none when the parent serves no
+    period of the solve before ``d``)."""
     schema = {"e": pl.Utf8, "cohort": pl.Utf8, "d": pl.Utf8, "d_last": pl.Utf8}
-    if cohort_alive is None or cohort_alive.height == 0:
+    if served.height == 0:
         return pl.DataFrame(schema=schema)
-    served = cohort_alive.select(pl.col("e").cast(pl.Utf8), "cohort", pl.col("d").cast(pl.Utf8).alias("d_last"))
     return (rows.join(forward.rename({"d_retire": "d_last"}), on="d", how="inner")
                 .join(served, on=["e", "cohort", "d_last"], how="inner")
                 .join(yr.rename({"d_all": "d_last", "y": "y_last"}), on="d_last", how="inner")
@@ -245,6 +339,42 @@ def _never_operates_warning(never: pl.DataFrame) -> None:
             f"Warning: {name}: the life extensions starting in {periods} would never operate "
             f"(life_extension_years {life:g} years, end_of_life_method {method}): their end of life is rounded to "
             "the start of the period they start in. They are not offered.")
+
+
+def existing_in_service_before(source: "InputSource",
+                               active_solve: str | None,
+                               cal: _Calendar,
+                               carried_retire: pl.DataFrame | None,
+                               *,
+                               workdir: "object | None" = None,
+                               provider: "object | None" = None) -> "Callable[[pl.DataFrame], pl.DataFrame]":
+    """The ``existing_before`` of :func:`extension_frames`: ``[e, d_run]`` (a run period, possibly before the solve)
+    → ``[e, d_run, value]``, the existing cohort's capacity in service there (``p_entity_pre_existing``: the user's
+    existing × virtual_unitsize while the cohort is in service) less the retirements of the existing cohort that
+    earlier solves realized up to it (``carried_retire``, handoff ``realized_retire``), MW (MWh)."""
+    from flextool.engine.preprocess.params._existing import p_entity_pre_existing_lf
+    run_years = {d: y for d, y in cal.run_periods}
+
+    def existing_before(keys: pl.DataFrame) -> pl.DataFrame:
+        periods = sorted(set(keys["d_run"].to_list()))
+        pre = (p_entity_pre_existing_lf(source, active_solve, periods, workdir=workdir, provider=provider)
+               .select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8).alias("d_run"), "value").collect())
+        out = keys.join(pre, on=["e", "d_run"], how="left").with_columns(pl.col("value").fill_null(0.0))
+        if carried_retire is None or carried_retire.height == 0:
+            return out
+        retired = (carried_retire.filter(pl.col("cohort").cast(pl.Utf8).str.starts_with(f"{KIND_EXISTING}:"))
+                   .select(pl.col("entity").cast(pl.Utf8).alias("e"), pl.col("period").cast(pl.Utf8).alias("d_r"),
+                           pl.col("value").cast(pl.Float64).alias("v"))
+                   .with_columns(y_r=pl.col("d_r").replace_strict(run_years, default=None, return_dtype=pl.Float64)))
+        counted = (keys.with_columns(y=pl.col("d_run").replace_strict(run_years, default=None,
+                                                                      return_dtype=pl.Float64))
+                       .join(retired, on="e", how="inner")
+                       .filter(pl.col("y_r").is_null() | (pl.col("y_r") <= pl.col("y") + YEAR_TOL))
+                       .group_by("e", "d_run", maintain_order=True).agg(pl.col("v").sum().alias("_r")))
+        return (out.join(counted, on=["e", "d_run"], how="left")
+                   .select("e", "d_run", value=pl.col("value") - pl.col("_r").fill_null(0.0)))
+
+    return existing_before
 
 
 def append_extensions(cohort: pl.DataFrame, cohort_alive: pl.DataFrame,

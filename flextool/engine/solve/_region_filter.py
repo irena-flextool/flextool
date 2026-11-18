@@ -2065,9 +2065,10 @@ def master_network_data(
                  "ed_lifetime_fixed_cost_run", "ed_lifetime_fixed_cost_divest_run", "edd_annuity",
                  "edd_entity_annual_discounted_run", "edd_existing_replacement_run",
                  "ed_divest_settlement_yearly", "p_entity_pre_existing", "cd_divest_built_cost",
-                 "cd_divest_built_fixed"):
+                 "cd_divest_built_fixed", "cd_extend_cost", "cd_extend_fixed"):
         setattr(new, name, _keep_entity_param(getattr(data, name, None)))
-    for name in ("cd_divest_built", "cdd_divest_built", "cohort_divest_built"):
+    for name in ("cd_divest_built", "cdd_divest_built", "cohort_divest_built", "cd_extend", "cdd_extend",
+                 "cohort_extend"):
         setattr(new, name, _keep_entity_frame(getattr(data, name, None)))
     new.edd_operating_window = _keep_entity_frame(getattr(data, "edd_operating_window", None))
     new.edd_retire_window = _keep_entity_frame(getattr(data, "edd_retire_window", None))
