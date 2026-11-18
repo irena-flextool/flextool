@@ -6,10 +6,11 @@ each reported in the period it happens (``_npv``: the line frames ``edl_*`` / ``
 calc_costs``: their sums).  The lines of one term add up to the term (the objective's coefficient or lump).
 
 * ``investment`` — the capital of a plant (a_cap over its years in service inside the horizon), at its start of
-  operation; ``replacement`` — the same of a later plant of a reinvest_automatic chain; ``extension`` — the
-  extension-cost part of a life extension's price.
-* ``retirement`` — a retirement's contract settlement (the payments due before it and the loan balance at its
-  start) less the capital its years in service were charged, in the retirement period.
+  operation; ``replacement`` — the same of a later plant of a reinvest_automatic chain, and a retirement before
+  that plant comes online takes its capital back here, in the same period; ``extension`` — the extension-cost
+  part of a life extension's price.
+* ``retirement`` — a retirement's contract settlement of the plant in service (the payments due before it and the
+  loan balance at its start) less the capital its years in service were charged, in the retirement period.
 * ``salvage end of life`` / ``salvage replaced`` — the salvage credit of a plant (a_salv over its years in service
   inside the horizon; negative for a positive salvage value), at its end of life (the last period of the run when
   it lives to or past the end of the horizon), for a plant whose life simply ends / one a reinvest_automatic

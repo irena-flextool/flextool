@@ -2047,9 +2047,11 @@ def chain_retirement_costs(source: "InputSource",
     and of every replacement still to come.
 
     ``lines`` ``[e, root, d, line, d_report, value]`` (Utf8, :mod:`._cost_lines`) split ``cost`` as
-    :func:`built_retirement_costs` does, per plant g′: ``retirement`` @ d = [settles]·cash − a_cap[g′]·S̄[g′,d],
-    ``salvage economic`` @ d = −[settles]·D(d)·S_d, ``salvage replaced`` @ the end of life of g′ =
-    a_salv[g′]·S̄[g′,d] (a plant of a chain is replaced at its end of life)."""
+    :func:`built_retirement_costs` does, per plant g′: ``retirement`` @ d = [settles]·cash − a_cap[g′]·S̄[g′,d] of
+    the plant in service in d (y_on[g′] <= y[d]), ``replacement`` @ the online period of g′ on d's lineage
+    (``d_price``) = −a_cap[g′]·S̄[g′,d] of a replacement still to come (the capital of a plant never built, taken
+    back where the investment lines put it), ``salvage economic`` @ d = −[settles]·D(d)·S_d, ``salvage replaced`` @
+    the end of life of g′ = a_salv[g′]·S̄[g′,d] (a plant of a chain is replaced at its end of life)."""
     from flextool.engine.preprocess.params import _cost_lines as L
     from flextool.engine.input._axis_enums import cast_dim
     from flextool.engine.preprocess.params._cohorts import salvage_periods
@@ -2096,9 +2098,12 @@ def chain_retirement_costs(source: "InputSource",
     timed = event_period(joined.with_columns(_settles=settles), "y_eol",
                          report_years(source, active_solve, period_in_use, workdir, provider), "d_eol")
     taken = pl.col("taken").fill_null(0.0)
-    lines = stack_lines(timed, ("e", "root", "d"), [
-        (L.RETIREMENT, pl.when(pl.col("_settles")).then(pl.col("cash").fill_null(0.0)).otherwise(0.0)
-         - pl.col("a_cap") * taken, pl.col("d")),
+    lines = stack_lines(timed.with_columns(_current=current), ("e", "root", "d"), [
+        (L.RETIREMENT, pl.when(pl.col("_current")).then(
+            pl.when(pl.col("_settles")).then(pl.col("cash").fill_null(0.0)).otherwise(0.0)
+            - pl.col("a_cap") * taken).otherwise(0.0), pl.col("d")),
+        (L.REPLACEMENT, pl.when(pl.col("_current")).then(0.0).otherwise(-pl.col("a_cap") * taken),
+         pl.col("d_price")),
         (L.SALVAGE_ECONOMIC, -pl.when(pl.col("_settles")).then(pl.col("sold").fill_null(0.0)).otherwise(0.0),
          pl.col("d")),
         (L.SALVAGE_REPLACED, pl.col("a_salv") * taken, pl.col("d_eol"))])

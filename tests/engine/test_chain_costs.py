@@ -494,9 +494,10 @@ def test_retirement_costs(tmp_path_factory, lifetime) -> None:
     The settlement is reported by event (each cost line in the period it happens): *salvage economic* −100·S·D(5)
     at p2025 (received); the existing plant's credits given back, +100·a_x·Σ_seen,plant F_inv, as *salvage
     replaced* where the plant's end of life is reported (lifetime 30: past the horizon, so the last period p2035;
-    lifetime 10: p2030); with lifetime 10 the replacement's capital given back, *retirement* −100·A·Σ_{seen, ≥ p2030}
-    F_inv at p2025, and its salvage credits, *salvage replaced* +100·a_x·Σ_{seen, ≥ p2030} F_inv at its end of life
-    (year 20, the horizon end: the last period p2035).  The lines add up to the settlement; the cost tables show
+    lifetime 10: p2030); with lifetime 10 the replacement's capital given back, *replacement* −100·A·Σ_{seen, ≥
+    p2030} F_inv at p2030 (where the replacement would come online; *retirement* holds only the existing plant's
+    settlement, which has no contract: 0), and its salvage credits, *salvage replaced* +100·a_x·Σ_{seen, ≥ p2030}
+    F_inv at its end of life (year 20, the horizon end: the last period p2035).  The lines add up to the settlement; the cost tables show
     the salvage causes as one *salvage* line, their sum per period.  Annualized: each line divided by the
     investment factor of the period it is reported in."""
     values = _retire_values(lifetime)
@@ -520,14 +521,14 @@ def test_retirement_costs(tmp_path_factory, lifetime) -> None:
         else:
             later = sum(F_INV[d] for d in periods if d >= "p2030")
             want[("p2030", "salvage replaced")] = 100.0 * a_x * (F_INV["p2020"] + F_INV["p2025"])
-            want[("p2025", "retirement")] = -100.0 * capital * later
+            want[("p2030", "replacement")] = -100.0 * capital * later
             want[("p2035", "salvage replaced")] = 100.0 * a_x * later
         discounted = results["cost_unit_discounted__d"]
         assert -100.0 * FIXED * F_OPS["p2025"] == pytest.approx(-37.3154e6, rel=1e-5)
         annualized = results["cost_unit_annualized__d"]
         for d in PERIODS:
             row, yearly = _row(discounted, d), _row(annualized, d)
-            for line in ("retirement", "salvage"):
+            for line in ("retirement", "replacement", "salvage"):
                 # The cost tables show the salvage causes as one salvage line.
                 amount = sum(v for (p_, cause), v in want.items() if p_ == d and cause.startswith(line))
                 assert row[line] * MEGA == pytest.approx(amount, rel=1e-7, abs=1e-3), (kind, d, line)

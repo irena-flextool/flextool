@@ -162,6 +162,48 @@ def test_h3_replacement_of_a_reinvest_automatic_plant(tmp_path_factory) -> None:
 
 
 @pytest.mark.solver
+def test_retiring_a_reinvest_automatic_build_takes_its_replacement_back_where_it_was_reported(
+        tmp_path_factory) -> None:
+    """The reinvest_automatic plant of p2020 (r = i, L = 10) retired at p2025, before its replacement comes online
+    at p2030.  *retirement* at p2025 holds only the plant's own settlement, 100·(A·S[0, 5) + D(5)·A·ā(r, 5) −
+    A·S[0, 10)) = 0 at r = i.  The replacement is never built: its capital, 100·A·S[10, 20) = 61.391325 M, is taken
+    back under *replacement* at p2030, where the investment lines put it, so *replacement* nets to 0 there.  The
+    salvage credits of both plants (−12.278265 M at p2030, −7.537790 M at p2035) are given back in *salvage replaced*
+    (0), and the salvage value is received at p2025, −100·S·D(5) = −15.670523 M."""
+    a = C * af(RATE, 10.0)
+    assert MW * (a * span(0, 5) + V ** 5 * a * abar(RATE, 5.0) - a * span(0, 10)) == pytest.approx(0.0, abs=1e-3)
+    assert MW * a * span(10, 20) / MEGA == pytest.approx(61.391325, abs=1e-6)
+    table, summary = _lines(tmp_path_factory, "auto_retired",
+                            _values(method="reinvest_automatic", retired={"p2025": MW}))
+    _assert_lines(table, summary, {("p2020", "investment"): 100.0, ("p2025", "salvage economic"): -15.670523},
+                  INVEST_LINES)
+    _assert_objective(summary)
+
+
+@pytest.mark.solver
+def test_retiring_existing_reinvest_automatic_capacity_takes_its_replacement_back_where_it_was_reported(
+        tmp_path_factory) -> None:
+    """100 MW existing reinvest_automatic capacity (age 0, L = 10: replaced at p2030, at the same values) retired at
+    p2025.  The replacement is an objective constant, *investment pre-existing* 100·A·S[10, 20) = 61.391325 M at
+    p2030; the retirement takes it back under *replacement* in the same period, −61.391325 M, so the two net to 0
+    there, and *retirement* holds only the settlement of the plant in service, which has no contract (0).  The
+    salvage credits of the plant and its replacement, *salvage pre-existing* −100·S·v^10 = −12.278265 M at p2030 and
+    −100·a_salv·S[10, 20) = −7.537790 M at p2035, are given back in *salvage replaced*, and the salvage value is
+    received at p2025, −100·S·D(5) = −15.670523 M."""
+    values = _values(method="reinvest_automatic", built="", existing=MW, retired={"p2025": MW},
+                     extra=[["unit", PLANT, "age_at_model_start", b64(0.0, "float")]])
+    table, summary = _lines(tmp_path_factory, "auto_existing_retired", values)
+    _assert_lines(table, summary, {("p2025", "salvage economic"): -15.670523,
+                                   ("p2030", "investment pre-existing"): 61.391325,
+                                   ("p2030", "replacement"): -61.391325,
+                                   ("p2030", "salvage pre-existing"): -12.278265,
+                                   ("p2030", "salvage replaced"): 12.278265,
+                                   ("p2035", "salvage pre-existing"): -7.537790,
+                                   ("p2035", "salvage replaced"): 7.537790},
+                  (*INVEST_LINES, "investment pre-existing", "salvage pre-existing"))
+
+
+@pytest.mark.solver
 def test_a_plant_past_the_horizon_reports_the_horizon_share_of_its_salvage(tmp_path_factory) -> None:
     a, a_salv = C * af(RATE, 15.0), S * 1.05 ** -15 * af(RATE, 15.0)
     assert MW * a * span(10, 20) / MEGA == pytest.approx(45.670825, abs=1e-6)

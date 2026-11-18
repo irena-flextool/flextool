@@ -97,11 +97,15 @@ y-axis is `m3/h` for a water node and `MWh/h` by default. A label without tokens
       `invest_cost` annuity over `payback_time` at `discount_rate`, spread evenly over `lifetime_technical`) for
       each year it is in service inside the horizon
     - *replacement* — M[CUR] the same for a later plant of a `reinvest_automatic` chain (the plant that replaces the
-      one before at its end of life, at the values of the period it comes online), when it comes online
+      one before at its end of life, at the values of the period it comes online), when it comes online; a
+      retirement before a replacement comes online gives the replacement's capital back here, in that period
+      (the replacement is never built: for new capacity the line nets to 0 there; for pre-existing capacity it
+      nets against *investment pre-existing*)
     - *extension* — M[CUR] the extension cost part of a life extension's price, when the extension starts
-    - *retirement* — M[CUR] the contract settlement of retired model-built capacity, in the retirement period: the
-      payments of its loan up to then and the balance still owed, less the capital its years in service were
-      charged (0 when `discount_rate` equals the `social_discount_rate`; existing capacity has no contract)
+    - *retirement* — M[CUR] the contract settlement of the retired plant in service, in the retirement period:
+      the payments of its loan up to then and the balance still owed, less the capital its years in service were
+      charged (0 when `discount_rate` equals the `social_discount_rate`); the replacements of a
+      `reinvest_automatic` plant that the retirement avoids are taken back under *replacement*
     - *salvage* — M[CUR] the salvage of new capacity (negative for a positive `net_salvage_value`): the salvage
       credit of a plant (its `net_salvage_value`, levelled over its lifetime, for its years in service inside the
       horizon) at its end of life, also for a plant of a `reinvest_automatic` chain that is replaced then (a
@@ -118,7 +122,7 @@ y-axis is `m3/h` for a water node and `MWh/h` by default. A label without tokens
     - *salvage pre-existing* — M[CUR] the salvage credit of pre-existing capacity that may be retired (and of the
       replacements of *reinvest_automatic* capacity), at its end of life. Only where there is one. Like *fixed
       cost pre-existing* and *investment pre-existing* it is not in the optimised objective (no decision changes
-      it); a retirement of that capacity gives it back in *salvage* and *retirement*, which are.
+      it); a retirement of that capacity gives it back in *salvage* and *replacement*, which are.
     - *fixed cost invested* — M[CUR] fixed O&M for newly invested capacity, in each period it is paid
     - *fixed cost reduction of divestments* — M[CUR] fixed O&M removed by divestments, in each period it is saved
     - *commodity cost* / *commodity sales* — M[CUR] cost of buying / revenue from selling commodities
