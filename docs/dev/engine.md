@@ -1168,7 +1168,26 @@ blocks forward in every period on `block_forward_lag` (the
 roll uses in a period it holds in part), with the start in the first
 block's balance and the end pin on the last block.  So the start pin and
 the end pin never sit on one state: a cyclic node is pinned at its wrap
-target by `fix_start` only, and at its end by `fix_end` only.
+target by `fix_start` only, and at its end by `fix_end` only.  In a solve
+on representative periods the mapping is `_FIX_START_END_FORWARD_RP`: a
+`bind_within_timeblock` fix_start_end node becomes
+`bind_forward_only_blended_weights` (plain `bind_forward_only` there is a
+configuration error, `_reject_plain_forward_in_rp_solve`, checked on the
+database methods before this mapping).
+
+Then `_run_model._timeblock_binds_within_period_in_roll` rewrites
+`bind_within_timeblock` to `bind_within_period` in a rolling solve
+(`_reject_rolling_with_gaps` has made sure each period is one timeblock),
+so the per-period rolling rule (`_scope_rows`, `scope_*` rows) applies to
+it.  Order per sub-solve: non-RP downgrade → `_reject_rolling_rp` /
+`_reject_rolling_with_gaps` / `_reject_plain_cyclic_in_rp_solve` /
+`_reject_plain_forward_in_rp_solve` → fix_start_end → rolling timeblock.
+`_restore_methods` captures the frame after these rewrites.
+
+Storage warnings and notices print one line per message type and complete
+solve, naming how many nodes and the first
+(`_behaviour_changes.storage_message`, `notice(..., solve=...)`); the
+values per node go to the `flextool.engine.storage` logger at debug level.
 
 ## Output-writer shape adaptation
 
