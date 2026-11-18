@@ -1283,6 +1283,17 @@ class FlexData:
     # include_existing_fixed_cost): ``_npv.apply_retirement_salvage``.
     ed_divest_salvage: Param | None = None
     ed_existing_salvage_credit: Param | None = None
+    # Retirement of model-built capacity (preprocess/params/_retire_built.py; apply_derived_c, None without an
+    # option): (e, cohort, d) the retirement options (the columns of v_divest_built), (e, cohort, d_divest, d) the
+    # periods a retirement decided in d_divest counts in, one row per retirable cohort (its decision period in this
+    # solve or the carried capacity it has left, its bound, years and prices); (e, cohort, d) the settlement of a
+    # retired MW less the level price taken back and the fixed cost it saves (CUR/MW, MWh;
+    # ``_npv.apply_built_retirement_costs``).
+    cd_divest_built: pl.DataFrame | None = None
+    cdd_divest_built: pl.DataFrame | None = None
+    cohort_divest_built: pl.DataFrame | None = None
+    cd_divest_built_cost: Param | None = None
+    cd_divest_built_fixed: Param | None = None
     # Reported costs only (no model term reads them; ``_npv`` "Run-level fields of the reported costs"):
     # discounted from the start of the run over the periods of the whole run.  (d,) factors over the solve's
     # periods and the other run periods; (e, d) lumps of the invest / divest decisions (the lifetime fixed cost
@@ -6833,6 +6844,14 @@ def build_handoff_from_solution(
                 e = str(r[entity_col])
                 dd = str(r["d"])
                 divest_by_ed[(e, dd)] = divest_by_ed.get((e, dd), 0.0) + v
+    # The retirements of model-built cohorts (v_divest_built), per (entity, cohort, decision period).
+    divest_built_by_ecd: dict[tuple[str, str, str], float] = {}
+    for var_name, entity_col in (("v_divest_built_p", "p"), ("v_divest_built_n", "n")):
+        if var_name in sol._vars:
+            for e, c, dd, v in sol.value(var_name).select(entity_col, "cohort", "d", "value").iter_rows():
+                if float(v) > 1e-12:
+                    key = (str(e), str(c), str(dd))
+                    divest_built_by_ecd[key] = divest_built_by_ecd.get(key, 0.0) + float(v)
 
     # ---- Slice D (H, §10.1): EXPLICIT non-realized invest drop ----
     # ``invest_by_ed`` collects every solved v_invest row, including
@@ -6869,6 +6888,7 @@ def build_handoff_from_solution(
             )
         divest_by_ed = {k: v for k, v in divest_by_ed.items()
                         if k[1] not in _synth_handoff}
+        divest_built_by_ecd = {k: v for k, v in divest_built_by_ecd.items() if k[2] not in _synth_handoff}
 
     # ---- the realized decision periods of this solve ----
     realize_invest = _read_realize_invest_periods(
@@ -6886,6 +6906,11 @@ def build_handoff_from_solution(
         if _d in realize_invest:
             divest_by_e[_e] = divest_by_e.get(_e, 0.0) + _v
             realized_divest_by_ed[(_e, _d)] = _v
+    realized_divest_built: dict[tuple[str, str, str], float] = {}
+    for (_e, _c, _d), _v in divest_built_by_ecd.items():
+        if _d in realize_invest:
+            divest_by_e[_e] = divest_by_e.get(_e, 0.0) + _v
+            realized_divest_built[(_e, _c, _d)] = _v
 
     # ---- the realized investments with a construction lead time, by decision period and the period they start
     # to operate in (``ed_invest_commission``, found by this solve on the run calendar): a later solve counts them
@@ -6947,7 +6972,8 @@ def build_handoff_from_solution(
         _cohort_table,
         {(e, o): v for (e, o), v in invest_by_ed.items() if o in realize_invest},
         {(e, d): v for (e, d), v in realized_divest_by_ed.items() if e in entity_divest and v != 0.0},
-        unitsize)
+        unitsize,
+        {k: v for k, v in realized_divest_built.items() if k[0] in entity_divest})
     # Slice C Guard 3 (b): no carried cohort is decided in a synthetic branch period.
     if _synth and realized_cohort_df is not None:
         _bad_cohort = sorted(set(realized_cohort_df["period_decided"].drop_nulls().to_list()) & _synth)

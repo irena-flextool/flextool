@@ -970,6 +970,8 @@ def realized_cohort_schema(cohort_schema: Mapping[str, pl.DataType] | None = Non
     return out
 
 
+#: A retirement (MW, MWh) of a cohort that was not built, at most this, is the solver's tolerance.
+_RETIRED_TOL = 1e-6
 #: The columns of the ``realized_retire`` carrier: MW (MWh) retired from a cohort in a realized decision period.
 REALIZED_RETIRE_SCHEMA: dict[str, pl.DataType] = {"entity": pl.Utf8, "cohort": pl.Utf8, "period": pl.Utf8,
                                                   "value": pl.Float64}
@@ -987,6 +989,7 @@ def realized_cohorts(prior_cohort: pl.DataFrame | None,
                      invested: Mapping[tuple[str, str], float],
                      retired: Mapping[tuple[str, str], float],
                      unitsize: Mapping[str, float],
+                     retired_built: Mapping[tuple[str, str, str], float] | None = None,
                      ) -> tuple[pl.DataFrame | None, pl.DataFrame | None]:
     """``(realized_cohort, realized_retire)``: the cohorts a solve hands to the later solves of the run, and the
     capacity retired from them, both chain-cumulative.
@@ -999,8 +1002,10 @@ def realized_cohorts(prior_cohort: pl.DataFrame | None,
 
     ``realized_retire`` ``[entity, cohort, period, value]`` — the rows of ``prior_retire`` and
     ``retired[e, d] · unitsize[e]`` (``v_divest`` of a realized decision period, > 0) of the existing cohort of
-    ``e``, summed per (entity, cohort, period); sorted, zero rows left out.  A retirement of another cohort is a
-    row with that cohort's id.
+    ``e`` and ``retired_built[e, c, d] · unitsize[e]`` (``v_divest_built`` of a realized decision period, > 0) of
+    the model-built cohort ``c``, summed per (entity, cohort, period); sorted, zero rows left out.  A later solve
+    subtracts each from its own cohort only (the existing cohort's retirements bound the existing capacity, a built
+    cohort's its carried size).
 
     Each frame is ``None`` when it has no row.  An investment without a row in ``cohort`` cannot be placed in a
     later solve's periods and raises :class:`ValueError`."""
@@ -1046,6 +1051,14 @@ def realized_cohorts(prior_cohort: pl.DataFrame | None,
     for (e, d), v in retired.items():
         key = (e, existing_of.get(e, KIND_EXISTING), d)
         sums[key] = sums.get(key, 0.0) + v * unitsize.get(e, 1.0)
+    for (e, c, d), v in (retired_built or {}).items():
+        mw = v * unitsize.get(e, 1.0)
+        if (e, c) not in by_key:
+            if mw <= _RETIRED_TOL:
+                continue  # the solver's tolerance on a cohort that was not built
+            raise ValueError(f"The retirement of {e!r} cohort {c!r} in period {d!r} ({mw:g}) names a cohort that is "
+                             "not realized: it cannot be handed to the later solves.")
+        sums[(e, c, d)] = sums.get((e, c, d), 0.0) + mw
     retire_rows = [(e, c, d, v) for (e, c, d), v in sorted(sums.items()) if v != 0.0]
     retire_out = (pl.DataFrame(retire_rows, schema=REALIZED_RETIRE_SCHEMA, orient="row")
                   if retire_rows else None)

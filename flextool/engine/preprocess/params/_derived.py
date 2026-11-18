@@ -5484,25 +5484,40 @@ def _fan_branch_years_notice(source: "InputSource",
 
 def _retirement_without_existing_warning(source: "InputSource", offered: pl.DataFrame) -> None:
     """Warn about the entities that have a retirement option but no ``existing`` capacity in any period (none
-    given, or 0 everywhere): only capacity that existed before the run can be retired, so the option has no
-    effect — no retirement variable, and their retired-capacity terms (user constraints, group retirement
+    given, or 0 everywhere) and whose model-built capacity cannot be retired either (``lifetime_method``
+    ``reinvest_automatic``, renewed capacity without a retirement of its own, or no investment option): the option
+    has no effect — no retirement variable, and their retired-capacity terms (user constraints, group retirement
     limits) are 0.  Each entity once per run.  An entity with existing capacity whose retirement periods are past
     its end of life is a valid model and is not warned about (the end of life is in the retirement notice)."""
     from flextool.engine import _behaviour_changes
-    from flextool.engine.preprocess.params._npv import _per_entity_param_lf
+    from flextool.engine.preprocess.params._cohorts import BOUNDED_METHODS
+    from flextool.engine.preprocess.params._npv import (
+        _entity_invest_set_lf,
+        _lifetime_method_with_default_lf,
+        _per_entity_param_lf,
+    )
     with_existing = (_per_entity_param_lf(source, "existing")
                        .filter(pl.col("value").cast(pl.Float64, strict=False) > 0.0)
-                       .select(pl.col("e").cast(pl.Utf8)).unique().collect())
-    lost = (offered.select(pl.col("e").cast(pl.Utf8)).unique()
-                   .join(with_existing, on="e", how="anti").sort("e")["e"].to_list())
-    if not lost:
+                       .select("e").unique().collect())
+    entities = offered.select("e").unique()
+    entities, with_existing = align_join_dtypes(entities, with_existing, ["e"])
+    lost = entities.join(with_existing, on="e", how="anti")
+    if lost.height == 0:
+        return
+    bounded = (_lifetime_method_with_default_lf(source, lost.lazy())
+               .filter(pl.col("method").is_in(list(BOUNDED_METHODS))).select("e"))
+    bounded, investing = align_join_dtypes(bounded, _entity_invest_set_lf(source, _INVEST_NOT_ALLOWED), ["e"])
+    built = bounded.join(investing, on="e", how="semi").collect()
+    lost, built = align_join_dtypes(lost, built, ["e"])
+    names = sorted(str(e) for e in lost.join(built, on="e", how="anti")["e"].to_list())
+    if not names:
         return
     _behaviour_changes.warn_once_each(
-        "retirement_without_existing", lost,
-        lambda names: "Warning: " + ", ".join(names) + (" have" if len(names) > 1 else " has")
-        + " a retirement option (invest_method) but no existing capacity. Only existing capacity can be retired, "
-        "so there is no retirement variable; retired-capacity terms of user constraints and group retirement "
-        "limits are 0.")
+        "retirement_without_existing", names,
+        lambda fresh: "Warning: " + ", ".join(fresh) + (" have" if len(fresh) > 1 else " has")
+        + " a retirement option (invest_method) but no existing capacity. Only existing capacity can be retired "
+        "(and, with lifetime_method reinvest_choice or no_reinvestment, capacity the model builds), so there is no "
+        "retirement variable; retired-capacity terms of user constraints and group retirement limits are 0.")
 
 
 def _check_retirement_minimums(flex_data: object,
@@ -5533,6 +5548,9 @@ def _check_retirement_minimums(flex_data: object,
                                        workdir=workdir, provider=provider)
                 .select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), "value").collect())
     pre = {(e, d): float(v) for e, d, v in pre_df.iter_rows()}
+    from flextool.engine.preprocess.params._retire_built import check_minimums_inputs
+    built_options, built_total, built_alive = check_minimums_inputs(getattr(flex_data, "cohort_divest_built", None),
+                                                                    getattr(flex_data, "cd_divest_built", None))
     check_retirement_minimums(
         offered=offered, kept=kept,
         period_method_pairs=ed_divest_period_set_lf(source, offered.lazy()).collect(),
@@ -5542,7 +5560,8 @@ def _check_retirement_minimums(flex_data: object,
         min_total=getattr(flex_data, "e_divest_min_total", None),
         prior=p_entity_divested_from_handoff(provider=provider),
         carried=ed_values(p_entity_retired_carried_from_provider(workdir, provider=provider)),
-        eol=existing_ends(existing_cohorts(source, active_solve, workdir, provider=provider)))
+        eol=existing_ends(existing_cohorts(source, active_solve, workdir, provider=provider)),
+        built_options=built_options, built_total=built_total, built_alive=built_alive)
 
 
 def _end_of_life_notice(source: "InputSource",
@@ -5847,6 +5866,7 @@ def apply_derived_c(
 
     _fan_branch_years_notice(source, flex_data, ed_inv_for_partition, ed_div_for_partition)
     _end_of_life_notice(source, active_solve, workdir, provider=provider)
+    carried_cohort, carried_retire = _carried_cohorts(provider)
 
     # Dispatch-only gate: when neither ed_invest nor ed_divest carries
     # any (e, d) row, mirror ``flex_data.py::_load_invest`` blank-out by
@@ -5860,7 +5880,8 @@ def apply_derived_c(
     # even though the snapshot CSV had genuine invest activity.
     inv_empty = ed_inv_for_partition is None or ed_inv_for_partition.height == 0
     div_empty = ed_div_for_partition is None or ed_div_for_partition.height == 0
-    if inv_empty and div_empty:
+    # A cohort an earlier solve built can be retired here even without an investment or existing-capacity option.
+    if inv_empty and div_empty and not _carried_retirable(offered_div, carried_cohort):
         _check_retirement_minimums(flex_data, source, active_solve, workdir, offered_div, ed_div_db, [],
                                    _c_period_in_use, provider=provider)
         for blank_field in (
@@ -5873,6 +5894,7 @@ def apply_derived_c(
             # Read only where an investment or retirement variable exists;
             # nulled so no seed outlives the empty investment set.
             "cohort", "cohort_alive", "dd_forward",
+            "cd_divest_built", "cdd_divest_built", "cohort_divest_built",
         ):
             setattr(flex_data, blank_field, None)
         return
@@ -5894,8 +5916,12 @@ def apply_derived_c(
     # The periods a retirement of existing capacity counts in (the model builds the same, model/_capacity.py).
     edda_db = retire_active(getattr(flex_data, "pd_divest_set", None), frames.cohort_alive, frames.dd_forward, "p")
     ndda_db = retire_active(getattr(flex_data, "nd_divest_set", None), frames.cohort_alive, frames.dd_forward, "n")
-    _check_retirement_minimums(flex_data, source, active_solve, workdir, offered_div, ed_div_db,
-                               [edda_db, ndda_db], _c_period_in_use, provider=provider)
+    # The retirement options of model-built capacity: the per-period retirement limits apply to them too.
+    built = _apply_built_retirement(flex_data, source, active_solve, workdir, frames, offered_div, carried_cohort,
+                                    carried_retire, _c_period_in_use, provider=provider)
+    if built is not None:
+        flex_data.ed_divest_period_set = _class_partitions(
+            source, _with_built_options(ed_div_for_partition, built.options), (_ed_divest_period_lf,))[0]
 
     # p_entity_max_units uses ed_invest plus the per-period-in-use grid
     # and the unitsize cascade.
@@ -5913,6 +5939,79 @@ def apply_derived_c(
         pemu_db = None
     if pemu_db is not None:
         flex_data.p_entity_max_units = pemu_db
+    if built is not None:
+        from flextool.engine.preprocess.params._retire_built import with_bounds
+        flex_data.cohort_divest_built = with_bounds(flex_data.cohort_divest_built, flex_data,
+                                                    _entity_unitsizes(flex_data))
+    _check_retirement_minimums(flex_data, source, active_solve, workdir, offered_div, ed_div_db,
+                               [edda_db, ndda_db], _c_period_in_use, provider=provider)
+
+
+def _carried_cohorts(provider: "object | None") -> "tuple[pl.DataFrame | None, pl.DataFrame | None]":
+    """``(realized_cohort, realized_retire)``: the cohorts earlier solves of the run realized and their retirements
+    (the handoff, an override first); ``None`` each without rows."""
+    from flextool.engine.preprocess import _provider_keys as K
+    from flextool.engine.preprocess._provider_translators import read_handoff_frame
+    return (read_handoff_frame(provider, K.HANDOFF_REALIZED_COHORT),
+            read_handoff_frame(provider, K.HANDOFF_REALIZED_RETIRE))
+
+
+def _carried_retirable(offered: "pl.DataFrame | None", carried: "pl.DataFrame | None") -> bool:
+    """Whether a carried investment cohort of a ``reinvest_choice`` / ``no_reinvestment`` entity has a retirement
+    option in the solve's investment periods (``offered`` ``[e, d]``)."""
+    if offered is None or offered.height == 0 or carried is None or carried.height == 0:
+        return False
+    from flextool.engine.preprocess.params._cohorts import BOUNDED_METHODS, KIND_INVEST
+    entities = sorted({str(e) for e in offered["e"].unique().to_list()})
+    return carried.filter((pl.col("kind") == KIND_INVEST) & pl.col("method").is_in(list(BOUNDED_METHODS))
+                          & pl.col("entity").is_in(entities)).height > 0
+
+
+def _apply_built_retirement(flex_data: object,
+                            source: "InputSource",
+                            active_solve: str | None,
+                            workdir: Path | None,
+                            frames: "object",
+                            offered: "pl.DataFrame | None",
+                            carried: "pl.DataFrame | None",
+                            carried_retire: "pl.DataFrame | None",
+                            period_in_use: "list[str]",
+                            *,
+                            provider: "object | None" = None):
+    """Set ``cd_divest_built`` / ``cdd_divest_built`` / ``cohort_divest_built`` (:mod:`._retire_built`) on
+    ``flex_data`` from the solve's cohort frames ``frames``; returns the :class:`._retire_built.BuiltRetirement`
+    (``None``, and the fields ``None``, without a retirement option of model-built capacity)."""
+    from flextool.engine.preprocess.params._retire_built import built_retirable_notice, built_retirement_options
+    built = built_retirement_options(frames.cohort, frames.cohort_alive, frames.dd_forward, offered, carried,
+                                     carried_retire, cohort_years(source, active_solve, workdir, provider=provider),
+                                     [str(d) for d in period_in_use])
+    flex_data.cd_divest_built = None if built is None else built.options
+    flex_data.cdd_divest_built = None if built is None else built.counting
+    flex_data.cohort_divest_built = None if built is None else built.cohorts
+    built_retirable_notice(flex_data.cohort_divest_built)
+    return built
+
+
+def _with_built_options(ed_div: "pl.DataFrame | None", options: pl.DataFrame) -> pl.DataFrame:
+    """``[e, d]``: the retirement options of existing capacity ``ed_div`` and those of model-built capacity."""
+    built = options.select("e", "d").unique()
+    if ed_div is None or ed_div.height == 0:
+        return built.sort("e", "d")
+    ed_div, built = align_join_dtypes(ed_div.select("e", "d"), built, ["e", "d"])
+    return pl.concat([ed_div, built]).unique().sort("e", "d")
+
+
+def _entity_unitsizes(flex_data: object) -> "dict[str, float]":
+    """``{entity: unitsize}`` of the processes (``p_unitsize``) and storage nodes (``p_state_unitsize``)."""
+    out: dict[str, float] = {}
+    for name, col in (("p_unitsize", "p"), ("p_state_unitsize", "n")):
+        param = getattr(flex_data, name, None)
+        if param is None:
+            continue
+        for e, v in param.frame.select(col, pl.col("value").cast(pl.Float64)).iter_rows():
+            if v is not None:
+                out.setdefault(str(e), float(v))
+    return out
 
 
 

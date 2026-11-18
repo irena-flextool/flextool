@@ -18,6 +18,9 @@ The cluster covers these FlexData fields:
 * ``ed_divest_salvage`` / ``ed_existing_salvage_credit`` — the salvage
   settlement of a retirement of existing capacity and the level salvage
   credit of existing capacity (:func:`existing_salvage`).
+* ``cd_divest_built_cost`` / ``cd_divest_built_fixed`` — the settlement of a
+  retired MW of a model-built cohort less the level price given back, and the
+  fixed cost it saves (:func:`built_retirement_costs`).
 * ``ed_lifetime_fixed_cost``                   — invest-side lifetime
   cumulative fixed cost.  Replaces ``solve_data/ed_lifetime_fixed_cost.csv``.
 * ``ed_lifetime_fixed_cost_divest``            — divest-side lifetime
@@ -1146,6 +1149,43 @@ def _retirement_discount_lf(source: "InputSource",
 _EXISTING_PRICE_COLUMNS = ("r_loan", "a_salv", "nsv_eol")
 
 
+def _run_inv_factors(source: "InputSource",
+                     active_solve: str | None,
+                     period_in_use: list[str],
+                     period_universe: list[str],
+                     period_with_history: list[str],
+                     years: dict[str, float],
+                     *,
+                     provider: "object | None",
+                     year_rows: pl.DataFrame | None,
+                     run_factor: "Param | None",
+                     ) -> tuple[pl.DataFrame, pl.DataFrame, list[str]]:
+    """``(factors, walk_periods, universe)``: the investment factor ``[d_all, factor]`` (Utf8) of every period of
+    the solve's history and periods in use, from the start of the run (``run_factor``, ``p_inflation_inv_run``, where
+    it has the period; the solve's own factor otherwise, equal on its periods), the years ``[d_all, y]`` of those
+    periods (``years``: :func:`._cohorts.cohort_years`) and the period universe the factors are computed over.  The
+    take-back of a salvage credit or a level price sums these factors over the periods a cohort is in service.  A
+    period of the history that is neither in use nor a period of the run calendar is no period of the run (the
+    branch copy of a realized designation, ``<period>_<branch>``, :func:`run_years`): it holds no years of its own."""
+    from flextool.engine.preprocess.params._run_calendar import read_run_calendar
+    calendar = read_run_calendar(provider)
+    in_use = {str(d) for d in period_in_use}
+    history = [str(d) for d in period_with_history
+               if calendar is None or str(d) in in_use or str(d) in calendar.years]
+    periods = list(dict.fromkeys([*history, *(str(d) for d in period_in_use)]))
+    universe = list(dict.fromkeys([*(str(d) for d in period_universe), *periods]))
+    factors = (_inflation_factors_lf(source, active_solve, universe, provider=provider, year_rows=year_rows)
+               .select(pl.col("d").cast(pl.Utf8).alias("d_all"), pl.col("inv_factor").alias("factor")).collect())
+    if run_factor is not None:
+        run = run_factor.frame.select(pl.col("d").cast(pl.Utf8).alias("d_all"), pl.col("value").alias("_run"))
+        factors = (factors.join(run, on="d_all", how="full", coalesce=True)
+                          .select("d_all", factor=pl.coalesce("_run", "factor")))
+    walk_periods = pl.DataFrame({"d_all": [d for d in periods if d in years],
+                                 "y": [float(years[d]) for d in periods if d in years]},
+                                schema={"d_all": pl.Utf8, "y": pl.Float64})
+    return factors, walk_periods, universe
+
+
 def existing_salvage(source: "InputSource",
                      active_solve: str | None,
                      period_invest: list[str],
@@ -1223,19 +1263,10 @@ def existing_salvage(source: "InputSource",
                       .with_columns(a_x=salvage_credit(pl.col("s_x"), pl.col("r_x"), pl.col("span"), offset)))
     prices = cohorts.select("e", r_loan=pl.col("r_x"), a_salv=pl.col("a_x"), nsv_eol=pl.col("s_x")).sort("e")
 
-    # The investment factor of every period of the solve's history and periods in use (from the start of the run).
-    periods = list(dict.fromkeys([*(str(d) for d in period_with_history), *(str(d) for d in period_in_use)]))
-    universe = list(dict.fromkeys([*(str(d) for d in period_universe), *periods]))
-    factors = (_inflation_factors_lf(source, active_solve, universe, provider=provider, year_rows=year_rows)
-               .select(pl.col("d").cast(pl.Utf8).alias("d_all"), pl.col("inv_factor").alias("factor")).collect())
-    if run_factor is not None:
-        run = run_factor.frame.select(pl.col("d").cast(pl.Utf8).alias("d_all"), pl.col("value").alias("_run"))
-        factors = (factors.join(run, on="d_all", how="full", coalesce=True)
-                          .select("d_all", factor=pl.coalesce("_run", "factor")))
+    factors, walk_periods, universe = _run_inv_factors(source, active_solve, period_in_use, period_universe,
+                                                       period_with_history, years, provider=provider,
+                                                       year_rows=year_rows, run_factor=run_factor)
     in_use = {str(d) for d in period_in_use}
-    walk_periods = pl.DataFrame({"d_all": [d for d in periods if d in years],
-                                 "y": [float(years[d]) for d in periods if d in years]},
-                                schema={"d_all": pl.Utf8, "y": pl.Float64})
     alive = (cohorts.filter(pl.col("a_x") != 0.0).select("e", "y_eol", "a_x")
                     .join(walk_periods, how="cross")
                     .filter((pl.col("y") >= y0 - YEAR_TOL) & (pl.col("y") < pl.col("y_eol") - YEAR_TOL))
@@ -1269,6 +1300,154 @@ def existing_salvage(source: "InputSource",
                      .select("e", "d", value=pl.col("disc") * pl.col("s_d") - pl.col("taken"))
                      .sort("e", "d"))
     return divest, credit.sort("e", "d"), prices
+
+
+def _payment_rows(source: "InputSource",
+                  active_solve: str | None,
+                  period_in_use: list[str],
+                  universe: list[str],
+                  periods: set[str],
+                  workdir: Path | None,
+                  *,
+                  provider: "object | None",
+                  year_rows: pl.DataFrame | None) -> pl.DataFrame:
+    """``[base, width, contrib]``: one row per represented calendar year of the run (the run calendar's periods and
+    widths, :func:`run_years`; the solve's own years ``periods`` when the solve is the run), ``base`` its years from
+    the start of the run and ``contrib = width·(1+i)^−(base + width·off_inv)`` the discounted width a yearly payment
+    of it has (:func:`_inflation_year_rows_lf`).  The forecast copies of a period share its years: each year once."""
+    run = run_years(source, active_solve, list(period_in_use), workdir, provider=provider)
+    if run is not None:
+        rows = _inflation_year_rows_lf(source, active_solve, sorted(run[0]), year_rows=_run_year_rows(*run))
+    else:
+        rows = _inflation_year_rows_lf(source, active_solve, universe, provider=provider, year_rows=year_rows)
+        if rows is not None:
+            rows = rows.filter(pl.col("d").is_in(sorted(periods)))
+    if rows is None:
+        return pl.DataFrame(schema={"base": pl.Float64, "width": pl.Float64, "contrib": pl.Float64})
+    return (rows.select("base", "width", contrib=pl.col("inv_contrib"))
+                .sort("base").unique(subset=["base"], keep="first", maintain_order=True).collect())
+
+
+def built_retirement_costs(source: "InputSource",
+                           active_solve: str | None,
+                           cohorts: pl.DataFrame,
+                           options: pl.DataFrame,
+                           period_in_use: list[str],
+                           period_universe: list[str],
+                           period_with_history: list[str],
+                           *,
+                           lineage: pl.DataFrame | None,
+                           year_rows: pl.DataFrame | None,
+                           workdir: Path | None,
+                           provider: "object | None",
+                           run_factor: "Param | None" = None,
+                           ) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """``(cost, fixed)`` ``[e, cohort, d, value]`` of the retirement options ``options`` (``cd_divest_built``) of the
+    model-built cohorts ``cohorts`` (``cohort_divest_built`` with their prices), CUR/MW (MWh for storage): the
+    ``divest_built_cost_{p,n}`` OBJ header::
+
+        cost[e,c,d]  = set[c,d] − (a_cap[c] − a_salv[c])·S̄[c,d]
+        set[c,d]     = pay[c]·S[y_on, min(y[d], y_on + n)) + D(d)·(B[c,m] − S_d)
+        B[c,m]       = pay[c]·(1+r)^(1−off_inv)·ā(r, n − m) for m < n, else 0;  m = y[d] − y_on
+        S̄[c,d]       = Σ_{d′ ∈ history ∪ solve, y_on ≤ y[d′] < y_eol, on d's lineage} inflation_inv_run[d′]
+        fixed[e,c,d] = Σ_{d″ ∈ solve, y[d] ≤ y[d″] < y_eol, on d's lineage} 1000·fixed_cost[e,d″]·inflation_op[d″]
+
+    pay, n = n_pay, r = r_loan, a_cap, a_salv, y_on, y_eol the cohort's (``_cohorts.PRICE_COLUMNS``); ā(r, x) =
+    (1 − (1+r)^−x)/r (x at r = 0); S[a, b) = Σ σ·contrib over the year rows of the run (:func:`_payment_rows`), σ the
+    share of the row inside [a, b); D(d) the discount of the start of d (:func:`_retirement_discount_lf`); S_d =
+    1000·net_salvage_value[e, d]; years of the run (:func:`._cohorts.cohort_years`), the lineage pairs of the
+    investment walks.  A retired MW pays its contract as it ran: the payments due before d, then at the start of d the
+    capital still owed, less its salvage value received then; the level price its years in service were charged is
+    taken back (history included: a carried cohort's price was charged by an earlier solve) and the fixed cost from d
+    on is saved."""
+    from flextool.engine.input._axis_enums import cast_dim
+    from flextool.engine.preprocess.params._cohorts import cohort_years
+    from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
+    from flextool.engine.preprocess.params._walks import _apply_lineage_filter
+    empty = pl.DataFrame(schema={"e": schema_dtype(_enums, "e"), "cohort": pl.Utf8, "d": schema_dtype(_enums, "d"),
+                                 "value": pl.Float64})
+    if options is None or options.height == 0:
+        return empty, empty
+    years = cohort_years(source, active_solve, workdir, provider=provider)
+    off_inv = _solve_inflation_scalars(source)[1]
+    factors, walk_periods, universe = _run_inv_factors(source, active_solve, period_in_use, period_universe,
+                                                       period_with_history, years, provider=provider,
+                                                       year_rows=year_rows, run_factor=run_factor)
+    in_use = [str(d) for d in period_in_use]
+    in_use_frame = pl.DataFrame({"d_all": in_use}, schema={"d_all": pl.Utf8})
+    d_dtype = options.schema["d"]
+    on_d = pl.col("d_all").pipe(cast_dim, _enums, "d")
+    year_of = (pl.DataFrame({"d": list(years), "y_d": [float(y) for y in years.values()]},
+                            schema={"d": pl.Utf8, "y_d": pl.Float64})
+                 .with_columns(pl.col("d").pipe(cast_dim, _enums, "d")))
+    prices = cohorts.select("e", "cohort", "y_on", "y_eol", "pay", "n_pay", "r_loan", "a_cap", "a_salv")
+    anchors, year_of = align_join_dtypes(options.select("e", "cohort", "d"), year_of, ["d"])
+    anchors = (anchors.join(prices, on=["e", "cohort"], how="left", maintain_order="left")
+                      .join(year_of, on="d", how="left", maintain_order="left"))
+    missing = anchors.filter(pl.col("y_d").is_null())
+    if missing.height > 0:
+        raise ValueError(f"Solve '{active_solve}': the retirement periods {sorted(set(missing['d'].to_list()))} have "
+                         "no year of the run; the retirement of model-built capacity cannot be settled.")
+
+    # The periods each cohort is in service in (history included), on the lineage of the retirement period.
+    walk = (anchors.select("e", "cohort", "d", "y_d", "y_on", "y_eol")
+                   .join(walk_periods.with_columns(on_d.alias("d_all")), how="cross")
+                   .filter((pl.col("y") >= pl.col("y_on") - YEAR_TOL) & (pl.col("y") < pl.col("y_eol") - YEAR_TOL)))
+    if lineage is not None:
+        walk = _apply_lineage_filter(walk.lazy(), lineage, in_use, d_dtype).collect()
+    walk = walk.join(factors.with_columns(on_d.alias("d_all")), on="d_all", how="left")
+    no_factor = walk.filter(pl.col("factor").is_null())
+    if no_factor.height > 0:
+        raise ValueError(f"Solve '{active_solve}': the periods {sorted(set(no_factor['d_all'].to_list()))} have no "
+                         "investment discount factor; the retirement of model-built capacity cannot be settled.")
+    keys = ["e", "cohort", "d"]
+    taken = walk.group_by(keys, maintain_order=True).agg(pl.col("factor").sum().alias("taken"))
+
+    # The fixed cost saved: the solve's periods from d on, while the cohort is in service.
+    saved_rows = (walk.join(in_use_frame.with_columns(on_d.alias("d_all")), on="d_all", how="semi")
+                      .filter(pl.col("y") >= pl.col("y_d") - YEAR_TOL))
+    fc = (_ed_fixed_cost_raw_lf(source, saved_rows.lazy().select("e", pl.col("d_all").alias("d")).unique())
+          .select("e", pl.col("d").alias("d_all"), "fc").collect())
+    ops = (_factor_frame(source, active_solve, period_in_use, period_universe, provider, "ops_factor", year_rows)
+           .with_columns(on_d.alias("d_all")).collect())
+    saved_rows, fc = align_join_dtypes(saved_rows, fc, ["e", "d_all"])
+    saved = (saved_rows.join(fc, on=["e", "d_all"], how="left")
+                       .join(ops.rename({"factor": "ops"}), on="d_all", how="left")
+                       .group_by(keys, maintain_order=True)
+                       .agg((pl.col("fc").fill_null(0.0) * pl.col("ops").fill_null(0.0)).sum().alias("saved")))
+
+    # The payments due before d (history included), the capital still owed at the start of d and the salvage.
+    rows = _payment_rows(source, active_solve, period_in_use, universe, set(walk_periods["d_all"].to_list()),
+                         workdir, provider=provider, year_rows=year_rows)
+    end = pl.min_horizontal(pl.col("y_d"), pl.col("y_on") + pl.col("n_pay"))
+    share = ((pl.min_horizontal(end, pl.col("base") + pl.col("width"))
+              - pl.max_horizontal(pl.col("y_on"), pl.col("base"))) / pl.col("width")).clip(0.0, 1.0)
+    paid = (anchors.select(*keys, "y_d", "y_on", "n_pay").join(rows, how="cross")
+                   .filter(pl.col("width") > 0.0)
+                   .group_by(keys, maintain_order=True).agg((share * pl.col("contrib")).sum().alias("paid")))
+    disc = (_retirement_discount_lf(source, active_solve, universe, provider=provider, year_rows=year_rows)
+            .with_columns(pl.col("d").pipe(cast_dim, _enums, "d")).collect())
+    s_d = (ed_values_on(source, NET_SALVAGE_VALUE, anchors.lazy().select("e", "cohort", "d"), fill=0.0)
+           .select(*keys, s_d=pl.col("value") * 1000.0).collect())
+    left = pl.col("n_pay") - (pl.col("y_d") - pl.col("y_on"))
+    r = pl.col("r_loan")
+    remaining = pl.when(r.abs() < 1e-9).then(left).otherwise((1.0 - (1.0 + r).pow(-left)) / r)
+    balance = (pl.when(left > YEAR_TOL)
+                 .then(pl.col("pay") * (1.0 + r).pow(1.0 - off_inv) * remaining)
+                 .otherwise(0.0))
+    anchors, disc = align_join_dtypes(anchors, disc, ["d"])
+    out = (anchors.join(paid, on=keys, how="left", maintain_order="left")
+                  .join(taken, on=keys, how="left", maintain_order="left")
+                  .join(saved, on=keys, how="left", maintain_order="left")
+                  .join(s_d, on=keys, how="left", maintain_order="left")
+                  .join(disc, on="d", how="left", maintain_order="left")
+                  .with_columns(paid=pl.col("paid").fill_null(0.0), taken=pl.col("taken").fill_null(0.0),
+                                saved=pl.col("saved").fill_null(0.0), s_d=pl.col("s_d").fill_null(0.0),
+                                disc=pl.col("disc").fill_null(1.0))
+                  .with_columns(value=pl.col("pay") * pl.col("paid") + pl.col("disc") * (balance - pl.col("s_d"))
+                                - (pl.col("a_cap") - pl.col("a_salv")) * pl.col("taken"))
+                  .sort(keys))
+    return out.select(*keys, "value"), out.select(*keys, value=pl.col("saved"))
 
 
 def _ed_fixed_cost_raw_lf(source: "InputSource",
@@ -2423,6 +2602,9 @@ def apply_run_fields_of_synthetic_solve(flex_data: object,
         apply_retirement_salvage(flex_data, source, active_solve, decision_periods, period_in_use, period_universe,
                                  period_with_history, lineage=lineage, year_rows=year_rows, workdir=workdir,
                                  provider=provider)
+    apply_built_retirement_costs(flex_data, source, active_solve, period_in_use, period_universe,
+                                 period_with_history, lineage=lineage, year_rows=year_rows, workdir=workdir,
+                                 provider=provider)
     apply_run_cost_fields(flex_data, source, active_solve, period_in_use, period_invest, period_with_history,
                           workdir, lineage=lineage, years=years, provider=provider)
 
@@ -2522,9 +2704,11 @@ def apply_npv(flex_data: object,
     # variables that would consume them).
     ed_invest = getattr(flex_data, "ed_invest_set", None)
     ed_divest = getattr(flex_data, "ed_divest_set", None)
+    built = getattr(flex_data, "cd_divest_built", None)
     no_invest = (
         (ed_invest is None or ed_invest.height == 0)
         and (ed_divest is None or ed_divest.height == 0)
+        and (built is None or built.height == 0)
     )
     if no_invest or active_solve is None:
         if run_yrs is None:
@@ -2543,6 +2727,9 @@ def apply_npv(flex_data: object,
     apply_retirement_salvage(flex_data, source, active_solve, list(period_invest), list(period_in_use),
                              list(period_universe), list(period_with_history), lineage=_npv_lineage,
                              year_rows=year_rows, workdir=workdir, provider=provider)
+    apply_built_retirement_costs(flex_data, source, active_solve, list(period_in_use), list(period_universe),
+                                 list(period_with_history), lineage=_npv_lineage, year_rows=year_rows,
+                                 workdir=workdir, provider=provider)
 
     _set_if("ed_lifetime_fixed_cost_divest",
             ed_lifetime_fixed_cost_divest_from_source(
@@ -2635,6 +2822,81 @@ def apply_retirement_salvage(flex_data: object,
     else:
         flex_data.ed_divest_settlement_yearly = None
     _set_existing_cohort_prices(flex_data, prices)
+
+
+def apply_built_retirement_costs(flex_data: object,
+                                 source: "InputSource",
+                                 active_solve: str,
+                                 period_in_use: list[str],
+                                 period_universe: list[str],
+                                 period_with_history: list[str],
+                                 *,
+                                 lineage: pl.DataFrame | None,
+                                 year_rows: pl.DataFrame | None,
+                                 workdir: Path | None,
+                                 provider: "object | None" = None,
+                                 ) -> None:
+    """Set the retirement costs of model-built capacity (:func:`built_retirement_costs`): ``cd_divest_built_cost``
+    (the settlement less the level price taken back) and ``cd_divest_built_fixed`` (the fixed cost saved), after the
+    cohort prices of this solve's investments (:func:`apply_invest_lumps`) are on ``cohort_divest_built``.  A
+    retirable cohort without its prices is an error (:func:`._retire_built.require_cohort_prices`), never a 0.  Warns
+    where building a cohort and retiring it earns money (:func:`._retire_built.warn_build_to_retire`).  The only
+    derivation of these terms: a Spine solve (:func:`apply_npv`) and a synthetic sub-solve
+    (:func:`apply_run_fields_of_synthetic_solve`) call it alike."""
+    from flextool.engine.preprocess.params._retire_built import require_cohort_prices, warn_build_to_retire
+    options = getattr(flex_data, "cd_divest_built", None)
+    cohorts = getattr(flex_data, "cohort_divest_built", None)
+    if options is None or options.height == 0 or cohorts is None or cohorts.height == 0:
+        flex_data.cd_divest_built_cost = flex_data.cd_divest_built_fixed = None
+        return
+    cohorts = _with_cohort_prices(cohorts, getattr(flex_data, "cohort", None))
+    flex_data.cohort_divest_built = cohorts
+    require_cohort_prices(cohorts)
+    cost, fixed = built_retirement_costs(
+        source, active_solve, cohorts, options, period_in_use, period_universe, period_with_history,
+        lineage=lineage, year_rows=year_rows, workdir=workdir, provider=provider,
+        run_factor=getattr(flex_data, "p_inflation_inv_run", None))
+    flex_data.cd_divest_built_cost = Param(("e", "cohort", "d"), cost)
+    flex_data.cd_divest_built_fixed = Param(("e", "cohort", "d"), fixed)
+    warn_build_to_retire(_build_and_retire_totals(flex_data, cohorts, cost, fixed))
+
+
+def _with_cohort_prices(cohorts: pl.DataFrame, cohort: pl.DataFrame | None) -> pl.DataFrame:
+    """``cohorts`` (``cohort_divest_built``) with the prices of each cohort decided in this solve from the cohort
+    table ``cohort`` (set by :func:`_set_cohort_prices`); a carried cohort keeps the prices it was carried with."""
+    from flextool.engine.preprocess.params._cohorts import KIND_INVEST
+    if cohort is None or cohort.height == 0:
+        return cohorts
+    own = (cohort.filter(pl.col("kind") == KIND_INVEST)
+                 .select("e", "cohort", *(pl.col(c).alias(f"_{c}") for c in PRICE_COLUMNS)))
+    left, own = align_join_dtypes(cohorts, own, ["e"])
+    here = pl.col("d_build").is_not_null()
+    return (left.join(own, on=["e", "cohort"], how="left", maintain_order="left")
+                .with_columns(pl.when(here).then(pl.col(f"_{c}")).otherwise(pl.col(c)).alias(c)
+                              for c in PRICE_COLUMNS)
+                .select(cohorts.columns))
+
+
+def _build_and_retire_totals(flex_data: object, cohorts: pl.DataFrame, cost: pl.DataFrame,
+                             fixed: pl.DataFrame) -> pl.DataFrame:
+    """``[e, cohort, total]``: for each cohort decided in this solve, the objective coefficient of a MW built (its
+    price and lifetime fixed cost, ``ed_entity_annual_discounted`` + ``ed_lifetime_fixed_cost`` of its decision)
+    plus the smallest coefficient of retiring it (``cost − fixed``), CUR/MW."""
+    retire = (cost.join(fixed.rename({"value": "fixed"}), on=["e", "cohort", "d"], how="inner")
+                  .group_by("e", "cohort").agg((pl.col("value") - pl.col("fixed")).min().alias("retire")))
+    built = cohorts.filter(pl.col("d_build").is_not_null()).select("e", "cohort", "d_build")
+    for name in ("ed_entity_annual_discounted", "ed_lifetime_fixed_cost"):
+        param = getattr(flex_data, name, None)
+        if param is None:
+            built = built.with_columns(pl.lit(0.0).alias(name))
+            continue
+        frame = param.frame.select("e", pl.col("d").alias("d_build"), pl.col("value").alias(name))
+        built, frame = align_join_dtypes(built, frame, ["e", "d_build"])
+        built = built.join(frame, on=["e", "d_build"], how="left").with_columns(pl.col(name).fill_null(0.0))
+    built, retire = align_join_dtypes(built, retire, ["e"])
+    return (built.join(retire, on=["e", "cohort"], how="inner")
+                 .select("e", "cohort", total=pl.col("ed_entity_annual_discounted") + pl.col("ed_lifetime_fixed_cost")
+                         + pl.col("retire")))
 
 
 def _set_existing_cohort_prices(flex_data: object, prices: pl.DataFrame) -> None:

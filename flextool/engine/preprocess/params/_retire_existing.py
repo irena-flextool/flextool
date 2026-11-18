@@ -15,6 +15,15 @@ it instead:
 
 ``carried[e, d]`` is the capacity earlier solves of a chain retired that still counts in d, ``prior[e]`` all of
 it (``p_entity_divested``).
+
+Model-built capacity of a ``reinvest_choice`` / ``no_reinvestment`` entity can be retired too (``_retire_built``):
+its options count as retirement options and the most its cohorts can supply adds to what the existing capacity
+allows: over the solve ``built_total[e]`` (the sum of their bounds; +inf with an unknown bound, then there is no
+total check), in a period ``built_alive[e, d]`` (the bounds of the cohorts that can retire in d).  For an entity
+with such options the per-period check is ``retire_min_period[e, d] ≤ pre_existing[e, d] − carried[e, d] +
+built_alive[e, d]`` (a built cohort's retirements stop counting at its end of life, so the cumulative window of the
+existing capacity does not bound them).  ``reinvest_automatic`` capacity is renewed and has no retirement of its
+own.
 """
 from __future__ import annotations
 
@@ -113,6 +122,9 @@ def check_retirement_minimums(*,
                               prior,
                               carried: Mapping[tuple[str, str], float] | None,
                               eol: Mapping[str, "ExistingEnd"],
+                              built_options: "set[tuple[str, str]] | None" = None,
+                              built_total: Mapping[str, float] | None = None,
+                              built_alive: Mapping[tuple[str, str], float] | None = None,
                               ) -> None:
     """Raise :class:`FlexToolConfigError` for a minimum retirement the pre-existing capacity cannot supply (the
     three conditions of the module docstring), naming the entity, the period and the existing capacity.
@@ -122,22 +134,36 @@ def check_retirement_minimums(*,
     limit (``retire_min_period`` applies); ``total_method_entities`` those with a total limit; ``windows`` is
     :func:`active_windows`; ``pre`` the pre-existing capacity ``{(e, d): MW}``; ``min_period`` /
     ``min_total`` / ``prior`` the Params ``ed_divest_min_period`` / ``e_divest_min_total`` /
-    ``p_entity_divested``; ``eol`` the end of life of the bounded-lifetime entities (:func:`._cohorts.existing_ends`)."""
+    ``p_entity_divested``; ``eol`` the end of life of the bounded-lifetime entities (:func:`._cohorts.existing_ends`);
+    ``built_options`` / ``built_total`` / ``built_alive`` the retirement options ``(e, d)`` of model-built capacity
+    and the most it can supply per entity and per period (module docstring)."""
     from flextool.engine.input._solve_state import FlexToolConfigError
     carried = carried or {}
+    built_options = built_options or set()
+    built_total = built_total or {}
+    built_alive = built_alive or {}
+    with_built = {e for e, _ in built_options}
     mins = {k: v for k, v in _ed_values(min_period).items() if v > _TOL}
     kept_set = set(_pairs(kept))
     errors: list[str] = []
-    for e, d in sorted(set(_pairs(period_method_pairs)) - kept_set):
+    for e, d in sorted(set(_pairs(period_method_pairs)) - kept_set - built_options):
         if (e, d) in mins:
             errors.append(f"{e} must retire at least {mins[(e, d)]:g} (retire_min_period) in {d}, but it has no "
-                          f"existing capacity there (only capacity that existed before the run can be retired)"
+                          f"capacity there that can be retired (existing capacity, or capacity the model builds "
+                          f"with lifetime_method reinvest_choice or no_reinvestment)" + _eol_phrase(e, eol))
+    period_method = set(_pairs(period_method_pairs))
+    for (e, d), m in sorted(mins.items()):
+        if e not in with_built or (e, d) not in period_method:
+            continue
+        have = pre.get((e, d), 0.0) - carried.get((e, d), 0.0) + built_alive.get((e, d), 0.0)
+        if m > have + _TOL:
+            errors.append(f"{e} must retire at least {m:g} (retire_min_period) in {d}, more than its existing "
+                          f"capacity and the capacity the model can build and retire there allow ({have:g})"
                           + _eol_phrase(e, eol))
     needed: dict[tuple[str, str], float] = {}
-    period_method = set(_pairs(period_method_pairs))
     for (e, d_r), window in windows.items():
         m = mins.get((e, d_r), 0.0)
-        if m <= _TOL or (e, d_r) not in period_method:
+        if m <= _TOL or (e, d_r) not in period_method or e in with_built:
             continue
         for d in window:
             needed[(e, d)] = needed.get((e, d), 0.0) + m
@@ -154,6 +180,13 @@ def check_retirement_minimums(*,
         if required <= _TOL:
             continue
         cap, at = max_retirable(e, windows, pre, carried)
+        if e in with_built:
+            built = built_total.get(e, 0.0)
+            if required > cap + built + _TOL:
+                errors.append(f"{e} must retire at least {required:g} (retire_min_total) in this solve, more than its "
+                              f"existing capacity ({cap:g}) and the capacity the model can build and retire "
+                              f"({built:g}) allow" + _eol_phrase(e, eol))
+            continue
         if required > cap + _TOL:
             where = f" (at most {cap:g}, retiring in {at})" if at is not None else " (it has no existing capacity "\
                 "in the retirement periods)"
@@ -171,11 +204,15 @@ def check_group_retirement_minimums(*,
                                     pre: Mapping[tuple[str, str], float],
                                     prior,
                                     carried: Mapping[tuple[str, str], float] | None,
+                                    built_total: Mapping[str, float] | None = None,
+                                    built_alive: Mapping[tuple[str, str], float] | None = None,
                                     ) -> None:
     """Raise :class:`FlexToolConfigError` when a group's minimum retirement exceeds what its members' pre-existing
     capacity allows: ``retire_min_total[g] − Σ_{e ∈ g} prior[e] > Σ_{e ∈ g} max_retirable(e)``, or
     ``retire_min_period[g, d] > Σ_{e ∈ g} (pre_existing[e, d] − carried[e, d])``.  ``group_entity`` is ``[g, e]``,
-    ``min_total`` / ``min_period`` the group Params ``[g, value]`` / ``[g, d, value]``."""
+    ``min_total`` / ``min_period`` the group Params ``[g, value]`` / ``[g, d, value]``.  Model-built capacity that
+    can be retired adds ``built_total[e]`` to the total and ``built_alive[(e, d)]`` (the bounds of its cohorts with
+    a retirement option in d) to the period capacity (module docstring)."""
     from flextool.engine.input._solve_state import FlexToolConfigError
     if group_entity is None or group_entity.height == 0:
         return
@@ -183,13 +220,15 @@ def check_group_retirement_minimums(*,
     for g, e in group_entity.select(pl.col("g").cast(pl.Utf8), pl.col("e").cast(pl.Utf8)).iter_rows():
         members.setdefault(g, []).append(e)
     carried = carried or {}
+    built_total = built_total or {}
+    built_alive = built_alive or {}
     prior_e = _e_values(prior)
     errors: list[str] = []
     totals = {} if min_total is None else {str(g): float(v) for g, v in min_total.frame.select(
         pl.col("g").cast(pl.Utf8), pl.col("value").cast(pl.Float64)).iter_rows() if v is not None}
     for g, need in sorted(totals.items()):
         required = need - sum(prior_e.get(e, 0.0) for e in members.get(g, []))
-        cap = sum(max_retirable(e, windows, pre, carried)[0] for e in members.get(g, []))
+        cap = sum(max_retirable(e, windows, pre, carried)[0] + built_total.get(e, 0.0) for e in members.get(g, []))
         if required > cap + _TOL:
             errors.append(f"group {g} must retire at least {required:g} (retire_min_total) in this solve, more than "
                           f"the existing capacity of its members allows ({cap:g})")
@@ -198,7 +237,8 @@ def check_group_retirement_minimums(*,
                                                   pl.col("value").cast(pl.Float64)).iter_rows():
             if need is None or need <= _TOL or g not in members:
                 continue
-            have = sum(pre.get((e, d), 0.0) - carried.get((e, d), 0.0) for e in members[g])
+            have = sum(pre.get((e, d), 0.0) - carried.get((e, d), 0.0) + built_alive.get((e, d), 0.0)
+                       for e in members[g])
             if need > have + _TOL:
                 errors.append(f"group {g} must retire at least {need:g} (retire_min_period) in {d}, more than the "
                               f"existing capacity of its members there ({have:g})")

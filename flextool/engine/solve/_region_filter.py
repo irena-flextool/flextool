@@ -2062,8 +2062,11 @@ def master_network_data(
     new.ed_entity_annual_discounted = _keep_entity_param(data.ed_entity_annual_discounted)
     for name in ("ed_divest_salvage", "ed_existing_salvage_credit", "ed_entity_annual_discounted_run",
                  "ed_lifetime_fixed_cost_run", "ed_lifetime_fixed_cost_divest_run", "ed_annuity",
-                 "ed_divest_settlement_yearly", "p_entity_pre_existing"):
+                 "ed_divest_settlement_yearly", "p_entity_pre_existing", "cd_divest_built_cost",
+                 "cd_divest_built_fixed"):
         setattr(new, name, _keep_entity_param(getattr(data, name, None)))
+    for name in ("cd_divest_built", "cdd_divest_built", "cohort_divest_built"):
+        setattr(new, name, _keep_entity_frame(getattr(data, name, None)))
     new.edd_operating_window = _keep_entity_frame(getattr(data, "edd_operating_window", None))
     new.edd_retire_window = _keep_entity_frame(getattr(data, "edd_retire_window", None))
     new.e_invest_total = _keep_entity_frame(data.e_invest_total)
