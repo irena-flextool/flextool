@@ -1,6 +1,5 @@
 import pandas as pd
 
-from flextool.engine.preprocess.params._cost_lines import PRE_EXISTING_LINES
 from flextool.process_outputs.calc_costs import lines_by_entity
 
 
@@ -8,6 +7,8 @@ def shown_lines(lines: pd.DataFrame) -> list[str]:
     """The cost lines of ``lines`` (columns: the lines of a cost table, or of the text summary by cause) a table
     shows, in their order: every line, the two pre-existing ones only where they are not 0 (the objective constants
     of existing capacity, as *fixed cost pre-existing*)."""
+    # Imported here: flextool.engine pulls in polar_high and its solver backends, which `import flextool` must not.
+    from flextool.engine.preprocess.params._cost_lines import PRE_EXISTING_LINES
     return [c for c in lines.columns
             if c not in PRE_EXISTING_LINES or bool(lines[c].fillna(0.0).ne(0.0).any())]
 
@@ -28,6 +29,8 @@ def generic(par, s, v, r, debug):
 
 def cost_summaries(par, s, v, r, debug):
     """Cost summaries for periods and timesteps"""
+    # Imported here: flextool.engine pulls in polar_high and its solver backends, which `import flextool` must not.
+    from flextool.engine.preprocess.params._cost_lines import PRE_EXISTING_LINES
 
     results = []
 

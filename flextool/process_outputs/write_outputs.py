@@ -44,7 +44,6 @@ from flextool.process_outputs.out_ancillary import (
     co2_duals, capacity_margin, reserve_requirement,
 )
 from flextool.process_outputs.out_capacity import cohort_capacity, connection_capacity, node_capacity, unit_capacity
-from flextool.engine.preprocess.params._cost_lines import PRE_EXISTING_LINES
 from flextool.process_outputs.out_costs import (
     generic, cost_summaries, cost_breakdown_by_entity, CO2, realized_leaf_periods, shown_lines,
 )
@@ -494,6 +493,8 @@ def print_namespace_structure(namespace, name='r', max_items=3, output_file='nam
 def write_summary_csv(par, s, v, r, csv_dir):
     """Write summary CSV file matching the GNU MathProg format"""
     import os
+    # Imported here: flextool.engine pulls in polar_high and its solver backends, which `import flextool` must not.
+    from flextool.engine.preprocess.params._cost_lines import PRE_EXISTING_LINES
 
     # Output file path
     fn_summary = os.path.join(csv_dir, 'summary_solve.csv')
