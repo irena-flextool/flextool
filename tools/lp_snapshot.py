@@ -427,14 +427,20 @@ def _patch_life_extension_chain(data: dict) -> dict:
 
 def _patch_retire_built_chain(data: dict) -> dict:
     """Retirement of model-built capacity on ``multi_year_reinvest_choice``: coal_plant's ``invest_method``
-    ``invest_retire_period_total`` (its invest limits kept, ``retire_max_period`` 200 MW) with a
-    ``net_salvage_value`` of 100, so the chain's built cohorts (``reinvest_choice``) get retirement columns and a
-    settlement, and the cohorts the solves retire are carried to the later solves."""
+    ``invest_retire_period_total`` (its invest limits kept; ``retire_max_period`` 200 MW, ``retire_max_total``
+    500 MW) with a ``net_salvage_value`` of 100 and ``lifetime_technical`` 10, so the chain's built cohorts
+    (``reinvest_choice``) get retirement columns and a settlement and the existing capacity a salvage.
+    ``retire_min_period`` 50 MW in p2035, when only built capacity is in service, retires a built cohort early,
+    and the retirement is carried to the last solve."""
     data = _patch_multi_year_reinvest_choice(data)
     return _overlay(
         data, name="retire_built_chain", base="multi_year_reinvest_choice",
         values=[["unit", "coal_plant", "invest_method", "invest_retire_period_total"],
+                ["unit", "coal_plant", "lifetime_technical", 10.0],
                 ["unit", "coal_plant", "retire_max_period", _per(200.0)],
+                ["unit", "coal_plant", "retire_max_total", 500.0],
+                ["unit", "coal_plant", "retire_min_period",
+                 _pmap({"p2020": 0.0, "p2025": 0.0, "p2030": 0.0, "p2035": 50.0})],
                 ["unit", "coal_plant", "net_salvage_value", 100.0]])
 
 
