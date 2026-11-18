@@ -8805,7 +8805,7 @@ def apply_derived_f(
       1. Cluster A (Δ.5): ``p_inflation_op``, ``p_ed_fixed_cost``,
          ``ed_entity_annual_discounted``, ``ed_divest_salvage``, ``ed_existing_salvage_credit``,
          ``ed_lifetime_fixed_cost``, ``ed_lifetime_fixed_cost_divest``
-         — delegated to :func:`._npv.apply_npv`, the lazy-polars
+         — delegated to :func:`._lifetime_costs.apply_npv`, the lazy-polars
          port.  Replaces the eager ``ed_entity_annual_family_from_source``
          and ``p_inflation_op_full_cascade_from_source`` paths.
       2. ``p_entity_previously_invested_capacity`` / ``p_entity_invested``
@@ -8815,10 +8815,10 @@ def apply_derived_f(
     Δ.4 deleted the deprecated wrapper alias; Δ.5 ports the lifetime
     cascade family to lazy polars.
     """
-    from flextool.engine.preprocess.params import _npv as _derived_npv
+    from flextool.engine.preprocess.params import _lifetime_costs
 
     # 1. Cluster A (lazy NPV / inflation / fixed cost cascade).
-    _derived_npv.apply_npv(flex_data, source, workdir, provider=provider)
+    _lifetime_costs.apply_npv(flex_data, source, workdir, provider=provider)
 
     # 2. Handoff state -----------------------------------------------
     # Δ.12b — unconditional assignment.  Each helper returns ``None``
@@ -9615,7 +9615,7 @@ def apply_synthetic_invest_sets(flex_data: object,
     ``ed_divest_period_set``) stay on the ``_invest_seeds.py`` CSV-seed
     path.  The NPV cost lumps are not set here: the investment annuity and
     lifetime fixed cost come from :func:`._npv.apply_invest_lumps` (called
-    by :func:`._npv.apply_run_fields_of_synthetic_solve`), the divest lumps
+    by :func:`._lifetime_costs.apply_run_fields_of_synthetic_solve`), the divest lumps
     from their emitted ``solve_data`` frames.
     """
     base, anchor = synthetic

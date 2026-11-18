@@ -386,7 +386,7 @@ def p_inflation_op_from_source(source: "InputSource",
     Lazy port of
     :func:`._derived.p_inflation_op_full_cascade_from_source`.
     Replaces the workdir read of ``solve_data/p_inflation_factor_operations_yearly.csv``
-    when wired through :func:`._npv.apply_npv`.
+    when wired through :func:`._lifetime_costs.apply_npv`.
 
     ``provider`` — forwarded to :func:`_inflation_factors_lf` /
     :func:`_years_for_period_lf` so a stochastic branch period reads its

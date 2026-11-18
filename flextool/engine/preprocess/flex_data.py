@@ -1308,7 +1308,7 @@ class FlexData:
     cohort_extend: pl.DataFrame | None = None
     cd_extend_cost: Param | None = None
     cd_extend_fixed: Param | None = None
-    # Reported costs only (no model term reads them; ``_npv`` "Run-level fields of the reported costs"):
+    # Reported costs only (no model term reads them; ``_run_costs`` "Run-level fields of the reported costs"):
     # discounted from the start of the run over the periods of the whole run.  (d,) factors over the solve's
     # periods and the other run periods; (e, d) the investment lump of the invest decisions.  Equal to the
     # per-solve fields when the run is the solve.
@@ -6141,7 +6141,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # ``apply_derived_f`` (``apply_npv``) is skipped: the investment annuity and lifetime fixed cost of a
         # sub-solve that invests are derived here by the same ``_npv`` rule over its own periods, and the run-level
         # fields of the reported costs (outputs only) discount from the start of the run over the whole run.
-        from flextool.engine.preprocess.params._npv import apply_run_fields_of_synthetic_solve
+        from flextool.engine.preprocess.params._lifetime_costs import apply_run_fields_of_synthetic_solve
         _timed("c.synth run costs", apply_run_fields_of_synthetic_solve, flex_data, db_reader, workdir_path,
                provider=provider)
         return

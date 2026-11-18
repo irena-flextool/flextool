@@ -595,6 +595,8 @@ Representative entries:
 | `_lifetime_inputs.py` | The per-entity readers and the per-decision lifetime inputs the lifetime costs share: entity class, `invest_method` / `lifetime_method`, the lifetime at the period a decision comes online, the raw fixed cost, the per-period walk (`period_walk_iterator`) and its window to the end of life, the registration of the lumps set as values. |
 | `_discount.py` | Discount factors: the inflation scalars, the year rows, the per-period investment and operations factors (`p_inflation_op`), the solve's discount base from the run start (`solve_year_rows`), the run years (`run_years`). |
 | `_report_lines.py` | Placing a reported cost event in a period (`report_years`, `event_period`, `stack_lines`). |
+| `_run_costs.py` | The run-level fields of the reported costs (no model term reads them): the run's investment lump `ed_entity_annual_discounted_run` and cost lines, the run's discount factors `p_inflation_op_run` / `p_inflation_inv_run`, `p_entity_pre_existing`. |
+| `_lifetime_costs.py` | The apply boundary: `apply_npv` (a Spine solve) and `apply_run_fields_of_synthetic_solve` (a roll or nested sub-solve) set the lifetime costs on `flex_data`. |
 | `_profiles.py` | `p_profile_value` and the `p_process_existing_count` factor used by profile-bound constraints. |
 | `_walks.py` | Backward / forward step lookups (`dtttdt`, `dtttdt_forward_only`, the block-interior variant). |
 | `_arc_unions.py` | Arc set algebra: `flow_to_n`, `flow_from_n`, the commodity-flow joins, the reverse-arc additions for connections. |

@@ -3,7 +3,7 @@
 Fixture ``tests.json`` (built from JSON).  ``model.social_discount_rate`` r = 0.04 (alternative
 ``invest_solveSequence_5weeks``), ``discount_offset_operations`` 0.5 and ``discount_offset_investment`` 0 (the
 defaults), four periods p2020 … p2035 of 5 years each, so the run years are Y = 0, 5, 10, 15 and the horizon ends at
-20.  Hand derivation of the factors (``_npv`` "Run-level fields of the reported costs")::
+20.  Hand derivation of the factors (``_run_costs`` "Run-level fields of the reported costs")::
 
     F_ops(d) = Σ_{y=0..4} 1.04^-(Y_d + y + 0.5)        F_inv(d) = Σ_{y=0..4} 1.04^-(Y_d + y)
 
@@ -172,7 +172,7 @@ def test_run_window_keeps_the_fan_lineage() -> None:
     branch period p2035_high operates in p2035_high and p2040_high, not in the other branch's p2040_low; a period
     of the run outside the solve (p2045) is in every window; the bounded window stops at the end of the
     lifetime (yr 0 + 10)."""
-    from flextool.engine.preprocess.params._npv import _run_window
+    from flextool.engine.preprocess.params._run_costs import _run_window
 
     yr = {"p2035_high": 0.0, "p2035_low": 0.0, "p2040_high": 5.0, "p2040_low": 5.0, "p2045": 10.0}
     in_use = ["p2035_high", "p2035_low", "p2040_high", "p2040_low"]
