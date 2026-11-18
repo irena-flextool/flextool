@@ -66,7 +66,8 @@ Equation families, in emit order (module in brackets when not model/core.py):
                       storage_state_solve_horizon_reference_value
   Profiles            profile_flow_{upper_limit,lower_limit,fixed}
   Objective           balance slack penalty, commodity cost and sales, CO2 price, variable cost, startup cost,
-                      ramp cost, storage reference price, invest/divest annuities, existing fixed cost (optional constant),
+                      ramp cost, storage reference price, invest/divest annuities, existing fixed cost (optional
+                      constant),
                       divest_built_cost [_retire_built], extend_cost [_extend]
   Feature modules     capacityMargin, inertia_constraint, non_sync_constraint + slack penalties [_group_slack];
                       reserveBalance_*, reserve_total_upper, reserve_process_*, connection_reserve_*,

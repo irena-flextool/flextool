@@ -193,3 +193,22 @@ def test_unnamed_lifetime_map_reads_each_period(tmp_path_factory) -> None:
         assert {d: got.get(d, 0.0) for d in want} == want, shape
     assert _lp(runs["x"].flex_data) == _lp(runs["period"].flex_data)
 
+
+
+@pytest.mark.solver
+@pytest.mark.parametrize("parameter, start_value", [("life_extension_cost", 999.0), ("life_extension_years", 3.0)])
+def test_extension_map_is_read_at_the_extension_start(tmp_path_factory, parameter, start_value) -> None:
+    """Every extension of ``single_extension`` starts at p2030 or p2035 (the end of life of the existing cohort and of
+    the p2020 / p2025 investments, lifetime 10): a map whose value differs at the run start (p2020, p2025:
+    ``start_value``) and equals the constant from p2030 on builds the constant's LP."""
+    entity, base, extra, chain, periods, _ = CASES["single_extension"]
+    constant = _steps(tmp_path_factory, "single_extension")
+    shaped = {d: (start_value if d in ("p2020", "p2025") else base[parameter]) for d in periods}
+    values = list(extra) + [["unit", entity, name, _map(shaped, "period") if name == parameter else b64(v, "float")]
+                            for name, v in base.items()]
+    steps, _, _ = _RUNS.get(tmp_path_factory, alt=f"life_ext_start_{parameter}", values=values, base_chain=chain)
+    assert list(steps) == list(constant) and constant
+    step = list(steps.values())[-1]
+    assert step.flex_data.cd_extend is not None and step.flex_data.cd_extend.height > 0
+    for name in constant:
+        assert _lp(steps[name].flex_data) == _lp(constant[name].flex_data), name

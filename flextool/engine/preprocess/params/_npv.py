@@ -3643,8 +3643,9 @@ def apply_extension_costs(flex_data: object,
                             .select(cohort.columns))
 
     def keyed(frame: pl.DataFrame) -> Param:
-        return Param(("e", "cohort", "d"), frame.lazy().select(alias_to_axis("e", "e"), pl.col("parent").alias("cohort"),
-                                                               alias_to_axis("d", "d"), "value").collect())
+        return Param(("e", "cohort", "d"),
+                     frame.lazy().select(alias_to_axis("e", "e"), pl.col("parent").alias("cohort"),
+                                         alias_to_axis("d", "d"), "value").collect())
 
     flex_data.cd_extend_cost = keyed(cost)
     flex_data.cd_extend_fixed = keyed(fixed)

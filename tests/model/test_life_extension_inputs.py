@@ -4,8 +4,8 @@
 offers.  Errors: only one of the two parameters on an entity (an extension needs both: the cost it pays and the
 years it is kept), ``life_extension_years`` ≤ 0 (charged for no years), ``life_extension_cost`` < 0 (paid to
 be extended) and either on a ``reinvest_automatic`` entity (explicit or the default: its capacity is replaced at its
-end of life, never extended).  Warning: both given on an entity without ``lifetime_technical`` (its capacity never reaches an end
-of life).  Both given with a lifetime: silent.
+end of life, never extended).  Warning: both given on an entity without ``lifetime_technical`` (its capacity never
+reaches an end of life).  Both given with a lifetime: silent.
 
 Database: ``tests/fixtures/tests.json`` + one override alternative on ``init, west, coal`` (coal_plant: existing
 500 MW, no lifetime_technical, no lifetime_method: the default reinvest_automatic); the cases set lifetime_method

@@ -1385,8 +1385,8 @@ def existing_capacity(entities: Iterable[str],
     dead = {k for k, v in alive.items() if not v}
     retired_all = retired_carried(rows, years, periods, dead)
     retired = retired_carried([r for r in rows if existing_of.get(r[0]) == r[1]], years, periods, dead)
-    retired_built = retired_carried([r for r in rows if existing_of.get(r[0]) != r[1] and (r[0], r[1]) not in extensions],
-                                    years, periods, dead)
+    retired_built = retired_carried(
+        [r for r in rows if existing_of.get(r[0]) != r[1] and (r[0], r[1]) not in extensions], years, periods, dead)
 
     divest = frozenset(str(e) for e in divest_entities)
     pre: dict[tuple[str, str], float] = {}

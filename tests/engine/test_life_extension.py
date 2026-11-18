@@ -176,8 +176,8 @@ def test_an_extension_is_never_extended(tmp_path_factory) -> None:
 
 @pytest.mark.solver
 def test_extension_without_an_invest_method_is_reported_as_investment(tmp_path_factory) -> None:
-    """invest_method not_allowed (no investment, no retirement): the existing 500 MW are still extended at p2030 (E 100, 10
-    years, the plant's only way to keep producing), and the extension's cost is reported as investment of p2030:
+    """invest_method not_allowed (no investment, no retirement): the existing 500 MW are still extended at p2030 (E 100,
+    10 years, the plant's only way to keep producing), and the extension's cost is reported as investment of p2030:
     500 · 100 000·v^10 = 30.695663 M CUR (discounted) and 500 · 100 000·ann(10) = 6.475229 M CUR a year."""
     from tests.engine.test_chain_costs import MEGA, _results
     values = _values(cost=100.0, method="not_allowed")
@@ -218,3 +218,30 @@ def test_extension_that_rounds_to_no_period_is_not_offered(tmp_path_factory, cap
     assert step.flex_data.cd_extend is None
     assert (f"Warning: {PLANT}: the life extensions starting in p2030, p2035 would never operate "
             "(life_extension_years 1 years, end_of_life_method closest_seam)") in capsys.readouterr().out
+
+
+@pytest.mark.solver
+def test_capacity_margin_report_counts_the_extended_capacity(tmp_path_factory) -> None:
+    """invest_method not_allowed: the existing 500 MW of coal_plant end at p2030 and are extended (E 100, 10 years),
+    so the plant still holds 500 MW of firm capacity in p2030 and p2035.  A capacity margin of 100 MW on west: the
+    report's coal_plant firm row is that 500 MW (κ 1, the plant fully available) in every period, and at the binding
+    step counted + shortfall = requirement (the report agrees with the LP's own slack)."""
+    from flextool.engine.model._group_slack import capacity_margin_report
+
+    values = _values(cost=100.0, method="not_allowed") + [
+        ["group", "cm", "capacity_margin_method", b64("absolute", "str")],
+        ["group", "cm", "capacity_margin_absolute", b64(100.0, "float")],
+        ["group", "cm", "penalty_capacity_margin", b64(1000.0, "float")]]
+    entities = [["group", "cm", None], ["group__node", ["cm", "west"], None]]
+    steps, _, _ = _RUNS.get(tmp_path_factory, alt="le_margin", values=values, base_chain=_no_battery_invest(SINGLE),
+                            entities=entities)
+    step = list(steps.values())[-1]
+    assert _solution(step, "v_extend_p")[("existing:p2020", "p2030")] * MW == pytest.approx(MW, abs=1e-6)
+    summary, entity = capacity_margin_report(step.flex_data, step.solution)
+    firm = entity.filter((pl.col("entity") == PLANT) & (pl.col("class") == "firm"))
+    assert dict(firm.select("period", "value").rows()) == {
+        d: pytest.approx(MW, rel=1e-9) for d in ("p2020", "p2025", "p2030", "p2035")}
+    for row in summary.filter(pl.col("group") == "cm").iter_rows(named=True):
+        assert row["counted"] + row["shortfall"] >= row["requirement"] - 1e-6, row["period"]
+        assert row["shortfall"] == pytest.approx(max(0.0, row["requirement"] - row["counted"]), abs=1e-6), \
+            row["period"]
