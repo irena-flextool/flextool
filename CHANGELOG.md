@@ -85,6 +85,27 @@ values").
   period's discount factor. The fixed costs of new and retired capacity are reported in each period they are paid
   or saved. Totals over the periods are unchanged, except that the salvage credit of existing capacity that may
   retire now shows as *salvage pre-existing*. Scripts reading the old category names must be updated.
+- **`bind_within_solve` storage in a rolling solve continues from roll to roll and closes over the solve
+  (results change).** In a `rolling_window` solve without representative periods (also
+  `bind_within_solve_blended_weights`, which such a solve uses as `bind_within_solve`) every roll after the first
+  starts from the level realised by the previous roll, a roll ends its horizon at least at the level it started
+  from (less only what the node's own `self_discharge_loss` and `inflow` take when nothing is done), and the
+  roll(s) whose horizon reaches the end of the solve end at the level the first roll started from (in MWh). An
+  upper-level `fix_quantity` or `fix_usage` at the end of a roll's horizon replaces these end conditions,
+  `fix_price` only values the closing rolls' end, and `fix_end` wins at the model's last step (with `fix_end`
+  and no `fix_start` the first roll cycles at `storage_state_end`). Before, each roll cycled on itself from a
+  free level: the level jumped at every roll boundary and the rolls could use energy never produced (#119, #126).
+  Rolling solves on representative periods, `bind_within_period` and `bind_within_timeblock` are unchanged.
+  Upgraded databases get a notice naming the nodes.
+- **A nested lower-level solve starts a node its upper solve fixes from the upper plan (results change).** A
+  storage node with a `storage_nested_fix_method` that chains forward in the lower solve (`bind_forward_only`, or
+  `bind_within_solve` in a rolling solve under `fix_quantity` / `fix_usage`) and has no state realised before it
+  starts from the level the upper solve planned for the lower solve's first step, unless `fix_start` applies (the
+  lower level starts with the model; a warning names a node whose two starts differ). Before, it started free or
+  from `fix_start` also later in the model, so the lower solve could start fuller than the upper plan and keep
+  the difference. Under `fix_quantity` / `fix_usage` the first roll of a rolling `bind_within_solve` node now
+  starts from `fix_start` instead of from its wrap, which the upper target pinned. Upgraded databases get a
+  notice naming the nodes.
 - **BREAKING for tools that connect FlexTool with other models through `override_provider`** (scripts and
   integrations that inject state between solves, for example capacities decided by another model): the keys
   `handoff/realized_invest`, `handoff/realized_existing` and `handoff/realized_divest` are gone and raise an error
@@ -125,6 +146,9 @@ values").
 
 ### Fixes
 
+- **The self-discharge result (`v_self_discharge`) of a `fix_start` storage node counts the storage invested in
+  the solve** in the loss of the first step. Before, only the existing capacity was counted there (the model's
+  balance row was right).
 - **A chain of solves with a `no_reinvestment` entity no longer stops with a `p_entity_max_units` error** once
   the entity's investment window has closed in a later solve.
 - **A `lifetime_technical` map with the unnamed index (`x`) gives each period its own value** in the end of life
