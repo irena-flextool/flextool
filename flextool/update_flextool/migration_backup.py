@@ -18,6 +18,7 @@ import logging
 import os
 import shutil
 from collections.abc import Iterator
+from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -46,19 +47,44 @@ def recovery_text(db_path: Path, backup: Path) -> str:
             f"{db_path.name} (both in {db_path.parent}).")
 
 
+def _made_on(backup: Path) -> str:
+    """When *backup* was written (its creation time; its modification time is the original's, kept by the copy)."""
+    try:
+        st = backup.stat()
+    except OSError:
+        return "at an unknown time"
+    made = getattr(st, "st_birthtime", None) or st.st_ctime
+    return datetime.fromtimestamp(made).strftime("on %Y-%m-%d %H:%M")
+
+
+def kept_copy_error(db_path: Path, backup: Path) -> MigrationBackupError:
+    """The refusal to migrate *db_path* while the pre-migration copy *backup* of an earlier migration is there."""
+    return MigrationBackupError(
+        f"{db_path} was not migrated: the pre-migration copy {backup.name}, made {_made_on(backup)} by an earlier "
+        f"migration, is still there (in {db_path.parent}). If that migration did not complete (it was stopped or "
+        f"its restore failed), the copy is the original and the database may be half migrated: close every program "
+        f"that uses the database, delete {db_path.name} and rename {backup.name} to {db_path.name}. If that "
+        f"migration completed and the database has been used since, the copy is out of date: delete "
+        f"{backup.name}. Then migrate again.")
+
+
+def refuse_kept_copy(db_path: Path) -> None:
+    """Raise :func:`kept_copy_error` when a pre-migration copy of *db_path* is still there: it may be the only intact
+    original, so nothing may migrate (or overwrite it) until the user has put it back or deleted it."""
+    backup = backup_path(db_path)
+    if backup.exists():
+        raise kept_copy_error(db_path, backup)
+
+
 def make_backup(db_path: Path) -> Path:
     """Copy *db_path* to :func:`backup_path` and return that path.
 
     Raises :class:`MigrationBackupError` (the file is unchanged, no partial copy is left) when a copy from an earlier
-    migration is still there (it may be the only intact original), when the disk has no room for the copy, or when
-    it cannot be written.
+    migration is still there (:func:`refuse_kept_copy`), when the disk has no room for the copy, or when it cannot be
+    written.
     """
     backup = backup_path(db_path)
-    if backup.exists():
-        raise MigrationBackupError(
-            f"{db_path} was not migrated: the pre-migration copy {backup} of an earlier migration is still there. "
-            f"If that migration did not complete, it is the original: {recovery_text(db_path, backup)} Otherwise "
-            f"delete {backup.name} and migrate again.")
+    refuse_kept_copy(db_path)
     size = db_path.stat().st_size
     try:
         free = shutil.disk_usage(db_path.parent).free

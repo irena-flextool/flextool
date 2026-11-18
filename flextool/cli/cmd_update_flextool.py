@@ -1,4 +1,6 @@
 import argparse
+import sys
+
 from flextool.update_flextool.self_update import update_flextool
 
 
@@ -10,8 +12,8 @@ def main():
         help="skip 'git restore' and 'git pull' steps",
     )
     args = arg_parser.parse_args()
-    update_flextool(args.skip_git)
+    return update_flextool(args.skip_git)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

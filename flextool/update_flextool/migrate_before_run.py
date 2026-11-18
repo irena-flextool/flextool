@@ -94,9 +94,11 @@ def migrate_before_run(database: str) -> int | None:
     run migrated it while this one waited for the lock, or *database* is not a local sqlite file (the engine reports
     a missing file or another URL).  Raises :class:`~flextool.update_flextool.frozen.FrozenDatabaseError` for a frozen
     database that would have to be migrated, and :class:`~flextool._file_lock.FileLockError` when the lock cannot be
-    taken.
+    taken, and :class:`~flextool.update_flextool.migration_backup.MigrationBackupError` when a pre-migration copy of
+    an earlier migration is still there.
     """
     from flextool.update_flextool.frozen import FrozenCheckError, frozen_guard, sqlite_path_from
+    from flextool.update_flextool.migration_backup import refuse_kept_copy
 
     path = sqlite_path_from(database)
     if path is None or not path.is_file():
@@ -105,6 +107,8 @@ def migrate_before_run(database: str) -> int | None:
     needed, _version = _needed(path)
     if needed is None:
         return None
+    # A kept pre-migration copy may be the only intact original: name it before anything else reads the file.
+    refuse_kept_copy(path)
     # Refuse a frozen database before waiting for the lock (migrate_database checks again).  A marker that cannot be
     # read now (another migration is committing) is checked again under the lock.
     try:

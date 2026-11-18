@@ -181,8 +181,17 @@ def migrate_database(
     """
     from flextool.update_flextool.frozen import FrozenCheckError, sqlite_path_from
     from flextool.update_flextool.migrate_before_run import migration_lock
+    from flextool.update_flextool.migration_backup import backup_path, refuse_kept_copy
 
-    # The frozen guard runs first, read-only, before anything can open the file with ``upgrade=True``.  A marker that
+    # A pre-migration copy left by an earlier migration may be the only intact original (the file itself may be half
+    # migrated, or truncated by an interrupted restore, so that even the frozen check below cannot read it): refuse
+    # first, naming the copy.  A current file has nothing to migrate and is left alone.
+    kept_path = sqlite_path_from(database_path)
+    if (backup and kept_path is not None and kept_path.is_file() and backup_path(kept_path).exists()
+            and _current_version_ro(kept_path, up_to) is None):
+        refuse_kept_copy(kept_path)
+
+    # The frozen guard runs next, read-only, before anything can open the file with ``upgrade=True``.  A marker that
     # cannot be read now (another migration is committing) is checked again under the migration lock.
     try:
         proceed, frozen = _frozen_check(database_path, allow_frozen)

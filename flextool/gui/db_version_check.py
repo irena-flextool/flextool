@@ -14,7 +14,15 @@ from typing import Callable
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_migration import MigrationCancelled
 from flextool.sqlite_url import sqlite_url_string
-from flextool.update_flextool.migration_backup import make_backup, recovery_text, remove_backup, restore_from_backup
+from flextool.update_flextool.migration_backup import (
+    MigrationBackupError,
+    backup_path,
+    kept_copy_error,
+    make_backup,
+    recovery_text,
+    remove_backup,
+    restore_from_backup,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +153,14 @@ def check_and_upgrade_database(
             return False
         return True
 
+    # A pre-migration copy left by an earlier migration may be the only intact original; the file itself may be half
+    # migrated or truncated (then even the frozen check cannot read it).  Name the copy first; a current file has
+    # nothing to migrate and is left alone.
+    kept = backup_path(Path(db_path))
+    if kept.exists() and not is_current_ro(db_path):
+        messages.append(str(kept_copy_error(Path(db_path), kept)))
+        return was_upgraded, True, messages
+
     try:
         frozen_guard(db_path, allow_frozen=allow_frozen)
     except FrozenCheckError:
@@ -205,7 +221,9 @@ def _upgrade_locked(
             backup = make_backup(db_path)
             return True
         except Exception as exc:
-            backup_error = str(exc)
+            backup_error = (str(exc) if isinstance(exc, MigrationBackupError) else
+                            f"{db_path.name} was not migrated: its pre-migration copy could not be made ({exc}). "
+                            "The database is unchanged.")
             logger.error("Could not create migration backup for %s", db_path, exc_info=True)
             return False
 
@@ -213,10 +231,7 @@ def _upgrade_locked(
         # ── Step 1: SpineDB API schema upgrade ─────────────────────
         if not schema_current:
             if not _ensure_backup():
-                messages.append(
-                    f"{db_path.name}: could not create a safety backup before "
-                    f"upgrading; the database was left untouched. {backup_error}"
-                )
+                messages.append(backup_error)
                 return was_upgraded, True, messages
             with open_database_mapping(db_url, create=False, upgrade=True):
                 pass
@@ -228,10 +243,7 @@ def _upgrade_locked(
         version_before = _read_flextool_version(db_url)
         if version_before is not None and version_before < FLEXTOOL_DB_VERSION:
             if not _ensure_backup():
-                messages.append(
-                    f"{db_path.name}: could not create a safety backup before "
-                    f"migrating; the database was left untouched. {backup_error}"
-                )
+                messages.append(backup_error)
                 return was_upgraded, True, messages
 
             from flextool.update_flextool.db_migration import migrate_database
