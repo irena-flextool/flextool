@@ -75,6 +75,8 @@ class TimeSeriesResults:
     unit_startup_energy_dt_ee: pd.DataFrame | None = None
     unit_startup_energy_d_ee: pd.DataFrame | None = None
     unit_capacity_ed_p: pd.DataFrame | None = None
+    unit_cohort_capacity_ed_p: pd.DataFrame | None = None
+    unit_retirement_ed_p: pd.DataFrame | None = None
 
     # --- Connection outputs ---
     connection_online_dt_e: pd.DataFrame | None = None
@@ -90,6 +92,8 @@ class TimeSeriesResults:
     connection_d_eee: pd.DataFrame | None = None
     connection_cf_d_e: pd.DataFrame | None = None
     connection_capacity_ed_p: pd.DataFrame | None = None
+    connection_cohort_capacity_ed_p: pd.DataFrame | None = None
+    connection_retirement_ed_p: pd.DataFrame | None = None
 
     # --- Node outputs ---
     node_d_ep: pd.DataFrame | None = None
@@ -105,6 +109,8 @@ class TimeSeriesResults:
     node_slack_down_dt_e: pd.DataFrame | None = None
     node_slack_down_d_e: pd.DataFrame | None = None
     node_capacity_ed_p: pd.DataFrame | None = None
+    node_cohort_capacity_ed_p: pd.DataFrame | None = None
+    node_retirement_ed_p: pd.DataFrame | None = None
 
     # --- NodeGroup outputs ---
     nodeGroup_flows_d_gpe: pd.DataFrame | None = None
