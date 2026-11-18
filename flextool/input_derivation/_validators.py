@@ -2732,10 +2732,25 @@ def _missing_lifetime(src, cls: str, methods: dict[str, str]) -> list[str]:
 
 def _life_extension_pairs(src, cls: str, errors: list[str], warnings: list[str]) -> None:
     """The life-extension checks of the ``cls`` entities: an error for an entity that gives only one of
-    ``life_extension_cost`` / ``life_extension_years`` (the extension needs both), a warning for one that gives both
-    but no ``lifetime_technical`` (its capacity never reaches an end of life, so there is nothing to extend)."""
+    ``life_extension_cost`` / ``life_extension_years`` (the extension needs both) and for one whose
+    ``lifetime_method`` (explicit, or the default) is ``reinvest_automatic`` (its capacity is replaced at its end of
+    life, so an extension would be ignored), a warning for one that gives both but no ``lifetime_technical`` (its
+    capacity never reaches an end of life, so there is nothing to extend)."""
     entities_with = _entities_with(src, cls)
     cost, years = entities_with(LIFE_EXTENSION_COST), entities_with(LIFE_EXTENSION_YEARS)
+    db = getattr(src, "_db", src)
+    default_method = str(_definition_default(db, cls, "lifetime_method") or "reinvest_automatic")
+    methods = {k[0]: v for k, v in _str_values(src, cls, "lifetime_method").items()}
+    automatic = sorted(e for e in cost | years if methods.get(e, default_method) not in _BOUNDED_LIFETIME)
+    for ent in automatic:
+        method = methods.get(ent, default_method)
+        given = " and ".join(name for name, ents in ((LIFE_EXTENSION_COST, cost), (LIFE_EXTENSION_YEARS, years))
+                             if ent in ents)
+        errors.append(f"{cls} '{ent}' has {given} but lifetime_method {method}"
+                      + ("" if ent in methods else " (the default)")
+                      + ": its capacity is replaced at the end of its life, so it is never extended. Set "
+                      "lifetime_method reinvest_choice or no_reinvestment to extend it, or remove the life "
+                      "extension.")
     for ent in sorted(cost ^ years):
         given, missing = ((LIFE_EXTENSION_COST, LIFE_EXTENSION_YEARS) if ent in cost
                           else (LIFE_EXTENSION_YEARS, LIFE_EXTENSION_COST))
@@ -2770,8 +2785,9 @@ def validate_basic_sanity(src) -> None:
       (without ``payback_time``), or a ``lifetime_method`` ``reinvest_choice`` / ``no_reinvestment`` with
       investment, retirement or ``existing``;
     * ``discount_rate`` < 0 (unit / connection / node); 0 is the straight-line annuity.
-    * ``life_extension_years`` ≤ 0 (charged for no years), ``life_extension_cost`` < 0, or only one of the two on
-      an entity (:func:`_life_extension_pairs`; an extension needs both).
+    * ``life_extension_years`` ≤ 0 (charged for no years), ``life_extension_cost`` < 0, only one of the two on an
+      entity, or either on a ``reinvest_automatic`` entity (:func:`_life_extension_pairs`; an extension needs both,
+      and only capacity that retires at its end of life is extended).
     * the age of existing capacity (:func:`_existing_age_errors`): ``age_at_model_start`` and ``build_year`` on one
       entity, a ``build_year`` without ``model.start_year`` or after it, a negative ``age_at_model_start``, models
       of the scenario with different ``start_year``.

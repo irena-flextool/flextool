@@ -108,7 +108,7 @@ def test_descriptions_say_what_an_extension_does() -> None:
         for phrase in ("paid when the extension starts", "at most all of it", "no invest_method is needed",
                        "net_salvage_value the capacity would have received at its end of life (given up",
                        "net_salvage_value received at the extended end of life", "financed at discount_rate",
-                       "reinvest_automatic it competes with the replacement", "never extended again",
+                       "Not with reinvest_automatic", "never extended again",
                        "can be retired when invest_method allows retirement", "not as investment",
                        "Give both life_extension_cost and life_extension_years, or neither",
                        "the value of the period the extension starts in"):
@@ -167,3 +167,27 @@ def test_a_class_the_database_lacks_gets_no_definition() -> None:
         names = {(d["entity_class_name"], d["name"]) for d in db.get_items("parameter_definition")}
     assert {k for k in SIX if k[0] != "node"} <= names
     assert not [k for k in names if k[0] == "node"]
+
+
+@pytest.mark.parametrize("edited", [False, True])
+def test_head_refresh_replaces_the_superseded_extension_text(tmp_path_factory, edited) -> None:
+    """A database at 82 made by a development build that offered a life extension also under reinvest_automatic has
+    that build's life_extension_cost description: it gets the current one (no extension of reinvest_automatic
+    capacity); a description the user edited is kept."""
+    url = _seed(tmp_path_factory, f"le_dev_text_{edited}", FLEXTOOL_DB_VERSION)
+    old = {cls: m._v82_superseded()[(cls, "life_extension_cost")][1] + (" My note." if edited else "")
+           for cls in CLASSES}
+    with DatabaseMapping(url) as db:
+        for cls, text in old.items():
+            pdef = db.get_item("parameter_definition", entity_class_name=cls, name="life_extension_cost")
+            db.update_parameter_definition(id=pdef["id"], description=text)
+        db.commit_session("a development build's life extension text")
+    path = Path(url.removeprefix("sqlite:///"))
+    assert m._head_defaults_stale_ro(path) is not edited
+    migrate_database(url)
+    with DatabaseMapping(url) as db:
+        for cls in CLASSES:
+            got = db.get_item("parameter_definition", entity_class_name=cls, name="life_extension_cost")["description"]
+            assert got == (old[cls] if edited else _shipped()[(cls, "life_extension_cost")][0]), cls
+            assert edited or "Not with reinvest_automatic" in got
+    assert not m._head_defaults_stale_ro(path)

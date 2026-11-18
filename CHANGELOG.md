@@ -143,7 +143,9 @@ Input databases move to data version 82. The FlexTool window, the Spine Toolbox 
   cost paid when the extension starts. The extension is priced as a plant of its own (the extension cost plus the
   `net_salvage_value` the capacity would have received at its end of life, financed at `discount_rate` over
   `life_extension_years`, less the salvage value at the extended end of life), so it competes with new capacity on
-  equal terms; it pays the `fixed_cost` of its years in service. It needs no `invest_method`, can be retired when the
+  equal terms; it pays the `fixed_cost` of its years in service. It is for `lifetime_method` `reinvest_choice` and
+  `no_reinvestment` (an input error names a `reinvest_automatic` entity, whose capacity is replaced at its end of
+  life). It needs no `invest_method`, can be retired when the
   `invest_method` allows retirement, is never extended again, and counts as capacity, not investment, in the
   investment limits. The extension cost is reported as investment of the period it starts in. Give both parameters or
   neither (an input error names an entity with one of them). Without them nothing changes.

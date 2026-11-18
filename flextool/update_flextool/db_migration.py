@@ -11585,16 +11585,16 @@ def _v82_life_extension_texts(cls: str, cap: str, per: str) -> dict[tuple[str, s
             "lifetime_technical, paid when the extension starts: at the end of life (rounded by end_of_life_method). "
             f"The model decides how much of the {cap} still in service at its end of life to extend, at most all of "
             "it; no invest_method is needed, but the period the extension starts in must be an invest_period of the "
-            "solve. The extension is priced as a plant of its own: life_extension_cost plus the net_salvage_value the capacity would have received at its end of life (given up: it stays in "
-            "the plant), financed at discount_rate over life_extension_years, less the net_salvage_value received "
-            "at the extended end of life, paid as a level yearly cost for each year in service, with the fixed_cost "
-            "of each year. With lifetime_method reinvest_choice it competes with new capacity, with "
-            "no_reinvestment it is the only way to keep the capacity after its end of life, and with "
-            "reinvest_automatic it competes with the replacement: the extended capacity is replaced at the "
-            "extended end of life instead (each end of life of the chain can be extended). An extension, and the "
-            "replacements of an extension, are never extended again. Extended capacity can be retired when "
-            "invest_method allows retirement, and counts as capacity, not as investment, in the investment limits. "
-            f"{both} Constant or period: the value of the period the extension starts in is used."),
+            "solve. The extension is priced as a plant of its own: life_extension_cost plus the net_salvage_value "
+            "the capacity would have received at its end of life (given up: it stays in the plant), financed at "
+            "discount_rate over life_extension_years, less the net_salvage_value received at the extended end of "
+            "life, paid as a level yearly cost for each year in service, with the fixed_cost of each year. With "
+            "lifetime_method reinvest_choice it competes with new capacity; with no_reinvestment it is the only "
+            "way to keep the capacity after its end of life. Not with reinvest_automatic, whose capacity is "
+            "replaced at its end of life (an input error). An extension is never extended again. Extended capacity "
+            "can be retired when invest_method allows retirement, and counts as capacity, not as investment, in "
+            f"the investment limits. {both} Constant or period: the value of the period the extension starts in is "
+            "used."),
         (cls, "life_extension_years"): (
             f"[years] How long {cap} can be kept in service beyond the end of its lifetime_technical for "
             "life_extension_cost (see there): the extended end of life is the end of life plus "
@@ -11650,6 +11650,26 @@ def _v82_replacement_texts(cls: str, cap: str, what: str, per: str) -> dict[tupl
     }
 
 
+def _v82_shipped_life_extension_cost_text(cap: str, per: str) -> str:
+    """The description of ``life_extension_cost`` a development build of v82 shipped, when a life extension was
+    also offered under reinvest_automatic (superseded, :func:`_v82_superseded`)."""
+    return (f"[CUR/{per}] One-off cost of keeping {cap} in service for life_extension_years beyond the end of its "
+            "lifetime_technical, paid when the extension starts: at the end of life (rounded by end_of_life_method). "
+            f"The model decides how much of the {cap} still in service at its end of life to extend, at most all of "
+            "it; no invest_method is needed, but the period the extension starts in must be an invest_period of the "
+            "solve. The extension is priced as a plant of its own: life_extension_cost plus the net_salvage_value "
+            "the capacity would have received at its end of life (given up: it stays in the plant), financed at "
+            "discount_rate over life_extension_years, less the net_salvage_value received at the extended end of "
+            "life, paid as a level yearly cost for each year in service, with the fixed_cost of each year. With "
+            "lifetime_method reinvest_choice it competes with new capacity, with no_reinvestment it is the only "
+            "way to keep the capacity after its end of life, and with reinvest_automatic it competes with the "
+            "replacement: the extended capacity is replaced at the extended end of life instead (each end of life "
+            "of the chain can be extended). An extension, and the replacements of an extension, are never extended "
+            "again. Extended capacity can be retired when invest_method allows retirement, and counts as capacity, "
+            "not as investment, in the investment limits. Give both life_extension_cost and life_extension_years, "
+            "or neither. Constant or period: the value of the period the extension starts in is used.")
+
+
 def _v82_superseded() -> dict[tuple[str, str], tuple[str | None, str]]:
     """``{(class, name): (default, description)}``: the default and description pairs of v82 definitions that a
     development build of v82 shipped and that have since been superseded (the current description is in
@@ -11667,6 +11687,7 @@ def _v82_superseded() -> dict[tuple[str, str], tuple[str | None, str]]:
         for _cls, name in _v82_replacement_texts(cls, cap, what, per):
             out[(cls, name)] = (defaults.get(name), v81[(cls, name)])
         out[(cls, "payback_time")] = (None, _v82_shipped_payback_time_text(cap))
+        out[(cls, "life_extension_cost")] = (None, _v82_shipped_life_extension_cost_text(cap, per))
     return out
 
 
