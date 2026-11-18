@@ -72,13 +72,29 @@ _PINNED_ENV = [
 # Per-iteration ``progress_callback`` payloads: iter and converged are exact;
 # lower_bound / upper_bound / best_upper_bound / gap / region_costs values
 # are rtol=1e-12; region_costs key sets are exact.
-_EXPECTED_TRAJECTORY = [
+#
+# The investment annuity is worth the investment cost at every
+# discount_offset_investment: A = C * ann(r, n) * (1 + r)**(offset - 1).  The
+# fixture leaves the offset at its default 0, so every investment coefficient
+# is 1/(1 + r) of the captured one, and nothing else in the LP changes.  The
+# literals below are the trajectory captured before that change; the pinned
+# trajectory is DERIVED from them, not re-captured:
+#   * The only investors the master prices are the two pipes (invest_cost 10
+#     CUR/kW, discount_rate 0.05, lifetime_technical 25, unit size 1000 MW,
+#     one year represented, social_discount_rate 0).  Their coefficient per
+#     normalised unit was 1000 * 10 * ann(0.05, 25) * 1000 = 709 524.57; the
+#     change removes _PIPE_SHIFT = that * (1 - 1/1.05) = 33 786.88 per unit.
+#   * The iterates are unchanged: the master's pipe choice is 5 units in
+#     iteration 1 (its bound) and pipe_AB 0.015685987287817 in iteration 2
+#     (the recovered decision, the same before and after).  So both bounds of
+#     iteration k fall by _PIPE_SHIFT * x_k, the region costs (dispatch and
+#     the regions' own unused investment options) are unchanged, and the gap
+#     is (UB - LB) / |UB| of the shifted bounds.
+_PRE_ANNUITY_FIX = [
     {
         "iter": 1,
         "lower_bound": -200298184177.43353,
         "upper_bound": 457336487520.2136,
-        "best_upper_bound": 457336487520.2136,
-        "gap": 1.4379667698580045,
         "converged": False,
         "region_costs": {
             "region_A": 231849759806.85568,
@@ -90,8 +106,6 @@ _EXPECTED_TRAJECTORY = [
         "iter": 2,
         "lower_bound": 12217877391.52521,
         "upper_bound": 12217881132.513472,
-        "best_upper_bound": 12217881132.513472,
-        "gap": 3.061896102607535e-07,
         "converged": True,
         "region_costs": {
             "region_A": 2046654330.1666317,
@@ -100,13 +114,37 @@ _EXPECTED_TRAJECTORY = [
         },
     },
 ]
+_DISCOUNT_RATE = 0.05
+_PIPE_COEFFICIENT_BEFORE = (
+    1000.0 * 10.0 * _DISCOUNT_RATE / (1.0 - (1.0 + _DISCOUNT_RATE) ** -25) * 1000.0
+)
+_PIPE_SHIFT = _PIPE_COEFFICIENT_BEFORE * (1.0 - 1.0 / (1.0 + _DISCOUNT_RATE))
+_PIPE_UNITS = {1: 5.0, 2: 0.01568598728781764}
 
-# Final ``BendersResult`` fields (real units, s=1.0).
+
+def _derived(entry: dict) -> dict:
+    shift = _PIPE_SHIFT * _PIPE_UNITS[entry["iter"]]
+    lower = entry["lower_bound"] - shift
+    upper = entry["upper_bound"] - shift
+    return {
+        "iter": entry["iter"],
+        "lower_bound": lower,
+        "upper_bound": upper,
+        "best_upper_bound": upper,
+        "gap": (upper - lower) / max(1.0, abs(upper)),
+        "converged": entry["converged"],
+        "region_costs": dict(entry["region_costs"]),
+    }
+
+
+_EXPECTED_TRAJECTORY = [_derived(e) for e in _PRE_ANNUITY_FIX]
+
+# Final ``BendersResult`` fields (real units, s=1.0): the converged iteration.
 _EXPECTED_ITERATIONS = 2
-_EXPECTED_LOWER_BOUND = 12217877391.52521
-_EXPECTED_UPPER_BOUND = 12217881132.513472
-_EXPECTED_TOTAL_OBJECTIVE = 12217881132.513472
-_EXPECTED_GAP = 3.061896102607535e-07
+_EXPECTED_LOWER_BOUND = _EXPECTED_TRAJECTORY[-1]["lower_bound"]
+_EXPECTED_UPPER_BOUND = _EXPECTED_TRAJECTORY[-1]["upper_bound"]
+_EXPECTED_TOTAL_OBJECTIVE = _EXPECTED_UPPER_BOUND
+_EXPECTED_GAP = _EXPECTED_TRAJECTORY[-1]["gap"]
 
 _RTOL = 1e-12
 # Absolute floor so a value pinned at exactly 0.0 (e.g. a converged gap) doesn't
