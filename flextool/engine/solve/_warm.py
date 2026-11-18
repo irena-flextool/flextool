@@ -128,7 +128,8 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "storage_bind_forward_only_blended_weights",
     # Phase E — landed with the per-period cyclic-closure variant.
     "storage_bind_within_period_blended_weights",
-    "storage_fix_start", "storage_fix_end", "storage_solve_at_model_end", "storage_roll_end",
+    "storage_fix_start", "storage_fix_end", "storage_solve_at_model_end", "storage_rp_chain_at_model_end",
+    "storage_roll_end",
     "dtttdt", "dtttdt_forward_only", "dtttdt_within_solve",
     "n_fix_storage_quantity", "ndt_fix_storage_quantity", "ndt_fix_storage_price",
     "dtt_timeline_matching", "period_branch", "period_last",

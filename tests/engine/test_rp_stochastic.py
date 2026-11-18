@@ -176,23 +176,25 @@ def _first_fan(tmp_path_factory, *, high, low, s: dict, s_in_group: bool = False
 
 
 def test_h1b_forward_only_blended_first_period_fan_starts_equal(tmp_path_factory):
-    """H1b: fix_start pins v_state at t0001 of every root forecast (1.5 = 0.5 · C); the chain starts
-    X = v_inter[b1] − drift[b1] are equal (rp_inter_period_fan_start) ⇒ X = 1: v_inter high (0, 2), low (2, 3)."""
+    """H1b: fix_start pins the chain start X = v_inter[b1] − drift[b1] of every root forecast at 0.5 · C (C = 4:
+    X = 2; rp_inter_period_start_fix, one row per root, so no rp_inter_period_fan_start tie) ⇒ v_inter high
+    (2 − 1, 1 + 2) = (1, 3), low (2 + 1, 3 + 1) = (3, 4), no slack.  Before, fix_start pinned v_state at t0001
+    inside the first block (a free offset) and the chain start was free."""
     steps = _first_fan(tmp_path_factory, high=_H1B_HIGH, low=_H1B_LOW,
-                       s={"existing": 3.0, "storage_binding_method": FO_B, "storage_start_end_method": "fix_start",
+                       s={"existing": 4.0, "storage_binding_method": FO_B, "storage_start_end_method": "fix_start",
                           "storage_state_start": 0.5})
     step = steps["sol"]
-    state = _values(step, "v_state")
-    assert state[("s", "p1_high", "t0001")] == pytest.approx(1.5, abs=TOL)
-    assert state[("s", "p1_low", "t0001")] == pytest.approx(1.5, abs=TOL)
     inter = _values(step, "v_state_inter")
-    assert inter == pytest.approx({("s", "p1_high", "t0001"): 0.0, ("s", "p1_high", "t0003"): 2.0,
-                                   ("s", "p1_low", "t0001"): 2.0, ("s", "p1_low", "t0003"): 3.0}, abs=TOL)
+    assert inter == pytest.approx({("s", "p1_high", "t0001"): 1.0, ("s", "p1_high", "t0003"): 3.0,
+                                   ("s", "p1_low", "t0001"): 3.0, ("s", "p1_low", "t0003"): 4.0}, abs=TOL)
     assert float(step.solution.obj) == pytest.approx(0.0, abs=TOL)
     # H5 (first-period fan; label p1): no rp data on the label.
     fd = step.flex_data
     pb = build(fd)
-    assert len(_rows(pb, "rp_inter_period_fan_start")) == 1
+    assert _rows(pb, "rp_inter_period_fan_start") == []
+    assert _rows(pb, "rp_inter_period_start_fix") == ["rp_inter_period_start_fix[s,p1_high,t0001]",
+                                                      "rp_inter_period_start_fix[s,p1_low,t0001]"]
+    assert _rows(pb, "rp_inter_period_end_match") == [], "fix_start on capacity the solve cannot invest in"
     assert len(_rows(pb, "rp_inter_period_balance")) == 2
     assert _rows(pb, "rp_inter_period_cyclic") == []
     assert len(_rows(pb, "rp_inter_period_max_state")) == 4
@@ -224,7 +226,7 @@ def test_h4_block_starts_tied_in_the_tie_window(tmp_path_factory):
     assert float(step.solution.obj) == pytest.approx(0.0, abs=TOL)
 
 
-def test_h4_tied_block_start_costs_a_spill(tmp_path_factory):
+def test_h4_tied_block_start_costs_slack(tmp_path_factory):
     """H4 (values): the block-start tie decides the objective, not only the row list.
 
     H4's timeline, timeset (blocks A = t0001-2, B = t0003-4; base b1 ← A, b2 ← B; tsw = 1) and first-period fan
@@ -237,12 +239,16 @@ def test_h4_tied_block_start_costs_a_spill(tmp_path_factory):
     C = 3); low S_low − 2, S_low (S_low ≥ 2).  Every block nets 0, so every drift is 0 and the base chain
     (v_inter[b2] = v_inter[b1], one fan start) binds nothing.
     - Untied (non_anticipativity_rp_block_start removed): S_high ∈ [0, 1], S_low ∈ [2, 3], no slack, objective 0.
-    - Tied (S_high = S_low = S): S + 2 − spill ≤ 3 and S − 2 + up ≥ 0 ⇒ spill + up ≥ 1 MWh.  Spill is the
-      cheaper (P_d < P_u at the same weight) ⇒ S = 2, spill 1 MWh at (p1_high, t0003), up 0; v_state high
-      t0003 = 3, t0004 = 1; low t0003 = 0, t0004 = 2.
-    op_factor[p1_high, t0003] = Δt (1 h) · tsw (1) · inflation_op[p1] / period_share[p1] · branch weight:
+    - Tied (S_high = S_low = S): S + 2 − spill ≤ 3 and S − 2 + up ≥ 0 ⇒ spill + up ≥ 1 MWh.  The chain starts
+      free, so it must end at least where it starts on each path (rp_inter_period_end_match): block B's drift
+      up − spill ≥ 0 in each forecast, so a spill must be made up by upward slack.  High: spill ≥ S − 1 and up ≥
+      spill; low: up ≥ 2 − S.  Cost P_d·spill + P_u·up (P_d = 100, P_u = 1000) = 1100·(S − 1) + 1000·(2 − S) on
+      S ∈ [1, 2] ⇒ S = 1, no spill, up 1 MWh at (p1_low, t0003); v_state high t0003 = 3, t0004 = 1; low t0003 = 0,
+      t0004 = 2.  (Before the matching end, the spill of 1 MWh in the high forecast was cheaper: the free start
+      paid for the energy the path lost.)
+    op_factor[p1_low, t0003] = Δt (1 h) · tsw (1) · inflation_op[p1] / period_share[p1] · branch weight:
     social_discount_rate 0 and years_represented 1 ⇒ inflation_op = 1; p1 represents b1 + b2 = 4 h ⇒ period_share =
-    4 / 8760; weight 0.5 ⇒ op_factor = 8760 / 4 · 0.5 = 1095.  **Objective = P_d · 1 MWh · 1095 = 109 500.**
+    4 / 8760; weight 0.5 ⇒ op_factor = 8760 / 4 · 0.5 = 1095.  **Objective = P_u · 1 MWh · 1095 = 1 095 000.**
     """
     st = _steps(4)
     flat = {t: 0.5 for t in st}
@@ -255,15 +261,16 @@ def test_h4_tied_block_start_costs_a_spill(tmp_path_factory):
                           "low": {"t0001": dict(zip(st, [-1.0, -1.0, -3.0, 1.0]))}})
     step = steps["sol"]
     # Values first: removing the tie leaves an objective of 0 and different block-B starts.
-    assert float(step.solution.obj) == pytest.approx(100.0 * 1095.0, rel=1e-9)
+    assert float(step.solution.obj) == pytest.approx(1000.0 * 1095.0, rel=1e-9)
     start = _values(step, "v_state_rp_start")
-    assert start[("s", "p1_high", "t0003")] == pytest.approx(2.0, abs=TOL)
-    assert start[("s", "p1_low", "t0003")] == pytest.approx(2.0, abs=TOL)
+    assert start[("s", "p1_high", "t0003")] == pytest.approx(1.0, abs=TOL)
+    assert start[("s", "p1_low", "t0003")] == pytest.approx(1.0, abs=TOL)
     state = _values(step, "v_state")
     assert [state[("s", "p1_high", t)] for t in ("t0003", "t0004")] == pytest.approx([3.0, 1.0], abs=TOL)
     assert [state[("s", "p1_low", t)] for t in ("t0003", "t0004")] == pytest.approx([0.0, 2.0], abs=TOL)
-    spill = {k: v for k, v in _values(step, "vq_state_down").items() if abs(v) > TOL}
-    assert spill == pytest.approx({("s", "p1_high", "t0003"): 1.0}, abs=TOL)
+    assert {k: v for k, v in _values(step, "vq_state_down").items() if abs(v) > TOL} == {}
+    up = {k: v for k, v in _values(step, "vq_state_up").items() if abs(v) > TOL}
+    assert up == pytest.approx({("s", "p1_low", "t0003"): 1.0}, abs=TOL)
     assert len(_rows(build(step.flex_data), "non_anticipativity_rp_block_start")) == 2
 
 
@@ -273,9 +280,11 @@ def test_h4_tied_block_start_costs_a_spill(tmp_path_factory):
 
 
 def test_h3_forward_only_blended_trunk_to_branch_chain(tmp_path_factory):
-    """H3 (C = 3): drifts p1 b1 3, b2 0.75, b3 −2, p2_high −1, p2_low +1; every branch's first base period
-    continues from the trunk period's last ⇒ unique v_inter 2.25, 3.0, 1.0, 0.0 (high), 2.0 (low).  H5: the
-    domains carry no label (p2) row."""
+    """H3 (C = 3.75): drifts p1 b1 3, b2 0.75, b3 −2, p2_high −1, p2_low +1; every branch's first base period
+    continues from the trunk period's last.  The chain start X = v_inter[b1] − 3 is a level in [0, C]
+    (rp_inter_period_start_min_state / _max_state) and v_inter[b2] = X + 3.75 ≤ C ⇒ X = 0: unique v_inter 3.0,
+    3.75, 1.75, 0.75 (high), 2.75 (low); both leaves end above the start (rp_inter_period_end_match).  (Before, the
+    chain start had no bound: with C = 3 it was −0.75.)  H5: the domains carry no label (p2) row."""
     K, D = 4.0, 2.0
     trunk = _series(_steps(6), [1.5, 1.5, -1.0, -1.0, 0.0, 0.0], K, D)
     steps = _tiny(
@@ -285,16 +294,16 @@ def test_h3_forward_only_blended_trunk_to_branch_chain(tmp_path_factory):
                            "t0005": {"t0003": 1.0}}),
                   "ts2": ({"t0007": 2.0}, {"t0007": {"t0007": 1.0}})},
         period_timeset={"p1": "ts1", "p2": "ts2"}, fan=("p2", "t0007"), K=K, D=D,
-        s={"existing": 3.0, "storage_binding_method": FO_B, "storage_start_end_method": "fix_nothing"},
+        s={"existing": 3.75, "storage_binding_method": FO_B, "storage_start_end_method": "fix_nothing"},
         profile={"high": {"t0007": _series(["t0007", "t0008"], [-0.5, -0.5], K, D)},
                  "low": {"t0007": _series(["t0007", "t0008"], [0.5, 0.5], K, D)},
                  "real": {"t0001": trunk, "t0007": _series(["t0007", "t0008"], [0.5, 0.5], K, D)}},
         realized="real")
     step = steps["sol"]
     inter = _values(step, "v_state_inter")
-    assert inter == pytest.approx({("s", "p1", "t0001"): 2.25, ("s", "p1", "t0003"): 3.0,
-                                   ("s", "p1", "t0005"): 1.0, ("s", "p2_high", "t0007"): 0.0,
-                                   ("s", "p2_low", "t0007"): 2.0}, abs=TOL)
+    assert inter == pytest.approx({("s", "p1", "t0001"): 3.0, ("s", "p1", "t0003"): 3.75,
+                                   ("s", "p1", "t0005"): 1.75, ("s", "p2_high", "t0007"): 0.75,
+                                   ("s", "p2_low", "t0007"): 2.75}, abs=TOL)
     assert float(step.solution.obj) == pytest.approx(0.0, abs=TOL)
     fd = step.flex_data
     assert set(_values(step, "v_state_rp_start")) == {("s", "p1", "t0001"), ("s", "p1", "t0003"),
@@ -312,6 +321,10 @@ def test_h3_forward_only_blended_trunk_to_branch_chain(tmp_path_factory):
     assert len(_rows(pb, "rp_inter_period_balance")) == 4
     assert _rows(pb, "rp_inter_period_cyclic") == []
     assert _rows(pb, "rp_inter_period_fan_start") == []
+    assert _rows(pb, "rp_inter_period_start_min_state") == ["rp_inter_period_start_min_state[s,p1,t0001]"]
+    assert _rows(pb, "rp_inter_period_start_max_state") == ["rp_inter_period_start_max_state[s,p1,t0001]"]
+    assert _rows(pb, "rp_inter_period_end_match") == [
+        "rp_inter_period_end_match[s,p1,t0001,p2_high,t0007]", "rp_inter_period_end_match[s,p1,t0001,p2_low,t0007]"]
     assert len(_rows(pb, "rp_inter_period_max_state")) == 5
     assert len(_rows(pb, "maxState_rp_start")) == 4
 
@@ -560,8 +573,11 @@ def test_o1_identical_forecasts_equal_the_deterministic_objective(tmp_path_facto
     fan_periods = ("y2030", "y2040") if fan[0] == "y2030" else ("y2040",)
     assert branch_periods == {f"{p}_{b}" for p in fan_periods for b in ("a", "b")}
     if method == FO_B and fan[0] == "y2030":
-        # The lh2 nodes' fix_start pins the first block, not the chain start: the fan start ties them too.
-        assert len(_rows(build(step.flex_data), "rp_inter_period_fan_start")) == len(LH2)
+        # The lh2 nodes' fix_start pins the chain start of each root forecast (at that forecast's own capacity),
+        # so the fan start does not tie them.
+        pb = build(step.flex_data)
+        assert _rows(pb, "rp_inter_period_fan_start") == []
+        assert len(_rows(pb, "rp_inter_period_start_fix")) == 2 * len(LH2)
 
 
 _FANS = [("y2040", "t0049"), ("y2030", "t0001")]

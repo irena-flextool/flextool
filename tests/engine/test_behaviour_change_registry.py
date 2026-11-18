@@ -74,5 +74,7 @@ def test_migration_markers_are_registered() -> None:
                                                               "built_capacity_retirable",
                                                               "automatic_replacement_cost",
                                                               "rolling_cyclic_storage_anchored",
-                                                              "nested_storage_start_borrowed"}
+                                                              "nested_storage_start_borrowed",
+                                                              "rp_storage_chain_pinned",
+                                                              "storage_end_matches_start"}
     assert written <= set(BEHAVIOUR_CHANGES)

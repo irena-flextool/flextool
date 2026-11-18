@@ -11845,6 +11845,44 @@ def _v82_rolling_storage_markers(db) -> None:
             _v77_set_marker(db, "nested_storage_start_borrowed", json.dumps({"since": 82, "nodes": nodes}))
 
 
+def _v82_storage_accounting_markers(db) -> None:
+    """Part 7 of v82: the behaviour-change markers of the storage start and end accounting.  No value is rewritten.
+    Idempotent: a rerun finds the markers written.
+
+    * ``rp_storage_chain_pinned`` (``{"since": 82, "nodes": [...]}``) when a timeset has
+      ``representative_period_weights`` and a storage node has a ``*_blended_weights`` ``storage_binding_method``
+      (in some alternative): storage_state_start / storage_state_end / use_reference_value now set the level at the
+      ends of its base-period chain, and a forward chain's start is within the capacity.
+    * ``storage_end_matches_start`` (``{"since": 82, "nodes": [...]}``) when a storage node chains forward
+      (``storage_binding_method`` bind_forward_only or bind_forward_only_blended_weights in some alternative, or no
+      value: the default bind_forward_only): where the solve decides its start, the model now ends at least at it.
+
+    The markers are broader than the changes (the migration does not read which alternatives a scenario combines,
+    nor which solves invest); a run names the nodes whose rows change.
+    """
+    if not db.get_item("entity_class", name="node"):
+        return
+
+    def values(cls: str, name: str) -> list[tuple[str, object]]:
+        return [(pv["entity_byname"][0], from_database(pv["value"], pv["type"]))
+                for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name=name)]
+
+    storage = {n for n, v in values("node", "node_type") if v == "storage"}
+    if not storage:
+        return
+    methods = values("node", "storage_binding_method")
+    if db.get_item("entity_class", name="timeset") and any(
+            v is not None for _t, v in values("timeset", "representative_period_weights")):
+        nodes = sorted({n for n, v in methods if isinstance(v, str) and v.endswith("_blended_weights")} & storage)
+        if nodes:
+            _v77_set_marker(db, "rp_storage_chain_pinned", json.dumps({"since": 82, "nodes": nodes}))
+    with_method = {n for n, _v in methods}
+    forward = {n for n, v in methods if v in ("bind_forward_only", "bind_forward_only_blended_weights")}
+    nodes = sorted((forward | (storage - with_method)) & storage)
+    if nodes:
+        _v77_set_marker(db, "storage_end_matches_start", json.dumps({"since": 82, "nodes": nodes}))
+
+
 def _migrate_v82_schema_batch(db) -> None:
     """All schema changes of database version 82 (v81 -> v82), in one step.
 
@@ -11867,6 +11905,8 @@ def _migrate_v82_schema_batch(db) -> None:
        (:func:`_v82_automatic_replacement_marker`).
     6. The behaviour-change markers ``rolling_cyclic_storage_anchored`` and ``nested_storage_start_borrowed`` of the
        storage carry in rolling and nested solves (:func:`_v82_rolling_storage_markers`).
+    7. The behaviour-change markers ``rp_storage_chain_pinned`` and ``storage_end_matches_start`` of the storage start
+       and end accounting (:func:`_v82_storage_accounting_markers`).
 
     Values change only by the renames of part 2 (they keep their rows; a collision moves them).  Each part is
     idempotent, so a rerun of the step changes nothing.
@@ -11877,6 +11917,7 @@ def _migrate_v82_schema_batch(db) -> None:
     _v82_descriptions(db)
     _v82_automatic_replacement_marker(db)
     _v82_rolling_storage_markers(db)
+    _v82_storage_accounting_markers(db)
     _commit_step(db, "v82: inflation_rate is social_discount_rate, inflation_offset_investment is "
                      "discount_offset_investment, inflation_offset_operations is discount_offset_operations")
 

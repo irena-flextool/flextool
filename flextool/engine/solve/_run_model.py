@@ -245,6 +245,28 @@ def _downgrade_blended_for_rolling_rp(*, state, complete_solve_name: str, active
         complete_solve_name, ", ".join(names))
 
 
+def _rp_chain_reaches_model_end(state, solves: list, complete_solve: dict, at_end: list[bool], index) -> list[bool]:
+    """``at_end`` with every representative-period solve (not rolling) that holds the model's last period set: its
+    base-period chain runs to the end of that period, so the chain end is the end of the model although its last
+    representative block may lie earlier in the year (rp_inter_period_end_fix pins fix_end there)."""
+    ends = [index.end(s) for s in solves]
+    known = [e for e in ends if e is not None]
+    if not known:
+        return at_end
+    last_rank = max(known)[0]
+    out = list(at_end)
+    for i, solve in enumerate(solves):
+        cs = complete_solve.get(solve, solve)
+        if out[i] or ends[i] is None or ends[i][0] != last_rank:
+            continue
+        if state.solve.solve_modes.get(cs) == "rolling_window":
+            continue
+        names = [ts for _p, ts in state.solve.timesets_used_by_solves.get(cs, [])]
+        if any(ts in state.timeline.rp_weights for ts in names):
+            out[i] = True
+    return out
+
+
 _SBM_KEY = "input/node__storage_binding_method"
 _SSE_KEY = "input/node__storage_start_end_method"
 _ROLL_END_SCHEMA = {"node": pl.Utf8, "kind": pl.Utf8, "value": pl.Float64}
@@ -1329,6 +1351,10 @@ def native_run_model(state, solver) -> int:
     # state in each of them, owner decision Q-c15f-D).
     storage_solve_at_model_end = _carry_routing.reaches_model_end(
         all_solves, active_time_lists, period__branch_lists, siblings=_siblings, **_time_args)
+    # The representative-period solves whose base-period chain ends at the end of the model (fix_end pins the chain
+    # end there, rp_inter_period_end_fix).
+    storage_rp_chain_at_model_end = _rp_chain_reaches_model_end(
+        state, all_solves, complete_solve, storage_solve_at_model_end, _time_index)
     # The sub-solves whose horizon holds the last step of their solve instance (the closing rolls of a rolling solve:
     # bind_within_solve ends there at the level the instance started from), whether an instance reaches the model end,
     # and where the model starts (the first step of the run: an explicit fix_start applies there).
@@ -1609,6 +1635,9 @@ def native_run_model(state, solver) -> int:
                                             schema={"value": pl.Boolean}))
         sub_solve_provider.put(_provider_keys.SOLVE_DATA_STORAGE_SOLVE_AT_MODEL_END,
                                pl.DataFrame({"value": [storage_solve_at_model_end[i]]}, schema={"value": pl.Boolean}))
+        sub_solve_provider.put(_provider_keys.SOLVE_DATA_STORAGE_RP_CHAIN_AT_MODEL_END,
+                               pl.DataFrame({"value": [storage_rp_chain_at_model_end[i]]},
+                                            schema={"value": pl.Boolean}))
         pb_time, pb_succ = make_period_block(active_time_lists[solve])
         solve_writers.emit_period_block(
             pb_time, pb_succ,

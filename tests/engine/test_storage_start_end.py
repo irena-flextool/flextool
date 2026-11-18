@@ -452,14 +452,20 @@ def test_representative_period_node_takes_no_carry_term_nor_pin(tmp_path_factory
     (a state inside a representative block, not a chronological level) is handed over: it marks the node as
     continuing, and a later solve that downgrades the node starts from it (``…_downgraded_later_continues``).  But
     the rp LP takes no carry term for it, and since a state was realised before y2025, fix_start does not re-pin it
-    either: each block starts from v_state_rp_start, free.  Before, y2025 was re-pinned
+    either: each block starts from v_state_rp_start, free, and so does its base-period chain, which therefore ends
+    at least at its start (rp_inter_period_end_match).  The first rp solve pins the start of its chain at fix_start
+    (rp_inter_period_start_fix), not a state inside its first block.  Before, y2025 was re-pinned
     (storage_state_start_binding at its first step)."""
     steps = _rp_sequence(tmp_path_factory, "sse_rp_rp", second_rp=True)
     fd = steps[1].flex_data
     assert "battery" in utf8(fd.nodeState_rp)["n"].to_list()
     assert _carry(fd) is not None
     pb = build(fd)
-    assert _bare(build(steps[0].flex_data), "battery"), "the first rp solve keeps its fix_start pin"
+    first = build(steps[0].flex_data)
+    assert row_terms(first, "rp_inter_period_start_fix", "battery,"), "the first rp solve pins its chain start"
+    assert not _bare(first, "battery")
+    assert not row_terms(pb, "rp_inter_period_start_fix", "battery,")
+    assert row_terms(pb, "rp_inter_period_end_match", "battery,")
     assert not _bare(pb, "battery") and not row_terms(pb, PIN, "battery,")
     rows, bounds = row_terms(pb, "nodeBalance_eq", "battery,"), row_bounds(pb, "nodeBalance_eq", "battery,")
     firsts = utf8(fd.rp_block_first).select("d", "t").unique().rows()

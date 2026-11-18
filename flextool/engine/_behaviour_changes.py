@@ -341,6 +341,33 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "nested_storage_start_borrowed"),
         ),
         BehaviourChange(
+            id="rp_storage_chain_pinned",
+            summary=("In a representative-period solve, storage_state_start, storage_state_end and "
+                     "use_reference_value of a *_blended_weights storage node now set the stored level at the start "
+                     "and the end of its base-period chain (the chronological level the representative blocks add up "
+                     "to), not a state inside the first or last representative block, which only placed the block's "
+                     "free offset. The level a bind_forward_only_blended_weights chain starts from is now within the "
+                     "storage capacity, and a bind_within_solve_blended_weights or "
+                     "bind_within_period_blended_weights node takes no use_reference_value (its cycle closes on "
+                     "itself). Before, a forward chain started and ended at free levels whatever these parameters "
+                     "said, so an investment solve could use stored energy that was never produced (results "
+                     "change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "rp_storage_chain_pinned"),
+        ),
+        BehaviourChange(
+            id="storage_end_matches_start",
+            summary=("A storage node that chains forward (bind_forward_only, also the default, and "
+                     "bind_forward_only_blended_weights) and whose start the solve decides now ends the model at "
+                     "least at that start: a free start (storage_start_end_method fix_nothing or fix_end) ends at "
+                     "least at the level it started from, and a fix_start start on storage the solve can invest in "
+                     "returns at least the storage_state_start share of the capacity it builds in the first period. "
+                     "This holds in a solve that has both the start of the model and its last step (a single solve, "
+                     "an investment solve over the whole horizon, every representative-period solve). Before, the "
+                     "solve could start full and end empty, or build storage only for its start energy (results "
+                     "change). fix_start on capacity the solve cannot change keeps a free end."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "storage_end_matches_start"),
+        ),
+        BehaviourChange(
             id="annuity_over_payback_time",
             summary=("With lifetime_method reinvest_choice or no_reinvestment the investment cost is now the level "
                      "yearly cost of the plant over its lifetime_technical (the annuity over payback_time with "

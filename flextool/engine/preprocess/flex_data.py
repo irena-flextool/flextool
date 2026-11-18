@@ -1478,6 +1478,9 @@ class FlexData:
     # solve_data/storage_solve_at_model_end, default True).
     storage_fix_end: pl.DataFrame | None = None  # set: (n,)
     storage_solve_at_model_end: bool = True
+    # Whether the base-period chain of a representative-period solve ends at the end of the model (the solve holds
+    # the model's last period; solve_data/storage_rp_chain_at_model_end, default True).
+    storage_rp_chain_at_model_end: bool = True
     # (n, kind, value): the horizon-end condition of the bind_within_solve nodes of a rolling roll that continues
     # from a carried state (solve_data/storage_roll_end, _run_model._anchor_cyclic_in_rolling): kind anchor /
     # close (MWh value), anchor_share / close_share (storage_state_start × capacity) and wrap_end (the first roll's
@@ -3646,6 +3649,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         storage_fix_start = None,
         storage_fix_end = None,
         storage_solve_at_model_end = True,
+        storage_rp_chain_at_model_end = True,
         storage_roll_end = None,
         storage_use_reference_value = None,
         p_storage_state_reference_value = None,
@@ -3701,7 +3705,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # one-row-per-node slice and the CSV-fallback resolution for
     # ``first_period`` needs the slow-path provider context.
 
-    # First (d, t) per period — used for storage_state_start_binding.
+    # First (d, t) per period — used for the start of the storage chains.
     # The .mod uses ``period_first_of_solve`` for the boundary tests in
     # both the fwd_fix start binding (mod:2197) and the roll_continue
     # term (mod:2196).  ``period_first.csv`` is the legacy single-solve
@@ -3913,6 +3917,12 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         ssl = _provider_read(provider, K.SOLVE_DATA_STORAGE_SOLVE_AT_MODEL_END, sd / "storage_solve_at_model_end.csv")
         if ssl.height > 0 and "value" in ssl.columns:
             at_model_end = bool(ssl["value"].cast(pl.Boolean)[0])
+    rp_chain_at_model_end = at_model_end
+    if _provider_has(provider, K.SOLVE_DATA_STORAGE_RP_CHAIN_AT_MODEL_END, sd / "storage_rp_chain_at_model_end.csv"):
+        rce = _provider_read(provider, K.SOLVE_DATA_STORAGE_RP_CHAIN_AT_MODEL_END,
+                             sd / "storage_rp_chain_at_model_end.csv")
+        if rce.height > 0 and "value" in rce.columns:
+            rp_chain_at_model_end = bool(rce["value"].cast(pl.Boolean)[0])
 
     # The horizon-end condition of the rolling bind_within_solve nodes continued from a carried state (_run_model).
     roll_end = None
@@ -4364,6 +4374,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         storage_fix_start = fix_start,
         storage_fix_end = fix_end,
         storage_solve_at_model_end = at_model_end,
+        storage_rp_chain_at_model_end = rp_chain_at_model_end,
         storage_roll_end = roll_end,
         storage_use_reference_value = use_reference_value,
         p_storage_state_reference_value = p_ssrv,

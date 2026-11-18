@@ -167,7 +167,9 @@ def test_reverse_flow_into_group_is_infeed(tmp_path_factory) -> None:
 
 def test_howto_battery_connection_inside(tmp_path_factory) -> None:
     """``curtailment``: nodeA_group = {nodeA, battery}, so con_battery is inside and has no term in the rows;
-    the battery no longer cycles to inflate the supply side (objective 6.580699 → 8.788234 × 10⁶)."""
+    the battery no longer cycles to inflate the supply side (objective 6.580699 → 8.788234 × 10⁶).  The battery
+    (bind_forward_only, free start) now ends the solve at least at its start (storage_state_end_match): before, it
+    started full and ended empty, and that free energy was worth the difference (8.788234 → 9.283591 × 10⁶)."""
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_migration import migrate_database
     from flextool.update_flextool.initialize_database import initialize_database
@@ -185,7 +187,9 @@ def test_howto_battery_connection_inside(tmp_path_factory) -> None:
     assert rows
     for row, terms in rows.items():
         assert not [c for c in terms if c.startswith("v_flow[con_battery,")], row
-    assert step.solution.obj == pytest.approx(8_788_234.09095786, rel=1e-7)
+    assert list(row_terms(build(fd), "storage_state_end_match")) == [
+        "storage_state_end_match[battery,first24h,t0001,first24h,t0024]"]
+    assert step.solution.obj == pytest.approx(9_283_591.233815003, rel=1e-7)
 
 
 # ---------------------------------------------------------------------------

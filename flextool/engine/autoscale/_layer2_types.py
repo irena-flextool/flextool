@@ -265,8 +265,14 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "rp_inter_period_fan_start": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_rp_storage_chain
     "rp_inter_period_max_state": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_storage_start_binding
-    "storage_state_start_binding": CstrFamily(QuantityType.ENERGY),
+    # flextool/engine/model/core.py _eq_rp_chain_ends (the absolute level at the ends of the base-period chain)
+    "rp_inter_period_start_fix": CstrFamily(QuantityType.ENERGY),
+    "rp_inter_period_end_fix": CstrFamily(QuantityType.ENERGY),
+    "rp_inter_period_start_max_state": CstrFamily(QuantityType.ENERGY),
+    "rp_inter_period_start_min_state": CstrFamily(QuantityType.ENERGY),
+    "rp_inter_period_end_match": CstrFamily(QuantityType.ENERGY),
+    "rp_inter_period_reference_value": CstrFamily(QuantityType.ENERGY),
+    "rp_inter_period_reference_value_min": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_start_binding_cyclic
     "storage_state_start_binding_cyclic_period": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_within_solve_path_end (bind_within_solve, stochastic paths)
@@ -280,8 +286,12 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "storage_state_roll_close": CstrFamily(QuantityType.ENERGY),
     "storage_state_roll_anchor_share": CstrFamily(QuantityType.ENERGY),
     "storage_state_roll_close_share": CstrFamily(QuantityType.ENERGY),
+    # flextool/engine/model/core.py _eq_storage_end_match (forward chains whose start the solve decides)
+    "storage_state_end_match": CstrFamily(QuantityType.ENERGY),
+    "storage_state_end_match_share": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_reference_value
     "storage_state_solve_horizon_reference_value": CstrFamily(QuantityType.ENERGY),
+    "storage_state_solve_horizon_reference_value_min": CstrFamily(QuantityType.ENERGY),
 
     # ── Flow caps from process side.  DIMENSIONLESS (capacity coefficient).
     # The cap is a fraction × existing_count; the row's effective type

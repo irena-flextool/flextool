@@ -170,7 +170,10 @@ def test_variant_order_on_two_periods(tmp_path_factory):
     # 16 367 709 994; FA-3 (the bind_within_solve batteries' fix_start pin moved from the end of y2030, mid-horizon,
     # to the end of y2040, the state the first step starts from) +2.8 %: the batteries now end y2040 at the pin and
     # refill there, competing with y2040's H2 shortfall (the same mechanism as the RP Benders M_rp pin).
-    assert cost["wp"] == pytest.approx(16_820_838_994.0, rel=1e-6)
+    # 16 820 838 994 → 16 910 567 160 (+0.53 %): the lh2 nodes' fix_start 0.5 now pins the level their y2030 chain
+    # starts from (rp_inter_period_start_fix; the closure holds y2030's cycle there), not a free offset inside
+    # their first block.
+    assert cost["wp"] == pytest.approx(16_910_567_160.0, rel=1e-6)
 
 
 def test_mixed_variants_in_one_solve(tmp_path_factory):
@@ -263,12 +266,19 @@ def test_rolling_solve_with_blended_nodes_binds_forward_only(tmp_path_factory, c
 @pytest.mark.parametrize("variant", ["ws", "fo", "wp"])
 def test_rp_matches_hourly_reference(tmp_path_factory, exp, variant):
     """Within 1 % of the hourly model of the same days (before: 3–100 % off in ws / fo).  within_period's
-    hourly twin cycles each period with one 168 h bind_within_timeblock block."""
+    hourly twin cycles each period with one 168 h bind_within_timeblock block.
+
+    forward_only runs with fix_start 0.5 on the lh2 nodes: both models then start from the same level before the
+    first step (the RP chain start, rp_inter_period_start_fix; the hourly start term) and end free.  With a free start
+    the two differ by construction: the RP chain starts before its first block, while the hourly forward chain has
+    no state change in its first step (a 24 h coarse step of the lh2 nodes), and both must end at least at their
+    start (the matching end), so the hourly model loses its first day of storage use."""
     fn = H.EXPERIMENTS[exp]
-    rp = _total_cost(_run(tmp_path_factory, fn("rp", H.BLENDED[variant]))[SOLVE])
+    start = 0.5 if variant == "fo" else None
+    rp = _total_cost(_run(tmp_path_factory, fn("rp", H.BLENDED[variant], start))[SOLVE])
     if variant == "wp":
         hourly_patch = H.one_block(fn, "hourly", "bind_within_timeblock")
     else:
-        hourly_patch = fn("hourly", H.PLAIN[variant])
+        hourly_patch = fn("hourly", H.PLAIN[variant], start)
     hourly = _total_cost(_run(tmp_path_factory, hourly_patch)[SOLVE])
     assert rp == pytest.approx(hourly, rel=1e-2), (exp, variant, rp, hourly)

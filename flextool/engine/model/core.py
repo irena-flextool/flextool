@@ -39,7 +39,9 @@ r reserve, ud up/down, c commodity, i price tier.  "× unitsize" converts to MW 
                                        group floor slacks, fraction of the group's scale      [_group_slack]
 
 Equation families, in emit order (module in brackets when not model/core.py):
-  Balance & storage   rp_inter_period_{balance,cyclic,fan_start,max_state}, maxState_rp_start; nodeBalance_eq;
+  Balance & storage   rp_inter_period_{balance,cyclic,fan_start,max_state}, maxState_rp_start;
+                      rp_inter_period_{start_fix,end_fix,start_max_state,start_min_state,end_match,
+                      reference_value[_min]} (the ends of the base-period chain); nodeBalance_eq;
                       nodeBalanceCoarse_eq, stateConstantCoarse_eq (coarse new_stepduration groups);
                       nodeBalancePeriod_eq; node_balance_fix_quantity_eq_lower; node_storage_usage_fix_le;
                       stateConstantWithinBlock_eq, nodeBalanceBlock_eq (bind_intraperiod_blocks)
@@ -61,10 +63,11 @@ Equation families, in emit order (module in brackets when not model/core.py):
                       piecewise_linear units); minInputShare
   Emissions & user    co2_max_period, co2_max_total; process_constraint_{equal,less_than,greater_than}[_period]
   Storage state       maxState; profile_state_{upper_limit,lower_limit,fixed};
-                      storage_state_start_binding[_cyclic_period]; storage_within_solve_path_end,
+                      storage_state_start_binding_cyclic_period; storage_within_solve_path_end,
                       storage_state_fan_start (stochastic fans); storage_state_end_binding;
                       storage_state_roll_{anchor,close}[_share] (rolling bind_within_solve);
-                      storage_state_solve_horizon_reference_value
+                      storage_state_end_match[_share] (forward chains whose start the solve decides);
+                      storage_state_solve_horizon_reference_value[_min]
   Profiles            profile_flow_{upper_limit,lower_limit,fixed}
   Objective           balance slack penalty, commodity cost and sales, CO2 price, variable cost, startup cost,
                       ramp cost, storage reference price, invest/divest annuities, existing fixed cost (optional
@@ -495,6 +498,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _shared_expressions,
         # ── constraints, in emit order ──
         _eq_rp_storage_chain,
+        _eq_rp_chain_ends,
         _eq_node_balance,
         _eq_node_balance_coarse,
         _eq_node_balance_period,
@@ -523,12 +527,12 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _eq_user_constraints,
         _eq_max_state,
         _eq_state_profiles,
-        _eq_storage_start_binding,
         _eq_storage_start_binding_cyclic,
         _eq_storage_within_solve_path_end,
         _eq_storage_state_fan_start,
         _eq_storage_end_binding,
         _eq_storage_roll_end,
+        _eq_storage_end_match,
         _eq_storage_reference_value,
         _eq_profiles,
         # ── core objective terms ──
@@ -728,6 +732,7 @@ def _prepare(b: _Build) -> None:
     _validate_storage_binding_disjoint(d)
     if b.has_storage:
         _validate_storage_start_end_values(d)
+        _check_storage_accounting(b)
     if b.has_rp:
         b.rp_start_idx = compute_nodeState_rp_block_first_dt(d)
     if b.has_online_lin:
@@ -869,6 +874,108 @@ def _validate_storage_binding_disjoint(d) -> None:
                     "migration step) and ensure each node has exactly one "
                     "storage_binding_method value."
                 )
+
+
+def _start_periods(d, names: set[str]) -> dict[str, list[str]]:
+    """``{node: [periods]}``: the periods of the nodes' first steps in this solve (nodeState_first_dt)."""
+    out: dict[str, list[str]] = {}
+    if not _has_rows(d.nodeState_first_dt):
+        return out
+    for n, p in d.nodeState_first_dt.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)).unique().iter_rows():
+        if n in names:
+            out.setdefault(n, []).append(p)
+    return out
+
+
+def _check_storage_accounting(b: _Build) -> None:
+    """Storage start and end conditions that let a solve use energy it never produced (storage_semantics, Q7).
+
+    * fix_start_end with storage_state_end below storage_state_start on storage the solve can invest in during the
+      period it starts in: the explicit drain grows with the investment, so the solve would build storage to empty
+      it (no consistent reading of the two values) — a configuration error.
+    * fix_start on a forward chain (bind_forward_only, bind_forward_only_blended_weights) whose capacity at the start
+      is not a decision of the solve, with an open end (no fix_end, no use_reference_value, no upper-level fix): the
+      start is an endowment the run may use up; logged once per run per node with its size.
+    * A forward chain without representative periods whose start the solve decides by investing (a free start or
+      fix_start on capacity it can invest in during the start period) in a solve that does not hold the last step
+      of the model: the matching end (storage_state_end_match) needs both ends in one solve, so it is not applied;
+      warned once per run per node.  (A representative-period chain always gets rp_inter_period_end_match.)
+    """
+    from flextool.engine import _behaviour_changes
+    d = b.d
+    carried = set()
+    if _has_rows(_self_discharge.carried_nodes(d)):
+        carried = set(str(n) for n in _self_discharge.carried_nodes(d)["n"].to_list())
+    fix_start = set(str(n) for n in d.storage_fix_start["n"].to_list()) if _has_rows(d.storage_fix_start) else set()
+    fix_end = (set(str(n) for n in d.storage_fix_end["n"].to_list())
+               if _has_rows(getattr(d, "storage_fix_end", None)) else set())
+    share = ({str(n): float(v) for n, v in d.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), "value").iter_rows()}
+             if d.p_state_start is not None else {})
+    end_share = ({str(n): float(v) for n, v in d.p_state_end.frame.select(pl.col("n").cast(pl.Utf8), "value").iter_rows()}
+                 if getattr(d, "p_state_end", None) is not None else {})
+    starting = (fix_start | set(str(n) for n in d.nodeState["n"].to_list())) - carried
+    periods = _start_periods(d, starting)
+    invest: dict[str, set[str]] = {}
+    if b.has_invest_n:
+        for n, p in d.nd_invest_set.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)).iter_rows():
+            invest.setdefault(n, set()).add(p)
+
+    def investable(n: str) -> bool:
+        return bool(invest.get(n, set()) & set(periods.get(n, [])))
+
+    where = f"solve '{b.solve_name}'" if b.solve_name else "this solve"
+    conflict = sorted(n for n in (fix_start & fix_end) - carried
+                      if n in share and n in end_share and end_share[n] < share[n] - 1e-12 and investable(n))
+    if conflict:
+        raise FlexToolConfigError(
+            f"Storage node(s) {_node_list(conflict)} in {where} have storage_start_end_method fix_start_end with "
+            "storage_state_end below storage_state_start, and the solve can invest in their storage capacity in the "
+            "period they start in. The drain from the start share to the end share grows with the storage built, so "
+            "the solve could build storage only to empty it, using energy that was never produced. Give "
+            "storage_state_end at least storage_state_start, use a cyclic storage_binding_method (bind_within_solve, "
+            "bind_within_solve_blended_weights) with fix_start, or do not allow investment in the start period.")
+
+    forward = set()
+    for frame in (d.storage_bind_forward_only, d.storage_bind_forward_only_blended_weights):
+        if _has_rows(frame):
+            forward |= set(str(n) for n in frame["n"].to_list())
+    forward -= carried
+    if not forward:
+        return
+    nested = set()
+    steps = _nested_fixed_end(b, with_price=True)
+    if steps is not None:
+        nested = set(steps["n"].to_list())
+    reference = (set(str(n) for n in d.storage_use_reference_value["n"].to_list())
+                 if _has_rows(d.storage_use_reference_value) else set())
+    open_end = forward - nested - reference - fix_end
+    endowed = sorted(n for n in open_end & fix_start if n in share and not investable(n))
+    if endowed and d.p_state_existing_capacity is not None:
+        exist = {(str(n), str(p)): float(v) for n, p, v in d.p_state_existing_capacity.frame.select(
+            pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), "value").iter_rows()}
+        sizes = []
+        for n in endowed:
+            first = sorted(periods.get(n, []))
+            mwh = share[n] * exist.get((n, first[0]), 0.0) if first else 0.0
+            if mwh > 0 and _behaviour_changes.mark_once(("storage_endowment", n)):
+                sizes.append(f"{n} {mwh:.6g} MWh")
+        if sizes:
+            _LOG.info(
+                "Storage node(s) start at storage_state_start on capacity %s cannot change and end free (bind "
+                "forward only, no fix_end, use_reference_value or upper-level fix): the run may use this stored start "
+                "energy without producing it: %s.", where, ", ".join(sizes))
+    if not d.storage_solve_at_model_end:
+        rp_nodes = set(str(n) for n in d.nodeState_rp["n"].to_list()) if _has_rows(d.nodeState_rp) else set()
+        decided = sorted(n for n in forward - nested - rp_nodes if investable(n))
+        if decided:
+            _behaviour_changes.warn_once_each(
+                "storage_end_match_not_applied", decided,
+                lambda fresh: (f"Warning: storage node(s) {_node_list(fresh)} start {where} at a level the solve "
+                               "decides by investing (a free start, or storage_state_start of capacity it can build) "
+                               "and chain forward, but the solve does not reach the end of the model, so the end is "
+                               "not held at least at that start: built storage can deliver its start energy without "
+                               "producing it. Use bind_within_solve(_blended_weights), or fix_start_end with "
+                               "storage_state_end at least storage_state_start."))
 
 
 STORAGE_START_END_MESSAGE = (
@@ -1354,15 +1461,17 @@ def _eq_rp_storage_chain(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_state_inter[n,d,b_first(d)] − drift[n,d,b_first(d)]
     #   − v_state_inter[n,d″,b_first(d″)] + drift[n,d″,b_first(d″)] = 0
-    #   ∀ n ∈ bind_forward_only_blended_weights, d = the first root (sorted), d″ ∈ the other roots
+    #   ∀ n ∈ bind_forward_only_blended_weights, n ∉ the nodes of rp_inter_period_start_fix,
+    #     d = the first root (sorted), d″ ∈ the other roots
     #   roots = the rp periods of period_first_of_solve (the forecast branch periods of a fan in the solve's
     #     first period; one root without a fan: no rows), read as the periods of nodeState_first_dt, which is
     #     built from period_first_of_solve
     # Every forecast of a fan in the solve's first period starts its base-period
     # chain from the same level: the chain start v_state_inter − drift of the
     # first base period, which no other row binds in a forward-only chain.  A
-    # fix_start node is included: fix_start pins v_state in the first block,
-    # not the chain start.  The bind_within_solve_blended_weights roots are
+    # fix_start node is not included: rp_inter_period_start_fix pins each
+    # root's chain start at the share of that forecast's own capacity.  The
+    # bind_within_solve_blended_weights roots are
     # already tied by rp_inter_period_cyclic; the base-period levels inside a
     # tie window need no tie of their own (they follow from the tied net flows,
     # the tied block starts and this shared chain start).
@@ -1375,7 +1484,11 @@ def _eq_rp_storage_chain(b: _Build) -> None:
             ref = roots.filter(pl.col("d").cast(pl.Utf8) == root_names[0])
             other = (roots.filter(pl.col("d").cast(pl.Utf8) != root_names[0])
                      .rename({"d": "d_prev", "b": "b_prev"}))
-            over = (d.storage_bind_forward_only_blended_weights.select("n").unique()
+            fan_nodes = d.storage_bind_forward_only_blended_weights.select("n").unique()
+            pinned = _rp_start_pin_nodes(b)
+            if pinned is not None:
+                fan_nodes = fan_nodes.filter(~pl.col("n").cast(pl.Utf8).is_in(pinned["n"].cast(pl.Utf8).implode()))
+            over = (fan_nodes
                     .join(ref.select("d", "b"), how="cross")
                     .join(other.select("d_prev", "b_prev"), how="cross")
                     .select(*keys).sort(pl.col("d_prev").cast(pl.Utf8)))
@@ -1430,6 +1543,368 @@ def _eq_rp_storage_chain(b: _Build) -> None:
             lhs_terms = lhs,
             rhs_terms = {"upper": d.p_state_upper},
         )
+
+
+def _rp_typed(b: _Build, frame: pl.DataFrame) -> pl.DataFrame:
+    """Base-period labels (b, b_prev) onto v_state_inter's b dtype, periods (d, d_prev) onto its d dtype."""
+    schema = b.v_state_inter.frame.schema
+    return frame.with_columns(
+        [pl.col(c).cast(schema["b"], strict=False) for c in ("b", "b_prev") if c in frame.columns]
+        + [pl.col(c).cast(pl.Utf8).cast(schema["d"], strict=False) for c in ("d", "d_prev") if c in frame.columns])
+
+
+def _rp_chain_paths(b: _Build) -> "tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame] | None":
+    """``(roots, leaves, paths)`` of the base-period chain of a representative-period solve, typed onto
+    v_state_inter.
+
+    roots (d, b): the first base period of each rp period without a predecessor in rp_period_previous (the solve's
+    first period; each forecast branch of a fan in the first period); leaves (d, b): the last base period of each rp
+    period that is no period's predecessor (the solve's last period; each terminal branch); paths (d, b, d_prev,
+    b_prev): each leaf (d_prev, b_prev) with the root (d, b) its periods descend from.  None without a chain.
+    """
+    d = b.d
+    if not (_has_rows(d.rp_base_first) and _has_rows(d.rp_base_last)):
+        return None
+    first = _rp_typed(b, d.rp_base_first).select("d", "b")
+    last = _rp_typed(b, d.rp_base_last).select("d", "b")
+    if _has_rows(d.period_in_use_set):
+        in_use = dispatch_periods(d).select(pl.col("d").cast(pl.Utf8))
+        first = first.filter(pl.col("d").cast(pl.Utf8).is_in(in_use["d"].implode()))
+        last = last.filter(pl.col("d").cast(pl.Utf8).is_in(in_use["d"].implode()))
+    prev_of: dict[str, str] = {}
+    if _has_rows(d.rp_period_previous):
+        prev_of = {str(a): str(p) for a, p in d.rp_period_previous.select(
+            pl.col("d").cast(pl.Utf8), pl.col("d_prev").cast(pl.Utf8)).iter_rows()}
+    periods = [str(x) for x in first["d"].cast(pl.Utf8).to_list()]
+    is_prev = set(prev_of.values())
+    root_names = [p for p in periods if p not in prev_of]
+    leaf_names = [str(x) for x in last["d"].cast(pl.Utf8).to_list() if str(x) not in is_prev]
+    if not root_names or not leaf_names:
+        return None
+
+    def root_of(period: str) -> str:
+        seen = set()
+        while period in prev_of and period not in seen:
+            seen.add(period)
+            period = prev_of[period]
+        return period
+
+    roots = first.filter(pl.col("d").cast(pl.Utf8).is_in(root_names))
+    leaves = last.filter(pl.col("d").cast(pl.Utf8).is_in(leaf_names))
+    pairs = pl.DataFrame({"_root": [root_of(p) for p in leaf_names], "_leaf": leaf_names},
+                         schema={"_root": pl.Utf8, "_leaf": pl.Utf8})
+    paths = (pairs
+             .join(roots.with_columns(_root=pl.col("d").cast(pl.Utf8)), on="_root", how="inner")
+             .join(leaves.rename({"d": "d_prev", "b": "b_prev"}).with_columns(_leaf=pl.col("d_prev").cast(pl.Utf8)),
+                   on="_leaf", how="inner")
+             .select("d", "b", "d_prev", "b_prev"))
+    return roots, leaves, paths
+
+
+def _rp_node_set(b: _Build, frame) -> "pl.DataFrame | None":
+    """``frame`` (n) ∩ nodeState_rp, typed onto v_state_inter's n; None when empty."""
+    d = b.d
+    if not (_has_rows(frame) and _has_rows(d.nodeState_rp)):
+        return None
+    n_dtype = b.v_state_inter.frame.schema["n"]
+    out = (frame.select(pl.col("n").cast(pl.Utf8)).unique()
+           .join(d.nodeState_rp.select(pl.col("n").cast(pl.Utf8)).unique(), on="n", how="inner")
+           .select(pl.col("n").cast(n_dtype, strict=False)).sort("n"))
+    return out if out.height > 0 else None
+
+
+def _rp_minus(frame: "pl.DataFrame | None", other) -> "pl.DataFrame | None":
+    """``frame`` (n) without the nodes of ``other`` (any frame with n); None when empty."""
+    if frame is None:
+        return None
+    if _has_rows(other):
+        frame = frame.filter(~pl.col("n").cast(pl.Utf8).is_in(other.select(pl.col("n").cast(pl.Utf8))["n"].implode()))
+    return frame if frame.height > 0 else None
+
+
+def _nested_nodes(b: _Build, *, with_price: bool) -> "pl.DataFrame | None":
+    """``(n,)`` Utf8: the nodes an upper-level solve fixes at some step of this solve (_nested_fixed_end)."""
+    steps = _nested_fixed_end(b, with_price=with_price)
+    return None if steps is None else steps.select("n").unique()
+
+
+def _rp_start_pin_nodes(b: _Build) -> "pl.DataFrame | None":
+    """``(n,)``: the representative-period nodes whose chain start fix_start pins (storage_fix_start ∩
+    nodeState_rp, not carried); None when none or the data to pin is missing."""
+    d = b.d
+    if not (b.has_storage and b.has_rp and d.p_state_start is not None and b.cap.existing_state_n is not None
+            and d.p_state_unitsize is not None):
+        return None
+    nodes = _rp_node_set(b, d.storage_fix_start)
+    return _rp_minus(nodes, _self_discharge.carried_nodes(d))
+
+
+def _rp_end_pin_nodes(b: _Build) -> "pl.DataFrame | None":
+    """``(n,)``: the representative-period nodes whose chain end fix_end pins (storage_fix_end ∩ nodeState_rp, in a
+    solve whose chain ends at the end of the model: it holds the model's last period, storage_rp_chain_at_model_end,
+    or its last step; no upper-level fix_quantity / fix_usage on the node)."""
+    d = b.d
+    at_end = d.storage_solve_at_model_end or getattr(d, "storage_rp_chain_at_model_end", False)
+    if not (b.has_storage and b.has_rp and at_end and d.p_state_end is not None
+            and b.cap.existing_state_n is not None and d.p_state_unitsize is not None):
+        return None
+    return _rp_minus(_rp_node_set(b, d.storage_fix_end), _nested_nodes(b, with_price=False))
+
+
+def _invest_at_start_nodes(b: _Build, nodes: "pl.DataFrame | None", periods: list[str]) -> set[str]:
+    """The ``nodes`` (n) that this solve can invest in during one of ``periods`` (the periods the chain or the solve
+    starts in): their capacity at the start, so also a fix_start start, is a decision of the solve."""
+    d = b.d
+    if nodes is None or not b.has_invest_n:
+        return set()
+    names = set(str(n) for n in nodes["n"].to_list())
+    inv = d.nd_invest_set.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8))
+    return set(inv.filter(pl.col("n").is_in(list(names)) & pl.col("d").is_in(periods))["n"].to_list())
+
+
+def _eq_rp_chain_ends(b: _Build) -> None:
+    """Representative-period storage: the absolute level at the start and the end of the base-period chain
+    (fix_start, fix_end, use_reference_value, the start's capacity bounds and the matching end)."""
+    if not (b.has_storage and b.has_rp and b.v_state_inter is not None):
+        return
+    m, d = b.m, b.d
+    has_rep_blocks = d.rp_base__rep is not None and _has_rows(d.rp_block_first) and _has_rows(d.p_rp_last_step)
+    shape = _rp_chain_paths(b)
+    if not has_rep_blocks or shape is None:
+        return
+    roots, leaves, paths = shape
+    drift = _rp_weighted_drift(b, d.nodeState_rp)
+    if drift is None:
+        return
+    v_inter = b.v_state_inter
+    inter_prev = _var_view(v_inter, "__chain_end", {"d": "d_prev", "b": "b_prev"})
+    forward = _rp_node_set(b, d.storage_bind_forward_only_blended_weights)
+    start_pin = _rp_start_pin_nodes(b)
+    end_pin = _rp_end_pin_nodes(b)
+    su = d.p_state_unitsize
+
+    # ─── EQ. ─── rp_inter_period_start_fix ───────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_inter[n,d,b] − drift[n,d,b] − state_start[n]·invested[n,d] + state_start[n]·retired[n,d]
+    #   = state_start[n] · capacity[n,d] / state_unitsize[n]
+    #   ∀ n ∈ storage_fix_start ∩ nodeState_rp, n ∉ carried, (d,b) ∈ chain roots (the first base period of the
+    #     solve's first period; of each forecast branch of a fan in the first period)
+    # The level at the start of the chain (the level the first base period starts from: its end level less the
+    # weighted net change of its blocks) is the share state_start of the storage capacity in service, in state
+    # units.  The block-internal states start from free offsets (v_state_rp_start), so the start is pinned on the
+    # chain, the absolute level, not on a state inside the first block.  With bind_within_solve_blended_weights /
+    # bind_within_period_blended_weights the closure (rp_inter_period_cyclic) then holds the cycle at that level, as
+    # storage_state_start_binding_cyclic_period does without representative periods.  Only where no state of the
+    # node was realised before this solve (the first solve of the model and of each nested level).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
+    if start_pin is not None:
+        over = start_pin.join(roots, how="cross").select("n", "d", "b")
+        lhs: dict = {"state_inter": Where(v_inter, over), "neg_rp_drift": -Where(drift, over)}
+        invested, divested = _capacity.node_in_service(b, start_pin, "_rp_start", coef=d.p_state_start)
+        if invested is not None:
+            lhs["invest_neg"] = -invested
+        if divested is not None:
+            lhs["divest"] = divested
+        _notice_nodes("rp_storage_chain_pinned", start_pin)
+        m.add_cstr(
+            "rp_inter_period_start_fix",
+            over      = over,
+            sense     = "==",
+            lhs_terms = lhs,
+            rhs_terms = {"target": (d.p_state_start * b.cap.existing_state_n) / su},
+        )
+
+    # ─── EQ. ─── rp_inter_period_end_fix ─────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_inter[n,d,b] − state_end[n]·invested[n,d] + state_end[n]·retired[n,d]
+    #   = state_end[n] · capacity[n,d] / state_unitsize[n]
+    #   ∀ n ∈ storage_fix_end ∩ nodeState_rp, (d,b) ∈ chain leaves (the last base period of the solve's last
+    #     period; of each terminal branch), the chain ends at the end of the model (storage_rp_chain_at_model_end: the
+    #     solve holds the model's last period, whose last base period ends with it), no upper-level fix_quantity /
+    #     fix_usage on n
+    # The level at the end of the chain (the end of the last base period) is the share state_end of the storage
+    # capacity in service, in every solve whose horizon holds the last step of the model, as
+    # storage_state_end_binding pins v_state without representative periods.
+    if end_pin is not None:
+        over = end_pin.join(leaves, how="cross").select("n", "d", "b")
+        lhs = {"state_inter": Where(v_inter, over)}
+        invested, divested = _capacity.node_in_service(b, end_pin, "_rp_end", coef=d.p_state_end)
+        if invested is not None:
+            lhs["invest_neg"] = -invested
+        if divested is not None:
+            lhs["divest"] = divested
+        _notice_nodes("rp_storage_chain_pinned", end_pin)
+        m.add_cstr(
+            "rp_inter_period_end_fix",
+            over      = over,
+            sense     = "==",
+            lhs_terms = lhs,
+            rhs_terms = {"target": (d.p_state_end * b.cap.existing_state_n) / su},
+        )
+
+    if forward is None:
+        return
+    # The forward chains with a free start: the start pin above does not apply (no fix_start; a carried node,
+    # whose block states take no carry).
+    free_start = _rp_minus(forward, start_pin)
+
+    # ─── EQ. ─── rp_inter_period_start_max_state / rp_inter_period_start_min_state ─
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_inter[n,d,b] − drift[n,d,b] + retired[n,d] − invested[n,d]  ≤  state_upper[n,d]
+    # v_state_inter[n,d,b] − drift[n,d,b]  ≥  0
+    #   ∀ n ∈ bind_forward_only_blended_weights ∩ nodeState_rp, n ∉ the nodes of rp_inter_period_start_fix,
+    #     (d,b) ∈ chain roots
+    # The level a forward chain starts from is a physical level: within the storage capacity in service, as every
+    # base-period level (rp_inter_period_max_state).  Without the bounds the start of a forward chain had no bound.
+    if free_start is not None:
+        over = free_start.join(roots, how="cross").select("n", "d", "b")
+        lhs = {"state_inter": Where(v_inter, over), "neg_rp_drift": -Where(drift, over)}
+        upper = dict(lhs)
+        upper.update(_capacity.node_capacity_change_terms(b, free_start, "_rp_start_max"))
+        _notice_nodes("rp_storage_chain_pinned", free_start)
+        m.add_cstr(
+            "rp_inter_period_start_max_state",
+            over      = over,
+            sense     = "<=",
+            lhs_terms = upper,
+            rhs_terms = {"upper": d.p_state_upper},
+        )
+        m.add_cstr(
+            "rp_inter_period_start_min_state",
+            over      = over,
+            sense     = ">=",
+            lhs_terms = lhs,
+            rhs_terms = {},
+        )
+
+    # The forward chains whose start is a decision of this solve (storage_semantics: the matching end applies):
+    # a free start, or a fix_start share of capacity the solve can invest in during the start period; not where an
+    # upper-level solve fixes the node, nor where fix_start_end pins the end at least at the start share.
+    root_periods = [str(x) for x in roots["d"].cast(pl.Utf8).to_list()]
+    investable = _invest_at_start_nodes(b, _rp_minus(forward, free_start), root_periods)
+    closed_by_end = set()
+    if end_pin is not None and d.p_state_start is not None and d.p_state_end is not None:
+        shares = (d.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("s"))
+                  .join(d.p_state_end.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("e")), on="n"))
+        pinned = set(str(n) for n in end_pin["n"].to_list())
+        closed_by_end = {n for n, s, e in shares.iter_rows() if n in pinned and e >= s - 1e-12}
+    match_names = (set() if free_start is None else set(str(n) for n in free_start["n"].to_list())) | \
+        (investable - closed_by_end)
+    nested = _nested_nodes(b, with_price=True)
+    if nested is not None:
+        match_names -= set(nested["n"].to_list())
+    ref_nodes = _rp_minus(_rp_node_set(b, d.storage_use_reference_value), nested)
+    ref_nodes = _rp_minus(ref_nodes, end_pin)
+    if ref_nodes is not None:
+        ref_nodes = ref_nodes.filter(pl.col("n").cast(pl.Utf8).is_in(forward["n"].cast(pl.Utf8).implode()))
+        ref_nodes = ref_nodes if ref_nodes.height > 0 else None
+    match = forward.filter(pl.col("n").cast(pl.Utf8).is_in(sorted(match_names)))
+    endowment = None
+    if match.height > 0:
+        # Endowment (state units): the start a fix_start node has on the capacity that exists before the solve
+        # decides; 0 for a free start.  Only the start on the capacity the solve adds must come back.
+        endowment = (match.select(pl.col("n").cast(pl.Utf8)).join(
+            pl.DataFrame({"d": root_periods}, schema={"d": pl.Utf8}), how="cross"))
+        if investable and d.p_state_start is not None and b.cap.existing_state_n is not None:
+            exist = (d.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("s"))
+                     .filter(pl.col("n").is_in(sorted(investable)))
+                     .join(b.cap.existing_state_n.frame.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                                              pl.col("value").alias("cap")), on="n")
+                     .join(su.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("us")), on="n")
+                     .select("n", "d", value=-pl.col("s") * pl.col("cap") / pl.col("us")))
+            endowment = endowment.join(exist, on=["n", "d"], how="left")
+        else:
+            endowment = endowment.with_columns(value=pl.lit(None, dtype=pl.Float64))
+        endowment = endowment.with_columns(pl.col("value").fill_null(0.0))
+
+    # ─── EQ. ─── rp_inter_period_end_match ───────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_inter[n,d′,b′] − (v_state_inter[n,d,b] − drift[n,d,b])  ≥  − state_start[n]·existing[n,d] / su[n]
+    #   ∀ n ∈ bind_forward_only_blended_weights ∩ nodeState_rp whose start is a decision of the solve: a free start
+    #     (no fix_start, or carried), or fix_start while the solve can invest in n in the start period d (not with
+    #     fix_start_end at state_end ≥ state_start); n without an upper-level fix;
+    #     (d,b,d′,b′) ∈ chain paths (root (d,b), the leaf (d′,b′) of each path); the right-hand side is 0 for a
+    #     free start
+    # The matching end: a forward chain whose start the solve chooses ends at least at that start, so the solve
+    # cannot take energy it never produced (a free start full, the end empty; or storage built as a fuel tank whose
+    # fix_start share is spent once).  With fix_start only the start on the capacity the solve adds must come back:
+    # the start on existing capacity is the user's explicit endowment (state units).  An inequality: a start of 0,
+    # or no investment, always meets it, so it never forces slack.  fix_end and use_reference_value still set the
+    # end; with a free start this bounds the start by that end.
+    if match.height > 0:
+        over = match.join(paths, how="cross").select("n", "d", "b", "d_prev", "b_prev")
+        rhs = Param(("n", "d"), _rp_typed(b, endowment.with_columns(
+            pl.col("n").cast(v_inter.frame.schema["n"], strict=False))).select("n", "d", "value"))
+        _notice_nodes("storage_end_matches_start", match)
+        m.add_cstr(
+            "rp_inter_period_end_match",
+            over      = over,
+            sense     = ">=",
+            lhs_terms = {"state_end": Where(inter_prev, over), "neg_state_start": -Where(v_inter, over),
+                         "rp_drift_start": Where(drift, over)},
+            rhs_terms = {"endowment": rhs},
+        )
+
+    # ─── EQ. ─── rp_inter_period_reference_value / rp_inter_period_reference_value_min ─
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_inter[n,d,b] − reference_value[n,d,t]·invested[n,d] + reference_value[n,d,t]·retired[n,d]
+    #   (= | ≥) reference_value[n,d,t] · capacity[n,d] / state_unitsize[n]
+    #   ∀ n ∈ storage_use_reference_value ∩ bind_forward_only_blended_weights ∩ nodeState_rp, (d,b) ∈ chain leaves,
+    #     t = the node's last step in d (nodeState_last_dt), no upper-level fix on n
+    # use_reference_value sets the level at the end of the chain (the absolute level at the end of the horizon), not
+    # a state inside the last block.  A reference value is guidance, not accounting: where it lies below the
+    # fix_start share of a node the solve can invest in, the matching end above would conflict with it, so there
+    # the row is a lower bound (≥) and the matching end wins; elsewhere an equality.
+    if ref_nodes is not None and d.p_storage_state_reference_value is not None and _has_rows(d.nodeState_last_dt):
+        last_step = (d.nodeState_last_dt.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+                     .join(leaves.select(pl.col("d").cast(pl.Utf8)), on="d", how="inner")
+                     .filter(pl.col("n").is_in(ref_nodes["n"].cast(pl.Utf8).implode())))
+        rv = (promote_param_to_dt(d.p_storage_state_reference_value, d.dt)
+              .select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8), "value")
+              .join(last_step.lazy(), on=["n", "d", "t"], how="inner")
+              .select("n", "d", "value").unique(subset=["n", "d"], keep="first").collect())
+        soft = set()
+        if investable and d.p_state_start is not None:
+            share = {str(n): v for n, v in d.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), "value").iter_rows()}
+            soft = {n for n, _d, v in rv.iter_rows() if n in investable - closed_by_end and v < share.get(n, 0.0)}
+        target = (rv.rename({"value": "rv"})
+                  .join(b.cap.existing_state_n.frame.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                                            pl.col("value").alias("exist")), on=["n", "d"], how="left")
+                  .join(su.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("us")), on="n", how="inner")
+                  .with_columns(value=pl.col("rv") * pl.col("exist").fill_null(0.0) / pl.col("us")))
+        for name, sense, keep in (("rp_inter_period_reference_value", "==", False),
+                                  ("rp_inter_period_reference_value_min", ">=", True)):
+            part = target.filter(pl.col("n").is_in(sorted(soft)) == keep)
+            if part.height == 0:
+                continue
+            nodes = ref_nodes.filter(pl.col("n").cast(pl.Utf8).is_in(part["n"].implode()))
+            over = _rp_typed(b, nodes.join(leaves, how="cross").select("n", "d", "b"))
+            over = over.join(_rp_typed(b, part.select("n", "d").with_columns(
+                pl.col("n").cast(v_inter.frame.schema["n"], strict=False))), on=["n", "d"], how="semi")
+            if over.height == 0:
+                continue
+            coef = Param(("n", "d"), _rp_typed(b, part.select("n", "d", pl.col("rv").alias("value")).with_columns(
+                pl.col("n").cast(v_inter.frame.schema["n"], strict=False))))
+            lhs = {"state_inter": Where(v_inter, over)}
+            invested, divested = _capacity.node_in_service(b, nodes, f"_rp_ref{'_min' if keep else ''}", coef=coef)
+            if invested is not None:
+                lhs["invest_neg"] = -invested
+            if divested is not None:
+                lhs["divest"] = divested
+            _notice_nodes("rp_storage_chain_pinned", nodes)
+            m.add_cstr(
+                name,
+                over      = over,
+                sense     = sense,
+                lhs_terms = lhs,
+                rhs_terms = {"target": Param(("n", "d"), _rp_typed(b, part.select("n", "d", "value").with_columns(
+                    pl.col("n").cast(v_inter.frame.schema["n"], strict=False))))},
+            )
+        if soft:
+            _LOG.info("use_reference_value below the fix_start share of storage the solve can invest in: the end of "
+                      "the chain is at least the reference level and at least the start on the new capacity: %s",
+                      ", ".join(sorted(soft)))
 
 
 def _rp_weighted_drift(b: _Build, nodes: pl.DataFrame, *, at_prev: bool = False):
@@ -1725,8 +2200,8 @@ def _fix_start_terms(b: _Build) -> dict:
     # The first step of a node with no realised state from before the solve (carried: the nodes of
     # roll_continue_state; so the first solve of the model and of each nested level), where the state change is
     # omitted, starts from the start state (MWh); α, β: the self-discharge weights (_self_discharge, 0 without a
-    # loss).  Other fix_start nodes are pinned by storage_state_start_binding / storage_state_start_binding_cyclic_
-    # period.
+    # loss).  Other fix_start nodes are pinned by storage_state_start_binding_cyclic_period (cyclic) or
+    # rp_inter_period_start_fix (representative-period nodes: the start of their base-period chain).
     d = b.d
     first = _self_discharge.fix_start_first(d)
     if first is None:
@@ -4606,60 +5081,6 @@ def _eq_state_profiles(b: _Build) -> None:
         )
 
 
-def _eq_storage_start_binding(b: _Build) -> None:
-    """Start state of fix_start storage nodes."""
-    d = b.d
-    if not (b.has_storage
-            and _has_rows(d.storage_fix_start)
-            and d.p_state_start is not None
-            and b.cap.existing_state_n is not None
-            and d.p_state_unitsize is not None):
-        return
-    m = b.m
-
-    # ─── EQ. ─── storage_state_start_binding ─────────────────────────────────
-    # ─────────────────────────────────────────────────────────────────────────
-    # v_state[n,d,t] − state_start[n]·invested[n,d]
-    #   + state_start[n]·retired[n,d]
-    #   = state_start[n] · capacity[n,d] / state_unitsize[n]
-    #   ∀ (n,d,t) ∈ nodeState_first_dt, n ∈ storage_fix_start, n ∉ carried,
-    #     n ∉ bind_forward_only ∪ bind_within_timeblock ∪ bind_within_solve ∪ bind_within_period ∪ nodeStateBlock
-    # Pins the state at the first step to the share state_start of the built storage capacity (state
-    # units).  Only where no state of the node was realised before this solve (carried: the nodes of
-    # roll_continue_state), i.e. the first solve of the model and of each nested level.  The nodes left are the
-    # representative-period (blended weights) nodes,
-    # whose first step starts from v_state_rp_start.  bind_forward_only nodes get their start through
-    # nodeBalance_eq (_fix_start_terms); the cyclic nodes (bind_within_timeblock, bind_within_solve,
-    # bind_within_period, bind_intraperiod_blocks) are pinned by storage_state_start_binding_cyclic_period.
-    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
-    # existing capacity counting until its end of life (none for reinvest_automatic).
-    nodes = d.storage_fix_start
-    for excluded in (d.storage_bind_forward_only, d.storage_bind_within_timeblock, d.storage_bind_within_solve,
-                     d.storage_bind_within_period, d.nodeStateBlock):
-        if _has_rows(excluded):
-            nodes = nodes.join(excluded, on="n", how="anti")
-    nodes = _self_discharge.without_nodes(nodes, _self_discharge.carried_nodes(d))
-    if nodes is None:
-        return
-    over = d.nodeState_first_dt.join(nodes, on="n", how="inner")
-    if over.height == 0:
-        return
-    target = (d.p_state_start * b.cap.existing_state_n) / d.p_state_unitsize
-    lhs: dict = {"state": b.v_state}
-    invested, divested = _capacity.node_in_service(b, d.nodeState, "_start", coef=d.p_state_start)
-    if invested is not None:
-        lhs["invest_neg"] = -invested
-    if divested is not None:
-        lhs["divest"] = divested
-    m.add_cstr(
-        "storage_state_start_binding",
-        over      = over,
-        sense     = "==",
-        lhs_terms = lhs,
-        rhs_terms = {"target": target},
-    )
-
-
 def _roll_end_rows(d, kinds) -> "pl.DataFrame | None":
     """``(n, value)`` of the storage_roll_end rows of the ``kinds`` (_run_model._anchor_cyclic_in_rolling); None
     when there are none."""
@@ -4803,6 +5224,16 @@ def _state_keys_typed(b: _Build, frame: pl.DataFrame) -> pl.DataFrame:
     """``frame`` (n, d, t, value) with its keys cast onto v_state's dtypes."""
     schema = b.v_state.frame.schema
     return frame.with_columns([pl.col(c).cast(schema[c], strict=False) for c in ("n", "d", "t")])
+
+
+def _notice_nodes(change_id: str, nodes) -> None:
+    """The behaviour-change notice of ``change_id`` for the nodes of ``nodes`` (a frame with n, or names)."""
+    if nodes is None:
+        return
+    names = nodes["n"].to_list() if isinstance(nodes, pl.DataFrame) else list(nodes)
+    if names:
+        from flextool.engine import _behaviour_changes
+        _behaviour_changes.notice(change_id, "nodes", sorted(set(str(n) for n in names)))
 
 
 def _notice_stochastic_storage_paths(names) -> None:
@@ -4970,6 +5401,10 @@ def _end_binding_steps(b: _Build) -> "pl.DataFrame | None":
             .join(d.period_last, on="d", how="inner")
             .join(d.storage_fix_end, on="n", how="inner")
             .select("n", "d", "t").unique())
+    if _has_rows(d.nodeState_rp):
+        # A representative-period node's end is the end of its base-period chain (rp_inter_period_end_fix), not a
+        # state inside the last representative block.
+        over = over.join(d.nodeState_rp.select(pl.col("n").cast(over.schema["n"], strict=False)), on="n", how="anti")
     # An upper-level storage fix at the step wins (fix_quantity: a second equality on the same state; fix_usage: with
     # the end pinned the usage cap can be infeasible).  A nested fix_price does not conflict and keeps the pin.
     over = _without_steps(over, _nested_fixed_end(b, with_price=False))
@@ -5017,6 +5452,129 @@ def _eq_storage_end_binding(b: _Build) -> None:
         lhs_terms = lhs,
         rhs_terms = {"target": (d.p_state_end * b.cap.existing_state_n) / d.p_state_unitsize},
     )
+
+
+def _end_match_nodes(b: _Build) -> "tuple[pl.DataFrame | None, pl.DataFrame | None, pl.DataFrame | None]":
+    """``(free_first, share_first, ends)`` of the matching end of forward chains without representative periods.
+
+    free_first (n, d, t): the first steps of the bind_forward_only nodes whose chain starts free in this solve
+    (no fix_start, no carry); share_first (n, d, t): those of the fix_start nodes the solve can invest in during the
+    first period (not with fix_start_end at state_end ≥ state_start); ends (n, d, t): the last step of each last
+    period of those nodes.  Only in a solve that holds both the start of the chain (not carried: the first solve of
+    the model and of each nested level) and the last step of the model (storage_solve_at_model_end), and not for a
+    node an upper-level solve fixes.  Each None when empty.
+    """
+    d = b.d
+    none = (None, None, None)
+    if not (b.has_storage and d.storage_solve_at_model_end and _has_rows(d.storage_bind_forward_only)
+            and _has_rows(d.nodeState_last_dt) and _has_rows(d.period_last) and _has_rows(d.nodeState_first_dt)):
+        return none
+    forward = d.storage_bind_forward_only.select(pl.col("n").cast(pl.Utf8)).unique()
+    nested = _nested_nodes(b, with_price=True)
+    if nested is not None:
+        forward = forward.join(nested, on="n", how="anti")
+    if _has_rows(d.nodeState_rp):
+        forward = forward.join(d.nodeState_rp.select(pl.col("n").cast(pl.Utf8)), on="n", how="anti")
+    if forward.height == 0:
+        return none
+
+    def restrict(first) -> "pl.DataFrame | None":
+        if first is None:
+            return None
+        out = first.filter(pl.col("n").cast(pl.Utf8).is_in(forward["n"].implode()))
+        return out if out.height > 0 else None
+
+    free_first = restrict(_self_discharge.open_first(d))
+    share_first = restrict(_self_discharge.fix_start_first(d))
+    if share_first is not None:
+        periods = sorted(set(str(x) for x in share_first["d"].to_list()))
+        investable = _invest_at_start_nodes(b, share_first.select("n").unique(), periods)
+        if _has_rows(d.storage_fix_end) and d.p_state_end is not None and d.p_state_start is not None:
+            shares = (d.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("s"))
+                      .join(d.p_state_end.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("e")),
+                            on="n"))
+            fix_end = set(str(n) for n in d.storage_fix_end["n"].to_list())
+            investable -= {n for n, s, e in shares.iter_rows() if n in fix_end and e >= s - 1e-12}
+        share_first = share_first.filter(pl.col("n").cast(pl.Utf8).is_in(sorted(investable)))
+        share_first = share_first if share_first.height > 0 else None
+    names = set()
+    for f in (free_first, share_first):
+        if f is not None:
+            names |= set(str(n) for n in f["n"].to_list())
+    if not names:
+        return none
+    ends = (d.nodeState_last_dt.join(d.period_last, on="d", how="inner")
+            .filter(pl.col("n").cast(pl.Utf8).is_in(sorted(names)))
+            .select("n", "d", "t").unique().sort("n", "d", "t"))
+    return free_first, share_first, (ends if ends.height > 0 else None)
+
+
+def _eq_storage_end_match(b: _Build) -> None:
+    """The matching end of forward chains (no representative periods) whose start is a decision of the solve."""
+    d = b.d
+    free_first, share_first, ends = _end_match_nodes(b)
+    if ends is None:
+        return
+    m = b.m
+    end_view = _var_view(b.v_state, "__end_match", {"d": "d_end", "t": "t_end"})
+    ends = ends.rename({"d": "d_end", "t": "t_end"})
+
+    # ─── EQ. ─── storage_state_end_match ─────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,d_end,t_end] − v_state[n,d,t]  ≥  0
+    #   ∀ n ∈ bind_forward_only, (n,d,t) ∈ nodeState_first_dt with a free start (no fix_start, n ∉ carried),
+    #     (n,d_end,t_end) ∈ nodeState_last_dt, d_end ∈ period_last, storage_solve_at_model_end, no upper-level fix on n
+    # The matching end: a forward chain that starts free (the solve chooses the level of the first step, which has
+    # no state change) ends the model at least at that level, so the solve cannot start full and end empty with
+    # energy it never produced.  An inequality: a start of 0 always meets it, so it does not force slack by
+    # itself.  fix_end and use_reference_value still set the end; with a free start this bounds the start by that
+    # end.  With a stochastic fan in the first period every root start is tied (storage_state_fan_start), so each
+    # last step is held to it.
+    if free_first is not None:
+        over = (free_first.select("n", "d", "t")
+                .join(ends.with_columns(pl.col("n").cast(free_first.schema["n"], strict=False)), on="n", how="inner")
+                .sort("n", "d", "t", "d_end", "t_end"))
+        if over.height > 0:
+            _notice_nodes("storage_end_matches_start", over.select("n").unique())
+            m.add_cstr(
+                "storage_state_end_match",
+                over      = over,
+                sense     = ">=",
+                lhs_terms = {"state_end": Where(end_view, over), "neg_state_start": -Where(b.v_state, over)},
+                rhs_terms = {},
+            )
+
+    # ─── EQ. ─── storage_state_end_match_share ───────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,d_end,t_end] − state_start[n]·invested[n,d] + state_start[n]·retired[n,d]  ≥  0
+    #   ∀ n ∈ bind_forward_only ∩ storage_fix_start, n ∉ carried, (n,d,t) ∈ nodeState_first_dt, the solve can
+    #     invest in n in d (nd_invest_set), not fix_start_end with state_end ≥ state_start; (n,d_end,t_end) as above
+    # The matching end of a fix_start start on capacity the solve can invest in: the start on the capacity the solve
+    # adds in the first period (state units) comes back by the end of the model, so storage is not built as a fuel
+    # tank whose fix_start share is spent once.  The start on existing capacity is the user's endowment and may be
+    # used.  No investment always meets it.
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
+    if share_first is not None and d.p_state_start is not None:
+        over = (share_first.select("n", "d", "t")
+                .join(ends.with_columns(pl.col("n").cast(share_first.schema["n"], strict=False)), on="n", how="inner")
+                .sort("n", "d", "t", "d_end", "t_end"))
+        if over.height > 0:
+            nodes = over.select("n").unique()
+            lhs: dict = {"state_end": Where(end_view, over)}
+            invested, divested = _capacity.node_in_service(b, nodes, "_end_match", coef=d.p_state_start)
+            if invested is not None:
+                lhs["invest_neg"] = -invested
+            if divested is not None:
+                lhs["divest"] = divested
+            _notice_nodes("storage_end_matches_start", nodes)
+            m.add_cstr(
+                "storage_state_end_match_share",
+                over      = over,
+                sense     = ">=",
+                lhs_terms = lhs,
+                rhs_terms = {},
+            )
 
 
 def _roll_horizon_ends(b: _Build, nodes: pl.DataFrame) -> "pl.DataFrame | None":
@@ -5231,6 +5789,13 @@ def _eq_storage_reference_value(b: _Build) -> None:
     over = (ends
             .join(d.storage_use_reference_value, on="n", how="inner")
             .select("n", "d", "t").unique())
+    if _has_rows(d.nodeState_rp):
+        # A representative-period node takes its reference value on the end of its base-period chain
+        # (rp_inter_period_reference_value), not on a state inside the last representative block; a cyclic one
+        # none (its closure wins).
+        rp_ref = over.join(d.nodeState_rp.select(pl.col("n").cast(over.schema["n"], strict=False)), on="n", how="semi")
+        _notice_nodes("rp_storage_chain_pinned", rp_ref.select("n").unique())
+        over = over.join(d.nodeState_rp.select(pl.col("n").cast(over.schema["n"], strict=False)), on="n", how="anti")
     if _has_rows(d.nodeStateBlock):
         # A bind_intraperiod_blocks node (in storage_use_reference_value in rolling solves only) is pinned where the
         # roll holds the period in part (period_block_chain): at the roll end and at the end of a chained tail that a
@@ -5277,20 +5842,41 @@ def _eq_storage_reference_value(b: _Build) -> None:
               .with_columns(value=pl.col("rv") * pl.col("exist") / pl.col("us"))
               .select("n", "d", "t", "value")
               .collect())
-    lhs: dict = {"state": Where(b.v_state, over)}
-    invested, divested = _capacity.node_in_service(b, d.storage_use_reference_value, "_ref_value",
-                                          coef=Param(("n", "d", "t"), rv))
-    if invested is not None:
-        lhs["invest_neg"] = -invested
-    if divested is not None:
-        lhs["divest"] = divested
-    m.add_cstr(
-        "storage_state_solve_horizon_reference_value",
-        over      = over,
-        sense     = "==",
-        lhs_terms = lhs,
-        rhs_terms = {"target": Param(("n", "d", "t"), target)},
-    )
+    # A reference value is guidance: where it lies below the fix_start share of a node whose start the solve decides
+    # by investing (storage_state_end_match_share), the matching end wins and the row is a lower bound
+    # (storage_state_solve_horizon_reference_value_min).
+    _free, share_first, _ends = _end_match_nodes(b)
+    soft: set[str] = set()
+    if share_first is not None and d.p_state_start is not None:
+        share = {str(n): v for n, v in d.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), "value").iter_rows()}
+        matched = set(str(n) for n in share_first["n"].to_list())
+        soft = {str(n) for n, v in rv.select("n", "value").iter_rows() if str(n) in matched and v < share[str(n)]}
+        if soft:
+            _LOG.info("use_reference_value below the fix_start share of storage the solve can invest in: the end is "
+                      "at least the reference level and at least the start on the new capacity: %s",
+                      ", ".join(sorted(soft)))
+    for name, sense, keep in (("storage_state_solve_horizon_reference_value", "==", False),
+                              ("storage_state_solve_horizon_reference_value_min", ">=", True)):
+        is_soft = pl.col("n").cast(pl.Utf8).is_in(sorted(soft))
+        part = over.filter(is_soft if keep else ~is_soft)
+        if part.height == 0:
+            continue
+        rv_part = rv.filter(is_soft if keep else ~is_soft)
+        lhs: dict = {"state": Where(b.v_state, part)}
+        invested, divested = _capacity.node_in_service(b, d.storage_use_reference_value,
+                                                       "_ref_value" + ("_min" if keep else ""),
+                                                       coef=Param(("n", "d", "t"), rv_part))
+        if invested is not None:
+            lhs["invest_neg"] = -invested
+        if divested is not None:
+            lhs["divest"] = divested
+        m.add_cstr(
+            name,
+            over      = part,
+            sense     = sense,
+            lhs_terms = lhs,
+            rhs_terms = {"target": Param(("n", "d", "t"), target.filter(is_soft if keep else ~is_soft))},
+        )
 
 
 def _eq_profiles(b: _Build) -> None:
