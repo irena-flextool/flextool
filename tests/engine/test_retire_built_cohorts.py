@@ -347,6 +347,8 @@ def _hedge_values(invest: dict[str, float], retire_min: dict[str, float]) -> lis
             ["unit", "base", "invest_method", b64("invest_retire_period", "str")],
             ["unit", "base", "lifetime_method", b64("reinvest_choice", "str")],
             ["unit", "base", "lifetime_technical", b64(2.0, "float")],
+            ["unit", "base", "invest_cost", _period_map({"p2035": 1.0, "p2040": 3.0})],
+            ["unit", "base", "discount_rate", b64(0.05, "float")],
             ["unit", "base", "net_salvage_value", b64(0.5, "float")],
             ["unit", "base", "invest_min_period", _period_map(invest)],
             ["unit", "base", "invest_max_period", _period_map(invest)],

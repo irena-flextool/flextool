@@ -7648,7 +7648,7 @@
       "base",
       "discount_rate",
       [
-        "MC4wNQ==",
+        "MC4w",
         "float"
       ],
       "base"
@@ -7688,7 +7688,7 @@
       "base",
       "invest_cost",
       [
-        "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sicDIwMzUiLCAxLjBdLCBbInAyMDQwIiwgMy4wXV19",
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sicDIwMzUiLCAyLjBdLCBbInAyMDQwIiwgNi4wXV19",
         "map"
       ],
       "base"
@@ -7728,7 +7728,7 @@
       "base",
       "lifetime_technical",
       [
-        "MS4w",
+        "Mi4w",
         "float"
       ],
       "base"

@@ -4,10 +4,10 @@ hedged two-stage (mid-horizon reveal) fixture (design
 
 Two 3-step periods ``p2035`` (t0001-t0003) / ``p2040`` (t0004-t0006).  The
 lever that makes hedging valuable: a period-Map ``invest_cost``
-``{p2035: 1, p2040: 3}`` so the FIRST-STAGE (p2035) capacity is cheaper per
-delivered p2040-MW than the recourse (p2040) capacity — under
-``reinvest_automatic`` p2035 capacity is alive at p2040 (unbounded-forward
-windows), so pre-positioning under uncertainty pays off.
+``{p2035: 2, p2040: 6}`` of a plant whose ``lifetime_technical`` (2 years)
+spans both periods, so the FIRST-STAGE (p2035) capacity is cheaper per
+delivered p2040-MW than the recourse (p2040) capacity — the p2035 plant is
+still in service at p2040, so pre-positioning under uncertainty pays off.
 
 Two scenarios drive the WS < RP < EEV proof on IDENTICAL scenario data,
 differing ONLY in WHERE the branches are declared:
@@ -38,12 +38,11 @@ mechanism note).  A free existing ``wind`` unit with a branch-varying
       - p2040 high:            0.0 → wind  0 → base residual 120 (= D2 high).
       - p2040 low:             0.6 → wind 60 → base residual  60 (= D2 low).
   * unit ``base`` → ``elec`` — the investable peaker (virtual_unitsize 1,
-    invest_total, discount_rate 0.05, lifetime 1 → annuity per MW-period
-    = cost·1000·CRF(0.05,1)·1.05^(0−1) = cost·1000 at the default
-    discount_offset_investment 0 (a start-of-year payment worth the cost at
-    5 %); unbounded-forward windows so the p2035 anchor's window is
-    {p2035, p2040} → K1 = 2·1·1000 = 2000 and the p2040 anchor's window is
-    {p2040} → K2 = 1·3·1000 = 3000),
+    invest_total, discount_rate 0, lifetime_technical 2 = payback time →
+    straight-line annuity per MW and year = cost·1000 / 2, at every
+    discount_offset_investment; the plant built in p2035 serves p2035 and
+    p2040 (one plant, no replacement inside the horizon) → K1 = 2·(2·1000/2)
+    = 2000, the plant built in p2040 serves p2040 → K2 = 6·1000/2 = 3000),
     ``invest_max_total`` 150 (non-binding; the per-path cap witness §8.3).
 
 **No inflation / no solve-level discount** (design §8.1 F3): the exact
@@ -51,8 +50,8 @@ mechanism note).  A free existing ``wind`` unit with a branch-varying
 inflation scalar = 0.  This builder authors NO ``model.social_discount_rate``,
 NO ``discount_offset_investment/operations``, and NO solve-level
 ``discount_rate`` — all left at their 0.0 default.  The entity
-``discount_rate = 0.05`` on ``base`` drives ONLY the CRF (the annuity), a
-distinct knob.
+``discount_rate`` on ``base`` drives ONLY the CRF (the annuity), a
+distinct knob (here 0: the straight-line annuity).
 
 Hand calculation (design §8.2), ``x = v_invest[base, p2035]``,
 ``r_s = v_invest[base, p2040_s]``, weights ``w_high = 0.25`` (D2 = 120),
@@ -250,8 +249,9 @@ def build() -> dict:
     ])
     # Deterministic demand: 120 MW at every step (both periods).
     inflow = _map([(t, -120.0) for t in STEPS])
-    # Period-Map invest_cost: first stage cheap (1), recourse dear (3).
-    invest_cost = _map([("p2035", 1.0), ("p2040", 3.0)])
+    # Period-Map invest_cost of a 2-year plant at discount_rate 0: 1000 a year for a p2035 plant (first stage
+    # cheap), 3000 a year for a p2040 plant (recourse dear).
+    invest_cost = _map([("p2035", 2.0), ("p2040", 6.0)])
 
     spec["parameter_values"] = [
         ["model", "flextool", "solves",
@@ -296,8 +296,8 @@ def build() -> dict:
         ["unit", "base", "invest_method",
          _pack("invest_total", "str"), "base"],
         ["unit", "base", "invest_cost", _pack(invest_cost, "map"), "base"],
-        ["unit", "base", "discount_rate", _pack(0.05, "float"), "base"],
-        ["unit", "base", "lifetime_technical", _pack(1.0, "float"), "base"],
+        ["unit", "base", "discount_rate", _pack(0.0, "float"), "base"],
+        ["unit", "base", "lifetime_technical", _pack(2.0, "float"), "base"],
         ["unit", "base", "invest_max_total", _pack(150.0, "float"),
          "base"],
         ["unit__outputNode", ["base", "elec"], "other_operational_cost",
