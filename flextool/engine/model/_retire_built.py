@@ -1,8 +1,8 @@
 """Retirement of model-built capacity: the retirement columns, their reach and bound, the ties and the cost.
 
-A model-built cohort (an investment of this solve, or one an earlier solve of the run realized and carried) of a
-``reinvest_choice`` / ``no_reinvestment`` entity whose ``invest_method`` allows retirement has a retirement column
-per investment period it is in service in (``cd_divest_built``, ``preprocess/params/_retire_built.py``).  One
+A model-built cohort (an investment of this solve, or one an earlier solve of the run realized and carried) of an
+entity whose ``invest_method`` allows retirement (any ``lifetime_method``; a ``reinvest_automatic`` cohort is the root
+of its chain of replacements) has a retirement column per investment period it is in service in (``cd_divest_built``, ``preprocess/params/_retire_built.py``).  One
 aggregate column per (entity, period) holds the model-built capacity retired so far that still counts there, so
 every capacity row gains one term whatever the number of cohorts (``_capacity``: ``retired[e,d]`` adds
 ``v_divested_built[e,d]``).  The retirement of existing capacity keeps ``v_divest`` (``maxRetired_existing``).
@@ -62,8 +62,9 @@ def add_variables(b: "_Build") -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_divest_built_p[p,c,d] ≥ 0   ∀ (p,c,d) ∈ cd_divest_built, p a process   (n: storage nodes, state_unitsize)
     #   cd_divest_built = {(e,c,d) : c a model-built cohort of e (an investment of this solve, or carried from an
-    #     earlier solve of the run), e ∈ entityDivest with lifetime_method reinvest_choice / no_reinvestment,
-    #     d ∈ period_invest, (c,d) ∈ cohort_alive (along the scenario lineage)}
+    #     earlier solve of the run), e ∈ entityDivest with a lifetime_method (bounded and reinvest_automatic
+    #     cohorts; an automatic cohort is in service to the end of the horizon), d ∈ period_invest, (c,d) ∈
+    #     cohort_alive (along the scenario lineage)}
     # Units (of unitsize) of cohort c retired in period d; a retirement is permanent: it counts in every later
     # period of the lineage while the cohort is in service (divestedBuilt).
     # ─── VAR. ─── v_divested_built_p / v_divested_built_n ───────────────────
@@ -281,6 +282,10 @@ def objective_terms(b: "_Build") -> list:
         # ─── OBJ. ─── divest_built_cost_{p,n} ────────────────────────────────
         # ─────────────────────────────────────────────────────────────────────
         # Σ_{(e,c,d) ∈ cd_divest_built} v_divest_built[e,c,d]·us[e]·(settle[c,d] − a_b[c]·S̄[c,d] − fcs[c,d])·bw[d]
+        #   (reinvest_choice / no_reinvestment); a reinvest_automatic cohort c, the root of its chain:
+        #   settle[c,d] − a_b[c]·S̄[c,d] := [m > 0 or g = g1]·settle[g,d] − Σ_{g′ ≥ g} a_b[g′]·S̄[g′,d]
+        #     g the generation of c in service in d, m = y[d] − y_on[g]; settle / S̄ of each generation as below with
+        #     its own pay, n, r, y_on, y_eol, a_b of the plant as constructed in d_on(g) (on d's lineage in a fan)
         #   settle[c,d] = pay[c]·S[y_on, min(y[d], y_on + n)) + D(d)·(B[c,m] − S_d)
         #   B[c,m] = pay[c]·(1+r)^(1−off_inv)·ā(r, n − m) for m < n, else 0;  m = y[d] − y_on;
         #     ā(r,x) = (1 − (1+r)^−x)/r (x at r = 0)
@@ -296,7 +301,9 @@ def objective_terms(b: "_Build") -> list:
         # then at the start of d the capital still owed (the loan balance), less the net salvage value received
         # then.  The level price its years in service were charged (v_invest's, or an earlier solve's for a
         # carried cohort, history included) is taken back with its salvage credits, and the fixed cost from d on
-        # is saved.  Building and retiring at once costs (invest_cost − net_salvage_value)·1000·D(d).
+        # is saved.  Building and retiring at once costs (invest_cost − net_salvage_value)·1000·D(d).  Retiring a
+        # reinvest_automatic cohort also cancels every replacement still to come; a replacement retired at its own
+        # start is never built (no settlement).
         us = _unitsize(d, axis)
         cost = _cost(d, d.cd_divest_built_cost, axis)
         fixed = _cost(d, d.cd_divest_built_fixed, axis)

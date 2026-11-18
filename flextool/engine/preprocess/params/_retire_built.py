@@ -1,9 +1,9 @@
 """Retirement of model-built capacity: the retirement options of each built cohort, their bounds and the checks.
 
 A cohort built by the model (an investment decision of this solve, or one an earlier solve of the run realized and
-handed on in ``realized_cohort``) can be retired when its entity's ``invest_method`` allows retirement and its
-``lifetime_method`` is ``reinvest_choice`` or ``no_reinvestment`` (``reinvest_automatic`` capacity is renewed and
-has no retirement of its own).  A retirement is decided in an investment period ``d`` in which the cohort is in
+handed on in ``realized_cohort``) can be retired when its entity's ``invest_method`` allows retirement, whatever its
+``lifetime_method`` (a ``reinvest_automatic`` cohort is the root of its chain of replacements: retiring it retires
+the plant in service and avoids every replacement still to come).  A retirement is decided in an investment period ``d`` in which the cohort is in
 service and counts in every later period of the lineage while the cohort is in service (``dd_forward``, the
 cohort's alive periods).  The frames (``FlexData`` fields, :func:`built_retirement_options`):
 
@@ -33,7 +33,7 @@ from flextool.engine.input._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
-from flextool.engine.preprocess.params._cohorts import BOUNDED_METHODS, KIND_INVEST, PRICE_COLUMNS
+from flextool.engine.preprocess.params._cohorts import KIND_INVEST, LIFETIME_METHODS, PRICE_COLUMNS
 
 _INF = float("inf")
 #: Capacities (MW, MWh) closer than this are equal.
@@ -58,14 +58,14 @@ class BuiltRetirement:
 
 def _carried_rows(carried: pl.DataFrame | None, retire: pl.DataFrame | None, entities: pl.DataFrame) -> pl.DataFrame:
     """``[e, cohort, remaining, y_on, y_eol, prices…]`` of the carried cohorts (handoff ``realized_cohort``) that can
-    be retired: an investment cohort of a ``reinvest_choice`` / ``no_reinvestment`` entity of ``entities`` (``[e]``),
+    be retired: an investment cohort (not a generation of a chain) of an entity of ``entities`` (``[e]``),
     ``remaining`` its size less its carried retirements (``realized_retire``)."""
     schema = {"e": schema_dtype(None, "e"), "cohort": pl.Utf8, "remaining": pl.Float64, "y_on": pl.Float64,
               "y_eol": pl.Float64, **{c: pl.Float64 for c in PRICE_COLUMNS}}
     if carried is None or carried.height == 0:
         return pl.DataFrame(schema=schema)
     rows = (carried.lazy()
-                   .filter((pl.col("kind") == KIND_INVEST) & pl.col("method").is_in(list(BOUNDED_METHODS)))
+                   .filter((pl.col("kind") == KIND_INVEST) & pl.col("method").is_in(list(LIFETIME_METHODS)))
                    .select(alias_to_axis("entity", "e"), pl.col("cohort"), pl.col("size").cast(pl.Float64),
                            pl.col("y_on").cast(pl.Float64), pl.col("y_eol").cast(pl.Float64).fill_null(_INF),
                            *(pl.col(c).cast(pl.Float64) for c in PRICE_COLUMNS)))
@@ -112,7 +112,7 @@ def built_retirement_options(cohort: pl.DataFrame | None,
                                 **{c: pl.Float64 for c in PRICE_COLUMNS}})
     if cohort is not None and cohort.height > 0 and cohort_alive is not None and cohort_alive.height > 0:
         own, ents = align_join_dtypes(
-            cohort.lazy().filter((pl.col("kind") == KIND_INVEST) & pl.col("method").is_in(list(BOUNDED_METHODS))
+            cohort.lazy().filter((pl.col("kind") == KIND_INVEST) & pl.col("method").is_in(list(LIFETIME_METHODS))
                                  & pl.col("y_on").is_not_null()),
             entities.lazy(), ["e"])
         here = (own.join(ents, on="e", how="semi")

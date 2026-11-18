@@ -5484,13 +5484,12 @@ def _fan_branch_years_notice(source: "InputSource",
 
 def _retirement_without_existing_warning(source: "InputSource", offered: pl.DataFrame) -> None:
     """Warn about the entities that have a retirement option but no ``existing`` capacity in any period (none
-    given, or 0 everywhere) and whose model-built capacity cannot be retired either (``lifetime_method``
-    ``reinvest_automatic``, renewed capacity without a retirement of its own, or no investment option): the option
-    has no effect — no retirement variable, and their retired-capacity terms (user constraints, group retirement
-    limits) are 0.  Each entity once per run.  An entity with existing capacity whose retirement periods are past
-    its end of life is a valid model and is not warned about (the end of life is in the retirement notice)."""
+    given, or 0 everywhere) and no investment option (no model-built capacity to retire either): the option has no
+    effect — no retirement variable, and their retired-capacity terms (user constraints, group retirement limits)
+    are 0.  Each entity once per run.  An entity with existing capacity whose retirement periods are past its end of
+    life is a valid model and is not warned about (the end of life is in the retirement notice)."""
     from flextool.engine import _behaviour_changes
-    from flextool.engine.preprocess.params._cohorts import BOUNDED_METHODS
+    from flextool.engine.preprocess.params._cohorts import LIFETIME_METHODS
     from flextool.engine.preprocess.params._npv import (
         _entity_invest_set_lf,
         _lifetime_method_with_default_lf,
@@ -5505,7 +5504,7 @@ def _retirement_without_existing_warning(source: "InputSource", offered: pl.Data
     if lost.height == 0:
         return
     bounded = (_lifetime_method_with_default_lf(source, lost.lazy())
-               .filter(pl.col("method").is_in(list(BOUNDED_METHODS))).select("e"))
+               .filter(pl.col("method").is_in(list(LIFETIME_METHODS))).select("e"))
     bounded, investing = align_join_dtypes(bounded, _entity_invest_set_lf(source, _INVEST_NOT_ALLOWED), ["e"])
     built = bounded.join(investing, on="e", how="semi").collect()
     lost, built = align_join_dtypes(lost, built, ["e"])
@@ -5515,9 +5514,9 @@ def _retirement_without_existing_warning(source: "InputSource", offered: pl.Data
     _behaviour_changes.warn_once_each(
         "retirement_without_existing", names,
         lambda fresh: "Warning: " + ", ".join(fresh) + (" have" if len(fresh) > 1 else " has")
-        + " a retirement option (invest_method) but no existing capacity. Only existing capacity can be retired "
-        "(and, with lifetime_method reinvest_choice or no_reinvestment, capacity the model builds), so there is no "
-        "retirement variable; retired-capacity terms of user constraints and group retirement limits are 0.")
+        + " a retirement option (invest_method) but no existing capacity and no investment option. Only existing "
+        "capacity and capacity the model builds can be retired, so there is no retirement variable; retired-capacity "
+        "terms of user constraints and group retirement limits are 0.")
 
 
 def _check_retirement_minimums(flex_data: object,
@@ -5957,13 +5956,13 @@ def _carried_cohorts(provider: "object | None") -> "tuple[pl.DataFrame | None, p
 
 
 def _carried_retirable(offered: "pl.DataFrame | None", carried: "pl.DataFrame | None") -> bool:
-    """Whether a carried investment cohort of a ``reinvest_choice`` / ``no_reinvestment`` entity has a retirement
-    option in the solve's investment periods (``offered`` ``[e, d]``)."""
+    """Whether a carried investment cohort of an entity with a lifetime_method has a retirement option in the solve's
+    investment periods (``offered`` ``[e, d]``)."""
     if offered is None or offered.height == 0 or carried is None or carried.height == 0:
         return False
-    from flextool.engine.preprocess.params._cohorts import BOUNDED_METHODS, KIND_INVEST
+    from flextool.engine.preprocess.params._cohorts import KIND_INVEST, LIFETIME_METHODS
     entities = sorted({str(e) for e in offered["e"].unique().to_list()})
-    return carried.filter((pl.col("kind") == KIND_INVEST) & pl.col("method").is_in(list(BOUNDED_METHODS))
+    return carried.filter((pl.col("kind") == KIND_INVEST) & pl.col("method").is_in(list(LIFETIME_METHODS))
                           & pl.col("entity").is_in(entities)).height > 0
 
 

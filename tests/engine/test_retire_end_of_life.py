@@ -234,8 +234,9 @@ def test_retired_capacity_stays_within_the_existing_capacity(tmp_path_factory) -
 
 @pytest.mark.solver
 def test_entity_without_existing_capacity_has_no_retirement(tmp_path_factory, capsys) -> None:
-    """coal_plant with existing 0 that may invest and retire (invest_retire_no_limit): only existing capacity can
-    be retired, so it has investment variables but no retirement variable, and a warning names it."""
+    """coal_plant with existing 0 that may invest and retire (invest_retire_no_limit, reinvest_automatic): it has no
+    retirement of existing capacity, but the capacity it builds can be retired, so no warning names it.  With
+    retire_no_limit (no investment) it has nothing to retire: no retirement variable at all, and a warning."""
     values = [["unit", PLANT, "existing", b64(0.0, "float")],
               ["unit", PLANT, "invest_method", b64("invest_retire_no_limit", "str")],
               ["unit", PLANT, "net_salvage_value", b64(SALVAGE, "float")]]
@@ -245,8 +246,17 @@ def test_entity_without_existing_capacity_has_no_retirement(tmp_path_factory, ca
     fd = step.flex_data
     assert fd.pd_divest_set is None or utf8(fd.pd_divest_set).filter(pl.col("p") == PLANT).height == 0
     assert utf8(in_service(fd).retired_p).filter(pl.col("p") == PLANT).height == 0
+    assert utf8(fd.cd_divest_built).filter(pl.col("e") == PLANT).height > 0
+    assert f"{PLANT} has a retirement option" not in capsys.readouterr().out
+    retire_only = [v for v in values if v[2] != "invest_method"] + [
+        ["unit", PLANT, "invest_method", b64("retire_no_limit", "str")]]
+    step = _single(tmp_path_factory, "ret_none_retire_only", retire_only)
+    assert step.optimal
+    fd = step.flex_data
+    assert fd.pd_divest_set is None or utf8(fd.pd_divest_set).filter(pl.col("p") == PLANT).height == 0
+    assert fd.cd_divest_built is None or utf8(fd.cd_divest_built).filter(pl.col("e") == PLANT).height == 0
     out = capsys.readouterr().out
-    assert f"{PLANT} has a retirement option" in out and "Only existing capacity can be retired" in out
+    assert f"{PLANT} has a retirement option" in out and "no investment option" in out
 
 
 def _config_error(tmp_path_factory, alt: str, values: list) -> str:
@@ -614,10 +624,10 @@ def test_no_warning_for_retirement_periods_past_the_end_of_life(tmp_path_factory
 
 @pytest.mark.solver
 def test_retirement_option_without_existing_capacity_warns_once_per_run(tmp_path_factory, capsys) -> None:
-    """coal_plant with existing 0 and invest_retire_no_limit, solved as the chain y2020 … y2035: the warning names
-    it once in the run, not once per solve."""
+    """coal_plant with existing 0 and retire_no_limit (nothing to retire), solved as the chain y2020 … y2035: the
+    warning names it once in the run, not once per solve."""
     values = [["unit", PLANT, "existing", b64(0.0, "float")],
-              ["unit", PLANT, "invest_method", b64("invest_retire_no_limit", "str")],
+              ["unit", PLANT, "invest_method", b64("retire_no_limit", "str")],
               ["unit", PLANT, "net_salvage_value", b64(SALVAGE, "float")]]
     url, scen = make_db(tmp_path_factory, alt="ret_warn_once", values=values, base_chain=_no_battery_invest(CHAIN))
     capsys.readouterr()

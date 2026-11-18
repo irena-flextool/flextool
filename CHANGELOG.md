@@ -56,7 +56,10 @@ Input databases move to data version 82. The FlexTool window, the Spine Toolbox 
   optimised objective like the fixed cost of existing capacity, and an info line names the entities. Retiring
   existing capacity now also avoids every replacement still to come, and its salvage value is a level credit to the
   existing plant's end of life (before: no credit), which a retirement gives back. A free replacement that keeps a
-  `net_salvage_value` gets a warning. Upgraded databases get a notice naming the
+  `net_salvage_value` gets a warning. Capacity the model builds with `reinvest_automatic` can now be retired when
+  its `invest_method` allows retirement (before: only `reinvest_choice` / `no_reinvestment`): a retired MW pays the
+  loan of the plant then in service as it ran, receives its `net_salvage_value`, saves its fixed cost and avoids
+  every replacement still to come; a replacement retired at its own start is never bought. Upgraded databases get a notice naming the
   entities whose investment cost changes (results change).
 - **Investments get cheaper by one year of interest at the default `discount_offset_investment` 0: the yearly
   investment payment is sized for when it is paid** (unit, connection, node). The annuity is now `invest_cost ·

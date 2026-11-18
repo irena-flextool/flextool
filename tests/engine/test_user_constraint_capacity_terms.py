@@ -18,7 +18,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from tests.engine._lp_rows import row_bounds, row_terms
+from tests.engine._lp_rows import expand_divested_built, row_bounds, row_terms
 from tests.engine._unit_db import FLEXTOOL_ROOT, b64, build, make_db, run, utf8
 
 PLANT = "coal_plant"
@@ -70,7 +70,10 @@ def _assert_twin(pb) -> None:
     assert cap, "no capacity rows"
     assert sorted(cap) == sorted(twin)
     for d in cap:
-        assert cap[d][0] == pytest.approx(twin[d][0], rel=1e-12), d
+        # The capacity term counts the model-built retirements so far by their aggregate column, the twin by the
+        # retirements of the earlier periods (pre-built) and of d (retired): the same sum (divestedBuilt).
+        assert expand_divested_built(pb, cap[d][0]) == pytest.approx(expand_divested_built(pb, twin[d][0]),
+                                                                    rel=1e-12), d
         assert cap[d][1] == pytest.approx(twin[d][1], rel=1e-12), d
     # The capacity rows of a period carry the investments of that period and of the earlier ones.
     assert any(len([c for c in t if c.startswith("v_invest")]) > 1 for t, _ in cap.values())

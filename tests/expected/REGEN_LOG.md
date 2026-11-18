@@ -1588,3 +1588,26 @@ Generated with `pytest "tests/test_scenarios.py::test_scenario[<scenario>]" --re
 the regeneration also rewrote cells whose values did not change beyond the test's own rounding and tolerance (number
 format, last-digit solver wobble of `costs__dt`, `node_state__dt`, `unit__outputNode__dt`): every cell other than the
 added column, row and line keeps its committed text. The 8 scenarios pass in compare mode.
+
+## 2026-11-18 — built reinvest_automatic capacity can be retired (`network_coal_wind_battery_invest_cumulative`, #187)
+
+**Context.** Capacity the model builds with `lifetime_method` `reinvest_automatic` can now be retired when its
+`invest_method` allows retirement (`cumulative_limits` does); retiring a MW pays the loan of the plant then in
+service, receives its salvage value and avoids every replacement still to come (`_npv.chain_retirement_costs`,
+`tests/engine/test_retire_automatic.py`, hand-derived). `tools/lp_snapshot.py`: this fixture gains the 20 + 10
+`v_divest_built_{p,n}` columns, the 8 + 4 `v_divested_built_{p,n}` and their `maxDivest_cohort` / `divestedBuilt`
+rows (the four other fixtures of the list in the commit likewise), no coefficient of an existing column changes.
+
+**Decisions move (a cheaper way to meet an investment tie):** the user constraint `battery_tie_kW_kWh` (equal, 0)
+ties the invested battery storage to 8 × the invested `battery_inverter` power (invest_cost 0). The 37.5 kW of
+inverter built in p2020 force 300 kWh of battery (invest_cost 200 CUR/kWh, lifetime_technical 10, no salvage value).
+Before, that battery was kept and replaced in p2030 at its invest_cost (the endless annuity); now the model retires
+279.24 kWh of it at once in p2020 (a MW built and retired at once costs its invest_cost once, the build-and-retire
+identity, instead of the whole chain) and the remaining 20.76 kWh at the replacement's start in p2030 (the
+replacement is never bought). The coal investment adjusts (p2030 205.25 → 187.18 MW, p2035 137.00 → 140.95 MW) and the
+dispatch with it (`unit_capacity__d`, `unit__outputNode__dt`, `connection__dt`, `node_state__dt`, `costs__dt`). The
+objective of the LP falls from 9005.0207 to 8977.1335 (scaled MPS units, HiGHS on the snapshot files).
+
+Generated with `pytest "tests/test_scenarios.py::test_scenario[network_coal_wind_battery_invest_cumulative]"
+--regenerate network_coal_wind_battery_invest_cumulative`; the solution moves, so its five files are taken whole. The
+scenario passes in compare mode.

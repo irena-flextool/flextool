@@ -16,6 +16,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
+from tests.engine._lp_rows import expand_divested_built
 from tests.engine._unit_db import FLEXTOOL_ROOT, b64, build, make_db, run, utf8
 from tests.engine.test_user_constraint_capacity_terms import (
     PLANT,
@@ -116,7 +117,8 @@ def test_recourse_annuity_counted_once_and_identity(tmp_path_factory) -> None:
     twin = _period_rows(pb, GE + "_period", "c_twin")
     assert cap and sorted(cap) == sorted(twin)
     for d in cap:
-        assert cap[d][0] == pytest.approx(twin[d][0], rel=1e-12), d
+        assert expand_divested_built(pb, cap[d][0]) == pytest.approx(expand_divested_built(pb, twin[d][0]),
+                                                                    rel=1e-12), d
         assert cap[d][1] == pytest.approx(twin[d][1], rel=1e-12), d
     # The branch p2040 rows carry the branch's p2035 decision (online there).
     assert all(f"v_invest_p[peaker,p2035_{b}]" in cap[f"p2040_{b}"][0] for b in ("high", "low"))

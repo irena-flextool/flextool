@@ -3443,14 +3443,47 @@ def apply_built_retirement_costs(flex_data: object,
         return
     cohorts = _with_cohort_prices(cohorts, getattr(flex_data, "cohort", None))
     flex_data.cohort_divest_built = cohorts
-    require_cohort_prices(cohorts)
+    gens = _built_chain_generations(flex_data, provider)
+    roots = cohorts.select(pl.col("e").cast(pl.Utf8), "cohort").join(
+        gens.select("e", pl.col("root").alias("cohort")).unique(), on=["e", "cohort"], how="semi")
+    left = cohorts.with_columns(_e=pl.col("e").cast(pl.Utf8))
+    require_cohort_prices(left.join(roots.rename({"e": "_e"}), on=["_e", "cohort"], how="anti").drop("_e"))
     cost, fixed = built_retirement_costs(
         source, active_solve, cohorts, options, period_in_use, period_universe, period_with_history,
         lineage=lineage, year_rows=year_rows, workdir=workdir, provider=provider,
         run_factor=getattr(flex_data, "p_inflation_inv_run", None))
+    if roots.height > 0:
+        # A reinvest_automatic cohort: its chain's settlement (the plant in service, and every replacement to come).
+        chained = options.select(pl.col("e").cast(pl.Utf8), pl.col("cohort").alias("root"), pl.col("d").cast(pl.Utf8))
+        chained = chained.join(roots.rename({"cohort": "root"}), on=["e", "root"], how="semi")
+        chain = chain_retirement_costs(
+            source, active_solve, gens, chained, period_in_use, period_universe, period_with_history,
+            lineage=lineage, year_rows=year_rows, workdir=workdir, provider=provider,
+            run_factor=getattr(flex_data, "p_inflation_inv_run", None), first_settles=True)
+        chain, cost = align_join_dtypes(
+            chain.lazy().select(alias_to_axis("e", "e"), pl.col("root").alias("cohort"), alias_to_axis("d", "d"),
+                                _chain=pl.col("value")), cost.lazy(), ["e", "d"])
+        cost = (cost.join(chain, on=["e", "cohort", "d"], how="left", maintain_order="left")
+                    .with_columns(value=pl.coalesce("_chain", "value")).drop("_chain").collect())
+        _notice_automatic_replacement_cost(roots.lazy().select("e").unique().with_columns(changed=pl.lit(True)))
     flex_data.cd_divest_built_cost = Param(("e", "cohort", "d"), cost)
     flex_data.cd_divest_built_fixed = Param(("e", "cohort", "d"), fixed)
     warn_build_to_retire(_build_and_retire_totals(flex_data, cohorts, cost, fixed))
+
+
+def _built_chain_generations(flex_data: object, provider: "object | None") -> pl.DataFrame:
+    """:func:`chain_generations` of the solve's investment decisions (``flex_data.cohort``) and of the chains earlier
+    solves of the run realized (handoff ``realized_cohort``: their generations as the deciding solve placed them)."""
+    from flextool.engine.preprocess import _provider_keys as K
+    from flextool.engine.preprocess._provider_translators import read_handoff_frame
+    own = chain_generations(getattr(flex_data, "cohort", None))
+    carried = read_handoff_frame(provider, K.HANDOFF_REALIZED_COHORT) if provider is not None else None
+    if carried is None or carried.height == 0 or "root" not in carried.columns:
+        return own
+    renamed = carried.rename({"entity": "e", "period_decided": "d_build", "period_online": "d_on",
+                              "period_eol": "d_eol"})
+    carried_gens = chain_generations(renamed.with_columns(pl.col(c).cast(pl.Float64) for c in ("y_on", "y_eol")))
+    return pl.concat([own, carried_gens.join(own.select("e", "cohort"), on=["e", "cohort"], how="anti")])
 
 
 def _with_cohort_prices(cohorts: pl.DataFrame, cohort: pl.DataFrame | None) -> pl.DataFrame:
