@@ -71,7 +71,9 @@ Input databases move to data version 82. The FlexTool window, the Spine Toolbox 
   (for example 1 / 1.05 at 5 %), so more investment can pay and objective values, investment
   decisions and reported investment costs change; offset 1 and `discount_rate` 0 give the same results as before.
   Upgraded databases get a notice naming the entities with an investment or salvage annuity (results change).
-  The FlexTool 2 import sets `discount_offset_investment` 1, the year-end annuity FlexTool 2 charges.
+  A FlexTool 2 workbook is imported with the default `discount_offset_investment` 0, so imported models use the
+  corrected annuity too (worth `invest_cost` at the `discount_rate`; FlexTool 2's year-end annuity is that annuity
+  times 1 + interest).
 - **The `net_salvage_value` is counted once, as a cash flow when the capacity stops operating** (unit, connection,
   node). Retiring existing capacity receives the whole `net_salvage_value` of the retirement period at the start of
   that period, discounted to it, and saves the fixed cost from then on; the investment in existing capacity is sunk.

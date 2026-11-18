@@ -1009,11 +1009,11 @@ def test_interest_zero_is_written_and_blank_interest_is_not(tmp_path: Path) -> N
     assert list(conn.values()) == [0]
 
 
-def test_imported_annuity_is_paid_at_the_year_end(imported: str) -> None:
-    """FT2 charges the year-end annuity -PMT(interest, lifetime, 1) once a year: FlexTool's annuity at
-    discount_offset_investment 1, so the imported model sets it (the default 0 would size the payments for the
-    year start, lower by 1 / (1 + interest))."""
-    assert list(_values(imported, "model", "discount_offset_investment").values()) == [1.0]
+def test_imported_annuity_is_the_corrected_one(imported: str) -> None:
+    """The imported model keeps the default discount_offset_investment 0 (no value written): its annuity is worth
+    the investment cost at the discount_rate, not FT2's year-end -PMT(interest, lifetime, 1), which is worth
+    invest_cost · (1 + interest)."""
+    assert _values(imported, "model", "discount_offset_investment") == {}
 
 
 def test_ft2_annuity_matches_pmt() -> None:
