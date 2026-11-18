@@ -1,4 +1,6 @@
-## Unreleased
+## Release 4.5.2 (18.11.2026) — migration of large databases, all-or-nothing migration (schema v80)
+
+Migration only: no change to the model, results or data version. A failed migration now leaves the original database in place.
 
 ### Fixes
 
