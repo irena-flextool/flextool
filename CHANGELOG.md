@@ -106,6 +106,32 @@ values").
   the difference. Under `fix_quantity` / `fix_usage` the first roll of a rolling `bind_within_solve` node now
   starts from `fix_start` instead of from its wrap, which the upper target pinned. Upgraded databases get a
   notice naming the nodes.
+- **Representative-period storage: the start, end and reference values set the chronological level (results
+  change).** In a solve with representative periods, `storage_state_start`, `storage_state_end` and
+  `storage_state_reference_value` of a `*_blended_weights` node now set the level where its base-period chain
+  starts and ends, the level the representative blocks add up to. Before, they pinned a state inside the first or
+  the last representative block, which only placed that block's free offset: a
+  `bind_forward_only_blended_weights` chain started and ended at free levels (the start not even within the
+  capacity), so an investment solve could use stored energy that was never produced and built storage instead of
+  production. The start of such a chain is now within the capacity; `bind_within_solve_blended_weights` with
+  `fix_start` holds its cycle at the start share; a `bind_within_solve_blended_weights` or
+  `bind_within_period_blended_weights` node takes no `use_reference_value` (its chain closes on itself).
+  Upgraded databases get a notice naming the nodes.
+- **A forward storage chain whose start the solve decides ends at least at that start (results change, also for
+  the default storage).** A `bind_forward_only` (the default) or `bind_forward_only_blended_weights` node with a
+  free start (`fix_nothing`, `fix_end`) now ends the model at least at the level it started from, and one with
+  `fix_start` on storage the solve can invest in during the period it starts in returns at least the
+  `storage_state_start` share of the capacity built there. Before, the solve could start full and end empty, or
+  build storage only for its start energy. The condition is an inequality (a start of 0, or no investment, always
+  meets it) and applies in a solve that holds both the start of the model and its last step, and in every solve
+  with representative periods; a free end after `fix_start` on capacity the solve cannot change is kept (the
+  user's start energy, logged with its size). With `use_reference_value` and a free start the reference end bounds
+  the start, so a falling reference series no longer lets the solve take the drop for free; a reference below the
+  `fix_start` share of storage the solve can invest in becomes a lower bound. An investment solve that does not
+  reach the end of the model warns for such nodes instead. Upgraded databases get a notice naming the nodes.
+- **`fix_start_end` with `storage_state_end` below `storage_state_start` on storage the solve can invest in is an
+  error.** The drain from the start share to the end share would grow with the storage built; give the end at
+  least the start share, use a cyclic method, or do not allow investment in the start period.
 - **BREAKING for tools that connect FlexTool with other models through `override_provider`** (scripts and
   integrations that inject state between solves, for example capacities decided by another model): the keys
   `handoff/realized_invest`, `handoff/realized_existing` and `handoff/realized_divest` are gone and raise an error
