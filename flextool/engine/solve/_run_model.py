@@ -132,7 +132,8 @@ def _warn_rolling_blocks_chained(state, complete_solve_name: str, solve: str, ac
     storage nodes (its rolling_solve_jump is not a whole number of periods).
 
     Such a period is held in part by the rolls around its inside start, so its blocks chain forward and carry the
-    storage level from roll to roll instead of looping as in a solve that is not rolling.  ``solve_data/
+    storage level from roll to roll instead of looping as in a solve that is not rolling (the period still closes at
+    its end, :func:`_scope_rows`).  ``solve_data/
     nodeStateBlock`` (the block nodes of this sub-solve) is emitted by ``preprocessing_solve_time.run``, so this runs
     after it.  Routed through the module logger: ``state.logger`` is silenced to ERROR during the cascade.
     """
@@ -154,8 +155,9 @@ def _warn_rolling_blocks_chained(state, complete_solve_name: str, solve: str, ac
     _MODULE_LOGGER.warning(
         "Solve '%s' is a rolling_window solve whose rolling_solve_jump is not a whole number of periods (roll '%s' "
         "starts at step '%s' inside period '%s'). The bind_intraperiod_blocks storage node(s) %s loop their timeset "
-        "blocks only in the periods a roll holds whole; in a period a roll holds in part the blocks chain forward "
-        "and the storage level is carried from roll to roll.",
+        "blocks only in the periods a roll holds whole; in a period a roll holds in part the blocks chain forward, "
+        "the storage level is carried from roll to roll and the roll(s) holding the period's end close it at the "
+        "level it started from.",
         complete_solve_name, solve, steps[0].timestep, first_period, ", ".join(names))
 
 
@@ -298,6 +300,43 @@ def _frame_nodes(frame) -> set[str]:
     return {str(n) for n in frame["node"].to_list()}
 
 
+_SCOPE_METHODS = ("bind_within_period", "bind_within_timeblock", "bind_intraperiod_blocks")
+
+
+def _first_scope(method: str, active_time_list: dict, complete_active_time_list: dict,
+                 period_branch: list) -> "tuple[tuple[str, str], bool, bool] | None":
+    """``(scope, continued, holds_end)`` of the cyclic scope that holds a rolling roll's first step.
+
+    The scope of bind_within_timeblock is the timeblock (a maximal run of consecutive timeline steps of the period,
+    as :func:`flextool.engine.input._timeline.make_step_jump` finds them), else the period; ``scope`` is ``(period,
+    the scope's first step)`` in the complete solve (a forecast branch period by the period it branches from).
+    ``continued``: the roll starts after the scope's first step (an earlier roll began the scope); ``holds_end``:
+    the roll holds the scope's last step.  None when the roll's first step is not in the complete solve.
+    """
+    first = next(((p, steps) for p, steps in (active_time_list or {}).items() if steps), None)
+    if first is None:
+        return None
+    period, steps = first
+    anchor = {b: p for p, b in period_branch if b != p}
+    base = str(anchor.get(period, period))
+    full = complete_active_time_list.get(base) or complete_active_time_list.get(period) or []
+    names = [str(e.timestep) for e in full]
+    s0 = str(steps[0].timestep)
+    if s0 not in names:
+        return None
+    at = names.index(s0)
+    start, end = 0, len(full) - 1
+    if method == "bind_within_timeblock":
+        start = at
+        while start > 0 and full[start].index - full[start - 1].index == 1:
+            start -= 1
+        end = at
+        while end < len(full) - 1 and full[end + 1].index - full[end].index == 1:
+            end += 1
+    held = {str(e.timestep) for e in steps}
+    return (base, names[start]), names[start] != s0, names[end] in held
+
+
 class _RollingStorage:
     """Run-scoped bookkeeping of the bind_within_solve storage carry of rolling solves
     (:func:`_anchor_cyclic_in_rolling`).
@@ -318,6 +357,17 @@ class _RollingStorage:
         self.seen: set = set()
         self.borrowed_check: dict = {}
         self.warned: set = set()
+        # scope_start[(instance, node, period, first step)]: the level (MWh) a bind_within_period /
+        # bind_within_timeblock / bind_intraperiod_blocks scope started from in the roll that began it.
+        self.scope_start: dict = {}
+        self.scope_pending: dict = {}
+        # scope_from_start[solve]: (scope key, node) of the nested first rolls whose scope starts from fix_start: the
+        # start level is read from the handoff's cycle_start_state.
+        self.scope_from_start: dict = {}
+        # usage_start[(instance, period)]: where the period starts in the instance (the first sub-solve holding it);
+        # usage_realised[(instance, period, node)]: the fix_usage energy the instance's sub-solves realised in it.
+        self.usage_start: dict = {}
+        self.usage_realised: dict = {}
 
 
 def _restore_methods(store: _RollingStorage, level_key, provider) -> "pl.DataFrame | None":
@@ -341,7 +391,10 @@ def _put_roll_end(provider, rows: list) -> None:
 
 def _anchor_cyclic_in_rolling(*, state, solve: str, complete_solve_name: str, instance: tuple, level_key,
                               provider, routed_state: "pl.DataFrame | None", closing: bool, instance_at_model_end: bool,
-                              nested_fixed: set, store: _RollingStorage, is_rp: bool) -> None:
+                              nested_fixed: set, store: _RollingStorage, is_rp: bool,
+                              active_time_list: "dict | None" = None, complete_active_time_list: "dict | None" = None,
+                              period_branch: "list | None" = None, extra_rows: "list | None" = None,
+                              nested_any: "set | None" = None) -> None:
     """Carry, anchor and close the bind_within_solve storage nodes of a rolling_window roll (no representative
     periods).
 
@@ -364,27 +417,74 @@ def _anchor_cyclic_in_rolling(*, state, solve: str, complete_solve_name: str, in
     fix_start whose instance reaches the model end gets ``wrap_end``: its first roll's wrap is pinned at
     storage_state_end.  ``solve_data/storage_roll_end`` is written for every sub-solve (empty when unused): the
     level Provider is shared by the iters of a level.
+
+    The same rule holds per period (bind_within_period, bind_intraperiod_blocks) and per timeblock
+    (bind_within_timeblock): a roll whose first step lies inside a scope that an earlier roll began (a realised roll
+    boundary inside the scope, :func:`_first_scope`) continues that scope from the carry (kind ``scope_carry``, for
+    bind_within_period / bind_within_timeblock; the blocks of a period held in part chain forward already), and
+    where the scope's part in the roll ends gets ``scope_close`` (the roll holds the scope's last step, or reaches
+    the end of the instance) at the level the scope started from, else ``scope_anchor`` at the carried level.  The
+    scopes that begin in the roll keep their cycle (a period or timeblock held whole loops as before; the blocks of
+    a bind_intraperiod_blocks period held in part chain forward with the horizon method at the roll end), and
+    their start levels are read from the handoff (``scope_start_state``) once solved.  ``extra_rows`` (the
+    nested-fix rows of :func:`_nested_end_rows`) are written with the rows of any solve.
+
+    A bind_forward_only node with a free start (fix_nothing, no upper-level fix) whose first roll does not reach the
+    end of the model gets ``match_first`` there (its horizon end at least at the level it starts from, the matching
+    end of a solve that is not rolling) and its start level is recorded; the rolls reaching the end of the model end
+    it at least at that level (``match``).
     """
+    extra = list(extra_rows or [])
+    nested_any = set(nested_any or ()) | set(nested_fixed)
     rolling = state.solve.solve_modes.get(complete_solve_name) == "rolling_window"
     if not rolling or is_rp or not provider.has(_SBM_KEY):
-        _put_roll_end(provider, [])
+        _put_roll_end(provider, extra)
         return
     sbm = _restore_methods(store, level_key, provider)
     col = _method_col(sbm, "storage_binding_method") if sbm.height > 0 else None
     if col is None:
-        _put_roll_end(provider, [])
+        _put_roll_end(provider, extra)
         return
     targets = sorted({str(n) for n in sbm.filter(pl.col(col) == "bind_within_solve")["node"].to_list()})
-    if not targets:
-        _put_roll_end(provider, [])
-        return
     sse = _node_methods(provider, _SSE_KEY, "storage_start_end_method")
+    scoped = {str(n): str(m) for n, m in zip(sbm["node"].to_list(), sbm[col].to_list())
+              if m in _SCOPE_METHODS and not (m == "bind_intraperiod_blocks"
+                                               and sse.get(str(n)) == "fix_start_end")}
+    # The matching end of a forward chain whose start the first roll chooses (fix_nothing; logic doc E-match).
+    free_forward = sorted(str(n) for n, m in zip(sbm["node"].to_list(), sbm[col].to_list())
+                          if m == "bind_forward_only" and sse.get(str(n), "fix_nothing") == "fix_nothing"
+                          and str(n) not in nested_any)
+    if not targets and not scoped and not free_forward:
+        _put_roll_end(provider, extra)
+        return
     carry = ({} if routed_state is None else
              dict(zip(routed_state["node"].cast(pl.Utf8).to_list(), routed_state["value"].to_list())))
     first_roll = instance not in store.seen
     store.seen.add(instance)
     starts = store.start.setdefault(instance, {})
     rows: list = []
+    matched: list[str] = []
+    match_pending: list[str] = []
+    for node in free_forward:
+        if node not in carry and first_roll and not (closing and instance_at_model_end):
+            # The first roll's horizon ends at least at the level it chose to start from, and that level is
+            # recorded for the rolls reaching the end of the model.
+            rows.append((node, "match_first", None))
+            match_pending.append(node)
+            matched.append(node)
+        elif node in carry and closing and instance_at_model_end and node in starts:
+            rows.append((node, "match", float(starts[node])))
+            matched.append(node)
+    if matched:
+        from flextool.engine import _behaviour_changes
+        _behaviour_changes.notice("storage_end_matches_start", "nodes", matched)
+    if scoped and active_time_list:
+        rows += _scope_rows(complete_solve_name=complete_solve_name, solve=solve, instance=instance, scoped=scoped,
+                            carry=carry, closing=closing, first_roll=first_roll, store=store,
+                            active_time_list=active_time_list,
+                            complete_active_time_list=complete_active_time_list or {},
+                            period_branch=period_branch or [], sse=sse, provider=provider,
+                            nested_fixed=nested_fixed)
     forward: list[str] = []
     pending: list[str] = []
     for node in targets:
@@ -434,9 +534,120 @@ def _anchor_cyclic_in_rolling(*, state, solve: str, complete_solve_name: str, in
                 "from the level realised by the previous roll; a roll ends its horizon at least at the level it "
                 "started from, and the roll(s) reaching the end of the solve end at the level the first roll "
                 "started from.", complete_solve_name, ", ".join(forward))
+    pending += match_pending
     if pending:
         store.pending[solve] = (instance, pending)
-    _put_roll_end(provider, rows)
+    _put_roll_end(provider, rows + extra)
+
+
+def _scope_rows(*, complete_solve_name: str, solve: str, instance: tuple, scoped: dict, carry: dict, closing: bool,
+                first_roll: bool, store: _RollingStorage, active_time_list: dict, complete_active_time_list: dict,
+                period_branch: list, sse: dict, provider, nested_fixed: set) -> list:
+    """The ``storage_roll_end`` rows of the per-period / per-timeblock scopes of a rolling roll
+    (:func:`_anchor_cyclic_in_rolling`): for each node of ``scoped`` ({node: method}) whose first scope the roll
+    continues from the carry, ``scope_carry`` (bind_within_period / bind_within_timeblock) and ``scope_close`` (at the
+    level the scope started from) or ``scope_anchor`` (at the carried level; a bind_intraperiod_blocks node whose
+    storage_solve_horizon_method is use_reference_value keeps that guidance instead).  The roll's scopes are left
+    pending for :func:`_record_scope_starts`."""
+    rows: list = []
+    names: list[str] = []
+    shm = _node_methods(provider, "input/node__storage_solve_horizon_method", "storage_solve_horizon_method")
+    for node, method in sorted(scoped.items()):
+        scope = _first_scope(method, active_time_list, complete_active_time_list, period_branch)
+        if scope is None:
+            continue
+        (period, step), continued, holds_end = scope
+        guided = method == "bind_intraperiod_blocks" and shm.get(node) == "use_reference_value"
+        if (first_roll and not continued and node in nested_fixed and not holds_end
+                and method != "bind_intraperiod_blocks"):
+            # The first roll of a nested level begins a period / timeblock that its horizon cuts: its first step
+            # would wrap to the horizon end, which the upper solve fixes, so the cycle would start at the upper level
+            # of that moment.  It starts instead from the level the upper solve starts from (borrowed, in the carry)
+            # or from fix_start, and continues the scope forward from there.
+            key = (instance, node, period, step)
+            if node in carry:
+                store.scope_start[key] = float(carry[node])
+                rows += [(node, "scope_carry", None), (node, "scope_anchor", float(carry[node]))]
+                names.append(node)
+            elif sse.get(node) in ("fix_start", "fix_start_end"):
+                store.scope_from_start.setdefault(solve, []).append((key, node))
+                rows.append((node, "scope_carry", None))
+                names.append(node)
+            continue
+        if not continued and method == "bind_intraperiod_blocks" and not (holds_end or closing):
+            # The roll begins the period at its first step and holds it in part, so its blocks chain forward from
+            # the roll's start: the horizon end is anchored at that start, as a roll that loops ends where it
+            # began (a free start, and a node guided by use_reference_value, keep the horizon method).
+            if guided:
+                continue
+            if node in carry:
+                rows.append((node, "scope_anchor", float(carry[node])))
+                names.append(node)
+            elif sse.get(node) == "fix_start":
+                rows.append((node, "anchor_share", None))
+                names.append(node)
+            continue
+        if not continued or node not in carry:
+            continue
+        key = (instance, node, period, step)
+        start = store.scope_start.get(key)
+        if start is None:
+            if not first_roll and (key, "missing") not in store.warned:
+                store.warned.add((key, "missing"))
+                _MODULE_LOGGER.warning(
+                    "Solve '%s': the level storage node '%s' started period '%s' (scope from step '%s') at is not "
+                    "known; roll %s continues it from the carried level and closes it there.", complete_solve_name,
+                    node, period, step, solve)
+            start = float(carry[node])
+            store.scope_start[key] = start
+        if method != "bind_intraperiod_blocks":
+            rows.append((node, "scope_carry", None))
+        if holds_end or closing:
+            rows.append((node, "scope_close", float(start)))
+        elif not guided:
+            rows.append((node, "scope_anchor", float(carry[node])))
+        names.append(node)
+    store.scope_pending[solve] = (instance, sorted(scoped))
+    if names:
+        from flextool.engine import _behaviour_changes
+        _behaviour_changes.notice("rolling_cyclic_storage_anchored", "nodes", names)
+        key = ("scope_logged", complete_solve_name)
+        if key not in store.warned:
+            store.warned.add(key)
+            _MODULE_LOGGER.info(
+                "Solve '%s' is a rolling_window solve whose rolls start inside a period or timeblock: the "
+                "bind_within_period / bind_within_timeblock / bind_intraperiod_blocks storage node(s) %s continue that "
+                "period or timeblock from the level realised by the previous roll; a roll ends its part at least at "
+                "that level, and the roll(s) holding its end end it at the level it started from.",
+                complete_solve_name, ", ".join(names))
+    return rows
+
+
+def _record_scope_starts(store: _RollingStorage, solve: str, handoff, period_branch: list) -> None:
+    """Record the start levels of the scopes that began in ``solve`` (its handoff's ``scope_start_state``)."""
+    from_start = store.scope_from_start.pop(solve, [])
+    if from_start:
+        cycle = getattr(handoff, "cycle_start_state", None)
+        levels = ({} if cycle is None or cycle.height == 0 else
+                  dict(zip(cycle["node"].cast(pl.Utf8).to_list(), cycle["value"].to_list())))
+        for key, node in from_start:
+            if levels.get(node) is not None:
+                store.scope_start[key] = float(levels[node])
+    instance, nodes = store.scope_pending.pop(solve, (None, ()))
+    if instance is None:
+        return
+    frame = getattr(handoff, "scope_start_state", None)
+    if frame is None or frame.height == 0:
+        return
+    anchor = {str(b): str(p) for p, b in period_branch if b != p}
+    wanted = set(nodes)
+    # The latest roll that began a scope wins: a roll that holds a scope's first step only in its look-ahead is
+    # followed by a roll that begins it again, and the roll that continues the scope follows the one that realised
+    # its first step.
+    for node, period, step, value in frame.select(pl.col("node").cast(pl.Utf8), pl.col("period").cast(pl.Utf8),
+                                                  pl.col("step").cast(pl.Utf8), "value").iter_rows():
+        if node in wanted and value is not None:
+            store.scope_start[(instance, node, anchor.get(period, period), step)] = float(value)
 
 
 def _record_roll_starts(store: _RollingStorage, solve: str, handoff) -> None:
@@ -455,49 +666,173 @@ def _record_roll_starts(store: _RollingStorage, solve: str, handoff) -> None:
             starts.setdefault(node, float(levels[node]))
 
 
-def _upper_level_at(*, node: str, parent: str, parent_handoff, active_time_lists: dict, time_index,
-                    first: "tuple[str, str]", warned: set, solve: str) -> "float | None":
-    """The level (MWh) the upper sub-solve ``parent`` planned for ``node`` at the start of ``first`` (the lower
-    sub-solve's first step): its start level when ``first`` starts with the upper solve (``cycle_start_state``),
-    else its level at the end of the upper step that ends where ``first`` starts (``storage_level``); when ``first``
-    starts inside an upper step, the level at the end of the step before it (with a warning).  None when the upper
-    solve has no such level."""
-    at = time_index.position(*first)
-    upper_first = _carry_routing.first_step(active_time_lists.get(parent) or {})
-    if at is None or upper_first is None:
-        return None
-    if time_index.position(*upper_first) == at:
-        frame = getattr(parent_handoff, "cycle_start_state", None)
-        if frame is None or frame.height == 0:
-            return None
-        hit = frame.filter(pl.col("node").cast(pl.Utf8) == node)
-        return float(hit["value"][0]) if hit.height > 0 else None
-    level = getattr(parent_handoff, "storage_level", None)
-    if level is None or level.height == 0:
-        return None
-    best, aligned = None, False
+def _upper_steps(parent: str, active_time_lists: dict, time_index) -> list:
+    """``(period rank, base timeline, start, stop, period, step)`` of the upper sub-solve ``parent``'s steps in its
+    order (start / stop: base-timeline indices, :meth:`_carry_routing._TimeIndex.span`); forecast branch periods and
+    steps that cannot be placed are left out."""
+    out: list = []
     for period, steps in (active_time_lists.get(parent) or {}).items():
         for entry in steps:
             end = time_index.end_of(str(period), str(entry.timestep), entry.duration)
             if end is None or end[3] is not None:
                 continue
-            pos = (end[0], end[2])
-            if pos == at:
-                best, aligned = (str(period), str(entry.timestep)), True
-            elif pos < at and not aligned and (best is None or pos >= best[2]):
-                best = (str(period), str(entry.timestep), pos)
-    if best is None:
+            span = time_index.span(str(period), str(entry.timestep), entry.duration)
+            if span is not None:
+                out.append((*span, str(period), str(entry.timestep)))
+    return out
+
+
+def _node_levels(parent_handoff, node: str) -> dict:
+    """``{(period, step): MWh}``: the upper solve's planned level of ``node`` at the end of each step
+    (``storage_level``)."""
+    level = getattr(parent_handoff, "storage_level", None)
+    if level is None or level.height == 0:
+        return {}
+    hit = level.filter(pl.col("node").cast(pl.Utf8) == node)
+    return {(str(p), str(t)): float(v) for p, t, v in zip(hit["period"].to_list(), hit["step"].to_list(),
+                                                          hit["value"].to_list())}
+
+
+def _upper_start_level(parent_handoff, node: str) -> "float | None":
+    """The level (MWh) the upper solve's first step starts ``node`` from (``cycle_start_state``)."""
+    frame = getattr(parent_handoff, "cycle_start_state", None)
+    if frame is None or frame.height == 0:
         return None
-    hit = level.filter((pl.col("node").cast(pl.Utf8) == node) & (pl.col("period").cast(pl.Utf8) == best[0])
-                       & (pl.col("step").cast(pl.Utf8) == best[1]))
-    if hit.height == 0:
+    hit = frame.filter(pl.col("node").cast(pl.Utf8) == node)
+    return float(hit["value"][0]) if hit.height > 0 else None
+
+
+def _upper_level_interp(*, node: str, at: tuple, steps: list, parent_handoff, time_index,
+                        levels: "dict | None" = None) -> "tuple[float, bool] | None":
+    """``(level, aligned)``: the level (MWh) the upper solve planned for ``node`` at the instant ``at`` (``(period
+    rank, base-timeline index)``) and whether an upper step ends (or the upper solve starts) exactly there.
+
+    The upper solve holds its flows constant within a step, so its level is linear inside the step: inside a step
+    the level is interpolated between the step's start (the end of the step before it, or the upper solve's start
+    level for its first step) and its end, by the hours elapsed (owner question Q6).  Where the step's start is not
+    known (the first step of a later period) the containing step's end is used.  None when the upper solve has no
+    level there."""
+    levels = _node_levels(parent_handoff, node) if levels is None else levels
+    for k, (rank, root, start, stop, period, step) in enumerate(steps):
+        if rank != at[0]:
+            continue
+        if k == 0 and start == at[1]:
+            value = _upper_start_level(parent_handoff, node)
+            return None if value is None else (value, True)
+        if stop == at[1]:
+            value = levels.get((period, step))
+            return None if value is None else (value, True)
+        if start < at[1] < stop:
+            end = levels.get((period, step))
+            if end is None:
+                return None
+            if k == 0:
+                begin = _upper_start_level(parent_handoff, node)
+            else:
+                prev = steps[k - 1]
+                begin = levels.get((prev[4], prev[5])) if prev[0] == rank and prev[3] == start else None
+            if begin is None:
+                return end, False
+            total = time_index.hours(root, start, stop)
+            if not total > 0:
+                return end, False
+            return begin + (end - begin) * time_index.hours(root, start, at[1]) / total, False
+    return None
+
+
+def _upper_level_at(*, node: str, parent: str, parent_handoff, active_time_lists: dict, time_index,
+                    first: "tuple[str, str]", warned: set, solve: str) -> "float | None":
+    """The level (MWh) the upper sub-solve ``parent`` planned for ``node`` at the start of ``first`` (the lower
+    sub-solve's first step): its start level when ``first`` starts with the upper solve (``cycle_start_state``),
+    else its level at the end of the upper step that ends where ``first`` starts (``storage_level``); when ``first``
+    starts inside an upper step, the level interpolated inside that step (:func:`_upper_level_interp`).  None when
+    the upper solve has no such level."""
+    at = time_index.position(*first)
+    if at is None:
         return None
-    if not aligned and (solve, node) not in warned:
-        warned.add((solve, node))
-        _MODULE_LOGGER.warning(
-            "Solve '%s' starts inside a step of its upper-level solve '%s': storage node '%s' starts from the upper "
-            "level at the end of the upper step before it (%s %s).", solve, parent, node, best[0], best[1])
-    return float(hit["value"][0])
+    hit = _upper_level_interp(node=node, at=at, steps=_upper_steps(parent, active_time_lists, time_index),
+                              parent_handoff=parent_handoff, time_index=time_index)
+    return None if hit is None else hit[0]
+
+
+def _nested_end_rows(*, solve: str, parent: "str | None", parent_handoff, active_time_lists: dict, time_index,
+                     instance: tuple, store: "_RollingStorage", period_branch: list) -> list:
+    """``storage_roll_end`` rows that restate an upper-level storage fix at the horizon end of ``solve``.
+
+    * ``fix_quantity`` (MWh): where the horizon ends inside an upper step, the upper level interpolated at that
+      instant (:func:`_upper_level_interp`) replaces the containing step's end level
+      (node_balance_fix_quantity_eq_lower).
+    * ``usage_cap`` (MWh): the fix_usage cap of the horizon's last period (node_storage_usage_fix_le) counts the
+      upper usage from the start of that period in the solve instance up to the horizon end, each upper window
+      pro rata to the hours of it that lie in that span, less what the earlier sub-solves of the instance realised
+      in the period (``realised_storage_usage``): the cap is cumulative over the rolls, so the realised rolls
+      together use at most what the upper solve planned.  Written only where it differs from the sum of the whole
+      upper windows that overlap the horizon (the cap of a sub-solve aligned with the upper steps that starts the
+      period).
+    """
+    if parent is None or parent_handoff is None:
+        return []
+    lower = active_time_lists.get(solve) or {}
+    last = next(((p, steps) for p, steps in reversed(list(lower.items())) if steps), None)
+    if last is None:
+        return []
+    period, steps = last
+    end = time_index.end_of(str(period), str(steps[-1].timestep), steps[-1].duration)
+    first = time_index.position(str(period), str(steps[0].timestep))
+    if end is None or first is None:
+        return []
+    h = (end[0], end[2])
+    upper = _upper_steps(parent, active_time_lists, time_index)
+    if not upper:
+        return []
+    rows: list = []
+    for node in sorted(_frame_nodes(getattr(parent_handoff, "fix_storage_quantity", None))):
+        hit = _upper_level_interp(node=node, at=h, steps=upper, parent_handoff=parent_handoff,
+                                  time_index=time_index)
+        if hit is not None and not hit[1]:
+            rows.append((node, "fix_quantity", float(hit[0])))
+    usage = getattr(parent_handoff, "fix_storage_usage", None)
+    if usage is not None and usage.height > 0:
+        anchor = {str(b): str(p) for p, b in period_branch if b != p}
+        base = anchor.get(str(period), str(period))
+        start = store.usage_start.setdefault((instance, base), first)
+        spans = {(u[4], u[5]): u for u in upper}
+        value_col = "p_fix_storage_usage" if "p_fix_storage_usage" in usage.columns else "value"
+        per_node: dict = {}
+        for node, p_up, t_up, value in usage.select(
+                pl.col("node").cast(pl.Utf8), pl.col("period").cast(pl.Utf8), pl.col("step").cast(pl.Utf8),
+                pl.col(value_col).cast(pl.Float64)).iter_rows():
+            span = spans.get((p_up, t_up))
+            if span is None or span[0] != h[0] or value is None:
+                continue
+            rank, root, a, b = span[:4]
+            whole = float(value) if (a < h[1] and b > first[1]) else 0.0
+            lo, hi = max(a, start[1] if start[0] == rank else a), min(b, h[1])
+            total = time_index.hours(root, a, b)
+            part = float(value) * time_index.hours(root, lo, hi) / total if hi > lo and total > 0 else 0.0
+            old, new = per_node.get(node, (0.0, 0.0))
+            per_node[node] = (old + whole, new + part)
+        for node, (old, new) in sorted(per_node.items()):
+            new -= store.usage_realised.get((instance, base, node), 0.0)
+            if abs(new - old) > 1e-9 * max(1.0, abs(old)):
+                rows.append((node, "usage_cap", new))
+    if rows:
+        from flextool.engine import _behaviour_changes
+        _behaviour_changes.notice("nested_storage_fix_cumulative", "nodes", sorted({r[0] for r in rows}))
+    return rows
+
+
+def _record_usage(store: "_RollingStorage", instance: tuple, handoff, period_branch: list) -> None:
+    """Add a solved sub-solve's realised fix_usage energy (``realised_storage_usage``) to its instance's total."""
+    frame = getattr(handoff, "realised_storage_usage", None)
+    if frame is None or frame.height == 0:
+        return
+    anchor = {str(b): str(p) for p, b in period_branch if b != p}
+    for node, period, value in frame.select(pl.col("node").cast(pl.Utf8), pl.col("period").cast(pl.Utf8),
+                                            "value").iter_rows():
+        if value is not None:
+            key = (instance, anchor.get(period, period), node)
+            store.usage_realised[key] = store.usage_realised.get(key, 0.0) + float(value)
 
 
 def _borrow_upper_start(*, state, solve: str, complete_solve_name: str, parent: "str | None", parent_handoff,
@@ -510,9 +845,10 @@ def _borrow_upper_start(*, state, solve: str, complete_solve_name: str, parent: 
     fix_usage or fix_price: a node of the parent's ``fix_storage_*`` handoff) and that has no state realised before
     this sub-solve at its level or deeper starts from the level the upper solve planned for the same instant
     (:func:`_upper_level_at`): the lower level's accounting is then the upper's.  Only a node that continues from a
-    start: one that chains forward in this sub-solve (bind_forward_only), or a bind_within_solve node of a rolling
-    roll (no representative periods) under fix_quantity / fix_usage, which then continues from it
-    (:func:`_anchor_cyclic_in_rolling`); a node that cycles on itself is closed already.  An explicit fix_start
+    start: one that chains forward in this sub-solve (bind_forward_only), or a bind_within_solve, bind_within_period or
+    bind_within_timeblock node of a rolling roll (no representative periods) under fix_quantity / fix_usage, which
+    then continues from it (:func:`_anchor_cyclic_in_rolling`, :func:`_scope_rows`: its cycle would otherwise wrap
+    to the upper target at the roll's end); a node that cycles on itself is closed already.  An explicit fix_start
     (fix_start, fix_start_end) at the model start is used instead (the same parameter as the upper solve's start;
     the two are compared once the sub-solve is solved).  Returns the routed state (MWh, sorted by node) or None.
     """
@@ -536,7 +872,8 @@ def _borrow_upper_start(*, state, solve: str, complete_solve_name: str, parent: 
     for node in sorted(nested - carried):
         method = sbm.get(node, "bind_forward_only")
         if not (method == "bind_forward_only"
-                or (rolling and not is_rp and method == "bind_within_solve" and node in quantity_usage)):
+                or (rolling and not is_rp and node in quantity_usage
+                    and method in ("bind_within_solve", "bind_within_period", "bind_within_timeblock"))):
             continue
         if sse.get(node) in ("fix_start", "fix_start_end") and at_start:
             compare.append(node)
@@ -2127,6 +2464,12 @@ def native_run_model(state, solver) -> int:
             parent_handoff=parent_handoff, provider=sub_solve_provider, routed_state=_routed_state,
             active_time_lists=active_time_lists, time_index=_time_index, model_start=_model_start,
             is_rp=_is_rp_solve, store=_rolling_storage)
+        # An upper-level fix restated at the horizon end: the level interpolated inside an upper step, the fix_usage
+        # cap cumulative over the instance.
+        _nested_rows = _nested_end_rows(
+            solve=solve, parent=parent_roll.get(solve), parent_handoff=parent_handoff,
+            active_time_lists=active_time_lists, time_index=_time_index, instance=_instance_of[solve],
+            store=_rolling_storage, period_branch=period__branch_lists[solve])
         # Rolling bind_within_solve: carry from roll to roll, the horizon-end anchor and the closing rolls' closure.
         _anchor_cyclic_in_rolling(
             state=state, solve=solve, complete_solve_name=complete_solve[solve], instance=_instance_of[solve],
@@ -2135,7 +2478,9 @@ def native_run_model(state, solver) -> int:
             nested_fixed=(_frame_nodes(getattr(parent_handoff, "fix_storage_quantity", None))
                           | _frame_nodes(getattr(parent_handoff, "fix_storage_usage", None)))
             if parent_handoff is not None else set(),
-            store=_rolling_storage, is_rp=_is_rp_solve)
+            store=_rolling_storage, is_rp=_is_rp_solve, active_time_list=active_time_lists[solve],
+            complete_active_time_list=complete_active_time_lists, period_branch=period__branch_lists[solve],
+            extra_rows=_nested_rows, nested_any=_upper_fixed)
         for _key in (_provider_keys.HANDOFF_ROLL_END_STATE, _provider_keys.HANDOFF_UPWARD_ROLL_END_STATE):
             sub_solve_provider.put(
                 _key, _routed_state if _routed_state is not None
@@ -2311,6 +2656,10 @@ def native_run_model(state, solver) -> int:
             state.last_captured_solve = last_captured_solve
             carry_router.record(solve, state.handoffs.get(last_captured_solve))
             _record_roll_starts(_rolling_storage, solve, state.handoffs.get(last_captured_solve))
+            _record_scope_starts(_rolling_storage, solve, state.handoffs.get(last_captured_solve),
+                                 period__branch_lists[solve])
+            _record_usage(_rolling_storage, _instance_of[solve], state.handoffs.get(last_captured_solve),
+                          period__branch_lists[solve])
             _check_borrowed_start(_rolling_storage, solve, complete_solve[solve],
                                   state.handoffs.get(last_captured_solve))
             # The solve's own (produced) handoff goes to the ``produced_handoff/*`` keys: the ``handoff/*`` keys

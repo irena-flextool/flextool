@@ -5,10 +5,15 @@
 names the storage nodes with a ``storage_nested_fix_method`` when some solve contains solves.  On a hand-built
 database:
 
-* ``cyc``: storage, bind_within_solve, fix_quantity → both markers;
+* ``cyc``: storage, bind_within_solve, fix_quantity → every marker;
 * ``blend``: storage, bind_within_solve_blended_weights → the rolling marker;
-* ``fwd``: storage, bind_forward_only, fix_price → the nested marker;
-* ``bal``: a balance node with bind_within_solve → neither.
+* ``wp``: storage, bind_within_period, fix_usage → every marker;
+* ``blocks``: storage, bind_intraperiod_blocks → the rolling marker;
+* ``fwd``: storage, bind_forward_only, fix_price → the borrowed-start marker only;
+* ``bal``: a balance node with bind_within_solve → none.
+
+``nested_storage_fix_cumulative`` names the storage nodes with ``fix_usage`` or ``fix_quantity`` when some solve
+contains solves.
 """
 from __future__ import annotations
 
@@ -32,6 +37,9 @@ def _db(*, rolling: bool = True, nested: bool = True) -> DatabaseMapping:
         ("node", "cyc"): {"node_type": "storage", "storage_binding_method": "bind_within_solve",
                           "storage_nested_fix_method": "fix_quantity"},
         ("node", "blend"): {"node_type": "storage", "storage_binding_method": "bind_within_solve_blended_weights"},
+        ("node", "wp"): {"node_type": "storage", "storage_binding_method": "bind_within_period",
+                         "storage_nested_fix_method": "fix_usage"},
+        ("node", "blocks"): {"node_type": "storage", "storage_binding_method": "bind_intraperiod_blocks"},
         ("node", "fwd"): {"node_type": "storage", "storage_binding_method": "bind_forward_only",
                           "storage_nested_fix_method": "fix_price"},
         ("node", "bal"): {"node_type": "balance", "storage_binding_method": "bind_within_solve"},
@@ -57,11 +65,14 @@ def _marker(db, change: str) -> dict | None:
 def test_markers_name_the_rolling_and_nested_storage_nodes() -> None:
     with _db() as db:
         m._v82_rolling_storage_markers(db)
-        assert _marker(db, "rolling_cyclic_storage_anchored") == {"since": 82, "nodes": ["blend", "cyc"]}
-        assert _marker(db, "nested_storage_start_borrowed") == {"since": 82, "nodes": ["cyc", "fwd"]}
+        assert _marker(db, "rolling_cyclic_storage_anchored") == {"since": 82,
+                                                                  "nodes": ["blend", "blocks", "cyc", "wp"]}
+        assert _marker(db, "nested_storage_start_borrowed") == {"since": 82, "nodes": ["cyc", "fwd", "wp"]}
+        assert _marker(db, "nested_storage_fix_cumulative") == {"since": 82, "nodes": ["cyc", "wp"]}
         # Idempotent: a rerun writes the same markers.
         m._v82_rolling_storage_markers(db)
-        assert _marker(db, "rolling_cyclic_storage_anchored") == {"since": 82, "nodes": ["blend", "cyc"]}
+        assert _marker(db, "rolling_cyclic_storage_anchored") == {"since": 82,
+                                                                  "nodes": ["blend", "blocks", "cyc", "wp"]}
 
 
 def test_no_marker_without_rolling_or_nested_solves() -> None:
@@ -69,3 +80,4 @@ def test_no_marker_without_rolling_or_nested_solves() -> None:
         m._v82_rolling_storage_markers(db)
         assert _marker(db, "rolling_cyclic_storage_anchored") is None
         assert _marker(db, "nested_storage_start_borrowed") is None
+        assert _marker(db, "nested_storage_fix_cumulative") is None

@@ -341,6 +341,20 @@ class _TimeIndex:
         branch = str(period) if str(period) in self._anchor else None
         return self._rank[base], root, end, branch
 
+    def span(self, period: str, step: str, duration: float) -> "tuple[int, str, int, int] | None":
+        """``(period rank, base timeline, base index of the step's start, base index after it)``; None when the step
+        cannot be placed (:meth:`end_of`)."""
+        end = self.end_of(period, step, duration)
+        pos = self.position(period, step)
+        if end is None or pos is None:
+            return None
+        return end[0], end[1], pos[1], end[2]
+
+    def hours(self, root: str, start: int, stop: int) -> float:
+        """The hours of the base timeline ``root`` from base index ``start`` up to (not including) ``stop``."""
+        hours = self._hours.get(root) or []
+        return float(sum(hours[max(start, 0):max(stop, 0)]))
+
     def end(self, solve: str) -> "Position | None":
         """``(period rank, base-timeline index after the solve's last step)``: where the sub-solve's horizon ends (the
         latest end over its periods, so a stochastic solve ends with its terminal branches); None when unknown."""

@@ -128,7 +128,7 @@ def test_default_node_beside_a_start_value_starts_free_with_a_notice(tmp_path_fa
     capsys.readouterr()
     lp = _first_lp(tmp_path_factory, url, scen)
     lines = [ln for ln in _notice_lines(capsys.readouterr().out) if "storage_start_end_method" in ln
-             and "default" in ln]
+             and "default" in ln and "storage_end_matches_start" not in ln]
     assert len(lines) == 1
     affected = re.search(r"Affected storage nodes: ([^.]*)\.", lines[0]).group(1).split(", ")
     assert affected == ["ev_battery"]
@@ -144,7 +144,8 @@ def test_default_node_beside_a_start_value_starts_free_with_a_notice(tmp_path_fa
 def test_default_nodes_without_any_start_value_are_unchanged_and_silent(tmp_path_factory, capsys, binding):
     """battery and ev_battery without a method and no storage_state_start anywhere: the old default fix_start
     fixed nothing, so the upgraded database builds the same LP as the twin with fix_nothing on both, and no
-    notice is printed although the marker is present."""
+    notice of it is printed although the marker is present.  (A forward chain with a free start gets the matching
+    end of version 82 in both, with its own notice, storage_end_matches_start.)"""
     upgraded = _data()
     for node in ("battery", "ev_battery"):
         _drop(upgraded, node, "storage_start_end_method")
@@ -161,7 +162,8 @@ def test_default_nodes_without_any_start_value_are_unchanged_and_silent(tmp_path
     assert PREFIX + "storage_default_fix_nothing" in _markers(url)
     capsys.readouterr()
     lp = _first_lp(tmp_path_factory, url, scen)
-    assert not [ln for ln in _notice_lines(capsys.readouterr().out) if "storage" in ln]
+    assert not [ln for ln in _notice_lines(capsys.readouterr().out)
+                if "storage" in ln and "storage_end_matches_start" not in ln]
     assert lp == _first_lp(tmp_path_factory, _db(tmp_path_factory, f"nostart_twin_{binding}", twin), scen)
 
 

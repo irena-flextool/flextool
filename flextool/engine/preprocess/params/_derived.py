@@ -8215,8 +8215,9 @@ def apply_derived_e(
         # nodes this solve downgraded (no representative periods): those cycle too and get no end pin.
         # A bind_within_solve node of a rolling roll that continues from a carried state chains forward in the roll
         # (_run_model._anchor_cyclic_in_rolling) and its end is tied to its start by storage_roll_end: no pin either.
+        from flextool.engine.preprocess.flex_data import _roll_end_tied_nodes
         for cyclic in (flex_data.storage_bind_within_solve, flex_data.storage_bind_within_period,
-                       getattr(flex_data, "storage_roll_end", None)):
+                       _roll_end_tied_nodes(getattr(flex_data, "storage_roll_end", None))):
             if use_ref is not None and cyclic is not None and cyclic.height > 0:
                 names = [str(n) for n in cyclic["n"].to_list()]
                 use_ref = use_ref.filter(~pl.col("n").cast(pl.Utf8).is_in(names))

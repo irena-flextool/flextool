@@ -653,9 +653,19 @@ def read_sets(
         s.dt_realize_dispatch = empty_multi_index(
             ["solve", "period", "time"],
         )
-    s.dt_fix_storage_timesteps = empty_multi_index(
-        ["solve", "period", "time"],
-    )
+    # The steps at which this solve hands the nested storage fix down (its own fix_storage_periods); empty for a
+    # solve without them.
+    fst = getattr(flex_data, "fix_storage_timesteps", None)
+    if fst is not None and fst.height > 0 and {"period", "step"}.issubset(fst.columns):
+        s.dt_fix_storage_timesteps = pd.MultiIndex.from_frame(
+            fst.select(pl.lit(solve_name).alias("solve"), pl.col("period").cast(pl.Utf8),
+                       pl.col("step").cast(pl.Utf8)).unique(maintain_order=True).to_pandas(),
+            names=["solve", "period", "time"],
+        )
+    else:
+        s.dt_fix_storage_timesteps = empty_multi_index(
+            ["solve", "period", "time"],
+        )
 
     # d_realize_invest — periods where invest *or divest* decisions are
     # realized.  Use the union of ed_invest_set and ed_divest_set "d"

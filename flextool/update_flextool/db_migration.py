@@ -11815,13 +11815,17 @@ def _v82_rolling_storage_markers(db) -> None:
     rewritten.  Idempotent: a rerun finds the markers written.
 
     * ``rolling_cyclic_storage_anchored`` (``{"since": 82, "nodes": [...]}``) when a solve has ``solve_mode``
-      ``rolling_window`` and a storage node has ``storage_binding_method`` ``bind_within_solve`` or
-      ``bind_within_solve_blended_weights`` (in some alternative): such a node now continues each roll from the
-      previous roll, ends a roll's horizon at least at its start level and closes the solve at the first roll's
-      start.
+      ``rolling_window`` and a storage node has a cyclic ``storage_binding_method`` (``bind_within_solve``,
+      ``bind_within_period``, their ``_blended_weights`` variants, ``bind_within_timeblock`` or
+      ``bind_intraperiod_blocks``, in some alternative): such a node now continues each roll from the previous roll
+      (per period or timeblock where a roll starts inside one), ends a roll's part at least at its start level and
+      closes the solve, period or timeblock at the level it started from.
     * ``nested_storage_start_borrowed`` (``{"since": 82, "nodes": [...]}``) when a solve has ``contains_solves``
       and a node has a ``storage_nested_fix_method``: its first lower-level solve can now start from the upper
       solve's planned level.
+    * ``nested_storage_fix_cumulative`` (``{"since": 82, "nodes": [...]}``) when a solve has ``contains_solves`` and
+      a node has ``storage_nested_fix_method`` ``fix_usage`` or ``fix_quantity``: the usage cap is cumulative and pro
+      rata, and the quantity target is interpolated inside an upper step.
 
     The markers are broader than the changes (the migration does not read which alternatives a scenario
     combines); a run names the nodes whose rows change.
@@ -11835,14 +11839,19 @@ def _v82_rolling_storage_markers(db) -> None:
 
     storage = {n for n, v in values("node", "node_type") if v == "storage"}
     if any(v == "rolling_window" for _s, v in values("solve", "solve_mode")):
-        nodes = sorted({n for n, v in values("node", "storage_binding_method")
-                        if v in ("bind_within_solve", "bind_within_solve_blended_weights")} & storage)
+        cyclic = ("bind_within_solve", "bind_within_solve_blended_weights", "bind_within_period",
+                  "bind_within_period_blended_weights", "bind_within_timeblock", "bind_intraperiod_blocks")
+        nodes = sorted({n for n, v in values("node", "storage_binding_method") if v in cyclic} & storage)
         if nodes:
             _v77_set_marker(db, "rolling_cyclic_storage_anchored", json.dumps({"since": 82, "nodes": nodes}))
     if any(v is not None for _s, v in values("solve", "contains_solves")):
-        nodes = sorted({n for n, v in values("node", "storage_nested_fix_method") if v} & storage)
+        fix = values("node", "storage_nested_fix_method")
+        nodes = sorted({n for n, v in fix if v} & storage)
         if nodes:
             _v77_set_marker(db, "nested_storage_start_borrowed", json.dumps({"since": 82, "nodes": nodes}))
+        nodes = sorted({n for n, v in fix if v in ("fix_usage", "fix_quantity")} & storage)
+        if nodes:
+            _v77_set_marker(db, "nested_storage_fix_cumulative", json.dumps({"since": 82, "nodes": nodes}))
 
 
 def _v82_storage_accounting_markers(db) -> None:
@@ -11903,8 +11912,9 @@ def _migrate_v82_schema_batch(db) -> None:
     5. The behaviour-change marker ``automatic_replacement_cost`` on the reinvest_automatic entities with a
        lifetime_technical whose investment cost or retirement now follows the replacements of their capacity
        (:func:`_v82_automatic_replacement_marker`).
-    6. The behaviour-change markers ``rolling_cyclic_storage_anchored`` and ``nested_storage_start_borrowed`` of the
-       storage carry in rolling and nested solves (:func:`_v82_rolling_storage_markers`).
+    6. The behaviour-change markers ``rolling_cyclic_storage_anchored``, ``nested_storage_start_borrowed`` and
+       ``nested_storage_fix_cumulative`` of the storage carry in rolling and nested solves
+       (:func:`_v82_rolling_storage_markers`).
     7. The behaviour-change markers ``rp_storage_chain_pinned`` and ``storage_end_matches_start`` of the storage start
        and end accounting (:func:`_v82_storage_accounting_markers`).
 

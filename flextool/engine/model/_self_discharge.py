@@ -180,10 +180,17 @@ def state_links(d, *, has_rp: bool, has_nsb: bool) -> list[StateLink]:
     """The state-change branches of ``model.core._state_change_terms``, one per storage_binding_method; each node
     is in one branch only (``_validate_storage_binding_disjoint``)."""
     links: list[StateLink] = []
+    carry = scope_carry_nodes(d)
     if d.storage_bind_within_timeblock is not None:
-        # bind_within_timeblock: t⁻ wraps around within the timeblock.
-        links.append(StateLink("state_change", d.storage_bind_within_timeblock, d.dtttdt,
-                               "t_previous_within_timeset", False, True))
+        # bind_within_timeblock: t⁻ wraps around within the timeblock.  A node whose first timeblock continues
+        # from the carry (scope_carry_nodes) has no wrap at the solve's first step.
+        looping = without_nodes(d.storage_bind_within_timeblock, carry)
+        if looping is not None:
+            links.append(StateLink("state_change", looping, d.dtttdt, "t_previous_within_timeset", False, True))
+        carried = _scope_carried(d.storage_bind_within_timeblock, carry)
+        lag = _without_first_steps(d, d.dtttdt) if carried is not None else None
+        if lag is not None:
+            links.append(StateLink("state_change_carry", carried, lag, "t_previous_within_timeset", False, False))
     if _has_rows(d.storage_bind_forward_only) and _has_rows(d.dtttdt_forward_only):
         # bind_forward_only: t⁻ crosses period boundaries; the first step of the solve has no state change
         # (dtttdt_forward_only omits it).
@@ -198,9 +205,16 @@ def state_links(d, *, has_rp: bool, has_nsb: bool) -> list[StateLink]:
                                "t_previous_within_solve", True, True))
     if _has_rows(d.storage_bind_within_period) and _has_rows(d.dtttdt_within_period):
         # bind_within_period: t⁻ is the previous step of the period; the first step of each period wraps to the
-        # period's own last step.
-        links.append(StateLink("state_change_wp", d.storage_bind_within_period, d.dtttdt_within_period,
-                               "t_previous_within_period", False, True))
+        # period's own last step.  A node whose first period continues from the carry (scope_carry_nodes) has no
+        # wrap at the solve's first step.
+        looping = without_nodes(d.storage_bind_within_period, carry)
+        if looping is not None:
+            links.append(StateLink("state_change_wp", looping, d.dtttdt_within_period,
+                                   "t_previous_within_period", False, True))
+        carried = _scope_carried(d.storage_bind_within_period, carry)
+        lag = _without_first_steps(d, d.dtttdt_within_period) if carried is not None else None
+        if lag is not None:
+            links.append(StateLink("state_change_wp_carry", carried, lag, "t_previous_within_period", False, False))
     if has_nsb and _has_rows(d.dtttdt_block_lag):
         # bind_intraperiod_blocks: t⁻ from dtttdt_block_lag (the blocks of a period form a loop; in a rolling solve
         # the blocks of a period the roll holds only in part chain forward, with no row at the solve's first step).
@@ -221,6 +235,42 @@ def state_links(d, *, has_rp: bool, has_nsb: bool) -> list[StateLink]:
         links.append(StateLink("state_change_rp_interior", d.nodeState_rp, interior,
                                "t_previous_within_timeset", False, False))
     return links
+
+
+def scope_carry_nodes(d) -> "pl.DataFrame | None":
+    """bind_within_period / bind_within_timeblock nodes (n) of a rolling roll whose first scope (the period, or the
+    timeblock, of the roll's first step) began in an earlier roll: the roll continues that scope from the carried
+    level instead of wrapping its first step (``storage_roll_end`` kind ``scope_carry``,
+    ``solve._run_model._anchor_cyclic_in_rolling``).  None when there are none."""
+    sre = getattr(d, "storage_roll_end", None)
+    if not _has_rows(sre):
+        return None
+    out = sre.filter(pl.col("kind") == "scope_carry").select("n").unique(maintain_order=True)
+    ns = getattr(d, "nodeState", None)
+    if _has_rows(ns):
+        out = out.select(pl.col("n").cast(ns.schema["n"], strict=False))
+    return out if out.height > 0 else None
+
+
+def _scope_carried(method_nodes: "pl.DataFrame | None", carry: "pl.DataFrame | None") -> "pl.DataFrame | None":
+    """The nodes of ``method_nodes`` (n) that are in ``carry`` (n), with ``method_nodes``' dtype; None when none."""
+    if not (_has_rows(method_nodes) and _has_rows(carry)):
+        return None
+    out = method_nodes.join(carry.select(pl.col("n").cast(method_nodes.schema["n"], strict=False)), on="n",
+                            how="semi")
+    return out if out.height > 0 else None
+
+
+def _without_first_steps(d, lag: "pl.DataFrame | None") -> "pl.DataFrame | None":
+    """``lag`` without the rows of the solve's first step(s) (``nodeState_first_dt``): the step starts from the
+    carry, not from a wrap.  None when nothing is left."""
+    if not _has_rows(lag) or not _has_rows(getattr(d, "nodeState_first_dt", None)):
+        return lag
+    first = d.nodeState_first_dt.select(pl.col("d").cast(pl.Utf8).alias("_d"),
+                                        pl.col("t").cast(pl.Utf8).alias("_t")).unique()
+    out = (lag.with_columns(_d=pl.col("d").cast(pl.Utf8), _t=pl.col("t").cast(pl.Utf8))
+           .join(first, on=["_d", "_t"], how="anti").drop("_d", "_t"))
+    return out if out.height > 0 else None
 
 
 def previous_steps(links: list[StateLink]) -> pl.DataFrame:
@@ -420,19 +470,22 @@ def block_tail_ends(d) -> "pl.DataFrame | None":
 def cyclic_nodes(d) -> "pl.DataFrame | None":
     """Storage nodes whose chain closes on itself within the solve (n): bind_within_timeblock,
     bind_within_period, bind_within_solve and the bind_intraperiod_blocks nodes whose first period loops
-    (:func:`block_cyclic_nodes`).  Their first step wraps to a later step of the solve, so they take neither a start
+    (:func:`block_cyclic_nodes`), less the nodes whose first scope continues from the carry
+    (:func:`scope_carry_nodes`).  Their first step wraps to a later step of the solve, so they take neither a start
     term nor the roll carry."""
-    return node_union((d.storage_bind_within_timeblock, d.storage_bind_within_period,
-                        d.storage_bind_within_solve, block_cyclic_nodes(d)))
+    cyclic = node_union((d.storage_bind_within_timeblock, d.storage_bind_within_period,
+                         d.storage_bind_within_solve, block_cyclic_nodes(d)))
+    return without_nodes(cyclic, scope_carry_nodes(d))
 
 
 def open_start_nodes(d) -> "pl.DataFrame | None":
-    """Storage nodes whose chain starts open at the solve's first step (n): bind_forward_only and the
+    """Storage nodes whose chain starts open at the solve's first step (n): bind_forward_only, the
     bind_intraperiod_blocks nodes that chain forward from it (:func:`block_open_nodes`: fix_start_end, or a roll
-    that holds its first period only in part).
+    that holds its first period only in part) and the bind_within_period / bind_within_timeblock nodes whose first
+    scope continues from the carry (:func:`scope_carry_nodes`).
     Their first step starts from the fix_start state in the first solve and from the roll carry in a continuation
     solve."""
-    return node_union((d.storage_bind_forward_only, block_open_nodes(d)))
+    return node_union((d.storage_bind_forward_only, block_open_nodes(d), scope_carry_nodes(d)))
 
 
 def fix_start_first(d) -> "pl.DataFrame | None":
@@ -582,3 +635,62 @@ def start_levels(d, state: pl.DataFrame, chosen) -> "pl.DataFrame | None":
            .unique(subset=["n"], keep="first", maintain_order=True)
            .select(pl.col("n").alias("node"), "value"))
     return out if out.height > 0 else None
+
+
+def scope_start_levels(d, state: pl.DataFrame, start: "pl.DataFrame | None") -> "pl.DataFrame | None":
+    """``[node, period, step, value]``: the level (MWh) each cyclic scope that starts in a solved solve starts from,
+    keyed by the scope's first step in the solve.
+
+    The scopes: every timeblock of a bind_within_timeblock node and every period of a bind_within_period node whose
+    first step wraps (the state of its wrap target, :func:`state_links`), and every period of a
+    bind_intraperiod_blocks node, from the step its first block continues from (the period's last block where the
+    blocks loop, the step before the period where they chain forward) or, at the solve's first step, from ``start``
+    (``[node, value]``, :func:`start_levels`).  ``state``: the solve's v_state ``(n, d, t, value)`` (state units).
+    Read by the cascade: the level a rolling roll that continues the scope closes it to
+    (``solve._run_model._anchor_cyclic_in_rolling``).  None when there are none.
+    """
+    if not _has_rows(getattr(d, "nodeState_first_dt", None)) or d.p_state_unitsize is None:
+        return None
+
+    def utf8(frame: pl.DataFrame) -> pl.DataFrame:
+        return frame.with_columns([pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t") if c in frame.columns])
+
+    state = utf8(state)
+    su = utf8(d.p_state_unitsize.frame).select("n", pl.col("value").alias("su"))
+    has_nsb = _has_rows(getattr(d, "nodeStateBlock", None))
+    links = [link for link in state_links(d, has_rp=False, has_nsb=has_nsb)
+             if link.key in ("state_change", "state_change_wp")]
+    parts = []
+    if links:
+        wrap = previous_steps(links).filter(pl.col("t_prev") >= pl.col("t"))
+        parts.append(wrap.join(state.select("n", pl.col("d").alias("d_prev"), pl.col("t").alias("t_prev"), "value"),
+                               on=["n", "d_prev", "t_prev"], how="inner")
+                     .select("n", "d", "t", "value"))
+    if has_nsb:
+        nsb = utf8(d.nodeStateBlock.select("n"))
+        firsts = state.join(nsb, on="n", how="semi").group_by("n", "d").agg(pl.col("t").min())
+        block_links = [link for link in state_links(d, has_rp=False, has_nsb=True)
+                       if link.key in ("state_change_block", "state_change_block_forward")]
+        prev = previous_steps(block_links) if block_links else None
+        if prev is not None and prev.height > 0:
+            parts.append(firsts.join(prev, on=["n", "d", "t"], how="inner")
+                         .join(state.select("n", pl.col("d").alias("d_prev"), pl.col("t").alias("t_prev"), "value"),
+                               on=["n", "d_prev", "t_prev"], how="inner")
+                         .select("n", "d", "t", "value"))
+        if start is not None and start.height > 0:
+            solve_first = utf8(d.nodeState_first_dt.select("n", "d", "t"))
+            parts.append(firsts.join(solve_first, on=["n", "d", "t"], how="inner")
+                         .join(start.select(pl.col("node").cast(pl.Utf8).alias("n"),
+                                            pl.col("value").cast(pl.Float64).alias("_mwh")), on="n", how="inner")
+                         .join(su, on="n", how="inner")
+                         .select("n", "d", "t", value=pl.col("_mwh") / pl.col("su")))
+    parts = [p.select("n", "d", "t", pl.col("value").cast(pl.Float64)) for p in parts if p.height > 0]
+    if not parts:
+        return None
+    out = (pl.concat(parts, how="vertical").unique(subset=["n", "d", "t"], keep="first")
+           .join(su, on="n", how="inner")
+           .select(pl.col("n").alias("node"), pl.col("d").alias("period"), pl.col("t").alias("step"),
+                   value=pl.col("value") * pl.col("su"))
+           .sort("node", "period", "step"))
+    return out if out.height > 0 else None
+

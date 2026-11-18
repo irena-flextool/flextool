@@ -240,19 +240,19 @@ def test_reference_series_below_the_start_does_not_drain(tmp_path_factory, rp):
         assert list(row_terms(pb, "storage_state_end_match")) == ["storage_state_end_match[s,p1,t0001,p1,t0004]"]
 
 
-def test_reference_below_fix_start_share_yields_to_the_matching_end(tmp_path_factory):
-    """use_reference_value 0.3 below fix_start 0.5 on storage the solve can invest in: the reference is guidance, the
-    matching end is accounting, so the reference becomes a lower bound (rp_inter_period_reference_value_min)."""
-    step = _run(tmp_path_factory, invest=True,
-                s={"existing": 0.0, "storage_binding_method": FO_B, "storage_start_end_method": "fix_start",
-                   "storage_state_start": 0.5, "storage_solve_horizon_method": "use_reference_value",
-                   "storage_state_reference_value": 0.3})
-    assert _invested(step) == pytest.approx(0.0, abs=TOL)
-    assert _production(step) == pytest.approx(4.0, abs=TOL)
-    pb = build(step.flex_data)
-    assert list(row_terms(pb, "rp_inter_period_reference_value_min")) == [
-        "rp_inter_period_reference_value_min[s,p1,t0003]"]
-    assert not row_terms(pb, "rp_inter_period_reference_value[")
+@pytest.mark.parametrize("rp", [True, False])
+def test_reference_below_fix_start_share_on_investable_storage_is_an_error(tmp_path_factory, rp):
+    """use_reference_value 0.3 below fix_start 0.5 on storage the solve can invest in: ending at the reference would
+    let built storage deliver part of its start energy for free, against the matching end — a configuration error
+    (owner decision).  Before: the reference became a lower bound (rp_inter_period_reference_value_min /
+    storage_state_solve_horizon_reference_value_min)."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    with pytest.raises(FlexToolConfigError, match="storage_state_reference_value below storage_state_start"):
+        _run(tmp_path_factory, invest=True, rp=rp,
+             s={"existing": 0.0, "storage_binding_method": FO_B if rp else "bind_forward_only",
+                "storage_start_end_method": "fix_start", "storage_state_start": 0.5,
+                "storage_solve_horizon_method": "use_reference_value", "storage_state_reference_value": 0.3})
 
 
 def test_investment_solve_short_of_the_model_end_warns(tmp_path_factory, capsys):

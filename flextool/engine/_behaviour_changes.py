@@ -323,9 +323,13 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "roll(s) whose horizon reaches the end of the solve end at the level the first roll started "
                      "from, so the year (the solve) returns the energy it took. An upper-level fix_quantity or "
                      "fix_usage at the end of a roll's horizon replaces these end conditions (fix_price keeps the "
-                     "closure and only values the end), and fix_end wins at the last step of the model. Before, each "
-                     "roll cycled on itself from a free level, so the level jumped at every roll boundary and the "
-                     "rolls could use energy that was never produced (results change)."),
+                     "closure and only values the end), and fix_end wins at the last step of the model. "
+                     "bind_within_period (also bind_within_period_blended_weights), bind_within_timeblock and "
+                     "bind_intraperiod_blocks do the same per period or timeblock where a roll starts inside one: "
+                     "the roll continues it from the carried level and the roll(s) holding its end close it at the "
+                     "level it started from. Before, each roll cycled on itself from a free level (or the blocks of "
+                     "a period held in part chained forward without closing it), so the level jumped at roll "
+                     "boundaries and the rolls could use energy that was never produced (results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "rolling_cyclic_storage_anchored"),
         ),
         BehaviourChange(
@@ -334,11 +338,24 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "(storage_nested_fix_method fix_quantity, fix_usage or fix_price) and that has no state "
                      "realised before the lower solve now starts from the level the upper solve planned for the "
                      "same moment, when it chains forward (bind_forward_only, or bind_within_solve in a rolling "
-                     "solve under fix_quantity or fix_usage) and fix_start does not apply (no fix_start, or the "
+                     "solve under fix_quantity or fix_usage, and bind_within_period / bind_within_timeblock there "
+                     "when the first roll cuts the period or timeblock) and fix_start does not apply (no fix_start, or the "
                      "lower solve starts after the start of the model). Before, it started free or from fix_start, "
                      "so the lower solve could start fuller than the upper plan and keep the difference (results "
                      "change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "nested_storage_start_borrowed"),
+        ),
+        BehaviourChange(
+            id="nested_storage_fix_cumulative",
+            summary=("A lower-level solve under an upper-level storage_nested_fix_method fix_usage is now capped by "
+                     "the upper solve's usage from the start of the period (within the instance nested in that "
+                     "upper solve) to the end of its horizon, less what its earlier rolls realised, with an upper "
+                     "step that the span cuts counted pro rata to its hours. Before, each roll was capped by the "
+                     "upper usage of every upper step it touched, counted whole and from its own start, so the "
+                     "realised rolls could use energy the upper solve never planned. Under fix_quantity a lower "
+                     "horizon that ends inside an upper step now takes the upper level interpolated at that moment "
+                     "instead of the level at the end of the step (results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "nested_storage_fix_cumulative"),
         ),
         BehaviourChange(
             id="rp_storage_chain_pinned",
@@ -362,7 +379,9 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "least at the level it started from, and a fix_start start on storage the solve can invest in "
                      "returns at least the storage_state_start share of the capacity it builds in the first period. "
                      "This holds in a solve that has both the start of the model and its last step (a single solve, "
-                     "an investment solve over the whole horizon, every representative-period solve). Before, the "
+                     "an investment solve over the whole horizon, every representative-period solve) and, with a "
+                     "free start (fix_nothing), over the rolls of a rolling solve (the first roll's horizon ends at "
+                     "least at its start, the rolls reaching the end of the model at least at that level). Before, the "
                      "solve could start full and end empty, or build storage only for its start energy (results "
                      "change). fix_start on capacity the solve cannot change keeps a free end."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "storage_end_matches_start"),
