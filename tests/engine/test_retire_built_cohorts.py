@@ -419,3 +419,33 @@ def test_built_retirements_carry_into_a_rolling_solve(tmp_path_factory) -> None:
         capacity = utf8(roll.flex_data.p_entity_all_existing.frame).filter(pl.col("e") == PLANT)
         assert dict(zip(capacity["d"], capacity["value"])) == pytest.approx({"p2030": 250.0})
 
+
+@pytest.mark.solver
+def test_retirement_of_built_capacity_in_the_results(tmp_path_factory) -> None:
+    """100 MW built in p2020 (lifetime 10, fixed_cost 100 CUR/kW), 40 MW retired in p2025.  The unit capacity
+    reports 40 MW divested in p2025 and 60 MW in service then (0 from p2030, the end of life); the discounted
+    retirement cost is the objective's term, 40 MW × the change of retiring a MW (C − S·D(5) less the kept
+    plant's level price, :func:`_contract`), and the fixed cost no longer paid −40 · 100 000 · Σ_{k=5..9}
+    1.05^-(k+0.5) (inflation_offset_operations 0.5); annualized, the retirement is that cost ÷ Σ_{k=5..9}
+    1.05^-(k+1) a year in p2025, the fixed cost reduction −40 · 100 000 a year in p2025."""
+    import pandas as pd
+
+    from tests.engine.test_chain_costs import MEGA, _row, _write_csv
+
+    values = _values(life=10.0, fixed_cost=b64(100.0, "float"), extra=_pinned({"p2020": 100.0}, {"p2025": 40.0}))
+    out = _write_csv(tmp_path_factory, "rb_results", values, _no_battery_invest(SINGLE))
+    capacity = pd.read_csv(out / "unit_capacity__d.csv")
+    plant = capacity[capacity["unit"] == PLANT].set_index("period")
+    assert plant.loc["p2025", "divested"] == pytest.approx(40.0, rel=1e-9)
+    assert plant.loc["p2025", "total"] == pytest.approx(60.0, rel=1e-9)
+    assert plant.loc["p2030", "total"] == pytest.approx(0.0, abs=1e-9)
+    _, change = _contract(0.05, 10, 10, 1.0, 0, 5)
+    fixed = 100.0 * 1000.0 * sum(V ** (k + 0.5) for k in range(5, 10))
+    discounted = _row(pd.read_csv(out / "cost_unit_discounted__d.csv"), "p2025")
+    assert discounted["retirement"] * MEGA == pytest.approx(40.0 * change, rel=1e-7)
+    assert discounted["fixed cost reduction of divestments"] * MEGA == pytest.approx(-40.0 * fixed, rel=1e-7)
+    annualized = _row(pd.read_csv(out / "cost_unit_annualized__d.csv"), "p2025")
+    assert annualized["retirement"] * MEGA == pytest.approx(
+        40.0 * change / sum(V ** (k + 1) for k in range(5, 10)), rel=1e-7)
+    assert annualized["fixed cost reduction of divestments"] * MEGA == pytest.approx(-40.0 * 100.0 * 1000.0,
+                                                                                    rel=1e-7)

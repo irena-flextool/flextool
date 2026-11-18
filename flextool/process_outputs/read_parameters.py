@@ -694,6 +694,7 @@ def _entity_all_capacity(
                 v_invest[e, d_inv] * unitsize[e]
               - sum over (e, d_dv) in ed_divest with years[d_dv] <= years[d] of
                 v_divest[e, d_dv] * unitsize[e]
+              - v_divested_built[e, d] * unitsize[e]   (the model-built capacity retired so far)
     """
     # Collect base existing — start from p_entity_all_existing if
     # available; else fall back to a (entity × period) zero frame
@@ -870,18 +871,29 @@ def _entity_all_capacity(
     # explicit coalesce on the join keys.  Every input has already
     # been normalised to Utf8 ``e`` / ``d`` above (so Enum-typed
     # populated frames don't clash with the Utf8 empty fallbacks).
+    # The model-built capacity retired so far, counting in d (``v_divested_built``, already per (e, d)).
+    built_pieces = [f for f in (_try_value("v_divested_built_p"), _try_value("v_divested_built_n")) if f.height > 0]
+    built_contrib = (
+        pl.concat(built_pieces, how="vertical").lazy()
+          .join(unitsize_lf, on="e", how="inner")
+          .select("e", "d", divested_built=pl.col("value") * pl.col("unitsize"))
+        if built_pieces else
+        pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "divested_built": pl.Float64}).lazy()
+    )
     j1 = existing_lf.join(
         invest_contrib, on=["e", "d"], how="full", coalesce=True,
     )
-    j2 = j1.join(divest_contrib, on=["e", "d"], how="full", coalesce=True)
+    j2 = (j1.join(divest_contrib, on=["e", "d"], how="full", coalesce=True)
+            .join(built_contrib, on=["e", "d"], how="full", coalesce=True))
     combined = (
         j2.with_columns(
             existing=pl.col("existing").fill_null(0.0),
             invested=pl.col("invested").fill_null(0.0),
             divested=pl.col("divested").fill_null(0.0),
+            divested_built=pl.col("divested_built").fill_null(0.0),
         )
         .with_columns(
-            total=pl.col("existing") + pl.col("invested") - pl.col("divested"),
+            total=pl.col("existing") + pl.col("invested") - pl.col("divested") - pl.col("divested_built"),
         )
         .filter(pl.col("e").is_not_null() & pl.col("d").is_not_null())
         .select("e", "d", "total")

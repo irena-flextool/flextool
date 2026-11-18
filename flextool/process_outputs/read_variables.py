@@ -373,6 +373,13 @@ def _read_from_parquet(parquet_dir: Path) -> SimpleNamespace:
     v.q_capacity_margin = _read("vq_capacity_margin", ("group",), has_time=False)
     v.invest = _read("v_invest", ("entity",), has_time=False)
     v.divest = _read("v_divest", ("entity",), has_time=False)
+    # The retirements of model-built capacity (empty frames without retirable built capacity): units retired in a
+    # period, units retired so far counting in it, and their objective terms (CUR; read_highs_solution
+    # write_v_divest_built).
+    v.divest_built = _read("v_divest_built", ("entity",), has_time=False)
+    v.divested_built = _read("v_divested_built", ("entity",), has_time=False)
+    v.divest_built_cost = _read("v_divest_built_cost", ("entity",), has_time=False)
+    v.divest_built_fixed = _read("v_divest_built_fixed", ("entity",), has_time=False)
     # The branch-weighted investment of a stochastic fan's branch periods at its label (recourse; empty frame
     # without the parquet): the reported investment costs inside a fan.
     v.invest_fan = _read("v_invest_fan", ("entity",), has_time=False)

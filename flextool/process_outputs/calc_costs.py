@@ -146,6 +146,17 @@ def _annualized_investment(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
             _fixed_cost_in_window(long, window, 'period_invest', 'start', par, columns, drop_unpriced=True))
 
 
+def _with_built(existing: pd.DataFrame, built: pd.DataFrame) -> pd.DataFrame:
+    """``existing`` (period × entity, the retirements of existing capacity) plus ``built`` (the same of model-built
+    capacity, the outputs of read_highs_solution.write_v_divest_built): the union of their periods and entities,
+    a cell only one of them has kept as it is.  ``existing`` unchanged without built retirements."""
+    if built is None or built.empty or len(built.columns) == 0:
+        return existing
+    out = existing.add(built, fill_value=0.0)
+    out.columns.name = existing.columns.name
+    return out
+
+
 def _annualized_retirement(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
     """``(retirement, fixed cost reduction of divestments)`` per year, rows: period, columns: entity (CUR/yr).
 
@@ -157,7 +168,25 @@ def _annualized_retirement(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
       d, the period it happens in; and the fixed cost of d' the retired capacity no longer pays (from the
       retirement period until the end of life of the existing capacity).  fc[e,d'] falls back to fc[e,d] of the
       retirement period for a window period the solve does not hold; such rows are never reported (the chain union
-      keeps each period from the solve that realizes it, which holds its fixed cost)."""
+      keeps each period from the solve that realizes it, which holds its fixed cost).
+    ANN. retire_built_yr[e,d] = divest_built_cost[e,d] / inflation_inv[d]
+         fixed_divested_built_yr[e,d] = −divested_built[e,d]·unitsize[e]·fc[e,d]
+      The retirements of model-built capacity (read_highs_solution.write_v_divest_built): their objective term as a
+      yearly amount of the retirement period, and the fixed cost of every period the model-built capacity retired
+      so far no longer pays.  Both are added to the existing capacity's columns."""
+    retirement, fixed = _annualized_existing_retirement(par, s, v)
+    if v.divest_built_cost.empty or len(v.divest_built_cost.columns) == 0:
+        return retirement, fixed
+    factor = par.inflation_factor_investment_yearly.reindex(v.divest_built_cost.index)
+    built = v.divest_built_cost.div(factor, axis=0)
+    gone = v.divested_built.mul(par.entity_unitsize[v.divested_built.columns])
+    saved = -gone.mul(par.entity_fixed_cost.reindex(index=gone.index, columns=gone.columns).fillna(0.0))
+    return _with_built(retirement, built), _with_built(fixed, saved)
+
+
+def _annualized_existing_retirement(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The ``(retirement, fixed cost reduction)`` per year of the retirements of existing capacity
+    (:func:`_annualized_retirement`)."""
     columns = v.divest.columns
     long = _decisions_long(-v.divest.mul(par.entity_unitsize[columns]), 'period_divest')
     settlement = _decisions_long(par.entity_divest_settlement_yearly, 'period_divest').rename(
@@ -472,7 +501,8 @@ def compute_costs(par, s, v, r) -> None:
     invest = _invest_with_fan(v)
     r.cost_entity_invest_d = _at_start_of_operation(
         invest.mul(par.entity_unitsize[v.invest.columns]).mul(par.entity_annual_discounted), s)
-    r.cost_entity_divest_d = -v.divest.mul(par.entity_unitsize[v.divest.columns]).mul(par.entity_divest_salvage)
+    r.cost_entity_divest_d = _with_built(
+        -v.divest.mul(par.entity_unitsize[v.divest.columns]).mul(par.entity_divest_salvage), v.divest_built_cost)
     # The fixed cost of existing capacity: the user's existing capacity aged over its lifetime, in every period of
     # the run.  The capacity carried from earlier solves is in the fixed-cost lump of its investment and a
     # retirement in the lump of the retirement, so neither is charged here (a single solve: the same as
@@ -484,7 +514,9 @@ def compute_costs(par, s, v, r) -> None:
     # column — direct indexing is safe.
     r.cost_entity_fixed_invested = _at_start_of_operation(
         invest.mul(par.entity_unitsize[v.invest.columns] * par.entity_lifetime_fixed_cost[v.invest.columns]), s)
-    r.cost_entity_fixed_divested = -(v.divest.mul(par.entity_unitsize[v.divest.columns] * par.entity_lifetime_fixed_cost_divest[v.divest.columns]))
+    r.cost_entity_fixed_divested = _with_built(
+        -(v.divest.mul(par.entity_unitsize[v.divest.columns]
+                       * par.entity_lifetime_fixed_cost_divest[v.divest.columns])), -v.divest_built_fixed)
 
     # The annualized investment, retirement and fixed costs of new / retired capacity: the yearly amounts of
     # every vintage and retirement in effect in a period (not the lumps divided by a period's factor).

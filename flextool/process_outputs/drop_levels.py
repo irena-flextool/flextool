@@ -11,6 +11,7 @@ _V_DROP = [
     'q_state_up', 'q_state_down', 'q_reserve',
     'q_inertia', 'q_non_synchronous', 'q_state_up_group', 'q_capacity_margin',
     'invest', 'divest', 'invest_fan',
+    'divest_built', 'divested_built', 'divest_built_cost', 'divest_built_fixed',
     # trade (v_trade, commodity price ladder, #57): period-only, same
     # rolling treatment as invest/divest — the committing roll's tier
     # purchase for a period wins over an earlier look-ahead roll's.
@@ -157,6 +158,7 @@ def _reduce_share_per_period(csoy: pd.Series) -> pd.Series:
 # The investment duals too (item 266): the v_invest reduced costs and the per-period cap / floor duals.
 _V_REALIZING_SOLVE = frozenset({
     'invest', 'divest', 'q_capacity_margin',
+    'divest_built', 'divested_built', 'divest_built_cost', 'divest_built_fixed',
     'dual_invest_connection', 'dual_invest_node', 'dual_invest_unit',
     'dual_maxInvest_period', 'dual_maxCumulative', 'dual_maxInvestGroup_period', 'dual_maxInvestGroup_cumulative',
     'dual_minInvest_period', 'dual_minCumulative', 'dual_minInvestGroup_period', 'dual_minInvestGroup_cumulative',

@@ -1852,6 +1852,89 @@ def write_v_invest_fan(
     return path
 
 
+#: The parquets of :func:`write_v_divest_built` (output name → the quantity, per realized investment period and
+#: entity).
+DIVEST_BUILT_OUTPUTS: tuple[str, ...] = ("v_divest_built", "v_divested_built", "v_divest_built_cost",
+                                         "v_divest_built_fixed")
+
+
+def write_v_divest_built(
+    h: "highspy.Highs",
+    *,
+    solve_name: str,
+    output_dir: Path | str,
+    flex_data: "FlexData | None",
+    realized_periods_csv: Path | str | None = None,
+    provider: "object | None" = None,
+    col_names_cache: Sequence[str] | None = None,
+    col_value: "object | None" = None,
+) -> list[Path]:
+    """Write the retirements of model-built capacity (:data:`DIVEST_BUILT_OUTPUTS`), one parquet each.
+
+    # ─── OUTPUT. ─── v_divest_built / v_divested_built / v_divest_built_cost / v_divest_built_fixed ───
+    # divest_built[e,d]       = Σ_c v_divest_built[e,c,d]                     (units retired in d)
+    # divested_built[e,d]     = v_divested_built[e,d]                         (units retired so far, counting in d)
+    # divest_built_cost[e,d]  = Σ_c v_divest_built[e,c,d]·us[e]·cd_divest_built_cost[e,c,d]     (CUR)
+    # divest_built_fixed[e,d] = Σ_c v_divest_built[e,c,d]·us[e]·cd_divest_built_fixed[e,c,d]    (CUR)
+    #   us = unitsize (state_unitsize for a storage node); d a period whose investment the solve realizes
+    # The model-built capacity retired (per cohort in the LP, summed over the cohorts of an entity here) and its
+    # objective terms divest_built_cost_{p,n}: the settlement less the level price given back, and the fixed cost
+    # saved (both discounted, as the objective).  The reported retirement costs and capacities add them to those of
+    # existing capacity.  Rows: the realized investment periods; columns: the entities with a retirable cohort.
+
+    No file without FlexData or without a retirement option of model-built capacity.
+    """
+    if flex_data is None or getattr(flex_data, "cd_divest_built", None) is None:
+        return []
+    names = col_names_cache if col_names_cache is not None else h.allVariableNames()
+    values = col_value if col_value is not None else h.getSolution().col_value
+    decided = pl.concat([_solution_frame(names, values, var, ("e", "cohort", "d"))
+                         for var in ("v_divest_built_p", "v_divest_built_n")])
+    counted = pl.concat([_solution_frame(names, values, var, ("e", "d"))
+                         for var in ("v_divested_built_p", "v_divested_built_n")])
+    if decided.height == 0:
+        return []
+    sizes = [param.frame.select(pl.col(col).cast(pl.Utf8).alias("e"), pl.col("value").alias("us"))
+             for param, col in ((getattr(flex_data, "p_unitsize", None), "p"),
+                                (getattr(flex_data, "p_state_unitsize", None), "n"))
+             if param is not None]
+    us = pl.concat(sizes).unique(subset=["e"], keep="first", maintain_order=True)
+
+    def coefficient(param) -> pl.DataFrame:
+        return param.frame.select(pl.col("e").cast(pl.Utf8), pl.col("cohort"), pl.col("d").cast(pl.Utf8),
+                                  pl.col("value").alias("coef"))
+
+    mw = decided.join(us, on="e", how="inner").with_columns(mw=pl.col("value") * pl.col("us"))
+    keys = ["e", "cohort", "d"]
+    long = {
+        "v_divest_built": decided.group_by("e", "d", maintain_order=True).agg(pl.col("value").sum()),
+        "v_divested_built": counted,
+        "v_divest_built_cost": (mw.join(coefficient(flex_data.cd_divest_built_cost), on=keys, how="inner")
+                                .group_by("e", "d", maintain_order=True)
+                                .agg((pl.col("mw") * pl.col("coef")).sum().alias("value"))),
+        "v_divest_built_fixed": (mw.join(coefficient(flex_data.cd_divest_built_fixed), on=keys, how="inner")
+                                 .group_by("e", "d", maintain_order=True)
+                                 .agg((pl.col("mw") * pl.col("coef")).sum().alias("value"))),
+    }
+    realized = _load_realized_invest_periods_list(realized_periods_csv, provider=provider)
+    entities = list(dict.fromkeys(decided["e"].to_list()))
+    rows = realized if realized is not None else list(dict.fromkeys(decided["d"].to_list()))
+    written: list[Path] = []
+    for name in DIVEST_BUILT_OUTPUTS:
+        frame = long[name]
+        wide = (frame.to_pandas().pivot_table(index="d", columns="e", values="value", aggfunc="sum")
+                if frame.height > 0 else pd.DataFrame())
+        wide = wide.reindex(index=rows, columns=entities)
+        out = pd.DataFrame(wide.to_numpy(dtype=float), columns=pd.Index(entities, name="entity"),
+                           index=pd.MultiIndex.from_tuples([(solve_name, d) for d in rows],
+                                                           names=["solve", "period"])).fillna(0.0)
+        out += 0.0
+        path = Path(output_dir) / f"{name}__{solve_name}.parquet"
+        write_lean_parquet(out, path)
+        written.append(path)
+    return written
+
+
 def write_all_variables(
     h: "highspy.Highs",
     *,
@@ -1961,6 +2044,14 @@ def write_all_variables(
             col_value=col_value,
         )),
         ("v_invest_fan", lambda: write_v_invest_fan(
+            h, solve_name=solve_name, output_dir=output_dir,
+            flex_data=flex_data,
+            realized_periods_csv=realized_periods_csv,
+            provider=provider,
+            col_names_cache=col_names_cache,
+            col_value=col_value,
+        )),
+        ("v_divest_built", lambda: write_v_divest_built(
             h, solve_name=solve_name, output_dir=output_dir,
             flex_data=flex_data,
             realized_periods_csv=realized_periods_csv,

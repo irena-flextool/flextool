@@ -37,6 +37,22 @@ def _invest_columns(par, s, v, entities) -> tuple[pd.Series, pd.Series]:
     return _by_period(commission), _by_period(s.edd_invest_in_construction)
 
 
+def _with_built_divested(divested: pd.Series, par, v, members, names) -> pd.Series:
+    """``divested`` ((entity, period) MW of the existing capacity retired in the period) plus the model-built
+    capacity of ``members`` retired then (``v.divest_built`` × unitsize, read_highs_solution.write_v_divest_built),
+    on the index level ``names`` of the capacity table; ``divested`` unchanged without built retirements of these
+    entities."""
+    built = v.divest_built
+    cols = [e for e in built.columns if e in set(members)] if not built.empty else []
+    if not cols:
+        return divested
+    mw = built[cols].mul(par.entity_unitsize[cols]).unstack()
+    mw.index = mw.index.set_names(list(names))
+    if divested.empty:
+        return mw
+    return divested.add(mw, fill_value=0.0)
+
+
 def unit_capacity(par, s, v, r, debug):
     """Unit capacity by period"""
 
@@ -86,6 +102,7 @@ def unit_capacity(par, s, v, r, debug):
         ed_unit_divest = ed_unit_divest.intersection(unstacked_divest.index)
         unit_divest = ed_unit_divest.get_level_values('entity').unique()
         results['divested'] = unstacked_divest[ed_unit_divest] * par.entity_unitsize[unit_divest]
+    results['divested'] = _with_built_divested(results['divested'], par, v, s.process_unit, results.index.names)
 
     # Total capacity - filter to process_unit only
     total = r.entity_all_capacity[processes].unstack()
@@ -130,6 +147,7 @@ def connection_capacity(par, s, v, r, debug):
         ed_conn_divest = ed_conn_divest.intersection(unstacked_divest.index)
         conn_divest = ed_conn_divest.get_level_values('entity').unique()
         results['divested'] = unstacked_divest[ed_conn_divest] * par.entity_unitsize[conn_divest]  # was: results['invested']
+    results['divested'] = _with_built_divested(results['divested'], par, v, s.process_connection, results.index.names)
 
     # Total capacity - filter to process_connection only
     results['total'] = r.entity_all_capacity[connections].unstack()
@@ -179,6 +197,7 @@ def node_capacity(par, s, v, r, debug):
         ed_node_divest = ed_node_divest.intersection(unstacked_divest.index)
         node_divest = ed_node_divest.get_level_values('entity').unique()
         results['divested'] = unstacked_divest[ed_node_divest] * par.entity_unitsize[node_divest]  # was: v.invest, results['invested']
+    results['divested'] = _with_built_divested(results['divested'], par, v, s.node, results.index.names)
 
     # Total capacity - filter to node_state only
     if nodes:
