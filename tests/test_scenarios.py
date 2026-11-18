@@ -118,10 +118,19 @@ def _parse_summary_solver_objective(summary_path: Path) -> float:
     return total
 
 
-#: Deterministic single solves whose objective holds a term no cost table reports (their calculated total is not
-#: the solver objective before the investment-type costs too): 5weeks_battery_intraperiod_blocks (objective 1843.38
-#: M, calculated 956.43 M).
-_OBJECTIVE_TERMS_NOT_REPORTED = frozenset({"5weeks_battery_intraperiod_blocks"})
+def _periods_not_realized(out_dir: Path, raw_dir: Path) -> set[str]:
+    """The periods of ``summary_solve.csv``'s ``Period`` row (every period a solve of the run optimises) that no
+    solve realizes (``output_raw`` ``d_realized_period`` / ``d_realize_invest``): a look-ahead period whose operation
+    the solver objective counts but no cost table reports."""
+    import csv
+    import polars as pl
+    with (out_dir / "summary_solve.csv").open() as f:
+        periods = next((set(row[1:]) for row in csv.reader(f) if row and row[0] == "Period"), set())
+    realized: set[str] = set()
+    for name in ("d_realized_period", "d_realize_invest"):
+        for path in raw_dir.glob(f"{name}__*.parquet"):
+            realized |= set(pl.read_parquet(path)["period"].to_list())
+    return periods - realized
 
 
 def _solver_objectives_and_counted_total(summary_path: Path) -> tuple[list[float], float]:
@@ -537,11 +546,12 @@ def test_obj_decomposition(
 
     decomposition_total = _parse_costs_discounted(costs_path)
     obj_total = _parse_summary_solve_objective(summary_path)
-    # One deterministic solve: the total the objective counts (the calculated total without the constants of
-    # existing capacity) is the solver objective.
+    # One deterministic solve that realizes every period it optimises: the total the objective counts (the
+    # calculated total without the constants of existing capacity) is the solver objective.  A look-ahead period
+    # the solve does not realize is in the objective but in no cost table.
     objectives, counted = _solver_objectives_and_counted_total(summary_path)
     if len(objectives) == 1 and "stoch" not in scenario and "stoch" not in db_fixture \
-            and scenario not in _OBJECTIVE_TERMS_NOT_REPORTED:
+            and not _periods_not_realized(out_dir, solved / "output_raw"):
         assert math.isclose(counted, objectives[0], rel_tol=1e-6, abs_tol=1e-6), (
             f"{scenario}: total counted in the objective {counted!r} != solver objective {objectives[0]!r}")
 
