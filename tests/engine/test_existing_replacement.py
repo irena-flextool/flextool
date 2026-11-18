@@ -181,12 +181,11 @@ def test_free_replacement_with_salvage_is_named(tmp_path_factory, capsys) -> Non
 
 
 @pytest.mark.solver
-@pytest.mark.parametrize("cost, salvage, named", [(None, 200.0, True), (100.0, 200.0, True), (200.0, 200.0, False)])
-def test_replacement_whose_salvage_exceeds_its_cost_is_named(tmp_path_factory, capsys, cost, salvage,
-                                                              named) -> None:
-    """The replacement's yearly price is (C − S·(1+r)^−10)·ann(r, 10): below 0 when its salvage value discounted
-    at r over its life, S·1.05^−10 = 122 782.65 for S 200 000, exceeds its cost C (free, or 100 000); at C 200 000
-    it is above 0 and no warning names the entity."""
+@pytest.mark.parametrize("cost, salvage, named", [(None, 200.0, True), (100.0, 200.0, False)])
+def test_only_a_free_replacement_with_salvage_is_named(tmp_path_factory, capsys, cost, salvage, named) -> None:
+    """The warning names a replacement without an invest_cost that keeps a salvage value (D56), not a priced one,
+    even when its salvage value discounted at r over its life (S·1.05^−10 = 122 782.65 for S 200 000) exceeds its
+    cost C 100 000 (the owner's rule: no cap and no warning on a priced replacement)."""
     from flextool.engine import run_chain_from_db
     from tests.engine._unit_db import make_db
     alt = f"er_gain_warning_{cost}"
