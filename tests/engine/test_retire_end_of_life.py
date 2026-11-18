@@ -436,31 +436,35 @@ def test_fan_retirement_ends_with_the_existing_capacity(tmp_path_factory, chain)
 @pytest.mark.solver
 def test_retirement_costs_stop_at_the_end_of_life(tmp_path_factory) -> None:
     """reinvest_choice, lifetime 15 (EOL year 15), 100 MW retired in p2025: the window of the retirement (and of its
-    fixed-cost saving) is p2025 and p2030.  The salvage value is the annuity over lifetime, over the window
-    [Y(p2025), Y(p2025) + lifetime) = [5, 20) as an investment's annuity: p2025, p2030 and p2035.  By hand
-    (``test_chain_costs`` factors, r = 0.04 / offsets 0.5 and 0)::
+    fixed-cost saving) is p2025 and p2030.  The existing capacity's investment is sunk; it holds its salvage value
+    200 · 1000 CUR/MW, received at its end of life (year 15, the start of p2035: net_salvage_value of p2035), as a
+    level credit over its 15 service years from the run start at its discount_rate 0.05, paid at year starts
+    (inflation_offset_investment 0).  Retiring a MW in p2025 receives the salvage value at the start of p2025 and
+    gives back every credit of its service years.  By hand (``test_chain_costs`` factors, r = 0.04 / offsets 0.5
+    and 0)::
 
         fixed cost reduction (p2025) = −100 · 1e5 · (F_ops(p2025) + F_ops(p2030))
-        A = 200 · 1000 · 0.05 / (1 − 1.05^−15) / 1.05 = 18 350.91 CUR/MW/yr (paid at year starts)
-        retirement (p2025)           = −100 · A · (F_inv(p2025) + F_inv(p2030) + F_inv(p2035))
+        a_x = 200 000 · 1.05^−15 · 0.05 / (1 − 1.05^−15) / 1.05 = 8 827.10 CUR/MW/yr
+        retirement (p2025)           = −100 · (200 000 · 1.04^−5 − a_x · (F_inv(p2020) + F_inv(p2025) + F_inv(p2030)))
         fixed cost pre-existing (d)  = 500 · 1e5 · F_ops(d) in p2020 … p2030, 0 in p2035
 
-    Annualized: −100 · A per year in p2025 … p2035, −100 · 1e5 per year in p2025 and p2030.  The chain reports what
-    the single solve reports."""
+    Annualized: the retirement as a yearly amount of p2025 (÷ F_inv(p2025)), −100 · 1e5 per year in p2025 and
+    p2030.  The chain reports what the single solve reports (the chain's p2025 solve gives back the credit of its
+    history period p2020 too)."""
     from tests.engine.test_chain_costs import F_INV
     values = _lifetime("reinvest_choice", 15.0) + _retire()
     single = _results(tmp_path_factory, "ret_cost_single", values, _no_battery_invest(SINGLE))
     chain = _results(tmp_path_factory, "ret_cost_chain", values, _no_battery_invest(CHAIN))
     _assert_same_results(chain, single)
     window = ["p2025", "p2030"]
-    salvage_window = ["p2025", "p2030", "p2035"]
-    annuity = SALVAGE * 1000.0 * 0.05 / (1.0 - 1.05 ** -15.0) / 1.05
+    credit = SALVAGE * 1000.0 * 1.05 ** -15.0 * 0.05 / (1.0 - 1.05 ** -15.0) / 1.05
+    assert credit == pytest.approx(8_827.10, abs=0.01)
+    settlement = SALVAGE * 1000.0 * 1.04 ** -5 - credit * sum(F_INV[d] for d in ("p2020", "p2025", "p2030"))
     discounted = single["cost_unit_discounted__d"]
     rows = discounted[(discounted["period"] == "p2025") & (discounted["unit"] == PLANT)]
     assert rows["fixed cost reduction of divestments"].sum() * MEGA == pytest.approx(
         -100.0 * FIXED * sum(F_OPS[d] for d in window), rel=1e-7)
-    assert rows["retirement"].sum() * MEGA == pytest.approx(
-        -100.0 * annuity * sum(F_INV[d] for d in salvage_window), rel=1e-7)
+    assert rows["retirement"].sum() * MEGA == pytest.approx(-100.0 * settlement, rel=1e-7)
     for d in PERIODS:
         rows = discounted[(discounted["period"] == d) & (discounted["unit"] == PLANT)]
         want = 0.0 if d == "p2035" else 500.0 * FIXED * F_OPS[d]
@@ -468,8 +472,8 @@ def test_retirement_costs_stop_at_the_end_of_life(tmp_path_factory) -> None:
     for annualized in (chain["cost_unit_annualized__d"], single["cost_unit_annualized__d"]):
         for d in PERIODS:
             rows = annualized[(annualized["period"] == d) & (annualized["unit"] == PLANT)]
-            mw = 100.0 if d in salvage_window else 0.0
-            assert rows["retirement"].sum() * MEGA == pytest.approx(-mw * annuity, rel=1e-7, abs=1e-6), d
+            want = -100.0 * settlement / F_INV["p2025"] if d == "p2025" else 0.0
+            assert rows["retirement"].sum() * MEGA == pytest.approx(want, rel=1e-7, abs=1e-6), d
             mw = 100.0 if d in window else 0.0
             assert rows["fixed cost reduction of divestments"].sum() * MEGA == pytest.approx(
                 -mw * FIXED, rel=1e-7, abs=1e-6), d
@@ -530,15 +534,18 @@ def _swap_values(no_retirement_in: str | None = None) -> list:
 
 @pytest.mark.solver
 @pytest.mark.parametrize("kind", ["single", "chain"])
-def test_retiring_and_rebuilding_identical_capacity_earns_nothing(tmp_path_factory, kind) -> None:
+def test_retiring_and_rebuilding_identical_capacity_in_the_last_period(tmp_path_factory, kind) -> None:
     """coal_plant may invest and retire up to 500 MW in every period (invest_retire_period; invest_cost 400 CUR/kW,
-    lifetime 30, reinvest_automatic; net_salvage_value 200).  A new MW costs its annuity A(400, 30) over the window
-    [yr, yr + 30), inside the horizon; a retired MW earns A(200, 30) over the same window, and both save / pay the
-    same fixed cost.  Retiring existing capacity and building identical new capacity in p2035 so loses
-    (A(400, 30) − A(200, 30)) · F_inv(p2035) per MW: no retirement in p2035, and the solves equal the twin
-    without the p2035 retirement option (objective, and the p2035 build, 137.0 MW as before the retirement windows
-    of existing capacity).  Before: the salvage value was spread over the years to the end of the run only, so
-    the solve retired 363 MW and built 500 MW in p2035."""
+    lifetime 30, reinvest_automatic; net_salvage_value 200).  A retired MW of the existing capacity receives the
+    full net salvage value at the start of its retirement period (its investment is sunk); a new MW pays its annuity
+    for the years it operates inside the horizon; both save / pay the same fixed cost.  In p2035, the last period
+    (years 15 … 19), the swap gains, per MW (the finite-horizon effect: the years after the horizon are unseen)::
+
+        200 · 1000 · 1.04^−15 − A · F_inv(p2035) = 111 052.90 − 24 781.50 · 2.570816 = 47 344.21 CUR
+        A = 400 · 1000 · 0.05 / (1 − 1.05^−30) / 1.05 (paid at year starts), F_inv(p2035) = Σ_{y=15..19} 1.04^−y
+
+    so the solve builds the 500 MW limit in p2035 and retires what it does not need: 500 − 137 MW (the twin without
+    the p2035 retirement option builds 137 MW), and its objective is the twin's less 363 · 47 344.21."""
     chain = _no_battery_invest(SINGLE if kind == "single" else CHAIN)
     outcomes = []
     for tag, values in (("case", _swap_values()), ("twin", _swap_values("p2035"))):
@@ -546,14 +553,23 @@ def test_retiring_and_rebuilding_identical_capacity_earns_nothing(tmp_path_facto
         outcomes.append(run(tmp_path_factory, url, scen))
     case, twin = outcomes
     assert sorted(case) == sorted(twin)
+    gain = 200.0 * 1000.0 * 1.04 ** -15 - (400.0 * 1000.0 * 0.05 / (1.0 - 1.05 ** -30) / 1.05
+                                           * sum(1.04 ** -y for y in range(15, 20)))
+    assert gain == pytest.approx(47_344.21, abs=0.01)
+    swapped = 0
     for name, step in case.items():
         assert step.optimal and twin[name].optimal, name
-        assert step.solution.obj == pytest.approx(twin[name].solution.obj, rel=1e-9), name
-        if "p2035" in _divest_mw(step):
-            assert _divest_mw(step)["p2035"] == pytest.approx(0.0, abs=1e-6), name
-            built = _divest_mw(step, var="v_invest_p")["p2035"]
-            assert built == pytest.approx(_divest_mw(twin[name], var="v_invest_p")["p2035"], abs=1e-6), name
-            assert built == pytest.approx(137.0, abs=0.01), name
+        if "p2035" not in _divest_mw(step):
+            assert step.solution.obj == pytest.approx(twin[name].solution.obj, rel=1e-9), name
+            continue
+        swapped += 1
+        built_twin = _divest_mw(twin[name], var="v_invest_p")["p2035"]
+        assert built_twin == pytest.approx(137.0, abs=0.01), name
+        assert _divest_mw(step, var="v_invest_p")["p2035"] == pytest.approx(500.0, abs=1e-6), name
+        retired = _divest_mw(step)["p2035"]
+        assert retired == pytest.approx(500.0 - built_twin, abs=1e-6), name
+        assert step.solution.obj == pytest.approx(twin[name].solution.obj - retired * gain, rel=1e-9), name
+    assert swapped >= 1
 
 
 @pytest.mark.solver

@@ -10982,10 +10982,7 @@ def _v81_texts() -> dict[tuple[str, str], str]:
             f"investment). Constant or period: the value of the period when the {cap} comes online is used, for "
             f"existing {cap} that of the first period.")
         t[(cls, "payback_time")] = _v81_payback_time_text(cap, "changes nothing (a whole number of years)")
-        t[(cls, "net_salvage_value")] = (
-            f"[CUR/{per}] Net salvage value: scrap value minus decommissioning cost, received once when {cap} is "
-            "retired (at end of life or earlier). Negative when decommissioning costs more than the scrap is worth. "
-            "Does not depend on age. Constant or period.")
+        t[(cls, "net_salvage_value")] = _v81_net_salvage_text(cap, per)
         t[(cls, "lifetime_method")] = (
             "[choice] What happens when capacity reaches the end of its lifetime_technical. reinvest_automatic "
             "(default): the capacity is kept to the end of the model horizon and the annualized investment cost is "
@@ -11051,6 +11048,25 @@ def _v81_payback_time_text(cap: str, equal_rates: str) -> str:
             f"{cap} comes online is used.")
 
 
+def _v81_net_salvage_text(cap: str, per: str) -> str:
+    """The description of ``net_salvage_value`` on a class whose capacity is *cap*, priced per *per*."""
+    return (f"[CUR/{per}] Net salvage value: scrap value minus decommissioning cost, negative when decommissioning "
+            "costs more than the scrap is worth. A retirement of existing capacity receives it in full at the start "
+            "of the retirement period (the investment in existing capacity is sunk). With lifetime_method "
+            "reinvest_choice or no_reinvestment the value at the end of life is a level yearly credit over the "
+            f"lifetime at discount_rate: it lowers the yearly cost of new {cap}, existing {cap} holds it over its "
+            "service years, and a retirement gives the credits back. Constant or period: the value of the period "
+            "the salvage happens in, after the last period the last value.")
+
+
+def _v81_superseded_net_salvage_text(cap: str, per: str) -> str:
+    """The description of ``net_salvage_value`` that FlexTool shipped before the salvage terms of retirement and of
+    new capacity (verbatim)."""
+    return (f"[CUR/{per}] Net salvage value: scrap value minus decommissioning cost, received once when {cap} is "
+            "retired (at end of life or earlier). Negative when decommissioning costs more than the scrap is worth. "
+            "Does not depend on age. Constant or period.")
+
+
 def _v81_superseded_end_of_life_text(cls: str) -> str:
     """The description of ``end_of_life_method`` on ``cls`` that FlexTool shipped with the default ``next_seam``
     (verbatim)."""
@@ -11068,10 +11084,11 @@ def _v81_superseded() -> dict[tuple[str, str], tuple[str | None, str]]:
     FlexTool shipped and has since superseded (the current pair is in :func:`_v81_definitions`).  A database at 81
     that has exactly such a pair gets the current one (:func:`_refresh_head_schema`)."""
     out: dict[tuple[str, str], tuple[str | None, str]] = {}
-    for cls, (cap, _what, _per) in _V81_CAPACITY.items():
+    for cls, (cap, _what, per) in _V81_CAPACITY.items():
         out[(cls, "end_of_life_method")] = (V81_SUPERSEDED_END_OF_LIFE_METHOD_DEFAULT,
                                             _v81_superseded_end_of_life_text(cls))
         out[(cls, "payback_time")] = (None, _v81_payback_time_text(cap, "changes nothing"))
+        out[(cls, "net_salvage_value")] = (None, _v81_superseded_net_salvage_text(cap, per))
     return out
 
 
@@ -11344,6 +11361,37 @@ def _v81_annuity_timing_marker(db) -> None:
         _v77_set_marker(db, "annuity_timing", json.dumps({"since": 81, "entities": sorted(entities)}))
 
 
+def _v81_net_salvage_marker(db) -> None:
+    """Part 10 of v81: the behaviour-change marker ``net_salvage_once`` (``{"since": 81, "entities": [...]}``) on a
+    database where an entity has a non-zero ``net_salvage_value`` (in some alternative) and an ``invest_method`` that
+    allows retirement, or one that allows investment together with the ``lifetime_method`` ``reinvest_choice`` or
+    ``no_reinvestment``: a retirement of existing capacity now receives the whole net salvage value at the start of
+    the retirement period (before: its annuity over lifetime_technical, inside the horizon), and the net salvage
+    value at the end of life of new capacity lowers its yearly cost (before: no effect).  A run names those whose
+    costs change.  No value is rewritten.  Idempotent: a rerun finds the marker written.
+    """
+    no_invest = {"not_allowed", "retire_period", "retire_total", "retire_no_limit", "retire_period_total"}
+    no_retire = {"not_allowed", "invest_period", "invest_total", "invest_no_limit", "invest_period_total"}
+    entities: set[str] = set()
+    for cls in ("unit", "connection", "node"):
+        if not db.get_item("entity_class", name=cls):
+            continue
+        methods: dict[str, set[str]] = {}
+        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name="invest_method"):
+            methods.setdefault(pv["entity_byname"][0], set()).add(from_database(pv["value"], pv["type"]))
+        bounded = {pv["entity_byname"][0] for pv in db.find_parameter_values(
+            entity_class_name=cls, parameter_definition_name="lifetime_method")
+            if from_database(pv["value"], pv["type"]) in ("reinvest_choice", "no_reinvestment")}
+        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name="net_salvage_value"):
+            name = pv["entity_byname"][0]
+            own = methods.get(name, set())
+            if (any(v != 0.0 for v in _v79_numbers(from_database(pv["value"], pv["type"])))
+                    and (own - no_retire or (name in bounded and own - no_invest))):
+                entities.add(name)
+    if entities:
+        _v77_set_marker(db, "net_salvage_once", json.dumps({"since": 81, "entities": sorted(entities)}))
+
+
 def _migrate_v81_schema_batch(db) -> None:
     """All schema changes of database version 81 (v80 -> v81), in one step.
 
@@ -11376,6 +11424,8 @@ def _migrate_v81_schema_batch(db) -> None:
     9. The behaviour-change marker ``annuity_timing`` on the entities with an investment or salvage annuity: its
        yearly payment is now sized for where inflation_offset_investment places it in the year
        (:func:`_v81_annuity_timing_marker`).
+    10. The behaviour-change marker ``net_salvage_once`` on the entities with a net_salvage_value that a retirement
+        or a new plant's yearly cost now counts differently (:func:`_v81_net_salvage_marker`).
 
     Values change only by the moves of part 3 and the renames of part 4.  Each part is idempotent, so a rerun of the
     step changes nothing.
@@ -11389,6 +11439,7 @@ def _migrate_v81_schema_batch(db) -> None:
     _v81_end_of_life_marker(db)
     _v81_fixed_cost_marker(db)
     _v81_annuity_timing_marker(db)
+    _v81_net_salvage_marker(db)
     _commit_step(db, "v81: lifetime is lifetime_technical (payback_time added, no value), salvage_value is "
                      "net_salvage_value, the lifetime_method value no_investment is no_reinvestment")
 

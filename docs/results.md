@@ -117,9 +117,9 @@ y-axis is `m3/h` for a water node and `MWh/h` by default. A label without tokens
     its present value spread evenly over the lifetime; the annuity with `reinvest_automatic`) and the period's
     yearly fixed cost in every period it is in service within the run (until its end of life as
     `end_of_life_method` rounds it, or every later period with `reinvest_automatic`). These are the yearly amounts
-    the objective charges; the investment and the salvage are not reported as one-off events. A retirement
-    subtracts its salvage annuity
-    in every period from the retirement until `lifetime_technical` later, and the yearly fixed
+    the objective charges; the investment is not reported as a one-off event. A retirement
+    subtracts its salvage settlement (the net salvage value received at the start of the retirement period, less
+    the salvage credits of existing capacity it gives back) as a yearly amount of the retirement period, and the yearly fixed
     cost of the retired capacity in every period the retirement counts in (until the end of life of the existing
     capacity). They are reported only for capacity whose investment cost is reported (see the next section). For these
     columns the annualized value is therefore not the discounted value divided by the period's discount factor,
@@ -152,8 +152,9 @@ as one solve over the same periods with the same decisions would report:
   operates in come once, from the solve that decided it, and are reported
   only once a solve realizes the period it starts to operate in. Capacity carried from an earlier solve is
   therefore not charged again as existing capacity.
-- **Retirements** are reported in the retirement period: the salvage annuity over the years from the retirement
-  until `lifetime_technical` later, and the fixed cost saved in the periods the retirement counts in. The fixed cost of existing capacity (*fixed cost pre-existing*) is that of the
+- **Retirements** are reported in the retirement period: the salvage settlement as the objective charges it (the
+  net salvage value received at the start of the period, less the salvage credits of existing capacity given back),
+  and the fixed cost saved in the periods the retirement counts in. The fixed cost of existing capacity (*fixed cost pre-existing*) is that of the
   capacity given in `existing`, aged over its lifetime, in every period of the run, also in the last solve's
   look-ahead periods that no solve realizes (the fixed cost of new capacity covers them too).
 - **Inside a stochastic fan** the investment cost and the fixed cost of the new capacity that operates in the fan's

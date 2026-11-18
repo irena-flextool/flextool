@@ -1642,7 +1642,7 @@ def read_parameters(
         entity_dim="g", col_name="group", flex_data=flex_data,
     )
 
-    # entity_annuity / entity_annual_discounted / entity_annual_divest_discounted.
+    # entity_annuity / entity_annual_discounted / entity_divest_salvage.
     # entity_annuity is undiscounted; we use discounted as a stand-in
     # (only consumed in debug mode; the legacy distinction is preserved
     # for compatibility).
@@ -1656,21 +1656,22 @@ def read_parameters(
         entity_dim="e", col_name="entity", flex_data=flex_data,
         densify_entities=_entity_universe,
     )
-    p.entity_annual_divest_discounted = _pdX_per_entity(
-        _run_field(flex_data, "ed_entity_annual_divest_discounted"), solve_name=solve_name,
+    # The salvage settlement of a retirement (CUR/MW): the objective's term, discounted from the start of the run.
+    p.entity_divest_salvage = _pdX_per_entity(
+        getattr(flex_data, "ed_divest_salvage", None), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
         densify_entities=_entity_universe,
     )
 
     # The undiscounted yearly amounts (CUR/MW/yr) of the investment decisions (the price per year in service, at
-    # the start of operation) and of the retirements (the salvage annuity): the annualized investment and retirement
-    # costs.
+    # the start of operation) and of the retirements (the salvage settlement as a yearly amount of the retirement
+    # period): the annualized investment and retirement costs.
     p.entity_annuity_yearly = _pdX_per_entity(
         _with_fan_label_rows(getattr(flex_data, "ed_annuity", None), flex_data), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
     )
-    p.entity_divest_annuity_yearly = _pdX_per_entity(
-        getattr(flex_data, "ed_divest_annuity", None), solve_name=solve_name,
+    p.entity_divest_settlement_yearly = _pdX_per_entity(
+        getattr(flex_data, "ed_divest_settlement_yearly", None), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
     )
 

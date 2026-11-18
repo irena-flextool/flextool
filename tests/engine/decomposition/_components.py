@@ -673,14 +673,14 @@ def divest_n_savings_obj(data, sol) -> float:
 
 
 def divest_p_salvage_obj(data, sol) -> float:
-    """§7.7: -Σ v_divest_p * unitsize * ed_entity_annual_divest_discounted.
+    """§7.7: -Σ v_divest_p * unitsize * ed_divest_salvage.
 
     Mirrors OBJ. divest_cost_p (``model._obj_invest_divest``).  Sign is **negative**.
     """
     vdp = _sol_value_or_empty(sol, "v_divest_p")
     if _is_empty(vdp) or data.p_unitsize is None:
         return 0.0
-    annd = _ed_param_for(data, "ed_entity_annual_divest_discounted", "p", ref=vdp)
+    annd = _ed_param_for(data, "ed_divest_salvage", "p", ref=vdp)
     if annd is None:
         return 0.0
     df = (vdp.rename({"value": "dv"})
@@ -688,19 +688,18 @@ def divest_p_salvage_obj(data, sol) -> float:
              .join(annd, on=["p", "d"]))
     return -float(df.select(
         (pl.col("dv") * pl.col("us")
-         * pl.col("ed_entity_annual_divest_discounted")).sum()).item())
+         * pl.col("ed_divest_salvage")).sum()).item())
 
 
 def divest_n_salvage_obj(data, sol) -> float:
-    """§7.8: -Σ v_divest_n * state_unitsize *
-    ed_entity_annual_divest_discounted.
+    """§7.8: -Σ v_divest_n * state_unitsize * ed_divest_salvage.
 
     Mirrors OBJ. divest_cost_n (``model._obj_invest_divest``).  Sign is **negative**.
     """
     vdn = _sol_value_or_empty(sol, "v_divest_n")
     if _is_empty(vdn) or data.p_state_unitsize is None:
         return 0.0
-    annd = _ed_param_for(data, "ed_entity_annual_divest_discounted", "n", ref=vdn)
+    annd = _ed_param_for(data, "ed_divest_salvage", "n", ref=vdn)
     if annd is None:
         return 0.0
     df = (vdn.rename({"value": "dv"})
@@ -709,7 +708,7 @@ def divest_n_salvage_obj(data, sol) -> float:
              .join(annd, on=["n", "d"]))
     return -float(df.select(
         (pl.col("dv") * pl.col("us")
-         * pl.col("ed_entity_annual_divest_discounted")).sum()).item())
+         * pl.col("ed_divest_salvage")).sum()).item())
 
 
 # ---------------------------------------------------------------------------

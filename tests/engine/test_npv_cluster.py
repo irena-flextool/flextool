@@ -162,7 +162,7 @@ def test_npv_lazy_vs_eager_parity(
     lazy_infl = npv.p_inflation_op_from_source(
         reader, active_solve, period_in_use, period_universe, provider=provider, year_rows=year_rows)
     lazy_fc = npv.p_ed_fixed_cost_from_source(reader, period_with_history)
-    lazy_ann = lazy_div = lazy_lfc = lazy_lfcd = None
+    lazy_ann = lazy_lfc = lazy_lfcd = None
     # Mirror apply_npv's no_invest short-circuit so the lazy path
     # matches the eager loader's gate.
     ed_invest = getattr(data_eager, "ed_invest_set", None)
@@ -173,9 +173,6 @@ def test_npv_lazy_vs_eager_parity(
     )
     if active_solve is not None and not no_invest:
         lazy_ann = npv.ed_entity_annual_discounted_from_source(
-            reader, active_solve,
-            period_invest, period_in_use, period_universe, year_rows=year_rows)
-        lazy_div = npv.ed_entity_annual_divest_discounted_from_source(
             reader, active_solve,
             period_invest, period_in_use, period_universe, year_rows=year_rows)
         lazy_lfc = npv.ed_lifetime_fixed_cost_from_source(
@@ -195,9 +192,6 @@ def test_npv_lazy_vs_eager_parity(
         ("ed_entity_annual_discounted",
          _param_frame(data_eager.ed_entity_annual_discounted),
          _param_frame(lazy_ann), ("e", "d")),
-        ("ed_entity_annual_divest_discounted",
-         _param_frame(data_eager.ed_entity_annual_divest_discounted),
-         _param_frame(lazy_div), ("e", "d")),
         ("ed_lifetime_fixed_cost",
          _param_frame(data_eager.ed_lifetime_fixed_cost),
          _param_frame(lazy_lfc), ("e", "d")),

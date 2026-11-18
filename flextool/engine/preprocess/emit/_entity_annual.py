@@ -2,16 +2,17 @@
 
 Called per-solve via ``write_entity_annual_calc_params``.
 
-The four CSVs emitted are precision-sensitive: the values are float
+The CSVs emitted are precision-sensitive: the values are float
 annuities and discounted sums.  We pre-stringify with ``repr(float(v))``
 to keep round-trip safety byte-for-byte.
 
 Outputs (all written under ``solve_data/``):
 
   * ``ed_entity_annual.csv``                     (entity, period, value)
-  * ``ed_entity_annual_divest.csv``              (entity, period, value)
-  * ``ed_entity_annual_divest_discounted.csv``   (entity, period, value)
   * ``ed_lifetime_fixed_cost_divest.csv``        (entity, period, value)
+
+The salvage terms of a retirement are not emitted: ``_npv.apply_retirement_salvage`` derives them for a Spine
+solve and a synthetic sub-solve alike.
 
 ``ed_entity_annual_discounted.csv`` and ``ed_lifetime_fixed_cost.csv`` are not emitted here: their windows start
 at the start of operation of a decision (construction lead time) and run over the years in service at the level
@@ -31,7 +32,6 @@ import polars as pl
 
 from flextool.engine.input._lifetime_roles import (
     LIFETIME_TECHNICAL,
-    NET_SALVAGE_VALUE,
     PAYBACK_TIME,
     lookup_roles,
     role_param,
@@ -46,7 +46,6 @@ from flextool.engine.preprocess.emit._period_calc import scalar_max
 from flextool.engine.preprocess.params._branch import annuity_window_pairs
 from flextool.engine.preprocess._provider_io import _emit
 from flextool.engine.preprocess.params._existing import (
-    DIVEST_NOT_ALLOWED as _DIVEST_NOT_ALLOWED,
     INVEST_NOT_ALLOWED as _INVEST_NOT_ALLOWED,
 )
 
@@ -55,8 +54,7 @@ from flextool.engine.preprocess.params._existing import (
 # Method-enum constants — mirror flextool/flextool_base.dat:211-212.
 # ---------------------------------------------------------------------------
 
-# The invest/retire method lists (_INVEST_NOT_ALLOWED / _DIVEST_NOT_ALLOWED)
-# are imported from params/_existing.py, their one definition.
+# The invest method list (_INVEST_NOT_ALLOWED) is imported from params/_existing.py, its one definition.
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +231,7 @@ def _window_periods(inp: dict, d: str) -> list[str]:
 # ---------------------------------------------------------------------------
 # Phase E-b — derive_X family for each emitted CSV.
 #
-# The 4 CSVs share substantial input scans (PdLookup over pd_*, p_*, plus
+# The CSVs share substantial input scans (PdLookup over pd_*, p_*, plus
 # entity-class sets and period lists), so the wrapper builds the bundle
 # once via :func:`_entity_annual_inputs` and threads it through private
 # ``_compute_*`` helpers.  Public ``derive_*`` functions are thin
@@ -243,7 +241,7 @@ def _window_periods(inp: dict, d: str) -> list[str]:
 
 def _entity_annual_inputs(input_dir: Path, solve_data_dir: Path,
                             *, provider: "object | None" = None) -> dict:
-    """Shared input bundle for the 4 entity-annual derives."""
+    """Shared input bundle for the entity-annual derives."""
     pp = PdLookup(
         pd_csv=input_dir / "pd_process.csv",
         p_csv=input_dir / "p_process.csv",
@@ -308,34 +306,6 @@ def _rows_annuity(inp: dict) -> list[tuple[str, str, float]]:
     return [(e, d, v) for (e, d), v in zip(pairs, values)]
 
 
-def _div_pair(inp: dict) -> tuple[
-    list[tuple[str, str, float]], list[tuple[str, str, float]]
-]:
-    """Compute both ed_entity_annual_divest and its _discounted variant."""
-    rows_div: list[tuple[str, str, float]] = []
-    rows_div_disc: list[tuple[str, str, float]] = []
-    pairs = [(e, d) for e in inp["entityDivest"] for d in inp["period_invest"]]
-    values = _annuities(inp, NET_SALVAGE_VALUE, _annuity_rows(inp, pairs, _DIVEST_NOT_ALLOWED))
-    for (e, d), ann in zip(pairs, values):
-        rows_div.append((e, d, ann))
-        pdy_d = inp["p_discount_years"].get(d, 0.0)
-        disc = 0.0
-        if e in inp["node_set"]:
-            life = inp["pn"].get(e, LIFETIME_TECHNICAL, d)
-            disc = ann * _inflation_window_sum(
-                pdy_d, life, _window_periods(inp, d),
-                inp["p_discount_years"], inp["p_inflation_invest"],
-            )
-        elif e in inp["process_set"]:
-            life = inp["pp"].get(e, LIFETIME_TECHNICAL, d)
-            disc = ann * _inflation_window_sum(
-                pdy_d, life, _window_periods(inp, d),
-                inp["p_discount_years"], inp["p_inflation_invest"],
-            )
-        rows_div_disc.append((e, d, disc))
-    return rows_div, rows_div_disc
-
-
 def _rows_lifetime_fixed_cost_divest(inp: dict) -> list[tuple[str, str, float]]:
     # NB: mod L1651 deliberately uses p_inflation_factor_INVESTMENT_yearly
     # here (not operations-yearly) — asymmetric vs the non-divest variant.
@@ -363,19 +333,13 @@ def emit_entity_annual_calc_params(
     *, provider,
 ) -> None:
     """Emit ``entity_annual_calc_params`` to the Provider.
-    Emits the four frames under ``solve_data/<basename>`` keys via
+    Emits the two frames under ``solve_data/<basename>`` keys via
     :func:`_emit` (dual-key registration: basename and parent/basename).
     """
     inp = _entity_annual_inputs(input_dir, solve_data_dir, provider=provider)
 
     _emit(provider, "solve_data/ed_entity_annual.csv",
           _rows_to_frame(_rows_annuity(inp)))
-
-    rows_div, rows_div_disc = _div_pair(inp)
-    _emit(provider, "solve_data/ed_entity_annual_divest.csv",
-          _rows_to_frame(rows_div))
-    _emit(provider, "solve_data/ed_entity_annual_divest_discounted.csv",
-          _rows_to_frame(rows_div_disc))
 
     _emit(provider, "solve_data/ed_lifetime_fixed_cost_divest.csv",
           _rows_to_frame(_rows_lifetime_fixed_cost_divest(inp)))

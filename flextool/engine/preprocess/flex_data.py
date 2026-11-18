@@ -1278,25 +1278,27 @@ class FlexData:
     ed_lifetime_fixed_cost: Param | None = None      # (e, d)
     ed_lifetime_fixed_cost_divest: Param | None = None
     ed_entity_annual_discounted: Param | None = None
-    ed_entity_annual_divest_discounted: Param | None = None
+    # (e, d) the salvage term of a retirement of existing capacity (D(d)·S_d − a_x·S̄_x, CUR/MW) and (e, d) the level
+    # salvage credit of existing capacity in d (a_x·inflation_inv[d], the objective constant with
+    # include_existing_fixed_cost): ``_npv.apply_retirement_salvage``.
+    ed_divest_salvage: Param | None = None
+    ed_existing_salvage_credit: Param | None = None
     # Reported costs only (no model term reads them; ``_npv`` "Run-level fields of the reported costs"):
     # discounted from the start of the run over the periods of the whole run.  (d,) factors over the solve's
     # periods and the other run periods; (e, d) lumps of the invest / divest decisions (the lifetime fixed cost
-    # over every entity of the period history); (e, d) undiscounted annuities, CUR/MW/yr (invest: of the start of
-    # operation); (e, d_invest, d) / (e, d_divest, d) the run periods each vintage operates in / each retirement
-    # applies to / the salvage value of each retirement is spread over.  Equal to the per-solve fields when the
-    # run is the solve.
+    # over every entity of the period history); (e, d) undiscounted yearly amounts, CUR/MW/yr (invest: the price per
+    # year in service of the start of operation; divest: the salvage settlement as a yearly amount of the retirement
+    # period); (e, d_invest, d) / (e, d_divest, d) the run periods each vintage operates in / each retirement applies
+    # to.  Equal to the per-solve fields when the run is the solve.
     p_inflation_op_run: Param | None = None
     p_inflation_inv_run: Param | None = None
     ed_entity_annual_discounted_run: Param | None = None
-    ed_entity_annual_divest_discounted_run: Param | None = None
     ed_lifetime_fixed_cost_run: Param | None = None
     ed_lifetime_fixed_cost_divest_run: Param | None = None
     ed_annuity: Param | None = None
-    ed_divest_annuity: Param | None = None
+    ed_divest_settlement_yearly: Param | None = None
     edd_operating_window: pl.DataFrame | None = None
     edd_retire_window: pl.DataFrame | None = None
-    edd_salvage_window: pl.DataFrame | None = None
     # (e, d) existing capacity given by the user, aged over its lifetime (no capacity carried from earlier solves,
     # no retirements): the reported fixed cost of existing capacity.
     p_entity_pre_existing: Param | None = None
@@ -2890,7 +2892,6 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         ed_lifetime_fixed_cost=None,
         ed_lifetime_fixed_cost_divest=None,
         ed_entity_annual_discounted=None,
-        ed_entity_annual_divest_discounted=None,
         e_invest_total=None, e_divest_total=None,
         e_invest_max_total=None, e_divest_max_total=None,
         ed_invest_period_set=None, ed_divest_period_set=None,
@@ -2986,11 +2987,10 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
                 sd / "p_entity_max_units.csv") else None
 
     # The lifetime / NPV cost frames as the Provider holds them.  The divest
-    # lumps (``ed_lifetime_fixed_cost_divest`` /
-    # ``ed_entity_annual_divest_discounted``) are emitted per solve and are
-    # the coefficients of a synthetic sub-solve (``apply_npv`` does not run
-    # for it).  ``ed_entity_annual_discounted`` / ``ed_lifetime_fixed_cost``
-    # are not emitted: ``_npv.apply_invest_lumps`` derives them for every
+    # lump ``ed_lifetime_fixed_cost_divest`` is emitted per solve and is a
+    # coefficient of a synthetic sub-solve (``apply_npv`` does not run for
+    # it).  ``ed_entity_annual_discounted`` / ``ed_lifetime_fixed_cost`` are
+    # not emitted: ``_npv.apply_invest_lumps`` derives them for every
     # solve that invests (Spine solve and synthetic sub-solve alike), after
     # this load, and registers its frames: what is read here is a reader-less
     # reload's frame of a dumped workdir, or the frame an earlier solve
@@ -3009,7 +3009,6 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     ed_lifetime_fc_seed       = _read_e_d("ed_lifetime_fixed_cost")
     ed_lifetime_fc_div_seed   = _read_e_d("ed_lifetime_fixed_cost_divest")
     ed_annual_disc_seed       = _read_e_d("ed_entity_annual_discounted")
-    ed_annual_div_disc_seed   = _read_e_d("ed_entity_annual_divest_discounted")
 
     # ``ed_invest_period_set`` / ``ed_divest_period_set`` (set frames
     # of (e, d) pairs with per-period invest / divest caps) —
@@ -3036,8 +3035,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
     #   * ``e_invest_max_total`` / ``e_divest_max_total`` / ``e_invest_min_total``
     #     / ``e_divest_min_total``  ← ``apply_direct_params._e_total_param``.
     #   * ``ed_lifetime_fixed_cost`` / ``ed_lifetime_fixed_cost_divest`` /
-    #     ``ed_entity_annual_discounted`` /
-    #     ``ed_entity_annual_divest_discounted`` ← ``apply_derived_f`` (npv).
+    #     ``ed_entity_annual_discounted`` ← ``apply_derived_f`` (npv).
     #   * ``ed_invest_max_period`` / ``ed_divest_max_period``
     #     ← ``apply_direct_params`` via ``ed_*_max_period_from_source``.
     #
@@ -3065,7 +3063,6 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         ed_lifetime_fixed_cost=ed_lifetime_fc_seed,
         ed_lifetime_fixed_cost_divest=ed_lifetime_fc_div_seed,
         ed_entity_annual_discounted=ed_annual_disc_seed,
-        ed_entity_annual_divest_discounted=ed_annual_div_disc_seed,
         e_invest_total=None,
         e_divest_total=None,
         e_invest_max_total=None,

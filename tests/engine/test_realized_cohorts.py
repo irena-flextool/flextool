@@ -13,14 +13,20 @@ import math
 import polars as pl
 import pytest
 
-from flextool.engine.preprocess.params._cohorts import REALIZED_RETIRE_SCHEMA, _cohort_frame, realized_cohorts
+from flextool.engine.preprocess.params._cohorts import (
+    PRICE_COLUMNS,
+    REALIZED_RETIRE_SCHEMA,
+    _cohort_frame,
+    realized_cohorts,
+)
 
 INF = math.inf
 UNITSIZE = {"plant": 50.0}
 
 
 def _table(rows: list[tuple]) -> pl.DataFrame:
-    return _cohort_frame(rows)
+    """The cohort table of ``rows`` given up to ``a_cap``; the other price columns are null."""
+    return _cohort_frame([row + (None,) * (len(PRICE_COLUMNS) - 1) for row in rows])
 
 
 EXISTING = ("existing:p2020", "plant", "existing", "reinvest_choice", "next_seam", None, "p2020", 0.0, 0.0, 12.0,

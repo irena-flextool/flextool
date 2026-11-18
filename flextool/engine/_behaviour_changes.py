@@ -344,6 +344,20 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "annuity_timing"),
         ),
         BehaviourChange(
+            id="net_salvage_once",
+            summary=("The net_salvage_value is now counted once, as a cash flow when the capacity stops operating. A "
+                     "retirement of existing capacity receives the whole net_salvage_value of the retirement period "
+                     "at its start (the investment in existing capacity is sunk; before: the salvage annuity over "
+                     "lifetime_technical, inside the horizon). With lifetime_method reinvest_choice or "
+                     "no_reinvestment the net_salvage_value at the end of life lowers the yearly cost of new "
+                     "capacity (levelled over lifetime_technical at discount_rate; before: no effect), existing "
+                     "capacity holds it as a level yearly credit (an objective constant with "
+                     "include_existing_fixed_cost) and a retirement gives the credits back. Retiring long-lived "
+                     "capacity late in the horizon can now pay, since the years after the horizon are not seen "
+                     "(results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "net_salvage_once"),
+        ),
+        BehaviourChange(
             id="end_of_life_closest_seam",
             summary=("With lifetime_method reinvest_choice or no_reinvestment, the end of life (start of operation "
                      "plus lifetime_technical; existing capacity from the model start) is now rounded to the "

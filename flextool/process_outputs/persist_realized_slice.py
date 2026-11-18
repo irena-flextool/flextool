@@ -103,10 +103,10 @@ _SOLVE_FACTOR_ATTRS: frozenset[str] = frozenset({"inflation_factor_operations_so
 _ANNUAL_SRC_FIELD: dict[str, str] = {
     "entity_annual_discounted": "ed_entity_annual_discounted",
     "entity_annuity": "ed_entity_annual_discounted",
-    "entity_annual_divest_discounted": "ed_entity_annual_divest_discounted",
+    "entity_divest_salvage": "ed_divest_salvage",
     # The yearly annuities of the decisions (the annualized investment and retirement costs).
     "entity_annuity_yearly": "ed_annuity",
-    "entity_divest_annuity_yearly": "ed_divest_annuity",
+    "entity_divest_settlement_yearly": "ed_divest_settlement_yearly",
 }
 
 
@@ -480,7 +480,6 @@ _DECISION_SETS: dict[str, str] = {
     "edd_invest_in_construction": "period_invest",
     "edd_operating_window": "period_invest",
     "edd_retire_window": "period_divest",
-    "edd_salvage_window": "period_divest",
 }
 
 # dtt / dtttdt — the storage-adjacency sets whose current ``(period,

@@ -351,8 +351,17 @@ For a unit, connection or storage node `e` in period `d`:
   (`G(x) = x` for `i = 0`); `a_cap = A` when `n = L` and for
   `reinvest_automatic`.  The loan's present value spread evenly over the real
   lifetime: one price for every build period, rounding and period length.
-  The objective charges it over the cohort's periods in service
-  (`invest_cost_p` OBJ header).
+  `A` carries the timing factor `(1+r)^(off_inv − 1)` (`_annuity.annuity_factor`):
+  the loan is worth `invest_cost` at `r` for every `inflation_offset_investment`.
+  The salvage credit `a_salv = S·(1+r)^−L·af(r, L)` (`af` the annual factor
+  `annuity_factor`, `_annuity.salvage_credit`) with `S =
+  1000·net_salvage_value[e,d_eol]` (`_npv._level_prices_lf`; 0 for
+  `reinvest_automatic`) lowers the price: the objective charges `a_cap − a_salv`
+  over the cohort's periods in service (`invest_cost_p` OBJ header).  The cohort
+  also carries the loan (`pay = A`, `n_pay = n`, `r_loan = r`) and `nsv_eol = S`.
+  The existing cohort carries `r_loan = r_x`, `a_salv = a_x` and `nsv_eol = S_x`
+  of its salvage credit (`_npv.existing_salvage`, `divest_cost_p` /
+  `existing_salvage` OBJ headers).
 
 ### Required fields
 
@@ -909,7 +918,7 @@ the next solve's preprocessing. The dataclass is in
 
 | Field | Shape | Meaning |
 |---|---|---|
-| `realized_cohort` | `[entity, cohort, kind, method, eol_method, period_decided, period_online, y_on, age, y_life, y_end, y_first_life_end, y_eol, period_eol, a_cap, size]` | The investments realised by the run so far, one row per cohort (investment decision), chain-cumulative: the cohort-table row of the deciding solve (years of the run; a later solve compares its periods' run years with `y_on` / `y_eol`, no rounding repeated; `a_cap` its price per year in service) and the size (MW, MWh). |
+| `realized_cohort` | `[entity, cohort, kind, method, eol_method, period_decided, period_online, y_on, age, y_life, y_end, y_first_life_end, y_eol, period_eol, a_cap, pay, n_pay, r_loan, a_salv, nsv_eol, size]` | The investments realised by the run so far, one row per cohort (investment decision), chain-cumulative: the cohort-table row of the deciding solve (years of the run; a later solve compares its periods' run years with `y_on` / `y_eol`, no rounding repeated; `a_cap` / `a_salv` the capital price and the salvage credit per year in service, `pay` / `n_pay` / `r_loan` its loan, `nsv_eol` the salvage value at its end of life) and the size (MW, MWh). |
 | `realized_retire` | `[entity, cohort, period, value]` | Retired capacity per cohort and realised decision period, chain-cumulative; counts while the cohort is in service. |
 | `realized_commission` | `[entity, period, commission_period, value]` | Realised investments with a construction lead time (coming online / in construction in a later solve). |
 | `divest_cumulative` | `[entity, value]` | Cumulative divest per entity. |

@@ -565,9 +565,9 @@ def test_w7_npv_variants_vacuity_and_overlay(stoch_wf) -> None:
     assert npv.npv_invest_discounted_lf(
         reader, STOCH_SOLVE, period_invest, piu, universe
         ).collect().height == 0
-    assert npv.npv_divest_discounted_lf(
-        reader, STOCH_SOLVE, period_invest, piu, universe
-        ).collect().height == 0
+    assert all(frame.height == 0 for frame in npv.existing_salvage(
+        reader, STOCH_SOLVE, period_invest, piu, universe, pwh, lineage=None, year_rows=None, workdir=wf,
+        provider=provider))
     assert npv.lifetime_fixed_cost_divest_lf(
         reader, STOCH_SOLVE, period_invest, piu, universe
         ).collect().height == 0

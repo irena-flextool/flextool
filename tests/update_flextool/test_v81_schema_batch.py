@@ -30,7 +30,10 @@ connection and a node), ``salvage_value`` (a constant and a ``period`` map) and 
   alternative; not wind: a map {5, 5}; not c1: no invest_method; not city: retire_no_limit);
 * writes the behaviour-change marker ``annuity_timing`` naming the entities with an investment or salvage annuity
   (thermal: invest_no_limit and invest_cost 400; not wind: invest_cost 0; not c1: no invest_method; not city:
-  retire_no_limit without a net_salvage_value).
+  retire_no_limit without a net_salvage_value);
+* writes the behaviour-change marker ``net_salvage_once`` naming the entities whose net_salvage_value a retirement or
+  a new plant's yearly cost counts (thermal: a non-zero net_salvage_value, reinvest_choice and invest_no_limit; not
+  city: retire_no_limit but no net_salvage_value).
 
 Nothing else changes, and a rerun commits nothing.  Where a database already has a value under a new name, that
 value is kept (and printed).  A database already at 81 that lacks a definition of the step gets it without a migration of its
@@ -263,6 +266,11 @@ def test_annuity_timing_marker_names_entities_with_an_annuity(migrated) -> None:
     assert json.loads(markers["flextool_behaviour_change:annuity_timing"]) == {"since": 81, "entities": ["thermal"]}
 
 
+def test_net_salvage_marker_names_entities_with_a_salvage_value(migrated) -> None:
+    markers = migrated["after"]["markers"]
+    assert json.loads(markers["flextool_behaviour_change:net_salvage_once"]) == {"since": 81, "entities": ["thermal"]}
+
+
 def test_descriptions_are_the_shipped_ones(migrated) -> None:
     before, after = migrated["before"]["defs"], migrated["after"]["defs"]
     shipped, _ = _shipped()
@@ -315,7 +323,7 @@ def _rerun_changes_nothing(db, step, monkeypatch) -> None:
 @pytest.mark.parametrize("part", ["_v81_value_lists", "_v81_definitions_part", "_v81_move_values",
                                   "_v81_list_member_renames", "_v81_descriptions", "_v81_annuity_marker",
                                   "_v81_end_of_life_marker", "_v81_fixed_cost_marker", "_v81_annuity_timing_marker",
-                                  "_migrate_v81_schema_batch",
+                                  "_v81_net_salvage_marker", "_migrate_v81_schema_batch",
                                   "_refresh_head_schema"])
 def test_rerun_commits_nothing(migrated, part: str, monkeypatch) -> None:
     with DatabaseMapping(migrated["url"]) as db:

@@ -15,8 +15,10 @@ Formula::
 
     level yearly price a_cap [CUR/MW/a] = A · level_factor(payback_time, lifetime_technical, inflation_rate)
 
-What it does: ``annuity_factor`` spreads an investment (or a retirement's net salvage value) over ``payback_time``
-years at the interest ``discount_rate``.  ``r = 0`` is the straight-line limit of the formula: the annuity is
+    salvage_credit(S, r, x, off) = S · (1 + r)^−x · annuity_factor(r, x, off)
+
+What it does: ``annuity_factor`` spreads an investment over ``payback_time`` years at the interest
+``discount_rate``.  ``r = 0`` is the straight-line limit of the formula: the annuity is
 ``cost / payback_time``.  An entity without ``payback_time`` pays back over its ``lifetime_technical``.  The
 payment of service year k falls at ``off`` years into that year (``inflation_offset_investment``: 0 its start,
 1 its end), so ``(1 + r)^(off − 1)`` sizes the payments for that moment: the loan taken when the capacity comes
@@ -24,7 +26,9 @@ online is then worth exactly ``cost`` at ``discount_rate`` for every ``off`` (``
 of ``off`` 1; at ``off`` 0 it was worth ``cost · (1 + r)``).
 ``level_factor`` turns that loan into the level yearly cost of the plant over its real lifetime: the present value
 (at the model's ``inflation_rate`` i) of ``n`` yearly payments A, A·G(n), spread evenly over ``L`` years, gives
-A·G(n)/G(L) a year.  It does not depend on when the plant is built, so one price per year in service holds for
+A·G(n)/G(L) a year.  ``salvage_credit`` is the level yearly income of a salvage value S received at the end of ``x``
+service years: its present value at ``r`` levelled over those years (``x = L`` for a plant built in the model).
+It does not depend on when the plant is built, so one price per year in service holds for
 every build period and period length.  With ``discount_rate = inflation_rate`` the price is
 ``invest_cost · 1000 · annuity_factor(i, L)`` whatever ``n`` (a whole number of years); with a ``discount_rate`` below the inflation rate a
 shorter payback time costs more.  A fractional last year counts its fraction (the rule of a fractional
@@ -68,6 +72,17 @@ def annuity_factor(r: pl.Expr, n: pl.Expr, offset: float) -> pl.Expr:
              .then(1.0 / n)
              .otherwise(r / (1.0 - (1.0 + r).pow(-n))))
     return ann * (1.0 + r).pow(offset - 1.0)
+
+
+def salvage_credit(salvage: pl.Expr, r: pl.Expr, years: pl.Expr, offset: float) -> pl.Expr:
+    """The level yearly credit of a salvage value received ``years`` after the start of a contract at ``r``:
+    ``salvage · (1+r)^−years · annuity_factor(r, years, offset)`` (its present value at ``r`` spread over the
+    ``years`` service years as the annuity is).  0 where the salvage or the years are 0 or missing, or the years
+    are infinite (no end of life)."""
+    credit = salvage * (1.0 + r).pow(-years) * annuity_factor(r, years, offset)
+    return (pl.when(salvage.is_null() | (salvage == 0.0) | years.is_null() | (years <= 0.0) | years.is_infinite())
+              .then(0.0)
+              .otherwise(credit))
 
 
 def _level_sum(x: float, i: float) -> float:

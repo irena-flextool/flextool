@@ -5,8 +5,8 @@ Closed-form perturbation tests for two currently-untested obj terms:
 * B17-3 — process divest lifetime FC credit
           ``- v_divest_p * p_unitsize * ed_lifetime_fixed_cost_divest``
           model._obj_invest_divest
-* B17-4 — process divest annuity credit
-          ``- v_divest_p * p_unitsize * ed_entity_annual_divest_discounted``
+* B17-4 — process divest salvage credit
+          ``- v_divest_p * p_unitsize * ed_divest_salvage``
           model._obj_invest_divest
 
 Both share a fixture: extend ``toy_invest_3d`` with a divest-eligible
@@ -82,7 +82,7 @@ def _enable_divest(data: FlexData, *, lfd: float, annd: float) -> FlexData:
         ed_divest_set=ed_div,
         **cohort_fields(base=data, retired_p=edd_div, divest_p=pd_div),
         ed_lifetime_fixed_cost_divest=lfd_param,
-        ed_entity_annual_divest_discounted=annd_param,
+        ed_divest_salvage=annd_param,
         p_flow_upper=p_flow_upper,
         p_flow_upper_existing=p_flow_upper_existing,
         # A retirement removes pre-existing capacity only (maxRetired_existing_p): 5 MW (unitsize 1).
@@ -91,7 +91,7 @@ def _enable_divest(data: FlexData, *, lfd: float, annd: float) -> FlexData:
 
 
 def test_b17_3_and_4_process_divest_credits_isolated(toy_invest_3d):
-    """Covers B17-3 (lifetime FC divest credit) + B17-4 (annuity divest credit).
+    """Covers B17-3 (lifetime FC divest credit) + B17-4 (salvage divest credit).
 
     Two independent perturbations on the SAME divest-enabled fixture:
       • Δlfd 10→30 with annd=0 ⇒ Δobj_3 = -(30-10)*Σv_divest*unitsize
@@ -112,7 +112,7 @@ def test_b17_3_and_4_process_divest_credits_isolated(toy_invest_3d):
     # Hand-calc: Δobj = -(30-10) * 15 * 1 = -300.
     assert float(sol_p.obj) - float(sol_b.obj) == pytest.approx(-300.0, rel=1e-7)
 
-    # --- B17-4: annuity perturbation (lfd held at 0) ----------------------
+    # --- B17-4: salvage perturbation (lfd held at 0) ----------------------
     base2 = _enable_divest(toy_invest_3d, lfd=0.0, annd=10.0)
     pert2 = _enable_divest(toy_invest_3d, lfd=0.0, annd=40.0)
     _, sol_b2 = _solve(base2)

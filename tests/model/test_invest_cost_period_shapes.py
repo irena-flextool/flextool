@@ -4,8 +4,8 @@
 (docs/reference/) and are read through the shape resolver (CLAUDE.md invariant #2).
 Whether an ``(entity, period)`` pair gets an invest / divest variable does not depend on
 the cost (#218: every investment period of an ``invest_method`` that allows it); the cost
-sets the annuity coefficient of the variable (``ed_entity_annual_discounted`` /
-``ed_entity_annual_divest_discounted``):
+sets the cost coefficient of the variable (``ed_entity_annual_discounted`` / the salvage term
+``ed_divest_salvage``):
 
 * a period map on one entity class next to a constant on another (or within one class)
   must not crash (it raised a polars schema mismatch in ``pl.concat``);
@@ -89,8 +89,9 @@ def _periods_of(pairs: set[tuple[str, str]], entity: str) -> set[str]:
 
 
 def _annuity(step, divest: bool = False) -> dict[tuple[str, str], float]:
-    """``{(entity, period): annuity coefficient}`` of the investment (retirement) variables; a missing row is 0."""
-    param = (step.flex_data.ed_entity_annual_divest_discounted if divest
+    """``{(entity, period): cost coefficient}`` of the investment (the retirement salvage) variables; a missing row is
+    0."""
+    param = (step.flex_data.ed_divest_salvage if divest
              else step.flex_data.ed_entity_annual_discounted)
     if param is None:
         return {}
@@ -184,7 +185,7 @@ def test_net_salvage_value_mixed_shapes(tmp_path_factory):
     # Both have existing capacity in every period, so every period is retirable whatever the salvage value.
     assert _periods_of(divest, "coal_plant") == set(PERIODS)
     assert _periods_of(divest, "wind_plant") == set(PERIODS)
-    # The salvage annuity keeps the map's per-period values and the constant's broadcast.
+    # The salvage received in the retirement period keeps the map's per-period values and the constant's broadcast.
     annuity = _annuity(step, divest=True)
     assert annuity.get(("coal_plant", "p2025"), 0.0) == 0.0
     assert all(annuity.get(("coal_plant", d), 0.0) != 0.0 for d in ("p2020", "p2030", "p2035")), annuity

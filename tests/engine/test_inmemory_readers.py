@@ -93,7 +93,7 @@ _REQUIRED_PARAM_ATTRS: tuple[str, ...] = (
     "group_capacity_margin",
     "entity_annuity",
     "entity_annual_discounted",
-    "entity_annual_divest_discounted",
+    "entity_divest_salvage",
     "inflation_factor_operations_yearly",
     "inflation_factor_investment_yearly",
     "node_capacity_for_scaling",

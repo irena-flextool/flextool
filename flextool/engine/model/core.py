@@ -507,6 +507,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _obj_storage_reference_price,
         _obj_invest_divest,
         _obj_existing_fixed_cost,
+        _obj_existing_salvage,
         # ── further constraint families and their objective terms ──
         _group_slack.add_constraints,
         _group_slack.objective_terms,
@@ -3186,14 +3187,7 @@ def _eq_retired_existing(b: _Build) -> None:
     # Only capacity that existed before the run can be retired: the capacity retired so far and still counting in
     # d stays within the pre-existing capacity of d (a declining existing map, or an entity that also invests,
     # cannot retire more than was there).  A retirement option exists only where pre_existing > 0.
-    pre = b.cap.existing_cohort_size_e
-    pre_frame = pre.frame if pre is not None else None
-    carried = getattr(d, "p_entity_retired_carried", None)
-    if pre_frame is not None and carried is not None and carried.frame.height > 0:
-        pre_frame, carried_frame = align_join_dtypes(pre_frame, carried.frame.rename({"value": "carried"}), ["e", "d"])
-        pre_frame = (pre_frame.join(carried_frame, on=["e", "d"], how="left")
-                     .with_columns(value=pl.col("value") - pl.col("carried").fill_null(0.0))
-                     .drop("carried"))
+    pre_frame = _existing_not_retired(b)
     for axis, active_set, var, members in (
             ("p", b.cap.retired_frame("p"), b.v_divest_p if b.has_divest_p else None,
              d.process_source_sink),
@@ -5377,7 +5371,8 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{(p,d) ∈ pd_invest_set} v_invest_p[p,d]·unitsize[p] · annual_discounted[p,d] · bw[d]
     #   + Σ_{(p,d) ∈ pd_invest_set} v_invest_p[p,d]·unitsize[p] · lifetime_fixed_cost[p,d] · bw[d]
-    #   annual_discounted[p,d] = a_cap[p,c] · Σ_{d′ ∈ L(p,d)} inflation_inv[d′]     (reinvest_choice / no_reinvestment)
+    #   annual_discounted[p,d] = (a_cap[p,c] − a_salv[p,c]) · Σ_{d′ ∈ L(p,d)} inflation_inv[d′]
+    #                                                                       (reinvest_choice / no_reinvestment)
     #                          = A[p,c] · Σ_{d′ ∈ solve, yr[d′] ≥ yr[c]} inflation_inv[d′]   (reinvest_automatic)
     #   c = c(d) the period the capacity comes online; L(p,d) = the solve's periods d′ with yr[c] ≤ yr[d′] < y_eol[p,d]
     #     (no upper end for reinvest_automatic): the periods the cohort of the decision is in service in, y_eol =
@@ -5385,21 +5380,25 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     #   a_cap[p,c] = A[p,c]·G(n)/G(L) (A[p,c] when n = L); A[p,c] = ann(invest_cost[p,c], discount_rate[p,c], n);
     #     n = payback_time[p,c] (lifetime_technical[p,c] where the entity has none); L = lifetime_technical[p,c];
     #     G(x) = Σ_{k<⌈x⌉} min(1, x−k)·(1+inflation_rate)^−k
+    #   a_salv[p,c] = S·(1+r)^−L·af(r, L), S = 1000·net_salvage_value[p,d_eol] (d_eol the period y_eol starts; the
+    #     last period after the last period start), r = discount_rate[p,c]
     #   lifetime_fixed_cost[p,d] = 1000 · Σ_{d′ ∈ L(p,d)} fixed_cost[p,d′]·inflation_op[d′]
-    #   ann(c, r, n) = c·1000·r / (1 − (1+r)^−n) · (1+r)^(off_inv − 1) (c·1000 / n for r = 0);
+    #   ann(c, r, n) = c·1000·af(r, n);  af(r, x) = r / (1 − (1+r)^−x) · (1+r)^(off_inv − 1) (1 / x for r = 0);
     #     off_inv = inflation_offset_investment: each payment falls off_inv years into its service year
-    # Cost of process capacity decided in period d, currency/MW.  Capital: the level yearly cost of a plant of its
-    # real lifetime (the present value of the loan, paid over payback_time at discount_rate, spread evenly over
-    # lifetime_technical years; the payments are sized for when they fall, so the loan taken when the capacity
-    # comes online is worth invest_cost at discount_rate for every off_inv), charged for each year the cohort is in service inside the horizon (discounted per
-    # period).  end_of_life_method sets the years in service, not the price; payback_time and discount_rate set
-    # only the size (with discount_rate = inflation_rate payback_time changes nothing for a whole number of years).
-    # The inflation-adjusted fixed cost of each period the capacity operates in is charged over the same periods (it
-    # stops at the rounded end of life), as for existing capacity.  With a construction lead time the capacity
-    # operates from its start of operation c(d): both windows start there, and the invest cost, interest rate,
-    # payback time and lifetime are those of c(d): their period maps describe the plant as constructed (invest_cost
-    # is an overnight cost); without one c(d) = d.  No w_op: both factors are already per period.  A solve with
-    # invest variables and neither cost frame is an error, not a free investment.
+    # Cost of process capacity decided in period d, currency/MW. Capital: the level yearly cost of a plant of its real
+    # lifetime (the present value of the loan, paid over payback_time at discount_rate, spread evenly over
+    # lifetime_technical years; the payments are sized for when they fall, so the loan taken when the capacity comes
+    # online is worth invest_cost at discount_rate for every off_inv), charged for each year the cohort is in service
+    # inside the horizon (discounted per period). end_of_life_method sets the years in service, not the price;
+    # payback_time and discount_rate set only the size (with discount_rate = inflation_rate payback_time changes
+    # nothing for a whole number of years). The salvage value at the end of the real lifetime lowers the price: its
+    # present value at discount_rate, levelled over the lifetime_technical years (the textbook capital recovery with
+    # salvage when payback_time = lifetime_technical). The inflation-adjusted fixed cost of each period the capacity
+    # operates in is charged over the same periods (it stops at the rounded end of life), as for existing capacity.
+    # With a construction lead time the capacity operates from its start of operation c(d): both windows start there,
+    # and the invest cost, interest rate, payback time and lifetime are those of c(d): their period maps describe the
+    # plant as constructed (invest_cost is an overnight cost); without one c(d) = d. No w_op: both factors are already
+    # per period. A solve with invest variables and neither cost frame is an error, not a free investment.
     if b.has_invest_p:
         annu, lf = (_cost(p, "p") for p in _costs("v_invest_p", "ed_entity_annual_discounted",
                                                     "ed_lifetime_fixed_cost"))
@@ -5411,24 +5410,28 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     # ─── OBJ. ─── divest_cost_p ──────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # − Σ_{(p,d) ∈ pd_divest_set} v_divest_p[p,d]·unitsize[p] · lifetime_fixed_cost_divest[p,d] · bw[d]
-    #   − Σ_{(p,d) ∈ pd_divest_set} v_divest_p[p,d]·unitsize[p] · annual_divest_discounted[p,d] · bw[d]
+    #   − Σ_{(p,d) ∈ pd_divest_set} v_divest_p[p,d]·unitsize[p] · divest_salvage[p,d] · bw[d]
     #   lifetime_fixed_cost_divest[p,d] = Σ_{d′ ∈ W(p,d)} fixed_cost[p,d′]·1000·inflation_op[d′]
-    #   annual_divest_discounted[p,d] = ann(net_salvage_value[p,d], discount_rate[p,d], payback_time[p,d])
-    #                                   · Σ_{d′ ∈ S(p,d)} inflation_inv[d′]
+    #   divest_salvage[p,d] = D(d)·S_d − a_x[p]·S̄_x[p,d]
     #   W(p,d) = the solve's periods d′ with yr[d] ≤ yr[d′] < EOL[p] (the window of retired[p,·]: until the
     #     end of life of p's pre-existing capacity, the end of the horizon for reinvest_automatic)
-    #   S(p,d) = the solve's periods d′ with yr[d] ≤ yr[d′] < yr[d] + lifetime_technical[p,d]
+    #   S_d = 1000·net_salvage_value[p,d]; D(d) = (1+inflation_rate)^−(years from the run start to the start of d)
+    #   a_x[p] = S_x·(1+r_x)^−R_x·af(r_x, R_x) (af: invest_cost_p), S_x = 1000·net_salvage_value[p,d_eol] (the
+    #     last period's value after the last period start), r_x = discount_rate[p,d0], R_x = y_eol[p] − y0 (y_end[p]
+    #     − y0 for a life past the horizon), a_x = 0 for reinvest_automatic; y0 / d0 the start of the run
+    #   S̄_x[p,d] = Σ_{d′ ∈ history ∪ solve, y0 ≤ yr[d′] < EOL[p], on d's lineage} inflation_inv[d′]
     # Saving from process capacity retired in period d, currency/MW: the fixed cost of the existing capacity it no
-    # longer pays (each period's, with the factor the existing fixed cost has), and the net-salvage-value annuity over
-    # the discounted years of lifetime inside the horizon, the basis of an investment's annuity (so retiring
-    # existing capacity and building identical new capacity gains nothing).
+    # longer pays (each period's, with the factor the existing fixed cost has), and its salvage settlement.  The
+    # investment in existing capacity is sunk; it holds its salvage value as a level credit a_x per year in service
+    # (existing_salvage); a retired MW receives its net salvage value at the start of d and gives back every credit,
+    # so it earns exactly S_d·D(d).  A kept plant's credits are counted inside the horizon only.
     if b.has_divest_p:
         lfd = _cost(d.ed_lifetime_fixed_cost_divest, "p")
-        annd = _cost(d.ed_entity_annual_divest_discounted, "p")
+        salvage = _cost(d.ed_divest_salvage, "p")
         if lfd is not None:
             terms.append(-Sum(b.v_divest_p * d.p_unitsize * lfd))
-        if annd is not None:
-            terms.append(-Sum(b.v_divest_p * d.p_unitsize * annd))
+        if salvage is not None:
+            terms.append(-Sum(b.v_divest_p * d.p_unitsize * salvage))
 
     # ─── OBJ. ─── invest_cost_n ──────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -5447,16 +5450,16 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     # ─── OBJ. ─── divest_cost_n ──────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # − Σ_{(n,d) ∈ nd_divest_set} v_divest_n[n,d]·state_unitsize[n] · lifetime_fixed_cost_divest[n,d] · bw[d]
-    #   − Σ_{(n,d) ∈ nd_divest_set} v_divest_n[n,d]·state_unitsize[n] · annual_divest_discounted[n,d] · bw[d]
+    #   − Σ_{(n,d) ∈ nd_divest_set} v_divest_n[n,d]·state_unitsize[n] · divest_salvage[n,d] · bw[d]
     # As divest_cost_p for storage capacity (W over the window of retired[n,·]).
     if b.has_divest_n:
         us_n = Param(("n",), d.p_state_unitsize.frame)
         lfd_n = _cost(d.ed_lifetime_fixed_cost_divest, "n")
-        annd_n = _cost(d.ed_entity_annual_divest_discounted, "n")
+        salvage_n = _cost(d.ed_divest_salvage, "n")
         if lfd_n is not None:
             terms.append(-Sum(b.v_divest_n * us_n * lfd_n))
-        if annd_n is not None:
-            terms.append(-Sum(b.v_divest_n * us_n * annd_n))
+        if salvage_n is not None:
+            terms.append(-Sum(b.v_divest_n * us_n * salvage_n))
     return _sum_terms(terms)
 
 
@@ -5493,6 +5496,56 @@ def _obj_existing_fixed_cost(b: _Build) -> None:
     fc_const = fc_frame.sort("e", "d")["contrib"].sum()  # fixed summation order (the joins leave it unspecified)
     if fc_const:
         b.m.add_obj_constant(float(fc_const) * b.scale_the_objective)
+
+
+def _existing_not_retired(b: _Build) -> "pl.DataFrame | None":
+    """``[e, d, value]``: the existing cohort's capacity in d (``p_entity_pre_existing``, MW, MWh) less its
+    retirements realized by earlier solves of a chain that still count in d (``p_entity_retired_carried``); None
+    without existing capacity."""
+    pre = b.cap.existing_cohort_size_e
+    if pre is None:
+        return None
+    frame = pre.frame
+    carried = getattr(b.d, "p_entity_retired_carried", None)
+    if carried is not None and carried.frame.height > 0:
+        frame, carried_frame = align_join_dtypes(frame, carried.frame.rename({"value": "carried"}), ["e", "d"])
+        frame = (frame.join(carried_frame, on=["e", "d"], how="left")
+                      .with_columns(value=pl.col("value") - pl.col("carried").fill_null(0.0))
+                      .drop("carried"))
+    return frame
+
+
+def _obj_existing_salvage(b: _Build) -> None:
+    """The salvage value of existing capacity as a level yearly credit, an objective constant (opt-in)."""
+    d = b.d
+    credit = getattr(d, "ed_existing_salvage_credit", None)
+    if not (b.include_existing_fixed_cost and credit is not None and b.cap.existing_cohort_size_e is not None):
+        return
+
+    # ─── OBJ. ─── existing_salvage ───────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # − Σ_{(e,d) ∈ credit} (pre_existing[e,d] − retired_carried[e,d]) · a_x[e]·inflation_inv[d] · bw[d]
+    #   pre_existing = p_entity_pre_existing (the existing cohort's size, lifetime-gated, MW, MWh),
+    #   retired_carried = p_entity_retired_carried (its retirements realized by earlier solves of a chain)
+    #   credit = ed_existing_salvage_credit[e,d] = a_x[e]·inflation_inv[d] over the periods y0 ≤ yr[d] < EOL[e] of
+    #     an entity that may retire (a_x: divest_cost_p)
+    #   bw = pd_branch_weight, factor 1 when absent
+    # The salvage value of existing capacity, received at its end of life, as a level yearly income over its
+    # service years from the run start, the same credit as a built plant's (net of the retirements of earlier
+    # solves; a retirement in this solve gives its credits back through divest_cost_p).  A constant, added only with
+    # include_existing_fixed_cost, multiplied by scale_the_objective like every other objective term.
+    exist = _existing_not_retired(b).rename({"value": "exist"})
+    frame, credit_frame = align_join_dtypes(exist, credit.frame.rename({"value": "credit"}), ["e", "d"])
+    frame = frame.join(credit_frame, on=["e", "d"], how="inner")
+    if d.pd_branch_weight is not None:
+        frame, weights = align_join_dtypes(frame, d.pd_branch_weight.frame.rename({"value": "pdbw"}), ["d"])
+        frame = (frame.join(weights, on="d", how="inner")
+                      .with_columns(contrib=pl.col("exist") * pl.col("credit") * pl.col("pdbw")))
+    else:
+        frame = frame.with_columns(contrib=pl.col("exist") * pl.col("credit"))
+    constant = frame.sort("e", "d")["contrib"].sum()  # fixed summation order (the joins leave it unspecified)
+    if constant:
+        b.m.add_obj_constant(-float(constant) * b.scale_the_objective)
 
 
 # ---------------------------------------------------------------------------

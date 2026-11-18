@@ -646,12 +646,16 @@ class TestCoalWindInertiaControl:
 # ===========================================================================
 
 class TestDivestSalvageIncludedInObjective:
-    """Salvage annuity (``ed_entity_annual_divest_discounted`` × v_divest
-    × unitsize) is now included in the mod objective as a variable term
-    alongside the lifetime-fixed-cost-savings term (flextool.mod
-    line 2410-2425).  In ``coal_retire`` the fixture divests 0.5
-    coal_plant units, so the salvage contribution is numerically
-    non-zero.
+    """The salvage settlement (``ed_divest_salvage`` × v_divest × unitsize)
+    is in the objective as a variable term alongside the lifetime-fixed-cost
+    savings term.  In ``coal_retire`` (tests.json init / west / coal /
+    retire: one 1-year period p2020, inflation_rate 0, coal_plant
+    reinvest_automatic with net_salvage_value 200 CUR/kW, fixed_cost 100,
+    retire_max_total 1000 MW) the retirement earns the full net salvage
+    value at the start of p2020 (the existing capacity's investment is
+    sunk, and reinvest_automatic capacity has no salvage credit to give
+    back): 200 · 1000 CUR/MW · 1000 MW = 200 M CUR, discounted by
+    (1 + 0)^0 = 1, so the retirement bucket is −200 M CUR.
 
     Solver objective ≈ Python total - pre-existing fixed cost constant.
     Any other residual means the salvage term is mis-accounted.
@@ -673,6 +677,13 @@ class TestDivestSalvageIncludedInObjective:
             "retirement bucket is zero — fixture did not exercise salvage, "
             "test below is vacuous"
         )
+
+    def test_retirement_receives_the_net_salvage_value(self, csv_dir: Path) -> None:
+        """The retirement bucket is the salvage settlement of the 1000 MW
+        retired at the cap: −200 000 CUR/MW · 1000 MW = −200 M CUR (class
+        docstring)."""
+        s = _read_summary_solve(csv_dir)
+        assert s["retirement"] == pytest.approx(-200.0, rel=1e-9)
 
     def test_solver_matches_python_minus_preexisting(self, csv_dir: Path) -> None:
         """Solver objective excludes the pre-existing-fixed constant;

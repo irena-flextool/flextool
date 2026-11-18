@@ -72,8 +72,8 @@ _PAR_DROP = [
     # The invest / divest lumps come from the solve that realizes the
     # decision period only (persist_realized_slice); keep='last' ties the
     # rolls of one solve.
-    'entity_annual_discounted', 'entity_annual_divest_discounted',
-    'entity_annuity_yearly', 'entity_divest_annuity_yearly',
+    'entity_annual_discounted', 'entity_divest_salvage',
+    'entity_annuity_yearly', 'entity_divest_settlement_yearly',
     # The reported costs' discount factors count from the start of the run,
     # so every solve holding a period gives it the same value.
     'inflation_factor_investment_yearly',
@@ -404,8 +404,7 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
     realized_invest = set(s.d_realize_invest) | set(v.invest_fan.index)
     # The operating / retirement windows of the annualized costs are keyed by their decision likewise.
     for attr, decision in (('edd_invest_commission', 'period_invest'), ('edd_invest_in_construction', 'period_invest'),
-                           ('edd_operating_window', 'period_invest'), ('edd_retire_window', 'period_divest'),
-                           ('edd_salvage_window', 'period_divest')):
+                           ('edd_operating_window', 'period_invest'), ('edd_retire_window', 'period_divest')):
         idx = getattr(s, attr).droplevel('solve').unique()
         setattr(s, attr, idx[idx.get_level_values(decision).isin(realized_invest)])
 

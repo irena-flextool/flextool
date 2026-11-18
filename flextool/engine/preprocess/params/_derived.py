@@ -8653,7 +8653,7 @@ def apply_derived_f(
 
     Order:
       1. Cluster A (Δ.5): ``p_inflation_op``, ``p_ed_fixed_cost``,
-         ``ed_entity_annual_discounted``, ``ed_entity_annual_divest_discounted``,
+         ``ed_entity_annual_discounted``, ``ed_divest_salvage``, ``ed_existing_salvage_credit``,
          ``ed_lifetime_fixed_cost``, ``ed_lifetime_fixed_cost_divest``
          — delegated to :func:`._npv.apply_npv`, the lazy-polars
          port.  Replaces the eager ``ed_entity_annual_family_from_source``

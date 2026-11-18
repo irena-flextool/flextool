@@ -5,7 +5,7 @@ cascade.  Replaces the eager-Python implementation that previously lived
 in :mod:`._derived` (``ed_entity_annual_family_from_source`` plus
 its supporting per-(entity, period) lookup).
 
-The cluster covers six FlexData fields:
+The cluster covers these FlexData fields:
 
 * ``p_inflation_op``                           — per-period operations
   inflation factor.  Replaces the workdir read of
@@ -15,8 +15,9 @@ The cluster covers six FlexData fields:
   read of ``solve_data/ed_fixed_cost.csv``.
 * ``ed_entity_annual_discounted``              — invest-side NPV.
   Replaces ``solve_data/ed_entity_annual_discounted.csv``.
-* ``ed_entity_annual_divest_discounted``       — divest-side NPV.
-  Replaces ``solve_data/ed_entity_annual_divest_discounted.csv``.
+* ``ed_divest_salvage`` / ``ed_existing_salvage_credit`` — the salvage
+  settlement of a retirement of existing capacity and the level salvage
+  credit of existing capacity (:func:`existing_salvage`).
 * ``ed_lifetime_fixed_cost``                   — invest-side lifetime
   cumulative fixed cost.  Replaces ``solve_data/ed_lifetime_fixed_cost.csv``.
 * ``ed_lifetime_fixed_cost_divest``            — divest-side lifetime
@@ -25,9 +26,9 @@ The cluster covers six FlexData fields:
 and, for the reported costs only (no model term reads them), their run-level
 twins ``*_run`` discounted from the start of the run over the periods of the
 whole run, the undiscounted yearly amounts ``ed_annuity`` (an investment's price per year in service) /
-``ed_divest_annuity`` (the salvage annuity),
-the operating / retirement / salvage windows ``edd_operating_window`` /
-``edd_retire_window`` / ``edd_salvage_window`` (section "Run-level fields of the reported costs").
+``ed_divest_settlement_yearly`` (a retirement's salvage settlement as a yearly amount of its period),
+the operating / retirement windows ``edd_operating_window`` / ``edd_retire_window`` (section "Run-level
+fields of the reported costs").
 
 Architecture
 ------------
@@ -62,14 +63,17 @@ Algorithm:
     ``r`` takes the schema default (0.05); a missing payback time where the
     cost is not 0 is an error.  The investment of ``reinvest_choice`` /
     ``no_reinvestment`` takes the level yearly price instead,
-    ``a_cap = annuity × G(n) / G(L)`` (:func:`.._annuity.level_factor`,
-    ``L`` the ``lifetime_technical``).
+    ``a_cap − a_salv``: ``a_cap = annuity × G(n) / G(L)`` (:func:`.._annuity.level_factor`,
+    ``L`` the ``lifetime_technical``) less the level salvage credit ``a_salv``
+    (:func:`_level_prices_lf`).
   * ``window(d, d_all, e)``:
       - investment price and lifetime fixed cost, ``reinvest_choice`` / ``no_reinvestment``: ``pdy[d_all] ∈
         [pdy[d], y_eol)``, ``y_eol = round_end_of_life(pdy[d] + lifetime_technical[e, d], end_of_life_method[e])``
         (the periods the cohort is in service; :func:`_window_life_to_end_of_life`).
       - ``reinvest_automatic``: ``pdy[d_all] ≥ pdy[d]``.
-      - divest side: always the bounded form using ``lifetime_technical``.
+      - the fixed cost a retirement saves: the retirement's periods until the end of life of the existing
+        capacity (:func:`_retire_window_lf`).
+  * The salvage terms of a retirement of existing capacity are no annuity window: :func:`existing_salvage`.
   * ``inflation_factor[d_all]``:
       - investment side → ``p_inflation_factor_investment_yearly[d_all]``.
       - operations side (``ed_lifetime_fixed_cost`` only) →
@@ -113,7 +117,7 @@ from flextool.engine.preprocess._annuity import (
     require_lifetime,
 )
 from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
-from flextool.engine.preprocess.params._cohorts import BOUNDED_METHODS
+from flextool.engine.preprocess.params._cohorts import BOUNDED_METHODS, PRICE_COLUMNS
 from flextool.engine.input._lifetime_roles import (
     LIFETIME_TECHNICAL,
     NET_SALVAGE_VALUE,
@@ -445,9 +449,10 @@ def _inflation_year_rows_lf(source: "InputSource",
                            provider: "object | None" = None,
                            year_rows: pl.DataFrame | None = None,
                            ) -> pl.LazyFrame | None:
-    """Lazy ``[d, off, width, inv_contrib, ops_contrib]``: one row per represented year of a period of
-    ``period_universe`` (``d`` on the period axis), ``off`` the years of the period before it, ``width`` its width and
-    ``inv_contrib`` / ``ops_contrib`` its discounted width (the terms of :func:`_inflation_factors_lf`).
+    """Lazy ``[d, off, width, base, inv_contrib, ops_contrib]``: one row per represented year of a period of
+    ``period_universe`` (``d`` on the period axis), ``off`` the years of the period before it, ``width`` its width,
+    ``base`` the years from the discount base to its start and ``inv_contrib`` / ``ops_contrib`` its discounted width
+    (the terms of :func:`_inflation_factors_lf`).
 
     Algorithm — port of ``preprocessing/period_calculated_params.py:230-322``:
 
@@ -486,7 +491,7 @@ def _inflation_year_rows_lf(source: "InputSource",
                                                                       + pl.col("width") * off_inv)),
                       ops_contrib=pl.col("width") * (one_plus_inv ** (pl.col("base")
                                                                       + pl.col("width") * off_ops)))
-                  .select("d", "off", "width", "inv_contrib", "ops_contrib"))
+                  .select("d", "off", "width", "base", "inv_contrib", "ops_contrib"))
     yfp_lf = _years_for_period_lf(
         source, active_solve, period_universe, provider=provider)
 
@@ -543,7 +548,7 @@ def _inflation_year_rows_lf(source: "InputSource",
                   inv_contrib=pl.col("pyr") * (one_plus_inv ** pl.col("until_inv")),
                   ops_contrib=pl.col("pyr") * (one_plus_inv ** pl.col("until_ops")),
               )
-              .select("d", "off", pl.col("pyr").alias("width"), "inv_contrib", "ops_contrib"))
+              .select("d", "off", pl.col("pyr").alias("width"), "base", "inv_contrib", "ops_contrib"))
 
 
 def _inflation_factors_lf(source: "InputSource",
@@ -652,21 +657,6 @@ def _ed_lifetime_on_lf(source: "InputSource", ed_lf: pl.LazyFrame,
               .select("e", "d", "life"))
 
 
-def _raw_lifetime_on_lf(source: "InputSource", ed_lf: pl.LazyFrame) -> pl.LazyFrame:
-    """Lazy ``(e, d, life)``: ``lifetime_technical`` (not edEntity_lifetime) over the given ``(e, d)`` pairs, read by
-    :func:`._period_values.ed_values_on` with the class gate (only nodes and processes; others 0).  The divest-side
-    window."""
-    cls_lf = _entity_class_lookup_lf(_entity_class_lf(source))
-    in_class = (pl.col("is_process").fill_null(False)
-                | pl.col("is_node").fill_null(False))
-    ed_with_class = ed_lf.join(cls_lf, on="e", how="left")
-    return (ed_values_on(source, LIFETIME_TECHNICAL, ed_with_class, fill=0.0)
-              .with_columns(
-                  life=pl.when(in_class).then(pl.col("value")).otherwise(0.0),
-              )
-              .select("e", "d", "life"))
-
-
 def _commission_walk_lf(commission: pl.DataFrame | None) -> pl.LazyFrame | None:
     """``[e, d, yr_c]`` for the walks: the cost window of a decision with a lead time starts where its capacity
     starts to operate."""
@@ -693,6 +683,21 @@ def _notice_discount_rate_zero() -> None:
 
 ANNUITY_OVER_PAYBACK_TIME = "annuity_over_payback_time"
 ANNUITY_TIMING = "annuity_timing"
+NET_SALVAGE_ONCE = "net_salvage_once"
+
+
+def _notice_net_salvage_once(entities) -> None:
+    """The ``net_salvage_once`` notice for the entities its marker names (an upgraded database where a retirement
+    took the salvage annuity and a new plant's yearly cost had no salvage) among ``entities`` (those whose salvage
+    terms are not 0 in this solve)."""
+    from flextool.engine import _behaviour_changes as bc
+
+    if not bc.has_marker(NET_SALVAGE_ONCE):
+        return
+    names = {str(n) for n in bc.marker_json(NET_SALVAGE_ONCE).get("entities") or []}
+    hit = sorted(names & {str(e) for e in entities})
+    if hit:
+        bc.notice(NET_SALVAGE_ONCE, "entities", hit)
 
 
 def _notice_annuity_timing(rows: pl.LazyFrame, offset: float) -> None:
@@ -745,7 +750,9 @@ def _per_method_annuity_lf(
         *,
         level: bool = False,
         ) -> pl.LazyFrame:
-    """Lazy ``(e, d, ann)`` frame computing the per-method annuity sum; with ``level`` ``(e, d, ann, a_cap)``.
+    """Lazy ``(e, d, ann)`` frame computing the per-method annuity sum; with ``level`` ``(e, d, ann, a_cap, disc,
+    life, technical, method_count)`` (the interest rate, the payback time and the lifetime the price is of, and the
+    number of invest methods the annuity is summed over).
 
     ``commission`` (``[e, d, d_c]``, the decisions with a construction lead time): the cost, the interest rate and
     the payback time (``lifetime_technical`` for an entity without ``payback_time``) of such a decision are those
@@ -849,7 +856,7 @@ def _per_method_annuity_lf(
     return (out.lazy()
                .join(factors.lazy(), on=["life", "technical"], how="left", maintain_order="left")
                .with_columns(a_cap=pl.when(plain).then(pl.col("ann")).otherwise(pl.col("ann") * pl.col("_level")))
-               .select("e", "d", "ann", "a_cap"))
+               .select("e", "d", "ann", "a_cap", "disc", "life", "technical", "method_count"))
 
 
 # ---------------------------------------------------------------------------
@@ -878,6 +885,52 @@ def _entity_invest_set_lf(source: "InputSource",
               .filter(~pl.col("method").is_in(list(disallowed_methods)))
               .select("e")
               .unique())
+
+
+def _level_prices_lf(source: "InputSource",
+                     active_solve: str | None,
+                     ed_anchor_lf: pl.LazyFrame,
+                     commission: pl.DataFrame | None,
+                     *,
+                     provider: "object | None") -> pl.LazyFrame:
+    """Lazy ``[e, d, ann, a_cap, a_salv, disc, life, nsv_eol]`` of each investment decision ``(e, d)`` of
+    ``ed_anchor_lf``: the annuity ``ann`` = A (``pay``), the level yearly price ``a_cap`` and the level salvage credit
+    of the plant as constructed (its period maps read at the period it comes online, :func:`_per_method_annuity_lf`
+    with ``level``)::
+
+        a_salv = salvage_credit(S, r, L, off_inv) = S·(1+r)^−L·ann(r, L)·(1+r)^(off_inv − 1)
+        S      = 1000·net_salvage_value[e, d_eol]   (d_eol the period its rounded end of life starts; the last run
+                 period after the last period start, :func:`._cohorts.salvage_periods`)
+
+    ``disc`` the discount_rate r, ``life`` the payback time n and ``nsv_eol`` S.  The salvage at the end of the real
+    lifetime ``L`` = lifetime_technical is levelled over the ``L`` service years at ``r``: the credit the yearly
+    price of a ``reinvest_choice`` / ``no_reinvestment`` plant is lowered by (``invest_cost_p`` OBJ header).  S and
+    a_salv are 0.0 without a net_salvage_value (and for an entity without a lifetime_technical)."""
+    from flextool.engine.preprocess._annuity import salvage_credit
+    from flextool.engine.preprocess.params._cohorts import cohort_years, salvage_periods
+    keys = ed_anchor_lf.select("e", "d").unique(maintain_order=True)
+    prices = _per_method_annuity_lf(source, keys, "invest_cost", _INVEST_NOT_ALLOWED, commission,
+                                    level=True).collect()
+    eol = _window_life_to_end_of_life(source, active_solve,
+                                      _ed_lifetime_on_lf(source, keys, LIFETIME_TECHNICAL, commission), commission,
+                                      provider=provider, keep_eol=True).collect()
+    years = cohort_years(source, active_solve, None, provider=provider)
+    eol = eol.with_columns(d_salv=pl.Series("d_salv", salvage_periods(source, active_solve, years, provider,
+                                                                      eol["y_eol"].to_list()), dtype=pl.Utf8))
+    salvage = (ed_values_on(source, NET_SALVAGE_VALUE,
+                            eol.lazy().select(pl.col("e").cast(pl.Utf8), pl.col("d_salv").alias("d"),
+                                              _d=pl.col("d").cast(pl.Utf8)),
+                            fill=0.0)
+               .select(pl.col("e").cast(pl.Utf8), pl.col("_d").alias("d"), nsv_eol=pl.col("value") * 1000.0)
+               .collect())
+    prices, salvage = align_join_dtypes(prices, salvage, ["e", "d"])
+    offset = _solve_inflation_scalars(source)[1]
+    return (prices.lazy()
+              .join(salvage.lazy(), on=["e", "d"], how="left", maintain_order="left")
+              .with_columns(nsv_eol=pl.col("nsv_eol").fill_null(0.0))
+              .with_columns(a_salv=salvage_credit(pl.col("nsv_eol"), pl.col("disc"), pl.col("technical"), offset)
+                            * pl.col("method_count").cast(pl.Float64))
+              .select("e", "d", "ann", "a_cap", "a_salv", "disc", "life", "nsv_eol"))
 
 
 def npv_invest_discounted_lf(
@@ -912,7 +965,14 @@ def npv_invest_discounted_lf(
     ``lineage`` — see :func:`._walks.period_walk_iterator`; the
     :func:`._branch.annuity_window_lineage_df` frame in a stochastic fan, ``None`` otherwise.
 
-    Returns lazy ``[e, d, value, a_cap]``: ``a_cap`` the price per year in service (the annuity for
+    The level price of ``reinvest_choice`` / ``no_reinvestment`` is lowered by the level salvage credit ``a_salv``
+    (:func:`_level_prices_lf`): the bounded value is ``(a_cap − a_salv) · Σ inv_factor``.
+
+    Returns lazy ``[e, d, value, a_cap, pay, n_pay, r_loan, a_salv, nsv_eol]`` (``value`` and the cohort's
+    :data:`._cohorts.PRICE_COLUMNS`): ``a_cap`` the capital part of the
+    price per year in service (the annuity for ``reinvest_automatic``), ``a_salv`` the salvage credit (0 for
+    ``reinvest_automatic``), and for ``reinvest_choice`` / ``no_reinvestment`` the loan's yearly payment ``pay`` (A),
+    its years ``n_pay``, its interest rate ``r_loan`` and the salvage value ``nsv_eol`` at the end of life (null for
     ``reinvest_automatic``).
     """
     if not period_invest:
@@ -920,7 +980,7 @@ def npv_invest_discounted_lf(
             "e": schema_dtype(_enums, "e"),
             "d": schema_dtype(_enums, "d"),
             "value": pl.Float64,
-            "a_cap": pl.Float64,
+            **{c: pl.Float64 for c in PRICE_COLUMNS},
         })
     # entityInvest = projection of entity__invest_method via the
     # method-allowed gate (mirror of preprocessing/invest_method_sets).
@@ -929,9 +989,8 @@ def npv_invest_discounted_lf(
         alias_to_axis("d", "d"))
     ed_anchor_lf = entity_invest_set.join(pi_lf, how="cross")
 
-    # Annuity and level price (invest cost), of the period a decision with a lead time comes online.
-    ann_lf = _per_method_annuity_lf(source, ed_anchor_lf, "invest_cost", _INVEST_NOT_ALLOWED, commission,
-                                    level=True)
+    # Annuity, level price and salvage credit, of the period a decision with a lead time comes online.
+    ann_lf = _level_prices_lf(source, active_solve, ed_anchor_lf, commission, provider=provider)
 
     # Lifetime methods: per-entity dispatch.
     all_e_lf = ed_anchor_lf.select("e").unique()
@@ -982,6 +1041,7 @@ def npv_invest_discounted_lf(
                   .with_columns(
                       ann=pl.col("ann").fill_null(0.0),
                       a_cap=pl.col("a_cap").fill_null(0.0),
+                      a_salv=pl.col("a_salv").fill_null(0.0),
                       factor_b=pl.col("factor_b").fill_null(0.0),
                       factor_u=pl.col("factor_u").fill_null(0.0),
                       has_choice=pl.col("has_choice").fill_null(False),
@@ -990,7 +1050,7 @@ def npv_invest_discounted_lf(
                   .with_columns(
                       value=(
                           pl.when(pl.col("has_choice"))
-                              .then(pl.col("a_cap") * pl.col("factor_b"))
+                              .then((pl.col("a_cap") - pl.col("a_salv")) * pl.col("factor_b"))
                               .otherwise(0.0)
                           + pl.when(pl.col("has_automatic"))
                               .then(pl.col("ann") * pl.col("factor_u"))
@@ -1001,14 +1061,21 @@ def npv_invest_discounted_lf(
     # unchanged).  The value before: the annuity over whole periods that start before the end of the lifetime of
     # the start of operation.
     _notice_annuity_over_payback_time(
-        combined.join(has_choice_or_no.select("e"), on="e", how="semi").select("e", "d", "value"),
+        combined.join(has_choice_or_no.select("e"), on="e", how="semi")
+                .select("e", "d", value=pl.col("a_cap") * pl.col("factor_b")),
         lambda: (period_walk_iterator(source, active_solve, ed_anchor_lf, period_in_use, period_universe,
                                       bounded=True, life_lf=technical_lf, factor_side="inv", lineage=lineage,
                                       commission_lf=commission_lf, year_rows=year_rows)
                  .join(ann_lf, on=["e", "d"], how="left")
                  .select("e", "d", value=pl.col("factor") * pl.col("ann").fill_null(0.0))))
+    bounded = pl.col("has_choice")
     return combined.select("e", "d", "value",
-                           a_cap=pl.when(pl.col("has_choice")).then(pl.col("a_cap")).otherwise(pl.col("ann")))
+                           a_cap=pl.when(bounded).then(pl.col("a_cap")).otherwise(pl.col("ann")),
+                           pay=pl.when(bounded).then(pl.col("ann")),
+                           n_pay=pl.when(bounded).then(pl.col("life")),
+                           r_loan=pl.when(bounded).then(pl.col("disc")),
+                           a_salv=pl.when(bounded).then(pl.col("a_salv")).otherwise(0.0),
+                           nsv_eol=pl.when(bounded).then(pl.col("nsv_eol")))
 
 
 def _retire_window_lf(source: "InputSource",
@@ -1054,63 +1121,154 @@ def _factor_frame(source: "InputSource",
     return param.frame.lazy().select(pl.col("d").cast(pl.Utf8).alias("d_all"), pl.col("value").alias("factor"))
 
 
-def npv_divest_discounted_lf(
-        source: "InputSource",
-        active_solve: str | None,
-        period_invest: list[str],
-        period_in_use: list[str],
-        period_universe: list[str],
-        *,
-        lineage: pl.DataFrame | None = None,
-        year_rows: pl.DataFrame | None = None,
-        ) -> pl.LazyFrame:
-    """Variant 2: ``ed_entity_annual_divest_discounted`` (divest-side NPV).
+def _retirement_discount_lf(source: "InputSource",
+                            active_solve: str | None,
+                            period_universe: list[str],
+                            *,
+                            provider: "object | None",
+                            year_rows: pl.DataFrame | None) -> pl.LazyFrame:
+    """Lazy ``[d, disc]`` (``d`` Utf8): D(d) = (1+i)^−base₀(d), the discount of a one-off cash flow at the start of
+    period ``d`` (its first year's ``base``, :func:`_inflation_year_rows_lf`; no offset: a retirement settles when
+    the capacity leaves, at the start of the period).  1.0 for a period without year rows."""
+    rate = _solve_inflation_scalars(source)[0]
+    periods = pl.LazyFrame({"d": [str(d) for d in period_universe]}, schema={"d": pl.Utf8})
+    rows = _inflation_year_rows_lf(source, active_solve, period_universe, provider=provider, year_rows=year_rows)
+    if rows is None:
+        return periods.with_columns(disc=pl.lit(1.0))
+    start = rows.group_by("d").agg(pl.col("base").min()).select(pl.col("d").cast(pl.Utf8), "base")
+    v = (1.0 / (1.0 + rate)) if rate != -1.0 else 1.0
+    return (periods.join(start, on="d", how="left")
+                   .with_columns(disc=pl.when(pl.col("base").is_null()).then(1.0).otherwise(v ** pl.col("base")))
+                   .select("d", "disc"))
 
-    Per (e ∈ entityDivest, d ∈ period_invest)::
 
-        ann[e, d] × Σ_{d_all : pdy ∈ [pdy_d, pdy_d + life)} inv_factor[d_all]
+#: The columns of :func:`existing_salvage`'s ``prices``: the cohort price columns of the existing capacity.
+_EXISTING_PRICE_COLUMNS = ("r_loan", "a_salv", "nsv_eol")
 
-    where ``life`` is the **raw** ``lifetime_technical`` value (not edEntity_lifetime),
-    and the gate is restricted to e ∈ node ∪ process (mirrors
-    L266-285 — no fallback for unclassified entities).
 
-    ``lineage`` — see :func:`._walks.period_walk_iterator`; the
-    :func:`._branch.annuity_window_lineage_df` frame in a stochastic fan, ``None`` otherwise.
+def existing_salvage(source: "InputSource",
+                     active_solve: str | None,
+                     period_invest: list[str],
+                     period_in_use: list[str],
+                     period_universe: list[str],
+                     period_with_history: list[str],
+                     *,
+                     lineage: pl.DataFrame | None,
+                     year_rows: pl.DataFrame | None,
+                     workdir: Path | None,
+                     provider: "object | None",
+                     run_factor: "Param | None" = None,
+                     ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """``(divest_salvage, credit, prices)`` of the existing capacity of the entities that may retire (entityDivest):
+    the salvage term of the retirement coefficient, the level salvage credit of the objective constant and the
+    existing cohort's prices (``divest_salvage_p`` / ``existing_salvage`` OBJ headers)::
 
-    Returns lazy ``[e, d, value]``.
-    """
-    if not period_invest:
-        return pl.LazyFrame(schema={
-            "e": schema_dtype(_enums, "e"),
-            "d": schema_dtype(_enums, "d"),
-            "value": pl.Float64,
-        })
-    entity_divest_set = _entity_invest_set_lf(source, _DIVEST_NOT_ALLOWED)
-    pi_lf = pl.LazyFrame({"d": period_invest}).with_columns(
-        alias_to_axis("d", "d"))
-    ed_anchor_lf = entity_divest_set.join(pi_lf, how="cross")
+        divest_salvage[e,d] = D(d)·S_d − a_x·S̄_x[e,d]        (e ∈ entityDivest, d ∈ period_invest)
+        credit[e,d]         = a_x·inflation_inv[d]             (d ∈ period_in_use, y0 ≤ y[d] < y_eol_x)
+        a_x  = salvage_credit(S_x, r_x, R_x, off_inv) = S_x·(1+r_x)^−R_x·ann(r_x, R_x)·(1+r_x)^(off_inv − 1)
+        R_x  = y_eol_x − y0 when the life ends inside the run horizon (y_end_x ≤ H), else y_end_x − y0; +inf (a_x = 0)
+               for reinvest_automatic
+        S̄_x[e,d] = Σ_{d′ ∈ history ∪ period_in_use, y0 ≤ y[d′] < y_eol_x, on d's lineage} inflation_inv[d′]
+        S_d  = 1000·net_salvage_value[e,d];  S_x = 1000·net_salvage_value[e, d_eol_x] (the last run period's value
+               after the last period start, :func:`._cohorts.salvage_periods`);  r_x = discount_rate[e, d0]
 
-    ann_lf = _per_method_annuity_lf(
-        source, ed_anchor_lf, NET_SALVAGE_VALUE, _DIVEST_NOT_ALLOWED)
+    y0 the run start (period d0), y_eol_x / y_end_x the rounded / unrounded end of life of the existing cohort, H
+    the end of the run horizon, D(d) :func:`_retirement_discount_lf`, inflation_inv the investment factor from the
+    start of the run (``run_factor``, ``p_inflation_inv_run``: the history periods' too; the solve's own factor,
+    equal on its periods, where it has none).  The existing capacity's investment is sunk; it holds its salvage value,
+    received at its end of life, as a level credit a_x over its service years from the run start (the rounded
+    span: the credits sum to its salvage once, never more).  Retiring it in d receives S_d at the start of d and
+    gives back every credit of the cohort (history included, along d's lineage of a stochastic fan, each calendar
+    period once), so a retired MW earns exactly S_d·D(d).  Rows of ``divest_salvage`` only where S_d or a_x is not
+    0; ``credit`` only where a_x is not 0; ``prices`` ``[e, r_loan, a_salv, nsv_eol]`` (r_x, a_x, S_x) of every
+    entity of entityDivest with an existing cohort.  All frames Utf8 keyed."""
+    from flextool.engine.preprocess._annuity import salvage_credit
+    from flextool.engine.preprocess.params._cohorts import (
+        REINVEST_AUTOMATIC,
+        _run_calendar_of,
+        cohort_years,
+        existing_cohorts,
+        salvage_periods,
+    )
+    from flextool.engine.preprocess.params._derived import run_start_period
+    from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
+    empty_ed = pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64})
+    empty_prices = pl.DataFrame(schema={"e": pl.Utf8, **{c: pl.Float64 for c in _EXISTING_PRICE_COLUMNS}})
+    divesting = _utf8_ed(_entity_invest_set_lf(source, _DIVEST_NOT_ALLOWED), ("e",)).select("e").unique()
+    years = cohort_years(source, active_solve, workdir, provider=provider)
+    start = run_start_period(years)
+    if divesting.height == 0 or start is None:
+        return empty_ed, empty_ed, empty_prices
+    y0 = float(years[start])
+    horizon = _run_calendar_of(source, active_solve, years, provider).horizon_end
+    cohorts = (existing_cohorts(source, active_solve, workdir, provider=provider, years=years)
+               .select(pl.col("e").cast(pl.Utf8), "method", "y_end", "y_eol")
+               .join(divesting, on="e", how="semi"))
+    if cohorts.height == 0:
+        return empty_ed, empty_ed, empty_prices
+    span = (pl.when(pl.col("method") == REINVEST_AUTOMATIC).then(float("inf"))
+              .when(pl.col("y_end").is_null() | pl.col("y_eol").is_null()).then(float("inf"))
+              .when(pl.lit(horizon is not None) & (pl.col("y_end") <= (horizon or 0.0) + YEAR_TOL))
+              .then(pl.col("y_eol") - y0)
+              .otherwise(pl.col("y_end") - y0))
+    cohorts = cohorts.with_columns(span=span, d_salv=pl.Series(
+        "d_salv", salvage_periods(source, active_solve, years, provider, cohorts["y_eol"].to_list()), dtype=pl.Utf8))
+    nsv_x = (ed_values_on(source, NET_SALVAGE_VALUE, cohorts.lazy().select("e", d=pl.col("d_salv")), fill=0.0)
+             .select(pl.col("e").cast(pl.Utf8), s_x=pl.col("value") * 1000.0).collect())
+    rate_x = (ed_values_on(source, "discount_rate", cohorts.lazy().select("e", d=pl.lit(str(start))),
+                           fill=default_discount_rate(source))
+              .select(pl.col("e").cast(pl.Utf8), r_x=pl.col("value")).collect())
+    offset = _solve_inflation_scalars(source)[1]
+    cohorts = (cohorts.join(nsv_x, on="e", how="left").join(rate_x, on="e", how="left")
+                      .with_columns(a_x=salvage_credit(pl.col("s_x"), pl.col("r_x"), pl.col("span"), offset)))
+    prices = cohorts.select("e", r_loan=pl.col("r_x"), a_salv=pl.col("a_x"), nsv_eol=pl.col("s_x")).sort("e")
 
-    # Use raw lifetime (per L271-284), not edEntity_lifetime.
-    life_lf = _raw_lifetime_on_lf(source, ed_anchor_lf)
+    # The investment factor of every period of the solve's history and periods in use (from the start of the run).
+    periods = list(dict.fromkeys([*(str(d) for d in period_with_history), *(str(d) for d in period_in_use)]))
+    universe = list(dict.fromkeys([*(str(d) for d in period_universe), *periods]))
+    factors = (_inflation_factors_lf(source, active_solve, universe, provider=provider, year_rows=year_rows)
+               .select(pl.col("d").cast(pl.Utf8).alias("d_all"), pl.col("inv_factor").alias("factor")).collect())
+    if run_factor is not None:
+        run = run_factor.frame.select(pl.col("d").cast(pl.Utf8).alias("d_all"), pl.col("value").alias("_run"))
+        factors = (factors.join(run, on="d_all", how="full", coalesce=True)
+                          .select("d_all", factor=pl.coalesce("_run", "factor")))
+    in_use = {str(d) for d in period_in_use}
+    walk_periods = pl.DataFrame({"d_all": [d for d in periods if d in years],
+                                 "y": [float(years[d]) for d in periods if d in years]},
+                                schema={"d_all": pl.Utf8, "y": pl.Float64})
+    alive = (cohorts.filter(pl.col("a_x") != 0.0).select("e", "y_eol", "a_x")
+                    .join(walk_periods, how="cross")
+                    .filter((pl.col("y") >= y0 - YEAR_TOL) & (pl.col("y") < pl.col("y_eol") - YEAR_TOL))
+                    .join(factors, on="d_all", how="left"))
+    missing = alive.filter(pl.col("factor").is_null())
+    if missing.height > 0:
+        raise ValueError(f"Solve '{active_solve}': the periods {sorted(set(missing['d_all'].to_list()))} have no "
+                         "investment discount factor; the salvage credit of existing capacity cannot be discounted.")
+    credit = (alive.filter(pl.col("d_all").is_in(list(in_use)))
+                   .select("e", pl.col("d_all").alias("d"), value=pl.col("a_x") * pl.col("factor")))
 
-    walk = period_walk_iterator(
-        source, active_solve, ed_anchor_lf,
-        period_in_use, period_universe,
-        bounded=True, life_lf=life_lf, factor_side="inv",
-        lineage=lineage, year_rows=year_rows)
-
-    return (ed_anchor_lf
-              .join(ann_lf, on=["e", "d"], how="left")
-              .join(walk, on=["e", "d"], how="left")
-              .with_columns(
-                  ann=pl.col("ann").fill_null(0.0),
-                  factor=pl.col("factor").fill_null(0.0),
-                  value=pl.col("ann") * pl.col("factor"),
-              )
-              .select("e", "d", "value"))
+    anchors = divesting.join(pl.DataFrame({"d": [str(d) for d in period_invest]}, schema={"d": pl.Utf8}),
+                             how="cross")
+    take_back = anchors.join(alive, on="e", how="inner")
+    if lineage is not None:
+        pairs = lineage.select(pl.col("d").cast(pl.Utf8), pl.col("d_other").cast(pl.Utf8).alias("d_all"))
+        both = pl.col("d").is_in(list(in_use)) & pl.col("d_all").is_in(list(in_use))
+        take_back = pl.concat([take_back.filter(~both),
+                               take_back.filter(both).join(pairs, on=["d", "d_all"], how="semi")])
+    take_back = (take_back.group_by("e", "d")
+                          .agg((pl.col("a_x") * pl.col("factor")).sum().alias("taken")))
+    s_d = (ed_values_on(source, NET_SALVAGE_VALUE, anchors.lazy(), fill=0.0)
+           .select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), s_d=pl.col("value") * 1000.0).collect())
+    disc = _retirement_discount_lf(source, active_solve, universe, provider=provider, year_rows=year_rows).collect()
+    divest = (anchors.join(s_d, on=["e", "d"], how="left")
+                     .join(take_back, on=["e", "d"], how="left")
+                     .join(disc, on="d", how="left")
+                     .with_columns(s_d=pl.col("s_d").fill_null(0.0), taken=pl.col("taken").fill_null(0.0),
+                                   disc=pl.col("disc").fill_null(1.0))
+                     .filter((pl.col("s_d") != 0.0) | (pl.col("taken") != 0.0))
+                     .select("e", "d", value=pl.col("disc") * pl.col("s_d") - pl.col("taken"))
+                     .sort("e", "d"))
+    return divest, credit.sort("e", "d"), prices
 
 
 def _ed_fixed_cost_raw_lf(source: "InputSource",
@@ -1308,7 +1466,8 @@ def _window_life_to_end_of_life(source: "InputSource",
                                  life_lf: pl.LazyFrame,
                                  commission: pl.DataFrame | None,
                                  *,
-                                 provider: "object | None") -> pl.LazyFrame:
+                                 provider: "object | None",
+                                 keep_eol: bool = False) -> pl.LazyFrame:
     """``life_lf`` ``[e, d, life]`` (the lifetime of decision ``(e, d)``, read at the period it comes online) with
     ``life`` the years from the start of operation ``y_on`` to the rounded end of life of its cohort, so that the
     bounded walk ``yr[d′] < yr_avail + life`` keeps the periods ``y_on ≤ yr[d′] < y_eol``::
@@ -1320,7 +1479,7 @@ def _window_life_to_end_of_life(source: "InputSource",
     The half tolerance keeps the period starting at ``y_eol`` out whatever the float rounding of
     ``y_on + (y_eol − y_on)`` (period starts lie more than ``YEAR_TOL`` apart).  Under ``next_seam`` the walk keeps
     the same periods as with the raw lifetime.  A decision whose start of operation has no year keeps its
-    lifetime."""
+    lifetime.  ``keep_eol`` also keeps the column ``y_eol`` (null where the start of operation has no year)."""
     from flextool.engine.preprocess.params._cohorts import (
         cohort_years,
         end_of_life_years,
@@ -1331,7 +1490,7 @@ def _window_life_to_end_of_life(source: "InputSource",
     from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
     years = cohort_years(source, active_solve, None, provider=provider)
     if not years:
-        return life_lf
+        return life_lf.with_columns(y_eol=pl.lit(None, dtype=pl.Float64)) if keep_eol else life_lf
     cal = run_cohort_calendar(source, active_solve, years, provider)
     eol = eol_methods_of(existing_cohorts(source, active_solve, provider=provider, years=years))
     life = life_lf.collect()
@@ -1342,11 +1501,12 @@ def _window_life_to_end_of_life(source: "InputSource",
     y_on = [years.get(starts.get((str(e), str(d)), str(d))) for e, d in life.select("e", "d").iter_rows()]
     life = life.with_columns(y_on=pl.Series("y_on", y_on, dtype=pl.Float64))
     y_eol = end_of_life_years(life, cal, eol)
-    return (life.with_columns(y_eol=y_eol)
-                .with_columns(life=pl.when(pl.col("y_on").is_null()).then(pl.col("life"))
-                                     .otherwise(pl.col("y_eol") - pl.col("y_on") - YEAR_TOL / 2))
-                .drop("y_on", "y_eol")
-                .lazy())
+    out = (life.with_columns(y_eol=y_eol)
+               .with_columns(life=pl.when(pl.col("y_on").is_null()).then(pl.col("life"))
+                                    .otherwise(pl.col("y_eol") - pl.col("y_on") - YEAR_TOL / 2),
+                             y_eol=pl.when(pl.col("y_on").is_null()).then(None).otherwise(pl.col("y_eol")))
+               .drop("y_on"))
+    return (out if keep_eol else out.drop("y_eol")).lazy()
 
 
 def lifetime_fixed_cost_divest_lf(
@@ -1534,38 +1694,6 @@ def ed_entity_annual_discounted_from_source(
     return Param(("e", "d"), out)
 
 
-def ed_entity_annual_divest_discounted_from_source(
-        source: "InputSource",
-        active_solve: str | None,
-        period_invest: list[str],
-        period_in_use: list[str],
-        period_universe: list[str],
-        *,
-        lineage: pl.DataFrame | None = None,
-        year_rows: pl.DataFrame | None = None,
-        ) -> "Param | None":
-    """Public entry: ``ed_entity_annual_divest_discounted[e, d]``.
-
-    Unfiltered ``entityDivest × period_invest`` — see the rationale on
-    :func:`ed_entity_annual_discounted_from_source`.
-
-    ``lineage`` — see :func:`._walks.period_walk_iterator`; the
-    :func:`._branch.annuity_window_lineage_df` frame in a stochastic fan, ``None`` otherwise.
-    """
-    if not period_invest:
-        return None
-    out = (npv_divest_discounted_lf(
-              source, active_solve,
-              period_invest, period_in_use, period_universe,
-              lineage=lineage, year_rows=year_rows)
-              .select("e", "d", "value")
-              .sort("e", "d")
-              .collect())
-    if out.height == 0:
-        return None
-    return Param(("e", "d"), out)
-
-
 def ed_lifetime_fixed_cost_from_source(
         source: "InputSource",
         active_solve: str | None,
@@ -1655,26 +1783,26 @@ def ed_lifetime_fixed_cost_divest_from_source(
 #   without a construction lead time), whose values describe the plant as constructed.
 #   edd_retire_window[e,d_divest,d]: yr_run[d_divest] ≤ yr_run[d] < EOL[e] (the rounded end of life y_eol of the
 #   pre-existing capacity, from the start of the run; the end of the run for reinvest_automatic),
-#   the window of _cohorts.retire_active.  edd_salvage_window[e,d_divest,d]: yr_run[d] ∈ [yr_run[d_divest],
-#   yr_run[d_divest] + lifetime_technical[e, d_divest]), the window the net salvage value is spread over.  In a
-#   stochastic fan only the pairs of the walk lineage (each calendar period once).
-# OUT. ed_annuity[e,d] = the price per year in service (CUR/MW/yr, undiscounted) of the vintage: a_cap[e,c(d)] for
-#   reinvest_choice / no_reinvestment (the level yearly cost of the plant over its lifetime_technical, the objective's
-#   price, _per_method_annuity_lf), the annuity of invest_cost at c(d) over payback_time for reinvest_automatic;
-#   ed_divest_annuity[e,d] the annuity of net_salvage_value at d.
+#   the window of _cohorts.retire_active.  In a stochastic fan only the pairs of the walk lineage (each calendar
+#   period once).
+# OUT. ed_annuity[e,d] = the price per year in service (CUR/MW/yr, undiscounted) of the vintage: a_cap[e,c(d)] −
+#   a_salv[e,c(d)] for reinvest_choice / no_reinvestment (the level yearly cost of the plant over its
+#   lifetime_technical less its level salvage credit, the objective's price, _level_prices_lf), the annuity of
+#   invest_cost at c(d) over payback_time for reinvest_automatic.
+#   ed_divest_settlement_yearly[e,d] = ed_divest_salvage[e,d] / p_inflation_inv[d]: the salvage settlement of a MW
+#   retired in d (the salvage value received at the start of d less the salvage credits given back, the objective's
+#   term) as a yearly amount of the retirement period d.
 # OUT. ed_entity_annual_discounted_run[e,d] = Σ_{kind} price_kind[e,d]·Σ_{(e,d,d') ∈ edd_operating_window(kind)}
 #        p_inflation_inv_run[d']
-#   price_bounded = a_cap, price_unbounded = the annuity: the objective's investment lump over the run periods.
+#   price_bounded = a_cap − a_salv, price_unbounded = the annuity: the objective's investment lump over the run
+#   periods.
 #      ed_lifetime_fixed_cost_run[e,d] = Σ_{(e,d,d') ∈ edd_operating_window} fc[e,d']·p_inflation_op_run[d']
 #        (summed as fc[e,c(d)]·Σ factor + Σ (fc[e,d'] − fc[e,c(d)])·factor, the objective's form)
-#      ed_entity_annual_divest_discounted_run[e,d]
-#        = ed_divest_annuity[e,d]·Σ_{edd_salvage_window} p_inflation_inv_run[d']
 #      ed_lifetime_fixed_cost_divest_run[e,d] = Σ_{(e,d,d') ∈ edd_retire_window} fc[e,d']·p_inflation_op_run[d']
 #   The fixed costs are those of each window period with the operations factor (as the fixed cost of existing
-#   capacity is charged), as their per-solve twins.
-#   The salvage value keeps the annuity over lifetime and the window of the investment annuity (its per-solve
-#   twin ed_entity_annual_divest_discounted likewise), so retiring existing capacity and building identical new
-#   capacity earns nothing.
+#   capacity is charged), as their per-solve twins.  The salvage settlement of a retirement is reported as the
+#   objective charges it (ed_divest_salvage, discounted from the start of the run): a one-off at the start of the
+#   retirement period.
 # Notes: when the run is the solve itself (no run calendar, or every run period is in use and the solve starts
 #   the run) the factors and lumps ARE the per-solve fields (byte-identical); only the windows and annuities are
 #   built.  An entity with both a bounded and an unbounded lifetime method adds both sums, as the per-solve lumps
@@ -2093,19 +2221,20 @@ def apply_run_cost_fields(flex_data: object,
     vintages = inv if offered_inv is None or offered_inv.height == 0 else (
         offered_inv.select(pl.col("e").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)).unique().sort("e", "d"))
     if inv.height > 0:
-        # The price per year in service of each lifetime kind: the level yearly price a_cap for reinvest_choice /
-        # no_reinvestment, the annuity for reinvest_automatic (the objective's, npv_invest_discounted_lf).
+        # The price per year in service of each lifetime kind: the level yearly price a_cap less the level salvage
+        # credit a_salv for reinvest_choice / no_reinvestment, the annuity for reinvest_automatic (the objective's,
+        # npv_invest_discounted_lf).
         kinds = _lifetime_kinds(source, inv.select("e").unique())
-        ann = _utf8_ed(_per_method_annuity_lf(source, _anchor_lf(inv), "invest_cost", _INVEST_NOT_ALLOWED,
-                                              commission, level=True))
+        ann = _utf8_ed(_level_prices_lf(source, active_solve, _anchor_lf(inv), commission, provider=provider))
+        level = pl.col("a_cap") - pl.col("a_salv")
         price = (ann.join(kinds, on="e", how="inner")
                     .select("e", "d", "kind",
-                            coef=pl.when(pl.col("kind") == "bounded").then(pl.col("a_cap")).otherwise(pl.col("ann"))))
+                            coef=pl.when(pl.col("kind") == "bounded").then(level).otherwise(pl.col("ann"))))
         bounded_e = kinds.filter(pl.col("kind") == "bounded").select("e")
         flex_data.ed_annuity = _ed_param(
             vintages.join(ann.with_columns(bounded=pl.col("e").is_in(bounded_e["e"].implode())), on=["e", "d"],
                           how="left")
-                    .select("e", "d", value=pl.when(pl.col("bounded")).then(pl.col("a_cap"))
+                    .select("e", "d", value=pl.when(pl.col("bounded")).then(level)
                                              .otherwise(pl.col("ann")).fill_null(0.0)))
     # The lifetime fixed cost covers every entity over the period history (as its per-solve twin); without run
     # years only the vintages are walked (for their operating window).  The history periods are those of the run
@@ -2154,7 +2283,6 @@ def apply_run_cost_fields(flex_data: object,
     if div.height > 0:
         from flextool.engine.preprocess.params._cohorts import existing_cohorts, existing_ends
         from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
-        div_lf = _anchor_lf(div)
         anchors = (year_of_start(div, False)
                      .with_columns(life=pl.lit(0.0), kind=pl.lit("unbounded")))
         walk = _run_window(anchors, yr, lineage, period_in_use)
@@ -2168,17 +2296,6 @@ def apply_run_cost_fields(flex_data: object,
                            .filter(pl.col("y") >= pl.col("end") - YEAR_TOL).select("e", "d_all"))
             walk = walk.join(expired, on=["e", "d_all"], how="anti")
         flex_data.edd_retire_window = _window_frame(walk, "d_divest")
-        # The salvage value: its annuity over lifetime, over the window [yr, yr + lifetime) (raw lifetime).
-        life = _utf8_ed(_raw_lifetime_on_lf(source, div_lf))
-        salvage_walk = _run_window(year_of_start(div, False)
-                                   .join(life, on=["e", "d"], how="left")
-                                   .with_columns(life=pl.col("life").fill_null(0.0), kind=pl.lit("bounded")),
-                                   yr, lineage, period_in_use)
-        flex_data.edd_salvage_window = _window_frame(salvage_walk, "d_divest")
-        ann = _utf8_ed(_per_method_annuity_lf(source, div_lf, NET_SALVAGE_VALUE, _DIVEST_NOT_ALLOWED)
-                       ).rename({"ann": "coef"})
-        flex_data.ed_divest_annuity = _ed_param(div.join(ann, on=["e", "d"], how="left")
-                                                   .select("e", "d", value=pl.col("coef").fill_null(0.0)))
         if years is not None:
             fc_all = _utf8_ed(_ed_fixed_cost_raw_lf(
                 source, walk.lazy().select(alias_to_axis("e", "e"), alias_to_axis("d_all", "d")).unique()))
@@ -2186,7 +2303,6 @@ def apply_run_cost_fields(flex_data: object,
                          .join(factor_ops, on="d_all", how="left")
                          .group_by("e", "d")
                          .agg((pl.col("fc").fill_null(0.0) * pl.col("factor").fill_null(0.0)).sum().alias("value")))
-            flex_data.ed_entity_annual_divest_discounted_run = _ed_param(_lump(salvage_walk, ann, factor_inv, div))
             flex_data.ed_lifetime_fixed_cost_divest_run = _ed_param(
                 div.join(saved, on=["e", "d"], how="left").select("e", "d", value=pl.col("value").fill_null(0.0)))
 
@@ -2196,8 +2312,7 @@ def apply_run_cost_fields(flex_data: object,
 
 def _run_lumps_are_the_solves(flex_data: object) -> None:
     """The run is the solve: the run lumps are the solve's own lumps."""
-    for name in ("ed_entity_annual_discounted", "ed_entity_annual_divest_discounted", "ed_lifetime_fixed_cost",
-                 "ed_lifetime_fixed_cost_divest"):
+    for name in ("ed_entity_annual_discounted", "ed_lifetime_fixed_cost", "ed_lifetime_fixed_cost_divest"):
         setattr(flex_data, f"{name}_run", getattr(flex_data, name, None))
 
 
@@ -2250,9 +2365,10 @@ def apply_run_fields_of_synthetic_solve(flex_data: object,
     """The investment lumps and the run-level fields of a synthetic sub-solve (a roll of a rolling solve, a nested
     ``<solve>_<period>`` sub-solve), for which ``apply_npv`` does not run.
 
-    A sub-solve with an invest set gets its annuity and lifetime fixed cost from
-    :func:`apply_invest_lumps` over its own periods, as a Spine solve does (the CSV emitter derives neither); its
-    divest lumps and its own discount factors stay the loaded ``solve_data`` frames.  Without run years the run
+    A sub-solve with an invest or a divest set gets its investment lumps from :func:`apply_invest_lumps` and its
+    salvage terms from :func:`apply_retirement_salvage` over its own periods, as a Spine solve does (the CSV emitter derives neither the
+    investment lumps nor the salvage terms); its lifetime fixed cost of retirements and its own discount factors
+    stay the loaded ``solve_data`` frames.  Without run years the run
     fields are the sub-solve's own fields."""
     from flextool.engine.preprocess.params._branch import annuity_window_lineage_df
     from flextool.engine.preprocess.params._derived import (
@@ -2293,16 +2409,20 @@ def apply_run_fields_of_synthetic_solve(flex_data: object,
     period_invest = [] if pi is None or pi.height == 0 else [str(d) for d in pi[pi.columns[0]].to_list()]
     period_with_history = _read_period_with_history(workdir, provider=provider) or list(period_in_use)
     lineage = annuity_window_lineage_df(workdir, source, active_solve, provider=provider)
+    # The decision periods as apply_npv and ed_invest_set read them (the sub-solve's own invest periods).
+    decision_periods = _expand_invest_branch_periods(
+        _solve_periods(source, active_solve, "invest_periods"), workdir, provider=provider) or []
+    period_universe = list(_periodAll_from_source(source, active_solve, workdir=workdir, provider=provider))
+    year_rows = solve_year_rows(workdir, provider, source, active_solve, period_universe)
+    if year_rows is not None:
+        notice_discount_from_run_start(active_solve, _solve_inflation_scalars(source)[0])
     if ed_invest is not None and ed_invest.height > 0:
-        # The decision periods as apply_npv and ed_invest_set read them (the sub-solve's own invest periods).
-        decision_periods = _expand_invest_branch_periods(
-            _solve_periods(source, active_solve, "invest_periods"), workdir, provider=provider) or []
-        period_universe = list(_periodAll_from_source(source, active_solve, workdir=workdir, provider=provider))
-        year_rows = solve_year_rows(workdir, provider, source, active_solve, period_universe)
-        if year_rows is not None:
-            notice_discount_from_run_start(active_solve, _solve_inflation_scalars(source)[0])
         apply_invest_lumps(flex_data, source, active_solve, decision_periods, period_in_use, period_universe,
                            period_with_history, lineage=lineage, year_rows=year_rows, provider=provider)
+    if ed_divest is not None and ed_divest.height > 0:
+        apply_retirement_salvage(flex_data, source, active_solve, decision_periods, period_in_use, period_universe,
+                                 period_with_history, lineage=lineage, year_rows=year_rows, workdir=workdir,
+                                 provider=provider)
     apply_run_cost_fields(flex_data, source, active_solve, period_in_use, period_invest, period_with_history,
                           workdir, lineage=lineage, years=years, provider=provider)
 
@@ -2323,8 +2443,8 @@ def apply_npv(flex_data: object,
       1. ``p_inflation_op``                 (depends on years_represented)
       2. ``p_ed_fixed_cost``                (depends on period_with_history)
       3. ``ed_entity_annual_discounted``    (depends on inv_factor + ed_invest)
-      4. ``ed_entity_annual_divest_discounted``
-                                            (depends on inv_factor + ed_divest)
+      4. ``ed_divest_salvage`` / ``ed_existing_salvage_credit``
+                                            (depends on inv_factor + ed_divest; in apply_invest_lumps)
       5. ``ed_lifetime_fixed_cost``         (depends on ops_factor + period_with_history)
       6. ``ed_lifetime_fixed_cost_divest``  (depends on inv_factor + ed_divest)
 
@@ -2420,12 +2540,9 @@ def apply_npv(flex_data: object,
     apply_invest_lumps(flex_data, source, active_solve, list(period_invest), list(period_in_use),
                        list(period_universe), list(period_with_history), lineage=_npv_lineage,
                        year_rows=year_rows, provider=provider)
-
-    _set_if("ed_entity_annual_divest_discounted",
-            ed_entity_annual_divest_discounted_from_source(
-                source, active_solve,
-                period_invest, period_in_use, period_universe,
-                lineage=_npv_lineage, year_rows=year_rows))
+    apply_retirement_salvage(flex_data, source, active_solve, list(period_invest), list(period_in_use),
+                             list(period_universe), list(period_with_history), lineage=_npv_lineage,
+                             year_rows=year_rows, workdir=workdir, provider=provider)
 
     _set_if("ed_lifetime_fixed_cost_divest",
             ed_lifetime_fixed_cost_divest_from_source(
@@ -2457,9 +2574,9 @@ def apply_invest_lumps(flex_data: object,
                        ) -> None:
     """Set the objective's investment lumps ``ed_entity_annual_discounted`` (the level yearly price over the years
     in service) and ``ed_lifetime_fixed_cost`` (the fixed cost over the years in service) of ``active_solve``,
-    register their ``solve_data`` frames (:func:`_register_invest_lumps`) and write each investment cohort's price
-    per year in service into the cohort table (``flex_data.cohort.a_cap``, carried to the later solves by
-    ``realized_cohort``).  These are the only derivation of both lumps: a Spine solve (:func:`apply_npv`) and a
+    register their ``solve_data`` frames (:func:`_register_invest_lumps`) and write each investment cohort's prices
+    into the cohort table (``flex_data.cohort``: ``a_cap``, ``pay``, ``n_pay``, ``r_loan``, ``a_salv``, ``nsv_eol``,
+    carried to the later solves by ``realized_cohort``).  These are the only derivation of both lumps: a Spine solve (:func:`apply_npv`) and a
     synthetic sub-solve (:func:`apply_run_fields_of_synthetic_solve`) call it alike.  The start of operation of a
     construction lead time is ``flex_data.ed_invest_commission``.  A helper that returns None (no invest period, no
     entity row) leaves the field as it is."""
@@ -2472,6 +2589,7 @@ def apply_invest_lumps(flex_data: object,
         if lumps.height > 0:
             flex_data.ed_entity_annual_discounted = Param(("e", "d"), lumps.select("e", "d", "value"))
             _set_cohort_prices(flex_data, lumps)
+            _notice_net_salvage_once(lumps.filter(pl.col("a_salv") != 0.0)["e"].cast(pl.Utf8).unique().to_list())
     fixed = ed_lifetime_fixed_cost_from_source(
         source, active_solve, period_with_history, period_in_use, period_universe,
         lineage=lineage, commission=commission, year_rows=year_rows, provider=provider)
@@ -2480,20 +2598,77 @@ def apply_invest_lumps(flex_data: object,
     _register_invest_lumps(flex_data, provider)
 
 
+def apply_retirement_salvage(flex_data: object,
+                             source: "InputSource",
+                             active_solve: str,
+                             period_invest: list[str],
+                             period_in_use: list[str],
+                             period_universe: list[str],
+                             period_with_history: list[str],
+                             *,
+                             lineage: pl.DataFrame | None,
+                             year_rows: pl.DataFrame | None,
+                             workdir: Path | None,
+                             provider: "object | None" = None,
+                             ) -> None:
+    """Set the salvage terms of the retirement of existing capacity (:func:`existing_salvage`):
+    ``ed_divest_salvage`` (the salvage part of the ``v_divest`` coefficient), ``ed_existing_salvage_credit`` (the
+    level salvage credit of the objective constant), ``ed_divest_settlement_yearly`` (the reported yearly amount of
+    the retirement period: ``ed_divest_salvage / inflation_inv``) and the existing cohort's prices (``r_loan``,
+    ``a_salv``, ``nsv_eol``).  The only derivation of these terms: a Spine solve (:func:`apply_npv`) and a synthetic
+    sub-solve (:func:`apply_run_fields_of_synthetic_solve`) call it alike."""
+    divest, credit, prices = existing_salvage(
+        source, active_solve, period_invest, period_in_use, period_universe, period_with_history,
+        lineage=lineage, year_rows=year_rows, workdir=workdir, provider=provider,
+        run_factor=getattr(flex_data, "p_inflation_inv_run", None))
+    _notice_net_salvage_once(divest["e"].unique().to_list())
+    flex_data.ed_divest_salvage = _ed_param(divest) if divest.height > 0 else None
+    flex_data.ed_existing_salvage_credit = _ed_param(credit) if credit.height > 0 else None
+    if divest.height > 0:
+        factor = (_inflation_factors_lf(source, active_solve, list(dict.fromkeys(
+                      [*(str(d) for d in period_universe), *(str(d) for d in period_invest)])),
+                                        provider=provider, year_rows=year_rows)
+                  .select(pl.col("d").cast(pl.Utf8), factor=pl.col("inv_factor")).collect())
+        flex_data.ed_divest_settlement_yearly = _ed_param(
+            divest.join(factor, on="d", how="left")
+                  .select("e", "d", value=pl.col("value") / pl.col("factor").fill_null(1.0)))
+    else:
+        flex_data.ed_divest_settlement_yearly = None
+    _set_existing_cohort_prices(flex_data, prices)
+
+
+def _set_existing_cohort_prices(flex_data: object, prices: pl.DataFrame) -> None:
+    """``flex_data.cohort`` with the prices ``[e, r_loan, a_salv, nsv_eol]`` (:func:`existing_salvage`) on the existing
+    cohort of each entity of ``prices``."""
+    cohort = getattr(flex_data, "cohort", None)
+    if cohort is None or cohort.height == 0 or prices.height == 0:
+        return
+    from flextool.engine.preprocess.params._cohorts import KIND_EXISTING
+    new = prices.rename({c: f"_{c}" for c in _EXISTING_PRICE_COLUMNS})
+    left, new = align_join_dtypes(cohort, new, ["e"])
+    existing = pl.col("kind") == KIND_EXISTING
+    flex_data.cohort = (left
+                        .join(new, on="e", how="left", maintain_order="left")
+                        .with_columns(pl.when(existing & pl.col(f"_{c}").is_not_null()).then(pl.col(f"_{c}"))
+                                      .otherwise(pl.col(c)).alias(c) for c in _EXISTING_PRICE_COLUMNS)
+                        .select(cohort.columns))
+
+
 def _set_cohort_prices(flex_data: object, lumps: pl.DataFrame) -> None:
-    """``flex_data.cohort`` with ``a_cap`` of each investment cohort (``invest:<d>`` of entity ``e``) its price per
-    year in service from ``lumps`` (``[e, d, value, a_cap]``, :func:`npv_invest_discounted_lf`); the existing
-    cohorts keep a null price (no capital in the model)."""
+    """``flex_data.cohort`` with the prices (:data:`._cohorts.PRICE_COLUMNS`) of each investment cohort (``invest:<d>``
+    of entity ``e``) from ``lumps`` (:func:`npv_invest_discounted_lf`); the existing cohorts keep theirs (no capital in
+    the model; their salvage terms: :func:`_set_existing_cohort_prices`)."""
     cohort = getattr(flex_data, "cohort", None)
     if cohort is None or cohort.height == 0:
         return
     from flextool.engine.preprocess.params._cohorts import KIND_INVEST
-    prices = lumps.select("e", pl.col("d").alias("d_build"), pl.col("a_cap").alias("_price"))
+    prices = lumps.select("e", pl.col("d").alias("d_build"), *(pl.col(c).alias(f"_{c}") for c in PRICE_COLUMNS))
     left, prices = align_join_dtypes(cohort, prices, ["e", "d_build"])
+    invest = pl.col("kind") == KIND_INVEST
     flex_data.cohort = (left
                         .join(prices, on=["e", "d_build"], how="left", maintain_order="left")
-                        .with_columns(a_cap=pl.when(pl.col("kind") == KIND_INVEST).then(pl.col("_price"))
-                                      .otherwise(pl.col("a_cap")))
+                        .with_columns(pl.when(invest).then(pl.col(f"_{c}")).otherwise(pl.col(c)).alias(c)
+                                      for c in PRICE_COLUMNS)
                         .select(cohort.columns))
 
 
@@ -2521,7 +2696,6 @@ __all__ = [
     "p_inflation_op_from_source",
     "p_ed_fixed_cost_from_source",
     "ed_entity_annual_discounted_from_source",
-    "ed_entity_annual_divest_discounted_from_source",
     "ed_lifetime_fixed_cost_from_source",
     "ed_lifetime_fixed_cost_divest_from_source",
     "apply_npv",

@@ -23,10 +23,14 @@ Three frames (``FlexData.cohort``, ``cohort_alive``, ``dd_forward``):
   an investment), ``y_eol`` (``y_end`` rounded to a seam by ``eol_method``,
   :func:`._run_calendar.round_end_of_life`: ``+inf`` for ``reinvest_automatic`` and for ``next_seam`` past the last
   seam), ``d_eol`` (Utf8: the run period that starts at ``y_eol``; null at ``+inf`` and at the end of the
-  horizon) and ``a_cap`` (CUR/MW a year, MWh for storage: the price of an investment cohort per year in service, the
-  level yearly cost of the plant over its real lifetime, ``_npv.apply_invest_lumps``; the annuity for
-  ``reinvest_automatic``; null for existing capacity, which has no capital in the model, and until the lumps are
-  set).
+  horizon) and the prices (CUR/MW a year, MWh for storage; ``_npv.apply_invest_lumps``, null until the lumps are
+  set): ``a_cap`` the capital part of an investment cohort's price per year in service, the level yearly cost of
+  the plant over its real lifetime (the annuity for ``reinvest_automatic``; null for existing capacity, which has
+  no capital in the model); for a ``reinvest_choice`` / ``no_reinvestment`` investment the loan's yearly payment
+  ``pay`` (A), its years ``n_pay`` and interest rate ``r_loan``; ``a_salv`` the level yearly salvage credit (the
+  price per year in service is ``a_cap − a_salv``; 0 for ``reinvest_automatic``; for existing capacity its credit
+  a_x) and ``nsv_eol`` the salvage value at the end of life (existing capacity: ``r_loan`` its discount_rate at
+  the run start, ``nsv_eol`` S_x).
 * ``cohort_alive`` — ``[cohort, e, kind, d_build, d, y]``: the periods ``d`` of the solve's ``period_in_use`` in
   which a cohort is in service, ``y`` the year of ``d``.
 * ``dd_forward`` — ``[d_retire, d]``: a retirement decided in ``d_retire`` counts in ``d`` when
@@ -110,7 +114,15 @@ def _cohort_schema() -> dict[str, pl.DataType]:
             "eol_method": pl.Utf8, "d_build": schema_dtype(None, "d"), "d_on": pl.Utf8, "y_on": pl.Float64,
             "age": pl.Float64, "y_life": pl.Float64,
             "y_end": pl.Float64, "y_first_life_end": pl.Float64, "y_eol": pl.Float64, "d_eol": pl.Utf8,
-            "a_cap": pl.Float64}
+            **{c: pl.Float64 for c in PRICE_COLUMNS}}
+
+
+#: The price columns of the cohort table (CUR/MW, MWh for storage; ``_npv.apply_invest_lumps`` sets them): the
+#: level yearly price ``a_cap``, the loan's yearly payment ``pay``, years ``n_pay`` and interest rate ``r_loan``,
+#: the level yearly salvage credit ``a_salv`` and the salvage value ``nsv_eol`` at the end of life.
+PRICE_COLUMNS: tuple[str, ...] = ("a_cap", "pay", "n_pay", "r_loan", "a_salv", "nsv_eol")
+#: The price cells of a cohort row before the prices are set.
+_NO_PRICES: tuple[None, ...] = (None,) * len(PRICE_COLUMNS)
 
 
 #: The cohort-table columns on an axis (``e`` / ``d_build``); every other column is Utf8 or Float64.
@@ -299,6 +311,20 @@ def run_cohort_calendar(source: "InputSource",
     return cohort_calendar(_run_calendar_of(source, active_solve, years, provider), years)
 
 
+def salvage_periods(source: "InputSource",
+                    active_solve: str | None,
+                    years: Mapping[str, float],
+                    provider: "object | None",
+                    y_eols: Iterable[float | None]) -> list[str | None]:
+    """The period whose ``net_salvage_value`` a salvage at each end of life ``y_eols`` (years of the run) takes: the
+    run period that starts there; the last period of the run after the last period start (the horizon end, a life
+    past it, ``+inf``) or for an unknown end (``None``) — the value of the period the salvage happens in, after the
+    last model period the last value."""
+    rc = _run_calendar_of(source, active_solve, years, provider)
+    cal = cohort_calendar(rc, years)
+    return [(cal.label(y) if y is not None else None) or rc.last_period for y in y_eols]
+
+
 def end_of_life_years(anchors: pl.DataFrame, cal: _Calendar, eol_methods: Mapping[str, str]) -> pl.Series:
     """``y_eol`` (Float64, one per row of ``anchors`` ``[e, y_on, life]``, years of the run) of capacity starting to
     operate at ``y_on`` with the lifetime ``life`` (a null as 0): ``round_end_of_life(y_on + life,
@@ -335,7 +361,7 @@ def _existing_rows(source: "InputSource", years: Mapping[str, float], cal: _Cale
     ages = existing_ages(source)
     if start is None:
         return [(KIND_EXISTING, e, KIND_EXISTING, method, eol_methods.get(e, END_OF_LIFE_METHOD_DEFAULT), None,
-                 None, None, ages.get(e, 0.0), None, None, None, _INF, None, None)
+                 None, None, ages.get(e, 0.0), None, None, None, _INF, None, *_NO_PRICES)
                 for e, method in _entity_methods(source).items() if method in LIFETIME_METHODS]
     lifetime = _ed_period_value_map(source, LIFETIME_TECHNICAL, [start])
     process_set, node_set, _ = _entity_classes_lookup(source)
@@ -353,7 +379,7 @@ def _existing_rows(source: "InputSource", years: Mapping[str, float], cal: _Cale
             y_life, y_end, y_eol = window_end(y_on, lifetime.get((e, start), 0.0), method, cal, eol_method)
             y_first = y0 + y_life
         rows.append((f"{KIND_EXISTING}:{start}", e, KIND_EXISTING, method, eol_method, None, start, y_on, age,
-                     y_life, y_end, y_first, y_eol, cal.label(y_eol), None))
+                     y_life, y_end, y_first, y_eol, cal.label(y_eol), *_NO_PRICES))
     _closest_seam_notice(source, rows, cal)
     return rows
 
@@ -526,7 +552,7 @@ def _invest_rows(source: "InputSource",
         y_on = float(years[d_on])
         y_life, y_end, y_eol = window_end(y_on, float(life_v), method, cal, eol_method)
         rows.append((f"{KIND_INVEST}:{d}", e, KIND_INVEST, method, eol_method, d, d_on, y_on, 0.0, y_life, y_end,
-                     None, y_eol, cal.label(y_eol), None))
+                     None, y_eol, cal.label(y_eol), *_NO_PRICES))
     return anchor, rows
 
 
@@ -557,7 +583,7 @@ def never_operating_investments(source: "InputSource",
     eol_methods = eol_methods_of(existing_cohorts(source, active_solve, workdir, provider=provider, years=years))
     _anchor, rows = _invest_rows(source, active_solve, ed_invest, years, cal, eol_methods, commission_lf)
     never: dict[str, list[tuple[str, float, str]]] = {}
-    for _c, e, _k, _m, eol_method, d, _d_on, y_on, _age, y_life, _y_end, _first, y_eol, _d_eol, _a_cap in rows:
+    for _c, e, _k, _m, eol_method, d, _d_on, y_on, _age, y_life, _y_end, _first, y_eol, _d_eol, *_prices in rows:
         if 0.0 < y_life < _INF and y_eol <= y_on + YEAR_TOL:
             never.setdefault(e, []).append((d, y_life, eol_method))
     if not never:
@@ -664,7 +690,8 @@ def _closest_seam_notice(source: "InputSource", rows: list[tuple], cal: _Calenda
     if not named:
         return
     moved: dict[str, list[tuple[str, str, float, float]]] = {}
-    for _c, e, kind, method, eol_method, d_build, _d_on, _y_on, _age, _life, y_end, _first, y_eol, _d_eol, _a in rows:
+    for (_c, e, kind, method, eol_method, d_build, _d_on, _y_on, _age, _life, y_end, _first, y_eol, _d_eol,
+         *_prices) in rows:
         if (e in named and method in BOUNDED_METHODS and eol_method == "closest_seam" and y_end is not None
                 and eol_moves(y_end, cal.seams, cal.period_starts)):
             moved.setdefault(e, []).append((kind, str(d_build), float(y_end), float(y_eol)))
@@ -700,7 +727,7 @@ def seed_cohorts(seed: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     its alive periods those of the seed."""
     keys = seed.select("e", "d_invest").unique(maintain_order=True)
     rows = [(f"{KIND_INVEST}:{d}", str(e), KIND_INVEST, None, None, str(d), None, None, None, None, None, None,
-             _INF, None, None)
+             _INF, None, *_NO_PRICES)
             for e, d in keys.iter_rows()]
     cohort = _cohort_frame(rows)
     triples = [(f"{KIND_INVEST}:{di}", str(e), KIND_INVEST, str(di), str(d), None)

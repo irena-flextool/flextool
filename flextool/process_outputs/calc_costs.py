@@ -149,19 +149,25 @@ def _annualized_investment(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
 def _annualized_retirement(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
     """``(retirement, fixed cost reduction of divestments)`` per year, rows: period, columns: entity (CUR/yr).
 
-    ANN. retire_yr[e,d'] = −Σ_{(e,d,d') ∈ edd_salvage_window} v_divest[e,d]·unitsize[e]·ed_divest_annuity[e,d]
+    ANN. retire_yr[e,d] = −v_divest[e,d]·unitsize[e]·ed_divest_settlement_yearly[e,d]
          fixed_divested_yr[e,d'] = −Σ_{(e,d,d') ∈ edd_retire_window} v_divest[e,d]·unitsize[e]·fc[e,d']
-      The yearly amounts of every retirement in d': the salvage annuity over the window it is spread over (the
-      retirement period until lifetime later), and the fixed cost of d' the retired capacity no longer pays (from
-      the retirement period until the end of life of the existing capacity).  fc[e,d'] falls back to fc[e,d] of
-      the retirement period for a window period the solve does not hold; such rows are never reported (the chain
-      union keeps each period from the solve that realizes it, which holds its fixed cost)."""
+      ed_divest_settlement_yearly[e,d] = ed_divest_salvage[e,d] / inflation_inv[d]
+      The salvage settlement of a retirement in d (the net salvage value received at the start of d less the salvage
+      credits of existing capacity given back, the objective's term) as a yearly amount of the retirement period
+      d, the period it happens in; and the fixed cost of d' the retired capacity no longer pays (from the
+      retirement period until the end of life of the existing capacity).  fc[e,d'] falls back to fc[e,d] of the
+      retirement period for a window period the solve does not hold; such rows are never reported (the chain union
+      keeps each period from the solve that realizes it, which holds its fixed cost)."""
     columns = v.divest.columns
     long = _decisions_long(-v.divest.mul(par.entity_unitsize[columns]), 'period_divest')
-    annuity = _decisions_long(par.entity_divest_annuity_yearly, 'period_divest').rename(columns={'value': 'coef'})
-    joined = long.merge(annuity, on=['period_divest', 'entity'], how='inner')
+    settlement = _decisions_long(par.entity_divest_settlement_yearly, 'period_divest').rename(
+        columns={'value': 'coef'})
+    joined = long.merge(settlement, on=['period_divest', 'entity'], how='inner')
     joined = joined.assign(value=joined['value'] * joined['coef'])[['period_divest', 'entity', 'value']]
-    retirement = _per_year_in_window(joined, s.edd_salvage_window, 'period_divest', columns)
+    own_period = pd.MultiIndex.from_frame(
+        joined[['entity', 'period_divest']].assign(period=joined['period_divest']).drop_duplicates(),
+        names=['entity', 'period_divest', 'period'])
+    retirement = _per_year_in_window(joined, own_period, 'period_divest', columns)
     return retirement, _fixed_cost_in_window(long, s.edd_retire_window, 'period_divest', 'period_divest', par,
                                              columns, drop_unpriced=False)
 
@@ -466,7 +472,7 @@ def compute_costs(par, s, v, r) -> None:
     invest = _invest_with_fan(v)
     r.cost_entity_invest_d = _at_start_of_operation(
         invest.mul(par.entity_unitsize[v.invest.columns]).mul(par.entity_annual_discounted), s)
-    r.cost_entity_divest_d = -v.divest.mul(par.entity_unitsize[v.divest.columns]).mul(par.entity_annual_divest_discounted)
+    r.cost_entity_divest_d = -v.divest.mul(par.entity_unitsize[v.divest.columns]).mul(par.entity_divest_salvage)
     # The fixed cost of existing capacity: the user's existing capacity aged over its lifetime, in every period of
     # the run.  The capacity carried from earlier solves is in the fixed-cost lump of its investment and a
     # retirement in the lump of the retirement, so neither is charged here (a single solve: the same as

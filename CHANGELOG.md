@@ -41,6 +41,23 @@ Input databases move to data version 81. The FlexTool window, the Spine Toolbox 
   decisions and reported investment costs change; offset 1 and `discount_rate` 0 give the same results as before.
   Upgraded databases get a notice naming the entities with an investment or salvage annuity (results change).
   The FlexTool 2 import sets `inflation_offset_investment` 1, the year-end annuity FlexTool 2 charges.
+- **The `net_salvage_value` is counted once, as a cash flow when the capacity stops operating** (unit, connection,
+  node). Retiring existing capacity receives the whole `net_salvage_value` of the retirement period at the start of
+  that period, discounted to it, and saves the fixed cost from then on; the investment in existing capacity is sunk.
+  Before, a retirement earned the annuity of the salvage value over `lifetime_technical`, inside the horizon. With
+  `lifetime_method` *reinvest_choice* or *no_reinvestment* the `net_salvage_value` at the end of life (of the period
+  the life ends in; after the last period, the last value) is a level yearly credit over the lifetime at
+  `discount_rate`: it lowers the yearly cost of new capacity (the textbook capital recovery with salvage when
+  `payback_time` equals `lifetime_technical`; before, it had no effect), existing capacity holds it over its
+  service years (counted from the model start to its end of life as `end_of_life_method` rounds it; an objective
+  constant with `include_existing_fixed_cost`), and a retirement gives these credits back, so a retired MW earns its
+  salvage value exactly once. Two consequences follow from counting only what happens inside the horizon: a kept
+  plant's credits after the horizon are not seen while a retirement collects the whole salvage value, so retiring
+  long-lived capacity late in the horizon can pay (an existing 40-year plant retired at the start of the last
+  5-year period of a 20-year horizon gains about 0.38 of its salvage value, and swapping it for an identical new
+  plant can pay); and with a `discount_rate` different from `inflation_rate` a kept plant's salvage is levelled at
+  the `discount_rate` while a retired one is discounted at the `inflation_rate`. Upgraded databases get a notice
+  naming the entities whose salvage is now counted differently (results change).
 - **New capacity pays the `fixed_cost` of each period it operates in**, as existing capacity does (unit,
   connection, node). In FlexTool 4.5.0 an investment paid the `fixed_cost` of the period it came online in every
   period it operated, so with a `fixed_cost` period map the fixed cost of new capacity changes; a constant
