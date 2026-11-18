@@ -265,17 +265,20 @@ def add_non_anticipativity(b: "_Build", window: pl.DataFrame) -> None:
     # v_extend[e,c,d] − v_extend[e,c^b,b] = 0
     #   ∀ (d,b) ∈ pd_non_anticipativity, (e,c,d) and (e,c^b,b) ∈ cd_extend
     #   c^b = c for a cohort not decided in a forecast of the window (the existing cohort, a cohort decided before
-    #     the fan, or a carried one); the cohort of e decided in the forecast of b's branch at the same anchor
-    #     period as c's decision otherwise (non_anticipativity_divest_built)
+    #     the fan, or a carried one); otherwise the cohort of e of the same kind decided in the forecast of b's
+    #     branch at the same anchor period as c's decision (non_anticipativity_divest_built; a parent is never an
+    #     extension, so at most one parent per kind and decision period)
     # An extension inside the window is the same in every forecast branch.
     window, groups = _retire_built.forecast_window(window)
     for axis in ("p", "n"):
         var = getattr(b, f"v_extend_{axis}", None)
         if var is None:
             continue
-        cohorts = _parents(d, axis).select(axis, "cohort", "d_build").unique(subset=[axis, "cohort"],
-                                                                            maintain_order=True)
-        over = _retire_built.tied_pairs(var.frame.select(axis, "cohort", "d"), cohorts, groups, window, axis)
+        cohorts = (_parents(d, axis).select(axis, "cohort", "kind", "d_build")
+                   .unique(subset=[axis, "cohort"], maintain_order=True)
+                   .with_columns(parent=pl.lit(None, dtype=pl.Utf8)))
+        over = _retire_built.tied_pairs(var.frame.select(axis, "cohort", "d"),
+                                        _retire_built.with_parents(d, cohorts, axis), groups, window, axis)
         if over is None:
             continue
         b.m.add_cstr(

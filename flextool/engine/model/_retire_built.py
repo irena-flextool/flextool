@@ -240,17 +240,21 @@ def add_non_anticipativity(b: "_Build", window: pl.DataFrame) -> None:
     # v_divest_built[e,c,d] − v_divest_built[e,c^b,b] = 0
     #   ∀ (d,b) ∈ pd_non_anticipativity, (e,c,d) and (e,c^b,b) ∈ cd_divest_built
     #   c^b = c for a cohort not decided in a forecast of the window (decided before the fan, or carried);
-    #     the cohort of e decided in the forecast of b's branch at the same anchor period as c's decision otherwise
-    #     (the forecasts of a window anchor share its reference forecast)
+    #     otherwise c's twin: the cohort of e of the same kind decided in the forecast of b's branch at the same
+    #     anchor period as c's decision (the forecasts of a window anchor share its reference forecast) and, for a
+    #     life extension, of the twin parent (the same parent when the parent is not decided in a forecast of the
+    #     window; else the parent of the same kind decided at the same anchor period)
     # A retirement inside the window is the same in every forecast branch, of the same cohort (a cohort decided
-    # before the window) or of its twins (the forecasts' copies of one shared decision).
+    # before the window) or of its twin (the forecasts' copies of one shared decision: an investment and the
+    # extensions decided in one period are different decisions, each tied to its own copy).
     window, groups = forecast_window(window)
     for axis in ("p", "n"):
         var = getattr(b, f"v_divest_built_{axis}", None)
         if var is None:
             continue
-        cohorts = _entity_rows(d.cohort_divest_built, "e", _members(d, axis), axis).select(axis, "cohort", "d_build")
-        over = tied_pairs(var.frame.select(axis, "cohort", "d"), cohorts, groups, window, axis)
+        cohorts = _entity_rows(d.cohort_divest_built, "e", _members(d, axis), axis).select(
+            axis, "cohort", "kind", "parent", "d_build")
+        over = tied_pairs(var.frame.select(axis, "cohort", "d"), with_parents(d, cohorts, axis), groups, window, axis)
         if over is None:
             continue
         b.m.add_cstr(
@@ -270,34 +274,64 @@ def forecast_window(window: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     return window, _forecast_groups(window)
 
 
+def with_parents(d, cohorts: pl.DataFrame, axis: str) -> pl.DataFrame:
+    """``cohorts`` (``[axis, cohort, kind, parent, d_build]``) with ``parent_kind`` / ``parent_d_build``: the kind and
+    decision period of each life extension's parent in the cohort table (null without a parent, and for a parent
+    the table does not hold)."""
+    table = getattr(d, "cohort", None)
+    if not _has_rows(table):
+        return cohorts.with_columns(parent_kind=pl.lit(None, dtype=pl.Utf8),
+                                    parent_d_build=pl.lit(None, dtype=cohorts.schema["d_build"]))
+    parents = (_entity_rows(table, "e", _members(d, axis), axis)
+               .select(axis, pl.col("cohort").alias("parent"), pl.col("kind").alias("parent_kind"),
+                       pl.col("d_build").alias("parent_d_build"))
+               .unique(subset=[axis, "parent"], maintain_order=True))
+    cohorts, parents = align_join_dtypes(cohorts, parents, [axis])
+    return cohorts.join(parents, on=[axis, "parent"], how="left")
+
+
 def tied_pairs(rows: pl.DataFrame, cohorts: pl.DataFrame, groups: pl.DataFrame, window: pl.DataFrame,
                axis: str) -> pl.DataFrame | None:
     """``[axis, cohort, d, cohort_b, b]``: the pairs of the columns ``rows`` (``[axis, cohort, d]``, one per cohort
-    and period) a non-anticipativity row ties over the window ``window`` (``(d, b)``, ``b`` on the period axis)::
+    and period) a non-anticipativity row ties over the window ``window`` (``(d, b)``, ``b`` on the period axis);
+    ``cohorts`` is ``[axis, cohort, kind, parent, d_build, parent_kind, parent_d_build]`` (:func:`with_parents`)::
 
         c^b = c for a cohort not decided in a forecast of the window (``cohorts``' ``d_build`` null or outside it);
-              the cohort of the same entity decided in the forecast of b's branch at the same anchor period as c's
-              decision otherwise (``groups``: the forecasts of a window anchor share its reference forecast)
+              otherwise the cohort of the same entity and kind decided in the forecast of b's branch at the same
+              anchor period as c's decision (``groups``: the forecasts of a window anchor share its reference
+              forecast) and, for a life extension, with the twin parent: the same parent when the parent is not
+              decided in a forecast of the window, else the parent of the same kind decided at the same anchor
 
     ``None`` without a pair."""
     rows, cohorts = align_join_dtypes(rows, cohorts, [axis])
     rows = rows.join(cohorts, on=[axis, "cohort"], how="left")
-    # The cohort's group: the reference forecast of its decision period (null outside the window).
+    # The cohort's group: the reference forecast of its decision period (null outside the window); its parent's
+    # group likewise.
     rows, groups_k = align_join_dtypes(rows, groups, ["d_build"])
     keyed = rows.join(groups_k, on="d_build", how="left")
+    parent_groups = groups_k.rename({"d_build": "parent_d_build", "ref": "parent_ref"})
+    keyed, parent_groups = align_join_dtypes(keyed, parent_groups, ["parent_d_build"])
+    keyed = keyed.join(parent_groups, on="parent_d_build", how="left")
+    # The twin key of the parent: the parent itself outside the window's forecasts, else its (kind, group).
+    in_fan = pl.col("parent_ref").is_not_null()
+    keyed = keyed.with_columns(
+        pkey=pl.when(in_fan).then(pl.lit(None, dtype=pl.Utf8)).otherwise(pl.col("parent")),
+        pkey_kind=pl.when(in_fan).then(pl.col("parent_kind")).otherwise(pl.lit(None, dtype=pl.Utf8)),
+        pkey_ref=pl.when(in_fan).then(pl.col("parent_ref")).otherwise(pl.lit(None, dtype=keyed.schema["parent_ref"])))
     rows_w, window_k = align_join_dtypes(keyed, window, ["d"])
     left = rows_w.join(window_k, on="d", how="inner")
     if left.height == 0:
         return None
+    twin_key = ["kind", "pkey", "pkey_kind", "pkey_ref"]
     right = (keyed.select(axis, pl.col("cohort").alias("cohort_b"), pl.col("d").alias("b"),
-                          pl.col("ref").alias("ref_b")))
+                          pl.col("ref").alias("ref_b"), *twin_key))
     same = (left.filter(pl.col("ref").is_null())
                 .join(right.select(axis, "cohort_b", "b"), left_on=[axis, "cohort", "b"],
                       right_on=[axis, "cohort_b", "b"], how="inner")
                 .with_columns(cohort_b=pl.col("cohort")))
     twin = (left.filter(pl.col("ref").is_not_null())
-                .join(right.filter(pl.col("ref_b").is_not_null()), left_on=[axis, "b", "ref"],
-                      right_on=[axis, "b", "ref_b"], how="inner"))
+                .join(right.filter(pl.col("ref_b").is_not_null()), left_on=[axis, "b", "ref", *twin_key],
+                      right_on=[axis, "b", "ref_b", *twin_key], how="inner", nulls_equal=True))
     over = (pl.concat([same.select(axis, "cohort", "d", "cohort_b", "b"),
                        twin.select(axis, "cohort", "d", "cohort_b", "b")])
               .unique().sort(axis, "cohort", "d", "b"))

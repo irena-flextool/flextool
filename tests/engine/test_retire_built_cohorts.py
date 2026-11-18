@@ -414,6 +414,47 @@ def test_retirement_inside_the_shared_investment_window_is_the_same_in_every_bra
 
 
 @pytest.mark.solver
+@pytest.mark.parametrize("retired", [12.0, 30.0])
+def test_an_investment_and_the_extensions_of_one_shared_period_each_tie_to_their_own_twin(tmp_path_factory,
+                                                                                          retired) -> None:
+    """The fan opens in p2035; p2035 and p2040 are shared investment periods.  base has 50 MW existing and 50 MW
+    built in p2035 (each branch's copy), both with a 1-year life that ends at p2040, a life extension of 1 year,
+    and at most 5 MW built in p2040.  In each branch's p2040 three different cohorts are decided: the extension of
+    the existing cohort, the extension of the branch's own p2035 investment, and the p2040 investment.  Each ties
+    only to its own twin in the other branch (same kind, twin parent): four ties in all with the p2035 investment.
+    A retirement of ``retired`` MW in p2040 is then free to come from any cohort (30 MW needs more than the 5 MW the
+    p2040 investment can hold, so tying every cohort to every other one made it infeasible), the same in each
+    branch."""
+    values = [row for row in _hedge_values({"p2035": 50.0, "p2040": 0.0}, {"p2035": 0.0, "p2040": retired})
+              if row[2] not in ("lifetime_technical", "invest_max_period", "retire_max_period")]
+    values += [["unit", "base", "existing", b64(50.0, "float")],
+               ["unit", "base", "lifetime_technical", b64(1.0, "float")],
+               ["unit", "base", "invest_max_period", _period_map({"p2035": 50.0, "p2040": 5.0})],
+               ["unit", "base", "retire_max_period", _period_map({"p2035": 0.0, "p2040": retired})],
+               ["unit", "base", "life_extension_cost", b64(0.5, "float")],
+               ["unit", "base", "life_extension_years", b64(1.0, "float")],
+               ["solve", "stoch_2p_hedge", "shared_invest_periods",
+                b64({"value_type": "str", "data": ["p2035", "p2040"]}, "array")]]
+    step = _hedge(tmp_path_factory, f"rb_fan_twins_{int(retired)}", ["init", "base", "stoch", "ws", "na_window"],
+                  values)
+    rows = cstr_over(build(step.flex_data), "non_anticipativity_divest_built_p")
+    assert rows is not None
+    ties = {(c, d, cb, b) for c, d, cb, b in utf8(rows).select("cohort", "d", "cohort_b", "b").iter_rows()}
+
+    shared = [("invest:p2035_{}", "p2035_{}"), ("invest:p2040_{}", "p2040_{}"),
+              ("extend:p2040_{}:existing:p2035", "p2040_{}"), ("extend:p2040_{}:invest:p2035_{}", "p2040_{}")]
+    want = {(c.format("high", "high"), d.format("high"), c.format("low", "low"), d.format("low")) for c, d in shared}
+    assert ties == want, ties
+    built = {(c, dd): v for c, dd, v in utf8(step.solution.value("v_divest_built_p"))
+             .filter(pl.col("p") == "base").select("cohort", "d", "value").iter_rows()}
+    for c, d, cb, b in want:
+        assert built.get((c, d), 0.0) == pytest.approx(built.get((cb, b), 0.0), abs=1e-9)
+    for branch in ("high", "low"):
+        total = sum(v for (c, dd), v in built.items() if dd == f"p2040_{branch}")
+        assert total == pytest.approx(retired, abs=1e-6)
+
+
+@pytest.mark.solver
 def test_built_retirements_carry_into_a_rolling_solve(tmp_path_factory) -> None:
     """rb_first builds 200 MW in p2025 and retires 50 MW of them there; a rolling dispatch solve of p2030 that
     follows starts from the existing 100 MW and the 150 MW left of that cohort in every roll."""
