@@ -166,7 +166,7 @@ def run(
     # ── L1 batch 13: period_calculated_params ─────────────────────────
     _period_calc.emit_period_calculated_params(input_dir, solve_data_dir, provider=provider)
     _ck("period_calculated_params")
-    # ── L1 batch 15: pdProcess / pdNode + edEntity_lifetime + ed_fixed_cost
+    # ── L1 batch 15: pdProcess / pdNode + ed_fixed_cost + p_entity_unitsize
     _disp.emit_entity_period_calc_params(input_dir, solve_data_dir, provider=provider)
     _ck("entity_period_calc_params")
     # ── L1 batch 17: node-inflow scaling family ───────────────────────

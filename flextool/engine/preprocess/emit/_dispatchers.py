@@ -15,7 +15,7 @@ constructions) rather than delegating to sibling emitters.
   ``process__source__sink__profile__profile_method_direct``.
 
 * :func:`emit_entity_period_calc_params` — emits ``pdProcess``,
-  ``pdNode``, ``edEntity_lifetime``, ``ed_fixed_cost``,
+  ``pdNode``, ``ed_fixed_cost``,
   ``p_entity_unitsize`` via the ``PdLookup`` machinery (native shim in
   :mod:`._pdt_lookup`).
 
@@ -30,7 +30,6 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine.input._lifetime_roles import LIFETIME_TECHNICAL
 from flextool.engine.preprocess._provider_io import (
     _emit,
     _provider_key,
@@ -582,30 +581,6 @@ def _compute_pdNode(inp: dict) -> pl.DataFrame:
     )
 
 
-def _compute_edEntity_lifetime(inp: dict) -> pl.DataFrame:
-    pp = inp["pp"]
-    pn = inp["pn"]
-    process_set = inp["process_set"]
-    node_set = inp["node_set"]
-    # The technical lifetime (the end of life and the windows).
-    rows: list[tuple[str, str, str]] = []
-    for e in inp["entities"]:
-        for d in inp["period_with_history"]:
-            if e in process_set:
-                v = pp.get(e, LIFETIME_TECHNICAL, d)
-            elif e in node_set:
-                v = pn.get(e, LIFETIME_TECHNICAL, d)
-            else:
-                v = 0.0
-            rows.append((e, d, repr(v)))
-    return pl.DataFrame(
-        {"entity": [r[0] for r in rows],
-         "period": [r[1] for r in rows],
-         "value":  [r[2] for r in rows]},
-        schema={"entity": pl.Utf8, "period": pl.Utf8, "value": pl.Utf8},
-    )
-
-
 def _compute_ed_fixed_cost(inp: dict) -> pl.DataFrame:
     pp = inp["pp"]
     pn = inp["pn"]
@@ -670,14 +645,12 @@ def emit_entity_period_calc_params(input_dir: Path,
                                    solve_data_dir: Path,
                                    *, provider) -> None:
     """Emit ``entity_period_calc_params`` to the Provider.
-    Emits the same 5 frames under ``solve_data/<basename>`` keys via
+    Emits the same 4 frames under ``solve_data/<basename>`` keys via
     :func:`_emit` (dual-key registration).
     """
     inp = _entity_period_inputs(input_dir, solve_data_dir, provider=provider)
     _emit(provider, "solve_data/pdProcess.csv", _compute_pdProcess(inp))
     _emit(provider, "solve_data/pdNode.csv", _compute_pdNode(inp))
-    _emit(provider, "solve_data/edEntity_lifetime.csv",
-          _compute_edEntity_lifetime(inp))
     _emit(provider, "solve_data/ed_fixed_cost.csv",
           _compute_ed_fixed_cost(inp))
     _emit(provider, "solve_data/p_entity_unitsize.csv",

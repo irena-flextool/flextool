@@ -197,7 +197,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     # _dispatchers — Phase E-b lifted entity_period_calc_params
     "pdProcess.csv",
     "pdNode.csv",
-    "edEntity_lifetime.csv",
     "ed_fixed_cost.csv",
     "p_entity_unitsize.csv",
     # _dispatchers — Phase E-b lifted process_arc_unions monolith
