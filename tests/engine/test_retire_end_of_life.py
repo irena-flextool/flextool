@@ -453,7 +453,8 @@ def test_retirement_costs_stop_at_the_end_of_life(tmp_path_factory) -> None:
     gives back every credit of its service years.  By hand (``test_chain_costs`` factors, r = 0.04 / offsets 0.5
     and 0)::
 
-        fixed cost reduction (p2025) = −100 · 1e5 · (F_ops(p2025) + F_ops(p2030))
+        fixed cost reduction (d)     = −100 · 1e5 · F_ops(d) in p2025 and p2030 (the retired MW until the end of
+                                       life of the existing plant)
         a_x = 200 000 · 1.05^−15 · 0.05 / (1 − 1.05^−15) / 1.05 = 8 827.10 CUR/MW/yr
         salvage economic (p2025)     = −100 · 200 000 · 1.04^−5                          (the salvage value received)
         salvage end of life (p2035)  = +100 · a_x · (F_inv(p2020) + F_inv(p2025) + F_inv(p2030))  (credits back, at
@@ -462,8 +463,9 @@ def test_retirement_costs_stop_at_the_end_of_life(tmp_path_factory) -> None:
                                        the user's existing 500 MW, an objective constant)
         fixed cost pre-existing (d)  = 500 · 1e5 · F_ops(d) in p2020 … p2030, 0 in p2035
 
-    The retirement's two lines add up to its settlement −100 · (200 000 · 1.04^−5 − a_x · Σ F_inv).  Annualized:
-    each line divided by its period's investment factor, −100 · 1e5 per year in p2025 and p2030.  The chain
+    The retirement's two lines add up to its settlement −100 · (200 000 · 1.04^−5 − a_x · Σ F_inv); the cost tables
+    show them in the one *salvage* line.  Annualized: each line divided by its period's investment factor, −100 ·
+    1e5 per year in p2025 and p2030.  The chain
     reports what the single solve reports (the chain's p2025 solve gives back the credit of its history period
     p2020 too)."""
     from tests.engine.test_chain_costs import F_INV
@@ -475,13 +477,15 @@ def test_retirement_costs_stop_at_the_end_of_life(tmp_path_factory) -> None:
     credit = SALVAGE * 1000.0 * 1.05 ** -15.0 * 0.05 / (1.0 - 1.05 ** -15.0) / 1.05
     assert credit == pytest.approx(8_827.10, abs=0.01)
     served = sum(F_INV[d] for d in ("p2020", "p2025", "p2030"))
-    lines = {("p2025", "salvage economic"): -100.0 * SALVAGE * 1000.0 * 1.04 ** -5,
-             ("p2035", "salvage end of life"): 100.0 * credit * served,
+    lines = {("p2025", "salvage"): -100.0 * SALVAGE * 1000.0 * 1.04 ** -5,
+             ("p2035", "salvage"): 100.0 * credit * served,
              ("p2035", "salvage pre-existing"): -500.0 * credit * served}
     discounted = single["cost_unit_discounted__d"]
-    rows = discounted[(discounted["period"] == "p2025") & (discounted["unit"] == PLANT)]
-    assert rows["fixed cost reduction of divestments"].sum() * MEGA == pytest.approx(
-        -100.0 * FIXED * sum(F_OPS[d] for d in window), rel=1e-7)
+    for d in PERIODS:
+        rows = discounted[(discounted["period"] == d) & (discounted["unit"] == PLANT)]
+        mw = 100.0 if d in window else 0.0
+        assert rows["fixed cost reduction of divestments"].sum() * MEGA == pytest.approx(
+            -mw * FIXED * F_OPS[d], rel=1e-7, abs=1e-6), d
     for (d, line), amount in lines.items():
         rows = discounted[(discounted["period"] == d) & (discounted["unit"] == PLANT)]
         assert rows[line].sum() * MEGA == pytest.approx(amount, rel=1e-7), (d, line)
@@ -493,7 +497,7 @@ def test_retirement_costs_stop_at_the_end_of_life(tmp_path_factory) -> None:
     for annualized in (chain["cost_unit_annualized__d"], single["cost_unit_annualized__d"]):
         for d in PERIODS:
             rows = annualized[(annualized["period"] == d) & (annualized["unit"] == PLANT)]
-            for line in ("salvage economic", "salvage end of life", "salvage pre-existing"):
+            for line in ("salvage", "salvage pre-existing"):
                 want = lines.get((d, line), 0.0) / F_INV[d]
                 assert rows[line].sum() * MEGA == pytest.approx(want, rel=1e-7, abs=1e-6), (d, line)
             mw = 100.0 if d in window else 0.0
@@ -519,13 +523,11 @@ def test_retirement_saves_exactly_the_fixed_cost_of_existing_capacity(tmp_path_f
 @pytest.mark.solver
 def test_fixed_cost_map_saving_of_a_chain_equals_the_single_solve(tmp_path_factory) -> None:
     """fixed_cost as the period map 100 / 100 / 100 / 200 CUR/kW/yr (reinvest_automatic), 100 MW retired in p2025:
-    the saving is each window period's own fixed cost, the same in the chain and the single solve.  By hand::
+    the saving is each period's own fixed cost, reported in that period, the same in the chain and the single
+    solve.  By hand::
 
-        fixed cost reduction (p2025) = −(100 · 1e5 · (F_ops(p2025) + F_ops(p2030)) + 100 · 2e5 · F_ops(p2035))
+        fixed cost reduction (d) = −100 · 1e5 · F_ops(d) in p2025 and p2030, −100 · 2e5 · F_ops(p2035) in p2035
         annualized: −10, −10, −20 M/yr in p2025, p2030, p2035
-
-    (each chain solve holds only its own period and the next, so the window periods it lacks would take the
-    retirement period's fixed cost; those rows are never reported).
 
     The salvage settlement is what each solve charges: the net salvage value S = 200 000 at the start of p2025 less
     the existing plant's level salvage credits given back, a_x = S·1.05^−30·0.05/(1 − 1.05^−30)/1.05 = 2 866.94
@@ -533,7 +535,8 @@ def test_fixed_cost_map_saving_of_a_chain_equals_the_single_solve(tmp_path_facto
     Σ_{y=0..4} 1.04^−(Y_d + y): the single solve all four, −100·(S·1.04^−5 − a_x·Σ_d F_inv(d)) = −12.386426 M;
     the chain's y2025 solve its history p2020 and its own p2025, p2030 (its horizon), −13.123464 M.  It is
     reported as *salvage economic* −100·S·1.04^−5 at p2025 and *salvage replaced* +100·a_x·Σ F_inv at the last
-    period p2035 (the plant lives past the horizon; a reinvest_automatic plant is replaced at its end of life)."""
+    period p2035 (the plant lives past the horizon; a reinvest_automatic plant is replaced at its end of life), in
+    the cost tables' *salvage* line."""
     from tests.engine.test_chain_costs import F_INV, _period_map
     fixed = {"p2020": 100.0, "p2025": 100.0, "p2030": 100.0, "p2035": 200.0}
     values = _retire() + [["unit", PLANT, "fixed_cost", _period_map(fixed)]]
@@ -551,15 +554,17 @@ def test_fixed_cost_map_saving_of_a_chain_equals_the_single_solve(tmp_path_facto
         settlement = -100.0 * (SALVAGE * 1000.0 * 1.04 ** -5 - a_x * sum(F_INV[d] for d in seen[kind]))
         rows = results["cost_unit_discounted__d"]
         unit = rows[rows["unit"] == PLANT].set_index("period")
-        economic = unit.loc["p2025", "salvage economic"] * MEGA
-        back = unit.loc["p2035", "salvage replaced"] * MEGA
+        economic = unit.loc["p2025", "salvage"] * MEGA
+        back = unit.loc["p2035", "salvage"] * MEGA
         assert economic == pytest.approx(-100.0 * SALVAGE * 1000.0 * 1.04 ** -5, rel=1e-7), kind
         assert economic + back == pytest.approx(settlement, rel=1e-7), kind
     for results in (chain, single):
         discounted = results["cost_unit_discounted__d"]
-        rows = discounted[(discounted["period"] == "p2025") & (discounted["unit"] == PLANT)]
-        assert rows["fixed cost reduction of divestments"].sum() * MEGA == pytest.approx(
-            -100.0 * sum(fixed[d] * 1000.0 * F_OPS[d] for d in ("p2025", "p2030", "p2035")), rel=1e-7)
+        for d in PERIODS:
+            rows = discounted[(discounted["period"] == d) & (discounted["unit"] == PLANT)]
+            want = 0.0 if d == "p2020" else -100.0 * fixed[d] * 1000.0 * F_OPS[d]
+            assert rows["fixed cost reduction of divestments"].sum() * MEGA == pytest.approx(
+                want, rel=1e-7, abs=1e-6), d
         annualized = results["cost_unit_annualized__d"]
         for d in PERIODS:
             rows = annualized[(annualized["period"] == d) & (annualized["unit"] == PLANT)]

@@ -195,7 +195,7 @@ def test_extension_without_an_invest_method_is_reported_as_an_extension(tmp_path
         want = event if d == "p2030" else 0.0
         assert row["extension"] * MEGA == pytest.approx(want, rel=1e-7, abs=1e-6), d
         assert row["investment"] == pytest.approx(0.0, abs=1e-12), d
-        assert row["salvage extended"] == pytest.approx(0.0, abs=1e-12), d
+        assert row["salvage"] == pytest.approx(0.0, abs=1e-12), d
         row = yearly[(yearly["unit"] == PLANT) & (yearly["period"] == d)].iloc[0]
         assert row["extension"] * MEGA == pytest.approx(want / span(10, 15), rel=1e-7, abs=1e-6), d
 

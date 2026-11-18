@@ -26,14 +26,16 @@ divest_built_cost_p), the oracle in each docstring:
   retire nothing): its salvage credit a_x = S·(1+r)^−5·af(r, 5) over its service years [0, 5), *salvage
   pre-existing* −100·a_x·S[0, 5) = −100·S·v^5 = −15.670523 M at p2025 (r = i), an objective constant.
 
-The single solves' "Total cost counted in the objective" is the solver objective (the constants of existing capacity
-excluded).
+The cost table shows the four salvage causes as one *salvage* line (their sum per period); ``summary_solve.csv``
+keeps them apart (each cause's total over the periods).  The single solves' "Total cost counted in the objective" is
+the solver objective (the constants of existing capacity excluded).
 """
 from __future__ import annotations
 
 import pandas as pd
 import pytest
 
+from flextool.engine.preprocess.params._cost_lines import SALVAGE, SALVAGE_CAUSES
 from tests.engine._unit_db import PLANT, b64
 from tests.engine.test_chain_costs import MEGA, _no_battery_invest, _period_map, _write_csv
 from tests.engine.test_user_constraint_capacity_terms import SINGLE
@@ -102,11 +104,22 @@ def _lines(tmp_path_factory, case: str, values: list) -> tuple[pd.DataFrame, dic
     return _TABLES[case]
 
 
-def _assert_lines(table: pd.DataFrame, want: dict[tuple[str, str], float], lines: tuple[str, ...]) -> None:
+def _assert_lines(table: pd.DataFrame, summary: dict[str, float], want: dict[tuple[str, str], float],
+                  lines: tuple[str, ...]) -> None:
+    """``want`` ((period, line by cause) → M CUR, 0 elsewhere) in the cost table, the salvage causes summed in its
+    salvage line, and each line's total over the periods in the summary."""
+    def shown(line: str) -> str:
+        return SALVAGE if line in SALVAGE_CAUSES else line
+    in_table: dict[tuple[str, str], float] = {}
+    for (d, line), amount in want.items():
+        in_table[(d, shown(line))] = in_table.get((d, shown(line)), 0.0) + amount
     for d in PERIODS:
-        for line in lines:
+        for line in dict.fromkeys(shown(li) for li in lines):
             got = table.loc[d, line] * MEGA if d in table.index else 0.0
-            assert got == pytest.approx(want.get((d, line), 0.0) * MEGA, rel=1e-6, abs=1.0), (d, line)
+            assert got == pytest.approx(in_table.get((d, line), 0.0) * MEGA, rel=1e-6, abs=1.0), (d, line)
+    for line in lines:
+        total = sum(amount for (_, li), amount in want.items() if li == line)
+        assert summary[f"{line[0].upper()}{line[1:]} (M CUR)"] == pytest.approx(total, rel=1e-6, abs=1e-6), line
 
 
 def _assert_objective(summary: dict[str, float]) -> None:
@@ -121,7 +134,7 @@ INVEST_LINES = ("investment", "replacement", "retirement", "salvage end of life"
 @pytest.mark.solver
 def test_h1_investment_and_its_salvage_at_the_end_of_life(tmp_path_factory) -> None:
     table, summary = _lines(tmp_path_factory, "h1", _values())
-    _assert_lines(table, {("p2020", "investment"): 100.0, ("p2030", "salvage end of life"): -12.278265},
+    _assert_lines(table, summary, {("p2020", "investment"): 100.0, ("p2030", "salvage end of life"): -12.278265},
                   INVEST_LINES)
     _assert_objective(summary)
 
@@ -134,7 +147,7 @@ def test_h2_retirement_settles_the_loan_and_receives_the_salvage(tmp_path_factor
         retirement, abs=1e-6)
     assert MW * a * span(0, 10) / MEGA == pytest.approx(investment, abs=1e-6)
     table, summary = _lines(tmp_path_factory, f"h2_{r}", _values(r=r, retired={"p2025": MW}))
-    _assert_lines(table, {("p2020", "investment"): investment, ("p2025", "retirement"): retirement,
+    _assert_lines(table, summary, {("p2020", "investment"): investment, ("p2025", "retirement"): retirement,
                           ("p2025", "salvage economic"): -15.670523}, INVEST_LINES)
     _assert_objective(summary)
 
@@ -142,7 +155,7 @@ def test_h2_retirement_settles_the_loan_and_receives_the_salvage(tmp_path_factor
 @pytest.mark.solver
 def test_h3_replacement_of_a_reinvest_automatic_plant(tmp_path_factory) -> None:
     table, summary = _lines(tmp_path_factory, "h3", _values(method="reinvest_automatic"))
-    _assert_lines(table, {("p2020", "investment"): 100.0, ("p2030", "replacement"): 61.391325,
+    _assert_lines(table, summary, {("p2020", "investment"): 100.0, ("p2030", "replacement"): 61.391325,
                           ("p2030", "salvage replaced"): -12.278265, ("p2035", "salvage replaced"): -7.537790},
                   INVEST_LINES)
     _assert_objective(summary)
@@ -154,7 +167,7 @@ def test_a_plant_past_the_horizon_reports_the_horizon_share_of_its_salvage(tmp_p
     assert MW * a * span(10, 20) / MEGA == pytest.approx(45.670825, abs=1e-6)
     assert -MW * a_salv * span(10, 20) / MEGA == pytest.approx(-4.393690, abs=1e-6)
     table, summary = _lines(tmp_path_factory, "past_h", _values(life=15.0, built="p2030"))
-    _assert_lines(table, {("p2030", "investment"): 45.670825, ("p2035", "salvage end of life"): -4.393690},
+    _assert_lines(table, summary, {("p2030", "investment"): 45.670825, ("p2035", "salvage end of life"): -4.393690},
                   INVEST_LINES)
     _assert_objective(summary)
 
@@ -165,8 +178,36 @@ def test_h4_salvage_credit_of_existing_capacity(tmp_path_factory) -> None:
     assert -MW * a_x * span(0, 5) / MEGA == pytest.approx(-15.670523, abs=1e-6)
     values = _values(built="", existing=MW, extra=[["unit", PLANT, "age_at_model_start", b64(5.0, "float")]])
     table, summary = _lines(tmp_path_factory, "h4", values)
-    _assert_lines(table, {("p2025", "salvage pre-existing"): -15.670523},
+    _assert_lines(table, summary, {("p2025", "salvage pre-existing"): -15.670523},
                   (*INVEST_LINES, "salvage pre-existing"))
+    _assert_objective(summary)
+
+
+@pytest.mark.solver
+def test_fixed_costs_of_a_retired_build_in_each_period_add_up_to_the_objective(tmp_path_factory) -> None:
+    """H2 (the 100 MW built at p2020 retired at p2025) with fixed_cost 10 CUR/kW a year (1e4 CUR/MW) and the default
+    discount_offset_operations 0.5: S_op[a, b) = Σ_{k=a}^{b−1} 1.05^−(k+0.5), S_op[0, 5) = 4.436393, S_op[5, 10) =
+    3.476030.  The plant would serve [0, 10); its fixed cost is reported in each period it is paid, from the
+    capacity of its cohort: *fixed cost invested* 100·1e4·S_op[0, 5) = 4.436393 M at p2020 and 100·1e4·S_op[5, 10)
+    = 3.476030 M at p2025 (the retired MW still count there, until the end of life at p2030), and the retirement
+    saves the same p2025 amount, *fixed cost reduction of divestments* −3.476030 M at p2025; nothing from p2030.
+    The objective then holds the fixed cost of p2020 only, and the reported total is the solver objective."""
+    def s_op(a: int, b: int) -> float:
+        return sum(1.05 ** -(k + 0.5) for k in range(a, b))
+
+    assert (s_op(0, 5), s_op(5, 10)) == (pytest.approx(4.436393, abs=1e-6), pytest.approx(3.476030, abs=1e-6))
+    values = [v for v in _values(retired={"p2025": MW}) if v[2] != "fixed_cost"] + [
+        ["unit", PLANT, "fixed_cost", b64(10.0, "float")]]
+    table, summary = _lines(tmp_path_factory, "h2_fixed", values)
+    invested = {"p2020": 4.436393, "p2025": 3.476030}
+    divested = {"p2025": -3.476030}
+    for d in PERIODS:
+        got_inv = table.loc[d, "fixed cost invested"] if d in table.index else 0.0
+        got_div = table.loc[d, "fixed cost reduction of divestments"] if d in table.index else 0.0
+        assert got_inv == pytest.approx(invested.get(d, 0.0), abs=1e-6), d
+        assert got_div == pytest.approx(divested.get(d, 0.0), abs=1e-6), d
+    assert summary["Fixed costs for invested entities (M CUR)"] == pytest.approx(4.436393 + 3.476030, abs=1e-6)
+    assert summary["Fixed cost removal due to divested entities (M CUR)"] == pytest.approx(-3.476030, abs=1e-6)
     _assert_objective(summary)
 
 

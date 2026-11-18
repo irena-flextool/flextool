@@ -538,7 +538,7 @@ def write_summary_csv(par, s, v, r, csv_dir):
         # flextool.mod:2107-2126; omitting them here would under-report
         # the objective for any scenario with non-zero existing capacity
         # or a non-zero lifetime_fixed_cost on invest/divest entities.
-        lines_d = r.costLines_d
+        lines_d = r.costLinesByCause_d
         total_cost_d = (
             r.costOper_and_penalty_d
                 .add(lines_d.sum(axis=1), fill_value=0.0)

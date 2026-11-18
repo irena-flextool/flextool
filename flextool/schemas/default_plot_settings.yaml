@@ -65,11 +65,8 @@ categories:
     replacement:                           '#3b6fc4'   # medium blue
     extension:                             '#6691d8'   # lighter blue
     retirement:                            '#0b2e6b'   # navy (the settlement of a retired plant)
-    # Salvage (income: green family)
-    salvage end of life:                   '#2e8b57'   # sea green
-    salvage replaced:                      '#56a96f'   # medium green
-    salvage extended:                      '#8fc79a'   # light green (the salvage an extension gives up)
-    salvage economic:                      '#1b5e20'   # dark green (received at a retirement)
+    # Salvage (income: green)
+    salvage:                               '#2e8b57'   # sea green
     # Objective constants of existing capacity (teal-blue)
     investment pre-existing:               '#2a6f8f'   # teal-blue
     salvage pre-existing:                  '#6aa9bf'   # light teal-blue

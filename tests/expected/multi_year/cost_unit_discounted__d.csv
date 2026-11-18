@@ -1,9 +1,9 @@
-solve,period,unit,commodity_cost,co2,other operational,investment,replacement,extension,retirement,salvage end of life,salvage replaced,salvage extended,salvage economic,fixed cost pre-existing,fixed cost invested
-y2020_5week,p2020,coal_plant,363.3317,308.832,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,226.9993,0.0
-y2020_5week,p2020,wind_plant,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-y2025_5week,p2025,coal_plant,484.1819,411.5546,0.0,15.9781,0.0,0.0,0.0,0.0,0.0,0.0,0.0,186.5769,63.2239
-y2025_5week,p2025,wind_plant,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-y2030_5week,p2030,coal_plant,551.3148,468.6176,0.0,36.0785,0.0,0.0,0.0,0.0,0.0,0.0,0.0,153.3526,142.7593
-y2030_5week,p2030,wind_plant,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-y2035_5week,p2035,coal_plant,579.1852,492.3074,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,126.0446,0.0
-y2035_5week,p2035,wind_plant,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+solve,period,unit,commodity_cost,co2,other operational,investment,replacement,extension,retirement,salvage,fixed cost pre-existing,fixed cost invested
+y2020_5week,p2020,coal_plant,363.3317,308.832,0.0,0.0,0.0,0.0,0.0,0.0,226.9993,0.0
+y2020_5week,p2020,wind_plant,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+y2025_5week,p2025,coal_plant,484.1819,411.5546,0.0,15.9781,0.0,0.0,0.0,0.0,186.5769,25.315
+y2025_5week,p2025,wind_plant,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+y2030_5week,p2030,coal_plant,551.3148,468.6176,0.0,36.0785,0.0,0.0,0.0,0.0,153.3526,99.1633
+y2030_5week,p2030,wind_plant,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+y2035_5week,p2035,coal_plant,579.1852,492.3074,0.0,0.0,0.0,0.0,0.0,0.0,126.0446,81.505
+y2035_5week,p2035,wind_plant,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0

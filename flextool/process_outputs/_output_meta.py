@@ -681,13 +681,10 @@ _COST_LINE_FORMULAS: dict[str, str] = {
     "extension": "extension cost part of a_cap[x] · Σ_service(x) investment_discount_factor  @ the extension's start",
     "retirement": "pay · Σ paid years + D(d) · loan balance − a_cap · Σ_service investment_discount_factor  "
                   "@ retirement period d",
-    "salvage end of life": "−a_salv · Σ_service investment_discount_factor (+ the credits a retirement gives back)  "
-                           "@ end of life (last period past the horizon)",
-    "salvage replaced": "−a_salv[g] · Σ_service(g) investment_discount_factor of a reinvest_automatic plant  @ its end "
-                        "of life",
-    "salvage extended": "salvage part of a_cap[x] · Σ_service(x) investment_discount_factor (the salvage given up)  "
-                        "@ the extension's start",
-    "salvage economic": "−D(d) · net_salvage_value[d] · 1000  @ retirement period d",
+    "salvage": "−a_salv · Σ_service investment_discount_factor @ end of life (last period past the horizon; a "
+               "reinvest_automatic plant's at its replacement; with the credits a retirement gives back) "
+               "+ the salvage part of an extension's price @ its start − D(d) · net_salvage_value[d] · 1000 "
+               "@ retirement period d",
     "investment pre-existing": "existing · a_cap[g] · investment_discount_factor of the replacement of existing "
                                "capacity  @ its online period",
     "salvage pre-existing": "−existing · a_salv · investment_discount_factor of existing capacity  @ its end of life",

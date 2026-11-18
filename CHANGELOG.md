@@ -8,18 +8,21 @@ Input databases move to data version 82. The FlexTool window, the Spine Toolbox 
 - **Investment-type costs are reported when they happen.** The cost categories *unit / connection / storage
   investment & retirement* are replaced by event lines, the same for every class: *investment* (the capital of new
   capacity, at its start of operation), *replacement* (a later plant of a `reinvest_automatic` chain, when it comes
-  online), *extension*, *retirement* (the contract settlement of retired built capacity), *salvage end of life* /
-  *salvage replaced* (a plant's salvage credit, at its end of life), *salvage extended*, *salvage economic* (the
-  salvage value received at a retirement) and, where there is one, *investment pre-existing* / *salvage
-  pre-existing*. Each is reported at the amount the objective charges; for capacity living past the horizon the
-  investment and the salvage are the horizon shares, the salvage in the last period. The per-entity cost tables
-  use the same names (the node table's *storage investment* / *storage retirement* are gone). Totals over the
-  periods are unchanged, except that the salvage credit of existing capacity that may retire is now shown as
-  *salvage pre-existing* (an objective constant, as *fixed cost pre-existing*). `summary_solve.csv` has one row per
-  line in place of the investment and retirement rows, and a new row *Total cost counted in the objective*: the
-  solver objective of one deterministic solve. Annualized costs are the discounted ones divided by the period's
-  discount factor (an event spread over the period's years), no longer the yearly annuity of every vintage in
-  service. Scripts reading the old category names must be updated.
+  online), *extension*, *retirement* (the contract settlement of retired built capacity), *salvage* (a plant's
+  salvage credit at its end of life, the salvage a life extension gives up and the salvage value received at a
+  retirement) and, where there is one, *investment pre-existing* / *salvage pre-existing*. Each is reported at the
+  amount the objective charges; for capacity living past the horizon the investment and the salvage are the
+  horizon shares, the salvage in the last period. The per-entity cost tables use the same names (the node table's
+  *storage investment* / *storage retirement* are gone). Totals over the periods are unchanged, except that the
+  salvage credit of existing capacity that may retire is now shown as *salvage pre-existing* (an objective
+  constant, as *fixed cost pre-existing*). `summary_solve.csv` has one row per line in place of the investment and
+  retirement rows, with the salvage by cause (*salvage end of life*, *salvage replaced*, *salvage extended*,
+  *salvage economic*), and a new row *Total cost counted in the objective*: the solver objective of one
+  deterministic solve. Annualized costs are the discounted ones divided by the period's discount factor (an event
+  spread over the period's years), no longer the yearly annuity of every vintage in service. The discounted *fixed
+  cost invested* and *fixed cost reduction of divestments* are reported in each period they are paid or saved
+  (the capacity in service then), no longer as one amount over the capacity's life in the period it starts
+  operating or retires; their totals are unchanged. Scripts reading the old category names must be updated.
 - **`inflation_rate` is `social_discount_rate`, `inflation_offset_investment` is `discount_offset_investment` and
   `inflation_offset_operations` is `discount_offset_operations`** (model). The migration renames each parameter with
   every value, in every alternative, and its default; results do not change. `social_discount_rate` is the model's

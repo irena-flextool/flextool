@@ -1659,3 +1659,30 @@ Annualized, a line is its discounted value ÷ the period's investment factor. Th
 Files the regeneration rewrote within the compare tolerance but that this change does not touch (`costs__dt`,
 `node__d`, `node__dt`, `node_state__dt`, `slack__upward__node_state__dt`, `unit__outputNode__dt`, `unit_capacity__d`
 of 16 scenarios) were restored to their previous content.
+
+## 2026-11-18 — one *salvage* line in the cost tables; fixed costs of new and retired capacity in each period paid (32 scenarios, #187, P7a)
+
+**Mechanism.** (1) Owner decision: the cost tables show the four salvage causes (*salvage end of life / replaced /
+extended / economic*) as one *salvage* line, their sum (`calc_costs.lines_by_period` / `lines_by_entity`,
+`_cost_lines.TABLE_LINES`); `summary_solve.csv` keeps them apart (`r.costLinesByCause_d`). (2) The discounted *fixed
+cost invested* / *fixed cost reduction of divestments* are reported in each period they are paid or saved, from the
+capacity of each cohort in service (`calc_costs.fixed_costs_in_service`: capacity × fixed_cost × the run's operations
+factor × branch weight), no longer as one lump over the capacity's life at its start of operation / retirement
+period. Annualized fixed costs (the yearly amounts) do not change. The LP is untouched (lp_snapshot 695/695
+identical vs `lp_p6_3`).
+
+**Files (regenerated with `--regenerate <scenario>`, one call per scenario; the solutions do not move):**
+- `costs_discounted.csv`, 32 scenarios: shape only (four salvage rows → one *salvage* row = their sum; in every
+  fixture the four were 0). Check: Σ all rows unchanged (largest gap 2e-13), every other row unchanged.
+- `cost_unit_{discounted,annualized}__d.csv` (11 scenarios), `cost_node_*` (6): the four salvage columns → one
+  *salvage* column, their sum, cell by cell. `cost_unit_discounted__d.csv` of `multi_year` (a chain: coal_plant's
+  *fixed cost invested* 63.22 / 142.76 / 0 M in p2025 / p2030 / p2035 → 25.32 / 99.16 / 81.51) and
+  `y2020_2029_2x5y` (80.51 / 0 → 40.25 / 40.25 in p2020 / p2025) move fixed cost invested between periods; per entity
+  the totals over the periods are unchanged (largest gap below the 4-decimal rounding). Every other column, and the
+  `cost_connection_*` tables, unchanged.
+- `summary_solve.csv`: unchanged (the cause rows stay; the fixed-cost totals are the same).
+
+Files the regeneration rewrote that this change does not touch (`costs__dt`, `node__d`, `node_state__dt`,
+`unit__outputNode__dt`, `slack__upward__node_state__dt`, `summary_solve` timestamps; within the 1e-4 compare
+tolerance) were restored to their previous content. All 44 `test_scenario` cases and their `test_obj_decomposition`
+pass.

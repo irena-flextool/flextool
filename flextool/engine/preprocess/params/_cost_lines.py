@@ -19,6 +19,9 @@ calc_costs``: their sums).  The lines of one term add up to the term (the object
 * ``investment pre-existing`` / ``salvage pre-existing`` — the replacement of existing reinvest_automatic capacity
   and the salvage credits of existing capacity: objective constants (counted only with
   ``include_existing_fixed_cost``).
+
+The cost tables (:data:`TABLE_LINES`) show the four salvage lines of new capacity as one ``salvage`` line; the text
+summary keeps them apart (the cause is also in the retirement-by-cause tables).
 """
 from __future__ import annotations
 
@@ -38,5 +41,11 @@ COST_LINES: tuple[str, ...] = (INVESTMENT, REPLACEMENT, EXTENSION, RETIREMENT, S
                                SALVAGE_EXTENDED, SALVAGE_ECONOMIC, INVESTMENT_PRE_EXISTING, SALVAGE_PRE_EXISTING)
 #: The lines of the objective constants of existing capacity (counted only with include_existing_fixed_cost).
 PRE_EXISTING_LINES: tuple[str, ...] = (INVESTMENT_PRE_EXISTING, SALVAGE_PRE_EXISTING)
+#: The salvage of new capacity, by cause (the text summary's lines), and their sum in the cost tables.
+SALVAGE_CAUSES: tuple[str, ...] = (SALVAGE_END_OF_LIFE, SALVAGE_REPLACED, SALVAGE_EXTENDED, SALVAGE_ECONOMIC)
+SALVAGE = "salvage"
+#: The lines of the cost tables (costs_discounted, the annualized and per-entity cost tables), in their order.
+TABLE_LINES: tuple[str, ...] = (INVESTMENT, REPLACEMENT, EXTENSION, RETIREMENT, SALVAGE, INVESTMENT_PRE_EXISTING,
+                                SALVAGE_PRE_EXISTING)
 #: The columns of a line frame of a decision (CUR per MW of the decision; Utf8 labels).
 LINE_COLUMNS: tuple[str, ...] = ("e", "d", "line", "d_report", "value")

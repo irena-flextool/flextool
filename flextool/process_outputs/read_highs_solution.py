@@ -1852,8 +1852,7 @@ def write_v_invest_fan(
 
 #: The parquets of :func:`write_v_divest_built` (output name → the quantity, per realized investment period and
 #: entity; the lines also per cost line and report period).
-DIVEST_BUILT_OUTPUTS: tuple[str, ...] = ("v_divest_built", "v_divested_built", "v_divest_built_fixed",
-                                         "v_divest_built_lines")
+DIVEST_BUILT_OUTPUTS: tuple[str, ...] = ("v_divest_built", "v_divested_built", "v_divest_built_lines")
 
 
 def write_v_divest_built(
@@ -1869,17 +1868,17 @@ def write_v_divest_built(
 ) -> list[Path]:
     """Write the retirements of model-built capacity (:data:`DIVEST_BUILT_OUTPUTS`), one parquet each.
 
-    # ─── OUTPUT. ─── v_divest_built / v_divested_built / v_divest_built_fixed / v_divest_built_lines ───
+    # ─── OUTPUT. ─── v_divest_built / v_divested_built / v_divest_built_lines ───
     # divest_built[e,d]       = Σ_c v_divest_built[e,c,d]                     (units retired in d)
     # divested_built[e,d]     = v_divested_built[e,d]                         (units retired so far, counting in d)
-    # divest_built_fixed[e,d] = Σ_c v_divest_built[e,c,d]·us[e]·cd_divest_built_fixed[e,c,d]    (CUR)
     # divest_built_lines[e,d,line,d_report] = Σ_c v_divest_built[e,c,d]·us[e]·cdl_divest_built_lines[e,c,d,line,d_report]
     #   us = unitsize (state_unitsize for a storage node); d a period whose investment the solve realizes (a fan's
     #   branch periods at its label, weighted by pd_branch_weight)
-    # The model-built capacity retired (per cohort in the LP, summed over the cohorts of an entity here), the fixed
-    # cost it saves (discounted, as the objective) and its objective term divest_built_cost_{p,n} split by cost line
-    # and the period each is reported in (CUR; the lines add up to the term).  Rows: the realized investment periods;
-    # columns: the entities with a retirable cohort (the lines: (entity, line, period_report)).
+    # The model-built capacity retired (per cohort in the LP, summed over the cohorts of an entity here) and its
+    # objective term divest_built_cost_{p,n} split by cost line and the period each is reported in (CUR; the lines
+    # add up to the term; the fixed cost it saves is reported from the capacity in service, calc_costs).  Rows: the
+    # realized investment periods; columns: the entities with a retirable cohort (the lines: (entity, line,
+    # period_report)).
 
     No file without FlexData or without a retirement option of model-built capacity.
     """
@@ -1888,14 +1887,14 @@ def write_v_divest_built(
     return _write_cohort_decisions(
         h, solve_name=solve_name, output_dir=output_dir, flex_data=flex_data,
         decision=("v_divest_built_p", "v_divest_built_n"), counted=("v_divested_built_p", "v_divested_built_n"),
-        fixed=flex_data.cd_divest_built_fixed, lines=getattr(flex_data, "cdl_divest_built_lines", None),
+        lines=getattr(flex_data, "cdl_divest_built_lines", None),
         outputs=DIVEST_BUILT_OUTPUTS, realized_periods_csv=realized_periods_csv, provider=provider,
         col_names_cache=col_names_cache, col_value=col_value)
 
 
 #: The parquets of :func:`write_v_extend` (output name → the quantity, per realized investment period and entity; the
 #: lines also per cost line and report period).
-EXTEND_OUTPUTS: tuple[str, ...] = ("v_extend", "v_extended", "v_extend_fixed", "v_extend_lines")
+EXTEND_OUTPUTS: tuple[str, ...] = ("v_extend", "v_extended", "v_extend_lines")
 
 
 def write_v_extend(
@@ -1911,17 +1910,16 @@ def write_v_extend(
 ) -> list[Path]:
     """Write the life extensions (:data:`EXTEND_OUTPUTS`), one parquet each.
 
-    # ─── OUTPUT. ─── v_extend / v_extended / v_extend_fixed / v_extend_lines ───
+    # ─── OUTPUT. ─── v_extend / v_extended / v_extend_lines ───
     # extend[e,d]       = Σ_c v_extend[e,c,d]                          (units extended in d, starting to operate)
     # extended[e,d]     = v_extended[e,d]                              (extended units in service in d)
-    # extend_fixed[e,d] = Σ_c v_extend[e,c,d]·us[e]·cd_extend_fixed[e,c,d]    (CUR)
     # extend_lines[e,d,line,d_report] = Σ_c v_extend[e,c,d]·us[e]·cdl_extend_lines[e,c,d,line,d_report]   (CUR)
     #   us = unitsize (state_unitsize for a storage node); d a period whose investment the solve realizes (a fan's
     #   branch periods at its label, weighted by pd_branch_weight)
-    # The capacity kept beyond its end of life (per parent cohort in the LP, summed here), the fixed cost of its years
-    # in service (discounted, as the objective) and its objective term extend_cost_{p,n} split by cost line and the
-    # period each is reported in (the lines add up to the term).  Rows: the realized investment periods; columns: the
-    # entities with an extension option (the lines: (entity, line, period_report)).
+    # The capacity kept beyond its end of life (per parent cohort in the LP, summed here) and its objective term
+    # extend_cost_{p,n} split by cost line and the period each is reported in (the lines add up to its price term;
+    # its fixed cost is reported from the capacity in service, calc_costs).  Rows: the realized investment periods;
+    # columns: the entities with an extension option (the lines: (entity, line, period_report)).
 
     No file without FlexData or without an extension option.
     """
@@ -1930,7 +1928,7 @@ def write_v_extend(
     return _write_cohort_decisions(
         h, solve_name=solve_name, output_dir=output_dir, flex_data=flex_data,
         decision=("v_extend_p", "v_extend_n"), counted=("v_extended_p", "v_extended_n"),
-        fixed=flex_data.cd_extend_fixed, lines=getattr(flex_data, "cdl_extend_lines", None),
+        lines=getattr(flex_data, "cdl_extend_lines", None),
         outputs=EXTEND_OUTPUTS, realized_periods_csv=realized_periods_csv, provider=provider,
         col_names_cache=col_names_cache, col_value=col_value)
 
@@ -1943,7 +1941,6 @@ def _write_cohort_decisions(
     flex_data: "FlexData",
     decision: tuple[str, str],
     counted: tuple[str, str],
-    fixed,
     lines: "pl.DataFrame | None",
     outputs: tuple[str, ...],
     realized_periods_csv: Path | str | None,
@@ -1953,10 +1950,9 @@ def _write_cohort_decisions(
 ) -> list[Path]:
     """The parquets ``outputs`` of a per-cohort decision (``decision`` ``[axis, cohort, d]`` of processes and
     storage nodes) and of its per-entity aggregate (``counted`` ``[axis, d]``): the units decided in d (summed over
-    the cohorts), the aggregate, the decided MW times ``fixed`` (an ``[e, cohort, d]`` Param) and the decided MW
-    times the cost lines ``lines`` (``[e, cohort, d, line, d_report, value]``, a fan's branch decisions weighted to
-    its label); rows the realized investment periods, columns the entities with a decision column ((entity, line,
-    period_report) for the lines)."""
+    the cohorts), the aggregate and the decided MW times the cost lines ``lines`` (``[e, cohort, d, line, d_report,
+    value]``, a fan's branch decisions weighted to its label); rows the realized investment periods, columns the
+    entities with a decision column ((entity, line, period_report) for the lines)."""
     from flextool.process_outputs._fan_labels import at_fan_labels
 
     names = col_names_cache if col_names_cache is not None else h.allVariableNames()
@@ -1971,24 +1967,17 @@ def _write_cohort_decisions(
              if param is not None]
     us = pl.concat(sizes).unique(subset=["e"], keep="first", maintain_order=True)
 
-    def coefficient(param) -> pl.DataFrame:
-        return param.frame.select(pl.col("e").cast(pl.Utf8), pl.col("cohort"), pl.col("d").cast(pl.Utf8),
-                                  pl.col("value").alias("coef"))
-
     mw = decided.join(us, on="e", how="inner").with_columns(mw=pl.col("value") * pl.col("us"))
     keys = ["e", "cohort", "d"]
     long = {
         outputs[0]: decided.group_by("e", "d", maintain_order=True).agg(pl.col("value").sum()),
         outputs[1]: counted_frame,
-        outputs[2]: (mw.join(coefficient(fixed), on=keys, how="inner")
-                     .group_by("e", "d", maintain_order=True)
-                     .agg((pl.col("mw") * pl.col("coef")).sum().alias("value"))),
     }
     realized = _load_realized_invest_periods_list(realized_periods_csv, provider=provider)
     entities = list(dict.fromkeys(decided["e"].to_list()))
     rows = realized if realized is not None else list(dict.fromkeys(decided["d"].to_list()))
     written: list[Path] = []
-    for name in outputs[:3]:
+    for name in outputs[:2]:
         frame = long[name]
         wide = (frame.to_pandas().pivot_table(index="d", columns="e", values="value", aggfunc="sum")
                 if frame.height > 0 else pd.DataFrame())
@@ -2015,7 +2004,7 @@ def _write_cohort_decisions(
                                index=pd.MultiIndex.from_tuples([(solve_name, d) for d in rows],
                                                                names=["solve", "period"])).fillna(0.0)
             out += 0.0
-            path = Path(output_dir) / f"{outputs[3]}__{solve_name}.parquet"
+            path = Path(output_dir) / f"{outputs[2]}__{solve_name}.parquet"
             write_lean_parquet(out, path)
             written.append(path)
     return written

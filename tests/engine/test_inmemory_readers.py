@@ -83,8 +83,6 @@ _REQUIRED_PARAM_ATTRS: tuple[str, ...] = (
     "entity_all_capacity",
     "process_startup_cost",
     "entity_fixed_cost",
-    "entity_lifetime_fixed_cost",
-    "entity_lifetime_fixed_cost_divest",
     "node_annual_flow",
     "group_penalty_inertia",
     "group_penalty_non_synchronous",

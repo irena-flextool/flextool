@@ -179,8 +179,6 @@ for _spec in (
     _v("v_divest_built_lines", ("entity", "line", "period_report"), has_time=False,
        note="objective term of the retirements of model-built capacity by cost line and report period, CUR "
             "(discounted)."),
-    _v("v_divest_built_fixed", ("entity",), has_time=False,
-       note="fixed cost the retirements of model-built capacity save, CUR (discounted)."),
     _v("v_extend",          ("entity",), has_time=False,
        note="units kept in service beyond their end of life, decided in the period (Σ over cohorts); only with a "
             "life extension."),
@@ -189,8 +187,6 @@ for _spec in (
     _v("v_extend_lines",    ("entity", "line", "period_report"), has_time=False,
        note="objective term of the life extensions decided in the period by cost line and report period, CUR "
             "(discounted)."),
-    _v("v_extend_fixed",    ("entity",), has_time=False,
-       note="fixed cost of the life extensions decided in the period over their years in service, CUR (discounted)."),
     _v("v_invest_fan",      ("entity",), has_time=False,
        note="branch-weighted investment of a stochastic fan's branch periods at its label; only with recourse."),
     _v("v_divest_fan",      ("entity",), has_time=False,

@@ -374,18 +374,16 @@ def _read_from_parquet(parquet_dir: Path) -> SimpleNamespace:
     v.invest = _read("v_invest", ("entity",), has_time=False)
     v.divest = _read("v_divest", ("entity",), has_time=False)
     # The retirements of model-built capacity (empty frames without retirable built capacity): units retired in a
-    # period, units retired so far counting in it, the fixed cost they save and their objective term by cost line
-    # and report period (CUR; read_highs_solution write_v_divest_built).
+    # period, units retired so far counting in it and their objective term by cost line and report period (CUR;
+    # read_highs_solution write_v_divest_built).
     v.divest_built = _read("v_divest_built", ("entity",), has_time=False)
     v.divested_built = _read("v_divested_built", ("entity",), has_time=False)
-    v.divest_built_fixed = _read("v_divest_built_fixed", ("entity",), has_time=False)
     v.divest_built_lines = _read("v_divest_built_lines", ("entity", "line", "period_report"), has_time=False)
     # The life extensions (empty frames without an extension option): units extended in a period (starting to
-    # operate there), extended units in service, and their objective terms (CUR; read_highs_solution
-    # write_v_extend).
+    # operate there), extended units in service, and their objective term by cost line and report period (CUR;
+    # read_highs_solution write_v_extend).
     v.extend = _read("v_extend", ("entity",), has_time=False)
     v.extended = _read("v_extended", ("entity",), has_time=False)
-    v.extend_fixed = _read("v_extend_fixed", ("entity",), has_time=False)
     v.extend_lines = _read("v_extend_lines", ("entity", "line", "period_report"), has_time=False)
     # The branch-weighted investment of a stochastic fan's branch periods at its label (recourse; empty frame
     # without the parquet): the reported investment costs inside a fan.

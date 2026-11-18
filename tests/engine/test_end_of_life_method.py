@@ -220,8 +220,8 @@ def test_fixed_cost_of_an_investment_stops_at_its_rounded_end_of_life(tmp_path_f
     """wind_plant decided in p2025 (y_on 5, lifetime_technical 7, fixed_cost 10 CUR/kW/a): its end of life
     Y = 12 lies inside p2030 [10, 20).  previous_seam / closest_seam (also the default, no end_of_life_method) end
     the cohort at 10, so it pays its fixed cost in p2025 only: ``lifetime_fixed_cost = 10 · 1000 ·
-    inflation_op[p2025]``; next_seam keeps p2030: ``10 · 1000 · (inflation_op[p2025] + inflation_op[p2030])``.  The
-    reported operating window has the same periods."""
+    inflation_op[p2025]``; next_seam keeps p2030: ``10 · 1000 · (inflation_op[p2025] + inflation_op[p2030])``, the
+    periods the cohort is in service in."""
     values = solve_values(invest=["p2025"]) + wind_invest(7.0, method) + [
         ["unit", WIND, "fixed_cost", b64(10.0, "float")]]
     (step,) = steps_of(tmp_path_factory, f"eol_fc_{method}", values).values()
@@ -230,9 +230,6 @@ def test_fixed_cost_of_an_investment_stops_at_its_rounded_end_of_life(tmp_path_f
     lfc = fd.ed_lifetime_fixed_cost.frame.filter((pl.col("e").cast(pl.Utf8) == WIND)
                                                  & (pl.col("d").cast(pl.Utf8) == "p2025"))
     assert lfc["value"].to_list() == [pytest.approx(10.0 * 1000.0 * sum(op[d] for d in periods), rel=1e-12)]
-    window = fd.edd_operating_window.filter((pl.col("e").cast(pl.Utf8) == WIND)
-                                            & (pl.col("d_invest").cast(pl.Utf8) == "p2025"))
-    assert sorted(str(d) for d in window["d"].to_list()) == periods
     assert invest_alive(step) == [("p2025", d) for d in periods]
 
 
@@ -242,7 +239,7 @@ def test_lead_time_investment_takes_the_lifetime_of_its_online_period(tmp_path_f
     CUR/kW/a.  The period map describes the plant as constructed (owner decision D50), so the lifetime is that of
     the online period p2025, 20: Y = 5 + 20 = 25, past the horizon end 20 (the last seam) → next_seam +inf, so the
     cohort is in service in p2025 and p2030 and pays its fixed cost there: ``lifetime_fixed_cost[p2020] = 10 · 1000
-    · (inflation_op[p2025] + inflation_op[p2030])``, the reported operating window p2025, p2030.  (The lifetime of
+    · (inflation_op[p2025] + inflation_op[p2030])``.  (The lifetime of
     the decision period, 3, would give Y = 8 → 10: p2025 only.)"""
     values = solve_values(invest=["p2020"]) + [
         ["unit", WIND, "lifetime_method", b64("reinvest_choice", "str")],
@@ -261,9 +258,6 @@ def test_lead_time_investment_takes_the_lifetime_of_its_online_period(tmp_path_f
     lfc = fd.ed_lifetime_fixed_cost.frame.filter((pl.col("e").cast(pl.Utf8) == WIND)
                                                  & (pl.col("d").cast(pl.Utf8) == "p2020"))
     assert lfc["value"].to_list() == [pytest.approx(10.0 * 1000.0 * (op["p2025"] + op["p2030"]), rel=1e-12)]
-    window = fd.edd_operating_window.filter((pl.col("e").cast(pl.Utf8) == WIND)
-                                            & (pl.col("d_invest").cast(pl.Utf8) == "p2020"))
-    assert sorted(str(d) for d in window["d"].to_list()) == ["p2025", "p2030"]
 
 
 # ---------------------------------------------------------------------------
@@ -466,8 +460,8 @@ def test_lead_time_investment_reads_every_period_map_at_its_online_period(tmp_pa
       268 582.70 CUR/MW/a, paid back over payback_time 4 years at the start of each year (the default
       discount_offset_investment 0);
     * end of life Y = 5 + 7 = 12 → next_seam 20: the cohort (y_life 7, y_eol 20) is in service in p2025 and
-      p2030 (5 + 10 = 15 years), the operating window p2025, p2030, the fixed cost ``10 · 1000 ·
-      (inflation_op[p2025] + inflation_op[p2030])`` (``ed_lifetime_fixed_cost`` and ``ed_lifetime_fixed_cost_run``);
+      p2030 (5 + 10 = 15 years), the fixed cost ``10 · 1000 · (inflation_op[p2025] + inflation_op[p2030])``
+      (``ed_lifetime_fixed_cost``);
     * the level price over lifetime_technical 7 (no inflation: G(x) = x) is a = 268 582.70 · 4 / 7 = 153 475.83
       CUR/MW a year in service (the cohort's price; before: the annuity for 4 of p2025's 5 years), so the lump
       ``ed_entity_annual_discounted`` (and its run-level twin ``ed_entity_annual_discounted_run``: the solve is the
@@ -504,13 +498,9 @@ def test_lead_time_investment_reads_every_period_map_at_its_online_period(tmp_pa
         named=True)
     assert (str(cohort["d_on"]), cohort["y_on"], cohort["y_life"], cohort["y_eol"]) == ("p2025", 5.0, 7.0, 20.0)
     assert invest_alive(step) == [("p2020", "p2025"), ("p2020", "p2030")]
-    window = fd.edd_operating_window.filter((pl.col("e").cast(pl.Utf8) == WIND)
-                                            & (pl.col("d_invest").cast(pl.Utf8) == "p2020"))
-    assert sorted(str(d) for d in window["d"].to_list()) == ["p2025", "p2030"]
     op = {str(d): float(v) for d, v in fd.p_inflation_op.frame.select(pl.col("d").cast(pl.Utf8), "value").iter_rows()}
     fixed = 10.0 * 1000.0 * (op["p2025"] + op["p2030"])
     assert _at_decision(fd.ed_lifetime_fixed_cost.frame) == pytest.approx(fixed, rel=1e-12)
-    assert _at_decision(fd.ed_lifetime_fixed_cost_run.frame) == pytest.approx(fixed, rel=1e-12)
 
 
 @pytest.mark.parametrize(("cost", "named"), [

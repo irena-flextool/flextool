@@ -496,8 +496,10 @@ def test_chain_pays_the_years_in_service_of_the_run(tmp_path_factory) -> None:
     p2020, payback_time = lifetime_technical = 12: the end of life 12 is rounded to 10, so the capacity is in
     service in p2020 and p2025.  The y2020 solve (p2020, p2025) prices the decision over its years 0 … 9: A12 ·
     S(1, 10) = 348 483.16 per MW, and so does the reported lump over the run (before: the payback years of the run,
-    0 … 11, A12 · S(1, 12) = 400 000).  The annualized investment cost is 100 · A12 in p2020 and p2025 and 0 in
-    p2030 (before: 100 · A12 · 2/5 = 1.805 M there)."""
+    0 … 11, A12 · S(1, 12) = 400 000).  The investment is reported as one event at its start of operation, p2020:
+    discounted 100 · A12 · S(1, 10), annualized that event ÷ p2020's investment factor S(1, 5) = 100 · A12 ·
+    S(1, 10) / S(1, 5) = 8.049083 M, and 0 in the later periods (before: the yearly annuity, 100 · A12 in p2020 and
+    p2025; earlier still 100 · A12 · 2/5 = 1.805 M in p2030 too)."""
     values = _pinned(12.0)
     steps, _, _ = _RUNS.get(tmp_path_factory, alt="pb_chain_steps", values=values,
                             base_chain=_no_battery_invest(CHAIN))
@@ -506,27 +508,38 @@ def test_chain_pays_the_years_in_service_of_the_run(tmp_path_factory) -> None:
     assert A12 * _s(1, 10) == pytest.approx(348_483.1638, rel=1e-9)
     assert _ed(fd.ed_entity_annual_discounted_run)["p2020"] == pytest.approx(A12 * _s(1, 10), rel=1e-12)
     got = _yearly_investment(_results(tmp_path_factory, "pb_yearly_chain", values, _no_battery_invest(CHAIN)))
-    want = {"p2020": 100.0 * A12, "p2025": 100.0 * A12, "p2030": 0.0, "p2035": 0.0}
+    want = {"p2020": 100.0 * A12 * _s(1, 10) / _s(1, 5), "p2025": 0.0, "p2030": 0.0, "p2035": 0.0}
+    assert want["p2020"] == pytest.approx(8_049_082.8, abs=1.0)
     for d in PERIODS:
         assert got[d] == pytest.approx(want[d], rel=1e-7, abs=1e-6), d
 
 
 @pytest.mark.solver
 def test_chain_reports_the_fixed_cost_of_each_period(tmp_path_factory) -> None:
-    """The chain above with the fixed_cost map {p2020: 10, p2025: 20, p2030: 30, p2035: 40} CUR/kW/a (100 MW in
-    service in p2020 and p2025): the reported lump over the run is 1000 · (10 · S_op(0, 5) + 20 · S_op(5, 10)) =
-    113 884.54 per MW, the objective's of the single solve (test_fixed_cost_of_each_period_in_service), and the
-    annualized fixed cost invested is 100 · 1000 · 10 = 1 M a year in p2020 and 2 M in p2025 (FlexTool 4.5.0: the
-    p2020 value in both, 79 124.24 per MW and 1 M a year)."""
+    """The chain above with the fixed_cost map {p2020: 10, p2025: 20, p2030: 30, p2035: 40} CUR/kW/a (100 MW decided
+    in p2020, in service in p2020 and p2025): the fixed cost invested is reported in each period it is paid,
+    discounted 100 · 1000 · 10 · S_op(0, 5) = 4.436393 M in p2020 and 100 · 1000 · 20 · S_op(5, 10) = 6.952060 M in
+    p2025, and the two add up to the lump the deciding solve's objective charges, 100 MW · ed_lifetime_fixed_cost
+    = 100 · 113 884.54 (the y2020 solve holds p2020 and p2025, the plant's whole life).  Annualized, 100 · 1000 · 10
+    = 1 M a year in p2020 and 2 M in p2025 (FlexTool 4.5.0: the p2020 value in both, 79 124.24 per MW and 1 M a
+    year)."""
     values = [v for v in _pinned(12.0) if v[2] != "fixed_cost"] + [
         ["model", "flexTool", "discount_offset_operations", b64(0.5, "float")],
         ["unit", PLANT, "fixed_cost", _period_map(FIXED_COST_MAP)]]
     steps, _, _ = _RUNS.get(tmp_path_factory, alt="pb_chain_fixed_steps", values=values,
                             base_chain=_no_battery_invest(CHAIN))
-    run_lump = _ed(steps["y2020_5week"].flex_data.ed_lifetime_fixed_cost_run)["p2020"]
-    assert run_lump == pytest.approx(1000.0 * (10.0 * _s_op(0, 5) + 20.0 * _s_op(5, 10)), rel=1e-12)
-    assert run_lump == pytest.approx(113_884.54, abs=0.01)
-    got = _yearly_fixed_cost(_results(tmp_path_factory, "pb_yearly_chain_fixed", values, _no_battery_invest(CHAIN)))
+    lump = _ed(steps["y2020_5week"].flex_data.ed_lifetime_fixed_cost)["p2020"]
+    assert lump == pytest.approx(113_884.54, abs=0.01)
+    results = _results(tmp_path_factory, "pb_yearly_chain_fixed", values, _no_battery_invest(CHAIN))
+    unit = results["cost_unit_discounted__d"]
+    unit = unit[unit["unit"] == PLANT].set_index("period")["fixed cost invested"] * MEGA
+    want = {"p2020": 100.0 * 1000.0 * 10.0 * _s_op(0, 5), "p2025": 100.0 * 1000.0 * 20.0 * _s_op(5, 10),
+            "p2030": 0.0, "p2035": 0.0}
+    assert (want["p2020"], want["p2025"]) == (pytest.approx(4.436393e6, abs=1.0), pytest.approx(6.952060e6, abs=1.0))
+    for d in PERIODS:
+        assert unit.get(d, 0.0) == pytest.approx(want[d], rel=1e-7, abs=1e-6), d
+    assert unit.sum() == pytest.approx(100.0 * lump, rel=1e-7)
+    got = _yearly_fixed_cost(results)
     want = {"p2020": 1.0e6, "p2025": 2.0e6, "p2030": 0.0, "p2035": 0.0}
     for d in PERIODS:
         assert got[d] == pytest.approx(want[d], rel=1e-7, abs=1e-6), d

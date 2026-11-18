@@ -1,5 +1,5 @@
-solve,period,unit,commodity_cost,other operational,investment,replacement,extension,retirement,salvage end of life,salvage replaced,salvage extended,salvage economic,fixed cost pre-existing,fixed cost invested
-y2020_2029_2x5y,p2020,coal_plant,4.6005,0.0,3.9903,0.0,0.0,0.0,0.0,0.0,0.0,0.0,10.0,8.0509
-y2020_2029_2x5y,p2020,wind_plant,0.0,0.0,38.5558,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-y2020_2029_2x5y,p2025,coal_plant,4.6005,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,10.0,8.0509
-y2020_2029_2x5y,p2025,wind_plant,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+solve,period,unit,commodity_cost,other operational,investment,replacement,extension,retirement,salvage,fixed cost pre-existing,fixed cost invested
+y2020_2029_2x5y,p2020,coal_plant,4.6005,0.0,3.9903,0.0,0.0,0.0,0.0,10.0,8.0509
+y2020_2029_2x5y,p2020,wind_plant,0.0,0.0,38.5558,0.0,0.0,0.0,0.0,0.0,0.0
+y2020_2029_2x5y,p2025,coal_plant,4.6005,0.0,0.0,0.0,0.0,0.0,0.0,10.0,8.0509
+y2020_2029_2x5y,p2025,wind_plant,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0

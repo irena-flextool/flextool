@@ -36,10 +36,10 @@ is a clean disjoint concat):
   in the roll's realized dispatch set (``flex_data.realized_dispatch``).
 * ``(period)``-keyed attrs → keep rows whose ``period`` is in the roll's
   realized-invest set.
-* Attr-specific rules (see :func:`_apply_realized_filter`): the invest /
-  divest lumps (``entity_annual_[divest_]discounted``,
-  ``entity_lifetime_fixed_cost[_divest]``) come from the solve that
-  realizes the decision period; ``entity_all_existing`` keeps its
+* Attr-specific rules (see :func:`_apply_realized_filter`): the invest
+  lump (``entity_annual_discounted``) and the cost lines of the decisions
+  (``entity_invest_lines`` / ``entity_divest_lines``) come from the solve
+  that realizes the decision period; ``entity_all_existing`` keeps its
   realized ∪ invest-period filter; the run-level attrs of the reported
   costs (discount factors, user existing capacity, fixed cost) are kept
   over the solve's own periods; the solve's own operations factor over
@@ -84,9 +84,6 @@ _DEAD_PARAMS: frozenset[str] = frozenset(
 
 # Attr-specific realized-filter hack families (preserved from
 # ``read_parameters_multi``).
-_LIFETIME_ATTRS: frozenset[str] = frozenset(
-    {"entity_lifetime_fixed_cost", "entity_lifetime_fixed_cost_divest"}
-)
 _EXISTING_ATTRS: frozenset[str] = frozenset({"entity_all_existing"})
 # Run-level attrs of the reported costs: equal in every solve that holds the period (the run-level discount
 # factors, the user's existing capacity and the fixed cost), kept over the solve's own periods, so that the union
@@ -312,12 +309,6 @@ def _apply_realized_filter(
         decided = obj.index.get_level_values("period_decision").astype(str)
         return obj[decided.isin(realized_invest_periods)]
 
-    # Hack 1 — entity_lifetime_fixed_cost[_divest]: the lifetime fixed-cost
-    # lump of a decision comes from the solve that realizes the decision
-    # period (a nested invest solve realizes no dispatch).
-    if attr in _LIFETIME_ATTRS:
-        return _filter_by_period(obj, realized_invest_periods)
-
     if attr in _RUN_PERIOD_ATTRS:
         return _filter_by_period(obj, _solve_periods(flex_data))
 
@@ -484,12 +475,9 @@ _INVEST_SETS: frozenset[str] = frozenset(
 # the realized-invest DECISION period (mirrors ``drop_levels``); the
 # period the capacity comes online or is in construction may be a
 # look-ahead period of the deciding solve.
-# The operating / retirement windows of the reported annualized costs are keyed by their decision too.
 _DECISION_SETS: dict[str, str] = {
     "edd_invest_commission": "period_invest",
     "edd_invest_in_construction": "period_invest",
-    "edd_operating_window": "period_invest",
-    "edd_retire_window": "period_divest",
 }
 
 # dtt / dtttdt — the storage-adjacency sets whose current ``(period,

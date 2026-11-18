@@ -452,10 +452,11 @@ def test_retirement_of_built_capacity_in_the_results(tmp_path_factory) -> None:
     * *salvage end of life* at p2030 (its end of life): the 100 MW plant's credit −100·S·v^10 (the investment's
       line) and the retired 40 MW's credit given back +40·S·v^10: −60·S·v^10;
 
-    the retirement's lines add up to 40 × change.  The fixed cost no longer paid −40 · 100 000 · Σ_{k=5..9}
-    1.05^-(k+0.5) (discount_offset_operations 0.5).  Annualized: each line divided by its period's investment
-    factor (p2025: Σ_{k=5..9} v^(k+1), p2030: Σ_{k=10..14} v^(k+1)); the fixed cost reduction −40 · 100 000 a year
-    in p2025."""
+    the retirement's lines add up to 40 × change; the cost tables show the salvage causes as one *salvage* line.
+    The fixed cost no longer paid, in p2025 (the retired 40 MW count until the end of life, the start of p2030):
+    −40 · 100 000 · Σ_{k=5..9} 1.05^-(k+0.5) (discount_offset_operations 0.5).  Annualized: each line divided by
+    its period's investment factor (p2025: Σ_{k=5..9} v^(k+1), p2030: Σ_{k=10..14} v^(k+1)); the fixed cost
+    reduction −40 · 100 000 a year in p2025."""
     import pandas as pd
 
     from tests.engine.test_chain_costs import MEGA, _row, _write_csv
@@ -474,8 +475,8 @@ def test_retirement_of_built_capacity_in_the_results(tmp_path_factory) -> None:
     discounted = pd.read_csv(out / "cost_unit_discounted__d.csv")
     annualized = pd.read_csv(out / "cost_unit_annualized__d.csv")
     factor = {"p2025": sum(V ** (k + 1) for k in range(5, 10)), "p2030": sum(V ** (k + 1) for k in range(10, 15))}
-    want = {("p2025", "retirement"): 0.0, ("p2025", "salvage economic"): economic,
-            ("p2030", "salvage end of life"): -100.0 * S * V ** 10 + back}
+    want = {("p2025", "retirement"): 0.0, ("p2025", "salvage"): economic,
+            ("p2030", "salvage"): -100.0 * S * V ** 10 + back}
     for (d, line), amount in want.items():
         assert _row(discounted, d)[line] * MEGA == pytest.approx(amount, rel=1e-7, abs=1e-3), (d, line)
         assert _row(annualized, d)[line] * MEGA == pytest.approx(amount / factor[d], rel=1e-7, abs=1e-3), (d, line)

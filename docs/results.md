@@ -102,14 +102,15 @@ y-axis is `m3/h` for a water node and `MWh/h` by default. A label without tokens
     - *retirement* — M[CUR] the contract settlement of retired model-built capacity, in the retirement period: the
       payments of its loan up to then and the balance still owed, less the capital its years in service were
       charged (0 when `discount_rate` equals the `social_discount_rate`; existing capacity has no contract)
-    - *salvage end of life* — M[CUR] the salvage credit of a plant (its `net_salvage_value`, levelled over its
-      lifetime, for its years in service inside the horizon; negative for a positive salvage value), at its end of
-      life; a retirement gives back here the credit of the years the plant no longer serves
-    - *salvage replaced* — M[CUR] the same for a plant of a `reinvest_automatic` chain (it is replaced at its end of
-      life)
-    - *salvage extended* — M[CUR] the salvage value a life extension gives up (the `net_salvage_value` at the
-      extended plant's end of life), part of the extension's price, when the extension starts
-    - *salvage economic* — M[CUR] the salvage value received when capacity is retired, in the retirement period
+    - *salvage* — M[CUR] the salvage of new capacity (negative for a positive `net_salvage_value`): the salvage
+      credit of a plant (its `net_salvage_value`, levelled over its lifetime, for its years in service inside the
+      horizon) at its end of life, also for a plant of a `reinvest_automatic` chain that is replaced then (a
+      retirement gives back here the credit of the years the plant no longer serves); the salvage value a life
+      extension gives up (the `net_salvage_value` at the extended plant's end of life), part of the extension's
+      price, when the extension starts; and the salvage value received when capacity is retired, in the
+      retirement period. `summary_solve.csv` shows the four apart as *Salvage end of life*, *Salvage replaced*,
+      *Salvage extended* and *Salvage economic*; the capacity that leaves service by cause is in the
+      [retirement tables](#capacity-by-cohort-and-retirements)
     - *fixed cost pre-existing* — M[CUR] fixed O&M for pre-existing capacity
     - *investment pre-existing* — M[CUR] the replacement of pre-existing capacity at its end of life
       (`lifetime_method` *reinvest_automatic*), at the `invest_cost` of the period the replacement comes online;
@@ -117,8 +118,7 @@ y-axis is `m3/h` for a water node and `MWh/h` by default. A label without tokens
     - *salvage pre-existing* — M[CUR] the salvage credit of pre-existing capacity that may be retired (and of the
       replacements of *reinvest_automatic* capacity), at its end of life. Only where there is one. Like *fixed
       cost pre-existing* and *investment pre-existing* it is not in the optimised objective (no decision changes
-      it); a retirement of that capacity gives it back in *salvage end of life* / *salvage replaced* and
-      *retirement*, which are.
+      it); a retirement of that capacity gives it back in *salvage* and *retirement*, which are.
     - *fixed cost invested* — M[CUR] fixed O&M for newly invested capacity, in each period it is paid
     - *fixed cost reduction of divestments* — M[CUR] fixed O&M removed by divestments, in each period it is saved
     - *commodity cost* / *commodity sales* — M[CUR] cost of buying / revenue from selling commodities
@@ -136,7 +136,7 @@ y-axis is `m3/h` for a water node and `MWh/h` by default. A label without tokens
     period it happens, at the amount the objective charges for it, so the discounted costs add up to the
     objective (`summary_solve.csv` has the total as *Total cost counted in the objective*: the calculated total
     without the pre-existing constants). An investment and its salvage are charged inside the horizon only: for
-    capacity whose life ends at or after the end of the horizon, *investment* and *salvage …* are the shares of
+    capacity whose life ends at or after the end of the horizon, *investment* and *salvage* are the shares of
     its years in service inside the horizon, and the salvage is reported in the last period (no period holds its
     end of life). The fixed costs of new and retired capacity are reported in each period they are paid or saved,
     from the capacity in service ([Capacity by cohort](#capacity-by-cohort-and-retirements)).
@@ -220,7 +220,7 @@ The categories mirror the system [Costs](#costs) decomposition, restricted to th
 - *other operational* — M[CUR] other variable O&M costs
 - *starts* — M[CUR] start-up costs (units)
 - *ramps* — M[CUR] ramp costs (units with a `ramp_cost`)
-- the investment-type categories — M[CUR] *investment*, *replacement*, *extension*, *retirement*, *salvage end of life*, *salvage replaced*, *salvage extended*, *salvage economic* and (only for entities with one) *investment pre-existing* / *salvage pre-existing*, as in the system [Costs](#costs), with the same names in the `node` table (where the capacity is node-state storage energy); only for a class with investment-type costs
+- the investment-type categories — M[CUR] *investment*, *replacement*, *extension*, *retirement*, *salvage* and (only for entities with one) *investment pre-existing* / *salvage pre-existing*, as in the system [Costs](#costs), with the same names in the `node` table (where the capacity is node-state storage energy); only for a class with investment-type costs
 - *fixed cost pre-existing* / *fixed cost invested* / *fixed cost reduction of divestments* — M[CUR] fixed O&M for pre-existing, newly invested and divested capacity
 - in the *annualized* tables every category is the discounted one divided by the period's discount factor, as in the system [Costs](#costs)
 - *upward slack penalty* / *downward slack penalty* (`node` table only) — M[CUR] cost of involuntary demand reduction / increase at the node

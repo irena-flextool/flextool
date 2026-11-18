@@ -429,10 +429,10 @@ class TestCostCategoryIntegration:
         tpl = ct.load_color_template()
         # A representative sample spanning semantic groups (fuel, invest,
         # slack, CO2).  If any of these disappear, the YAML drifted.
-        from flextool.engine.preprocess.params._cost_lines import COST_LINES
+        from flextool.engine.preprocess.params._cost_lines import TABLE_LINES
 
         expected_labels = [
-            *COST_LINES,
+            *TABLE_LINES,
             "commodity_cost",
             "co2",
             "upward slack penalty",

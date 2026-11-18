@@ -1,14 +1,15 @@
 import pandas as pd
 
-from flextool.engine.preprocess.params._cost_lines import COST_LINES, PRE_EXISTING_LINES
+from flextool.engine.preprocess.params._cost_lines import PRE_EXISTING_LINES
 from flextool.process_outputs.calc_costs import lines_by_entity
 
 
 def shown_lines(lines: pd.DataFrame) -> list[str]:
-    """The cost lines a cost table shows: every line, the two pre-existing ones only where they are not 0 (the
-    objective constants of existing capacity, as *fixed cost pre-existing*)."""
-    return [c for c in COST_LINES
-            if c not in PRE_EXISTING_LINES or (c in lines.columns and bool(lines[c].fillna(0.0).ne(0.0).any()))]
+    """The cost lines of ``lines`` (columns: the lines of a cost table, or of the text summary by cause) a table
+    shows, in their order: every line, the two pre-existing ones only where they are not 0 (the objective constants
+    of existing capacity, as *fixed cost pre-existing*)."""
+    return [c for c in lines.columns
+            if c not in PRE_EXISTING_LINES or bool(lines[c].fillna(0.0).ne(0.0).any())]
 
 
 def generic(par, s, v, r, debug):
@@ -126,26 +127,17 @@ def cost_summaries(par, s, v, r, debug):
     investment_costs['capacity margin penalty'] = r.costPenalty_capacity_margin_d / to_millions
     investment_costs = investment_costs.fillna(0.0)
 
-    # Annualized: the cost lines, the fixed cost of existing capacity and the capacity margin penalty are the
-    # discounted costs divided by the period's discount factor (investment for the lines, operations for the
-    # others): an event spread evenly over the period's years.  The fixed costs of new and retired capacity are the
-    # yearly amounts of every vintage and retirement in effect in the period (calc_costs ANN.).
+    # Annualized: every category is the discounted cost divided by the period's discount factor (investment for the
+    # cost lines, operations for the others): an event spread evenly over the period's years, a fixed cost its
+    # yearly amount.
     discount_inv = par.inflation_factor_investment_yearly
-    yearly = {
-        'fixed cost invested': r.costFixedInvested_yearly,
-        'fixed cost reduction of divestments': r.costFixedDivested_yearly,
-    }
-    extra = [d for frame in yearly.values() for d in frame.index[frame.fillna(0.0).ne(0.0)]]
-    annual_index = investment_index.union(pd.Index(list(dict.fromkeys(extra)), name=investment_index.name))
-    annual_invest_costs = pd.DataFrame(index=annual_index, columns=investment_costs.columns, dtype=float)
+    annual_invest_costs = pd.DataFrame(index=investment_index, columns=investment_costs.columns, dtype=float)
     annual_invest_costs.columns.name = 'category'
-    for col, series in yearly.items():
-        annual_invest_costs[col] = series.reindex(annual_index) / to_millions
     for line in shown:
-        annual_invest_costs[line] = investment_costs[line].reindex(annual_index).div(
-            discount_inv.reindex(annual_index), axis=0)
-    annual_invest_costs['fixed cost pre-existing'] = investment_costs['fixed cost pre-existing'].div(discount_ops, axis=0)
-    annual_invest_costs['capacity margin penalty'] = investment_costs['capacity margin penalty'].div(discount_ops, axis=0)
+        annual_invest_costs[line] = investment_costs[line].div(discount_inv.reindex(investment_index), axis=0)
+    for column in ('fixed cost pre-existing', 'fixed cost invested', 'fixed cost reduction of divestments',
+                   'capacity margin penalty'):
+        annual_invest_costs[column] = investment_costs[column].div(discount_ops.reindex(investment_index), axis=0)
     annual_invest_costs = annual_invest_costs.fillna(0.0)
 
     # 4. Combined summary (investment + dispatch aggregated to period)
@@ -323,25 +315,16 @@ def cost_breakdown_by_entity(par, s, v, r, debug):
                 ann_pieces[line] = own[line].div(factor) / to_millions
 
         # --- Fixed costs (already discounted M-path) ---
-        # Skip categories whose sliced frame is empty (dispatch-only models
-        # have empty v.invest / v.divest).
-        # Annualized: the fixed cost of existing capacity without its discount factor; the others are the
-        # yearly amounts in every period the capacity operates or the retirement applies (calc_costs ANN.).
+        # Skip categories whose sliced frame is empty (no capacity of the class in service).  Annualized: the
+        # discounted cost without the period's operations discount factor (the yearly fixed cost).
         inv_specs = [
-            ('fixed cost pre-existing', r.cost_entity_fixed_pre_existing, None),
-            ('fixed cost invested', r.cost_entity_fixed_invested, r.cost_entity_fixed_invested_yearly),
-            ('fixed cost reduction of divestments', r.cost_entity_fixed_divested,
-             r.cost_entity_fixed_divested_yearly),
+            ('fixed cost pre-existing', r.cost_entity_fixed_pre_existing),
+            ('fixed cost invested', r.cost_entity_fixed_invested),
+            ('fixed cost reduction of divestments', r.cost_entity_fixed_divested),
         ]
-        for cat, frame, yearly in inv_specs:
+        for cat, frame in inv_specs:
             d = _inv_discounted(frame, entities)
-            if yearly is None:
-                a = _inv_annualized(frame, entities, discount=discount_ops)
-            else:
-                # Already per year (/1e6 only); the rows of the discounted lumps stay (as zeros where no
-                # capacity of the entity operates), so a category keeps its column without investments.
-                index = yearly.index.union(frame.index) if len(yearly.index) else frame.index
-                a = _inv_discounted(yearly.reindex(index=index, columns=frame.columns).fillna(0.0), entities)
+            a = _inv_annualized(frame, entities, discount=discount_ops)
             if a is not None:
                 ann_pieces[cat] = a
             if d is not None:

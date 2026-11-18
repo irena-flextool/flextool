@@ -1108,11 +1108,11 @@ def _build_p_process_per_arc(
 
 def _build_entity_universe(flex_data: "FlexData") -> list[str]:
     """Build the densify entity universe for the (entity, period) wide
-    frames (``entity_fixed_cost`` / ``entity_lifetime_fixed_cost*``).
+    frames (``entity_fixed_cost``, ``entity_annual_discounted``, ...).
 
-    ``calc_costs.py:cost_entity_fixed_invested`` indexes those frames by
-    ``v.invest.columns`` / ``v.divest.columns`` — the cross-solve column
-    union — so every column they reach must be present.  The returned
+    The cost calculations index those frames by ``v.invest.columns`` /
+    ``v.divest.columns`` — the cross-solve column union — so every column
+    they reach must be present.  The returned
     list is the order-preserving, de-duplicated union of:
 
     * ``nodeBalance`` nodes,
@@ -1128,9 +1128,8 @@ def _build_entity_universe(flex_data: "FlexData") -> list[str]:
     ``v.divest`` carry the cross-solve union.  An entity that is
     invest-eligible in some other roll (e.g. ``CaboVerde_wind``) is
     otherwise absent from every step's universe and so missing from the
-    concatenated ``entity_lifetime_fixed_cost`` columns, raising
-    ``KeyError`` when ``calc_costs`` indexes by ``v.invest.columns``
-    (calc_costs.py:168).  Densifying over the carrier's full entity list
+    concatenated columns, raising ``KeyError`` when ``calc_costs`` indexes
+    by ``v.invest.columns``.  Densifying over the carrier's full entity list
     zero-fills those cells, matching the legacy CSV path's full-universe
     coverage.
     """
@@ -1250,10 +1249,8 @@ def read_parameters(
     p = SimpleNamespace()
 
     # Entity universe — used to densify the (entity, period) wide frames
-    # so downstream consumers like
-    # ``calc_costs.py:cost_entity_fixed_invested`` find every invest
-    # entity in ``par.entity_lifetime_fixed_cost.columns`` (the legacy
-    # CSV path emitted zero-filled rows for every entity).
+    # so the cost calculations find every invest entity in their columns
+    # (the legacy CSV path emitted zero-filled rows for every entity).
     _entity_universe = _build_entity_universe(flex_data)
 
     # ─── Write-once static params (entity-level scalars / per-arc tables) ──
@@ -1633,25 +1630,10 @@ def read_parameters(
         col_dims=("p", "source", "sink"), col_names=("process", "source", "sink"),
     )
 
-    # entity_fixed_cost / entity_lifetime_fixed_cost / entity_lifetime_fixed_cost_divest.
-    # Densify across the full entity universe — calc_costs.py:154-155
-    # indexes these by ``v.invest.columns`` / ``v.divest.columns``,
-    # which can include any entity.
+    # entity_fixed_cost — densified across the full entity universe (calc_costs prices the capacity of every
+    # entity in service with it).
     p.entity_fixed_cost = _pdX_per_entity(
         flex_data.p_ed_fixed_cost, solve_name=solve_name,
-        entity_dim="e", col_name="entity", flex_data=flex_data,
-        densify_entities=_entity_universe,
-    )
-    # The reported costs read the run-level lumps (discounted from the start of the run over the run's
-    # periods, ``_npv`` "Run-level fields of the reported costs"); a csv-dump reload carries only the
-    # per-solve lumps.
-    p.entity_lifetime_fixed_cost = _pdX_per_entity(
-        _with_fan_label_rows(_run_field(flex_data, "ed_lifetime_fixed_cost"), flex_data), solve_name=solve_name,
-        entity_dim="e", col_name="entity", flex_data=flex_data,
-        densify_entities=_entity_universe,
-    )
-    p.entity_lifetime_fixed_cost_divest = _pdX_per_entity(
-        _run_field(flex_data, "ed_lifetime_fixed_cost_divest"), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
         densify_entities=_entity_universe,
     )

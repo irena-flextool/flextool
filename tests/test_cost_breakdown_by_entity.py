@@ -51,7 +51,7 @@ if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))
 
 from flextool.engine import run_chain_from_db  # noqa: E402
-from flextool.engine.preprocess.params._cost_lines import COST_LINES  # noqa: E402
+from flextool.engine.preprocess.params._cost_lines import TABLE_LINES  # noqa: E402
 from flextool.process_outputs.out_costs import (  # noqa: E402
     cost_breakdown_by_entity,
     cost_summaries,
@@ -136,7 +136,7 @@ SYSTEM_ONLY_CATEGORIES = {
 # Direct per-category matches (same column name on both sides): the investment-type cost lines too (the same
 # names in the system and in every per-entity table).
 DIRECT_CATEGORIES = [
-    *COST_LINES,
+    *TABLE_LINES,
     "commodity_cost",
     "commodity_sales",
     "co2",
