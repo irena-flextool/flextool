@@ -35,7 +35,13 @@ from flextool.engine.input._axis_enums import (
     rename_to_axis,
     schema_dtype,
 )
-from flextool.engine.preprocess.params._cohorts import KIND_EXTEND, KIND_INVEST, LIFETIME_METHODS, PRICE_COLUMNS
+from flextool.engine.preprocess.params._cohorts import (
+    KIND_EXTEND,
+    KIND_INVEST,
+    LIFETIME_METHODS,
+    PRICE_COLUMNS,
+    within_life,
+)
 
 _INF = float("inf")
 #: The kinds of the cohorts of this solve that are model-built capacity: an investment, a life extension.
@@ -139,8 +145,8 @@ def built_retirement_options(cohort: pl.DataFrame | None,
                                              dtype=pl.Float64)))
         alive_parts.append(carried_rows.lazy().select("e", "cohort", "y_on", "y_eol")
                                        .join(periods, how="cross")
-                                       .filter((pl.col("y_on").is_null() | (pl.col("y") >= pl.col("y_on")))
-                                               & (pl.col("y") < pl.col("y_eol")))
+                                       .filter(within_life(pl.col("y"), pl.col("y_on").fill_null(-_INF),
+                                                           pl.col("y_eol")))
                                        .select("e", "cohort", "d").collect())
     if not alive_parts:
         return None

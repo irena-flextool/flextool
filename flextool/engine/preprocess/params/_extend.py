@@ -47,6 +47,7 @@ from flextool.engine.preprocess.params._cohorts import (
     _alive_schema,
     _cohort_frame,
     _Calendar,
+    within_life,
 )
 from flextool.engine.preprocess.params._period_values import ed_values_on
 from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
@@ -230,7 +231,7 @@ def extension_frames(source: "InputSource",
     alive_x = (rows.select("e", "cohort", "x", "d", "y_eol_x")
                    .join(forward.rename({"d_retire": "d", "d": "d_all"}), on="d", how="inner")
                    .join(yr, on="d_all", how="inner")
-                   .filter(pl.col("y") < pl.col("y_eol_x") - YEAR_TOL))
+                   .filter(within_life(pl.col("y"), None, pl.col("y_eol_x"))))
     served = _served(cohort_alive, parents.filter(pl.col("kind") == KIND_CARRIED), yr)
     d_last = _last_periods(rows.select("e", "cohort", "d", "y_d"), served, forward, yr)
     rows = rows.join(d_last, on=["e", "cohort", "d"], how="left")
@@ -273,7 +274,7 @@ def _served(cohort_alive: pl.DataFrame | None, carried: pl.DataFrame, yr: pl.Dat
                                          pl.col("d").cast(pl.Utf8).alias("d_last")))
     if carried.height > 0:
         parts.append(carried.select("e", "cohort", "y_on", "y_eol").join(yr, how="cross")
-                     .filter((pl.col("y") >= pl.col("y_on") - YEAR_TOL) & (pl.col("y") < pl.col("y_eol") - YEAR_TOL))
+                     .filter(within_life(pl.col("y"), pl.col("y_on"), pl.col("y_eol")))
                      .select("e", "cohort", pl.col("d_all").alias("d_last")))
     return pl.concat(parts)
 

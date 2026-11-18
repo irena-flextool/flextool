@@ -120,7 +120,7 @@ from flextool.engine.preprocess._annuity import (
     require_lifetime,
 )
 from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
-from flextool.engine.preprocess.params._cohorts import BOUNDED_METHODS, PRICE_COLUMNS
+from flextool.engine.preprocess.params._cohorts import BOUNDED_METHODS, PRICE_COLUMNS, within_life
 from flextool.engine.input._lifetime_roles import (
     LIFETIME_TECHNICAL,
     NET_SALVAGE_VALUE,
@@ -1025,7 +1025,7 @@ def _generation_walk(walk: pl.DataFrame, years: dict[str, float], gens: pl.DataF
                       schema={"d_all": pl.Utf8, "y": pl.Float64})
     walked = walk.join(yr, on="d_all", how="inner")
     rows = (walked.join(gens, on=["e", root], how="inner")
-                  .filter((pl.col("y") >= pl.col("y_on") - YEAR_TOL) & (pl.col("y") < pl.col("y_eol") - YEAR_TOL)))
+                  .filter(within_life(pl.col("y"), pl.col("y_on"), pl.col("y_eol"))))
     at = walked.select("e", root, pl.col("d_all").alias("_at"), pl.col("y").alias("_y"))
 
     def label(year: str, out: str) -> pl.DataFrame:
@@ -1546,7 +1546,7 @@ def existing_salvage(source: "InputSource",
     in_use = {str(d) for d in period_in_use}
     alive = (cohorts.filter(pl.col("a_x") != 0.0).select("e", "y_eol", "a_x")
                     .join(walk_periods, how="cross")
-                    .filter((pl.col("y") >= y0 - YEAR_TOL) & (pl.col("y") < pl.col("y_eol") - YEAR_TOL))
+                    .filter(within_life(pl.col("y"), pl.lit(y0), pl.col("y_eol")))
                     .join(factors, on="d_all", how="left"))
     missing = alive.filter(pl.col("factor").is_null())
     if missing.height > 0:
@@ -1573,7 +1573,7 @@ def existing_salvage(source: "InputSource",
     y_d = pl.DataFrame({"d": list(chain_years), "y_d": [float(v) for v in chain_years.values()]},
                        schema={"d": pl.Utf8, "y_d": pl.Float64})
     in_service = (anchors.join(cohorts.select("e", "y_eol"), on="e", how="inner").join(y_d, on="d", how="left")
-                         .filter(pl.col("y_d").is_null() | (pl.col("y_d") < pl.col("y_eol") - YEAR_TOL))
+                         .filter(pl.col("y_d").is_null() | within_life(pl.col("y_d"), None, pl.col("y_eol")))
                          .select("e", "d"))
     parts = (in_service.join(s_d, on=["e", "d"], how="left")
                        .join(take_back, on=["e", "d"], how="left")
@@ -1629,7 +1629,6 @@ def existing_replacement_prices(source: "InputSource",
     plant itself (the first generation, sunk) has none.  A replacement
     starting inside a stochastic fan takes the values of ``d``'s branch (:func:`_labels_on_lineage`)."""
     from flextool.engine.preprocess.params._cohorts import existing_generations, salvage_periods
-    from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
     empty = pl.DataFrame(schema={"e": pl.Utf8, "d_on": pl.Utf8, "d": pl.Utf8, "value": pl.Float64})
     gens = chain_generations(existing_generations(source, active_solve, workdir, provider=provider), "existing")
     gens = gens.filter(~pl.col("cohort").str.ends_with(":1"))
@@ -1638,7 +1637,7 @@ def existing_replacement_prices(source: "InputSource",
     if gens.height == 0 or yd.height == 0:
         return empty
     rows = (gens.join(yd, how="cross")
-                .filter((pl.col("y_d") >= pl.col("y_on") - YEAR_TOL) & (pl.col("y_d") < pl.col("y_eol") - YEAR_TOL)))
+                .filter(within_life(pl.col("y_d"), pl.col("y_on"), pl.col("y_eol"))))
     if rows.height == 0:
         return empty
     last = salvage_periods(source, active_solve, years, provider, [None])[0]
@@ -1926,7 +1925,7 @@ def _settlements(source: "InputSource",
     # The periods each cohort is in service in (history included), on the lineage of the retirement period.
     walk = (anchors.select("e", "cohort", "d", "y_d", "y_on", "y_eol")
                    .join(walk_periods.with_columns(on_d.alias("d_all")), how="cross")
-                   .filter((pl.col("y") >= pl.col("y_on") - YEAR_TOL) & (pl.col("y") < pl.col("y_eol") - YEAR_TOL)))
+                   .filter(within_life(pl.col("y"), pl.col("y_on"), pl.col("y_eol"))))
     if lineage is not None:
         walk = _apply_lineage_filter(walk.lazy(), lineage, in_use, d_dtype).collect()
     walk = walk.join(factors.with_columns(on_d.alias("d_all")), on="d_all", how="left")
@@ -2068,7 +2067,7 @@ def chain_retirement_costs(source: "InputSource",
     rows = (opts.join(yd, on="d", how="inner")
                 .join(gens.select("e", "root", "cohort", "y_on", "y_eol", "d_on", "d_eol"), on=["e", "root"],
                       how="inner")
-                .filter(pl.col("y_eol") > pl.col("y_d") + YEAR_TOL))
+                .filter(within_life(pl.col("y_d"), None, pl.col("y_eol"))))
     if rows.height == 0:
         return empty, no_lines
     rows = _labels_on_lineage(rows, years, lineage, last)
@@ -2087,7 +2086,7 @@ def chain_retirement_costs(source: "InputSource",
         return empty, no_lines
     parts = parts.select(pl.col("e").cast(pl.Utf8), pl.col("cohort").alias("plant"), pl.col("d").cast(pl.Utf8),
                          "settle", "cash", "sold", "taken")
-    current = (pl.col("y_on") <= pl.col("y_d") + YEAR_TOL)
+    current = within_life(pl.col("y_d"), pl.col("y_on"), None)
     starts = pl.col("cohort").str.ends_with(":1") & pl.lit(first_settles)
     settles = current & ((pl.col("y_d") - pl.col("y_on") > YEAR_TOL) | starts)
     joined = rows.join(parts, on=["e", "plant", "d"], how="left").sort("e", "root", "d", "y_on")

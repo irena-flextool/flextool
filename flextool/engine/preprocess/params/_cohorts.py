@@ -67,7 +67,8 @@ give a period different years (the run calendar's ``conflicts``), the run calend
 decides.
 
 Views (the only lifetime-gate code): :func:`existing_eol`, :func:`existing_expired`,
-:func:`no_reinvestment_closed`, :func:`invest_alive`, :func:`invest_prebuilt`, :func:`retire_active`.
+:func:`no_reinvestment_closed`, :func:`invest_alive`, :func:`invest_prebuilt`, :func:`retire_active`; the test
+whether a year lies in a life ``[y_on, y_eol)``, with its tolerance, is :func:`within_life`.
 
 A cohort taken from the ``edd_invest`` seed of a sub-solve without the investment walk has unknown years
 (``y_on`` null, ``y_eol = +inf``): its alive periods are the seed's, and it is never pre-built
@@ -396,6 +397,28 @@ def window_end(y_on: float, y_life: float, method: str, cal: _Calendar,
     return y_life, y_end, cal.eol(y_end, eol_method)
 
 
+def within_life(y: pl.Expr, y_on: pl.Expr | None, y_eol: pl.Expr | None) -> pl.Expr:
+    """Whether the year ``y`` lies in the life ``[y_on, y_eol)`` of a plant, the one in-service test of the lifetime
+    rule (``y_on`` / ``y_eol`` ``None``: no bound on that side)::
+
+        y_on − YEAR_TOL <= y < y_eol − YEAR_TOL
+
+    Every year it compares is a year of the run (:func:`cohort_years`) and an end of life is rounded to a seam,
+    which is a period's own year, so on those years this is ``y_on <= y < y_eol`` exactly; the tolerance only keeps
+    a year carried on another calendar (or a sum of years) from falling to the wrong side of a seam by rounding.
+    A null bound makes the test null (the row is filtered out, a ``when`` takes its ``otherwise``); a caller that
+    means "no bound" for a null fills it (``±inf``)."""
+    test = None
+    if y_on is not None:
+        test = y >= y_on - YEAR_TOL
+    if y_eol is not None:
+        before_end = y < y_eol - YEAR_TOL
+        test = before_end if test is None else test & before_end
+    if test is None:
+        raise ValueError("within_life needs y_on or y_eol.")
+    return test
+
+
 @dataclass(frozen=True)
 class _ChainStart:
     """The first generation of a ``reinvest_automatic`` chain (:func:`chain_rows`)."""
@@ -720,7 +743,7 @@ def _existing_alive(cohort: pl.DataFrame, years: Mapping[str, float], period_in_
     return (existing.lazy()
               .select("cohort", "e", "kind", "d_build", "y_eol")
               .join(periods, how="cross")
-              .filter(pl.col("y") < pl.col("y_eol"))
+              .filter(within_life(pl.col("y"), None, pl.col("y_eol")))
               .select(list(_alive_schema()))
               .collect())
 
@@ -863,7 +886,7 @@ def invest_cohorts(source: "InputSource",
     walk, yrs = align_join_dtypes(walk, _years_frame(years), ["d"])
     alive = (walk.join(yrs, on="d", how="left")
                  .with_columns(y=pl.col("y").fill_null(0.0))
-                 .filter(pl.col("y") < pl.col("y_eol"))
+                 .filter(within_life(pl.col("y"), None, pl.col("y_eol")))
                  .select(list(_alive_schema()))
                  .collect())
     return pl.concat([cohort, generations], how="vertical"), alive
@@ -1516,8 +1539,8 @@ def cohort_capacity(cohort: pl.DataFrame,
                        .select("e", "cohort", "d", size=pl.col("mw")))
     previous = (theirs.filter(pl.col("kind") != KIND_GENERATION)
                       .join(year, how="cross")
-                      .filter((pl.col("y_on").is_null() | (pl.col("y") >= pl.col("y_on") - YEAR_TOL))
-                              & (pl.col("y") < pl.col("y_eol").fill_null(_INF) - YEAR_TOL))
+                      .filter(within_life(pl.col("y"), pl.col("y_on").fill_null(-_INF),
+                                          pl.col("y_eol").fill_null(_INF)))
                       .select("e", "cohort", "d", size=pl.col("size").fill_null(0.0)))
     sized = pl.concat([existing, decided, previous], how="vertical_relaxed").filter(pl.col("size") > 0.0)
 
@@ -1572,6 +1595,7 @@ def cohort_capacity(cohort: pl.DataFrame,
 
 
 __all__ = [
+    "within_life",
     "BOUNDED_METHODS",
     "COHORT_CAPACITY_SCHEMA",
     "as_names",

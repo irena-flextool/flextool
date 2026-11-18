@@ -1061,7 +1061,7 @@ def p_entity_pre_existing_lf(source: "InputSource",
                        .with_columns(vu=pl.col("vu").fill_null(0.0)))
 
     # The existing cohort of each entity: in service while y[d] < y_eol.
-    from flextool.engine.preprocess.params._cohorts import cohort_years, existing_cohorts
+    from flextool.engine.preprocess.params._cohorts import cohort_years, existing_cohorts, within_life
     years = cohort_years(source, active_solve, workdir, provider=provider)
     ends = existing_cohorts(source, active_solve, workdir, provider=provider, years=years).lazy().select("e", "y_eol")
     periods = list(dict.fromkeys(str(d) for d in period_in_use))
@@ -1078,7 +1078,7 @@ def p_entity_pre_existing_lf(source: "InputSource",
               .join(period_years, on="d", how="left", maintain_order="left")
               .join(ends, on="e", how="left", maintain_order="left")
               .with_columns(
-                  value=pl.when(pl.col("y") < pl.col("y_eol"))
+                  value=pl.when(within_life(pl.col("y"), None, pl.col("y_eol")))
                               .then(capacity_expr)
                               .otherwise(0.0),
               )
