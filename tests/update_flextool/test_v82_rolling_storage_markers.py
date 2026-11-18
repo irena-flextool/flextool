@@ -81,3 +81,30 @@ def test_no_marker_without_rolling_or_nested_solves() -> None:
         assert _marker(db, "rolling_cyclic_storage_anchored") is None
         assert _marker(db, "nested_storage_start_borrowed") is None
         assert _marker(db, "nested_storage_fix_cumulative") is None
+
+
+def test_reference_start_marker_names_reference_nodes_without_fix_start() -> None:
+    """Part 7 (Phase 5): ``storage_reference_start`` names the storage nodes with use_reference_value and no
+    fix_start (fix_end turns the reference off): they now start from the reference value instead of a free
+    level."""
+    db = DatabaseMapping("sqlite://", create=True)
+    db.add_item("entity_class", name="node")
+    db.add_item("alternative", name="base")
+    for name in ("node_type", "storage_solve_horizon_method", "storage_start_end_method"):
+        db.add_item("parameter_definition", entity_class_name="node", name=name)
+    values = {"ref": {"node_type": "storage", "storage_solve_horizon_method": "use_reference_value"},
+              "ref_end": {"node_type": "storage", "storage_solve_horizon_method": "use_reference_value",
+                          "storage_start_end_method": "fix_end"},
+              "ref_fixed": {"node_type": "storage", "storage_solve_horizon_method": "use_reference_value",
+                            "storage_start_end_method": "fix_start"},
+              "free": {"node_type": "storage", "storage_solve_horizon_method": "free"},
+              "bal": {"node_type": "balance", "storage_solve_horizon_method": "use_reference_value"}}
+    with db:
+        for entity, params in values.items():
+            db.add_item("entity", entity_class_name="node", name=entity)
+            for name, value in params.items():
+                raw, typ = to_database(value)
+                db.add_item("parameter_value", entity_class_name="node", entity_byname=(entity,),
+                            parameter_definition_name=name, alternative_name="base", value=raw, type=typ)
+        m._v82_storage_accounting_markers(db)
+        assert _marker(db, "storage_reference_start") == {"since": 82, "nodes": ["ref"]}

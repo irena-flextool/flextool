@@ -77,5 +77,6 @@ def test_migration_markers_are_registered() -> None:
                                                               "nested_storage_start_borrowed",
                                                               "nested_storage_fix_cumulative",
                                                               "rp_storage_chain_pinned",
-                                                              "storage_end_matches_start"}
+                                                              "storage_end_matches_start",
+                                                              "storage_reference_start"}
     assert written <= set(BEHAVIOUR_CHANGES)

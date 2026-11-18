@@ -11593,11 +11593,13 @@ def _v82_storage_texts() -> dict[tuple[str, str], str]:
             "representative_period_weights a blended method is used as its plain variant. 'bind_intraperiod_blocks' "
             "is an aggregation method: the state is held constant within each block, the block-total flow is "
             "balanced and the blocks of a period loop. In a rolling_window solve without representative periods a "
-            "cycle is closed over the rolls: a roll that starts inside the solve, period or timeblock continues it "
-            "from the level realised by the previous roll and ends its part at least at that level, and the roll(s) "
-            "holding its end end it at the level it started from. A rolling solve on representative periods is a "
-            "configuration error, and so is bind_within_solve, bind_within_period or bind_intraperiod_blocks in a "
-            "solve on representative periods (use a blended method or bind_within_timeblock). "
+            "cycle is closed over the rolls: a roll that starts inside the solve or period continues it from the "
+            "level realised by the previous roll and ends its part at least at that level, and the roll(s) holding "
+            "its end end it at the level it started from; such a solve uses bind_within_timeblock as "
+            "bind_within_period and needs a continuous timeline (a period with several timeblocks is a "
+            "configuration error). A rolling solve on representative periods is a configuration error, and so is "
+            "bind_forward_only (also the default), bind_within_solve, bind_within_period or bind_intraperiod_blocks "
+            "in a solve on representative periods (use a blended method or bind_within_timeblock). "
             "storage_start_end_method fixes the start and the end of the whole model."),
         ("node", "storage_nested_fix_method"): (
             "[choice] Used in nested solve sequences: makes this storage a long-term storage whose planned level the "
@@ -11902,6 +11904,10 @@ def _v82_storage_accounting_markers(db) -> None:
     * ``storage_end_matches_start`` (``{"since": 82, "nodes": [...]}``) when a storage node chains forward
       (``storage_binding_method`` bind_forward_only or bind_forward_only_blended_weights in some alternative, or no
       value: the default bind_forward_only): where the solve decides its start, the model now ends at least at it.
+    * ``storage_reference_start`` (``{"since": 82, "nodes": [...]}``) when a storage node has
+      ``storage_solve_horizon_method`` use_reference_value and storage_start_end_method fix_nothing (in some
+      alternative; fix_end turns the reference off): it now starts from the reference value instead of a free
+      level.
 
     The markers are broader than the changes (the migration does not read which alternatives a scenario combines,
     nor which solves invest); a run names the nodes whose rows change.
@@ -11927,6 +11933,11 @@ def _v82_storage_accounting_markers(db) -> None:
     nodes = sorted((forward | (storage - with_method)) & storage)
     if nodes:
         _v77_set_marker(db, "storage_end_matches_start", json.dumps({"since": 82, "nodes": nodes}))
+    start_end = {n: v for n, v in values("node", "storage_start_end_method")}
+    reference = {n for n, v in values("node", "storage_solve_horizon_method") if v == "use_reference_value"}
+    nodes = sorted(n for n in reference & storage if start_end.get(n, "fix_nothing") == "fix_nothing")
+    if nodes:
+        _v77_set_marker(db, "storage_reference_start", json.dumps({"since": 82, "nodes": nodes}))
 
 
 def _migrate_v82_schema_batch(db) -> None:
@@ -11953,8 +11964,8 @@ def _migrate_v82_schema_batch(db) -> None:
     6. The behaviour-change markers ``rolling_cyclic_storage_anchored``, ``nested_storage_start_borrowed`` and
        ``nested_storage_fix_cumulative`` of the storage carry in rolling and nested solves
        (:func:`_v82_rolling_storage_markers`).
-    7. The behaviour-change markers ``rp_storage_chain_pinned`` and ``storage_end_matches_start`` of the storage start
-       and end accounting (:func:`_v82_storage_accounting_markers`).
+    7. The behaviour-change markers ``rp_storage_chain_pinned``, ``storage_end_matches_start`` and
+       ``storage_reference_start`` of the storage start and end accounting (:func:`_v82_storage_accounting_markers`).
 
     Values change only by the renames of part 2 (they keep their rows; a collision moves them).  Each part is
     idempotent, so a rerun of the step changes nothing.

@@ -124,8 +124,8 @@ def test_rolling_solve_on_representative_periods_is_an_error(tmp_path):
 @pytest.mark.parametrize("penalty_method", ["off", "regular"])
 def test_storage_slack_beside_a_hard_balance_is_warned_once(tmp_path, capsys, penalty_method):
     """The tank (balance slack on) feeds ``load`` through ``dis``: with penalty_method off on ``load`` the tank's
-    slack can serve the load at the tank's penalty, a warning names the pair once for the rolling solve (its four
-    rolls)."""
+    slack can serve the load at the tank's penalty, one warning line for the rolling solve (its four rolls) names
+    how many storage nodes and the first pair."""
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_handle import open_database_mapping
 
@@ -147,5 +147,5 @@ def test_storage_slack_beside_a_hard_balance_is_warned_once(tmp_path, capsys, pe
         assert hits == []
         return
     assert len(hits) == 1, hits
-    assert hits[0].startswith("Warning: in solve 'st")
-    assert "tank (load)" in hits[0]
+    assert hits[0].startswith("Warning: in solve 'st' 1 storage node (tank)")
+    assert "(e.g. tank to load)" in hits[0]

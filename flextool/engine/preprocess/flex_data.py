@@ -5682,6 +5682,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
         _warn_fractional_integer_unit_counts(flex_data, db_reader)
 
+        # use_reference_value without fix_start: the start comes from the reference value (owner decision, Phase 5).
+        _reference_start_as_fix_start(flex_data)
+
         # Phase 4.6 — end-of-load FlexData → Enum sweep.  With the global
         # flipped on above, the cascade emits Enum-typed dim columns
         # throughout, but ad-hoc CSV-fallback paths inside the cascade
@@ -5728,6 +5731,65 @@ def load_flextool(source: "Path | str | FlexInputSource",
             set_global_axis_enums(None)
         else:
             set_global_axis_enums(axis_enums)
+
+
+def reference_start_shares(flex_data: "FlexData") -> dict:
+    """``{node: share}``: the storage_state_reference_value at the first step each use_reference_value storage node
+    starts from in this solve (not carried from an earlier solve; the model's first step in the first solve).  With
+    several first steps (a stochastic fan) the first in sorted order.  Empty when there are none."""
+    from flextool.engine.input._param_shapes import promote_param_to_dt
+    ref, rv, first = (flex_data.storage_use_reference_value, flex_data.p_storage_state_reference_value,
+                      flex_data.nodeState_first_dt)
+    if ref is None or ref.height == 0 or rv is None or first is None or first.height == 0 or flex_data.dt is None:
+        return {}
+    names = set(str(n) for n in ref["n"].to_list())
+    carry = flex_data.p_roll_continue_state
+    if carry is not None and carry.frame.height > 0:
+        names -= set(str(n) for n in carry.frame["n"].to_list())
+    if not names:
+        return {}
+    steps = first.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t")).filter(pl.col("n").is_in(sorted(names)))
+    values = promote_param_to_dt(rv, flex_data.dt)
+    values = values.collect() if isinstance(values, pl.LazyFrame) else values
+    values = values.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t")).with_columns(
+        value=values["value"].cast(pl.Float64))
+    hit = steps.join(values, on=["n", "d", "t"], how="inner").sort("n", "d", "t").unique("n", keep="first")
+    return {str(n): float(v) for n, v in hit.select("n", "value").iter_rows() if v is not None}
+
+
+def _reference_start_as_fix_start(flex_data: "FlexData") -> None:
+    """A use_reference_value storage node without fix_start starts from the reference value at its first step (owner
+    decision, Phase 5; before, its start was free and only the matching end bounded it): it joins
+    ``storage_fix_start`` with that share as ``p_state_start``, so every fix_start rule applies to it (the start pin,
+    the matching end of storage the solve can invest in).  A node with its own fix_start keeps it
+    (``model.core._check_storage_accounting`` warns where the two differ)."""
+    shares = reference_start_shares(flex_data)
+    if not shares:
+        return
+    fix_start = flex_data.storage_fix_start
+    fixed = set() if fix_start is None else set(str(n) for n in fix_start["n"].to_list())
+    new = {n: v for n, v in shares.items() if n not in fixed}
+    if not new:
+        return
+    names = sorted(new)
+    dtype = flex_data.nodeState.schema["n"] if flex_data.nodeState is not None else pl.Utf8
+    added = pl.DataFrame({"n": names}).with_columns(pl.col("n").cast(dtype, strict=False))
+    if fix_start is None or fix_start.height == 0:
+        flex_data.storage_fix_start = added
+    else:
+        flex_data.storage_fix_start = pl.concat([fix_start, added.cast(fix_start.schema)], how="vertical")
+    rows = pl.DataFrame({"n": names, "value": [float(new[n]) for n in names]})
+    old = flex_data.p_state_start
+    if old is None or old.frame.height == 0:
+        frame = rows.with_columns(pl.col("n").cast(dtype, strict=False))
+    else:
+        keep = old.frame.filter(~pl.col("n").cast(pl.Utf8).is_in(names))
+        frame = pl.concat([keep, rows.with_columns(pl.col("n").cast(keep.schema["n"], strict=False),
+                                                   pl.col("value").cast(keep.schema["value"]))],
+                          how="vertical")
+    flex_data.p_state_start = Param(("n",), frame)
+    from flextool.engine import _behaviour_changes
+    _behaviour_changes.notice("storage_reference_start", "nodes", names, solve="")
 
 
 # Units already reported by :func:`_warn_fractional_integer_unit_counts`, per run: a rolling run loads one FlexData

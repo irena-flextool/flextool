@@ -154,11 +154,11 @@ def _warn_rolling_blocks_chained(state, complete_solve_name: str, solve: str, ac
     names = sorted(str(n) for n in nsb[col].unique().to_list())
     _MODULE_LOGGER.warning(
         "Solve '%s' is a rolling_window solve whose rolling_solve_jump is not a whole number of periods (roll '%s' "
-        "starts at step '%s' inside period '%s'). The bind_intraperiod_blocks storage node(s) %s loop their timeset "
+        "starts at step '%s' inside period '%s'). The bind_intraperiod_blocks %s loop their timeset "
         "blocks only in the periods a roll holds whole; in a period a roll holds in part the blocks chain forward, "
         "the storage level is carried from roll to roll and the roll(s) holding the period's end close it at the "
         "level it started from.",
-        complete_solve_name, solve, steps[0].timestep, first_period, ", ".join(names))
+        complete_solve_name, solve, steps[0].timestep, first_period, _storages_named(names))
 
 
 _BLENDED_METHODS = tuple(_RP_METHOD_DOWNGRADE)
@@ -268,6 +268,47 @@ def _reject_plain_cyclic_in_rp_solve(*, complete_solve_name: str, active_timeset
         "period.")
 
 
+def _reject_plain_forward_in_rp_solve(*, complete_solve_name: str, active_timeset_names: list, rp_weights: dict,
+                                      provider) -> None:
+    """Raise for a solve on representative periods with a storage node on plain bind_forward_only (the default
+    storage_binding_method) (owner decision, Phase 5).
+
+    As for the plain cycles (:func:`_reject_plain_cyclic_in_rp_solve`): the forward chain runs through the
+    representative periods one after the other, unweighted, while the flows of each step count with the weight of
+    its representative period, so energy stored in a period of low weight can be used in one of high weight.  There
+    is no automatic switch to bind_forward_only_blended_weights: the user chooses the blended method.  Checked on
+    the method set in the database (a node without one is bind_forward_only), before the engine's own mappings
+    (:func:`_fix_start_end_chains_forward` maps a cyclic fix_start_end node in such a solve to the blended chain).
+    The message names how many nodes and the first.
+    """
+    if not any(ts in rp_weights for ts in active_timeset_names):
+        return
+    from pathlib import Path
+    from flextool.engine.preprocess.emit._mid_sets import derive_node_effective_type
+    try:
+        types = derive_node_effective_type(Path("input"), provider=provider)
+    except Exception:  # noqa: BLE001 — no node data: nothing to check, the loaders report it
+        return
+    storage = sorted(str(n) for n in types.filter(pl.col("type") == "storage")["node"].to_list())
+    if not storage:
+        return
+    methods = _node_methods(provider, _SBM_KEY, "storage_binding_method")
+    hit = [n for n in storage if methods.get(n, "bind_forward_only") == "bind_forward_only"]
+    if not hit:
+        return
+    from flextool.engine import _behaviour_changes
+    rp = sorted({ts for ts in active_timeset_names if ts in rp_weights})
+    raise FlexToolConfigError(
+        f"Solve '{complete_solve_name}' is on representative periods (timeset(s) {', '.join(rp)} have "
+        f"representative_period_weights) and {_behaviour_changes.storages_named(hit)} use storage_binding_method "
+        "bind_forward_only (also the default): the forward chain runs through the representative periods without "
+        "their weights, while the flows of each period count with its weight, so energy stored in a period of low "
+        "weight could be used in a period of high weight, for free. Blended weights need to be provided: choose a "
+        "*_blended_weights storage_binding_method for these nodes (bind_forward_only_blended_weights, "
+        "bind_within_solve_blended_weights or bind_within_period_blended_weights), or bind_within_timeblock to cycle "
+        "the storage within each representative period.")
+
+
 def _rp_chain_reaches_model_end(state, solves: list, complete_solve: dict, at_end: list[bool], index) -> list[bool]:
     """``at_end`` with every representative-period solve (not rolling) that holds the model's last period set: its
     base-period chain runs to the end of that period, so the chain end is the end of the model although its last
@@ -321,16 +362,16 @@ def _frame_nodes(frame) -> set[str]:
     return {str(n) for n in frame["node"].to_list()}
 
 
-_SCOPE_METHODS = ("bind_within_period", "bind_within_timeblock", "bind_intraperiod_blocks")
+# bind_within_timeblock reaches a rolling solve as bind_within_period (:func:`_timeblock_binds_within_period_in_roll`).
+_SCOPE_METHODS = ("bind_within_period", "bind_intraperiod_blocks")
 
 
-def _first_scope(method: str, active_time_list: dict, complete_active_time_list: dict,
+def _first_scope(active_time_list: dict, complete_active_time_list: dict,
                  period_branch: list) -> "tuple[tuple[str, str], bool, bool] | None":
-    """``(scope, continued, holds_end)`` of the cyclic scope that holds a rolling roll's first step.
+    """``(scope, continued, holds_end)`` of the cyclic scope (the period) that holds a rolling roll's first step.
 
-    The scope of bind_within_timeblock is the timeblock (a maximal run of consecutive timeline steps of the period,
-    as :func:`flextool.engine.input._timeline.make_step_jump` finds them), else the period; ``scope`` is ``(period,
-    the scope's first step)`` in the complete solve (a forecast branch period by the period it branches from).
+    ``scope`` is ``(period, the period's first step)`` in the complete solve (a forecast branch period by the period
+    it branches from).
     ``continued``: the roll starts after the scope's first step (an earlier roll began the scope); ``holds_end``:
     the roll holds the scope's last step.  None when the roll's first step is not in the complete solve.
     """
@@ -345,15 +386,7 @@ def _first_scope(method: str, active_time_list: dict, complete_active_time_list:
     s0 = str(steps[0].timestep)
     if s0 not in names:
         return None
-    at = names.index(s0)
     start, end = 0, len(full) - 1
-    if method == "bind_within_timeblock":
-        start = at
-        while start > 0 and full[start].index - full[start - 1].index == 1:
-            start -= 1
-        end = at
-        while end < len(full) - 1 and full[end + 1].index - full[end].index == 1:
-            end += 1
     held = {str(e.timestep) for e in steps}
     return (base, names[start]), names[start] != s0, names[end] in held
 
@@ -379,7 +412,7 @@ class _RollingStorage:
         self.borrowed_check: dict = {}
         self.warned: set = set()
         # scope_start[(instance, node, period, first step)]: the level (MWh) a bind_within_period /
-        # bind_within_timeblock / bind_intraperiod_blocks scope started from in the roll that began it.
+        # bind_intraperiod_blocks period started from in the roll that began it.
         self.scope_start: dict = {}
         self.scope_pending: dict = {}
         # scope_from_start[solve]: (scope key, node) of the nested first rolls whose scope starts from fix_start: the
@@ -404,6 +437,19 @@ def _restore_methods(store: _RollingStorage, level_key, provider) -> "pl.DataFra
     sbm = store.original[level_key]
     provider.put(_SBM_KEY, sbm)
     return sbm
+
+
+def _storages_named(names) -> str:
+    from flextool.engine import _behaviour_changes
+    return _behaviour_changes.storages_named(names)
+
+
+def _warn_storages(kind: str, complete_solve_name: str, names: list, text_of, details: str = "") -> None:
+    """A storage warning in the owner's format: one printed line per kind and solve, naming how many and the first
+    (:func:`flextool.engine._behaviour_changes.storage_message`); the per-node details go to the debug log."""
+    from flextool.engine import _behaviour_changes
+    _behaviour_changes.storage_message(kind, complete_solve_name, names, text_of,
+                                       details or f"Solve '{complete_solve_name}' ({kind}): {', '.join(names)}.")
 
 
 def _put_roll_end(provider, rows: list) -> None:
@@ -441,15 +487,16 @@ def _anchor_cyclic_in_rolling(*, state, solve: str, complete_solve_name: str, in
     storage_state_end.  ``solve_data/storage_roll_end`` is written for every sub-solve (empty when unused): the
     level Provider is shared by the iters of a level.
 
-    The same rule holds per period (bind_within_period, bind_intraperiod_blocks) and per timeblock
-    (bind_within_timeblock): a roll whose first step lies inside a scope that an earlier roll began (a realised roll
-    boundary inside the scope, :func:`_first_scope`) continues that scope from the carry (kind ``scope_carry``, for
-    bind_within_period / bind_within_timeblock; the blocks of a period held in part chain forward already), and
-    where the scope's part in the roll ends gets ``scope_close`` (the roll holds the scope's last step, or reaches
-    the end of the instance) at the level the scope started from, else ``scope_anchor`` at the carried level.  The
-    scopes that begin in the roll keep their cycle (a period or timeblock held whole loops as before; the blocks of
-    a bind_intraperiod_blocks period held in part chain forward with the horizon method at the roll end), and
-    their start levels are read from the handoff (``scope_start_state``) once solved.  ``extra_rows`` (the
+    The same rule holds per period (bind_within_period, bind_intraperiod_blocks; bind_within_timeblock, which a
+    rolling solve uses as bind_within_period, :func:`_timeblock_binds_within_period_in_roll`): a roll whose first
+    step lies inside a period that an earlier roll began (a realised roll boundary inside the period,
+    :func:`_first_scope`) continues that period from the carry (kind ``scope_carry``, for bind_within_period; the
+    blocks of a period held in part chain forward already), and where the period's part in the roll ends gets
+    ``scope_close`` (the roll holds the period's last step, or reaches the end of the instance) at the level the
+    period started from, else ``scope_anchor`` at the carried level.  The periods that begin in the roll keep their
+    cycle (a period held whole loops as before; the blocks of a bind_intraperiod_blocks period held in part chain
+    forward with the horizon method at the roll end), and their start levels are read from the handoff
+    (``scope_start_state``) once solved.  ``extra_rows`` (the
     nested-fix rows of :func:`_nested_end_rows`) are written with the rows of any solve.
 
     A bind_forward_only node with a free start (fix_nothing, no upper-level fix) whose first roll does not reach the
@@ -501,7 +548,7 @@ def _anchor_cyclic_in_rolling(*, state, solve: str, complete_solve_name: str, in
             matched.append(node)
     if matched:
         from flextool.engine import _behaviour_changes
-        _behaviour_changes.notice("storage_end_matches_start", "nodes", matched)
+        _behaviour_changes.notice("storage_end_matches_start", "nodes", matched, solve=complete_solve_name)
     if scoped and active_time_list:
         rows += _scope_rows(complete_solve_name=complete_solve_name, solve=solve, instance=instance, scoped=scoped,
                             carry=carry, closing=closing, first_roll=first_roll, store=store,
@@ -511,6 +558,8 @@ def _anchor_cyclic_in_rolling(*, state, solve: str, complete_solve_name: str, in
                             nested_fixed=nested_fixed)
     forward: list[str] = []
     pending: list[str] = []
+    unknown_start: list[str] = []
+    no_start: list[str] = []
     for node in targets:
         fix_start = sse.get(node) in ("fix_start", "fix_start_end")
         if node in carry:
@@ -522,9 +571,7 @@ def _anchor_cyclic_in_rolling(*, state, solve: str, complete_solve_name: str, in
                 if start is None:
                     if (instance, node) not in store.warned:
                         store.warned.add((instance, node))
-                        _MODULE_LOGGER.warning(
-                            "Solve '%s': the start level of storage node '%s' in this instance is not known; its "
-                            "closing roll %s ends at the carried level instead.", complete_solve_name, node, solve)
+                        unknown_start.append(node)
                     start = float(carry[node])
                 rows.append((node, "close", start))
             else:
@@ -540,24 +587,32 @@ def _anchor_cyclic_in_rolling(*, state, solve: str, complete_solve_name: str, in
                 rows.append((node, "wrap_end", None))
             if node in nested_fixed and (instance, node) not in store.warned:
                 store.warned.add((instance, node))
-                _MODULE_LOGGER.warning(
-                    "Solve '%s': storage node '%s' is fixed by the upper-level solve but its first roll %s has no "
-                    "start level from it nor a fix_start; the roll cycles on itself.", complete_solve_name, node,
-                    solve)
+                no_start.append(node)
+    if unknown_start:
+        _warn_storages("roll_start_unknown", complete_solve_name, unknown_start,
+                       lambda named: (f"Warning: solve '{complete_solve_name}': the start level of {named} in an "
+                                      f"instance is not known; the closing roll ({solve}) ends at the carried level "
+                                      "instead."))
+    if no_start:
+        _warn_storages("nested_roll_cycles", complete_solve_name, no_start,
+                       lambda named: (f"Warning: solve '{complete_solve_name}': {named} fixed by the upper-level "
+                                      f"solve have no start level from it nor a fix_start in the first roll ({solve}); "
+                                      "the roll cycles on itself."))
     if forward:
         is_fwd = pl.col("node").cast(pl.Utf8).is_in(forward)
         provider.put(_SBM_KEY, sbm.with_columns(
             pl.when(is_fwd).then(pl.lit("bind_forward_only")).otherwise(pl.col(col)).alias(col)))
         from flextool.engine import _behaviour_changes
-        _behaviour_changes.notice("rolling_cyclic_storage_anchored", "nodes", forward)
+        _behaviour_changes.notice("rolling_cyclic_storage_anchored", "nodes", forward, solve=complete_solve_name)
         key = ("logged", complete_solve_name)
         if key not in store.warned:
             store.warned.add(key)
             _MODULE_LOGGER.info(
-                "Solve '%s' is a rolling_window solve: the bind_within_solve storage node(s) %s continue each roll "
-                "from the level realised by the previous roll; a roll ends its horizon at least at the level it "
-                "started from, and the roll(s) reaching the end of the solve end at the level the first roll "
-                "started from.", complete_solve_name, ", ".join(forward))
+                "Solve '%s' is a rolling_window solve: %s with bind_within_solve continue each roll from the level "
+                "realised by the previous roll; a roll ends its horizon at least at the level it started from, and "
+                "the roll(s) reaching the end of the solve end at the level the first roll started from.",
+                complete_solve_name, _behaviour_changes.storages_named(forward))
+            _MODULE_LOGGER.debug("Solve '%s': rolling carry for %s.", complete_solve_name, ", ".join(forward))
     pending += match_pending
     if pending:
         store.pending[solve] = (instance, pending)
@@ -567,24 +622,25 @@ def _anchor_cyclic_in_rolling(*, state, solve: str, complete_solve_name: str, in
 def _scope_rows(*, complete_solve_name: str, solve: str, instance: tuple, scoped: dict, carry: dict, closing: bool,
                 first_roll: bool, store: _RollingStorage, active_time_list: dict, complete_active_time_list: dict,
                 period_branch: list, sse: dict, provider, nested_fixed: set) -> list:
-    """The ``storage_roll_end`` rows of the per-period / per-timeblock scopes of a rolling roll
-    (:func:`_anchor_cyclic_in_rolling`): for each node of ``scoped`` ({node: method}) whose first scope the roll
-    continues from the carry, ``scope_carry`` (bind_within_period / bind_within_timeblock) and ``scope_close`` (at the
+    """The ``storage_roll_end`` rows of the per-period scopes of a rolling roll
+    (:func:`_anchor_cyclic_in_rolling`): for each node of ``scoped`` ({node: method}) whose first period the roll
+    continues from the carry, ``scope_carry`` (bind_within_period) and ``scope_close`` (at the
     level the scope started from) or ``scope_anchor`` (at the carried level; a bind_intraperiod_blocks node whose
     storage_solve_horizon_method is use_reference_value keeps that guidance instead).  The roll's scopes are left
     pending for :func:`_record_scope_starts`."""
     rows: list = []
     names: list[str] = []
+    missing: list[str] = []
     shm = _node_methods(provider, "input/node__storage_solve_horizon_method", "storage_solve_horizon_method")
     for node, method in sorted(scoped.items()):
-        scope = _first_scope(method, active_time_list, complete_active_time_list, period_branch)
+        scope = _first_scope(active_time_list, complete_active_time_list, period_branch)
         if scope is None:
             continue
         (period, step), continued, holds_end = scope
         guided = method == "bind_intraperiod_blocks" and shm.get(node) == "use_reference_value"
         if (first_roll and not continued and node in nested_fixed and not holds_end
                 and method != "bind_intraperiod_blocks"):
-            # The first roll of a nested level begins a period / timeblock that its horizon cuts: its first step
+            # The first roll of a nested level begins a period that its horizon cuts: its first step
             # would wrap to the horizon end, which the upper solve fixes, so the cycle would start at the upper level
             # of that moment.  It starts instead from the level the upper solve starts from (borrowed, in the carry)
             # or from fix_start, and continues the scope forward from there.
@@ -618,10 +674,9 @@ def _scope_rows(*, complete_solve_name: str, solve: str, instance: tuple, scoped
         if start is None:
             if not first_roll and (key, "missing") not in store.warned:
                 store.warned.add((key, "missing"))
-                _MODULE_LOGGER.warning(
-                    "Solve '%s': the level storage node '%s' started period '%s' (scope from step '%s') at is not "
-                    "known; roll %s continues it from the carried level and closes it there.", complete_solve_name,
-                    node, period, step, solve)
+                missing.append(node)
+                _MODULE_LOGGER.debug("Solve '%s': start level of storage node '%s' in period '%s' (from step '%s') "
+                                     "not known in roll %s.", complete_solve_name, node, period, step, solve)
             start = float(carry[node])
             store.scope_start[key] = start
         if method != "bind_intraperiod_blocks":
@@ -632,18 +687,25 @@ def _scope_rows(*, complete_solve_name: str, solve: str, instance: tuple, scoped
             rows.append((node, "scope_anchor", float(carry[node])))
         names.append(node)
     store.scope_pending[solve] = (instance, sorted(scoped))
+    if missing:
+        _warn_storages("period_start_unknown", complete_solve_name, missing,
+                       lambda named: (f"Warning: solve '{complete_solve_name}': the level {named} started a period at "
+                                      f"is not known; roll {solve} continues the period from the carried level and "
+                                      "closes it there."))
     if names:
         from flextool.engine import _behaviour_changes
-        _behaviour_changes.notice("rolling_cyclic_storage_anchored", "nodes", names)
+        _behaviour_changes.notice("rolling_cyclic_storage_anchored", "nodes", names, solve=complete_solve_name)
         key = ("scope_logged", complete_solve_name)
         if key not in store.warned:
             store.warned.add(key)
             _MODULE_LOGGER.info(
-                "Solve '%s' is a rolling_window solve whose rolls start inside a period or timeblock: the "
-                "bind_within_period / bind_within_timeblock / bind_intraperiod_blocks storage node(s) %s continue that "
-                "period or timeblock from the level realised by the previous roll; a roll ends its part at least at "
-                "that level, and the roll(s) holding its end end it at the level it started from.",
-                complete_solve_name, ", ".join(names))
+                "Solve '%s' is a rolling_window solve whose rolls start inside a period: %s with bind_within_period "
+                "(also bind_within_timeblock) or bind_intraperiod_blocks continue that period from the level realised "
+                "by the previous roll; a roll ends its part at least at that level, and the roll(s) holding its end "
+                "end it at the level it started from.",
+                complete_solve_name, _behaviour_changes.storages_named(names))
+            _MODULE_LOGGER.debug("Solve '%s': per-period rolling carry for %s.", complete_solve_name,
+                                 ", ".join(names))
     return rows
 
 
@@ -842,7 +904,8 @@ def _nested_end_rows(*, solve: str, parent: "str | None", parent_handoff, active
                 rows.append((node, "usage_cap", new))
     if rows:
         from flextool.engine import _behaviour_changes
-        _behaviour_changes.notice("nested_storage_fix_cumulative", "nodes", sorted({r[0] for r in rows}))
+        _behaviour_changes.notice("nested_storage_fix_cumulative", "nodes", sorted({r[0] for r in rows}),
+                                  solve=solve)
     return rows
 
 
@@ -859,7 +922,7 @@ def _record_model_start(store: "_RollingStorage", handoff, routed_state) -> None
 
 
 def _sequence_match_rows(*, provider, routed_state, store: "_RollingStorage", at_model_end: bool,
-                         upper_fixed: set) -> list:
+                         upper_fixed: set, solve: str = "") -> list:
     """``match`` rows (node, MWh) of a sub-solve that is not rolling, reaches the end of the model and continues a
     forward chain (bind_forward_only, bind_forward_only_blended_weights) with a free start (fix_nothing) from a
     carry: it ends the chain at least at the level the model started the node from (the matching end over a
@@ -878,7 +941,7 @@ def _sequence_match_rows(*, provider, routed_state, store: "_RollingStorage", at
             rows.append((node, "match", store.model_start[node]))
     if rows:
         from flextool.engine import _behaviour_changes
-        _behaviour_changes.notice("storage_end_matches_start", "nodes", [r[0] for r in rows])
+        _behaviour_changes.notice("storage_end_matches_start", "nodes", [r[0] for r in rows], solve=solve)
     return rows
 
 
@@ -906,7 +969,8 @@ def _borrow_upper_start(*, state, solve: str, complete_solve_name: str, parent: 
     this sub-solve at its level or deeper starts from the level the upper solve planned for the same instant
     (:func:`_upper_level_at`): the lower level's accounting is then the upper's.  Only a node that continues from a
     start: one that chains forward in this sub-solve (bind_forward_only), or a bind_within_solve, bind_within_period or
-    bind_within_timeblock node of a rolling roll (no representative periods) under fix_quantity / fix_usage, which
+    bind_within_timeblock (used as bind_within_period there) node of a rolling roll (no representative periods)
+    under fix_quantity / fix_usage, which
     then continues from it (:func:`_anchor_cyclic_in_rolling`, :func:`_scope_rows`: its cycle would otherwise wrap
     to the upper target at the roll's end); a node that cycles on itself is closed already.  An explicit fix_start
     (fix_start, fix_start_end) at the model start is used instead (the same parameter as the upper solve's start;
@@ -933,7 +997,7 @@ def _borrow_upper_start(*, state, solve: str, complete_solve_name: str, parent: 
         method = sbm.get(node, "bind_forward_only")
         if not (method == "bind_forward_only"
                 or (rolling and not is_rp and node in quantity_usage
-                    and method in ("bind_within_solve", "bind_within_period", "bind_within_timeblock"))):
+                    and method in ("bind_within_solve", "bind_within_period"))):
             continue
         if sse.get(node) in ("fix_start", "fix_start_end") and at_start:
             compare.append(node)
@@ -952,13 +1016,15 @@ def _borrow_upper_start(*, state, solve: str, complete_solve_name: str, parent: 
         return routed_state
     from flextool.engine import _behaviour_changes
     names = sorted(borrowed)
-    _behaviour_changes.notice("nested_storage_start_borrowed", "nodes", names)
+    _behaviour_changes.notice("nested_storage_start_borrowed", "nodes", names, solve=complete_solve_name)
     key = ("borrowed", complete_solve_name)
     if key not in store.warned:
         store.warned.add(key)
         _MODULE_LOGGER.info(
-            "Solve '%s' is nested in solve '%s', which fixes storage node(s) %s: they start from the level the "
-            "upper solve planned for the start of this solve.", complete_solve_name, parent, ", ".join(names))
+            "Solve '%s' is nested in solve '%s', which fixes %s: they start from the level the upper solve planned "
+            "for the start of this solve.", complete_solve_name, parent, _behaviour_changes.storages_named(names))
+        _MODULE_LOGGER.debug("Solve '%s': borrowed start for %s.", complete_solve_name,
+                             ", ".join(f"{n} {borrowed[n]:.6g} MWh" for n in names))
     rows = {} if routed_state is None else dict(zip(routed_state["node"].cast(pl.Utf8).to_list(),
                                                     routed_state["value"].to_list()))
     rows.update(borrowed)
@@ -979,10 +1045,13 @@ def _check_borrowed_start(store: _RollingStorage, solve: str, complete_solve_nam
            if own.get(n) is not None and upper.get(n) is not None
            and abs(float(own[n]) - float(upper[n])) > 1e-6 * max(1.0, abs(float(upper[n])))]
     if off:
-        _MODULE_LOGGER.warning(
-            "Solve '%s' starts its storage from fix_start, at another level than the upper-level solve that fixes "
-            "it: %s. The difference is energy the lower solve gets or loses against the upper plan.",
-            complete_solve_name, ", ".join(f"{n} {a:.6g} MWh (upper {b:.6g})" for n, a, b in off))
+        _warn_storages(
+            "borrowed_start_mismatch", complete_solve_name, [n for n, _a, _b in off],
+            lambda named: (f"Warning: solve '{complete_solve_name}' starts {named} from fix_start, at another level "
+                           "than the upper-level solve that fixes them; the difference is energy the lower solve "
+                           "gets or loses against the upper plan."),
+            details=f"Solve '{complete_solve_name}', start from fix_start vs upper plan: "
+                    + ", ".join(f"{n} {a:.6g} MWh (upper {b:.6g})" for n, a, b in off))
 
 
 def _rp_period_previous(jump_list: list, active_time_list: dict, rp_periods: list[str],
@@ -1102,8 +1171,20 @@ _FIX_START_END_FORWARD: dict[str, str] = {
 }
 
 
+# In a solve on representative periods a plain forward chain would link the representative periods without their
+# weights (a configuration error, :func:`_reject_plain_cyclic_in_rp_solve`): a fix_start_end node there chains forward
+# on the base-period chain, where storage_state_start and storage_state_end act (owner decision, Phase 5).  Only
+# bind_within_timeblock reaches it (the other plain cyclic methods are errors in such a solve).
+_FIX_START_END_FORWARD_RP: dict[str, str] = {
+    **_FIX_START_END_FORWARD,
+    "bind_within_timeblock": "bind_forward_only_blended_weights",
+    "bind_within_period":    "bind_forward_only_blended_weights",
+    "bind_within_solve":     "bind_forward_only_blended_weights",
+}
+
+
 def _fix_start_end_chains_forward(*, solve: str, provider, logger, complete_solve_name: str | None = None,
-                                  logged: set | None = None) -> None:
+                                  logged: set | None = None, rp: bool = False) -> None:
     """Map the cyclic storage_binding_method of fix_start_end nodes to its forward-only equivalent, per solve.
 
     With ``storage_start_end_method`` *fix_start_end* the binding method is ignored (exception bind_forward_only,
@@ -1113,7 +1194,10 @@ def _fix_start_end_chains_forward(*, solve: str, provider, logger, complete_solv
     :func:`_downgrade_rp_methods_for_non_rp_solve`, after it (a blended node of a solve without representative
     periods: blended → plain → forward-only).  Every ``storage_bind_*`` set of the solve comes from that frame.
     ``bind_intraperiod_blocks`` stays: it is a time aggregation, not a cycle scope; such a node keeps its blocks and
-    the model chains them forward (``model._self_discharge.block_forward_nodes``).  One info line per mapping (the
+    the model chains them forward (``model._self_discharge.block_forward_nodes``).  In a solve on representative
+    periods (``rp``) the forward chain is the base-period chain (:data:`_FIX_START_END_FORWARD_RP`): a
+    bind_within_timeblock fix_start_end node there becomes bind_forward_only_blended_weights, so its start and end
+    are pinned on the weighted chronological level, not on a chain through the representative periods.  One info line per mapping (the
     shared frame is mapped once, so later rolls log nothing); the bind_intraperiod_blocks line keeps its method, so
     it is logged once per (complete solve, node) through ``logged``.
     """
@@ -1130,19 +1214,20 @@ def _fix_start_end_chains_forward(*, solve: str, provider, logger, complete_solv
     nodes = sorted(str(n) for n in sse.filter(pl.col(sse_col) == "fix_start_end")["node"].unique().to_list())
     if not nodes:
         return
-    hit = (sbm.filter(pl.col("node").cast(pl.Utf8).is_in(nodes) & pl.col(sbm_col).is_in(list(_FIX_START_END_FORWARD)))
+    mapping = _FIX_START_END_FORWARD_RP if rp else _FIX_START_END_FORWARD
+    hit = (sbm.filter(pl.col("node").cast(pl.Utf8).is_in(nodes) & pl.col(sbm_col).is_in(list(mapping)))
            .select(pl.col("node").cast(pl.Utf8), pl.col(sbm_col).cast(pl.Utf8)).unique().sort("node"))
     if hit.height > 0:
         is_hit = pl.col("node").cast(pl.Utf8).is_in(hit["node"].to_list())
         provider.put(sbm_key, sbm.with_columns(
             pl.when(is_hit)
-            .then(pl.col(sbm_col).replace_strict(_FIX_START_END_FORWARD, default=pl.col(sbm_col)))
+            .then(pl.col(sbm_col).replace_strict(mapping, default=pl.col(sbm_col)))
             .otherwise(pl.col(sbm_col))
             .alias(sbm_col)))
         for node, method in hit.iter_rows():
             logger.info(f"Solve '{solve}': storage node '{node}' has storage_start_end_method fix_start_end, so its "
                         f"storage_binding_method {method} is ignored; it chains forward "
-                        f"({_FIX_START_END_FORWARD[method]}).")
+                        f"({mapping[method]}).")
     blocks = (sbm.filter(pl.col("node").cast(pl.Utf8).is_in(nodes) & (pl.col(sbm_col) == "bind_intraperiod_blocks"))
               ["node"].cast(pl.Utf8).unique().sort().to_list())
     for node in blocks:
@@ -1153,6 +1238,65 @@ def _fix_start_end_chains_forward(*, solve: str, provider, logger, complete_solv
             logged.add(key)
         logger.info(f"Solve '{solve}': storage node '{node}' has storage_start_end_method fix_start_end, so its "
                     "bind_intraperiod_blocks blocks chain forward instead of looping within each period.")
+
+
+def _timeblock_binds_within_period_in_roll(*, state, complete_solve_name: str, active_timeset_names: list,
+                                           provider) -> None:
+    """A rolling_window solve (without representative periods) uses bind_within_timeblock as bind_within_period
+    (owner decision, Phase 5).
+
+    A rolling solve runs over a continuous timeline (:func:`_reject_rolling_with_gaps`), so each period of it is one
+    timeblock and the two methods mean the same cycle; a roll, however, cuts the timeblock, and the per-period rule of
+    bind_within_period (:func:`_anchor_cyclic_in_rolling`, :func:`_scope_rows`) carries the level from roll to roll,
+    anchors each horizon end and closes the period at the level it started from (capped at capacity).  Rewrites the
+    per-solve ``input/node__storage_binding_method`` in place, after :func:`_fix_start_end_chains_forward` (a
+    fix_start_end node already chains forward); the rolls of the level share the frame and
+    :func:`_restore_methods` keeps the converted one.  One printed line per solve, naming how many nodes and the
+    first.  A solve that is not rolling (an investment or storage solve above it) keeps bind_within_timeblock.
+    """
+    if state.solve.solve_modes.get(complete_solve_name) != "rolling_window":
+        return
+    if any(ts in state.timeline.rp_weights for ts in active_timeset_names):
+        return  # rolling over representative periods is an error (_reject_rolling_rp)
+    if not provider.has(_SBM_KEY):
+        return
+    sbm = provider.get(_SBM_KEY)
+    col = _method_col(sbm, "storage_binding_method") if sbm is not None and sbm.height > 0 else None
+    if col is None:
+        return
+    is_tb = pl.col(col).cast(pl.Utf8) == "bind_within_timeblock"
+    names = sorted(str(n) for n in sbm.filter(is_tb)["node"].unique().to_list())
+    if not names:
+        return
+    provider.put(_SBM_KEY, sbm.with_columns(
+        pl.when(is_tb).then(pl.lit("bind_within_period")).otherwise(pl.col(col)).alias(col)))
+    from flextool.engine import _behaviour_changes
+    _behaviour_changes.storage_message(
+        "rolling_timeblock_as_period", complete_solve_name, names,
+        lambda named: (f"Rolling solve '{complete_solve_name}': {named} with bind_within_timeblock use "
+                       "bind_within_period in this solve; each period is one continuous timeblock here."),
+        details=f"Rolling solve '{complete_solve_name}': bind_within_timeblock used as bind_within_period for "
+                f"{', '.join(names)}.")
+
+
+def _reject_rolling_with_gaps(*, state, complete_solve_name: str, complete_active_time_list: dict) -> None:
+    """Raise for a rolling_window solve over a timeline with gaps: a period with several timeblocks (a sampled
+    timeline, e.g. sampled weeks) (owner decision, Phase 5).
+
+    A roll cuts and joins the timeblocks, so the storage level would carry across the gaps, without the losses of the
+    hours between them, and the cyclic storage methods would lose their meaning.  Timeblocks are maximal runs of
+    consecutive timeline steps (:func:`flextool.engine.input._timeline.make_step_jump`); a solve with
+    new_stepduration counts the aggregated steps, which are consecutive on the aggregated timeline.
+    """
+    if state.solve.solve_modes.get(complete_solve_name) != "rolling_window":
+        return
+    for period, steps in (complete_active_time_list or {}).items():
+        blocks = 1 + sum(1 for a, b in zip(steps, steps[1:]) if b.index - a.index != 1) if steps else 0
+        if blocks > 1:
+            raise FlexToolConfigError(
+                f"Rolling solve '{complete_solve_name}' runs over a timeline with gaps (period '{period}' has "
+                f"{blocks} timeblocks). Rolling solves need a continuous timeline; use a single solve for sampled "
+                "timeblocks.")
 
 
 def project_realized_branch_time_branch_rows(
@@ -2355,12 +2499,22 @@ def native_run_model(state, solver) -> int:
         # periods without their weights.
         _reject_rolling_rp(state=state, complete_solve_name=complete_solve[solve],
                            active_timeset_names=active_timeset_names)
+        _reject_rolling_with_gaps(state=state, complete_solve_name=complete_solve[solve],
+                                  complete_active_time_list=complete_active_time_lists)
         _reject_plain_cyclic_in_rp_solve(complete_solve_name=complete_solve[solve],
                                          active_timeset_names=active_timeset_names,
                                          rp_weights=state.timeline.rp_weights, provider=sub_solve_provider)
+        _reject_plain_forward_in_rp_solve(complete_solve_name=complete_solve[solve],
+                                          active_timeset_names=active_timeset_names,
+                                          rp_weights=state.timeline.rp_weights, provider=sub_solve_provider)
         # fix_start_end ignores a cyclic binding method: after the downgrades, on the same frame.
         _fix_start_end_chains_forward(solve=solve, provider=sub_solve_provider, logger=state.logger,
-                                      complete_solve_name=complete_solve[solve], logged=_logged_fix_start_end_blocks)
+                                      complete_solve_name=complete_solve[solve], logged=_logged_fix_start_end_blocks,
+                                      rp=any(ts in state.timeline.rp_weights for ts in active_timeset_names))
+        # A rolling solve uses bind_within_timeblock as bind_within_period (each period is one timeblock there).
+        _timeblock_binds_within_period_in_roll(state=state, complete_solve_name=complete_solve[solve],
+                                               active_timeset_names=active_timeset_names,
+                                               provider=sub_solve_provider)
         for ts_name in active_timeset_names:
             if (
                 ts_name in state.timeline.rp_weights
@@ -2538,7 +2692,7 @@ def native_run_model(state, solver) -> int:
             _nested_rows += _sequence_match_rows(
                 provider=sub_solve_provider, routed_state=_routed_state, store=_rolling_storage,
                 at_model_end=storage_solve_at_model_end[i] or storage_rp_chain_at_model_end[i],
-                upper_fixed=_upper_fixed)
+                upper_fixed=_upper_fixed, solve=complete_solve[solve])
         # Rolling bind_within_solve: carry from roll to roll, the horizon-end anchor and the closing rolls' closure.
         _anchor_cyclic_in_rolling(
             state=state, solve=solve, complete_solve_name=complete_solve[solve], instance=_instance_of[solve],

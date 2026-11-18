@@ -324,8 +324,9 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "from, so the year (the solve) returns the energy it took. An upper-level fix_quantity or "
                      "fix_usage at the end of a roll's horizon replaces these end conditions (fix_price keeps the "
                      "closure and only values the end), and fix_end wins at the last step of the model. "
-                     "bind_within_period (also bind_within_period_blended_weights), bind_within_timeblock and "
-                     "bind_intraperiod_blocks do the same per period or timeblock where a roll starts inside one: "
+                     "bind_within_period (also bind_within_period_blended_weights, and bind_within_timeblock, which "
+                     "such a solve uses as bind_within_period) and bind_intraperiod_blocks do the same per period "
+                     "where a roll starts inside one: "
                      "the roll continues it from the carried level and the roll(s) holding its end close it at the "
                      "level it started from. Before, each roll cycled on itself from a free level (or the blocks of "
                      "a period held in part chained forward without closing it), so the level jumped at roll "
@@ -339,8 +340,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "(storage_nested_fix_method fix_quantity, fix_usage or fix_price) and that has no state "
                      "realised before the lower solve now starts from the level the upper solve planned for the "
                      "same moment, when it chains forward (bind_forward_only, or bind_within_solve in a rolling "
-                     "solve under fix_quantity or fix_usage, and bind_within_period / bind_within_timeblock there "
-                     "when the first roll cuts the period or timeblock) and fix_start does not apply (no fix_start, or the "
+                     "solve under fix_quantity or fix_usage, and bind_within_period (also bind_within_timeblock) "
+                     "there when the first roll cuts the period) and fix_start does not apply (no fix_start, or the "
                      "lower solve starts after the start of the model). Before, it started free or from fix_start, "
                      "so the lower solve could start fuller than the upper plan and keep the difference (results "
                      "change)."),
@@ -389,6 +390,15 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "solve could start full and end empty, or build storage only for its start energy (results "
                      "change). fix_start on capacity the solve cannot change keeps a free end."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "storage_end_matches_start"),
+        ),
+        BehaviourChange(
+            id="storage_reference_start",
+            summary=("A storage node with storage_solve_horizon_method use_reference_value and no fix_start now "
+                     "starts from its storage_state_reference_value at the first step (the model's first step in "
+                     "the first solve). Before, its start was free and only the matching end bounded it, so a "
+                     "reference series that falls during the year did not drain the storage; now the existing "
+                     "storage gives the drop (results change). With fix_start, storage_state_start still wins."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "storage_reference_start"),
         ),
         BehaviourChange(
             id="annuity_over_payback_time",
@@ -540,6 +550,40 @@ def warn_once_each(kind: str, names: list[str], text_of) -> bool:
     return True
 
 
+def complete_solve_of(solve: str | None) -> str:
+    """The complete solve a sub-solve name belongs to: a roll ``<solve>_roll_<k>`` counts as ``<solve>``."""
+    import re
+    return re.sub(r"_roll_\d+$", "", solve) if solve else ""
+
+
+def storages_named(names: Iterable[str], noun: str = "storage node") -> str:
+    """``"1 storage node (A)"`` / ``"12 storage nodes (A, ...)"``: how many and the first only (owner rule for the
+    storage messages: one console line per message type and solve, never a line or a list per node)."""
+    names = list(dict.fromkeys(str(n) for n in names))
+    count = len(names)
+    first = names[0] if names else ""
+    return f"{count} {noun}{'' if count == 1 else 's'} ({first}{', ...' if count > 1 else ''})"
+
+
+def storage_message(kind: str, solve: str | None, names: Iterable[str], text_of, details: str = "") -> bool:
+    """Print a storage warning or notice: one line per message ``kind`` and complete solve (the rolls of a rolling
+    solve count as one), ``text_of(named)`` where ``named`` is :func:`storages_named` of ``names`` (how many and
+    the first).  ``details`` (the values per node) go to the log at debug level, not to the console.  Returns True
+    when it printed."""
+    import logging
+    names = list(dict.fromkeys(str(n) for n in names))
+    if not names:
+        return False
+    key = ("storage_message", kind, complete_solve_of(solve))
+    if key in _warned:
+        return False
+    _warned.add(key)
+    print(text_of(storages_named(names)), flush=True)
+    if details:
+        logging.getLogger("flextool.engine.storage").debug(details)
+    return True
+
+
 def mark_once(key) -> bool:
     """Record *key* for this run without printing (a message that goes to the log, once per run).  Returns True
     the first time in a run, False after that; :func:`start_run` forgets it."""
@@ -618,15 +662,31 @@ def unannounced(change_id: str, names: Iterable[str]) -> list[str]:
     return [n for n in dict.fromkeys(str(n) for n in names) if (change_id, n) not in _announced]
 
 
-def notice(change_id: str, kind: str, names: Iterable[str], detail: str = "") -> bool:
+def notice(change_id: str, kind: str, names: Iterable[str], detail: str = "", solve: str | None = None) -> bool:
     """Print the notice of *change_id* for the *names* not yet announced in this run.
 
     Fires only while the input database carries the change's marker.  Returns True when a line was printed.
+    With *solve* (the storage notices): once per change and complete solve, naming how many entities and the first
+    only (:func:`storages_named`); the full list goes to the log at debug level.
     """
     if change_id not in BEHAVIOUR_CHANGES:
         raise KeyError(f"unknown behaviour change {change_id!r}")
     if change_id not in _markers:
         return False
+    if solve is not None:
+        names = list(dict.fromkeys(str(n) for n in names))
+        key = ("notice", change_id, complete_solve_of(solve))
+        if not names or key in _warned:
+            return False
+        _warned.add(key)
+        _announced.update((change_id, n) for n in names)
+        import logging
+        affected = names[0] if len(names) == 1 else f"{len(names)} {kind} ({names[0]}, ...)"
+        print(notice_text(change_id, kind, [affected], detail), flush=True)
+        logging.getLogger("flextool.engine.storage").debug(
+            "Behaviour change %s in solve '%s', affected %s: %s", change_id, complete_solve_of(solve), kind,
+            ", ".join(names))
+        return True
     fresh = unannounced(change_id, names)
     if not fresh:
         return False

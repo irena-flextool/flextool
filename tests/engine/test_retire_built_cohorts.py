@@ -467,8 +467,11 @@ def test_built_retirements_carry_into_a_rolling_solve(tmp_path_factory) -> None:
     values = (base + _solves(["rb_first", "rb_roll"])
               + _solve("rb_first", ["p2020", "p2025"], invest_periods=["p2020", "p2025"],
                        realized_periods=["p2020", "p2025"], realized_invest_periods=["p2020", "p2025"])
-              + [row for row in _solve("rb_roll", ["p2030"], realized_periods=["p2030"]) if row[2] != "solve_mode"]
-              + [["solve", "rb_roll", "solve_mode", b64("rolling_window", "str")],
+              + [row for row in _solve("rb_roll", ["p2030"], realized_periods=["p2030"])
+                 if row[2] not in ("solve_mode", "period_timeset")]
+              # a rolling solve needs a continuous timeline (5weeks has gaps): the 48 h of timeset 2day
+              + [["solve", "rb_roll", "period_timeset", _period_map({"p2030": "2day"})],
+                 ["solve", "rb_roll", "solve_mode", b64("rolling_window", "str")],
                  ["solve", "rb_roll", "rolling_solve_horizon", b64(8.0, "float")],
                  ["solve", "rb_roll", "rolling_solve_jump", b64(4.0, "float")]])
     steps, _, _ = _RUNS.get(tmp_path_factory, alt="rb_roll", values=values, base_chain=_no_battery_invest(SINGLE),

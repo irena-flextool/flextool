@@ -176,7 +176,8 @@ def test_fix_start_on_existing_capacity_is_an_endowment(tmp_path_factory, capsys
                                      "storage_start_end_method": "fix_start", "storage_state_start": 0.5})
     out = capsys.readouterr().out
     lines = [ln for ln in out.splitlines() if "storage_state_start on capacity the solve cannot change" in ln]
-    assert len(lines) == 1 and "s 1 MWh" in lines[0] and "endowment" in lines[0]
+    assert len(lines) == 1 and "1 storage node (s)" in lines[0] and "(1 MWh in total)" in lines[0]
+    assert "endowment" in lines[0]
     start, end = _chain(step)
     assert (start, end) == pytest.approx((1.0, 0.0), abs=TOL)
     assert _production(step) == pytest.approx(3.0, abs=TOL)
@@ -209,53 +210,109 @@ def test_fix_start_end_pins_both_ends_of_the_chain(tmp_path_factory):
     assert not row_terms(pb, "storage_state_end_binding")
 
 
-def test_fix_start_end_drain_on_investable_capacity_is_an_error(tmp_path_factory):
-    """fix_start_end with storage_state_end below storage_state_start on storage the solve can invest in: the drain
-    grows with the storage built, which has no consistent reading (validation error)."""
-    from flextool.engine.input._solve_state import FlexToolConfigError
-    with pytest.raises(FlexToolConfigError, match="storage_state_end below storage_state_start"):
-        _run(tmp_path_factory, invest=True, s={"existing": 0.0, "storage_binding_method": FO_B,
-                                               "storage_start_end_method": "fix_start_end",
-                                               "storage_state_start": 0.5, "storage_state_end": 0.25})
+@pytest.mark.parametrize("rp", [True, False], ids=["rp", "hourly"])
+@pytest.mark.parametrize("existing", [0.0, 2.0])
+def test_fix_start_end_drain_on_investable_capacity_warns(tmp_path_factory, capsys, rp, existing):
+    """fix_start_end 0.5 / 0.25 on storage the solve can invest in (owner decision, Phase 5; before a configuration
+    error): the run solves and prints one warning line with the MWh drained from existing capacity
+    (0.5·E − 0.25·E).  The matching end stays, so storage built must return its start energy: with the end pin
+    0.25·(E + I) ≥ 0.5·I the investment is capped at I ≤ 0.25·E / (0.5 − 0.25) = E.  Each MWh built under the cap
+    lets the end hold less of the existing start energy, so the store delivers 0.25·(E + I), at most the user's own
+    start energy on existing capacity (0.5·E): here storage at 1 per MWh is cheaper than production at 10, so the
+    solve builds to the cap (E), never beyond (no free energy)."""
+    step = _run(tmp_path_factory, invest=True, rp=rp,
+                s={"existing": existing, "storage_binding_method": FO_B if rp else "bind_forward_only",
+                   "storage_start_end_method": "fix_start_end", "storage_state_start": 0.5,
+                   "storage_state_end": 0.25})
+    out = capsys.readouterr().out
+    lines = [ln for ln in out.splitlines() if "fix_start_end with storage_state_end below" in ln]
+    assert len(lines) == 1, out[-2000:]
+    assert "1 storage node (s)" in lines[0] and f"drain {0.25 * existing:.6g} MWh" in lines[0]
+    assert "can be invested in" in lines[0]
+    invested = _invested(step)
+    assert invested == pytest.approx(existing, abs=TOL)
+    delivered = 4.0 - _production(step)
+    assert delivered == pytest.approx(0.25 * (existing + invested), abs=TOL)
+    assert delivered <= 0.5 * existing + TOL
+    _no_slack(step)
+    pb = build(step.flex_data)
+    match = "rp_inter_period_end_match" if rp else "storage_state_end_match_share"
+    assert row_terms(pb, match)
 
 
 @pytest.mark.parametrize("rp", [True, False], ids=["rp", "hourly"])
-def test_reference_series_below_the_start_does_not_drain(tmp_path_factory, rp):
-    """use_reference_value from a time series that falls from 0.8 to 0.3 (a historical drawdown), free start,
-    forward chain on 2 MWh: the reference sets the end at 0.6 MWh, and the matching end bounds the start by it, so
-    the store delivers nothing net and production is the demand (before: start full, end 0.6, 1.4 MWh free)."""
+def test_reference_series_starts_from_its_first_value(tmp_path_factory, rp):
+    """use_reference_value from a time series that falls from 0.8 to 0.3 (a historical drawdown), no fix_start,
+    forward chain on 2 MWh the solve cannot change (owner decision, Phase 5): the start is the reference at the
+    model's first step (0.8 → 1.6 MWh, not free) and the end the reference at the last (0.3 → 0.6 MWh), so the store
+    delivers the explicit 1 MWh drawdown of existing capacity and production is 3 (before: a free start bounded by
+    the matching end, production 4)."""
     step = _run(tmp_path_factory, rp=rp,
                 s={"existing": 2.0, "storage_binding_method": FO_B, "storage_start_end_method": "fix_nothing",
                    "storage_solve_horizon_method": "use_reference_value",
                    "storage_state_reference_value": _m(dict(zip(STEPS, [0.8, 0.7, 0.5, 0.3])), "time")})
-    assert _production(step) == pytest.approx(4.0, abs=TOL)
+    assert _production(step) == pytest.approx(3.0, abs=TOL)
     pb = build(step.flex_data)
     if rp:
         start, end = _chain(step)
-        assert end == pytest.approx(0.6, abs=TOL) and start <= end + TOL
+        assert (start, end) == pytest.approx((1.6, 0.6), abs=TOL)
         assert list(row_terms(pb, "rp_inter_period_reference_value")) == [
             "rp_inter_period_reference_value[s,p1,t0003]"]
+        assert list(row_terms(pb, "rp_inter_period_start_fix")) == ["rp_inter_period_start_fix[s,p1,t0001]"]
         assert not row_terms(pb, "storage_state_solve_horizon_reference_value")
     else:
         state = _values(step, "v_state")
         assert state[("s", "p1", "t0004")] == pytest.approx(0.6, abs=TOL)
-        assert state[("s", "p1", "t0001")] <= 0.6 + TOL
-        assert list(row_terms(pb, "storage_state_end_match")) == ["storage_state_end_match[s,p1,t0001,p1,t0004]"]
+        assert state[("s", "p1", "t0001")] == pytest.approx(1.6 - 1.0 + _production_at(step, "t0001"), abs=TOL)
+        assert not row_terms(pb, "storage_state_end_match")
+
+
+def _production_at(step, t: str) -> float:
+    return sum(v for k, v in _values(step, "v_flow").items() if k[0] == "src" and k[-1] == t)
+
+
+@pytest.mark.parametrize("fix_start", [None, 0.8, 0.5], ids=["reference", "same", "differs"])
+def test_reference_start_and_fix_start(tmp_path_factory, capsys, fix_start):
+    """A use_reference_value node without fix_start starts at the reference (0.8); with fix_start the share of
+    fix_start wins, and a printed warning names the node where the two differ (one line)."""
+    s = {"existing": 2.0, "storage_binding_method": "bind_forward_only",
+         "storage_start_end_method": "fix_nothing" if fix_start is None else "fix_start",
+         "storage_solve_horizon_method": "use_reference_value", "storage_state_reference_value": 0.8}
+    if fix_start is not None:
+        s["storage_state_start"] = fix_start
+    step = _run(tmp_path_factory, rp=False, s=s)
+    out = capsys.readouterr().out
+    lines = [ln for ln in out.splitlines() if "differs from the storage_state_reference_value" in ln]
+    share = 0.8 if fix_start is None else fix_start
+    # start share·2 MWh, end 0.8·2 MWh: the store gives (share − 0.8)·2 net
+    assert _production(step) == pytest.approx(4.0 - (share - 0.8) * 2.0, abs=TOL)
+    if fix_start == 0.5:
+        assert len(lines) == 1 and "1 storage node (s)" in lines[0]
+    else:
+        assert not lines
 
 
 @pytest.mark.parametrize("rp", [True, False])
-def test_reference_below_fix_start_share_on_investable_storage_is_an_error(tmp_path_factory, rp):
-    """use_reference_value 0.3 below fix_start 0.5 on storage the solve can invest in: ending at the reference would
-    let built storage deliver part of its start energy for free, against the matching end — a configuration error
-    (owner decision).  Before: the reference became a lower bound (rp_inter_period_reference_value_min /
-    storage_state_solve_horizon_reference_value_min)."""
-    from flextool.engine.input._solve_state import FlexToolConfigError
-
-    with pytest.raises(FlexToolConfigError, match="storage_state_reference_value below storage_state_start"):
-        _run(tmp_path_factory, invest=True, rp=rp,
-             s={"existing": 0.0, "storage_binding_method": FO_B if rp else "bind_forward_only",
-                "storage_start_end_method": "fix_start", "storage_state_start": 0.5,
-                "storage_solve_horizon_method": "use_reference_value", "storage_state_reference_value": 0.3})
+@pytest.mark.parametrize("fix_start", [0.5, None], ids=["fix_start", "reference_start"])
+def test_reference_below_the_start_on_investable_storage_warns(tmp_path_factory, capsys, rp, fix_start):
+    """use_reference_value end below the start (fix_start 0.5, or a reference series 0.5 → 0.3) on storage the solve
+    can invest in (owner decision, Phase 5; before a configuration error): the run solves with the matching end,
+    which caps the investment (here at 0: nothing exists), and prints one warning line."""
+    s = {"existing": 0.0, "storage_binding_method": FO_B if rp else "bind_forward_only",
+         "storage_solve_horizon_method": "use_reference_value"}
+    if fix_start is None:
+        s.update({"storage_start_end_method": "fix_nothing",
+                  "storage_state_reference_value": _m(dict(zip(STEPS, [0.5, 0.5, 0.4, 0.3])), "time")})
+    else:
+        s.update({"storage_start_end_method": "fix_start", "storage_state_start": fix_start,
+                  "storage_state_reference_value": 0.3})
+    step = _run(tmp_path_factory, invest=True, rp=rp, s=s)
+    out = capsys.readouterr().out
+    lines = [ln for ln in out.splitlines() if "use_reference_value end below their start" in ln]
+    assert len(lines) == 1 and "1 storage node (s)" in lines[0], out[-2000:]
+    assert _invested(step) == pytest.approx(0.0, abs=TOL)
+    assert _production(step) == pytest.approx(4.0, abs=TOL)
+    _no_slack(step)
 
 
 def test_investment_solve_short_of_the_model_end_warns(tmp_path_factory, capsys):
@@ -274,6 +331,6 @@ def test_investment_solve_short_of_the_model_end_warns(tmp_path_factory, capsys)
     steps = run(tmp_path_factory, url, scen)
     out = capsys.readouterr().out
     assert out.count("the solve does not reach the end of the model, so the end is not held") == 1, out[-3000:]
-    assert "storage node(s) battery start" in out
+    assert "1 storage node (battery) start" in out
     for step in steps.values():
         assert not row_terms(build(step.flex_data), "storage_state_end_match")

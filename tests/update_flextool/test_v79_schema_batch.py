@@ -560,11 +560,17 @@ def test_adds_the_node_unit_of_measure(plain) -> None:
 
 def test_rewrites_the_rp_descriptions(plain) -> None:
     shipped = _shipped()
+    # v82 rewrites the storage_binding_method description again (the rolling storage carry): the shipped text is
+    # v82's, the v79 step still writes its own.
+    later = m._v82_storage_texts()
     for key in RP_CHANGED:
-        assert plain["after"][key][2] == shipped[key] == m._v79_rp_texts()[key] != plain["before"][key][2]
+        assert plain["after"][key][2] == m._v79_rp_texts()[key] != plain["before"][key][2]
+        assert shipped[key] == later.get(key, m._v79_rp_texts()[key])
         assert plain["after"][key][:2] + plain["after"][key][3:] == plain["before"][key][:2] + plain["before"][key][3:]
     assert "Not allowed in a stochastic solve" in plain["before"][("timeset", "representative_period_weights")][2]
-    assert "bind forward only (bind_forward_only), with a warning" in shipped[("node", "storage_binding_method")]
+    v79 = m._v79_rp_texts()[("node", "storage_binding_method")]
+    assert "bind forward only (bind_forward_only), with a warning" in v79
+    assert "do not work with stochastic" not in v79
     assert "do not work with stochastic" not in shipped[("node", "storage_binding_method")]
 
 

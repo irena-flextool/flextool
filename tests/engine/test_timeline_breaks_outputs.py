@@ -91,10 +91,13 @@ def runs(tmp_path_factory):
     out = {}
     out["one_block"] = _write(tmp_path_factory, "tb_one_block", [_timeset({"t0001": 24.0})])
     out["gap"] = _write(tmp_path_factory, "tb_gap", [_timeset(GAP)])
-    out["gap_rolling"] = _write(tmp_path_factory, "tb_gap_roll", [_timeset(GAP)] + _rolling(24.0, 24.0))
-    out["gap_rolling_12"] = _write(tmp_path_factory, "tb_gap_roll12", [_timeset(GAP)] + _rolling(18.0, 12.0))
     values, ents = _two_periods("t0001", "t0049")
     out["periods_gap"] = _write(tmp_path_factory, "tb_periods_gap", values, entities=ents)
+    # A rolling solve needs a continuous timeline within each period (a gap inside a period is a configuration
+    # error, owner decision Phase 5): the rolling twins roll the two periods with the gap between them.
+    out["gap_rolling"] = _write(tmp_path_factory, "tb_gap_roll", values + _rolling(24.0, 24.0), entities=ents)
+    out["gap_rolling_12"] = _write(tmp_path_factory, "tb_gap_roll12", values + _rolling(18.0, 12.0),
+                                   entities=ents)
     values, ents = _two_periods("t0001", "t0025")
     out["periods_continue"] = _write(tmp_path_factory, "tb_periods_cont", values, entities=ents)
     values, ents = _two_periods("t0001", "t0001", shared=True)
@@ -128,10 +131,11 @@ def test_gap_in_the_timeline_breaks_at_the_step_after_it(runs):
 
 
 def test_rolling_twin_breaks_only_at_the_gap(runs):
-    """The gap model rolled one block per roll (seam at the gap) and in 12-h jumps (seams inside the blocks that
-    continue the timeline, carried from the previous roll): the same single break as the single solve."""
-    steps, pdir = runs["gap"]
-    expected = {(_single_period(steps), "t0049")}
+    """The two periods with a gap between them (p2020 t0001-t0024, p2025 t0049-t0072) rolled one period per roll
+    (seam at the gap) and in 12-h jumps (seams inside the periods that continue the timeline, carried from the
+    previous roll): the same single break as the single solve."""
+    expected = {("p2025", "t0049")}
+    assert _breaks(runs["periods_gap"][1]) == expected
     for name in ("gap_rolling", "gap_rolling_12"):
         roll_steps, roll_dir = runs[name]
         assert len(roll_steps) > 1, name

@@ -65,8 +65,8 @@ Equation families, in emit order (module in brackets when not model/core.py):
   Storage state       maxState; profile_state_{upper_limit,lower_limit,fixed};
                       storage_state_start_binding_cyclic_period; storage_within_solve_path_end,
                       storage_state_fan_start (stochastic fans); storage_state_end_binding;
-                      storage_state_roll_{anchor,close}[_share] (rolling cyclic storage, per instance, period or
-                      timeblock); storage_state_roll_match (rolling forward chains);
+                      storage_state_roll_{anchor,close}[_share] (rolling cyclic storage, per instance or
+                      period); storage_state_roll_match (rolling forward chains);
                       storage_state_end_match[_share] (forward chains whose start the solve decides);
                       storage_state_solve_horizon_reference_value
   Profiles            profile_flow_{upper_limit,lower_limit,fixed}
@@ -892,17 +892,19 @@ def _start_periods(d, names: set[str]) -> dict[str, list[str]]:
 def _check_storage_accounting(b: _Build) -> None:
     """Storage start and end conditions that let a solve use energy it never produced (storage_semantics, Q7).
 
-    * fix_start_end with storage_state_end below storage_state_start on storage the solve can invest in during the
-      period it starts in: the explicit drain grows with the investment, so the solve would build storage to empty
-      it (no consistent reading of the two values) — a configuration error.  The same for use_reference_value
-      below the fix_start share there (raised where the reference row is built: _raise_reference_below_start).
+    * fix_start_end with storage_state_end below storage_state_start: a warning with the MWh it drains from existing
+      capacity (_warn_fix_start_end_drain); the matching end still caps the investment.  The same for
+      use_reference_value below the start on storage the solve can invest in (warned where the reference row is
+      built: _warn_reference_below_start).
     * fix_start on a forward chain (bind_forward_only, bind_forward_only_blended_weights) whose capacity at the start
       is not a decision of the solve, with an open end (no fix_end, no use_reference_value, no upper-level fix): the
-      start is an endowment the run may use up; a warning with its size, once per node and solve (owner decision).
+      start is an endowment the run may use up; a warning with its size (owner decision).
     * A forward chain without representative periods whose start the solve decides by investing (a free start or
       fix_start on capacity it can invest in during the start period) in a solve that does not hold the last step
       of the model: the matching end (storage_state_end_match) needs both ends in one solve, so it is not applied;
-      warned once per run per node.  (A representative-period chain always gets rp_inter_period_end_match.)
+      a warning.  (A representative-period chain always gets rp_inter_period_end_match.)
+    Each warning prints one line per solve, naming how many nodes and the first (owner rule); the values per node
+    go to the log at debug level.
     """
     from flextool.engine import _behaviour_changes
     d = b.d
@@ -926,17 +928,9 @@ def _check_storage_accounting(b: _Build) -> None:
     def investable(n: str) -> bool:
         return bool(invest.get(n, set()) & set(periods.get(n, [])))
 
-    where = f"solve '{b.solve_name}'" if b.solve_name else "this solve"
-    conflict = sorted(n for n in (fix_start & fix_end) - carried
-                      if n in share and n in end_share and end_share[n] < share[n] - 1e-12 and investable(n))
-    if conflict:
-        raise FlexToolConfigError(
-            f"Storage node(s) {_node_list(conflict)} in {where} have storage_start_end_method fix_start_end with "
-            "storage_state_end below storage_state_start, and the solve can invest in their storage capacity in the "
-            "period they start in. The drain from the start share to the end share grows with the storage built, so "
-            "the solve could build storage only to empty it, using energy that was never produced. Give "
-            "storage_state_end at least storage_state_start, use a cyclic storage_binding_method (bind_within_solve, "
-            "bind_within_solve_blended_weights) with fix_start, or do not allow investment in the start period.")
+    where = (f"solve '{_behaviour_changes.complete_solve_of(b.solve_name)}'" if b.solve_name else "this solve")
+    _warn_fix_start_end_drain(b, fix_start & fix_end, share, end_share, periods, investable)
+    _warn_reference_start_mismatch(b, share)
 
     forward = set()
     for frame in (d.storage_bind_forward_only, d.storage_bind_forward_only_blended_weights):
@@ -956,34 +950,115 @@ def _check_storage_accounting(b: _Build) -> None:
     if endowed and d.p_state_existing_capacity is not None:
         exist = {(str(n), str(p)): float(v) for n, p, v in d.p_state_existing_capacity.frame.select(
             pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), "value").iter_rows()}
-        sizes = {}
+        sizes, mwh = {}, {}
         for n in endowed:
             first = sorted(periods.get(n, []))
-            mwh = share[n] * exist.get((n, first[0]), 0.0) if first else 0.0
-            if mwh > 0:
-                sizes[n] = f"{n} {mwh:.6g} MWh"
+            mwh[n] = share[n] * exist.get((n, first[0]), 0.0) if first else 0.0
+            if mwh[n] > 0:
+                sizes[n] = f"{n} {mwh[n]:.6g} MWh"
         if sizes:
-            # Printed once per node and solve (the first solve of each level: a carried start is not an endowment).
-            _behaviour_changes.warn_once_each(
-                f"storage_endowment:{b.solve_name}", sorted(sizes),
-                lambda fresh: (f"Warning: storage node(s) start {where} at storage_state_start on capacity the solve "
+            # One line per solve (the first solve of each level: a carried start is not an endowment).
+            total = sum(mwh[n] for n in sizes)
+            _behaviour_changes.storage_message(
+                "storage_endowment", b.solve_name, sorted(sizes),
+                lambda named: (f"Warning: {named} start {where} at storage_state_start on capacity the solve "
                                "cannot change and end free (bind forward only, no fix_end, use_reference_value or "
-                               "upper-level fix), so the run may use this start energy without producing it: "
-                               f"{', '.join(sizes[n] for n in fresh)}. This is a valid model of an initial stock (an "
-                               "endowment); if the storage should return it, use fix_start_end, a cyclic "
-                               "storage_binding_method or use_reference_value."))
+                               f"upper-level fix), so the run may use this start energy ({total:.6g} MWh in total) "
+                               "without producing it. This is a valid model of an initial stock (an endowment); if "
+                               "the storage should return it, use fix_start_end, a cyclic storage_binding_method or "
+                               "use_reference_value."),
+                details=f"Endowment in {where}: {', '.join(sizes[n] for n in sorted(sizes))}.")
     if not d.storage_solve_at_model_end:
         rp_nodes = set(str(n) for n in d.nodeState_rp["n"].to_list()) if _has_rows(d.nodeState_rp) else set()
         decided = sorted(n for n in forward - nested - rp_nodes if investable(n))
         if decided:
-            _behaviour_changes.warn_once_each(
-                "storage_end_match_not_applied", decided,
-                lambda fresh: (f"Warning: storage node(s) {_node_list(fresh)} start {where} at a level the solve "
-                               "decides by investing (a free start, or storage_state_start of capacity it can build) "
-                               "and chain forward, but the solve does not reach the end of the model, so the end is "
-                               "not held at least at that start: built storage can deliver its start energy without "
-                               "producing it. Use bind_within_solve(_blended_weights), or fix_start_end with "
-                               "storage_state_end at least storage_state_start."))
+            _behaviour_changes.storage_message(
+                "storage_end_match_not_applied", b.solve_name, decided,
+                lambda named: (f"Warning: {named} start {where} at a level the solve decides by investing (a free "
+                               "start, or storage_state_start of capacity it can build) and chain forward, but the "
+                               "solve does not reach the end of the model, so the end is not held at least at that "
+                               "start: built storage can deliver its start energy without producing it. Use "
+                               "bind_within_solve(_blended_weights), or fix_start_end with storage_state_end at least "
+                               "storage_state_start."))
+
+
+def _existing_mwh(d) -> dict:
+    """``{(node, period): MWh}``: the existing storage capacity (p_state_existing_capacity)."""
+    if d.p_state_existing_capacity is None:
+        return {}
+    return {(str(n), str(p)): float(v) for n, p, v in d.p_state_existing_capacity.frame.select(
+        pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), "value").iter_rows()}
+
+
+def _warn_fix_start_end_drain(b: _Build, nodes: set, share: dict, end_share: dict, periods: dict, investable) -> None:
+    """Warn about fix_start_end nodes whose storage_state_end is below their storage_state_start (owner decision,
+    Phase 5; before an error where the solve could invest in them).
+
+    The drawdown can be intended (a stock drawn down by design).  It drains s·E_start − e·E_end MWh of existing
+    capacity (E_start: the capacity at the start, E_end: at the model's last period).  Storage the solve builds
+    in the start period must still return its start energy: storage_state_end_match_share (or
+    rp_inter_period_end_match) stays, so with the end pin e·(E + I) ≥ s·I the investment is capped at
+    e·E / (s − e) (no free energy).  Only in a solve that holds the end of the model (the chain's end there), so the
+    message does not repeat storage_end_match_not_applied of the solve that starts the node; one printed line per
+    solve, the values per node in the log.
+    """
+    d = b.d
+    rp_nodes = set(str(n) for n in d.nodeState_rp["n"].to_list()) if _has_rows(d.nodeState_rp) else set()
+    drained = sorted(n for n in nodes if n in share and n in end_share and end_share[n] < share[n] - 1e-12
+                     and (d.storage_solve_at_model_end or (n in rp_nodes and d.storage_rp_chain_at_model_end)))
+    if not drained:
+        return
+    exist = _existing_mwh(d)
+    last = [str(x) for x in d.period_last["d"].to_list()] if _has_rows(d.period_last) else []
+    rows = []
+    for n in drained:
+        own = sorted(p for (m, p) in exist if m == n)
+        first = sorted(periods.get(n, [])) or own
+        e_start = exist.get((n, first[0]), 0.0) if first else 0.0
+        e_end = max((exist.get((n, p), 0.0) for p in last), default=exist.get((n, own[-1]), 0.0) if own else 0.0)
+        mwh = share[n] * e_start - end_share[n] * e_end
+        can_invest = investable(n)
+        if mwh > 1e-9 or can_invest:
+            rows.append((n, share[n], end_share[n], e_start, e_end, mwh, can_invest))
+    if not rows:
+        return
+    from flextool.engine import _behaviour_changes
+    total = sum(max(r[5], 0.0) for r in rows)
+    invest = [r[0] for r in rows if r[6]]
+    tail = (f" {len(invest)} of them can be invested in: storage built there must still return its start energy "
+            "(the matching end), which caps that investment." if invest else "")
+    solve = _behaviour_changes.complete_solve_of(b.solve_name)
+    _behaviour_changes.storage_message(
+        "storage_fix_start_end_drain", b.solve_name,
+        [r[0] for r in rows],
+        lambda named: (f"Warning: in solve '{solve}' {named} have storage_start_end_method fix_start_end with "
+                       f"storage_state_end below storage_state_start: they drain {total:.6g} MWh of existing "
+                       "storage capacity over the model (start share x capacity at the start - end share x "
+                       f"capacity at the model's last period).{tail} This can be intended (a stock drawn down by "
+                       "design); otherwise give storage_state_end at least storage_state_start."),
+        details=f"fix_start_end drain in solve '{solve}': " + "; ".join(
+            f"{n} start {s_:.6g} end {e_:.6g}, capacity {cs:.6g} -> {ce:.6g} MWh, drains {mwh:.6g} MWh"
+            f"{', investable' if inv else ''}" for n, s_, e_, cs, ce, mwh, inv in rows))
+
+
+def _warn_reference_start_mismatch(b: _Build, share: dict) -> None:
+    """Warn about use_reference_value nodes whose fix_start share differs from the reference value at their first
+    step (owner decision, Phase 5): fix_start wins.  A node without fix_start starts from the reference
+    (``preprocess.flex_data._reference_start_as_fix_start``), so the two agree there."""
+    from flextool.engine.preprocess.flex_data import reference_start_shares
+    ref = reference_start_shares(b.d)
+    off = sorted(n for n, v in ref.items() if n in share and abs(share[n] - v) > 1e-9)
+    if not off:
+        return
+    from flextool.engine import _behaviour_changes
+    solve = _behaviour_changes.complete_solve_of(b.solve_name)
+    _behaviour_changes.storage_message(
+        "storage_reference_start_mismatch", b.solve_name, off,
+        lambda named: (f"Warning: in solve '{solve}' {named} with use_reference_value have a storage_state_start "
+                       "(fix_start) that differs from the storage_state_reference_value at their first step; the "
+                       "start uses storage_state_start."),
+        details=f"Reference start mismatch in solve '{solve}': " + ", ".join(
+            f"{n} storage_state_start {share[n]:.6g}, reference {ref[n]:.6g}" for n in off))
 
 
 def _warn_storage_slack_bypass(b: _Build) -> None:
@@ -992,10 +1067,10 @@ def _warn_storage_slack_bypass(b: _Build) -> None:
     A storage node with balance slack (vq_state_up / vq_state_down: penalty_method not off) that a unit or a
     connection links to a node with penalty_method off: the storage slack supplies or absorbs energy that flows on
     to (or comes from) the node meant to balance exactly, so the hard balance is bypassed at the storage node's
-    penalty, which can be far below what an unmet demand elsewhere should cost.  Printed once per node and solve
-    (the rolls of a rolling solve count as one solve).
+    penalty, which can be far below what an unmet demand elsewhere should cost.  Only pure storage nodes (no own
+    inflow or demand, e.g. a battery): a carrier node's slack is the intended outlet of its unmet demand.  One
+    printed line per solve (the rolls of a rolling solve count as one solve), the node pairs in the log.
     """
-    import re
     from flextool.engine import _behaviour_changes
     d = b.d
     off = getattr(d, "nodeBalance_penalty_off", None)
@@ -1006,6 +1081,12 @@ def _warn_storage_slack_bypass(b: _Build) -> None:
     if _has_rows(d.nodeBalancePeriod):
         balanced |= set(str(n) for n in d.nodeBalancePeriod["n"].to_list())
     slack_storage = (set(str(n) for n in d.nodeState["n"].to_list()) & balanced) - off_nodes
+    # Only pure storage (e.g. a battery): a node with its own inflow or demand is a carrier node, whose slack is the
+    # intended outlet of its unmet demand (owner decision, Phase 5).
+    inflow = getattr(d, "p_inflow", None)
+    if slack_storage and inflow is not None and _has_rows(inflow.frame):
+        slack_storage -= set(str(n) for n in inflow.frame.filter(pl.col("value").abs() > 0)
+                             .select(pl.col("n").cast(pl.Utf8)).unique()["n"].to_list())
     if not slack_storage:
         return
     nodes_of: dict[str, set[str]] = {}
@@ -1020,16 +1101,19 @@ def _warn_storage_slack_bypass(b: _Build) -> None:
                 linked.setdefault(n, set()).update(hard)
     if not linked:
         return
-    solve = re.sub(r"_roll_\d+$", "", b.solve_name) if b.solve_name else ""
+    solve = _behaviour_changes.complete_solve_of(b.solve_name)
     where = f"solve '{solve}'" if solve else "this solve"
-    _behaviour_changes.warn_once_each(
-        f"storage_slack_bypass:{solve}", sorted(linked),
-        lambda fresh: (f"Warning: in {where} storage node(s) with balance slack (penalty_method not off) are linked by "
-                       "a unit or a connection to node(s) with penalty_method off: "
-                       f"{', '.join(f'{n} ({_node_list(sorted(linked[n]))})' for n in fresh)}. The storage slack "
-                       "can supply or absorb energy for those nodes and so bypass their hard balance at the storage "
-                       "node's penalty. If the balance should hold, set penalty_method off on the storage node too "
-                       "(or give it a high penalty), so that a shortfall shows where it arises."))
+    first = sorted(linked)[0]
+    _behaviour_changes.storage_message(
+        "storage_slack_bypass", b.solve_name, sorted(linked),
+        lambda named: (f"Warning: in {where} {named} with balance slack (penalty_method not off) are linked by a "
+                       f"unit or a connection to node(s) with penalty_method off (e.g. {first} to "
+                       f"{_node_list(sorted(linked[first]))}). The storage slack can supply or absorb energy for those "
+                       "nodes and so bypass their hard balance at the storage node's penalty. If the balance should "
+                       "hold, set penalty_method off on the storage node too (or give it a high penalty), so that a "
+                       "shortfall shows where it arises."),
+        details=f"Storage slack bypass in {where}: "
+                + ", ".join(f"{n} ({_node_list(sorted(linked[n]))})" for n in sorted(linked)))
 
 
 STORAGE_START_END_MESSAGE = (
@@ -1963,9 +2047,9 @@ def _eq_rp_chain_ends(b: _Build) -> None:
     #   ∀ n ∈ storage_use_reference_value ∩ bind_forward_only_blended_weights ∩ nodeState_rp, (d,b) ∈ chain leaves,
     #     t = the node's last step in d (nodeState_last_dt), no upper-level fix on n
     # use_reference_value sets the level at the end of the chain (the absolute level at the end of the horizon), not
-    # a state inside the last block.  A reference value below the fix_start share of a node the solve can invest in
-    # would conflict with the matching end above (the solve could build storage to spend its start share): a
-    # configuration error (_raise_reference_below_start).
+    # a state inside the last block.  A reference value below the start share of a node the solve can invest in:
+    # the matching end above stays (the solve cannot build storage to spend its start share) and caps the
+    # investment; a warning (_warn_reference_below_start).
     if ref_nodes is not None and d.p_storage_state_reference_value is not None and _has_rows(d.nodeState_last_dt):
         last_step = (d.nodeState_last_dt.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
                      .join(leaves.select(pl.col("d").cast(pl.Utf8)), on="d", how="inner")
@@ -1976,8 +2060,8 @@ def _eq_rp_chain_ends(b: _Build) -> None:
               .select("n", "d", "value").unique(subset=["n", "d"], keep="first").collect())
         if investable and d.p_state_start is not None:
             share = {str(n): v for n, v in d.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), "value").iter_rows()}
-            _raise_reference_below_start(b, {n for n, _d, v in rv.iter_rows()
-                                             if n in investable - closed_by_end and v < share.get(n, 0.0)})
+            _warn_reference_below_start(b, {n for n, _d, v in rv.iter_rows()
+                                            if n in investable - closed_by_end and v < share.get(n, 0.0) - 1e-12})
         target = (rv.rename({"value": "rv"})
                   .join(b.cap.existing_state_n.frame.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
                                                             pl.col("value").alias("exist")), on=["n", "d"], how="left")
@@ -5302,8 +5386,8 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
     #     node_balance_fix_quantity_eq_lower fixes
     # The first step of a cyclic node starts from its wrap target, so the start state is pinned there, to the
     # share state_start of the built storage capacity (state units): the last step of the first timeblock
-    # (bind_within_timeblock; in a roll, of the timeblock's part in the roll), of the solve (bind_within_solve) or
-    # of the first period (bind_within_period, bind_intraperiod_blocks).  Only where no state of the node was
+    # (bind_within_timeblock), of the solve (bind_within_solve) or of the first period (bind_within_period, also
+    # bind_within_timeblock in a rolling solve, and bind_intraperiod_blocks; in a roll, of its part in the roll).  Only where no state of the node was
     # realised before this solve (the first solve of the model and of each nested level); a later solve neither
     # pins nor carries a cyclic node (it cycles within the solve; a later roll of a rolling bind_within_solve node
     # chains forward from the carry instead, _run_model._anchor_cyclic_in_rolling).  Where an
@@ -5725,30 +5809,21 @@ def _roll_horizon_ends(b: _Build, nodes: pl.DataFrame) -> "pl.DataFrame | None":
 
 def _first_scope_ends(b: _Build, nodes: pl.DataFrame) -> "pl.DataFrame | None":
     """``(n, d, t)`` of ``nodes`` (n): where the first scope of a rolling roll ends within the roll — the step the
-    roll's first step would wrap to: the last step of the first timeblock's part in the roll (bind_within_timeblock,
-    ``t_previous_within_timeset`` of the first step) or of the first period (bind_within_period,
-    bind_intraperiod_blocks: the period's last step in the roll).  None when there are none."""
+    roll's first step would wrap to: the last step of the first period in the roll (bind_within_period, also
+    bind_within_timeblock, which a rolling solve uses as bind_within_period, and bind_intraperiod_blocks).  None
+    when there are none."""
     d = b.d
     if not (_has_rows(d.nodeState_first_dt) and _has_rows(d.nodeState_last_dt)):
         return None
     names = nodes.select(pl.col("n").cast(pl.Utf8)).unique()
     first = (d.nodeState_first_dt.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
              .join(names, on="n", how="semi"))
-    tb = (set(str(n) for n in d.storage_bind_within_timeblock["n"].to_list())
-          if _has_rows(d.storage_bind_within_timeblock) else set())
-    parts = []
-    in_tb = first.filter(pl.col("n").is_in(sorted(tb)))
-    if in_tb.height > 0 and _has_rows(d.dtttdt):
-        lag = d.dtttdt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
-                              pl.col("t_previous_within_timeset").cast(pl.Utf8).alias("_t"))
-        parts.append(in_tb.join(lag, on=["d", "t"], how="inner").select("n", "d", pl.col("_t").alias("t")))
-    other = first.filter(~pl.col("n").is_in(sorted(tb)))
-    if other.height > 0:
-        last = d.nodeState_last_dt.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
-        parts.append(other.select("n", "d").join(last, on=["n", "d"], how="inner"))
-    if not parts:
+    if first.height == 0:
         return None
-    utf = pl.concat(parts, how="vertical").unique()
+    last = d.nodeState_last_dt.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+    utf = first.select("n", "d").join(last, on=["n", "d"], how="inner").unique()
+    if utf.height == 0:
+        return None
     over = (b.nodeState_dt
             .with_columns(_n=pl.col("n").cast(pl.Utf8), _d=pl.col("d").cast(pl.Utf8), _t=pl.col("t").cast(pl.Utf8))
             .join(utf.rename({"n": "_n", "d": "_d", "t": "_t"}), on=["_n", "_d", "_t"], how="semi")
@@ -5859,7 +5934,7 @@ def _eq_storage_roll_end(b: _Build) -> None:
     # v_state[n,d,t]·state_unitsize[n] ≥ min(carry[n], hold[n,d,t])
     #   ∀ n ∈ storage_roll_end(anchor), (n,d,t) ∈ nodeState_last_dt, d ∈ period_last;
     #     n ∈ storage_roll_end(scope_anchor), (n,d,t) = the end of the roll's first scope (_first_scope_ends: the
-    #     last step of the first period, or of the first timeblock's part, in the roll);
+    #     last step of the first period in the roll);
     #     (n,d,t) ∉ the steps an upper-level solve fixes (fix_quantity, fix_usage, fix_price),
     #     (n,d,t) ∉ the steps storage_state_end_binding pins
     #   carry = the level the roll starts from (MWh, roll_continue_state); hold = the level reached from it by doing
@@ -5870,15 +5945,16 @@ def _eq_storage_roll_end(b: _Build) -> None:
     # its own start, as the first roll's wrap is.  An inequality, so that it can always be reached: storing more has
     # a cost, so a lossless node ends at the carried level.  Where an upper-level solve fixes, caps or prices the
     # state at the step, that replaces the anchor; fix_end (at the last step of the model) wins.  The same per
-    # period (bind_within_period, bind_intraperiod_blocks) and per timeblock (bind_within_timeblock): a roll that
-    # starts inside a scope an earlier roll began continues it from the carry (scope_carry: its first step has no
-    # wrap) and anchors the scope's part in the roll; for bind_intraperiod_blocks also the roll that begins a period
+    # period (bind_within_period, bind_intraperiod_blocks; bind_within_timeblock in a rolling solve is
+    # bind_within_period, _run_model._timeblock_binds_within_period_in_roll): a roll that
+    # starts inside a period an earlier roll began continues it from the carry (scope_carry: its first step has no
+    # wrap) and anchors the period's part in the roll; for bind_intraperiod_blocks also the roll that begins a period
     # at its first step and holds it in part (its blocks chain forward from the carry).
     over, nodes = rows(("anchor",), with_price=True)
     scope_over, scope_nodes = rows(("scope_anchor",), with_price=True)
     if scope_over is not None:
-        # A bind_within_period / bind_within_timeblock / bind_intraperiod_blocks node whose first scope (period or
-        # timeblock) continues from the carry: the anchor sits where that scope's part in the roll ends.
+        # A bind_within_period / bind_intraperiod_blocks node whose first period continues from the carry: the
+        # anchor sits where that period's part in the roll ends.
         over = scope_over if over is None else pl.concat([over, scope_over.cast(over.schema)]).unique()
         nodes = scope_nodes if nodes is None else pl.concat([nodes, scope_nodes.cast(nodes.schema)])
     if over is not None:
@@ -5898,23 +5974,24 @@ def _eq_storage_roll_end(b: _Build) -> None:
     #     n ∈ storage_roll_end(scope_close), (n,d,t) = the end of the roll's first scope (_first_scope_ends);
     #     (n,d,t) ∉ the steps an upper-level fix_quantity / fix_usage fixes,
     #     (n,d,t) ∉ the steps storage_state_end_binding pins
-    #   start = the level (MWh) the first roll of the instance (scope_close: the roll that began the period or
-    #   timeblock) started from (the cascade records it), at most the storage capacity in service in d (owner
+    #   start = the level (MWh) the first roll of the instance (scope_close: the roll that began the period)
+    #   started from (the cascade records it), at most the storage capacity in service in d (owner
     #   decision: the start energy is kept in MWh, so capacity built later adds none, but a closure never asks
     #   for more than the closing period can hold)
     # A roll whose horizon holds the last step of its solve instance closes the cycle of bind_within_solve: it ends at
     # the level the instance started from, so the realised rolls together return what they took (every roll whose
     # horizon reaches that step, e.g. two when the horizon is not a multiple of the jump).  An upper-level
     # fix_quantity / fix_usage at the step replaces it (that target carries the upper solve's closure); a nested
-    # fix_price only values the state and keeps it; fix_end wins at the last step of the model.  Per period and
-    # per timeblock: the roll that holds the end of a scope it continues (or reaches the end of the instance) ends
+    # fix_price only values the state and keeps it; fix_end wins at the last step of the model.  Per period
+    # (bind_within_timeblock in a rolling solve is bind_within_period): the roll that holds the end of a period it
+    # continues (or reaches the end of the instance) ends
     # the scope at its start level, so a realised roll boundary inside the scope creates no energy (logic doc
     # Lemma 4).
     over, nodes = rows(("close",), with_price=False)
     scope_over, scope_nodes = rows(("scope_close",), with_price=False)
     if scope_over is not None:
-        # The end of a continued period / timeblock that the roll holds: it ends at the level the scope started
-        # from in the roll that began it.
+        # The end of a continued period that the roll holds: it ends at the level the period started from in the
+        # roll that began it.
         over = scope_over if over is None else pl.concat([over, scope_over.cast(over.schema)]).unique()
         nodes = scope_nodes if nodes is None else pl.concat([nodes, scope_nodes.cast(nodes.schema)])
     if over is not None:
@@ -6080,15 +6157,15 @@ def _eq_storage_reference_value(b: _Build) -> None:
               .with_columns(value=pl.col("rv") * pl.col("exist") / pl.col("us"))
               .select("n", "d", "t", "value")
               .collect())
-    # A reference value below the fix_start share of a node whose start the solve decides by investing
-    # (storage_state_end_match_share) conflicts with the matching end: a configuration error
-    # (_raise_reference_below_start).
+    # A reference value below the start share (fix_start, or the reference at the first step) of a node whose start
+    # the solve decides by investing: the matching end (storage_state_end_match_share) stays, as for fix_start_end,
+    # and caps the investment; a warning (_warn_reference_below_start).
     _free, share_first, _ends = _end_match_nodes(b)
     if share_first is not None and d.p_state_start is not None:
         share = {str(n): v for n, v in d.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), "value").iter_rows()}
         matched = set(str(n) for n in share_first["n"].to_list())
-        _raise_reference_below_start(b, {str(n) for n, v in rv.select("n", "value").iter_rows()
-                                         if str(n) in matched and v < share[str(n)]})
+        _warn_reference_below_start(b, {str(n) for n, v in rv.select("n", "value").iter_rows()
+                                        if str(n) in matched and v < share[str(n)] - 1e-12})
     lhs: dict = {"state": Where(b.v_state, over)}
     invested, divested = _capacity.node_in_service(b, d.storage_use_reference_value, "_ref_value",
                                                    coef=Param(("n", "d", "t"), rv))
@@ -6105,20 +6182,21 @@ def _eq_storage_reference_value(b: _Build) -> None:
     )
 
 
-def _raise_reference_below_start(b: _Build, nodes: set) -> None:
-    """Raise FlexToolConfigError for the nodes whose use_reference_value lies below their fix_start share while the
-    solve can invest in their storage in the period they start in (owner decision): the reference end would let the
-    built storage deliver part of its start energy without producing it, against the matching end."""
+def _warn_reference_below_start(b: _Build, nodes: set) -> None:
+    """Warn about the nodes whose use_reference_value end lies below their start share while the solve can invest
+    in their storage in the period they start in (owner decision, Phase 5; before a configuration error): as for
+    fix_start_end, the matching end stays, so storage built must return its start energy, which caps the
+    investment.  One printed line per solve."""
     if not nodes:
         return
-    where = f"solve '{b.solve_name}'" if b.solve_name else "this solve"
-    raise FlexToolConfigError(
-        f"Storage node(s) {_node_list(sorted(nodes))} in {where} have storage_solve_horizon_method use_reference_value "
-        "with storage_state_reference_value below storage_state_start (fix_start), and the solve can invest in their "
-        "storage capacity in the period they start in. Ending at the reference level would let the storage built "
-        "deliver part of its start energy without producing it, so the two values conflict. Give "
-        "storage_state_reference_value at least storage_state_start, use fix_start_end, or do not allow investment "
-        "in the start period.")
+    from flextool.engine import _behaviour_changes
+    solve = _behaviour_changes.complete_solve_of(b.solve_name)
+    _behaviour_changes.storage_message(
+        "storage_reference_below_start", b.solve_name, sorted(nodes),
+        lambda named: (f"Warning: in solve '{solve}' {named} with use_reference_value end below their start and the "
+                       "solve can invest in their storage: storage built must still return its start energy (the "
+                       "matching end), which caps that investment. Give storage_state_reference_value at least the "
+                       "start if the storage should be built freely."))
 
 
 def _eq_profiles(b: _Build) -> None:

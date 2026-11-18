@@ -5,9 +5,10 @@ timeline ``tl`` t01..t16 (1 h steps), storage node ``tank`` (100 MWh, ``fix_star
 the balance node ``load`` through ``dis``; ``gen`` charges the tank at 1 CUR/MWh when available.  Penalties are
 10 000 CUR/MWh (the tank's own slacks 20 000).
 
-* Per-scope carry (bind_within_period, bind_within_timeblock, bind_intraperiod_blocks): a rolling solve whose roll
-  boundaries fall inside a period / timeblock continues that scope from the carried level, anchors the roll's part
-  and closes the scope at the level it started from in the roll(s) holding its end (logic doc Q3 / Q4, Lemma 4:
+* Per-period carry (bind_within_period, bind_intraperiod_blocks; bind_within_timeblock, which a rolling solve uses as
+  bind_within_period): a rolling solve whose roll boundaries fall inside a period continues that period from the
+  carried level, anchors the roll's part and closes the period at the level it started from in the roll(s) holding
+  its end (logic doc Q3 / Q4, Lemma 4:
   free energy arises iff a realised roll boundary lies strictly inside a cyclic scope).
 * Cumulative fix_usage (logic doc §4.6): a rolling lower level under an upper fix_usage is capped by the upper
   usage from the start of the period less what its earlier rolls realised.
@@ -153,7 +154,8 @@ def realised(rs: list, jump: int = 6) -> list:
 
 
 # ---------------------------------------------------------------------------
-# bind_within_period / bind_within_timeblock / bind_intraperiod_blocks across roll boundaries
+# bind_within_period / bind_intraperiod_blocks (and bind_within_timeblock as bind_within_period) across roll
+# boundaries; rolling over a timeline with gaps is an error
 # ---------------------------------------------------------------------------
 
 
@@ -192,27 +194,144 @@ def test_aligned_period_rolls_unchanged(tmp_path):
     assert len(rs) == 2 and all(r.flex_data.storage_roll_end is None for r in rs)
 
 
-def test_sampled_timeblocks_cut_by_rolls(tmp_path):
-    """Two sampled blocks per period (t01-t06 and t09-t14): the roll starting at t05 continues the first block
-    from the carry and closes it at t06 at its start level; the second block, begun in that roll, loops; the roll
-    starting at t13 continues and closes it."""
+def test_timeblock_in_rolling_is_within_period(tmp_path, capsys):
+    """Owner decision (Phase 5): a rolling solve uses bind_within_timeblock as bind_within_period (each period of a
+    rolling solve is one continuous timeblock).  The same model with the two methods gives, roll by roll, the same
+    storage_roll_end rows, the same anchor / close bounds and the same objective; one printed line names the
+    conversion."""
+    rs = {}
+    for method in ("bind_within_timeblock", "bind_within_period"):
+        rs[method] = rolls(run(tmp_path / method, {"st": two_periods()}, tank={"storage_binding_method": method}))
+        out = capsys.readouterr().out
+        lines = [ln for ln in out.splitlines() if "with bind_within_timeblock use bind_within_period" in ln]
+        assert len(lines) == (1 if method == "bind_within_timeblock" else 0), out[-2000:]
+        if lines:
+            assert lines[0] == ("Rolling solve 'st': 1 storage node (tank) with bind_within_timeblock use "
+                                "bind_within_period in this solve; each period is one continuous timeblock here.")
+    tb, wp = rs["bind_within_timeblock"], rs["bind_within_period"]
+    assert len(tb) == len(wp)
+    for a, b in zip(tb, wp):
+        assert kinds(a) == kinds(b)
+        tb_set = a.flex_data.storage_bind_within_timeblock
+        assert tb_set is None or tb_set.height == 0
+        pa, pb = build(a.flex_data), build(b.flex_data)
+        for name in (ANCHOR, CLOSE):
+            assert row_bounds(pa, name, "tank") == pytest.approx(row_bounds(pb, name, "tank"))
+        assert a.solution.objective_in_user_units == pytest.approx(b.solution.objective_in_user_units, rel=1e-9,
+                                                                   abs=1e-6)
+        assert levels(a) == pytest.approx(levels(b), abs=1e-6)
+
+
+def test_timeblock_upper_solve_keeps_its_cycle_above_rolling(tmp_path):
+    """An upper solve that is not rolling keeps bind_within_timeblock (it cycles within its timeblock), while the
+    rolling solve nested in it uses bind_within_period."""
+    solves, tank = nested("fix_quantity", {})
+    steps = run(tmp_path, solves, top=["up"], tank={**tank, "storage_binding_method": "bind_within_timeblock"})
+    up = steps["up"].flex_data
+    assert up.storage_bind_within_timeblock is not None and up.storage_bind_within_timeblock.height == 1
+    assert up.storage_bind_within_period is None or up.storage_bind_within_period.height == 0
+    for r in rolls(steps):
+        fd = r.flex_data
+        assert fd.storage_bind_within_timeblock is None or fd.storage_bind_within_timeblock.height == 0
+        in_roll = set()
+        for frame in (fd.storage_bind_within_period, fd.storage_bind_forward_only):
+            if frame is not None:
+                in_roll |= set(utf8(frame)["n"].to_list())
+        assert "tank" in in_roll
+
+
+def test_rolling_over_sampled_timeblocks_is_an_error(tmp_path):
+    """Owner decision (Phase 5): a rolling solve over a timeline with gaps (two sampled blocks t01-t06 and t09-t14
+    in one period) is a configuration error, whatever the storage method."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
     solve = {"solve_mode": "rolling_window", "rolling_solve_jump": 4.0, "rolling_solve_horizon": 8.0,
              "rolling_duration": 12.0, "period_timeset": tmap({"p1": "blocks"}, "period"),
              "years_represented": tmap({"p1": 1.0}, "period"), "realized_periods": arr(["p1"])}
-    rs = rolls(run(tmp_path, {"st": solve}, tank={"storage_binding_method": "bind_within_timeblock"},
-                   timesets={"blocks": {"t01": 6.0, "t09": 6.0}}))
-    steps = [sorted(t for _d, t in levels(r)) for r in rs]
-    first_block = next(k for k, s in enumerate(steps) if s[0] in ("t02", "t03", "t04", "t05", "t06"))
-    r = rs[first_block]
-    assert "scope_carry" in kinds(r) and "scope_close" in kinds(r)
-    (key, (lo, hi)), = row_bounds(build(r.flex_data), CLOSE, "tank").items()
-    assert key == f"{CLOSE}[tank,p1,t06]" and lo == pytest.approx(50.0) and hi == pytest.approx(50.0)
-    assert levels(r)[("p1", "t06")] == pytest.approx(50.0, abs=1e-6)
-    # the second block began in that roll (its first step wraps to t14) and the next roll closes it at that level
-    nxt = rs[first_block + 1]
-    assert "scope_carry" in kinds(nxt)
-    (key, (lo, hi)), = row_bounds(build(nxt.flex_data), CLOSE, "tank").items()
-    assert key == f"{CLOSE}[tank,p1,t14]" and lo == pytest.approx(levels(r)[("p1", "t14")])
+    with pytest.raises(FlexToolConfigError, match=r"Rolling solve 'st' runs over a timeline with gaps \(period 'p1' "
+                                                  r"has 2 timeblocks\)"):
+        run(tmp_path, {"st": solve}, tank={"storage_binding_method": "bind_forward_only"},
+            timesets={"blocks": {"t01": 6.0, "t09": 6.0}})
+
+
+def test_rolling_over_adjacent_timeset_blocks_runs(tmp_path):
+    """Timeset blocks that follow each other on the timeline (t01-t08 and t09-t16) are one continuous timeblock: no
+    error."""
+    solve = {**two_periods(), "period_timeset": tmap({"p1": "split", "p2": "split"}, "period")}
+    rs = rolls(run(tmp_path, {"st": solve}, tank={"storage_binding_method": "bind_within_period"},
+                   timesets={"split": {"t01": 8.0, "t09": 8.0}}))
+    assert len(rs) == 6
+
+
+def test_rolling_with_coarse_steps_counts_one_timeblock(tmp_path):
+    """A rolling solve with new_stepduration (2 h steps): the aggregated steps are consecutive, so the period is one
+    timeblock (no gap error) and the timeblock storage runs as bind_within_period."""
+    solve = {**two_periods(rolling_solve_jump=6.0, rolling_solve_horizon=8.0), "new_stepduration": 2.0}
+    rs = rolls(run(tmp_path, {"st": solve}, tank={"storage_binding_method": "bind_within_timeblock"}))
+    assert len(rs) >= 2
+    assert any("scope_carry" in kinds(r) for r in rs)
+
+
+def test_gap_counter_counts_blocks_per_period():
+    """The gap check counts timeblocks per period (index jumps), not periods."""
+    from types import SimpleNamespace
+
+    from flextool.engine.input._solve_state import ActiveTimeEntry, FlexToolConfigError
+    from flextool.engine.solve._run_model import _reject_rolling_with_gaps
+
+    state = SimpleNamespace(solve=SimpleNamespace(solve_modes={"st": "rolling_window", "one": "single_solve"}))
+
+    def steps(*idx):
+        return [ActiveTimeEntry(f"t{i:02d}", i, "1") for i in idx]
+
+    _reject_rolling_with_gaps(state=state, complete_solve_name="st",
+                              complete_active_time_list={"p1": steps(0, 1, 2), "p2": steps(0, 1, 2)})
+    _reject_rolling_with_gaps(state=state, complete_solve_name="one",
+                              complete_active_time_list={"p1": steps(0, 1, 5)})
+    with pytest.raises(FlexToolConfigError, match="period 'p2' has 3 timeblocks"):
+        _reject_rolling_with_gaps(state=state, complete_solve_name="st",
+                                  complete_active_time_list={"p1": steps(0, 1), "p2": steps(0, 2, 3, 7)})
+
+
+def test_many_storage_nodes_print_one_line(capsys):
+    """Owner rule (format 6b): a storage message prints one line per message type and solve, naming how many nodes
+    and the first only, whatever the number of nodes and rolls."""
+    from types import SimpleNamespace
+
+    from flextool.engine import _behaviour_changes
+    from flextool.engine.solve._run_model import _timeblock_binds_within_period_in_roll
+
+    class Provider:
+        def __init__(self, frame):
+            self.frames = {"input/node__storage_binding_method": frame}
+
+        def has(self, key):
+            return key in self.frames
+
+        def get(self, key):
+            return self.frames[key]
+
+        def put(self, key, frame):
+            self.frames[key] = frame
+
+    _behaviour_changes.start_run({})
+    names = [f"battery_{i:02d}" for i in range(12)]
+    state = SimpleNamespace(solve=SimpleNamespace(solve_modes={"st": "rolling_window"}),
+                            timeline=SimpleNamespace(rp_weights={}))
+    for roll in range(3):
+        provider = Provider(pl.DataFrame({"node": names, "storage_binding_method": ["bind_within_timeblock"] * 12}))
+        _timeblock_binds_within_period_in_roll(state=state, complete_solve_name="st", active_timeset_names=["full"],
+                                               provider=provider)
+        assert set(provider.get("input/node__storage_binding_method")["storage_binding_method"].to_list()) == {
+            "bind_within_period"}
+    for roll in range(3):
+        _behaviour_changes.storage_message("some_warning", f"st_roll_{roll}", names,
+                                           lambda named: f"Warning: {named} do something.")
+    lines = capsys.readouterr().out.splitlines()
+    assert lines == [
+        "Rolling solve 'st': 12 storage nodes (battery_00, ...) with bind_within_timeblock use bind_within_period in "
+        "this solve; each period is one continuous timeblock here.",
+        "Warning: 12 storage nodes (battery_00, ...) do something."]
 
 
 def test_intraperiod_blocks_close_the_period(tmp_path):

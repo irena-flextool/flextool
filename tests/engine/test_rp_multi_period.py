@@ -225,7 +225,8 @@ def test_mixed_rp_and_non_rp_periods_keep_both_weights(tmp_path_factory):
 
 def test_stochastic_solve_with_rp_timeset_solves(tmp_path_factory):
     """The forecast branch periods take the timeset of the period they branch from, so each gets its own rp data
-    (item 125; before: a FlexToolConfigError)."""
+    (item 125; before: a FlexToolConfigError).  The reservoir is bind_forward_only_blended_weights: plain
+    bind_forward_only (its default) is a configuration error in a solve on representative periods (Phase 5)."""
     rpw = {"type": "map", "index_type": "str", "index_name": "base_period", "rank": 1,
            "data": [[b, {"type": "map", "index_type": "str", "index_name": "representative_period", "rank": 1,
                          "data": [["t0001", 1.0]]}] for b in ("t0001", "t0025")]}
@@ -233,7 +234,8 @@ def test_stochastic_solve_with_rp_timeset_solves(tmp_path_factory):
     def patch(data):
         return L._overlay(data, name="custom", base="2_day_stochastic_dispatch", values=[
             ["timeset", "2day", "timeset_duration", L._pmap({"t0001": 24.0}, "time")],
-            ["timeset", "2day", "representative_period_weights", rpw]])
+            ["timeset", "2day", "representative_period_weights", rpw],
+            ["node", "hydro_reservoir", "storage_binding_method", "bind_forward_only_blended_weights"]])
     steps = _run(tmp_path_factory, patch, STOCH_JSON)
     fd = list(steps.values())[-1].flex_data
     rp_periods = set(_utf8(fd.rp_block_first)["d"].unique().to_list())
