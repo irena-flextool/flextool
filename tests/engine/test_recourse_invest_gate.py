@@ -158,8 +158,8 @@ def test_recourse_objective_coefficients(_resolved):
 
 @pytest.mark.solver
 def test_recourse_edd_lineage_filtered(_resolved):
-    """§15.2 D3 (the resolved Slice B W6 witness): the investments in service
-    pair only same-leaf (d_invest, d); the cross-leaf pairs are ABSENT."""
+    """The investments in service pair only same-leaf (d_invest, d); the
+    cross-leaf pairs are ABSENT."""
     from flextool.engine.preprocess.params._cohorts import invest_alive
     data, _sol = _resolved
     rows = {(str(r["d_invest"]), str(r["d"]))

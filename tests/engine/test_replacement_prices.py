@@ -4,7 +4,7 @@ it comes online (``_npv.chain_lumps``), on hand-derived cases.
 Model: ``tests.json``, the single solve over p2020 … p2035 (5-year periods, run years 0, 5, 10, 15, horizon end
 20, end_of_life_method closest_seam).  coal_plant: lifetime_method reinvest_automatic, discount_rate r = 5 %,
 social_discount_rate i = 5 %, discount_offset_investment 1 (each year's payment at its end), fixed_cost 0.
-Per MW, with C = 1000·invest_cost of the period a generation comes online (D50)::
+Per MW, with C = 1000·invest_cost of the period a generation comes online (the plant as constructed)::
 
     A(C, n) = C·r / (1 − (1+r)^−n)       (offset 1: the timing factor (1+r)^(off−1) is 1)
     S[a, b) = Σ_{y=a}^{b−1} (1+i)^−(y+1)  (each service year's payment, discounted from the run start)

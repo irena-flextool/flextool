@@ -74,7 +74,7 @@ _logger = logging.getLogger(__name__)
 # files + the vestigial ``period_capacity.csv`` accumulator) and the two retired
 # mirrors (``p_entity_period_existing_capacity`` / ``p_entity_divested_period``,
 # still cleared from a work folder an older version left them in).  Used by
-# ``_bootstrap_dirs`` (item 163 §4, 163-5) to clear a reused work folder's
+# ``_bootstrap_dirs`` to clear a reused work folder's
 # leftover mirrors at run start, and by ``tools/output_snapshot.py``.
 MIRROR_FILES: tuple[str, ...] = (
     "p_entity_period_existing_capacity.csv",

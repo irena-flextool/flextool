@@ -8,13 +8,13 @@ without existing capacity (unless stated), fixed_cost 0, invest_cost 1000 CUR/kW
 r / (1 − (1+r)^−n), A = C·af(r, L), a_salv = S·(1+r)^−L·af(r, L).  Per the objective (invest_cost_p,
 divest_built_cost_p), the oracle in each docstring:
 
-* H1 (reinvest_choice, r = i): *investment* at p2020 = 100·A·S[0, 10) = 100 M (the loan is worth C at r = i);
+* An investment (reinvest_choice, r = i): *investment* at p2020 = 100·A·S[0, 10) = 100 M (the loan is worth C at r = i);
   *salvage end of life* at p2030 (its end of life) = −100·a_salv·S[0, 10) = −100·S·v^10 = −12.278265 M.
-* H2 (the 100 MW retired at p2025): *retirement* at p2025 = 100·(A·S[0, 5) + D(5)·A·ā(r, 5) − A·S[0, 10)) (the
+* Its retirement (the 100 MW retired at p2025): *retirement* at p2025 = 100·(A·S[0, 5) + D(5)·A·ā(r, 5) − A·S[0, 10)) (the
   payments to the start of p2025 and the balance then, less the capital charged for the plant's years in service),
   0 at r = i and −3.932374 M at r = 8 % (investment 115.076621 M); *salvage economic* at p2025 = −100·S·D(5) =
   −15.670523 M; the end-of-life credit is given back at p2030 (+100·a_salv·S[0, 10)), so *salvage end of life* is 0.
-* H3 (reinvest_automatic, r = i): the plant of p2020 serves [0, 10), its replacement (at the same values) [10, 20):
+* A reinvest_automatic plant (reinvest_automatic, r = i): the plant of p2020 serves [0, 10), its replacement (at the same values) [10, 20):
   *investment* 100 M at p2020, *replacement* 100·A·S[10, 20) = 61.391325 M at p2030, *salvage replaced*
   −12.278265 M at p2030 and −100·a_salv·S[10, 20) = −7.537790 M at the last period p2035 (its life ends at the
   horizon end).
@@ -22,7 +22,7 @@ divest_built_cost_p), the oracle in each docstring:
   end of life 25 is past it), *investment* 100·A·S[10, 20) = 45.670825 M at p2030, *salvage end of life* the
   horizon share of its credit, −100·a_salv·S[10, 20) = −4.393690 M, at the last period p2035 (its full salvage
   value would be −100·S·v^25 = −5.906055 M).
-* H4: 100 MW existing of age 5 (lifetime 10: end of life at year 5, the start of p2025) that may retire (pinned to
+* Existing capacity: 100 MW existing of age 5 (lifetime 10: end of life at year 5, the start of p2025) that may retire (pinned to
   retire nothing): its salvage credit a_x = S·(1+r)^−5·af(r, 5) over its service years [0, 5), *salvage
   pre-existing* −100·a_x·S[0, 5) = −100·S·v^5 = −15.670523 M at p2025 (r = i), an objective constant.
 
@@ -132,8 +132,8 @@ INVEST_LINES = ("investment", "replacement", "retirement", "salvage end of life"
 
 
 @pytest.mark.solver
-def test_h1_investment_and_its_salvage_at_the_end_of_life(tmp_path_factory) -> None:
-    table, summary = _lines(tmp_path_factory, "h1", _values())
+def test_investment_and_its_salvage_at_the_end_of_life(tmp_path_factory) -> None:
+    table, summary = _lines(tmp_path_factory, "invest", _values())
     _assert_lines(table, summary, {("p2020", "investment"): 100.0, ("p2030", "salvage end of life"): -12.278265},
                   INVEST_LINES)
     _assert_objective(summary)
@@ -141,20 +141,20 @@ def test_h1_investment_and_its_salvage_at_the_end_of_life(tmp_path_factory) -> N
 
 @pytest.mark.solver
 @pytest.mark.parametrize("r, investment, retirement", [(0.05, 100.0, 0.0), (0.08, 115.076621, -3.932374)])
-def test_h2_retirement_settles_the_loan_and_receives_the_salvage(tmp_path_factory, r, investment, retirement) -> None:
+def test_retirement_settles_the_loan_and_receives_the_salvage(tmp_path_factory, r, investment, retirement) -> None:
     a = C * af(r, 10.0)
     assert MW * (a * span(0, 5) + V ** 5 * a * abar(r, 5.0) - a * span(0, 10)) / MEGA == pytest.approx(
         retirement, abs=1e-6)
     assert MW * a * span(0, 10) / MEGA == pytest.approx(investment, abs=1e-6)
-    table, summary = _lines(tmp_path_factory, f"h2_{r}", _values(r=r, retired={"p2025": MW}))
+    table, summary = _lines(tmp_path_factory, f"retired_{r}", _values(r=r, retired={"p2025": MW}))
     _assert_lines(table, summary, {("p2020", "investment"): investment, ("p2025", "retirement"): retirement,
                           ("p2025", "salvage economic"): -15.670523}, INVEST_LINES)
     _assert_objective(summary)
 
 
 @pytest.mark.solver
-def test_h3_replacement_of_a_reinvest_automatic_plant(tmp_path_factory) -> None:
-    table, summary = _lines(tmp_path_factory, "h3", _values(method="reinvest_automatic"))
+def test_replacement_of_a_reinvest_automatic_plant(tmp_path_factory) -> None:
+    table, summary = _lines(tmp_path_factory, "automatic", _values(method="reinvest_automatic"))
     _assert_lines(table, summary, {("p2020", "investment"): 100.0, ("p2030", "replacement"): 61.391325,
                           ("p2030", "salvage replaced"): -12.278265, ("p2035", "salvage replaced"): -7.537790},
                   INVEST_LINES)
@@ -215,11 +215,11 @@ def test_a_plant_past_the_horizon_reports_the_horizon_share_of_its_salvage(tmp_p
 
 
 @pytest.mark.solver
-def test_h4_salvage_credit_of_existing_capacity(tmp_path_factory) -> None:
+def test_salvage_credit_of_existing_capacity(tmp_path_factory) -> None:
     a_x = S * 1.05 ** -5 * af(RATE, 5.0)
     assert -MW * a_x * span(0, 5) / MEGA == pytest.approx(-15.670523, abs=1e-6)
     values = _values(built="", existing=MW, extra=[["unit", PLANT, "age_at_model_start", b64(5.0, "float")]])
-    table, summary = _lines(tmp_path_factory, "h4", values)
+    table, summary = _lines(tmp_path_factory, "existing_salvage", values)
     _assert_lines(table, summary, {("p2025", "salvage pre-existing"): -15.670523},
                   (*INVEST_LINES, "salvage pre-existing"))
     _assert_objective(summary)
@@ -227,7 +227,7 @@ def test_h4_salvage_credit_of_existing_capacity(tmp_path_factory) -> None:
 
 @pytest.mark.solver
 def test_fixed_costs_of_a_retired_build_in_each_period_add_up_to_the_objective(tmp_path_factory) -> None:
-    """H2 (the 100 MW built at p2020 retired at p2025) with fixed_cost 10 CUR/kW a year (1e4 CUR/MW) and the default
+    """The retirement case (the 100 MW built at p2020 retired at p2025) with fixed_cost 10 CUR/kW a year (1e4 CUR/MW) and the default
     discount_offset_operations 0.5: S_op[a, b) = Σ_{k=a}^{b−1} 1.05^−(k+0.5), S_op[0, 5) = 4.436393, S_op[5, 10) =
     3.476030.  The plant would serve [0, 10); its fixed cost is reported in each period it is paid, from the
     capacity of its cohort: *fixed cost invested* 100·1e4·S_op[0, 5) = 4.436393 M at p2020 and 100·1e4·S_op[5, 10)
@@ -240,7 +240,7 @@ def test_fixed_costs_of_a_retired_build_in_each_period_add_up_to_the_objective(t
     assert (s_op(0, 5), s_op(5, 10)) == (pytest.approx(4.436393, abs=1e-6), pytest.approx(3.476030, abs=1e-6))
     values = [v for v in _values(retired={"p2025": MW}) if v[2] != "fixed_cost"] + [
         ["unit", PLANT, "fixed_cost", b64(10.0, "float")]]
-    table, summary = _lines(tmp_path_factory, "h2_fixed", values)
+    table, summary = _lines(tmp_path_factory, "retired_fixed", values)
     invested = {"p2020": 4.436393, "p2025": 3.476030}
     divested = {"p2025": -3.476030}
     for d in PERIODS:
@@ -298,7 +298,7 @@ def test_benders_prices_the_cost_lines_of_the_monolith(tmp_path_factory) -> None
 
 @pytest.mark.solver
 def test_the_pre_existing_lines_are_the_objective_constants(tmp_path_factory) -> None:
-    """H4's existing capacity built with include_existing_fixed_cost (which no run sets): the objective moves by
+    """The existing capacity of the salvage-credit case built with include_existing_fixed_cost (which no run sets): the objective moves by
     exactly the reported pre-existing lines (the salvage credit −15.670523 M; no fixed cost, no replacement), and
     the decisions do not."""
     import polars as pl
@@ -308,12 +308,12 @@ def test_the_pre_existing_lines_are_the_objective_constants(tmp_path_factory) ->
     from tests.engine._unit_db import RunCache, utf8
 
     values = _values(built="", existing=MW, extra=[["unit", PLANT, "age_at_model_start", b64(5.0, "float")]])
-    table, _ = _lines(tmp_path_factory, "h4", values)
+    table, _ = _lines(tmp_path_factory, "existing_salvage", values)
     constants = sum(table[c].sum() for c in ("fixed cost pre-existing", "investment pre-existing",
                                              "salvage pre-existing") if c in table.columns) * MEGA
     assert constants == pytest.approx(-15.670523 * MEGA, rel=1e-6)
     runs = RunCache()
-    steps, _, _ = runs.get(tmp_path_factory, alt="lines_h4_constants", values=values,
+    steps, _, _ = runs.get(tmp_path_factory, alt="lines_existing_constants", values=values,
                            base_chain=_no_battery_invest(SINGLE))
     fd = list(steps.values())[-1].flex_data
 

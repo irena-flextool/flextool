@@ -15,9 +15,9 @@ The payback time is read, per entity, from the first name of :data:`ROLE_CHAIN` 
 (:func:`role_sources`): ``payback_time``, else ``lifetime_technical``, for all its periods.  A period map of either
 describes the plant as constructed: an investment with a construction lead time reads both, as its
 ``invest_cost``, at the period its capacity comes online
-(:func:`flextool.engine.preprocess.params._period_values.at_online_period`).  The database readers, the
-CSV-generation readers and the input checks each pass :func:`role_sources` their own way of listing the entities
-that have a value of a parameter.  The ``lifetime_method`` value :data:`NO_REINVESTMENT` retires the capacity at
+(:func:`flextool.engine.preprocess.params._period_values.at_online_period`).  The database readers and
+the input checks each pass :func:`role_sources` their own way of listing the entities that have a value of a
+parameter.  The ``lifetime_method`` value :data:`NO_REINVESTMENT` retires the capacity at
 the end of its technical lifetime and allows investment only in the first technical lifetime.
 """
 from __future__ import annotations
@@ -116,18 +116,3 @@ def source_entities_with(source: "InputSource", entity_class: str) -> Callable[[
 def source_role_sources(source: "InputSource", entity_class: str, role: str) -> dict[str, str]:
     """:func:`role_sources` of ``entity_class`` in the database ``source``."""
     return role_sources(role, source_entities_with(source, entity_class))
-
-
-def lookup_roles(lookup) -> dict[str, dict[str, str]]:
-    """``{role: role_sources(role)}`` of every role for the CSV-generation lookup ``lookup`` (a ``PdLookup``: its
-    ``explicit_rows(name)`` lists the explicit values of a parameter)."""
-    def entities_with(name: str) -> set[str]:
-        return {str(e) for e, _value in lookup.explicit_rows(name)}
-
-    return {role: role_sources(role, entities_with) for role in ROLE_CHAIN}
-
-
-def role_param(roles: Mapping[str, Mapping[str, str]], e: str, role: str) -> str:
-    """The parameter name entity ``e`` gives ``role`` in ``roles`` (:func:`lookup_roles`); the last name of the
-    chain when it gives none (a lookup of it then finds no value)."""
-    return roles[role].get(e, ROLE_CHAIN[role][-1])

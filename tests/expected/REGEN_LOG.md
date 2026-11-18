@@ -1630,7 +1630,7 @@ the dispatch objective is the commodity cost of its 72 timesteps scaled to the y
 16 985 122.92 (before 146 350 × 8760 / 72 = 17 805 916.67, the old inlined value), the sums of `commodity_cost` in
 this scenario's `costs__dt.csv` golden after and before e561af23.
 
-## 2026-11-18 — investment-type costs reported by event (cost lines), 44 scenarios (#187, P7a)
+## 2026-11-18 — investment-type costs reported by event (cost lines), 44 scenarios (#187)
 
 **Mechanism.** `calc_costs.cost_lines` replaces the class rows *unit / connection / storage investment &
 retirement* (and the node table's *storage investment* / *storage retirement*) by the cost lines of
@@ -1660,7 +1660,7 @@ Files the regeneration rewrote within the compare tolerance but that this change
 `node__d`, `node__dt`, `node_state__dt`, `slack__upward__node_state__dt`, `unit__outputNode__dt`, `unit_capacity__d`
 of 16 scenarios) were restored to their previous content.
 
-## 2026-11-18 — one *salvage* line in the cost tables; fixed costs of new and retired capacity in each period paid (32 scenarios, #187, P7a)
+## 2026-11-18 — one *salvage* line in the cost tables; fixed costs of new and retired capacity in each period paid (32 scenarios, #187)
 
 **Mechanism.** (1) Owner decision: the cost tables show the four salvage causes (*salvage end of life / replaced /
 extended / economic*) as one *salvage* line, their sum (`calc_costs.lines_by_period` / `lines_by_entity`,

@@ -306,7 +306,7 @@ def test_registry_has_four_invest_families() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Investment marginals of a recourse fan (item 266 review F1)
+# Investment marginals of a recourse fan
 # ---------------------------------------------------------------------------
 
 
@@ -314,10 +314,10 @@ def test_registry_has_four_invest_families() -> None:
 def test_recourse_fan_invest_marginals_stay_on_forecast_branches(tmp_path, monkeypatch) -> None:
     """Under ``stochastic_invest_method = recourse`` the fan's ``v_invest`` columns are on the forecast branch
     periods, so its reduced costs are read on the dispatch axis, not the investment axis with the fan's period
-    labels (item 266 read the investment duals on the investment axis; on a fan that put 0 rows at the labels
+    labels (read on the investment axis, a fan's investment duals put 0 rows at the labels
     p2035 / p2040, dropped the p2040_low reduced cost and wrote a ``unit_invest_marginal__d`` of -0 rows with an
     empty solve label).  1000 is the p2040_low reduced cost: its annuity 1 · 1000 · 0.05 / (1 − 1.05^−1) / 1.05 (the
-    parquet held 1050, the year-end annuity, before item 266)."""
+    parquet once held 1050, the year-end annuity)."""
     from pathlib import Path
 
     from flextool.engine import run_chain_from_db

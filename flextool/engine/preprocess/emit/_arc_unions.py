@@ -571,8 +571,9 @@ def emit_process_source_sink_ramp_family(
 #
 # ``payback_time`` is in none of them: these sets only feed ``pdProcess`` /
 # ``pdNode``, whose readers (the existing-capacity chain and the node
-# inflow scaling) do not use it; the annuity reads it from the
-# ``p_process`` / ``pd_process`` (``p_node`` / ``pd_node``) lookups.
+# inflow scaling) do not use it; the annuity reads it from the input
+# database (``params/_period_values.ed_values_online``, by
+# ``_lifetime_roles.source_role_sources``).
 
 # flextool_base.dat:144-152 — processPeriodParam family.
 _PROCESS_PERIOD_PARAM: frozenset[str] = frozenset((
