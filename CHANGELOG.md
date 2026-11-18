@@ -1,217 +1,135 @@
 ## Unreleased
 
 Input databases move to data version 82. The FlexTool window, the Spine Toolbox workflow and `flextool-run
---migrate` migrate them.
+--migrate` migrate them. All cost inputs and rates must be in the same terms (normally real prices with real
+rates); the investment, salvage and retirement costs assume it (see `docs/advanced_concepts.md`, "Real vs nominal
+values").
 
 ### Behaviour changes — read before upgrading
 
-- **Investment-type costs are reported when they happen.** The cost categories *unit / connection / storage
-  investment & retirement* are replaced by event lines, the same for every class: *investment* (the capital of new
-  capacity, at its start of operation), *replacement* (a later plant of a `reinvest_automatic` chain, when it comes
-  online), *extension*, *retirement* (the contract settlement of retired built capacity), *salvage* (a plant's
-  salvage credit at its end of life, the salvage a life extension gives up and the salvage value received at a
-  retirement) and, where there is one, *investment pre-existing* / *salvage pre-existing*. Each is reported at the
-  amount the objective charges; for capacity living past the horizon the investment and the salvage are the
-  horizon shares, the salvage in the last period. The per-entity cost tables use the same names (the node table's
-  *storage investment* / *storage retirement* are gone). Totals over the periods are unchanged, except that the
-  salvage credit of existing capacity that may retire is now shown as *salvage pre-existing* (an objective
-  constant, as *fixed cost pre-existing*). `summary_solve.csv` has one row per line in place of the investment and
-  retirement rows, with the salvage by cause (*salvage end of life*, *salvage replaced*, *salvage extended*,
-  *salvage economic*), and a new row *Total cost counted in the objective*: the solver objective of one
-  deterministic solve. Annualized costs are the discounted ones divided by the period's discount factor (an event
-  spread over the period's years), no longer the yearly annuity of every vintage in service. The discounted *fixed
-  cost invested* and *fixed cost reduction of divestments* are reported in each period they are paid or saved
-  (the capacity in service then), no longer as one amount over the capacity's life in the period it starts
-  operating or retires; their totals are unchanged. Scripts reading the old category names must be updated.
-- **`inflation_rate` is `social_discount_rate`, `inflation_offset_investment` is `discount_offset_investment` and
-  `inflation_offset_operations` is `discount_offset_operations`** (model). The migration renames each parameter with
-  every value, in every alternative, and its default; results do not change. `social_discount_rate` is the model's
-  time discount rate, in the same real or nominal terms as the cost inputs: 0 (no value) means no time preference,
-  and above 0 a cost or income in a later year weighs less; with nominal inputs use (1 + inflation) × (1 + social
-  rate) − 1. The per-entity `discount_rate` stays the investor's rate that turns `invest_cost` into yearly payments.
-  The offsets say where in each year the investment payments (and the salvage credits) and the operating costs
-  fall. Update scripts and Excel workbooks that name the old parameters; a workbook of an earlier version is
-  migrated when it is imported.
-- **`lifetime` is split into `lifetime_technical` and `payback_time`; `salvage_value` is `net_salvage_value`; the
-  `lifetime_method` value `no_investment` is `no_reinvestment`** (unit, connection and node).
-  `lifetime_technical` is how long capacity operates (its end of life and the investment and retirement windows);
-  `payback_time` is the number of years over which `invest_cost` is annualized with `discount_rate`, and an entity
-  without a `payback_time` pays back over its `lifetime_technical`. The migration moves every `lifetime` value, in
-  every alternative, to `lifetime_technical` and leaves `payback_time` empty, so the payback time stays the
-  lifetime; it renames `salvage_value` and rewrites every stored `no_investment` value. Results do not change. A
-  period map of `lifetime_technical`, `payback_time` or `invest_cost` describes the plant as constructed: an
-  investment with a construction lead time uses the value of the period it comes online, for its end of life, its
-  fixed-cost window and its annuity alike. Set `payback_time` only where the investment pays back over a different
-  number of years than it operates. Update scripts and Excel workbooks that name the old parameters or the old
-  value.
-- **With `lifetime_method` `reinvest_choice` or `no_reinvestment` the investment cost is the level yearly cost of
-  the plant over its `lifetime_technical`, paid for each year its capacity is in service**, and the reported
-  investment costs follow. The annuity over `payback_time` (with `discount_rate`) is turned into one yearly price:
-  its present value, discounted at the model `social_discount_rate`, spread evenly over the `lifetime_technical` years.
-  The price is paid from the start of operation to the end of life as `end_of_life_method` rounds it, inside the
-  horizon: a 12-year plant whose life is rounded to 10 years pays the yearly cost of the 12-year plant for 10
-  years. The price does not depend on the build period or the period lengths; `payback_time` and `discount_rate`
-  set only its size (with `discount_rate` equal to `social_discount_rate` the payback time changes nothing for a whole
-  number of years; with a lower `discount_rate` a shorter payback time costs more). Before, every period that
-  started before the end of the lifetime paid the annuity in full (a 12-year lifetime on 5-year periods paid 15 years), also after the capacity
-  was gone. The fixed cost runs over the same years. Upgraded databases get a notice naming the entities whose
-  investment cost changes (results change).
-- **With `lifetime_method` `reinvest_automatic` capacity is replaced at the end of its life by a new plant, at the
-  values of the period the replacement comes online** (unit, connection, node). A plant with a `lifetime_technical`
-  operates to its end of life as `end_of_life_method` rounds it (at least one period), and its capacity is then
-  held by a replacement with the `invest_cost`, `discount_rate`, `payback_time`, `lifetime_technical` and
-  `net_salvage_value` of that period, replaced again at its own end of life, to the end of the horizon. Each plant
-  pays its own level yearly cost (as `reinvest_choice` does, its salvage value netted in) for its years in service.
-  Before, the capacity paid the annuity of its first plant for every year to the end of the horizon, without a
-  salvage value. With constant values, `payback_time` equal to `lifetime_technical` and no `net_salvage_value` the
-  cost is the same as before; a falling `invest_cost`, a `net_salvage_value` or a `payback_time` now changes it. In
-  a stochastic fan a replacement takes the values of its own branch. The reported investment cost of a
-  replacement is in the period it comes online, and the annualized investment cost of each period is the yearly
-  cost of the plant in service then. A plant without a `lifetime_technical` is never replaced and pays its annuity
-  to the end of the horizon. Existing capacity reaches its end of life (`lifetime_technical` less
-  `age_at_model_start`, less the replacements before the model) and is replaced the same way, free without an
-  `invest_cost`: the replacement is reported in a new cost category, *investment pre-existing*, outside the
-  optimised objective like the fixed cost of existing capacity, and an info line names the entities. Retiring
-  existing capacity now also avoids every replacement still to come, and its salvage value is a level credit to the
-  existing plant's end of life (before: no credit), which a retirement gives back. A free replacement that keeps a
-  `net_salvage_value` gets a warning. Capacity the model builds with `reinvest_automatic` can now be retired when
-  its `invest_method` allows retirement (before: only `reinvest_choice` / `no_reinvestment`): a retired MW pays the
-  loan of the plant then in service as it ran, receives its `net_salvage_value`, saves its fixed cost and avoids
-  every replacement still to come; a replacement retired at its own start is never bought. Upgraded databases get a notice naming the
-  entities whose investment cost changes (results change).
-- **Investments get cheaper by one year of interest at the default `discount_offset_investment` 0: the yearly
-  investment payment is sized for when it is paid** (unit, connection, node). The annuity is now `invest_cost ·
-  discount_rate / (1 − (1 + discount_rate)^−payback_time) · (1 + discount_rate)^(discount_offset_investment − 1)`.
-  Before, the annuity was sized for payments at year ends, but the default offset 0 places each payment at the start
-  of its year (the first one on the day the capacity comes online), so the payments were worth `invest_cost · (1 +
-  discount_rate)` at the `discount_rate` instead of `invest_cost`. Now they are worth `invest_cost` at every offset.
-  With offset 0 every investment cost and every yearly salvage credit falls by the factor 1 / (1 + `discount_rate`)
-  (for example 1 / 1.05 at 5 %), so more investment can pay and objective values, investment
-  decisions and reported investment costs change; offset 1 and `discount_rate` 0 give the same results as before.
-  Upgraded databases get a notice naming the entities with an investment or salvage annuity (results change).
-  A FlexTool 2 workbook is imported with the default `discount_offset_investment` 0, so imported models use the
-  corrected annuity too (worth `invest_cost` at the `discount_rate`; FlexTool 2's year-end annuity is that annuity
-  times 1 + interest).
-- **The `net_salvage_value` is counted once, as a cash flow when the capacity stops operating** (unit, connection,
-  node). Retiring existing capacity receives the whole `net_salvage_value` of the retirement period at the start of
-  that period, discounted to it, and saves the fixed cost from then on; the investment in existing capacity is sunk.
-  Before, a retirement earned the annuity of the salvage value over `lifetime_technical`, inside the horizon. With
-  `lifetime_method` *reinvest_choice* or *no_reinvestment* the `net_salvage_value` at the end of life (of the period
-  the life ends in; after the last period, the last value) is a level yearly credit over the lifetime at
-  `discount_rate`: it lowers the yearly cost of new capacity (the textbook capital recovery with salvage when
-  `payback_time` equals `lifetime_technical`; before, it had no effect), existing capacity holds it over its
-  service years (counted from the model start to its end of life as `end_of_life_method` rounds it; a constant that
-  is not in the reported objective), and a retirement gives these credits back, so a retired MW earns its salvage
-  value exactly once. A kept new plant's credit is levelled over its `lifetime_technical` but, like its yearly cost,
-  received for its service years as `end_of_life_method` rounds them: with `discount_rate` and `social_discount_rate` 0 a
-  plant whose life is rounded from 8 to 10 years receives 10 / 8 = 1.25 times its salvage value, one rounded from 12
-  to 10 years 10 / 12 ≈ 0.83 times (existing capacity's credit is levelled over its rounded service years). Two consequences follow from counting only what happens inside the horizon: a kept
-  plant's credits after the horizon are not seen while a retirement collects the whole salvage value, so retiring
-  long-lived capacity late in the horizon can pay (an existing 40-year plant retired at the start of the last
-  5-year period of a 20-year horizon gains about 0.38 of its salvage value, and swapping it for an identical new
-  plant can pay); and with a `discount_rate` different from `social_discount_rate` a kept plant's salvage is levelled at
-  the `discount_rate` while a retired one is discounted at the `social_discount_rate`. Upgraded databases get a notice
-  naming the entities whose salvage is now counted differently (results change).
-- **Capacity the model builds can be retired** (#70; unit, connection, node). With `lifetime_method`
-  *reinvest_choice* or *no_reinvestment* and an `invest_method` that allows investment and retirement
-  (*invest_retire_…* or *cumulative_limits*), each investment can be retired in a later investment period while it
-  is in service, in the solve that builds it or in a later solve of a chain (before: only existing capacity could be
-  retired; *reinvest_automatic* capacity still cannot). A retired MW pays its investment as it ran: the payments of
-  the years before the retirement, then, at the start of the retirement period, the rest of the loan; it receives
-  the `net_salvage_value` of that period then, gives back the yearly cost it was charged for its years in service
-  and saves its `fixed_cost` from then on. So building and retiring at once costs `invest_cost − net_salvage_value`,
-  discounted to the retirement, for any `discount_rate`, `payback_time` and offset; with a `discount_rate` above the
-  `social_discount_rate` paying the loan off early is cheaper for the model, below it dearer. An investment never retires
-  more than it built (also across the solves of a chain, which carry each retirement with its investment, also from
-  a solve with Benders `decomposition`; the reported `existing` capacity of a later solve stays the user's existing
-  capacity, the retired built MW come off the carried investment), the retirement limits (`retire_max_period`,
-  `retire_max_total`, the minima, group limits) and the retired-capacity terms of user constraints count it, and
-  stochastic solves tie it in the shared investment periods like the investment. A `net_salvage_value` above what
-  the capacity costs until its retirement makes building to retire pay: a warning names such entities. Upgraded
-  databases get a notice naming the entities whose new capacity can now be retired (results change).
-- **New capacity pays the `fixed_cost` of each period it operates in**, as existing capacity does (unit,
-  connection, node). In FlexTool 4.5.0 an investment paid the `fixed_cost` of the period it came online in every
-  period it operated, so with a `fixed_cost` period map the fixed cost of new capacity changes; a constant
-  `fixed_cost` gives the same results. The reported fixed cost of investments follows. Upgraded databases get a
-  notice naming the investing entities whose `fixed_cost` differs between periods (results change).
-- **`end_of_life_method` defaults to `closest_seam`** (unit, connection, node; `lifetime_method` reinvest_choice /
-  no_reinvestment). The end of life (start of operation plus `lifetime_technical`; existing capacity: from the model
-  start, minus its age) is rounded to the closest period start, a tie to the later one. Before, it was rounded to
-  the next period start, so capacity operated to the end of the period its life ended in. Capacity whose life ends
-  in the first half of a period is now out of service for that whole period and pays neither its yearly
-  investment cost nor its fixed cost there. For capacity-adequacy studies, `previous_seam` never counts capacity
-  past its life. Set `end_of_life_method` `next_seam` to keep the old
-  rounding. Upgraded databases get a notice naming the entities whose end of life moves (results change).
-- **BREAKING for tools that connect FlexTool with other modelling tools through `override_provider`** (scripts
-  and integrations that inject state between solves, for example capacities decided by another model): the keys
+- **Parameters renamed (versions 81 and 82).** Unit, connection and node: `lifetime` is split into
+  `lifetime_technical` (how long capacity operates) and `payback_time` (the years over which `invest_cost` is
+  annualized; no value: `lifetime_technical`); `salvage_value` is `net_salvage_value`; the `lifetime_method` value
+  `no_investment` is `no_reinvestment`. Model: `inflation_rate` is `social_discount_rate`,
+  `inflation_offset_investment` is `discount_offset_investment` and `inflation_offset_operations` is
+  `discount_offset_operations`. The migration moves every value, in every alternative, to the new name
+  (`lifetime` to `lifetime_technical` only, so the payback time stays the lifetime) and rewrites every stored
+  `no_investment`; the renames alone change no result. Update scripts and Excel workbooks that name the old
+  parameters or value; a workbook of an earlier version is migrated when it is imported.
+- **`social_discount_rate` is the model's time discounting and `discount_rate` the investor's rate, both in the
+  terms of the inputs.** `social_discount_rate` 0 (no value) means no time preference; above 0 later costs and
+  incomes weigh less; with nominal inputs use (1 + inflation) × (1 + social rate) − 1. The per-entity
+  `discount_rate` is the investor's WACC that turns `invest_cost` into yearly payments; a risk premium belongs
+  there. FlexTool never converts a rate between real and nominal.
+- **Investments get cheaper by one year of interest at the default `discount_offset_investment` 0.** The yearly
+  investment payment is now sized for when it is paid: `invest_cost · discount_rate / (1 − (1 +
+  discount_rate)^−payback_time) · (1 + discount_rate)^(discount_offset_investment − 1)`, worth `invest_cost` at
+  the `discount_rate` when the capacity starts to operate, at any offset. Before, the payment was sized for year
+  ends but placed at year starts, so the payments were worth `invest_cost · (1 + discount_rate)`. With offset 0
+  every investment cost and every yearly salvage credit falls by 1 / (1 + `discount_rate`) (1 / 1.05 at 5 %), so
+  objective values, investment decisions and reported investment costs change; offset 1 or a `discount_rate` of 0
+  give the same results as before. A FlexTool 2 workbook is imported with the default offset 0. Upgraded
+  databases get a notice naming the affected entities.
+- **Each plant pays a level yearly price for each year it is in service.** The annuity over `payback_time` (at
+  `discount_rate`) is turned into one yearly price: its present value at the `social_discount_rate`, spread
+  evenly over the `lifetime_technical` years, less the level credit of the `net_salvage_value`. It is paid from
+  the start of operation to the end of life, inside the horizon: a 12-year plant whose life is rounded to 10 years
+  pays the 12-year plant's yearly price for 10 years. Before, every period that started before the end of the
+  lifetime paid the annuity in full (a 12-year lifetime on 5-year periods paid 15 years). `payback_time` sets
+  only the size of the price: with `discount_rate` equal to `social_discount_rate` it changes nothing (for a whole
+  number of years), with a `discount_rate` above it a shorter payback time is cheaper, below it dearer. Upgraded
+  databases get a notice naming the entities whose investment cost changes.
+- **With `lifetime_method` `reinvest_automatic` capacity is replaced at its end of life by a new plant at the
+  values of the period the replacement comes online** (`invest_cost`, `discount_rate`, `payback_time`,
+  `lifetime_technical`, `net_salvage_value`; in a stochastic fan, those of its own branch), and so on to the end
+  of the horizon; each plant pays its own yearly price. Before, the capacity paid the annuity of its first plant
+  in every year to the end of the horizon. With constant values, `payback_time` equal to `lifetime_technical` and
+  no `net_salvage_value` the cost is the same as before. Existing capacity reaches its end of life
+  (`lifetime_technical` less `age_at_model_start`, less the replacements before the model) and is replaced the
+  same way, free without an `invest_cost`, reported as *investment pre-existing* outside the optimised objective.
+  A plant without a `lifetime_technical` is never replaced. Upgraded databases get a notice naming the entities
+  whose investment cost changes.
+- **`end_of_life_method` defaults to `closest_seam`.** An end of life inside a period is rounded to the closest
+  period start (a tie to the later one); before, to the next one. Capacity whose life ends in the first half of a
+  period is now out of service for that whole period and pays neither its yearly price nor its fixed cost there.
+  For capacity-adequacy studies use `previous_seam`, which never counts capacity past its life; `next_seam` keeps
+  the old rounding. Upgraded databases get a notice naming the entities whose end of life moves.
+- **New capacity pays the `fixed_cost` of each period it operates in**, as existing capacity does. Before, an
+  investment paid the `fixed_cost` of the period it came online in every period it operated, so a `fixed_cost`
+  period map now changes the fixed cost of new capacity; a constant gives the same results. The fixed cost stops
+  when the capacity does. Upgraded databases get a notice naming the investing entities whose `fixed_cost`
+  differs between periods.
+- **The `net_salvage_value` is counted once, as an income when the capacity stops operating.** A retirement
+  receives the whole `net_salvage_value` of the retirement period at its start and saves the fixed cost from then
+  on; the investment is sunk (before, a retirement earned the annuity of the salvage value inside the horizon).
+  Capacity kept to its end of life receives it as a level yearly credit over its lifetime at `discount_rate`: it
+  lowers the yearly price of new capacity (before: no effect), and existing capacity holds it over its remaining
+  service years; a retirement gives these credits back. Only the horizon counts, so near its end a retirement
+  collects the whole salvage value that a kept plant would receive only after the horizon, and with a
+  `discount_rate` different from the `social_discount_rate` the timing of the investor's payments changes the
+  cost: both can make a retirement (or a swap for an identical plant) pay. In a chain of solves each solve prices a
+  retirement against its own horizon. Upgraded databases get a notice naming the entities whose salvage is counted
+  differently.
+- **A period-varying `existing` (a period map) is used in every solve of a run.** From the second solve of a
+  chain, in every roll after the first of a rolling solve and in nested sub-solves, the existing capacity was the
+  map's first-period value in every period: {500, 300, 100, 0} gave 500 MW in each later solve. Each solve now
+  takes the user's `existing` of each of its periods, plus the investments of the earlier solves (each with its
+  own start of operation and end of life), minus the carried retirements. Results of chained, rolling and nested
+  runs with an `existing` map change; a constant `existing` gives the same results.
+- **Investment-type costs are reported when they happen, at the amount the objective charges.** The categories
+  *unit / connection / storage investment & retirement* are replaced, for every class, by *investment*,
+  *replacement*, *extension*, *retirement*, *salvage* and, where there is one, *investment pre-existing* /
+  *salvage pre-existing*; the discounted costs add up to the objective, and `summary_solve.csv` has the new row
+  *Total cost counted in the objective* and shows the salvage by cause. For capacity living past the horizon the
+  investment and the salvage are the horizon shares. Annualized costs are the discounted ones divided by the
+  period's discount factor. The fixed costs of new and retired capacity are reported in each period they are paid
+  or saved. Totals over the periods are unchanged, except that the salvage credit of existing capacity that may
+  retire now shows as *salvage pre-existing*. Scripts reading the old category names must be updated.
+- **BREAKING for tools that connect FlexTool with other models through `override_provider`** (scripts and
+  integrations that inject state between solves, for example capacities decided by another model): the keys
   `handoff/realized_invest`, `handoff/realized_existing` and `handoff/realized_divest` are gone and raise an error
-  naming the new key, so such a tool stops working until it is changed. The realized capacity is now given per
-  investment cohort, `K.HANDOFF_REALIZED_COHORT` (one row per investment decision, with its start of operation, end
-  of life and size; start from a captured `SolveHandoff.realized_cohort` and change its sizes), and the retirements
-  per cohort, `K.HANDOFF_REALIZED_RETIRE`. `docs/dev/inject_between_solves.md` gives the columns of both and a
-  worked wrapper. The `--csv-dump` mirrors `solve_data/p_entity_period_existing_capacity.csv` and
-  `p_entity_divested_period.csv` are gone; the dump has the carriers themselves
-  (`produced_handoff/realized_cohort.csv`, `realized_retire.csv`).
+  naming the new key. The realized capacity is now given per investment cohort, `K.HANDOFF_REALIZED_COHORT` (one
+  row per investment decision, with its start of operation, end of life and size), and the retirements per cohort,
+  `K.HANDOFF_REALIZED_RETIRE`; `docs/dev/inject_between_solves.md` gives the columns and a worked wrapper. The
+  `--csv-dump` files `solve_data/p_entity_period_existing_capacity.csv` and `p_entity_divested_period.csv` are
+  replaced by `produced_handoff/realized_cohort.csv` and `realized_retire.csv`.
 
 ### New features
 
+- **Age of existing capacity.** `age_at_model_start` (years), or `build_year` with the new `model.start_year`
+  (age = `start_year` − `build_year`), shortens the remaining life of existing capacity: its end of life is
+  `lifetime_technical` minus the age, from the model start, with every `lifetime_method`. A warning names existing
+  capacity whose life has ended at the model start and investments whose rounded end of life is at their own
+  start of operation (such an investment is not offered).
+- **Capacity the model builds can be retired**, with an `invest_method` that allows investment and retirement
+  (*invest_retire_…*, *cumulative_limits*) and any `lifetime_method`, in a later investment period while it is in
+  service, also in a later solve of a chain. A retired MW pays the rest of its loan at the start of the retirement
+  period, receives the `net_salvage_value` of that period and saves its fixed cost; with `reinvest_automatic` it
+  also avoids every replacement still to come. Building and retiring at once costs `invest_cost −
+  net_salvage_value`, discounted to the retirement. A `net_salvage_value` above what the capacity costs until its
+  retirement makes building to retire pay: a warning names such entities. Upgraded databases get a notice naming
+  the entities whose new capacity can now be retired.
+- **Life extension.** With `life_extension_cost` and `life_extension_years`, capacity reaching the end of its
+  `lifetime_technical` can be kept in service that many years longer (`lifetime_method` `reinvest_choice` or
+  `no_reinvestment`; an input error names a `reinvest_automatic` entity). The model decides how much to extend.
+  The extension is priced as a plant of its own (its cost plus the salvage value it gives up, financed at
+  `discount_rate` over `life_extension_years`, less the salvage value at the extended end of life), so it
+  competes with new capacity on equal terms. It can be retired, is never extended again, and counts as capacity,
+  not investment, in the investment limits.
 - **Capacity by cohort and retirements by cause.** New tables `unit_cohort_capacity__d`,
-  `connection_cohort_capacity__d` and `node_cohort_capacity__d` give the capacity of each block of capacity that came
-  into service together (the existing capacity, each investment, each replacement plant of a `reinvest_automatic`
-  chain, each life extension) in each period, with the period it started to operate in and the period its life
-  ends at. The new `retirement` result (`unit_retirement__d`, `connection_retirement__d`, `node_retirement__d`)
-  gives the capacity leaving service at the start of each period by cause: end of life, economic retirement,
-  replaced, extended. The `existing` column of the capacity tables no longer counts a life extension decided by an
-  earlier solve of a chain (it is an extension cohort; the total is unchanged).
-- **Life extension** (unit, connection and node). With `life_extension_cost` [CUR/kW, CUR/kWh] and
-  `life_extension_years`, capacity reaching the end of its `lifetime_technical` can be kept in service that many
-  years longer: the model decides how much of what is still in service at the end of life to extend, for a one-off
-  cost paid when the extension starts. The extension is priced as a plant of its own (the extension cost plus the
-  `net_salvage_value` the capacity would have received at its end of life, financed at `discount_rate` over
-  `life_extension_years`, less the salvage value at the extended end of life), so it competes with new capacity on
-  equal terms; it pays the `fixed_cost` of its years in service. It is for `lifetime_method` `reinvest_choice` and
-  `no_reinvestment` (an input error names a `reinvest_automatic` entity, whose capacity is replaced at its end of
-  life). It needs no `invest_method`, can be retired when the
-  `invest_method` allows retirement, is never extended again, and counts as capacity, not investment, in the
-  investment limits. The extension cost is reported as investment of the period it starts in. Give both parameters or
-  neither (an input error names an entity with one of them). Without them nothing changes.
-- **The age of existing capacity and the rounding of an end of life** (unit, connection and node).
-  `age_at_model_start` (years), or `build_year` with the new `model.start_year` (age = `start_year` − `build_year`),
-  shortens the life of the existing capacity: its end of life is `lifetime_technical` minus the age, counted from the
-  model start (with `lifetime_method` `reinvest_choice` or `no_reinvestment`; `reinvest_automatic` capacity is kept).
-  `end_of_life_method` says how an end of life that falls inside a period is rounded to a period start, for existing
-  capacity and for every investment: `closest_seam` (the default: the nearer period start, a tie to the later one),
-  `next_seam` (the rounding before this release: in service to the end of the period its life ends in) or
-  `previous_seam` (gone for that whole period). The fixed cost of an investment stops when its capacity does. A
-  warning names existing capacity whose end of life is at or before the model start and investments whose rounded end
-  of life is at their own start of operation: such an investment would never operate and is not offered (no
-  investment variable, no cost; its `invest_min_period` does not apply and an `invest_min_total` counts only the
-  offered decisions). The `no_reinvestment` investment window (the first technical lifetime from the model start)
-  does not depend on the age. Without the new parameters only the default rounding changes results (see
-  `end_of_life_method` under Behaviour changes).
+  `connection_cohort_capacity__d` and `node_cohort_capacity__d` give the capacity of each block of capacity that
+  came into service together (the existing capacity, each investment, each replacement, each life extension) in
+  each period. The new `retirement` result (`unit_retirement__d`, `connection_retirement__d`,
+  `node_retirement__d`) gives the capacity leaving service at the start of each period by cause: end of life,
+  economic retirement, replaced, extended.
 
 ### Fixes
 
-- **A large database migrates to version 81.** The migration stopped with "Expression tree is too large (maximum
-  depth 1000)" when a database had many `lifetime` or `salvage_value` values. The values now move to their new
-  names without being deleted and written again.
-- **A period-varying `existing` (a period map) is used in every solve of a run.** From the second solve of a
-  chained run, and in every roll after the first of a rolling solve (and in nested sub-solves), the existing
-  capacity was the map's first-period value in every period: a map {500, 300, 100, 0} gave 500 MW in each later
-  solve, and a rising map gave too little. Each solve now takes the user's `existing` of each of its periods, plus
-  the investments the earlier solves realized (each in service from its start of operation to its end of life,
-  as the deciding solve placed them), minus the carried retirements. Results of chained, rolling and nested runs
-  with an `existing` map change (capacity, flow bounds, dispatch, costs); a constant `existing` gives the same
-  results as before. Two investments decided in different periods that start to operate in the same period
-  (construction lead times) are carried separately, each with its own lifetime (the `lifetime_technical` of the
-  period it comes online).
-- **A chain of solves with a `no_reinvestment` entity no longer stops with a `p_entity_max_units` error** once the
-  entity's investment window has closed in a later solve. The closed periods also no longer get an investment
-  variable (held at zero) when another entity still invests in that solve; results are unchanged.
-- **A `lifetime_technical` map with the unnamed index (`x`) gives each period its own value** in the end of life of
-  existing capacity (`reinvest_choice`, `no_reinvestment`). Before, that check read the map's last value, so a map
-  such as {10, 10, 10, 40} kept the existing capacity to the end of the horizon. The lifetimes and `discount_rate`
-  are now read like `invest_cost` and `net_salvage_value`: a constant or a period map.
+- **A chain of solves with a `no_reinvestment` entity no longer stops with a `p_entity_max_units` error** once
+  the entity's investment window has closed in a later solve.
+- **A `lifetime_technical` map with the unnamed index (`x`) gives each period its own value** in the end of life
+  of existing capacity. Before, the map's last value was read, so {10, 10, 10, 40} kept the existing capacity to
+  the end of the horizon.
 
 ## Release 4.5.2 (18.11.2026) — migration of large databases, all-or-nothing migration (schema v80)
 
