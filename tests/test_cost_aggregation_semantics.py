@@ -653,9 +653,14 @@ class TestDivestSalvageIncludedInObjective:
     reinvest_automatic with net_salvage_value 200 CUR/kW, fixed_cost 100,
     retire_max_total 1000 MW) the retirement earns the full net salvage
     value at the start of p2020 (the existing capacity's investment is
-    sunk, and reinvest_automatic capacity has no salvage credit to give
-    back): 200 · 1000 CUR/MW · 1000 MW = 200 M CUR, discounted by
-    (1 + 0)^0 = 1, so the retirement bucket is −200 M CUR.
+    sunk), 200 · 1000 CUR/MW discounted by (1 + 0)^0 = 1, and gives back
+    the existing plant's level salvage credit of its one year in the model:
+    the plant (lifetime_technical 30, age 0) holds its salvage value at its
+    end of life as the credit a_x = 200 000 · 1.05^−30 · 0.05 / (1 −
+    1.05^−30) / 1.05 = 2 866.94 CUR/MW a year (discount_rate 5 %, offset 0;
+    its life ends past the horizon, so the credit is levelled over the 30
+    years).  The retirement bucket is (−200 000 + 2 866.94) · 1000 MW =
+    −197.133060 M CUR.
 
     Solver objective ≈ Python total - pre-existing fixed cost constant.
     Any other residual means the salvage term is mis-accounted.
@@ -680,10 +685,12 @@ class TestDivestSalvageIncludedInObjective:
 
     def test_retirement_receives_the_net_salvage_value(self, csv_dir: Path) -> None:
         """The retirement bucket is the salvage settlement of the 1000 MW
-        retired at the cap: −200 000 CUR/MW · 1000 MW = −200 M CUR (class
+        retired at the cap: (−200 000 + a_x) CUR/MW · 1000 MW (class
         docstring)."""
+        a_x = 200_000.0 * 1.05 ** -30 * 0.05 / (1.0 - 1.05 ** -30) / 1.05
+        assert a_x == pytest.approx(2_866.94, abs=0.01)
         s = _read_summary_solve(csv_dir)
-        assert s["retirement"] == pytest.approx(-200.0, rel=1e-9)
+        assert s["retirement"] == pytest.approx((-200_000.0 + a_x) * 1000.0 / 1e6, rel=1e-9)
 
     def test_solver_matches_python_minus_preexisting(self, csv_dir: Path) -> None:
         """Solver objective excludes the pre-existing-fixed constant;

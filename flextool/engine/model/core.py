@@ -521,6 +521,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _obj_invest_divest,
         _obj_existing_fixed_cost,
         _obj_existing_salvage,
+        _obj_existing_replacement,
         # ── further constraint families and their objective terms ──
         _group_slack.add_constraints,
         _group_slack.objective_terms,
@@ -5509,19 +5510,27 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     # − Σ_{(p,d) ∈ pd_divest_set} v_divest_p[p,d]·unitsize[p] · lifetime_fixed_cost_divest[p,d] · bw[d]
     #   − Σ_{(p,d) ∈ pd_divest_set} v_divest_p[p,d]·unitsize[p] · divest_salvage[p,d] · bw[d]
     #   lifetime_fixed_cost_divest[p,d] = Σ_{d′ ∈ W(p,d)} fixed_cost[p,d′]·1000·inflation_op[d′]
-    #   divest_salvage[p,d] = D(d)·S_d − a_x[p]·S̄_x[p,d]
+    #   divest_salvage[p,d] = [g1 in service in d]·(D(d)·S_d − a_x[p]·S̄_x[p,d])
+    #                         − [g a replacement, m > 0]·set[g,d] + Σ_{replacements g′ ≥ g} a_b[g′]·S̄[g′,d]
+    #     (reinvest_automatic: g the generation of p's existing chain in service in d, g1 the existing plant;
+    #      m = yr[d] − y_on[g]; set, S̄[g′,d] and a_b as in divest_built_cost (_retire_built), a_b of one plant
+    #      built in d_on(g′); other entities: the first term, g1 the existing cohort)
     #   W(p,d) = the solve's periods d′ with yr[d] ≤ yr[d′] < EOL[p] (the window of retired[p,·]: until the
     #     end of life of p's pre-existing capacity, the end of the horizon for reinvest_automatic)
     #   S_d = 1000·net_salvage_value[p,d]; D(d) = (1+social_discount_rate)^−(years from the run start to the start of d)
     #   a_x[p] = S_x·(1+r_x)^−R_x·af(r_x, R_x) (af: invest_cost_p), S_x = 1000·net_salvage_value[p,d_eol] (the
     #     last period's value after the last period start), r_x = discount_rate[p,d0], R_x = y_eol[p] − y0 (y_end[p]
-    #     − y0 for a life past the horizon), a_x = 0 for reinvest_automatic; y0 / d0 the start of the run
+    #     − y0 for a life past the horizon; 0 for a plant that serves no period), y_eol / y_end of g1 for
+    #     reinvest_automatic (a_x = 0 without a lifetime); y0 / d0 the start of the run
     #   S̄_x[p,d] = Σ_{d′ ∈ history ∪ solve, y0 ≤ yr[d′] < EOL[p], on d's lineage} inflation_inv[d′]
     # Saving from process capacity retired in period d, currency/MW: the fixed cost of the existing capacity it no
     # longer pays (each period's, with the factor the existing fixed cost has), and its salvage settlement.  The
     # investment in existing capacity is sunk; it holds its salvage value as a level credit a_x per year in service
     # (existing_salvage); a retired MW receives its net salvage value at the start of d and gives back every credit,
-    # so it earns exactly S_d·D(d).  A kept plant's credits are counted inside the horizon only.
+    # so it earns exactly S_d·D(d).  A kept plant's credits are counted inside the horizon only.  Existing
+    # reinvest_automatic capacity is replaced at its end of life (existing_replacement): retiring it also avoids every
+    # replacement still to come, and retiring a replacement settles that plant's contract as it ran (a replacement
+    # retired at its own start was never bought).
     if b.has_divest_p:
         lfd = _cost(d.ed_lifetime_fixed_cost_divest, "p")
         salvage = _cost(d.ed_divest_salvage, "p")
@@ -5646,6 +5655,41 @@ def _obj_existing_salvage(b: _Build) -> None:
     constant = frame.sort("e", "d")["contrib"].sum()  # fixed summation order (the joins leave it unspecified)
     if constant:
         b.m.add_obj_constant(-float(constant) * b.scale_the_objective)
+
+
+def _obj_existing_replacement(b: _Build) -> None:
+    """The replacement of existing reinvest_automatic capacity at its end of life, an objective constant
+    (opt-in)."""
+    d = b.d
+    price = getattr(d, "ed_existing_replacement", None)
+    if not (b.include_existing_fixed_cost and price is not None and b.cap.existing_cohort_size_e is not None):
+        return
+
+    # ─── OBJ. ─── existing_replacement ───────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(e,d) ∈ price} (pre_existing[e,d] − retired_carried[e,d]) · a_b[g(e,d)]·inflation_inv[d] · bw[d]
+    #   price = ed_existing_replacement[e,d] = a_b[g(e,d)]·inflation_inv[d], g(e,d) the replacement of e's existing
+    #     capacity in service in d (a generation g ≥ 2 of the existing reinvest_automatic chain: online at the end of
+    #     life of the one before, round_end_of_life(y_on + lifetime_technical[e, d_on(g)]), until the horizon end)
+    #   a_b[g] = a_cap[g] − a_salv[g] (invest_cost_p) of one plant built in d_on(g) (on d's lineage in a stochastic
+    #     fan), its salvage at its end of life; 0 without an invest_cost (and no salvage value)
+    #   pre_existing, retired_carried as in existing_salvage; bw = pd_branch_weight, factor 1 when absent
+    # The replacement of existing capacity at its end of life, at the invest cost (and the other values) of the period
+    # the replacement comes online: no decision changes it except retiring the capacity first, whose retirement
+    # coefficient (divest_cost_p) gives the replacement back whether or not this constant is added.  A constant,
+    # added only with include_existing_fixed_cost, multiplied by scale_the_objective like every other objective term.
+    exist = _existing_not_retired(b).rename({"value": "exist"})
+    frame, price_frame = align_join_dtypes(exist, price.frame.rename({"value": "price"}), ["e", "d"])
+    frame = frame.join(price_frame, on=["e", "d"], how="inner")
+    if d.pd_branch_weight is not None:
+        frame, weights = align_join_dtypes(frame, d.pd_branch_weight.frame.rename({"value": "pdbw"}), ["d"])
+        frame = (frame.join(weights, on="d", how="inner")
+                      .with_columns(contrib=pl.col("exist") * pl.col("price") * pl.col("pdbw")))
+    else:
+        frame = frame.with_columns(contrib=pl.col("exist") * pl.col("price"))
+    constant = frame.sort("e", "d")["contrib"].sum()  # fixed summation order (the joins leave it unspecified)
+    if constant:
+        b.m.add_obj_constant(float(constant) * b.scale_the_objective)
 
 
 # ---------------------------------------------------------------------------

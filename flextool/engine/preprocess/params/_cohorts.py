@@ -539,7 +539,33 @@ def run_existing_cohorts(source: "InputSource", rc: "RunCalendar | None") -> pl.
     cal = cohort_calendar(rc, years) if rc is not None else None
     frame = _utf8_cohort_frame(_existing_rows(source, years, cal))
     _past_end_of_life_warning(source, frame, years)
+    _existing_replacement_info(source, frame)
     return frame
+
+
+def _existing_replacement_info(source: "InputSource", frame: pl.DataFrame) -> None:
+    """Name, once per run, the processes and storage nodes with existing capacity (> 0 in some period) whose
+    reinvest_automatic chain has a replacement inside the horizon (a generation after the first): their existing
+    capacity reaches its end of life and is replaced at the values of the period the replacement comes online."""
+    from flextool.engine import _behaviour_changes
+    from flextool.engine.preprocess.params._existing import _per_entity_param_lf
+    replaced = frame.filter((pl.col("kind") == KIND_GENERATION) & pl.col("root").str.starts_with(f"{KIND_EXISTING}:")
+                            & ~pl.col("cohort").str.ends_with(":1"))
+    if replaced.height == 0:
+        return
+    first = (replaced.sort("y_on").unique(subset=["e"], keep="first", maintain_order=True)
+                     .select(pl.col("e").cast(pl.Utf8), "y_on"))
+    with_existing = {str(e) for e, v in _per_entity_param_lf(source, "existing").select("e", "value").collect()
+                     .iter_rows() if v is not None and v > 0.0}
+    years = {e: y for e, y in first.iter_rows() if e in with_existing}
+    if years:
+        _behaviour_changes.warn_once_each(
+            "existing_replaced", sorted(years),
+            lambda fresh: "Info: the existing capacity of " + ", ".join(f"{e} (from year {years[e]:g} of the run)"
+                                                                         for e in fresh)
+            + " reaches its end of life inside the horizon and is replaced (lifetime_method reinvest_automatic) at "
+            "the invest_cost of the period the replacement comes online; the replacement is reported as investment "
+            "pre-existing, outside the optimised objective (as the fixed cost of existing capacity).")
 
 
 def _roots(frame: pl.DataFrame) -> pl.DataFrame:

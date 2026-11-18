@@ -66,6 +66,8 @@ categories:
     storage investment & retirement:       '#6691d8'   # lighter blue
     # Fixed O&M (teal family — "keep the lights on, recurring")
     fixed cost pre-existing:               '#0f8a7a'   # teal
+    investment pre-existing:               '#2a4f8f'   # dark blue (investment family)
+    storage investment pre-existing:       '#4f78bd'   # blue
     fixed cost invested:                   '#3bb0a0'   # brighter teal
     fixed cost reduction of divestments:   '#8ed2c9'   # pale teal
     # Commodity / fuel (warm browns / oranges for input, green for sales)

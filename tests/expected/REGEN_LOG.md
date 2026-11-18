@@ -1562,3 +1562,29 @@ Generated with `pytest "tests/test_scenarios.py::test_scenario[<scenario>]" --re
 The regeneration also rewrote 24 files whose values did not change (number format only: compared with the test's
 own rounding and tolerance); those were put back to their previous content (copied from a backup taken before the
 run). The 18 scenarios then pass in compare mode.
+
+## 2026-11-18 — the replacement of existing reinvest_automatic capacity is reported (8 scenarios, #187)
+
+**Context.** Existing `reinvest_automatic` capacity reaches its end of life and is replaced by a plant at the
+`invest_cost` of the period the replacement comes online (`flextool/engine/preprocess/params/_cohorts.py`
+`chain_rows`, `_npv.existing_replacement_prices`). The replacement is outside the optimised objective (as the fixed
+cost of existing capacity) and reported in its own category, *investment pre-existing* (*storage investment
+pre-existing* in the node tables), in the period it comes online (`tests/engine/test_existing_replacement.py`,
+hand-derived). The LPs of these scenarios do not change (no retirement option of the replaced capacity).
+
+**The one change:** the existing 50 MWh `battery` (lifetime_technical 10, invest_cost 200 CUR/kWh, discount_rate
+5 %, social_discount_rate 4 %, discount_offset_investment 0) is replaced in p2030 and serves p2030 and p2035:
+50 · A · Σ_{y=10..19} 1.04^−y = 50 · 24 667.538 · 5.698608 = 7.028531 M CUR, A = 200 · 1000 · 0.05 / (1 − 1.05^−10)
+/ 1.05. Added: the `investment pre-existing,7.0285` row of `costs_discounted.csv` (`test_a_lot`,
+`multi_fullYear_battery`, `multi_fullYear_battery_nested_24h_invest_one_solve`,
+`multi_fullYear_battery_nested_multi_invest`, `multi_fullYear_battery_nested_sample_invest_one_solve`,
+`multi_year_one_solve_battery`), the `storage investment pre-existing` column of `cost_node_discounted__d.csv`
+(7.0285 at p2030 battery, 0 elsewhere) and `cost_node_annualized__d.csv` (50 · A = 1.2334 M CUR a year in p2030 and
+p2035) of the same scenarios, and in `summary_solve.csv` of `multi_year_wind_growth_cap` and
+`multi_year_wind_no_investment` the line `Investment costs for pre-existing entities (M CUR),7.02853123343` and the
+calculated totals 7.028531 M higher (2050.83204573 → 2057.86057696, 5748.82887544 → 5755.85740667).
+
+Generated with `pytest "tests/test_scenarios.py::test_scenario[<scenario>]" --regenerate <scenario>` per scenario;
+the regeneration also rewrote cells whose values did not change beyond the test's own rounding and tolerance (number
+format, last-digit solver wobble of `costs__dt`, `node_state__dt`, `unit__outputNode__dt`): every cell other than the
+added column, row and line keeps its committed text. The 8 scenarios pass in compare mode.

@@ -362,16 +362,21 @@ For a unit, connection or storage node `e` in period `d`:
   `G(x) = Σ_{k<⌈x⌉} min(1, x−k)·(1+i)^−k`, `i = model.social_discount_rate`
   (the investment payments are weighed by `inflation_inv[d]`, the social
   discount factor of investment payments, at `discount_offset_investment`)
-  (`G(x) = x` for `i = 0`); `a_cap = A` when `n = L` and for
-  `reinvest_automatic`.  The loan's present value spread evenly over the real
+  (`G(x) = x` for `i = 0`); `a_cap = A` when `n = L`.  The loan's present value spread evenly over the real
   lifetime: one price for every build period, rounding and period length.
   The timing factor `(1+r)^(off_inv − 1)` (`_annuity.annuity_factor`) makes
   the loan worth `invest_cost` at `r` for every `discount_offset_investment`.
   The salvage credit `a_salv = S·(1+r)^−L·af(r, L)` (`af` the annual factor
   `annuity_factor`, `_annuity.salvage_credit`) with `S =
-  1000·net_salvage_value[e,d_eol]` (`_npv._level_prices_lf`; 0 for
-  `reinvest_automatic`) lowers the price: the objective charges `a_cap − a_salv`
-  over the cohort's periods in service (`invest_cost_p` OBJ header).  The cohort
+  1000·net_salvage_value[e,d_eol]` (`_npv._level_prices_lf`) lowers the price: the
+  objective charges `a_cap − a_salv` over the cohort's periods in service
+  (`invest_cost_p` OBJ header).  A `reinvest_automatic` cohort is priced by its
+  `generation` rows: each plant of the chain at the values of the period it comes
+  online (`_npv.generation_prices`, `chain_lumps`; one price for the whole chain
+  with constant values, the annuity bit for bit); the replacement of existing
+  capacity as one plant (`existing_replacement_prices`), outside the default
+  objective (`existing_replacement` OBJ header), and its retirement settled by
+  `chain_retirement_costs`.  The cohort
   also carries the loan (`pay = A`, `n_pay = n`, `r_loan = r`) and `nsv_eol = S`.
   The existing cohort carries `r_loan = r_x`, `a_salv = a_x` and `nsv_eol = S_x`
   of its salvage credit (`_npv.existing_salvage`, `divest_cost_p` /

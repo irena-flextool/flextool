@@ -1702,6 +1702,10 @@ def read_parameters(
                                               flex_data=flex_data)
     p.entity_annual_discounted_start = _edd_per_entity(
         getattr(flex_data, "edd_entity_annual_discounted_run", None), solve_name=solve_name, flex_data=flex_data)
+    # The yearly price of the replacement of existing reinvest_automatic capacity in service in each period (rows
+    # (solve, period_invest, period): the period it comes online, the period it serves): investment pre-existing.
+    p.entity_existing_replacement_yearly = _edd_per_entity(
+        getattr(flex_data, "edd_existing_replacement_run", None), solve_name=solve_name, flex_data=flex_data)
     p.entity_divest_settlement_yearly = _pdX_per_entity(
         getattr(flex_data, "ed_divest_settlement_yearly", None), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,

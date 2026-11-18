@@ -120,7 +120,7 @@
       "cost_annualized",
       null,
       null,
-      "per-entity annualized cost broken down by category (commodity cost, commodity sales, co2, other operational, starts, ramps, investment / retirement, fixed cost pre-existing / invested / reduction of divestments and, for nodes, upward / downward slack penalty). Fuel / commodity cost is attributed to the consuming process and CO2 cost is summed over every priced group the process touches. Summing a category over all entities reproduces the system-wide cost_annualized.",
+      "per-entity annualized cost broken down by category (commodity cost, commodity sales, co2, other operational, starts, ramps, investment / retirement, investment pre-existing (the replacement of existing capacity at its end of life, where there is one), fixed cost pre-existing / invested / reduction of divestments and, for nodes, upward / downward slack penalty). Fuel / commodity cost is attributed to the consuming process and CO2 cost is summed over every priced group the process touches. Summing a category over all entities reproduces the system-wide cost_annualized.",
       null
     ],
     [
@@ -480,7 +480,7 @@
       "cost_annualized",
       null,
       null,
-      "per-entity annualized cost broken down by category (commodity cost, commodity sales, co2, other operational, starts, ramps, investment / retirement, fixed cost pre-existing / invested / reduction of divestments and, for nodes, upward / downward slack penalty). Fuel / commodity cost is attributed to the consuming process and CO2 cost is summed over every priced group the process touches. Summing a category over all entities reproduces the system-wide cost_annualized.",
+      "per-entity annualized cost broken down by category (commodity cost, commodity sales, co2, other operational, starts, ramps, investment / retirement, investment pre-existing (the replacement of existing capacity at its end of life, where there is one), fixed cost pre-existing / invested / reduction of divestments and, for nodes, upward / downward slack penalty). Fuel / commodity cost is attributed to the consuming process and CO2 cost is summed over every priced group the process touches. Summing a category over all entities reproduces the system-wide cost_annualized.",
       null
     ],
     [
@@ -544,7 +544,7 @@
       "cost_annualized",
       null,
       null,
-      "per-entity annualized cost broken down by category (commodity cost, commodity sales, co2, other operational, starts, ramps, investment / retirement, fixed cost pre-existing / invested / reduction of divestments and, for nodes, upward / downward slack penalty). Fuel / commodity cost is attributed to the consuming process and CO2 cost is summed over every priced group the process touches. Summing a category over all entities reproduces the system-wide cost_annualized.",
+      "per-entity annualized cost broken down by category (commodity cost, commodity sales, co2, other operational, starts, ramps, investment / retirement, investment pre-existing (the replacement of existing capacity at its end of life, where there is one), fixed cost pre-existing / invested / reduction of divestments and, for nodes, upward / downward slack penalty). Fuel / commodity cost is attributed to the consuming process and CO2 cost is summed over every priced group the process touches. Summing a category over all entities reproduces the system-wide cost_annualized.",
       null
     ],
     [

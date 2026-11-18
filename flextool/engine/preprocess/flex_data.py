@@ -1283,6 +1283,10 @@ class FlexData:
     # include_existing_fixed_cost): ``_npv.apply_retirement_salvage``.
     ed_divest_salvage: Param | None = None
     ed_existing_salvage_credit: Param | None = None
+    # (e, d) the yearly price of the replacement of existing reinvest_automatic capacity in service in d times
+    # inflation_inv[d] (CUR/MW; the objective constant with include_existing_fixed_cost):
+    # ``_npv.apply_existing_replacement``.
+    ed_existing_replacement: Param | None = None
     # Retirement of model-built capacity (preprocess/params/_retire_built.py; apply_derived_c, None without an
     # option): (e, cohort, d) the retirement options (the columns of v_divest_built), (e, cohort, d_divest, d) the
     # periods a retirement decided in d_divest counts in, one row per retirable cohort (its decision period in this
@@ -1310,6 +1314,9 @@ class FlexData:
     ed_lifetime_fixed_cost_divest_run: Param | None = None
     edd_annuity: Param | None = None
     edd_entity_annual_discounted_run: Param | None = None
+    # (e, d_invest, d) the price per year in service (CUR/MW) of the replacement of existing reinvest_automatic
+    # capacity in service in run period d, d_invest the period it comes online: the reported investment pre-existing.
+    edd_existing_replacement_run: Param | None = None
     ed_divest_settlement_yearly: Param | None = None
     edd_operating_window: pl.DataFrame | None = None
     edd_retire_window: pl.DataFrame | None = None

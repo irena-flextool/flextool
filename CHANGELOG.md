@@ -50,7 +50,13 @@ Input databases move to data version 82. The FlexTool window, the Spine Toolbox 
   a stochastic fan a replacement takes the values of its own branch. The reported investment cost of a
   replacement is in the period it comes online, and the annualized investment cost of each period is the yearly
   cost of the plant in service then. A plant without a `lifetime_technical` is never replaced and pays its annuity
-  to the end of the horizon. Upgraded databases get a notice naming the
+  to the end of the horizon. Existing capacity reaches its end of life (`lifetime_technical` less
+  `age_at_model_start`, less the replacements before the model) and is replaced the same way, free without an
+  `invest_cost`: the replacement is reported in a new cost category, *investment pre-existing*, outside the
+  optimised objective like the fixed cost of existing capacity, and an info line names the entities. Retiring
+  existing capacity now also avoids every replacement still to come, and its salvage value is a level credit to the
+  existing plant's end of life (before: no credit), which a retirement gives back. A free replacement that keeps a
+  `net_salvage_value` gets a warning. Upgraded databases get a notice naming the
   entities whose investment cost changes (results change).
 - **Investments get cheaper by one year of interest at the default `discount_offset_investment` 0: the yearly
   investment payment is sized for when it is paid** (unit, connection, node). The annuity is now `invest_cost ·

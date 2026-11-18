@@ -116,6 +116,11 @@ def cost_summaries(par, s, v, r, debug):
     investment_costs['connection investment & retirement'] = r.costInvestConnection_d.add(r.costDivestConnection_d, fill_value=0) / to_millions
     investment_costs['storage investment & retirement'] = r.costInvestState_d.add(r.costDivestState_d, fill_value=0) / to_millions
     investment_costs['fixed cost pre-existing'] = r.costFixedPreExisting_d / to_millions
+    # The replacement of existing reinvest_automatic capacity at its end of life (only where there is one): not in
+    # the optimised objective unless include_existing_fixed_cost, as the fixed cost pre-existing.
+    has_pre_existing_investment = bool(r.costInvestPreExisting_d.fillna(0.0).ne(0.0).any())
+    if has_pre_existing_investment:
+        investment_costs['investment pre-existing'] = r.costInvestPreExisting_d / to_millions
     investment_costs['fixed cost invested'] = r.costFixedInvested_d / to_millions
     investment_costs['fixed cost reduction of divestments'] = r.costFixedDivested_d / to_millions
     investment_costs['capacity margin penalty'] = r.costPenalty_capacity_margin_d / to_millions
@@ -133,6 +138,8 @@ def cost_summaries(par, s, v, r, debug):
         'fixed cost invested': r.costFixedInvested_yearly,
         'fixed cost reduction of divestments': r.costFixedDivested_yearly,
     }
+    if has_pre_existing_investment:
+        yearly['investment pre-existing'] = r.cost_entity_invest_pre_existing_yearly.sum(axis=1)
     extra = [d for frame in yearly.values() for d in frame.index[frame.fillna(0.0).ne(0.0)]]
     annual_index = investment_index.union(pd.Index(list(dict.fromkeys(extra)), name=investment_index.name))
     annual_invest_costs = pd.DataFrame(index=annual_index, columns=investment_costs.columns, dtype=float)
@@ -317,6 +324,8 @@ def cost_breakdown_by_entity(par, s, v, r, debug):
             (invest_label, r.cost_entity_invest_d, r.cost_entity_invest_yearly),
             (divest_label, r.cost_entity_divest_d, r.cost_entity_divest_yearly),
             ('fixed cost pre-existing', r.cost_entity_fixed_pre_existing, None),
+            ('storage investment pre-existing' if kind == 'node' else 'investment pre-existing',
+             r.cost_entity_invest_pre_existing_d, r.cost_entity_invest_pre_existing_yearly),
             ('fixed cost invested', r.cost_entity_fixed_invested, r.cost_entity_fixed_invested_yearly),
             ('fixed cost reduction of divestments', r.cost_entity_fixed_divested,
              r.cost_entity_fixed_divested_yearly),

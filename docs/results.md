@@ -97,6 +97,11 @@ y-axis is `m3/h` for a water node and `MWh/h` by default. A label without tokens
     - *connection investment & retirement* — M[CUR] same for connections
     - *storage investment & retirement* — M[CUR] same for node states (storages)
     - *fixed cost pre-existing* — M[CUR] fixed O&M for pre-existing capacity
+    - *investment pre-existing* — M[CUR] the replacement of pre-existing capacity at its end of life
+      (`lifetime_method` *reinvest_automatic*), at the `invest_cost` of the period the replacement comes online;
+      reported in that period (annualized: its yearly cost in the periods it serves). Only where there is one. Like
+      *fixed cost pre-existing* it is not in the optimised objective (no decision changes it); a retirement of that
+      capacity gives it back in the retirement settlement, which is.
     - *fixed cost invested* — M[CUR] fixed O&M for newly invested capacity
     - *fixed cost reduction of divestments* — M[CUR] fixed O&M removed by divestments
     - *commodity cost* / *commodity sales* — M[CUR] cost of buying / revenue from selling commodities
@@ -203,6 +208,7 @@ The categories mirror the system [Costs](#costs) decomposition, restricted to th
 - *ramps* — M[CUR] ramp costs (units with a `ramp_cost`)
 - *investment* / *retirement* — M[CUR] cost of investing in unit / connection capacity or salvage from retiring it (named *storage investment* / *storage retirement* in the `node` table, where the capacity is node-state storage energy)
 - *fixed cost pre-existing* / *fixed cost invested* / *fixed cost reduction of divestments* — M[CUR] fixed O&M for pre-existing, newly invested and divested capacity
+- *investment pre-existing* (*storage investment pre-existing* in the `node` table) — M[CUR] the replacement of pre-existing *reinvest_automatic* capacity at its end of life (see [Costs](#costs)); only for entities with one
 - in the *annualized* tables, *investment*, *retirement*, *fixed cost invested* and *fixed cost reduction of divestments* are the yearly amounts in every period the capacity operates or the retirement applies, as in the system [Costs](#costs)
 - *upward slack penalty* / *downward slack penalty* (`node` table only) — M[CUR] cost of involuntary demand reduction / increase at the node
 

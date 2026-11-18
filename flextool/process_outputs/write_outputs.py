@@ -542,6 +542,7 @@ def write_summary_csv(par, s, v, r, csv_dir):
                 .add(r.costInvest_d, fill_value=0.0)
                 .add(r.costDivest_d, fill_value=0.0)
                 .add(r.costFixedPreExisting_d, fill_value=0.0)
+                .add(r.costInvestPreExisting_d, fill_value=0.0)
                 .add(r.costFixedInvested_d, fill_value=0.0)
                 .add(r.costFixedDivested_d, fill_value=0.0)
         )
@@ -577,6 +578,10 @@ def write_summary_csv(par, s, v, r, csv_dir):
         fixed_costs_divested = r.costFixedDivested_d.sum(axis=0) / 1000000
 
         f.write(f'"Fixed costs for pre-existing entities (M CUR)",{fixed_costs_pre_existing:.12g}\n')
+        if r.costInvestPreExisting_d.fillna(0.0).ne(0.0).any():
+            # The replacement of existing reinvest_automatic capacity at its end of life.
+            invest_pre_existing = r.costInvestPreExisting_d.sum(axis=0) / 1000000
+            f.write(f'"Investment costs for pre-existing entities (M CUR)",{invest_pre_existing:.12g}\n')
         f.write(f'"Fixed costs for invested entities (M CUR)",{fixed_costs_invested:.12g}\n')
         f.write(f'"Fixed cost removal due to divested entities (M CUR)",{fixed_costs_divested:.12g}\n')
 

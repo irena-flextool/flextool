@@ -503,13 +503,31 @@ def test_fixed_cost_map_saving_of_a_chain_equals_the_single_solve(tmp_path_facto
         annualized: −10, −10, −20 M/yr in p2025, p2030, p2035
 
     (each chain solve holds only its own period and the next, so the window periods it lacks would take the
-    retirement period's fixed cost; those rows are never reported)."""
-    from tests.engine.test_chain_costs import _period_map
+    retirement period's fixed cost; those rows are never reported).
+
+    The salvage settlement is what each solve charges: the net salvage value S = 200 000 at the start of p2025 less
+    the existing plant's level salvage credits given back, a_x = S·1.05^−30·0.05/(1 − 1.05^−30)/1.05 = 2 866.94
+    (lifetime 30, past the horizon) a year over the existing plant's periods the solve sees, F_inv(d) =
+    Σ_{y=0..4} 1.04^−(Y_d + y): the single solve all four, −100·(S·1.04^−5 − a_x·Σ_d F_inv(d)) = −12.386426 M;
+    the chain's y2025 solve its history p2020 and its own p2025, p2030 (its horizon), −13.123464 M."""
+    from tests.engine.test_chain_costs import F_INV, _period_map
     fixed = {"p2020": 100.0, "p2025": 100.0, "p2030": 100.0, "p2035": 200.0}
     values = _retire() + [["unit", PLANT, "fixed_cost", _period_map(fixed)]]
     single = _results(tmp_path_factory, "ret_fcmap_single", values, _no_battery_invest(SINGLE))
     chain = _results(tmp_path_factory, "ret_fcmap_chain", values, _no_battery_invest(CHAIN))
-    _assert_same_results(chain, single)
+    fixed_columns = ["fixed cost pre-existing", "fixed cost reduction of divestments"]
+    _assert_same_results({k: chain[k][["period", "unit", *fixed_columns]] for k in ("cost_unit_discounted__d",
+                                                                                   "cost_unit_annualized__d")},
+                         {k: single[k][["period", "unit", *fixed_columns]] for k in ("cost_unit_discounted__d",
+                                                                                    "cost_unit_annualized__d")})
+    a_x = SALVAGE * 1000.0 * 1.05 ** -30 * 0.05 / (1.0 - 1.05 ** -30) / 1.05
+    assert a_x == pytest.approx(2_866.94, abs=0.01)
+    seen = {"single": list(PERIODS), "chain": ["p2020", "p2025", "p2030"]}
+    for kind, results in (("chain", chain), ("single", single)):
+        settlement = -100.0 * (SALVAGE * 1000.0 * 1.04 ** -5 - a_x * sum(F_INV[d] for d in seen[kind]))
+        rows = results["cost_unit_discounted__d"]
+        row = rows[(rows["period"] == "p2025") & (rows["unit"] == PLANT)]
+        assert row["retirement"].sum() * MEGA == pytest.approx(settlement, rel=1e-7), kind
     for results in (chain, single):
         discounted = results["cost_unit_discounted__d"]
         rows = discounted[(discounted["period"] == "p2025") & (discounted["unit"] == PLANT)]
@@ -537,20 +555,22 @@ def _swap_values(retire_in: tuple[str, ...]) -> list:
 def test_retiring_and_rebuilding_identical_capacity_in_the_last_period(tmp_path_factory, kind) -> None:
     """coal_plant may invest and retire up to 500 MW in every period (invest_retire_period; invest_cost 400 CUR/kW,
     lifetime 30, reinvest_automatic; net_salvage_value 200).  A retired MW of the existing capacity receives the
-    full net salvage value at the start of its retirement period (its investment is sunk); a new MW pays its level
-    yearly price (the annuity less its salvage credit) for the years it operates inside the horizon; both save / pay
-    the same fixed cost.  In p2035, the last period (years 15 … 19), the swap gains, per MW (the finite-horizon
-    effect: the years after the horizon are unseen)::
+    full net salvage value at the start of its retirement period (its investment is sunk) and gives back the level
+    salvage credits a_x it held over the periods before (the existing plant holds its salvage value as a credit over
+    its 30 years); a new MW pays its level yearly price (the annuity less the same salvage credit) for the years it
+    operates inside the horizon; both save / pay the same fixed cost.  In p2035, the last period (years 15 … 19),
+    the swap gains, per MW (the finite-horizon effect: the years after the horizon are unseen)::
 
-        200 · 1000 · 1.04^−15 − (A − a_salv) · F_inv(p2035) = 111 052.90 − 21 914.56 · 2.570816 = 54 714.59 CUR
+        200 · 1000 · 1.04^−15 − a_x · Σ_{y=0..19} 1.04^−y − (A − a_x) · Σ_{y=15..19} 1.04^−y
+          = 111 052.90 − 33 150.78 − 24 781.50 · 2.570816 = 14 193.43 CUR
         A = 400 · 1000 · 0.05 / (1 − 1.05^−30) / 1.05 = 24 781.50 (paid at year starts),
-        a_salv = 200 · 1000 · 1.05^−30 · 0.05 / (1 − 1.05^−30) / 1.05 = 2 866.94 (the salvage value at the end of
-        the plant's 30 years, levelled over them), F_inv(p2035) = Σ_{y=15..19} 1.04^−y
+        a_x = 200 · 1000 · 1.05^−30 · 0.05 / (1 − 1.05^−30) / 1.05 = 2 866.94 (the salvage value at the end of
+        the plant's 30 years, levelled over them; Σ_{y=0..14} a_x · 1.04^−y = 33 150.78)
 
     Retirement is allowed in p2035 only (an earlier swap can pay too, which would make the twins differ in more than
     the last period).  So the solve builds the 500 MW limit in p2035 and retires what it does not need, 500 MW less
     what the twin without a retirement option builds there, and its objective is the twin's less that many times
-    54 714.59."""
+    14 193.43."""
     chain = _no_battery_invest(SINGLE if kind == "single" else CHAIN)
     outcomes = []
     for tag, values in (("case", _swap_values(("p2035",))), ("twin", _swap_values(()))):
@@ -559,9 +579,10 @@ def test_retiring_and_rebuilding_identical_capacity_in_the_last_period(tmp_path_
     case, twin = outcomes
     assert sorted(case) == sorted(twin)
     af = 0.05 / (1.0 - 1.05 ** -30) / 1.05
-    gain = 200.0 * 1000.0 * 1.04 ** -15 - ((400.0 - 200.0 * 1.05 ** -30) * 1000.0 * af
-                                           * sum(1.04 ** -y for y in range(15, 20)))
-    assert gain == pytest.approx(54_714.59, abs=0.01)
+    a_x = 200.0 * 1000.0 * 1.05 ** -30 * af
+    gain = (200.0 * 1000.0 * 1.04 ** -15 - a_x * sum(1.04 ** -y for y in range(15))
+            - 400.0 * 1000.0 * af * sum(1.04 ** -y for y in range(15, 20)))
+    assert gain == pytest.approx(14_193.43, abs=0.01)
     swapped = 0
     for name, step in case.items():
         assert step.optimal and twin[name].optimal, name

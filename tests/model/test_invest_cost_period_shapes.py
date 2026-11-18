@@ -186,9 +186,13 @@ def test_net_salvage_value_mixed_shapes(tmp_path_factory):
     assert _periods_of(divest, "coal_plant") == set(PERIODS)
     assert _periods_of(divest, "wind_plant") == set(PERIODS)
     # The salvage received in the retirement period keeps the map's per-period values and the constant's broadcast.
+    # coal_plant (reinvest_automatic, lifetime 30 past the horizon) also gives back its existing plant's level
+    # salvage credits, the same take-back T in every period of the single solve: its coefficient in p2025, where no
+    # salvage is received, is T alone (below 0), and every other period's exceeds T by the salvage received there.
     annuity = _annuity(step, divest=True)
-    assert annuity.get(("coal_plant", "p2025"), 0.0) == 0.0
-    assert all(annuity.get(("coal_plant", d), 0.0) != 0.0 for d in ("p2020", "p2030", "p2035")), annuity
+    take_back = annuity.get(("coal_plant", "p2025"), 0.0)
+    assert take_back < 0.0
+    assert all(annuity.get(("coal_plant", d), 0.0) - take_back > 0.0 for d in ("p2020", "p2030", "p2035")), annuity
     assert all(annuity.get(("wind_plant", d), 0.0) != 0.0 for d in PERIODS), annuity
 
 

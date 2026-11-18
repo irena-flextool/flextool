@@ -3,12 +3,13 @@
 
 "Solve","Objective","Total cost from solver, includes all penalty costs"
 y2020_2035_5week,5055.85548315
-"Total cost (calculated) full horizon (M CUR)",5748.82887544,"Annualized operational, penalty and investment costs"
-"Total cost (calculated) realized periods (M CUR)",5748.82887544
+"Total cost (calculated) full horizon (M CUR)",5755.85740667,"Annualized operational, penalty and investment costs"
+"Total cost (calculated) realized periods (M CUR)",5755.85740667
 "Operational costs for realized periods (M CUR)",1764.79767225
 "Investment costs for realized periods (M CUR)",1265.20651061
 "Retirement costs / salvage revenue for realized periods (M CUR)",0
 "Fixed costs for pre-existing entities (M CUR)",692.973392291
+"Investment costs for pre-existing entities (M CUR)",7.02853123343
 "Fixed costs for invested entities (M CUR)",503.102248773
 "Fixed cost removal due to divested entities (M CUR)",0
 "Penalty (slack) costs for realized periods (M CUR)",1522.74905152

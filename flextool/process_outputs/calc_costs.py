@@ -171,6 +171,44 @@ def _invest_at_plant_starts(par, s, v) -> pd.DataFrame:
     return out[out.index.isin(reported)]
 
 
+def _existing_replacement(par) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """``(discounted, yearly)`` investment pre-existing (rows: period, columns: entity, CUR / CUR/yr).
+
+    INV. invest_pre_existing_d[e,d_on] = Σ_d existing[e,d]·entity_existing_replacement_yearly[e,d_on,d]·
+                                           inflation_inv[d]
+         invest_pre_existing_yr[e,d] = existing[e,d]·entity_existing_replacement_yearly[e,·,d]
+      The replacement of existing reinvest_automatic capacity at its end of life (``edd_existing_replacement_run``:
+      the price per year in service of the plant that replaces it, from the period it comes online d_on) on the
+      user's existing capacity (``entity_user_existing``, as the fixed cost pre-existing; a retirement gives the
+      replacement back through its retirement settlement): reported in the period the replacement comes online, and
+      as yearly amounts in the periods it serves.  Not in the optimised objective unless
+      include_existing_fixed_cost (the existing_replacement constant)."""
+    price = par.entity_existing_replacement_yearly
+    if price.empty or len(price.columns) == 0:
+        empty = pd.DataFrame(index=pd.Index([], name='period'), dtype=float)
+        return empty, empty
+    long = (price.stack(future_stack=True).rename('price').rename_axis(['period_invest', 'period', 'entity'])
+                 .reset_index())
+    long = long[long['price'].notna()].astype({'period_invest': str, 'period': str, 'entity': str})
+    existing = par.entity_user_existing.stack(future_stack=True).rename('mw').rename_axis(['period', 'entity'])
+    existing = existing.reset_index().astype({'period': str, 'entity': str})
+    factor = par.inflation_factor_investment_yearly.rename('factor').rename_axis('period').reset_index()
+    factor = factor.astype({'period': str})
+    joined = (long.merge(existing, on=['period', 'entity'], how='inner')
+                  .merge(factor, on='period', how='left'))
+    joined = joined.assign(yearly=joined['mw'] * joined['price'],
+                           discounted=joined['mw'] * joined['price'] * joined['factor'].fillna(1.0))
+    order = list(dict.fromkeys(long['period']))
+    yearly = joined.groupby(['period', 'entity'], sort=False)['yearly'].sum().unstack('entity')
+    yearly = yearly.reindex(index=[d for d in order if d in yearly.index])
+    discounted = joined.groupby(['period_invest', 'entity'], sort=False)['discounted'].sum().unstack('entity')
+    discounted = discounted.reindex(index=[d for d in order if d in discounted.index])
+    for frame in (yearly, discounted):
+        frame.index.name = 'period'
+        frame.columns.name = 'entity'
+    return discounted, yearly
+
+
 def _annualized_investment(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
     """``(investment, fixed cost invested)`` per year, rows: period, columns: entity (CUR/yr).
 
@@ -551,6 +589,8 @@ def compute_costs(par, s, v, r) -> None:
     # p_entity_all_existing, the mod objective term at flextool.mod:2395-2398).
     r.cost_entity_fixed_pre_existing = (par.entity_user_existing * par.entity_fixed_cost).mul(
         par.inflation_factor_operations_yearly, axis=0)
+    r.cost_entity_invest_pre_existing_d, r.cost_entity_invest_pre_existing_yearly = _existing_replacement(par)
+    r.costInvestPreExisting_d = r.cost_entity_invest_pre_existing_d.sum(axis=1)
     # entity_lifetime_fixed_cost* are densified over _entity_universe and
     # solve-keyed (concat-unioned), so they cover every v.invest/v.divest
     # column — direct indexing is safe.
