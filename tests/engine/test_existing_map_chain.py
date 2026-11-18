@@ -195,7 +195,7 @@ def test_stochastic_dispatch_reads_the_map_and_the_trunk_investment(tmp_path_fac
     trunk = _invested_mw(stoch, "peaker")
     assert set(trunk) == {"p2035"}
     carried = stoch.handoff.realized_cohort
-    assert carried["period_decided"].to_list() == ["p2035"]
+    assert carried.filter(pl.col("kind") == "invest")["period_decided"].to_list() == ["p2035"]
     assert _frame(dispatch, "p_entity_all_existing", "peaker") == {"p2035": pytest.approx(20.0 + trunk["p2035"])}
 
 

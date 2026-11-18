@@ -25,8 +25,8 @@ UNITSIZE = {"plant": 50.0}
 
 
 def _table(rows: list[tuple]) -> pl.DataFrame:
-    """The cohort table of ``rows`` given up to ``a_cap``; the other price columns are null."""
-    return _cohort_frame([row + (None,) * (len(PRICE_COLUMNS) - 1) for row in rows])
+    """The cohort table of ``rows`` given up to ``a_cap``; the other price columns are null, each row its own root."""
+    return _cohort_frame([row + (None,) * (len(PRICE_COLUMNS) - 1) + (row[0],) for row in rows])
 
 
 EXISTING = ("existing:p2020", "plant", "existing", "reinvest_choice", "next_seam", None, "p2020", 0.0, 0.0, 12.0,

@@ -84,8 +84,10 @@ def test_chain_cumulative_handoffs_accumulate_monotonically(
             f"{sub}: realized_cohort has duplicate (entity, cohort) rows")
 
         # Cross-solve carryover: every cohort of the prior solve's handoff
-        # persists in this solve's handoff, its size never smaller.
-        cur = {(r["entity"], r["cohort"]): r["size"] for r in rc.iter_rows(named=True)}
+        # persists in this solve's handoff, its size never smaller (the
+        # generation rows of a reinvest_automatic chain have no size).
+        cur = {(r["entity"], r["cohort"]): r["size"] for r in rc.iter_rows(named=True)
+               if r["kind"] != "generation"}
         missing = set(prev) - set(cur)
         assert not missing, (
             f"{sub}: prior-solve cohorts missing from current handoff: "

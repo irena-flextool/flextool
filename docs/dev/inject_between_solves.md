@@ -69,7 +69,7 @@ in `flextool.engine.preprocess._provider_keys`; import as
 
 | Key constant | What it overrides | Required columns |
 |---|---|---|
-| `K.HANDOFF_REALIZED_COHORT` | The investments realised by the earlier solves, one row per cohort (investment decision): its start of operation and end of life (years of the run) and its size. The next solve's capacity is the user's `existing` of each period plus the cohorts in service there | `entity, cohort, kind, method, eol_method, period_decided, period_online, y_on, age, y_life, y_end, y_first_life_end, y_eol, period_eol, a_cap, pay, n_pay, r_loan, a_salv, nsv_eol, size` |
+| `K.HANDOFF_REALIZED_COHORT` | The investments realised by the earlier solves, one row per cohort (investment decision): its start of operation and end of life (years of the run) and its size; a `reinvest_automatic` cohort is followed by the `generation` rows of its replacements (`root` the cohort, no size), which price the chain and hold no capacity. The next solve's capacity is the user's `existing` of each period plus the cohorts in service there | `entity, cohort, kind, method, eol_method, period_decided, period_online, y_on, age, y_life, y_end, y_first_life_end, y_eol, period_eol, a_cap, pay, n_pay, r_loan, a_salv, nsv_eol, root, size` |
 | `K.HANDOFF_REALIZED_RETIRE` | Retired capacity per cohort and decision period (counts while the cohort is in service) | `entity, cohort, period, value` |
 | `K.HANDOFF_DIVEST_CUMULATIVE` | Cumulative divestments carried forward | `entity, value` |
 | `K.HANDOFF_ROLL_END_STATE` | End-of-horizon storage state (downward roll) | `node, value` |
@@ -235,12 +235,14 @@ def _make_override_callback(scenario: str, solve_order: list[str]):
         # capital price per year in service ``a_cap`` and the salvage
         # credit ``a_salv`` (CUR/MW), the loan's payment ``pay``, years
         # ``n_pay`` and rate ``r_loan``, the end-of-life salvage value
-        # ``nsv_eol`` and ``size`` in MW (MWh for storage).
+        # ``nsv_eol``, ``root`` (the cohort a ``generation`` row of a
+        # reinvest_automatic chain belongs to; a cohort's own id) and
+        # ``size`` in MW (MWh for storage; empty on a generation row).
         frame = frame.select(
             "entity", "cohort", "kind", "method", "eol_method",
             "period_decided", "period_online", "y_on", "age", "y_life",
             "y_end", "y_first_life_end", "y_eol", "period_eol", "a_cap", "pay",
-            "n_pay", "r_loan", "a_salv", "nsv_eol", "size",
+            "n_pay", "r_loan", "a_salv", "nsv_eol", "root", "size",
         )
         return {K.HANDOFF_REALIZED_COHORT: frame}
 

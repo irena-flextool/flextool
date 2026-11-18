@@ -33,6 +33,8 @@ direct port.
 """
 from __future__ import annotations
 
+import polars as pl
+
 import pytest
 
 from flextool.engine import run_chain_from_db
@@ -89,7 +91,9 @@ def test_chain_realized_cohort_handoff_is_unique_across_rolling_solves(
                     f"{rc}"
                 )
                 # One row per decision: no leftover solve dim (analogue of
-                # "droplevel('solve')").
+                # "droplevel('solve')").  The generation rows of a
+                # reinvest_automatic chain share their decision's period.
+                rc = rc.filter(pl.col("kind") != "generation")
                 assert rc.unique(["entity", "period_decided"]).height == rc.height, (
                     f"{scenario_name}/{sub}: realized_cohort has duplicate "
                     f"(entity, period_decided) rows.\n{rc}")

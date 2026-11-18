@@ -26,7 +26,7 @@ carriers, named metric columns for multi-value):
     divest_cumulative      [entity, value]
     realized_cohort        [entity, cohort, kind, method, eol_method, period_decided, period_online, y_on, age,
                             y_life, y_end, y_first_life_end, y_eol, period_eol, a_cap, pay, n_pay,
-                            r_loan, a_salv, nsv_eol, size]
+                            r_loan, a_salv, nsv_eol, root, size]
     realized_retire        [entity, cohort, period, value]
     roll_end_state         [node, value]
     roll_end_online        [process, value]
