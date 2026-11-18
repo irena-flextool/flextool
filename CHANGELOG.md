@@ -95,15 +95,38 @@ values").
   `fix_price` only values the closing rolls' end, and `fix_end` wins at the model's last step (with `fix_end`
   and no `fix_start` the first roll cycles at `storage_state_end`). Before, each roll cycled on itself from a
   free level: the level jumped at every roll boundary and the rolls could use energy never produced (#119, #126).
-  Rolling solves on representative periods, `bind_within_period` and `bind_within_timeblock` are unchanged.
-  Upgraded databases get a notice naming the nodes.
+  Rolling solves on representative periods are unchanged; `bind_within_period`, `bind_within_timeblock` and
+  `bind_intraperiod_blocks` follow the same rule per period or timeblock (next item). Upgraded databases get a
+  notice naming the nodes.
+- **Per-period and per-timeblock storage in a rolling solve continue across roll boundaries and close their
+  period or timeblock (results change).** In a `rolling_window` solve without representative periods, a roll that
+  starts inside a period (`bind_within_period`, also `bind_within_period_blended_weights`) or a timeblock
+  (`bind_within_timeblock`) that an earlier roll began now continues it from the level realised by the previous
+  roll instead of cycling its part on itself, ends that part at least at the level it started from, and the
+  roll(s) holding the end of the period or timeblock end it at the level it started from in the roll that began
+  it. A `bind_intraperiod_blocks` period that the rolls hold only in part (a jump shorter than the period) now
+  closes the same way at its end (before, its blocks chained forward and the horizon method set the period's end,
+  so its cycle never closed), and the roll beginning such a period ends its horizon at least at its start level.
+  A jump of whole periods or timeblocks changes nothing. Before, energy could appear at every roll boundary that
+  fell inside a period or timeblock. Upgraded databases get a notice naming the nodes.
+- **A nested `fix_usage` is cumulative over the rolls and pro rata, and a nested `fix_quantity` is interpolated
+  inside an upper step (results change).** A lower-level solve under an upper `fix_usage` may now use, over the
+  last period of its horizon, the upper solve's usage from the start of that period (in the solve instance) to the
+  horizon end, less what its earlier rolls realised there; an upper step only partly in that span counts with the
+  share of its hours inside it. Before, each roll was capped by the upper usage of every upper step it touched,
+  counted whole and from its own start, so a roll that drew more than planned in its realised hours and planned to
+  refill in its look-ahead left the next roll free to skip the refill: the realised rolls could use energy the
+  upper solve never planned. A lower horizon that ends inside an upper step is now fixed (`fix_quantity`) at the
+  upper level interpolated at that moment (the upper level changes linearly within its step), not at the end of
+  that step, and a lower solve starting inside an upper step borrows the upper level interpolated there.
 - **A nested lower-level solve starts a node its upper solve fixes from the upper plan (results change).** A
   storage node with a `storage_nested_fix_method` that chains forward in the lower solve (`bind_forward_only`, or
-  `bind_within_solve` in a rolling solve under `fix_quantity` / `fix_usage`) and has no state realised before it
-  starts from the level the upper solve planned for the lower solve's first step, unless `fix_start` applies (the
-  lower level starts with the model; a warning names a node whose two starts differ). Before, it started free or
-  from `fix_start` also later in the model, so the lower solve could start fuller than the upper plan and keep
-  the difference. Under `fix_quantity` / `fix_usage` the first roll of a rolling `bind_within_solve` node now
+  `bind_within_solve` in a rolling solve under `fix_quantity` / `fix_usage`, and `bind_within_period` /
+  `bind_within_timeblock` there when the first roll cuts the period or timeblock) and has no state realised
+  before it starts from the level the upper solve planned for the lower solve's first step, unless `fix_start`
+  applies (the lower level starts with the model; a warning names a node whose two starts differ). Before, it
+  started free or from `fix_start` also later in the model, so the lower solve could start fuller than the upper
+  plan and keep the difference. Under `fix_quantity` / `fix_usage` the first roll of such a rolling node now
   starts from `fix_start` instead of from its wrap, which the upper target pinned. Upgraded databases get a
   notice naming the nodes.
 - **Representative-period storage: the start, end and reference values set the chronological level (results
@@ -123,15 +146,19 @@ values").
   `fix_start` on storage the solve can invest in during the period it starts in returns at least the
   `storage_state_start` share of the capacity built there. Before, the solve could start full and end empty, or
   build storage only for its start energy. The condition is an inequality (a start of 0, or no investment, always
-  meets it) and applies in a solve that holds both the start of the model and its last step, and in every solve
-  with representative periods; a free end after `fix_start` on capacity the solve cannot change is kept (the
+  meets it) and applies in a solve that holds both the start of the model and its last step, in every solve
+  with representative periods, and with a free start (`fix_nothing`) in a rolling solve without them (the first
+  roll ends its horizon at least at the level it starts from, and the rolls reaching the end of the model end at
+  least at that level); a free end after `fix_start` on capacity the solve cannot change is kept (the
   user's start energy, logged with its size). With `use_reference_value` and a free start the reference end bounds
-  the start, so a falling reference series no longer lets the solve take the drop for free; a reference below the
-  `fix_start` share of storage the solve can invest in becomes a lower bound. An investment solve that does not
-  reach the end of the model warns for such nodes instead. Upgraded databases get a notice naming the nodes.
-- **`fix_start_end` with `storage_state_end` below `storage_state_start` on storage the solve can invest in is an
-  error.** The drain from the start share to the end share would grow with the storage built; give the end at
-  least the start share, use a cyclic method, or do not allow investment in the start period.
+  the start, so a falling reference series no longer lets the solve take the drop for free. An investment solve
+  that does not reach the end of the model warns for such nodes instead. Upgraded databases get a notice naming
+  the nodes.
+- **`fix_start_end` with `storage_state_end` below `storage_state_start`, or `use_reference_value` with
+  `storage_state_reference_value` below `storage_state_start` (`fix_start`), on storage the solve can invest in is
+  an error.** The drain from the start share to the end share would grow with the storage built; give the end (or
+  the reference) at least the start share, use a cyclic method (or `fix_start_end`), or do not allow investment in
+  the start period.
 - **BREAKING for tools that connect FlexTool with other models through `override_provider`** (scripts and
   integrations that inject state between solves, for example capacities decided by another model): the keys
   `handoff/realized_invest`, `handoff/realized_existing` and `handoff/realized_divest` are gone and raise an error
@@ -172,6 +199,9 @@ values").
 
 ### Fixes
 
+- **The output set `dt_fix_storage_timesteps` holds the steps at which a solve hands its nested storage fix
+  down** (the steps of its `fix_storage_periods`). It was always empty, and with it the storage usage the result
+  processing computes for `fix_usage` nodes.
 - **The self-discharge result (`v_self_discharge`) of a `fix_start` storage node counts the storage invested in
   the solve** in the loss of the first step. Before, only the existing capacity was counted there (the model's
   balance row was right).
