@@ -3,6 +3,7 @@ import logging
 import os
 import subprocess
 import shutil
+import sys
 from pathlib import Path
 try: 
     from spinedb_api import import_data
@@ -519,20 +520,10 @@ def update_flextool(skip_git):
     path = specifications["items"]["Input data"]["url"]["database"]["path"]
     db_to_update.append(path)
 
-    # migrate the databases to new version; a frozen database older than
-    # this FlexTool is skipped and listed (migrate a copy of it with
-    # ``flextool-migrate-database DB --copy-to NEW.sqlite``).
-    from flextool.update_flextool.frozen import FrozenDatabaseError
-    skipped_frozen: list[str] = []
-    for i in db_to_update:
-        try:
-            migrate_database(i)
-        except FrozenDatabaseError as exc:
-            skipped_frozen.append(str(exc))
-    if skipped_frozen:
-        print("These frozen databases were not migrated:")
-        for line in skipped_frozen:
-            print("  " + line)
+    # migrate the databases to new version; a database that cannot be
+    # migrated is skipped, the rest of the update goes on, and every skipped
+    # one is listed at the end.
+    skipped_frozen, not_migrated = _migrate_databases(db_to_update)
 
     # Refresh the results template (unconditional) and ensure results.sqlite
     # exists (ensure_runtime_files seeds it; this is a belt-and-braces copy
@@ -555,7 +546,45 @@ def update_flextool(skip_git):
             db.commit_session("Updated relationship_parameters, object parameters to the Results.sqlite")
         except NothingToCommit:
             print("These parameters have been added before, continuing")
-        return 0
+    return _report_skipped_databases(skipped_frozen, not_migrated)
+
+
+def _migrate_databases(paths) -> tuple[list[str], list[str]]:
+    """Migrate each database of *paths* to the current version; return the messages of the frozen databases that
+    were skipped (migrate a copy of one with ``flextool-migrate-database DB --copy-to NEW.sqlite``) and of the ones
+    that were not migrated (a kept or impossible pre-migration copy, a lock) or could not be restored after a failed
+    migration.  One such database does not stop the others."""
+    from flextool._file_lock import FileLockError
+    from flextool.update_flextool.frozen import FrozenDatabaseError
+    from flextool.update_flextool.migration_backup import MigrationBackupError, MigrationRestoreError
+
+    skipped_frozen: list[str] = []
+    not_migrated: list[str] = []
+    for path in paths:
+        try:
+            migrate_database(path)
+        except FrozenDatabaseError as exc:
+            skipped_frozen.append(str(exc))
+        except FileLockError as exc:
+            not_migrated.append(f"{path} was not migrated: {exc}")
+        except (MigrationBackupError, MigrationRestoreError) as exc:
+            not_migrated.append(str(exc))
+    return skipped_frozen, not_migrated
+
+
+def _report_skipped_databases(skipped_frozen: list[str], not_migrated: list[str]) -> int:
+    """Print the databases :func:`_migrate_databases` skipped; 1 when one was not migrated for another reason than
+    being frozen, else 0."""
+    if skipped_frozen:
+        print("These frozen databases were not migrated:")
+        for line in skipped_frozen:
+            print("  " + line)
+    if not_migrated:
+        print("These databases were not migrated:", file=sys.stderr)
+        for line in not_migrated:
+            print("  " + line, file=sys.stderr)
+        return 1
+    return 0
 
 def initialize_result_database(filename,json_path):
 
@@ -621,7 +650,7 @@ def migrate_project(old_path, new_path):
 
 
 def main():
-    update_flextool(False)
+    sys.exit(update_flextool(False))
 
 
 if __name__ == '__main__':

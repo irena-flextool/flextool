@@ -1,3 +1,34 @@
+## Unreleased
+
+### Fixes
+
+- **A large database migrates.** A migration step that deletes many rows (values, flow-group memberships, entity
+  alternatives) stopped with "Expression tree is too large (maximum depth 1000)" when the rows were scattered over
+  the database, as in a large database edited over time. Such a step now deletes them in several commits.
+- **A failed migration leaves the database as it was, also from the command line.** `flextool-migrate-database`,
+  `flextool-run --migrate` and the other migrations outside the FlexTool window now copy the database before the
+  first step (as `<database>.premigration.bak`, which needs free space as large as the database) and move it back
+  in one rename when a step fails or the migration is cancelled, as the window already did; before, a migration
+  that failed part way left the steps before the failure in the database. When the copy cannot be put back, it is
+  kept, the console says how to recover it, and a new migration of the database refuses to start until it is dealt
+  with.
+- **A migration that is killed outright can be finished.** A killed migration (the process stopped, the console
+  closed) can leave the database half migrated, with its original in `<database>.premigration.bak`. The next
+  migration of the database then refuses to start, names the copy and the time it was made, and says how to go on:
+  put the copy back (close every program that uses the database, delete the database and rename the copy to the
+  database's name) or, when the copy is out of date, delete it; then run the migration again. Every step that
+  deletes in several commits also finishes on a rerun: before, a rerun of the version 56 step could lose `is_DC` /
+  `is_non_synchronous` values, and a rerun of the version 70 step could keep an output `capacity_min_coeff` left
+  over from version 36.
+- **`flextool-migrate-database`, `flextool-run --migrate` and `flextool-update` print the reason when a database
+  is not migrated** (a kept pre-migration copy, no room for the copy, or a restore that failed) and exit with code
+  1, instead of showing a traceback. `flextool-update` goes on with the other databases and lists those it could
+  not migrate at the end.
+- **Running the version 56 step again no longer switches off reserves active in the base alternative.** A rerun of
+  the step, after an interruption or after the whole step had been applied and a later step failed, set
+  `is_enabled` to *no* in the base alternative of every reserve, overwriting the *yes* the first run had written
+  for the reserves active there.
+
 ## Release 4.5.1 (17.11.2026) — database migration fixes (schema v80)
 
 Migrating older input databases works again in more cases. No change to the model, results or data version.

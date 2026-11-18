@@ -37,6 +37,85 @@ def _commit_step(db, message):
         logging.info("Migration step idempotent (no changes): %s", message)
 
 
+#: The most runs of consecutive ids one commit deletes from a table.  spinedb_api deletes the removed rows of a table
+#: in one ``DELETE ... WHERE id >= ? AND id <= ? OR ...`` statement, one term and two bound variables per run.  SQLite
+#: refuses an expression deeper than 1000 (``Expression tree is too large``) and, before 3.32, more than 999 bound
+#: variables: the scattered values of a large database exceed both.
+_MAX_REMOVED_RANGES = 400
+
+
+def _id_runs(ids) -> list[list[int]]:
+    """The runs of consecutive integers in *ids*, in order."""
+    runs: list[list[int]] = []
+    for i in sorted(set(ids)):
+        if runs and i == runs[-1][-1] + 1:
+            runs[-1].append(i)
+        else:
+            runs.append([i])
+    return runs
+
+
+def _pending_removed_db_ids(db, item_type: str) -> set[int]:
+    """The database ids of the *item_type* rows removed in the session and not yet committed (what the next commit
+    deletes)."""
+    from spinedb_api.mapped_item_status import Status
+    from spinedb_api.temp_id import resolve
+
+    return {resolve(item["id"]) for item in db.mapped_table(item_type).values()
+            if item.status == Status.to_remove and item.has_valid_id}
+
+
+#: What spinedb_api removes with an item (item type -> (dependent item type, the fields that refer to the item)), the
+#: dependents that can be many.  A dependent not listed here (a dimension row, a type-list row) shares the item's id
+#: in its DELETE or is one of a few per item.
+_REMOVAL_CASCADES: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
+    "entity_class": (("entity", ("class_id",)), ("parameter_definition", ("entity_class_id",))),
+    "entity": (("entity", ("element_id_list",)), ("parameter_value", ("entity_id",)),
+               ("entity_alternative", ("entity_id",)), ("entity_metadata", ("entity_id",)),
+               ("entity_group", ("entity_id", "member_id")), ("entity_location", ("entity_id",))),
+    "parameter_definition": (("parameter_value", ("parameter_definition_id",)),),
+    "parameter_value": (("parameter_value_metadata", ("parameter_value_id",)),),
+}
+
+
+def _remove_items_bounded(db, item_type: str, ids, message: str) -> None:
+    """Remove the *item_type* items *ids* so that no commit deletes more than :data:`_MAX_REMOVED_RANGES` runs of
+    ids from one table.
+
+    When they fit beside the removals the session already holds, they are only removed (the caller's commit deletes
+    them, as a plain ``remove_items``).  Otherwise the session is committed first and the items are removed and
+    committed in batches, each commit named *message* with its batch number.  What cascades from an item
+    (:data:`_REMOVAL_CASCADES`) is removed first, the same way.  The result is that of ``remove_items``.
+    """
+    from spinedb_api.temp_id import resolve
+
+    def key(id_):
+        # The database id; an item added in this session (no database id yet) is its own key.
+        db_id = resolve(id_)
+        return id_ if db_id is None else db_id
+
+    by_key = {key(i): i for i in ids}
+    if not by_key:
+        return
+    for child_type, refs in _REMOVAL_CASCADES.get(item_type, ()):
+        children = [x["id"] for x in db.get_items(child_type)
+                    if any((key(x[ref]) in by_key) if not ref.endswith("_list") else
+                           any(key(e) in by_key for e in x[ref]) for ref in refs)]
+        _remove_items_bounded(db, child_type, children, message)
+    in_db = {k for k in by_key if isinstance(k, int)}
+    if len(_id_runs(_pending_removed_db_ids(db, item_type) | in_db)) <= _MAX_REMOVED_RANGES:
+        db.remove_items(item_type, *by_key.values())
+        return
+    # An item added in this session deletes no row.
+    db.remove_items(item_type, *(i for k, i in by_key.items() if not isinstance(k, int)))
+    _commit_step(db, f"{message} (before removing {len(in_db)} {item_type} items in batches)")
+    runs = _id_runs(in_db)
+    batches = [runs[i:i + _MAX_REMOVED_RANGES] for i in range(0, len(runs), _MAX_REMOVED_RANGES)]
+    for n, batch in enumerate(batches, start=1):
+        db.remove_items(item_type, *(by_key[k] for run in batch for k in run))
+        _commit_step(db, f"{message} (removed {item_type} items, batch {n}/{len(batches)})")
+
+
 def _ensure_parameter_group(db, name, color, priority):
     """Get-or-create a ``parameter_group`` so a new parameter can be
     attached to it.
@@ -67,8 +146,13 @@ def migrate_database(
     progress_callback: Callable[[int, int, int], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
     allow_frozen: bool = False,
+    backup: bool = True,
 ):
     """Migrate a FlexTool database to a target schema version.
+
+    A local file is migrated all or nothing: it is copied aside before the first step and copied back when any step
+    fails or the migration is cancelled (:func:`~flextool.update_flextool.migration_backup.restored_on_failure`), so
+    it is never left half migrated.
 
     Args:
         database_path: Path or URL to the SQLite database.
@@ -92,11 +176,22 @@ def migrate_database(
             :class:`~flextool.update_flextool.frozen.FrozenDatabaseError`
             before the file is opened, and a frozen database that is
             already current is left unchanged.
+        backup: Copy a local file aside and restore it on failure (the default).  ``False`` only for a caller that
+            holds its own backup of the file for the whole migration (the window's upgrade).
     """
     from flextool.update_flextool.frozen import FrozenCheckError, sqlite_path_from
     from flextool.update_flextool.migrate_before_run import migration_lock
+    from flextool.update_flextool.migration_backup import backup_path, refuse_kept_copy
 
-    # The frozen guard runs first, read-only, before anything can open the file with ``upgrade=True``.  A marker that
+    # A pre-migration copy left by an earlier migration may be the only intact original (the file itself may be half
+    # migrated, or truncated by an interrupted restore, so that even the frozen check below cannot read it): refuse
+    # first, naming the copy.  A current file has nothing to migrate and is left alone.
+    kept_path = sqlite_path_from(database_path)
+    if (backup and kept_path is not None and kept_path.is_file() and backup_path(kept_path).exists()
+            and _current_version_ro(kept_path, up_to) is None):
+        refuse_kept_copy(kept_path)
+
+    # The frozen guard runs next, read-only, before anything can open the file with ``upgrade=True``.  A marker that
     # cannot be read now (another migration is committing) is checked again under the migration lock.
     try:
         proceed, frozen = _frozen_check(database_path, allow_frozen)
@@ -128,7 +223,11 @@ def migrate_database(
             proceed, frozen = _frozen_check(database_path, allow_frozen)
             if proceed is False:
                 return
-        _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback, cancel_check)
+        from flextool.update_flextool.migration_backup import restored_on_failure
+
+        local = path is not None and path.is_file()
+        with restored_on_failure(path) if backup and local else contextlib.nullcontext():
+            _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback, cancel_check)
 
 
 def _current_version_ro(path, up_to: int | None) -> int | None:
@@ -1031,8 +1130,9 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     entity_class_name="node", name=typo_name,
                 ))
                 if typo_defs:
-                    db.remove_items(
-                        "parameter_definition", typo_defs[0]["id"]
+                    _remove_items_bounded(
+                        db, "parameter_definition", [typo_defs[0]["id"]],
+                        "v41: removed node.storate_state_end",
                     )
 
                 try:
@@ -1966,7 +2066,8 @@ def _rename_or_drop_parameter_definition(db, entity_class_name, old_name, new_na
     if new:
         # Target already exists (carried in by a prior partial migration);
         # the rename would collide.  Drop the stale source definition.
-        db.remove_parameter_definition(id=old["id"])
+        _remove_items_bounded(db, "parameter_definition", [old["id"]],
+                              f"removed {entity_class_name}.{old_name} ({new_name} is there)")
         return
     kwargs = {"id": old["id"], "name": new_name}
     if description is not None:
@@ -2021,7 +2122,7 @@ def remove_parameters_manual(db,obj_param_names):
             id_list.append(param.id)
 
     try:
-        db.remove_items('parameter_definition', *id_list)
+        _remove_items_bounded(db, 'parameter_definition', id_list, "Removed parameters")
         _commit_step(db,"Removed parameters")
     except SpineDBAPIError:
         print("This removal has been done before, continuing")
@@ -5192,7 +5293,8 @@ def _v77_drop_stale_definitions(db) -> None:
                       "re-author if needed):")
                 for pv in values:
                     print("  " + _describe_pv(pv))
-                db.remove_items("parameter_value", *[pv["id"] for pv in values])
+                _remove_items_bounded(db, "parameter_value", [pv["id"] for pv in values],
+                                      f"v77: removed the {cls}.{name} values")
             fields = {"description": description}
             if default is not None:
                 fields["default_value"], fields["default_type"] = default
@@ -5221,7 +5323,7 @@ def _v77_drop_stale_definitions(db) -> None:
             print(f"v77: {cls}.{name} is no longer a FlexTool parameter; deleted its values:")
             for pv in dropped:
                 print("  " + _describe_pv(pv))
-        db.remove_items("parameter_definition", pdef["id"])
+        _remove_items_bounded(db, "parameter_definition", [pdef["id"]], f"v77: removed {cls}.{name}")
     # The value list of the dropped storage_include_solve_fix_method, when nothing else uses it.
     if db.get_item("parameter_value_list", name="storage_include_solve_fix_method") and not any(
             pd["parameter_value_list_name"] == "storage_include_solve_fix_method"
@@ -6992,36 +7094,10 @@ def _migrate_v70_capacity_coefficient_descriptions(db) -> None:
                 and _pdef_or_none(db, "unit__inputNode", "input_share_min")
                 is None)
 
-    # ── unit__inputNode: rename; input_share_min loses its old values ──
-    if pre_step:
-        old_vals = list(db.find_parameter_values(
-            entity_class_name="unit__inputNode",
-            parameter_definition_name="capacity_min_coeff"))
-        if old_vals:
-            print("v70: deleted the old input-side capacity_min_coeff "
-                  "values (now input_share_min, a different meaning; "
-                  "re-author if needed):")
-            for pv in old_vals:
-                print("  " + _describe_pv(pv))
-            db.remove_items("parameter_value", *[pv["id"] for pv in old_vals])
-    for old_name, new_name, description, default in (
-        ("capacity_max_coeff", "input_share_max",
-         _V70_INPUT_SHARE_MAX_DESCRIPTION, None),
-        ("capacity_min_coeff", "input_share_min",
-         _V70_INPUT_SHARE_MIN_DESCRIPTION, (zero_val, zero_type)),
-    ):
-        old = _pdef_or_none(db, "unit__inputNode", old_name)
-        new = _pdef_or_none(db, "unit__inputNode", new_name)
-        fields = {"description": description}
-        if default is not None:
-            fields["default_value"], fields["default_type"] = default
-        if old and not new:
-            db.update_parameter_definition(id=old["id"], name=new_name,
-                                           **fields)
-        elif new:
-            db.update_parameter_definition(id=new["id"], **fields)
-
     # ── unit__outputNode.capacity_min_coeff: per-output floor, default 0 ─
+    # Before the input-side rename: the v36 leftovers are recognised only
+    # while ``pre_step`` holds, and a large removal commits in batches,
+    # so a rerun after an interruption must still see the old input names.
     out_min = _pdef_or_none(db, "unit__outputNode", "capacity_min_coeff")
     if out_min:
         db.update_parameter_definition(
@@ -7064,11 +7140,42 @@ def _migrate_v70_capacity_coefficient_descriptions(db) -> None:
                 print("  " + _describe_pv(pv))
         removed = out_of_range + leftovers
         if removed:
-            db.remove_items("parameter_value", *[pv["id"] for pv in removed])
+            _remove_items_bounded(db, "parameter_value", [pv["id"] for pv in removed],
+                                  "v70: removed unit__outputNode capacity_min_coeff values")
         if pre_step:
             _print_v70_min_load_notices(
                 db, [pv for pv in out_vals
                      if pv["id"] not in {r["id"] for r in removed}])
+    # ── unit__inputNode: rename; input_share_min loses its old values ──
+    if pre_step:
+        old_vals = list(db.find_parameter_values(
+            entity_class_name="unit__inputNode",
+            parameter_definition_name="capacity_min_coeff"))
+        if old_vals:
+            print("v70: deleted the old input-side capacity_min_coeff "
+                  "values (now input_share_min, a different meaning; "
+                  "re-author if needed):")
+            for pv in old_vals:
+                print("  " + _describe_pv(pv))
+            _remove_items_bounded(db, "parameter_value", [pv["id"] for pv in old_vals],
+                                  "v70: removed the unit__inputNode capacity_min_coeff values")
+    for old_name, new_name, description, default in (
+        ("capacity_max_coeff", "input_share_max",
+         _V70_INPUT_SHARE_MAX_DESCRIPTION, None),
+        ("capacity_min_coeff", "input_share_min",
+         _V70_INPUT_SHARE_MIN_DESCRIPTION, (zero_val, zero_type)),
+    ):
+        old = _pdef_or_none(db, "unit__inputNode", old_name)
+        new = _pdef_or_none(db, "unit__inputNode", new_name)
+        fields = {"description": description}
+        if default is not None:
+            fields["default_value"], fields["default_type"] = default
+        if old and not new:
+            db.update_parameter_definition(id=old["id"], name=new_name,
+                                           **fields)
+        elif new:
+            db.update_parameter_definition(id=new["id"], **fields)
+
     # ── reserve__upDown__group.penalty_reserve: default 5000 restored ──
     # (v18 set it, v56 cleared it because the engine ignored it; the
     # engine now applies it to every group without an authored value).
@@ -9547,6 +9654,10 @@ def _migrate_v56_set_unit_node_profile_default_upper_limit(db) -> None:
     )
 
 
+#: v56 D.3: the suffix of the definition that holds a parameter's values while its value list is rebound.
+_V56_YES_NO_STAGE_SUFFIX = "__v56_yes_no_stage"
+
+
 def _migrate_v56_retype_yes_only_to_yes_no(db) -> None:
     """Batch D.3 — retype the six boolean-as-enum parameters from their
     single-``yes`` dedicated value-lists to the shared ``yes_no``
@@ -9618,22 +9729,41 @@ def _migrate_v56_retype_yes_only_to_yes_no(db) -> None:
     # parameter that already has stored values ("can't modify the
     # parameter value list of a parameter that already has values").
     # The pre-D.3 lists each carry only ``"yes"`` so any saved value is
-    # the string ``"yes"`` — also a valid member of ``yes_no``.  We
-    # save them, remove them, rebind the parameter_definition, and then
-    # restore the same rows; the round-trip is byte-stable.
+    # the string ``"yes"`` — also a valid member of ``yes_no``.  The
+    # values are copied to a stage definition, removed, the
+    # parameter_definition is rebound, the same rows are written back
+    # from the stage and the stage is removed; the round-trip is
+    # byte-stable.  The stage is in the database before the first
+    # removal is committed (a large removal commits in batches), so a
+    # rerun after an interruption restores every value from it.  In one
+    # commit the stage is added and removed again and never reaches the
+    # database.
     for entity_class_name, name in targets:
-        saved_values = [
-            (pv["entity_byname"], pv["alternative_name"], pv["value"], pv["type"])
-            for pv in db.find_parameter_values(
+        stage_name = f"{name}{_V56_YES_NO_STAGE_SUFFIX}"
+        if _pdef_or_none(db, entity_class_name, stage_name) is None:
+            db.add_parameter_definition(entity_class_name=entity_class_name, name=stage_name)
+            for pv in db.find_parameter_values(entity_class_name=entity_class_name,
+                                               parameter_definition_name=name):
+                db.add_parameter_value(
+                    entity_class_name=entity_class_name, entity_byname=pv["entity_byname"],
+                    parameter_definition_name=stage_name, alternative_name=pv["alternative_name"],
+                    value=pv["value"], type=pv["type"])
+        # A rerun finds, beside the stage, the values not yet removed or those already written back (all
+        # copies of the stage's); the stage has every value until it is removed itself.
+        saved = {}
+        for source in (name, stage_name):
+            for pv in db.find_parameter_values(entity_class_name=entity_class_name,
+                                               parameter_definition_name=source):
+                saved[(tuple(pv["entity_byname"]), pv["alternative_name"])] = (pv["value"], pv["type"])
+        saved_values = [(byname, alt, raw_val, raw_type) for (byname, alt), (raw_val, raw_type) in saved.items()]
+        _remove_items_bounded(
+            db, "parameter_value",
+            [pv["id"] for pv in db.find_parameter_values(
                 entity_class_name=entity_class_name,
                 parameter_definition_name=name,
-            )
-        ]
-        for pv in list(db.find_parameter_values(
-            entity_class_name=entity_class_name,
-            parameter_definition_name=name,
-        )):
-            db.remove_item("parameter_value", pv["id"])
+            )],
+            f"v56: removed the {entity_class_name}.{name} values to rebind its value list",
+        )
         db.add_update_item(
             "parameter_definition",
             entity_class_name=entity_class_name,
@@ -9652,6 +9782,11 @@ def _migrate_v56_retype_yes_only_to_yes_no(db) -> None:
                 value=raw_val,
                 type=raw_type,
             )
+        _remove_items_bounded(
+            db, "parameter_definition",
+            [_pdef_or_none(db, entity_class_name, stage_name)["id"]],
+            f"v56: removed the stage of {entity_class_name}.{name}",
+        )
 
     # ---- Step (b): drop the five obsolete value-lists ---------------
     pvl_table = db.mapped_table("parameter_value_list")
@@ -10076,8 +10211,14 @@ def _migrate_v56_reactivate_is_enabled_parameter(db) -> None:
     # row = inactive" semantic across the active_by_default flip.
     backfilled_count = 0
     no_value, no_type = yes_no_values[False]
+    # An entity that already has a Base is_enabled value is covered too:
+    # before v56 only this step writes one, so it is the value an earlier
+    # (interrupted or later-failed) run of the step materialised from a
+    # Base entity_alternative row that is gone now.
     for cls_name in classes_with_flip:
-        covered = base_alt_covered[cls_name]
+        covered = base_alt_covered[cls_name] | {
+            tuple(pv["entity_byname"]) for pv in db.find_parameter_values(
+                entity_class_name=cls_name, parameter_definition_name="is_enabled", alternative_name="Base")}
         for ent in db.find_entities(entity_class_name=cls_name):
             byname = ent["entity_byname"]
             if tuple(byname) in covered:
@@ -10099,9 +10240,9 @@ def _migrate_v56_reactivate_is_enabled_parameter(db) -> None:
         ea_rows = list(
             db.find_entity_alternatives(entity_class_name=cls_name),
         )
-        for ea in ea_rows:
-            db.remove_item("entity_alternative", ea["id"])
-            dropped_ea_count += 1
+        _remove_items_bounded(db, "entity_alternative", [ea["id"] for ea in ea_rows],
+                              f"v56: removed the {cls_name} entity_alternative rows")
+        dropped_ea_count += len(ea_rows)
 
     # ---- Step 5: flip active_by_default on the two reserve classes ---
     entity_class_table = db.mapped_table("entity_class")
@@ -10322,8 +10463,11 @@ def _migrate_v58_carve_flowgroup_out_of_group(db) -> None:
     migrated = []
     split = []
     dropped_vacuous = []
+    removed_entities = []
     for g in group_names:
-        has_flow_mem = g in flow_mem
+        # A flowGroup of the same name was made by an earlier run of this step (before v58 there is no flowGroup)
+        # that stopped before it removed every flow membership of the group: the group is still being re-homed.
+        has_flow_mem = g in flow_mem or bool(db.find_entities(entity_class_name="flowGroup", name=g))
         has_group_role = (g in group_mem) or (g in nonflow_param_names)
         if not has_flow_mem:
             # No flow membership: any flow content on this group is vacuous and
@@ -10382,26 +10526,28 @@ def _migrate_v58_carve_flowgroup_out_of_group(db) -> None:
             # SPLIT: keep the group entity (node/2-dim membership + non-flow
             # params), drop only its 3-dim flow membership rows.
             for src_cls in _V58_THREE_DIM:
-                for ent in list(db.find_entities(entity_class_name=src_cls)):
-                    if ent["entity_byname"][0] == g:
-                        db.remove_items("entity", ent["id"])
+                removed_entities += [ent["id"] for ent in db.find_entities(entity_class_name=src_cls)
+                                     if ent["entity_byname"][0] == g]
             split.append(g)
         else:
             ge = _v58_find_one(db, "entity", entity_class_name="group", name=g)
             if ge is not None:
-                db.remove_items("entity", ge["id"])
+                removed_entities.append(ge["id"])
             migrated.append(g)
+    # A group removes its flow memberships, their values and entity_alternatives with it: many rows in a large
+    # database, so the removal is bounded.
+    _remove_items_bounded(db, "entity", removed_entities, "v58: removed the flow memberships of group")
     _commit_step(db, f"v58: re-homed {migrated!r}; split {split!r}; vacuous dropped {dropped_vacuous!r}")
 
     # Step 4: drop old flow defs + 3-dim classes from group (cascades values/members)
     for name in _V58_ALL_FLOW_PARAMS:
         pdef = _v58_find_one(db, "parameter_definition", entity_class_name="group", name=name)
         if pdef is not None:
-            db.remove_items("parameter_definition", pdef["id"])
+            _remove_items_bounded(db, "parameter_definition", [pdef["id"]], f"v58: removed group.{name}")
     for cls in _V58_THREE_DIM:
         ec = _v58_find_one(db, "entity_class", name=cls)
         if ec is not None:
-            db.remove_items("entity_class", ec["id"])
+            _remove_items_bounded(db, "entity_class", [ec["id"]], f"v58: removed {cls}")
     _commit_step(db, "v58: dropped old group flow defs + 3-dim classes")
 
     # Step 5: rename output flags on group + set their new descriptions

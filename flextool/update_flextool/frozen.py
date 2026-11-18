@@ -479,8 +479,10 @@ def migrate_copy(
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
     try:
+        # The destination is a fresh copy, deleted below on any failure: no backup of it is needed.
         migrate_database(
-            sqlite_url_string(destination.resolve().as_posix()), allow_frozen=True, progress_callback=progress_callback, cancel_check=cancel_check
+            sqlite_url_string(destination.resolve().as_posix()), allow_frozen=True, progress_callback=progress_callback,
+            cancel_check=cancel_check, backup=False,
         )
         with _open(destination) as db:
             _replace_rows(db, FROZEN_KEY, None)

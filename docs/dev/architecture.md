@@ -909,6 +909,7 @@ dialogs/                         Add / project / plot / file-picker dialogs.
 |---|---|
 | `self_update.py` (`update_flextool`) | `git pull` + project-side migration. |
 | `db_migration.py` (`migrate_database`) | Walk the version chain to the current `FLEXTOOL_DB_VERSION`. |
+| `migration_backup.py` | The pre-migration copy (`<db>.premigration.bak`) and its atomic restore on failure; shared by `migrate_database` and the window's upgrade. |
 | `initialize_database.py` (`initialize_database`) | Create new DB from JSON template. |
 | `ensure_settings_db.py` | Idempotent settings-DB creation. |
 | `test_fixtures.py` | Migrate `tests/fixtures/*.json` to current schema and sync their schema sections. |
