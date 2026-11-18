@@ -414,6 +414,30 @@ def _patch_model_discount_settings(data: dict) -> dict:
                 ["model", "flexTool", "discount_offset_operations", 0.25]])
 
 
+def _patch_life_extension_chain(data: dict) -> dict:
+    """Life extension on ``multi_year_reinvest_choice``: coal_plant (existing 500 MW and the chain's investments,
+    lifetime 5, ``reinvest_choice``) may extend a cohort reaching its end of life (``life_extension_cost`` 200,
+    ``life_extension_years`` 10), so the chain prices, takes and carries extensions between its solves."""
+    data = _patch_multi_year_reinvest_choice(data)
+    return _overlay(
+        data, name="life_extension_chain", base="multi_year_reinvest_choice",
+        values=[["unit", "coal_plant", "life_extension_cost", 200.0],
+                ["unit", "coal_plant", "life_extension_years", 10.0]])
+
+
+def _patch_retire_built_chain(data: dict) -> dict:
+    """Retirement of model-built capacity on ``multi_year_reinvest_choice``: coal_plant's ``invest_method``
+    ``invest_retire_period_total`` (its invest limits kept, ``retire_max_period`` 200 MW) with a
+    ``net_salvage_value`` of 100, so the chain's built cohorts (``reinvest_choice``) get retirement columns and a
+    settlement, and the cohorts the solves retire are carried to the later solves."""
+    data = _patch_multi_year_reinvest_choice(data)
+    return _overlay(
+        data, name="retire_built_chain", base="multi_year_reinvest_choice",
+        values=[["unit", "coal_plant", "invest_method", "invest_retire_period_total"],
+                ["unit", "coal_plant", "retire_max_period", _per(200.0)],
+                ["unit", "coal_plant", "net_salvage_value", 100.0]])
+
+
 def _patch_invest_total_no_var(data: dict) -> dict:
     """c16a #28/#43 probe (review's ``i28_skip2``): ``wind_plant`` and
     ``battery_inverter`` switched to ``invest_no_limit`` (no entity-total
@@ -2029,6 +2053,8 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "stoch_invest_storage": _patch_stoch_invest_storage,
     "multi_year_reinvest_choice": _patch_multi_year_reinvest_choice,
     "model_discount_settings": _patch_model_discount_settings,
+    "life_extension_chain": _patch_life_extension_chain,
+    "retire_built_chain": _patch_retire_built_chain,
     "invest_total_no_var": _patch_invest_total_no_var,
     "reserve_floors": _patch_reserve_floors,
     "chp_floor_linear": _patch_chp_floor_linear,
@@ -2250,6 +2276,8 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("stoch_invest_storage", _F + "stoch_two_period_hedge.json"),
     ("multi_year_reinvest_choice", _T),
     ("model_discount_settings", _T),
+    ("life_extension_chain", _T),
+    ("retire_built_chain", _T),
     ("invest_total_no_var", _T),
     ("reserve_floors", _T),
     ("chp_floor_linear", _T),
