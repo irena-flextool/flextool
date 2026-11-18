@@ -198,21 +198,26 @@ def _pdX_per_entity(
     return out
 
 
-def _edd_per_entity(param, *, solve_name: str, flex_data: "FlexData") -> pd.DataFrame:
-    """A Param with dims ``(e, d_invest, d)`` in pandas wide format: rows ``(solve, period_invest, period)``,
-    columns entity; the rows of a recourse fan's branch periods also at their label (:mod:`._fan_labels`)."""
-    from flextool.process_outputs._fan_labels import recourse_branch_labels, with_label_rows
+def _lines_per_entity(frame: "pl.DataFrame | None", *, solve_name: str, flex_data: "FlexData",
+                      decision: str) -> pd.DataFrame:
+    """A cost-line frame ``[e, d, line, d_report, value]`` in pandas wide format: rows ``(solve, <decision>, line,
+    period_report)``, columns entity.  Inside a stochastic fan the lines are at the fan's label: a recourse
+    branch's decision rows also at the label (:mod:`._fan_labels`), every report period of a branch at its label."""
+    from flextool.process_outputs._fan_labels import fan_branch_labels, recourse_branch_labels, with_label_rows
 
-    frame = None if param is None else param.frame
-    if frame is not None:
-        frame = with_label_rows(frame, recourse_branch_labels(flex_data), ("d_invest", "d"))
+    names = ("solve", decision, "line", "period_report")
     if frame is None or frame.height == 0:
-        idx = pd.MultiIndex.from_arrays([[], [], []], names=["solve", "period_invest", "period"])
+        idx = pd.MultiIndex.from_arrays([[], [], [], []], names=list(names))
         out = pd.DataFrame(index=idx, dtype=float)
         out.columns = pd.Index([], dtype="object", name="entity")
         return out
-    return wide_per_entity(with_solve_column(frame, solve_name), row_dims=("solve", "d_invest", "d"), col_dim="e",
-                           row_names=("solve", "period_invest", "period"), col_name="entity")
+    branch_of = fan_branch_labels(flex_data)
+    if branch_of:
+        frame = (frame.with_columns(pl.col("d_report").replace(branch_of))
+                      .group_by("e", "d", "line", "d_report", maintain_order=True).agg(pl.col("value").sum()))
+    frame = with_label_rows(frame, recourse_branch_labels(flex_data), ("d",))
+    return wide_per_entity(with_solve_column(frame, solve_name), row_dims=("solve", "d", "line", "d_report"),
+                           col_dim="e", row_names=names, col_name="entity")
 
 
 def _ramp_cost_by_period(flex_data: "FlexData") -> "object | None":
@@ -1712,30 +1717,18 @@ def read_parameters(
         entity_dim="e", col_name="entity", flex_data=flex_data,
         densify_entities=_entity_universe,
     )
-    # The salvage settlement of a retirement (CUR/MW): the objective's term, discounted from the start of the run.
-    p.entity_divest_salvage = _pdX_per_entity(
-        getattr(flex_data, "ed_divest_salvage", None), solve_name=solve_name,
-        entity_dim="e", col_name="entity", flex_data=flex_data,
-        densify_entities=_entity_universe,
-    )
-
-    # The undiscounted yearly amounts (CUR/MW/yr) of the investment decisions (the price per year in service of the
-    # plant in service in each period, rows (solve, period_invest, period)) and of the retirements (the salvage
-    # settlement as a yearly amount of the retirement period): the annualized investment and retirement costs.
-    # The investment lump of each decision split by the period each of its plants comes online (rows (solve,
-    # period_invest, period)): the discounted investment cost, reported when each plant comes online.
-    p.entity_annuity_yearly = _edd_per_entity(getattr(flex_data, "edd_annuity", None), solve_name=solve_name,
-                                              flex_data=flex_data)
-    p.entity_annual_discounted_start = _edd_per_entity(
-        getattr(flex_data, "edd_entity_annual_discounted_run", None), solve_name=solve_name, flex_data=flex_data)
-    # The yearly price of the replacement of existing reinvest_automatic capacity in service in each period (rows
-    # (solve, period_invest, period): the period it comes online, the period it serves): investment pre-existing.
-    p.entity_existing_replacement_yearly = _edd_per_entity(
-        getattr(flex_data, "edd_existing_replacement_run", None), solve_name=solve_name, flex_data=flex_data)
-    p.entity_divest_settlement_yearly = _pdX_per_entity(
-        getattr(flex_data, "ed_divest_settlement_yearly", None), solve_name=solve_name,
-        entity_dim="e", col_name="entity", flex_data=flex_data,
-    )
+    # The cost lines (CUR per MW, ``_npv`` / ``params._cost_lines``) of a MW of each investment decision (the run
+    # lump split by event) and of each retirement of existing capacity (rows (solve, period_decision, line,
+    # period_report)), and of a MW of existing capacity in a period (rows (solve, period, line, period_report): the
+    # pre-existing constants): the reported investment-type costs, each line in the period it happens.
+    p.entity_invest_lines = _lines_per_entity(getattr(flex_data, "edl_invest_lines_run", None), solve_name=solve_name,
+                                              flex_data=flex_data, decision="period_decision")
+    p.entity_divest_lines = _lines_per_entity(getattr(flex_data, "edl_divest_lines", None), solve_name=solve_name,
+                                              flex_data=flex_data, decision="period_decision")
+    existing = [f for f in (getattr(flex_data, "edl_existing_credit_lines", None),
+                            getattr(flex_data, "edl_existing_replacement_lines", None)) if f is not None]
+    p.entity_existing_lines = _lines_per_entity(pl.concat(existing, how="vertical_relaxed") if existing else None,
+                                                solve_name=solve_name, flex_data=flex_data, decision="period")
 
     # inflation factors — Series((solve, period)).  The reported costs discount from the start of the run
     # (``p_inflation_*_run``); ``inflation_factor_operations_solve`` is the solve's own factor, the one its

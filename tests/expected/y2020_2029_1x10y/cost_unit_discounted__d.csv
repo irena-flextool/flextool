@@ -1,3 +1,3 @@
-solve,period,unit,commodity_cost,other operational,investment,retirement,fixed cost pre-existing,fixed cost invested
-y2020_2029_1x10y,p2020,coal_plant,46.0055,0.0,19.9514,0.0,100.0,80.5094
-y2020_2029_1x10y,p2020,wind_plant,0.0,0.0,192.7791,0.0,0.0,0.0
+solve,period,unit,commodity_cost,other operational,investment,replacement,extension,retirement,salvage end of life,salvage replaced,salvage extended,salvage economic,fixed cost pre-existing,fixed cost invested
+y2020_2029_1x10y,p2020,coal_plant,46.0055,0.0,19.9514,0.0,0.0,0.0,0.0,0.0,0.0,0.0,100.0,80.5094
+y2020_2029_1x10y,p2020,wind_plant,0.0,0.0,192.7791,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0

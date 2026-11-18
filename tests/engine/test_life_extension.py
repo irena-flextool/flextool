@@ -175,10 +175,11 @@ def test_an_extension_is_never_extended(tmp_path_factory) -> None:
 
 
 @pytest.mark.solver
-def test_extension_without_an_invest_method_is_reported_as_investment(tmp_path_factory) -> None:
+def test_extension_without_an_invest_method_is_reported_as_an_extension(tmp_path_factory) -> None:
     """invest_method not_allowed (no investment, no retirement): the existing 500 MW are still extended at p2030 (E 100,
-    10 years, the plant's only way to keep producing), and the extension's cost is reported as investment of p2030:
-    500 · 100 000·v^10 = 30.695663 M CUR (discounted) and 500 · 100 000·ann(10) = 6.475229 M CUR a year."""
+    10 years, the plant's only way to keep producing), and the extension's cost is reported as the extension of
+    p2030, the period it starts in: 500 · 100 000·v^10 = 30.695663 M CUR (discounted; no salvage value, so no
+    salvage extended), and annualized that event divided by p2030's investment factor S[10, 15)."""
     from tests.engine.test_chain_costs import MEGA, _results
     values = _values(cost=100.0, method="not_allowed")
     step = _step(tmp_path_factory, "le_no_method", values)
@@ -186,14 +187,17 @@ def test_extension_without_an_invest_method_is_reported_as_investment(tmp_path_f
     assert not _solution(step, "v_invest_p", ("d",))
     results = _results(tmp_path_factory, "le_no_method_out", values, _no_battery_invest(SINGLE))
     discounted = results["cost_unit_discounted__d"]
-    row = discounted[(discounted["unit"] == PLANT) & (discounted["period"] == "p2030")].iloc[0]
-    assert row["investment"] * MEGA == pytest.approx(MW * 100_000.0 * V ** 10, rel=1e-7)
-    assert MW * 100_000.0 * V ** 10 / MEGA == pytest.approx(30.695663, abs=1e-6)
     yearly = results["cost_unit_annualized__d"]
-    for d in ("p2030", "p2035"):
+    event = MW * 100_000.0 * V ** 10
+    assert event / MEGA == pytest.approx(30.695663, abs=1e-6)
+    for d in ("p2020", "p2025", "p2030", "p2035"):
+        row = discounted[(discounted["unit"] == PLANT) & (discounted["period"] == d)].iloc[0]
+        want = event if d == "p2030" else 0.0
+        assert row["extension"] * MEGA == pytest.approx(want, rel=1e-7, abs=1e-6), d
+        assert row["investment"] == pytest.approx(0.0, abs=1e-12), d
+        assert row["salvage extended"] == pytest.approx(0.0, abs=1e-12), d
         row = yearly[(yearly["unit"] == PLANT) & (yearly["period"] == d)].iloc[0]
-        assert row["investment"] * MEGA == pytest.approx(MW * 100_000.0 * ann(10.0), rel=1e-7), d
-    assert MW * 100_000.0 * ann(10.0) / MEGA == pytest.approx(6.475229, abs=1e-6)
+        assert row["extension"] * MEGA == pytest.approx(want / span(10, 15), rel=1e-7, abs=1e-6), d
 
 
 @pytest.mark.solver

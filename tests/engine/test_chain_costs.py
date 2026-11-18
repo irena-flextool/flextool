@@ -32,6 +32,7 @@ from tests.engine._unit_db import FLEXTOOL_ROOT, b64, make_db, run, utf8
 from tests.engine.test_construction_lead_time_calendar import ROLLING, ROLLING_VALUES
 from tests.engine.test_construction_lead_time_limits import ENTITIES, _values
 from tests.engine.test_user_constraint_capacity_terms import CHAIN, PLANT, SINGLE
+from flextool.engine.preprocess.params._cost_lines import COST_LINES
 
 PERIODS = ["p2020", "p2025", "p2030", "p2035"]
 YEARS = {"p2020": 0.0, "p2025": 5.0, "p2030": 10.0, "p2035": 15.0}
@@ -96,9 +97,10 @@ def test_chain_reports_from_the_start_of_the_run(tmp_path_factory) -> None:
         # The objective's factors: discounted from the start of the run, as the reported costs.
         assert _d(fd.p_inflation_op) == pytest.approx({d: F_OPS[d] for d in own}, rel=1e-12), name
         assert _window(fd.edd_operating_window, "d_invest") == {d: _later(d) for d in own}, name
-        yearly = utf8(fd.edd_annuity.frame).filter(pl.col("e") == PLANT)
-        assert {(a, b): v for a, b, v in yearly.select("d_invest", "d", "value").iter_rows()} == pytest.approx(
-            {(d, x): ANNUITY for d in own for x in _later(d)}, rel=1e-12), name
+        lines = fd.edl_invest_lines_run.filter(pl.col("e") == PLANT)
+        assert {(a, li, b): v for a, li, b, v in lines.select("d", "line", "d_report", "value").iter_rows()} == \
+            pytest.approx({(d, "investment", d): ANNUITY * sum(F_INV[x] for x in _later(d)) for d in own},
+                          rel=1e-12), name
         assert _ed(fd.ed_entity_annual_discounted_run) == pytest.approx(
             {d: ANNUITY * sum(F_INV[x] for x in _later(d)) for d in own}, rel=1e-12), name
         fixed = _ed(fd.ed_lifetime_fixed_cost_run)
@@ -286,28 +288,31 @@ def _probe_values(lead: float) -> list:
 
 
 def _assert_annualized_investment(results: dict[str, pd.DataFrame]) -> None:
-    """The annualized investment and fixed cost invested of coal_plant: in every period, the yearly amounts of
-    every vintage operating in it (reinvest_automatic, lifetime 30: from its start of operation to the end of the
-    run).  100 MW operate from p2025, 50 MW more from p2030::
+    """The annualized investment and fixed cost invested of coal_plant (reinvest_automatic, lifetime 30: from its
+    start of operation to the end of the run).  100 MW start to operate in p2025, 50 MW more in p2030.  The
+    investment is an event at the start of operation, the decision's capital over its years in service inside the
+    horizon, and its annualized value is that event divided by the period's investment factor (spread evenly over
+    the period's years)::
 
-        investment[d]          = MW_operating[d] · A,  A = 400 · 1000 · 0.05 / (1 − 1.05^−30) / 1.05
-                                                         = 24 781.50 CUR/MW/yr
+        investment[d]          = MW_new[d] · A · Σ_{d' ≥ d} F_inv(d') / F_inv(d),
+                                 A = 400 · 1000 · 0.05 / (1 − 1.05^−30) / 1.05 = 24 781.50 CUR/MW/yr
         fixed cost invested[d] = MW_operating[d] · 100 · 1000
-        MW_operating = {p2020: 0, p2025: 100, p2030: 150, p2035: 150}
+        MW_new = {p2025: 100, p2030: 50},  MW_operating = {p2020: 0, p2025: 100, p2030: 150, p2035: 150}
 
-    so 0, 2.47815, 3.71722, 3.71722 M/yr and 0, 10, 15, 15 M/yr; the system columns (only coal_plant invests)
-    are the same.  Before: the lump in the period it is reported, divided by that period's factor (p2025 only)."""
+    The system columns are the same (only coal_plant invests).  Before: the yearly annuity of every vintage
+    operating in the period."""
+    new = {"p2025": 100.0, "p2030": 50.0}
     operating = {"p2020": 0.0, "p2025": 100.0, "p2030": 150.0, "p2035": 150.0}
     unit = results["cost_unit_annualized__d"]
     system = results["annualized_costs__d"].set_index("period")
     for d, mw in operating.items():
+        event = new.get(d, 0.0) * ANNUITY * sum(F_INV[x] for x in _later(d)) / F_INV[d]
         rows = unit[(unit["period"] == d) & (unit["unit"] == PLANT)]
         invest = rows["investment"].sum() if len(rows) else 0.0
         fixed = rows["fixed cost invested"].sum() if len(rows) else 0.0
-        assert invest * MEGA == pytest.approx(mw * ANNUITY, rel=1e-7, abs=1e-6), d
+        assert invest * MEGA == pytest.approx(event, rel=1e-7, abs=1e-6), d
         assert fixed * MEGA == pytest.approx(mw * FIXED, rel=1e-7, abs=1e-6), d
-        assert system.loc[d, "unit investment & retirement"] * MEGA == pytest.approx(mw * ANNUITY, rel=1e-7,
-                                                                                     abs=1e-6), d
+        assert system.loc[d, "investment"] * MEGA == pytest.approx(event, rel=1e-7, abs=1e-6), d
         assert system.loc[d, "fixed cost invested"] * MEGA == pytest.approx(mw * FIXED, rel=1e-7, abs=1e-6), d
 
 
@@ -360,7 +365,7 @@ def test_lead_time_costs_in_the_period_capacity_starts_operating(tmp_path_factor
     assert start["solve"] == "y2025_5week"
     assert start["investment"] * MEGA == pytest.approx(100.0 * ANNUITY * sum(F_INV[d] for d in _later("p2025")),
                                                        rel=1e-7)
-    # The annualized columns follow the capacity's operation: from p2025 (the p2020 decision) and p2030.
+    # The annualized investment is each start of operation's event: p2025 (the p2020 decision) and p2030.
     _assert_annualized_investment(chain)
 
 
@@ -499,11 +504,17 @@ def test_retirement_costs(tmp_path_factory, lifetime) -> None:
     credit netted in: A − a_x, A = 400 000·af) over the replacement's periods the solve sees.  The single solve sees
     p2020 … p2035; the chain's y2025 solve its history p2020 and its own p2025, p2030 (its horizon):
 
-        lifetime 30 (one plant past the horizon): retirement = −100·(S·D(5) − a_x·Σ_seen F_inv)
-        lifetime 10: retirement = −100·(S·D(5) − a_x·(F_inv(p2020) + F_inv(p2025)) + (A − a_x)·Σ_{seen, ≥ p2030}
+        lifetime 30 (one plant past the horizon): settlement = −100·(S·D(5) − a_x·Σ_seen F_inv)
+        lifetime 10: settlement = −100·(S·D(5) − a_x·(F_inv(p2020) + F_inv(p2025)) + (A − a_x)·Σ_{seen, ≥ p2030}
                      F_inv)
 
-    Annualized, the settlement is a yearly amount of the retirement period: retirement / F_inv(p2025) in p2025."""
+    The settlement is reported by event (each cost line in the period it happens): *salvage economic* −100·S·D(5)
+    at p2025 (received); the existing plant's credits given back, +100·a_x·Σ_seen,plant F_inv, as *salvage
+    replaced* where the plant's end of life is reported (lifetime 30: past the horizon, so the last period p2035;
+    lifetime 10: p2030); with lifetime 10 the replacement's capital given back, *retirement* −100·A·Σ_{seen, ≥ p2030}
+    F_inv at p2025, and its salvage credits, *salvage replaced* +100·a_x·Σ_{seen, ≥ p2030} F_inv at its end of life
+    (year 20, the horizon end: the last period p2035).  The lines add up to the settlement.  Annualized: each line
+    divided by the investment factor of the period it is reported in."""
     values = _retire_values(lifetime)
     tag = f"retire_{int(lifetime)}"
     chain = _results(tmp_path_factory, f"{tag}_chain", values, _no_battery_invest(CHAIN))
@@ -515,35 +526,32 @@ def test_retirement_costs(tmp_path_factory, lifetime) -> None:
     window = _later("p2025")
     af = 0.05 / (1.0 - 1.05 ** -lifetime) / 1.05
     a_x = SALVAGE * 1000.0 * 1.05 ** -lifetime * af
-    price = 400.0 * 1000.0 * af - a_x
+    capital = 400.0 * 1000.0 * af
     seen = {"single": PERIODS, "chain": ["p2020", "p2025", "p2030"]}
-    settlement = {}
-    for kind, periods in seen.items():
-        if lifetime > 20.0:
-            saving = SALVAGE * 1000.0 * 1.04 ** -5 - a_x * sum(F_INV[d] for d in periods)
-        else:
-            saving = (SALVAGE * 1000.0 * 1.04 ** -5 - a_x * (F_INV["p2020"] + F_INV["p2025"])
-                      + price * sum(F_INV[d] for d in periods if d >= "p2030"))
-        settlement[kind] = -100.0 * saving
     for kind, results in (("chain", chain), ("single", single)):
+        periods = seen[kind]
+        want = {("p2025", "salvage economic"): -100.0 * SALVAGE * 1000.0 * 1.04 ** -5}
+        if lifetime > 20.0:
+            want[("p2035", "salvage replaced")] = 100.0 * a_x * sum(F_INV[d] for d in periods)
+        else:
+            later = sum(F_INV[d] for d in periods if d >= "p2030")
+            want[("p2030", "salvage replaced")] = 100.0 * a_x * (F_INV["p2020"] + F_INV["p2025"])
+            want[("p2025", "retirement")] = -100.0 * capital * later
+            want[("p2035", "salvage replaced")] = 100.0 * a_x * later
         discounted = results["cost_unit_discounted__d"]
         retired = _row(discounted, "p2025")
         assert retired["fixed cost reduction of divestments"] * MEGA == pytest.approx(
             -100.0 * FIXED * sum(F_OPS[d] for d in window), rel=1e-7)
-        assert retired["retirement"] * MEGA == pytest.approx(settlement[kind], rel=1e-7), kind
+        annualized = results["cost_unit_annualized__d"]
         for d in PERIODS:
-            assert _row(discounted, d)["fixed cost pre-existing"] * MEGA == pytest.approx(
-                500.0 * FIXED * F_OPS[d], rel=1e-7), d
-    # Annualized: the settlement as a yearly amount of the retirement period, per year in p2025 and nothing in the
-    # other periods; and the yearly fixed cost of the retired 100 MW, −10 M/yr in p2025 … p2035; nothing in p2020.
-    for kind, annualized in (("chain", chain["cost_unit_annualized__d"]),
-                             ("single", single["cost_unit_annualized__d"])):
-        for d in PERIODS:
-            rows = annualized[(annualized["period"] == d) & (annualized["unit"] == PLANT)]
-            want = settlement[kind] / F_INV["p2025"] if d == "p2025" else 0.0
-            assert rows["retirement"].sum() * MEGA == pytest.approx(want, rel=1e-7, abs=1e-6), (kind, d)
+            row, yearly = _row(discounted, d), _row(annualized, d)
+            for line in ("retirement", "salvage economic", "salvage replaced", "salvage end of life"):
+                amount = want.get((d, line), 0.0)
+                assert row[line] * MEGA == pytest.approx(amount, rel=1e-7, abs=1e-3), (kind, d, line)
+                assert yearly[line] * MEGA == pytest.approx(amount / F_INV[d], rel=1e-7, abs=1e-3), (kind, d, line)
+            assert row["fixed cost pre-existing"] * MEGA == pytest.approx(500.0 * FIXED * F_OPS[d], rel=1e-7), d
             mw = 100.0 if d in window else 0.0
-            assert rows["fixed cost reduction of divestments"].sum() * MEGA == pytest.approx(
+            assert yearly["fixed cost reduction of divestments"] * MEGA == pytest.approx(
                 -mw * FIXED, rel=1e-7, abs=1e-6), d
 
 
@@ -681,8 +689,9 @@ def test_chain_of_realized_fans_reports_from_the_run_start(tmp_path_factory) -> 
     10 000 CUR/MW/yr, reinvest_automatic (operates to the end of the run).  The builds: the low forecast must
     cover the demand of 100 MW (penalty 1e4): 100 / 0.3 = 333.33 MW in p2030, 100 / 0.25 = 400 MW in p2040, so
     66.67 MW more.  Discounted: p2030 333.33 · A · (F_inv(p2030) + F_inv(p2040)), p2040 66.67 · A · F_inv(p2040);
-    fixed cost invested likewise with 10 000 and F_ops.  Operations: the realized wind (CF 0.5 / 0.6, enough
-    for the demand) produces 100 MWh/h at 1 CUR/MWh: 0.876 M/yr annualized, · F_ops(d) discounted."""
+    fixed cost invested likewise with 10 000 and F_ops; the annualized investment is that event ÷ F_inv(d).
+    Operations: the realized wind (CF 0.5 / 0.6, enough for the demand) produces 100 MWh/h at 1 CUR/MWh: 0.876 M/yr
+    annualized, · F_ops(d) discounted."""
     from flextool.engine import run_chain_from_db
     from flextool.process_outputs.write_outputs import write_outputs
 
@@ -709,14 +718,14 @@ def test_chain_of_realized_fans_reports_from_the_run_start(tmp_path_factory) -> 
     annualized = pd.read_csv(out / "cost_unit_annualized__d.csv")
     for d in ("p2030", "p2040"):
         row = _row(discounted, d, "wind")
-        assert row["investment"] * MEGA == pytest.approx(built[d] * annuity * sum(f_inv[p] for p in window[d]),
-                                                         rel=1e-6), d
+        event = built[d] * annuity * sum(f_inv[p] for p in window[d])
+        assert row["investment"] * MEGA == pytest.approx(event, rel=1e-6), d
         assert row["fixed cost invested"] * MEGA == pytest.approx(
             built[d] * 10_000.0 * sum(f_ops[p] for p in window[d]), rel=1e-6), d
         assert row["other operational"] * MEGA == pytest.approx(operations * f_ops[d], rel=1e-6), d
         operating = sum(built[p] for p in built if p <= d)
         row = _row(annualized, d, "wind")
-        assert row["investment"] * MEGA == pytest.approx(operating * annuity, rel=1e-6), d
+        assert row["investment"] * MEGA == pytest.approx(event / f_inv[d], rel=1e-6), d
         assert row["fixed cost invested"] * MEGA == pytest.approx(operating * 10_000.0, rel=1e-6), d
         assert row["other operational"] * MEGA == pytest.approx(operations, rel=1e-6), d
 
@@ -740,7 +749,7 @@ def _assert_fan_reports_no_operations(fan: dict[str, pd.DataFrame]) -> None:
         assert _row(discounted, d, "wind")["fixed cost pre-existing"] * MEGA == pytest.approx(
             100.0 * 10.0e3 * FAN_F_OPS[d], rel=1e-7), d
     operations = [c for c in discounted.columns
-                  if c not in ("solve", "period", "unit", "investment", "retirement", "fixed cost pre-existing",
+                  if c not in ("solve", "period", "unit", *COST_LINES, "fixed cost pre-existing",
                                "fixed cost invested")]
     assert operations and (discounted[operations].fillna(0.0) == 0.0).all().all()
     total = fan["costs_discounted"].set_index("category").iloc[:, 0]
@@ -763,8 +772,9 @@ def test_fan_without_realization_reports_investment_and_existing_fixed_cost(tmp_
     deficit) and p2040 adds the 40 MW that are cheaper there (no p2035 annuity or fixed cost):
     p2035 investment 80 · 1000 · F_inv(p2035); the peaker's lifetime_technical is 1 year, so the p2035 plant is
     replaced in p2040 (reinvest_automatic, at the same invest_cost) and that replacement is reported when it comes
-    online: p2040 investment (80 + 40) · 1000 · F_inv(p2040).  The fixed cost of new capacity is the lump of each
-    decision over the periods it operates, at its start: p2035 80 · 20 000 · Σ F_ops, p2040 40 · 20 000 · F_ops."""
+    online: p2040 replacement 80 · 1000 · F_inv(p2040) and investment 40 · 1000 · F_inv(p2040).  The fixed cost of
+    new capacity is the lump of each decision over the periods it operates, at its start: p2035 80 · 20 000 · Σ
+    F_ops, p2040 40 · 20 000 · F_ops."""
     fan = _results(tmp_path_factory, "stoch_fan_costs", FAN_VALUES, ["init", "base", "stoch"],
                    fixture_json=FAN_JSON)
     discounted = fan["cost_unit_discounted__d"]
@@ -773,7 +783,8 @@ def test_fan_without_realization_reports_investment_and_existing_fixed_cost(tmp_
     assert first["fixed cost invested"] * MEGA == pytest.approx(80.0 * FAN_FIXED * sum(FAN_F_OPS.values()),
                                                                 rel=1e-7)
     second = _row(discounted, "p2040", "peaker")
-    assert second["investment"] * MEGA == pytest.approx(120.0 * FAN_ANNUITY * FAN_F_INV["p2040"], rel=1e-7)
+    assert second["investment"] * MEGA == pytest.approx(40.0 * FAN_ANNUITY * FAN_F_INV["p2040"], rel=1e-7)
+    assert second["replacement"] * MEGA == pytest.approx(80.0 * FAN_ANNUITY * FAN_F_INV["p2040"], rel=1e-7)
     assert second["fixed cost invested"] * MEGA == pytest.approx(40.0 * FAN_FIXED * FAN_F_OPS["p2040"], rel=1e-7)
     _assert_fan_reports_no_operations(fan)
 
@@ -783,21 +794,24 @@ FAN_LEAD_TIME = [["unit", "peaker", "construction_lead_time", b64(1.0, "float")]
 
 def _assert_fan_investment(fan: dict[str, pd.DataFrame], built: dict[str, float], operating: dict[str, float]) -> None:
     """The peaker's reported investment costs: ``built[d]`` MW decided in d (branch-weighted), operating in the
-    run periods after their start ``operating[d']`` MW.  Discounted: the investment of the plants that come online
-    in d (lifetime_technical 1 year: every MW operating in d is a plant of d, a replacement of an earlier build or
-    a new one) = operating[d] · 1000 · F_inv(d); the fixed cost invested of a decision at its start = MW · 20 000
-    · Σ F_ops over the periods it operates in; annualized: operating[d'] · 1000 and operating[d'] · 20 000 per year
-    in every period."""
+    run periods after their start ``operating[d']`` MW.  Discounted: lifetime_technical 1 year, so every MW
+    operating in d is a plant of d: a new one (investment built[d] · 1000 · F_inv(d)) or the replacement of an
+    earlier build ((operating[d] − built[d]) · 1000 · F_inv(d)); the fixed cost invested of a decision at its start
+    = MW · 20 000 · Σ F_ops over the periods it operates in; annualized: each event divided by F_inv(d) and
+    operating[d'] · 20 000 per year in every period."""
     discounted, annualized = fan["cost_unit_discounted__d"], fan["cost_unit_annualized__d"]
     for d in ("p2035", "p2040"):
         later = [p for p in ("p2035", "p2040") if p >= d]
-        want_inv = operating[d] * FAN_ANNUITY * FAN_F_INV[d]
-        want_fix = built.get(d, 0.0) * FAN_FIXED * sum(FAN_F_OPS[p] for p in later)
+        new = built.get(d, 0.0)
+        want_fix = new * FAN_FIXED * sum(FAN_F_OPS[p] for p in later)
         row = _row(discounted, d, "peaker")
-        assert row["investment"] * MEGA == pytest.approx(want_inv, rel=1e-7, abs=1e-6), d
+        assert row["investment"] * MEGA == pytest.approx(new * FAN_ANNUITY * FAN_F_INV[d], rel=1e-7, abs=1e-6), d
+        assert row["replacement"] * MEGA == pytest.approx((operating[d] - new) * FAN_ANNUITY * FAN_F_INV[d],
+                                                          rel=1e-7, abs=1e-6), d
         assert row["fixed cost invested"] * MEGA == pytest.approx(want_fix, rel=1e-7, abs=1e-6), d
         row = _row(annualized, d, "peaker")
-        assert row["investment"] * MEGA == pytest.approx(operating[d] * FAN_ANNUITY, rel=1e-7, abs=1e-6), d
+        assert row["investment"] * MEGA == pytest.approx(new * FAN_ANNUITY, rel=1e-7, abs=1e-6), d
+        assert row["replacement"] * MEGA == pytest.approx((operating[d] - new) * FAN_ANNUITY, rel=1e-7, abs=1e-6), d
         assert row["fixed cost invested"] * MEGA == pytest.approx(operating[d] * FAN_FIXED, rel=1e-7, abs=1e-6), d
     _assert_fan_reports_no_operations(fan)
 

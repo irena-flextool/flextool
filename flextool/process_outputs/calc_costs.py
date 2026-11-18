@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 
+from flextool.engine.preprocess.params._cost_lines import COST_LINES
 from flextool.process_outputs._annualize import annualize_dt_to_d
 from flextool.process_outputs.calc_capacity_flows import flows_with_startup
 
@@ -20,21 +21,27 @@ def _reported_start_periods(s) -> pd.Index:
     return s.d_realized_period.union(s.d_realize_invest).union(s.fan_label_period)
 
 
-def _invest_with_fan(v) -> pd.DataFrame:
-    """The investment of the reported costs (rows: decision period, columns: entity):
+def _with_fan(decided: pd.DataFrame, fan: pd.DataFrame) -> pd.DataFrame:
+    """A decision of the reported costs (rows: decision period, columns: entity):
 
-    invest_cost[e,d] = v_invest[e,d] + invest_fan[e,d]
-      invest_fan[e,L] = Σ_b pd_branch_weight[b]·v_invest[e,b] over the branch periods b of a fan label L
-      (``v_invest_fan``, recourse); 0 elsewhere.  A shared fan investment is the label's own v_invest (its
-      branch weights sum to 1); under recourse each branch's own investment carries its branch weight."""
-    fan = v.invest_fan
+    decided_cost[e,d] = decided[e,d] + fan[e,d]
+      fan[e,L] = Σ_b pd_branch_weight[b]·decided[e,b] over the branch periods b of a fan label L (``v_invest_fan`` /
+      ``v_divest_fan``, recourse); 0 elsewhere.  A shared fan decision is the label's own (its branch weights sum
+      to 1); under recourse each branch's own decision carries its branch weight."""
     if fan.empty or len(fan.columns) == 0:
-        return v.invest
-    index = v.invest.index.union(fan.index, sort=False)
-    out = v.invest.reindex(index=index).add(fan.reindex(index=index, columns=v.invest.columns), fill_value=0.0)
-    out.index.name = v.invest.index.name
-    out.columns.name = v.invest.columns.name
+        return decided
+    index = decided.index.union(fan.index, sort=False)
+    columns = decided.columns.union(fan.columns, sort=False)
+    out = decided.reindex(index=index, columns=columns).add(fan.reindex(index=index, columns=columns),
+                                                            fill_value=0.0)
+    out.index.name = decided.index.name
+    out.columns.name = decided.columns.name
     return out
+
+
+def _invest_with_fan(v) -> pd.DataFrame:
+    """The investment of the reported costs (:func:`_with_fan` of ``v_invest`` and ``v_invest_fan``)."""
+    return _with_fan(v.invest, v.invest_fan)
 
 
 def _at_start_of_operation(cost: pd.DataFrame, s) -> pd.DataFrame:
@@ -134,120 +141,121 @@ def _invested_mw_at_start(par, s, v) -> pd.DataFrame:
     return long
 
 
-def _per_vintage_period(long: pd.DataFrame, amount: pd.DataFrame, columns: pd.Index) -> pd.DataFrame:
-    """``long`` (``[period_invest, entity, value]``, MW of a decision) times ``amount`` (rows (period_invest,
-    period), columns entity: an amount per MW of each decision in each period), summed per (period, entity).  Rows:
-    period (in ``amount``'s order), columns: ``columns``."""
-    if long.empty or amount.empty or len(amount.columns) == 0:
-        out = pd.DataFrame(index=pd.Index([], name='period'), columns=columns, dtype=float)
-        out.columns.name = columns.name
-        return out
-    per = (amount.stack(future_stack=True).rename('coef').rename_axis(['period_invest', 'period', 'entity'])
-                 .reset_index())
-    per = per[per['coef'].notna()].astype({'period_invest': str, 'period': str, 'entity': str})
-    joined = long.astype({'period_invest': str, 'entity': str}).merge(per, on=['period_invest', 'entity'],
-                                                                      how='inner')
-    joined = joined.assign(value=joined['value'] * joined['coef'])
-    out = joined.groupby(['period', 'entity'], sort=False)['value'].sum().unstack('entity')
-    order = list(dict.fromkeys(per['period']))
-    out = out.reindex(index=[d for d in order if d in out.index], columns=columns)
+def _stack_lines(lines: pd.DataFrame, decision: str) -> pd.DataFrame:
+    """``[<decision>, line, period, entity, coef]`` of a cost-line parameter (rows (decision period, line,
+    period_report), columns entity; CUR per MW of the decision), without empty cells."""
+    if lines.empty or len(lines.columns) == 0:
+        return pd.DataFrame(columns=[decision, 'line', 'period', 'entity', 'coef'])
+    long = lines.stack(future_stack=True).rename('coef')
+    long.index = long.index.set_names([decision, 'line', 'period', 'entity'])
+    long = long.reset_index()
+    return long[long['coef'].notna()].astype({decision: str, 'line': str, 'period': str, 'entity': str})
+
+
+def _priced(mw: pd.DataFrame, lines: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
+    """``[period, entity, line, value]``: the MW of each decision (``mw`` ``[*keys, mw]``) times its cost lines
+    (``lines`` of :func:`_stack_lines`)."""
+    if mw.empty or lines.empty:
+        return pd.DataFrame(columns=['period', 'entity', 'line', 'value'])
+    joined = mw.astype({k: str for k in keys}).merge(lines, on=keys, how='inner')
+    return joined.assign(value=joined['mw'] * joined['coef'])[['period', 'entity', 'line', 'value']]
+
+
+def _cohort_lines(amounts: pd.DataFrame) -> pd.DataFrame:
+    """``[period, entity, line, value]`` of a per-cohort decision's cost lines summed by the writer (rows: decision
+    period, columns (entity, line, period_report); CUR, read_highs_solution write_v_divest_built / write_v_extend)."""
+    if amounts.empty or len(amounts.columns) == 0:
+        return pd.DataFrame(columns=['period', 'entity', 'line', 'value'])
+    long = amounts.stack(['entity', 'line', 'period_report'], future_stack=True).rename('value').reset_index()
+    long = long[long['value'].notna() & long['value'].ne(0.0)]
+    return long.rename(columns={'period': 'decision', 'period_report': 'period'})[
+        ['period', 'entity', 'line', 'value']].astype({'period': str, 'entity': str, 'line': str})
+
+
+def cost_lines(par, s, v) -> pd.DataFrame:
+    """``[period, entity, line, value]`` (CUR, discounted from the start of the run): the investment-type costs by
+    cost line (:data:`COST_LINES`), each in the period its event is reported in.
+
+    LINE. cost[e,line,d'] = Σ_d MW_invest[e,d]·invest_lines[e,d,line,d']              (c(d) reported)
+                          + Σ_d MW_divest[e,d]·divest_lines[e,d,line,d']
+                          + Σ_{c,d} MW_divest_built[e,c,d]·divest_built_lines[e,c,d,line,d']
+                          + Σ_{c,d} MW_extend[e,c,d]·extend_lines[e,c,d,line,d']
+                          + Σ_d existing[e,d]·existing_lines[e,d,line,d']
+      MW the realized decisions × unitsize (a fan's branch decisions weighted to its label, ``v_invest_fan`` /
+      ``v_divest_fan``); the lines per MW of ``_npv`` (``par.entity_invest_lines`` / ``entity_divest_lines``, the
+      writer's ``v.divest_built_lines`` / ``v.extend_lines``), existing the user's existing capacity aged over its
+      lifetime (``entity_user_existing``, as the fixed cost pre-existing) with the lines of the objective constants of
+      existing capacity (``entity_existing_lines``: investment pre-existing, salvage pre-existing).  The lines of
+      one decision add up to its term in the objective (the run's lump for an investment); an investment's lines
+      are reported only once a solve realizes the period it starts to operate in, or in a fan
+      (:func:`_reported_start_periods`)."""
+    invest = _invested_mw_at_start(par, s, v)
+    invest = invest[invest['start'].isin(_reported_start_periods(s))].rename(columns={'value': 'mw'})
+    divest_mw = _with_fan(v.divest, v.divest_fan)
+    divest = _decisions_long(divest_mw.mul(par.entity_unitsize.reindex(divest_mw.columns).fillna(1.0)),
+                             'period_divest').rename(columns={'value': 'mw'})
+    existing = _decisions_long(par.entity_user_existing, 'period').rename(columns={'value': 'mw'})
+    parts = [
+        _priced(invest[['period_invest', 'entity', 'mw']].rename(columns={'period_invest': 'period_decision'}),
+                _stack_lines(par.entity_invest_lines, 'period_decision'), ['period_decision', 'entity']),
+        _priced(divest.rename(columns={'period_divest': 'period_decision'}),
+                _stack_lines(par.entity_divest_lines, 'period_decision'), ['period_decision', 'entity']),
+        _priced(existing.rename(columns={'period': 'period_existing'}),
+                _stack_lines(par.entity_existing_lines, 'period_existing'), ['period_existing', 'entity']),
+        _cohort_lines(v.divest_built_lines),
+        _cohort_lines(v.extend_lines),
+    ]
+    parts = [p for p in parts if not p.empty]
+    if not parts:
+        return pd.DataFrame(columns=['period', 'entity', 'line', 'value']).astype({'value': float})
+    long = pd.concat(parts, ignore_index=True).astype({'value': float})
+    return long.groupby(['period', 'entity', 'line'], sort=False, as_index=False)['value'].sum()
+
+
+def lines_by_period(lines: pd.DataFrame, entities=None) -> pd.DataFrame:
+    """The cost lines ``lines`` (:func:`cost_lines`) of ``entities`` (all when None) summed per period: rows period,
+    columns :data:`COST_LINES` (CUR)."""
+    if entities is not None:
+        lines = lines[lines['entity'].isin(list(entities))]
+    out = lines.groupby(['period', 'line'], sort=False)['value'].sum().unstack('line')
+    out = out.reindex(columns=list(COST_LINES), fill_value=0.0).fillna(0.0)
     out.index.name = 'period'
-    out.columns.name = columns.name
+    out.columns.name = 'category'
     return out
 
 
-def _invest_at_plant_starts(par, s, v) -> pd.DataFrame:
-    """The discounted investment cost (rows: period, columns: entity, CUR), reported when each plant comes online.
-
-    INV. invest_d[e,d'] = Σ_{d} v_invest[e,d]·unitsize[e]·entity_annual_discounted_start[e,d,d']
-      entity_annual_discounted_start[e,d,d'] (``edd_entity_annual_discounted_run``): the investment lump of decision
-      d (the objective's, from the start of the run over the run's periods) of the plants that come online in d':
-      the whole lump at c(d), or with reinvest_automatic each replacement's part at the period it comes online.
-      Only where the decision's c(d) and d' are realized or a fan label (:func:`_reported_start_periods`)."""
-    long = _invested_mw_at_start(par, s, v)
-    reported = _reported_start_periods(s)
-    long = long[long['start'].isin(reported)]
-    out = _per_vintage_period(long, par.entity_annual_discounted_start, v.invest.columns)
-    return out[out.index.isin(reported)]
+def lines_by_entity(lines: pd.DataFrame, entities) -> pd.DataFrame:
+    """The cost lines of ``entities``: rows (period, entity), columns :data:`COST_LINES` (CUR)."""
+    lines = lines[lines['entity'].isin(list(entities))]
+    out = lines.pivot_table(index=['period', 'entity'], columns='line', values='value', aggfunc='sum')
+    out = out.reindex(columns=list(COST_LINES), fill_value=0.0).fillna(0.0)
+    out.columns.name = 'category'
+    return out
 
 
-def _existing_replacement(par) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """``(discounted, yearly)`` investment pre-existing (rows: period, columns: entity, CUR / CUR/yr).
+def _fixed_cost_invested_yearly(par, s, v) -> pd.DataFrame:
+    """The fixed cost invested per year (rows: period, columns: entity, CUR/yr).
 
-    INV. invest_pre_existing_d[e,d_on] = Σ_d existing[e,d]·entity_existing_replacement_yearly[e,d_on,d]·
-                                           inflation_inv[d]
-         invest_pre_existing_yr[e,d] = existing[e,d]·entity_existing_replacement_yearly[e,·,d]
-      The replacement of existing reinvest_automatic capacity at its end of life (``edd_existing_replacement_run``:
-      the price per year in service of the plant that replaces it, from the period it comes online d_on) on the
-      user's existing capacity (``entity_user_existing``, as the fixed cost pre-existing; a retirement gives the
-      replacement back through its retirement settlement): reported in the period the replacement comes online, and
-      as yearly amounts in the periods it serves.  Not in the optimised objective unless
-      include_existing_fixed_cost (the existing_replacement constant)."""
-    price = par.entity_existing_replacement_yearly
-    if price.empty or len(price.columns) == 0:
-        empty = pd.DataFrame(index=pd.Index([], name='period'), dtype=float)
-        return empty, empty
-    long = (price.stack(future_stack=True).rename('price').rename_axis(['period_invest', 'period', 'entity'])
-                 .reset_index())
-    long = long[long['price'].notna()].astype({'period_invest': str, 'period': str, 'entity': str})
-    existing = par.entity_user_existing.stack(future_stack=True).rename('mw').rename_axis(['period', 'entity'])
-    existing = existing.reset_index().astype({'period': str, 'entity': str})
-    factor = par.inflation_factor_investment_yearly.rename('factor').rename_axis('period').reset_index()
-    factor = factor.astype({'period': str})
-    joined = (long.merge(existing, on=['period', 'entity'], how='inner')
-                  .merge(factor, on='period', how='left'))
-    joined = joined.assign(yearly=joined['mw'] * joined['price'],
-                           discounted=joined['mw'] * joined['price'] * joined['factor'].fillna(1.0))
-    order = list(dict.fromkeys(long['period']))
-    yearly = joined.groupby(['period', 'entity'], sort=False)['yearly'].sum().unstack('entity')
-    yearly = yearly.reindex(index=[d for d in order if d in yearly.index])
-    discounted = joined.groupby(['period_invest', 'entity'], sort=False)['discounted'].sum().unstack('entity')
-    discounted = discounted.reindex(index=[d for d in order if d in discounted.index])
-    for frame in (yearly, discounted):
-        frame.index.name = 'period'
-        frame.columns.name = 'entity'
-    return discounted, yearly
-
-
-def _annualized_investment(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """``(investment, fixed cost invested)`` per year, rows: period, columns: entity (CUR/yr).
-
-    ANN. invest_yr[e,d'] = Σ_{d} v_invest[e,d]·unitsize[e]·edd_annuity[e,d,d']
-         fixed_invested_yr[e,d'] = Σ_{(e,d,d') ∈ edd_operating_window} v_invest[e,d]·unitsize[e]·fc[e,d']
-      The yearly amounts of every vintage in service in d': edd_annuity[e,d,d'] the price per year in service of
-      the plant of decision d in service in d' (a_cap − a_salv of the plant as constructed in c(d), the level
-      yearly cost of its lifetime with its salvage credit; with reinvest_automatic each replacement at its own
-      price), as in the objective, and the fixed cost of d'.  The investment cost is reported by these yearly
-      amounts (the objective's spreading).  Only the decisions whose c(d) is realized (or a fan label)."""
+    ANN. fixed_invested_yr[e,d'] = Σ_{(e,d,d') ∈ edd_operating_window} v_invest[e,d]·unitsize[e]·fc[e,d']
+                                   + extended[e,d']·unitsize[e]·fc[e,d']
+      The fixed cost of d' of every vintage in service in d' (only the decisions whose c(d) is realized, or a fan
+      label) and of the extended capacity."""
     columns = v.invest.columns
     long = _invested_mw_at_start(par, s, v)
     long = long[long['start'].isin(_reported_start_periods(s))]
-    window = s.edd_operating_window
-    invest = _per_vintage_period(long[['period_invest', 'entity', 'value']], par.entity_annuity_yearly, columns)
-    fixed = _fixed_cost_in_window(long, window, 'period_invest', 'start', par, columns, drop_unpriced=True)
-    return _with_extensions(par, v, invest, fixed)
-
-
-def _with_extensions(par, v, invest: pd.DataFrame, fixed: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """``(investment, fixed cost invested)`` per year with the life extensions (read_highs_solution.write_v_extend):
-
-    ANN. extend_yr[e,d] = extend_yearly[e,d] = Σ_{extensions x in service in d} MW[x]·(a_cap − a_salv)[x]
-         fixed_extended_yr[e,d] = extended[e,d]·unitsize[e]·fc[e,d]
-      The yearly price of every extension in service in d (its level price, as in the objective) and the fixed cost
-      of d of the extended capacity.  Both are added to the entity's investment columns.  Unchanged without an
-      extension."""
-    if v.extend_yearly.empty or len(v.extend_yearly.columns) == 0:
-        return invest, fixed
-    yearly = v.extend_yearly
+    fixed = _fixed_cost_in_window(long, s.edd_operating_window, 'period_invest', 'start', par, columns,
+                                  drop_unpriced=True)
+    if v.extended.empty or len(v.extended.columns) == 0:
+        return fixed
     kept = v.extended.mul(par.entity_unitsize[v.extended.columns])
     paid = kept.mul(par.entity_fixed_cost.reindex(index=kept.index, columns=kept.columns).fillna(0.0))
-    return _with_built(invest, yearly), _with_built(fixed, paid)
+    return _with_built(fixed, paid)
 
 
 def _with_built(existing: pd.DataFrame, built: pd.DataFrame) -> pd.DataFrame:
-    """``existing`` (period × entity, the retirements of existing capacity) plus ``built`` (the same of model-built
-    capacity, the outputs of read_highs_solution.write_v_divest_built): the union of their periods and entities,
-    a cell only one of them has kept as it is.  ``existing`` unchanged without built retirements."""
+    """``existing`` (period × entity) plus ``built`` (the same of model-built capacity, the outputs of
+    read_highs_solution.write_v_divest_built / write_v_extend): the union of their periods and entities, a cell only
+    one of them has kept as it is.  ``existing`` unchanged without built rows."""
     if built is None or built.empty or len(built.columns) == 0:
         return existing
     out = existing.add(built, fill_value=0.0)
@@ -255,48 +263,22 @@ def _with_built(existing: pd.DataFrame, built: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _annualized_retirement(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """``(retirement, fixed cost reduction of divestments)`` per year, rows: period, columns: entity (CUR/yr).
+def _fixed_cost_divested_yearly(par, s, v) -> pd.DataFrame:
+    """The fixed cost reduction of divestments per year (rows: period, columns: entity, CUR/yr).
 
-    ANN. retire_yr[e,d] = −v_divest[e,d]·unitsize[e]·ed_divest_settlement_yearly[e,d]
-         fixed_divested_yr[e,d'] = −Σ_{(e,d,d') ∈ edd_retire_window} v_divest[e,d]·unitsize[e]·fc[e,d']
-      ed_divest_settlement_yearly[e,d] = ed_divest_salvage[e,d] / inflation_inv[d]
-      The salvage settlement of a retirement in d (the net salvage value received at the start of d less the salvage
-      credits of existing capacity given back, the objective's term) as a yearly amount of the retirement period
-      d, the period it happens in; and the fixed cost of d' the retired capacity no longer pays (from the
-      retirement period until the end of life of the existing capacity).  fc[e,d'] falls back to fc[e,d] of the
-      retirement period for a window period the solve does not hold; such rows are never reported (the chain union
-      keeps each period from the solve that realizes it, which holds its fixed cost).
-    ANN. retire_built_yr[e,d] = divest_built_cost[e,d] / inflation_inv[d]
-         fixed_divested_built_yr[e,d] = −divested_built[e,d]·unitsize[e]·fc[e,d]
-      The retirements of model-built capacity (read_highs_solution.write_v_divest_built): their objective term as a
-      yearly amount of the retirement period, and the fixed cost of every period the model-built capacity retired
-      so far no longer pays.  Both are added to the existing capacity's columns."""
-    retirement, fixed = _annualized_existing_retirement(par, s, v)
-    if v.divest_built_cost.empty or len(v.divest_built_cost.columns) == 0:
-        return retirement, fixed
-    factor = par.inflation_factor_investment_yearly.reindex(v.divest_built_cost.index)
-    built = v.divest_built_cost.div(factor, axis=0)
-    gone = v.divested_built.mul(par.entity_unitsize[v.divested_built.columns])
-    saved = -gone.mul(par.entity_fixed_cost.reindex(index=gone.index, columns=gone.columns).fillna(0.0))
-    return _with_built(retirement, built), _with_built(fixed, saved)
-
-
-def _annualized_existing_retirement(par, s, v) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """The ``(retirement, fixed cost reduction)`` per year of the retirements of existing capacity
-    (:func:`_annualized_retirement`)."""
+    ANN. fixed_divested_yr[e,d'] = −Σ_{(e,d,d') ∈ edd_retire_window} v_divest[e,d]·unitsize[e]·fc[e,d']
+                                   − divested_built[e,d']·unitsize[e]·fc[e,d']
+      The fixed cost of d' the retired capacity no longer pays (from the retirement period until the end of life of
+      the existing capacity), and that of the model-built capacity retired so far."""
     columns = v.divest.columns
     long = _decisions_long(-v.divest.mul(par.entity_unitsize[columns]), 'period_divest')
-    settlement = _decisions_long(par.entity_divest_settlement_yearly, 'period_divest').rename(
-        columns={'value': 'coef'})
-    joined = long.merge(settlement, on=['period_divest', 'entity'], how='inner')
-    joined = joined.assign(value=joined['value'] * joined['coef'])[['period_divest', 'entity', 'value']]
-    own_period = pd.MultiIndex.from_frame(
-        joined[['entity', 'period_divest']].assign(period=joined['period_divest']).drop_duplicates(),
-        names=['entity', 'period_divest', 'period'])
-    retirement = _per_year_in_window(joined, own_period, 'period_divest', columns)
-    return retirement, _fixed_cost_in_window(long, s.edd_retire_window, 'period_divest', 'period_divest', par,
-                                             columns, drop_unpriced=False)
+    fixed = _fixed_cost_in_window(long, s.edd_retire_window, 'period_divest', 'period_divest', par, columns,
+                                  drop_unpriced=False)
+    if v.divested_built.empty or len(v.divested_built.columns) == 0:
+        return fixed
+    gone = v.divested_built.mul(par.entity_unitsize[v.divested_built.columns])
+    saved = -gone.mul(par.entity_fixed_cost.reindex(index=gone.index, columns=gone.columns).fillna(0.0))
+    return _with_built(fixed, saved)
 
 
 def compute_costs(par, s, v, r) -> None:
@@ -593,22 +575,17 @@ def compute_costs(par, s, v, r) -> None:
                           .reindex(index=r.flow_dt.index, columns=ramp_procs, fill_value=0.0))
 
     # --- Investment costs ---
-    # The lumps are discounted from the start of the run over the run's periods; the investment lump and the
-    # lifetime fixed cost of new capacity are reported in the period the capacity starts to operate, the
-    # retirement lumps in the retirement period.
+    # The investment-type costs by cost line, each in the period its event is reported in (cost_lines), discounted
+    # from the start of the run; the lifetime fixed cost of new capacity is reported in the period the capacity
+    # starts to operate, a retirement's saving in the retirement period.
     invest = _invest_with_fan(v)
-    # A life extension's objective term is reported as investment of the period it is decided (comes online) in.
-    r.cost_entity_invest_d = _with_built(_invest_at_plant_starts(par, s, v), v.extend_cost)
-    r.cost_entity_divest_d = _with_built(
-        -v.divest.mul(par.entity_unitsize[v.divest.columns]).mul(par.entity_divest_salvage), v.divest_built_cost)
+    r.cost_lines = cost_lines(par, s, v)
     # The fixed cost of existing capacity: the user's existing capacity aged over its lifetime, in every period of
     # the run.  The capacity carried from earlier solves is in the fixed-cost lump of its investment and a
     # retirement in the lump of the retirement, so neither is charged here (a single solve: the same as
     # p_entity_all_existing, the mod objective term at flextool.mod:2395-2398).
     r.cost_entity_fixed_pre_existing = (par.entity_user_existing * par.entity_fixed_cost).mul(
         par.inflation_factor_operations_yearly, axis=0)
-    r.cost_entity_invest_pre_existing_d, r.cost_entity_invest_pre_existing_yearly = _existing_replacement(par)
-    r.costInvestPreExisting_d = r.cost_entity_invest_pre_existing_d.sum(axis=1)
     # entity_lifetime_fixed_cost* are densified over _entity_universe and
     # solve-keyed (concat-unioned), so they cover every v.invest/v.divest
     # column — direct indexing is safe.
@@ -619,15 +596,15 @@ def compute_costs(par, s, v, r) -> None:
         -(v.divest.mul(par.entity_unitsize[v.divest.columns]
                        * par.entity_lifetime_fixed_cost_divest[v.divest.columns])), -v.divest_built_fixed)
 
-    # The annualized investment, retirement and fixed costs of new / retired capacity: the yearly amounts of
-    # every vintage and retirement in effect in a period (not the lumps divided by a period's factor).
-    r.cost_entity_invest_yearly, r.cost_entity_fixed_invested_yearly = _annualized_investment(par, s, v)
-    r.cost_entity_divest_yearly, r.cost_entity_fixed_divested_yearly = _annualized_retirement(par, s, v)
+    # The annualized fixed costs of new / retired capacity: the yearly amounts of every vintage and retirement in
+    # effect in a period (not the lumps divided by a period's factor).
+    r.cost_entity_fixed_invested_yearly = _fixed_cost_invested_yearly(par, s, v)
+    r.cost_entity_fixed_divested_yearly = _fixed_cost_divested_yearly(par, s, v)
 
-    # Under ``recourse`` the LP weights the invest annuity and lifetime-fixed terms by pd_branch_weight[period]:
-    # the fan's investment is the branch-weighted v_invest_fan at the label (_invest_with_fan), whose lumps are
-    # the label's (a branch period takes its label's years).  Retirements in the branch periods of a recourse fan
-    # are not reported (normal outputs hold no forecast-branch retirement).
+    # Under ``recourse`` the LP weights the decisions' terms by pd_branch_weight[period]: the fan's investments and
+    # retirements are the branch-weighted v_invest_fan / v_divest_fan at the label, and the per-cohort decisions'
+    # lines the writer's (weighted to the label), whose lines are the label's (a branch period takes its label's
+    # years).
 
     # --- Aggregate operational costs (depends on r.costPenalty_* from compute_slacks) ---
     r.costOper_dt = (r.cost_commodity_dt.sum(axis=1) -
@@ -660,24 +637,9 @@ def compute_costs(par, s, v, r) -> None:
     r.costPenalty_d = r.costPenalty_d.add(r.costPenalty_capacity_margin_d, fill_value=0)
     r.costOper_and_penalty_d = r.costOper_d.add(r.costPenalty_d, fill_value=0)
 
-    r.costInvestUnit_d = r.cost_entity_invest_d[[e for e in s.process_unit if e in r.cost_entity_invest_d.columns]].sum(axis=1)
-    r.costDivestUnit_d = r.cost_entity_divest_d[[e for e in s.process_unit if e in r.cost_entity_divest_d.columns]].sum(axis=1)
-    r.costInvestConnection_d = r.cost_entity_invest_d[[e for e in s.process_connection if e in r.cost_entity_invest_d.columns]].sum(axis=1)
-    r.costDivestConnection_d = r.cost_entity_divest_d[[e for e in s.process_connection if e in r.cost_entity_divest_d.columns]].sum(axis=1)
-    r.costInvestState_d = r.cost_entity_invest_d[[e for e in s.node_state if e in r.cost_entity_invest_d.columns]].sum(axis=1)
-    r.costDivestState_d = r.cost_entity_divest_d[[e for e in s.node_state if e in r.cost_entity_divest_d.columns]].sum(axis=1)
-
-    r.costInvest_d = r.costInvestUnit_d + r.costInvestConnection_d + r.costInvestState_d
-    r.costDivest_d = r.costDivestUnit_d + r.costDivestConnection_d + r.costDivestState_d
     r.costFixedPreExisting_d = r.cost_entity_fixed_pre_existing.sum(axis=1)
     r.costFixedInvested_d = r.cost_entity_fixed_invested.sum(axis=1)
     r.costFixedDivested_d = r.cost_entity_fixed_divested.sum(axis=1)
-
-    def _class_sum(frame: pd.DataFrame, entities) -> pd.Series:
-        return frame[[e for e in entities if e in frame.columns]].sum(axis=1)
-
-    for kind, entities in (('Unit', s.process_unit), ('Connection', s.process_connection), ('State', s.node_state)):
-        setattr(r, f'costInvest{kind}_yearly', _class_sum(r.cost_entity_invest_yearly, entities))
-        setattr(r, f'costDivest{kind}_yearly', _class_sum(r.cost_entity_divest_yearly, entities))
+    r.costLines_d = lines_by_period(r.cost_lines)
     r.costFixedInvested_yearly = r.cost_entity_fixed_invested_yearly.sum(axis=1)
     r.costFixedDivested_yearly = r.cost_entity_fixed_divested_yearly.sum(axis=1)

@@ -11,8 +11,8 @@ _V_DROP = [
     'q_state_up', 'q_state_down', 'q_reserve',
     'q_inertia', 'q_non_synchronous', 'q_state_up_group', 'q_capacity_margin',
     'invest', 'divest', 'invest_fan',
-    'divest_built', 'divested_built', 'divest_built_cost', 'divest_built_fixed',
-    'extend', 'extended', 'extend_cost', 'extend_fixed', 'extend_yearly',
+    'divest_built', 'divested_built', 'divest_built_fixed', 'divest_built_lines',
+    'extend', 'extended', 'extend_fixed', 'extend_lines', 'divest_fan',
     # trade (v_trade, commodity price ladder, #57): period-only, same
     # rolling treatment as invest/divest — the committing roll's tier
     # purchase for a period wins over an earlier look-ahead roll's.
@@ -74,10 +74,10 @@ _PAR_DROP = [
     # The invest / divest lumps come from the solve that realizes the
     # decision period only (persist_realized_slice); keep='last' ties the
     # rolls of one solve.
-    'entity_annual_discounted', 'entity_divest_salvage',
-    'entity_annuity_yearly', 'entity_annual_discounted_start', 'entity_divest_settlement_yearly',
-    # The yearly price of the replacement of existing capacity: every solve computes it for the run's periods.
-    'entity_existing_replacement_yearly',
+    # The cost lines of the investment and retirement decisions (rows (period_decision, line, period_report)) too.
+    'entity_annual_discounted', 'entity_invest_lines', 'entity_divest_lines',
+    # The cost lines of a MW of existing capacity: every solve computes them for its periods.
+    'entity_existing_lines',
     # The reported costs' discount factors count from the start of the run,
     # so every solve holding a period gives it the same value.
     'inflation_factor_investment_yearly',
@@ -161,8 +161,8 @@ def _reduce_share_per_period(csoy: pd.Series) -> pd.Series:
 # The investment duals too (item 266): the v_invest reduced costs and the per-period cap / floor duals.
 _V_REALIZING_SOLVE = frozenset({
     'invest', 'divest', 'q_capacity_margin',
-    'divest_built', 'divested_built', 'divest_built_cost', 'divest_built_fixed',
-    'extend', 'extended', 'extend_cost', 'extend_fixed', 'extend_yearly',
+    'divest_built', 'divested_built', 'divest_built_fixed', 'divest_built_lines',
+    'extend', 'extended', 'extend_fixed', 'extend_lines',
     'dual_invest_connection', 'dual_invest_node', 'dual_invest_unit',
     'dual_maxInvest_period', 'dual_maxCumulative', 'dual_maxInvestGroup_period', 'dual_maxInvestGroup_cumulative',
     'dual_minInvest_period', 'dual_minCumulative', 'dual_minInvestGroup_period', 'dual_minInvestGroup_cumulative',

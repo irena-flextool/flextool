@@ -103,7 +103,7 @@ def test_the_dispatch_solve_has_no_investment_variable(chain) -> None:
 def test_the_investment_cost_is_counted_once(chain) -> None:
     _, csv = chain
     costs = pd.read_csv(csv / "costs_discounted.csv").set_index("category").iloc[:, 0]
-    assert float(costs["unit investment & retirement"]) == pytest.approx(INVEST_COST_MCUR, rel=1e-9)
+    assert float(costs["investment"]) == pytest.approx(INVEST_COST_MCUR, rel=1e-9)
 
 
 

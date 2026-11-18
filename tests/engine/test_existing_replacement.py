@@ -148,15 +148,16 @@ def test_replacement_constant_moves_the_objective_not_the_decisions(tmp_path_fac
 @pytest.mark.solver
 def test_replacement_is_reported_as_investment_pre_existing(tmp_path_factory) -> None:
     """invest_cost 400, the 500 MW kept (no retirement option): the replacement is reported in p2030, the period it
-    comes online, as 500 · A·S[10, 20) (M CUR), and as 500 · A a year in p2030 and p2035; the same in the chain of
-    solves as in the single solve (the run's existing chain is placed once)."""
+    comes online, as 500 · A·S[10, 20) (M CUR), and annualized as that event divided by p2030's investment factor
+    S[10, 15) (nothing in p2035); the same in the chain of solves as in the single solve (the run's existing chain
+    is placed once)."""
     from tests.engine.test_chain_costs import MEGA, _results, _row
     from tests.engine.test_user_constraint_capacity_terms import CHAIN
     a = 400_000.0 * ann(R, 10.0)
     values = [v for v in _values(cost=400.0) if v[2] != "invest_method"] + [
         ["unit", PLANT, "invest_method", b64("not_allowed", "str")]]
     want = {"p2020": 0.0, "p2025": 0.0, "p2030": 500.0 * a * span(10, 20), "p2035": 0.0}
-    yearly = {"p2020": 0.0, "p2025": 0.0, "p2030": 500.0 * a, "p2035": 500.0 * a}
+    yearly = {"p2020": 0.0, "p2025": 0.0, "p2030": 500.0 * a * span(10, 20) / span(10, 15), "p2035": 0.0}
     for kind, chain in (("single", SINGLE), ("chain", CHAIN)):
         results = _results(tmp_path_factory, f"er_report_{kind}", values, _no_battery_invest(chain))
         for d in want:

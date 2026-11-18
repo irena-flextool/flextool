@@ -119,7 +119,7 @@ def test_a_investment_without_invest_cost(tmp_path_factory, monkeypatch) -> None
     assert invest["d"].to_list() == ["p2020"]
     assert invest["value"][0] * _unitsize(step, "g") == pytest.approx(100.0, rel=1e-6)
     lines = _summary_lines(_write_outputs(steps, work, monkeypatch))
-    assert lines["Investment costs for realized periods (M CUR)"] == pytest.approx(0.0, abs=1e-9)
+    assert lines["Investment (M CUR)"] == pytest.approx(0.0, abs=1e-9)
     assert lines["Fixed costs for invested entities (M CUR)"] == pytest.approx(6.0, rel=1e-6)
 
 
@@ -147,7 +147,8 @@ def test_c_retirement_without_net_salvage_value(tmp_path_factory, monkeypatch) -
     assert divest["d"].to_list() == ["p2020"]
     assert divest["value"][0] * _unitsize(step, "r") == pytest.approx(100.0, rel=1e-6)
     lines = _summary_lines(_write_outputs(steps, work, monkeypatch))
-    assert lines["Retirement costs / salvage revenue for realized periods (M CUR)"] == pytest.approx(0.0, abs=1e-9)
+    assert lines["Retirement (M CUR)"] == pytest.approx(0.0, abs=1e-9)
+    assert lines["Salvage economic (M CUR)"] == pytest.approx(0.0, abs=1e-9)
     assert lines["Fixed costs for pre-existing entities (M CUR)"] == pytest.approx(5.0, rel=1e-6)
     assert lines["Fixed cost removal due to divested entities (M CUR)"] == pytest.approx(-5.0, rel=1e-6)
 

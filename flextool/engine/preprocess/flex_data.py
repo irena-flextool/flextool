@@ -1311,23 +1311,13 @@ class FlexData:
     # Reported costs only (no model term reads them; ``_npv`` "Run-level fields of the reported costs"):
     # discounted from the start of the run over the periods of the whole run.  (d,) factors over the solve's
     # periods and the other run periods; (e, d) lumps of the invest / divest decisions (the lifetime fixed cost
-    # over every entity of the period history); undiscounted yearly amounts, CUR/MW/yr ((e, d_invest, d) invest: the
-    # price per year in service of the plant of each vintage in service in d, a reinvest_automatic replacement at its
-    # own price; (e, d) divest: the salvage settlement as a yearly amount of the retirement period); (e, d_invest,
-    # d) the investment lump of each vintage split by the period each of its plants comes online; (e, d_invest, d)
-    # / (e, d_divest, d) the run periods each vintage operates in / each retirement applies to.  Equal to the
-    # per-solve fields when the run is the solve.
+    # over every entity of the period history); (e, d_invest, d) / (e, d_divest, d) the run periods each vintage
+    # operates in / each retirement applies to.  Equal to the per-solve fields when the run is the solve.
     p_inflation_op_run: Param | None = None
     p_inflation_inv_run: Param | None = None
     ed_entity_annual_discounted_run: Param | None = None
     ed_lifetime_fixed_cost_run: Param | None = None
     ed_lifetime_fixed_cost_divest_run: Param | None = None
-    edd_annuity: Param | None = None
-    edd_entity_annual_discounted_run: Param | None = None
-    # (e, d_invest, d) the price per year in service (CUR/MW) of the replacement of existing reinvest_automatic
-    # capacity in service in run period d, d_invest the period it comes online: the reported investment pre-existing.
-    edd_existing_replacement_run: Param | None = None
-    ed_divest_settlement_yearly: Param | None = None
     # The cost lines of the reported costs (``_npv``, :mod:`.params._cost_lines`; no model term reads them):
     # ``[e, d, line, d_report, value]`` (Utf8) per MW of v_invest (the run lump split by event), of v_divest, of
     # the existing capacity in d (its credit; its replacement over the run), and ``[e, cohort, d, line, d_report,

@@ -442,11 +442,20 @@ def test_built_retirements_carry_into_a_rolling_solve(tmp_path_factory) -> None:
 @pytest.mark.solver
 def test_retirement_of_built_capacity_in_the_results(tmp_path_factory) -> None:
     """100 MW built in p2020 (lifetime 10, fixed_cost 100 CUR/kW), 40 MW retired in p2025.  The unit capacity
-    reports 40 MW divested in p2025 and 60 MW in service then (0 from p2030, the end of life); the discounted
-    retirement cost is the objective's term, 40 MW × the change of retiring a MW (C − S·D(5) less the kept
-    plant's level price, :func:`_contract`), and the fixed cost no longer paid −40 · 100 000 · Σ_{k=5..9}
-    1.05^-(k+0.5) (discount_offset_operations 0.5); annualized, the retirement is that cost ÷ Σ_{k=5..9}
-    1.05^-(k+1) a year in p2025, the fixed cost reduction −40 · 100 000 a year in p2025."""
+    reports 40 MW divested in p2025 and 60 MW in service then (0 from p2030, the end of life).  The retirement's
+    term in the objective, 40 MW × the change of retiring a MW (C − S·D(5) less the kept plant's level price,
+    :func:`_contract`), is reported by event (r = i, off 1, v = 1/1.05):
+
+    * *retirement* at p2025: the contract's payments to the start of p2025 and its balance then, less the capital
+      its years in service were charged, A·Σ_{k=0..9} v^(k+1): both are worth C at r = i, so 0;
+    * *salvage economic* at p2025: the salvage value received, −40·S·v^5;
+    * *salvage end of life* at p2030 (its end of life): the 100 MW plant's credit −100·S·v^10 (the investment's
+      line) and the retired 40 MW's credit given back +40·S·v^10: −60·S·v^10;
+
+    the retirement's lines add up to 40 × change.  The fixed cost no longer paid −40 · 100 000 · Σ_{k=5..9}
+    1.05^-(k+0.5) (discount_offset_operations 0.5).  Annualized: each line divided by its period's investment
+    factor (p2025: Σ_{k=5..9} v^(k+1), p2030: Σ_{k=10..14} v^(k+1)); the fixed cost reduction −40 · 100 000 a year
+    in p2025."""
     import pandas as pd
 
     from tests.engine.test_chain_costs import MEGA, _row, _write_csv
@@ -459,15 +468,21 @@ def test_retirement_of_built_capacity_in_the_results(tmp_path_factory) -> None:
     assert plant.loc["p2025", "total"] == pytest.approx(60.0, rel=1e-9)
     assert plant.loc["p2030", "total"] == pytest.approx(0.0, abs=1e-9)
     _, change = _contract(0.05, 10, 10, 1.0, 0, 5)
+    economic, back = -40.0 * S * V ** 5, 40.0 * S * V ** 10
+    assert economic + back == pytest.approx(40.0 * change, rel=1e-9)
     fixed = 100.0 * 1000.0 * sum(V ** (k + 0.5) for k in range(5, 10))
-    discounted = _row(pd.read_csv(out / "cost_unit_discounted__d.csv"), "p2025")
-    assert discounted["retirement"] * MEGA == pytest.approx(40.0 * change, rel=1e-7)
-    assert discounted["fixed cost reduction of divestments"] * MEGA == pytest.approx(-40.0 * fixed, rel=1e-7)
-    annualized = _row(pd.read_csv(out / "cost_unit_annualized__d.csv"), "p2025")
-    assert annualized["retirement"] * MEGA == pytest.approx(
-        40.0 * change / sum(V ** (k + 1) for k in range(5, 10)), rel=1e-7)
-    assert annualized["fixed cost reduction of divestments"] * MEGA == pytest.approx(-40.0 * 100.0 * 1000.0,
-                                                                                    rel=1e-7)
+    discounted = pd.read_csv(out / "cost_unit_discounted__d.csv")
+    annualized = pd.read_csv(out / "cost_unit_annualized__d.csv")
+    factor = {"p2025": sum(V ** (k + 1) for k in range(5, 10)), "p2030": sum(V ** (k + 1) for k in range(10, 15))}
+    want = {("p2025", "retirement"): 0.0, ("p2025", "salvage economic"): economic,
+            ("p2030", "salvage end of life"): -100.0 * S * V ** 10 + back}
+    for (d, line), amount in want.items():
+        assert _row(discounted, d)[line] * MEGA == pytest.approx(amount, rel=1e-7, abs=1e-3), (d, line)
+        assert _row(annualized, d)[line] * MEGA == pytest.approx(amount / factor[d], rel=1e-7, abs=1e-3), (d, line)
+    retired = _row(discounted, "p2025")
+    assert retired["fixed cost reduction of divestments"] * MEGA == pytest.approx(-40.0 * fixed, rel=1e-7)
+    assert _row(annualized, "p2025")["fixed cost reduction of divestments"] * MEGA == pytest.approx(
+        -40.0 * 100.0 * 1000.0, rel=1e-7)
 
 
 LH2_JSON = FLEXTOOL_ROOT / "tests" / "fixtures" / "lh2_three_region.json"

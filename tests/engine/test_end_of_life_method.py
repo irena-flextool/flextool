@@ -414,18 +414,16 @@ def _at_decision(frame: pl.DataFrame, d: str = "p2020") -> float:
 
 
 def _lead_time_annuity(step) -> tuple[float, float]:
-    """``(edd_annuity at its start of operation p2025, ed_entity_annual_discounted)`` of wind_plant's decision p2020
-    in ``step``."""
+    """``(the price per year in service, ed_entity_annual_discounted)`` of wind_plant's decision p2020 in ``step``."""
     fd = step.flex_data
-    return _yearly(fd, "p2025"), _at_decision(fd.ed_entity_annual_discounted.frame)
+    return _price(fd), _at_decision(fd.ed_entity_annual_discounted.frame)
 
 
-def _yearly(fd, d: str) -> float:
-    """``edd_annuity`` (the reported price per year in service) of wind_plant's decision p2020 in period ``d``."""
-    rows = fd.edd_annuity.frame.filter((pl.col("e").cast(pl.Utf8) == WIND) & (pl.col("d_invest").cast(pl.Utf8)
-                                                                               == "p2020")
-                                       & (pl.col("d").cast(pl.Utf8) == d))
-    (value,) = rows["value"].to_list()
+def _price(fd) -> float:
+    """The price per year in service a_cap − a_salv of wind_plant's investment cohort of p2020 (the cohort table:
+    the plant as constructed, its period maps read at its online period)."""
+    rows = fd.cohort.filter((pl.col("e").cast(pl.Utf8) == WIND) & (pl.col("cohort") == "invest:p2020"))
+    (value,) = (rows["a_cap"] - rows["a_salv"]).to_list()
     return float(value)
 
 
@@ -471,10 +469,10 @@ def test_lead_time_investment_reads_every_period_map_at_its_online_period(tmp_pa
       p2030 (5 + 10 = 15 years), the operating window p2025, p2030, the fixed cost ``10 · 1000 ·
       (inflation_op[p2025] + inflation_op[p2030])`` (``ed_lifetime_fixed_cost`` and ``ed_lifetime_fixed_cost_run``);
     * the level price over lifetime_technical 7 (no inflation: G(x) = x) is a = 268 582.70 · 4 / 7 = 153 475.83
-      CUR/MW a year in service (``edd_annuity`` in p2025 and p2030, the reported yearly amount; before: the annuity for 4 of p2025's 5
-      years), so the lump ``ed_entity_annual_discounted`` (and its run-level twin
-      ``ed_entity_annual_discounted_run``: the solve is the run) = 15 · a = 2 302 137.41 (before: the 4 payback
-      years, 4 · 268 582.70 = 1 074 330.79).
+      CUR/MW a year in service (the cohort's price; before: the annuity for 4 of p2025's 5 years), so the lump
+      ``ed_entity_annual_discounted`` (and its run-level twin ``ed_entity_annual_discounted_run``: the solve is the
+      run) = 15 · a = 2 302 137.41 (before: the 4 payback years, 4 · 268 582.70 = 1 074 330.79), the reported
+      investment at its start of operation p2025.
 
     (At the decision period: annuity 2000 · 1000 · 0.05 / (1 − 1.05^-10) over 10 years, end of life 0 + 5 + 3 =
     8 → 10, in service and paying fixed cost in p2025 only.)"""
@@ -495,9 +493,11 @@ def test_lead_time_investment_reads_every_period_map_at_its_online_period(tmp_pa
     assert ann == pytest.approx(268_582.70, rel=1e-8)
     price = ann * 4.0 / 7.0
     assert price == pytest.approx(153_475.83, abs=0.01)
-    assert _yearly(fd, "p2025") == pytest.approx(price, rel=1e-12)
-    assert _yearly(fd, "p2030") == pytest.approx(price, rel=1e-12)
+    assert _price(fd) == pytest.approx(price, rel=1e-12)
     assert 15.0 * price == pytest.approx(2_302_137.41, abs=0.01)
+    lines = fd.edl_invest_lines_run.filter((pl.col("e") == WIND) & (pl.col("d") == "p2020"))
+    assert {(li, d): v for li, d, v in lines.select("line", "d_report", "value").iter_rows()} == pytest.approx(
+        {("investment", "p2025"): 15.0 * price}, rel=1e-12)
     assert _at_decision(fd.ed_entity_annual_discounted.frame) == pytest.approx(15.0 * price, rel=1e-12)
     assert _at_decision(fd.ed_entity_annual_discounted_run.frame) == pytest.approx(15.0 * price, rel=1e-12)
     (cohort,) = fd.cohort.filter((pl.col("kind") == "invest") & (pl.col("e").cast(pl.Utf8) == WIND)).iter_rows(

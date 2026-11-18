@@ -44,8 +44,9 @@ from flextool.process_outputs.out_ancillary import (
     co2_duals, capacity_margin, reserve_requirement,
 )
 from flextool.process_outputs.out_capacity import cohort_capacity, connection_capacity, node_capacity, unit_capacity
+from flextool.engine.preprocess.params._cost_lines import PRE_EXISTING_LINES
 from flextool.process_outputs.out_costs import (
-    generic, cost_summaries, cost_breakdown_by_entity, CO2, realized_leaf_periods,
+    generic, cost_summaries, cost_breakdown_by_entity, CO2, realized_leaf_periods, shown_lines,
 )
 from flextool.process_outputs.out_flowgroup import flowGroup_indicators
 from flextool.process_outputs.out_flows import (
@@ -537,12 +538,11 @@ def write_summary_csv(par, s, v, r, csv_dir):
         # flextool.mod:2107-2126; omitting them here would under-report
         # the objective for any scenario with non-zero existing capacity
         # or a non-zero lifetime_fixed_cost on invest/divest entities.
+        lines_d = r.costLines_d
         total_cost_d = (
             r.costOper_and_penalty_d
-                .add(r.costInvest_d, fill_value=0.0)
-                .add(r.costDivest_d, fill_value=0.0)
+                .add(lines_d.sum(axis=1), fill_value=0.0)
                 .add(r.costFixedPreExisting_d, fill_value=0.0)
-                .add(r.costInvestPreExisting_d, fill_value=0.0)
                 .add(r.costFixedInvested_d, fill_value=0.0)
                 .add(r.costFixedDivested_d, fill_value=0.0)
         )
@@ -555,22 +555,23 @@ def write_summary_csv(par, s, v, r, csv_dir):
 
         f.write(f'"Total cost (calculated) full horizon (M CUR)",{total_cost_full:.12g},"Annualized operational, penalty and investment costs"\n')
         f.write(f'"Total cost (calculated) realized periods (M CUR)",{total_cost_realized:.12g}\n')
+        # The total the objectives count: the calculated total without the objective constants of existing capacity
+        # (its fixed cost, the replacement of reinvest_automatic capacity and its salvage credits), which the
+        # optimised objective leaves out (include_existing_fixed_cost is not set by a run).
+        constants = (r.costFixedPreExisting_d.sum() + lines_d[list(PRE_EXISTING_LINES)].sum().sum()) / 1000000
+        f.write(f'"Total cost counted in the objective (M CUR)",{total_cost_full - constants:.12g},'
+                '"The solver objective for one deterministic solve; for several solves or a stochastic solve, the '
+                'realized run total priced as the objectives price it"\n')
 
         # Operational costs for realized periods (M CUR)
         operational_costs = r.costOper_d.sum(axis=0) / 1000000
         f.write(f'"Operational costs for realized periods (M CUR)",{operational_costs:.12g}\n')
 
-        # Investment costs for realized periods (M CUR)
-        investment_costs = r.costInvest_d.sum(axis=0) / 1000000
-        f.write(f'"Investment costs for realized periods (M CUR)",{investment_costs:.12g}\n')
-
-        # Retirement costs / salvage revenue for realized periods (M CUR).
-        # Sign follows the user's salvage_value input: positive salvage
-        # (scrap revenue) shows as a negative cost; negative salvage
-        # (decommissioning cost) shows as a positive cost.  Included in
-        # the solver objective since v_divest is a decision variable.
-        retirement_costs = r.costDivest_d.sum(axis=0) / 1000000
-        f.write(f'"Retirement costs / salvage revenue for realized periods (M CUR)",{retirement_costs:.12g}\n')
+        # The investment-type costs by cost line (M CUR), each counted in the period its event is reported in.
+        # A positive salvage value shows as a negative cost.  The pre-existing lines only where they are not 0.
+        shown = shown_lines(lines_d)
+        for line in (c for c in shown if c not in PRE_EXISTING_LINES):
+            f.write(f'"{line[0].upper()}{line[1:]} (M CUR)",{lines_d[line].sum() / 1000000:.12g}\n')
 
         # Fixed costs for existing entities (M CUR)
         fixed_costs_pre_existing = r.costFixedPreExisting_d.sum(axis=0) / 1000000
@@ -578,10 +579,9 @@ def write_summary_csv(par, s, v, r, csv_dir):
         fixed_costs_divested = r.costFixedDivested_d.sum(axis=0) / 1000000
 
         f.write(f'"Fixed costs for pre-existing entities (M CUR)",{fixed_costs_pre_existing:.12g}\n')
-        if r.costInvestPreExisting_d.fillna(0.0).ne(0.0).any():
-            # The replacement of existing reinvest_automatic capacity at its end of life.
-            invest_pre_existing = r.costInvestPreExisting_d.sum(axis=0) / 1000000
-            f.write(f'"Investment costs for pre-existing entities (M CUR)",{invest_pre_existing:.12g}\n')
+        for line in (c for c in shown if c in PRE_EXISTING_LINES):
+            # The replacement of existing reinvest_automatic capacity and the salvage credits of existing capacity.
+            f.write(f'"{line[0].upper()}{line[1:]} (M CUR)",{lines_d[line].sum() / 1000000:.12g}\n')
         f.write(f'"Fixed costs for invested entities (M CUR)",{fixed_costs_invested:.12g}\n')
         f.write(f'"Fixed cost removal due to divested entities (M CUR)",{fixed_costs_divested:.12g}\n')
 

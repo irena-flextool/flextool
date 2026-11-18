@@ -70,6 +70,7 @@ if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))
 
 from flextool.engine import run_chain_from_db  # noqa: E402  # imports after sys.path manipulation above
+from flextool.engine.preprocess.params._cost_lines import COST_LINES, PRE_EXISTING_LINES  # noqa: E402
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider  # noqa: E402
 from flextool.process_outputs.write_outputs import write_outputs  # noqa: E402  # imports after sys.path manipulation above
 
@@ -328,10 +329,10 @@ def _read_summary_solve(csv_dir: Path) -> dict:
             out["total_calc"] = float(row[1])
         elif "Operational costs for realized periods" in label:
             out["operational"] = float(row[1])
-        elif "Investment costs for realized periods" in label:
-            out["investment"] = float(row[1])
-        elif "Retirement costs" in label:
-            out["retirement"] = float(row[1])
+        elif "Total cost counted in the objective" in label:
+            out["objective_total"] = float(row[1])
+        elif label.endswith(" (M CUR)") and label[:-len(" (M CUR)")].lower() in COST_LINES:
+            out.setdefault("lines", {})[label[:-len(" (M CUR)")].lower()] = float(row[1])
         elif "Fixed costs for pre-existing entities" in label:
             out["fixed_pre_existing"] = float(row[1])
         elif "Fixed costs for invested entities" in label:
@@ -659,8 +660,12 @@ class TestDivestSalvageIncludedInObjective:
     end of life as the credit a_x = 200 000 · 1.05^−30 · 0.05 / (1 −
     1.05^−30) / 1.05 = 2 866.94 CUR/MW a year (discount_rate 5 %, offset 0;
     its life ends past the horizon, so the credit is levelled over the 30
-    years).  The retirement bucket is (−200 000 + 2 866.94) · 1000 MW =
-    −197.133060 M CUR.
+    years).  The retirement's cost lines: *salvage economic* −200 000 ·
+    1000 MW = −200 M CUR (received at p2020) and *salvage replaced* +2 866.94
+    · 1000 MW = 2.866940 M CUR (the credit given back where the plant's end of
+    life is reported: its life passes the horizon end, so the last period,
+    p2020; a reinvest_automatic plant is replaced at its end of life), together
+    −197.133060 M CUR, the objective's term.
 
     Solver objective ≈ Python total - pre-existing fixed cost constant.
     Any other residual means the salvage term is mis-accounted.
@@ -678,19 +683,21 @@ class TestDivestSalvageIncludedInObjective:
         the solver-vs-python assertion distinguishes the salvage algebra
         from the trivial no-divest case."""
         s = _read_summary_solve(csv_dir)
-        assert abs(s["retirement"]) > 1e-6, (
+        assert abs(s["lines"]["salvage economic"]) > 1e-6, (
             "retirement bucket is zero — fixture did not exercise salvage, "
             "test below is vacuous"
         )
 
     def test_retirement_receives_the_net_salvage_value(self, csv_dir: Path) -> None:
-        """The retirement bucket is the salvage settlement of the 1000 MW
-        retired at the cap: (−200 000 + a_x) CUR/MW · 1000 MW (class
-        docstring)."""
+        """The retirement of the 1000 MW retired at the cap: salvage economic
+        −200 000 CUR/MW · 1000 MW, salvage replaced a_x · 1000 MW, no contract
+        settlement (the existing plant's investment is sunk) (class docstring)."""
         a_x = 200_000.0 * 1.05 ** -30 * 0.05 / (1.0 - 1.05 ** -30) / 1.05
         assert a_x == pytest.approx(2_866.94, abs=0.01)
-        s = _read_summary_solve(csv_dir)
-        assert s["retirement"] == pytest.approx((-200_000.0 + a_x) * 1000.0 / 1e6, rel=1e-9)
+        lines = _read_summary_solve(csv_dir)["lines"]
+        assert lines["salvage economic"] == pytest.approx(-200_000.0 * 1000.0 / 1e6, rel=1e-9)
+        assert lines["salvage replaced"] == pytest.approx(a_x * 1000.0 / 1e6, rel=1e-9)
+        assert lines["retirement"] == pytest.approx(0.0, abs=1e-9)
 
     def test_solver_matches_python_minus_preexisting(self, csv_dir: Path) -> None:
         """Solver objective excludes the pre-existing-fixed constant;
@@ -703,19 +710,19 @@ class TestDivestSalvageIncludedInObjective:
         python_sum = (
             s["operational"]
             + s["penalty"]
-            + s["investment"]
-            + s["retirement"]
+            + sum(v for k, v in s["lines"].items() if k not in PRE_EXISTING_LINES)
             + s["fixed_invested"]
             + s["fixed_divested"]
         )
+        assert s["objective_total"] == pytest.approx(s["objective"], rel=1e-9)
         residual = python_sum - s["objective"]
         assert abs(residual) < max(1.0, 1e-4 * abs(s["objective"])), (
             f"Residual {residual:+.6f} M CUR — salvage term may be "
             f"mis-accounted.  python_sum={python_sum} "
             f"objective={s['objective']} "
             f"(components: oper={s['operational']} "
-            f"penalty={s['penalty']} invest={s['investment']} "
-            f"retire={s['retirement']} fix_inv={s['fixed_invested']} "
+            f"penalty={s['penalty']} lines={s['lines']} "
+            f"fix_inv={s['fixed_invested']} "
             f"fix_div={s['fixed_divested']})"
         )
 

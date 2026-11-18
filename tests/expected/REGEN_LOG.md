@@ -1629,3 +1629,33 @@ cheaper wind invests 8.75 MW. In the dispatch solve only 144 RHS change (72 `max
 the dispatch objective is the commodity cost of its 72 timesteps scaled to the year: 139 603.75 × 8760 / 72 =
 16 985 122.92 (before 146 350 × 8760 / 72 = 17 805 916.67, the old inlined value), the sums of `commodity_cost` in
 this scenario's `costs__dt.csv` golden after and before e561af23.
+
+## 2026-11-18 — investment-type costs reported by event (cost lines), 44 scenarios (#187, P7a)
+
+**Mechanism.** `calc_costs.cost_lines` replaces the class rows *unit / connection / storage investment &
+retirement* (and the node table's *storage investment* / *storage retirement*) by the cost lines of
+`params._cost_lines` (investment, replacement, extension, retirement, salvage end of life / replaced / extended /
+economic; the pre-existing lines where not 0), each in the period its event happens, from `_npv`'s split of the same
+lumps and coefficients (per decision the lines add up to the term to 1e-12, `tests/engine/test_cost_line_split.py`).
+Annualized, a line is its discounted value ÷ the period's investment factor. The LP is untouched (lp_snapshot
+695/695 identical vs `lp_p6_3`).
+
+**Files (regenerated with `--regenerate <scenario>`, one call per scenario; the solutions do not move):**
+- `costs_discounted.csv`, 32 scenarios: shape (class rows → line rows). Check (R3): per scenario, Σ old class rows
+  (+ *investment pre-existing*) = Σ new non-pre-existing line rows, to the 4-decimal rounding (largest gap 1e-4 M,
+  test_a_lot); every other category unchanged; no fixture gains a *salvage pre-existing* row (none has existing
+  capacity with a salvage credit).
+- `cost_unit_{discounted,annualized}__d.csv` (13), `cost_connection_*` (6), `cost_node_*` (6): columns (the lines in
+  place of investment / retirement); discounted values move between periods where a salvage value is set (the
+  salvage at the end of life, not netted into the investment) and to *replacement* where a reinvest_automatic plant
+  is replaced inside the horizon (multi_fullYear_battery family, test_a_lot); annualized investment values change
+  in every investing scenario (the event ÷ the period's factor instead of the yearly annuity of every vintage in
+  service). The non-line columns are unchanged.
+- `summary_solve.csv`, 19 scenarios (text compare): the rows *Investment costs for realized periods*, *Retirement
+  costs / salvage revenue for realized periods* and *Investment costs for pre-existing entities* are replaced by one
+  row per line, and the row *Total cost counted in the objective* is added after the calculated totals; the
+  calculated totals are unchanged.
+
+Files the regeneration rewrote within the compare tolerance but that this change does not touch (`costs__dt`,
+`node__d`, `node__dt`, `node_state__dt`, `slack__upward__node_state__dt`, `unit__outputNode__dt`, `unit_capacity__d`
+of 16 scenarios) were restored to their previous content.

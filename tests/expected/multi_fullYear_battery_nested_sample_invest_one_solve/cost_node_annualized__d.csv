@@ -1,9 +1,9 @@
-solve,period,node,upward slack penalty,downward slack penalty,storage investment,storage retirement,fixed cost pre-existing,storage investment pre-existing,fixed cost invested
-dispatch_fullYear_roll,p2020,battery,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-dispatch_fullYear_roll,p2020,west,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-dispatch_fullYear_roll,p2025,battery,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-dispatch_fullYear_roll,p2025,west,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-dispatch_fullYear_roll,p2030,battery,0.0,0.0,0.0,0.0,0.0,1.2334,0.0
-dispatch_fullYear_roll,p2030,west,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-dispatch_fullYear_roll,p2035,battery,0.0,0.0,0.0,0.0,0.0,1.2334,0.0
-dispatch_fullYear_roll,p2035,west,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+solve,period,node,upward slack penalty,downward slack penalty,investment,replacement,extension,retirement,salvage end of life,salvage replaced,salvage extended,salvage economic,investment pre-existing,fixed cost pre-existing,fixed cost invested
+dispatch_fullYear_roll,p2020,battery,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll,p2020,west,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll,p2025,battery,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll,p2025,west,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll,p2030,battery,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,2.2471,0.0,0.0
+dispatch_fullYear_roll,p2030,west,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll,p2035,battery,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll,p2035,west,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0

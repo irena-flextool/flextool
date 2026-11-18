@@ -9,8 +9,9 @@ Per decision (row) of each solve, to 1e-12 relative:
   retired in d);
 * Σ_lines ``cdl_divest_built_lines`` [e, c, d] = ``cd_divest_built_cost`` [e, c, d];
 * Σ_lines ``cdl_extend_lines`` [e, c, d] = ``cd_extend_cost`` [e, c, d];
-* Σ_lines ``edl_existing_credit_lines`` [e, d] = −``ed_existing_salvage_credit`` [e, d] and
-  Σ_lines ``edl_existing_replacement_lines`` [e, d] = the replacement's price × ``p_inflation_inv_run`` [d].
+* Σ_lines ``edl_existing_credit_lines`` [e, d] = −``ed_existing_salvage_credit`` [e, d] and, in one solve,
+  Σ_lines ``edl_existing_replacement_lines`` [e, d] = ``ed_existing_replacement`` [e, d] (the objective constant's
+  term).
 
 Cases: reinvest_choice with a salvage value (single solve and chain), reinvest_automatic (chains of plants, the
 existing capacity's replacements), retirement of existing and of built capacity, a life extension, and a
@@ -112,11 +113,10 @@ def test_the_lines_add_up_to_the_terms(tmp_path_factory, case) -> None:
             _assert_same(_summed(fd.edl_existing_credit_lines, ("e", "d")),
                          _param(fd.ed_existing_salvage_credit, ("e", "d"), -1.0), f"{name} credit")
             seen.add("credit")
-        if fd.edd_existing_replacement_run is not None:
-            factor = dict(utf8(fd.p_inflation_inv_run.frame).select("d", "value").iter_rows())
-            price = {(e, d): v * factor[d] for e, _on, d, v in
-                     utf8(fd.edd_existing_replacement_run.frame).select("e", "d_invest", "d", "value").iter_rows()}
-            _assert_same(_summed(fd.edl_existing_replacement_lines, ("e", "d")), price, f"{name} replacement")
+        if fd.ed_existing_replacement is not None and len(_steps(tmp_path_factory, case)) == 1:
+            # One solve: the run is the solve, and the replacement lines are the objective constant's terms.
+            _assert_same(_summed(fd.edl_existing_replacement_lines, ("e", "d")),
+                         _param(fd.ed_existing_replacement, ("e", "d")), f"{name} replacement")
             seen.add("replacement")
     want = {"choice_single": {"invest", "divest", "built", "credit"}, "automatic_single": {"invest", "replacement", "divest", "built"},
             "extension": {"invest", "extend"}, "stochastic": {"invest", "built"}}

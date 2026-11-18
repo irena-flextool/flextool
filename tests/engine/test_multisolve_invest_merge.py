@@ -17,9 +17,10 @@ p2040: 1, p2045: 1} CUR/kW and ``lifetime`` 30 years (all capacity alive over th
 
 Hand values: p2035 residual 120 - 60 = 60 MW -> invest 60; p2040 residual 120 MW -> 60 more; p2045 residual 60 MW
 < 120 MW existing -> invest 0.  Annuity at r = 0.05, n = 30, paid at the start of each year (the default
-discount_offset_investment 0): 0.05 / (1 - 1.05**-30) / 1.05 = 0.0619537.  The p2040 annualized unit investment
-(both investments operate in p2040): (60 MW * 3000 CUR/MW + 60 MW * 1000 CUR/MW) * 0.0619537 = 240 000 *
-0.0619537 = 14 868.9 CUR = 0.0148689 M CUR.
+discount_offset_investment 0): 0.05 / (1 - 1.05**-30) / 1.05 = 0.0619537.  The investment of p2040 is an event
+at its start of operation: its 60 MW at 1000 CUR/MW over its years in service inside the run, p2040 and p2045
+(one year each, no social discount rate: factor 1), 60 * 1000 * 0.0619537 * 2 = 7 434.4 CUR; annualized, divided
+by p2040's investment factor 1: 0.0074344 M CUR.
 
 A second chain (item 266) checks the investment duals the same way: ``s1`` does not invest in p2040, so the p2040
 marginal (``unit_invest_marginal__d``) is the non-zero reduced cost of ``s1``, not ``s2``'s 0 row.
@@ -36,7 +37,7 @@ S1 = "stoch_2p_mid"
 S2 = "s2_dispatch_p2040"
 EXPECTED_INVESTED = {"p2035": 60.0, "p2040": 60.0, "p2045": 0.0}
 _ANNUITY_30Y = 0.05 / (1.0 - 1.05 ** -30) / 1.05
-EXPECTED_P2040_ANNUALIZED_INVEST_MCUR = (60.0 * 3000.0 + 60.0 * 1000.0) * _ANNUITY_30Y / 1e6
+EXPECTED_P2040_ANNUALIZED_INVEST_MCUR = 60.0 * 1000.0 * _ANNUITY_30Y * 2.0 / 1e6
 SCENARIO_NO_P2040_INVEST = "two_solves_no_p2040_invest"
 
 
@@ -123,7 +124,7 @@ def test_later_solve_does_not_overwrite_realized_investment(tmp_path, monkeypatc
     assert dict(zip(capacity["period"], capacity["invested"])) == pytest.approx(EXPECTED_INVESTED), capacity
     # The investment table is labelled with the solve that realizes each investment.
     costs = pl.read_csv(csv_dir / "annualized_costs__d.csv").filter(pl.col("period") == "p2040")
-    assert costs["unit investment & retirement"].to_list() == pytest.approx(
+    assert costs["investment"].to_list() == pytest.approx(
         [EXPECTED_P2040_ANNUALIZED_INVEST_MCUR], rel=1e-5)
 
 

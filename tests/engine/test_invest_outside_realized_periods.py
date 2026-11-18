@@ -20,10 +20,12 @@ SCENARIO = "deterministic_partial_realized"
 SOLVE = "stoch_2p_mid"
 # Hand values: p2035 residual 120 - 60 (wind) = 60 MW, p2040 residual 120 MW.  Invest 60 at p2035 and 60 more at
 # p2040 (the p2035 capacity carries over).  Annuity at r = 0.05, n = 1, paid at the start of the year (the default
-# discount_offset_investment 0): 0.05 / (1 - 1.05**-1) / 1.05 = 1.  The p2040 annualized unit investment:
-# 60 MW * 3000 CUR/MW * 1 + 60 MW * 1000 CUR/MW * 1 = 180 000 + 60 000 CUR = 0.24 M CUR.
+# discount_offset_investment 0): 0.05 / (1 - 1.05**-1) / 1.05 = 1.  lifetime 1 (reinvest_automatic): the p2035
+# plant serves its one year and is replaced in p2040 at the invest_cost of p2040.  The p2040 events, annualized
+# (each event over its one year in service, divided by p2040's investment factor): the new 60 MW, investment
+# 60 MW * 1000 CUR/MW * 1 = 0.06 M CUR, and the replacement of the p2035 plant, 60 MW * 1000 CUR/MW * 1 = 0.06 M CUR.
 EXPECTED_INVEST = {"p2035": 60.0, "p2040": 60.0}
-EXPECTED_P2040_ANNUALIZED_INVEST_MCUR = 0.24
+EXPECTED_P2040_ANNUALIZED_MCUR = {"investment": 0.06, "replacement": 0.06}
 
 
 def _add_partial_scenario(db_url: str) -> None:
@@ -84,4 +86,5 @@ def test_invest_period_outside_realized_periods_has_its_rows(tmp_path, monkeypat
     assert capacity["period"].to_list() == ["p2035", "p2040"], capacity
     assert capacity["invested"].to_list() == pytest.approx([60.0, 60.0])
     costs = pl.read_csv(csv_dir / "annualized_costs__d.csv").filter(pl.col("period") == "p2040")
-    assert costs["unit investment & retirement"].to_list() == pytest.approx([EXPECTED_P2040_ANNUALIZED_INVEST_MCUR])
+    for line, amount in EXPECTED_P2040_ANNUALIZED_MCUR.items():
+        assert costs[line].to_list() == pytest.approx([amount]), line

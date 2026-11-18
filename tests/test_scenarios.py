@@ -118,6 +118,38 @@ def _parse_summary_solver_objective(summary_path: Path) -> float:
     return total
 
 
+#: Deterministic single solves whose objective holds a term no cost table reports (their calculated total is not
+#: the solver objective before the investment-type costs too): 5weeks_battery_intraperiod_blocks (objective 1843.38
+#: M, calculated 956.43 M).
+_OBJECTIVE_TERMS_NOT_REPORTED = frozenset({"5weeks_battery_intraperiod_blocks"})
+
+
+def _solver_objectives_and_counted_total(summary_path: Path) -> tuple[list[float], float]:
+    """``(the solver objective of each solve, "Total cost counted in the objective")`` of ``summary_solve.csv``
+    (the solve rows follow its ``"Solve","Objective"`` header up to the first labelled row)."""
+    import csv
+    objectives: list[float] = []
+    counted = None
+    in_solves = False
+    with summary_path.open() as f:
+        for row in csv.reader(f):
+            if not row:
+                continue
+            if row[0] == "Solve":
+                in_solves = True
+                continue
+            if row[0].startswith("Total cost counted in the objective"):
+                counted = float(row[1])
+            if in_solves:
+                if row[0].startswith("Total cost"):
+                    in_solves = False
+                else:
+                    objectives.append(float(row[1]))
+    if counted is None:
+        raise ValueError(f"No 'Total cost counted in the objective' row in {summary_path}")
+    return objectives, counted
+
+
 def _parse_summary_solve_objective(summary_path: Path) -> float:
     """Extract the full-horizon total cost from ``summary_solve.csv``.
 
@@ -475,7 +507,8 @@ def test_obj_decomposition(
     workdir: Path,
 ) -> None:
     """Tier 8 obj-decomposition parity: ``sum(costs_discounted.csv)`` equals the
-    "Total cost (calculated) full horizon (M CUR)" row of ``summary_solve.csv`` to ``1e-6`` relative.
+    "Total cost (calculated) full horizon (M CUR)" row of ``summary_solve.csv`` to ``1e-6`` relative, and for one
+    deterministic solve "Total cost counted in the objective (M CUR)" is the solver objective.
 
     A failure pinpoints the obj writer summing something twice, dropping a term, or getting a sign wrong — the
     diagnostic gap that the golden-CSV comparison cannot localise on its own.  The outputs are the ones
@@ -504,6 +537,13 @@ def test_obj_decomposition(
 
     decomposition_total = _parse_costs_discounted(costs_path)
     obj_total = _parse_summary_solve_objective(summary_path)
+    # One deterministic solve: the total the objective counts (the calculated total without the constants of
+    # existing capacity) is the solver objective.
+    objectives, counted = _solver_objectives_and_counted_total(summary_path)
+    if len(objectives) == 1 and "stoch" not in scenario and "stoch" not in db_fixture \
+            and scenario not in _OBJECTIVE_TERMS_NOT_REPORTED:
+        assert math.isclose(counted, objectives[0], rel_tol=1e-6, abs_tol=1e-6), (
+            f"{scenario}: total counted in the objective {counted!r} != solver objective {objectives[0]!r}")
 
     assert math.isclose(
         decomposition_total, obj_total, rel_tol=1e-6, abs_tol=1e-9

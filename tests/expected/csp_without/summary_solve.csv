@@ -1,13 +1,20 @@
-"Diagnostic results from all solves. Output at (UTC): 2026-11-10 04:31:01.626746+00:00"
+"Diagnostic results from all solves. Output at (UTC): 2026-11-18 10:53:50.210831+00:00"
 
 
 "Solve","Objective","Total cost from solver, includes all penalty costs"
 y2020_2day_dispatch,65.7
 "Total cost (calculated) full horizon (M CUR)",65.7,"Annualized operational, penalty and investment costs"
 "Total cost (calculated) realized periods (M CUR)",65.7
+"Total cost counted in the objective (M CUR)",65.7,"The solver objective for one deterministic solve; for several solves or a stochastic solve, the realized run total priced as the objectives price it"
 "Operational costs for realized periods (M CUR)",65.7
-"Investment costs for realized periods (M CUR)",0
-"Retirement costs / salvage revenue for realized periods (M CUR)",0
+"Investment (M CUR)",0
+"Replacement (M CUR)",0
+"Extension (M CUR)",0
+"Retirement (M CUR)",0
+"Salvage end of life (M CUR)",0
+"Salvage replaced (M CUR)",0
+"Salvage extended (M CUR)",0
+"Salvage economic (M CUR)",0
 "Fixed costs for pre-existing entities (M CUR)",0
 "Fixed costs for invested entities (M CUR)",0
 "Fixed cost removal due to divested entities (M CUR)",0

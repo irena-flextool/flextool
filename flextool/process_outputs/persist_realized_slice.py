@@ -94,7 +94,7 @@ _EXISTING_ATTRS: frozenset[str] = frozenset({"entity_all_existing"})
 # its investments cover).
 _RUN_PERIOD_ATTRS: frozenset[str] = frozenset(
     {"inflation_factor_operations_yearly", "inflation_factor_investment_yearly", "entity_user_existing",
-     "entity_fixed_cost"}
+     "entity_fixed_cost", "entity_existing_lines"}
 )
 # The solve's own operations factor: kept over its realized dispatch periods (the CO2 price of a period is its
 # dual ÷ the factor of the solve that realizes it).
@@ -103,17 +103,13 @@ _SOLVE_FACTOR_ATTRS: frozenset[str] = frozenset({"inflation_factor_operations_so
 _ANNUAL_SRC_FIELD: dict[str, str] = {
     "entity_annual_discounted": "ed_entity_annual_discounted",
     "entity_annuity": "ed_entity_annual_discounted",
-    "entity_divest_salvage": "ed_divest_salvage",
-    # The yearly settlement of the retirements (the annualized retirement costs).
-    "entity_divest_settlement_yearly": "ed_divest_settlement_yearly",
 }
-# The (period_invest, period)-keyed amounts of the investment decisions and their FlexData carriers: the yearly
-# price of the plant in service in each period (the annualized investment cost) and the investment lump at the
-# period each plant comes online (the discounted investment cost).  Like the lumps, they come from the solve that
-# realizes the decision period.
+# The cost lines of a MW of an investment / a retirement of existing capacity (rows (period_decision, line,
+# period_report)) and their FlexData carriers.  Like the lumps, they come from the solve that realizes the decision
+# period.
 _DECISION_PARAMS: dict[str, str] = {
-    "entity_annuity_yearly": "edd_annuity",
-    "entity_annual_discounted_start": "edd_entity_annual_discounted_run",
+    "entity_invest_lines": "edl_invest_lines_run",
+    "entity_divest_lines": "edl_divest_lines",
 }
 
 
@@ -244,6 +240,8 @@ def _annual_carrier_empty(flex_data: "FlexData", src_attr: str) -> bool:
     """True iff the annual-NPV carrier ``src_attr`` is empty/None — i.e.
     this is a dispatch-only step (read_parameters.py:1707-1752)."""
     src_param = getattr(flex_data, src_attr, None)
+    if isinstance(src_param, pl.DataFrame):  # a cost-line frame
+        return src_param.height == 0
     return (
         src_param is None
         or getattr(src_param, "frame", None) is None
@@ -311,7 +309,7 @@ def _apply_realized_filter(
     if attr in _DECISION_PARAMS:
         if _annual_carrier_empty(flex_data, _DECISION_PARAMS[attr]):
             return obj.iloc[0:0]
-        decided = obj.index.get_level_values("period_invest").astype(str)
+        decided = obj.index.get_level_values("period_decision").astype(str)
         return obj[decided.isin(realized_invest_periods)]
 
     # Hack 1 — entity_lifetime_fixed_cost[_divest]: the lifetime fixed-cost

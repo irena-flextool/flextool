@@ -28,11 +28,9 @@ The cluster covers these FlexData fields:
 
 and, for the reported costs only (no model term reads them), their run-level
 twins ``*_run`` discounted from the start of the run over the periods of the
-whole run, the undiscounted yearly amounts ``edd_annuity`` (an investment's price per year in service, per
-period) /
-``ed_divest_settlement_yearly`` (a retirement's salvage settlement as a yearly amount of its period),
-the operating / retirement windows ``edd_operating_window`` / ``edd_retire_window`` (section "Run-level
-fields of the reported costs").
+whole run, the operating / retirement windows ``edd_operating_window`` / ``edd_retire_window`` and the cost
+lines ``edl_*`` / ``cdl_*`` (:mod:`._cost_lines`: each lump and coefficient split by the event it is made of,
+in the period it happens; section "Run-level fields of the reported costs").
 
 Architecture
 ------------
@@ -1704,8 +1702,8 @@ def apply_existing_replacement(flex_data: object,
     """Set ``ed_existing_replacement`` (``[e, d]``: the price per year of the replacement of existing
     reinvest_automatic capacity in service in d times the solve's investment factor inflation_inv[d], CUR/MW; the
     objective constant ``existing_replacement`` with include_existing_fixed_cost), its reported twin
-    ``edd_existing_replacement_run`` (``[e, d_invest, d]``: the price per year over the run's periods d, d_invest
-    the period the replacement comes online) and the existing generations' prices in ``flex_data.cohort``.  ``None``
+    ``edl_existing_replacement_lines`` (the cost lines per MW of existing capacity in the run's periods,
+    :func:`_existing_replacement_lines`) and the existing generations' prices in ``flex_data.cohort``.  ``None``
     without a replacement in the periods."""
     years = _chain_years(source, active_solve, provider)
     run = run_years(source, active_solve, list(period_in_use), workdir, provider=provider)
@@ -1713,8 +1711,6 @@ def apply_existing_replacement(flex_data: object,
     reported = existing_replacement_prices(source, active_solve, run_periods,
                                            {**years, **(run[0] if run is not None else {})}, lineage=lineage,
                                            workdir=workdir, provider=provider)
-    flex_data.edd_existing_replacement_run = _edd_param(
-        reported.filter(pl.col("value") != 0.0).select("e", d_invest=pl.col("d_on"), d="d", value="value"))
     flex_data.edl_existing_replacement_lines = _existing_replacement_lines(
         reported, getattr(flex_data, "p_inflation_inv_run", None),
         report_years(source, active_solve, list(period_in_use), workdir, provider))
@@ -2622,19 +2618,13 @@ def ed_lifetime_fixed_cost_divest_from_source(
 #   pre-existing capacity, from the start of the run; the end of the run for reinvest_automatic),
 #   the window of _cohorts.retire_active.  In a stochastic fan only the pairs of the walk lineage (each calendar
 #   period once).
-# OUT. edd_annuity[e,d_invest,d] = the price per year in service (CUR/MW/yr, undiscounted) of the plant of the vintage
-#   (e, d_invest) in service in d, over its operating window: a_cap[e,c(d_invest)] − a_salv[e,c(d_invest)] for
-#   reinvest_choice / no_reinvestment (the level yearly cost of the plant over its lifetime_technical less its level
-#   salvage credit, the objective's price, _level_prices_lf); for reinvest_automatic a_b[g] of the generation g in
-#   service in d (each replacement at its own price, priced_chain_rows; the annuity of a decision without
-#   generations).
-#      edd_entity_annual_discounted_run[e,d_invest,d] = Σ over the window periods d' of the plants of the vintage
-#   that come online in d of price[d']·p_inflation_inv_run[d']: the investment lump split by the period each plant
-#   comes online (c(d_invest), and each generation of a chain at its own online period); the reported investment
-#   cost when it happens.
-#   ed_divest_settlement_yearly[e,d] = ed_divest_salvage[e,d] / p_inflation_inv[d]: the salvage settlement of a MW
-#   retired in d (the salvage value received at the start of d less the salvage credits given back, the objective's
-#   term) as a yearly amount of the retirement period d.
+# OUT. edl_invest_lines_run[e,d,line,d_report] = the investment lump of a MW of decision (e, d) over its run
+#   operating window split by event (_vintage_lines): investment a_cap·S̄ at its start of operation, salvage end of
+#   life −a_salv·S̄ at its end of life (reinvest_choice / no_reinvestment; a_cap, a_salv of _level_prices_lf); for
+#   reinvest_automatic each plant g of the chain (priced_chain_rows): investment (g1) / replacement a_cap[g]·S̄[g] at
+#   its online period and salvage replaced −a_salv[g]·S̄[g] at its end of life (the last run period for a life to or
+#   past the horizon end); S̄ the plant's Σ p_inflation_inv_run over its periods in service.  Σ_lines =
+#   ed_entity_annual_discounted_run[e,d].
 # OUT. ed_entity_annual_discounted_run[e,d] = Σ_{kind} price_kind[e,d]·Σ_{(e,d,d') ∈ edd_operating_window(kind)}
 #        p_inflation_inv_run[d']
 #   price_bounded = a_cap − a_salv, price_unbounded = the price of the generation in service in d' (the annuity
@@ -3115,8 +3105,6 @@ def apply_run_cost_fields(flex_data: object,
         if inv.height > 0:
             chain_rows = _run_chain_rows(source, active_solve, walk.join(inv, on=["e", "d"], how="semi"),
                                          factor_inv, yr, flex_data, provider)
-            flex_data.edd_annuity, flex_data.edd_entity_annual_discounted_run = _vintage_yearly_and_starts(
-                walk.join(vintages, on=["e", "d"], how="semi"), price, chain_rows, factor_inv, start)
             ends = anchors.select("e", "d", "kind", y_eol=pl.col("yr_avail") + pl.col("life"))
             flex_data.edl_invest_lines_run = _vintage_lines(
                 walk.join(vintages, on=["e", "d"], how="semi"), split, chain_rows, factor_inv, start, ends,
@@ -3194,37 +3182,6 @@ def _run_chain_rows(source: "InputSource",
     return priced_chain_rows(source, rows, factor, {**years, **yr}, gens, last)
 
 
-def _vintage_yearly_and_starts(walk: pl.DataFrame,
-                               price: pl.DataFrame,
-                               chain_rows: pl.DataFrame | None,
-                               factor: pl.DataFrame,
-                               start: pl.DataFrame) -> tuple["Param | None", "Param | None"]:
-    """``(edd_annuity, edd_entity_annual_discounted_run)`` (``[e, d_invest, d, value]``) of the vintages of
-    ``walk`` (``[e, d, kind, d_all]``, their run operating window): the price per year in service of the plant in
-    service in each period ``d`` (``price`` ``[e, d, kind, coef]``; a reinvest_automatic chain at its
-    generation's ``a_b``, ``chain_rows`` of :func:`priced_chain_rows`), and the investment lump split by the period
-    each plant comes online (``d`` the start of operation ``c(d_invest)``, ``start`` ``[e, d, d_c]``; a generation
-    of a chain at its own online period), Σ price·factor over its periods (``factor`` ``[d_all, factor]``)."""
-    chained = (pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8}) if chain_rows is None
-               else chain_rows.select("e", "d").unique())
-    plain = (walk.join(chained.with_columns(kind=pl.lit("unbounded")), on=["e", "d", "kind"], how="anti")
-                 .join(price, on=["e", "d", "kind"], how="left")
-                 .join(factor, on="d_all", how="left")
-                 .join(start, on=["e", "d"], how="left")
-                 .select("e", "d", "d_all", coef=pl.col("coef").fill_null(0.0),
-                         factor=pl.col("factor").fill_null(1.0), d_start=pl.coalesce("d_c", "d")))
-    rows = plain if chain_rows is None else pl.concat([
-        plain, chain_rows.select("e", "d", "d_all", coef=pl.col("a_b"), factor=pl.col("factor"),
-                                 d_start=pl.col("d_price"))])
-    yearly = (rows.group_by("e", "d", "d_all").agg(pl.col("coef").sum().alias("value"))
-                  .select("e", pl.col("d").alias("d_invest"), pl.col("d_all").alias("d"), "value"))
-    starts = (rows.sort("e", "d", "d_all")
-                  .group_by("e", "d", "d_start", maintain_order=True)
-                  .agg((pl.col("coef") * pl.col("factor")).sum().alias("value"))
-                  .select("e", pl.col("d").alias("d_invest"), pl.col("d_start").alias("d"), "value"))
-    return _edd_param(yearly), _edd_param(starts)
-
-
 def _vintage_lines(walk: pl.DataFrame,
                    split: pl.DataFrame,
                    chain_rows: pl.DataFrame | None,
@@ -3235,8 +3192,8 @@ def _vintage_lines(walk: pl.DataFrame,
                    years: dict[str, float]) -> pl.DataFrame | None:
     """``[e, d, line, d_report, value]`` (Utf8, :mod:`._cost_lines`) of the vintages of ``walk`` (``[e, d, kind,
     d_all]``, their run operating window): the investment lump of a MW of each decision (the sum of
-    :func:`_vintage_yearly_and_starts`' starts) split by event, each part Σ price·factor over the periods of its
-    plant (``factor`` ``[d_all, factor]``)::
+    :func:`chain_lumps` and the bounded and single-price lumps) split by event, each part Σ price·factor over the
+    periods of its plant (``factor`` ``[d_all, factor]``)::
 
         investment          @ c(d)          = a_cap[e,c]·S̄          (the annuity for reinvest_automatic)
         salvage end of life @ d_eol         = −a_salv[e,c]·S̄         (reinvest_choice / no_reinvestment)
@@ -3281,14 +3238,6 @@ def _vintage_lines(walk: pl.DataFrame,
                .group_by("e", "d", "line", "d_report", maintain_order=True).agg(pl.col("value").sum())
                .sort("e", "d", "line", "d_report"))
     return lines if lines.height > 0 else None
-
-
-def _edd_param(df: pl.DataFrame) -> "Param | None":
-    if df.height == 0:
-        return None
-    return Param(("e", "d_invest", "d"),
-                 df.lazy().select(alias_to_axis("e", "e"), alias_to_axis("d_invest", "d_invest"),
-                                  alias_to_axis("d", "d"), "value").sort("e", "d_invest", "d").collect())
 
 
 def _run_lumps_are_the_solves(flex_data: object) -> None:
@@ -3636,8 +3585,7 @@ def apply_retirement_salvage(flex_data: object,
                              ) -> None:
     """Set the salvage terms of the retirement of existing capacity (:func:`existing_salvage`):
     ``ed_divest_salvage`` (the salvage part of the ``v_divest`` coefficient), ``ed_existing_salvage_credit`` (the
-    level salvage credit of the objective constant), ``ed_divest_settlement_yearly`` (the reported yearly amount of
-    the retirement period: ``ed_divest_salvage / inflation_inv``), the existing cohort's prices (``r_loan``,
+    level salvage credit of the objective constant), the existing cohort's prices (``r_loan``,
     ``a_salv``, ``nsv_eol``) and the cost lines of the reported costs (``edl_divest_lines``: per MW retired,
     ``edl_existing_credit_lines``: per MW of existing capacity; :func:`existing_salvage`).  The only derivation of these terms: a Spine solve (:func:`apply_npv`) and a synthetic
     sub-solve (:func:`apply_run_fields_of_synthetic_solve`) call it alike."""
@@ -3651,16 +3599,6 @@ def apply_retirement_salvage(flex_data: object,
     _notice_net_salvage_once(divest["e"].unique().to_list())
     flex_data.ed_divest_salvage = _ed_param(divest) if divest.height > 0 else None
     flex_data.ed_existing_salvage_credit = _ed_param(credit) if credit.height > 0 else None
-    if divest.height > 0:
-        factor = (_inflation_factors_lf(source, active_solve, list(dict.fromkeys(
-                      [*(str(d) for d in period_universe), *(str(d) for d in period_invest)])),
-                                        provider=provider, year_rows=year_rows)
-                  .select(pl.col("d").cast(pl.Utf8), factor=pl.col("inv_factor")).collect())
-        flex_data.ed_divest_settlement_yearly = _ed_param(
-            divest.join(factor, on="d", how="left")
-                  .select("e", "d", value=pl.col("value") / pl.col("factor").fill_null(1.0)))
-    else:
-        flex_data.ed_divest_settlement_yearly = None
     _set_existing_cohort_prices(flex_data, prices)
 
 

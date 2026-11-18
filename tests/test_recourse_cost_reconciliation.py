@@ -15,8 +15,9 @@ is exactly that probability-weighted investment::
 
 (high builds 60 MW in p2035 and 30 more in p2040, low 80 and 40; annuity
 1 · 1000 · 0.05 / (1 − 1.05^−1) / 1.05 = 1000 per MW and year, paid at the start
-of the year, a p2035 decision pays two years), so the
-"Investment costs for realized periods" total equals the objective.
+of the year, a p2035 decision pays two years), so the reported investment
+lines (investment and replacement: lifetime 1, a p2035 plant is replaced in
+p2040) add up to the objective, as does "Total cost counted in the objective".
 """
 from __future__ import annotations
 
@@ -95,10 +96,12 @@ def test_recourse_invest_cost_reconciles_to_objective(
     csv_dir = wf / "output_csv" / "recourse"
 
     objective = _summary_row(csv_dir, "stoch_2p_inv")
-    invest_realized = _summary_row(
-        csv_dir, "Investment costs for realized periods (M CUR)")
+    invested = (_summary_row(csv_dir, "Investment (M CUR)")
+                + _summary_row(csv_dir, "Replacement (M CUR)"))
+    counted = _summary_row(csv_dir, "Total cost counted in the objective (M CUR)")
 
     # The investment inside the fan is reported branch-weighted, so the
     # reported investment equals the objective (which holds nothing else).
     assert objective == pytest.approx(0.1875, rel=1e-6)
-    assert invest_realized == pytest.approx(objective, rel=1e-6)
+    assert invested == pytest.approx(objective, rel=1e-6)
+    assert counted == pytest.approx(objective, rel=1e-6)

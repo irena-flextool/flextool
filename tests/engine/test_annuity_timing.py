@@ -76,17 +76,15 @@ def _plant(param) -> dict[str, float]:
 @pytest.mark.parametrize("off", [0.0, 0.5, 1.0])
 def test_investment_is_worth_its_cost_at_every_offset(tmp_path_factory, off) -> None:
     """The objective coefficient of a p2020 investment (10 years in service, social_discount_rate = discount_rate) is
-    the PV of its loan, 400 CUR/kW · 1000 = 400 000 CUR/MW, at every offset; the reported yearly investment cost of
-    that decision (``edd_annuity``, in each of its two periods in service) is the payment A, whose payments discounted
-    one by one at discount_rate are worth 400 000."""
+    the PV of its loan, 400 CUR/kW · 1000 = 400 000 CUR/MW, at every offset; the reported cost of that decision
+    (``edl_invest_lines_run``) is that one investment event at its start of operation, p2020 (no salvage value)."""
     steps, _, _ = _RUNS.get(tmp_path_factory, alt=f"ann_off_{str(off).replace('.', '_')}", values=_values(off),
                             base_chain=_no_battery_invest(SINGLE))
     fd = list(steps.values())[-1].flex_data
     assert _plant(fd.ed_entity_annual_discounted)["p2020"] == pytest.approx(400_000.0, rel=1e-12)
-    yearly = utf8(fd.edd_annuity.frame).filter((pl.col("e") == PLANT) & (pl.col("d_invest") == "p2020"))
-    assert set(yearly["d"].to_list()) == {"p2020", "p2025"}
-    for payment in yearly["value"].to_list():
-        assert _pv(payment, off) == pytest.approx(400_000.0, rel=1e-12)
+    lines = fd.edl_invest_lines_run.filter((pl.col("e") == PLANT) & (pl.col("d") == "p2020"))
+    assert {(li, d): v for li, d, v in lines.select("line", "d_report", "value").iter_rows()} == pytest.approx(
+        {("investment", "p2020"): 400_000.0}, rel=1e-12)
 
 
 @pytest.mark.solver

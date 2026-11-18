@@ -20,10 +20,10 @@ This test proves the additivity invariant end-to-end against a live solve:
 
 2.  **Reconciliation** — summing each per-entity table over its entities,
     per category and period, must equal the corresponding system summary
-    (``annualized_costs_d_p`` / ``costs_discounted_d_p``).  Investment +
-    retirement are compared against the fused system column
-    ('<kind> investment & retirement').  Group-level penalties with no
-    entity home are explicitly excluded.
+    (``annualized_costs_d_p`` / ``costs_discounted_d_p``), the investment-type
+    cost lines (investment, retirement, salvage ...) included: they have the
+    same names in the system and the per-entity tables.  Group-level penalties
+    with no entity home are explicitly excluded.
 
 The harness mirrors ``tests/test_cost_aggregation_semantics.py`` (run the
 native cascade, snapshot the processed inputs), but instead of reading CSVs
@@ -51,6 +51,7 @@ if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))
 
 from flextool.engine import run_chain_from_db  # noqa: E402
+from flextool.engine.preprocess.params._cost_lines import COST_LINES  # noqa: E402
 from flextool.process_outputs.out_costs import (  # noqa: E402
     cost_breakdown_by_entity,
     cost_summaries,
@@ -132,21 +133,10 @@ SYSTEM_ONLY_CATEGORIES = {
     "capacity margin penalty",
 }
 
-# Per-kind fused invest/retirement system column → the two per-entity
-# categories that sum into it.
-FUSED_INVEST_COLUMN = {
-    "unit": "unit investment & retirement",
-    "connection": "connection investment & retirement",
-    "node": "storage investment & retirement",
-}
-INVEST_CATEGORIES = {
-    "unit": ("investment", "retirement"),
-    "connection": ("investment", "retirement"),
-    "node": ("storage investment", "storage retirement"),
-}
-
-# Direct per-category matches (same column name on both sides).
+# Direct per-category matches (same column name on both sides): the investment-type cost lines too (the same
+# names in the system and in every per-entity table).
 DIRECT_CATEGORIES = [
+    *COST_LINES,
     "commodity_cost",
     "commodity_sales",
     "co2",
@@ -261,41 +251,6 @@ def _reconcile_cross_kind(out: dict, system: pd.DataFrame, flavour: str):
         )
         checked.append(cat)
 
-    # --- Fused invest + retirement: per-kind, vs the kind's fused column --
-    for kind, frame in collapsed.items():
-        inv_cat, div_cat = INVEST_CATEGORIES[kind]
-        fused_col = FUSED_INVEST_COLUMN[kind]
-        if fused_col not in system.columns:
-            continue
-        if inv_cat not in frame.columns and div_cat not in frame.columns:
-            # No invest/retire for this kind: system fused column must be 0.
-            sys_col = system[fused_col].astype(float)
-            assert sys_col.abs().sum() <= ATOL, (
-                f"{flavour} / {fused_col}: system column non-zero "
-                f"({sys_col.abs().sum():.6f}) but the {kind} table has no "
-                f"invest/retire categories."
-            )
-            continue
-        total = pd.Series(0.0, index=frame.index)
-        for cc in (inv_cat, div_cat):
-            if cc in frame.columns:
-                total = total.add(frame[cc].astype(float), fill_value=0.0)
-        total = total.reindex(system.index).fillna(0.0)
-        rhs = system[fused_col].astype(float).fillna(0.0)
-        np.testing.assert_allclose(
-            total.to_numpy(), rhs.to_numpy(), rtol=RTOL, atol=ATOL,
-            err_msg=(
-                f"{flavour} / {fused_col}: per-period (invest+retire) "
-                f"entity-sum does not match the fused system column.\n"
-                f"lhs=\n{total}\nrhs=\n{rhs}"
-            ),
-        )
-        np.testing.assert_allclose(
-            total.sum(), rhs.sum(), rtol=RTOL, atol=ATOL,
-            err_msg=f"{flavour} / {fused_col}: full-column sum mismatch",
-        )
-        checked.append(fused_col)
-
     return checked
 
 
@@ -306,8 +261,8 @@ def _reconcile_cross_kind(out: dict, system: pd.DataFrame, flavour: str):
 # Three complementary fixtures drive the broad per-scenario reconciliation
 # (every category reconciles; periods/levels lock):
 #   * wind_battery_invest — unit investment (wind) + storage investment
-#     (battery state); exercises the 'investment' / 'storage investment'
-#     columns with non-zero values.
+#     (battery state); exercises the 'investment' line of the unit and node
+#     tables with non-zero values.
 #   * coal_retire — commodity (coal) + retirement (divest 0.5 coal_plant)
 #     + 'fixed cost reduction of divestments' + 'fixed cost pre-existing'.
 #   * coal_co2_price — commodity + CO2 price + (online) startup, plus
@@ -407,7 +362,6 @@ def test_reconciliation_annualized(namespaces):
         if c not in SYSTEM_ONLY_CATEGORIES
         and system[c].abs().sum() > ATOL
     }
-    # Fused invest columns are reconciled under their own name.
     missing = expected - set(checked)
     assert not missing, (
         f"[{scenario}] annualized: non-zero system categories left "
