@@ -80,12 +80,13 @@ Input databases move to data version 82. The FlexTool window, the Spine Toolbox 
   and saves its `fixed_cost` from then on. So building and retiring at once costs `invest_cost − net_salvage_value`,
   discounted to the retirement, for any `discount_rate`, `payback_time` and offset; with a `discount_rate` above the
   `social_discount_rate` paying the loan off early is cheaper for the model, below it dearer. An investment never retires
-  more than it built (also across the solves of a chain, which carry each retirement with its investment), the
-  retirement limits (`retire_max_period`, `retire_max_total`, the minima, group limits) and the retired-capacity
-  terms of user constraints count it, and stochastic solves tie it in the shared investment periods like the
-  investment. A `net_salvage_value` above what the capacity costs until its retirement makes building to retire
-  pay: a warning names such entities. Upgraded databases get a notice naming the entities whose new capacity can
-  now be retired (results change).
+  more than it built (also across the solves of a chain, which carry each retirement with its investment, also from
+  a solve with Benders `decomposition`; the reported `existing` capacity of a later solve stays the user's existing
+  capacity, the retired built MW come off the carried investment), the retirement limits (`retire_max_period`,
+  `retire_max_total`, the minima, group limits) and the retired-capacity terms of user constraints count it, and
+  stochastic solves tie it in the shared investment periods like the investment. A `net_salvage_value` above what
+  the capacity costs until its retirement makes building to retire pay: a warning names such entities. Upgraded
+  databases get a notice naming the entities whose new capacity can now be retired (results change).
 - **New capacity pays the `fixed_cost` of each period it operates in**, as existing capacity does (unit,
   connection, node). In FlexTool 4.5.0 an investment paid the `fixed_cost` of the period it came online in every
   period it operated, so with a `fixed_cost` period map the fixed cost of new capacity changes; a constant

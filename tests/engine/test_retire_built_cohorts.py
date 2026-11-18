@@ -284,6 +284,23 @@ def test_built_retirements_carry_to_the_later_solve(tmp_path_factory) -> None:
     assert _built_mw(second)[("invest:p2025", "p2030")] == pytest.approx(150.0, rel=1e-9)
 
 
+@pytest.mark.solver
+def test_carried_built_retirements_leave_the_reported_existing_capacity(tmp_path_factory) -> None:
+    """In rb_second the reported existing capacity is the user's existing 100 MW of p2030 and p2035: rb_first
+    retired 50 MW of its own p2025 cohort and none of the existing capacity, so those 50 MW come off the carried
+    cohort (150 MW of the 200 built), not off the existing column."""
+    import pandas as pd
+
+    from tests.engine.test_chain_costs import _write_csv
+
+    out = _write_csv(tmp_path_factory, "rb_chain_results", _chain_values(250.0), _no_battery_invest(SINGLE),
+                     entities=_CHAIN_ENTITIES)
+    capacity = pd.read_csv(out / "unit_capacity__d.csv")
+    plant = capacity[(capacity["unit"] == PLANT) & (capacity["solve"] == "rb_second")].set_index("period")
+    assert plant.loc["p2030", "existing"] == pytest.approx(100.0, rel=1e-9)
+    assert plant.loc["p2035", "existing"] == pytest.approx(100.0, rel=1e-9)
+
+
 def test_a_carried_cohort_retires_at_most_its_remainder(tmp_path_factory) -> None:
     """rb_second must retire 251 MW in p2030: more than the existing 100 MW and the 150 MW left of the carried
     cohort (an error naming them, 250); 250 MW is met."""
@@ -449,3 +466,49 @@ def test_retirement_of_built_capacity_in_the_results(tmp_path_factory) -> None:
         40.0 * change / sum(V ** (k + 1) for k in range(5, 10)), rel=1e-7)
     assert annualized["fixed cost reduction of divestments"] * MEGA == pytest.approx(-40.0 * 100.0 * 1000.0,
                                                                                     rel=1e-7)
+
+
+LH2_JSON = FLEXTOOL_ROOT / "tests" / "fixtures" / "lh2_three_region.json"
+#: lh2_three_region_invest: lh2_invest (one period y2030, decomposition benders over three benders_regional
+#: regions) then the monolithic lh2_dispatch of y2030.  wind_A (region_A, unitsize 1000 MW) gets no existing
+#: capacity and is reinvest_choice with retirement, at most 100 MW built and 40 MW retired in y2030.  Its
+#: net_salvage_value of 100 000 CUR/kW (invest_cost 50) makes building and retiring at once earn far more than the
+#: 40 MW would produce, so the solve builds the 100 MW and retires 40 MW of them: the limits bind (a pinned minimum
+#: is not used: a non-owner region of a Benders solve cannot meet another region's investment minimum).
+WIND = "wind_A"
+
+
+def _lh2_retire(tmp_path_factory, alt: str, extra: list) -> dict:
+    values = [["unit", WIND, "existing", b64(0.0, "float")],
+              ["unit", WIND, "lifetime_method", b64("reinvest_choice", "str")],
+              ["unit", WIND, "invest_method", b64("invest_retire_period", "str")],
+              ["unit", WIND, "net_salvage_value", b64(100_000.0, "float")],
+              ["unit", WIND, "invest_max_period", _period_map({"y2030": 100.0})],
+              ["unit", WIND, "retire_max_period", _period_map({"y2030": 40.0})]] + extra
+    steps, _, _ = _RUNS.get(tmp_path_factory, alt=alt, values=values,
+                            base_chain=["lh2_three_region", "lh2_three_region_invest"], fixture_json=LH2_JSON)
+    return steps
+
+
+def _wind_existing(steps: dict) -> dict[str, float]:
+    dispatch = next(s for name, s in steps.items() if "lh2_dispatch" in name)
+    capacity = utf8(dispatch.flex_data.p_entity_all_existing.frame).filter(pl.col("e") == WIND)
+    return dict(zip(capacity["d"], capacity["value"]))
+
+
+@pytest.mark.solver
+def test_built_retirements_under_benders_carry_to_the_later_solve(tmp_path_factory) -> None:
+    """The Benders invest solve builds 100 MW of wind_A and retires 40 MW of that cohort in y2030; the dispatch
+    solve that follows starts from 100 − 40 = 60 MW (the cohort's 100 MW less its carried retirement), not 100,
+    as after the same invest solve without decomposition."""
+    steps = _lh2_retire(tmp_path_factory, "rb_benders", [])
+    invest = next(s for name, s in steps.items() if "lh2_invest" in name)
+    assert invest.is_benders
+    retired = utf8(invest.handoff.realized_retire).filter(pl.col("entity") == WIND)
+    assert retired.select("cohort", "period").rows() == [("invest:y2030", "y2030")]
+    assert retired["value"][0] == pytest.approx(40.0, rel=1e-9)
+    assert _wind_existing(steps) == pytest.approx({"y2030": 60.0}, rel=1e-9)
+    monolith = _lh2_retire(tmp_path_factory, "rb_benders_twin",
+                           [["solve", "lh2_invest", "decomposition", b64("none", "str")]])
+    assert not next(s for name, s in monolith.items() if "lh2_invest" in name).is_benders
+    assert _wind_existing(monolith) == pytest.approx(_wind_existing(steps), rel=1e-9)

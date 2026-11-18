@@ -3210,8 +3210,9 @@ def _drive_cascade(
             # dispatch solve consumes this Benders solve's invested
             # capacity.  ``result.invest_solution_vars`` is a dict keyed by
             # ``v_invest_p`` / ``v_invest_n`` / ``v_divest_p`` /
-            # ``v_divest_n`` to long-form (entity, d, value) frames whose
-            # columns match ``polar_high.Solution.value(name)`` exactly;
+            # ``v_divest_n`` and the built retirements ``v_divest_built_{p,n}``
+            # (per cohort) / ``v_divested_built_{p,n}`` to long-form frames
+            # whose columns match ``polar_high.Solution.value(name)`` exactly;
             # it is ``{}`` when the model has no investment.
             # ``--csv-dump``: dump the solve's undecomposed FlexData (the master and the regions are derived from it).
             self._dump_solve_inputs(data, complete_solve_name)
@@ -4973,9 +4974,10 @@ def _drive_cascade(
             # end-of-cascade.  End-of-cascade writers
             # (``_entity_all_capacity`` and friends) need EACH sub-
             # solve's own ``v_invest_p`` / ``v_invest_n`` /
-            # ``v_divest_p`` / ``v_divest_n``; snapshot those four
-            # long-form polars frames here so they survive the
-            # between-solve release.  Cost: 4 small DataFrames per
+            # ``v_divest_p`` / ``v_divest_n`` and the built capacity
+            # retired so far ``v_divested_built_p`` / ``v_divested_built_n``;
+            # snapshot those long-form polars frames here so they survive
+            # the between-solve release.  Cost: 6 small DataFrames per
             # sub-solve (typically a few hundred rows each).  See
             # :class:`SnapshotSolution` for the wrapper consumers read.
             captured_vars: "dict[str, pl.DataFrame]" = {}
@@ -4984,6 +4986,7 @@ def _drive_cascade(
                 for _vname in (
                     "v_invest_p", "v_invest_n",
                     "v_divest_p", "v_divest_n",
+                    "v_divested_built_p", "v_divested_built_n",
                 ):
                     if _vname in sol._vars:
                         try:

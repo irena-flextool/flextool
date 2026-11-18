@@ -1072,7 +1072,7 @@ class ExistingCapacity:
 
     #: ``pre[e, d]``: the existing cohort (the user's ``existing`` of period d, × virtual_unitsize) in service in d.
     pre: dict[tuple[str, str], float]
-    #: ``carried[e, d]``: the carried investment cohorts in service in d.
+    #: ``carried[e, d]``: the carried investment cohorts in service in d, less their carried retirements.
     carried: dict[tuple[str, str], float]
     #: ``all[e, d] = pre + carried − retired_all`` (``retired_all`` subtracted for the entities that may retire).
     all: dict[tuple[str, str], float]
@@ -1099,16 +1099,19 @@ def existing_capacity(entities: Iterable[str],
 
         alive_c(d)    ⟺  y_on_c ≤ y[d] < y_eol_c                          (years of the run)
         pre[e, d]     =  existing_mw[e, d]  if the existing cohort of e is alive in d, else 0
-        carried[e, d] =  Σ_{carried invest cohorts c of e alive in d} size_c
         retired_c[e, d] = Σ_{(c, d′, v) ∈ retire : alive_c(d), y[d′] ≤ y[d] or d′ before the solve} v
-        all[e, d]     =  (pre[e, d] + carried[e, d]) − [e may retire] · Σ_c retired_c[e, d]
+        carried[e, d] =  Σ_{carried invest cohorts c of e alive in d} size_c
+                         − [e may retire] · Σ_{carried invest cohorts c} retired_c[e, d]
+        all[e, d]     =  (pre[e, d] + Σ_{carried invest cohorts c alive in d} size_c)
+                         − [e may retire] · Σ_c retired_c[e, d]
         invested[e]   =  Σ_{carried invest cohorts c of e} size_c
 
     ``existing`` are the existing cohorts of the run (:func:`run_existing_cohorts`, ``y_on`` / ``y_eol``),
     ``existing_mw[e, d]`` the user's ``existing`` of each period in MW (the map is read in every solve),
     ``carried`` / ``retire`` the handoff ``realized_cohort`` / ``realized_retire``.  The sums add in the order of
     the carried rows (by start of operation), ``all`` starting from ``pre``.  ``retired`` is the existing cohort's
-    part (the bound of the retirements of existing capacity); ``all`` subtracts the retirements of every cohort.
+    part (the bound of the retirements of existing capacity); ``carried`` subtracts those of the carried cohorts,
+    ``all`` those of every cohort (so ``all − carried`` is the existing cohort less its own retirements).
     A retirement of a cohort that is neither the existing cohort nor a carried one raises :class:`ValueError`."""
     from flextool.engine.preprocess.params._retire_existing import retired_carried
     entities = [str(e) for e in entities]
@@ -1135,6 +1138,7 @@ def existing_capacity(entities: Iterable[str],
     dead = {k for k, v in alive.items() if not v}
     retired_all = retired_carried(rows, years, periods, dead)
     retired = retired_carried([r for r in rows if existing_of.get(r[0]) == r[1]], years, periods, dead)
+    retired_built = retired_carried([r for r in rows if existing_of.get(r[0]) != r[1]], years, periods, dead)
 
     divest = frozenset(str(e) for e in divest_entities)
     pre: dict[tuple[str, str], float] = {}
@@ -1152,6 +1156,7 @@ def existing_capacity(entities: Iterable[str],
                     v_carried += size
             if e in divest:
                 v_all -= retired_all.get((e, d), 0.0)
+                v_carried -= retired_built.get((e, d), 0.0)
             pre[(e, d)], carried_mw[(e, d)], all_mw[(e, d)] = v_pre, v_carried, v_all
     invested: dict[str, float] = {}
     for e, cohorts in sizes.items():

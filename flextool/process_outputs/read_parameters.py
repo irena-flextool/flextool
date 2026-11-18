@@ -1499,10 +1499,11 @@ def read_parameters(
 
     # entity_pre_existing — distinct from entity_all_existing on
     # multi-solve runs (``pre_existing`` is the same as ``all_existing``
-    # on first solve; differs only when prior solves invested).  We
-    # use ``p_entity_previously_invested_capacity`` if available, else
-    # fall back to ``entity_all_existing`` minus the previously
-    # invested.  Single-solve: identical to entity_all_existing.
+    # on first solve; differs only when prior solves invested).  It is
+    # ``entity_all_existing`` minus ``p_entity_previously_invested_capacity``
+    # (the carried investments in service, net of their own carried
+    # retirements), so the existing capacity less its own retirements.
+    # Single-solve: identical to entity_all_existing.
     if (flex_data.p_entity_previously_invested_capacity is not None
             and flex_data.p_entity_previously_invested_capacity.frame.height > 0):
         # Subtract from p_entity_all_existing if both populated.

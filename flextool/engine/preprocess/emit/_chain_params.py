@@ -286,7 +286,7 @@ def emit_existing_capacity(input_dir: Path, solve_data_dir: Path, *, provider) -
 
     * ``p_entity_pre_existing`` — the existing cohort in service (the user's ``existing`` × virtual_unitsize);
     * ``p_entity_all_existing`` — the capacity in service at the start of the solve (existing + carried − retired);
-    * ``p_entity_previously_invested_capacity`` — the carried investments in service;
+    * ``p_entity_previously_invested_capacity`` — the carried investments in service, less their carried retirements;
     * ``p_entity_retired_carried`` — the retirements of the existing cohort earlier solves realized that still
       count (the rows with a retirement, sorted);
     * ``p_entity_invested`` ``[entity, p_entity_invested]`` — every carried investment of an entity.
