@@ -320,6 +320,12 @@ for _key, _producer, _note in (
     ("unit_capacity_ed_p",        "out_capacity.unit_capacity",       "Per-(unit, period) capacity decomposition."),
     ("connection_capacity_ed_p",  "out_capacity.connection_capacity", "Per-(connection, period) capacity decomposition."),
     ("node_capacity_ed_p",        "out_capacity.node_capacity",       "Per-(node, period) capacity decomposition; only for nodeState nodes."),
+    ("unit_cohort_capacity_ed_p", "out_capacity.cohort_capacity",     "Per-(unit, cohort, period) capacity in service; only with a cohort table."),
+    ("connection_cohort_capacity_ed_p", "out_capacity.cohort_capacity", "Per-(connection, cohort, period) capacity in service."),
+    ("node_cohort_capacity_ed_p", "out_capacity.cohort_capacity",     "Per-(node, cohort, period) storage capacity in service."),
+    ("unit_retirement_ed_p",      "out_capacity.cohort_capacity",     "Per-(unit, period) capacity leaving service, by cause."),
+    ("connection_retirement_ed_p", "out_capacity.cohort_capacity",    "Per-(connection, period) capacity leaving service, by cause."),
+    ("node_retirement_ed_p",      "out_capacity.cohort_capacity",     "Per-(node, period) storage capacity leaving service, by cause."),
 ):
     REGISTRY[_key] = _proc(
         _key, note=_note, producer=f"flextool.process_outputs.{_producer}",

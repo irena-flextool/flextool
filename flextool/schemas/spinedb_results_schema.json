@@ -109,6 +109,14 @@
   "parameter_definitions": [
     [
       "connection",
+      "retirement",
+      null,
+      null,
+      "'end_of_life' - capacity reaching the end of its lifetime at the start of the period (or the fall of a period-varying existing capacity). 'economic' - capacity the model decided to retire at the start of the period. 'replaced' - capacity of a reinvest_automatic plant taken over by its replacement. 'extended' - capacity kept in service by a life extension.",
+      null
+    ],
+    [
+      "connection",
       "capacity",
       null,
       null,
@@ -469,6 +477,14 @@
     ],
     [
       "node",
+      "retirement",
+      null,
+      null,
+      "'end_of_life' - capacity reaching the end of its lifetime at the start of the period (or the fall of a period-varying existing capacity). 'economic' - capacity the model decided to retire at the start of the period. 'replaced' - capacity of a reinvest_automatic plant taken over by its replacement. 'extended' - capacity kept in service by a life extension.",
+      null
+    ],
+    [
+      "node",
       "capacity",
       null,
       null,
@@ -529,6 +545,14 @@
       null,
       null,
       "how many tonnes of CO2 the unit has generated (by using commodity with CO2 content) or removed.",
+      null
+    ],
+    [
+      "unit",
+      "retirement",
+      null,
+      null,
+      "'end_of_life' - capacity reaching the end of its lifetime at the start of the period (or the fall of a period-varying existing capacity). 'economic' - capacity the model decided to retire at the start of the period. 'replaced' - capacity of a reinvest_automatic plant taken over by its replacement. 'extended' - capacity kept in service by a life extension.",
       null
     ],
     [

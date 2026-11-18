@@ -137,6 +137,14 @@ Input databases move to data version 82. The FlexTool window, the Spine Toolbox 
 
 ### New features
 
+- **Capacity by cohort and retirements by cause.** New tables `unit_cohort_capacity__d`,
+  `connection_cohort_capacity__d` and `node_cohort_capacity__d` give the capacity of each block of capacity that came
+  into service together (the existing capacity, each investment, each replacement plant of a `reinvest_automatic`
+  chain, each life extension) in each period, with the period it started to operate in and the period its life
+  ends at. The new `retirement` result (`unit_retirement__d`, `connection_retirement__d`, `node_retirement__d`)
+  gives the capacity leaving service at the start of each period by cause: end of life, economic retirement,
+  replaced, extended. The `existing` column of the capacity tables no longer counts a life extension decided by an
+  earlier solve of a chain (it is an extension cohort; the total is unchanged).
 - **Life extension** (unit, connection and node). With `life_extension_cost` [CUR/kW, CUR/kWh] and
   `life_extension_years`, capacity reaching the end of its `lifetime_technical` can be kept in service that many
   years longer: the model decides how much of what is still in service at the end of life to extend, for a one-off

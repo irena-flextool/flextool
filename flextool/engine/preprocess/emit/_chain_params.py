@@ -247,6 +247,18 @@ def _existing_mw(input_dir: Path, solve_data_dir: Path, entities: list[str], per
     return out
 
 
+def solve_run_years(provider, solve_data_dir: Path = Path("solve_data")) -> dict[str, float]:
+    """``{period: run year}`` of the solve on ``provider``: its ``p_years_d`` (history, periods in use and branch
+    periods) on the run calendar (:func:`._run_calendar.run_years`), the years the cohorts compare."""
+    from flextool.engine.preprocess.params._run_calendar import read_run_calendar, run_years
+    p_years_d: dict[str, float] = {}
+    pyd = provider.get(_provider_key(solve_data_dir / "p_years_d.csv"))
+    for d, y in ([] if pyd is None else pyd.select(pyd.columns[0], pyd.columns[-1]).iter_rows()):
+        if _cell_str(d):
+            p_years_d.setdefault(_cell_str(d), float(y))
+    return run_years(p_years_d, read_run_calendar(provider))
+
+
 def compute_existing_capacity(input_dir: Path, solve_data_dir: Path,
                               *, provider) -> "tuple[list[str], list[str], ExistingCapacity]":
     """``(entities, period_in_use, capacity)``: :func:`._cohorts.existing_capacity` of the solve from the
@@ -255,23 +267,14 @@ def compute_existing_capacity(input_dir: Path, solve_data_dir: Path,
     (:func:`._run_calendar.run_years` of ``p_years_d``), the carried cohorts and retirements (handoff
     ``realized_cohort`` / ``realized_retire``, an override first) and ``entityDivest``."""
     from flextool.engine.preprocess.params._cohorts import cohort_frame_from_utf8, existing_capacity
-    from flextool.engine.preprocess.params._run_calendar import (
-        RUN_EXISTING_COHORT_KEY,
-        read_run_calendar,
-        run_years,
-    )
+    from flextool.engine.preprocess.params._run_calendar import RUN_EXISTING_COHORT_KEY
     if not provider.has(RUN_EXISTING_COHORT_KEY):
         raise ValueError("The existing capacity of a solve needs the run's existing cohorts "
                          f"({RUN_EXISTING_COHORT_KEY}), which the run puts on every sub-solve's Provider.")
     entities = _read_singles(input_dir / "entity.csv", provider=provider)
     periods = _read_singles(solve_data_dir / "period_in_use_set.csv", provider=provider)
-    p_years_d: dict[str, float] = {}
-    pyd = provider.get(_provider_key(solve_data_dir / "p_years_d.csv"))
-    for d, y in ([] if pyd is None else pyd.select(pyd.columns[0], pyd.columns[-1]).iter_rows()):
-        if _cell_str(d):
-            p_years_d.setdefault(_cell_str(d), float(y))
     capacity = existing_capacity(
-        entities, periods, run_years(p_years_d, read_run_calendar(provider)),
+        entities, periods, solve_run_years(provider, solve_data_dir),
         cohort_frame_from_utf8(provider.get(RUN_EXISTING_COHORT_KEY)),
         _existing_mw(input_dir, solve_data_dir, entities, periods, provider=provider),
         read_handoff_frame(provider, K.HANDOFF_REALIZED_COHORT),

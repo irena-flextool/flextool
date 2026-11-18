@@ -239,6 +239,44 @@ CAPACITY_MWH = Transform(
     algebra="total = existing + invested − divested (cumulative; in_construction excluded)",
     template="{A}",
 )
+COHORT_CAPACITY_MW = Transform(
+    "MW", Semantics.LEVEL,
+    "Capacity of one cohort in service in the period (a stock that holds over the period).",
+    description="Capacity of each block of capacity that came into service together (a cohort: the existing "
+                "capacity, an investment decision, a later plant of a reinvest_automatic chain, a life extension) "
+                "in each period it is in service, net of its retirements so far; kind says which, period_online the "
+                "period it started to operate in and period_end_of_life the period its life ends at (empty at or "
+                "past the end of the horizon). Summed over the cohorts of an entity it is the capacity table's "
+                "total.",
+    algebra="capacity[c,d] = size[c,d] − retired so far[c,d]",
+    template="{R}",
+)
+COHORT_CAPACITY_MWH = Transform(
+    "MWh", Semantics.LEVEL,
+    "Storage capacity of one cohort in service in the period (a stock).",
+    description="Storage capacity of each cohort of a storage node in each period it is in service, net of its "
+                "retirements so far (see the unit table).",
+    algebra="capacity[c,d] = size[c,d] − retired so far[c,d]",
+    template="{A}",
+)
+RETIRED_CAPACITY_MW = Transform(
+    "MW", Semantics.PER_PERIOD,
+    "Capacity leaving service at the start of the period, by cause; sums over periods.",
+    description="Capacity leaving service at the start of each period: end_of_life (a cohort reaching the end "
+                "of its lifetime, or a fall of a period-varying existing capacity), economic (retired by the "
+                "model), replaced (a reinvest_automatic plant taken over by its replacement: the capacity "
+                "stays) and extended (kept in service by a life extension: the capacity stays, as an extension "
+                "cohort).",
+    algebra="end_of_life = Σ capacity leaving − extended; economic = Σ retired in the period",
+    template="{R}",
+)
+RETIRED_CAPACITY_MWH = Transform(
+    "MWh", Semantics.PER_PERIOD,
+    "Storage capacity leaving service at the start of the period, by cause; sums over periods.",
+    description="Storage capacity leaving service at the start of each period, by cause (see the unit table).",
+    algebra="end_of_life = Σ capacity leaving − extended; economic = Σ retired in the period",
+    template="{A}",
+)
 STORAGE_STATE = Transform(
     "MWh", Semantics.LEVEL,
     "Stored energy at the timestep (state of charge).",
@@ -550,6 +588,12 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "unit_capacity_ed_p": CAPACITY_MW,
     "connection_capacity_ed_p": CAPACITY_MW,
     "node_capacity_ed_p": CAPACITY_MWH,
+    "unit_cohort_capacity_ed_p": COHORT_CAPACITY_MW,
+    "connection_cohort_capacity_ed_p": COHORT_CAPACITY_MW,
+    "node_cohort_capacity_ed_p": COHORT_CAPACITY_MWH,
+    "unit_retirement_ed_p": RETIRED_CAPACITY_MW,
+    "connection_retirement_ed_p": RETIRED_CAPACITY_MW,
+    "node_retirement_ed_p": RETIRED_CAPACITY_MWH,
     # Costs / factors
     "costs_discounted_p_": MONEY_DISCOUNTED,
     "discountFactors_d_p": FACTOR,
@@ -627,6 +671,8 @@ FORMULA_OVERRIDE: dict[tuple[str, str], str] = {
 }
 
 DOCS_ANCHOR: dict[str, str] = {
+    **{f"{c}_{t}_ed_p": "results.html#capacity-by-cohort-and-retirements"
+       for c in ("unit", "connection", "node") for t in ("cohort_capacity", "retirement")},
     "annualized_costs_d_p": "results.html#costs",
     "costs_dt_p": "results.html#costs",
     "cost_unit_annualized_d_ec": "results.html#cost-by-entity",
@@ -710,6 +756,8 @@ _DT = ("period", "time")
 _D = ("period",)
 _CATEGORY_PART = (("category", "part"),)
 _PARAMETER_QUANTITY = (("parameter", "quantity"),)
+_COHORT_PARTS = ("cohort", "kind", "period_online", "period_end_of_life")
+_COHORT_KINDS = tuple((level, "part") for level in _COHORT_PARTS)
 _PARAM_QUANTITY = (("param", "quantity"),)
 _RESERVE_QUANTITY = (("reserve", "quantity"), ("updown", "quantity"))
 _NODE_CATEGORY = (("category", "quantity"),)              # signed balance terms: their sum is the net (about 0)
@@ -864,6 +912,18 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
                                 "divested and the total in service.",
     "node_capacity_ed_p": "Storage capacity of each storage node in each period: existing, invested, in "
                           "construction, divested and the total in service.",
+    "unit_cohort_capacity_ed_p": "Capacity of each cohort of each unit (the existing capacity, each investment, "
+                                 "each replacement plant, each life extension) in each period it is in service.",
+    "connection_cohort_capacity_ed_p": "Capacity of each cohort of each connection in each period it is in "
+                                       "service.",
+    "node_cohort_capacity_ed_p": "Storage capacity of each cohort of each storage node in each period it is in "
+                                 "service.",
+    "unit_retirement_ed_p": "Capacity of each unit leaving service at the start of each period, by cause: end of "
+                            "life, economic retirement, replaced, extended.",
+    "connection_retirement_ed_p": "Capacity of each connection leaving service at the start of each period, by "
+                                  "cause.",
+    "node_retirement_ed_p": "Storage capacity of each storage node leaving service at the start of each period, by "
+                            "cause.",
     "dual_invest_effective_unit_d_e": "Marginal value of one more unit of capacity of each investable unit in "
                                       "each period (positive: more capacity would lower the cost).",
     "dual_invest_effective_connection_d_e": "Marginal value of one more unit of capacity of each investable "
@@ -1022,6 +1082,11 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "unit_capacity_ed_p": OutputDims(("unit", "period"), ("parameter",), kinds=_PARAMETER_QUANTITY),
     "connection_capacity_ed_p": OutputDims(("connection", "period"), ("parameter",), kinds=_PARAMETER_QUANTITY),
     "node_capacity_ed_p": OutputDims(("node", "period"), ("parameter",), kinds=_PARAMETER_QUANTITY),
+    **{f"{c}_cohort_capacity_ed_p": OutputDims((c, *_COHORT_PARTS, "period"), ("parameter",),
+                                               kinds=_COHORT_KINDS + _PARAMETER_QUANTITY)
+       for c in ("unit", "connection", "node")},
+    **{f"{c}_retirement_ed_p": OutputDims((c, "period"), ("cause",), kinds=(("cause", "part"),))
+       for c in ("unit", "connection", "node")},
     "dual_invest_effective_unit_d_e": OutputDims(_D, ("entity",)),
     "dual_invest_effective_connection_d_e": OutputDims(_D, ("entity",)),
     "dual_invest_effective_node_d_e": OutputDims(_D, ("entity",)),
@@ -1546,6 +1611,12 @@ UNIT_SOURCE: dict[str, UnitSource] = {
     "unit_capacity_ed_p": UnitSource("unit", _U.CAPACITY_SIDE, row=True),
     "connection_capacity_ed_p": UnitSource("connection", _U.CONNECTION_ENDS, row=True),
     "node_capacity_ed_p": UnitSource("node", _U.NODE, row=True),
+    "unit_cohort_capacity_ed_p": UnitSource("unit", _U.CAPACITY_SIDE, row=True),
+    "connection_cohort_capacity_ed_p": UnitSource("connection", _U.CONNECTION_ENDS, row=True),
+    "node_cohort_capacity_ed_p": UnitSource("node", _U.NODE, row=True),
+    "unit_retirement_ed_p": UnitSource("unit", _U.CAPACITY_SIDE, row=True),
+    "connection_retirement_ed_p": UnitSource("connection", _U.CONNECTION_ENDS, row=True),
+    "node_retirement_ed_p": UnitSource("node", _U.NODE, row=True),
     "dual_invest_effective_unit_d_e": UnitSource("entity", _U.CAPACITY_SIDE),
     "dual_invest_effective_connection_d_e": UnitSource("entity", _U.CONNECTION_ENDS),
     "dual_invest_effective_node_d_e": UnitSource("entity", _U.NODE),

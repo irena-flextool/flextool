@@ -426,6 +426,11 @@ def _read_from_parquet(parquet_dir: Path) -> SimpleNamespace:
 
     v.capacity_margin_report = read_capacity_margin_parts(parquet_dir, REPORT_PREFIX, solve_order)
     v.capacity_margin_entity = read_capacity_margin_parts(parquet_dir, ENTITY_PREFIX, solve_order)
+    # The capacity of each cohort per period (engine.output._cohort_capacity): a long polars frame, each period
+    # from the last solve that holds it; None without a cohort table.
+    from flextool.engine.output._cohort_capacity import read_cohort_capacity
+
+    v.cohort_capacity = read_cohort_capacity(parquet_dir, solve_order)
     # The reserve requirement of each reserve group (engine.output._reserve_report): long polars frames over the
     # realized steps, a step from the last solve that realizes it; None without a reserve requirement.
     from flextool.engine.output._reserve_report import PROVIDER_PREFIX, REPORT_PREFIX as RESERVE_PREFIX

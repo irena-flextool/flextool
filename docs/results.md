@@ -321,7 +321,7 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
 ## Capacity and investment results
 
 - `unit`, `connection`, `node` entities `capacity` parameter — [MW or MWh] decomposed into:
-    - *existing* — capacity assumed at the start of the period
+    - *existing* — capacity assumed at the start of the period: the `existing` capacity in service, less what earlier solves of the run retired of it (a life extension carried from an earlier solve is an extension cohort, see below, not existing capacity)
     - *invested* — capacity that comes online in the period (without a construction lead time, the capacity invested in that period)
     - *in_construction* — capacity decided but not yet operating in the period; always present, empty without a construction lead time
     - *divested* — capacity the model decided to retire at the start of the period
@@ -332,6 +332,39 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
     Period axis covers every period in which an investment **or** a divestment decision occurs (both the invest-eligible and divest-eligible periods feed into `d_realize_invest`), so divest-only periods are visible even when no new capacity is added.
 
 - `unit`, `connection`, `node` entities `invest_marginal` parameter — [CUR/kW, CUR/kWh for storage nodes, as `invest_cost`] effective dual of the investment decision: zero means the model is at the unconstrained optimum; positive means an active upper bound (per-entity, per-group, period, total or cumulative caps are summed automatically); negative means the entity is not built and is unprofitable to build (the v_invest column's own reduced cost) — this is the ordinary reading for an unbuilt entity, not an artefact; a numerical artefact instead looks like a non-zero value on a *built* (or at-bound) entity, or an inconsistent sign across these regimes, and is worth investigating
+
+## Capacity by cohort and retirements
+
+A *cohort* is capacity that came into service together: the existing capacity of an entity, the capacity of one
+investment decision, a later plant of a `reinvest_automatic` chain (the plant that replaces the one before at its
+end of life) or a life extension. These tables are written when the run has investment, retirement or lifetime
+data (a cohort table); they cover the periods of the capacity tables.
+
+- `unit_cohort_capacity__d.csv` / `connection_cohort_capacity__d.csv` / `node_cohort_capacity__d.csv` (not in the
+  results database) — [MW or MWh] the capacity of each cohort in each period it is in service, net of its
+  retirements so far. Rows:
+    - *cohort* — its name: `existing:<first period>`, `invest:<decision period>`, `gen:<chain>:<k>` (the k-th plant
+      of a `reinvest_automatic` chain, `<chain>` the existing capacity or the investment it renews),
+      `extend:<period>:<cohort>` (a life extension of `<cohort>` starting in `<period>`)
+    - *kind* — *existing* (the existing capacity, and the first plant of its chain), *invested* (an investment,
+      and the first plant of its chain), *replacement* (a later plant of a chain), *extension* (a life extension)
+    - *period_online* — the period the cohort (plant) started to operate in; *period_end_of_life* — the period
+      its life ends at (`end_of_life_method` rounding), empty when it lives to or past the end of the horizon
+    - *period* — the period of the value
+
+  Summed over the cohorts of an entity, the capacity is the *total* of the capacity table.
+- `unit`, `connection`, `node` entities `retirement` parameter (table `unit_retirement__d` /
+  `connection_retirement__d` / `node_retirement__d`) — [MW or MWh] the capacity leaving service at the start of
+  each period, by cause:
+    - *end_of_life* — cohorts reaching the end of their lifetime (and the fall of a period-varying `existing`;
+      a rise is no cause), less the capacity a life extension keeps
+    - *economic* — capacity the model retired (the *divested* of the capacity table)
+    - *replaced* — the capacity of a `reinvest_automatic` plant taken over by its replacement: the capacity
+      stays (as a *replacement* cohort)
+    - *extended* — the capacity kept in service by a life extension: it stays (as an *extension* cohort)
+
+  From one period to the next the *total* capacity changes by *invested* − *end_of_life* − *economic* (plus a
+  rise of a period-varying `existing`).
 
 ## CO2 emissions
 

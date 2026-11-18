@@ -43,7 +43,7 @@ from flextool.process_outputs.out_ancillary import (
     slack_variables, input_sets, dc_power_flow,
     co2_duals, capacity_margin, reserve_requirement,
 )
-from flextool.process_outputs.out_capacity import unit_capacity, connection_capacity, node_capacity
+from flextool.process_outputs.out_capacity import cohort_capacity, connection_capacity, node_capacity, unit_capacity
 from flextool.process_outputs.out_costs import (
     generic, cost_summaries, cost_breakdown_by_entity, CO2, realized_leaf_periods,
 )
@@ -703,6 +703,7 @@ ALL_OUTPUTS = [
     unit_capacity,
     connection_capacity,
     node_capacity,
+    cohort_capacity,
     nodeGroup_indicators,
     nodeGroup_VRE_share,
     flowGroup_indicators,

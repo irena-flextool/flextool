@@ -496,6 +496,11 @@ def write_outputs_for_solve(
     except Exception as exc:  # noqa: BLE001
         _logger.error("capacity margin report failed for solve '%s': %s", solve_name, exc)
 
+    # The capacity of each cohort over the solve's periods (unioned with the last solve winning a period).
+    from flextool.engine.output._cohort_capacity import write_cohort_capacity
+
+    write_cohort_capacity(sol, flex_data, output_dir=output_dir, solve_name=roll_name, provider=provider)
+
     # The reserve requirement of each reserve group (#234): its per-solve tables over the realized steps (unioned
     # with the last solve winning a step, as the other per-step outputs) and the run-log line of a broken check.
     try:

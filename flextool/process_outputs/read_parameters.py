@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 import polars as pl
 
+from flextool.engine.input._axis_enums import align_join_dtypes
 from flextool.process_outputs._inmemory_helpers import (
     series_with_index,
     series_with_multi_index,
@@ -1527,14 +1528,26 @@ def read_parameters(
         densify_entities=_entity_universe,
     )
 
-    # entity_pre_existing — distinct from entity_all_existing on
-    # multi-solve runs (``pre_existing`` is the same as ``all_existing``
-    # on first solve; differs only when prior solves invested).  It is
-    # ``entity_all_existing`` minus ``p_entity_previously_invested_capacity``
-    # (the carried investments in service, net of their own carried
-    # retirements), so the existing capacity less its own retirements.
-    # Single-solve: identical to entity_all_existing.
-    if (flex_data.p_entity_previously_invested_capacity is not None
+    # entity_pre_existing — the existing capacity column of the capacity tables: the existing cohort in
+    # service less the retirements of it earlier solves realized (``p_entity_pre_existing −
+    # p_entity_retired_carried``), without the carried investments and life extensions (a carried life
+    # extension is an extension cohort of its own).  Without the cohort fields (a csv-dump reload):
+    # ``entity_all_existing`` minus ``p_entity_previously_invested_capacity`` (the carried investments in
+    # service, net of their own carried retirements).  Single solve: identical to entity_all_existing.
+    if getattr(flex_data, "p_entity_pre_existing", None) is not None:
+        from polar_high import Param  # local import — Param is heavy
+        pre_lf = flex_data.p_entity_pre_existing.frame.lazy()
+        carried = getattr(flex_data, "p_entity_retired_carried", None)
+        if carried is not None and carried.frame.height > 0:
+            pre_lf, ret_lf = align_join_dtypes(pre_lf, carried.frame.lazy().rename({"value": "ret"}), ["e", "d"])
+            pre_lf = (pre_lf.join(ret_lf, on=["e", "d"], how="left")
+                            .with_columns(value=pl.col("value") - pl.col("ret").fill_null(0.0)))
+        p.entity_pre_existing = _pdX_per_entity(
+            Param(("e", "d"), pre_lf.select("e", "d", "value").collect()), solve_name=solve_name,
+            entity_dim="e", col_name="entity", flex_data=flex_data,
+            densify_entities=_entity_universe,
+        )
+    elif (flex_data.p_entity_previously_invested_capacity is not None
             and flex_data.p_entity_previously_invested_capacity.frame.height > 0):
         # Subtract from p_entity_all_existing if both populated.
         all_lf = flex_data.p_entity_all_existing.frame.lazy() if (
