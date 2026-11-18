@@ -181,6 +181,23 @@ def test_free_replacement_with_salvage_is_named(tmp_path_factory, capsys) -> Non
 
 
 @pytest.mark.solver
+@pytest.mark.parametrize("cost, salvage, named", [(None, 200.0, True), (100.0, 200.0, True), (200.0, 200.0, False)])
+def test_replacement_whose_salvage_exceeds_its_cost_is_named(tmp_path_factory, capsys, cost, salvage,
+                                                              named) -> None:
+    """The replacement's yearly price is (C − S·(1+r)^−10)·ann(r, 10): below 0 when its salvage value discounted
+    at r over its life, S·1.05^−10 = 122 782.65 for S 200 000, exceeds its cost C (free, or 100 000); at C 200 000
+    it is above 0 and no warning names the entity."""
+    from flextool.engine import run_chain_from_db
+    from tests.engine._unit_db import make_db
+    alt = f"er_gain_warning_{cost}"
+    url, scen = make_db(tmp_path_factory, alt=alt, values=_values(cost=cost, salvage=salvage),
+                        base_chain=_no_battery_invest(SINGLE))
+    run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
+    warned = f"Warning: {PLANT}: the existing capacity (lifetime_method reinvest_automatic) is replaced"
+    assert capsys.readouterr().out.count(warned) == (1 if named else 0)
+
+
+@pytest.mark.solver
 @pytest.mark.parametrize("method", ["next_seam", "closest_seam"])
 def test_existing_plant_credit_of_a_rounded_life(tmp_path_factory, method) -> None:
     """lifetime 30, age 29, salvage 200: one year of the existing plant remains.  next_seam rounds its end to year 5:

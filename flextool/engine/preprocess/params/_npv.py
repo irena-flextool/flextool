@@ -1618,22 +1618,25 @@ def existing_replacement_prices(source: "InputSource",
 
 def warn_free_replacement_salvage(prices: pl.DataFrame, existing: "Param | None") -> None:
     """Warn, once per run and entity, where existing reinvest_automatic capacity (``existing`` ``[e, d, value]`` > 0
-    in some period) is replaced by a free plant (``prices`` :func:`existing_replacement_prices`: no invest_cost,
-    ``pay`` 0) that has a net_salvage_value (``nsv_eol`` not 0): the replacement keeps its salvage value (a plant
-    priced at −salvage credit), so keeping the capacity earns that salvage and a retirement gives it up."""
+    in some period) is replaced by a plant whose salvage value is worth more than its cost (``prices``
+    :func:`existing_replacement_prices`): a free plant (no invest_cost, ``pay`` 0) that has a net_salvage_value
+    (``nsv_eol`` not 0), or a priced one whose salvage credit exceeds its capital price (its yearly price ``value``
+    = a_b below 0).  The replacement is forced, so keeping the capacity earns that salvage and a retirement gives it
+    up."""
     from flextool.engine import _behaviour_changes
     if prices.height == 0 or existing is None:
         return
     held = {str(e) for e, v in existing.frame.select(pl.col("e").cast(pl.Utf8), "value").iter_rows() if v and v > 0}
-    free = prices.filter((pl.col("pay") == 0.0) & (pl.col("nsv_eol") != 0.0))
-    names = sorted({str(e) for e in free["e"].to_list()} & held)
+    gaining = prices.filter(((pl.col("pay") == 0.0) & (pl.col("nsv_eol") != 0.0)) | (pl.col("value") < -1e-9))
+    names = sorted({str(e) for e in gaining["e"].to_list()} & held)
     if names:
         _behaviour_changes.warn_once_each(
             "free_replacement_salvage", names,
             lambda fresh: "Warning: " + ", ".join(fresh) + ": the existing capacity (lifetime_method "
-            "reinvest_automatic) is replaced at its end of life by a plant without an invest_cost that still has a "
-            "net_salvage_value: the replacement is free and keeps its salvage value, so keeping the capacity earns "
-            "that salvage value and a retirement gives it up. Set invest_cost if the replacement, and so the "
+            "reinvest_automatic) is replaced at its end of life by a plant whose net_salvage_value is worth more "
+            "than its cost (no invest_cost, or an invest_cost below the salvage value discounted at "
+            "discount_rate): the replacement keeps its salvage value, so keeping the capacity earns it and a "
+            "retirement gives it up. Set invest_cost (at least the salvage value) if the replacement, and so the "
             "retirement, should be priced.")
 
 
