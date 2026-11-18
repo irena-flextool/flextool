@@ -335,22 +335,6 @@ ANN_R0 = 50_000.0
 ANN_R5 = 76_421.51161
 
 
-class _Lookup:
-    """Duck-typed ``PdLookup`` (``get`` / ``has`` / ``explicit_rows``) over a ``{(e, param): value}`` dict."""
-
-    def __init__(self, values: dict[tuple[str, str], float]) -> None:
-        self._v = values
-
-    def get(self, e: str, param: str, d: str) -> float:
-        return self._v.get((e, param), 0.0)
-
-    def has(self, e: str, param: str, d: str) -> bool:
-        return (e, param) in self._v
-
-    def explicit_rows(self, param: str) -> list[tuple[str, float]]:
-        return [(e, v) for (e, prm), v in self._v.items() if prm == param]
-
-
 def _lazy_annuity(disc: float | None, life: float | None, cost: float = 1000.0) -> float:
     from flextool.engine.input._inmemory_reader import InMemoryReader
 
@@ -370,28 +354,14 @@ def _lazy_annuity(disc: float | None, life: float | None, cost: float = 1000.0) 
     return float(out["ann"][0])
 
 
-def _emit_annuity(disc: float | None, life: float | None, cost: float = 1000.0) -> float:
-    from flextool.engine.input._lifetime_roles import lookup_roles
-    from flextool.engine.preprocess.emit._entity_annual import _annuities
-
-    values = {("u", "invest_cost"): cost}
-    if disc is not None:
-        values[("u", "discount_rate")] = disc
-    if life is not None:
-        values[("u", "lifetime_technical")] = life
-    lookup = _Lookup(values)
-    inp = {"pp": lookup, "roles": {"pp": lookup_roles(lookup)}, "offset_inv": 0.0}
-    return _annuities(inp, "invest_cost", [("u", "p2020", "pp", 1)])[0]
-
-
-@pytest.mark.parametrize("path", [_lazy_annuity, _emit_annuity], ids=["lazy", "emit"])
+@pytest.mark.parametrize("path", [_lazy_annuity], ids=["lazy"])
 @pytest.mark.parametrize("disc, expected", [(0.0, ANN_R0), (None, ANN_R5), (0.05, ANN_R5)],
                          ids=["zero", "missing", "explicit_5pct"])
 def test_annuity_discount_rate(path, disc, expected) -> None:
     assert math.isclose(path(disc, 20.0), expected, rel_tol=1e-9), (path.__name__, disc)
 
 
-@pytest.mark.parametrize("path", [_lazy_annuity, _emit_annuity], ids=["lazy", "emit"])
+@pytest.mark.parametrize("path", [_lazy_annuity], ids=["lazy"])
 def test_annuity_without_lifetime_is_an_error(path) -> None:
     from flextool.engine.input._solve_state import FlexToolConfigError
 

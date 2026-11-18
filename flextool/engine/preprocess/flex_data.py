@@ -3017,15 +3017,15 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
                 provider, "solve_data/p_entity_max_units",
                 sd / "p_entity_max_units.csv") else None
 
-    # The lifetime / NPV cost frames as the Provider holds them.  The divest
-    # lump ``ed_lifetime_fixed_cost_divest`` is emitted per solve and is a
-    # coefficient of a synthetic sub-solve (``apply_npv`` does not run for
-    # it).  ``ed_entity_annual_discounted`` / ``ed_lifetime_fixed_cost`` are
-    # not emitted: ``_npv.apply_invest_lumps`` derives them for every
-    # solve that invests (Spine solve and synthetic sub-solve alike), after
-    # this load, and registers its frames: what is read here is a reader-less
-    # reload's frame of a dumped workdir, or the frame an earlier solve
-    # sharing the Provider registered (replaced when this solve invests).
+    # The lifetime / NPV cost frames as the Provider holds them.  None is
+    # emitted: ``_npv.apply_invest_lumps`` derives ``ed_entity_annual_discounted``
+    # / ``ed_lifetime_fixed_cost`` for every solve that invests and
+    # ``_npv.apply_retirement_fixed_cost`` ``ed_lifetime_fixed_cost_divest`` for
+    # every solve that retires (Spine solve and synthetic sub-solve alike),
+    # after this load, and registers its frames: what is read here is a
+    # reader-less reload's frame of a dumped workdir, or the frame an earlier
+    # solve sharing the Provider registered (replaced when this solve invests
+    # or retires).
     # A solve with invest variables and neither frame fails in the objective
     # instead of investing for free.
     def _read_e_d(name: str) -> "Param | None":

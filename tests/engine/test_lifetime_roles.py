@@ -8,7 +8,6 @@ from __future__ import annotations
 import math
 
 import polars as pl
-import pytest
 
 from flextool.engine.input._inmemory_reader import InMemoryReader
 from flextool.engine.input._lifetime_roles import PAYBACK_TIME, source_role_sources
@@ -62,33 +61,17 @@ def _db_path(lifetimes: dict[str, float]) -> tuple[float, float]:
     return float(ann["ann"][0]), float(window["life"][0])
 
 
-def _emit_path(lifetimes: dict[str, float]) -> tuple[float, float]:
-    """``(annuity, window)`` of unit u read from the CSV-generation lookup (``_entity_annual``): the annuity and the
-    technical lifetime the windows of the emitted sets use."""
-    from flextool.engine.input._lifetime_roles import LIFETIME_TECHNICAL, lookup_roles
-    from flextool.engine.preprocess.emit._entity_annual import _annuities
-    from tests.engine.test_npv_cluster import _Lookup
-
-    lookup = _Lookup({("u", "invest_cost"): 1000.0, ("u", "discount_rate"): 0.05,
-                      **{("u", k): v for k, v in lifetimes.items()}})
-    inp = {"pp": lookup, "roles": {"pp": lookup_roles(lookup)}, "offset_inv": 0.0}
-    ann = _annuities(inp, "invest_cost", [("u", "p2020", "pp", 1)])[0]
-    return ann, lookup.get("u", LIFETIME_TECHNICAL, "p2020")
-
-
-@pytest.mark.parametrize("path", [_db_path, _emit_path], ids=["db", "emit"])
-def test_payback_time_split(path) -> None:
+def test_payback_time_split() -> None:
     """lifetime_technical 20, payback_time 10: the annuity is over 10 years (123 337.69 per MW, not the 20-year
     76 421.51), the window over 20."""
-    ann, life = path({"lifetime_technical": 20.0, "payback_time": 10.0})
+    ann, life = _db_path({"lifetime_technical": 20.0, "payback_time": 10.0})
     assert math.isclose(ann, ANN_N10, rel_tol=1e-7)
     assert life == 20.0
 
 
-@pytest.mark.parametrize("path", [_db_path, _emit_path], ids=["db", "emit"])
-def test_payback_time_defaults_to_the_technical_lifetime(path) -> None:
+def test_payback_time_defaults_to_the_technical_lifetime() -> None:
     """lifetime_technical 20 and no payback_time: the annuity is over the technical lifetime, 20 years."""
-    ann, life = path({"lifetime_technical": 20.0})
+    ann, life = _db_path({"lifetime_technical": 20.0})
     assert math.isclose(ann, ANN_N20, rel_tol=1e-7)
     assert life == 20.0
 

@@ -208,11 +208,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "process_source_sink.csv",
     "process_source_sink_alwaysProcess.csv",
     "process__source__sink__profile__profile_method_direct.csv",
-    # _entity_annual — Phase E-b lifted.  ed_entity_annual_discounted and ed_lifetime_fixed_cost are not emit
-    # outputs: _npv.apply_invest_lumps registers them only in a solve that has an investment; the salvage terms of
-    # a retirement are _npv.apply_retirement_salvage's.
-    "ed_entity_annual.csv",
-    "ed_lifetime_fixed_cost_divest.csv",
     # _inflow_scaling — only the 6 CONSUMED outputs are emitted; the 9
     # internal middle parameters (orig_flow_sum, period_share_of_annual_flow,
     # new_peak_sign, old_peak_max, old_peak_min, old_peak_sign,

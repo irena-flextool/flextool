@@ -63,7 +63,6 @@ def run(
     from flextool.engine.preprocess.emit import _arc_unions as _arc
     from flextool.engine.preprocess.emit import _calc_params as _calc
     from flextool.engine.preprocess.emit import _dispatchers as _disp
-    from flextool.engine.preprocess.emit import _entity_annual
     from flextool.engine.preprocess.emit import _inflow_scaling
     from flextool.engine.preprocess.emit import _leaf_sets as _leaf
     from flextool.engine.preprocess.emit import _lp_scaling
@@ -170,9 +169,6 @@ def run(
     # ── L1 batch 15: pdProcess / pdNode + edEntity_lifetime + ed_fixed_cost
     _disp.emit_entity_period_calc_params(input_dir, solve_data_dir, provider=provider)
     _ck("entity_period_calc_params")
-    # ── L1 batch 16: ed_entity_annual family ──────────────────────────
-    _entity_annual.emit_entity_annual_calc_params(input_dir, solve_data_dir, provider=provider)
-    _ck("entity_annual_calc_params")
     # ── L1 batch 17: node-inflow scaling family ───────────────────────
     _inflow_scaling.emit_node_inflow_scaling_params(input_dir, solve_data_dir, provider=provider)
     _ck("node_inflow_scaling_params")

@@ -48,7 +48,7 @@ Notes:
   inputs give a bit-equal price whatever the layout of the frame that holds them.
 
 Used, as the one form of the annuity, by ``preprocess/params/_npv.py`` (the values the model reads and the reported
-costs) and ``preprocess/emit/_entity_annual.py`` (the per-solve ``ed_entity_annual*.csv``).
+costs).
 """
 from __future__ import annotations
 

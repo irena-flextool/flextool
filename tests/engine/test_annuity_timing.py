@@ -37,32 +37,13 @@ def _pv(payment: float, off: float) -> float:
     return sum(payment * (1.0 + R) ** -(k + off) for k in range(N))
 
 
-class _Lookup:
-    """Duck-typed ``PdLookup`` over a ``{(e, param): value}`` dict (one value for every period)."""
-
-    def __init__(self, values: dict[tuple[str, str], float]) -> None:
-        self._v = values
-
-    def get(self, e: str, param: str, d: str) -> float:
-        return self._v.get((e, param), 0.0)
-
-    def has(self, e: str, param: str, d: str) -> bool:
-        return (e, param) in self._v
-
-    def explicit_rows(self, param: str) -> list[tuple[str, float]]:
-        return [(e, v) for (e, prm), v in self._v.items() if prm == param]
-
-
 @pytest.mark.parametrize("off", [0.0, 0.5, 1.0])
-def test_annuity_of_the_emitted_frames_is_worth_the_investment_cost(off) -> None:
-    """The per-solve CSV path (``ed_entity_annual*.csv``, the retirement coefficients of a synthetic sub-solve):
-    invest_cost 1000 CUR/kW, discount_rate 5 %, payback over lifetime_technical 10: PV 1 000 000 at every offset."""
-    from flextool.engine.input._lifetime_roles import lookup_roles
-    from flextool.engine.preprocess.emit._entity_annual import _annuities
+def test_annuity_factor_is_worth_the_investment_cost(off) -> None:
+    """The annuity form every cost path uses (``_annuity.annuity_factor``): invest_cost 1000 CUR/kW, discount_rate
+    5 %, payback over lifetime_technical 10: PV 1 000 000 at every offset."""
+    from flextool.engine.preprocess._annuity import annuity_factor
 
-    lookup = _Lookup({("u", "invest_cost"): 1000.0, ("u", "discount_rate"): R, ("u", "lifetime_technical"): 10.0})
-    inp = {"pp": lookup, "roles": {"pp": lookup_roles(lookup)}, "offset_inv": off}
-    payment = _annuities(inp, "invest_cost", [("u", "p2020", "pp", 1)])[0]
+    payment = 1000.0 * 1000.0 * pl.select(annuity_factor(pl.lit(R), pl.lit(float(N)), off)).item()
     assert _pv(payment, off) == pytest.approx(1_000_000.0, rel=1e-12)
 
 

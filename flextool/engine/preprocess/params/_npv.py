@@ -3126,11 +3126,11 @@ def apply_run_fields_of_synthetic_solve(flex_data: object,
     """The investment lumps and the run-level fields of a synthetic sub-solve (a roll of a rolling solve, a nested
     ``<solve>_<period>`` sub-solve), for which ``apply_npv`` does not run.
 
-    A sub-solve with an invest or a divest set gets its investment lumps from :func:`apply_invest_lumps` and its
-    salvage terms from :func:`apply_retirement_salvage` over its own periods, as a Spine solve does (the CSV emitter derives neither the
-    investment lumps nor the salvage terms); its lifetime fixed cost of retirements and its own discount factors
-    stay the loaded ``solve_data`` frames.  Without run years the run
-    fields are the sub-solve's own fields."""
+    A sub-solve with an invest or a divest set gets its investment lumps from :func:`apply_invest_lumps`, its
+    salvage terms from :func:`apply_retirement_salvage` and the fixed cost its retirements save from
+    :func:`apply_retirement_fixed_cost` over its own periods, as a Spine solve does (no CSV emitter derives them;
+    the rolls and nested sub-solves of the test fixtures have no divest set); its own discount factors stay the
+    loaded ``solve_data`` frames.  Without run years the run fields are the sub-solve's own fields."""
     from flextool.engine.preprocess.params._branch import annuity_window_lineage_df
     from flextool.engine.preprocess.params._derived import (
         _expand_invest_branch_periods,
@@ -3188,6 +3188,9 @@ def apply_run_fields_of_synthetic_solve(flex_data: object,
         apply_retirement_salvage(flex_data, source, active_solve, decision_periods, period_in_use, period_universe,
                                  period_with_history, lineage=lineage, year_rows=year_rows, workdir=workdir,
                                  provider=provider)
+        apply_retirement_fixed_cost(flex_data, source, active_solve, decision_periods, period_in_use,
+                                    period_universe, lineage=lineage, year_rows=year_rows, workdir=workdir,
+                                    provider=provider)
     apply_built_retirement_costs(flex_data, source, active_solve, period_in_use, period_universe,
                                  period_with_history, lineage=lineage, year_rows=year_rows, workdir=workdir,
                                  provider=provider)
@@ -3306,12 +3309,6 @@ def apply_npv(flex_data: object,
             _run_lumps_are_the_solves(flex_data)
         return
 
-    # A helper returns None only when its feature is inactive (no period, no entity row); the field then keeps
-    # its loaded value (the divest lumps' emitted ``solve_data`` frames).
-    def _set_if(field: str, value):
-        if value is not None:
-            setattr(flex_data, field, value)
-
     apply_invest_lumps(flex_data, source, active_solve, list(period_invest), list(period_in_use),
                        list(period_universe), list(period_with_history), lineage=_npv_lineage,
                        year_rows=year_rows, provider=provider)
@@ -3325,11 +3322,9 @@ def apply_npv(flex_data: object,
                                  list(period_with_history), lineage=_npv_lineage, year_rows=year_rows,
                                  workdir=workdir, provider=provider)
 
-    _set_if("ed_lifetime_fixed_cost_divest",
-            ed_lifetime_fixed_cost_divest_from_source(
-                source, active_solve,
-                period_invest, period_in_use, period_universe,
-                lineage=_npv_lineage, workdir=workdir, provider=provider, year_rows=year_rows))
+    apply_retirement_fixed_cost(flex_data, source, active_solve, list(period_invest), list(period_in_use),
+                                list(period_universe), lineage=_npv_lineage, year_rows=year_rows, workdir=workdir,
+                                provider=provider)
 
     # Reported costs: the lumps from the start of the run over the run's periods, and the windows (outputs only).
     apply_run_cost_fields(flex_data, source, active_solve, list(period_in_use), list(period_invest),
@@ -3337,8 +3332,32 @@ def apply_npv(flex_data: object,
                           provider=provider)
 
 
-#: The investment lumps whose ``solve_data`` frames are the values set here (the CSV emitter does not derive them).
+#: The investment lumps whose ``solve_data`` frames are the values set here (no CSV emitter derives them).
 _REGISTERED_LUMPS = ("ed_entity_annual_discounted", "ed_lifetime_fixed_cost")
+#: The retirement lump whose ``solve_data`` frame is the value set by :func:`apply_retirement_fixed_cost`.
+_REGISTERED_RETIREMENT_LUMPS = ("ed_lifetime_fixed_cost_divest",)
+
+
+def apply_retirement_fixed_cost(flex_data: object,
+                                source: "InputSource",
+                                active_solve: str,
+                                period_invest: list[str],
+                                period_in_use: list[str],
+                                period_universe: list[str],
+                                *,
+                                lineage: pl.DataFrame | None,
+                                year_rows: pl.DataFrame | None,
+                                workdir: Path | None,
+                                provider: "object | None" = None,
+                                ) -> None:
+    """Set ``ed_lifetime_fixed_cost_divest`` (the fixed cost a retirement of existing capacity saves,
+    :func:`lifetime_fixed_cost_divest_lf`; ``None`` without a retirement option) and register its ``solve_data``
+    frame (:func:`_register_invest_lumps`).  The only derivation of the lump: a Spine solve (:func:`apply_npv`) and
+    a synthetic sub-solve with a divest set (:func:`apply_run_fields_of_synthetic_solve`) call it alike."""
+    flex_data.ed_lifetime_fixed_cost_divest = ed_lifetime_fixed_cost_divest_from_source(
+        source, active_solve, period_invest, period_in_use, period_universe,
+        lineage=lineage, workdir=workdir, provider=provider, year_rows=year_rows)
+    _register_invest_lumps(flex_data, provider, _REGISTERED_RETIREMENT_LUMPS)
 
 
 def apply_invest_lumps(flex_data: object,
@@ -3779,16 +3798,17 @@ def _set_generation_prices(flex_data: object,
                             .select(cohort.columns))
 
 
-def _register_invest_lumps(flex_data: object, provider: "object | None") -> None:
-    """Register ``ed_entity_annual_discounted`` / ``ed_lifetime_fixed_cost`` of ``flex_data`` under their
-    ``solve_data/<name>`` provider keys (``entity, period, value``, the value rendered with ``repr``), so that the
-    solve's frames of these lumps are the objective's coefficients: one derivation, with the start of operation of
-    a construction lead time and the years in service."""
+def _register_invest_lumps(flex_data: object, provider: "object | None",
+                           names: tuple[str, ...] = _REGISTERED_LUMPS) -> None:
+    """Register the lumps ``names`` of ``flex_data`` (default ``ed_entity_annual_discounted`` /
+    ``ed_lifetime_fixed_cost``) under their ``solve_data/<name>`` provider keys (``entity, period, value``, the value
+    rendered with ``repr``), so that the solve's frames of these lumps are the objective's coefficients: one
+    derivation, with the start of operation of a construction lead time and the years in service."""
     if provider is None:
         return
     from flextool.engine.preprocess._provider_io import _emit
     from flextool.engine.preprocess.emit._vectorize import _render_value_column
-    for name in _REGISTERED_LUMPS:
+    for name in names:
         param = getattr(flex_data, name, None)
         if param is None:
             continue
